@@ -1,0 +1,179 @@
+{
+  "_meta": {
+    "verified": "2026-06-13",
+    "source": "https://developers.openai.com/api/docs/pricing",
+    "note": "USD per 1M tokens. batch = 50% of realtime. Edit here (or ~/.spendguard/prices.json) \u2014 do not hardcode prices in code.",
+    "stale_after_days": 45
+  },
+  "providers": {
+    "openai": {
+      "models": {
+        "gpt-5.5": {
+          "in_": 5.0,
+          "out": 30.0,
+          "cached_in": 0.5,
+          "batch_in": 2.5,
+          "batch_out": 15.0
+        },
+        "gpt-5.5-pro": {
+          "in_": 30.0,
+          "out": 180.0,
+          "cached_in": 3.0,
+          "batch_in": 15.0,
+          "batch_out": 90.0
+        },
+        "gpt-5.4": {
+          "in_": 2.5,
+          "out": 15.0,
+          "cached_in": 0.25,
+          "batch_in": 1.25,
+          "batch_out": 7.5
+        },
+        "gpt-5.4-mini": {
+          "in_": 0.75,
+          "out": 4.5,
+          "cached_in": 0.075,
+          "batch_in": 0.375,
+          "batch_out": 2.25
+        },
+        "gpt-5.4-nano": {
+          "in_": 0.2,
+          "out": 1.25,
+          "cached_in": 0.02,
+          "batch_in": 0.1,
+          "batch_out": 0.625
+        },
+        "gpt-5": {
+          "in_": 1.25,
+          "out": 10.0,
+          "cached_in": 0.125,
+          "batch_in": 0.625,
+          "batch_out": 5.0
+        },
+        "gpt-5-mini": {
+          "in_": 0.25,
+          "out": 2.0,
+          "cached_in": 0.025,
+          "batch_in": 0.125,
+          "batch_out": 1.0
+        },
+        "gpt-5-nano": {
+          "in_": 0.05,
+          "out": 0.4,
+          "cached_in": 0.005,
+          "batch_in": 0.025,
+          "batch_out": 0.2
+        },
+        "gpt-4o": {
+          "in_": 2.5,
+          "out": 10.0,
+          "cached_in": 1.25,
+          "batch_in": 1.25,
+          "batch_out": 5.0
+        },
+        "gpt-4o-mini": {
+          "in_": 0.15,
+          "out": 0.6,
+          "cached_in": 0.075,
+          "batch_in": 0.075,
+          "batch_out": 0.3
+        },
+        "gpt-4.1-mini": {
+          "in_": 0.4,
+          "out": 1.6,
+          "cached_in": 0.1,
+          "batch_in": 0.2,
+          "batch_out": 0.8
+        },
+        "text-embedding-3-large": {
+          "in_": 0.13,
+          "out": 0.0,
+          "cached_in": 0.0,
+          "batch_in": 0.065,
+          "batch_out": 0.0
+        },
+        "text-embedding-3-small": {
+          "in_": 0.02,
+          "out": 0.0,
+          "cached_in": 0.0,
+          "batch_in": 0.01,
+          "batch_out": 0.0
+        }
+      }
+    },
+    "anthropic": {
+      "models": {
+        "claude-opus-4-8": {
+          "in_": 5.0,
+          "out": 25.0,
+          "cached_in": 0.5,
+          "batch_in": 2.5,
+          "batch_out": 12.5
+        },
+        "claude-sonnet-4-6": {
+          "in_": 3.0,
+          "out": 15.0,
+          "cached_in": 0.3,
+          "batch_in": 1.5,
+          "batch_out": 7.5
+        },
+        "claude-haiku-4-5": {
+          "in_": 1.0,
+          "out": 5.0,
+          "cached_in": 0.1,
+          "batch_in": 0.5,
+          "batch_out": 2.5
+        },
+        "claude-opus-4-7": {
+          "in_": 5.0,
+          "out": 25.0,
+          "cached_in": 0.5,
+          "batch_in": 2.5,
+          "batch_out": 12.5
+        },
+        "claude-opus-4-6": {
+          "in_": 5.0,
+          "out": 25.0,
+          "cached_in": 0.5,
+          "batch_in": 2.5,
+          "batch_out": 12.5
+        },
+        "claude-opus-4-5": {
+          "in_": 5.0,
+          "out": 25.0,
+          "cached_in": 0.5,
+          "batch_in": 2.5,
+          "batch_out": 12.5
+        },
+        "claude-opus-4-1": {
+          "in_": 15.0,
+          "out": 75.0,
+          "cached_in": 1.5,
+          "batch_in": 7.5,
+          "batch_out": 37.5
+        },
+        "claude-opus-4-0": {
+          "in_": 15.0,
+          "out": 75.0,
+          "cached_in": 1.5,
+          "batch_in": 7.5,
+          "batch_out": 37.5
+        },
+        "claude-sonnet-4-5": {
+          "in_": 3.0,
+          "out": 15.0,
+          "cached_in": 0.3,
+          "batch_in": 1.5,
+          "batch_out": 7.5
+        },
+        "claude-sonnet-4-0": {
+          "in_": 3.0,
+          "out": 15.0,
+          "cached_in": 0.3,
+          "batch_in": 1.5,
+          "batch_out": 7.5
+        }
+      }
+    }
+  }
+}
