@@ -32,6 +32,27 @@ def ssl_context():
         return ssl.create_default_context()
 
 
+def email_config():
+    """SMTP/recipient config from ~/.spendguard/email.json, overlaid by env. Secrets stay here
+    (gitignored) or in env — never in the repo."""
+    import json as _json
+    cfg = {}
+    p = HOME / "email.json"
+    try:
+        if p.exists():
+            cfg.update(_json.loads(p.read_text()))
+    except Exception:
+        pass
+    for key, env in (("host", "SPENDGUARD_SMTP_HOST"), ("port", "SPENDGUARD_SMTP_PORT"),
+                     ("user", "SPENDGUARD_SMTP_USER"), ("password", "SPENDGUARD_SMTP_PASS"),
+                     ("from_", "SPENDGUARD_EMAIL_FROM"), ("to", "SPENDGUARD_EMAIL_TO"),
+                     ("provider", "SPENDGUARD_EMAIL_PROVIDER"), ("api_key", "SPENDGUARD_RESEND_KEY")):
+        v = os.environ.get(env)
+        if v:
+            cfg[key] = v
+    return cfg
+
+
 def cap():      return float(os.getenv("GATE_CAP", "75"))
 def disabled(): return os.getenv("GATE_DISABLE") == "1" or FLAG.exists()
 def allow():    return os.getenv("GATE_ALLOW") == "1"

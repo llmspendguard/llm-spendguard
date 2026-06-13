@@ -47,8 +47,29 @@ def sum_window(by_day, lo, hi=None):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--alert-threshold", type=float, help="ALERT if TODAY combined exceeds this $")
+    ap.add_argument("--email", action="store_true", help="also email the report (SMTP config required)")
+    ap.add_argument("--email-to", help="recipient override (else SPENDGUARD_EMAIL_TO / ~/.spendguard/email.json)")
     a = ap.parse_args()
 
+    import io, contextlib
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = _run(a)
+    text = buf.getvalue()
+    print(text, end="")
+    if a.email:
+        from . import notify
+        stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+        subj = f"LLM spend report — {stamp}" + ("  ⚠️ ALERT" if rc == 2 else "")
+        try:
+            to = notify.send_email(subj, text, to=a.email_to)
+            print(f"  (emailed to {to})")
+        except Exception as e:
+            print(f"  EMAIL FAILED: {e}  — set SPENDGUARD_EMAIL_TO + SMTP env or ~/.spendguard/email.json")
+    return rc
+
+
+def _run(a):
     today = datetime.datetime.now(datetime.timezone.utc).date()
     tstr, week_start, month_start = windows(today)
 

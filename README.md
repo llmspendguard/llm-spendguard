@@ -63,6 +63,13 @@ Batch cost is known before submit; real-time isn't (output tokens). So the real-
 usage after each call** (and logs it, so real-time spend shows in `report`) and **hard-stops before the next call**
 once per-process cumulative spend crosses `GATE_RT_BUDGET` (default $50) — the runaway-loop guard.
 
+## Email the report
+`spendguard report --email` (or `--email-to addr`) sends the report so a daily run isn't missed.
+Configure in `~/.spendguard/email.json` (gitignored — safe for the key) or env. Two backends:
+- **Resend** (recommended): `{"provider":"resend","to":"you@x.com","from_":"reports@verified-domain","api_key":"re_…"}`.
+  Verify a domain on resend.com for arbitrary recipients, or use `onboarding@resend.dev` (delivers only to your Resend signup email).
+- **SMTP**: `{"host":"smtp.gmail.com","port":587,"user":"…","password":"<app pw>","to":"you@x.com"}`.
+
 ## Extending to a new SDK
 Add one interceptor: `spendguard.register(module, ClassName, "create", gate_fn)`, write a small
 estimator for that SDK's request shape, and add its prices to `pricing.py`.
