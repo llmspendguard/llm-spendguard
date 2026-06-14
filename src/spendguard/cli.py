@@ -66,6 +66,9 @@ def main(argv=None):
     if cmd in ("mine-history", "history"):           # deterministic post-event mining + graph enrichment (no spend)
         from . import history
         return history.main(rest)
+    if cmd in ("mine-conv", "conv"):                  # conversation mining: index (no spend) + synth (caged)
+        from . import conv
+        return conv.main(rest)
     if cmd == "compare":
         from . import compare
         return compare.main(rest)
