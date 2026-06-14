@@ -15,7 +15,7 @@ Variants (compose freely, iterate to converge):
 The baseline cost is computed from the stored sample (no spend); only the variants make calls.
 CLI: `spendguard experiment --intent X [--model M]... [--instruction "..."]... [--n 20] [--run]`.
 """
-import json, re, difflib
+import json
 from . import callio, calls, config, pricing
 from .submit import _count_tokens
 
@@ -43,45 +43,13 @@ def _samples(intent, base_model, k):
     return rows
 
 
-def _norm_json(s):
-    if not s:
-        return None
-    for a, b in (("{", "}"), ("[", "]")):
-        i, j = s.find(a), s.rfind(b)
-        if 0 <= i < j:
-            try:
-                return json.loads(s[i:j + 1])
-            except Exception:
-                pass
-    return None
+from . import equivalence
+_flatten = equivalence._flatten          # kept for back-compat (tests)
 
 
-def _flatten(x):
-    """Scalars in document order — so equivalence is GRADED (fraction of fields that match), not the
-    all-or-nothing exact match that scores 0% on any rich nested output (even a model vs itself)."""
-    if isinstance(x, list):
-        for e in x:
-            yield from _flatten(e)
-    elif isinstance(x, dict):
-        for k in sorted(x):
-            yield from _flatten(x[k])
-    else:
-        yield x
-
-
-def _match(a, b):
-    fa, fb = list(_flatten(a)), list(_flatten(b))
-    n = max(len(fa), len(fb))
-    if not n:
-        return 1.0
-    return sum(1 for i in range(n) if i < len(fa) and i < len(fb) and fa[i] == fb[i]) / n
-
-
-def _equiv(ref, out):
-    a, b = _norm_json(ref), _norm_json(out)
-    if a is not None and b is not None:
-        return _match(a, b)
-    return difflib.SequenceMatcher(None, (ref or "").strip(), (out or "").strip()).ratio()
+def _equiv(ref, out, mode="auto", model=None):
+    """Score 0..1 from the graded equivalence ladder (see equivalence.grade)."""
+    return equivalence.grade(ref, out, mode=mode, model=model)[0]
 
 
 def _call(model, prompt, max_out=400):
@@ -124,7 +92,7 @@ def _variants(intent, base_model, models, instructions):
     return vs
 
 
-def experiment(intent, models=None, instructions=None, n=20, run=False, reconsider=False):
+def experiment(intent, models=None, instructions=None, n=20, run=False, reconsider=False, mode="auto"):
     from . import models as M
     base_model = _base_model(intent)
     samples = _samples(intent, base_model, n) if base_model else []
@@ -178,29 +146,35 @@ def experiment(intent, models=None, instructions=None, n=20, run=False, reconsid
     results = []
 
     def _measure(v, subset):
-        costs, scores = [], []
+        costs, scores, tiers, struct = [], [], [], []
         for prompt, ref, _m in subset:
             try:
                 mo = max(1500, int(_count_tokens(ref, v["model"]) * 2) + 800)
                 cost, _it, _ot, text = _call(v["model"], prompt + v["instr"], max_out=mo)
-                costs.append(cost); scores.append(_equiv(ref, text))
+                sc, tier = equivalence.grade(ref, text, mode=mode, model=v["model"])
+                st = equivalence.structural(ref, text)
+                costs.append(cost); scores.append(sc); tiers.append(tier)
+                if st is not None:
+                    struct.append(st)
             except Exception:
                 pass
-        return costs, scores
+        return costs, scores, tiers, struct
 
     with calls.context(intent=f"{META}:experiment"):
         for v in variants:
-            costs, scores = _measure(v, samples[:pilot])
+            costs, scores, tiers, struct = _measure(v, samples[:pilot])
             killed = scores and (sum(scores) / len(scores)) < KILL_THRESH
             if not killed:                                  # expand survivors to the full sample
-                c2, s2 = _measure(v, samples[pilot:])
-                costs += c2; scores += s2
+                c2, s2, t2, st2 = _measure(v, samples[pilot:])
+                costs += c2; scores += s2; tiers += t2; struct += st2
             if not scores:
                 print(f"  {v['label'][:21]:<22}{'ERR':>10}")
                 continue
             n = len(scores)
             per = sum(costs) / n
             match = sum(scores) / n
+            tier = max(set(tiers), key=tiers.count) if tiers else "?"
+            fmt = (100 * sum(struct) / len(struct)) if struct else None
             var = sum((s - match) ** 2 for s in scores) / n
             stderr = (var ** 0.5) / (n ** 0.5)
             drop = (base_per - per) / base_per * 100 if base_per else 0
@@ -212,9 +186,12 @@ def experiment(intent, models=None, instructions=None, n=20, run=False, reconsid
                 verdict = "✅ adopt" + (" (N small)" if n < 10 else "")
             else:
                 verdict = "⚠️ cheaper, output differs"
+            fmt_s = f" · format {fmt:.0f}%" if fmt is not None else ""
             print(f"  {v['label'][:21]:<22}{('$%.5f' % per):>10}{('%+.0f%%' % -drop):>13}"
                   f"{('%.0f%% ±%.0f%% (N=%d)' % (100*match, 100*stderr, n)):>16}  {verdict}")
-            results.append(dict(label=v["label"], per=per, drop=drop, match=match, stderr=stderr, n=n, killed=killed))
+            print(f"      via {tier} equivalence{fmt_s}")
+            results.append(dict(label=v["label"], per=per, drop=drop, match=match, stderr=stderr,
+                                n=n, killed=killed, tier=tier, format=fmt))
             # self-learning denylist: a killed MODEL-swap is remembered as ineffective for this intent
             if killed and v["label"].startswith("model:"):
                 M.mark_ineffective(v["model"], intent, f"{int(100*match)}% output-match at pilot (N={n})")
@@ -300,9 +277,12 @@ def main(argv=None):
     ap.add_argument("--instruction", action="append", help="an output-format instruction variant (repeatable)")
     ap.add_argument("--n", type=int, default=20, help="samples to test per variant")
     ap.add_argument("--reconsider", action="store_true", help="also test models previously marked ineffective")
+    ap.add_argument("--semantic", choices=["embed", "rubric"], help="for PROSE outputs: add a caged semantic "
+                    "equivalence tier (embed=embedding cosine, rubric=LLM judge) — costs extra, meta-capped")
     ap.add_argument("--run", action="store_true", help="actually call (default: estimate). Caged by caps.meta.")
     a = ap.parse_args(argv)
-    experiment(a.intent, models=a.model, instructions=a.instruction, n=a.n, run=a.run, reconsider=a.reconsider)
+    experiment(a.intent, models=a.model, instructions=a.instruction, n=a.n, run=a.run,
+               reconsider=a.reconsider, mode=a.semantic or "auto")
     return 0
 
 
