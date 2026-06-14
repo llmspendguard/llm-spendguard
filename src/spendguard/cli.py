@@ -69,6 +69,9 @@ def main(argv=None):
     if cmd in ("mine-conv", "conv"):                  # conversation mining: index (no spend) + synth (caged)
         from . import conv
         return conv.main(rest)
+    if cmd in ("fetch-io", "fetchio"):                # recover real prompt+output samples from providers (free)
+        from . import callio
+        return callio.main(rest)
     if cmd == "compare":
         from . import compare
         return compare.main(rest)

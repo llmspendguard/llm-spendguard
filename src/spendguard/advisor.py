@@ -39,20 +39,20 @@ _OPT_OUT = 600
 
 
 # ─────────────────────────────── shared helpers ───────────────────────────────
-def _judgeable():
-    """Unlabeled, non-meta calls that have BOTH prompt and output snippets stored (judge needs them)."""
-    with calls._lock:
-        return calls._db().execute(
-            "SELECT id, intent, model, prompt_snip, output_snip FROM calls "
-            "WHERE quality IS NULL AND prompt_snip IS NOT NULL AND output_snip IS NOT NULL "
-            "AND (intent IS NULL OR intent NOT LIKE 'spendguard:%')").fetchall()
-
-
-def _unlabeled_count():
-    with calls._lock:
-        return calls._db().execute(
-            "SELECT COUNT(*) FROM calls WHERE quality IS NULL "
-            "AND (intent IS NULL OR intent NOT LIKE 'spendguard:%')").fetchone()[0]
+def _judge_sample(per, limit=None):
+    """Unjudged call_io samples, bounded to `per` per (intent, model) — enough to estimate good%
+    with a confidence interval, not label everything (keeps the judge spend small)."""
+    from . import callio
+    from collections import defaultdict
+    seen, out = defaultdict(int), []
+    for io_id, intent, model, p, o in callio.unjudged():
+        if seen[(intent, model)] >= per:
+            continue
+        seen[(intent, model)] += 1
+        out.append((io_id, intent, model, p, o))
+        if limit and len(out) >= limit:
+            break
+    return out
 
 
 def _judge_prompt(prompt_snip, output_snip):
@@ -80,67 +80,50 @@ def _est_line(mode, model, n, in_tok, out_tok, cost):
 
 
 # ─────────────────────────────── reconstruct (judge) ───────────────────────────────
-def reconstruct(run=False, limit=None):
-    """Judge unlabeled calls for quality. Estimate-only unless run=True. Returns the estimate dict."""
+def reconstruct(run=False, per=15, limit=None):
+    """Judge a bounded sample of the recovered call_io corpus for quality → makes good% / $/good real.
+    Estimate-only unless run=True. Realtime judge (synchronous, small, caged by intent spendguard:*)."""
+    from . import callio
     judge = config.advisor_judge_model()
-    rows = _judgeable()
-    if limit:
-        rows = rows[:limit]
-    total_unlabeled = _unlabeled_count()
-    print(f"reconstruct — quality judge = {judge} (Batch API), caged by intent {META}:*")
-    print(f"  unlabeled calls: {total_unlabeled:,}   judgeable (have stored prompt+output): {len(rows):,}")
-    if not rows:
-        print("  → nothing to judge. Enable calls.store_prompts so future calls store snippets the "
-              "judge can read (historical/backfilled rows have none). 0 spend.")
+    samples = _judge_sample(per, limit)
+    total_unjudged = len(callio.unjudged())
+    print(f"reconstruct — quality judge = {judge} (realtime), caged by intent {META}:*")
+    print(f"  call_io samples: {total_unjudged:,} unjudged   judging up to {per}/(intent,model) → {len(samples):,}")
+    if not samples:
+        print("  → no recovered prompt+output samples to judge. Run `spendguard fetch-io` first "
+              "(recovers them from the providers, free). 0 spend.")
         return dict(requests=0, cost=0.0, model=judge)
 
-    in_tok = sum(_count_tokens(_JUDGE_SYS + _judge_prompt(p, o), judge) for _, _, _, p, o in rows)
-    out_tok = _JUDGE_OUT_CEILING * len(rows)
-    cost = pricing.batch_cost(judge, in_tok, out_tok)
+    in_tok = sum(_count_tokens(_JUDGE_SYS + _judge_prompt(p, o), judge) for _, _, _, p, o in samples)
+    out_tok = _JUDGE_OUT_CEILING * len(samples)
+    cost = pricing.realtime_cost(judge, in_tok, out_tok)
     print("  ESTIMATE (zero paid calls):")
-    _est_line("batch", judge, len(rows), in_tok, out_tok, cost)
+    _est_line("realtime", judge, len(samples), in_tok, out_tok, cost)
     print(f"  meta budget: ${config.meta_cap():.2f}/day · spent today ${_meta_spent():.4f}")
     if not run:
-        print("  estimate-only. Re-run with --run to submit (gate enforces the meta cap).")
-        return dict(requests=len(rows), in_tok=in_tok, out_tok=out_tok, cost=cost, model=judge)
-    return _reconstruct_run(judge, rows)
+        print("  estimate-only. Re-run with --run to judge (gate enforces the meta cap).")
+        return dict(requests=len(samples), in_tok=in_tok, out_tok=out_tok, cost=cost, model=judge)
 
-
-def _reconstruct_run(judge, rows):
-    prov = _provider(judge)
-    print(f"  SUBMITTING judge batch ({prov}) under intent {META}:reconstruct …")
+    from . import adapters
+    good = bad = err = 0
     with calls.context(intent=f"{META}:reconstruct"):
-        if prov == "anthropic":
-            import anthropic
-            reqs = [{"custom_id": cid, "params": {"model": judge, "max_tokens": _JUDGE_OUT_CEILING,
-                     "system": _JUDGE_SYS, "messages": [{"role": "user", "content": _judge_prompt(p, o)}]}}
-                    for cid, _, _, p, o in rows]
-            c = anthropic.Anthropic(api_key=config.api_key("ANTHROPIC_API_KEY"))
-            b = c.messages.batches.create(requests=reqs)   # gate meters → meta cap; may raise SpendGateRefused
-            print(f"  submitted Anthropic batch {b.id}. Poll, then `spendguard reconstruct-apply {b.id}`.")
-            return dict(batch=b.id, provider=prov, requests=len(rows))
-        else:
-            import tempfile, os
-            fd, path = tempfile.mkstemp(suffix=".jsonl", prefix="sg_judge_")
-            with os.fdopen(fd, "w") as f:
-                for cid, _, _, p, o in rows:
-                    f.write(json.dumps({"custom_id": cid, "method": "POST", "url": "/v1/chat/completions",
-                        "body": {"model": judge, "max_tokens": _JUDGE_OUT_CEILING,
-                                 "messages": [{"role": "system", "content": _JUDGE_SYS},
-                                              {"role": "user", "content": _judge_prompt(p, o)}]}}) + "\n")
-            from .submit import guarded_submit
-            bid = guarded_submit(path, model=judge, cap_dollars=config.meta_cap())
-            print(f"  submitted OpenAI batch {bid}. Poll, then `spendguard reconstruct-apply {bid}`.")
-            return dict(batch=bid, provider=prov, requests=len(rows))
-
-
-def apply_verdicts(verdicts):
-    """verdicts: {call_id: 'GOOD'|'BAD'} → label calls with source='judge' (conf 0.95)."""
-    n = 0
-    for cid, v in verdicts.items():
-        calls.feedback(cid, ok=str(v).strip().upper().startswith("GOOD"), source="judge")
-        n += 1
-    return n
+        for io_id, _intent, _model, p, o in samples:
+            r = adapters.call(judge, _judge_prompt(p, o), max_tokens=_JUDGE_OUT_CEILING, system=_JUDGE_SYS)
+            if r["error"]:
+                err += 1
+                continue
+            ok = (r["text"] or "").strip().upper().startswith("GOOD")
+            callio.set_quality(io_id, ok, src="judge", conf=0.95)
+            good += int(ok)
+            bad += int(not ok)
+    print(f"  judged {good + bad} ({err} errors): {good} good / {bad} bad.")
+    print("  empirical quality per (intent, model):")
+    for (intent, model), d in sorted(callio.good_rates().items(), key=lambda kv: -(kv[1]['judged'])):
+        if d["judged"]:
+            print(f"    {(intent or '(none)')[:22]:<24}{model[:20]:<22}"
+                  f"good={('%.0f%%' % (100*d['good_rate'])) if d['good_rate'] is not None else '—':>5}"
+                  f"  ({d['judged']}/{d['sampled']} judged)")
+    return dict(judged=good + bad, good=good, bad=bad, model=judge)
 
 
 # ─────────────────────────────── mine (insights) ───────────────────────────────
@@ -250,14 +233,6 @@ def optimize(intent=None, plan=None, run=False):
 
 
 # ─────────────────────────────── misc ───────────────────────────────
-def _provider(model):
-    from . import adapters
-    try:
-        return adapters.provider_for(model)
-    except Exception:
-        return "anthropic" if str(model).startswith("claude") else "openai"
-
-
 def _meta_spent():
     from . import budget
     try:
@@ -272,11 +247,12 @@ def main(argv=None):
     ap.add_argument("op", choices=["reconstruct", "mine", "optimize"])
     ap.add_argument("--intent")
     ap.add_argument("--plan", help="(optimize) the model you're about to use")
-    ap.add_argument("--limit", type=int, help="(reconstruct) cap how many calls to judge")
+    ap.add_argument("--per", type=int, default=15, help="(reconstruct) samples to judge per (intent,model)")
+    ap.add_argument("--limit", type=int, help="(reconstruct) overall cap on samples to judge")
     ap.add_argument("--run", action="store_true", help="actually spend (default: estimate only). Capped by caps.meta.")
     a = ap.parse_args(argv)
     if a.op == "reconstruct":
-        reconstruct(run=a.run, limit=a.limit)
+        reconstruct(run=a.run, per=a.per, limit=a.limit)
     elif a.op == "mine":
         mine(run=a.run, intent=a.intent)
     else:

@@ -22,6 +22,29 @@ def _db():
                 c.execute("""CREATE TABLE IF NOT EXISTS insights(
                     id TEXT PRIMARY KEY, ts TEXT, intent TEXT, lesson TEXT,
                     evidence TEXT, source TEXT, confidence REAL)""")
+                # ── living-insight + applicability columns (migrate older dbs) ──
+                # A bare metric isn't reasoning-able or shareable: an insight is a CONDITIONAL rule
+                # (IF context THEN action BECAUSE mechanism) that carries the regime it holds in, the
+                # quality basis behind it, and a lifecycle so it can be re-validated as data grows.
+                have = {r[1] for r in c.execute("PRAGMA table_info(insights)").fetchall()}
+                for col, decl in (
+                    ("task_class", "TEXT"),    # classification | extraction | generation | judging | embedding | reasoning
+                    ("regime", "TEXT"),        # bulk | interactive
+                    ("output_shape", "TEXT"),  # short-structured | short-text | long-form
+                    ("scale", "TEXT"),         # order-of-magnitude bucket (10s / 1000s / 100k+)
+                    ("condition", "TEXT"),     # the IF
+                    ("action", "TEXT"),        # the THEN
+                    ("mechanism", "TEXT"),     # the BECAUSE (why it holds)
+                    ("quality_basis", "TEXT"), # judged(n) | used | unverified
+                    ("n_observations", "INTEGER"),
+                    ("status", "TEXT"),        # candidate | active | superseded | refuted
+                    ("support", "REAL"),       # corroborating weight
+                    ("contradiction", "REAL"), # contradicting weight
+                    ("last_validated", "TEXT"),
+                    ("version", "INTEGER"),
+                    ("scope", "TEXT")):        # private | shareable
+                    if col not in have:
+                        c.execute(f"ALTER TABLE insights ADD COLUMN {col} {decl}")
                 c.execute("""CREATE TABLE IF NOT EXISTS graph_nodes(
                     id TEXT PRIMARY KEY, ts TEXT, type TEXT, label TEXT, attrs TEXT)""")
                 c.execute("""CREATE TABLE IF NOT EXISTS graph_edges(
@@ -42,26 +65,72 @@ def _now():
     return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
 
 
-# ── insights ──
-def add_insight(intent, lesson, evidence=None, source="manual", confidence=0.5):
+# ── insights (conditional, context-rich, lifecycle-tracked) ──
+_CTX = ("task_class", "regime", "output_shape", "scale", "condition", "action", "mechanism",
+        "quality_basis", "n_observations", "scope")
+
+
+def add_insight(intent, lesson, evidence=None, source="manual", confidence=0.5, ctx=None,
+                status="candidate", scope="private"):
+    """Record a learning. `ctx` carries the applicability (task_class/regime/output_shape/scale) and the
+    structured rule (condition/action/mechanism) + quality_basis/n_observations — what makes it reusable
+    and (when scrubbed) shareable. New insights start as 'candidate' until validated against the corpus."""
     iid = _uid()
+    ctx = dict(ctx or {})
+    cols = ["id", "ts", "intent", "lesson", "evidence", "source", "confidence",
+            "status", "support", "contradiction", "last_validated", "version", "scope"] + list(_CTX)
+    ctx.setdefault("scope", scope)
+    vals = [iid, _now(), intent, lesson, evidence, source, float(confidence),
+            status, 0.0, 0.0, _now(), 1, ctx.get("scope", scope)] + [ctx.get(k) for k in _CTX]
     with _lock:
-        _db().execute("INSERT INTO insights VALUES (?,?,?,?,?,?,?)",
-                      (iid, _now(), intent, lesson, evidence, source, float(confidence)))
+        _db().execute(f"INSERT INTO insights ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})", vals)
         _db().commit()
     return iid
 
 
-def insights(intent=None, min_conf=0.0):
+# status priority for ranking (active learnings beat unproven candidates; refuted sinks)
+_STATUS_RANK = "CASE status WHEN 'active' THEN 3 WHEN 'candidate' THEN 2 WHEN 'superseded' THEN 1 ELSE 0 END"
+
+
+def insights(intent=None, min_conf=0.0, include_refuted=False, scope=None):
     where = ["confidence >= ?"]
     args = [min_conf]
     if intent:
-        where.append("intent = ?")
-        args.append(intent)
+        where.append("intent = ?"); args.append(intent)
+    if not include_refuted:
+        where.append("(status IS NULL OR status != 'refuted')")
+    if scope:
+        where.append("scope = ?"); args.append(scope)
     with _lock:
         return _db().execute(
             f"SELECT intent, lesson, source, confidence, evidence FROM insights "
-            f"WHERE {' AND '.join(where)} ORDER BY confidence DESC", args).fetchall()
+            f"WHERE {' AND '.join(where)} ORDER BY {_STATUS_RANK} DESC, confidence DESC", args).fetchall()
+
+
+def insights_full(intent=None, include_refuted=False):
+    """Rich rows incl. applicability + lifecycle — for validate / review / export."""
+    where = [] if include_refuted else ["(status IS NULL OR status != 'refuted')"]
+    args = []
+    if intent:
+        where.append("intent = ?"); args.append(intent)
+    w = ("WHERE " + " AND ".join(where)) if where else ""
+    with _lock:
+        cur = _db().execute(
+            f"SELECT id,intent,lesson,evidence,source,confidence,status,support,contradiction,"
+            f"last_validated,version,scope,{','.join(_CTX)} FROM insights {w} "
+            f"ORDER BY {_STATUS_RANK} DESC, confidence DESC", args)
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def update_insight(iid, **fields):
+    """Update lifecycle/confidence fields (used by the validate pass)."""
+    if not fields:
+        return
+    keys = ", ".join(f"{k}=?" for k in fields)
+    with _lock:
+        _db().execute(f"UPDATE insights SET {keys} WHERE id=?", list(fields.values()) + [iid])
+        _db().commit()
 
 
 # ── temporal learning graph ──
