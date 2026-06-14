@@ -93,6 +93,9 @@ def main(argv=None):
     if cmd in ("cache-stats", "semcache"):            # semantic response cache stats (opt-in cost saver)
         from . import semcache
         return semcache.cmd(rest)
+    if cmd == "cascade":                              # cost-aware routing: cheap→verify→escalate (workload)
+        from . import cascade
+        return cascade.cmd(rest)
     if cmd in ("cross-check", "crosscheck"):          # free price drift check vs OpenRouter's public JSON
         from . import pricing as p
         try:
