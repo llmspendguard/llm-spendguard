@@ -78,4 +78,24 @@ expect("2nd realtime call exceeds $0.05 budget -> refuse", lambda: oc.chat.compl
 os.environ["GATE_RT_BUDGET"] = "1000"
 expect("under raised budget -> pass (and accounts)", lambda: oc.chat.completions.create(**req), False)
 print(f"    (cumulative real-time spent now = ${spend_gate._rt_spent:.3f}, logged to ~/.spendguard/realtime_log.jsonl)")
+
+print("\n-- META budget cage (spendguard's OWN advisor LLM use, intent spendguard:*) --")
+from spendguard import budget, calls
+os.environ["GATE_RT_BUDGET"] = "1000"                 # workload budget wide open — must stay untouched by meta
+os.environ["GATE_META_BUDGET"] = "0.05"              # tiny meta cap → 2nd meta call exceeds (1k+1k gpt-5.5 = $0.035)
+rt_before = spend_gate._rt_spent
+with calls.context(intent="spendguard:test"):
+    expect("1st meta call under meta cap -> pass", lambda: oc.chat.completions.create(**req), False)
+    expect("2nd meta call exceeds $0.05 meta cap -> refuse", lambda: oc.chat.completions.create(**req), True)
+meta_t = budget.meta_spent_today()
+print(f"    meta_spent_today = ${meta_t:.3f}  (recorded to the SEPARATE meta ledger)")
+print(f"    workload _rt_spent unchanged: {rt_before:.3f} -> {spend_gate._rt_spent:.3f}  "
+      f"[{'OK' if abs(spend_gate._rt_spent - rt_before) < 1e-9 else 'FAIL'}]")
+wl = budget.spent_today()                            # sqlite workload ledger — must NOT contain the meta spend
+print(f"    workload spent_today (sqlite) = ${wl:.3f}  excludes the ${meta_t:.3f} meta  "
+      f"[{'OK' if wl < meta_t else 'FAIL'}]")
+assert abs(spend_gate._rt_spent - rt_before) < 1e-9, "meta call leaked into workload real-time budget!"
+assert meta_t > 0, "meta call was not recorded to the meta ledger!"
+assert wl < meta_t, "meta spend leaked into the workload sqlite ledger!"
+os.environ.pop("GATE_META_BUDGET", None)
 print("done.")

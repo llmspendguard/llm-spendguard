@@ -99,6 +99,10 @@ def _run(a):
     if pending:
         print(f"  ({pending:,} OpenAI requests in flight — not yet metered)")
     print("  NOTE: real-time = only calls made through the gate (this venv); other-host real-time still needs an Admin key.")
+    from . import budget
+    mt, mw, mm = (budget.meta_spent_since(tstr), budget.meta_spent_since(week_start), budget.meta_spent_since(month_start))
+    if mt or mw or mm:
+        print(f"{'spendguard meta (advisor)':<26}{'$%.2f' % mt:>11}{'$%.2f' % mw:>12}{'$%.2f' % mm:>12}   (own cap; not in COMBINED)")
     _v, _days, _stale = pricing.freshness()
     if _stale:
         print(f"  ⚠️ PRICE TABLE STALE: verified {_v} ({_days}d ago). Re-verify vs {pricing.PRICING_SOURCE} and update prices.json (`spendguard check-prices`).")

@@ -38,10 +38,34 @@ def record(provider, model, kind, cost):
         _db().commit()
 
 
-def spent_since(day):
+def spent_since(day):  # WORKLOAD spend only — excludes spendguard's own meta calls
     with _lock:
-        r = _db().execute("SELECT COALESCE(SUM(cost),0) FROM charges WHERE day >= ?", (day,)).fetchone()
+        r = _db().execute("SELECT COALESCE(SUM(cost),0) FROM charges WHERE day >= ? "
+                          "AND (kind IS NULL OR kind != 'meta')", (day,)).fetchone()
     return float(r[0] or 0)
+
+
+# ── spendguard's own advisor LLM use (segregated: own cap, own line, excluded from workload) ──
+def record_meta(provider, model, cost):
+    record(provider, model, "meta", cost)
+
+
+def meta_spent_since(day):
+    with _lock:
+        r = _db().execute("SELECT COALESCE(SUM(cost),0) FROM charges WHERE day >= ? AND kind='meta'",
+                          (day,)).fetchone()
+    return float(r[0] or 0)
+
+
+def meta_spent_today():
+    return meta_spent_since(_utc().strftime("%Y-%m-%d"))
+
+
+def meta_exceeded(pending=0.0):
+    cap = config.meta_cap()
+    if cap is not None and meta_spent_today() + pending > cap:
+        return ("meta", cap, meta_spent_today() + pending)
+    return None
 
 
 def _utc():

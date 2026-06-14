@@ -62,6 +62,12 @@ def monthly_cap():
     return float(v) if v is not None else None
 
 
+def meta_cap():
+    """Separate daily $ cap for spendguard's OWN advisor LLM use (intent spendguard:*). Default $2/day."""
+    v = os.getenv("GATE_META_BUDGET")
+    return float(v) if v is not None else float(_cfg_get("caps", "meta", 2.0))
+
+
 def budget_backend():
     return _cfg_get("budget", "backend", "memory")
 

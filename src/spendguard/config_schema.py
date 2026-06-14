@@ -31,6 +31,9 @@ SETTINGS = [
     dict(section="caps", key="monthly", store="config.json:caps.monthly", env=None, default=None,
          kind="float|null", secret=False,
          desc="Cross-process MONTHLY spend cap ($). null = off. Requires budget.backend=sqlite."),
+    dict(section="caps", key="meta", store="config.json:caps.meta", env="GATE_META_BUDGET", default=2.0,
+         kind="float", secret=False,
+         desc="Daily $ cap for spendguard's OWN advisor LLM use (intent spendguard:*) — separate from workload caps."),
 
     # ── budget backend ──
     dict(section="budget", key="backend", store="config.json:budget.backend", env=None, default="memory",

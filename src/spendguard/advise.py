@@ -13,7 +13,7 @@ from . import calls
 
 def _rows(as_of=None, intent=None):
     q = "SELECT provider, model, intent, cost, in_tok, out_tok, quality, quality_conf FROM calls"
-    cond, args = [], []
+    cond, args = ["(intent IS NULL OR intent NOT LIKE 'spendguard:%')"], []  # never analyze our own meta calls
     if as_of:
         cond.append("substr(ts,1,10) <= ?"); args.append(as_of)
     if intent:

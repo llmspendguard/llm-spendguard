@@ -182,7 +182,11 @@ def _link_used(chain, current_prompt):
 
 def summary(intent=None):
     """Per (intent, model): calls, $ total, %good, and cost-per-good-result."""
-    where, args = (("WHERE intent=?", (intent,)) if intent else ("", ()))
+    cond = ["(intent IS NULL OR intent NOT LIKE 'spendguard:%')"]   # exclude spendguard's own meta calls
+    args = []
+    if intent:
+        cond.append("intent=?"); args.append(intent)
+    where, args = ("WHERE " + " AND ".join(cond), tuple(args))
     with _lock:
         rows = _db().execute(
             f"""SELECT COALESCE(intent,'(none)'), COALESCE(model,'?'), COUNT(*), COALESCE(SUM(cost),0),

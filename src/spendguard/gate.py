@@ -195,7 +195,32 @@ def _budget_record(cost, model, provider, kind):
         budget.record(provider, model, kind, cost)
 
 
+def _meta_intent():
+    """True if the current context intent is spendguard's own (spendguard:*) — segregated budget+tracking."""
+    try:
+        return (_calls.current().get("intent") or "").startswith("spendguard:")
+    except Exception:
+        return False
+
+
+def _meta_gate(cost, model, provider):
+    """Enforce the SEPARATE meta cap + record to the meta ledger. Returns True if handled (meta)."""
+    if not _meta_intent():
+        return False
+    from . import budget, config
+    if not _allow():
+        ex = budget.meta_exceeded(cost)
+        if ex:
+            _emit({"kind": "meta", "provider": provider, "model": model, "cost": cost, "decision": "refused_meta"})
+            raise SpendGateRefused(f"spendguard meta budget ${config.meta_cap():.0f}/day would be exceeded "
+                                   f"(projected ${ex[2]:.2f}). Raise caps.meta or set GATE_ALLOW=1.")
+    budget.record_meta(provider, model, cost)
+    return True
+
+
 def _decide_and_account(est):
+    if _meta_gate(est["cost"], est.get("model"), est.get("provider")):   # spendguard's own use → meta cap
+        return
     _budget_check(est["cost"], est.get("model"), est.get("provider"), "batch")   # daily/monthly (sqlite)
     _decide(est)                                                                  # per-batch cap (may raise)
     _budget_record(est["cost"], est.get("model"), est.get("provider"), "batch")  # ledger (sqlite)
@@ -292,6 +317,15 @@ def _rt_precheck(provider, model, in_tok, est_out):
         est = pricing.realtime_cost(model, in_tok, est_out) if model else 0.0
     except Exception:
         est = 0.0
+    if _meta_intent():                                # spendguard's own use → separate meta cap, skip workload
+        if not _allow():
+            from . import budget, config
+            ex = budget.meta_exceeded(est)
+            if ex:
+                _emit({"kind": "meta", "provider": provider, "model": model, "cost": est, "decision": "refused_meta"})
+                raise SpendGateRefused(f"spendguard meta budget ${config.meta_cap():.0f}/day would be exceeded "
+                                       f"(projected ${ex[2]:.2f}). Raise caps.meta or set GATE_ALLOW=1.")
+        return
     _budget_check(est, model, provider, "realtime")   # cross-process daily/monthly cap (sqlite backend)
     with _rt_lock:
         projected = _rt_spent + est
@@ -354,6 +388,13 @@ def _rt_account(model, kw, result, est_fn, act_fn, latency=None):
             output = _output_text(result); finish = _finish(result)
         cost = pricing.realtime_cost(model, in_tok, out_tok) if model else 0.0
         prov = "openai" if "gpt" in str(model) else "anthropic"
+        if _meta_intent():                            # meta call → meta ledger only (not workload realtime)
+            from . import budget
+            budget.record_meta(prov, model, cost)
+            if _calls.enabled():
+                _calls.record(prov, model, "realtime", cost, in_tok=in_tok, out_tok=out_tok, latency=latency,
+                              prompt=_prompt_text(kw), output=output, finish=finish)
+            return
         _rt_record(prov, model, cost)
         if _calls.enabled():
             _calls.record(prov, model, "realtime", cost, in_tok=in_tok, out_tok=out_tok, latency=latency,
