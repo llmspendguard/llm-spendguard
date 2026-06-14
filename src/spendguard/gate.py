@@ -175,17 +175,29 @@ def _read_filelike(file):
 
 
 def _budget_check(cost, model, provider, kind):
-    """Cross-process daily/monthly cap (only when budget.backend=sqlite). Raises if it'd exceed."""
+    """Cross-process daily/monthly cap (only when budget.backend=sqlite). Hard stop — but ASK first
+    when interactive (same as the per-batch cap); GATE_ALLOW=1 skips the prompt for big intentional runs."""
     from . import config
     if config.budget_backend() != "sqlite" or _allow():
         return
     from . import budget
     ex = budget.exceeded(cost)
-    if ex:
-        w, capv, proj = ex
-        _emit({"kind": kind, "provider": provider, "model": model, "cost": cost, "decision": f"refused_{w}"})
-        raise SpendGateRefused(f"{w} budget ${capv:.0f} would be exceeded (projected ${proj:.2f}). "
-                               f"Raise caps.{w}, or set GATE_ALLOW=1.")
+    if not ex:
+        return
+    w, capv, proj = ex
+    print(f"\n*** SPEND GATE: this call would push {w} spend to ${proj:.2f}, over the ${capv:.0f} {w} cap. ***",
+          file=sys.stderr)
+    if sys.stdin and sys.stdin.isatty():
+        try:
+            ans = input(f"Allow it anyway (over the {w} cap)? type 'yes' to proceed: ").strip().lower()
+        except Exception:
+            ans = ""
+        if ans in ("yes", "y"):
+            _emit({"kind": kind, "provider": provider, "model": model, "cost": cost, "decision": f"allowed_prompt_{w}"})
+            return
+    _emit({"kind": kind, "provider": provider, "model": model, "cost": cost, "decision": f"refused_{w}"})
+    raise SpendGateRefused(f"{w} budget ${capv:.0f} would be exceeded (projected ${proj:.2f}). "
+                           f"Raise caps.{w}, or set GATE_ALLOW=1.")
 
 
 def _budget_record(cost, model, provider, kind):
