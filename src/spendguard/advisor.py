@@ -25,12 +25,12 @@ _JUDGE_SYS = ("You evaluate whether an LLM OUTPUT is a usable, correct result fo
 _JUDGE_OUT_CEILING = 8          # the verdict is one token; tiny ceiling keeps the estimate honest
 
 _MINE_SYS = ("You are a cost/quality analyst for LLM usage. Given a table of per-(intent,model) "
-             "spend and quality evidence, output STRICT JSON: a list of objects "
-             '{"intent": str|null, "lesson": str, "confidence": 0..1, "evidence": str}. '
-             "Each lesson must be specific and actionable (which model/approach is cheaper per good "
-             "result, where packing/batching would help). Only claim what the evidence supports; "
-             "lower confidence when labels are sparse. No prose outside the JSON.")
-_MINE_OUT = 1200
+             "spend and quality evidence, output STRICT JSON and NOTHING else (no code fences): a list "
+             'of AT MOST 6 objects {"intent": str|null, "lesson": str, "confidence": 0..1, "evidence": str}, '
+             "most important first. Each lesson must be specific and actionable (which model/approach is "
+             "cheaper per good result, where packing/batching would help). Keep each lesson under 240 "
+             "characters. Only claim what the evidence supports; lower confidence when labels are sparse.")
+_MINE_OUT = 1500
 
 _OPT_SYS = ("You are a cost optimization advisor. Given historical evidence and mined insights for an "
             "intent, recommend how to run the next job most cheaply WITHOUT losing quality. Be concrete "
@@ -173,10 +173,34 @@ def mine(run=False, intent=None):
     return dict(insights=added, cost=r["cost"], model=model)
 
 
+def _parse_insights(text):
+    """Robustly extract a JSON insight list — tolerate ```json fences and max_tokens truncation."""
+    import re
+    t = re.sub(r"\s*```$", "", re.sub(r"^```(?:json)?\s*", "", text.strip()))
+    s = t.find("[")
+    if s < 0:
+        return None
+    frag = t[s:]
+    candidates = []
+    e = frag.rfind("]")
+    if e >= 0:
+        candidates.append(frag[:e + 1])
+    cut = frag.rfind("}")                       # truncated array → close after last complete object
+    if cut >= 0:
+        candidates.append(frag[:cut + 1] + "]")
+    for c in candidates:
+        try:
+            d = json.loads(c)
+            if isinstance(d, list):
+                return d
+        except Exception:
+            pass
+    return None
+
+
 def _persist_insights(text):
-    try:
-        data = json.loads(text[text.index("["):text.rindex("]") + 1])
-    except Exception:
+    data = _parse_insights(text)
+    if data is None:
         learn.add_insight(None, text.strip()[:500], source="mined", confidence=0.4)
         return 1
     added = 0
