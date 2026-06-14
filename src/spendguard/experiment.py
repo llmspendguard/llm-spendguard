@@ -20,6 +20,8 @@ from . import callio, calls, config, pricing
 from .submit import _count_tokens
 
 META = "spendguard"
+KILL_PILOT = 5        # samples in the cheap first stage
+KILL_THRESH = 0.5     # kill a variant at pilot if mean output-match is below this (clear loser → stop spending)
 _TERSE = ("\n\nOutput ONLY the minimal result (e.g. the JSON / the codes) with NO prose, "
           "explanation, or restated input. Be as terse as possible while keeping the same answer.")
 
@@ -83,23 +85,21 @@ def _equiv(ref, out):
 
 
 def _call(model, prompt, max_out=400):
-    """One realtime call; returns (cost, in_tok, out_tok, text). Handles gpt-5 max_completion_tokens."""
-    from . import adapters
+    """One realtime call; returns (cost, in_tok, out_tok, text). models.apply_call_params handles each
+    model's quirks (gpt-5 → reasoning='minimal' + max_completion_tokens) so we can't forget them."""
+    from . import adapters, models
     prov = adapters.provider_for(model)
     key = config.api_key(adapters.PROVIDERS[prov]["key_env"])
+    kw = models.apply_call_params(model, {"model": model, "max_tokens": max_out,
+                                          "messages": [{"role": "user", "content": prompt}]})
     if prov == "anthropic":
         import anthropic
-        c = anthropic.Anthropic(api_key=key)
-        m = c.messages.create(model=model, max_tokens=max_out, messages=[{"role": "user", "content": prompt}])
+        m = anthropic.Anthropic(api_key=key).messages.create(**kw)
         text = "".join(b.text for b in m.content if getattr(b, "type", None) == "text")
         it, ot = m.usage.input_tokens, m.usage.output_tokens
     else:
         from openai import OpenAI
-        c = OpenAI(api_key=key, base_url=adapters.PROVIDERS[prov]["base_url"])
-        kw = {"model": model, "max_completion_tokens": max_out, "messages": [{"role": "user", "content": prompt}]}
-        if re.match(r"(gpt-5|o[134])", model):     # reasoning models: minimal reasoning or it eats the
-            kw["reasoning_effort"] = "minimal"      # whole token budget and returns EMPTY (the prod rule)
-        m = c.chat.completions.create(**kw)
+        m = OpenAI(api_key=key, base_url=adapters.PROVIDERS[prov]["base_url"]).chat.completions.create(**kw)
         text = m.choices[0].message.content or ""
         it, ot = m.usage.prompt_tokens, m.usage.completion_tokens
     return pricing.realtime_cost(model, it, ot), it, ot, text
@@ -148,35 +148,56 @@ def experiment(intent, models=None, instructions=None, n=20, run=False):
         print("  estimate-only. Re-run with --run to execute (gate caps it).")
         return dict(ok=True, est=est)
 
-    print(f"\n  {'variant':<22}{'$/call':>10}{'cost vs base':>14}{'out-match':>11}  verdict")
-    print(f"  {'baseline (' + base_model[:11] + ')':<22}{('$%.5f' % base_per):>10}{'—':>14}{'—':>11}  reference")
+    # GRADUATED: pilot small → kill clear losers cheap → expand survivors → report match ± stderr.
+    # Guards against the law of small numbers: you SEE the uncertainty, losers waste only the pilot, and
+    # a survivor's calls are real output (not lost if you then keep them — see --keep idea in docs).
+    pilot = min(KILL_PILOT, len(samples))
+    print(f"\n  graduated: pilot {pilot}, then expand survivors to {len(samples)} "
+          f"(kill if match < {int(KILL_THRESH*100)}% at pilot)\n")
+    print(f"  {'variant':<22}{'$/call':>10}{'cost vs base':>13}{'match±stderr':>16}  verdict")
+    print(f"  {'baseline(' + base_model[:12] + ')':<22}{('$%.5f' % base_per):>10}{'—':>13}{'—':>16}  reference")
     results = []
+
+    def _measure(v, subset):
+        costs, scores = [], []
+        for prompt, ref, _m in subset:
+            try:
+                mo = max(1500, int(_count_tokens(ref, v["model"]) * 2) + 800)
+                cost, _it, _ot, text = _call(v["model"], prompt + v["instr"], max_out=mo)
+                costs.append(cost); scores.append(_equiv(ref, text))
+            except Exception:
+                pass
+        return costs, scores
+
     with calls.context(intent=f"{META}:experiment"):
         for v in variants:
-            tot_cost = matches = okc = 0.0
-            for prompt, ref, _m in samples:
-                try:
-                    # generous headroom: reasoning models spend reasoning+output from one budget; unused isn't billed
-                    mo = max(1500, int(_count_tokens(ref, v["model"]) * 2) + 800)
-                    cost, _it, _ot, text = _call(v["model"], prompt + v["instr"], max_out=mo)
-                    tot_cost += cost
-                    matches += _equiv(ref, text)
-                    okc += 1
-                except Exception:
-                    pass
-            if not okc:
+            costs, scores = _measure(v, samples[:pilot])
+            killed = scores and (sum(scores) / len(scores)) < KILL_THRESH
+            if not killed:                                  # expand survivors to the full sample
+                c2, s2 = _measure(v, samples[pilot:])
+                costs += c2; scores += s2
+            if not scores:
                 print(f"  {v['label'][:21]:<22}{'ERR':>10}")
                 continue
-            per = tot_cost / okc
-            match = matches / okc
+            n = len(scores)
+            per = sum(costs) / n
+            match = sum(scores) / n
+            var = sum((s - match) ** 2 for s in scores) / n
+            stderr = (var ** 0.5) / (n ** 0.5)
             drop = (base_per - per) / base_per * 100 if base_per else 0
-            verdict = "✅ adopt" if (per < base_per and match >= 0.97) else (
-                "⚠️ cheaper, output differs" if per < base_per else "✗ not cheaper")
-            print(f"  {v['label'][:21]:<22}{('$%.5f' % per):>10}{('%+.0f%%' % -drop):>14}"
-                  f"{('%.0f%%' % (100*match)):>11}  {verdict}")
-            results.append(dict(label=v["label"], per=per, drop=drop, match=match))
-    print("\n  adopt only variants that are cheaper AND keep output (match ≥ 97%). "
-          "Lower match = the change altered the answer — don't trade quality for cost.")
+            if killed:
+                verdict = f"✗ killed at pilot (N={n})"
+            elif per >= base_per:
+                verdict = "✗ not cheaper"
+            elif match >= 0.97:
+                verdict = "✅ adopt" + (" (N small)" if n < 10 else "")
+            else:
+                verdict = "⚠️ cheaper, output differs"
+            print(f"  {v['label'][:21]:<22}{('$%.5f' % per):>10}{('%+.0f%%' % -drop):>13}"
+                  f"{('%.0f%% ±%.0f%% (N=%d)' % (100*match, 100*stderr, n)):>16}  {verdict}")
+            results.append(dict(label=v["label"], per=per, drop=drop, match=match, stderr=stderr, n=n, killed=killed))
+    print("\n  adopt only variants that are cheaper AND keep output (match ≥ 97%). Wide ±stderr or small N "
+          "= inconclusive — run more samples (`--n`) before trusting it. Losers were killed at the pilot to cap waste.")
     return dict(ok=True, results=results)
 
 

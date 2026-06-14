@@ -84,6 +84,9 @@ def main(argv=None):
     if cmd == "experiment":                           # A/B efficiency lab: cost↓ + same-output (caged, estimate-first)
         from . import experiment
         return experiment.main(rest)
+    if cmd == "models":                               # per-model learnings/profiles (auto-applied on every call)
+        from . import models
+        return models.cmd(rest)
     if cmd == "bootstrap":                            # cold-start: mine all history → corpus + insights
         from . import bootstrap
         return bootstrap.main(rest)
