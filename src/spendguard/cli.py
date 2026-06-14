@@ -63,6 +63,9 @@ def main(argv=None):
     if cmd in ("optimize", "mine", "reconstruct"):   # Layer 2 — caged by caps.meta; estimate-only unless --run
         from . import advisor
         return advisor.main([cmd] + rest)
+    if cmd in ("mine-history", "history"):           # deterministic post-event mining + graph enrichment (no spend)
+        from . import history
+        return history.main(rest)
     if cmd == "compare":
         from . import compare
         return compare.main(rest)
