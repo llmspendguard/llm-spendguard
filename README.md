@@ -81,6 +81,14 @@ is least friction for you:
 you'll just see `email not configured — skipping`. A *configured* backend that errors prints `EMAIL FAILED: <reason>`
 (e.g. Resend's "verify a domain" message) without affecting the report. So leaving email unset is a fine default.
 
+> **⚠️ Deliverability (shared senders land in spam).** Sending from a provider's *shared* address
+> (e.g. Resend's `onboarding@resend.dev`) **sends fine but frequently lands in Gmail/Workspace Spam** — the
+> domain has no alignment with yours, so receivers distrust it. The report *is* delivered; it's just filtered.
+> Fixes, simplest first: **(1)** in Gmail, "Report as not spam" + a filter on the sender/subject set to
+> *Never send to Spam*; **(2)** use **Gmail/Workspace SMTP** so it sends *as you* from inside Google (inbox, no DNS);
+> **(3)** verify your own domain on the provider and send from it. Also note `api.resend.com` is behind Cloudflare,
+> which 403s the default `urllib` User-Agent — spendguard sets one (don't strip it).
+
 ## Extending to a new SDK
 Add one interceptor: `spendguard.register(module, ClassName, "create", gate_fn)`, write a small
 estimator for that SDK's request shape, and add its prices to `pricing.py`.

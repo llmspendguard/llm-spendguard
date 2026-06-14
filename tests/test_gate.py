@@ -1,5 +1,9 @@
 """Offline test for the gate — NO network, NO API calls. Stubs the real create methods."""
-import os, sys, io, json
+import os, sys, io, json, tempfile
+
+# Isolate the test's data dir so it never pollutes the user's real ~/.spendguard
+# (gate/realtime logs, flag, cache). Must be set before spendguard.config is imported.
+os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-test-")
 
 # 1) stub the REAL create methods BEFORE install, so the gate wraps the stub (no network)
 from openai.resources import files as of
