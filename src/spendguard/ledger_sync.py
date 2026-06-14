@@ -33,10 +33,40 @@ def _provider_batch_by_day(since):
     return prov, pending
 
 
+def _compute(since=None):
+    """Compute the local-vs-provider reconciliation WITHOUT printing — for the report/monitor."""
+    from . import budget
+    since = since or datetime.date.today().replace(day=1).isoformat()
+    prov, pending = _provider_batch_by_day(since)
+    local_batch = budget.by_day(kind="batch", since=since)
+    cutoff = budget.ledger_start() or since
+    post_p = sum(v for d, v in prov.items() if d >= cutoff)
+    post_l = sum(v for d, v in local_batch.items() if d >= cutoff)
+    leak = sum(max(0.0, prov.get(d, 0) - local_batch.get(d, 0))
+               for d in prov if d >= cutoff and prov.get(d, 0) - local_batch.get(d, 0) > max(0.5, 0.05 * prov.get(d, 0)))
+    return dict(since=since, cutoff=cutoff, prov=prov, local_batch=local_batch,
+                local_rt=budget.by_day(kind="realtime", since=since), meta=budget.by_day(kind="meta", since=since),
+                pending=pending, post_p=post_p, post_l=post_l, leak=leak,
+                coverage=(post_l / post_p * 100) if post_p else 100.0)
+
+
+def leak_line(since=None):
+    """One-line leak alert for the report (or None if clean / nothing to compare)."""
+    try:
+        c = _compute(since)
+    except Exception:
+        return None
+    if c["leak"] > 0.5:
+        return (f"⚠️ LEDGER LEAK: ~${c['leak']:.2f} provider-billed batch not in the local ledger since "
+                f"{c['cutoff']} (coverage {c['coverage']:.0f}%) — run `spendguard reconcile-ledger`.")
+    if c["post_p"] > 0:
+        return f"ledger coverage {c['coverage']:.0f}% of provider batch since {c['cutoff']} (no material leak)."
+    return None
+
+
 def sync(since=None):
     from . import budget
-    today = datetime.date.today()
-    since = since or today.replace(day=1).isoformat()
+    since = since or datetime.date.today().replace(day=1).isoformat()
     prov, pending = _provider_batch_by_day(since)
     local_batch = budget.by_day(kind="batch", since=since)
     local_rt = budget.by_day(kind="realtime", since=since)

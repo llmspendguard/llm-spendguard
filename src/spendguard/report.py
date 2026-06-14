@@ -110,11 +110,40 @@ def _run(a):
         print("  WARN Anthropic models missing from pricing.py (priced $0): "
               + ", ".join(f"{m}×{n}" for m, n in anth.UNKNOWN_MODELS.items()))
 
+    # ── ledger leak check (provider billing vs what the gate recorded) ──
+    leaked = 0.0
+    try:
+        from . import ledger_sync
+        c = ledger_sync._compute(month_start)
+        leaked = c["leak"]
+        line = ledger_sync.leak_line(month_start)
+        if line:
+            print("  " + line)
+    except Exception:
+        pass
+
+    # ── top learnings (the advisor's confidence-scored insights) ──
+    try:
+        from . import learn
+        ins = learn.insights(min_conf=0.7)
+        if ins:
+            print("\nTOP LEARNINGS (spendguard advisor):")
+            for intent, lesson, src, conf, _ev in ins[:6]:
+                print(f"  [{conf:.2f}] {lesson[:100]}")
+            print("  (full: `spendguard insights list` · recommend: `spendguard optimize --intent <X>`)")
+    except Exception:
+        pass
+
+    rc = 0
     if a.alert_threshold and combined[1] > a.alert_threshold:
         print(f"\n*** ALERT: today combined ${combined[1]:,.2f} exceeds ${a.alert_threshold:,.0f}. "
-              f"Check reconcile_openai_spend.py --by-day / reconcile_anthropic_spend.py --by-day. ***")
-        return 2
-    return 0
+              f"Check `spendguard reconcile openai|anthropic --by-day`. ***")
+        rc = 2
+    if leaked > max(1.0, (a.alert_threshold or 1e9) * 0.1):
+        print(f"\n*** ALERT: ~${leaked:.2f} provider-billed batch is NOT in the local ledger (ungoverned). "
+              f"Run `spendguard reconcile-ledger`; install the gate on any repo/venv that's missing it. ***")
+        rc = max(rc, 2)
+    return rc
 
 
 if __name__ == "__main__":
