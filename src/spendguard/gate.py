@@ -286,9 +286,12 @@ def _rt_flush():
         items = list(_rt_agg.items()); _rt_agg = {}; _rt_since_flush = 0
     try:
         with open(RT_LOG, "a") as f:
-            for (day, prov, mdl), (calls, cost) in items:
-                f.write(json.dumps({"day": day, "provider": prov, "model": mdl,
-                                    "calls": calls, "cost": round(cost, 6)}) + "\n")
+            for (day, prov, mdl), v in items:
+                calls, cost = v[0], v[1]
+                in_tok, out_tok, cached = (v[2], v[3], v[4]) if len(v) >= 5 else (0, 0, 0)
+                f.write(json.dumps({"day": day, "provider": prov, "model": mdl, "calls": calls,
+                                    "cost": round(cost, 6), "in_tok": in_tok, "out_tok": out_tok,
+                                    "cached_in_tok": cached}) + "\n")
     except Exception:
         pass
 
@@ -296,12 +299,14 @@ def _rt_flush():
 _atexit.register(_rt_flush)
 
 
-def _rt_record(provider, model, cost):
+def _rt_record(provider, model, cost, in_tok=0, out_tok=0, cached=0):
     global _rt_spent, _rt_since_flush
     with _rt_lock:
         _rt_spent += cost
         k = (_now_day(), provider, pricing.normalize(model) if model else "?")
-        a = _rt_agg.get(k, [0, 0.0]); a[0] += 1; a[1] += cost; _rt_agg[k] = a
+        a = _rt_agg.get(k, [0, 0.0, 0, 0, 0])
+        a[0] += 1; a[1] += cost; a[2] += int(in_tok or 0); a[3] += int(out_tok or 0); a[4] += int(cached or 0)
+        _rt_agg[k] = a
         _rt_since_flush += 1
         flush = _rt_since_flush >= 200
     if flush:
@@ -374,6 +379,18 @@ def _act_anth_msg(result):
     return None if not u else (getattr(u, "input_tokens", 0) or 0, getattr(u, "output_tokens", 0) or 0)
 
 
+def _cached_in(result):
+    """Cached input tokens from usage — OpenAI prompt_tokens_details.cached_tokens / Anthropic
+    cache_read_input_tokens. Lets cache-audit measure the realized hit rate (the 28% lever)."""
+    u = getattr(result, "usage", None)
+    if not u:
+        return 0
+    d = getattr(u, "prompt_tokens_details", None)
+    if d is not None:
+        return getattr(d, "cached_tokens", 0) or 0
+    return getattr(u, "cache_read_input_tokens", 0) or 0
+
+
 def _rt_account(model, kw, result, est_fn, act_fn, latency=None):
     try:
         output = finish = None
@@ -386,7 +403,8 @@ def _rt_account(model, kw, result, est_fn, act_fn, latency=None):
             else:
                 _, in_tok, out_tok = est_fn(kw)
             output = _output_text(result); finish = _finish(result)
-        cost = pricing.realtime_cost(model, in_tok, out_tok) if model else 0.0
+        cached = 0 if kw.get("stream") else _cached_in(result)
+        cost = pricing.realtime_cost(model, in_tok, out_tok, cached) if model else 0.0
         prov = "openai" if "gpt" in str(model) else "anthropic"
         if _meta_intent():                            # meta call → meta ledger only (not workload realtime)
             from . import budget
@@ -395,7 +413,7 @@ def _rt_account(model, kw, result, est_fn, act_fn, latency=None):
                 _calls.record(prov, model, "realtime", cost, in_tok=in_tok, out_tok=out_tok, latency=latency,
                               prompt=_prompt_text(kw), output=output, finish=finish)
             return
-        _rt_record(prov, model, cost)
+        _rt_record(prov, model, cost, in_tok=in_tok, out_tok=out_tok, cached=cached)
         if _calls.enabled():
             _calls.record(prov, model, "realtime", cost, in_tok=in_tok, out_tok=out_tok, latency=latency,
                           prompt=_prompt_text(kw), output=output, finish=finish)

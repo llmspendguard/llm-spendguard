@@ -75,6 +75,9 @@ def main(argv=None):
     if cmd == "review":                               # practice audit (smart-vs-wasteful) — caged, estimate-first
         from . import review
         return review.main(rest)
+    if cmd in ("cache-audit", "cacheaudit"):          # find prompt-caching savings (no spend)
+        from . import cacheaudit
+        return cacheaudit.main(rest)
     if cmd == "bootstrap":                            # cold-start: mine all history → corpus + insights
         from . import bootstrap
         return bootstrap.main(rest)

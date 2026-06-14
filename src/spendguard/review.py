@@ -91,7 +91,14 @@ def review(run=False, top=10):
         print("  → no call_io samples to review. Run `spendguard fetch-io` first. 0 spend.")
         return dict(requests=0, cost=0.0)
     body = "\n\n".join(_bundle_text(b) for b in bundles)
-    prompt = f"Audit these {len(bundles)} (intent, model) usages:\n\n{body}"
+    # larger window: reason WITH accumulated, corroborated learnings — esp. quality findings — so a
+    # cost-only recommendation (e.g. "use nano") can't contradict what we already proved (nano under-quality).
+    prior = learn.insights(min_conf=0.7)
+    known = "\n".join(f"- {lesson}" for _i, lesson, _s, _c, _e in prior[:12])
+    constraints = (f"\n\nKNOWN PRIOR LEARNINGS — respect these; do NOT recommend anything they contradict "
+                   f"(e.g. don't push a cheaper model if quality was already shown insufficient):\n{known}"
+                   if known else "")
+    prompt = f"Audit these {len(bundles)} (intent, model) usages:\n\n{body}{constraints}"
     in_tok = _count_tokens(_SYS + prompt, model)
     cost = pricing.realtime_cost(model, in_tok, _OUT)
     print(f"  {len(bundles)} usage bundles (cost+quality+token-ratio+sample+chat).  ESTIMATE (zero paid calls):")
