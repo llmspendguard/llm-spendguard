@@ -1,9 +1,13 @@
 """Offline test for the gate — NO network, NO API calls. Stubs the real create methods."""
 import os, sys, io, json, tempfile
 
-# Isolate the test's data dir so it never pollutes the user's real ~/.spendguard
-# (gate/realtime logs, flag, cache). Must be set before spendguard.config is imported.
-os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-test-")
+# Isolate the test's data dir so it never pollutes the real ~/.spendguard (gate/realtime logs,
+# flag, cache). The venv's sitecustomize loads the gate at interpreter startup — before any
+# in-script env var — so set SPENDGUARD_HOME in the environment and re-exec once.
+if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
+    os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
+    os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-test-")
+    os.execv(sys.executable, [sys.executable] + sys.argv)
 
 # 1) stub the REAL create methods BEFORE install, so the gate wraps the stub (no network)
 from openai.resources import files as of
