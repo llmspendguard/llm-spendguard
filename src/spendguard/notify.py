@@ -64,6 +64,19 @@ def _send_smtp(subject, body, to, cfg):
     return to
 
 
+def is_configured(cfg=None):
+    """True if a usable email backend is set up (so report can distinguish 'not set up'
+    from 'tried and failed')."""
+    cfg = config.email_config() if cfg is None else cfg
+    provider = cfg.get("provider") or ("resend" if cfg.get("api_key") else ("smtp" if cfg.get("host") else None))
+    if provider == "resend":
+        key = str(cfg.get("api_key") or "")
+        return bool(key) and not key.startswith("re_PASTE")
+    if provider == "smtp":
+        return bool(cfg.get("host"))
+    return False
+
+
 def send_email(subject, body, to=None, cfg=None):
     cfg = dict(cfg or config.email_config())
     to = to or cfg.get("to")

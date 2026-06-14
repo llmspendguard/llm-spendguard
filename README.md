@@ -64,11 +64,22 @@ usage after each call** (and logs it, so real-time spend shows in `report`) and 
 once per-process cumulative spend crosses `GATE_RT_BUDGET` (default $50) — the runaway-loop guard.
 
 ## Email the report
-`spendguard report --email` (or `--email-to addr`) sends the report so a daily run isn't missed.
-Configure in `~/.spendguard/email.json` (gitignored — safe for the key) or env. Two backends:
-- **Resend** (recommended): `{"provider":"resend","to":"you@x.com","from_":"reports@verified-domain","api_key":"re_…"}`.
-  Verify a domain on resend.com for arbitrary recipients, or use `onboarding@resend.dev` (delivers only to your Resend signup email).
-- **SMTP**: `{"host":"smtp.gmail.com","port":587,"user":"…","password":"<app pw>","to":"you@x.com"}`.
+`spendguard report --email` (or `--email-to addr`) emails the report so a scheduled run isn't missed.
+Config lives in `~/.spendguard/email.json` (gitignored — safe for the secret) or env.
+
+**Email needs a *gated* sender — this is universal, not a spendguard limitation.** Mail servers reject
+unauthenticated senders, so every provider makes you prove ownership *somehow* before sending. Pick whichever
+is least friction for you:
+
+| Backend | What it takes (one-time) | DNS? | config |
+|---|---|---|---|
+| **Gmail / Workspace SMTP** | a 16-char app password (Google authenticates the send) | no | `{"host":"smtp.gmail.com","port":587,"user":"you@co.com","password":"<app pw>","to":"you@co.com"}` |
+| **SendGrid (Twilio)** | "Single Sender Verification" — click a link in a confirm email | no | SMTP host `smtp.sendgrid.net`, or add a SendGrid backend |
+| **Resend** | verify a domain (SPF/DKIM DNS records) for arbitrary recipients; or send only to your Resend signup email via `onboarding@resend.dev` | yes (for arbitrary recipients) | `{"provider":"resend","to":"you@co.com","from_":"reports@your-verified-domain","api_key":"re_…"}` |
+
+**If it isn't configured, it gracefully no-ops** — `report` still prints (and the scheduled task still delivers in-app);
+you'll just see `email not configured — skipping`. A *configured* backend that errors prints `EMAIL FAILED: <reason>`
+(e.g. Resend's "verify a domain" message) without affecting the report. So leaving email unset is a fine default.
 
 ## Extending to a new SDK
 Add one interceptor: `spendguard.register(module, ClassName, "create", gate_fn)`, write a small

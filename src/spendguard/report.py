@@ -59,13 +59,16 @@ def main():
     print(text, end="")
     if a.email:
         from . import notify
-        stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
-        subj = f"LLM spend report — {stamp}" + ("  ⚠️ ALERT" if rc == 2 else "")
-        try:
-            to = notify.send_email(subj, text, to=a.email_to)
-            print(f"  (emailed to {to})")
-        except Exception as e:
-            print(f"  EMAIL FAILED: {e}  — set SPENDGUARD_EMAIL_TO + SMTP env or ~/.spendguard/email.json")
+        if not notify.is_configured():
+            print("  email not configured — skipping (set up a sender: see README → 'Email the report')")
+        else:
+            stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+            subj = f"LLM spend report — {stamp}" + ("  ⚠️ ALERT" if rc == 2 else "")
+            try:
+                to = notify.send_email(subj, text, to=a.email_to)
+                print(f"  (emailed to {to})")
+            except Exception as e:
+                print(f"  EMAIL FAILED: {e}")
     return rc
 
 
