@@ -4,7 +4,13 @@
 Sinks (all optional, all best-effort, none ever block or break the gate):
   - in-process callback:  spendguard.on_event(fn)   # fn(event: dict)
   - webhook:              POST JSON to a URL          # config emit.webhook / $SPENDGUARD_WEBHOOK
-  - OpenTelemetry:        a cost counter per event    # config emit.otel=true / $SPENDGUARD_OTEL  (needs opentelemetry-sdk)
+  - OpenTelemetry:        GenAI-conventioned metrics + spans  # config emit.otel=true / $SPENDGUARD_OTEL
+
+The OTel sink emits using OpenTelemetry **GenAI semantic conventions** (gen_ai.system /
+gen_ai.request.model / gen_ai.operation.name / gen_ai.usage.*tokens + a spendguard.cost_usd metric),
+to the GLOBAL meter+tracer. Point your own OTel SDK's OTLP exporter at whatever you run — **Langfuse,
+Helicone, Arize Phoenix, Honeycomb** all ingest OTLP — and spendguard's events flow there with no
+bespoke per-vendor code. (Langfuse: set its OTLP endpoint + auth on your OTel exporter.)
 
 Event shape: {"ts", "kind": batch|realtime, "provider", "model", "cost", "decision", ...}.
 Webhook/OTel run on a background daemon thread (drop-if-flooded) so high-volume real-time calls
@@ -76,11 +82,43 @@ def _drain():
                 pass
 
 
+_otel_inst = None
+
+
+def _otel_instruments():
+    """Cache the OTel instruments once (creating per-event is wasteful)."""
+    global _otel_inst
+    if _otel_inst is None:
+        from opentelemetry import metrics
+        m = metrics.get_meter("spendguard")
+        _otel_inst = (m.create_counter("spendguard.cost_usd", unit="USD"),
+                      m.create_counter("gen_ai.client.token.usage", unit="token"))
+    return _otel_inst
+
+
 def _otel(event):
-    from opentelemetry import metrics
-    ctr = metrics.get_meter("spendguard").create_counter("spendguard.cost_usd", unit="USD")
-    ctr.add(float(event.get("cost", 0) or 0),
-            {k: str(event.get(k, "")) for k in ("provider", "model", "kind", "decision")})
+    # Emit using OpenTelemetry GenAI semantic conventions so it drops into ANY OTLP backend the user
+    # already runs (Langfuse / Helicone / Phoenix / Honeycomb …). spendguard records to the GLOBAL
+    # meter+tracer; the user's own OTel SDK + exporter route it — no bespoke per-vendor sink to break.
+    from opentelemetry import trace
+    attrs = {"gen_ai.system": str(event.get("provider", "")),
+             "gen_ai.request.model": str(event.get("model", "")),
+             "gen_ai.operation.name": str(event.get("kind", "")),
+             "spendguard.decision": str(event.get("decision", ""))}
+    cost_ctr, tok_ctr = _otel_instruments()
+    cost_ctr.add(float(event.get("cost", 0) or 0), attrs)
+    for kind_attr, key in (("input", "in_tok"), ("output", "out_tok")):
+        v = event.get(key)
+        if v:
+            tok_ctr.add(int(v), {**attrs, "gen_ai.token.type": kind_attr})
+    # a span too, for trace-based backends (Langfuse/Phoenix ingest spans)
+    span = trace.get_tracer("spendguard").start_span("gen_ai." + str(event.get("kind", "call")), attributes=attrs)
+    for k in ("in_tok", "out_tok", "cached_in_tok"):
+        if event.get(k) is not None:
+            span.set_attribute("gen_ai.usage." + k.replace("_tok", "_tokens"), int(event[k] or 0))
+    if event.get("cost") is not None:
+        span.set_attribute("spendguard.cost_usd", float(event["cost"] or 0))
+    span.end()
 
 
 def emit(event):

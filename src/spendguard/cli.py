@@ -90,6 +90,21 @@ def main(argv=None):
     if cmd == "promote":                              # run a winning config on a chunk + KEEP output (workload)
         from . import experiment
         return experiment.promote_main(rest)
+    if cmd in ("cross-check", "crosscheck"):          # free price drift check vs OpenRouter's public JSON
+        from . import pricing as p
+        try:
+            rows, matched, total = p.cross_check_openrouter()
+        except Exception as e:
+            print(f"cross-check failed (network?): {e}"); return 1
+        print(f"price cross-check vs OpenRouter — {matched}/{total} models matched "
+              f"(frontier models not on OpenRouter don't match; that's coverage, not error)")
+        print(f"  {'model':<24}{'our in/out':>16}{'OR in/out':>16}  flag")
+        for model, oi, ri, oo, ro, flag in rows:
+            print(f"  {model[:23]:<24}{('$%.2f/$%.2f' % (oi, oo)):>16}{('$%.2f/$%.2f' % (ri, ro)):>16}  "
+                  f"{'⚠️ ' + flag if flag == 'DRIFT' else flag}")
+        if not rows:
+            print("  (no overlapping models — your table is mostly frontier models OpenRouter doesn't list.)")
+        return 0
     if cmd == "bootstrap":                            # cold-start: mine all history → corpus + insights
         from . import bootstrap
         return bootstrap.main(rest)

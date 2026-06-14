@@ -129,6 +129,37 @@ def providers():
     return out
 
 
+_OPENROUTER_URL = "https://openrouter.ai/api/v1/models"
+
+
+def cross_check_openrouter(tol=0.10):
+    """Free, read-only price drift check against OpenRouter's public models JSON. Strict normalized
+    match (avoid false matches); returns (rows, matched, total). Frontier models not on OpenRouter
+    simply don't match — reported as coverage, not error."""
+    import json as _json, urllib.request
+    from . import config
+    req = urllib.request.Request(_OPENROUTER_URL, headers={"User-Agent": "spendguard/0.1"})
+    data = _json.loads(urllib.request.urlopen(req, context=config.ssl_context(), timeout=10).read())
+    ormap = {}
+    for m in data.get("data", []):
+        p = m.get("pricing") or {}
+        try:
+            ormap[re.sub(r"[^a-z0-9]", "", m["id"].split("/")[-1].lower())] = \
+                (float(p.get("prompt", 0)) * 1e6, float(p.get("completion", 0)) * 1e6)
+        except Exception:
+            pass
+    rows = []
+    for model, pr in PRICING.items():
+        key = re.sub(r"[^a-z0-9]", "", model.lower())
+        if key not in ormap:
+            continue
+        oin, oout = ormap[key]
+        din = abs(oin - pr["in_"]) / pr["in_"] if pr["in_"] else 0
+        dout = abs(oout - pr["out"]) / pr["out"] if pr["out"] else 0
+        rows.append((model, pr["in_"], oin, pr["out"], oout, "DRIFT" if (din > tol or dout > tol) else "ok"))
+    return rows, len(rows), len(PRICING)
+
+
 def freshness(today=None):
     """(verified_date, days_old, is_stale) — is the price table older than stale_after_days?"""
     import datetime
