@@ -60,6 +60,9 @@ def main(argv=None):
     if cmd in ("advise", "backtest"):   # backtest = advise --as-of <date>
         from . import advise
         return advise.main(rest)
+    if cmd in ("optimize", "mine", "reconstruct"):   # Layer 2 — caged by caps.meta; estimate-only unless --run
+        from . import advisor
+        return advisor.main([cmd] + rest)
     if cmd == "compare":
         from . import compare
         return compare.main(rest)
