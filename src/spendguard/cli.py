@@ -78,6 +78,9 @@ def main(argv=None):
     if cmd in ("cache-audit", "cacheaudit"):          # find prompt-caching savings (no spend)
         from . import cacheaudit
         return cacheaudit.main(rest)
+    if cmd in ("cache-test", "cachetest"):            # empirically prove caching engages (caged, estimate-first)
+        from . import cachetest
+        return cachetest.main(rest)
     if cmd == "bootstrap":                            # cold-start: mine all history → corpus + insights
         from . import bootstrap
         return bootstrap.main(rest)
