@@ -150,9 +150,30 @@ Real-time calls are recorded automatically (caller, prompt/output snippets, late
   out of your workload budget, and is excluded from the corpus it analyzes:
   - **`spendguard mine`** — synthesize confidence-scored **insights** + learning-graph nodes from the evidence (reasoner).
   - **`spendguard optimize [--intent X] [--plan MODEL]`** — an actionable recommendation citing evidence + insights (reasoner).
-  - **`spendguard reconstruct`** — bulk-judge unlabeled calls' quality (judge; Batch API; needs `calls.store_prompts`).
+  - **`spendguard reconstruct`** — judge a bounded sample of recovered call I/O for quality → real `good%`/`$/good`.
+  - **`spendguard review`** — **practice audit**: judges whether usage was *smart*, not just what it cost. Assembles a
+    context bundle (cost + quality + token-ratio + sample I/O + linked chat notes) and emits **conditional** insights
+    (IF task_class/regime THEN action BECAUSE mechanism) — needs no ground truth, so it's robust where output-judging isn't.
   - **Models are configurable:** `advisor.model` (reasoner, default Opus 4.8) · `advisor.judge_model` (judge, default
     Haiku 4.5) — any priced model / provider. Run any op without `--run` to see the projected cost first.
+
+### Cold start, quality corpus, living insights, collective learning
+- **`spendguard bootstrap`** — the cold-start process: mine **all** history (ledgers → intents → graph → provider I/O →
+  conversation) for free, then estimate the caged reasoning. One command, history → corpus → insights.
+- **`spendguard fetch-io`** — recover the **real prompts+outputs** from the providers (OpenAI batch input/output files,
+  streamed with early-stop; Anthropic results within 29 days) into a bounded `call_io` sample. **Zero token cost.**
+- **`spendguard validate`** — **living insights**: re-checks each learning against the current corpus and moves it through
+  its lifecycle (corroborated → `active` + confidence up; cited model gone / gap inverted → `refuted`/`superseded`). The
+  advisor weights by *current* confidence + status, so stale advice sinks as data grows.
+- **`spendguard insights {list,export,import}`** — **collective learning, opt-in + scrubbed**. Export *abstracts* insights
+  into generalizable rules (keeps task_class/regime, model names, ratios; strips `$` amounts, intent names, evidence) and
+  **previews exactly what would leave**. Import brings community rules in as **low-trust priors** that must be locally
+  corroborated by `validate` before they sway the advisor.
+
+> **On quality:** a cheap call that fails quality is wasted money, so cost-per-**good**-result is the metric. Two signals are
+> trustworthy: **approach-quality** (`review` — needs no ground truth) and **outcome** (the conversation showing an output was
+> used or redone). Judging output *correctness* in isolation is **not** reliable (an LLM can't verify a value it has no ground
+> truth for) — spendguard quarantines such labels rather than trusting them.
 - **Post-event mining (deterministic, zero spend)** — recover what the live recorder missed:
   - **`spendguard mine-history {intents,graph,git}`** — reconstruct each batch's **intent** from repo artifacts
     (`*batch_id*.json` + a size-bounded content scan of `data/`), add causal graph edges (`preceded`,
