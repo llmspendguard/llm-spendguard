@@ -35,6 +35,14 @@ SETTINGS = [
          kind="float", secret=False,
          desc="Daily $ cap for spendguard's OWN advisor LLM use (intent spendguard:*) — separate from workload caps."),
 
+    # ── learning advisor (Layer 2 — its own LLM use, caged by caps.meta + intent spendguard:*) ──
+    dict(section="advisor", key="model", store="config.json:advisor.model", env="SPENDGUARD_ADVISOR_MODEL",
+         default="claude-opus-4-8", kind="string", secret=False,
+         desc="Model for the advisor's REASONING (insight synthesis + `optimize`). Realtime; must exist in pricing.py."),
+    dict(section="advisor", key="judge_model", store="config.json:advisor.judge_model", env="SPENDGUARD_ADVISOR_JUDGE_MODEL",
+         default="claude-haiku-4-5", kind="string", secret=False,
+         desc="Model for BULK quality reconstruction/judging. Batch API; must exist in pricing.py."),
+
     # ── budget backend ──
     dict(section="budget", key="backend", store="config.json:budget.backend", env=None, default="memory",
          kind="enum:memory,sqlite", secret=False,

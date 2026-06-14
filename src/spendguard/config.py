@@ -68,6 +68,31 @@ def meta_cap():
     return float(v) if v is not None else float(_cfg_get("caps", "meta", 2.0))
 
 
+def advisor_model():
+    """Model for the advisor's REASONING (insight synthesis + `optimize`). Realtime; capped by caps.meta.
+    Configurable: env SPENDGUARD_ADVISOR_MODEL > config.json advisor.model > default (Opus 4.8)."""
+    return os.getenv("SPENDGUARD_ADVISOR_MODEL") or _cfg_get("advisor", "model", "claude-opus-4-8")
+
+
+def advisor_judge_model():
+    """Model for BULK quality reconstruction / judging. Batch API; capped by caps.meta.
+    Configurable: env SPENDGUARD_ADVISOR_JUDGE_MODEL > config.json advisor.judge_model > default (Haiku 4.5)."""
+    return os.getenv("SPENDGUARD_ADVISOR_JUDGE_MODEL") or _cfg_get("advisor", "judge_model", "claude-haiku-4-5")
+
+
+def validate_advisor():
+    """Both advisor models MUST be priced in pricing.py (else the meta estimate/cap can't be computed).
+    Returns a list of human-readable problems (empty = OK)."""
+    from . import pricing
+    problems = []
+    for role, m in (("advisor.model", advisor_model()), ("advisor.judge_model", advisor_judge_model())):
+        try:
+            pricing.price(m)
+        except Exception as e:
+            problems.append(f"{role}={m!r}: {e}")
+    return problems
+
+
 def budget_backend():
     return _cfg_get("budget", "backend", "memory")
 
