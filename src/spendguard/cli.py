@@ -72,6 +72,9 @@ def main(argv=None):
     if cmd in ("fetch-io", "fetchio"):                # recover real prompt+output samples from providers (free)
         from . import callio
         return callio.main(rest)
+    if cmd == "review":                               # practice audit (smart-vs-wasteful) — caged, estimate-first
+        from . import review
+        return review.main(rest)
     if cmd == "compare":
         from . import compare
         return compare.main(rest)

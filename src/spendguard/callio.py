@@ -134,10 +134,14 @@ def fetch_openai(client, batch_id, intent, model, cap, sample_n):
     if not getattr(b, "output_file_id", None):
         return 0, "no output_file (expired/failed)"
     want = {}
+    scanned = 0
     with client.files.with_streaming_response.content(b.output_file_id) as resp:
         for ln in resp.iter_lines():
             if not ln or not ln.strip():
                 continue
+            scanned += 1
+            if scanned > max(sample_n * 4, 400):         # safety net: non-chat format (e.g. embeddings) → bail
+                break
             try:
                 o = json.loads(ln)
             except Exception:
@@ -219,6 +223,8 @@ def fetch_history(cap=DEFAULT_CAP, sample_n=None, limit_batches=None):
     for i, (bid, intent, model, prov) in enumerate(runs):
         if limit_batches and fetched >= limit_batches:
             break
+        if "embedding" in (model or "").lower():    # embeddings are vectors, not judgeable text output
+            continue
         if count(intent, model) >= cap:
             skipped_full += 1
             continue
