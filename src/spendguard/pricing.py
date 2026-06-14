@@ -200,17 +200,18 @@ def _cost(model, in_tok, out_tok, cached_in_tok, batch):
     return (fresh_in * pin + cached_in_tok * pcache + out_tok * pout) / 1_000_000
 
 
-def batch_cost(model, in_tok, out_tok=0, cached_in_tok=0):
-    """Actual/forecast cost of `in_tok`+`out_tok` via the Batch API (50% off)."""
+def batch_cost(model: str, in_tok: int, out_tok: int = 0, cached_in_tok: int = 0) -> float:
+    """Actual/forecast cost ($) of `in_tok`+`out_tok` via the Batch API (50% off)."""
     return _cost(model, in_tok, out_tok, cached_in_tok, batch=True)
 
 
-def realtime_cost(model, in_tok, out_tok=0, cached_in_tok=0):
+def realtime_cost(model: str, in_tok: int, out_tok: int = 0, cached_in_tok: int = 0) -> float:
+    """Actual/forecast cost ($) of `in_tok`+`out_tok` for a real-time call."""
     return _cost(model, in_tok, out_tok, cached_in_tok, batch=False)
 
 
-def estimate(model, n, avg_in, avg_out, batch=True):
-    """Pre-flight estimate for `n` requests of `avg_in`/`avg_out` tokens each."""
+def estimate(model: str, n: int, avg_in: int, avg_out: int, batch: bool = True) -> float:
+    """Pre-flight cost ($) for `n` requests of `avg_in`/`avg_out` tokens each."""
     return _cost(model, n * avg_in, n * avg_out, 0, batch=batch)
 
 

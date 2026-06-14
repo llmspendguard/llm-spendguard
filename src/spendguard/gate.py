@@ -532,7 +532,7 @@ def _apply_rt(module_path, class_name, method, est_fn, act_fn, is_async):
     setattr(cls, method, _wrap_rt(cur, est_fn, act_fn, is_async))
 
 
-def install(cap=None):
+def install(cap: "float | None" = None) -> None:
     """Idempotently patch every registered SDK surface. Fail-open per entry (a missing
     SDK or changed internal just logs a warning; other surfaces still install).
     Optional cap=<dollars> sets GATE_CAP for this process."""
