@@ -18,11 +18,45 @@ Design for safety on a live submit path:
 
 Audit trail: data/spend_audit/gate_log.jsonl (one line per submission, with decision).
 """
-import os, sys, json, functools, datetime
+import os, sys, json, functools, datetime, time
 
 from . import pricing
+from . import calls as _calls
 from .config import LOG, FLAG, cap as _cap, disabled as _disabled, allow as _allow
 from .emit import emit as _emit
+
+
+def _prompt_text(kw):
+    parts = []
+    if kw.get("system"):
+        parts.append(str(kw["system"]))
+    for m in (kw.get("messages") or []):
+        c = m.get("content") if isinstance(m, dict) else getattr(m, "content", "")
+        parts.append(c if isinstance(c, str) else json.dumps(c, default=str))
+    return "\n".join(parts)
+
+
+def _output_text(result):
+    try:
+        ch = getattr(result, "choices", None)
+        if ch:
+            return ch[0].message.content or ""
+        cont = getattr(result, "content", None)
+        if cont:
+            return "".join(getattr(b, "text", "") for b in cont if getattr(b, "type", None) == "text")
+    except Exception:
+        pass
+    return ""
+
+
+def _finish(result):
+    try:
+        ch = getattr(result, "choices", None)
+        if ch:
+            return getattr(ch[0], "finish_reason", None)
+        return getattr(result, "stop_reason", None)
+    except Exception:
+        return None
 
 
 class SpendGateRefused(RuntimeError):
@@ -165,6 +199,9 @@ def _decide_and_account(est):
     _budget_check(est["cost"], est.get("model"), est.get("provider"), "batch")   # daily/monthly (sqlite)
     _decide(est)                                                                  # per-batch cap (may raise)
     _budget_record(est["cost"], est.get("model"), est.get("provider"), "batch")  # ledger (sqlite)
+    if _calls.enabled():                                                          # job-level call-context row
+        _calls.record(est.get("provider"), est.get("model"), "batch", est["cost"],
+                      in_tok=est.get("in_tok", 0), out_tok=est.get("out_tok", 0))
 
 
 def _gate_openai_files(kw, args=()):
@@ -303,19 +340,24 @@ def _act_anth_msg(result):
     return None if not u else (getattr(u, "input_tokens", 0) or 0, getattr(u, "output_tokens", 0) or 0)
 
 
-def _rt_account(model, kw, result, est_fn, act_fn):
+def _rt_account(model, kw, result, est_fn, act_fn, latency=None):
     try:
+        output = finish = None
         if kw.get("stream"):                       # can't read a stream's usage without consuming it
-            _, in_tok, est_out = est_fn(kw)
-            cost = pricing.realtime_cost(model, in_tok, est_out) if model else 0.0
+            _, in_tok, out_tok = est_fn(kw)
         else:
             act = act_fn(result)
             if act:
-                cost = pricing.realtime_cost(model, act[0], act[1]) if model else 0.0
+                in_tok, out_tok = act
             else:
-                _, in_tok, est_out = est_fn(kw)
-                cost = pricing.realtime_cost(model, in_tok, est_out) if model else 0.0
-        _rt_record("openai" if "gpt" in str(model) else "anthropic", model, cost)
+                _, in_tok, out_tok = est_fn(kw)
+            output = _output_text(result); finish = _finish(result)
+        cost = pricing.realtime_cost(model, in_tok, out_tok) if model else 0.0
+        prov = "openai" if "gpt" in str(model) else "anthropic"
+        _rt_record(prov, model, cost)
+        if _calls.enabled():
+            _calls.record(prov, model, "realtime", cost, in_tok=in_tok, out_tok=out_tok, latency=latency,
+                          prompt=_prompt_text(kw), output=output, finish=finish)
     except Exception as e:
         print(f"[spend_gate] WARN real-time accounting failed ({e})", file=sys.stderr)
 
@@ -326,18 +368,20 @@ def _wrap_rt(orig, est_fn, act_fn, is_async):
         async def w(self, *a, **kw):
             if not _disabled():
                 m, i, o = est_fn(kw); _rt_precheck(None, m, i, o)
+            t0 = time.time()
             r = await orig(self, *a, **kw)
             if not _disabled():
-                _rt_account(kw.get("model"), kw, r, est_fn, act_fn)
+                _rt_account(kw.get("model"), kw, r, est_fn, act_fn, time.time() - t0)
             return r
     else:
         @functools.wraps(orig)
         def w(self, *a, **kw):
             if not _disabled():
                 m, i, o = est_fn(kw); _rt_precheck(None, m, i, o)
+            t0 = time.time()
             r = orig(self, *a, **kw)
             if not _disabled():
-                _rt_account(kw.get("model"), kw, r, est_fn, act_fn)
+                _rt_account(kw.get("model"), kw, r, est_fn, act_fn, time.time() - t0)
             return r
     w._spend_gated = True
     return w

@@ -51,6 +51,9 @@ def main(argv=None):
     if cmd == "init":
         from . import setup
         return setup.cmd_init(rest)
+    if cmd == "calls":
+        from . import calls
+        return calls.cmd_summary(rest)
     if cmd == "compare":
         from . import compare
         return compare.main(rest)

@@ -128,6 +128,19 @@ from spendguard.adapters import register_provider
 register_provider("together", "https://api.together.xyz/v1", "TOGETHER_API_KEY", ("meta-llama", "mistralai"))
 ```
 
+## Call context & cost-per-good-result (opt-in)
+Beyond *cost*, spendguard can record per-call **context** to build a cost+**quality** corpus. Off by default
+(it can store prompts/outputs — privacy). Enable `calls.enabled` (+ `calls.store_prompts` for snippets and the
+implicit signal).
+- **Tag intent:** `with spendguard.context(intent="loinc-typing", chain="run-42"): ...`
+- **Quality is deferred** — you can't judge an output when it's made, but the *next* call reveals it:
+  - *automatic ("used"):* a later call in the same chain that reuses an output marks it good.
+  - *explicit / judge:* `spendguard.feedback(call_id, ok=True, source="judge")` — capture the verdicts you already produce.
+- **`spendguard calls`** → per intent: calls, $, good%, and **$/good (cost-per-good-result)** — the efficiency metric.
+
+Real-time calls are recorded automatically (caller, prompt/output snippets, latency); batches record job-level.
+*(Next: `spendguard optimize <intent>` — an LLM analyzes the corpus to suggest cheaper models / better prompts / packing.)*
+
 ## Observability (feed your existing stack)
 spendguard emits an event per gated call — it's the *enforcement* layer, not another dashboard; route the
 events to whatever you already run. Three sinks, all optional, none ever block or break the gate:

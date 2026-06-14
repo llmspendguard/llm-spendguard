@@ -66,6 +66,16 @@ SETTINGS = [
     dict(section="email", key="password", store="email.json:password", env="SPENDGUARD_SMTP_PASS", default=None,
          kind="string", secret=True, desc="SMTP app password when provider=smtp."),
 
+    # ── call context log (cost + quality corpus) ──
+    dict(section="calls", key="enabled", store="config.json:calls.enabled", env="SPENDGUARD_CALLS", default=False,
+         kind="bool", secret=False,
+         desc="Record per-call context (caller, intent, cost, quality) to the SQLite calls table. Off by default."),
+    dict(section="calls", key="store_prompts", store="config.json:calls.store_prompts", env=None, default=False,
+         kind="bool", secret=False,
+         desc="Also store prompt/output SNIPPETS — enables implicit 'used' detection + optimize. Privacy-sensitive."),
+    dict(section="calls", key="snippet_len", store="config.json:calls.snippet_len", env=None, default=200,
+         kind="float", secret=False, desc="Max characters of prompt/output snippet to store."),
+
     # ── pricing ──
     dict(section="pricing", key="prices_override", store="env", env="SPENDGUARD_PRICES", default=None,
          kind="path|null", secret=False, desc="Path to a custom prices.json/.yaml override (highest precedence)."),

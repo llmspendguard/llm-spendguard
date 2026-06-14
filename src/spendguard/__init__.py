@@ -10,7 +10,9 @@ from .pricing import (batch_cost, realtime_cost, estimate, price, normalize,
                       PRICING, PRICING_VERIFIED, PRICING_SOURCE)
 from .gate import install, register, SpendGateRefused
 from .emit import on_event
+from .calls import context, set_context, feedback
 
-__all__ = ["install", "register", "SpendGateRefused", "on_event", "batch_cost", "realtime_cost",
-           "estimate", "price", "normalize", "PRICING", "PRICING_VERIFIED", "PRICING_SOURCE"]
+__all__ = ["install", "register", "SpendGateRefused", "on_event", "context", "set_context", "feedback",
+           "batch_cost", "realtime_cost", "estimate", "price", "normalize",
+           "PRICING", "PRICING_VERIFIED", "PRICING_SOURCE"]
 __version__ = "0.1.0"
