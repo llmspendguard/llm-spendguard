@@ -68,6 +68,28 @@ def meta_exceeded(pending=0.0):
     return None
 
 
+def by_day(kind=None, exclude_meta=False, since=None):
+    """{day: total$} from the local ledger, optionally filtered by kind / excluding meta / since a date."""
+    cond, args = [], []
+    if kind:
+        cond.append("kind=?"); args.append(kind)
+    if exclude_meta:
+        cond.append("(kind IS NULL OR kind != 'meta')")
+    if since:
+        cond.append("day >= ?"); args.append(since)
+    where = ("WHERE " + " AND ".join(cond)) if cond else ""
+    with _lock:
+        rows = _db().execute(f"SELECT day, COALESCE(SUM(cost),0) FROM charges {where} GROUP BY day", args).fetchall()
+    return {d: float(v or 0) for d, v in rows}
+
+
+def ledger_start():
+    """Earliest day in the local ledger — spend before this wasn't recorded locally (pre-ledger)."""
+    with _lock:
+        r = _db().execute("SELECT MIN(day) FROM charges").fetchone()
+    return r[0] if r and r[0] else None
+
+
 def _utc():
     return datetime.datetime.now(datetime.timezone.utc)
 
