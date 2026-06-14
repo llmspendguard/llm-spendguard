@@ -45,6 +45,9 @@ def main(argv=None):
         for prov, models in sorted(p.providers().items()):
             print(f"{prov} ({len(models)}): {', '.join(sorted(models))}")
         return 0
+    if cmd in ("refresh-prices", "refresh"):
+        from . import refresh
+        return refresh.main(rest)
     if cmd in ("check-prices", "freshness"):
         from . import pricing as p
         v, days, stale = p.freshness()

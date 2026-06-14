@@ -15,6 +15,7 @@ SMTP:
 import json
 import smtplib
 import urllib.request
+import urllib.error
 from email.message import EmailMessage
 
 from . import config
@@ -33,8 +34,16 @@ def _send_resend(subject, body, to, cfg):
     req = urllib.request.Request(
         "https://api.resend.com/emails", data=payload, method="POST",
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
-    with urllib.request.urlopen(req, context=config.ssl_context(), timeout=30) as r:
-        r.read()
+    try:
+        with urllib.request.urlopen(req, context=config.ssl_context(), timeout=30) as r:
+            r.read()
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode()[:300]
+        hint = ""
+        if e.code == 403 or "1010" in detail:
+            hint = (" — Resend only delivers to your signup email until you verify a domain. "
+                    "Verify a domain at resend.com/domains and set from_ to an address on it (e.g. reports@healiom.com).")
+        raise RuntimeError(f"Resend HTTP {e.code}: {detail}{hint}")
     return to
 
 
