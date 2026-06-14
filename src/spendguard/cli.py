@@ -78,6 +78,12 @@ def main(argv=None):
     if cmd == "bootstrap":                            # cold-start: mine all history → corpus + insights
         from . import bootstrap
         return bootstrap.main(rest)
+    if cmd == "validate":                             # living insights — re-check learnings vs current corpus
+        from . import validate
+        return validate.main(rest)
+    if cmd == "insights":                             # list / export(scrubbed) / import community learnings
+        from . import share
+        return share.main(rest)
     if cmd == "compare":
         from . import compare
         return compare.main(rest)
