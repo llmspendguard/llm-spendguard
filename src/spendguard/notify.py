@@ -33,16 +33,22 @@ def _send_resend(subject, body, to, cfg):
     payload = json.dumps({"from": frm, "to": _recipients(to), "subject": subject, "text": body}).encode()
     req = urllib.request.Request(
         "https://api.resend.com/emails", data=payload, method="POST",
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json",
+                 "Accept": "application/json",
+                 # api.resend.com is behind Cloudflare, which 403s urllib's default UA ("error code: 1010").
+                 "User-Agent": "spendguard/0.1 (+https://github.com/ashdamle/llm-spendguard)"})
     try:
         with urllib.request.urlopen(req, context=config.ssl_context(), timeout=30) as r:
             r.read()
     except urllib.error.HTTPError as e:
         detail = e.read().decode()[:300]
-        hint = ""
-        if e.code == 403 or "1010" in detail:
-            hint = (" — Resend only delivers to your signup email until you verify a domain. "
-                    "Verify a domain at resend.com/domains and set from_ to an address on it (e.g. reports@healiom.com).")
+        if "1010" in detail or "cloudflare" in detail.lower():
+            hint = " — Cloudflare blocked the request (User-Agent); upgrade spendguard."
+        elif e.code == 403:
+            hint = (" — to send to an address other than your Resend signup email, verify a domain at "
+                    "resend.com/domains and set from_ to an address on it.")
+        else:
+            hint = ""
         raise RuntimeError(f"Resend HTTP {e.code}: {detail}{hint}")
     return to
 
