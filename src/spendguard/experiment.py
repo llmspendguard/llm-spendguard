@@ -232,9 +232,52 @@ def _read_inputs(path):
     return items
 
 
-def promote(intent, model, instruction="", input=None, out=None, n=None, run=False):
+def _promote_batch(intent, model, instr, items, run):
+    """Promote at SCALE via the Batch API (50% off, async) — the real 25K-chunk path. Per-model params
+    auto-applied; estimate+cap+submit reuse the guarded submit / gate. WORKLOAD spend (real intent)."""
+    from . import adapters, models as M
+    import tempfile, os
+    prov = adapters.provider_for(model)
+    if len(items) > 25000:
+        print(f"  ⚠ {len(items):,} requests > 25K batch limit — chunk it (submitting first 25K).")
+        items = items[:25000]
+    reqs_body = [(cid or f"i{idx}",
+                  M.apply_call_params(model, {"model": model, "max_tokens": 1500,
+                                              "messages": [{"role": "user", "content": p + instr}]}))
+                 for idx, (cid, p) in enumerate(items)]
+    print(f"promote (BATCH) — winner {model} ({prov}) on {len(reqs_body):,} requests for '{intent}', "
+          f"KEEP output as production")
+    if prov == "openai":
+        fd, path = tempfile.mkstemp(suffix=".jsonl", prefix=f"promote_{intent.replace('/', '_')}_")
+        with os.fdopen(fd, "w") as f:
+            for cid, body in reqs_body:
+                f.write(json.dumps({"custom_id": cid, "method": "POST",
+                                    "url": "/v1/chat/completions", "body": body}) + "\n")
+        from .submit import guarded_submit
+        with calls.context(intent=intent):            # WORKLOAD spend (real intent → your caps)
+            bid = guarded_submit(path, model=model, cap_dollars=config.cap(), submit=run)
+        print(f"  jsonl: {path}" + (f"\n  submitted batch {bid}; retrieve results with `spendguard fetch-io` "
+              f"or the batch output file when complete." if run else "\n  estimate-only (above). --run to submit."))
+        return dict(ok=True, provider=prov, jsonl=path, batch=bid if run else None)
+    else:  # anthropic — gate estimates + caps on create; submit under workload context
+        reqs = [{"custom_id": cid, "params": body} for cid, body in reqs_body]
+        if not run:
+            from . import gate
+            est = gate._estimate_anthropic_requests(reqs)
+            print(f"  ESTIMATE: {est['requests']:,} req · in~{est['in_tok']:,} out≤{est['out_tok']:,} "
+                  f"-> ~${est['cost']:.2f} (batch). --run to submit (WORKLOAD caps apply).")
+            return dict(ok=True, provider=prov, est=est["cost"])
+        import anthropic
+        with calls.context(intent=intent):            # WORKLOAD; gate meters + caps on create
+            b = anthropic.Anthropic(api_key=config.api_key("ANTHROPIC_API_KEY")).messages.batches.create(requests=reqs)
+        print(f"  submitted Anthropic batch {b.id}; retrieve results when complete.")
+        return dict(ok=True, provider=prov, batch=b.id)
+
+
+def promote(intent, model, instruction="", input=None, out=None, n=None, run=False, batch=False):
     """Run a WINNING config on real inputs and KEEP the output — a successful test IS production work,
-    not wasted spend. Runs under the REAL intent → WORKLOAD caps (not the meta cage). Estimate-first."""
+    not wasted spend. Runs under the REAL intent → WORKLOAD caps (not the meta cage). Estimate-first.
+    --batch uses the Batch API (50% off, async) for true large chunks; else realtime for slices."""
     instr = ("\n\n" + instruction) if instruction else ""
     if input:
         items = _read_inputs(input)
@@ -246,6 +289,8 @@ def promote(intent, model, instruction="", input=None, out=None, n=None, run=Fal
     if not items:
         print(f"promote — no inputs (give --input <chunk.jsonl> or fetch-io samples for '{intent}').")
         return dict(ok=False)
+    if batch:
+        return _promote_batch(intent, model, instr, items, run)
     est = sum(pricing.realtime_cost(model, _count_tokens(p + instr, model), max(50, _count_tokens(p, model) // 2))
               for _c, p in items)
     print(f"promote — run winner {model} on {len(items)} inputs for '{intent}', KEEP output as production")
@@ -293,9 +338,11 @@ def promote_main(argv=None):
     ap.add_argument("--model", required=True, help="the winning model")
     ap.add_argument("--instruction", help="the winning output-format instruction (optional)")
     ap.add_argument("--input", help="chunk to process (batch .jsonl / {prompt} jsonl / plain text)")
-    ap.add_argument("--out", help="where to write kept outputs (jsonl)")
+    ap.add_argument("--out", help="where to write kept outputs (jsonl) — realtime mode")
     ap.add_argument("--n", type=int, help="cap inputs")
+    ap.add_argument("--batch", action="store_true", help="use the Batch API (50%% off, async) for large chunks")
     ap.add_argument("--run", action="store_true", help="actually produce+keep (default: estimate). WORKLOAD spend.")
     a = ap.parse_args(argv)
-    promote(a.intent, a.model, instruction=a.instruction or "", input=a.input, out=a.out, n=a.n, run=a.run)
+    promote(a.intent, a.model, instruction=a.instruction or "", input=a.input, out=a.out, n=a.n,
+            run=a.run, batch=a.batch)
     return 0
