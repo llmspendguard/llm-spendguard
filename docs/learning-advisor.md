@@ -1,7 +1,11 @@
 # spendguard #7 — Learning advisor + temporal learning graph
 
-Status: **design** (not yet built). This is #6 (record cost+quality) taken to **action**: a loop that
-recommends **considering** history (not parroting it) and gets better as it runs.
+Status: **implemented** — Layer 1 (`advise`/`backtest`/`backfill`, deterministic) and Layer 2
+(`mine`/`optimize`/`reconstruct`, LLM, estimate-first, caged by `caps.meta` + intent `spendguard:*`,
+models configurable via `advisor.model`/`advisor.judge_model`) are live. Still open: deeper quality
+reconstruction by mining post-event conversation + script/git evolution, and richer causal graph edges.
+This is #6 (record cost+quality) taken to **action**: a loop that recommends **considering** history
+(not parroting it) and gets better as it runs.
 
 ## Principle: *considering* history, not *from* history
 - **From history** = lookup: replay the past winner. Assumes the past transfers directly.

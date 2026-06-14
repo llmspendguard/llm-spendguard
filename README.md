@@ -139,7 +139,20 @@ implicit signal).
 - **`spendguard calls`** → per intent: calls, $, good%, and **$/good (cost-per-good-result)** — the efficiency metric.
 
 Real-time calls are recorded automatically (caller, prompt/output snippets, latency); batches record job-level.
-*(Next: `spendguard optimize <intent>` — an LLM analyzes the corpus to suggest cheaper models / better prompts / packing.)*
+
+## Learning advisor — *recommend considering history* (Layer 1 deterministic · Layer 2 LLM)
+- **`spendguard advise [--intent X] [--plan MODEL]`** — pure-SQL ranking of your corpus by `$/good` (or `$/M out`
+  when quality isn't labeled yet), confidence-weighted, with caveats. No LLM, no spend.
+- **`spendguard backtest --as-of DATE`** — replays `advise` as of a past date (would it have caught known-good calls?).
+- **`spendguard backfill`** — seeds the corpus + learning graph from your real batch ledgers (no spend).
+- **Layer 2 (its own, *caged*, LLM use)** — every op is **estimate-only by default**; `--run` spends, and each paid
+  call is tagged `intent=spendguard:*` so it hits a **separate meta budget** (`caps.meta`, default **$2/day**), is kept
+  out of your workload budget, and is excluded from the corpus it analyzes:
+  - **`spendguard mine`** — synthesize confidence-scored **insights** + learning-graph nodes from the evidence (reasoner).
+  - **`spendguard optimize [--intent X] [--plan MODEL]`** — an actionable recommendation citing evidence + insights (reasoner).
+  - **`spendguard reconstruct`** — bulk-judge unlabeled calls' quality (judge; Batch API; needs `calls.store_prompts`).
+  - **Models are configurable:** `advisor.model` (reasoner, default Opus 4.8) · `advisor.judge_model` (judge, default
+    Haiku 4.5) — any priced model / provider. Run any op without `--run` to see the projected cost first.
 
 ## Observability (feed your existing stack)
 spendguard emits an event per gated call — it's the *enforcement* layer, not another dashboard; route the
