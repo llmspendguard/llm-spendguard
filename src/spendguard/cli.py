@@ -90,6 +90,9 @@ def main(argv=None):
     if cmd == "promote":                              # run a winning config on a chunk + KEEP output (workload)
         from . import experiment
         return experiment.promote_main(rest)
+    if cmd in ("cache-stats", "semcache"):            # semantic response cache stats (opt-in cost saver)
+        from . import semcache
+        return semcache.cmd(rest)
     if cmd in ("cross-check", "crosscheck"):          # free price drift check vs OpenRouter's public JSON
         from . import pricing as p
         try:
