@@ -15,11 +15,16 @@ from . import config
 
 # ordered family rules — first match wins; later stored facts override fields
 _RULES = [
+    # VERIFIED 2026-06-14: the literal "no reasoning" value DIFFERS by model and the wrong one is a hard 400.
+    (r"^gpt-5\.5", dict(provider="openai", reasoning="none", tokens_param="max_completion_tokens",
+        cache="auto", cache_min=1024,
+        note="gpt-5.5: reasoning_effort='none' (verified) — 'minimal' is REJECTED (400). Rejects max_tokens "
+             "(use max_completion_tokens). OpenAI auto-caches ≥1024-tok static-first prefix (read 0.5x).")),
     (r"^(gpt-5|o[1345])", dict(provider="openai", reasoning="minimal", tokens_param="max_completion_tokens",
         cache="auto", cache_min=1024,
-        note="REASONING model: set reasoning_effort≈'none' (minimal) or it spends the whole budget on "
-             "reasoning and returns EMPTY; rejects max_tokens (use max_completion_tokens). OpenAI auto-caches "
-             "≥1024-tok identical static-first prefix (read 0.5x).")),
+        note="gpt-5 mini/nano + o-series: reasoning_effort='minimal' (verified) — 'none' is REJECTED (400); "
+             "without it reasoning eats the budget → EMPTY output. Rejects max_tokens (use max_completion_tokens). "
+             "OpenAI auto-caches ≥1024-tok static-first prefix (read 0.5x).")),
     (r"^gpt-", dict(provider="openai", reasoning=None, tokens_param="max_tokens", cache="auto", cache_min=1024,
         note="OpenAI auto-caches ≥1024-tok identical static-first prefix (read 0.5x).")),
     (r"^claude-(haiku|3-5-haiku|3-haiku)", dict(provider="anthropic", reasoning=None, tokens_param="max_tokens",
@@ -86,6 +91,18 @@ def apply_call_params(model, kw):
     if p.get("provider") == "openai" and p.get("reasoning"):
         kw.setdefault("reasoning_effort", p["reasoning"])
     return kw
+
+
+def heal_reasoning(model, kw, err):
+    """If a call 400s because reasoning_effort is the wrong literal for this model, flip none<->minimal,
+    STORE the corrected fact (self-learning), and return True so the caller retries. Else False."""
+    e = str(err)
+    if "reasoning_effort" not in kw or "reasoning_effort" not in e or "does not support" not in e:
+        return False
+    alt = "none" if kw["reasoning_effort"] == "minimal" else "minimal"
+    kw["reasoning_effort"] = alt
+    add_fact(model, "reasoning", alt, source="auto-heal(400)", verified=True)
+    return True
 
 
 def learn_now():

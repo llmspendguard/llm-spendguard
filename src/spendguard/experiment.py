@@ -98,8 +98,14 @@ def _call(model, prompt, max_out=400):
         text = "".join(b.text for b in m.content if getattr(b, "type", None) == "text")
         it, ot = m.usage.input_tokens, m.usage.output_tokens
     else:
-        from openai import OpenAI
-        m = OpenAI(api_key=key, base_url=adapters.PROVIDERS[prov]["base_url"]).chat.completions.create(**kw)
+        oc = OpenAI(api_key=key, base_url=adapters.PROVIDERS[prov]["base_url"])
+        try:
+            m = oc.chat.completions.create(**kw)
+        except Exception as e:                          # self-heal a wrong reasoning_effort literal, then retry once
+            if models.heal_reasoning(model, kw, e):
+                m = oc.chat.completions.create(**kw)
+            else:
+                raise
         text = m.choices[0].message.content or ""
         it, ot = m.usage.prompt_tokens, m.usage.completion_tokens
     return pricing.realtime_cost(model, it, ot), it, ot, text
