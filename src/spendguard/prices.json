@@ -3,7 +3,8 @@
     "verified": "2026-06-13",
     "source": "https://developers.openai.com/api/docs/pricing",
     "note": "USD per 1M tokens. batch = 50% of realtime. Edit here (or ~/.spendguard/prices.json) \u2014 do not hardcode prices in code.",
-    "stale_after_days": 45
+    "stale_after_days": 45,
+    "qwen_source": "https://www.eesel.ai/blog/qwen-pricing (Alibaba Model Studio list prices, 2026-06-14)"
   },
   "providers": {
     "openai": {
@@ -172,6 +173,31 @@
           "cached_in": 0.3,
           "batch_in": 1.5,
           "batch_out": 7.5
+        }
+      }
+    },
+    "qwen": {
+      "models": {
+        "qwen-max": {
+          "in_": 2.5,
+          "out": 7.5,
+          "cached_in": 0.25,
+          "batch_in": 1.25,
+          "batch_out": 3.75
+        },
+        "qwen-plus": {
+          "in_": 0.4,
+          "out": 1.2,
+          "cached_in": 0.04,
+          "batch_in": 0.2,
+          "batch_out": 0.6
+        },
+        "qwen-turbo": {
+          "in_": 0.05,
+          "out": 0.2,
+          "cached_in": 0.005,
+          "batch_in": 0.025,
+          "batch_out": 0.1
         }
       }
     }

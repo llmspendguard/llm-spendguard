@@ -45,6 +45,9 @@ def main(argv=None):
         for prov, models in sorted(p.providers().items()):
             print(f"{prov} ({len(models)}): {', '.join(sorted(models))}")
         return 0
+    if cmd == "compare":
+        from . import compare
+        return compare.main(rest)
     if cmd in ("sync-prices", "sync"):
         from . import sync
         return sync.main(rest)

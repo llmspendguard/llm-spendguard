@@ -102,6 +102,22 @@ you'll just see `email not configured — skipping`. A *configured* backend that
 > **(3)** verify your own domain on the provider and send from it. Also note `api.resend.com` is behind Cloudflare,
 > which 403s the default `urllib` User-Agent — spendguard sets one (don't strip it).
 
+## Compare models (cost-per-result)
+Run one prompt across providers and table **cost + latency + output** — spendguard's angle is
+*cost-per-result* (for deep evals, use promptfoo). Real calls, metered by the gate:
+```
+spendguard compare --prompt "Summarize X in 3 bullets" \
+  --models gpt-5.5,claude-opus-4-8,gemini-2.5-flash,deepseek-chat,qwen-max --show
+```
+Built-in providers: **openai, anthropic, gemini, deepseek, qwen** (most via their OpenAI-compatible
+endpoints, so the gate already meters them). Keys resolve per provider from env / `~/.spendguard` / `./.env`
+(`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `DASHSCOPE_API_KEY` for Qwen).
+**Add another in one line:**
+```python
+from spendguard.adapters import register_provider
+register_provider("together", "https://api.together.xyz/v1", "TOGETHER_API_KEY", ("meta-llama", "mistralai"))
+```
+
 ## Observability (feed your existing stack)
 spendguard emits an event per gated call — it's the *enforcement* layer, not another dashboard; route the
 events to whatever you already run. Three sinks, all optional, none ever block or break the gate:
