@@ -39,9 +39,22 @@ spendguard pricing
 `GATE_CAP=<$>` (default 75) · `GATE_ALLOW=1` (permit one over-cap run) · `GATE_DISABLE=1` (off for one run)
 · `SPENDGUARD_HOME=<dir>` (data/flag/log location, default `~/.spendguard`) · `SPENDGUARD_ENV=<path>` (.env for keys)
 
+## Pricing: layered, broad, low-maintenance
+Prices load in layers, lowest→highest precedence — so you get **2,700+ models across all providers** for free,
+your hand-verified rates always win, and you can override anything:
+
+1. **LiteLLM community dataset** (breadth + freshness) — `spendguard sync-prices` fetches
+   [LiteLLM's CI-maintained `model_prices_and_context_window.json`](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json)
+   (~2,300 priced models, 80+ providers), validates it (refuses an empty/bad fetch), and caches it to
+   `~/.spendguard/litellm_prices.json`. Read from cache only — **no network at import**.
+2. **Curated `prices.json`** (shipped in the package) — your verified models (gpt-5.5, opus-4.8, …) override LiteLLM.
+3. **User override** — `~/.spendguard/prices.json` / `.yaml` / `$SPENDGUARD_PRICES` wins over everything.
+
+If nothing loads, a built-in table in `pricing.py` is the final fallback (never breaks). Run `spendguard sync-prices`
+once (and periodically) to refresh; that's the primary freshness mechanism — `check-prices`/`refresh-prices` are backups.
+
 ## Configuration (prices, providers, models)
-Prices live in a config file, not in code — `src/spendguard/prices.json` (shipped default), overridable by
-`~/.spendguard/prices.json`, `~/.spendguard/prices.yaml` (needs PyYAML), or `$SPENDGUARD_PRICES`. Structure:
+The curated/override files use this structure (`src/spendguard/prices.json`, `~/.spendguard/prices.json`, or `$SPENDGUARD_PRICES`):
 ```json
 { "_meta": {"verified": "2026-06-13", "source": "https://…", "stale_after_days": 45},
   "providers": {

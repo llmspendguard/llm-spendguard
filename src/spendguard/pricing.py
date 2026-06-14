@@ -84,10 +84,23 @@ def _read(path):
 
 
 def _load():
-    """Build PRICING (model->rates) + PROVIDERS (model->provider) from config, falling back to _FALLBACK."""
+    """Build PRICING (model->rates) + PROVIDERS (model->provider) by layering, lowest→highest precedence:
+       built-in _FALLBACK  →  LiteLLM cache (breadth, from `spendguard sync-prices`)  →
+       curated prices.json (our verified models win)  →  user override. No network here (cache only)."""
     global PRICING_SOURCE, PRICING_VERIFIED, STALE_AFTER_DAYS, PROVIDERS
     prices = dict(_FALLBACK)
     PROVIDERS = {m: ("anthropic" if m.startswith("claude") else "openai") for m in _FALLBACK}
+    # LiteLLM breadth (2700+ models) — cached locally; absent until `spendguard sync-prices` runs.
+    home = os.environ.get("SPENDGUARD_HOME") or os.path.expanduser("~/.spendguard")
+    litellm = os.path.join(home, "litellm_prices.json")
+    if os.path.exists(litellm):
+        try:
+            d = json.load(open(litellm))
+            prices.update(d.get("models", {}))
+            PROVIDERS.update(d.get("providers", {}))
+        except Exception as e:
+            import sys
+            sys.stderr.write(f"[pricing] WARN could not load LiteLLM cache ({e})\n")
     for path in _candidate_files():
         try:
             cfg = _read(path)
