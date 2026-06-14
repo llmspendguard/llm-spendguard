@@ -68,6 +68,22 @@ Validates the advisor against decisions whose right answer we already know.
 Gateways do cost; eval tools do quality; nobody closes the loop into **cost-per-good-result that improves itself
 with provenance**. A self-improving, auditable cost/quality advisor is a genuinely novel, broadly useful artifact.
 
+## Meta-budget: spendguard governs its OWN LLM use
+The advisor's Layer-2 LLM calls (quality reconstruction, insights mining, learning advisor, `optimize`)
+must not become the runaway they exist to prevent. They are first-class spendguard-gated, with a
+**separate budget, tag, and tracking** — build this cage *before* any Layer-2 LLM code.
+- **Reserved intent namespace `spendguard:*`** (`spendguard:mine`, `:advise`, `:optimize`). The advisor
+  sets `context(intent="spendguard:...")`, so every meta call is metered + logged like any other — but
+  distinguishable. **Always tracked**, independent of the `calls.enabled` opt-in (the tool's own spend is never invisible).
+- **Separate cap `caps.meta`** (default ~$2/day) enforced by the gate ONLY against meta-tagged spend,
+  independent of `caps.daily`/`per_batch`/`realtime`. Meta can't eat the workload budget; a meta loop hard-stops at `caps.meta`.
+- **Separate tracking** — `report` and `calls` break out a "spendguard meta" line so the advisor's cost
+  never inflates your workload $ or $/good.
+- **Cheap + bounded + estimate-first (dogfoods the protocol):** cheapest model (haiku/nano), sample +
+  truncate inputs, a per-run hard cap on # LLM calls and $, INCREMENTAL (only mine new/unmined data,
+  marked done), and it ESTIMATES its own cost and refuses over `--cap` before spending. The cost-control
+  tool follows its own test→estimate→cap→reconcile gate.
+
 ## Build order
 1. `calls` quality-confidence cols + `insights` + `graph` schema; **backfill** (hard: spend ledger + judge
    artifacts) as fn + CLI + **skill**; **deterministic `advise`**; **backtest** harness.
