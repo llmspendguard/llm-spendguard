@@ -102,6 +102,16 @@ you'll just see `email not configured — skipping`. A *configured* backend that
 > **(3)** verify your own domain on the provider and send from it. Also note `api.resend.com` is behind Cloudflare,
 > which 403s the default `urllib` User-Agent — spendguard sets one (don't strip it).
 
+## Observability (feed your existing stack)
+spendguard emits an event per gated call — it's the *enforcement* layer, not another dashboard; route the
+events to whatever you already run. Three sinks, all optional, none ever block or break the gate:
+- **In-process callback:** `spendguard.on_event(lambda e: log(e))`
+- **Webhook:** `emit.webhook` in `~/.spendguard/config.json` or `$SPENDGUARD_WEBHOOK` — POSTs the event JSON (Slack, your collector, …)
+- **OpenTelemetry:** `emit.otel: true` / `$SPENDGUARD_OTEL` — a `spendguard.cost_usd` counter (needs `opentelemetry-sdk`)
+
+Event shape: `{ts, kind: batch|realtime, provider, model, cost, decision}`. Webhook/OTel run on a background
+daemon thread (drop-if-flooded), so even high-volume real-time calls aren't slowed; callbacks run inline (keep them fast).
+
 ## Extending to a new SDK
 Add one interceptor: `spendguard.register(module, ClassName, "create", gate_fn)`, write a small
 estimator for that SDK's request shape, and add its prices to `pricing.py`.

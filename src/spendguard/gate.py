@@ -22,6 +22,7 @@ import os, sys, json, functools, datetime
 
 from . import pricing
 from .config import LOG, FLAG, cap as _cap, disabled as _disabled, allow as _allow
+from .emit import emit as _emit
 
 
 class SpendGateRefused(RuntimeError):
@@ -91,6 +92,7 @@ def _log(rec):
             f.write(json.dumps(rec) + "\n")
     except Exception:
         pass
+    _emit({**rec, "kind": rec.get("kind", "batch")})
 
 
 def _decide(est):
@@ -215,6 +217,8 @@ def _rt_record(provider, model, cost):
         flush = _rt_since_flush >= 200
     if flush:
         _rt_flush()
+    _emit({"kind": "realtime", "provider": provider,
+           "model": pricing.normalize(model) if model else "?", "cost": cost, "decision": "recorded"})
 
 
 def _rt_precheck(provider, model, in_tok, est_out):
@@ -239,6 +243,7 @@ def _rt_precheck(provider, model, in_tok, est_out):
         if ans in ("yes", "y"):
             os.environ["GATE_ALLOW"] = "1"
             return
+    _emit({"kind": "realtime", "provider": provider, "model": model, "cost": est, "decision": "refused_budget"})
     raise SpendGateRefused(msg + " Raise GATE_RT_BUDGET, set GATE_ALLOW=1, or stop the loop.")
 
 
