@@ -81,6 +81,9 @@ def main(argv=None):
     if cmd in ("cache-test", "cachetest"):            # empirically prove caching engages (caged, estimate-first)
         from . import cachetest
         return cachetest.main(rest)
+    if cmd == "experiment":                           # A/B efficiency lab: cost↓ + same-output (caged, estimate-first)
+        from . import experiment
+        return experiment.main(rest)
     if cmd == "bootstrap":                            # cold-start: mine all history → corpus + insights
         from . import bootstrap
         return bootstrap.main(rest)
