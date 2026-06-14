@@ -84,9 +84,11 @@ def _db():
                     provider TEXT, model TEXT, kind TEXT,
                     in_tok INTEGER, out_tok INTEGER, cost REAL, latency REAL,
                     prompt_hash TEXT, prompt_snip TEXT, output_snip TEXT, finish TEXT,
-                    quality TEXT, quality_src TEXT)""")
+                    quality TEXT, quality_src TEXT, quality_conf REAL)""")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_calls_chain ON calls(chain)")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_calls_intent ON calls(intent)")
+                if "quality_conf" not in [r[1] for r in c.execute("PRAGMA table_info(calls)").fetchall()]:
+                    c.execute("ALTER TABLE calls ADD COLUMN quality_conf REAL")  # migrate older dbs
                 c.commit()
                 _conn = c
     return _conn
@@ -113,10 +115,12 @@ def record(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
         osnip = output[:sp] if (output and _store_prompts()) else None
         ts = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
         with _lock:
-            _db().execute("INSERT INTO calls VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                          (cid, ts, chain, intent, who or caller(), provider, model, kind,
-                           int(in_tok or 0), int(out_tok or 0), float(cost or 0),
-                           latency, ph, psnip, osnip, finish, None, None))
+            _db().execute(
+                "INSERT INTO calls (id,ts,chain,intent,caller,provider,model,kind,in_tok,out_tok,"
+                "cost,latency,prompt_hash,prompt_snip,output_snip,finish) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (cid, ts, chain, intent, who or caller(), provider, model, kind,
+                 int(in_tok or 0), int(out_tok or 0), float(cost or 0), latency, ph, psnip, osnip, finish))
             _db().commit()
         # deferred implicit feedback: did THIS call reuse an earlier output in the same chain?
         if chain and prompt:
@@ -126,17 +130,37 @@ def record(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
         return None
 
 
-def feedback(call_id, ok=True, source="explicit"):
-    """Label a call's quality after the fact (judge verdict, human accept, downstream validation)."""
-    if not enabled() or not call_id:
+_CONF = {"explicit": 1.0, "judge": 0.95, "used": 0.6, "mined": 0.5}
+
+
+def feedback(call_id, ok=True, source="explicit", confidence=None):
+    """Label a call's quality after the fact (judge verdict, human accept, downstream validation).
+    Carries a confidence (explicit=1.0, judge=0.95, used=0.6, mined=0.5) the advisor weights by."""
+    if not call_id:
         return
+    conf = confidence if confidence is not None else _CONF.get(source, 0.7)
     try:
         with _lock:
-            _db().execute("UPDATE calls SET quality=?, quality_src=? WHERE id=?",
-                          ("good" if ok else "bad", source, call_id))
+            _db().execute("UPDATE calls SET quality=?, quality_src=?, quality_conf=? WHERE id=?",
+                          ("good" if ok else "bad", source, conf, call_id))
             _db().commit()
     except Exception:
         pass
+
+
+def insert(provider, model, kind, cost, in_tok=0, out_tok=0, ts=None, intent=None, chain=None,
+           quality=None, quality_src=None, quality_conf=None, who="backfill"):
+    """Low-level insert used by backfill (ungated). Returns call_id."""
+    cid = _uuid()
+    ts = ts or datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+    with _lock:
+        _db().execute(
+            "INSERT INTO calls (id,ts,chain,intent,caller,provider,model,kind,in_tok,out_tok,"
+            "cost,quality,quality_src,quality_conf) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (cid, ts, chain, intent, who, provider, model, kind,
+             int(in_tok or 0), int(out_tok or 0), float(cost or 0), quality, quality_src, quality_conf))
+        _db().commit()
+    return cid
 
 
 def _link_used(chain, current_prompt):
@@ -150,7 +174,7 @@ def _link_used(chain, current_prompt):
                 "AND output_snip IS NOT NULL ORDER BY ts DESC LIMIT 10", (chain,)).fetchall()
             for cid, out in rows:
                 if out and len(out) >= 12 and out[:80] in current_prompt:
-                    _db().execute("UPDATE calls SET quality='good', quality_src='used' WHERE id=?", (cid,))
+                    _db().execute("UPDATE calls SET quality='good', quality_src='used', quality_conf=0.6 WHERE id=?", (cid,))
             _db().commit()
     except Exception:
         pass

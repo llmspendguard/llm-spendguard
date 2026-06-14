@@ -54,6 +54,12 @@ def main(argv=None):
     if cmd == "calls":
         from . import calls
         return calls.cmd_summary(rest)
+    if cmd == "backfill":
+        from . import backfill
+        return backfill.main(rest)
+    if cmd in ("advise", "backtest"):   # backtest = advise --as-of <date>
+        from . import advise
+        return advise.main(rest)
     if cmd == "compare":
         from . import compare
         return compare.main(rest)
