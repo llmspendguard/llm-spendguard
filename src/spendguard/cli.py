@@ -45,6 +45,12 @@ def main(argv=None):
         for prov, models in sorted(p.providers().items()):
             print(f"{prov} ({len(models)}): {', '.join(sorted(models))}")
         return 0
+    if cmd == "config":
+        from . import setup
+        return setup.cmd_config(rest)
+    if cmd == "init":
+        from . import setup
+        return setup.cmd_init(rest)
     if cmd == "compare":
         from . import compare
         return compare.main(rest)

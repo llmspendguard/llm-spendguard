@@ -140,6 +140,33 @@ def _read_filelike(file):
     raise TypeError(f"unhandled file type {type(file)}")
 
 
+def _budget_check(cost, model, provider, kind):
+    """Cross-process daily/monthly cap (only when budget.backend=sqlite). Raises if it'd exceed."""
+    from . import config
+    if config.budget_backend() != "sqlite" or _allow():
+        return
+    from . import budget
+    ex = budget.exceeded(cost)
+    if ex:
+        w, capv, proj = ex
+        _emit({"kind": kind, "provider": provider, "model": model, "cost": cost, "decision": f"refused_{w}"})
+        raise SpendGateRefused(f"{w} budget ${capv:.0f} would be exceeded (projected ${proj:.2f}). "
+                               f"Raise caps.{w}, or set GATE_ALLOW=1.")
+
+
+def _budget_record(cost, model, provider, kind):
+    from . import config
+    if config.budget_backend() == "sqlite":
+        from . import budget
+        budget.record(provider, model, kind, cost)
+
+
+def _decide_and_account(est):
+    _budget_check(est["cost"], est.get("model"), est.get("provider"), "batch")   # daily/monthly (sqlite)
+    _decide(est)                                                                  # per-batch cap (may raise)
+    _budget_record(est["cost"], est.get("model"), est.get("provider"), "batch")  # ledger (sqlite)
+
+
 def _gate_openai_files(kw, args=()):
     if kw.get("purpose") != "batch":
         return
@@ -151,7 +178,7 @@ def _gate_openai_files(kw, args=()):
     except Exception as e:
         print(f"[spend_gate] WARN openai estimate failed ({e}); allowing (fail-open)", file=sys.stderr)
         return
-    _decide(est)  # may raise SpendGateRefused
+    _decide_and_account(est)  # per-batch cap + cross-process daily/monthly (sqlite)
 
 
 def _gate_anthropic(kw, args=()):
@@ -167,7 +194,7 @@ def _gate_anthropic(kw, args=()):
     except Exception as e:
         print(f"[spend_gate] WARN anthropic estimate failed ({e}); allowing (fail-open)", file=sys.stderr)
         return
-    _decide(est)  # may raise SpendGateRefused
+    _decide_and_account(est)  # per-batch cap + cross-process daily/monthly (sqlite)
 
 
 # ─────────────────────────── REAL-TIME cumulative budget ───────────────────────────
@@ -217,8 +244,9 @@ def _rt_record(provider, model, cost):
         flush = _rt_since_flush >= 200
     if flush:
         _rt_flush()
-    _emit({"kind": "realtime", "provider": provider,
-           "model": pricing.normalize(model) if model else "?", "cost": cost, "decision": "recorded"})
+    _m = pricing.normalize(model) if model else "?"
+    _budget_record(cost, _m, provider, "realtime")   # cross-process ledger (sqlite backend)
+    _emit({"kind": "realtime", "provider": provider, "model": _m, "cost": cost, "decision": "recorded"})
 
 
 def _rt_precheck(provider, model, in_tok, est_out):
@@ -227,6 +255,7 @@ def _rt_precheck(provider, model, in_tok, est_out):
         est = pricing.realtime_cost(model, in_tok, est_out) if model else 0.0
     except Exception:
         est = 0.0
+    _budget_check(est, model, provider, "realtime")   # cross-process daily/monthly cap (sqlite backend)
     with _rt_lock:
         projected = _rt_spent + est
         spent = _rt_spent

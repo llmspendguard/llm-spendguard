@@ -19,7 +19,56 @@ ANTHROPIC_CACHE = HOME / "anthropic_usage_cache.json"
 RT_LOG = HOME / "realtime_log.jsonl"          # real-time spend log (per-day-per-model rollup)
 
 
-def rt_budget(): return float(os.getenv("GATE_RT_BUDGET", "50"))   # per-process cumulative real-time cap ($)
+CONFIG_JSON = HOME / "config.json"             # operational (non-secret) config: caps, budget, emit
+
+
+def _cfg():
+    """~/.spendguard/config.json (cached). Operational settings; env vars override per-knob."""
+    import json as _json
+    if getattr(_cfg, "_cache", None) is None:
+        c = {}
+        try:
+            if CONFIG_JSON.exists():
+                c = _json.loads(CONFIG_JSON.read_text())
+        except Exception:
+            pass
+        _cfg._cache = c
+    return _cfg._cache
+
+
+def _cfg_get(section, key, default=None):
+    return (_cfg().get(section) or {}).get(key, default)
+
+
+def cap():
+    """Per-batch hard cap ($). env GATE_CAP → config.json caps.per_batch → 75."""
+    v = os.getenv("GATE_CAP")
+    return float(v) if v is not None else float(_cfg_get("caps", "per_batch", 75))
+
+
+def rt_budget():
+    """Cumulative real-time cap ($). env GATE_RT_BUDGET → config.json caps.realtime → 50."""
+    v = os.getenv("GATE_RT_BUDGET")
+    return float(v) if v is not None else float(_cfg_get("caps", "realtime", 50))
+
+
+def daily_cap():
+    v = _cfg_get("caps", "daily", None)
+    return float(v) if v is not None else None
+
+
+def monthly_cap():
+    v = _cfg_get("caps", "monthly", None)
+    return float(v) if v is not None else None
+
+
+def budget_backend():
+    return _cfg_get("budget", "backend", "memory")
+
+
+def db_path():
+    p = _cfg_get("budget", "db_path", None)
+    return p if p else str(HOME / "spend.db")
 
 
 def ssl_context():
@@ -53,7 +102,6 @@ def email_config():
     return cfg
 
 
-def cap():      return float(os.getenv("GATE_CAP", "75"))
 def disabled(): return os.getenv("GATE_DISABLE") == "1" or FLAG.exists()
 def allow():    return os.getenv("GATE_ALLOW") == "1"
 

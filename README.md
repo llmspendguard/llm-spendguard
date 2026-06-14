@@ -15,7 +15,16 @@ makes those mistakes impossible to ship silently.
 - **report** — daily / weekly / monthly spend across providers, for a scheduled monitor.
 - **audit** — fail CI if any code disagrees with the canonical price table.
 
-## Use
+## Quickstart
+
+**A) Set up with Claude (recommended).** Point Claude Code / the desktop app at this repo and say:
+> *Install spendguard from this repo and run the guided setup in `SETUP.md`.*
+
+Claude installs it, reads the **config registry** (`src/spendguard/config_schema.py` — the single source
+of truth for every setting, its default, valid options, and whether it's secret), asks you one question at
+a time, and writes your config. Details: [SETUP.md](SETUP.md).
+
+**B) pip + code.**
 ```python
 import spendguard
 spendguard.install(cap=75)          # gate every batch submission in this process
@@ -24,6 +33,7 @@ Or auto-install for every process in a venv — drop this in `sitecustomize.py`:
 ```python
 import spendguard; spendguard.install()
 ```
+Configure with `spendguard init` (interactive) / `spendguard config` (show current); see [Configuration](#configuration-prices-providers-models).
 
 ## CLI
 ```
