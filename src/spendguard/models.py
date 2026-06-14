@@ -93,6 +93,25 @@ def apply_call_params(model, kw):
     return kw
 
 
+def mark_ineffective(model, intent, reason, confidence=0.85):
+    """Record that a model just doesn't work for an intent (or globally if intent falsy) — so future
+    experiments/recommendations skip it instead of re-paying to rediscover it."""
+    add_fact(model, f"ineffective:{intent or '*'}", reason, confidence=confidence, source="experiment", verified=True)
+
+
+def ineffective(model, intent):
+    """(reason, confidence, ts) if model is known-ineffective for this intent or globally, else None."""
+    f = facts(model)
+    L = _db()
+    for key in (f"ineffective:{intent}", "ineffective:*"):
+        if key in f:
+            v, c, _src, _ver = f[key]
+            with L._lock:
+                r = L._db().execute("SELECT ts FROM model_facts WHERE model=? AND key=?", (model, key)).fetchone()
+            return (v, c, r[0] if r else None)
+    return None
+
+
 def heal_reasoning(model, kw, err):
     """If a call 400s because reasoning_effort is the wrong literal for this model, flip none<->minimal,
     STORE the corrected fact (self-learning), and return True so the caller retries. Else False."""

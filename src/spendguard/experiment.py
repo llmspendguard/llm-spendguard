@@ -98,6 +98,7 @@ def _call(model, prompt, max_out=400):
         text = "".join(b.text for b in m.content if getattr(b, "type", None) == "text")
         it, ot = m.usage.input_tokens, m.usage.output_tokens
     else:
+        from openai import OpenAI
         oc = OpenAI(api_key=key, base_url=adapters.PROVIDERS[prov]["base_url"])
         try:
             m = oc.chat.completions.create(**kw)
@@ -123,13 +124,25 @@ def _variants(intent, base_model, models, instructions):
     return vs
 
 
-def experiment(intent, models=None, instructions=None, n=20, run=False):
+def experiment(intent, models=None, instructions=None, n=20, run=False, reconsider=False):
+    from . import models as M
     base_model = _base_model(intent)
     samples = _samples(intent, base_model, n) if base_model else []
     if not samples:
         print(f"experiment — no call_io samples for intent '{intent}'. Run `spendguard fetch-io` first.")
         return dict(ok=False)
-    variants = _variants(intent, base_model, models, instructions)
+    # soft denylist: skip models already known-ineffective for this intent (unless --reconsider)
+    keep_models, skipped = [], []
+    for m in (models or []):
+        bad = M.ineffective(m, intent)
+        if bad and not reconsider:
+            skipped.append((m, bad))
+        else:
+            keep_models.append(m)
+    for m, (reason, conf, ts) in skipped:
+        print(f"  ⊘ skipping {m} — known ineffective for '{intent}' ({reason}; {(ts or '')[:10]}). "
+              f"--reconsider to retest (it may have improved).")
+    variants = _variants(intent, base_model, keep_models, instructions)
 
     # baseline cost from the stored samples (no spend)
     base_cost = 0.0
@@ -202,6 +215,10 @@ def experiment(intent, models=None, instructions=None, n=20, run=False):
             print(f"  {v['label'][:21]:<22}{('$%.5f' % per):>10}{('%+.0f%%' % -drop):>13}"
                   f"{('%.0f%% ±%.0f%% (N=%d)' % (100*match, 100*stderr, n)):>16}  {verdict}")
             results.append(dict(label=v["label"], per=per, drop=drop, match=match, stderr=stderr, n=n, killed=killed))
+            # self-learning denylist: a killed MODEL-swap is remembered as ineffective for this intent
+            if killed and v["label"].startswith("model:"):
+                M.mark_ineffective(v["model"], intent, f"{int(100*match)}% output-match at pilot (N={n})")
+                print(f"      ↳ marked {v['model']} ineffective for '{intent}' — auto-skipped next time.")
     print("\n  adopt only variants that are cheaper AND keep output (match ≥ 97%). Wide ±stderr or small N "
           "= inconclusive — run more samples (`--n`) before trusting it. Losers were killed at the pilot to cap waste.")
     return dict(ok=True, results=results)
@@ -215,6 +232,66 @@ def _meta():
         return 0.0
 
 
+def _read_inputs(path):
+    """Prompts from a chunk file: a batch .jsonl (OpenAI body.messages / Anthropic params.messages),
+    {"prompt":...} per line, or a plain text file (one prompt per line). Returns [(custom_id, prompt)]."""
+    items = []
+    for ln in open(path, errors="ignore"):
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            o = json.loads(ln)
+        except Exception:
+            items.append((None, ln)); continue
+        cid = o.get("custom_id")
+        body = o.get("body") or o.get("params") or o
+        prompt = None
+        for m in (body.get("messages") or []):
+            if (m.get("role") if isinstance(m, dict) else None) == "user":
+                c = m.get("content"); prompt = c if isinstance(c, str) else json.dumps(c)
+        prompt = prompt if prompt is not None else (o.get("prompt") or "")
+        items.append((cid, prompt))
+    return items
+
+
+def promote(intent, model, instruction="", input=None, out=None, n=None, run=False):
+    """Run a WINNING config on real inputs and KEEP the output — a successful test IS production work,
+    not wasted spend. Runs under the REAL intent → WORKLOAD caps (not the meta cage). Estimate-first."""
+    instr = ("\n\n" + instruction) if instruction else ""
+    if input:
+        items = _read_inputs(input)
+    else:                                              # fall back to the slice we already have for the intent
+        base = _base_model(intent)
+        items = [(None, p) for p, _r, _m in _samples(intent, base, n or 50)]
+    if n:
+        items = items[:n]
+    if not items:
+        print(f"promote — no inputs (give --input <chunk.jsonl> or fetch-io samples for '{intent}').")
+        return dict(ok=False)
+    est = sum(pricing.realtime_cost(model, _count_tokens(p + instr, model), max(50, _count_tokens(p, model) // 2))
+              for _c, p in items)
+    print(f"promote — run winner {model} on {len(items)} inputs for '{intent}', KEEP output as production")
+    print(f"  ⚠ this is WORKLOAD spend (real intent → your normal caps, NOT the meta cage). est ~${est:.4f}")
+    if not run:
+        print("  estimate-only. Re-run with --run to produce + keep the output.")
+        return dict(ok=True, est=est, items=len(items))
+    out = out or f"promote_{intent.replace('/', '_')}.jsonl"
+    kept, tot = 0, 0.0
+    with calls.context(intent=intent):                 # REAL intent → workload caps (this is production)
+        with open(out, "w") as f:
+            for cid, p in items:
+                try:
+                    cost, _it, _ot, text = _call(model, p + instr, max_out=1500)
+                    f.write(json.dumps({"custom_id": cid, "output": text}) + "\n")
+                    kept += 1; tot += cost
+                except Exception:
+                    pass
+    print(f"  kept {kept}/{len(items)} outputs → {out}  (${tot:.4f} — production work, not wasted).")
+    print("  (for a full 25K-request chunk use the Batch API path; this realtime promote suits meaningful slices.)")
+    return dict(ok=True, kept=kept, out=out, cost=tot)
+
+
 def main(argv=None):
     import argparse
     ap = argparse.ArgumentParser(prog="spendguard experiment")
@@ -222,7 +299,23 @@ def main(argv=None):
     ap.add_argument("--model", action="append", help="a cheaper model variant to test (repeatable)")
     ap.add_argument("--instruction", action="append", help="an output-format instruction variant (repeatable)")
     ap.add_argument("--n", type=int, default=20, help="samples to test per variant")
+    ap.add_argument("--reconsider", action="store_true", help="also test models previously marked ineffective")
     ap.add_argument("--run", action="store_true", help="actually call (default: estimate). Caged by caps.meta.")
     a = ap.parse_args(argv)
-    experiment(a.intent, models=a.model, instructions=a.instruction, n=a.n, run=a.run)
+    experiment(a.intent, models=a.model, instructions=a.instruction, n=a.n, run=a.run, reconsider=a.reconsider)
+    return 0
+
+
+def promote_main(argv=None):
+    import argparse
+    ap = argparse.ArgumentParser(prog="spendguard promote")
+    ap.add_argument("--intent", required=True)
+    ap.add_argument("--model", required=True, help="the winning model")
+    ap.add_argument("--instruction", help="the winning output-format instruction (optional)")
+    ap.add_argument("--input", help="chunk to process (batch .jsonl / {prompt} jsonl / plain text)")
+    ap.add_argument("--out", help="where to write kept outputs (jsonl)")
+    ap.add_argument("--n", type=int, help="cap inputs")
+    ap.add_argument("--run", action="store_true", help="actually produce+keep (default: estimate). WORKLOAD spend.")
+    a = ap.parse_args(argv)
+    promote(a.intent, a.model, instruction=a.instruction or "", input=a.input, out=a.out, n=a.n, run=a.run)
     return 0

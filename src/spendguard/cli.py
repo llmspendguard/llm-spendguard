@@ -87,6 +87,9 @@ def main(argv=None):
     if cmd == "models":                               # per-model learnings/profiles (auto-applied on every call)
         from . import models
         return models.cmd(rest)
+    if cmd == "promote":                              # run a winning config on a chunk + KEEP output (workload)
+        from . import experiment
+        return experiment.promote_main(rest)
     if cmd == "bootstrap":                            # cold-start: mine all history → corpus + insights
         from . import bootstrap
         return bootstrap.main(rest)
