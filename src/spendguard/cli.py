@@ -93,6 +93,12 @@ def main(argv=None):
     if cmd in ("cache-stats", "semcache"):            # semantic response cache stats (opt-in cost saver)
         from . import semcache
         return semcache.cmd(rest)
+    if cmd == "dedup":                                # collapse a batch jsonl (within-batch + already-cached)
+        from . import semcache
+        return semcache.dedup_main(rest)
+    if cmd == "dedup-populate":                       # seed the cache from completed results → free re-runs
+        from . import semcache
+        return semcache.populate_main(rest)
     if cmd == "cascade":                              # cost-aware routing: cheap→verify→escalate (workload)
         from . import cascade
         return cascade.cmd(rest)

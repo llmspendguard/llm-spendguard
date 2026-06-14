@@ -122,6 +122,120 @@ def stats():
     return {**_stats, "cached_entries": n[0], "with_embedding": n[1]}
 
 
+def _line_prompt(o):
+    body = o.get("body") or o.get("params") or o
+    for m in (body.get("messages") or []):
+        if isinstance(m, dict) and m.get("role") == "user":
+            c = m.get("content")
+            return c if isinstance(c, str) else _json_dumps(c)
+    return o.get("prompt") or ""
+
+
+def _json_dumps(x):
+    import json
+    return json.dumps(x)
+
+
+def dedup_jsonl(input_path, out_path, model="*", map_path=None):
+    """Collapse a batch jsonl: drop within-batch duplicate prompts AND prompts already in the persistent
+    cache (already processed in a prior run/retry — the real saver). Writes the unique requests to
+    out_path. NOTE: on FRESH unique-prompt workloads this is ~0%; its win is re-runs/retries/overlap."""
+    import json
+    total = kept_n = within_dup = cache_hit = 0
+    seen = set()
+    dup_map = {}
+    kept_ids = []
+    with open(input_path, errors="ignore") as fin, open(out_path, "w") as fout:
+        for ln in fin:
+            ln = ln.strip()
+            if not ln:
+                continue
+            try:
+                o = json.loads(ln)
+            except Exception:
+                fout.write(ln + "\n"); kept_n += 1; total += 1; continue
+            total += 1
+            cid = o.get("custom_id") or f"i{total}"
+            h = _hash(_line_prompt(o))
+            if h in seen:
+                within_dup += 1
+                dup_map.setdefault(h, []).append(cid)
+                continue
+            with _lock:
+                row = _db().execute("SELECT 1 FROM semcache WHERE model IN (?,?) AND prompt_hash=? LIMIT 1",
+                                    (model, "*", h)).fetchone()
+            if row:
+                cache_hit += 1
+                continue
+            seen.add(h); dup_map[h] = [cid]; kept_ids.append(cid)
+            fout.write(ln + "\n"); kept_n += 1
+    if map_path:
+        import json as _j
+        _j.dump({"kept": kept_ids, "groups": list(dup_map.values())}, open(map_path, "w"))
+    ratio = total / kept_n if kept_n else 1.0
+    print(f"dedup — {total:,} requests → {kept_n:,} to submit "
+          f"({within_dup:,} within-batch dup, {cache_hit:,} already-cached) = {ratio:.2f}x, "
+          f"{100*(1-kept_n/total) if total else 0:.0f}% fewer calls")
+    if ratio < 1.05:
+        print("  (≈no duplication here — fresh unique prompts; the win comes on re-runs/retries/overlap.)")
+    return dict(total=total, kept=kept_n, within_dup=within_dup, cache_hit=cache_hit, ratio=ratio)
+
+
+def populate_jsonl(input_path, results_path, model="*"):
+    """After a batch completes, store prompt→output so a future dedup skips those items (free re-runs)."""
+    import json
+    prompts = {}
+    for ln in open(input_path, errors="ignore"):
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            o = json.loads(ln)
+        except Exception:
+            continue
+        prompts[o.get("custom_id")] = _line_prompt(o)
+    n = 0
+    for ln in open(results_path, errors="ignore"):
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            o = json.loads(ln)
+        except Exception:
+            continue
+        cid = o.get("custom_id")
+        body = (o.get("response") or {}).get("body") or {}
+        out = ((body.get("choices") or [{}])[0].get("message") or {}).get("content")
+        if cid in prompts and out:
+            put(prompts[cid], model, out)
+            n += 1
+    print(f"populated {n} prompt→output pairs into the cache — future dedup will skip them (free re-runs).")
+    return n
+
+
+def dedup_main(argv=None):
+    import argparse
+    ap = argparse.ArgumentParser(prog="spendguard dedup")
+    ap.add_argument("--input", required=True, help="batch .jsonl to dedup")
+    ap.add_argument("--out", required=True, help="write the unique requests here")
+    ap.add_argument("--map", help="write the id-grouping map here (json)")
+    ap.add_argument("--model", default="*", help="cache scope (default * = any)")
+    a = ap.parse_args(argv)
+    dedup_jsonl(a.input, a.out, model=a.model, map_path=a.map)
+    return 0
+
+
+def populate_main(argv=None):
+    import argparse
+    ap = argparse.ArgumentParser(prog="spendguard dedup-populate")
+    ap.add_argument("--input", required=True, help="the batch .jsonl that was submitted")
+    ap.add_argument("--results", required=True, help="the batch results .jsonl")
+    ap.add_argument("--model", default="*")
+    a = ap.parse_args(argv)
+    populate_jsonl(a.input, a.results, model=a.model)
+    return 0
+
+
 def cmd(argv=None):
     s = stats()
     total = s["exact"] + s["semantic"] + s["miss"]
