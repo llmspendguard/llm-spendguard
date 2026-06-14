@@ -35,6 +35,21 @@ def _system_from_script(path):
     return best
 
 
+def _model_from_script(path):
+    """Test the model the script ACTUALLY uses (an explicit model= wins; else infer from the filename)."""
+    txt = open(path, errors="ignore").read()
+    m = re.search(r"""model\s*=\s*["']([\w.\-]+)["']""", txt)
+    if m:
+        return m.group(1)
+    base = os.path.basename(path).lower()
+    for key, mdl in [("gpt5mini", "gpt-5-mini"), ("gpt5nano", "gpt-5-nano"), ("gpt55", "gpt-5.5"),
+                     ("gpt5", "gpt-5"), ("opus", "claude-opus-4-8"), ("haiku", "claude-haiku-4-5"),
+                     ("sonnet", "claude-sonnet-4-5")]:
+        if key in base:
+            return mdl
+    return None
+
+
 def _system_and_users_from_intent(intent, n):
     from . import callio
     from .cacheaudit import _common_prefix
@@ -69,6 +84,8 @@ def cache_test(system, users, model=None, run=False):
     print(f"  ESTIMATE (zero paid calls): ~{in_tok:,} in tok -> ~${est:.4f}  (meta ${config.meta_cap():.0f}/day)")
     if prov == "openai" and sys_tok < 1024:
         print("  ⚠️ OpenAI auto-caches only prefixes ≥1024 tokens — this block is too short to cache there.")
+    if prov == "anthropic" and "haiku" in str(model) and sys_tok < 2200:
+        print("  ⚠️ Anthropic Haiku needs ≥2048 tokens to cache (Opus/Sonnet ≥1024); this block may be too short.")
     if not run:
         print("  estimate-only. Re-run with --run to actually test caching (gate caps it).")
         return dict(ok=True, est=est)
@@ -90,7 +107,8 @@ def cache_test(system, users, model=None, run=False):
             from openai import OpenAI
             c = OpenAI(api_key=config.api_key("OPENAI_API_KEY"))
             for u in users:
-                r = c.chat.completions.create(model=model, max_tokens=16,
+                # gpt-5 family requires max_completion_tokens (max_tokens is rejected)
+                r = c.chat.completions.create(model=model, max_completion_tokens=16,
                     messages=[{"role": "system", "content": system}, {"role": "user", "content": u}])
                 d = getattr(r.usage, "prompt_tokens_details", None)
                 calls_out.append(dict(in_=r.usage.prompt_tokens,
@@ -133,6 +151,8 @@ def main(argv=None):
     system, users = "", None
     if a.script:
         system = _system_from_script(a.script)
+        if not a.model:                              # test the model the script actually uses
+            a.model = _model_from_script(a.script)
     elif a.from_intent:
         system, users = _system_and_users_from_intent(a.from_intent, a.n)
     else:
