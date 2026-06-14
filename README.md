@@ -153,6 +153,13 @@ Real-time calls are recorded automatically (caller, prompt/output snippets, late
   - **`spendguard reconstruct`** — bulk-judge unlabeled calls' quality (judge; Batch API; needs `calls.store_prompts`).
   - **Models are configurable:** `advisor.model` (reasoner, default Opus 4.8) · `advisor.judge_model` (judge, default
     Haiku 4.5) — any priced model / provider. Run any op without `--run` to see the projected cost first.
+- **Post-event mining (deterministic, zero spend)** — recover what the live recorder missed:
+  - **`spendguard mine-history {intents,graph,git}`** — reconstruct each batch's **intent** from repo artifacts
+    (`*batch_id*.json` + a size-bounded content scan of `data/`), add causal graph edges (`preceded`,
+    `derived_from`), and read git history for cost/fix signals. `--apply` writes; report-only otherwise.
+  - **`spendguard mine-conv {index,synth}`** — mine session transcripts for cost decisions. `index` is cached
+    (deterministic); `synth` is the caged reasoner turning the top decision snippets into `source='conversation'`
+    insights (estimate-first). Reconstructs your actual playbook (packing, never-cancel, price-basis errors, …).
 
 ## Observability (feed your existing stack)
 spendguard emits an event per gated call — it's the *enforcement* layer, not another dashboard; route the
