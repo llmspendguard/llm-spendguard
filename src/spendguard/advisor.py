@@ -15,7 +15,7 @@ The model for each role is configurable (see config.advisor_model / advisor_judg
 estimate path makes ZERO paid calls — it only counts tokens and prices via pricing.py.
 """
 import json
-from . import calls, learn, advise, config, pricing
+from . import calls, learn, config, pricing
 from .submit import _count_tokens
 
 META = "spendguard"   # intent prefix → routed to the meta budget by the gate
@@ -59,21 +59,20 @@ def _judge_prompt(prompt_snip, output_snip):
     return f"PROMPT:\n{prompt_snip}\n\nOUTPUT:\n{output_snip}"
 
 
-def _evidence_table(intent=None):
-    """Compact text of the deterministic evidence — the reasoner's input (cheap, no PII beyond models)."""
-    agg = advise.evidence(intent=intent)
-    if not agg:
+def _evidence_table(intent=None, top=40):
+    """Compact per-(intent, model) evidence — the reasoner's input (so it sees reconstructed intents,
+    e.g. phase_taxonomy=$1127, not just model totals). Cheap; no PII beyond model/intent labels."""
+    rows = calls.summary(intent)   # (intent, model, jobs, cost, good, bad) — excludes meta
+    if not rows:
         return None, 0
-    lines = ["intent/model | jobs | $total | $/Mout | good% | $/good"]
-    for model, a in sorted(agg.items(), key=lambda kv: -kv[1]["cost"]):
-        permout = (a["cost"] / a["outtok"] * 1e6) if a["outtok"] else None
-        good_rate = (a["good"] / a["labeled"]) if a["labeled"] else None
-        per_good = (a["cost"] / a["good"]) if a["good"] else None
-        lines.append(f"{a['provider']}:{model} | {a['jobs']} | ${a['cost']:.2f} | "
-                     f"{('$%.2f' % permout) if permout else '—'} | "
-                     f"{('%.0f%%' % (100*good_rate)) if good_rate is not None else '—'} | "
-                     f"{('$%.4f' % per_good) if per_good else '—'}")
-    return "\n".join(lines), len(agg)
+    rows = sorted(rows, key=lambda r: -(r[3] or 0))[:top]
+    lines = ["intent | model | jobs | $total | good% | $/good"]
+    for it, model, jobs, cost, good, bad in rows:
+        labeled = (good or 0) + (bad or 0)
+        goodpct = f"{100*good/labeled:.0f}%" if labeled else "—"
+        per_good = f"${cost/good:.4f}" if good else "—"
+        lines.append(f"{it} | {model} | {jobs} | ${cost or 0:.2f} | {goodpct} | {per_good}")
+    return "\n".join(lines), len(rows)
 
 
 def _est_line(mode, model, n, in_tok, out_tok, cost):
