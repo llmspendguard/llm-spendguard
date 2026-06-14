@@ -81,6 +81,9 @@ def main(argv=None):
     if cmd in ("cache-test", "cachetest"):            # empirically prove caching engages (caged, estimate-first)
         from . import cachetest
         return cachetest.main(rest)
+    if cmd == "brief":                                # "this is what we need to do" → confirm-or-correct plan
+        from . import brief
+        return brief.main(rest)
     if cmd == "experiment":                           # A/B efficiency lab: cost↓ + same-output (caged, estimate-first)
         from . import experiment
         return experiment.main(rest)
