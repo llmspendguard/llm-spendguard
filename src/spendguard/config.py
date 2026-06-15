@@ -133,6 +133,32 @@ def email_config():
     return cfg
 
 
+def saas_config():
+    """SaaS / team roll-up connection from ~/.spendguard/saas.json, overlaid by env. The client seam to the
+    FUTURE separate server repo (llmseg.ai). Secrets (api_key) stay here (gitignored) or in env — never the repo.
+    Returns a dict with: enabled(bool), url, api_key, team_id, org_id, visibility."""
+    import json as _json
+    cfg = {}
+    p = HOME / "saas.json"
+    try:
+        if p.exists():
+            cfg.update(_json.loads(p.read_text()))
+    except Exception:
+        pass
+    for key, env in (("enabled", "SPENDGUARD_SAAS"), ("url", "SPENDGUARD_SAAS_URL"),
+                     ("api_key", "SPENDGUARD_SAAS_KEY"), ("team_id", "SPENDGUARD_TEAM_ID"),
+                     ("org_id", "SPENDGUARD_ORG_ID"), ("visibility", "SPENDGUARD_VISIBILITY")):
+        v = os.environ.get(env)
+        if v is not None and v != "":
+            cfg[key] = v
+    cfg["enabled"] = str(cfg.get("enabled", "")).lower() in ("1", "true", "yes", "y")
+    cfg.setdefault("visibility", "private")
+    return cfg
+
+
+def saas_path(): return HOME / "saas.json"
+
+
 def disabled(): return os.getenv("GATE_DISABLE") == "1" or FLAG.exists()
 def allow():    return os.getenv("GATE_ALLOW") == "1"
 

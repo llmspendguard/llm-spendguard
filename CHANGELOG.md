@@ -2,6 +2,27 @@
 
 All notable changes to **llm-spendguard**. Format loosely follows Keep a Changelog; dates are UTC.
 
+## [0.2.3] — 2026-06-14
+
+Multi-interpreter coverage + the team/org SaaS client seam (ready to connect to the future server repo).
+
+### Added
+- **`spendguard coverage`** — the gate is per-interpreter, and most people run several pythons (3.11, 3.14,
+  venvs). This scans every interpreter on the machine (bounded — no recursive `$HOME` walk), reports which
+  can actually **import** the LLM SDKs and which are **GATED**, and prints the exact `install-hook` line for
+  any gap. "has SDKs" now means *importable* (arch-mismatched installs like intel pydantic on arm64 no
+  longer show false positives). Exit 2 if any gap.
+- **SaaS client seam** (`saas.py`, `spendguard saas`, `saas.example.json`) — points at the future SEPARATE
+  server repo (llmseg.ai). Config in `~/.spendguard/saas.json` (gitignored) or env: `enabled`, `url`,
+  `api_key` (secret), `team_id`, `org_id`, `visibility`. Speaks a documented `/v1` contract
+  (`health`/`ledger`/`insights`) with Bearer auth; **degrades gracefully until the server exists**;
+  `visibility=private` = nothing leaves the machine. Partner, not supervisor — never overrides local caps.
+  New `saas`/`coverage` config section + `saas.json` store wired through `config`/`init`.
+
+### Changed
+- `scripts/batch_llm.py`: `estimate_both` → **`multi_llm_estimate`** (it always took N models, not 2);
+  `estimate_both`/`dual_estimate` kept as back-compat aliases.
+
 ## [0.2.2] — 2026-06-14
 
 Close the **generation-time** bypass: make assistants write gated code, and gate PEP668 system pythons.

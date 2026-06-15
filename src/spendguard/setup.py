@@ -81,6 +81,87 @@ def cmd_install_rule(argv=None):
     return install_rule(a.project, glob_=a.glob_)
 
 
+def _probe(interp):
+    """(version, has_sdks, enforcing|None) for an interpreter. enforcing=None if it can't even run.
+    'enforcing' means the gate is ACTUALLY patched onto the OpenAI SDK in that interpreter's startup."""
+    import subprocess
+    try:
+        ver = subprocess.run([interp, "--version"], capture_output=True, text=True, timeout=10
+                             ).stdout.strip().split()[-1]
+    except Exception:
+        return (None, False, None)
+    # "has" = the SDK actually IMPORTS (find_spec lies on arch-mismatched installs, e.g. intel pydantic on arm64).
+    chk = ("has=False; enf=None\n"
+           "try:\n"
+           " import openai; has=True\n"
+           " from openai.resources import files as of; enf=bool(getattr(of.Files.create,'_spend_gated',False))\n"
+           "except Exception: pass\n"
+           "if enf is None:\n"
+           " try:\n"
+           "  import anthropic; has=True\n"
+           "  from anthropic.resources.messages import batches as ab; enf=bool(getattr(ab.Batches.create,'_spend_gated',False))\n"
+           " except Exception: pass\n"
+           "print(int(has),int(bool(enf)))")
+    try:
+        out = subprocess.run([interp, "-c", chk], capture_output=True, text=True, timeout=20).stdout.strip().split()
+        has, enf = bool(int(out[0])), bool(int(out[1]))
+    except Exception:
+        has, enf = False, False
+    return (ver, has, enf)
+
+
+def coverage(extra=None):
+    """Show, across EVERY python on this machine (you use 3.11/3.14/…), which can make LLM calls and which
+     are actually GATED. The gate is per-interpreter, so this is how you confirm nothing is silently ungated.
+     `spendguard coverage [interp_or_venv ...]`."""
+    import glob, sys as _sys
+    from pathlib import Path
+    cands = [_sys.executable, "/usr/bin/python3"]
+    cands += sorted(glob.glob("/opt/homebrew/bin/python3.*") + glob.glob("/usr/local/bin/python3.*"))
+    # discover venvs SHALLOWLY under common project roots — never a recursive $HOME walk (iCloud/dataless trap)
+    roots = [Path.cwd(), Path.cwd().parent, Path.home() / "Documents", Path.home() / "Documents" / "claude"]
+    for root in roots:
+        for pat in ("*/.venv/bin/python", ".venv/bin/python", "*/*/.venv/bin/python"):
+            cands += glob.glob(str(root / pat))
+    for e in (extra or []):                                       # a passed venv dir → its python
+        p = os.path.join(e, "bin", "python")
+        cands.append(p if os.path.exists(p) else e)
+    seen, rows = set(), []
+    for c in cands:
+        rc = os.path.realpath(c) if os.path.exists(c) else c
+        if rc in seen:
+            continue
+        seen.add(rc)
+        ver, has, enf = _probe(c)
+        if ver is None:
+            continue
+        rows.append((c, ver, has, enf))
+    print("spendguard coverage — the gate is PER-INTERPRETER; each python/venv must be gated on its own.\n")
+    print(f"  {'interpreter':<52}{'ver':<9}{'LLM SDKs':<10}{'GATED'}")
+    gap = []
+    for c, ver, has, enf in rows:
+        mark = ("🟢 yes" if enf else "🔴 NO") if has else "— n/a"
+        print(f"  {c[:51]:<52}{ver:<9}{('yes' if has else 'no'):<10}{mark}")
+        if has and not enf:
+            gap.append(c)
+    print()
+    if gap:
+        print("  ⚠️ these CAN call LLMs but are NOT gated — gate each:")
+        for c in gap:
+            if "/.venv/" in c or c.endswith("/.venv/bin/python"):
+                print(f"     spendguard install-hook --venv {c.rsplit('/bin/python',1)[0]}")
+            else:
+                print(f"     spendguard install-hook --user --python {c}")
+        print("  (or rely on `import spendguard; spendguard.require()` at the top of the script — fail-closed in ANY interpreter.)")
+    else:
+        print("  ✓ every interpreter that has the LLM SDKs is gated.")
+    return 2 if gap else 0
+
+
+def cmd_coverage(argv=None):
+    return coverage(list(argv or []))
+
+
 def _site_packages(venv):
     import glob
     c = glob.glob(os.path.join(venv, "lib", "python*", "site-packages"))
@@ -214,6 +295,9 @@ def _resolve(s):
     if store.startswith("email.json:"):
         v = config.email_config().get(store[len("email.json:"):])
         return (v, "email.json") if v is not None else (s["default"], "default")
+    if store.startswith("saas.json:"):
+        v = config.saas_config().get(store[len("saas.json:"):])
+        return (v, "saas.json") if v not in (None, "") else (s["default"], "default")
     return s["default"], "default"
 
 
@@ -244,7 +328,7 @@ def cmd_config(argv=None):
             else:
                 disp = v
             print(f"  {s['key']:<20} {str(disp):<28} {src}")
-    print(f"\nfiles: {config.CONFIG_JSON} · {config.HOME / 'email.json'}")
+    print(f"\nfiles: {config.CONFIG_JSON} · {config.HOME / 'email.json'} · {config.saas_path()}")
     print("API keys come from env / ./.env (never written to config files).")
     return 0
 
@@ -253,10 +337,16 @@ def cmd_init(argv=None):
     print("spendguard setup — Enter keeps the current/default; 'null' clears.\n")
     cfgjson = dict(config._cfg())
     ep = config.HOME / "email.json"
-    email = {}
+    sp = config.saas_path()
+    email, saas = {}, {}
     if ep.exists():
         try:
             email = json.loads(ep.read_text())
+        except Exception:
+            pass
+    if sp.exists():
+        try:
+            saas = json.loads(sp.read_text())
         except Exception:
             pass
     for s in config_schema.SETTINGS:
@@ -279,12 +369,16 @@ def cmd_init(argv=None):
             cfgjson.setdefault(sec, {})[key] = val
         elif s["store"].startswith("email.json:"):
             email[s["store"][len("email.json:"):]] = val
+        elif s["store"].startswith("saas.json:"):
+            saas[s["store"][len("saas.json:"):]] = val
     config.HOME.mkdir(parents=True, exist_ok=True)
     config.CONFIG_JSON.write_text(json.dumps(cfgjson, indent=2))
     config._cfg._cache = None  # invalidate cache
     if email:
         ep.write_text(json.dumps(email, indent=2))
-    print(f"\nwrote {config.CONFIG_JSON}" + (f" and {ep}" if email else ""))
+    if saas:
+        sp.write_text(json.dumps(saas, indent=2))
+    print(f"\nwrote {config.CONFIG_JSON}" + (f" and {ep}" if email else "") + (f" and {sp}" if saas else ""))
     keys = ", ".join(s["env"] for s in config_schema.SETTINGS if s["section"] == "keys")
     print(f"Set API keys in your environment or ./.env: {keys}")
     if (cfgjson.get("budget") or {}).get("backend") == "sqlite":

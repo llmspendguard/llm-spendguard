@@ -30,12 +30,17 @@ choice. Greater visibility is something a user turns **on** — the partner mind
 The client never depends on the server (works fully standalone, fail-open). The server is purely additive
 visibility/aggregation over what users opt to send.
 
-### Client seam (already mostly present)
-- Config knobs to add: `team_id`, `org_id`, `sync.endpoint`, `sync.token`, `sync.visibility` (full | costs | learnings).
-- Transport reuses the existing `emit` webhook + `insights export` (scrubbed) — the SaaS ingest endpoint is
-  just another sink. Each user's own SQLite ledger stays the source of truth; the SaaS aggregates copies.
-- Scrub rules per visibility tier (never send prompts/keys upward; team can keep intent names, org gets
-  scrubbed, community fully scrubbed) — the `scope` field + scrubber already exist.
+### Client seam (BUILT — `saas.py`, `spendguard saas`)
+The client is ready to connect the moment the server exists:
+- **Config** lives in `~/.spendguard/saas.json` (gitignored; template `saas.example.json`): `enabled`, `url`
+  (e.g. `https://api.llmseg.ai`), `api_key` (secret; or `SPENDGUARD_SAAS_KEY`), `team_id`, `org_id`,
+  `visibility` (`private` | `team` | `org`). Surfaced in `spendguard config` like every other knob.
+- **Contract** (`saas.py`, versioned `{url}/v1`): `GET /v1/health`, `POST /v1/ledger` (per-day roll-up),
+  `POST /v1/insights` (scrubbed abstracts), `GET /v1/insights?scope=` (pooled learnings). Bearer auth.
+- **Fail-safe by design:** every call degrades gracefully ("not connected") until the server is up; the
+  client never depends on it. `visibility=private` = nothing leaves the machine. Reuses `share.py`'s scrub
+  (abstracts only — never prompts/keys/$). Each user's SQLite ledger stays the source of truth.
+- Status/test: `spendguard saas status` · `spendguard saas ping` · `saas push` / `saas pull`.
 
 ## Access — slash commands (shipped)
 `spendguard install-skills` deploys `/spend` (quick status: totals + leak + top learnings) and
@@ -45,8 +50,9 @@ both surfaces today.
 
 ## Build order
 1. **(done)** Client: gate / pricing / ledger / advisor / learnings / reconcile-ledger / report / slash-commands.
-2. Client **sync** seam — config knobs + push ledger-summary & scrubbed learnings to a configurable endpoint
-   (works against a flat file / bucket first, no server needed).
-3. **`llm-spendguard-server`** (separate repo): account/team/org, ingest, aggregate visibility + learnings +
-   advice, billing. llmseg.ai.
+2. **(done)** Client **sync** seam — `saas.py` + `saas.json` config + `spendguard saas`; speaks the `/v1`
+   contract, fail-safe until the server exists.
+3. **`llm-spendguard-server`** (separate repo, NEXT): implement the `/v1` contract — account/team/org, ingest,
+   aggregate visibility + learnings + advice, billing. llmseg.ai. The key-holding **proxy** (the only true
+   no-bypass guarantee) is the natural first milestone here.
 4. Publish client to PyPI; orgs use private index / base image / `install-hook` for fleet rollout.

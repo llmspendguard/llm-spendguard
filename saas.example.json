@@ -1,0 +1,9 @@
+{
+  "_comment": "Template for the spendguard SaaS/team roll-up connection. Copy to ~/.spendguard/saas.json (gitignored) and fill in once the SEPARATE server repo (llmseg.ai) is running. Until then keep enabled=false — every client call degrades gracefully. Secrets (api_key) NEVER go in the repo; use this file or the SPENDGUARD_SAAS_KEY env var. See src/spendguard/saas.py for the HTTP contract.",
+  "enabled": false,
+  "url": "https://api.llmseg.ai",
+  "api_key": "",
+  "team_id": "",
+  "org_id": "",
+  "visibility": "private"
+}

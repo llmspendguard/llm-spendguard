@@ -68,6 +68,12 @@ def main(argv=None):
     if cmd == "install-rule":                          # drop the spendguard usage rule into a CLAUDE.md
         from . import setup
         return setup.cmd_install_rule(rest)
+    if cmd == "coverage":                              # which interpreters/venvs are actually gated? (multi-version)
+        from . import setup
+        return setup.cmd_coverage(rest)
+    if cmd == "saas":                                  # team/org roll-up client seam (→ future server repo)
+        from . import saas
+        return saas.cmd(rest)
     if cmd == "calls":
         from . import calls
         return calls.cmd_summary(rest)

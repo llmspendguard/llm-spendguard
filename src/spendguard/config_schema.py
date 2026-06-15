@@ -87,6 +87,23 @@ SETTINGS = [
     dict(section="calls", key="snippet_len", store="config.json:calls.snippet_len", env=None, default=200,
          kind="float", secret=False, desc="Max characters of prompt/output snippet to store."),
 
+    # ── saas / team roll-up (client seam — points at the FUTURE separate server repo, llmseg.ai) ──
+    dict(section="saas", key="enabled", store="saas.json:enabled", env="SPENDGUARD_SAAS", default=False,
+         kind="bool", secret=False,
+         desc="Sync this machine's ledger/insights to a spendguard server for team/org roll-up. Off until the server exists."),
+    dict(section="saas", key="url", store="saas.json:url", env="SPENDGUARD_SAAS_URL", default=None,
+         kind="url|null", secret=False,
+         desc="Base URL of the spendguard server (e.g. https://api.llmseg.ai). The server is a SEPARATE repo."),
+    dict(section="saas", key="api_key", store="saas.json:api_key", env="SPENDGUARD_SAAS_KEY", default=None,
+         kind="string", secret=True, desc="Per-user token for the spendguard server (Bearer). Secret — env or saas.json only."),
+    dict(section="saas", key="team_id", store="saas.json:team_id", env="SPENDGUARD_TEAM_ID", default=None,
+         kind="string", secret=False, desc="Optional team this user rolls up into (visibility only — never overrides local caps)."),
+    dict(section="saas", key="org_id", store="saas.json:org_id", env="SPENDGUARD_ORG_ID", default=None,
+         kind="string", secret=False, desc="Optional org this user rolls up into (visibility only)."),
+    dict(section="saas", key="visibility", store="saas.json:visibility", env=None, default="private",
+         kind="enum:private,team,org", secret=False,
+         desc="How far this user's SCRUBBED insights/spend roll up. private = nothing leaves. Partner, not supervisor."),
+
     # ── pricing ──
     dict(section="pricing", key="prices_override", store="env", env="SPENDGUARD_PRICES", default=None,
          kind="path|null", secret=False, desc="Path to a custom prices.json/.yaml override (highest precedence)."),
