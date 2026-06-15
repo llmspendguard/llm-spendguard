@@ -69,6 +69,36 @@ def install_hook(venv, uninstall=False, install_pkg=True):
     return 0
 
 
+def install_skills(dest=None):
+    """Deploy the repo's skills/ as Claude slash-commands (copy into ~/.claude/skills/). They then work
+    as /<name> in Claude Code (CLI + the VS Code extension). `spendguard install-skills`."""
+    import shutil
+    from pathlib import Path
+    dest = Path(dest or (Path.home() / ".claude" / "skills"))
+    src = Path(__file__).resolve().parents[2] / "skills"
+    if not src.is_dir():
+        print(f"  no skills/ dir at {src}"); return 1
+    dest.mkdir(parents=True, exist_ok=True)
+    copied = []
+    for d in sorted(src.iterdir()):
+        if d.is_dir() and (d / "SKILL.md").exists():
+            tgt = dest / d.name
+            tgt.mkdir(exist_ok=True)
+            shutil.copy2(d / "SKILL.md", tgt / "SKILL.md")
+            copied.append(d.name)
+    print(f"  ✓ installed {len(copied)} skill(s) → {dest}: {', '.join('/' + c for c in copied)}")
+    print("  use them as slash-commands in Claude Code (CLI or the VS Code extension). `spend` is the quick status.")
+    return 0
+
+
+def cmd_install_skills(argv=None):
+    import argparse
+    ap = argparse.ArgumentParser(prog="spendguard install-skills")
+    ap.add_argument("--dest", help="skills dir (default: ~/.claude/skills)")
+    a = ap.parse_args(argv)
+    return install_skills(a.dest)
+
+
 def cmd_install_hook(argv=None):
     import argparse
     ap = argparse.ArgumentParser(prog="spendguard install-hook")

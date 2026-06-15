@@ -27,7 +27,10 @@ it reconstructs *what* you should do cheaper, and won't let "cheaper" cost you q
 The advisor's own LLM use is itself **caged** (a separate `caps.meta` budget, tagged `spendguard:*`, excluded
 from the corpus it analyzes) so the governor can't overspend governing.
 
-**Docs:** [Architecture + diagrams](docs/ARCHITECTURE.md) · [Methodology](docs/README.md) · [Module map](src/spendguard/README.md) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md) · [Setup](SETUP.md)
+**Docs:** [Architecture + diagrams](docs/ARCHITECTURE.md) · [Methodology](docs/README.md) · [Roadmap (teams/orgs/SaaS)](docs/ROADMAP.md) · [Module map](src/spendguard/README.md) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md) · [Setup](SETUP.md)
+
+**Slash-commands:** `spendguard install-skills` → use `/spend` (quick status) and `/spendguard-learn` (advisor) in Claude Code (CLI + VS Code extension).
+**Teams & orgs:** each user keeps their own ledger + sets their own caps (partner, not supervisor); opt-in roll-up for shared visibility + pooled learnings via the SaaS (separate repo). See the [Roadmap](docs/ROADMAP.md).
 
 ## Quickstart
 
@@ -54,6 +57,7 @@ Configure with `spendguard init` (interactive) / `spendguard config` (show curre
 # enforce / control
 spendguard status | on | off                 # kill switch (persistent flag)
 spendguard install-hook --venv <path>        # gate every process in ANOTHER venv/repo (--uninstall to remove)
+spendguard install-skills                    # deploy /spend + /spendguard-learn as Claude slash-commands
 
 # see the money
 spendguard report [--alert-threshold 150] [--email]   # daily/weekly/monthly + ledger-leak alert + top learnings
