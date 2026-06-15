@@ -14,6 +14,14 @@ def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     cmd = argv[0] if argv else "status"
     rest = argv[1:]
+    # ensure the gate is installed for this process so the advisor's OWN LLM calls (optimize/experiment/
+    # reconstruct/mine/review/promote/cascade/brief --llm) are caged by caps.meta even when run via the CLI
+    # outside a gated venv. Idempotent + fail-open.
+    try:
+        from . import gate
+        gate.install()
+    except Exception:
+        pass
     if cmd in ("status", "on", "off"):
         from . import gate
         return gate._cli(cmd)

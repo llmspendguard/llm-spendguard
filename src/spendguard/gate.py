@@ -284,6 +284,7 @@ _rt_spent = 0.0          # per-process cumulative real-time $
 _rt_agg = {}             # (day, provider, model) -> [calls, cost]  pending flush
 _rt_since_flush = 0
 _rt_warned = False
+_rt_bypass = False        # interactive "allow rest of run's real-time calls" — bypasses ONLY the RT budget
 
 
 def _now_day():
@@ -330,7 +331,7 @@ def _rt_record(provider, model, cost, in_tok=0, out_tok=0, cached=0):
 
 
 def _rt_precheck(provider, model, in_tok, est_out):
-    global _rt_warned
+    global _rt_warned, _rt_bypass
     try:
         est = pricing.realtime_cost(model, in_tok, est_out) if model else 0.0
     except Exception:
@@ -349,7 +350,7 @@ def _rt_precheck(provider, model, in_tok, est_out):
         projected = _rt_spent + est
         spent = _rt_spent
     budget = _rt_budget()
-    if projected <= budget or _allow():
+    if projected <= budget or _allow() or _rt_bypass:
         return
     msg = (f"[spend_gate] REAL-TIME budget: spent ${spent:.2f} + next ~${est:.2f} would exceed "
            f"${budget:.0f}/process (GATE_RT_BUDGET).")
@@ -359,7 +360,7 @@ def _rt_precheck(provider, model, in_tok, est_out):
         except Exception:
             ans = ""
         if ans in ("yes", "y"):
-            os.environ["GATE_ALLOW"] = "1"
+            _rt_bypass = True          # bypass ONLY the RT budget — NOT the per-batch / daily / monthly caps
             return
     _emit({"kind": "realtime", "provider": provider, "model": model, "cost": est, "decision": "refused_budget"})
     raise SpendGateRefused(msg + " Raise GATE_RT_BUDGET, set GATE_ALLOW=1, or stop the loop.")
@@ -417,8 +418,11 @@ def _rt_account(model, kw, result, est_fn, act_fn, latency=None):
                 _, in_tok, out_tok = est_fn(kw)
             output = _output_text(result); finish = _finish(result)
         cached = 0 if kw.get("stream") else _cached_in(result)
-        cost = pricing.realtime_cost(model, in_tok, out_tok, cached) if model else 0.0
-        prov = "openai" if "gpt" in str(model) else "anthropic"
+        prov = "anthropic" if str(model).startswith("claude") else "openai"   # o3/embeddings are OpenAI, not "gpt"
+        # normalize to OpenAI token semantics (input INCLUDES cached) before pricing: Anthropic's
+        # input_tokens EXCLUDES cache_read, so add it back or _cost double-subtracts and under-bills ~2x.
+        in_for_cost = (in_tok + cached) if prov == "anthropic" else in_tok
+        cost = pricing.realtime_cost(model, in_for_cost, out_tok, cached) if model else 0.0
         if _meta_intent():                            # meta call → meta ledger only (not workload realtime)
             from . import budget
             budget.record_meta(prov, model, cost)
@@ -509,18 +513,30 @@ def register(module_path, class_name, method, gate_fn, is_async=False):
     _EXTRA.append((module_path, class_name, method, gate_fn, is_async))
 
 
+def _guard(gate_fn, kw, a):
+    """Run a gate_fn fail-OPEN: only a deliberate SpendGateRefused blocks; any other error (e.g. a
+    `database is locked` under fleet concurrency, or a third-party register()'d fn) logs and lets the
+    call proceed — the gate must never break a legitimate job by accident."""
+    try:
+        gate_fn(kw, a)
+    except SpendGateRefused:
+        raise
+    except Exception as e:
+        print(f"[spend_gate] WARN gate error ({e}); allowing (fail-open)", file=sys.stderr)
+
+
 def _wrap(orig, gate_fn, is_async):
     if is_async:
         @functools.wraps(orig)
         async def w(self, *a, **kw):
             if not _disabled():
-                gate_fn(kw, a)          # may raise SpendGateRefused
+                _guard(gate_fn, kw, a)   # only SpendGateRefused propagates; all else fails open
             return await orig(self, *a, **kw)
     else:
         @functools.wraps(orig)
         def w(self, *a, **kw):
             if not _disabled():
-                gate_fn(kw, a)
+                _guard(gate_fn, kw, a)
             return orig(self, *a, **kw)
     w._spend_gated = True
     return w

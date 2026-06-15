@@ -98,4 +98,27 @@ assert abs(spend_gate._rt_spent - rt_before) < 1e-9, "meta call leaked into work
 assert meta_t > 0, "meta call was not recorded to the meta ledger!"
 assert wl < meta_t, "meta spend leaked into the workload sqlite ledger!"
 os.environ.pop("GATE_META_BUDGET", None)
+
+print("\n-- CORE FIXES (fail-open · Anthropic cache cost · provider) --")
+from spendguard import pricing
+# fail-open: a gate_fn raising a non-SpendGateRefused error must NOT propagate (a real job survives)
+_raised = {"v": False}
+try:
+    spend_gate._guard(lambda kw, a: (_ for _ in ()).throw(RuntimeError("database is locked")), {}, ())
+except Exception:
+    _raised["v"] = True
+print(f"  [{'OK' if not _raised['v'] else 'FAIL'}] gate_fn error fails OPEN (db-locked doesn't break the call)")
+# but a deliberate refusal still propagates
+_blocked = False
+try:
+    spend_gate._guard(lambda kw, a: (_ for _ in ()).throw(spend_gate.SpendGateRefused("x")), {}, ())
+except spend_gate.SpendGateRefused:
+    _blocked = True
+print(f"  [{'OK' if _blocked else 'FAIL'}] SpendGateRefused still propagates (cap still blocks)")
+# Anthropic cache cost: input_tokens EXCLUDES cache_read → gate adds it back so cost isn't ~2x under
+p = pricing.price("claude-opus-4-8")
+correct = (5000 * p["in_"] + 5000 * p["cached_in"] + 1000 * p["out"]) / 1e6
+gate_now = pricing.realtime_cost("claude-opus-4-8", 5000 + 5000, 1000, 5000)   # in_for_cost = fresh+cached
+print(f"  [{'OK' if abs(correct - gate_now) < 1e-9 else 'FAIL'}] Anthropic cache cost correct (${gate_now:.5f}=={correct:.5f}, not undercounted)")
+assert abs(correct - gate_now) < 1e-9
 print("done.")

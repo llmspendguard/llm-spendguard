@@ -15,15 +15,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install (with provider SDKs for the gate tests)
+      - name: Install (with provider SDKs + test deps)
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[openai,anthropic]"
+          pip install -e ".[openai,anthropic,dev]"
       - name: Pricing self-check
         run: spendguard pricing
       - name: Price freshness (warns if stale; non-fatal here)
         run: spendguard check-prices || true
-      - name: Gate regression (offline — no network, no spend)
-        run: python tests/test_gate.py
-      - name: Price-literal audit
-        run: SPENDGUARD_AUDIT_DIR=src/spendguard python -c "import sys; from spendguard.audit import main; sys.exit(main(['--ci']) or 0)" || true
+      - name: Test suite (offline — no network, no spend)
+        run: pytest
+      - name: Price-literal audit (FAILS the build on a mispriced literal)
+        run: SPENDGUARD_AUDIT_DIR=src/spendguard spendguard audit --ci

@@ -30,11 +30,15 @@ BANNED = [
     (re.compile(r"[\"']gpt-?5\.5[\"']\s*:\s*\(\s*1\.25\s*,\s*10"), "gpt-5.5 priced as old gpt-5 (1.25/10) — should be (5,30) rt"),
 ]
 
-def main():
-    ci = "--ci" in sys.argv
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else list(argv)
+    ci = "--ci" in argv
     hits = []
     for path in sorted(glob.glob(os.path.join(SCRIPTS, "*.py"))):
-        if os.path.basename(path) in ("pricing.py", "audit_price_constants.py", "reconcile_openai_spend.py"):
+        # skip files that legitimately CONTAIN the wrong literals to describe/test them (the audit itself,
+        # the canonical table, the reconcilers) — else the audit flags its own examples.
+        if os.path.basename(path) in ("pricing.py", "audit.py", "audit_price_constants.py",
+                                      "reconcile_openai_spend.py", "reconcile_openai.py"):
             continue
         for i, line in enumerate(open(path, errors="ignore"), 1):
             for m in KEYED.finditer(line):
