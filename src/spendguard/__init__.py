@@ -8,11 +8,11 @@ one canonical, verifiable price table.
 """
 from .pricing import (batch_cost, realtime_cost, estimate, price, normalize,
                       PRICING, PRICING_VERIFIED, PRICING_SOURCE)
-from .gate import install, register, SpendGateRefused
+from .gate import install, require, register, SpendGateRefused
 from .emit import on_event
 from .calls import context, set_context, feedback
 
-__all__ = ["install", "register", "SpendGateRefused", "on_event", "context", "set_context", "feedback",
+__all__ = ["install", "require", "register", "SpendGateRefused", "on_event", "context", "set_context", "feedback",
            "batch_cost", "realtime_cost", "estimate", "price", "normalize",
            "PRICING", "PRICING_VERIFIED", "PRICING_SOURCE"]
 __version__ = "0.2.1"

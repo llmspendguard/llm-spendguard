@@ -121,4 +121,18 @@ correct = (5000 * p["in_"] + 5000 * p["cached_in"] + 1000 * p["out"]) / 1e6
 gate_now = pricing.realtime_cost("claude-opus-4-8", 5000 + 5000, 1000, 5000)   # in_for_cost = fresh+cached
 print(f"  [{'OK' if abs(correct - gate_now) < 1e-9 else 'FAIL'}] Anthropic cache cost correct (${gate_now:.5f}=={correct:.5f}, not undercounted)")
 assert abs(correct - gate_now) < 1e-9
+
+print("\n-- require() fail-closed (no-bypass guard) --")
+os.environ.pop("GATE_DISABLE", None)
+spend_gate.require()                              # stubs are patched → enforcing → passes
+print("  [OK] require() passes when the gate is enforcing")
+os.environ["GATE_DISABLE"] = "1"
+_refused = False
+try:
+    spend_gate.require()
+except spend_gate.SpendGateRefused:
+    _refused = True
+os.environ.pop("GATE_DISABLE", None)
+print(f"  [{'OK' if _refused else 'FAIL'}] require() REFUSES when disabled (fail-closed, not silent bypass)")
+assert _refused
 print("done.")

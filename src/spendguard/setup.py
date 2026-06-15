@@ -27,36 +27,45 @@ def _site_packages(venv):
     return c[0] if c else None
 
 
-def install_hook(venv, uninstall=False, install_pkg=True):
-    """Gate every process in `venv`: pip-install spendguard (editable from this repo) + drop the
-    sitecustomize hook. `spendguard install-hook --venv <path> [--uninstall]`."""
+def install_hook(venv, uninstall=False, install_pkg=True, user=False):
+    """Gate every process in `venv` (or the per-USER site of the current python with user=True): pip-install
+    spendguard (editable from this repo) + drop the sitecustomize hook. `spendguard install-hook --venv <p>`
+    or `--user` (covers `python3 …` from anywhere for this interpreter — the system-python bypass)."""
     import subprocess
     from pathlib import Path
-    venv = os.path.abspath(os.path.expanduser(venv))
-    py = os.path.join(venv, "bin", "python")
-    if not os.path.exists(py):
-        print(f"  ✗ not a venv (no {py}). Create one first: python -m venv {venv}")
-        return 1
-    sp = _site_packages(venv)
-    if not sp:
-        print(f"  ✗ no site-packages under {venv}")
-        return 1
-    hook = os.path.join(sp, "sitecustomize.py")
+    if user:
+        import site, sys as _sys
+        sp = site.getusersitepackages()
+        os.makedirs(sp, exist_ok=True)
+        py = _sys.executable
+    else:
+        venv = os.path.abspath(os.path.expanduser(venv))
+        py = os.path.join(venv, "bin", "python")
+        if not os.path.exists(py):
+            print(f"  ✗ not a venv (no {py}). Create one first: python -m venv {venv}")
+            return 1
+        sp = _site_packages(venv)
+        if not sp:
+            print(f"  ✗ no site-packages under {venv}")
+            return 1
+    # user-site loads usercustomize (not sitecustomize) → use that filename for --user
+    hook = os.path.join(sp, "usercustomize.py" if user else "sitecustomize.py")
     if uninstall:
         if os.path.exists(hook) and "spendguard" in open(hook).read():
             os.remove(hook)
-            print(f"  ✓ removed gate hook from {venv} (run `pip uninstall llm-spendguard` to remove the package)")
+            print(f"  ✓ removed gate hook: {hook} (run `pip uninstall llm-spendguard` to remove the package)")
         else:
-            print(f"  (no spendguard hook in {venv})")
+            print(f"  (no spendguard hook at {hook})")
         return 0
     if os.path.exists(hook) and "spendguard" not in open(hook).read():
         print(f"  ✗ {hook} exists and isn't ours — not overwriting. Merge manually:\n{_HOOK}")
         return 1
     pkg_root = str(Path(__file__).resolve().parents[2])
     if install_pkg:
-        print(f"  pip install -e {pkg_root}  →  {venv}")
-        r = subprocess.run([os.path.join(venv, "bin", "pip"), "install", "-e", pkg_root],
-                           capture_output=True, text=True)
+        cmd = ([py, "-m", "pip", "install", "--user", "-e", pkg_root] if user
+               else [os.path.join(venv, "bin", "pip"), "install", "-e", pkg_root])
+        print(f"  pip install -e {pkg_root}  →  {'user site of ' + py if user else venv}")
+        r = subprocess.run(cmd, capture_output=True, text=True)
         if r.returncode != 0:
             print("  ✗ pip install failed:\n" + (r.stderr or r.stdout)[-600:])
             return 1
@@ -102,11 +111,15 @@ def cmd_install_skills(argv=None):
 def cmd_install_hook(argv=None):
     import argparse
     ap = argparse.ArgumentParser(prog="spendguard install-hook")
-    ap.add_argument("--venv", required=True, help="path to the target virtualenv (e.g. ../slide-recon/.venv)")
-    ap.add_argument("--uninstall", action="store_true", help="remove the gate hook from the venv")
+    ap.add_argument("--venv", help="path to the target virtualenv (e.g. ../slide-recon/.venv)")
+    ap.add_argument("--user", action="store_true", help="gate the per-USER site of the CURRENT python "
+                    "(covers `python3 …` from anywhere for this interpreter — the system-python bypass)")
+    ap.add_argument("--uninstall", action="store_true", help="remove the gate hook")
     ap.add_argument("--no-pkg", action="store_true", help="skip pip install (package already present)")
     a = ap.parse_args(argv)
-    return install_hook(a.venv, uninstall=a.uninstall, install_pkg=not a.no_pkg)
+    if not a.venv and not a.user:
+        ap.error("give --venv <path> or --user")
+    return install_hook(a.venv, uninstall=a.uninstall, install_pkg=not a.no_pkg, user=a.user)
 
 
 def _resolve(s):

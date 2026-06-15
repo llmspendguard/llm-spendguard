@@ -22,7 +22,7 @@ def main(argv=None):
         gate.install()
     except Exception:
         pass
-    if cmd in ("status", "on", "off"):
+    if cmd in ("status", "on", "off", "doctor"):
         from . import gate
         return gate._cli(cmd)
     if cmd == "report":

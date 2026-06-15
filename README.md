@@ -56,8 +56,11 @@ Configure with `spendguard init` (interactive) / `spendguard config` (show curre
 ```
 # enforce / control
 spendguard status | on | off                 # kill switch (persistent flag)
+spendguard doctor                            # is the gate ENFORCING in THIS interpreter? (+ ledger-leak check)
 spendguard install-hook --venv <path>        # gate every process in ANOTHER venv/repo (--uninstall to remove)
+spendguard install-hook --user               # gate the per-USER site of the current python (system-python bypass)
 spendguard install-skills                    # deploy /spend + /spendguard-learn as Claude slash-commands
+# in code, fail-closed:  import spendguard; spendguard.require()   # refuses to run if NOT actually gated
 
 # see the money
 spendguard report [--alert-threshold 150] [--email]   # daily/weekly/monthly + ledger-leak alert + top learnings

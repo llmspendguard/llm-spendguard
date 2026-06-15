@@ -90,6 +90,33 @@ into the host project.
 See [`src/spendguard/README.md`](../src/spendguard/README.md) for a one-line description of every module,
 grouped by the four roles above.
 
+## 6. Enforcement levels — making sure nothing bypasses it
+
+The in-process gate only enforces **where it's installed**. A call from a different interpreter/venv
+(e.g. `python3 script.py` under system python), a different machine, or raw HTTP (not via the SDK) is
+**not** gated. Defend in layers, weakest→strongest:
+
+1. **Ubiquitous install (resistant).** Auto-load in every venv you use (`sitecustomize.py`, what
+   `install-hook` writes) **and** the per-user site of system python (`install-hook --user` → a
+   `usercustomize.py`, so `python3 …` from anywhere for that interpreter is gated).
+2. **See it (detect).** `spendguard doctor` prints **ENFORCING HERE: YES/NO** for the *current*
+   interpreter — run it (or eyeball the gate is patched) before trusting a run. This is what reveals a
+   bypass like "I'm under system python."
+3. **Fail-closed (refuse).** Put `spendguard.require()` at the top of any script that must not spend
+   ungated — it raises if the gate isn't actually enforcing (wrong venv) or is disabled, instead of
+   silently going around it. This is the fix for the #1 bypass.
+4. **Catch it after (reconcile).** `reconcile-ledger` (and the daily report's leak alert) compares
+   provider billing to the local ledger — any ungoverned spend shows up as a **leak** within a day, even
+   if it bypassed the gate. The safety net for everything the in-process layers miss.
+5. **True no-bypass (proxy + key custody — roadmap).** The only *guarantee* across any language/machine:
+   route all traffic through a spendguard **proxy** that holds the provider keys and enforces server-side;
+   clients never hold raw keys, so there's nothing to bypass. This is the natural home of the separate
+   SaaS/server repo (see [ROADMAP](ROADMAP.md)). The in-process gate stays the zero-infra default; the
+   proxy is the opt-in hard guarantee.
+
+Real-time vs batch: the gate patches **both** (`chat.completions`/`messages.create` and `files`/`batches.create`),
+so real-time is gated wherever the gate is installed — the bypass risk is the *interpreter*, not the call type.
+
 ### Known limitations (be honest)
 - Cross-process caps are **check-then-record** — under heavy concurrency N processes can each pass the check
   before any records, so caps are near-hard, not transactional-hard.

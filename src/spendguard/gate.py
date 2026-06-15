@@ -582,6 +582,38 @@ def install(cap: "float | None" = None) -> None:
             print(f"[spend_gate] WARN rt-patch {spec[0]}.{spec[1]}.{spec[2]} skipped: {e}", file=sys.stderr)
 
 
+def _any_patched():
+    """True iff at least one SDK surface is actually gated in THIS interpreter (enforcement is live here)."""
+    import importlib
+    for spec in INTERCEPTORS + _EXTRA + RT_INTERCEPTORS:
+        module_path, class_name, method = spec[0], spec[1], spec[2]
+        try:
+            cls = getattr(importlib.import_module(module_path), class_name)
+            if getattr(getattr(cls, method, None), "_spend_gated", False):
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def require(cap: "float | None" = None) -> None:
+    """FAIL-CLOSED guard — ensure the gate is actually ENFORCING in this interpreter, else raise. Put at the
+    top of any script that must not spend ungated; it refuses to run if spendguard was bypassed or disabled:
+
+        import spendguard; spendguard.require()      # then your client.batches.create(...) / chat calls
+
+    This is the fix for the #1 bypass: running under a python/venv where the gate never auto-installed."""
+    if _disabled():
+        raise SpendGateRefused("spendguard is DISABLED (GATE_DISABLE / `spendguard off`) but this script "
+                               "called require() — refusing to spend ungated. `spendguard on` to re-enable.")
+    install(cap=cap)
+    if not _any_patched():
+        raise SpendGateRefused(
+            "spendguard is NOT enforcing in this interpreter — no OpenAI/Anthropic SDK was patched (wrong "
+            "python/venv, or the SDK isn't importable here). require() refuses to spend ungated. Fix: run under "
+            "a gated venv, or `pip install llm-spendguard` and `import spendguard` before the SDK is used.")
+
+
 def _cli(cmd="status"):
     if cmd == "off":
         open(FLAG, "w").write("disabled\n")
@@ -590,11 +622,17 @@ def _cli(cmd="status"):
         if os.path.exists(FLAG):
             os.remove(FLAG)
         print("🟢 spend gate ENABLED.")
-    else:  # status
+    else:  # status / doctor
         print(f"spend gate: {'🔴 DISABLED' if _disabled() else '🟢 ENABLED'}   (cap ${_cap():.0f})")
+        print(f"  python    : {sys.executable}")
+        install()
+        enforcing = _any_patched()
+        print(f"  ENFORCING HERE: {'🟢 YES — calls from this interpreter are gated' if enforcing else '🔴 NO — calls from THIS interpreter are NOT gated (bypass!)'}")
+        if not enforcing:
+            print("    fix: run under a gated venv, `spendguard install-hook --venv <v>` / `--user`, "
+                  "or `import spendguard; spendguard.require()` at the top of the script.")
         print(f"  flag file : {FLAG}  ({'present → off' if os.path.exists(FLAG) else 'absent'})")
         print(f"  env       : GATE_DISABLE={os.getenv('GATE_DISABLE','')!r}  GATE_ALLOW={os.getenv('GATE_ALLOW','')!r}  GATE_CAP={os.getenv('GATE_CAP') or '(default 75)'}")
-        install()
         try:
             from openai.resources import files as of
             oai = getattr(of.Files.create, "_spend_gated", False)
@@ -606,6 +644,14 @@ def _cli(cmd="status"):
         except Exception:
             ant = "n/a (SDK absent)"
         print(f"  patched   : openai={oai} anthropic={ant}")
+        if cmd == "doctor":                       # also surface ungoverned spend (bypass detection)
+            try:
+                from . import ledger_sync
+                line = ledger_sync.leak_line()
+                if line:
+                    print(f"  ledger    : {line}")
+            except Exception:
+                pass
     return 0
 
 
