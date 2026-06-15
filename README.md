@@ -1,19 +1,31 @@
-# spendguard
+# llm-spendguard
 
-Provider-agnostic LLM cost discipline for batch (and soon real-time) workloads.
-Born from a real incident: a "cost-conscious" day that was supposed to cost ~$33 actually
-cost **$149.76** — because a price constant was hardcoded wrong (GPT-5.5 at the old GPT-5
-rate) and jobs ran 1 item per request (the shared prompt re-billed every call). spendguard
-makes those mistakes impossible to ship silently.
+A pre-spend **governor** for LLM API cost (OpenAI + Anthropic): it caps every call before the spend,
+prices from a verified table, and **learns the cheapest config that still keeps quality** — then proves
+and enforces it. Zero required dependencies; install is one line; it never breaks a job (fail-open).
+
+Born from a real incident: a "cost-conscious" day meant to cost ~$33 actually cost **$149.76** — a price
+constant was hardcoded wrong (GPT-5.5 at the old GPT-5 rate) and jobs ran 1 item/request (the shared prompt
+re-billed every call). spendguard makes those mistakes impossible to ship silently — and goes further:
+it reconstructs *what* you should do cheaper, and won't let "cheaper" cost you quality.
 
 ## What it does
-- **pricing** — one canonical, verifiable price table (OpenAI + Anthropic). Never hardcode a price again.
-- **gate** — an overlay on the OpenAI/Anthropic SDKs (auto-installable via `sitecustomize.py`) that
-  estimates every batch's cost, logs it, and **hard-stops** any single batch over a cap — then asks, if interactive.
-- **estimate** — project a full job across models × packing *before* you spend.
-- **reconcile** — actual $ from real billed tokens (OpenAI batch usage; Anthropic batch results), cache-aware.
-- **report** — daily / weekly / monthly spend across providers, for a scheduled monitor.
-- **audit** — fail CI if any code disagrees with the canonical price table.
+**Enforce → see → plan → prove → learn.**
+- **gate** — overlay on the OpenAI/Anthropic SDKs (auto-installs via `sitecustomize.py`): estimates every
+  batch/real-time call, **hard-stops** over a cap (per-batch + cross-process daily/monthly) — then *asks* if interactive.
+- **pricing** — one canonical, verifiable table (layered from LiteLLM + curated + override), cross-checked
+  vs OpenRouter; an `audit` fails CI if any code hardcodes a disagreeing price.
+- **reconcile** — actual $ from real billed tokens; **`reconcile-ledger`** compares the local ledger to
+  provider billing to find **leaks** (ungoverned spend from a non-gated venv/repo).
+- **report** — daily/weekly/monthly email with spend totals + a leak alert + the advisor's top learnings.
+- **learning advisor** — a per-call cost+quality corpus → confidence-scored, lifecycle-tracked **insights**;
+  `brief` pre-fills a plan, `optimize` recommends the cheapest config that held quality, `experiment` proves
+  it (cost↓ **and** same-output), `promote` runs it and keeps the output. Cost-per-**good**-result, not per-token.
+- **cost levers** — prompt-caching audit/test, semantic cache + batch dedup, cost-aware cascade routing.
+- **observability** — emits OpenTelemetry GenAI-convention metrics+spans → Langfuse / Helicone / Phoenix / any OTLP backend.
+
+The advisor's own LLM use is itself **caged** (a separate `caps.meta` budget, tagged `spendguard:*`, excluded
+from the corpus it analyzes) so the governor can't overspend governing.
 
 ## Quickstart
 
@@ -35,15 +47,61 @@ import spendguard; spendguard.install()
 ```
 Configure with `spendguard init` (interactive) / `spendguard config` (show current); see [Configuration](#configuration-prices-providers-models).
 
-## CLI
+## CLI — full command reference
 ```
+# enforce / control
 spendguard status | on | off                 # kill switch (persistent flag)
-spendguard report --alert-threshold 150
-spendguard reconcile openai --by-day
-spendguard estimate --items 263000 --from-sample test.jsonl --packs 1,30
-spendguard audit --ci
-spendguard pricing
+spendguard install-hook --venv <path>        # gate every process in ANOTHER venv/repo (--uninstall to remove)
+
+# see the money
+spendguard report [--alert-threshold 150] [--email]   # daily/weekly/monthly + ledger-leak alert + top learnings
+spendguard reconcile openai|anthropic [--by-day]      # actual billed batch spend from the provider
+spendguard reconcile-ledger [--since DATE]            # local gate ledger vs provider billing → find LEAKS
+spendguard calls [--intent X]                # per-intent cost + good% + $/good (opt-in corpus)
+spendguard estimate --items N --from-sample f.jsonl --packs 1,30
+spendguard pricing | cross-check | check-prices | sync-prices   # canonical table · OpenRouter drift · freshness · LiteLLM sync
+spendguard audit [--ci]                       # fail if a script hardcodes a price ≠ the table
+
+# plan / decide  (the briefing + advisor loop)
+spendguard brief --task "..."                 # "what we need to do" → pre-filled confirm-or-correct plan
+spendguard advise [--intent X] [--plan M]     # deterministic per-intent ranking by $/good (no spend)
+spendguard optimize --intent X [--plan M]     # caged LLM recommendation (cheapest config that holds quality)
+spendguard models [show <model>]              # per-model learnings, auto-applied (reasoning/cache/tokens)
+spendguard insights list|export|import        # living insights; opt-in scrubbed collective learning
+spendguard backtest --as-of DATE             # replay advise as of a past date
+
+# prove / run cheaper  (estimate-first, caged by caps.meta)
+spendguard experiment --intent X --model M... [--semantic embed|rubric] [--run]   # A/B cost↓ + same-output, graduated
+spendguard promote --intent X --model M [--input chunk.jsonl] [--batch] [--run]    # run the winner + KEEP output
+spendguard cache-audit | cache-test --script f.py [--run]   # prompt-caching: find + prove savings
+spendguard cascade --ladder cheap,…,strong --intent X [--prompt …] --run           # cheap→verify→escalate
+spendguard cache-stats | dedup --input f.jsonl --out u.jsonl | dedup-populate      # response cache + batch dedup
+
+# cold start / corpus
+spendguard bootstrap [--repo] [--transcripts]   # mine ALL history → corpus + insights (free, then estimate)
+spendguard fetch-io [--cap 50]                  # recover real prompt+output from providers (free)
+spendguard backfill [--intent-map …]            # seed corpus + graph from the batch ledgers (free)
+spendguard mine-history {intents,graph,git} [--apply]   # reconstruct intents/edges from the repo (free)
+spendguard mine-conv {index,synth} [--run]      # mine session transcripts for the cost playbook
+spendguard validate                             # re-check learnings vs the current corpus (lifecycle)
+
+# setup
+spendguard init | config                        # guided setup / show resolved config
 ```
+
+### The workflow it's built around
+**brief** (pre-filled plan) → **experiment** (prove the cheapest config that holds quality, graduated) →
+**promote** (run it + keep the output) → the gate **enforces** caps → **reconcile-ledger** (catch leaks vs
+provider billing) → **report** (daily email: totals + leak alert + top learnings) → **validate** (learnings
+stay true as data grows) → those learnings feed the next **brief**.
+
+### Gate another repo
+The gate auto-installs per venv via a `sitecustomize.py` hook. To gate another project:
+```
+spendguard install-hook --venv /path/to/that-repo/.venv     # pip-installs spendguard + writes the hook
+```
+Then every process in that venv is gated (kill switch: `GATE_DISABLE=1` or `spendguard off`). Until a repo
+is gated, its provider spend shows up in `reconcile-ledger` as a **leak** (billed but ungoverned).
 
 ## Knobs (env)
 `GATE_CAP=<$>` (default 75) · `GATE_ALLOW=1` (permit one over-cap run) · `GATE_DISABLE=1` (off for one run)

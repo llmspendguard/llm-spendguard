@@ -6,6 +6,79 @@ import os, json
 from . import config, config_schema
 
 
+_HOOK = '''# Auto-installs the spendguard cost gate for every process in this venv (the `spendguard` package).
+# Kill switches checked HERE first, before the import, so disabling works even if the package is broken:
+#   GATE_DISABLE=1 (per-run)  OR  `spendguard off` (persistent flag).  Nuclear option: delete this file.
+import os, sys
+from pathlib import Path
+_home = os.environ.get("SPENDGUARD_HOME") or str(Path.home() / ".spendguard")
+if os.environ.get("GATE_DISABLE") != "1" and not os.path.exists(os.path.join(_home, "disabled")):
+    try:
+        import spendguard
+        spendguard.install()
+    except Exception as _e:  # never let the gate break a process
+        sys.stderr.write(f"[sitecustomize] spendguard not installed: {_e}\\n")
+'''
+
+
+def _site_packages(venv):
+    import glob
+    c = glob.glob(os.path.join(venv, "lib", "python*", "site-packages"))
+    return c[0] if c else None
+
+
+def install_hook(venv, uninstall=False, install_pkg=True):
+    """Gate every process in `venv`: pip-install spendguard (editable from this repo) + drop the
+    sitecustomize hook. `spendguard install-hook --venv <path> [--uninstall]`."""
+    import subprocess
+    from pathlib import Path
+    venv = os.path.abspath(os.path.expanduser(venv))
+    py = os.path.join(venv, "bin", "python")
+    if not os.path.exists(py):
+        print(f"  ✗ not a venv (no {py}). Create one first: python -m venv {venv}")
+        return 1
+    sp = _site_packages(venv)
+    if not sp:
+        print(f"  ✗ no site-packages under {venv}")
+        return 1
+    hook = os.path.join(sp, "sitecustomize.py")
+    if uninstall:
+        if os.path.exists(hook) and "spendguard" in open(hook).read():
+            os.remove(hook)
+            print(f"  ✓ removed gate hook from {venv} (run `pip uninstall llm-spendguard` to remove the package)")
+        else:
+            print(f"  (no spendguard hook in {venv})")
+        return 0
+    if os.path.exists(hook) and "spendguard" not in open(hook).read():
+        print(f"  ✗ {hook} exists and isn't ours — not overwriting. Merge manually:\n{_HOOK}")
+        return 1
+    pkg_root = str(Path(__file__).resolve().parents[2])
+    if install_pkg:
+        print(f"  pip install -e {pkg_root}  →  {venv}")
+        r = subprocess.run([os.path.join(venv, "bin", "pip"), "install", "-e", pkg_root],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            print("  ✗ pip install failed:\n" + (r.stderr or r.stdout)[-600:])
+            return 1
+    open(hook, "w").write(_HOOK)
+    v = subprocess.run([py, "-c", "import os; os.environ['GATE_DISABLE']='1'; import spendguard; "
+                        "print('spendguard importable; gate auto-installs on next run')"],
+                       capture_output=True, text=True)
+    print(f"  ✓ hook written → {hook}\n  {v.stdout.strip() or v.stderr.strip()[:160]}")
+    print("  every process in this venv is now gated (kill switch: GATE_DISABLE=1 or `spendguard off`).")
+    return 0
+
+
+def cmd_install_hook(argv=None):
+    import argparse
+    ap = argparse.ArgumentParser(prog="spendguard install-hook")
+    ap.add_argument("--venv", required=True, help="path to the target virtualenv (e.g. ../slide-recon/.venv)")
+    ap.add_argument("--uninstall", action="store_true", help="remove the gate hook from the venv")
+    ap.add_argument("--no-pkg", action="store_true", help="skip pip install (package already present)")
+    a = ap.parse_args(argv)
+    return install_hook(a.venv, uninstall=a.uninstall, install_pkg=not a.no_pkg)
+
+
 def _resolve(s):
     """(value, source) for one setting. env always wins; then the file; then the default."""
     env = s.get("env")

@@ -51,6 +51,9 @@ def main(argv=None):
     if cmd == "init":
         from . import setup
         return setup.cmd_init(rest)
+    if cmd in ("install-hook", "gate-venv"):          # gate every process in another venv (other repos)
+        from . import setup
+        return setup.cmd_install_hook(rest)
     if cmd == "calls":
         from . import calls
         return calls.cmd_summary(rest)
