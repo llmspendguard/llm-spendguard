@@ -6,6 +6,7 @@ command reference; these explain the *why*.
 | doc | what it covers |
 |---|---|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | The system, with diagrams: the gate chokepoint, pricing resolution, the learning loop, the meta cage, data/isolation, and the honest known-limitations. **Start here for the design.** |
+| [USING-WITH-CLAUDE.md](USING-WITH-CLAUDE.md) | Make **every** AI-assistant conversation wire in spendguard: `install-rule` (the standing `CLAUDE.md` rule) + how it pairs with the run-time enforcement layers + slash-commands. |
 | [learning-advisor.md](learning-advisor.md) | The #7 learning advisor + temporal learning graph: *recommend **considering** history, not parroting it*. Data model (calls corpus → insights → graph), the Layer-1 deterministic / Layer-2 caged-LLM split, the **meta-budget cage** (the governor governs its own LLM use), conversation/script mining, and confidence-scored living insights. Status: implemented. |
 
 ### Methodology in one screen

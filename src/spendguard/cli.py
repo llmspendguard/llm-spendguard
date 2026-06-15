@@ -65,6 +65,9 @@ def main(argv=None):
     if cmd == "install-skills":                       # deploy the / slash-commands into ~/.claude/skills
         from . import setup
         return setup.cmd_install_skills(rest)
+    if cmd == "install-rule":                          # drop the spendguard usage rule into a CLAUDE.md
+        from . import setup
+        return setup.cmd_install_rule(rest)
     if cmd == "calls":
         from . import calls
         return calls.cmd_summary(rest)

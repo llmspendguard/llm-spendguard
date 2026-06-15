@@ -2,6 +2,23 @@
 
 All notable changes to **llm-spendguard**. Format loosely follows Keep a Changelog; dates are UTC.
 
+## [0.2.2] — 2026-06-14
+
+Close the **generation-time** bypass: make assistants write gated code, and gate PEP668 system pythons.
+
+### Added
+- **`spendguard install-rule [--global | --project DIR]`** — writes a standing rule into `CLAUDE.md` (a
+  marked, idempotent block) so **every** Claude/Cursor conversation in that scope is told to route the LLM
+  code it builds through spendguard (gated interpreter + `require()` + canonical pricing + estimate-first).
+  New doc: [`docs/USING-WITH-CLAUDE.md`](docs/USING-WITH-CLAUDE.md).
+- **`install-hook --user --python <interp>`** — gate another interpreter's user site via a **path-injecting
+  `usercustomize`** with **no pip**, so it works on PEP668 "externally-managed" pythons (Homebrew/system).
+  Fixes the real-world `--user` failure on managed system python.
+
+### Changed
+- `install-hook` verification now reports `ENFORCING` (checks the SDK method is actually patched) for the
+  target interpreter, not just "importable".
+
 ## [0.2.1] — 2026-06-14
 
 Hardening pass after an adversarial code review (three independent reviewers).

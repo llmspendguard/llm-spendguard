@@ -27,9 +27,9 @@ it reconstructs *what* you should do cheaper, and won't let "cheaper" cost you q
 The advisor's own LLM use is itself **caged** (a separate `caps.meta` budget, tagged `spendguard:*`, excluded
 from the corpus it analyzes) so the governor can't overspend governing.
 
-**Docs:** [Architecture + diagrams](docs/ARCHITECTURE.md) · [Methodology](docs/README.md) · [Roadmap (teams/orgs/SaaS)](docs/ROADMAP.md) · [Module map](src/spendguard/README.md) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md) · [Setup](SETUP.md)
+**Docs:** [Architecture + diagrams](docs/ARCHITECTURE.md) · [Use with Claude/Cursor](docs/USING-WITH-CLAUDE.md) · [Methodology](docs/README.md) · [Roadmap (teams/orgs/SaaS)](docs/ROADMAP.md) · [Module map](src/spendguard/README.md) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md) · [Setup](SETUP.md)
 
-**Slash-commands:** `spendguard install-skills` → use `/spend` (quick status) and `/spendguard-learn` (advisor) in Claude Code (CLI + VS Code extension).
+**Use with an AI assistant:** `spendguard install-rule --global` writes a rule into `CLAUDE.md` so **every** Claude/Cursor conversation routes the LLM code it builds through spendguard — then `spendguard install-skills` adds `/spend` (status) and `/spendguard-learn` (advisor) as slash-commands. See [Use with Claude](docs/USING-WITH-CLAUDE.md).
 **Teams & orgs:** each user keeps their own ledger + sets their own caps (partner, not supervisor); opt-in roll-up for shared visibility + pooled learnings via the SaaS (separate repo). See the [Roadmap](docs/ROADMAP.md).
 
 ## Quickstart
@@ -58,7 +58,8 @@ Configure with `spendguard init` (interactive) / `spendguard config` (show curre
 spendguard status | on | off                 # kill switch (persistent flag)
 spendguard doctor                            # is the gate ENFORCING in THIS interpreter? (+ ledger-leak check)
 spendguard install-hook --venv <path>        # gate every process in ANOTHER venv/repo (--uninstall to remove)
-spendguard install-hook --user               # gate the per-USER site of the current python (system-python bypass)
+spendguard install-hook --user [--python P]  # gate a python's per-USER site (system-python bypass; PEP668-safe, no pip)
+spendguard install-rule [--global|--project DIR]  # drop the spendguard rule into CLAUDE.md → every AI chat wires it in
 spendguard install-skills                    # deploy /spend + /spendguard-learn as Claude slash-commands
 # in code, fail-closed:  import spendguard; spendguard.require()   # refuses to run if NOT actually gated
 

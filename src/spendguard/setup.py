@@ -20,6 +20,66 @@ if os.environ.get("GATE_DISABLE") != "1" and not os.path.exists(os.path.join(_ho
         sys.stderr.write(f"[sitecustomize] spendguard not installed: {_e}\\n")
 '''
 
+# A portable rule for any AI coding assistant (Claude Code, Cursor, etc.). `install-rule` drops it into a
+# CLAUDE.md so EVERY conversation in that project automatically wires spendguard into whatever it builds.
+_RULE_BEGIN = "<!-- spendguard:rule:begin -->"
+_RULE_END = "<!-- spendguard:rule:end -->"
+_RULE = _RULE_BEGIN + """
+## LLM Cost Governance — MANDATORY (llm-spendguard)
+
+Any code in this project that calls an LLM or embeddings API (OpenAI **or** Anthropic) MUST go through
+**llm-spendguard**. This is a hard rule that OVERRIDES default behavior — never write or run ungated LLM code.
+
+When you WRITE or RUN code that calls an LLM:
+1. **Run it under a gated interpreter.** Use a venv whose `sitecustomize.py` loads the gate (or a python whose
+   user-site has the spendguard `usercustomize`). Never bare/system `python3` that isn't gated. Verify with
+   **`spendguard doctor`** — it must print `ENFORCING HERE: YES`.
+2. **Fail closed.** Put `import spendguard; spendguard.require()` at the top of the script. It raises if the
+   gate isn't actually enforcing in that interpreter, so a bypass can't run silently.
+3. **Never hardcode prices.** Get $/token only from `spendguard.pricing` (or the repo's `pricing.py`).
+4. **Estimate before you spend.** For any paid batch, do a SEPARATE zero-spend estimate run (count + $ est),
+   confirm, then submit. Never cancel/kill a running job as cost control — completed requests still bill.
+5. Prefer the **Batch API** for non-interactive work; keep a per-job cost estimate + approval for large batches.
+
+Setup (one-time): `spendguard install-hook --venv <venv>` (or `--user --python <interp>` for system python),
+then `spendguard doctor`. Kill switch: `GATE_DISABLE=1` or `spendguard off`.
+""" + _RULE_END + "\n"
+
+
+def install_rule(target=None, glob_=False):
+    """Write the spendguard usage rule into a CLAUDE.md so EVERY AI-assistant conversation in that project
+     auto-wires spendguard into whatever it builds. `--project <dir>` (default: cwd) or `--global` (~/.claude).
+     Idempotent: replaces the marked block if present, else appends. Re-run after `spendguard` upgrades."""
+    from pathlib import Path
+    if glob_:
+        path = Path.home() / ".claude" / "CLAUDE.md"
+    else:
+        path = Path(target or ".").expanduser().resolve() / "CLAUDE.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    old = path.read_text() if path.exists() else ""
+    if _RULE_BEGIN in old and _RULE_END in old:                       # replace the existing block in place
+        pre, rest = old.split(_RULE_BEGIN, 1)
+        _, post = rest.split(_RULE_END, 1)
+        new = pre + _RULE.rstrip("\n") + post
+        action = "updated"
+    else:
+        new = (old.rstrip() + "\n\n" if old.strip() else "") + _RULE
+        action = "appended to" if old.strip() else "created"
+    path.write_text(new)
+    print(f"  ✓ {action} {path}")
+    print("  every AI-assistant conversation in this project will now be told to route LLM code through spendguard.")
+    return 0
+
+
+def cmd_install_rule(argv=None):
+    import argparse
+    ap = argparse.ArgumentParser(prog="spendguard install-rule")
+    g = ap.add_mutually_exclusive_group()
+    g.add_argument("--global", dest="glob_", action="store_true", help="write to ~/.claude/CLAUDE.md (all projects)")
+    g.add_argument("--project", help="project dir whose CLAUDE.md to write (default: current dir)")
+    a = ap.parse_args(argv)
+    return install_rule(a.project, glob_=a.glob_)
+
 
 def _site_packages(venv):
     import glob
@@ -27,54 +87,68 @@ def _site_packages(venv):
     return c[0] if c else None
 
 
-def install_hook(venv, uninstall=False, install_pkg=True, user=False):
-    """Gate every process in `venv` (or the per-USER site of the current python with user=True): pip-install
-    spendguard (editable from this repo) + drop the sitecustomize hook. `spendguard install-hook --venv <p>`
-    or `--user` (covers `python3 …` from anywhere for this interpreter — the system-python bypass)."""
+def _pkg_src():
+    from pathlib import Path
+    return str(Path(__file__).resolve().parents[2] / "src")
+
+
+def install_hook(venv=None, uninstall=False, install_pkg=True, user=False, python=None):
+    """Gate every process in another interpreter:
+      --venv <path>            pip-install spendguard + a sitecustomize hook (clean venv).
+      --user [--python <interp>]  write a PATH-INJECTING usercustomize into that interpreter's user site —
+                               NO pip, so it works on PEP668 'externally-managed' pythons (Homebrew/system).
+    Closes the system-python bypass. `--uninstall` removes the hook."""
     import subprocess
     from pathlib import Path
-    if user:
-        import site, sys as _sys
-        sp = site.getusersitepackages()
-        os.makedirs(sp, exist_ok=True)
-        py = _sys.executable
+    cross = user or python                          # user/python mode = path-injected usercustomize (no pip)
+    if cross:
+        target = python or __import__("sys").executable
+        try:
+            sp = subprocess.run([target, "-c", "import site,os;os.makedirs(site.getusersitepackages(),exist_ok=True);"
+                                 "print(site.getusersitepackages())"], capture_output=True, text=True, check=True).stdout.strip()
+        except Exception as e:
+            print(f"  ✗ couldn't resolve {target}'s user site: {e}"); return 1
+        hook = os.path.join(sp, "usercustomize.py")
     else:
         venv = os.path.abspath(os.path.expanduser(venv))
-        py = os.path.join(venv, "bin", "python")
-        if not os.path.exists(py):
-            print(f"  ✗ not a venv (no {py}). Create one first: python -m venv {venv}")
-            return 1
+        target = os.path.join(venv, "bin", "python")
+        if not os.path.exists(target):
+            print(f"  ✗ not a venv (no {target}). Create one: python -m venv {venv}"); return 1
         sp = _site_packages(venv)
         if not sp:
-            print(f"  ✗ no site-packages under {venv}")
-            return 1
-    # user-site loads usercustomize (not sitecustomize) → use that filename for --user
-    hook = os.path.join(sp, "usercustomize.py" if user else "sitecustomize.py")
+            print(f"  ✗ no site-packages under {venv}"); return 1
+        hook = os.path.join(sp, "sitecustomize.py")
+
     if uninstall:
         if os.path.exists(hook) and "spendguard" in open(hook).read():
-            os.remove(hook)
-            print(f"  ✓ removed gate hook: {hook} (run `pip uninstall llm-spendguard` to remove the package)")
+            os.remove(hook); print(f"  ✓ removed gate hook: {hook}")
         else:
             print(f"  (no spendguard hook at {hook})")
         return 0
     if os.path.exists(hook) and "spendguard" not in open(hook).read():
-        print(f"  ✗ {hook} exists and isn't ours — not overwriting. Merge manually:\n{_HOOK}")
+        print(f"  ✗ {hook} exists and isn't ours — not overwriting. Merge the spendguard.install() snippet manually.")
         return 1
-    pkg_root = str(Path(__file__).resolve().parents[2])
-    if install_pkg:
-        cmd = ([py, "-m", "pip", "install", "--user", "-e", pkg_root] if user
-               else [os.path.join(venv, "bin", "pip"), "install", "-e", pkg_root])
-        print(f"  pip install -e {pkg_root}  →  {'user site of ' + py if user else venv}")
-        r = subprocess.run(cmd, capture_output=True, text=True)
-        if r.returncode != 0:
-            print("  ✗ pip install failed:\n" + (r.stderr or r.stdout)[-600:])
-            return 1
-    open(hook, "w").write(_HOOK)
-    v = subprocess.run([py, "-c", "import os; os.environ['GATE_DISABLE']='1'; import spendguard; "
-                        "print('spendguard importable; gate auto-installs on next run')"],
+
+    if cross:                                       # path-injected — no pip (PEP668-safe)
+        body = _HOOK.replace("import spendguard\n        spendguard.install()",
+                             f"sys.path.insert(0, {_pkg_src()!r})\n        import spendguard\n        spendguard.install()")
+        open(hook, "w").write(body)
+    else:
+        pkg_root = str(Path(__file__).resolve().parents[2])
+        if install_pkg:
+            print(f"  pip install -e {pkg_root}  →  {venv}")
+            r = subprocess.run([os.path.join(venv, "bin", "pip"), "install", "-e", pkg_root],
+                               capture_output=True, text=True)
+            if r.returncode != 0:
+                print("  ✗ pip install failed:\n" + (r.stderr or r.stdout)[-600:]); return 1
+        open(hook, "w").write(_HOOK)
+
+    v = subprocess.run([target, "-c", "from openai.resources import files as of;"
+                        "print('ENFORCING' if getattr(of.Files.create,'_spend_gated',False) else 'loaded (no OpenAI SDK?)')"],
                        capture_output=True, text=True)
-    print(f"  ✓ hook written → {hook}\n  {v.stdout.strip() or v.stderr.strip()[:160]}")
-    print("  every process in this venv is now gated (kill switch: GATE_DISABLE=1 or `spendguard off`).")
+    print(f"  ✓ hook → {hook}")
+    print(f"  verify ({target}): {v.stdout.strip() or v.stderr.strip()[-160:]}")
+    print("  that interpreter is now gated (kill switch: GATE_DISABLE=1 or `spendguard off`).")
     return 0
 
 
@@ -112,14 +186,17 @@ def cmd_install_hook(argv=None):
     import argparse
     ap = argparse.ArgumentParser(prog="spendguard install-hook")
     ap.add_argument("--venv", help="path to the target virtualenv (e.g. ../slide-recon/.venv)")
-    ap.add_argument("--user", action="store_true", help="gate the per-USER site of the CURRENT python "
-                    "(covers `python3 …` from anywhere for this interpreter — the system-python bypass)")
+    ap.add_argument("--user", action="store_true", help="gate the per-USER site of the target python "
+                    "(covers `python3 …` from anywhere for that interpreter — the system-python bypass)")
+    ap.add_argument("--python", help="target interpreter for --user (default: current python). "
+                    "Use the system python you want to gate, e.g. /opt/homebrew/bin/python3 — "
+                    "writes a path-injecting usercustomize, NO pip, so it works on PEP668-managed pythons")
     ap.add_argument("--uninstall", action="store_true", help="remove the gate hook")
     ap.add_argument("--no-pkg", action="store_true", help="skip pip install (package already present)")
     a = ap.parse_args(argv)
-    if not a.venv and not a.user:
-        ap.error("give --venv <path> or --user")
-    return install_hook(a.venv, uninstall=a.uninstall, install_pkg=not a.no_pkg, user=a.user)
+    if not a.venv and not a.user and not a.python:
+        ap.error("give --venv <path>, or --user [--python <interp>]")
+    return install_hook(a.venv, uninstall=a.uninstall, install_pkg=not a.no_pkg, user=a.user, python=a.python)
 
 
 def _resolve(s):
