@@ -196,7 +196,8 @@ def _cost(model, in_tok, out_tok, cached_in_tok, batch):
         pin, pout, pcache = p["batch_in"], p["batch_out"], p.get("cached_in", 0.0) * 0.5
     else:
         pin, pout, pcache = p["in_"], p["out"], p.get("cached_in", 0.0)
-    fresh_in = max(0, in_tok - cached_in_tok)
+    cached_in_tok = min(max(0, cached_in_tok), in_tok)   # cached can't exceed (or precede) the input
+    fresh_in = in_tok - cached_in_tok
     return (fresh_in * pin + cached_in_tok * pcache + out_tok * pout) / 1_000_000
 
 

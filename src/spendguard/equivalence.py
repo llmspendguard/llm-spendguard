@@ -102,14 +102,20 @@ def _llm_rubric(ref, out, model):
 
 
 def grade(ref, out, mode="auto", model=None):
-    """(score 0..1, tier). mode 'auto'=free ladder; 'embed'/'rubric' add a caged semantic tier for prose."""
+    """(score 0..1, tier).
+
+    mode='auto' (free): exact → scalar (JSON value-fraction) → text. NOTE the scalar tier compares fields
+    POSITIONALLY (after sorting dict keys) — correct for ordered per-item outputs (the i-th label), but it
+    scores reordered/set-style or free-text-valued JSON as different. When order/format varies or values
+    are free text, pass mode='embed'/'rubric' — those CAGED semantic tiers now apply even to JSON (they
+    used to be silently skipped for any JSON pair)."""
     if _norm(ref) == _norm(out):
         return 1.0, "exact"
-    a, b = _norm_json(ref), _norm_json(out)
-    if a is not None and b is not None:
-        return _scalar(a, b), "scalar"
-    if mode == "embed":
+    if mode == "embed":                       # explicit semantic tier — applies even to JSON
         return _embed_cosine(ref, out), "embed"
     if mode == "rubric":
         return _llm_rubric(ref, out, model or "claude-haiku-4-5"), "rubric"
+    a, b = _norm_json(ref), _norm_json(out)
+    if a is not None and b is not None:
+        return _scalar(a, b), "scalar"
     return _text_ratio(ref, out), "text"

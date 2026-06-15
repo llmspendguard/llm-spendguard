@@ -17,6 +17,7 @@ Webhook/OTel run on a background daemon thread (drop-if-flooded) so high-volume 
 are never slowed. Callbacks run inline — keep them fast.
 """
 import json, os, threading, queue, datetime, urllib.request
+from typing import Any, Callable
 from . import config
 
 _callbacks = []
@@ -26,7 +27,7 @@ _lock = threading.Lock()
 _cfg_cache = None
 
 
-def on_event(fn):
+def on_event(fn: "Callable[[dict], Any]") -> "Callable[[dict], Any]":
     """Register an in-process callback fn(event: dict). Usable as a decorator."""
     _callbacks.append(fn)
     return fn

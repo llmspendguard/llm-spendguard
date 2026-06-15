@@ -3,7 +3,7 @@ verify, and escalate to a stronger model only when the cheap answer fails verifi
 served cheap; the expensive model is reserved for the hard ones.
 
     res = cascade.cascade(prompt, ["gpt-5-nano", "gpt-5-mini", "gpt-5.5"], verify=my_check, intent="...")
-    # res: {model, output, cost, escalations, ladder_cost} — model that ultimately served + spend
+    # res: {model, output, cost, escalations, n_tried} — model that ultimately served + total spend
 
 The VERIFIER is the quality gate: a weak verifier accepts wrong cheap output (the whole risk), so for
 quality-sensitive intents pass a real one (JSON-schema check, a confidence rating, a cheap LLM judge).
@@ -66,6 +66,8 @@ def cmd(argv=None):
     ladder = [m.strip() for m in a.ladder.split(",") if m.strip()]
     usable = [m for m in ladder if not (a.intent and M.ineffective(m, a.intent))]
     print(f"cascade — ladder {ladder}" + (f"  (intent '{a.intent}')" if a.intent else ""))
+    print("  ⚠ default verifier only catches EMPTY/broken output — it does NOT detect a subtly-wrong cheap "
+          "answer. For quality-sensitive work pass a real verify() (schema / confidence / cheap judge) in code.")
     for m in ladder:
         bad = M.ineffective(m, a.intent) if a.intent else None
         print(f"  {'⊘' if bad else '·'} {m}" + (f"  (skipped — ineffective: {bad[0]})" if bad else ""))

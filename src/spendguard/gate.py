@@ -508,7 +508,7 @@ INTERCEPTORS = [
 _EXTRA = []
 
 
-def register(module_path, class_name, method, gate_fn, is_async=False):
+def register(module_path: str, class_name: str, method: str, gate_fn, is_async: bool = False) -> None:
     """Register a new SDK surface to gate (e.g. a future provider). gate_fn(kw, args) -> None|raise."""
     _EXTRA.append((module_path, class_name, method, gate_fn, is_async))
 

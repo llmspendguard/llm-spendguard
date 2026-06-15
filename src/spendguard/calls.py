@@ -11,6 +11,7 @@ Shares the SQLite db with budget (config.db_path()), table `calls`. RLock — re
 hold it and call _db() which re-acquires).
 """
 import os, sqlite3, datetime, threading, hashlib, inspect, contextlib
+from typing import Optional
 
 from . import config
 
@@ -40,7 +41,7 @@ def current():
     return getattr(_local, "ctx", {})
 
 
-def set_context(intent=None, chain=None):
+def set_context(intent: Optional[str] = None, chain: Optional[str] = None) -> None:
     c = dict(current())
     if intent is not None:
         c["intent"] = intent
@@ -50,7 +51,7 @@ def set_context(intent=None, chain=None):
 
 
 @contextlib.contextmanager
-def context(intent=None, chain=None):
+def context(intent: Optional[str] = None, chain: Optional[str] = None):
     """`with spendguard.context(intent='loinc-typing', chain='run-42'): ...` tags the calls inside."""
     prev = getattr(_local, "ctx", None)
     set_context(intent=intent, chain=chain)
@@ -133,7 +134,8 @@ def record(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
 _CONF = {"explicit": 1.0, "judge": 0.95, "used": 0.6, "mined": 0.5}
 
 
-def feedback(call_id, ok=True, source="explicit", confidence=None):
+def feedback(call_id: Optional[str], ok: bool = True, source: str = "explicit",
+             confidence: Optional[float] = None) -> None:
     """Label a call's quality after the fact (judge verdict, human accept, downstream validation).
     Carries a confidence (explicit=1.0, judge=0.95, used=0.6, mined=0.5) the advisor weights by."""
     if not call_id:

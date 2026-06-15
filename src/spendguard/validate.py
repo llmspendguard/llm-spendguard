@@ -1,9 +1,11 @@
 """Layer 2 — LIVING insights: re-validate learnings as the corpus grows.
 
-A learning recorded once is a guess; a learning re-checked against new data is knowledge. This pass
-re-tests each insight against the CURRENT corpus and moves it through its lifecycle:
-  - the cost gap it's built on still holds (cheaper-cited model still cheaper) → support++, confidence up,
-    candidate → active once corroborated twice;
+A learning recorded once is a guess; re-checking it against new data keeps it from going stale. This pass
+re-tests each insight against the CURRENT corpus and moves it through its lifecycle. The cost-gap check is
+a COARSE heuristic (it compares cross-intent aggregate $/job for the models the insight names) — a
+consistency signal, NOT proof; treat "still-consistent" accordingly:
+  - the cost gap it names still holds (cheaper-cited model still cheaper) → support++, confidence up,
+    candidate → active once it survives two such checks;
   - a cited model vanished / the gap inverted → contradiction++, confidence decayed, → refuted/superseded;
   - nothing checkable (free-form lesson, no two priced models) → last_validated refreshed, status untouched.
 Deterministic + zero spend (a caged LLM adjudication of free-form insights can layer on later). The point:
@@ -63,7 +65,7 @@ def _recheck(ins, known, perjob, present):
         if costliest[1] > cheapest[1] * 1.2:
             return "support", f"{cheapest[0]} still ~{costliest[1]/cheapest[1]:.0f}x cheaper than {costliest[0]}"
         return "contradict", f"cost gap among {[m for m,_ in priced]} has collapsed"
-    return "support", "cited models still present"
+    return "unknown", "cited models still present but no 2-model cost gap to re-check"
 
 
 def _apply(ins, verdict):
@@ -109,8 +111,9 @@ def validate(verbose=True):
             refuted += 1
             if verbose:
                 print(f"  ↓ {fields['status']}: {ins['lesson'][:80]}  ({note})")
-    print(f"validate — {len(rows)} insights re-checked: "
-          f"{counts['support']} corroborated, {counts['contradict']} contradicted, "
+    print(f"validate — {len(rows)} insights re-checked (cost-gap heuristic = cross-intent $/job, COARSE — "
+          f"a consistency check, not proof): "
+          f"{counts['support']} still-consistent, {counts['contradict']} contradicted, "
           f"{counts['superseded']} superseded, {counts['unknown']} unverifiable.")
     print(f"  → {promoted} promoted candidate→active; {refuted} demoted (refuted/superseded). "
           f"Advisor now weights by current confidence + status.")
