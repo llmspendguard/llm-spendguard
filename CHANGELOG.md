@@ -2,6 +2,32 @@
 
 All notable changes to **llm-spendguard**. Format loosely follows Keep a Changelog; dates are UTC.
 
+## [0.2.1] — 2026-06-14
+
+Hardening pass after an adversarial code review (three independent reviewers).
+
+### Fixed
+- **Fail-open** (critical): gate_fns now run via `_guard` — only `SpendGateRefused` propagates; any other
+  error (e.g. `database is locked` under fleet concurrency) logs and lets the call proceed. Also protects
+  third-party `register()`'d gate_fns.
+- **Anthropic real-time cost** was undercounted ~2× — `input_tokens` excludes cache reads, so the cost
+  formula double-subtracted them. Normalized to OpenAI token semantics before pricing.
+- **Provider classification** — by `startswith("claude")`, so o-series/embeddings attribute to OpenAI.
+- **Cage via CLI** — `cli.main()` now calls `install()` so the advisor's own LLM calls are caged even
+  when run via the CLI outside a gated venv.
+- **Real-time-budget "allow"** now bypasses only the RT budget (process-local flag), not the per-batch /
+  daily / monthly caps.
+- **CI price audit** now actually gates the build (removed `|| true`, fixed the call, audit skips its own
+  examples); CI runs the full `pytest`.
+- **Cost math** clamps cached tokens ≤ input (a bad usage object can no longer inflate cost).
+
+### Added / changed
+- Tests for the money-critical core: `pricing`, `reconcile`, `submit`/`estimate` (now 16 test modules).
+- `--semantic embed|rubric` equivalence now applies to JSON too (was silently skipped).
+- Honest types on the public API (`py.typed` is no longer a lie); honest output in `validate`/`cascade`
+  about which signals are coarse heuristics vs proven.
+- **Docs:** `docs/ARCHITECTURE.md` (diagrams) + `CONTRIBUTING.md`.
+
 ## [0.2.0] — 2026-06-14
 
 The release that turns the cost *gate* into a cost *governor* — it now learns the cheapest config

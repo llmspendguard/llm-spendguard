@@ -27,6 +27,8 @@ it reconstructs *what* you should do cheaper, and won't let "cheaper" cost you q
 The advisor's own LLM use is itself **caged** (a separate `caps.meta` budget, tagged `spendguard:*`, excluded
 from the corpus it analyzes) so the governor can't overspend governing.
 
+**Docs:** [Architecture + diagrams](docs/ARCHITECTURE.md) · [Methodology](docs/README.md) · [Module map](src/spendguard/README.md) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md) · [Setup](SETUP.md)
+
 ## Quickstart
 
 **A) Set up with Claude (recommended).** Point Claude Code / the desktop app at this repo and say:
