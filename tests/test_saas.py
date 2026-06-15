@@ -47,8 +47,23 @@ print("-- visibility=private => push is a no-op (nothing leaves) --")
 os.environ["SPENDGUARD_SAAS"] = "1"; os.environ["SPENDGUARD_SAAS_URL"] = "https://x"; os.environ["SPENDGUARD_SAAS_KEY"] = "k"
 r = saas.push_rollup()
 check("private push skipped (no network attempted)", isinstance(r, dict) and "skipped" in r)
-for k in ("SPENDGUARD_SAAS", "SPENDGUARD_SAAS_URL", "SPENDGUARD_SAAS_KEY"):
+
+print("-- sync cadence: interval drives due(); sync(if_due) is cron-safe --")
+os.environ["SPENDGUARD_SYNC_INTERVAL"] = "daily"
+d, _why = saas.due()
+check("daily + never-synced => due", d is True)
+os.environ["SPENDGUARD_SYNC_INTERVAL"] = "off"
+d2, why2 = saas.due()
+check("interval=off => not due (manual only)", (d2 is False) and "off" in why2)
+os.environ["SPENDGUARD_SYNC_INTERVAL"] = "daily"
+# not connected (private visibility still 'connected' for ready(); make it not-ready by dropping key)
+os.environ.pop("SPENDGUARD_SAAS_KEY")
+rs = saas.sync(if_due=True)
+check("sync(if_due) when not connected => skipped, never raises", isinstance(rs, dict) and "skipped" in rs)
+for k in ("SPENDGUARD_SAAS", "SPENDGUARD_SAAS_URL", "SPENDGUARD_SAAS_KEY", "SPENDGUARD_SYNC_INTERVAL"):
     os.environ.pop(k, None)
+check("client config holds NO team_id/org_id (server resolves hierarchy from the key)",
+      "team_id" not in config.saas_config() and "org_id" not in config.saas_config())
 
 print("-- status() and saas.cmd() don't crash --")
 buf = io.StringIO()

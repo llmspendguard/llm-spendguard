@@ -9,8 +9,8 @@ locked from above; the value is shared sight and shared knowledge, opt-in.
 | Tier | Who | What they get | How |
 |---|---|---|---|
 | **I** (developer) | one person | local gate + caps **they** set, local ledger, local learnings | `pip install llm-spendguard` (this repo) — already shipped |
-| **We** (team) | a team | see each other's usage, pooled + aggregated learnings, team rollup report | set a **team id** in config + opt-in sync to the SaaS |
-| **Us** (org) | an org | org-wide visibility, aggregate advice across teams, org rollup | set an **org id** + members opt-in sync |
+| **We** (team) | a team | see each other's usage, pooled + aggregated learnings, team rollup report | paste the **server key** (one key, server maps it to your team) + opt-in sync |
+| **Us** (org) | an org | org-wide visibility, aggregate advice across teams, org rollup | members use keys the server maps to the org — no ids in client config |
 
 Roll-up is **additive and opt-in**: a user chooses how much to share (full usage / costs-only /
 scrubbed-learnings-only) in their own config. The default is private; sharing is a choice, and it's *their*
@@ -33,14 +33,20 @@ visibility/aggregation over what users opt to send.
 ### Client seam (BUILT — `saas.py`, `spendguard saas`)
 The client is ready to connect the moment the server exists:
 - **Config** lives in `~/.spendguard/saas.json` (gitignored; template `saas.example.json`): `enabled`, `url`
-  (e.g. `https://api.llmseg.ai`), `api_key` (secret; or `SPENDGUARD_SAAS_KEY`), `team_id`, `org_id`,
-  `visibility` (`private` | `team` | `org`). Surfaced in `spendguard config` like every other knob.
+  (e.g. `https://api.llmseg.ai`), `api_key` (secret; or `SPENDGUARD_SAAS_KEY`), `visibility`
+  (`private` | `team` | `org`), `sync_interval` (`off` | `hourly` | `daily` | `weekly`). Surfaced in
+  `spendguard config` like every other knob.
+- **One key = identity.** The client holds NO `team_id`/`org_id` — the SERVER maps the Bearer key to the
+  user→team→org hierarchy. Less to leak, nothing to keep in sync.
 - **Contract** (`saas.py`, versioned `{url}/v1`): `GET /v1/health`, `POST /v1/ledger` (per-day roll-up),
   `POST /v1/insights` (scrubbed abstracts), `GET /v1/insights?scope=` (pooled learnings). Bearer auth.
+- **Cadence:** `sync_interval` drives when the roll-up pushes. `saas.sync(if_due=True)` is wired into the
+  daily `report` cron (and `spendguard saas sync --if-due`), so it pushes on schedule and no-ops otherwise.
+  `last_sync` tracked in `saas_state.json`.
 - **Fail-safe by design:** every call degrades gracefully ("not connected") until the server is up; the
   client never depends on it. `visibility=private` = nothing leaves the machine. Reuses `share.py`'s scrub
   (abstracts only — never prompts/keys/$). Each user's SQLite ledger stays the source of truth.
-- Status/test: `spendguard saas status` · `spendguard saas ping` · `saas push` / `saas pull`.
+- Status/test: `spendguard saas status` · `spendguard saas ping` · `saas sync [--if-due]` · `push` / `pull`.
 
 ## Access — slash commands (shipped)
 `spendguard install-skills` deploys `/spend` (quick status: totals + leak + top learnings) and

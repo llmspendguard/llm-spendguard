@@ -2,6 +2,22 @@
 
 All notable changes to **llm-spendguard**. Format loosely follows Keep a Changelog; dates are UTC.
 
+## [0.2.4] — 2026-06-14
+
+Stand the repo on its own + simplify the SaaS seam.
+
+### Changed
+- **Relocated out of the lmm tree** to its own directory (`~/Documents/claude/llm-spendguard`). It was always
+  its own git repo, but was physically nested in lmm and the gate hooks hardcoded that path. Re-pointed the
+  editable install, both `usercustomize` hooks (system + intel python), `batch_llm.py`, and the docs/memory.
+- **SaaS config simplified to ONE key.** Dropped `team_id`/`org_id` from the client — the server maps the
+  Bearer `api_key` to the user→team→org hierarchy. Less to leak, nothing to keep in sync.
+
+### Added
+- **`saas.sync_interval`** (`off`|`hourly`|`daily`|`weekly`, default `daily`) — configurable push cadence.
+  `spendguard saas sync --if-due` is cron-safe (pushes only when the interval elapsed; `last_sync` tracked in
+  `saas_state.json`) and is wired into the daily `report` so the roll-up goes up on schedule automatically.
+
 ## [0.2.3] — 2026-06-14
 
 Multi-interpreter coverage + the team/org SaaS client seam (ready to connect to the future server repo).

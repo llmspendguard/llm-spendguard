@@ -136,7 +136,8 @@ def email_config():
 def saas_config():
     """SaaS / team roll-up connection from ~/.spendguard/saas.json, overlaid by env. The client seam to the
     FUTURE separate server repo (llmseg.ai). Secrets (api_key) stay here (gitignored) or in env — never the repo.
-    Returns a dict with: enabled(bool), url, api_key, team_id, org_id, visibility."""
+    ONE key is the identity: the server maps it to user/team/org (the client stores NO ids).
+    Returns: enabled(bool), url, api_key, visibility, sync_interval."""
     import json as _json
     cfg = {}
     p = HOME / "saas.json"
@@ -146,17 +147,19 @@ def saas_config():
     except Exception:
         pass
     for key, env in (("enabled", "SPENDGUARD_SAAS"), ("url", "SPENDGUARD_SAAS_URL"),
-                     ("api_key", "SPENDGUARD_SAAS_KEY"), ("team_id", "SPENDGUARD_TEAM_ID"),
-                     ("org_id", "SPENDGUARD_ORG_ID"), ("visibility", "SPENDGUARD_VISIBILITY")):
+                     ("api_key", "SPENDGUARD_SAAS_KEY"), ("visibility", "SPENDGUARD_VISIBILITY"),
+                     ("sync_interval", "SPENDGUARD_SYNC_INTERVAL")):
         v = os.environ.get(env)
         if v is not None and v != "":
             cfg[key] = v
     cfg["enabled"] = str(cfg.get("enabled", "")).lower() in ("1", "true", "yes", "y")
     cfg.setdefault("visibility", "private")
+    cfg.setdefault("sync_interval", "daily")
     return cfg
 
 
 def saas_path(): return HOME / "saas.json"
+def saas_state_path(): return HOME / "saas_state.json"   # last_sync timestamp (not the config; written each sync)
 
 
 def disabled(): return os.getenv("GATE_DISABLE") == "1" or FLAG.exists()

@@ -88,6 +88,7 @@ SETTINGS = [
          kind="float", secret=False, desc="Max characters of prompt/output snippet to store."),
 
     # ── saas / team roll-up (client seam — points at the FUTURE separate server repo, llmseg.ai) ──
+    # ONE key is the identity: the server resolves user→team→org hierarchy from it. The client holds no ids.
     dict(section="saas", key="enabled", store="saas.json:enabled", env="SPENDGUARD_SAAS", default=False,
          kind="bool", secret=False,
          desc="Sync this machine's ledger/insights to a spendguard server for team/org roll-up. Off until the server exists."),
@@ -95,14 +96,15 @@ SETTINGS = [
          kind="url|null", secret=False,
          desc="Base URL of the spendguard server (e.g. https://api.llmseg.ai). The server is a SEPARATE repo."),
     dict(section="saas", key="api_key", store="saas.json:api_key", env="SPENDGUARD_SAAS_KEY", default=None,
-         kind="string", secret=True, desc="Per-user token for the spendguard server (Bearer). Secret — env or saas.json only."),
-    dict(section="saas", key="team_id", store="saas.json:team_id", env="SPENDGUARD_TEAM_ID", default=None,
-         kind="string", secret=False, desc="Optional team this user rolls up into (visibility only — never overrides local caps)."),
-    dict(section="saas", key="org_id", store="saas.json:org_id", env="SPENDGUARD_ORG_ID", default=None,
-         kind="string", secret=False, desc="Optional org this user rolls up into (visibility only)."),
-    dict(section="saas", key="visibility", store="saas.json:visibility", env=None, default="private",
+         kind="string", secret=True,
+         desc="Your spendguard server key (Bearer). The SERVER maps this key to your user/team/org — the client "
+              "stores no team_id/org_id. Secret — env or saas.json only."),
+    dict(section="saas", key="visibility", store="saas.json:visibility", env="SPENDGUARD_VISIBILITY", default="private",
          kind="enum:private,team,org", secret=False,
          desc="How far this user's SCRUBBED insights/spend roll up. private = nothing leaves. Partner, not supervisor."),
+    dict(section="saas", key="sync_interval", store="saas.json:sync_interval", env="SPENDGUARD_SYNC_INTERVAL",
+         default="daily", kind="enum:off,hourly,daily,weekly", secret=False,
+         desc="How often `saas sync --if-due` (and the daily report) push the roll-up. off = manual only."),
 
     # ── pricing ──
     dict(section="pricing", key="prices_override", store="env", env="SPENDGUARD_PRICES", default=None,
