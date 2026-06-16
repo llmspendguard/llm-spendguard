@@ -110,6 +110,8 @@ def cached_call(fn, prompt, model, threshold=0.0, est_cost=0.0):
     hit = get(prompt, model, threshold=threshold)
     if hit is not None:
         _stats["saved"] += est_cost
+        from . import guard
+        guard.record_saving("cache", est_cost)          # guarded: the API cost this cache hit avoided
         return hit
     out = fn(prompt)
     put(prompt, model, out, store_embedding=(threshold and threshold > 0))

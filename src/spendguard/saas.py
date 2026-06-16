@@ -159,14 +159,40 @@ def _rollup_rows(since=None):
     return out
 
 
+def _guarded_rows(since=None):
+    """Per (day, project, source) cumulant SUMS of guarded spend (cache/block/cascade/…), filtered to this
+    connection's project(s). Cumulants add → the server rolls up to any scope and recovers the distribution."""
+    from . import guard
+    try:
+        rows = guard.by_dims_guarded(since=since)
+    except Exception:
+        return []
+    c = conn()
+    ps = c.get("projects")
+    base = set()
+    if isinstance(ps, list) and ps:
+        base = set(str(x).strip().lower() for x in ps if x)
+    elif c.get("project"):
+        base = {str(c["project"]).strip().lower()}
+    out = []
+    for r in rows:
+        proj = (r.get("project") or "").lower()
+        if base and proj not in base:
+            continue
+        out.append({"day": r["day"], "project": proj, "source": r["source"], "n": int(r["n"]),
+                    "k1": r["k1"], "k2": r["k2"], "k3": r["k3"], "k4": r["k4"]})
+    return out
+
+
 def push_rollup(since=None, dry=False):
-    """Push this machine's per-day spend roll-up (NOT per-call, NOT prompts), stamped with the contributor so the
-    server can roll up per user → team → org. The server derives team/org from the key. Honors visibility:
-    returns a no-op note if visibility=private. dry=True returns the payload without sending (offline-testable)."""
+    """Push this machine's per-day spend roll-up + GUARDED cumulants (NOT per-call, NOT prompts), stamped with the
+    contributor so the server can roll up per user → team → org. Honors visibility: no-op note if private.
+    dry=True returns the payload without sending (offline-testable)."""
     c = conn()
     if c.get("visibility", "private") == "private":
         return {"skipped": "visibility=private — nothing leaves this machine"}
-    payload = {"visibility": c.get("visibility"), "day_totals": _rollup_rows(since=since)}
+    payload = {"visibility": c.get("visibility"), "day_totals": _rollup_rows(since=since),
+               "guarded_totals": _guarded_rows(since=since)}
     if dry:
         return payload
     return _request("POST", "/v1/ledger", payload)

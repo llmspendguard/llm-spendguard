@@ -149,8 +149,12 @@ def _decide(est):
         if ans in ("yes", "y"):
             _log({**est, "decision": "allowed_prompt"}); return
         _log({**est, "decision": "refused_prompt"})
+        from . import guard
+        guard.record_saving("block", est["cost"])     # guarded: a blocked submission's spend, prevented
         raise SpendGateRefused(f"submission refused at gate (${est['cost']:.2f} > ${cap:.0f})")
     _log({**est, "decision": "refused_noninteractive"})
+    from . import guard
+    guard.record_saving("block", est["cost"])         # guarded: a blocked submission's spend, prevented
     raise SpendGateRefused(
         f"submission ${est['cost']:.2f} > cap ${cap:.0f} (non-interactive). "
         f"Set GATE_ALLOW=1 to permit this run, raise GATE_CAP, or pack/trim/cheaper-model.")

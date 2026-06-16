@@ -41,15 +41,24 @@ def cascade(prompt, ladder, verify=None, intent=None, _caller=None):
     caller = _caller or _default_caller
     usable = [m for m in ladder if not (intent and M.ineffective(m, intent))]
     skipped = [m for m in ladder if m not in usable]
-    escalations, total, served, out = [], 0.0, None, ""
+    escalations, total, served, served_cost, out = [], 0.0, None, 0.0, ""
     for i, m in enumerate(usable):
         cost, out = caller(m, prompt)
         total += cost
-        served = m
+        served, served_cost = m, cost
         if verify(prompt, out) or i == len(usable) - 1:   # accept on pass, or the last rung as fallback
             break
         escalations.append(m)                              # this rung failed verification → escalate
-    # what the strongest rung alone would have cost (rough: the last successful call's cost as proxy)
+    # guarded: serving below the top rung avoided the stronger model — rough estimate = same I/O at its rate
+    try:
+        if usable and served and served != usable[-1] and served_cost > 0:
+            from . import pricing, guard
+            ps = pricing.price(served).get("out") or pricing.price(served).get("in_")
+            pt = pricing.price(usable[-1]).get("out") or pricing.price(usable[-1]).get("in_")
+            if ps and pt and pt > ps:
+                guard.record_saving("cascade", max(0.0, served_cost * (pt / ps) - total))
+    except Exception:
+        pass
     return dict(model=served, output=out, cost=round(total, 6), escalations=escalations,
                 skipped_ineffective=skipped, n_tried=len(escalations) + 1)
 
