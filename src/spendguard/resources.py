@@ -90,24 +90,84 @@ def gpu_rows(now=None, label_map=None):
     return sorted(rows, key=lambda x: -x["cost"])
 
 
+def _month_start_ts():
+    import datetime
+    t = datetime.datetime.now(datetime.timezone.utc)
+    return datetime.datetime(t.year, t.month, 1, tzinfo=datetime.timezone.utc).timestamp()
+
+
+def gpu_rows_by_day(since_ts=None, now=None, label_map=None):
+    """Per (project, gpu, day) GPU cost — each instance's cost SPLIT across the UTC days it ran (dph × hours that
+    day), not lumped on today. Attributed by label → project. since_ts defaults to the start of this month."""
+    import datetime
+    now = now or time.time()
+    since_ts = since_ts if since_ts is not None else _month_start_ts()
+    agg = {}
+    for i in instances():
+        dph = float(i.get("dph_total") or 0)
+        start = i.get("start_date") or 0
+        if not dph or not start:
+            continue
+        end = min(i.get("end_date") or now, now)
+        t = max(start, since_ts)
+        proj = project_of(i.get("label"), label_map)
+        gpu = i.get("gpu_name") or "?"
+        while t < end:                                     # walk day by day, clipping to each UTC day
+            day = datetime.datetime.fromtimestamp(t, datetime.timezone.utc).strftime("%Y-%m-%d")
+            d0 = datetime.datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=datetime.timezone.utc).timestamp()
+            de = d0 + 86400
+            hours = (min(end, de) - t) / 3600.0
+            a = agg.setdefault((proj, gpu, day), {"project": proj, "gpu": gpu, "day": day, "cost": 0.0, "hours": 0.0, "instances": set()})
+            a["cost"] += dph * hours
+            a["hours"] += hours
+            a["instances"].add(i.get("id"))
+            t = de
+    rows = []
+    for a in agg.values():
+        a["instances"] = sorted(a["instances"])
+        a["cost"] = round(a["cost"], 6)
+        a["hours"] = round(a["hours"], 2)
+        rows.append(a)
+    return rows
+
+
+def account_gpu_total(since_ts=None):
+    """vast.ai account spend since the period — PROXY: invoice charges (prepaid top-ups that fund consumption).
+    Approximate (top-ups are lumpy and ± a balance buffer; vast.ai exposes no per-instance billing), but it's the
+    account-level GPU truth for the reconcile gap, mirroring the LLM provider-billing gap."""
+    since_ts = since_ts if since_ts is not None else _month_start_ts()
+    try:
+        inv = (_get("users/current/invoices/") or {}).get("invoices", [])
+    except Exception:
+        return 0.0
+    return round(sum(abs(float(i.get("amount") or 0)) for i in inv
+                     if not i.get("is_credit") and (i.get("timestamp") or 0) >= since_ts), 2)
+
+
 def sync(dry=False):
-    """Push THIS repo's GPU spend (the instances whose label maps to this repo's project) via this repo's key →
-    its org. Mirrors the LLM roll-up: provider='vastai', kind='gpu', model=GPU type, project + contributor + tags.
-    Run from each repo (lmm pushes its GLiNER A100 → Healiom/LMM; animepipe pushes manga2anime GPU → Manga2Anime)."""
+    """Push THIS repo's GPU spend (instances whose label maps to this repo's project), per-day, via this repo's
+    key → its org. The owns_account connection ALSO reconciles: gap = vast.ai account total − Σ attributed →
+    pushed as 'unattributed' remote-compute (destroyed/untracked instances), mirroring the LLM unattributed gap."""
     import datetime
     from . import saas, budget
     c = saas.conn()
     proj = (c.get("project") or budget._project() or "").lower()
-    rows = [r for r in gpu_rows() if (r.get("project") or "") == proj]
-    day = datetime.date.today().isoformat()
     ref = saas.contributor()
+    allrows = gpu_rows_by_day()
     day_totals = [{
-        "day": day, "provider": "vastai", "model": r["gpu"], "kind": "gpu", "channel": "realtime",
-        "spend_micros": round(r["cost"] * 1_000_000), "calls": r["running"],
+        "day": r["day"], "provider": "vastai", "model": r["gpu"], "kind": "gpu", "channel": "realtime",
+        "spend_micros": round(r["cost"] * 1_000_000), "calls": len(r["instances"]),
         "member_ref": ref, "project": proj,
-        # tag hierarchy: category 'remote-compute' → subtype 'gpu' → the specific GPU + instances
-        "tags": ",".join(["remote-compute", "gpu", r["gpu"].replace(" ", ""), "instances:" + "/".join(str(i) for i in r["instance_ids"])]),
-    } for r in rows]
+        "tags": ",".join(["remote-compute", "gpu", r["gpu"].replace(" ", ""), "instances:" + "/".join(str(x) for x in r["instances"])]),
+    } for r in allrows if (r.get("project") or "") == proj and r["cost"] > 0]
+    if c.get("owns_account"):                              # account-level GPU reconcile (one vast.ai account)
+        gap = round(account_gpu_total() - sum(r["cost"] for r in allrows), 2)
+        if gap > 0.5:
+            day_totals.append({
+                "day": datetime.date.today().isoformat(), "provider": "vastai", "model": "(destroyed/untracked)",
+                "kind": "gpu", "channel": "realtime", "spend_micros": round(gap * 1_000_000), "calls": 0,
+                "member_ref": "", "project": "unattributed", "tags": "remote-compute,gpu,unattributed",
+            })
     payload = {"visibility": c.get("visibility"), "day_totals": day_totals}
     if dry:
         return payload
@@ -125,8 +185,17 @@ def cmd(argv=None):
     if sub == "sync":
         print("resources sync:", sync(dry="--dry" in argv))
         return 0
-    rows = gpu_rows()
-    print("vast.ai GPU cost-to-date by project (label-attributed):")
+    # show: per-project attributed + the account reconcile gap
+    rows = gpu_rows_by_day()
+    byproj = {}
     for r in rows:
-        print(f"  {(r['project'] or '(untagged)'):12} {r['gpu']:14} ${r['cost']:8.2f}  ({r['hours']}h, {r['running']} running)  {r['instance_ids']}")
+        byproj[r["project"] or "(untagged)"] = byproj.get(r["project"] or "(untagged)", 0) + r["cost"]
+    truth = account_gpu_total()
+    attributed = sum(byproj.values())
+    print("vast.ai GPU (MTD), label-attributed per project:")
+    for p, c in sorted(byproj.items(), key=lambda x: -x[1]):
+        print(f"  {p:14} ${c:8.2f}")
+    print(f"  {'— attributed':14} ${attributed:8.2f}")
+    print(f"  {'account total':14} ${truth:8.2f}  (vast.ai charges; top-up proxy)")
+    print(f"  {'→ ungoverned':14} ${max(0, truth - attributed):8.2f}  (destroyed/untracked instances)")
     return 0
