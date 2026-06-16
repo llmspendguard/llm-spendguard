@@ -105,7 +105,8 @@ def sync(dry=False):
         "day": day, "provider": "vastai", "model": r["gpu"], "kind": "gpu", "channel": "realtime",
         "spend_micros": round(r["cost"] * 1_000_000), "calls": r["running"],
         "member_ref": ref, "project": proj,
-        "tags": ",".join(["gpu", r["gpu"].replace(" ", ""), "instances:" + "/".join(str(i) for i in r["instance_ids"])]),
+        # tag hierarchy: category 'remote-compute' → subtype 'gpu' → the specific GPU + instances
+        "tags": ",".join(["remote-compute", "gpu", r["gpu"].replace(" ", ""), "instances:" + "/".join(str(i) for i in r["instance_ids"])]),
     } for r in rows]
     payload = {"visibility": c.get("visibility"), "day_totals": day_totals}
     if dry:
