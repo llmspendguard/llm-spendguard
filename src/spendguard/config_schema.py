@@ -25,12 +25,22 @@ SETTINGS = [
     dict(section="caps", key="realtime", store="config.json:caps.realtime", env="GATE_RT_BUDGET", default=50,
          kind="float", secret=False,
          desc="Cumulative real-time spend cap ($) before the gate refuses further calls."),
-    dict(section="caps", key="daily", store="config.json:caps.daily", env=None, default=None,
-         kind="float|null", secret=False,
-         desc="Cross-process DAILY spend cap ($). null = off. Requires budget.backend=sqlite."),
-    dict(section="caps", key="monthly", store="config.json:caps.monthly", env=None, default=None,
-         kind="float|null", secret=False,
-         desc="Cross-process MONTHLY spend cap ($). null = off. Requires budget.backend=sqlite."),
+    # Resource-class caps: a TOTAL ceiling + per-class sub-caps (LLM vs remote-compute), each daily & monthly.
+    # null = off. Require budget.backend=sqlite. LLM caps are hard (gate-enforced); compute caps are alert/soft
+    # (vast.ai launches don't hit the gate — see resources.compute_exceeded). Legacy flat caps.daily/caps.monthly
+    # are still honored as the TOTAL ceiling.
+    dict(section="caps", key="total.daily", store="config.json:caps.total.daily", env="GATE_TOTAL_DAILY", default=None,
+         kind="float|null", secret=False, desc="DAILY total spend ceiling ($), LLM + remote-compute. null = off."),
+    dict(section="caps", key="total.monthly", store="config.json:caps.total.monthly", env="GATE_TOTAL_MONTHLY", default=None,
+         kind="float|null", secret=False, desc="MONTHLY total spend ceiling ($), LLM + remote-compute. null = off."),
+    dict(section="caps", key="llm.daily", store="config.json:caps.llm.daily", env="GATE_LLM_DAILY", default=None,
+         kind="float|null", secret=False, desc="DAILY LLM (OpenAI+Anthropic) sub-cap ($) — HARD, gate-enforced. null = off."),
+    dict(section="caps", key="llm.monthly", store="config.json:caps.llm.monthly", env="GATE_LLM_MONTHLY", default=None,
+         kind="float|null", secret=False, desc="MONTHLY LLM sub-cap ($) — HARD, gate-enforced. null = off."),
+    dict(section="caps", key="compute.daily", store="config.json:caps.compute.daily", env="GATE_COMPUTE_DAILY", default=None,
+         kind="float|null", secret=False, desc="DAILY remote-compute (vast.ai GPU) sub-cap ($) — alert/soft. null = off."),
+    dict(section="caps", key="compute.monthly", store="config.json:caps.compute.monthly", env="GATE_COMPUTE_MONTHLY", default=None,
+         kind="float|null", secret=False, desc="MONTHLY remote-compute sub-cap ($) — alert/soft. null = off."),
     dict(section="caps", key="meta", store="config.json:caps.meta", env="GATE_META_BUDGET", default=2.0,
          kind="float", secret=False,
          desc="Daily $ cap for spendguard's OWN advisor LLM use (intent spendguard:*) — separate from workload caps."),

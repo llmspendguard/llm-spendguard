@@ -185,7 +185,7 @@ def _budget_check(cost, model, provider, kind):
     if config.budget_backend() != "sqlite" or _allow():
         return
     from . import budget
-    ex = budget.exceeded(cost)
+    ex = budget.exceeded(cost, kind="llm")          # the gate governs LLM calls; checks the LLM sub-cap + total ceiling
     if not ex:
         return
     w, capv, proj = ex
@@ -201,7 +201,7 @@ def _budget_check(cost, model, provider, kind):
             return
     _emit({"kind": kind, "provider": provider, "model": model, "cost": cost, "decision": f"refused_{w}"})
     raise SpendGateRefused(f"{w} budget ${capv:.0f} would be exceeded (projected ${proj:.2f}). "
-                           f"Raise caps.{w}, or set GATE_ALLOW=1.")
+                           f"Raise caps.{w.replace('-', '.')}, or set GATE_ALLOW=1.")
 
 
 def _budget_record(cost, model, provider, kind):

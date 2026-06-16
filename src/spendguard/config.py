@@ -52,14 +52,28 @@ def rt_budget():
     return float(v) if v is not None else float(_cfg_get("caps", "realtime", 50))
 
 
-def daily_cap():
-    v = _cfg_get("caps", "daily", None)
-    return float(v) if v is not None else None
+def class_cap(cls, window):
+    """Resource-class spend cap ($) — cls in {total, llm, compute}, window in {daily, monthly}. None = off.
+    Order: env GATE_{CLS}_{WINDOW} (e.g. GATE_LLM_DAILY, GATE_COMPUTE_MONTHLY, GATE_TOTAL_DAILY) → nested
+    config caps.{cls}.{window} → (for total only) legacy flat caps.{window}. Splitting LLM vs remote-compute vs
+    a total ceiling lets you set a tight LLM sub-limit under a higher overall cap."""
+    env = os.getenv(f"GATE_{cls.upper()}_{window.upper()}")
+    if env is not None:
+        return float(env)
+    caps = _cfg().get("caps") or {}
+    flat = caps.get(f"{cls}.{window}")                         # how init/config stores it: caps["llm.daily"]
+    if flat is not None:
+        return float(flat)
+    node = caps.get(cls)                                       # nested form: caps["llm"]["daily"]
+    if isinstance(node, dict) and node.get(window) is not None:
+        return float(node[window])
+    if cls == "total" and caps.get(window) is not None:        # legacy flat caps.daily/monthly == the total ceiling
+        return float(caps[window])
+    return None
 
 
-def monthly_cap():
-    v = _cfg_get("caps", "monthly", None)
-    return float(v) if v is not None else None
+def daily_cap():    return class_cap("total", "daily")          # back-compat: the total daily ceiling
+def monthly_cap():  return class_cap("total", "monthly")
 
 
 def meta_cap():

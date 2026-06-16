@@ -232,12 +232,21 @@ def spent_today():  return spent_since(_utc().strftime("%Y-%m-%d"))
 def spent_month():  return spent_since(_utc().strftime("%Y-%m-01"))
 
 
-def exceeded(pending=0.0):
-    """(window, cap, projected) if a configured daily/monthly cap would be exceeded, else None."""
-    d = config.daily_cap()
-    if d is not None and spent_today() + pending > d:
-        return ("daily", d, spent_today() + pending)
-    m = config.monthly_cap()
-    if m is not None and spent_month() + pending > m:
-        return ("monthly", m, spent_month() + pending)
+def exceeded(pending=0.0, kind="llm"):
+    """(scope, cap, projected) if a cap would be exceeded by `pending` more $ on a call of resource class
+    `kind` (llm|compute), else None. Checks the class SUB-CAP then the TOTAL ceiling, daily then monthly.
+    The gate governs LLM calls, so it passes kind='llm'; remote-compute caps are checked in resources.py
+    (vast.ai launches don't hit the gate). meta is separate (meta_exceeded). NOTE: this local ledger holds LLM
+    spend, so the total ceiling here is evaluated against LLM spend — the true LLM+compute total is composed on
+    the dashboard/report; the compute portion is enforced/alerted via resources.compute_exceeded()."""
+    sd, sm = spent_today(), spent_month()
+    checks = []
+    if kind in ("llm", "compute"):
+        checks.append((f"{kind}-daily", config.class_cap(kind, "daily"), sd))
+        checks.append((f"{kind}-monthly", config.class_cap(kind, "monthly"), sm))
+    checks.append(("total-daily", config.class_cap("total", "daily"), sd))
+    checks.append(("total-monthly", config.class_cap("total", "monthly"), sm))
+    for scope, capv, sp in checks:
+        if capv is not None and sp + pending > capv:
+            return (scope, capv, sp + pending)
     return None

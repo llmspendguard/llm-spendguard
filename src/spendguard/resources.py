@@ -144,6 +144,30 @@ def account_gpu_total(since_ts=None):
                      if not i.get("is_credit") and (i.get("timestamp") or 0) >= since_ts), 2)
 
 
+def compute_exceeded():
+    """Remote-compute (vast.ai) cap status — ALERT-only: launches don't pass through the gate, and we never kill a
+    running billed job (your protocol). Returns (scope, cap, spent) for the first breached window, else None.
+    Surfaced in the report + dashboard so a breach is visible; pair with `spendguard resources launch` to hard-block
+    NEW launches over cap."""
+    from . import config
+    cm = config.class_cap("compute", "monthly")
+    if cm is not None:
+        spent = account_gpu_total()                       # month-to-date account charges (proxy)
+        if spent > cm:
+            return ("compute-monthly", cm, round(spent, 2))
+    cd = config.class_cap("compute", "daily")
+    if cd is not None:
+        try:
+            import datetime as _dt
+            today = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
+            st = round(sum(r["cost"] for r in gpu_rows_by_day() if r["day"] == today), 2)
+            if st > cd:
+                return ("compute-daily", cd, st)
+        except Exception:
+            pass
+    return None
+
+
 def sync(dry=False):
     """Push THIS repo's GPU spend (instances whose label maps to this repo's project), per-day, via this repo's
     key → its org. The owns_account connection ALSO reconciles: gap = vast.ai account total − Σ attributed →
