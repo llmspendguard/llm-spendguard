@@ -135,6 +135,17 @@ def _project_filter(c):
     return base
 
 
+def _row_uid(row):
+    """Client-side mirror of the server's core.mjs rowUid — MUST stay byte-identical so a local row and its server
+    row share one id (cross-check). key = 'v1|member_ref|project(lower)|day|provider|model|kind|channel' → sha1[:24].
+    Compute from the SAME normalized values we send (project already lowercased, kind/channel already defaulted)."""
+    import hashlib
+    key = "|".join(["v1", row.get("member_ref") or "", str(row.get("project") or "").lower(),
+                    row.get("day") or "", row.get("provider") or "", row.get("model") or "",
+                    row.get("kind") or "workload", row.get("channel") or "batch"])
+    return hashlib.sha1(key.encode()).hexdigest()[:24]
+
+
 def _rollup_rows(since=None):
     """Build the structured /v1/ledger day_totals from the local ledger, stamping this install's contributor and
     the project tag, and filtering to the project(s) this connection owns. Maps the local `kind`
@@ -153,7 +164,7 @@ def _rollup_rows(since=None):
         if flt is not None and proj not in flt:
             continue                      # not this connection's project — don't cross-attribute
         k = (r.get("kind") or "workload").lower()
-        out.append({
+        row = {
             "day": r["day"], "provider": r.get("provider") or "?", "model": r.get("model") or "?",
             "kind": "meta" if k == "meta" else "workload",
             "channel": "realtime" if k == "realtime" else "batch",
@@ -161,7 +172,9 @@ def _rollup_rows(since=None):
             "calls": int(r.get("calls", 0)),
             "member_ref": "" if proj == "unattributed" else ref,   # reconciled gap has no known contributor
             "project": proj,
-        })
+        }
+        row["uid"] = _row_uid(row)        # per-row id, local↔server cross-check (server recomputes + verifies)
+        out.append(row)
     return out
 
 
@@ -323,6 +336,50 @@ def sync(if_due=False, since=None):
     return out
 
 
+def crosscheck(since=None):
+    """Cross-check the LOCAL ledger against the SERVER, row by row, via the per-row uid. GET /v1/ledger (this
+    key's scope) and diff vs locally-computed rows → matched · value-drift · local-only (pushed-but-missing or
+    never pushed) · server-only (stale, should be pruned). The trust layer over the sync. Free (no spend)."""
+    import datetime
+    since = since or datetime.date.today().replace(day=1).isoformat()
+    ok, reason = ready()
+    if not ok:
+        return {"error": f"not connected: {reason}"}
+    local = {r["uid"]: r for r in _rollup_rows(since=since)}        # LLM ledger rows
+    try:                                                            # + GPU rows (best-effort; hits vast.ai)
+        from . import resources
+        for r in resources.sync(dry=True).get("day_totals", []):
+            local[r["uid"]] = r
+    except Exception:
+        pass
+    try:
+        resp = _request("GET", "/v1/ledger?since=" + since)
+    except Exception as e:
+        return {"error": str(e)}
+    srv = {row["uid"]: row for row in (resp.get("rows") or [])}
+    matched = 0
+    drift, local_only, server_only = [], [], []
+    for uid, lr in local.items():
+        if uid in srv:
+            sm, lm = int(srv[uid].get("spend_micros") or 0), int(lr.get("spend_micros") or 0)
+            if abs(sm - lm) > 1:
+                drift.append({"uid": uid, "project": lr.get("project"), "day": lr.get("day"),
+                              "local_usd": round(lm / 1e6, 2), "server_usd": round(sm / 1e6, 2), "version": srv[uid].get("version")})
+            else:
+                matched += 1
+        else:
+            local_only.append({"uid": uid, "project": lr.get("project"), "day": lr.get("day"),
+                               "usd": round(int(lr.get("spend_micros") or 0) / 1e6, 2)})
+    for uid, sr in srv.items():
+        if uid not in local:
+            server_only.append({"uid": uid, "project": sr.get("project"), "day": str(sr.get("day")),
+                                "usd": round(int(sr.get("spend_micros") or 0) / 1e6, 2), "version": sr.get("version")})
+    return {"since": since, "local_rows": len(local), "server_rows": len(srv),
+            "matched": matched, "value_drift": len(drift), "local_only": len(local_only), "server_only": len(server_only),
+            "in_sync": not (drift or local_only or server_only),
+            "samples": {"value_drift": drift[:10], "local_only": local_only[:10], "server_only": server_only[:10]}}
+
+
 def status():
     c = conn()
     ok, reason = ready()
@@ -373,6 +430,10 @@ def cmd(argv=None):
         import json as _j
         print(_j.dumps(ledger_sync.audit_completeness(), indent=2))
         return 0
+    if sub in ("crosscheck", "verify"):               # row-by-row local↔server diff via per-row uid (free)
+        import json as _j
+        print(_j.dumps(crosscheck(), indent=2))
+        return 0
     if sub == "commands":                             # drain + run server-enqueued work (reconcile / re-tag)
         print("commands:", run_commands())
         return 0
@@ -382,5 +443,5 @@ def cmd(argv=None):
             r = pull_insights(scope); print(f"pulled {len(r.get('abstracts', []))} abstract(s) (scope={scope})"); return 0
         except Exception as e:
             print(f"pull failed: {e}"); return 1
-    print("usage: spendguard saas [status|ping|sync [--if-due]|push [--dry]|reconcile|audit|commands|pull [team|org]]")
+    print("usage: spendguard saas [status|ping|sync [--if-due]|push [--dry]|reconcile|audit|crosscheck|commands|pull [team|org]]")
     return 1

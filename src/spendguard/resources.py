@@ -168,6 +168,8 @@ def sync(dry=False):
                 "kind": "gpu", "channel": "realtime", "spend_micros": round(gap * 1_000_000), "calls": 0,
                 "member_ref": "", "project": "unattributed", "tags": "remote-compute,gpu,unattributed",
             })
+    for row in day_totals:                                # per-row id, local↔server cross-check (gpu rows too)
+        row["uid"] = saas._row_uid(row)
     payload = {"visibility": c.get("visibility"), "day_totals": day_totals}
     if dry:
         return payload
