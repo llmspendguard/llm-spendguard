@@ -112,17 +112,18 @@ def good_rates():
     return out
 
 
-def link_conversations(tdir=None):
-    """Stamp each recovered per-request row with the conversation that spawned its batch + a context snippet
-    (the pre/post 'why' from the chat). The call→conversation join is the batch id. Returns rows linked."""
+def link_conversations(tdir=None, turns=10):
+    """Stamp each recovered per-request row with the conversation that spawned its batch + the RICH pre/post
+    context (~`turns` message turns before AND after the batch mention — the why/outcome, not a one-liner). The
+    call→conversation join is the batch id. Re-links (overwrites) so old one-line snippets upgrade. Returns rows."""
     from . import conv
-    links = conv.batch_links(tdir)
+    ctxs = conv.batch_contexts(tdir, turns=turns)
     n = 0
     with _lock:
         db = _db()
-        for bid, d in links.items():
-            r = db.execute("UPDATE call_io SET conv_id=?, context=? WHERE batch=? AND (conv_id IS NULL OR conv_id='')",
-                           (d.get("conv", ""), (d.get("snippet") or "")[:IO_SNIP], bid))
+        for bid, d in ctxs.items():
+            ctx = (d.get("before", "") + "\n--- [batch ran here: " + (d.get("at", "") or "")[:120] + "] ---\n" + d.get("after", "")).strip()
+            r = db.execute("UPDATE call_io SET conv_id=?, context=? WHERE batch=?", (d.get("conv", ""), ctx[:8000], bid))
             n += r.rowcount
         db.commit()
     return n
