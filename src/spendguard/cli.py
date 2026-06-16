@@ -101,6 +101,9 @@ def main(argv=None):
     if cmd == "accounting":                            # match actual provider USAGE → project via conversations
         from . import conv
         return conv.attribute_cmd(rest)
+    if cmd == "signal":                                # efficiency signal (cost+quality+waste+reco) → server
+        from . import signal
+        return signal.cmd(rest)
     if cmd in ("fetch-io", "fetchio"):                # recover real prompt+output samples from providers (free)
         from . import callio
         return callio.main(rest)
