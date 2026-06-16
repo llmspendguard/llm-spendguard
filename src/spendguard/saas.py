@@ -127,6 +127,7 @@ def _project_filter(c):
     if not base:
         return None                # no project configured → push everything
     base.add("llmseg")             # spendguard's own cost always accompanies the work it governed
+    base.add("unattributed")       # reconciled provider-truth gap (ungoverned) rides along too
     return base
 
 
@@ -154,7 +155,8 @@ def _rollup_rows(since=None):
             "channel": "realtime" if k == "realtime" else "batch",
             "spend_micros": round(float(r.get("cost", 0)) * 1_000_000),
             "calls": int(r.get("calls", 0)),
-            "member_ref": ref, "project": proj,
+            "member_ref": "" if proj == "unattributed" else ref,   # reconciled gap has no known contributor
+            "project": proj,
         })
     return out
 
@@ -251,14 +253,16 @@ def run_commands(since=None):
         try:
             if kind in ("reconcile", "full"):
                 from . import ledger_sync
-                comp = ledger_sync._compute(since=since)
-                res["coverage"] = round(comp.get("coverage", 100.0))
-                res["leak_usd"] = round(comp.get("leak", 0.0), 2)
+                rec = ledger_sync.reconcile_into_ledger(since=since)   # writes provider-truth gap into the ledger
+                res["coverage"] = rec["coverage"]
+                res["provider_total"] = rec["provider_total"]
+                res["leak_usd"] = rec["ungoverned"]                   # ungoverned = the gap surfaced
             if kind in ("retag", "full"):
                 from . import tag
                 res["retagged"] = tag.retag_deterministic()
                 res["ambiguous"] = tag.ambiguous_count()   # remainder an LLM pass could resolve (gated, separate)
-                push_rollup(since=since)                    # re-push the corrected tags
+            if kind in ("reconcile", "retag", "full"):
+                push_rollup(since=since)                    # re-push the corrected/reconciled ledger
             complete_command(c["id"], res)
             ran.append({"id": c["id"], "kind": kind, "result": res})
         except Exception as e:
@@ -305,6 +309,11 @@ def sync(if_due=False, since=None):
         d, why = due()
         if not d:
             return {"skipped": why}
+    try:
+        from . import ledger_sync
+        ledger_sync.reconcile_into_ledger(since=since)   # make the ledger reflect provider truth BEFORE pushing
+    except Exception:
+        pass
     out = {"rollup": push_rollup(since=since), "insights": push_insights(), "commands": run_commands(since=since)}
     _set_state(last_sync=time.time())
     return out
@@ -351,6 +360,10 @@ def cmd(argv=None):
             print("rollup:", push_rollup()); print("insights:", push_insights()); return 0
         except Exception as e:
             print(f"push failed: {e}"); return 1
+    if sub == "reconcile":                            # reconcile the LOCAL ledger to provider-billed truth (free)
+        from . import ledger_sync
+        print("reconcile:", ledger_sync.reconcile_into_ledger())
+        return 0
     if sub == "commands":                             # drain + run server-enqueued work (reconcile / re-tag)
         print("commands:", run_commands())
         return 0

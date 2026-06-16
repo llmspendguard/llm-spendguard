@@ -75,11 +75,46 @@ def record(provider, model, kind, cost, project=None):
         _db().commit()
 
 
-def spent_since(day):  # WORKLOAD spend only — excludes spendguard's own meta calls
+def spent_since(day):  # WORKLOAD spend only — excludes spendguard's own meta AND reconciled (historical) rows
     with _lock:
         r = _db().execute("SELECT COALESCE(SUM(cost),0) FROM charges WHERE day >= ? "
-                          "AND (kind IS NULL OR kind != 'meta')", (day,)).fetchone()
+                          "AND (kind IS NULL OR kind != 'meta') "
+                          "AND (project IS NULL OR project <> 'unattributed')", (day,)).fetchone()
     return float(r[0] or 0)
+
+
+# ── reconciliation: make the LOCAL ledger reflect PROVIDER-billed truth (the gap = ungoverned/pre-ledger spend) ──
+def by_provider_day(kind=None, since=None):
+    """{(provider, day): $} of GATE-recorded spend (excludes reconciled rows) — the attributed side of reconcile."""
+    cond, args = ["(project IS NULL OR project <> 'unattributed')"], []
+    if kind:
+        cond.append("kind=?"); args.append(kind)
+    if since:
+        cond.append("day >= ?"); args.append(since)
+    where = "WHERE " + " AND ".join(cond)
+    with _lock:
+        rows = _db().execute(f"SELECT COALESCE(provider,'?'), day, COALESCE(SUM(cost),0) FROM charges {where} "
+                             f"GROUP BY provider, day", args).fetchall()
+    return {(p, d): float(c or 0) for p, d, c in rows}
+
+
+def record_reconciled(day, provider, cost):
+    """Insert a reconciliation row for provider-billed spend we couldn't attribute (project='unattributed' →
+    pushed with no contributor; excluded from the cap)."""
+    with _lock:
+        _db().execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project) VALUES (?,?,?,?,?,?,?)",
+                      (day + "T00:00:00+00:00", day, provider or "?", "(provider-batch)", "batch", float(cost), "unattributed"))
+        _db().commit()
+
+
+def clear_reconciled(since=None):
+    """Remove prior reconciliation rows so reconcile is idempotent (rebuilds them)."""
+    with _lock:
+        if since:
+            _db().execute("DELETE FROM charges WHERE project='unattributed' AND day >= ?", (since,))
+        else:
+            _db().execute("DELETE FROM charges WHERE project='unattributed'")
+        _db().commit()
 
 
 # ── spendguard's own advisor LLM use (segregated: own cap, own line, excluded from workload) ──

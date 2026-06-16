@@ -50,6 +50,49 @@ def _compute(since=None):
                 coverage=(post_l / post_p * 100) if post_p else 100.0)
 
 
+def reconcile_into_ledger(since=None):
+    """Make the LOCAL ledger reflect PROVIDER-billed batch truth: write the per-(provider,day) GAP between
+    provider billing and gate-recorded batch as 'unattributed' rows. Idempotent (rebuilds them). The gate-recorded
+    spend stays attributed (project/user); the gap = pre-ledger / ungated / ungoverned. Zero model spend (provider
+    GETs are free). Returns a summary. This is what makes the ledger correct + the dashboard show the real total."""
+    from . import budget
+    since = since or datetime.date.today().replace(day=1).isoformat()
+    prov = {}   # (provider, day) -> $ billed (truth)
+    errors = {}   # NEVER silently undercount — a failed/partial provider fetch must be visible, not hidden
+    try:
+        from .report import openai_by_day
+        oai, _pending = openai_by_day()                        # NB: returns (by_day, pending)
+        for d, v in oai.items():
+            if d >= since:
+                prov[("openai", d)] = prov.get(("openai", d), 0.0) + v
+    except Exception as e:
+        errors["openai"] = str(e)[:140]
+    try:
+        from . import reconcile_anthropic as anth
+        an, _ = anth.cost_by_day(since=since)
+        for d, v in an.items():
+            if d >= since:
+                prov[("anthropic", d)] = prov.get(("anthropic", d), 0.0) + v
+    except Exception as e:
+        errors["anthropic"] = str(e)[:140]
+    local = budget.by_provider_day(kind="batch", since=since)   # gate-recorded (attributed) batch
+    budget.clear_reconciled(since)                              # rebuild the gap rows
+    gap_usd = 0.0
+    gap_rows = 0
+    for (p, d), pv in prov.items():
+        gap = pv - local.get((p, d), 0.0)
+        if gap > 0.01:                                          # provider billed more than the gate saw → ungoverned
+            budget.record_reconciled(d, p, gap)
+            gap_usd += gap
+            gap_rows += 1
+    provider_total = round(sum(prov.values()), 2)
+    local_total = round(sum(local.values()), 2)
+    return dict(since=since, provider_total=provider_total, gate_attributed=local_total,
+                ungoverned=round(gap_usd, 2), gap_rows=gap_rows,
+                coverage=round(local_total / provider_total * 100, 1) if provider_total else 100.0,
+                errors=errors, providers_ok=[p for p in ("openai", "anthropic") if p not in errors])
+
+
 def leak_line(since=None):
     """One-line leak alert for the report (or None if clean / nothing to compare)."""
     try:
