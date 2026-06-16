@@ -1,14 +1,14 @@
-"""Unified LLM spend report — OpenAI (gpt-5.5 etc.) + Anthropic (Opus 4.8 etc.).
+"""Unified LLM + Remote Compute spend report — OpenAI (gpt-5.5 etc.) + Anthropic (Opus 4.8 etc.) + vast.ai GPU.
 
-Reports DAILY / WEEKLY / MONTHLY billed batch spend per provider and combined,
-priced via canonical pricing.py. Message-ready for the scheduled monitor.
-ZERO paid calls (batch metadata + result GETs only).
+Reports DAILY / WEEKLY / MONTHLY billed batch spend per provider, an LLM subtotal, remote-compute (vast.ai GPU)
+spend, and a grand total — priced via canonical pricing.py. Message-ready for the scheduled monitor.
+ZERO paid calls (batch metadata + result GETs + vast.ai instance GETs only).
 
   python scripts/spend_report.py
-  python scripts/spend_report.py --alert-threshold 150   # adds an ALERT line if TODAY combined > $150
+  python scripts/spend_report.py --alert-threshold 150   # adds an ALERT line if TODAY total (LLM+compute) > $150
 
-Scope: BATCH spend both providers. Real-time spend (e.g. Opus LOINC judge) is not
-captured without an Admin key — noted in output.
+Scope: BATCH spend both providers + GPU consumption from currently-visible vast.ai instances. Real-time LLM spend
+(e.g. Opus LOINC judge) needs an Admin key — noted in output; destroyed GPU instances aren't per-instance billed.
 """
 import os, sys, argparse, datetime
 from collections import defaultdict
@@ -31,6 +31,23 @@ def openai_by_day():
         c = pricing.batch_cost(b["model"], it, ot, (u.get("input_tokens_details") or {}).get("cached_tokens", 0))
         by_day[oai_day(b)] += c
     return by_day, pending
+
+
+def gpu_by_day(since):
+    """{day: $} of vast.ai GPU consumption from currently-visible instances (per-day split), for the report's
+    Remote-Compute row. Free (instance GETs). Returns ({}, note) on any vast.ai error so the report still renders.
+    NB: destroyed instances aren't per-instance billed by vast.ai → this is current-instance consumption, not the
+    account top-up total (which is lumpy + cross-org on a shared account)."""
+    import datetime
+    try:
+        from . import resources
+        since_ts = datetime.datetime.strptime(since, "%Y-%m-%d").replace(tzinfo=datetime.timezone.utc).timestamp()
+        bd = defaultdict(float)
+        for r in resources.gpu_rows_by_day(since_ts=since_ts):
+            bd[r["day"]] += r["cost"]
+        return dict(bd), None
+    except Exception as e:
+        return {}, str(e)[:80]
 
 
 def windows(today):
@@ -63,7 +80,7 @@ def main():
             print("  email not configured — skipping (set up a sender: see README → 'Email the report')")
         else:
             stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
-            subj = f"LLM spend report — {stamp}" + ("  ⚠️ ALERT" if rc == 2 else "")
+            subj = f"LLM and Remote Compute spend report — {stamp}" + ("  ⚠️ ALERT" if rc == 2 else "")
             try:
                 to = notify.send_email(subj, text, to=a.email_to)
                 print(f"  (emailed to {to})")
@@ -91,16 +108,27 @@ def _run(a):
     def row(name, bd):
         return (name, sum_window(bd, tstr), sum_window(bd, week_start), sum_window(bd, month_start))
 
+    gpu, gpu_err = gpu_by_day(month_start)               # remote compute (vast.ai GPU) — free instance GETs
+
     r_oai = row("OpenAI batch (gpt-5.5)", oai)
     r_an = row("Anthropic batch (Opus)", an)
     r_rt = row("Real-time (gate-logged)", rt)
-    combined = ("COMBINED", r_oai[1] + r_an[1] + r_rt[1], r_oai[2] + r_an[2] + r_rt[2], r_oai[3] + r_an[3] + r_rt[3])
+    llm_sub = ("LLM subtotal", r_oai[1] + r_an[1] + r_rt[1], r_oai[2] + r_an[2] + r_rt[2], r_oai[3] + r_an[3] + r_rt[3])
+    r_gpu = row("Remote compute (vast.ai GPU)", gpu)
+    total = ("TOTAL (LLM + compute)", llm_sub[1] + r_gpu[1], llm_sub[2] + r_gpu[2], llm_sub[3] + r_gpu[3])
+    combined = total                                     # the alert threshold tracks the grand total (LLM + compute)
 
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%MZ")
-    print(f"LLM SPEND REPORT — {stamp}  (priced via pricing.py {pricing.PRICING_VERIFIED})")
-    print(f"{'source':<26}{'today':>11}{'last 7d':>12}{'month':>12}")
-    for name, t, w, m in (r_oai, r_an, r_rt, combined):
-        print(f"{name:<26}{'$%.2f'%t:>11}{'$%.2f'%w:>12}{'$%.2f'%m:>12}")
+    print(f"LLM AND REMOTE COMPUTE SPEND REPORT — {stamp}  (priced via pricing.py {pricing.PRICING_VERIFIED})")
+    print(f"{'source':<30}{'today':>11}{'last 7d':>12}{'month':>12}")
+    for name, t, w, m in (r_oai, r_an, r_rt, llm_sub, r_gpu, total):
+        if name == "Remote compute (vast.ai GPU)":
+            print("  " + "-" * 61)                       # divider: LLM subtotal above, compute below
+        print(f"{name:<30}{'$%.2f'%t:>11}{'$%.2f'%w:>12}{'$%.2f'%m:>12}")
+    if gpu_err:
+        print(f"  (remote compute: vast.ai unreachable — {gpu_err}; GPU shown as $0 this run)")
+    else:
+        print("  remote compute = consumption from currently-visible vast.ai instances (destroyed instances aren't per-instance billed).")
     if an_models:
         print("  Anthropic batch by model (month): " + ", ".join(f"{k.split('-')[1] if '-' in k else k}:${v:.0f}" for k, v in sorted(an_models.items(), key=lambda x: -x[1])))
     if pending:
@@ -109,7 +137,7 @@ def _run(a):
     from . import budget
     mt, mw, mm = (budget.meta_spent_since(tstr), budget.meta_spent_since(week_start), budget.meta_spent_since(month_start))
     if mt or mw or mm:
-        print(f"{'spendguard meta (advisor)':<26}{'$%.2f' % mt:>11}{'$%.2f' % mw:>12}{'$%.2f' % mm:>12}   (own cap; not in COMBINED)")
+        print(f"{'spendguard meta (advisor)':<30}{'$%.2f' % mt:>11}{'$%.2f' % mw:>12}{'$%.2f' % mm:>12}   (own cap; not in TOTAL)")
     _v, _days, _stale = pricing.freshness()
     if _stale:
         print(f"  ⚠️ PRICE TABLE STALE: verified {_v} ({_days}d ago). Re-verify vs {pricing.PRICING_SOURCE} and update prices.json (`spendguard check-prices`).")
@@ -143,8 +171,8 @@ def _run(a):
 
     rc = 0
     if a.alert_threshold and combined[1] > a.alert_threshold:
-        print(f"\n*** ALERT: today combined ${combined[1]:,.2f} exceeds ${a.alert_threshold:,.0f}. "
-              f"Check `spendguard reconcile openai|anthropic --by-day`. ***")
+        print(f"\n*** ALERT: today total (LLM + compute) ${combined[1]:,.2f} exceeds ${a.alert_threshold:,.0f}. "
+              f"Check `spendguard reconcile openai|anthropic --by-day` + `spendguard resources`. ***")
         rc = 2
     if leaked > max(1.0, (a.alert_threshold or 1e9) * 0.1):
         print(f"\n*** ALERT: ~${leaked:.2f} provider-billed batch is NOT in the local ledger (ungoverned). "

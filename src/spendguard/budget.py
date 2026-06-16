@@ -182,13 +182,17 @@ def meta_exceeded(pending=0.0):
     return None
 
 
-def by_day(kind=None, exclude_meta=False, since=None):
-    """{day: total$} from the local ledger, optionally filtered by kind / excluding meta / since a date."""
+def by_day(kind=None, exclude_meta=False, since=None, exclude_reconciled=False):
+    """{day: total$} from the local ledger, optionally filtered by kind / excluding meta / excluding reconciled
+    (provider-truth) rows / since a date. exclude_reconciled is essential for the LEAK check: reconciled rows ARE
+    the provider truth, so counting them as 'local gate-recorded' would make coverage exceed 100%."""
     cond, args = [], []
     if kind:
         cond.append("kind=?"); args.append(kind)
     if exclude_meta:
         cond.append("(kind IS NULL OR kind != 'meta')")
+    if exclude_reconciled:
+        cond.append("(model IS NULL OR model <> ?)"); args.append(_RECONCILED)
     if since:
         cond.append("day >= ?"); args.append(since)
     where = ("WHERE " + " AND ".join(cond)) if cond else ""

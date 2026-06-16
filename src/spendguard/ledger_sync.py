@@ -38,7 +38,7 @@ def _compute(since=None):
     from . import budget
     since = since or datetime.date.today().replace(day=1).isoformat()
     prov, pending = _provider_batch_by_day(since)
-    local_batch = budget.by_day(kind="batch", since=since)
+    local_batch = budget.by_day(kind="batch", since=since, exclude_reconciled=True)   # reconciled rows ARE provider truth — don't count them as local
     cutoff = budget.ledger_start() or since
     post_p = sum(v for d, v in prov.items() if d >= cutoff)
     post_l = sum(v for d, v in local_batch.items() if d >= cutoff)
@@ -193,7 +193,7 @@ def sync(since=None):
     from . import budget
     since = since or datetime.date.today().replace(day=1).isoformat()
     prov, pending = _provider_batch_by_day(since)
-    local_batch = budget.by_day(kind="batch", since=since)
+    local_batch = budget.by_day(kind="batch", since=since, exclude_reconciled=True)   # exclude provider-truth rows from the local side
     local_rt = budget.by_day(kind="realtime", since=since)
     meta = budget.by_day(kind="meta", since=since)
     lstart = budget.ledger_start()
