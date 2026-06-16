@@ -21,6 +21,30 @@ def retag_deterministic():
     return int(a or 0) + int(b or 0)
 
 
+def move_project(old, new):
+    """Re-assign a project tag across the local ledger — fixes cwd-fallback mistags (e.g. anime-captioning that
+    ran from ~/Documents got tagged 'documents' instead of 'manga2anime'). Returns rows changed."""
+    from . import budget
+    old, new = (old or "").strip().lower(), (new or "").strip().lower()
+    db = budget._db()
+    with budget._lock:
+        n = db.execute("UPDATE charges SET project=? WHERE lower(COALESCE(project,''))=?", (new, old)).rowcount
+        db.commit()
+    return int(n or 0)
+
+
+def cmd(argv=None):
+    argv = argv or []
+    if len(argv) >= 3 and argv[0] == "move":
+        print(f"re-tagged {move_project(argv[1], argv[2])} rows: {argv[1]} → {argv[2]}")
+        return 0
+    if argv and argv[0] == "estimate":
+        print(estimate_llm_retag())
+        return 0
+    print("usage: spendguard tag move <old-project> <new-project>   |   tag estimate")
+    return 1
+
+
 def ambiguous_count():
     """Rows a human/LLM might still need to disambiguate — untagged after the free pass (should be ~0 once
     deterministic runs, but non-repo or mixed-context charges can remain). Zero-spend."""

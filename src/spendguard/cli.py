@@ -77,6 +77,9 @@ def main(argv=None):
     if cmd == "resources":                             # non-LLM compute (vast.ai GPU) → same org/team/project model
         from . import resources
         return resources.cmd(rest)
+    if cmd == "tag":                                   # re-assign a project tag (fix cwd-fallback mistags)
+        from . import tag
+        return tag.cmd(rest)
     if cmd == "calls":
         from . import calls
         return calls.cmd_summary(rest)
