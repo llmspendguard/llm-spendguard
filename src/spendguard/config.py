@@ -194,16 +194,24 @@ def allow():    return os.getenv("GATE_ALLOW") == "1"
 
 
 def api_key(name):
-    """Resolve an API key: os.environ first, then SPENDGUARD_ENV or ./.env."""
+    """Resolve an API key: os.environ first, then a CHAIN of .env files — $SPENDGUARD_ENV, ./.env (cwd), and
+    SPENDGUARD_HOME/.env. The last is cwd-INDEPENDENT, so keys resolve from any repo (spendguard moved out of lmm,
+    so a cwd-only ./.env silently lost the keys — financial data must not depend on which directory you ran from)."""
     k = os.environ.get(name, "")
-    if not k:
-        envp = Path(os.getenv("SPENDGUARD_ENV") or (Path.cwd() / ".env"))
+    if k:
+        return k
+    candidates = []
+    if os.getenv("SPENDGUARD_ENV"):
+        candidates.append(Path(os.getenv("SPENDGUARD_ENV")))
+    candidates.append(Path.cwd() / ".env")
+    candidates.append(HOME / ".env")           # stable home (~/.spendguard/.env) — found from any directory
+    for envp in candidates:
         try:
             if envp.exists():
                 for ln in envp.read_text().splitlines():
-                    if ln.startswith(name + "="):
-                        k = ln.split("=", 1)[1].strip()
-                        break
+                    s = ln.strip()
+                    if s.startswith(name + "="):
+                        return s.split("=", 1)[1].strip().strip('"').strip("'")
         except Exception:
             pass
-    return k
+    return ""
