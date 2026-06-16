@@ -52,15 +52,57 @@ def build(since=None):
             tokens_in=a["tin"], tokens_out=a["tout"],
             context=(a["intent"] or "(none)")[:120], recommendation=recommend(a, gr),
         ))
+    out += cancellation_rows()                # cancelled-but-billed = loss, surfaced as waste
     return out
 
 
+def cancellation_rows():
+    """Cancelled-but-billed batches = LOSS — partial work billed then discarded (your protocol: 'never cancel as
+    cost control; completed requests still bill'). Surfaced as a signal row per project: full billed cost = waste,
+    with the recommendation. Attributed by conversation/intent evidence. Free (provider GETs)."""
+    import datetime
+    from . import conv, callio, pricing
+    try:
+        from .reconcile_openai import load_key, fetch_batches
+        batches = list(fetch_batches(load_key()))
+    except Exception:
+        return []
+    links = conv.batch_links()
+    try:
+        b2i = {b: i for b, i in callio._db().execute("SELECT batch, COALESCE(NULLIF(intent,''),'') FROM call_io GROUP BY batch")}
+    except Exception:
+        b2i = {}
+    by_proj = {}
+    for b in batches:
+        if b.get("status") != "cancelled":
+            continue
+        u = b.get("usage") or {}
+        it, ot = u.get("input_tokens", 0), u.get("output_tokens", 0)
+        if not (it or ot):
+            continue                                            # nothing completed → genuinely $0
+        bid = b["id"]
+        cost = pricing.batch_cost(b["model"], it, ot, (u.get("input_tokens_details") or {}).get("cached_tokens", 0))
+        proj = (conv._project_of(links[bid]["snippet"]) if bid in links else "") or \
+               (conv._project_of(b2i[bid]) if b2i.get(bid) else "") or "unattributed"
+        a = by_proj.setdefault(proj, {"cost": 0.0, "n": 0})
+        a["cost"] += cost; a["n"] += 1
+    day = datetime.date.today().isoformat()
+    return [dict(project=proj, intent="cancelled-batches", model="(various)", day=day,
+                 calls=a["n"], cost_micros=round(a["cost"] * 1_000_000), judged=0, good_rate=0.0,
+                 waste_micros=round(a["cost"] * 1_000_000), tokens_in=0, tokens_out=0,
+                 context="cancelled mid-run (partial work billed)",
+                 recommendation=f"{a['n']} batches cancelled but still billed ${a['cost']:.0f} — completed requests bill; let jobs finish or estimate first, never cancel as cost control")
+            for proj, a in by_proj.items()]
+
+
 def push(dry=False):
-    """Push THIS repo's project signal (scrubbed) → /v1/signal via the repo key."""
-    from . import saas, budget
+    """Push THIS repo's project signal (scrubbed) → /v1/signal via the repo key. Same project filter as the
+    ledger roll-up: the connection's own project(s), plus 'unattributed'/'llmseg' iff it owns_account — so the
+    account-owner (lmm) also carries the shared no-evidence cancellation loss, and other repos don't double-count."""
+    from . import saas
     c = saas.conn()
-    proj = (c.get("project") or budget._project() or "").lower()
-    rows = [r for r in build() if (r.get("project") or "") == proj]
+    flt = saas._project_filter(c)
+    rows = [r for r in build() if flt is None or (r.get("project") or "") in flt]
     payload = {"signal": rows}
     if dry:
         return payload
