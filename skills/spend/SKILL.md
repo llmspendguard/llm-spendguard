@@ -35,6 +35,8 @@ spendguard saas push --dry     # PREVIEW the exact roll-up payload (no send, no 
 spendguard saas push           # push the per-day roll-up now (idempotent)
 spendguard saas commands       # run any server-queued work (reconcile + re-tag); reports a scrubbed result
 spendguard saas sync --if-due  # reconcile + push + run queued work (cadence-safe; used by cron / the daily report)
+spendguard resources show      # vast.ai GPU cost by project (each instance's LABEL → project)
+spendguard resources sync      # push THIS repo's GPU spend → its org (provider=vastai, kind=gpu, multi-tag)
 ```
 
 **Attribution model — every roll-up row is `(org/team × user × project)`:**

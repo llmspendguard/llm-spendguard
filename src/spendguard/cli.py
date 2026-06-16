@@ -74,6 +74,9 @@ def main(argv=None):
     if cmd == "saas":                                  # team/org roll-up client seam (→ future server repo)
         from . import saas
         return saas.cmd(rest)
+    if cmd == "resources":                             # non-LLM compute (vast.ai GPU) → same org/team/project model
+        from . import resources
+        return resources.cmd(rest)
     if cmd == "calls":
         from . import calls
         return calls.cmd_summary(rest)
