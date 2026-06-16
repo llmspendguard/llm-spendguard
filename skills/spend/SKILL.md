@@ -23,9 +23,9 @@ Keep the summary tight: $ today/7d/month, leak (if any), and the 3 most actionab
 
 ## Team / org roll-up (SaaS — opt-in)
 
-If this repo is connected to a spendguard server (dashboard at https://llm-spendguard-server.vercel.app), the
-local ledger rolls UP for team/org visibility. The client never proxies tokens; only a scrubbed per-day roll-up
-leaves, at the configured `visibility`.
+If this repo is connected to a spendguard server (dashboard at https://llm-spendguard-server.vercel.app — note
+the hosted server is in development), the local ledger rolls UP for team/org visibility. The client never
+proxies tokens; only a scrubbed per-day roll-up leaves, at the configured `visibility`.
 
 ```
 spendguard saas status         # url · key(set?) · contributor · project · visibility · sync state

@@ -2,6 +2,32 @@
 
 All notable changes to **llm-spendguard**. Format loosely follows Keep a Changelog; dates are UTC.
 
+## [0.2.5] — 2026-06-16
+
+Split caps by resource class + a public-consumption documentation pass.
+
+### Added
+- **Split caps by resource class.** Cumulative caps are now per class, each with a `daily` and `monthly`
+  window: `caps.llm.{daily,monthly}` (**HARD — gate-enforced**, OpenAI + Anthropic), `caps.compute.{daily,monthly}`
+  (**alert-only** — remote-compute / vast.ai launches don't pass through the gate, surfaced in the report +
+  dashboard), and `caps.total.{daily,monthly}` (the overall LLM + compute ceiling). Env overrides for each:
+  `GATE_LLM_DAILY` · `GATE_LLM_MONTHLY` · `GATE_COMPUTE_DAILY` · `GATE_COMPUTE_MONTHLY` · `GATE_TOTAL_DAILY` ·
+  `GATE_TOTAL_MONTHLY` (`config.class_cap`, `config_schema.py`, `resources.compute_exceeded`). The **legacy flat
+  `caps.daily` / `caps.monthly` still work** and are honored as the total ceiling.
+
+### Changed
+- **Public-docs pass** (no logic changes): `llmspendguard.com` links throughout (README hook, docs index,
+  pyproject `Homepage`); a new **"Why llm-spendguard?"** section; explicit **SaaS-status clarity** (the client
+  is production-ready and standalone; the team/org server is a separate repo in development) in the README,
+  ROADMAP, and the `/spend` skill; a **"Smart attribution"** subsection (WHO `org→team→contributor` × WHAT
+  `project·intent·resource`); a stronger **conversational `spendguard init` / set-up-with-Claude** story; a
+  clearer **extend-to-any-SDK** path (`register` + adapters + emit, zero deps, fail-open); a **"Getting help"**
+  community footer (Issues, Discussions, site); and the PyPI install path alongside `pip install -e .`.
+- **New `scripts/README.md`** documenting `bootstrap-remote.sh` (configuring a remote/ephemeral GPU box to
+  gate + attribute + push), with prerequisites and an example.
+- Code comments noting that the example project→path mappings (`workdone.py`) and project-detection keyword
+  patterns (`conv.py`) are tuned to the author's machine and should be customized.
+
 ## [0.2.4] — 2026-06-14
 
 Stand the repo on its own + simplify the SaaS seam.

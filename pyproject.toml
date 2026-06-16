@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "llm-spendguard"
-version = "0.2.4"
+version = "0.2.5"
 description = "A pre-spend GATE + learning advisor for LLM API cost: caps every call, prices from a verified table, and learns the cheapest config that keeps quality."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -22,7 +22,7 @@ classifiers = [
 dependencies = []   # openai / anthropic / tiktoken are optional — the gate fails open if a SDK is absent
 
 [project.urls]
-Homepage = "https://github.com/ashdamle/llm-spendguard"
+Homepage = "https://llmspendguard.com"
 Repository = "https://github.com/ashdamle/llm-spendguard"
 Changelog = "https://github.com/ashdamle/llm-spendguard/blob/main/CHANGELOG.md"
 

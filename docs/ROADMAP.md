@@ -1,5 +1,9 @@
 # Roadmap — individuals → teams → orgs (partner mindset)
 
+> **Status:** the client (this `llm-spendguard` package) is production-ready and works standalone. The
+> hosted team/org server (e.g. llmseg.ai) is a **separate repo, currently in development** — the URLs below
+> describe where it will live, not a live service yet.
+
 The guiding principle: **partner, not supervisor.** Every user sets their own limits and keeps their own
 ledger. Teams and orgs get **visibility and pooled learnings by roll-up**, not control. Nobody's caps are
 locked from above; the value is shared sight and shared knowledge, opt-in.

@@ -13,6 +13,9 @@ import argparse, datetime, os, subprocess
 from collections import defaultdict
 
 # repo path → project tag (the WHAT this work belongs to). Override/extend via config workdone.repos.
+# NOTE: these are EXAMPLE mappings tuned to the author's machine (~/Documents/claude/lmm → "lmm",
+# ~/Documents/animepipe → "manga2anime", …). Customize them for YOUR repos via config workdone.repos
+# (or edit here) — the keys are absolute paths on this machine and won't match another setup.
 DEFAULT_REPOS = {
     "~/Documents/claude/lmm": "lmm",
     "~/Documents/claude/llm-spendguard": "llmseg",

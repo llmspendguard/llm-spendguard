@@ -3,6 +3,15 @@
 A pre-spend **governor** for LLM API cost (OpenAI + Anthropic): it caps every call before the spend,
 prices from a verified table, and **learns the cheapest config that still keeps quality** — then proves
 and enforces it. Zero required dependencies; install is one line; it never breaks a job (fail-open).
+Learn more at https://llmspendguard.com.
+
+## Why llm-spendguard?
+Cost overruns don't announce themselves — they slip in silently: a hardcoded price that drifted from the
+real rate, a forgotten model swap, under-batching that re-bills a shared prompt every request, a job
+cancelled "to save money" that still bills for completed work, an ungated script in some other venv quietly
+leaking spend. spendguard stops those before the spend (the gate hard-stops over a cap, prices from a
+verified table, finds the leaks) **and** learns what was actually worth it — so "cheaper" never quietly
+costs you quality.
 
 Born from a real incident: a "cost-conscious" day meant to cost ~$33 actually cost **$149.76** — a price
 constant was hardcoded wrong (GPT-5.5 at the old GPT-5 rate) and jobs ran 1 item/request (the shared prompt
@@ -30,18 +39,25 @@ from the corpus it analyzes) so the governor can't overspend governing.
 **Docs:** [Architecture + diagrams](docs/ARCHITECTURE.md) · [Use with Claude/Cursor](docs/USING-WITH-CLAUDE.md) · [Methodology](docs/README.md) · [Roadmap (teams/orgs/SaaS)](docs/ROADMAP.md) · [Module map](src/spendguard/README.md) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md) · [Setup](SETUP.md)
 
 **Use with an AI assistant:** `spendguard install-rule --global` writes a rule into `CLAUDE.md` so **every** Claude/Cursor conversation routes the LLM code it builds through spendguard — then `spendguard install-skills` adds `/spend` (status) and `/spendguard-learn` (advisor) as slash-commands. See [Use with Claude](docs/USING-WITH-CLAUDE.md).
-**Teams & orgs:** each user keeps their own ledger + sets their own caps (partner, not supervisor); opt-in roll-up for shared visibility + pooled learnings via the SaaS (separate repo). See the [Roadmap](docs/ROADMAP.md).
+**Teams & orgs:** each user keeps their own ledger + sets their own caps (partner, not supervisor); opt-in roll-up for shared visibility + pooled learnings via the SaaS (separate repo). The client (this package) is **production-ready and fully standalone**. The team/org dashboard (a separate server) is **in development** — see [ROADMAP.md](docs/ROADMAP.md).
 
 ## Quickstart
 
 **A) Set up with Claude (recommended).** Point Claude Code / the desktop app at this repo and say:
 > *Install spendguard from this repo and run the guided setup in `SETUP.md`.*
 
-Claude installs it, reads the **config registry** (`src/spendguard/config_schema.py` — the single source
-of truth for every setting, its default, valid options, and whether it's secret), asks you one question at
-a time, and writes your config. Details: [SETUP.md](SETUP.md).
+Or just run `spendguard init` — it reads the **config registry** (`src/spendguard/config_schema.py` — the
+single source of truth for every setting, its default, valid options, and whether it's secret) and walks you
+through caps, projects, and providers **conversationally**, one question at a time, then writes your config.
+Pointed at this repo, Claude does the same end-to-end: installs the package, runs the interview off that same
+registry, and wires up the gate. Details: [SETUP.md](SETUP.md).
 
 **B) pip + code.**
+```
+pip install llm-spendguard      # once published to PyPI
+# or, from a clone of this repo:
+pip install -e .
+```
 ```python
 import spendguard
 spendguard.install(cap=75)          # gate every batch submission in this process
@@ -120,6 +136,21 @@ is gated, its provider spend shows up in `reconcile-ledger` as a **leak** (bille
 ## Knobs (env)
 `GATE_CAP=<$>` (default 75) · `GATE_ALLOW=1` (permit one over-cap run) · `GATE_DISABLE=1` (off for one run)
 · `SPENDGUARD_HOME=<dir>` (data/flag/log location, default `~/.spendguard`) · `SPENDGUARD_ENV=<path>` (.env for keys)
+
+## Caps by resource class (LLM · compute · total)
+Beyond the per-batch cap, spendguard tracks **cumulative** spend caps split by *what's spending* — so you can
+set a tight LLM sub-limit under a higher overall ceiling. Each class has a `daily` and a `monthly` window
+(`null` = off), stored in `config.json` under `caps`, with an env override for every one:
+
+| Cap | Config (nested or flat) | Env | Behaviour |
+|---|---|---|---|
+| **LLM** daily / monthly | `caps.llm.{daily,monthly}` | `GATE_LLM_DAILY` · `GATE_LLM_MONTHLY` | **HARD — gate-enforced** (OpenAI + Anthropic calls hit the gate) |
+| **Compute** daily / monthly | `caps.compute.{daily,monthly}` | `GATE_COMPUTE_DAILY` · `GATE_COMPUTE_MONTHLY` | **alert-only** (remote-compute / vast.ai launches don't pass through the gate — surfaced in the report + dashboard) |
+| **Total** daily / monthly | `caps.total.{daily,monthly}` | `GATE_TOTAL_DAILY` · `GATE_TOTAL_MONTHLY` | overall ceiling (LLM + compute) |
+
+These need `budget.backend = sqlite` (the cross-process ledger). The **legacy flat `caps.daily` / `caps.monthly`**
+still work and are honored as the **total** ceiling. (Config storage accepts either the nested `caps.llm.daily`
+or the flat `caps["llm.daily"]` form — see `config.class_cap` / `config_schema.py`.)
 
 ## Pricing: layered, broad, low-maintenance
 Prices load in layers, lowest→highest precedence — so you get **2,700+ models across all providers** for free,
@@ -212,6 +243,19 @@ implicit signal).
 
 Real-time calls are recorded automatically (caller, prompt/output snippets, latency); batches record job-level.
 
+### Smart attribution (a clean P&L, no manual bookkeeping)
+Every charge is tagged on **two orthogonal dimensions**, so you can slice spend by either without bookkeeping:
+- **WHO** — `org → team → contributor`, which **rolls up** the hierarchy. The contributor is set per install
+  (default: git `user.email`); the org/team is resolved server-side from the connection key.
+- **WHAT** — `project · intent · resource` (the repo/work, the labeled task, and whether it's LLM or
+  remote-compute GPU).
+
+Tagging is automatic: a project is inferred from the repo/cwd, refined by the call corpus's intent/caller and
+the conversation that ran each batch; remote-compute rows route by instance label. The still-ambiguous
+remainder can be resolved by a small, **capped, estimate-first** LLM pass (never auto-run). The result is a
+clean P&L by team / project / intent with no manual entry. (Mechanism: `tag.py` cascade, `signal.py` per
+project·intent·model roll-up, `conv.py` batch→conversation attribution, `saas.py` `org→team→user` push.)
+
 ## Learning advisor — *recommend considering history* (Layer 1 deterministic · Layer 2 LLM)
 - **`spendguard advise [--intent X] [--plan MODEL]`** — pure-SQL ranking of your corpus by `$/good` (or `$/M out`
   when quality isn't labeled yet), confidence-weighted, with caveats. No LLM, no spend.
@@ -264,11 +308,27 @@ events to whatever you already run. Three sinks, all optional, none ever block o
 Event shape: `{ts, kind: batch|realtime, provider, model, cost, decision}`. Webhook/OTel run on a background
 daemon thread (drop-if-flooded), so even high-volume real-time calls aren't slowed; callbacks run inline (keep them fast).
 
-## Extending to a new SDK
-Add one interceptor: `spendguard.register(module, ClassName, "create", gate_fn)`, write a small
-estimator for that SDK's request shape, and add its prices to `pricing.py`.
+## Extend to any SDK (zero required deps, fail-open)
+spendguard ships with the OpenAI + Anthropic overlays, but the gate is generic — you can put **any** SDK under
+it without adding a dependency:
+1. **Intercept it:** `spendguard.register(module_path, ClassName, method, gate_fn)` patches that SDK's call
+   method (e.g. `register("cohere", "Client", "chat", gate_fn)`). Write a small `gate_fn` that reads the request
+   shape and estimates cost; add the model's prices to the table (`prices.json` / your override).
+2. **Add an OpenAI-compatible provider in one line** (for `compare` + metering — most providers expose one):
+   `from spendguard.adapters import register_provider; register_provider("together", "https://api.together.xyz/v1", "TOGETHER_API_KEY", ("meta-llama", "mistralai"))`.
+3. **Emit anywhere:** route the per-call event to a webhook, OpenTelemetry, or an in-process callback
+   (`spendguard.on_event(...)`) — see [Observability](#observability-feed-your-existing-stack).
+
+All of it is **fail-open** (an estimation/patch error logs and lets the call proceed) and needs **no required
+dependencies** — the SDKs and OTel are optional extras.
 
 ## Safety
 Fail-**open**: any estimation or patch error logs a warning and lets the call proceed — the gate
 never breaks a job by accident. Only the deliberate over-cap stop blocks. Disable instantly with
 `spendguard off` (checked per-call, live) — and the kill switch is honored even if the gate itself errors.
+
+## Getting help
+- **Website:** https://llmspendguard.com
+- **Bugs / feature requests:** [GitHub Issues](https://github.com/ashdamle/llm-spendguard/issues)
+- **Questions / ideas / show-and-tell:** [GitHub Discussions](https://github.com/ashdamle/llm-spendguard/discussions)
+- **Contributing:** see [CONTRIBUTING.md](CONTRIBUTING.md).

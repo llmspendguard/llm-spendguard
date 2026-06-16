@@ -1,7 +1,7 @@
 # `docs/` — design & methodology
 
 Deeper write-ups behind the code. Start with the root [README](../README.md) for usage and the full
-command reference; these explain the *why*.
+command reference; these explain the *why*. Project home: https://llmspendguard.com.
 
 | doc | what it covers |
 |---|---|
