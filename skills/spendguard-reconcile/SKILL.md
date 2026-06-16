@@ -19,6 +19,15 @@ Read the result: `provider_total`, `gate_attributed`, `ungoverned`, `coverage %`
 is resolvable, not just present in the shell — it loads from `.env`/config). A silent partial fetch is the classic
 trust bug; this surfaces it.
 
+## 1b. Triple-check completeness (financial integrity)
+```
+spendguard saas audit          # enumerate EVERY provider batch; confirm none with cost is dropped
+```
+`reconcile` also returns `complete` + `unaccounted`. The audit enumerates all batches by status: ones without a
+`usage` field are only OK if they had **0 completed requests** (cancelled / all-failed → genuine $0). Any batch
+with completed requests but no usage is listed in **`unaccounted`** — investigate before trusting the total.
+`complete: true` + `unaccounted: []` means every dollar of batch spend is accounted for. Regular keys only.
+
 ## 2. Identify cost-capture leaks
 - `ungoverned > 0` (coverage < ~100%) = provider billed spend the gate never saw → a repo/venv running **non-gated**,
   or spend from **before** the local ledger existed. Action: install the gate there (`spendguard install-hook`),

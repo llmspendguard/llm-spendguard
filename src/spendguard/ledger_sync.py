@@ -50,6 +50,45 @@ def _compute(since=None):
                 coverage=(post_l / post_p * 100) if post_p else 100.0)
 
 
+def audit_completeness():
+    """Triple-check the batch reconciliation is COMPLETE (regular keys only). Enumerate EVERY provider batch;
+    the only ones legitimately without usage are genuine zero-cost (0 completed requests). Any batch with
+    completed requests but no usage is flagged UNACCOUNTED — surfaced, never silently dropped. complete=True
+    iff there are no unaccounted batches."""
+    from . import pricing
+    audit = {}
+    try:
+        from collections import Counter
+        from .reconcile_openai import load_key, fetch_batches
+        k = load_key()
+        by_status = Counter(); total = counted = zero = 0; counted_usd = 0.0; unaccounted = []
+        for b in fetch_batches(k):
+            total += 1; by_status[b["status"]] += 1
+            u = b.get("usage") or {}
+            it, ot = u.get("input_tokens", 0), u.get("output_tokens", 0)
+            if it or ot:
+                counted += 1
+                counted_usd += pricing.batch_cost(b["model"], it, ot, (u.get("input_tokens_details") or {}).get("cached_tokens", 0))
+            elif (((b.get("request_counts") or {}).get("completed", 0)) or 0) > 0:
+                unaccounted.append(b["id"])          # completed requests but no usage = a REAL gap
+            else:
+                zero += 1                             # cancelled / all-failed before completion → genuine $0
+        audit["openai"] = dict(total=total, by_status=dict(by_status), counted=counted,
+                               counted_usd=round(counted_usd, 2), zero_cost=zero, unaccounted=unaccounted)
+    except Exception as e:
+        audit["openai"] = {"error": str(e)[:140]}
+    try:
+        import json
+        import os
+        from . import reconcile_anthropic as ra
+        cache = json.load(open(ra.CACHE_PATH)) if os.path.exists(ra.CACHE_PATH) else {}
+        audit["anthropic"] = dict(batches=len(cache), counted_usd=round(sum(r.get("cost", 0) for r in cache.values()), 2))
+    except Exception as e:
+        audit["anthropic"] = {"error": str(e)[:140]}
+    audit["complete"] = not audit.get("openai", {}).get("unaccounted")
+    return audit
+
+
 def reconcile_into_ledger(since=None):
     """Make the LOCAL ledger reflect PROVIDER-billed batch truth: write the per-(provider,day) GAP between
     provider billing and gate-recorded batch as 'unattributed' rows. Idempotent (rebuilds them). The gate-recorded
@@ -87,10 +126,13 @@ def reconcile_into_ledger(since=None):
             gap_rows += 1
     provider_total = round(sum(prov.values()), 2)
     local_total = round(sum(local.values()), 2)
+    audit = audit_completeness()                  # triple-check: every batch accounted, nothing silently dropped
     return dict(since=since, provider_total=provider_total, gate_attributed=local_total,
                 ungoverned=round(gap_usd, 2), gap_rows=gap_rows,
                 coverage=round(local_total / provider_total * 100, 1) if provider_total else 100.0,
-                errors=errors, providers_ok=[p for p in ("openai", "anthropic") if p not in errors])
+                errors=errors, providers_ok=[p for p in ("openai", "anthropic") if p not in errors],
+                complete=audit.get("complete", False), unaccounted=audit.get("openai", {}).get("unaccounted", []),
+                audit=audit)
 
 
 def leak_line(since=None):

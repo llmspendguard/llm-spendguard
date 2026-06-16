@@ -364,6 +364,11 @@ def cmd(argv=None):
         from . import ledger_sync
         print("reconcile:", ledger_sync.reconcile_into_ledger())
         return 0
+    if sub == "audit":                                # triple-check completeness: every batch accounted (free)
+        from . import ledger_sync
+        import json as _j
+        print(_j.dumps(ledger_sync.audit_completeness(), indent=2))
+        return 0
     if sub == "commands":                             # drain + run server-enqueued work (reconcile / re-tag)
         print("commands:", run_commands())
         return 0
@@ -373,5 +378,5 @@ def cmd(argv=None):
             r = pull_insights(scope); print(f"pulled {len(r.get('abstracts', []))} abstract(s) (scope={scope})"); return 0
         except Exception as e:
             print(f"pull failed: {e}"); return 1
-    print("usage: spendguard saas [status|ping|sync [--if-due]|push [--dry]|commands|pull [team|org]]")
+    print("usage: spendguard saas [status|ping|sync [--if-due]|push [--dry]|reconcile|audit|commands|pull [team|org]]")
     return 1
