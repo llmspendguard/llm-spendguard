@@ -104,6 +104,9 @@ def main(argv=None):
     if cmd == "signal":                                # efficiency signal (cost+quality+waste+reco) → server
         from . import signal
         return signal.cmd(rest)
+    if cmd in ("workdone", "work"):                    # work-done CONTEXT for spend (git + batch intents) → server
+        from . import workdone
+        return workdone.cmd(rest)
     if cmd in ("fetch-io", "fetchio"):                # recover real prompt+output samples from providers (free)
         from . import callio
         return callio.main(rest)
