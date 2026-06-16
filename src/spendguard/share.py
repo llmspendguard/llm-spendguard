@@ -53,6 +53,13 @@ def scrub(ins):
     }
 
 
+def scrubbed_abstracts(min_conf=0.6, active_only=True):
+    """The scrubbed, shareable rules to push to the SaaS server (`saas.push_insights`). Same scrubber + gate as
+    `insights export`: identity removed ($ amounts, intent names, evidence snippets), generalizable rule kept
+    (task_class/regime/condition→action/mechanism/lesson + confidence/quality_basis). Returns a list of dicts."""
+    return _shareable(min_conf, require_active=active_only)
+
+
 def _shareable(min_conf, require_active):
     out = []
     for ins in learn.insights_full():
