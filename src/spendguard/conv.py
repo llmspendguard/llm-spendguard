@@ -123,6 +123,19 @@ def build_index(tdir=None, rebuild=False):
     return out, scanned
 
 
+def batch_links(tdir=None):
+    """{batch_id: {conv, snippet, ts}} — which conversation (transcript = a Claude Code session id) references
+    each batch id. The bridge from a recovered per-request call (call_io.batch) to its pre/post chat context."""
+    index, _ = build_index(tdir)
+    links = {}
+    for path, rec in index.items():
+        conv = os.path.splitext(os.path.basename(path))[0]    # transcript filename = the session/conversation id
+        for ev in rec.get("events", []):
+            for bid in ev.get("runs", []):
+                links.setdefault(bid, {"conv": conv, "snippet": (ev.get("text") or "")[:200], "ts": ev.get("ts")})
+    return links
+
+
 def _all_events(index):
     for rec in index.values():
         for ev in rec.get("events", []):

@@ -32,7 +32,13 @@ def _db():
                     id TEXT PRIMARY KEY, ts TEXT, intent TEXT, provider TEXT, model TEXT,
                     batch TEXT, custom_id TEXT, prompt TEXT, output TEXT,
                     in_tok INTEGER, out_tok INTEGER,
-                    quality TEXT, quality_src TEXT, quality_conf REAL, source TEXT)""")
+                    quality TEXT, quality_src TEXT, quality_conf REAL, source TEXT,
+                    conv_id TEXT DEFAULT '', context TEXT DEFAULT '')""")
+                cols = [r[1] for r in c.execute("PRAGMA table_info(call_io)").fetchall()]
+                if "conv_id" not in cols:                  # link a recovered call back to its conversation
+                    c.execute("ALTER TABLE call_io ADD COLUMN conv_id TEXT DEFAULT ''")
+                if "context" not in cols:                  # the pre/post chat context (why / outcome)
+                    c.execute("ALTER TABLE call_io ADD COLUMN context TEXT DEFAULT ''")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_io_im ON call_io(intent, model)")
                 c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_io_key ON call_io(batch, custom_id)")
                 c.commit()
@@ -104,6 +110,30 @@ def good_rates():
         out[(intent, model)] = dict(sampled=n, judged=judged or 0,
                                     good_rate=(gw / lw) if lw else None)
     return out
+
+
+def link_conversations(tdir=None):
+    """Stamp each recovered per-request row with the conversation that spawned its batch + a context snippet
+    (the pre/post 'why' from the chat). The call→conversation join is the batch id. Returns rows linked."""
+    from . import conv
+    links = conv.batch_links(tdir)
+    n = 0
+    with _lock:
+        db = _db()
+        for bid, d in links.items():
+            r = db.execute("UPDATE call_io SET conv_id=?, context=? WHERE batch=? AND (conv_id IS NULL OR conv_id='')",
+                           (d.get("conv", ""), (d.get("snippet") or "")[:IO_SNIP], bid))
+            n += r.rowcount
+        db.commit()
+    return n
+
+
+def linked_sample(limit=5):
+    """A few recovered calls WITH their conversation context — proves the depth layer (prompt + output + why)."""
+    with _lock:
+        return _db().execute(
+            "SELECT intent, model, conv_id, substr(prompt,1,80), substr(output,1,80), substr(context,1,90) "
+            "FROM call_io WHERE conv_id<>'' ORDER BY ts DESC LIMIT ?", (limit,)).fetchall()
 
 
 # ─────────────────────────── provider retrieval (free) ───────────────────────────
@@ -251,13 +281,17 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="spendguard fetch-io")
     ap.add_argument("--cap", type=int, default=DEFAULT_CAP, help="max samples per (intent, model)")
     ap.add_argument("--limit-batches", type=int, help="cap how many batches to download (smoke test)")
+    ap.add_argument("--link-only", action="store_true", help="skip recovery; just (re)link recovered calls to conversations")
     a = ap.parse_args(argv)
-    print(f"fetch-io — recovering real prompt+output samples from providers (free; cap {a.cap}/intent+model)…")
-    r = fetch_history(cap=a.cap, limit_batches=a.limit_batches)
-    print(f"  added {r['added']} samples · {r['batches_fetched']} batches fetched · "
-          f"{r['skipped_quota']} skipped (quota full) · {r['errors']} unrecoverable (expired files)")
+    if not a.link_only:
+        print(f"fetch-io — recovering real prompt+output samples from providers (free; cap {a.cap}/intent+model)…")
+        r = fetch_history(cap=a.cap, limit_batches=a.limit_batches)
+        print(f"  added {r['added']} samples · {r['batches_fetched']} batches fetched · "
+              f"{r['skipped_quota']} skipped (quota full) · {r['errors']} unrecoverable (expired files)")
+    linked = link_conversations()                       # depth layer: tie each per-request call to its chat
+    print(f"  linked {linked} calls to their conversation (batch id → transcript) for pre/post context")
     print(f"{'intent':<24}{'model':<22}{'sampled':>8}{'judged':>8}")
     for intent, model, n, judged in counts()[:25]:
         print(f"{intent[:23]:<24}{model[:21]:<22}{n:>8}{judged or 0:>8}")
-    print("Next: `spendguard reconstruct --run` to judge these (caged Haiku) → real $/good.")
+    print("Next: `spendguard reconstruct --run` to judge these (caged Haiku) → real $/good-result.")
     return 0
