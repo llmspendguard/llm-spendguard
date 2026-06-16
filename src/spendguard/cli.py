@@ -98,6 +98,9 @@ def main(argv=None):
     if cmd in ("mine-conv", "conv"):                  # conversation mining: index (no spend) + synth (caged)
         from . import conv
         return conv.main(rest)
+    if cmd == "accounting":                            # match actual provider USAGE → project via conversations
+        from . import conv
+        return conv.attribute_cmd(rest)
     if cmd in ("fetch-io", "fetchio"):                # recover real prompt+output samples from providers (free)
         from . import callio
         return callio.main(rest)

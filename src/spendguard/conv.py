@@ -123,6 +123,52 @@ def build_index(tdir=None, rebuild=False):
     return out, scanned
 
 
+_PROJECT_RULES = [
+    ("lmm", r"shadow|phase|edge|taxonom|concept|\bbc\b|loinc|snomed|icd|typ|retype|mismap|hpo|mesh|medcin|gliner|ddx|omop"),
+    ("manga2anime", r"capt|anime|donghua|manga|\bsam\b|segment|frame|video|cap0"),
+]
+
+
+def _project_of(snippet):
+    s = (snippet or "").lower()
+    for proj, pat in _PROJECT_RULES:
+        if re.search(pat, s):
+            return proj
+    return ""
+
+
+def attribute_usage(since="2026-06-01", tdir=None):
+    """Proper accounting: match actual provider USAGE (per-batch cost) to PROJECTS via the conversation that ran
+    each batch (batch id → transcript → content), instead of a blanket 'unattributed' bucket. Uses the
+    timestamps/content already indexed. Returns {total, batches, linked, by_project:{proj:$}}. Free (no spend)."""
+    from . import backfill
+    costs = {}
+    for _prov, _model, cost, _it, _ot, day, bid in (backfill._openai_rows() + backfill._anthropic_rows()):
+        if (day or "") >= since:
+            costs[bid] = costs.get(bid, 0.0) + cost
+    links = batch_links(tdir)
+    by_project = {}
+    linked = 0
+    for bid, c in costs.items():
+        if bid in links:
+            linked += 1
+            p = _project_of(links[bid]["snippet"]) or "linked-unclear"
+        else:
+            p = "no-conversation"
+        by_project[p] = round(by_project.get(p, 0.0) + c, 4)
+    return {"total": round(sum(costs.values()), 2), "batches": len(costs), "linked": linked, "by_project": by_project}
+
+
+def attribute_cmd(argv=None):
+    r = attribute_usage()
+    print(f"usage→project by conversation evidence (MTD): ${r['total']:.2f} · {r['batches']} batches · {r['linked']} linked")
+    for p, c in sorted(r["by_project"].items(), key=lambda x: -x[1]):
+        pct = (100 * c / r["total"]) if r["total"] else 0
+        print(f"  {p:22} ${c:9.2f}  ({pct:.0f}%)")
+    print("  (linked-unclear / no-conversation = candidates for the gated LLM-residual tagger)")
+    return 0
+
+
 def batch_links(tdir=None):
     """{batch_id: {conv, snippet, ts}} — which conversation (transcript = a Claude Code session id) references
     each batch id. The bridge from a recovered per-request call (call_io.batch) to its pre/post chat context."""
