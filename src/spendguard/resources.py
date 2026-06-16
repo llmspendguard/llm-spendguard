@@ -161,13 +161,21 @@ def sync(dry=False):
         "tags": ",".join(["remote-compute", "gpu", r["gpu"].replace(" ", ""), "instances:" + "/".join(str(x) for x in r["instances"])]),
     } for r in allrows if (r.get("project") or "") == proj and r["cost"] > 0]
     if c.get("owns_account"):                              # account-level GPU reconcile (one vast.ai account)
-        gap = round(account_gpu_total() - sum(r["cost"] for r in allrows), 2)
-        if gap > 0.5:
-            day_totals.append({
-                "day": datetime.date.today().isoformat(), "provider": "vastai", "model": "(destroyed/untracked)",
-                "kind": "gpu", "channel": "realtime", "spend_micros": round(gap * 1_000_000), "calls": 0,
-                "member_ref": "", "project": "unattributed", "tags": "remote-compute,gpu,unattributed",
-            })
+        # Only reconcile the blanket gap when this vast.ai account is SINGLE-PROJECT. A shared multi-project account
+        # (e.g. lmm GLiNER A100 + manga2anime H200) makes the destroyed/untracked gap CROSS-ORG — dumping it as this
+        # org's 'unattributed' would pull another org's GPU spend in (and vast.ai exposes no per-instance billing to
+        # split it, and prepaid top-ups are lumpy = a balance buffer, not consumption). So: multi-project account →
+        # push only per-project attributed consumption (each org reconciles its own); single-project → the gap is
+        # this project's (the "primary task" rule), not 'unattributed'.
+        projs_present = {(r.get("project") or "") for r in allrows if r.get("project")}
+        if len(projs_present) <= 1:
+            gap = round(account_gpu_total() - sum(r["cost"] for r in allrows), 2)
+            if gap > 0.5:
+                day_totals.append({
+                    "day": datetime.date.today().isoformat(), "provider": "vastai", "model": "(destroyed/untracked)",
+                    "kind": "gpu", "channel": "realtime", "spend_micros": round(gap * 1_000_000), "calls": 0,
+                    "member_ref": ref, "project": proj, "tags": f"remote-compute,gpu,destroyed,{proj}",
+                })
     for row in day_totals:                                # per-row id, local↔server cross-check (gpu rows too)
         row["uid"] = saas._row_uid(row)
     payload = {"visibility": c.get("visibility"), "day_totals": day_totals}
