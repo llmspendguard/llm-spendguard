@@ -114,21 +114,49 @@ def reconcile_into_ledger(since=None):
                 prov[("anthropic", d)] = prov.get(("anthropic", d), 0.0) + v
     except Exception as e:
         errors["anthropic"] = str(e)[:140]
-    local = budget.by_provider_day(kind="batch", since=since)   # gate-recorded (attributed) batch
-    budget.clear_reconciled(since)                              # rebuild the gap rows
+    local = budget.by_provider_day(kind="batch", since=since)   # gate-recorded (attributed) batch, by provider/day
+    # Attribute the gap BY PROJECT using conversation/intent evidence (batch id → conversation → project), so the
+    # provider-truth gap lands on lmm / manga2anime / … instead of one blanket 'unattributed' bucket. Unknown → ''.
+    from . import backfill, conv, callio
+    links = conv.batch_links()
+    try:
+        b2i = {b: i for b, i in callio._db().execute("SELECT batch, COALESCE(NULLIF(intent,''),'') FROM call_io GROUP BY batch")}
+    except Exception:
+        b2i = {}
+    prov_by_proj = {}   # (project, day) -> provider $ (evidence-attributed)
+    for _pn, _model, cost, _it, _ot, day, bid in (backfill._openai_rows() + backfill._anthropic_rows()):
+        if (day or "") < since:
+            continue
+        proj = (conv._project_of(links[bid].get("snippet", "")) if bid in links else "") or \
+               (conv._project_of(b2i[bid]) if b2i.get(bid) else "") or ""
+        prov_by_proj[(proj or "unattributed", day)] = prov_by_proj.get((proj or "unattributed", day), 0.0) + cost
+    # match by PROJECT TOTAL, not (project, day): provider-billing day ≠ gate-record day, so a per-day match
+    # would fail to subtract the gate-attributed spend and double-count it. Record each project's gap on its
+    # latest provider day.
+    prov_proj_total, prov_proj_day = {}, {}
+    for (proj, day), pv in prov_by_proj.items():
+        prov_proj_total[proj] = prov_proj_total.get(proj, 0.0) + pv
+        if day > prov_proj_day.get(proj, ""):
+            prov_proj_day[proj] = day
+    gate_proj_total = {}
+    for (proj, _day), gv in budget.gate_by_project_day(kind="batch", since=since).items():
+        gate_proj_total[proj] = gate_proj_total.get(proj, 0.0) + gv
+    budget.clear_reconciled(since)
     gap_usd = 0.0
     gap_rows = 0
-    for (p, d), pv in prov.items():
-        gap = pv - local.get((p, d), 0.0)
-        if gap > 0.01:                                          # provider billed more than the gate saw → ungoverned
-            budget.record_reconciled(d, p, gap)
+    by_project = {}
+    for proj, pv in prov_proj_total.items():
+        gap = pv - gate_proj_total.get(proj, 0.0)             # provider billed more than the gate saw for this project
+        if gap > 0.01:
+            budget.record_reconciled(prov_proj_day.get(proj, since), "(reconciled)", gap, project=proj)
             gap_usd += gap
             gap_rows += 1
-    provider_total = round(sum(prov.values()), 2)
-    local_total = round(sum(local.values()), 2)
+            by_project[proj] = round(gap, 2)
+    provider_total = round(sum(prov_proj_total.values()), 2)   # evidence-based total — same source as the gaps
+    local_total = round(sum(gate_proj_total.values()), 2)
     audit = audit_completeness()                  # triple-check: every batch accounted, nothing silently dropped
     return dict(since=since, provider_total=provider_total, gate_attributed=local_total,
-                ungoverned=round(gap_usd, 2), gap_rows=gap_rows,
+                ungoverned=round(gap_usd, 2), gap_rows=gap_rows, gap_by_project=by_project,
                 coverage=round(local_total / provider_total * 100, 1) if provider_total else 100.0,
                 errors=errors, providers_ok=[p for p in ("openai", "anthropic") if p not in errors],
                 complete=audit.get("complete", False), unaccounted=audit.get("openai", {}).get("unaccounted", []),

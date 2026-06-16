@@ -99,18 +99,21 @@ def record(provider, model, kind, cost, project=None, conv_id=None):
         _db().commit()
 
 
+_RECONCILED = "(provider-batch)"   # marker model for reconciliation rows (the provider-truth gap), any project
+
+
 def spent_since(day):  # WORKLOAD spend only — excludes spendguard's own meta AND reconciled (historical) rows
     with _lock:
         r = _db().execute("SELECT COALESCE(SUM(cost),0) FROM charges WHERE day >= ? "
                           "AND (kind IS NULL OR kind != 'meta') "
-                          "AND (project IS NULL OR project <> 'unattributed')", (day,)).fetchone()
+                          "AND (model IS NULL OR model <> ?)", (day, _RECONCILED)).fetchone()
     return float(r[0] or 0)
 
 
 # ── reconciliation: make the LOCAL ledger reflect PROVIDER-billed truth (the gap = ungoverned/pre-ledger spend) ──
 def by_provider_day(kind=None, since=None):
     """{(provider, day): $} of GATE-recorded spend (excludes reconciled rows) — the attributed side of reconcile."""
-    cond, args = ["(project IS NULL OR project <> 'unattributed')"], []
+    cond, args = ["(model IS NULL OR model <> ?)"], [_RECONCILED]
     if kind:
         cond.append("kind=?"); args.append(kind)
     if since:
@@ -122,22 +125,37 @@ def by_provider_day(kind=None, since=None):
     return {(p, d): float(c or 0) for p, d, c in rows}
 
 
-def record_reconciled(day, provider, cost):
-    """Insert a reconciliation row for provider-billed spend we couldn't attribute (project='unattributed' →
-    pushed with no contributor; excluded from the cap)."""
+def gate_by_project_day(kind=None, since=None):
+    """{(project, day): $} of GATE-recorded (attributed) spend — excludes reconciled rows. Used to compute the
+    per-project gap so the provider-truth gap is attributed by evidence, not dumped in one 'unattributed' bucket."""
+    cond, args = ["(model IS NULL OR model <> ?)"], [_RECONCILED]
+    if kind:
+        cond.append("kind=?"); args.append(kind)
+    if since:
+        cond.append("day >= ?"); args.append(since)
+    where = "WHERE " + " AND ".join(cond)
+    with _lock:
+        rows = _db().execute(f"SELECT COALESCE(NULLIF(project,''),'unattributed'), day, COALESCE(SUM(cost),0) "
+                             f"FROM charges {where} GROUP BY 1, day", args).fetchall()
+    return {(p, d): float(c or 0) for p, d, c in rows}
+
+
+def record_reconciled(day, provider, cost, project="unattributed"):
+    """Insert a reconciliation row for provider-billed spend (the gap), attributed to `project` by evidence —
+    'unattributed' only when there's no evidence. Marked by model='(provider-batch)' (excluded from gate/cap)."""
     with _lock:
         _db().execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project) VALUES (?,?,?,?,?,?,?)",
-                      (day + "T00:00:00+00:00", day, provider or "?", "(provider-batch)", "batch", float(cost), "unattributed"))
+                      (day + "T00:00:00+00:00", day, provider or "?", _RECONCILED, "batch", float(cost), project or "unattributed"))
         _db().commit()
 
 
 def clear_reconciled(since=None):
-    """Remove prior reconciliation rows so reconcile is idempotent (rebuilds them)."""
+    """Remove prior reconciliation rows so reconcile is idempotent (rebuilds them). Keyed by the marker model."""
     with _lock:
         if since:
-            _db().execute("DELETE FROM charges WHERE project='unattributed' AND day >= ?", (since,))
+            _db().execute("DELETE FROM charges WHERE model=? AND day >= ?", (_RECONCILED, since))
         else:
-            _db().execute("DELETE FROM charges WHERE project='unattributed'")
+            _db().execute("DELETE FROM charges WHERE model=?", (_RECONCILED,))
         _db().commit()
 
 
