@@ -133,11 +133,34 @@ def email_config():
     return cfg
 
 
+def _project_saas():
+    """Repo-local SaaS overlay: nearest `.spendguard.json` found walking up from CWD (stop at $HOME / fs root).
+    Lets DIFFERENT repos on one machine push to different orgs/teams (e.g. lmm→Healiom/LMM, manga2anime→its org).
+    Keep it gitignored — it holds the org/team api_key. Overlays the global saas.json; env still wins."""
+    import json as _json
+    try:
+        d = Path.cwd().resolve()
+    except Exception:
+        return {}
+    home = Path.home().resolve()
+    for _ in range(40):
+        p = d / ".spendguard.json"
+        try:
+            if p.exists():
+                return _json.loads(p.read_text())
+        except Exception:
+            return {}
+        if d == home or d.parent == d:
+            break
+        d = d.parent
+    return {}
+
+
 def saas_config():
-    """SaaS / team roll-up connection from ~/.spendguard/saas.json, overlaid by env. The client seam to the
-    FUTURE separate server repo (llmseg.ai). Secrets (api_key) stay here (gitignored) or in env — never the repo.
-    ONE key is the identity: the server maps it to user/team/org (the client stores NO ids).
-    Returns: enabled(bool), url, api_key, visibility, sync_interval."""
+    """SaaS / team roll-up connection. Precedence: global ~/.spendguard/saas.json < repo-local .spendguard.json
+    (so each repo can target its own org/team) < env. Secrets (api_key) stay in those gitignored files or env —
+    never the repo source. The key is the identity: the server maps it to user/team/org.
+    Returns: enabled(bool), url, api_key, visibility, sync_interval, contributor."""
     import json as _json
     cfg = {}
     p = HOME / "saas.json"
@@ -146,9 +169,13 @@ def saas_config():
             cfg.update(_json.loads(p.read_text()))
     except Exception:
         pass
+    for k, v in _project_saas().items():       # repo-local overlay wins over the global config
+        if v is not None and v != "":
+            cfg[k] = v
     for key, env in (("enabled", "SPENDGUARD_SAAS"), ("url", "SPENDGUARD_SAAS_URL"),
                      ("api_key", "SPENDGUARD_SAAS_KEY"), ("visibility", "SPENDGUARD_VISIBILITY"),
-                     ("sync_interval", "SPENDGUARD_SYNC_INTERVAL")):
+                     ("sync_interval", "SPENDGUARD_SYNC_INTERVAL"), ("contributor", "SPENDGUARD_CONTRIBUTOR"),
+                     ("project", "SPENDGUARD_PROJECT")):
         v = os.environ.get(env)
         if v is not None and v != "":
             cfg[key] = v

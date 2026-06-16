@@ -32,3 +32,10 @@ Replays the advisor as of a past date — check it would have caught *pack it*, 
 Run `advise` at the **test** phase (before estimate/run) to pre-pick the model/packing, then still
 test-small and confirm with `spendguard compare` on a fixed sample. History proposes; compare disposes.
 Recommendations are suggestions — never auto-applied.
+
+## Tagging for the team/org roll-up
+Each charge carries a `project` tag (the WHAT) alongside the contributor (WHO); the SaaS roll-up groups by
+`(org/team × user × project)`. Most rows tag deterministically (repo/config); `spendguard saas commands` runs
+the server-requested **reconcile + re-tag** pass. The LLM-residual re-tag (classifying the ambiguous remainder
+with a small model) is **estimate-first + capped**, and its cost is billed to project `llmseg` — never auto-run;
+follow the estimate → confirm → run protocol like any paid batch.

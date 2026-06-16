@@ -105,6 +105,14 @@ SETTINGS = [
     dict(section="saas", key="sync_interval", store="saas.json:sync_interval", env="SPENDGUARD_SYNC_INTERVAL",
          default="daily", kind="enum:off,hourly,daily,weekly", secret=False,
          desc="How often `saas sync --if-due` (and the daily report) push the roll-up. off = manual only."),
+    dict(section="saas", key="contributor", store="saas.json:contributor", env="SPENDGUARD_CONTRIBUTOR", default=None,
+         kind="string|null", secret=False,
+         desc="Who this install attributes spend to (member_ref) for per-user → team → org roll-up. Use your ORG "
+              "email so it maps to your SaaS member. Defaults to git user.email, then $USER@host."),
+    dict(section="saas", key="project", store="saas.json:project", env="SPENDGUARD_PROJECT", default=None,
+         kind="string|null", secret=False,
+         desc="Project tag for this repo's charges (the WHAT, next to org/team/user). The roll-up push only sends "
+              "rows for this project, so one machine's ledger can feed multiple orgs. Defaults to the git repo name."),
 
     # ── pricing ──
     dict(section="pricing", key="prices_override", store="env", env="SPENDGUARD_PRICES", default=None,

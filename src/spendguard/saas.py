@@ -17,12 +17,16 @@ Design (decided with the user):
 
 The HTTP contract the server repo will implement (versioned under {url}/v1); identity comes from the Bearer key:
     GET  /v1/health                      -> {"ok": true, "version": "..."}            (ping)
-    POST /v1/ledger     {day_totals,...} -> {"accepted": N}                            (push spend roll-up)
+    POST /v1/ledger     {day_totals:[{day,provider,model,kind,channel,spend_micros,calls,member_ref}],...}
+                                         -> {"accepted": N}                            (push spend roll-up)
+        member_ref = the contributor (this install's dev — their org email) so the server rolls up per user
+        → team → org. The key sets the SCOPE (where in the hierarchy); member_ref sets WHO within it.
     POST /v1/insights   {abstracts:[...]} -> {"accepted": N}                           (push scrubbed learnings)
     GET  /v1/insights?scope=team|org     -> {"abstracts": [...]}                       (pull pooled learnings)
 All requests send `Authorization: Bearer <api_key>` and `X-Spendguard-Client: <version>`.
 """
 import json
+import os
 import time
 import urllib.request
 import urllib.error
@@ -86,18 +90,86 @@ def ping():
     return _request("GET", "/v1/health")
 
 
-def push_rollup(since=None):
-    """Push this machine's per-day spend roll-up (NOT per-call, NOT prompts). The server derives team/org
-    from the key. Honors visibility: returns a no-op note if visibility=private."""
+def contributor():
+    """Who this install attributes its spend to (member_ref), so the server rolls up per user → team → org.
+    Each gated venv is normally one developer, so we stamp ONE contributor on this machine's rows.
+    Order: saas.contributor / $SPENDGUARD_CONTRIBUTOR → git user.email → $USER@host. Use your ORG email so it
+    matches your SaaS member (the server joins member_ref to members by email)."""
+    c = conn()
+    v = (c.get("contributor") or "").strip()
+    if v:
+        return v.lower()[:128]
+    try:
+        import subprocess
+        e = subprocess.run(["git", "config", "user.email"], capture_output=True, text=True, timeout=2).stdout.strip()
+        if e:
+            return e.lower()[:128]
+    except Exception:
+        pass
+    try:
+        import getpass
+        import socket
+        return f"{getpass.getuser()}@{socket.gethostname()}".lower()[:128]
+    except Exception:
+        return ""
+
+
+def _project_filter(c):
+    """Which project(s) THIS connection pushes → so one shared ledger can serve several repos/orgs without
+    cross-attributing. `projects` (list) or `project` (single) in the config; None = push all. spendguard's own
+    meta ('llmseg') always rides along so each org can see + call out the small spendguard overhead."""
+    ps = c.get("projects")
+    base = set()
+    if isinstance(ps, list) and ps:
+        base = set(str(x).strip().lower() for x in ps if x)
+    elif c.get("project"):
+        base = {str(c["project"]).strip().lower()}
+    if not base:
+        return None                # no project configured → push everything
+    base.add("llmseg")             # spendguard's own cost always accompanies the work it governed
+    return base
+
+
+def _rollup_rows(since=None):
+    """Build the structured /v1/ledger day_totals from the local ledger, stamping this install's contributor and
+    the project tag, and filtering to the project(s) this connection owns. Maps the local `kind`
+    (batch|realtime|meta) to the server's kind (workload|meta) + channel (batch|realtime) and $ → micros.
+    Pure (no network) so it can be tested + dry-run."""
+    from . import budget
+    try:
+        raw = budget.by_dims(since=since)
+    except Exception:
+        raw = []
+    ref = contributor()
+    flt = _project_filter(conn())
+    out = []
+    for r in raw:
+        proj = (r.get("project") or "").lower()
+        if flt is not None and proj not in flt:
+            continue                      # not this connection's project — don't cross-attribute
+        k = (r.get("kind") or "workload").lower()
+        out.append({
+            "day": r["day"], "provider": r.get("provider") or "?", "model": r.get("model") or "?",
+            "kind": "meta" if k == "meta" else "workload",
+            "channel": "realtime" if k == "realtime" else "batch",
+            "spend_micros": round(float(r.get("cost", 0)) * 1_000_000),
+            "calls": int(r.get("calls", 0)),
+            "member_ref": ref, "project": proj,
+        })
+    return out
+
+
+def push_rollup(since=None, dry=False):
+    """Push this machine's per-day spend roll-up (NOT per-call, NOT prompts), stamped with the contributor so the
+    server can roll up per user → team → org. The server derives team/org from the key. Honors visibility:
+    returns a no-op note if visibility=private. dry=True returns the payload without sending (offline-testable)."""
     c = conn()
     if c.get("visibility", "private") == "private":
         return {"skipped": "visibility=private — nothing leaves this machine"}
-    from . import budget
-    try:
-        days = budget.by_day(since=since)
-    except Exception:
-        days = []
-    return _request("POST", "/v1/ledger", {"visibility": c.get("visibility"), "day_totals": days})
+    payload = {"visibility": c.get("visibility"), "day_totals": _rollup_rows(since=since)}
+    if dry:
+        return payload
+    return _request("POST", "/v1/ledger", payload)
 
 
 def push_insights():
@@ -110,12 +182,62 @@ def push_insights():
         abstracts = share.scrubbed_abstracts() if hasattr(share, "scrubbed_abstracts") else []
     except Exception:
         abstracts = []
-    return _request("POST", "/v1/insights", {"abstracts": abstracts})
+    try:
+        return _request("POST", "/v1/insights", {"abstracts": abstracts})
+    except RuntimeError as e:
+        # the server may not implement insights yet — don't let it break the spend roll-up sync
+        if " 404" in str(e) or " 405" in str(e):
+            return {"skipped": "server has no /v1/insights endpoint yet"}
+        raise
 
 
 def pull_insights(scope="team"):
     """Pull pooled (scrubbed) learnings as LOW-TRUST priors needing local corroboration."""
     return _request("GET", f"/v1/insights?scope={scope}")
+
+
+# ── server-triggered work (PULL model): the server enqueues intents; we drain + run them locally on sync ──
+def pull_commands():
+    """Pending commands the server enqueued for this key's scope (reconcile / retag / review / full)."""
+    return _request("GET", "/v1/commands")
+
+
+def complete_command(cmd_id, result):
+    """Report a command's (scrubbed) outcome and mark it done."""
+    return _request("POST", "/v1/commands/complete", {"id": cmd_id, "result": result})
+
+
+def run_commands(since=None):
+    """Drain the server's command queue and run each LOCALLY (the data + context live here), then report a
+    SCRUBBED result. FREE today: reconcile (provider-vs-local leak) + deterministic re-tag. The LLM-residual
+    re-tag is gated/estimate-first (tag.estimate_llm_retag) and never auto-runs here."""
+    ok, reason = ready()
+    if not ok:
+        return {"skipped": f"not connected: {reason}"}
+    try:
+        cmds = (pull_commands() or {}).get("commands", [])
+    except Exception as e:
+        return {"error": str(e)}
+    ran = []
+    for c in cmds:
+        kind = c.get("kind")
+        res = {}
+        try:
+            if kind in ("reconcile", "full"):
+                from . import ledger_sync
+                comp = ledger_sync._compute(since=since)
+                res["coverage"] = round(comp.get("coverage", 100.0))
+                res["leak_usd"] = round(comp.get("leak", 0.0), 2)
+            if kind in ("retag", "full"):
+                from . import tag
+                res["retagged"] = tag.retag_deterministic()
+                res["ambiguous"] = tag.ambiguous_count()   # remainder an LLM pass could resolve (gated, separate)
+                push_rollup(since=since)                    # re-push the corrected tags
+            complete_command(c["id"], res)
+            ran.append({"id": c["id"], "kind": kind, "result": res})
+        except Exception as e:
+            ran.append({"id": c["id"], "kind": kind, "error": str(e)})
+    return {"ran": ran} if ran else {"skipped": "no pending commands"}
 
 
 # ── cadence: how often we push (config saas.sync_interval), tracked in saas_state.json ──
@@ -157,7 +279,7 @@ def sync(if_due=False, since=None):
         d, why = due()
         if not d:
             return {"skipped": why}
-    out = {"rollup": push_rollup(since=since), "insights": push_insights()}
+    out = {"rollup": push_rollup(since=since), "insights": push_insights(), "commands": run_commands(since=since)}
     _set_state(last_sync=time.time())
     return out
 
@@ -171,6 +293,7 @@ def status():
     print(f"  url          : {c.get('url') or '(unset)'}")
     print(f"  api_key      : {'***set***' if c.get('api_key') else '(unset)'}  (server maps this key to your team/org)")
     print(f"  visibility   : {c.get('visibility', 'private')}  (private = nothing leaves this machine)")
+    print(f"  contributor  : {contributor() or '(unresolved)'}  (member_ref — set to your org email so it maps to your SaaS member)")
     print(f"  sync_interval: {c.get('sync_interval', 'daily')}  — {why}")
     print(f"  config file  : {config.saas_path()}")
     print(f"  status       : {'🟢 ' + reason if ok else '⚪ ' + reason}")
@@ -195,16 +318,21 @@ def cmd(argv=None):
         r = sync(if_due="--if-due" in argv)
         print("sync:", r)
         return 0 if "skipped" not in r else 1
-    if sub == "push":                                 # force a push now (ignores cadence)
+    if sub == "push":                                 # force a push now (ignores cadence); --dry = print payload, no send
+        if "--dry" in argv:
+            print(json.dumps(push_rollup(dry=True), indent=2)); return 0
         try:
             print("rollup:", push_rollup()); print("insights:", push_insights()); return 0
         except Exception as e:
             print(f"push failed: {e}"); return 1
+    if sub == "commands":                             # drain + run server-enqueued work (reconcile / re-tag)
+        print("commands:", run_commands())
+        return 0
     if sub == "pull":
         scope = argv[1] if len(argv) > 1 else "team"
         try:
             r = pull_insights(scope); print(f"pulled {len(r.get('abstracts', []))} abstract(s) (scope={scope})"); return 0
         except Exception as e:
             print(f"pull failed: {e}"); return 1
-    print("usage: spendguard saas [status|ping|sync [--if-due]|push|pull [team|org]]")
+    print("usage: spendguard saas [status|ping|sync [--if-due]|push [--dry]|commands|pull [team|org]]")
     return 1
