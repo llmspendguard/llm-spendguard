@@ -115,8 +115,20 @@ def reconcile_into_ledger(since=None):
     except Exception as e:
         errors["anthropic"] = str(e)[:140]
     local = budget.by_provider_day(kind="batch", since=since)   # gate-recorded (attributed) batch, by provider/day
+    # Fallback project for batches with NO conversation evidence: a single-project repo's LLM provider account is
+    # entirely THAT project (e.g. Healiom's OpenAI/Anthropic spend is all 'lmm'), so a no-evidence batch is the
+    # repo's project, not truly 'unattributed' — that bucket is for genuinely MULTI-project repos only. This is the
+    # "most-recent/primary task" rule the user asked for; it takes LLM attribution to ~100% for single-project orgs.
+    try:
+        from . import saas
+        _c = saas.conn()
+        _ps = _c.get("projects")
+        fallback = "unattributed" if (isinstance(_ps, list) and len(_ps) > 1) else \
+            (_c.get("project") or budget._project() or "unattributed").strip().lower()
+    except Exception:
+        fallback = "unattributed"
     # Attribute the gap BY PROJECT using conversation/intent evidence (batch id → conversation → project), so the
-    # provider-truth gap lands on lmm / manga2anime / … instead of one blanket 'unattributed' bucket. Unknown → ''.
+    # provider-truth gap lands on lmm / manga2anime / … instead of one blanket 'unattributed' bucket.
     from . import backfill, conv, callio
     links = conv.batch_links()
     try:
@@ -129,7 +141,7 @@ def reconcile_into_ledger(since=None):
             continue
         proj = (conv._project_of(links[bid].get("snippet", "")) if bid in links else "") or \
                (conv._project_of(b2i[bid]) if b2i.get(bid) else "") or ""
-        prov_by_proj[(proj or "unattributed", day)] = prov_by_proj.get((proj or "unattributed", day), 0.0) + cost
+        prov_by_proj[(proj or fallback, day)] = prov_by_proj.get((proj or fallback, day), 0.0) + cost
     # match by PROJECT TOTAL, not (project, day): provider-billing day ≠ gate-record day, so a per-day match
     # would fail to subtract the gate-attributed spend and double-count it. Record each project's gap on its
     # latest provider day.
