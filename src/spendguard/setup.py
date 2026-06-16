@@ -229,7 +229,16 @@ def install_hook(venv=None, uninstall=False, install_pkg=True, user=False, pytho
                        capture_output=True, text=True)
     print(f"  ✓ hook → {hook}")
     print(f"  verify ({target}): {v.stdout.strip() or v.stderr.strip()[-160:]}")
+    # ensure setup is actually USABLE, not just installed: keys must resolve in this interpreter (the repo-move
+    # break was silent because nothing checked this). Reconcile/report are dead without them.
+    kk = subprocess.run([target, "-c", "from spendguard import config as c;"
+                         "print('  keys: openai='+('ok' if c.api_key('OPENAI_API_KEY') else 'MISSING')+"
+                         "', anthropic='+('ok' if c.api_key('ANTHROPIC_API_KEY') else 'MISSING'))"],
+                        capture_output=True, text=True)
+    print(kk.stdout.strip() or ("  keys: (check failed) " + kk.stderr.strip()[-120:]))
     print("  that interpreter is now gated (kill switch: GATE_DISABLE=1 or `spendguard off`).")
+    print("  next: `spendguard doctor` — verifies keys + SaaS push readiness for this repo. Add keys to "
+          "~/.spendguard/.env (cwd-independent) if MISSING; add a per-repo .spendguard.json to push this repo to the server.")
     return 0
 
 

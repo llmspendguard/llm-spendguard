@@ -648,8 +648,29 @@ def _cli(cmd="status"):
         except Exception:
             ant = "n/a (SDK absent)"
         print(f"  patched   : openai={oai} anthropic={ant}")
-        if cmd == "doctor":                       # also surface ungoverned spend (bypass detection)
+        # API keys — a proper setup check (this is what would have CAUGHT the repo-move break: cwd-relative .env
+        # silently lost the keys, so reconcile/report saw no provider data). Show found + where from.
+        try:
+            from . import config
+            for prov, name in (("openai", "OPENAI_API_KEY"), ("anthropic", "ANTHROPIC_API_KEY")):
+                k = config.api_key(name)
+                print(f"  key {prov:<9}: {'🟢 resolved' if k else '🔴 MISSING — reconcile/report will see NO ' + prov + ' spend (add to ~/.spendguard/.env)'}")
+        except Exception:
+            pass
+        if cmd == "doctor":
+            # SaaS push readiness — confirm THIS repo will independently push to the aggregation server.
             try:
+                from . import saas as _saas
+                c = _saas.conn()
+                ok, reason = _saas.ready()
+                if c.get("enabled"):
+                    print(f"  saas      : {'🟢 ' + reason if ok else '🔴 ' + reason}  url={c.get('url') or '(unset)'}")
+                    print(f"  push-as   : project={c.get('project') or '(git repo name)'}  contributor={_saas.contributor() or '(unresolved)'}  visibility={c.get('visibility', 'private')}")
+                else:
+                    print("  saas      : ⚪ off (set up a per-repo .spendguard.json to push this repo to the server)")
+            except Exception:
+                pass
+            try:                                   # ungoverned spend (bypass detection)
                 from . import ledger_sync
                 line = ledger_sync.leak_line()
                 if line:

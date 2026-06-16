@@ -29,10 +29,12 @@ leaves, at the configured `visibility`.
 
 ```
 spendguard saas status         # url · key(set?) · contributor · project · visibility · sync state
+spendguard saas reconcile      # make the LOCAL ledger reflect provider-billed TRUTH (the must-do before trusting $)
+spendguard saas audit          # triple-check completeness: every batch accounted (complete=true / unaccounted=[])
 spendguard saas push --dry     # PREVIEW the exact roll-up payload (no send, no spend)
 spendguard saas push           # push the per-day roll-up now (idempotent)
 spendguard saas commands       # run any server-queued work (reconcile + re-tag); reports a scrubbed result
-spendguard saas sync --if-due  # cadence-safe push + commands (used by cron / the daily report)
+spendguard saas sync --if-due  # reconcile + push + run queued work (cadence-safe; used by cron / the daily report)
 ```
 
 **Attribution model — every roll-up row is `(org/team × user × project)`:**

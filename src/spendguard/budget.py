@@ -20,10 +20,13 @@ def _db():
                 c = sqlite3.connect(config.db_path(), timeout=10, check_same_thread=False)
                 c.execute("PRAGMA journal_mode=WAL")
                 c.execute("CREATE TABLE IF NOT EXISTS charges "
-                          "(ts TEXT, day TEXT, provider TEXT, model TEXT, kind TEXT, cost REAL, project TEXT DEFAULT '')")
+                          "(ts TEXT, day TEXT, provider TEXT, model TEXT, kind TEXT, cost REAL, "
+                          "project TEXT DEFAULT '', conv_id TEXT DEFAULT '')")
                 cols = [r[1] for r in c.execute("PRAGMA table_info(charges)").fetchall()]
                 if "project" not in cols:                      # migrate older ledgers
                     c.execute("ALTER TABLE charges ADD COLUMN project TEXT DEFAULT ''")
+                if "conv_id" not in cols:                      # conversation/chat id per call (links to the chat)
+                    c.execute("ALTER TABLE charges ADD COLUMN conv_id TEXT DEFAULT ''")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_day ON charges(day)")
                 c.commit()
                 _conn = c
@@ -63,15 +66,36 @@ def _project():
     return _PROJECT
 
 
-def record(provider, model, kind, cost, project=None):
+_CONV = None
+
+
+def _conv():
+    """Conversation/chat id this charge belongs to — links a call back to the chat that spawned it (so per-call
+    + pre/post conversation context is recoverable). Order: $SPENDGUARD_CONV / $SPENDGUARD_CHAT /
+    $CLAUDE_SESSION_ID, else a stable per-process id (calls in one run share it). Cached per process."""
+    global _CONV
+    if _CONV is not None:
+        return _CONV
+    import os
+    v = (os.environ.get("SPENDGUARD_CONV") or os.environ.get("SPENDGUARD_CHAT")
+         or os.environ.get("CLAUDE_SESSION_ID") or "")
+    if not v:
+        import uuid
+        v = "proc-" + uuid.uuid4().hex[:12]
+    _CONV = v.strip()[:128]
+    return _CONV
+
+
+def record(provider, model, kind, cost, project=None, conv_id=None):
     if not cost:
         return
     proj = project if project is not None else _project()
+    conv = conv_id if conv_id is not None else _conv()
     now = datetime.datetime.now(datetime.timezone.utc)
     with _lock:
-        _db().execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project) VALUES (?,?,?,?,?,?,?)",
+        _db().execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project,conv_id) VALUES (?,?,?,?,?,?,?,?)",
                       (now.isoformat(timespec="seconds"), now.strftime("%Y-%m-%d"),
-                       provider or "?", model or "?", kind, float(cost), proj or ""))
+                       provider or "?", model or "?", kind, float(cost), proj or "", conv or ""))
         _db().commit()
 
 
