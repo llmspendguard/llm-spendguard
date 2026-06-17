@@ -343,7 +343,16 @@ def cmd_config(argv=None):
 
 
 def cmd_init(argv=None):
-    print("spendguard setup — Enter keeps the current/default; 'null' clears.\n")
+    print("spendguard setup\n")
+    print("  spendguard runs FULLY STANDALONE — a local spend gate on this machine, no account needed.")
+    print("  Optionally connect to a team/org dashboard (llmspendguard.com) to roll spend up across your team.\n")
+    connect = "--connect" in (argv or [])
+    if not connect and "--local" not in (argv or []):
+        try:
+            connect = input("  Connect to a team/org now? (needs an org key from your admin; or use `spendguard saas link` later) [y/N]\n  > ").strip().lower() in ("y", "yes")
+        except EOFError:
+            connect = False
+    print("\n  Enter keeps the current/default; 'null' clears.\n")
     cfgjson = dict(config._cfg())
     ep = config.HOME / "email.json"
     sp = config.saas_path()
@@ -361,6 +370,8 @@ def cmd_init(argv=None):
     for s in config_schema.SETTINGS:
         if s["section"] == "keys" or s["store"] == "env":
             continue  # env-only (API keys, home, prices override) — instructed below, not written
+        if not connect and s["section"] == "saas":
+            continue  # local-only: skip all team/org connection prompts
         cur, _src = _resolve(s)
         try:
             ans = input(f"{s['section']}.{s['key']}  [{cur}]  — {s['desc']}\n  > ").strip()
@@ -399,6 +410,12 @@ def cmd_init(argv=None):
             print(f"Contributor: {ident}  (auto anonymous id — attribution works; set an email via `spendguard init` for alerts)")
     except Exception:
         pass
+    if connect:
+        print("\nTeam/org: put your org key in saas.json (saas.api_key) if you haven't, then run `spendguard saas link` "
+              "to approve in the browser + set your verified email.")
+    else:
+        print("\nRunning LOCAL-ONLY (no account). Connect a team anytime: `spendguard init --connect`, or "
+              "`spendguard saas link` once you have an org key.")
     keys = ", ".join(s["env"] for s in config_schema.SETTINGS if s["section"] == "keys")
     print(f"Set API keys in your environment or ./.env: {keys}")
     if (cfgjson.get("budget") or {}).get("backend") == "sqlite":

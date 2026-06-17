@@ -22,6 +22,13 @@ def main(argv=None):
         gate.install()
     except Exception:
         pass
+    if cmd in ("status", "doctor"):                   # first-run nudge when nothing's configured yet
+        try:
+            from . import config
+            if not config.CONFIG_JSON.exists() and not config.saas_path().exists():
+                print("ℹ not configured yet — run `spendguard init` (works standalone; optionally connect a team).\n")
+        except Exception:
+            pass
     if cmd in ("status", "on", "off", "doctor"):
         from . import gate
         return gate._cli(cmd)
