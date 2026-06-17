@@ -199,6 +199,39 @@ def saas_config():
     return cfg
 
 
+def identity_path(): return HOME / "identity.json"
+
+
+def machine_id():
+    """Stable, persisted anonymous contributor id (`usr_<hex>`) for this user/machine — the fallback identity when
+    no email is set, so spend is NEVER unattributed and per-user roll-up + billing always have someone to count.
+    Generated once, written to ~/.spendguard/identity.json, reused forever. (Replaces the old user@host fallback,
+    which leaked the OS username + wasn't a stable id.)"""
+    import json as _json
+    p = identity_path()
+    try:
+        if p.exists():
+            v = (_json.loads(p.read_text()).get("contributor") or "").strip()
+            if v:
+                return v
+    except Exception:
+        pass
+    import uuid
+    v = "usr_" + uuid.uuid4().hex[:12]
+    try:
+        HOME.mkdir(parents=True, exist_ok=True)
+        p.write_text(_json.dumps({"contributor": v}))
+    except Exception:
+        pass
+    return v
+
+
+def is_email(s):
+    """True if the contributor string is an email (→ it can double as the alert target). Else it's an anonymous id."""
+    import re
+    return bool(re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", (s or "").strip()))
+
+
 def saas_path(): return HOME / "saas.json"
 def saas_state_path(): return HOME / "saas_state.json"   # last_sync timestamp (not the config; written each sync)
 

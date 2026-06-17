@@ -91,10 +91,11 @@ def ping():
 
 
 def contributor():
-    """Who this install attributes its spend to (member_ref), so the server rolls up per user → team → org.
-    Each gated venv is normally one developer, so we stamp ONE contributor on this machine's rows.
-    Order: saas.contributor / $SPENDGUARD_CONTRIBUTOR → git user.email → $USER@host. Use your ORG email so it
-    matches your SaaS member (the server joins member_ref to members by email)."""
+    """Who this install attributes its spend to (member_ref) — the REAL billable/rollup user, identified by the
+    email each teammate sets in their repo config (one org key is shared across teammates' repos). NEVER empty:
+    explicit email/string → git user.email → a stable persisted anonymous id (`usr_<hex>`). An email doubles as
+    the alert target; an auto-id still gives clean per-user attribution + billing. Set your ORG email so the server
+    maps you to your SaaS member + can email you alerts. (Set via `spendguard init` or saas.json `contributor`.)"""
     c = conn()
     v = (c.get("contributor") or "").strip()
     if v:
@@ -106,12 +107,7 @@ def contributor():
             return e.lower()[:128]
     except Exception:
         pass
-    try:
-        import getpass
-        import socket
-        return f"{getpass.getuser()}@{socket.gethostname()}".lower()[:128]
-    except Exception:
-        return ""
+    return config.machine_id()   # persisted usr_<hex> — never empty, no user@host leak
 
 
 def _project_filter(c):

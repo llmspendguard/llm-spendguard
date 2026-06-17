@@ -117,8 +117,10 @@ SETTINGS = [
          desc="How often `saas sync --if-due` (and the daily report) push the roll-up. off = manual only."),
     dict(section="saas", key="contributor", store="saas.json:contributor", env="SPENDGUARD_CONTRIBUTOR", default=None,
          kind="string|null", secret=False,
-         desc="Who this install attributes spend to (member_ref) for per-user → team → org roll-up. Use your ORG "
-              "email so it maps to your SaaS member. Defaults to git user.email, then $USER@host."),
+         desc="Who this install attributes spend to (member_ref) for per-user → team → org roll-up + billing. Use "
+              "your ORG EMAIL (recommended — maps you to your SaaS member AND lets the server email you alerts). "
+              "Leave blank to fall back to git user.email, then a stable auto-generated anonymous id (usr_…) — "
+              "spend is never unattributed, but alerts need a real email."),
     dict(section="saas", key="project", store="saas.json:project", env="SPENDGUARD_PROJECT", default=None,
          kind="string|null", secret=False,
          desc="Project tag for this repo's charges (the WHAT, next to org/team/user). The roll-up push only sends "

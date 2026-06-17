@@ -388,6 +388,17 @@ def cmd_init(argv=None):
     if saas:
         sp.write_text(json.dumps(saas, indent=2))
     print(f"\nwrote {config.CONFIG_JSON}" + (f" and {ep}" if email else "") + (f" and {sp}" if saas else ""))
+    # Contributor identity is a MUST (it's the billable/rollup user). Materialize + show the resolved id now so it's
+    # never blank/unattributed; an email here also becomes the alert target.
+    try:
+        from . import saas as _saas
+        ident = _saas.contributor()
+        if config.is_email(ident):
+            print(f"Contributor: {ident}  (email — per-user roll-up, billing, AND alerts)")
+        else:
+            print(f"Contributor: {ident}  (auto anonymous id — attribution works; set an email via `spendguard init` for alerts)")
+    except Exception:
+        pass
     keys = ", ".join(s["env"] for s in config_schema.SETTINGS if s["section"] == "keys")
     print(f"Set API keys in your environment or ./.env: {keys}")
     if (cfgjson.get("budget") or {}).get("backend") == "sqlite":
