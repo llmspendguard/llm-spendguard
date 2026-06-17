@@ -12,7 +12,7 @@ Storage is BOUNDED: we keep at most `cap` samples per (intent, model) — enough
 confidence interval, not every request. Shares the spendguard db. Quality is written back by the caged
 judge (advisor.reconstruct). RLock — reentrant.
 """
-import os, json, sqlite3, threading, datetime
+import json, sqlite3, threading, datetime
 from . import config
 
 _conn = None

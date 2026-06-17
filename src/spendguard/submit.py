@@ -16,7 +16,7 @@ measured value from your tiny test (see notes/COST_RUNBOOK.md).
 CLI (estimate only, never submits):
     python scripts/submit_gate.py --jsonl requests.jsonl --model gpt-5.5 --cap 50
 """
-import os, sys, json, argparse, datetime
+import os, sys, json, argparse
 
 from .pricing import batch_cost, realtime_cost, normalize
 

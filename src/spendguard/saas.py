@@ -26,7 +26,6 @@ The HTTP contract the server repo will implement (versioned under {url}/v1); ide
 All requests send `Authorization: Bearer <api_key>` and `X-Spendguard-Client: <version>`.
 """
 import json
-import os
 import time
 import urllib.request
 import urllib.error

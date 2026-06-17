@@ -14,7 +14,7 @@ This reports the prefix fraction (high fraction = cache it), the savings per 100
 script-defined system prompts to cache, and per-provider setup. CLI: `spendguard cache-audit [--repo]`.
 """
 import os, re, glob
-from . import callio, calls, pricing
+from . import callio, pricing
 from .submit import _count_tokens
 
 # OpenAI auto-caches only prefixes at/above this; Anthropic explicit cache_control has lower minimums.

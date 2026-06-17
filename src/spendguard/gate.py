@@ -105,7 +105,7 @@ def _estimate_anthropic_requests(requests):
         params = r.get("params") if isinstance(r, dict) else getattr(r, "params", None)
         if params is None:
             continue
-        g = (params.get if isinstance(params, dict) else (lambda k, d=None: getattr(params, k, d)))
+        g = (params.get if isinstance(params, dict) else (lambda k, d=None, _p=params: getattr(_p, k, d)))
         model = model or g("model")
         sysp = g("system")
         if sysp:

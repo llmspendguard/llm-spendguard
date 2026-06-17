@@ -8,7 +8,6 @@ and the reconstructed quality. The reasoner judges smart-vs-wasteful and emits C
 insights — IF {task_class/regime/output_shape} THEN {action} BECAUSE {mechanism}, with a quality_basis —
 so each learning is reusable and (when scrubbed) shareable. Caged (spendguard:review), estimate-first.
 """
-import json
 from . import calls, callio, learn, config, pricing
 from .submit import _count_tokens
 

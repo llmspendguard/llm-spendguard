@@ -192,7 +192,7 @@ def main(argv=None):
         flag = f"  ⚠️ STALE (>{p.STALE_AFTER_DAYS}d) — re-verify against the source below" if stale else "  (fresh)"
         print(f"prices verified {v} ({days} days ago){flag}")
         print(f"  source : {p.PRICING_SOURCE}")
-        print(f"  config : edit prices.json in the package, or ~/.spendguard/prices.json (or SPENDGUARD_PRICES)")
+        print("  config : edit prices.json in the package, or ~/.spendguard/prices.json (or SPENDGUARD_PRICES)")
         for prov, models in sorted(p.providers().items()):
             print(f"  {prov}: {len(models)} models")
         return 2 if stale else 0

@@ -10,7 +10,7 @@ ZERO paid calls (batch metadata + result GETs + vast.ai instance GETs only).
 Scope: BATCH spend both providers + GPU consumption from currently-visible vast.ai instances. Real-time LLM spend
 (e.g. Opus LOINC judge) needs an Admin key — noted in output; destroyed GPU instances aren't per-instance billed.
 """
-import os, sys, argparse, datetime
+import sys, argparse, datetime
 from collections import defaultdict
 
 from . import pricing

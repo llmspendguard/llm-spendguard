@@ -31,7 +31,7 @@ openai = ["openai>=1.0", "tiktoken"]
 anthropic = ["anthropic>=0.40"]
 otel = ["opentelemetry-sdk"]
 all = ["openai>=1.0", "tiktoken", "anthropic>=0.40", "opentelemetry-sdk"]
-dev = ["pytest>=7", "build", "twine"]
+dev = ["pytest>=7", "build", "twine", "ruff>=0.6"]
 
 [project.scripts]
 spendguard = "spendguard.cli:main"
@@ -48,3 +48,14 @@ testpaths = ["tests"]
 # which would hijack pytest if collected directly).
 python_files = ["test_runner.py"]
 addopts = "-q"
+
+[tool.ruff]
+target-version = "py39"
+line-length = 120
+
+[tool.ruff.lint]
+# Correctness over style: pyflakes (unused/undefined/redefined names) + the real bugbear footguns (mutable
+# defaults, loop-var-in-closure). Deliberately NOT enforcing import-grouping/line-length — the codebase uses a
+# terse one-line-import style on purpose. This keeps the gate high-signal (catches real bugs, no bikeshedding).
+select = ["F", "B"]
+ignore = ["F841", "B007", "B904", "E501"]   # unused-local, unused-loop-var, raise-from — low value here

@@ -12,7 +12,7 @@ Wrap your call (no auto-hijack of the gate — explicit + safe):
     out = semcache.cached_call(lambda p: client_call(p), prompt, model, threshold=0.0)
 threshold=0.0 → exact-only (default, zero risk). >0 → also semantic. Returns the (possibly cached) text.
 """
-import os, sqlite3, struct, hashlib, threading, datetime
+import sqlite3, struct, hashlib, threading, datetime
 from . import config
 
 _conn = None

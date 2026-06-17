@@ -11,7 +11,6 @@ experiment that proved reasoning='minimal' is cheapest at equal accuracy, or tha
 an intent) which then surface in `profile()` and CLI. Per-model best-practices are highly shareable.
 """
 import re
-from . import config
 
 # ordered family rules — first match wins; later stored facts override fields
 _RULES = [

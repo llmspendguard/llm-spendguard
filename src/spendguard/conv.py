@@ -336,7 +336,6 @@ def synth(tdir=None, run=False, limit=40):
         return dict(requests=1, in_tok=in_tok, out_tok=out_tok, cost=cost, model=model)
 
     from . import adapters
-    from .advisor import _persist_insights
     with calls.context(intent="spendguard:conv-synth"):
         r = adapters.call(model, prompt, max_tokens=out_tok, system=sys)
     if r["error"]:

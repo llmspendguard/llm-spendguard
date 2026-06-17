@@ -82,7 +82,7 @@ def brief(task, intent=None, run_llm=False):
           f"{('historical ~$%.2f for this intent' % d['hist_cost']) if d.get('hist_cost') else 'set a ceiling'}"
           + (f"; daily cap ${d['daily_cap']:.0f}" if d.get("daily_cap") else ""))
     print(f"  5. output format  {d.get('sample') or 'specify the exact shape (terser = cheaper)'}")
-    print(f"  6. test vs prod   TEST first (pilot + estimate), then promote the winner")
+    print("  6. test vs prod   TEST first (pilot + estimate), then promote the winner")
     print("\nADVISOR (per-intent history):")
     if rec:
         q = f"good {100*rec['good']:.0f}%" if rec.get("good") is not None else "quality UNVERIFIED"

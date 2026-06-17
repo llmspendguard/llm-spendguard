@@ -6,7 +6,6 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-ledger-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
-import datetime
 from spendguard import budget
 
 

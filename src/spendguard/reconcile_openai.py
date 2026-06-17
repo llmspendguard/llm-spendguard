@@ -14,7 +14,7 @@ KEY ACCOUNTING RULES baked in:
   * billed = COMPLETED + CANCELLED batches (cancelled bills for completed requests!)
   * failed = $0 ; in_progress/finalizing = not yet metered (reported separately)
 """
-import os, sys, json, argparse, urllib.request, datetime
+import sys, json, argparse, urllib.request, datetime
 from collections import defaultdict
 
 from .pricing import batch_cost, normalize, PRICING_SOURCE, PRICING_VERIFIED

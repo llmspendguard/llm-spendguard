@@ -20,7 +20,7 @@ TWO ways to supply the token model (get these from your tiny test, see runbook):
   python scripts/estimate_job.py --items 263000 --from-sample test_usage.jsonl \
          --packs 1,30 --cap-dollars 200
 """
-import os, sys, json, math, argparse
+import json, math, argparse
 
 from .pricing import price, normalize
 
