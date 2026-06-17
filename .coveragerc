@@ -1,0 +1,15 @@
+# Coverage config. The suite runs each test as a SUBPROCESS (test_runner.py), so coverage is collected in
+# parallel mode (one data file per child) and combined afterwards. Enable by running pytest with
+# SPENDGUARD_COVERAGE=1, then: coverage combine && coverage report.
+[run]
+parallel = true
+source = spendguard
+branch = true
+
+[report]
+omit = */tests/*
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:
+    raise NotImplementedError
+    if TYPE_CHECKING:

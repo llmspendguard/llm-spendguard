@@ -7,6 +7,14 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 Quality + docs pass — no runtime behavior change.
 
 ### Added
+- **Coverage** — the subprocess test runner now supports `SPENDGUARD_COVERAGE=1` (runs each isolated child under
+  `coverage run -p`, combined afterward; `.coveragerc`, `coverage[toml]` dev dep). CI reports it with a regression
+  floor (`--fail-under=15`; ~19% today — the enforcement core is exercised, the CLI/mining/advisor surface is the
+  tracked gap). Note: gate/pricing undercount because the venv's sitecustomize imports them at startup before the
+  tracer attaches.
+- **More gate fail-closed tests** (`tests/test_gate_failclosed.py`) — `require()` refuses when disabled / not
+  enforcing; the real-time precheck refuses over `GATE_RT_BUDGET`, honors `GATE_ALLOW`, and `GATE_DISABLE` passes
+  through (kill switch). All offline (SDK create methods stubbed; no network, no spend).
 - **Docs site** — MkDocs Material (`mkdocs.yml`), home is a 60-second [quickstart-as-tutorial](docs/index.md);
   Architecture / Using-with-Claude / Learning-advisor / Roadmap wired into the nav with Mermaid + dark mode.
   Published to GitHub Pages via `.github/workflows/docs.yml` (strict build); deps pinned in `requirements-docs.txt`.

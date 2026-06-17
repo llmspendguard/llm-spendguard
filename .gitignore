@@ -24,3 +24,9 @@ email.json
 
 # MkDocs build output
 site/
+
+# Coverage artifacts
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml

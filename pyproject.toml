@@ -32,7 +32,7 @@ openai = ["openai>=1.0", "tiktoken"]
 anthropic = ["anthropic>=0.40"]
 otel = ["opentelemetry-sdk"]
 all = ["openai>=1.0", "tiktoken", "anthropic>=0.40", "opentelemetry-sdk"]
-dev = ["pytest>=7", "build", "twine", "ruff>=0.6"]
+dev = ["pytest>=7", "build", "twine", "ruff>=0.6", "coverage[toml]>=7"]
 
 [project.scripts]
 spendguard = "spendguard.cli:main"

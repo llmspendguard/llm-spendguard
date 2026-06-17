@@ -25,7 +25,10 @@ jobs:
         run: spendguard pricing
       - name: Price freshness (warns if stale; non-fatal here)
         run: spendguard check-prices || true
-      - name: Test suite (offline — no network, no spend)
-        run: pytest
+      - name: Test suite + coverage (offline — no network, no spend)
+        run: |
+          SPENDGUARD_COVERAGE=1 pytest
+          coverage combine
+          coverage report --fail-under=15   # regression floor; ~19% today (core exercised; CLI/mining gaps tracked)
       - name: Price-literal audit (FAILS the build on a mispriced literal)
         run: SPENDGUARD_AUDIT_DIR=src/spendguard spendguard audit --ci
