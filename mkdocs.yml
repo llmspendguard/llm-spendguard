@@ -1,0 +1,66 @@
+site_name: llm-spendguard
+site_description: A pre-spend governor for LLM + remote-compute cost — caps every call, prices from a verified table, and learns the cheapest config that still keeps quality.
+site_url: https://llmspendguard.github.io/llm-spendguard/
+repo_url: https://github.com/llmspendguard/llm-spendguard
+repo_name: llmspendguard/llm-spendguard
+edit_uri: edit/main/docs/
+copyright: "Open source (MIT) · your keys · we never proxy or resell tokens · <a href='https://llmspendguard.com'>llmspendguard.com</a>"
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: teal
+      toggle: { icon: material/weather-night, name: Dark mode }
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: teal
+      toggle: { icon: material/weather-sunny, name: Light mode }
+  features:
+    - navigation.top
+    - navigation.sections
+    - navigation.tracking
+    - content.code.copy
+    - toc.follow
+  icon:
+    repo: fontawesome/brands/github
+
+nav:
+  - Home: index.md
+  - Architecture: ARCHITECTURE.md
+  - Using with Claude & agents: USING-WITH-CLAUDE.md
+  - Learning advisor: learning-advisor.md
+  - Roadmap: ROADMAP.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight: { anchor_linenums: true }
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - toc: { permalink: true }
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/llmspendguard/llm-spendguard
+    - icon: material/web
+      link: https://llmspendguard.com
+
+# docs/README.md stays in the repo for GitHub folder browsing, but the site home is index.md.
+exclude_docs: |
+  README.md

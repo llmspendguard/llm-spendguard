@@ -21,3 +21,6 @@ venv/
 saas.json
 email.json
 !saas.example.json
+
+# MkDocs build output
+site/

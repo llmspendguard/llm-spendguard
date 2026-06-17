@@ -2,6 +2,19 @@
 
 All notable changes to **llm-spendguard**. Format loosely follows Keep a Changelog; dates are UTC.
 
+## [Unreleased]
+
+Quality + docs pass — no runtime behavior change.
+
+### Added
+- **Docs site** — MkDocs Material (`mkdocs.yml`), home is a 60-second [quickstart-as-tutorial](docs/index.md);
+  Architecture / Using-with-Claude / Learning-advisor / Roadmap wired into the nav with Mermaid + dark mode.
+  Published to GitHub Pages via `.github/workflows/docs.yml` (strict build); deps pinned in `requirements-docs.txt`.
+- **Ruff** lint in CI (`select = ["F","B"]`) — correctness/bug lints; format intentionally *not* imposed (keeps
+  the dense, deliberate one-liner style readable). **Release workflow** (`release.yml`) publishes to PyPI on a
+  `v*` tag via trusted publishing.
+- **ARCHITECTURE.md** rewritten around the extensibility seams (extend, don't fork), with diagrams.
+
 ## [0.2.5] — 2026-06-16
 
 Split caps by resource class + a public-consumption documentation pass.

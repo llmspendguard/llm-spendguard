@@ -8,7 +8,7 @@ spendguard sits **between your code and the provider SDKs** and does four things
 It is built to be **extended, not forked.** Like Postgres' access methods or a WSGI stack, every place
 you'd want to plug in — a new SDK, a new event sink, a new price table, a new config knob, a team server —
 is a documented seam with a one-call or one-entry extension point. Section 2 is the headline: it walks each
-seam. Everything below is grounded in the code under [`src/spendguard/`](../src/spendguard/) (file +
+seam. Everything below is grounded in the code under [`src/spendguard/`](https://github.com/llmspendguard/llm-spendguard/tree/main/src/spendguard) (file +
 function names are exact so you can jump straight to them).
 
 ---
@@ -344,7 +344,7 @@ anonymous `usr_<hex>` identity means spend is **never** unattributed. Operationa
 secrets are `email.json` / `saas.json` (gitignored). Nothing is written into the host project.
 
 ### Module map
-See [`src/spendguard/README.md`](../src/spendguard/README.md) for a one-line description of every module,
+See [`src/spendguard/README.md`](https://github.com/llmspendguard/llm-spendguard/blob/main/src/spendguard/README.md) for a one-line description of every module,
 grouped by the four roles (enforce / see / plan-prove / learn).
 
 ---
