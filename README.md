@@ -329,6 +329,6 @@ never breaks a job by accident. Only the deliberate over-cap stop blocks. Disabl
 
 ## Getting help
 - **Website:** https://llmspendguard.com
-- **Bugs / feature requests:** [GitHub Issues](https://github.com/ashdamle/llm-spendguard/issues)
-- **Questions / ideas / show-and-tell:** [GitHub Discussions](https://github.com/ashdamle/llm-spendguard/discussions)
+- **Bugs / feature requests:** [GitHub Issues](https://github.com/llmspendguard/llm-spendguard/issues)
+- **Questions / ideas / show-and-tell:** [GitHub Discussions](https://github.com/llmspendguard/llm-spendguard/discussions)
 - **Contributing:** see [CONTRIBUTING.md](CONTRIBUTING.md).

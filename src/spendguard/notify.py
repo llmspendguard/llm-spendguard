@@ -36,7 +36,7 @@ def _send_resend(subject, body, to, cfg):
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json",
                  "Accept": "application/json",
                  # api.resend.com is behind Cloudflare, which 403s urllib's default UA ("error code: 1010").
-                 "User-Agent": "spendguard/0.1 (+https://github.com/ashdamle/llm-spendguard)"})
+                 "User-Agent": "spendguard/0.1 (+https://github.com/llmspendguard/llm-spendguard)"})
     try:
         with urllib.request.urlopen(req, context=config.ssl_context(), timeout=30) as r:
             r.read()

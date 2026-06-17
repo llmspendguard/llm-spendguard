@@ -5,7 +5,7 @@ never report a wrong price, never spend without an estimate.**
 
 ## Setup
 ```bash
-git clone https://github.com/ashdamle/llm-spendguard && cd llm-spendguard
+git clone https://github.com/llmspendguard/llm-spendguard && cd llm-spendguard
 python -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev,openai,anthropic]"
 pytest                       # the whole suite (offline; no network, no spend)

@@ -23,8 +23,8 @@ dependencies = []   # openai / anthropic / tiktoken are optional — the gate fa
 
 [project.urls]
 Homepage = "https://llmspendguard.com"
-Repository = "https://github.com/ashdamle/llm-spendguard"
-Changelog = "https://github.com/ashdamle/llm-spendguard/blob/main/CHANGELOG.md"
+Repository = "https://github.com/llmspendguard/llm-spendguard"
+Changelog = "https://github.com/llmspendguard/llm-spendguard/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 openai = ["openai>=1.0", "tiktoken"]
