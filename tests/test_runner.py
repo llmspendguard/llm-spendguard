@@ -7,7 +7,9 @@ and guarantees none touch the real ~/.spendguard. `pytest` from the repo root ru
 import os
 import sys
 import glob
+import atexit
 import tempfile
+import sysconfig
 import subprocess
 
 import pytest
@@ -19,10 +21,31 @@ SCRIPTS = sorted(
     if os.path.basename(f) != "test_runner.py"
 )
 
-# Optional coverage: SPENDGUARD_COVERAGE=1 runs each child under `coverage run -p` (parallel data files in REPO),
-# the only way to measure the subprocess-isolated scripts. After pytest: coverage combine && coverage report.
+# Optional coverage: SPENDGUARD_COVERAGE=1 measures each subprocess-isolated script. After pytest:
+# coverage combine && coverage report. We use coverage's startup hook (below) rather than `coverage run` so
+# code imported DURING interpreter startup is counted too.
 COVERAGE = os.environ.get("SPENDGUARD_COVERAGE") == "1"
 RCFILE = os.path.join(REPO, ".coveragerc")
+
+
+def _enable_startup_coverage():
+    """Drop a .pth that runs `coverage.process_startup()` at interpreter start. .pth files execute BEFORE
+    sitecustomize, so on a gated venv (whose sitecustomize imports + install()s spendguard at startup) the
+    tracer is already attached — gate.py / pricing.py / __init__.py import-time lines get counted instead of
+    being missed by a later-attaching `coverage run`. Activated per-subprocess via COVERAGE_PROCESS_START.
+    Returns the .pth path (removed atexit), or None if site-packages isn't writable (then we fall back to
+    `coverage run`, which still works but undercounts startup imports)."""
+    try:
+        pth = os.path.join(sysconfig.get_paths()["purelib"], "_spendguard_cov_subprocess.pth")
+        with open(pth, "w") as f:
+            f.write("import coverage; coverage.process_startup()\n")
+        atexit.register(lambda: os.path.exists(pth) and os.remove(pth))
+        return pth
+    except OSError:
+        return None
+
+
+_COV_PTH = _enable_startup_coverage() if COVERAGE else None
 
 
 @pytest.mark.parametrize("script", SCRIPTS, ids=[os.path.basename(s) for s in SCRIPTS])
@@ -30,8 +53,14 @@ def test_script(script):
     env = dict(os.environ)
     env["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-pytest-")
     env["SPENDGUARD_TEST_ISOLATED"] = "1"            # tests skip their own re-exec; use this isolated home
-    cmd = ([sys.executable, "-m", "coverage", "run", "-p", "--rcfile", RCFILE, script]
-           if COVERAGE else [sys.executable, script])
+    if COVERAGE:
+        env["COVERAGE_PROCESS_START"] = RCFILE
+        # with the .pth hook → plain python (coverage starts at startup, traces sitecustomize imports);
+        # without it → `coverage run` (attaches after startup, misses those import-time lines).
+        cmd = ([sys.executable, script] if _COV_PTH
+               else [sys.executable, "-m", "coverage", "run", "-p", "--rcfile", RCFILE, script])
+    else:
+        cmd = [sys.executable, script]
     r = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=600, cwd=REPO)
     out = r.stdout + r.stderr
     assert r.returncode == 0, f"{os.path.basename(script)} exited {r.returncode}\n{out}"

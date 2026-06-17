@@ -7,11 +7,12 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 Quality + docs pass — no runtime behavior change.
 
 ### Added
-- **Coverage** — the subprocess test runner now supports `SPENDGUARD_COVERAGE=1` (runs each isolated child under
-  `coverage run -p`, combined afterward; `.coveragerc`, `coverage[toml]` dev dep). CI reports it with a regression
-  floor (`--fail-under=15`; ~19% today — the enforcement core is exercised, the CLI/mining/advisor surface is the
-  tracked gap). Note: gate/pricing undercount because the venv's sitecustomize imports them at startup before the
-  tracer attaches.
+- **Coverage 19% → 35%.** The subprocess test runner supports `SPENDGUARD_COVERAGE=1`; coverage now attaches at
+  interpreter **startup** via a `process_startup()` `.pth` hook + `COVERAGE_PROCESS_START`, so code the gated
+  venv's sitecustomize imports before the tracer would otherwise attach is counted (`__init__` 0→100%, pricing
+  17→54%, gate 44→55%). New **offline** unit tests for the formerly-untested CLI/mining/advisor modules —
+  `adapters`/`audit`/`backfill`/`bootstrap` 100%, `ledger_sync`/`advise` 98%, `workdone` 97%, `reconcile_openai`
+  87%, `reconcile_anthropic` 82% (every provider/network call stubbed — no spend). CI floor raised `15 → 30`.
 - **More gate fail-closed tests** (`tests/test_gate_failclosed.py`) — `require()` refuses when disabled / not
   enforcing; the real-time precheck refuses over `GATE_RT_BUDGET`, honors `GATE_ALLOW`, and `GATE_DISABLE` passes
   through (kill switch). All offline (SDK create methods stubbed; no network, no spend).

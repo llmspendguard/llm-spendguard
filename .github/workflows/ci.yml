@@ -29,6 +29,6 @@ jobs:
         run: |
           SPENDGUARD_COVERAGE=1 pytest
           coverage combine
-          coverage report --fail-under=15   # regression floor; ~19% today (core exercised; CLI/mining gaps tracked)
+          coverage report --fail-under=30   # regression floor; ~35% today (raised from 15 after the coverage pass)
       - name: Price-literal audit (FAILS the build on a mispriced literal)
         run: SPENDGUARD_AUDIT_DIR=src/spendguard spendguard audit --ci
