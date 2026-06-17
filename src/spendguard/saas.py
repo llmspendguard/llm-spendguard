@@ -110,6 +110,62 @@ def contributor():
     return config.machine_id()   # persisted usr_<hex> — never empty, no user@host leak
 
 
+def _persist_contributor(email):
+    """Write the verified contributor email to the USER-level ~/.spendguard/saas.json (applies across the user's
+    repos; repo-local .spendguard.json can still override). Idempotent."""
+    import json as _j
+    p = config.saas_path()
+    try:
+        cfg = _j.loads(p.read_text()) if p.exists() else {}
+    except Exception:
+        cfg = {}
+    cfg["contributor"] = (email or "").lower()[:128]
+    try:
+        config.HOME.mkdir(parents=True, exist_ok=True)
+        p.write_text(_j.dumps(cfg, indent=2))
+    except Exception:
+        pass
+
+
+def link(open_browser=True, timeout=900):
+    """Device-link this install to the org: start a link with the org key, a teammate approves in the browser
+    (Clerk sign-in), then we write their VERIFIED email as the contributor — no hand-editing config. Free, no spend."""
+    import time
+    ok, reason = ready()
+    if not ok:
+        return {"error": f"not connected: {reason} — set the org key in saas.json/.spendguard.json first"}
+    try:
+        start = _request("POST", "/v1/link/start", {})
+    except Exception as e:
+        return {"error": str(e)}
+    code, url, dt = start.get("code"), start.get("link_url"), start.get("device_token")
+    interval = int(start.get("poll_interval", 3))
+    print(f"\n  Approve this device at:\n    {url}\n  (verify the code there matches:  {code} )\n")
+    if open_browser:
+        try:
+            import webbrowser
+            webbrowser.open(url)
+        except Exception:
+            pass
+    print("  waiting for approval…  (Ctrl-C to cancel)", flush=True)
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        time.sleep(interval)
+        try:
+            r = _request("POST", "/v1/link/poll", {"device_token": dt})
+        except Exception:
+            continue
+        st = r.get("status")
+        if st == "approved":
+            em = r.get("email")
+            _persist_contributor(em)
+            print(f"\n  ✓ linked as {em}\n    saved to {config.saas_path()} — this is now your contributor across all repos.")
+            return {"linked": em}
+        if st in ("expired", "denied"):
+            return {"error": f"link {st} — re-run `spendguard saas link`"}
+    return {"error": "timed out waiting for approval"}
+
+
 def _project_filter(c):
     """Which project(s) THIS connection pushes → so one shared ledger can serve several repos/orgs without
     cross-attributing. `projects` (list) or `project` (single) in the config; None = push all. spendguard's own
@@ -430,6 +486,11 @@ def cmd(argv=None):
         import json as _j
         print(_j.dumps(crosscheck(), indent=2))
         return 0
+    if sub == "link":                                 # device-link: approve in browser → verified email = contributor
+        r = link(open_browser="--no-open" not in argv)
+        if "error" in r:
+            print("link failed:", r["error"]); return 1
+        return 0
     if sub == "commands":                             # drain + run server-enqueued work (reconcile / re-tag)
         print("commands:", run_commands())
         return 0
@@ -439,5 +500,5 @@ def cmd(argv=None):
             r = pull_insights(scope); print(f"pulled {len(r.get('abstracts', []))} abstract(s) (scope={scope})"); return 0
         except Exception as e:
             print(f"pull failed: {e}"); return 1
-    print("usage: spendguard saas [status|ping|sync [--if-due]|push [--dry]|reconcile|audit|crosscheck|commands|pull [team|org]]")
+    print("usage: spendguard saas [status|ping|link|sync [--if-due]|push [--dry]|reconcile|audit|crosscheck|commands|pull [team|org]]")
     return 1
