@@ -1,6 +1,6 @@
 site_name: llm-spendguard
 site_description: A pre-spend governor for LLM + remote-compute cost — caps every call, prices from a verified table, and learns the cheapest config that still keeps quality.
-site_url: https://llmspendguard.github.io/llm-spendguard/
+site_url: https://docs.llmspendguard.com/
 repo_url: https://github.com/llmspendguard/llm-spendguard
 repo_name: llmspendguard/llm-spendguard
 edit_uri: edit/main/docs/
