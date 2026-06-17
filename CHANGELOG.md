@@ -17,7 +17,9 @@ Quality + docs pass — no runtime behavior change.
   through (kill switch). All offline (SDK create methods stubbed; no network, no spend).
 - **Docs site** — MkDocs Material (`mkdocs.yml`), home is a 60-second [quickstart-as-tutorial](docs/index.md);
   Architecture / Using-with-Claude / Learning-advisor / Roadmap wired into the nav with Mermaid + dark mode.
-  Published to GitHub Pages via `.github/workflows/docs.yml` (strict build); deps pinned in `requirements-docs.txt`.
+  **Brand-skinned to match llmspendguard.com** (`docs/stylesheets/extra.css`): warm cream + teal palette,
+  editorial Newsreader serif headlines over a system-sans body, shield logo. Published to GitHub Pages via
+  `.github/workflows/docs.yml` (strict build); deps pinned in `requirements-docs.txt`.
 - **Ruff** lint in CI (`select = ["F","B"]`) — correctness/bug lints; format intentionally *not* imposed (keeps
   the dense, deliberate one-liner style readable). **Release workflow** (`release.yml`) publishes to PyPI on a
   `v*` tag via trusted publishing.

@@ -1,0 +1,50 @@
+/* Brand skin — mirrors llmspendguard.com: warm cream + teal, editorial Newsreader serif headlines over a
+   clean system-sans body. The same design tokens as the marketing site's globals.css / Landing.tsx. */
+@import url('https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,300;6..72,400;6..72,500&display=swap');
+
+/* teal + accent apply to both light and dark schemes */
+:root {
+  --md-primary-fg-color: #13957A;          /* brand teal (header) */
+  --md-primary-fg-color--dark: #0F6E56;
+  --md-accent-fg-color: #0F6E56;
+}
+
+/* light scheme = the marketing site's warm cream palette */
+[data-md-color-scheme="default"] {
+  --md-default-bg-color: #F3EFE7;           /* warm cream */
+  --md-typeset-color: #262420;              /* warm near-black */
+  --md-default-fg-color--light: #6E6A60;
+  --md-default-fg-color--lighter: #9C9789;
+  --md-typeset-a-color: #0F6E56;
+  --md-code-bg-color: #FCFBF8;
+  --md-code-fg-color: #262420;
+  --md-footer-bg-color: #262420;
+}
+
+[data-md-color-scheme="default"] .md-main,
+[data-md-color-scheme="default"] .md-container { background: #F3EFE7; }
+
+/* editorial serif headlines — the signature lever from the marketing site */
+.md-typeset h1, .md-typeset h2, .md-typeset h3 {
+  font-family: 'Newsreader', Georgia, serif;
+  letter-spacing: -0.3px;
+}
+.md-typeset h1 { font-weight: 300; font-size: 2.4rem; line-height: 1.1; }
+.md-typeset h2 { font-weight: 400; }
+.md-typeset h3 { font-weight: 400; }
+
+/* lighter body weight to match the airy marketing feel */
+.md-typeset { font-weight: 300; line-height: 1.65; }
+.md-typeset strong, .md-typeset b { font-weight: 600; }
+
+/* brand the primary call-to-action button + grid cards */
+.md-typeset .md-button--primary { background: #13957A; border-color: #13957A; color: #fff; }
+.md-typeset .md-button--primary:hover { background: #0F6E56; border-color: #0F6E56; }
+[data-md-color-scheme="default"] .md-typeset .grid.cards > :is(ul, ol) > li,
+[data-md-color-scheme="default"] .md-typeset .grid > .card {
+  border-color: #E8E3D7; background: #FCFBF8;
+}
+
+/* warm, quieter rules + tables */
+[data-md-color-scheme="default"] .md-typeset hr { border-bottom-color: #E8E3D7; }
+[data-md-color-scheme="default"] .md-typeset table:not([class]) th { background: #ECE8DE; }

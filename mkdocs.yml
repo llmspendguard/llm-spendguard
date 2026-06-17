@@ -19,6 +19,7 @@ theme:
       primary: teal
       accent: teal
       toggle: { icon: material/weather-sunny, name: Light mode }
+  font: false                  # system sans for the body (matches the marketing site; no Google Roboto)
   features:
     - navigation.top
     - navigation.sections
@@ -27,6 +28,10 @@ theme:
     - toc.follow
   icon:
     repo: fontawesome/brands/github
+    logo: material/shield-check  # "spend guard" mark in the header
+
+extra_css:
+  - stylesheets/extra.css
 
 nav:
   - Home: index.md
