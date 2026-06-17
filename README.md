@@ -3,7 +3,7 @@
 A pre-spend **governor** for LLM API cost (OpenAI + Anthropic): it caps every call before the spend,
 prices from a verified table, and **learns the cheapest config that still keeps quality** — then proves
 and enforces it. Zero required dependencies; install is one line; it never breaks a job (fail-open).
-Learn more at https://llmspendguard.com · **[Docs & quickstart →](https://llmspendguard.github.io/llm-spendguard/)**
+Learn more at https://llmspendguard.com · **[Docs & quickstart →](https://docs.llmspendguard.com/)**
 
 ## Why llm-spendguard?
 Cost overruns don't announce themselves — they slip in silently: a hardcoded price that drifted from the
