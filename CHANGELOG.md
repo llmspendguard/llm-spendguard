@@ -4,6 +4,14 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+### Added
+- **`spendguard init --chat`** — optional conversational setup: ONE small realtime call on YOUR own key, caged
+  under `caps.meta` (intent `spendguard:init`, estimate-first, never the server), parses plain-English budgets
+  ("$2k/mo for LLMs and $800 for GPUs") into `caps.llm/compute/total`. Falls back to the deterministic prompts
+  if no key / the call fails. Default `init` stays deterministic + zero-LLM.
+- **`init` now points to the corpus bootstrap** (`spendguard bootstrap` / the `/spendguard-learn` skill) to seed
+  the advisor from past provider history on day one.
+
 Quality + docs pass — no runtime behavior change.
 
 ### Added

@@ -342,6 +342,58 @@ def cmd_config(argv=None):
     return 0
 
 
+def _parse_caps_json(text):
+    """Tolerantly pull a {llm,compute,total} JSON object of USD monthly caps from the model's reply."""
+    import re
+    m = re.search(r"\{[^{}]*\}", text or "")
+    if not m:
+        return None
+    try:
+        d = json.loads(m.group(0))
+    except Exception:
+        return None
+    out = {}
+    for k in ("llm", "compute", "total"):
+        v = d.get(k)
+        if isinstance(v, (int, float)) and v > 0:
+            out[k] = float(v)
+    return out or None
+
+
+def _chat_caps():
+    """Conversational cap setup. Uses YOUR own key for ONE small realtime call, caged under caps.meta (intent
+    spendguard:init — separate budget, excluded from the corpus), estimate-first. NEVER the server. Returns
+    {llm,compute,total} monthly USD, or None to fall back to the deterministic prompts."""
+    from . import gate, adapters, calls
+    gate.install()   # ensure the gate is enforcing IN THIS PROCESS so the call is metered under caps.meta
+    model = config.advisor_model()
+    try:
+        ans = input('  Describe your monthly budgets (+ anything about projects), e.g.\n'
+                    '  "$2k/mo for LLMs and $800 for GPUs"\n  > ').strip()
+    except EOFError:
+        return None
+    if not ans:
+        return None
+    sys = ("Extract the user's MONTHLY spend caps as STRICT JSON, USD numbers only, no prose, no code fence. "
+           "Keys: llm (LLM/API monthly cap), compute (GPU/remote-compute monthly cap), total (overall ceiling; "
+           "if unstated use llm+compute). Omit any key you cannot infer. "
+           'Example: {"llm":2000,"compute":800,"total":2800}')
+    print(f'\n  (this uses YOUR {model} key for one small call, caged under caps.meta ${config.meta_cap():.2f}/day, est ~$0.001 — never the server)')
+    try:
+        with calls.context(intent="spendguard:init"):
+            r = adapters.call(model, ans, max_tokens=120, system=sys)
+    except Exception as e:
+        print(f"  (conversational setup unavailable: {e} — falling back to prompts)")
+        return None
+    if r.get("error"):
+        print(f"  (conversational setup unavailable: {r['error']} — falling back to prompts)")
+        return None
+    caps = _parse_caps_json(r.get("text", ""))
+    if caps and r.get("cost"):
+        print(f"  parsed your budgets (caged cost ${r['cost']:.4f}).")
+    return caps
+
+
 def cmd_init(argv=None):
     print("spendguard setup\n")
     print("  spendguard runs FULLY STANDALONE — a local spend gate on this machine, no account needed.")
@@ -352,7 +404,6 @@ def cmd_init(argv=None):
             connect = input("  Connect to a team/org now? (needs an org key from your admin; or use `spendguard saas link` later) [y/N]\n  > ").strip().lower() in ("y", "yes")
         except EOFError:
             connect = False
-    print("\n  Enter keeps the current/default; 'null' clears.\n")
     cfgjson = dict(config._cfg())
     ep = config.HOME / "email.json"
     sp = config.saas_path()
@@ -367,7 +418,26 @@ def cmd_init(argv=None):
             saas = json.loads(sp.read_text())
         except Exception:
             pass
+    # Two ways to set caps: --chat (one caged LLM call parses your plain-English budgets) or the default
+    # deterministic prompts. --chat falls back to prompts if no key / the call fails.
+    chat = "--chat" in (argv or [])
+    chat_set = False
+    if chat:
+        print("\n  Conversational setup (--chat):")
+        got = _chat_caps()
+        if got:
+            caps = cfgjson.setdefault("caps", {})
+            for k in ("llm", "compute", "total"):
+                if got.get(k):
+                    caps.setdefault(k, {})["monthly"] = got[k]
+            print("  → set " + ", ".join(f"caps.{k}.monthly=${int(v)}" for k, v in got.items()))
+            chat_set = True
+        else:
+            print("  (falling back to prompts)")
+    print("\n  Enter keeps the current/default; 'null' clears.\n")
     for s in config_schema.SETTINGS:
+        if chat_set and s["section"] != "saas":
+            continue  # --chat set the caps; keep defaults for the rest (tune later via `spendguard config set`)
         if s["section"] == "keys" or s["store"] == "env":
             continue  # env-only (API keys, home, prices override) — instructed below, not written
         if not connect and s["section"] == "saas":
@@ -420,4 +490,8 @@ def cmd_init(argv=None):
     print(f"Set API keys in your environment or ./.env: {keys}")
     if (cfgjson.get("budget") or {}).get("backend") == "sqlite":
         print(f"SQLite budget ledger will be created at {config.db_path()} on first charge.")
+    # Cold-start the cost advisor from your OWN history (so day-one recommendations aren't empty).
+    print("\nSeed the advisor: `spendguard bootstrap` mines your past provider batches (free retrieval) into a "
+          "starter cost+quality corpus — the paid reasoning step is caged by caps.meta + estimate-first (opt-in --run).")
+    print("  In Claude Code, the /spendguard-learn skill runs this for you.")
     return 0
