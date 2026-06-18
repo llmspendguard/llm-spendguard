@@ -54,7 +54,7 @@ def ready():
     if not c.get("enabled"):
         return False, "saas.enabled is off (set it on once the server exists)"
     if not c.get("url"):
-        return False, "saas.url is unset (point it at the server, e.g. https://api.llmseg.ai)"
+        return False, "saas.url is unset (point it at the server, e.g. https://llmspendguard.com)"
     if not c.get("api_key"):
         return False, "saas.api_key is unset (set SPENDGUARD_SAAS_KEY or saas.json)"
     return True, "configured"

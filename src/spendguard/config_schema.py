@@ -104,7 +104,7 @@ SETTINGS = [
          desc="Sync this machine's ledger/insights to a spendguard server for team/org roll-up. Off until the server exists."),
     dict(section="saas", key="url", store="saas.json:url", env="SPENDGUARD_SAAS_URL", default=None,
          kind="url|null", secret=False,
-         desc="Base URL of the spendguard server (e.g. https://api.llmseg.ai). The server is a SEPARATE repo."),
+         desc="Base URL of the spendguard server (e.g. https://llmspendguard.com). The server is a SEPARATE repo."),
     dict(section="saas", key="api_key", store="saas.json:api_key", env="SPENDGUARD_SAAS_KEY", default=None,
          kind="string", secret=True,
          desc="Your spendguard server key (Bearer). The SERVER maps this key to your user/team/org — the client "

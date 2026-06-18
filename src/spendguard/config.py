@@ -196,6 +196,7 @@ def saas_config():
     cfg["enabled"] = str(cfg.get("enabled", "")).lower() in ("1", "true", "yes", "y")
     cfg.setdefault("visibility", "private")
     cfg.setdefault("sync_interval", "daily")
+    cfg.setdefault("url", "https://llmspendguard.com")   # the only roll-up destination (the hosted aggregator)
     return cfg
 
 
