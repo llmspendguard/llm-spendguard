@@ -40,10 +40,9 @@ check("unknown 'by' falls through to day", workdone._period("2026-06-17", "x") =
 
 # ─────────────────────────── _repos (config override) ───────────────────────────
 print("-- _repos: config override + default fallback --")
-# default (no config) → expands the bundled DEFAULT_REPOS to absolute paths
+# default (no config) → DEFAULT_REPOS is empty; repos MUST be configured via config workdone.repos
 defaults = workdone._repos()
-check("default repos non-empty", len(defaults) > 0)
-check("default repos paths are expanded (no ~)", all("~" not in p for p in defaults))
+check("default repos empty (must be configured)", len(defaults) == 0)
 
 # now write a config that overrides workdone.repos and confirm it wins. _repos() reads
 # config.saas_config(), which overlays ~/.spendguard/saas.json — so the override lives there.
@@ -61,14 +60,14 @@ check("override keeps absolute path as-is", repos["/abs/bar"] == "barproj")
 print("-- build/rollup: seeded commits + intents per (day, project) --")
 
 # Point _repos at two fake projects, and monkeypatch _git_commits to return canned commit subjects.
-FAKE_REPOS = {"/fake/lmm": "lmm", "/fake/manga": "manga2anime"}
+FAKE_REPOS = {"/fake/nlp": "nlp-pipeline", "/fake/vision": "vision-pipeline"}
 workdone._repos = lambda: dict(FAKE_REPOS)
 
 _COMMITS = {
-    "/fake/lmm": [("2026-06-15", "lmm: build bc edges v16"),
-                  ("2026-06-16", "lmm: fix curgraph fold"),
-                  ("2026-06-17", "lmm: typing cross-check")],
-    "/fake/manga": [("2026-06-16", "manga: sam3 segment fix")],
+    "/fake/nlp": [("2026-06-15", "nlp: build entity index"),
+                  ("2026-06-16", "nlp: fix corpus loader"),
+                  ("2026-06-17", "nlp: classifier cross-check")],
+    "/fake/vision": [("2026-06-16", "vision: segment fix")],
 }
 workdone._git_commits = lambda repo, since: list(_COMMITS.get(repo, []))
 
@@ -83,12 +82,12 @@ def seed_io(ts, intent, model):
         db.commit()
 
 
-# loinc-typing intent → conv._project_of maps to "lmm"; two calls same day same intent → count 2
-seed_io("2026-06-15T10:00:00", "loinc-typing", "gpt-5.5")
-seed_io("2026-06-15T11:00:00", "loinc-typing", "gpt-5.5")
-# anime intent → maps to "manga2anime"
-seed_io("2026-06-16T09:00:00", "anime-caption", "claude-opus-4-8")
-# unlabeled intent (empty) on a day with no project signal → falls to "lmm" default in build()
+# entity-extract intent → conv._project_of maps to "nlp-pipeline"; two calls same day same intent → count 2
+seed_io("2026-06-15T10:00:00", "entity-extract", "gpt-5.5")
+seed_io("2026-06-15T11:00:00", "entity-extract", "gpt-5.5")
+# video-caption intent → matches "video"/"caption" → maps to "vision-pipeline"
+seed_io("2026-06-16T09:00:00", "video-caption", "claude-opus-4-8")
+# unlabeled intent (empty) on a day with no project signal → falls to "" (untagged) in build()
 seed_io("2026-06-17T08:00:00", "", "some-model")
 
 SINCE = "2026-06-15"
@@ -96,44 +95,44 @@ SINCE = "2026-06-15"
 rows = workdone.build(since=SINCE)
 by_key = {(r["day"], r["project"]): r for r in rows}
 
-check("build: lmm 2026-06-15 has 1 commit", by_key[("2026-06-15", "lmm")]["n_commits"] == 1)
-check("build: lmm 2026-06-15 counts 2 loinc batch calls",
-      by_key[("2026-06-15", "lmm")]["intents"].get("loinc-typing") == 2)
-check("build: lmm 2026-06-15 n_batch_calls == 2",
-      by_key[("2026-06-15", "lmm")]["n_batch_calls"] == 2)
-check("build: manga 2026-06-16 has 1 commit",
-      by_key[("2026-06-16", "manga2anime")]["n_commits"] == 1)
-check("build: manga 2026-06-16 anime batch call attributed",
-      by_key[("2026-06-16", "manga2anime")]["intents"].get("anime-caption") == 1)
-# the empty-intent call → _batch_intents COALESCEs '' to '(unlabeled)'; no project signal → "lmm" default
-check("build: unlabeled intent bucketed under lmm default",
-      "(unlabeled)" in by_key[("2026-06-17", "lmm")]["intents"])
-check("build: commit subjects captured", any(c.startswith("lmm: build bc edges")
-      for c in by_key[("2026-06-15", "lmm")]["commits"]))
+check("build: nlp-pipeline 2026-06-15 has 1 commit", by_key[("2026-06-15", "nlp-pipeline")]["n_commits"] == 1)
+check("build: nlp-pipeline 2026-06-15 counts 2 entity-extract batch calls",
+      by_key[("2026-06-15", "nlp-pipeline")]["intents"].get("entity-extract") == 2)
+check("build: nlp-pipeline 2026-06-15 n_batch_calls == 2",
+      by_key[("2026-06-15", "nlp-pipeline")]["n_batch_calls"] == 2)
+check("build: vision 2026-06-16 has 1 commit",
+      by_key[("2026-06-16", "vision-pipeline")]["n_commits"] == 1)
+check("build: vision 2026-06-16 video-caption batch call attributed",
+      by_key[("2026-06-16", "vision-pipeline")]["intents"].get("video-caption") == 1)
+# the empty-intent call → _batch_intents COALESCEs '' to '(unlabeled)'; no project signal → "" (untagged)
+check("build: unlabeled intent bucketed under untagged ('')",
+      "(unlabeled)" in by_key[("2026-06-17", "")]["intents"])
+check("build: commit subjects captured", any(c.startswith("nlp: build entity index")
+      for c in by_key[("2026-06-15", "nlp-pipeline")]["commits"]))
 
 
 # ─────────────────────────── rollup by week / month ───────────────────────────
 print("-- rollup: by week aggregates the whole ISO week --")
 wk = workdone.rollup(since=SINCE, by="week")
 # all our days (06-15..06-17) are in the same ISO week → Monday 2026-06-15
-lmm_week = next((r for r in wk if r["project"] == "lmm" and r["period"] == "2026-06-15"), None)
-check("week rollup: lmm period exists", lmm_week is not None)
-check("week rollup: lmm spans 3 active days", lmm_week["active_days"] == 3)
-check("week rollup: lmm 3 commits across the week", lmm_week["n_commits"] == 3)
-check("week rollup: lmm batch calls summed (2 loinc + 1 unlabeled)",
-      lmm_week["n_batch_calls"] == 3)
+nlp_week = next((r for r in wk if r["project"] == "nlp-pipeline" and r["period"] == "2026-06-15"), None)
+check("week rollup: nlp-pipeline period exists", nlp_week is not None)
+check("week rollup: nlp-pipeline spans 3 active days", nlp_week["active_days"] == 3)
+check("week rollup: nlp-pipeline 3 commits across the week", nlp_week["n_commits"] == 3)
+check("week rollup: nlp-pipeline batch calls summed (2 entity-extract)",
+      nlp_week["n_batch_calls"] == 2)
 
 print("-- rollup: by month --")
 mo = workdone.rollup(since=SINCE, by="month")
-lmm_month = next((r for r in mo if r["project"] == "lmm" and r["period"] == "2026-06"), None)
-check("month rollup: period is YYYY-MM", lmm_month is not None and lmm_month["period"] == "2026-06")
-check("month rollup: lmm 3 commits", lmm_month["n_commits"] == 3)
+nlp_month = next((r for r in mo if r["project"] == "nlp-pipeline" and r["period"] == "2026-06"), None)
+check("month rollup: period is YYYY-MM", nlp_month is not None and nlp_month["period"] == "2026-06")
+check("month rollup: nlp-pipeline 3 commits", nlp_month["n_commits"] == 3)
 
 print("-- rollup: by day (default) keeps day granularity --")
 dy = workdone.rollup(since=SINCE)               # by='day' default
 days = {(r["period"], r["project"]) for r in dy}
-check("day rollup: each day is its own period", ("2026-06-15", "lmm") in days
-      and ("2026-06-16", "lmm") in days and ("2026-06-17", "lmm") in days)
+check("day rollup: each day is its own period", ("2026-06-15", "nlp-pipeline") in days
+      and ("2026-06-16", "nlp-pipeline") in days and ("2026-06-17", "nlp-pipeline") in days)
 
 
 # ─────────────────────────── cmd (CLI rendering, no --push) ───────────────────────────
@@ -146,8 +145,8 @@ rc3 = workdone.cmd(["--since", SINCE])          # default by=day
 check("cmd default (by day) returns 0", rc3 == 0)
 
 # cmd with many commits exercises the "+N more" truncation branch (>8 commits in a bucket)
-big = [("2026-06-15", f"lmm: commit {i}") for i in range(12)]
-workdone._git_commits = lambda repo, since: (big if repo == "/fake/lmm" else [])
+big = [("2026-06-15", f"nlp: commit {i}") for i in range(12)]
+workdone._git_commits = lambda repo, since: (big if repo == "/fake/nlp" else [])
 rc4 = workdone.cmd(["--since", SINCE, "--by", "month"])
 check("cmd with >8 commits (truncation branch) returns 0", rc4 == 0)
 

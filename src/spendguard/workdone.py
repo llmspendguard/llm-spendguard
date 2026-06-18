@@ -12,16 +12,9 @@ TIER 2 (separate, caged + opt-in): an LLM pass synthesizes a day's raw activity 
 import argparse, datetime, os, subprocess
 from collections import defaultdict
 
-# repo path → project tag (the WHAT this work belongs to). Override/extend via config workdone.repos.
-# NOTE: these are EXAMPLE mappings tuned to the author's machine (~/Documents/claude/lmm → "lmm",
-# ~/Documents/animepipe → "manga2anime", …). Customize them for YOUR repos via config workdone.repos
-# (or edit here) — the keys are absolute paths on this machine and won't match another setup.
-DEFAULT_REPOS = {
-    "~/Documents/claude/lmm": "lmm",
-    "~/Documents/claude/llm-spendguard": "llmseg",
-    "~/Documents/claude/llm-spendguard-server": "llmseg",
-    "~/Documents/animepipe": "manga2anime",
-}
+# repo path → project tag (the WHAT this work belongs to). Repos MUST be configured via config workdone.repos
+# (mapping absolute repo paths → project tags); there are no machine-specific defaults.
+DEFAULT_REPOS = {}
 
 
 def _repos():
@@ -75,7 +68,7 @@ def build(since=None):
                 by[(day, proj)]["commits"].append(subj[:160])
     for (day, proj), intents in _batch_intents(since).items():
         for intent, n in intents.items():
-            by[(day, proj or "lmm")]["intents"][intent] += n
+            by[(day, proj or "")]["intents"][intent] += n
     rows = []
     for (day, proj), a in sorted(by.items()):
         rows.append({"day": day, "project": proj, "commits": a["commits"], "n_commits": len(a["commits"]),

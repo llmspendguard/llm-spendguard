@@ -29,12 +29,12 @@ def check(label, cond):
 DAYS = ["2026-06-01", "2026-06-02", "2026-06-03"]
 # gate saw $10 on d1, $20 on d2, $0 on d3 (the leak day)
 budget._db().execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project) VALUES (?,?,?,?,?,?,?)",
-                     (DAYS[0] + "T00:00:00+00:00", DAYS[0], "openai", "gpt-5.5", "batch", 10.0, "lmm"))
+                     (DAYS[0] + "T00:00:00+00:00", DAYS[0], "openai", "gpt-5.5", "batch", 10.0, "nlp-pipeline"))
 budget._db().execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project) VALUES (?,?,?,?,?,?,?)",
-                     (DAYS[1] + "T00:00:00+00:00", DAYS[1], "openai", "gpt-5.5", "batch", 20.0, "lmm"))
+                     (DAYS[1] + "T00:00:00+00:00", DAYS[1], "openai", "gpt-5.5", "batch", 20.0, "nlp-pipeline"))
 # a realtime + a meta row so the kind filters are exercised
 budget._db().execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project) VALUES (?,?,?,?,?,?,?)",
-                     (DAYS[1] + "T00:00:00+00:00", DAYS[1], "openai", "gpt-5.5", "realtime", 4.0, "lmm"))
+                     (DAYS[1] + "T00:00:00+00:00", DAYS[1], "openai", "gpt-5.5", "realtime", 4.0, "nlp-pipeline"))
 budget._db().execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project) VALUES (?,?,?,?,?,?,?)",
                      (DAYS[1] + "T00:00:00+00:00", DAYS[1], "anthropic", "claude-opus-4-8", "meta", 1.5, "llmseg"))
 budget._db().commit()
@@ -194,14 +194,14 @@ backfill._openai_rows = lambda: [("openai", "gpt-5.5", 40.0, 1_000_000, 0, DAYS[
 backfill._anthropic_rows = lambda: [("anthropic", "claude-opus-4-8", 5.0, 100, 100, DAYS[1], "bx-anth")]
 conv.batch_links = lambda tdir=None: {}                 # no transcript indexing
 callio._db = lambda: budget._db()                       # call_io lives in the isolated db (empty)
-saas.conn = lambda: {"project": "lmm", "projects": ["lmm"]}   # single-project → fallback = 'lmm'
+saas.conn = lambda: {"project": "nlp-pipeline", "projects": ["nlp-pipeline"]}   # single-project → fallback = 'nlp-pipeline'
 
 summ = LS.reconcile_into_ledger(since=SINCE)
 check("provider_total = 45 (40 + 5)", abs(summ["provider_total"] - 45.0) < 1e-9)
-check("gate_attributed = 30 (lmm batch the gate saw)", abs(summ["gate_attributed"] - 30.0) < 1e-9)
+check("gate_attributed = 30 (nlp-pipeline batch the gate saw)", abs(summ["gate_attributed"] - 30.0) < 1e-9)
 check("ungoverned gap = 15 (45 - 30)", abs(summ["ungoverned"] - 15.0) < 1e-9)
 check("gap_rows = 1", summ["gap_rows"] == 1)
-check("gap attributed to lmm", abs(summ["gap_by_project"].get("lmm", 0) - 15.0) < 1e-9)
+check("gap attributed to nlp-pipeline", abs(summ["gap_by_project"].get("nlp-pipeline", 0) - 15.0) < 1e-9)
 check("no provider errors", summ["errors"] == {})
 check("both providers ok", set(summ["providers_ok"]) == {"openai", "anthropic"})
 
@@ -236,20 +236,20 @@ backfill._openai_rows = lambda: [
     ("openai", "gpt-5.5", 9.0, 100, 100, DAYS[1], "bx-intent"),         # attributed via b2i intent text
 ]
 backfill._anthropic_rows = lambda: []
-# bx-linked → a snippet that _project_of routes to 'manga2anime'
-conv.batch_links = lambda tdir=None: {"bx-linked": {"snippet": "anime segment caption frames"}}
-# bx-intent → an intent string that routes to 'lmm' via the b2i path
+# bx-linked → a snippet that _project_of routes to 'vision-pipeline'
+conv.batch_links = lambda tdir=None: {"bx-linked": {"snippet": "video segment caption frames"}}
+# bx-intent → an intent string that routes to 'vision-pipeline' via the b2i path
 callio._db = lambda: budget._db()
 budget._db().execute("CREATE TABLE IF NOT EXISTS call_io (batch TEXT, intent TEXT)")
 budget._db().execute("DELETE FROM call_io")
-# route the b2i intent to manga2anime too, so the attributed gap survives the gate-spend subtraction
-budget._db().execute("INSERT INTO call_io (batch, intent) VALUES (?,?)", ("bx-intent", "anime caption frames"))
+# route the b2i intent to vision-pipeline too, so the attributed gap survives the gate-spend subtraction
+budget._db().execute("INSERT INTO call_io (batch, intent) VALUES (?,?)", ("bx-intent", "video caption frames"))
 budget._db().commit()
-saas.conn = lambda: {"project": "lmm", "projects": ["lmm"]}
+saas.conn = lambda: {"project": "nlp-pipeline", "projects": ["nlp-pipeline"]}
 summ_attr = LS.reconcile_into_ledger(since=SINCE)
-# bx-linked ($40, conv link) + bx-intent ($9, b2i) both → manga2anime (no gate spend there) → a real gap row
-check("manga2anime gap from link + b2i intent = $49", abs(summ_attr["gap_by_project"].get("manga2anime", 0) - 49.0) < 1e-9)
-check("lmm has gate spend → its gap suppressed (not in bucket)", "lmm" not in summ_attr["gap_by_project"])
+# bx-linked ($40, conv link) + bx-intent ($9, b2i) both → vision-pipeline (no gate spend there) → a real gap row
+check("vision-pipeline gap from link + b2i intent = $49", abs(summ_attr["gap_by_project"].get("vision-pipeline", 0) - 49.0) < 1e-9)
+check("nlp-pipeline has gate spend → its gap suppressed (not in bucket)", "nlp-pipeline" not in summ_attr["gap_by_project"])
 check("pre-`since` row (bx-old) excluded from totals", abs(summ_attr["provider_total"] - 49.0) < 1e-9)
 
 print("-- reconcile_into_ledger: multi-project saas → 'unattributed' fallback bucket --")
@@ -257,7 +257,7 @@ report.openai_by_day = lambda: ({DAYS[1]: 40.0}, 0)
 ra.cost_by_day = lambda since=None: ({}, {})
 backfill._openai_rows = lambda: [("openai", "gpt-5.5", 40.0, 1_000_000, 0, DAYS[1], "bx-multi")]
 backfill._anthropic_rows = lambda: []
-saas.conn = lambda: {"projects": ["lmm", "manga2anime"]}   # >1 project → fallback = 'unattributed'
+saas.conn = lambda: {"projects": ["nlp-pipeline", "vision-pipeline"]}   # >1 project → fallback = 'unattributed'
 summ4 = LS.reconcile_into_ledger(since=SINCE)
 check("no-evidence gap lands in 'unattributed'", "unattributed" in summ4["gap_by_project"])
 

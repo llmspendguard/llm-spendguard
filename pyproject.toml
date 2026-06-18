@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "llm-spendguard"
-version = "0.2.5"
+version = "0.2.6"
 description = "A pre-spend GATE + learning advisor for LLM API cost: caps every call, prices from a verified table, and learns the cheapest config that keeps quality."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
-authors = [{ name = "ashdamle" }]
+authors = [{ name = "Ash Damle" }]
 keywords = ["llm", "openai", "anthropic", "cost", "budget", "finops", "tokens", "prompt-caching", "observability"]
 classifiers = [
     "Development Status :: 4 - Beta",

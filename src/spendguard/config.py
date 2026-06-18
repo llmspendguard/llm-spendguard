@@ -149,7 +149,7 @@ def email_config():
 
 def _project_saas():
     """Repo-local SaaS overlay: nearest `.spendguard.json` found walking up from CWD (stop at $HOME / fs root).
-    Lets DIFFERENT repos on one machine push to different orgs/teams (e.g. lmm→Healiom/LMM, manga2anime→its org).
+    Lets DIFFERENT repos on one machine push to different orgs/teams (e.g. nlp-pipeline→Acme/NLP, vision-pipeline→its org).
     Keep it gitignored — it holds the org/team api_key. Overlays the global saas.json; env still wins."""
     import json as _json
     try:
@@ -243,8 +243,8 @@ def allow():    return os.getenv("GATE_ALLOW") == "1"
 
 def api_key(name):
     """Resolve an API key: os.environ first, then a CHAIN of .env files — $SPENDGUARD_ENV, ./.env (cwd), and
-    SPENDGUARD_HOME/.env. The last is cwd-INDEPENDENT, so keys resolve from any repo (spendguard moved out of lmm,
-    so a cwd-only ./.env silently lost the keys — financial data must not depend on which directory you ran from)."""
+    SPENDGUARD_HOME/.env. The last is cwd-INDEPENDENT, so keys resolve from any repo (if spendguard lives outside a
+    consumer repo, a cwd-only ./.env silently loses the keys — financial data must not depend on which directory you ran from)."""
     k = os.environ.get(name, "")
     if k:
         return k

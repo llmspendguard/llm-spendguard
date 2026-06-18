@@ -123,12 +123,12 @@ def build_index(tdir=None, rebuild=False):
     return out, scanned
 
 
-# NOTE: these keyword patterns are EXAMPLES tuned to the author's own projects (a medical-concept pipeline,
-# an anime pipeline). They map a snippet's vocabulary → a project tag. Adjust them to YOUR projects' domain
+# NOTE: these keyword patterns are EXAMPLES showing how a snippet's vocabulary → a project tag (two distinct
+# example domains: an NLP/text pipeline and a vision/image pipeline). Adjust them to YOUR projects' domain
 # keywords — the defaults won't match an unrelated codebase.
 _PROJECT_RULES = [
-    ("lmm", r"shadow|phase|edge|taxonom|concept|\bbc\b|loinc|snomed|icd|typ|retype|mismap|hpo|mesh|medcin|gliner|ddx|omop"),
-    ("manga2anime", r"capt|anime|donghua|manga|\bsam\b|segment|frame|video|cap0"),
+    ("nlp-pipeline", r"embedding|entity|\bner\b|extract|classif|corpus|ontolog|tokeniz|sentiment"),
+    ("vision-pipeline", r"image|frame|video|segment|detect|caption|render|\bvae\b"),
 ]
 
 

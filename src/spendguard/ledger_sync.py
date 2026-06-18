@@ -116,7 +116,7 @@ def reconcile_into_ledger(since=None):
         errors["anthropic"] = str(e)[:140]
     local = budget.by_provider_day(kind="batch", since=since)   # gate-recorded (attributed) batch, by provider/day
     # Fallback project for batches with NO conversation evidence: a single-project repo's LLM provider account is
-    # entirely THAT project (e.g. Healiom's OpenAI/Anthropic spend is all 'lmm'), so a no-evidence batch is the
+    # entirely THAT project (e.g. Acme's OpenAI/Anthropic spend is all 'nlp-pipeline'), so a no-evidence batch is the
     # repo's project, not truly 'unattributed' — that bucket is for genuinely MULTI-project repos only. This is the
     # "most-recent/primary task" rule the user asked for; it takes LLM attribution to ~100% for single-project orgs.
     try:
@@ -128,7 +128,7 @@ def reconcile_into_ledger(since=None):
     except Exception:
         fallback = "unattributed"
     # Attribute the gap BY PROJECT using conversation/intent evidence (batch id → conversation → project), so the
-    # provider-truth gap lands on lmm / manga2anime / … instead of one blanket 'unattributed' bucket.
+    # provider-truth gap lands on nlp-pipeline / vision-pipeline / … instead of one blanket 'unattributed' bucket.
     from . import backfill, conv, callio
     links = conv.batch_links()
     try:

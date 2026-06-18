@@ -22,8 +22,8 @@ def retag_deterministic():
 
 
 def move_project(old, new):
-    """Re-assign a project tag across the local ledger — fixes cwd-fallback mistags (e.g. anime-captioning that
-    ran from ~/Documents got tagged 'documents' instead of 'manga2anime'). Returns rows changed."""
+    """Re-assign a project tag across the local ledger — fixes cwd-fallback mistags (e.g. video-captioning that
+    ran from ~/Documents got tagged 'documents' instead of 'vision-pipeline'). Returns rows changed."""
     from . import budget
     old, new = (old or "").strip().lower(), (new or "").strip().lower()
     db = budget._db()

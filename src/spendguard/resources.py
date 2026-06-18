@@ -1,6 +1,6 @@
 """Resource (non-LLM compute) spend — vast.ai GPU — tracked like LLM: mapped to org/team/project/contributor and
 pushed to the SAME server, so the dashboard shows LLM + GPU side by side. One vast.ai account spans MULTIPLE
-projects (GLiNER A100 → lmm/Healiom, manga2anime training → Manga2Anime), so each instance's LABEL routes it to
+projects (NLP training → nlp-pipeline/Acme, vision training → vision-pipeline), so each instance's LABEL routes it to
 a project — exactly like one provider account spanning orgs. A GPU row carries multiple tags (gpu type, instance,
 label) alongside project/org/contributor.
 
@@ -19,8 +19,8 @@ VAST_BASE = "https://console.vast.ai/api/v0"
 
 # label substring → project (first match wins). Override/extend via config: resources.vastai.label_map.
 DEFAULT_LABEL_MAP = [
-    ("manga2anime", "manga2anime"), ("m2a", "manga2anime"), ("sam", "manga2anime"), ("anime", "manga2anime"),
-    ("gliner", "lmm"), ("healiom", "lmm"), ("lmm", "lmm"),
+    ("vision", "vision-pipeline"), ("video", "vision-pipeline"), ("segment", "vision-pipeline"), ("render", "vision-pipeline"),
+    ("nlp", "nlp-pipeline"), ("embed", "nlp-pipeline"), ("ner", "nlp-pipeline"),
 ]
 
 
@@ -186,7 +186,7 @@ def sync(dry=False):
     } for r in allrows if (r.get("project") or "") == proj and r["cost"] > 0]
     if c.get("owns_account"):                              # account-level GPU reconcile (one vast.ai account)
         # Only reconcile the blanket gap when this vast.ai account is SINGLE-PROJECT. A shared multi-project account
-        # (e.g. lmm GLiNER A100 + manga2anime H200) makes the destroyed/untracked gap CROSS-ORG — dumping it as this
+        # (e.g. nlp-pipeline A100 + vision-pipeline H200) makes the destroyed/untracked gap CROSS-ORG — dumping it as this
         # org's 'unattributed' would pull another org's GPU spend in (and vast.ai exposes no per-instance billing to
         # split it, and prepaid top-ups are lumpy = a balance buffer, not consumption). So: multi-project account →
         # push only per-project attributed consumption (each org reconciles its own); single-project → the gap is

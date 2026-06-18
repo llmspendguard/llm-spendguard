@@ -179,7 +179,7 @@ def _project_filter(c):
         return None                # no project configured → push everything
     # account-level / shared spend (the reconciled 'unattributed' gap + spendguard's own 'llmseg' meta) belongs to
     # exactly ONE org — the connection that runs reconcile. Only it opts in via owns_account, so other repos
-    # (e.g. animepipe → Manga2Anime) don't double-count the shared provider-account gap.
+    # (e.g. vision-pipeline → its org) don't double-count the shared provider-account gap.
     if c.get("owns_account"):
         base.add("llmseg")
         base.add("unattributed")

@@ -6,16 +6,16 @@
 #
 # Secrets come from the environment — do NOT hardcode keys in this file or commit them. Pass at provision time:
 #   OPENAI_API_KEY, ANTHROPIC_API_KEY   (provider keys, for reconcile/report)
-#   SPENDGUARD_SAAS_KEY                 (the org/team INGEST key, e.g. the Manga2Anime org key sg_org_…)
-# Optional overrides: PROJECT (default manga2anime), CONTRIBUTOR (default ash@ensight.ai), SERVER_URL.
+#   SPENDGUARD_SAAS_KEY                 (the org/team INGEST key, e.g. an org key sg_org_…)
+# Optional overrides: PROJECT (default vision-pipeline), CONTRIBUTOR (default you@example.com), SERVER_URL.
 #
 # IMPORTANT — one provider account across machines: this box only PUSHES its own gate-attributed spend. It does
 # NOT run `saas reconcile` (account-level reconciliation runs from ONE designated machine, so the account gap
 # isn't re-attributed here). Use `spendguard saas push`, not `saas sync`, on remote boxes.
 set -euo pipefail
 
-: "${PROJECT:=manga2anime}"
-: "${CONTRIBUTOR:=ash@ensight.ai}"
+: "${PROJECT:=vision-pipeline}"
+: "${CONTRIBUTOR:=you@example.com}"
 : "${SERVER_URL:=https://llm-spendguard-server.vercel.app}"
 : "${SPENDGUARD_SAAS_KEY:?set SPENDGUARD_SAAS_KEY to this box's org/team ingest key}"
 

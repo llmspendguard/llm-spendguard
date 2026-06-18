@@ -34,10 +34,10 @@ re-attributed on every box.
   - `SPENDGUARD_SAAS_KEY` — **required**; the org/team ingest key (e.g. `sg_org_…`).
   - `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` — provider keys (for `reconcile` / `report`); optional but
     recommended.
-- Optional overrides: `PROJECT` (default `manga2anime`), `CONTRIBUTOR` (default `ash@ensight.ai`),
+- Optional overrides: `PROJECT` (default `vision-pipeline`), `CONTRIBUTOR` (default `you@example.com`),
   `SERVER_URL`, `SPENDGUARD_SRC` (editable-install source path).
 
-> The default `PROJECT`, `CONTRIBUTOR`, and `SERVER_URL` are the author's values — set them for your own
+> The default `PROJECT`, `CONTRIBUTOR`, and `SERVER_URL` are placeholder examples — set them for your own
 > org/project/box.
 
 **Example.**

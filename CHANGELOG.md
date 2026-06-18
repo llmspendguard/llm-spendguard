@@ -4,6 +4,10 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.2.6] — 2026-06-18
+
+First public release. Same gate + advisor; this cut genericizes the repo for open source.
+
 ### Added
 - **`spendguard init --chat`** — optional conversational setup: ONE small realtime call on YOUR own key, caged
   under `caps.meta` (intent `spendguard:init`, estimate-first, never the server), parses plain-English budgets
@@ -29,6 +33,9 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
   the dense, deliberate one-liner style readable). **Release workflow** (`release.yml`) publishes to PyPI on a
   `v*` tag via trusted publishing.
 - **ARCHITECTURE.md** rewritten around the extensibility seams (extend, don't fork), with diagrams.
+- **Public-release cleanup** — genericized all internal example references (project tags, org names, sample
+  emails) to neutral placeholders (`nlp-pipeline` / `vision-pipeline` / `acme` / `you@example.com`); project
+  auto-detection keyword maps are now generic illustrations to customize. Behavior unchanged; full suite green.
 
 ## [0.2.5] — 2026-06-16
 
@@ -61,9 +68,9 @@ Split caps by resource class + a public-consumption documentation pass.
 Stand the repo on its own + simplify the SaaS seam.
 
 ### Changed
-- **Relocated out of the lmm tree** to its own directory (`~/Documents/claude/llm-spendguard`). It was always
-  its own git repo, but was physically nested in lmm and the gate hooks hardcoded that path. Re-pointed the
-  editable install, both `usercustomize` hooks (system + intel python), `batch_llm.py`, and the docs/memory.
+- **Relocated out of the consumer-repo tree** to its own directory (`~/Documents/claude/llm-spendguard`). It was
+  always its own git repo, but was physically nested in a consumer repo and the gate hooks hardcoded that path.
+  Re-pointed the editable install, both `usercustomize` hooks (system + intel python), the batch helper, and the docs/memory.
 - **SaaS config simplified to ONE key.** Dropped `team_id`/`org_id` from the client — the server maps the
   Bearer `api_key` to the user→team→org hierarchy. Less to leak, nothing to keep in sync.
 

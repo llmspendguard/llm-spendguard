@@ -70,7 +70,7 @@ def backfill(intent_map=None, providers=("openai", "anthropic")):
 
 def load_intent_map(path):
     """Load a {batch_id: intent} JSON, or a dir of files whose stem is the intent and which contain
-    an 'id' / 'ids' field (e.g. LMM's data/edge_evidence/*_batch_id.json)."""
+    an 'id' / 'ids' field (e.g. a pipeline's data/batches/*_batch_id.json)."""
     m = {}
     if os.path.isdir(path):
         for fn in os.listdir(path):
