@@ -11,10 +11,6 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
   if no key / the call fails. Default `init` stays deterministic + zero-LLM.
 - **`init` now points to the corpus bootstrap** (`spendguard bootstrap` / the `/spendguard-learn` skill) to seed
   the advisor from past provider history on day one.
-
-Quality + docs pass — no runtime behavior change.
-
-### Added
 - **Coverage 19% → 35%.** The subprocess test runner supports `SPENDGUARD_COVERAGE=1`; coverage now attaches at
   interpreter **startup** via a `process_startup()` `.pth` hook + `COVERAGE_PROCESS_START`, so code the gated
   venv's sitecustomize imports before the tracer would otherwise attach is counted (`__init__` 0→100%, pricing
