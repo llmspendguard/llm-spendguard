@@ -1,7 +1,7 @@
 # Roadmap — individuals → teams → orgs (partner mindset)
 
 > **Status:** the client (this `llm-spendguard` package) is production-ready and works standalone. The
-> hosted team/org server (e.g. llmseg.ai) is a **separate repo, currently in development** — the URLs below
+> hosted team/org server (e.g. llmspendguard.com) is a **separate repo, currently in development** — the URLs below
 > describe where it will live, not a live service yet.
 
 The guiding principle: **partner, not supervisor.** Every user sets their own limits and keeps their own
@@ -26,7 +26,7 @@ choice. Greater visibility is something a user turns **on** — the partner mind
   has their **own** ledger here. It gains a small, optional **sync** capability: with a `team_id`/`org_id` +
   token in config, it pushes its ledger summary + scrubbed learnings to the SaaS for aggregation. No server
   code lives here.
-- **`llm-spendguard-server` (separate repo, the SaaS — e.g. llmseg.ai):** login / create account / credit
+- **`llm-spendguard-server` (separate repo, the SaaS — e.g. llmspendguard.com):** login / create account / credit
   card / define team & org → get **team/org ids** to drop in your client config. It ingests members' pushed
   data and provides: cross-member **visibility** dashboards, **aggregate learnings**, **aggregate advice**,
   and rollup reporting. This is the open-core → hosted-collaboration layer; **build it as its own repo.**
@@ -37,7 +37,7 @@ visibility/aggregation over what users opt to send.
 ### Client seam (BUILT — `saas.py`, `spendguard saas`)
 The client is ready to connect the moment the server exists:
 - **Config** lives in `~/.spendguard/saas.json` (gitignored; template `saas.example.json`): `enabled`, `url`
-  (e.g. `https://api.llmseg.ai`), `api_key` (secret; or `SPENDGUARD_SAAS_KEY`), `visibility`
+  (e.g. `https://llmspendguard.com`), `api_key` (secret; or `SPENDGUARD_SAAS_KEY`), `visibility`
   (`private` | `team` | `org`), `sync_interval` (`off` | `hourly` | `daily` | `weekly`). Surfaced in
   `spendguard config` like every other knob.
 - **One key = identity.** The client holds NO `team_id`/`org_id` — the SERVER maps the Bearer key to the
@@ -63,6 +63,6 @@ both surfaces today.
 2. **(done)** Client **sync** seam — `saas.py` + `saas.json` config + `spendguard saas`; speaks the `/v1`
    contract, fail-safe until the server exists.
 3. **`llm-spendguard-server`** (separate repo, NEXT): implement the `/v1` contract — account/team/org, ingest,
-   aggregate visibility + learnings + advice, billing. llmseg.ai. The key-holding **proxy** (the only true
+   aggregate visibility + learnings + advice, billing. llmspendguard.com. The key-holding **proxy** (the only true
    no-bypass guarantee) is the natural first milestone here.
 4. Publish client to PyPI; orgs use private index / base image / `install-hook` for fleet rollout.

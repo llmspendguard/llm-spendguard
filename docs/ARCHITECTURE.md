@@ -275,14 +275,14 @@ flowchart LR
     subgraph client ["llm-spendguard — this repo (standalone, production-ready)"]
       GATE["gate + caps + ledger"] --> SAAS["saas.py<br/>client seam"]
     end
-    SAAS -.->|"opt-in · scrubbed · Bearer key"| SERVER["llm-spendguard-server<br/>(SEPARATE repo · llmseg.ai · in dev)"]
+    SAAS -.->|"opt-in · scrubbed · Bearer key"| SERVER["llm-spendguard-server<br/>(SEPARATE repo · llmspendguard.com · in dev)"]
     SERVER -.->|"pooled learnings / visibility"| SAAS
 ```
 
 - **This repo is the whole product, standalone.** Gate, pricing, ledger, advisor, reconcile, report,
   slash-commands. Each user keeps their **own** local ledger and sets their **own** caps. It depends on no
   server and works fully offline.
-- **The server is a separate repo (`llm-spendguard-server`, llmseg.ai — in development).** `saas.py` is only
+- **The server is a separate repo (`llm-spendguard-server`, llmspendguard.com — in development).** `saas.py` is only
   the **client seam**: it reads a connection from `~/.spendguard/saas.json` (or env) and speaks a small,
   versioned `/v1` HTTP contract — `GET /v1/health`, `POST /v1/ledger` (per-day roll-up), `POST/GET
   /v1/insights` (scrubbed learnings), plus device-link and a pull-model command queue. **One Bearer key is

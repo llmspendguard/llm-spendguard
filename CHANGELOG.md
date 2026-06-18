@@ -4,6 +4,10 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+### Changed
+- Corrected stale SaaS URLs in docs / examples / skill / comments (`llmseg.ai` and the Vercel preview URL →
+  the canonical `https://llmspendguard.com`). No behavior change — the client default URL was already correct.
+
 ## [0.2.6] — 2026-06-18
 
 First public release. Same gate + advisor; this cut genericizes the repo for open source.
@@ -90,7 +94,7 @@ Multi-interpreter coverage + the team/org SaaS client seam (ready to connect to 
   any gap. "has SDKs" now means *importable* (arch-mismatched installs like intel pydantic on arm64 no
   longer show false positives). Exit 2 if any gap.
 - **SaaS client seam** (`saas.py`, `spendguard saas`, `saas.example.json`) — points at the future SEPARATE
-  server repo (llmseg.ai). Config in `~/.spendguard/saas.json` (gitignored) or env: `enabled`, `url`,
+  server repo (llmspendguard.com). Config in `~/.spendguard/saas.json` (gitignored) or env: `enabled`, `url`,
   `api_key` (secret), `team_id`, `org_id`, `visibility`. Speaks a documented `/v1` contract
   (`health`/`ledger`/`insights`) with Bearer auth; **degrades gracefully until the server exists**;
   `visibility=private` = nothing leaves the machine. Partner, not supervisor — never overrides local caps.

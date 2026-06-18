@@ -16,10 +16,10 @@ def check(label, ok):
 
 print("-- saas_config: file + env overlay, enabled coercion --")
 home = config.HOME
-(home / "saas.json").write_text(json.dumps({"enabled": False, "url": "https://api.llmseg.ai", "visibility": "private"}))
+(home / "saas.json").write_text(json.dumps({"enabled": False, "url": "https://llmspendguard.com", "visibility": "private"}))
 config._cfg._cache = None
 c = config.saas_config()
-check("reads url from saas.json", c["url"] == "https://api.llmseg.ai")
+check("reads url from saas.json", c["url"] == "https://llmspendguard.com")
 check("enabled coerced to bool False", c["enabled"] is False)
 check("visibility defaults sanely", c["visibility"] == "private")
 os.environ["SPENDGUARD_SAAS"] = "1"; os.environ["SPENDGUARD_SAAS_KEY"] = "tok_test"

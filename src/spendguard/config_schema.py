@@ -97,7 +97,7 @@ SETTINGS = [
     dict(section="calls", key="snippet_len", store="config.json:calls.snippet_len", env=None, default=200,
          kind="float", secret=False, desc="Max characters of prompt/output snippet to store."),
 
-    # ── saas / team roll-up (client seam — points at the FUTURE separate server repo, llmseg.ai) ──
+    # ── saas / team roll-up (client seam — points at the FUTURE separate server repo, llmspendguard.com) ──
     # ONE key is the identity: the server resolves user→team→org hierarchy from it. The client holds no ids.
     dict(section="saas", key="enabled", store="saas.json:enabled", env="SPENDGUARD_SAAS", default=False,
          kind="bool", secret=False,

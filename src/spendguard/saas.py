@@ -1,5 +1,5 @@
 """SaaS client seam — the (zero-dependency) bridge from this local install to the FUTURE separate
-spendguard **server** repo (target domain: llmseg.ai).
+spendguard **server** repo (target domain: llmspendguard.com).
 
 Design (decided with the user):
 - **Partner, not supervisor.** Every user keeps their OWN ledger + sets their OWN caps locally. The server
@@ -444,7 +444,7 @@ def status():
     print(f"  sync_interval: {c.get('sync_interval', 'daily')}  — {why}")
     print(f"  config file  : {config.saas_path()}")
     print(f"  status       : {'🟢 ' + reason if ok else '⚪ ' + reason}")
-    print("  note         : the server is a SEPARATE repo (llmseg.ai) — this is the ready-to-connect client.")
+    print("  note         : the server is a SEPARATE repo (llmspendguard.com) — this is the ready-to-connect client.")
     return 0
 
 

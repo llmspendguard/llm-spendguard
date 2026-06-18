@@ -80,7 +80,7 @@ spendguard install-skills                    # deploy /spend + /spendguard-learn
 spendguard coverage                          # across ALL pythons (3.11/3.14/…): which can call LLMs & which are GATED
 # in code, fail-closed:  import spendguard; spendguard.require()   # refuses to run if NOT actually gated
 
-# teams / orgs (client seam → future server repo, llmseg.ai)
+# teams / orgs (client seam → future server repo, llmspendguard.com)
 spendguard saas [status|ping|push|pull]      # opt-in roll-up; partner not supervisor; private until you enable it
 
 # see the money

@@ -23,7 +23,7 @@ Keep the summary tight: $ today/7d/month, leak (if any), and the 3 most actionab
 
 ## Team / org roll-up (SaaS — opt-in)
 
-If this repo is connected to a spendguard server (dashboard at https://llm-spendguard-server.vercel.app — note
+If this repo is connected to a spendguard server (dashboard at https://llmspendguard.com — note
 the hosted server is in development), the local ledger rolls UP for team/org visibility. The client never
 proxies tokens; only a scrubbed per-day roll-up leaves, at the configured `visibility`.
 
@@ -50,7 +50,7 @@ spendguard resources sync      # push THIS repo's GPU spend → its org (provide
 **Per-repo connection** lives in a gitignored `.spendguard.json` at the repo root (overlays the global
 `~/.spendguard/saas.json`; env wins). So different repos on one machine push to different orgs:
 ```json
-{ "enabled": true, "url": "https://llm-spendguard-server.vercel.app",
+{ "enabled": true, "url": "https://llmspendguard.com",
   "api_key": "sg_team_…", "contributor": "you@org.com", "project": "your-repo", "visibility": "org" }
 ```
 The push only sends rows for this connection's `project` (+ `llmseg`), so one machine's ledger never

@@ -16,7 +16,7 @@ set -euo pipefail
 
 : "${PROJECT:=vision-pipeline}"
 : "${CONTRIBUTOR:=you@example.com}"
-: "${SERVER_URL:=https://llm-spendguard-server.vercel.app}"
+: "${SERVER_URL:=https://llmspendguard.com}"
 : "${SPENDGUARD_SAAS_KEY:?set SPENDGUARD_SAAS_KEY to this box's org/team ingest key}"
 
 # 1. install the package (PyPI, or editable from a synced checkout)
