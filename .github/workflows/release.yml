@@ -13,6 +13,7 @@ jobs:
     environment: pypi
     permissions:
       id-token: write          # OIDC token for trusted publishing
+      contents: write          # create the GitHub Release
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -28,3 +29,16 @@ jobs:
           twine check dist/*
       - name: Publish to PyPI (trusted publishing)
         uses: pypa/gh-action-pypi-publish@release/v1
+      - name: GitHub Release from CHANGELOG
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VER="${GITHUB_REF_NAME#v}"
+          # extract the matching "## [X.Y.Z]" section from the changelog as the release notes
+          awk -v v="$VER" '
+            $0 ~ "^## \\[" v "\\]" {p=1; next}
+            p && /^## \[/ {exit}
+            p {print}
+          ' CHANGELOG.md > notes.md
+          [ -s notes.md ] || echo "Release $GITHUB_REF_NAME" > notes.md
+          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md dist/*
