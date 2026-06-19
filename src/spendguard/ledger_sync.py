@@ -96,6 +96,18 @@ def reconcile_into_ledger(since=None):
     GETs are free). Returns a summary. This is what makes the ledger correct + the dashboard show the real total."""
     from . import budget
     since = since or datetime.date.today().replace(day=1).isoformat()
+    # Only the account-OWNER connection reconciles the SHARED provider-account gap. A connected non-owner
+    # (owns_account=false — e.g. one of several repos sharing one OpenAI/Anthropic account) must NOT claim it, or it
+    # attributes OTHER repos' provider spend to its own project (the bug where vision-pipeline absorbed nlp-pipeline's
+    # batch). Standalone / unconnected use (no saas.json) still reconciles fully — the whole account is genuinely theirs.
+    try:
+        from . import saas as _saas
+        _conn = _saas.conn()
+    except Exception:
+        _conn = {}
+    if _conn.get("enabled") and not _conn.get("owns_account"):
+        return dict(since=since, skipped="not the account owner (owns_account=false); the owner connection reconciles the shared provider-account gap",
+                    provider_total=0.0, gate_attributed=0.0, ungoverned=0.0, gap_rows=0, gap_by_project={}, errors={})
     prov = {}   # (provider, day) -> $ billed (truth)
     errors = {}   # NEVER silently undercount — a failed/partial provider fetch must be visible, not hidden
     try:

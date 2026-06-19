@@ -4,6 +4,13 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+### Fixed
+- **Cross-account misattribution in `reconcile_into_ledger`.** A connected client now only reconciles the shared
+  provider-account gap when it **owns** the account (`owns_account=true`). Previously *any* connected repo that ran
+  reconcile claimed the whole OpenAI/Anthropic account's no-evidence batch spend under its own project — so a repo
+  sharing the account (e.g. a vision pipeline) absorbed another repo's LLM batch. Non-owning connections now skip
+  the gap entirely (the owner connection absorbs it); standalone/unconnected use still reconciles fully.
+
 ### Changed
 - Corrected stale SaaS URLs in docs / examples / skill / comments (`llmseg.ai` and the Vercel preview URL →
   the canonical `https://llmspendguard.com`). No behavior change — the client default URL was already correct.

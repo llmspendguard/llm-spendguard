@@ -272,6 +272,21 @@ summ5 = LS.reconcile_into_ledger(since=SINCE)
 check("saas error → still attributes a gap", summ5["ungoverned"] > 0)
 check("callio._db error tolerated (b2i empty)", isinstance(summ5["gap_by_project"], dict))
 
+print("-- reconcile_into_ledger: connected NON-owner (owns_account=false) skips the shared-account gap --")
+report.openai_by_day = lambda: ({DAYS[1]: 40.0}, 0)
+ra.cost_by_day = lambda since=None: ({}, {})
+backfill._openai_rows = lambda: [("openai", "gpt-5.5", 40.0, 1_000_000, 0, DAYS[1], "bx-shared")]
+backfill._anthropic_rows = lambda: []
+callio._db = lambda: budget._db()   # restore (db_boom was set just above)
+conv.batch_links = lambda tdir=None: {}
+saas.conn = lambda: {"enabled": True, "project": "vision-pipeline", "owns_account": False}
+summ_no = LS.reconcile_into_ledger(since=SINCE)
+check("non-owner reconcile is skipped", bool(summ_no.get("skipped")))
+check("non-owner records NO gap rows", summ_no["gap_rows"] == 0 and summ_no["gap_by_project"] == {})
+saas.conn = lambda: {"enabled": True, "project": "vision-pipeline", "owns_account": True}
+summ_own = LS.reconcile_into_ledger(since=SINCE)
+check("owner DOES reconcile the shared gap (not skipped)", not summ_own.get("skipped"))
+
 print("-- main(argv): exercises the CLI dry path (sync) --")
 LS._provider_batch_by_day = stub_provider
 check("main returns 0", LS.main(["--since", SINCE]) == 0)
