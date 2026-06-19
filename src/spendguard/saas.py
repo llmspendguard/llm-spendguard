@@ -287,6 +287,41 @@ def push_insights():
         raise
 
 
+def push_workdone(since=None, by="month", dry=False):
+    """Push the WORK-DONE roll-up — git commit subjects + LLM batch-intent counts per period·project — so the
+    dashboard reads "spent $X, here's what got done." Tier-1: deterministic + FREE (no diffs, no prompts). Honors
+    visibility (private → no-op) and the connection's project filter. Monthly periods by default, to match the
+    dashboard's current-month view. dry=True returns the payload without sending (offline-testable)."""
+    c = conn()
+    if c.get("visibility", "private") == "private":
+        return {"skipped": "visibility=private — nothing leaves this machine"}
+    from . import workdone
+    flt = _project_filter(c)
+    work = []
+    for r in workdone.rollup(since=since, by=by):
+        proj = (r.get("project") or "").lower()
+        if flt is not None and proj not in flt:
+            continue                      # not this connection's project — don't cross-attribute
+        work.append({
+            "period": r["period"], "project": proj,
+            "active_days": int(r.get("active_days") or 0),
+            "n_commits": int(r.get("n_commits") or 0),
+            "n_batch_calls": int(r.get("n_batch_calls") or 0),
+            "commits": [str(s)[:200] for s in (r.get("commits") or [])][:100],
+            "intents": {str(k): int(v) for k, v in (r.get("intents") or {}).items()},
+        })
+    if not work:
+        return {"skipped": "no work in range for this connection's project(s)"}
+    if dry:
+        return {"work": work}
+    try:
+        return _request("POST", "/v1/work", {"work": work})
+    except RuntimeError as e:
+        if " 404" in str(e) or " 405" in str(e):
+            return {"skipped": "server has no /v1/work endpoint yet"}
+        raise
+
+
 def pull_insights(scope="team"):
     """Pull pooled (scrubbed) learnings as LOW-TRUST priors needing local corroboration."""
     return _request("GET", f"/v1/insights?scope={scope}")

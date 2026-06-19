@@ -207,6 +207,26 @@ finally:
     _callio._db = orig_db
 
 
+# ─────────────────────────── push_workdone: dry-run payload (REAL fn — run before cmd test monkeypatches it) ───────────────────────────
+print("-- push_workdone: dry-run builds the /v1/work payload, filtered to the connection's project --")
+import spendguard.saas as _saas
+_saas.conn = lambda: {"enabled": True, "visibility": "org", "project": "nlp-pipeline", "url": "https://x", "api_key": "k"}
+workdone.rollup = lambda since=None, by="month": [
+    {"period": "2026-06", "project": "nlp-pipeline", "active_days": 3, "n_commits": 5, "n_batch_calls": 7,
+     "commits": ["x" * 250, "short"], "intents": {"entity-extract": 7}},
+    {"period": "2026-06", "project": "vision-pipeline", "active_days": 1, "n_commits": 2, "n_batch_calls": 0,
+     "commits": ["v"], "intents": {}},
+]
+_pw = _saas.push_workdone(dry=True)
+check("push_workdone dry: returns a work list", isinstance(_pw.get("work"), list))
+check("push_workdone dry: filtered to the connection's project only", [w["project"] for w in _pw["work"]] == ["nlp-pipeline"])
+check("push_workdone dry: counts carried", _pw["work"][0]["n_commits"] == 5 and _pw["work"][0]["n_batch_calls"] == 7)
+check("push_workdone dry: commit subjects truncated to 200 chars", len(_pw["work"][0]["commits"][0]) == 200)
+check("push_workdone dry: monthly period", _pw["work"][0]["period"] == "2026-06")
+_saas.conn = lambda: {"visibility": "private"}
+check("push_workdone: visibility=private → no-op skip", bool(_saas.push_workdone(dry=True).get("skipped")))
+
+
 # ─────────────────────────── cmd --push (monkeypatched saas, no network) ───────────────────────────
 print("-- cmd --push: routes to saas.push_workdone (monkeypatched, no network) --")
 import spendguard.saas as _saas

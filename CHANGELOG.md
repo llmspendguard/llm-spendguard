@@ -4,6 +4,13 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+### Added
+- **`spendguard workdone --push`** now feeds the server's `/v1/work` (`saas.push_workdone`) — the work-done roll-up
+  (git commit subjects + LLM batch-intent counts per month·project) lands on the team/org dashboard next to spend.
+  Monthly periods, filtered to the connection's project(s), visibility-honored, graceful if the server lacks the
+  endpoint. (Previously `--push` called a non-existent function and crashed.) Configure your repos via
+  `workdone.repos` in `saas.json` — `DEFAULT_REPOS` is intentionally empty in the public repo.
+
 ### Fixed
 - **Cross-account misattribution in `reconcile_into_ledger`.** A connected client now only reconciles the shared
   provider-account gap when it **owns** the account (`owns_account=true`). Previously *any* connected repo that ran

@@ -111,7 +111,8 @@ def cmd(argv=None):
     a = ap.parse_args(argv or [])
     if a.push:
         from . import saas
-        print("workdone push:", saas.push_workdone(since=a.since, by=a.by))
+        # push monthly periods regardless of the display --by, to match the dashboard's current-month view
+        print("workdone push:", saas.push_workdone(since=a.since))
         return 0
     rows = rollup(since=a.since, by=a.by)
     print(f"WORK DONE — by {a.by}, per project (context for spend):")
