@@ -298,6 +298,19 @@ def sync(since=None):
         print("  (no provider batch billing since the ledger went live yet — re-run after the next gated batch.)")
     print(f"  real-time (local-only, no provider cross-check w/o Admin key): ${sum(local_rt.values()):.2f}")
     print(f"  spendguard meta (advisor): ${sum(meta.values()):.2f}")
+    # work done this month — context for the spend above (git commits + LLM intents per project). Same data the
+    # sync pushes to the org; shown here so a reconcile reports BOTH "what it cost" and "what got done".
+    try:
+        from . import workdone
+        wd = sorted(workdone.rollup(since=since, by="month"), key=lambda x: -x.get("n_commits", 0))
+        if wd:
+            print("\n  work done (context for the spend):")
+            for r in wd[:6]:
+                top = sorted((r.get("intents") or {}).items(), key=lambda x: -x[1])[:2]
+                ints = (" · LLM: " + ", ".join(f"{i}×{n}" for i, n in top)) if top else ""
+                print(f"    [{r['project'] or '?'}] {r['n_commits']} commits, {r['active_days']} active day(s){ints}")
+    except Exception:
+        pass
     if pending:
         print(f"  ({pending:,} OpenAI requests in flight — not yet billed)")
     return dict(provider=p_tot, local=l_tot, coverage=cov, leak=leak)
