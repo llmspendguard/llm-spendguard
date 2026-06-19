@@ -187,6 +187,57 @@ def reconcile_into_ledger(since=None):
                 audit=audit)
 
 
+_RT_MARKER = "(realtime-history)"   # marker model for realtime backfilled from the gate's realtime_log
+
+
+def reconcile_realtime(since=None):
+    """Backfill the gate's realtime history into the LEDGER. Realtime is normally recorded live (gate → sqlite +
+    realtime_log.jsonl), but spend logged BEFORE the sqlite backend — or otherwise only in the log — never reaches the
+    ledger, so it doesn't push to the org. This imports realtime_log.jsonl as 'realtime' rows = max(0, log − gate-
+    recorded) per (provider, day). Idempotent (clears + rebuilds the marker rows each run). NOT provider-truth — it's
+    the gate's own complete log; catching UNGATED realtime would need the provider Usage/Admin API (separate). Project
+    fallback = the connection's single project (a single-project repo's realtime is all that project), else
+    'unattributed' — same rule as the batch reconcile. Zero spend (reads a local file)."""
+    from . import budget
+    from .config import RT_LOG
+    import os, json
+    since = since or datetime.date.today().replace(day=1).isoformat()
+    if not os.path.exists(RT_LOG):
+        return dict(since=since, imported=0.0, rows=0)
+    budget.clear_reconciled(since=since, model=_RT_MARKER)        # rebuild from the log (idempotent)
+    log_pd = {}                                                  # (provider, day) -> $ in the gate's realtime log
+    try:
+        for ln in open(RT_LOG):
+            try:
+                r = json.loads(ln)
+            except Exception:
+                continue
+            d = r.get("day", "")
+            if not d or d < since:
+                continue
+            k = (r.get("provider") or "?", d)
+            log_pd[k] = log_pd.get(k, 0.0) + float(r.get("cost") or 0)
+    except Exception:
+        return dict(since=since, imported=0.0, rows=0)
+    gate_pd = budget.by_provider_day(kind="realtime", since=since)   # REAL gate realtime (markers just cleared)
+    try:
+        from . import saas
+        _c = saas.conn()
+        _ps = _c.get("projects")
+        fallback = "unattributed" if (isinstance(_ps, list) and len(_ps) > 1) else \
+            (_c.get("project") or budget._project() or "unattributed").strip().lower()
+    except Exception:
+        fallback = "unattributed"
+    imported, rows = 0.0, 0
+    for (prov, day), log_cost in log_pd.items():
+        gap = log_cost - gate_pd.get((prov, day), 0.0)           # log has more than the ledger saw → the stranded gap
+        if gap > 0.005:
+            budget.record_reconciled(day, prov, gap, project=fallback, kind="realtime", model=_RT_MARKER)
+            imported += gap
+            rows += 1
+    return dict(since=since, imported=round(imported, 4), rows=rows)
+
+
 def leak_line(since=None):
     """One-line leak alert for the report (or None if clean / nothing to compare)."""
     try:

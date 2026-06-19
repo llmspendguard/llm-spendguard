@@ -403,8 +403,8 @@ def due():
 
 
 def sync(if_due=False, since=None):
-    """Push roll-up + insights. With if_due=True (cron/report), no-op unless the interval has elapsed.
-    Always safe: not-connected / private / not-due all return a note instead of raising."""
+    """Push spend roll-up + insights + work-done. With if_due=True (cron/report), no-op unless the interval has
+    elapsed. Always safe: not-connected / private / not-due all return a note instead of raising."""
     ok, reason = ready()
     if not ok:
         return {"skipped": f"not connected: {reason}"}
@@ -414,10 +414,13 @@ def sync(if_due=False, since=None):
             return {"skipped": why}
     try:
         from . import ledger_sync
-        ledger_sync.reconcile_into_ledger(since=since)   # make the ledger reflect provider truth BEFORE pushing
+        ledger_sync.reconcile_into_ledger(since=since)   # batch provider-truth gap → ledger
+        ledger_sync.reconcile_realtime(since=since)      # gate's realtime history (realtime_log) → ledger
     except Exception:
         pass
-    out = {"rollup": push_rollup(since=since), "insights": push_insights(), "commands": run_commands(since=since)}
+    # work-done needs no gap-fill reconcile: it's re-derived from git + the call corpus (complete, idempotent push).
+    out = {"rollup": push_rollup(since=since), "insights": push_insights(),
+           "workdone": push_workdone(since=since), "commands": run_commands(since=since)}
     _set_state(last_sync=time.time())
     return out
 

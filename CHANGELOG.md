@@ -10,6 +10,12 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
   Monthly periods, filtered to the connection's project(s), visibility-honored, graceful if the server lacks the
   endpoint. (Previously `--push` called a non-existent function and crashed.) Configure your repos via
   `workdone.repos` in `saas.json` — `DEFAULT_REPOS` is intentionally empty in the public repo.
+- **`reconcile_realtime` + everything in `sync`** — `reconcile_realtime` backfills the gate's realtime history
+  (`realtime_log.jsonl`) into the ledger as `realtime` rows = `max(0, log − gate-recorded)` per (provider, day),
+  idempotent — closing the gap where realtime logged before the sqlite ledger backend never reached the roll-up.
+  `sync()` now reconciles **realtime alongside batch** and pushes **work-done** too, so batch + realtime spend and
+  work-done all roll up to the org automatically on every sync — no manual `--push`. (`record_reconciled`/
+  `clear_reconciled` generalized to take a marker; realtime markers `(realtime-history)` rebuild idempotently.)
 
 ### Fixed
 - **Cross-account misattribution in `reconcile_into_ledger`.** A connected client now only reconciles the shared

@@ -140,22 +140,26 @@ def gate_by_project_day(kind=None, since=None):
     return {(p, d): float(c or 0) for p, d, c in rows}
 
 
-def record_reconciled(day, provider, cost, project="unattributed"):
-    """Insert a reconciliation row for provider-billed spend (the gap), attributed to `project` by evidence —
-    'unattributed' only when there's no evidence. Marked by model='(provider-batch)' (excluded from gate/cap)."""
+def record_reconciled(day, provider, cost, project="unattributed", kind="batch", model=None):
+    """Insert a reconciliation row for provider-billed (batch) OR gate-logged (realtime) spend — the gap — attributed
+    to `project` by evidence ('unattributed' only when there's none). Marked by a marker model so it's excluded from
+    gate/cap and rebuilt idempotently. Default marker '(provider-batch)' / kind 'batch'; the realtime backfill passes
+    its own marker + kind='realtime'."""
     with _lock:
         _db().execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project) VALUES (?,?,?,?,?,?,?)",
-                      (day + "T00:00:00+00:00", day, provider or "?", _RECONCILED, "batch", float(cost), project or "unattributed"))
+                      (day + "T00:00:00+00:00", day, provider or "?", model or _RECONCILED, kind, float(cost), project or "unattributed"))
         _db().commit()
 
 
-def clear_reconciled(since=None):
-    """Remove prior reconciliation rows so reconcile is idempotent (rebuilds them). Keyed by the marker model."""
+def clear_reconciled(since=None, model=None):
+    """Remove prior reconciliation rows so reconcile is idempotent (rebuilds them). Keyed by the marker model
+    (default the batch marker; the realtime backfill passes its own)."""
+    marker = model or _RECONCILED
     with _lock:
         if since:
-            _db().execute("DELETE FROM charges WHERE model=? AND day >= ?", (_RECONCILED, since))
+            _db().execute("DELETE FROM charges WHERE model=? AND day >= ?", (marker, since))
         else:
-            _db().execute("DELETE FROM charges WHERE model=?", (_RECONCILED,))
+            _db().execute("DELETE FROM charges WHERE model=?", (marker,))
         _db().commit()
 
 

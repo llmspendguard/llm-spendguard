@@ -287,6 +287,27 @@ saas.conn = lambda: {"enabled": True, "project": "vision-pipeline", "owns_accoun
 summ_own = LS.reconcile_into_ledger(since=SINCE)
 check("owner DOES reconcile the shared gap (not skipped)", not summ_own.get("skipped"))
 
+print("-- reconcile_realtime: backfill realtime_log → ledger gap (idempotent) --")
+from spendguard import config as _cfg
+import spendguard.saas as _saas_rt
+_saas_rt.conn = lambda: {"project": "vision-pipeline"}   # single-project → fallback = vision-pipeline
+RT_D1, RT_D2 = "2026-06-05", "2026-06-06"
+with open(_cfg.RT_LOG, "w") as _f:
+    _f.write(json.dumps({"day": RT_D1, "provider": "anthropic", "model": "claude-opus-4-8", "calls": 2, "cost": 3.0}) + "\n")
+    _f.write(json.dumps({"day": RT_D2, "provider": "anthropic", "model": "claude-opus-4-8", "calls": 1, "cost": 5.0}) + "\n")
+# the ledger already has $5 gate realtime on RT_D2 (no gap); RT_D1 has none → full $3 stranded gap
+budget._db().execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project) VALUES (?,?,?,?,?,?,?)",
+                     (RT_D2 + "T00:00:00+00:00", RT_D2, "anthropic", "claude-opus-4-8", "realtime", 5.0, "vision-pipeline"))
+budget._db().commit()
+r1 = LS.reconcile_realtime(since=RT_D1)
+check("reconcile_realtime: imports only the RT_D1 stranded gap ($3, 1 row)", abs(r1["imported"] - 3.0) < 1e-6 and r1["rows"] == 1)
+_mk = budget._db().execute("SELECT COALESCE(SUM(cost),0), MAX(project) FROM charges WHERE kind='realtime' AND model=?", (LS._RT_MARKER,)).fetchone()
+check("reconcile_realtime: marker row carries $3", abs(_mk[0] - 3.0) < 1e-6)
+check("reconcile_realtime: gap attributed to the connection's project", _mk[1] == "vision-pipeline")
+r2 = LS.reconcile_realtime(since=RT_D1)   # rebuild → must not double-count
+_mk2 = budget._db().execute("SELECT COALESCE(SUM(cost),0) FROM charges WHERE kind='realtime' AND model=?", (LS._RT_MARKER,)).fetchone()[0]
+check("reconcile_realtime: idempotent on re-run", abs(_mk2 - 3.0) < 1e-6 and abs(r2["imported"] - 3.0) < 1e-6)
+
 print("-- main(argv): exercises the CLI dry path (sync) --")
 LS._provider_batch_by_day = stub_provider
 check("main returns 0", LS.main(["--since", SINCE]) == 0)
