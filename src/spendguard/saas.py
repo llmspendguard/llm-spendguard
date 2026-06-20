@@ -495,8 +495,14 @@ def sync(if_due=False, since=None):
     except Exception:
         pass
     # work-done needs no gap-fill reconcile: it's re-derived from git + the call corpus (complete, idempotent push).
+    try:                                                  # remote-compute (vast.ai GPU) → same org/project as LLM
+        from . import resources as _resources
+        res = _resources.sync()
+    except Exception as e:
+        res = {"skipped": f"resources unavailable: {str(e)[:80]}"}
     out = {"rollup": push_rollup(since=since), "insights": push_insights(),
-           "workdone": push_workdone(since=since), "status": push_status(), "commands": run_commands(since=since)}
+           "workdone": push_workdone(since=since), "status": push_status(),
+           "resources": res, "commands": run_commands(since=since)}
     _set_state(last_sync=time.time())
     return out
 

@@ -210,6 +210,9 @@ def sync(dry=False):
         return {"skipped": f"not connected: {reason}"}
     if c.get("visibility", "private") == "private":
         return {"skipped": "visibility=private"}
+    if not day_totals:                                    # nothing attributed to THIS project → don't 422 the push
+        return {"skipped": "no attributed GPU for this project — label your vast.ai instances (include the project "
+                "in the instance label) or set resources.vastai.label_map; destroyed instances are unrecoverable per-project"}
     return saas._request("POST", "/v1/ledger", payload)
 
 
