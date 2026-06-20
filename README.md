@@ -146,6 +146,9 @@ default `~/.spendguard`) · `SPENDGUARD_ENV=<path>` (.env for keys)
 · `SPENDGUARD_NO_AUTOINSTALL=1` (don't gate on `import spendguard`) · `SPENDGUARD_REQUIRE=1` (fail-closed import —
 raise if an SDK is present but the gate can't enforce) · `SPENDGUARD_ALLOW_ANON=1` (allow team push with a
 non-email contributor; off by default so anon ids can't create phantom members)
+· **batch-1 gate:** `GATE_BATCH1_MIN` (req count = "large", default 50) · `GATE_BATCH1_USD` (or ≥ this $, default 5)
+· `GATE_BATCH1_DAYS` (look-back for a prior test, default 14) · `GATE_REQUIRE_BATCH1=1` (refuse, don't just warn) ·
+`GATE_NO_BATCH1=1` (disable) — warns/refuses a large batch for an intent with no recent realtime/batch-1 test
 
 ## Caps by resource class (LLM · compute · total)
 Beyond the per-batch cap, spendguard tracks **cumulative** spend caps split by *what's spending* — so you can

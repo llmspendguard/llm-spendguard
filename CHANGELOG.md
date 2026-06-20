@@ -4,6 +4,17 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+### Added
+- **Batch-1 gate** — before a *large* batch for an intent that has **no recent realtime/batch-1 test of the same
+  shape**, the gate now WARNS (prompts if interactive) — or hard-refuses with `GATE_REQUIRE_BATCH1`. The cost cap
+  can only stop *over-spend*; it can't catch a prompt/tool bug in a correctly-sized batch — and the #1 batch waste
+  is exactly that (a 1–5 item realtime test would've caught it for ~$0). This mechanizes the "PROMPT-CHECK →
+  batch-1 before you scale" discipline instead of relying on it. Heuristic + opt-out so it never breaks a legit
+  job by default. Signal = a recent realtime call for the same intent in the call corpus (`calls.tested_recently`).
+  Knobs: `GATE_BATCH1_MIN` (req count = "large", default 50) · `GATE_BATCH1_USD` (or ≥ this $, default 5) ·
+  `GATE_BATCH1_DAYS` (look-back, default 14) · `GATE_REQUIRE_BATCH1` (refuse non-interactive) · `GATE_NO_BATCH1`
+  (off) · `GATE_ALLOW=1` bypasses.
+
 ## [0.2.7] — 2026-06-20
 
 ### Added

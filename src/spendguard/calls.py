@@ -198,6 +198,27 @@ def summary(intent=None):
     return rows
 
 
+def tested_recently(intent, model=None, days=14, kinds=("realtime",)):
+    """True iff there's a recent SMALL test for this intent — a realtime call (a batch-1 / PROMPT-CHECK on a
+    handful of items) within `days`. The signal the batch-1 gate uses to tell "you tested this prompt shape before
+    scaling it to a big batch" from "first thing you did for this intent was a huge batch." Model match is optional
+    (a prompt/tool bug shows on any model); pass model to require the same one. Realtime-only by default because a
+    prior *batch* row carries no request-count, so it can't prove a SMALL test was run."""
+    if not enabled() or not intent:
+        return False
+    try:
+        import datetime as _dt
+        since = (_dt.datetime.now() - _dt.timedelta(days=int(days))).isoformat()
+        q = "SELECT COUNT(*) FROM calls WHERE intent=? AND ts>=? AND kind IN (%s)" % ",".join("?" * len(kinds))
+        args = [intent, since, *kinds]
+        if model:
+            q += " AND model=?"; args.append(model)
+        with _lock:
+            return _db().execute(q, args).fetchone()[0] > 0
+    except Exception:
+        return False
+
+
 def cmd_summary(argv=None):
     import argparse
     ap = argparse.ArgumentParser()

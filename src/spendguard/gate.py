@@ -234,9 +234,60 @@ def _meta_gate(cost, model, provider):
     return True
 
 
+def _on(name):
+    return (os.getenv(name) or "").lower() in ("1", "true", "yes", "on")
+
+
+def _batch1_check(est):
+    """Mechanize the batch-1 discipline. Before a LARGE batch for an intent that has NO recent small/realtime test
+    of the same shape, WARN (and prompt if interactive) — or hard-refuse with GATE_REQUIRE_BATCH1. The #1 batch
+    waste is a prompt/tool bug a 1–5 item realtime test would have caught for ~$0; the cost cap can't see it (a
+    buggy-but-cheap batch passes). Heuristic + opt-out, so it never breaks a legit job by default.
+
+    Knobs: GATE_BATCH1_MIN (req count that counts as 'large', default 50) · GATE_BATCH1_USD (or ≥ this $, default 5)
+    · GATE_BATCH1_DAYS (look-back, default 14) · GATE_REQUIRE_BATCH1 (refuse non-interactive) · GATE_NO_BATCH1 (off).
+    GATE_ALLOW=1 bypasses (like the cost cap). Needs the calls corpus + an intent to reason about 'shape'."""
+    if _on("GATE_NO_BATCH1") or _allow() or not _calls.enabled():
+        return
+    try:
+        intent = (_calls.current().get("intent") or "").strip()
+    except Exception:
+        intent = ""
+    if not intent or intent.startswith("spendguard:"):
+        return                                                        # no intent to key on / our own meta → skip
+    n = int(est.get("requests", 0) or 0)
+    cost = float(est.get("cost", 0) or 0)
+    if n < int(os.getenv("GATE_BATCH1_MIN", "50") or 50) and cost < float(os.getenv("GATE_BATCH1_USD", "5") or 5):
+        return                                                        # not a 'large' batch → nothing to gate
+    days = int(os.getenv("GATE_BATCH1_DAYS", "14") or 14)
+    if _calls.tested_recently(intent, None, days):                    # any realtime test of this intent counts
+        return                                                        # (a prompt/tool bug shows on any model)
+    prov, mdl = est.get("provider"), est.get("model")
+    print(f"\n*** [spend_gate] BATCH-1 CHECK: a {n:,}-request '{intent}' batch ({mdl}, ~${cost:.2f}) with NO "
+          f"realtime/batch-1 test of this intent in the last {days}d. The #1 batch waste is a prompt/tool bug a "
+          f"1–5 item realtime test catches for ~$0 — run that first (PROMPT-CHECK → batch-1). ***", file=sys.stderr)
+    if sys.stdin and sys.stdin.isatty():
+        try:
+            ans = input("Submit the full batch anyway? type 'yes' to proceed: ").strip().lower()
+        except Exception:
+            ans = ""
+        if ans in ("yes", "y"):
+            _emit({"kind": "batch", "provider": prov, "model": mdl, "cost": cost, "decision": "batch1_override_prompt"})
+            return
+        _emit({"kind": "batch", "provider": prov, "model": mdl, "cost": cost, "decision": "batch1_refused"})
+        raise SpendGateRefused("batch-1 check: refused — test this intent on a few items (realtime) first, "
+                               "or set GATE_ALLOW=1 / GATE_NO_BATCH1=1.")
+    if _on("GATE_REQUIRE_BATCH1"):
+        _emit({"kind": "batch", "provider": prov, "model": mdl, "cost": cost, "decision": "batch1_refused_strict"})
+        raise SpendGateRefused("batch-1 check (GATE_REQUIRE_BATCH1): large batch for an intent with no prior "
+                               "realtime/batch-1 test. Run a small test first, or GATE_ALLOW=1 / GATE_NO_BATCH1=1.")
+    _emit({"kind": "batch", "provider": prov, "model": mdl, "cost": cost, "decision": "batch1_warned"})  # warn, allow
+
+
 def _decide_and_account(est):
     if _meta_gate(est["cost"], est.get("model"), est.get("provider")):   # spendguard's own use → meta cap
         return
+    _batch1_check(est)            # batch-1 discipline: warn/refuse a LARGE batch for an untested intent (may raise)
     _budget_check(est["cost"], est.get("model"), est.get("provider"), "batch")   # daily/monthly (sqlite)
     _decide(est)                                                                  # per-batch cap (may raise)
     _budget_record(est["cost"], est.get("model"), est.get("provider"), "batch")  # ledger (sqlite)
