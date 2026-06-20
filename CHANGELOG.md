@@ -5,6 +5,11 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 ## [Unreleased]
 
 ### Added
+- **Coverage + pricing-drift push** (`saas.push_status`, in `sync`) — each contributor reports a scrubbed snapshot
+  to the server's `/v1/status`: a `gated` bool (does this interpreter *auto*-enforce the gate at startup, probed in
+  a clean subprocess so the CLI's own install doesn't mask it) and `{model, pct}` price-table drift vs OpenRouter.
+  Powers the org dashboard's "X of N seats gated" panel + drift flag. Honors visibility + the contributor-email
+  requirement; graceful if the server lacks the endpoint.
 - **Batch-1 gate** — before a *large* batch for an intent that has **no recent realtime/batch-1 test of the same
   shape**, the gate now WARNS (prompts if interactive) — or hard-refuses with `GATE_REQUIRE_BATCH1`. The cost cap
   can only stop *over-spend*; it can't catch a prompt/tool bug in a correctly-sized batch — and the #1 batch waste

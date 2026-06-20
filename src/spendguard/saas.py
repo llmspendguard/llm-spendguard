@@ -352,6 +352,49 @@ def push_workdone(since=None, by="month", dry=False):
         raise
 
 
+def push_status(dry=False):
+    """Push this contributor's GATE-COVERAGE + PRICING-DRIFT snapshot → the server's /v1/status. Powers the org
+    'X of N seats gated' panel (PRD #3) + the price-drift flag (PRD #6). Scrubbed: a `gated` bool (does THIS
+    interpreter auto-enforce the gate at startup — the honest per-seat signal, probed in a clean subprocess so the
+    CLI's own install() doesn't mask it), interpreter counts, and {model, pct} drift vs OpenRouter. No paths/$.
+    Honors visibility + the contributor-email requirement. Graceful if the server lacks the endpoint."""
+    c = conn()
+    if c.get("visibility", "private") == "private":
+        return {"skipped": "visibility=private — nothing leaves this machine"}
+    cok, cwhy = contributor_ok()
+    if not cok:
+        return {"skipped": cwhy}
+    gated, total_g, total = None, 0, 0
+    try:
+        from . import setup
+        import sys as _sys
+        _ver, has, enf = setup._probe(_sys.executable)     # clean-subprocess: does this interpreter auto-gate?
+        if has:
+            gated = bool(enf); total = 1; total_g = 1 if enf else 0
+    except Exception:
+        pass
+    drift = []
+    try:                                                    # free, read-only OpenRouter price drift; tolerate offline
+        from . import pricing
+        rows, _m, _t = pricing.cross_check_openrouter()
+        for model, oi, ri, oo, ro, flag in rows:
+            if flag == "DRIFT":
+                base = ri or oi or 1e-9
+                drift.append({"model": model, "pct": round(100 * abs((oi or 0) - (ri or 0)) / base)})
+    except Exception:
+        pass
+    payload = {"member_ref": contributor(), "gated": gated,
+               "interpreters": {"gated": total_g, "total": total}, "drift": drift[:50], "client": _client_version()}
+    if dry:
+        return payload
+    try:
+        return _request("POST", "/v1/status", payload)
+    except RuntimeError as e:
+        if " 404" in str(e) or " 405" in str(e):
+            return {"skipped": "server has no /v1/status endpoint yet"}
+        raise
+
+
 def pull_insights(scope="team"):
     """Pull pooled (scrubbed) learnings as LOW-TRUST priors needing local corroboration."""
     return _request("GET", f"/v1/insights?scope={scope}")
@@ -453,7 +496,7 @@ def sync(if_due=False, since=None):
         pass
     # work-done needs no gap-fill reconcile: it's re-derived from git + the call corpus (complete, idempotent push).
     out = {"rollup": push_rollup(since=since), "insights": push_insights(),
-           "workdone": push_workdone(since=since), "commands": run_commands(since=since)}
+           "workdone": push_workdone(since=since), "status": push_status(), "commands": run_commands(since=since)}
     _set_state(last_sync=time.time())
     return out
 
