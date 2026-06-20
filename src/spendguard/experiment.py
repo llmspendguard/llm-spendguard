@@ -132,7 +132,7 @@ def experiment(intent, models=None, instructions=None, n=20, run=False, reconsid
           f"(meta ${config.meta_cap():.0f}/day · spent ${_meta():.4f})")
     if not run:
         print("  variants: " + ", ".join(v["label"] for v in variants))
-        print("  estimate-only. Re-run with --run to execute (gate caps it).")
+        from . import ui; ui.estimate_only(action="run the A/B experiment", cost=est)
         return dict(ok=True, est=est)
 
     # GRADUATED: pilot small → kill clear losers cheap → expand survivors → report match ± stderr.
@@ -256,8 +256,12 @@ def _promote_batch(intent, model, instr, items, run):
         from .submit import guarded_submit
         with calls.context(intent=intent):            # WORKLOAD spend (real intent → your caps)
             bid = guarded_submit(path, model=model, cap_dollars=config.cap(), submit=run)
-        print(f"  jsonl: {path}" + (f"\n  submitted batch {bid}; retrieve results with `spendguard fetch-io` "
-              f"or the batch output file when complete." if run else "\n  estimate-only (above). --run to submit."))
+        if run:
+            print(f"  jsonl: {path}\n  submitted batch {bid}; retrieve results with `spendguard fetch-io` "
+                  f"or the batch output file when complete.")
+        else:
+            print(f"  jsonl: {path}")
+            from . import ui; ui.estimate_only(action="submit the batch", note="WORKLOAD caps apply")
         return dict(ok=True, provider=prov, jsonl=path, batch=bid if run else None)
     else:  # anthropic — gate estimates + caps on create; submit under workload context
         reqs = [{"custom_id": cid, "params": body} for cid, body in reqs_body]
@@ -265,7 +269,8 @@ def _promote_batch(intent, model, instr, items, run):
             from . import gate
             est = gate._estimate_anthropic_requests(reqs)
             print(f"  ESTIMATE: {est['requests']:,} req · in~{est['in_tok']:,} out≤{est['out_tok']:,} "
-                  f"-> ~${est['cost']:.2f} (batch). --run to submit (WORKLOAD caps apply).")
+                  f"-> ~${est['cost']:.2f} (batch).")
+            from . import ui; ui.estimate_only(action="submit the batch", cost=est["cost"], note="WORKLOAD caps apply")
             return dict(ok=True, provider=prov, est=est["cost"])
         import anthropic
         with calls.context(intent=intent):            # WORKLOAD; gate meters + caps on create
@@ -296,7 +301,7 @@ def promote(intent, model, instruction="", input=None, out=None, n=None, run=Fal
     print(f"promote — run winner {model} on {len(items)} inputs for '{intent}', KEEP output as production")
     print(f"  ⚠ this is WORKLOAD spend (real intent → your normal caps, NOT the meta cage). est ~${est:.4f}")
     if not run:
-        print("  estimate-only. Re-run with --run to produce + keep the output.")
+        from . import ui; ui.estimate_only(action="produce + keep the output", cost=est, note="WORKLOAD spend")
         return dict(ok=True, est=est, items=len(items))
     out = out or f"promote_{intent.replace('/', '_')}.jsonl"
     kept, tot = 0, 0.0

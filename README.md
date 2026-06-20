@@ -59,14 +59,20 @@ pip install llm-spendguard      # once published to PyPI
 pip install -e .
 ```
 ```python
-import spendguard
-spendguard.install(cap=75)          # gate every batch submission in this process
+import spendguard                    # importing the guard now GATES every OpenAI/Anthropic call in this process
+# spendguard.install(cap=75)         # optional — set a per-batch cap (import already installed the gate)
 ```
+`import spendguard` auto-installs the gate (idempotent, fail-open), so `pip install` + `import` is enough — no more
+silently-ungated spend. Knobs: `SPENDGUARD_NO_AUTOINSTALL=1` opts out; `SPENDGUARD_REQUIRE=1` makes the import
+**fail-closed** (raises if an SDK is present but the gate can't enforce here — refuse loudly rather than spend
+ungated). For a hard guarantee in a script, keep `spendguard.require()` at the top.
+
 Or auto-install for every process in a venv — drop this in `sitecustomize.py`:
 ```python
 import spendguard; spendguard.install()
 ```
-Configure with `spendguard init` (interactive) / `spendguard config` (show current); see [Configuration](#configuration-prices-providers-models).
+Configure with `spendguard init` (interactive — or `init --quick` for non-interactive defaults) / `spendguard
+config` (show current); see [Configuration](#configuration-prices-providers-models).
 
 ## CLI — full command reference
 ```
@@ -135,7 +141,11 @@ is gated, its provider spend shows up in `reconcile-ledger` as a **leak** (bille
 
 ## Knobs (env)
 `GATE_CAP=<$>` (default 75) · `GATE_ALLOW=1` (permit one over-cap run) · `GATE_DISABLE=1` (off for one run)
-· `SPENDGUARD_HOME=<dir>` (data/flag/log location, default `~/.spendguard`) · `SPENDGUARD_ENV=<path>` (.env for keys)
+· `GATE_RT_BUDGET=<$>` (per-process realtime ceiling, default 50) · `SPENDGUARD_HOME=<dir>` (data/flag/log location,
+default `~/.spendguard`) · `SPENDGUARD_ENV=<path>` (.env for keys)
+· `SPENDGUARD_NO_AUTOINSTALL=1` (don't gate on `import spendguard`) · `SPENDGUARD_REQUIRE=1` (fail-closed import —
+raise if an SDK is present but the gate can't enforce) · `SPENDGUARD_ALLOW_ANON=1` (allow team push with a
+non-email contributor; off by default so anon ids can't create phantom members)
 
 ## Caps by resource class (LLM · compute · total)
 Beyond the per-batch cap, spendguard tracks **cumulative** spend caps split by *what's spending* — so you can

@@ -105,7 +105,7 @@ def review(run=False, top=10):
     from . import budget
     print(f"  meta budget: ${config.meta_cap():.2f}/day · spent today ${budget.meta_spent_today():.4f}")
     if not run:
-        print("  estimate-only. Re-run with --run for the audit (gate enforces the meta cap).")
+        from . import ui; ui.estimate_only(action="run the practice audit", cost=cost)
         return dict(requests=1, in_tok=in_tok, out_tok=_OUT, cost=cost, model=model)
 
     from . import adapters

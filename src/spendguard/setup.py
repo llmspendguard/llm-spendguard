@@ -395,11 +395,13 @@ def _chat_caps():
 
 
 def cmd_init(argv=None):
-    print("spendguard setup\n")
+    argv = list(argv or [])
+    quick = bool({"--quick", "--yes", "-y"} & set(argv))   # fast path: write defaults, zero prompts (CI/onboarding)
+    print("spendguard setup" + ("  (--quick: writing defaults, no prompts)" if quick else "") + "\n")
     print("  spendguard runs FULLY STANDALONE — a local spend gate on this machine, no account needed.")
     print("  Optionally connect to a team/org dashboard (llmspendguard.com) to roll spend up across your team.\n")
-    connect = "--connect" in (argv or [])
-    if not connect and "--local" not in (argv or []):
+    connect = "--connect" in argv
+    if not connect and "--local" not in argv and not quick:
         try:
             connect = input("  Connect to a team/org now? (needs an org key from your admin; or use `spendguard saas link` later) [y/N]\n  > ").strip().lower() in ("y", "yes")
         except EOFError:
@@ -434,8 +436,11 @@ def cmd_init(argv=None):
             chat_set = True
         else:
             print("  (falling back to prompts)")
-    print("\n  Enter keeps the current/default; 'null' clears.\n")
+    if not quick:
+        print("\n  Enter keeps the current/default; 'null' clears.\n")
     for s in config_schema.SETTINGS:
+        if quick:
+            continue  # --quick: no prompts — every setting keeps its current/default value
         if chat_set and s["section"] != "saas":
             continue  # --chat set the caps; keep defaults for the rest (tune later via `spendguard config set`)
         if s["section"] == "keys" or s["store"] == "env":
@@ -488,6 +493,16 @@ def cmd_init(argv=None):
               "`spendguard saas link` once you have an org key.")
     keys = ", ".join(s["env"] for s in config_schema.SETTINGS if s["section"] == "keys")
     print(f"Set API keys in your environment or ./.env: {keys}")
+    # Pre-flight: do the keys actually RESOLVE here? This is exactly the silent gap that broke reconcile/report
+    # after a repo move (cwd-relative .env lost the keys). Same check as `spendguard doctor`, surfaced at setup.
+    print("  key pre-flight (reconcile/report are blind without these — put missing ones in ~/.spendguard/.env, "
+          "which is cwd-independent):")
+    for prov, name in (("openai", "OPENAI_API_KEY"), ("anthropic", "ANTHROPIC_API_KEY")):
+        try:
+            k = config.api_key(name)
+        except Exception:
+            k = None
+        print(f"    {prov:<9}: {'🟢 resolved' if k else '🔴 MISSING — ' + prov + ' spend will be INVISIBLE to reconcile/report'}")
     if (cfgjson.get("budget") or {}).get("backend") == "sqlite":
         print(f"SQLite budget ledger will be created at {config.db_path()} on first charge.")
     # Cold-start the cost advisor from your OWN history (so day-one recommendations aren't empty).

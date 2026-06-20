@@ -87,7 +87,7 @@ def cache_test(system, users, model=None, run=False):
     if prov == "anthropic" and "haiku" in str(model) and sys_tok < 2200:
         print("  ⚠️ Anthropic Haiku needs ≥2048 tokens to cache (Opus/Sonnet ≥1024); this block may be too short.")
     if not run:
-        print("  estimate-only. Re-run with --run to actually test caching (gate caps it).")
+        from . import ui; ui.estimate_only(action="run the live caching test", cost=est)
         return dict(ok=True, est=est)
 
     calls_out = []

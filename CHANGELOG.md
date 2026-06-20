@@ -5,6 +5,28 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 ## [Unreleased]
 
 ### Added
+- **`import spendguard` now actually gates** — closes the #1 adoption gap ("pip install ≠ gated"). Previously, the
+  common `pip install llm-spendguard` + `import spendguard` path patched *nothing*, so spend went ungated SILENTLY
+  while the user thought they were protected. Importing the guard now installs it (idempotent, fail-open).
+  - `SPENDGUARD_NO_AUTOINSTALL=1` — opt out of the import-time install (you call `install()`/`require()` yourself).
+  - `SPENDGUARD_REQUIRE=1` — **refuse loudly when ungated**: upgrade the import to fail-closed, so if an LLM SDK is
+    present but the gate can't enforce here (wrong interpreter, or `spendguard off`), the import RAISES instead of
+    letting you spend ungated. Lets a team enforce with one env var, zero per-script edits. No-SDK contexts (e.g.
+    running the `spendguard` CLI) stay a no-op.
+- **`spendguard init --quick`** (`--yes`/`-y`) — non-interactive setup: writes sensible defaults with zero prompts
+  (CI / fast onboarding). Implies local-only unless `--connect` is also passed.
+- **Key pre-flight in `spendguard init`** — after setup, init now reports whether `OPENAI_API_KEY` /
+  `ANTHROPIC_API_KEY` actually RESOLVE in this interpreter (🟢/🔴), the same check as `spendguard doctor`. This is
+  exactly the silent gap that blinded reconcile/report after a repo move (cwd-relative `.env` lost the keys).
+- **Louder estimate-only banners** — every caged, estimate-first command (`optimize`/`mine`/`reconstruct`/`review`/
+  `experiment`/`promote`/`conv`/`cache-test`/`cascade`/`bootstrap`) now prints one consistent, hard-to-miss
+  "🟡 ESTIMATE ONLY — nothing was spent · re-run with --run" banner (with projected $ when known) instead of a quiet
+  one-liner, so a dry run is never mistaken for a real one. (`spendguard.ui.estimate_only`.)
+- **Contributor-email requirement when pushing to a team** — when SaaS is enabled and `visibility` isn't `private`,
+  the client now REFUSES to push un-attributable rows if the contributor isn't an email (the server bills/rolls up
+  by email; an anon `usr_<hex>` would create a phantom member). `push_rollup`/`push_workdone`/`push_insights`/`sync`
+  skip with a clear one-line fix (`spendguard saas link`); `saas status` + `doctor` show a 🔴 flag. Solo/local
+  dashboards opt out with `SPENDGUARD_ALLOW_ANON=1`.
 - **`spendguard workdone --push`** now feeds the server's `/v1/work` (`saas.push_workdone`) — the work-done roll-up
   (git commit subjects + LLM batch-intent counts per month·project) lands on the team/org dashboard next to spend.
   Monthly periods, filtered to the connection's project(s), visibility-honored, graceful if the server lacks the

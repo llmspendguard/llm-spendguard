@@ -101,7 +101,7 @@ def reconstruct(run=False, per=15, limit=None):
     _est_line("realtime", judge, len(samples), in_tok, out_tok, cost)
     print(f"  meta budget: ${config.meta_cap():.2f}/day · spent today ${_meta_spent():.4f}")
     if not run:
-        print("  estimate-only. Re-run with --run to judge (gate enforces the meta cap).")
+        from . import ui; ui.estimate_only(action="judge output quality", cost=cost)
         return dict(requests=len(samples), in_tok=in_tok, out_tok=out_tok, cost=cost, model=judge)
 
     from . import adapters
@@ -141,7 +141,7 @@ def mine(run=False, intent=None):
     _est_line("realtime", model, 1, in_tok, _MINE_OUT, cost)
     print(f"  meta budget: ${config.meta_cap():.2f}/day · spent today ${_meta_spent():.4f}")
     if not run:
-        print("  estimate-only. Re-run with --run to synthesize (gate enforces the meta cap).")
+        from . import ui; ui.estimate_only(action="synthesize the insights", cost=cost)
         return dict(requests=1, in_tok=in_tok, out_tok=_MINE_OUT, cost=cost, model=model)
 
     from . import adapters
@@ -218,7 +218,7 @@ def optimize(intent=None, plan=None, run=False):
     _est_line("realtime", model, 1, in_tok, _OPT_OUT, cost)
     print(f"  meta budget: ${config.meta_cap():.2f}/day · spent today ${_meta_spent():.4f}")
     if not run:
-        print("  estimate-only. Re-run with --run for the recommendation (gate enforces the meta cap).")
+        from . import ui; ui.estimate_only(action="produce the recommendation", cost=cost)
         return dict(requests=1, in_tok=in_tok, out_tok=_OPT_OUT, cost=cost, model=model)
 
     from . import adapters

@@ -665,7 +665,12 @@ def _cli(cmd="status"):
                 ok, reason = _saas.ready()
                 if c.get("enabled"):
                     print(f"  saas      : {'🟢 ' + reason if ok else '🔴 ' + reason}  url={c.get('url') or '(unset)'}")
-                    print(f"  push-as   : project={c.get('project') or '(git repo name)'}  contributor={_saas.contributor() or '(unresolved)'}  visibility={c.get('visibility', 'private')}")
+                    cok, cwhy = _saas.contributor_ok()
+                    print(f"  push-as   : project={c.get('project') or '(git repo name)'}  "
+                          f"contributor={'🟢' if cok else '🔴'} {_saas.contributor() or '(unresolved)'}  "
+                          f"visibility={c.get('visibility', 'private')}")
+                    if not cok:
+                        print(f"    ⚠ {cwhy}")
                 else:
                     print("  saas      : ⚪ off (set up a per-repo .spendguard.json to push this repo to the server)")
             except Exception:

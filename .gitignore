@@ -6,7 +6,10 @@ build/
 dist/
 .eggs/
 .venv/
+.venv
 venv/
+# iCloud-ignored dirs (e.g. .venv.nosync) — keep churny venvs out of iCloud sync
+*.nosync
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

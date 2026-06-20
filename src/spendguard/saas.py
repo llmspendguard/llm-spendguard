@@ -109,6 +109,27 @@ def contributor():
     return config.machine_id()   # persisted usr_<hex> — never empty, no user@host leak
 
 
+def contributor_ok():
+    """(ok, reason) — is the contributor identity adequate for the CURRENT SaaS mode?
+
+    Only matters when enabled AND visibility != private (i.e. per-user spend is actually leaving this machine).
+    Then a real EMAIL is REQUIRED: the server bills + rolls up BY contributor email, so an anonymous usr_<hex>
+    would create a phantom member and the org would mis-/under-attribute spend. Fix (happy path): `spendguard saas
+    link` (verifies + persists your org email). Solo/local dashboards that don't need per-person mapping can opt out
+    with SPENDGUARD_ALLOW_ANON=1."""
+    import os
+    c = conn()
+    if not c.get("enabled") or c.get("visibility", "private") == "private":
+        return True, "n/a (not pushing per-user data)"
+    if os.environ.get("SPENDGUARD_ALLOW_ANON") == "1":
+        return True, "anonymous id allowed (SPENDGUARD_ALLOW_ANON=1)"
+    if config.is_email(contributor()):
+        return True, "contributor email set"
+    return False, ("contributor is not an email — the server bills/rolls up by email, so an anon id can't map to "
+                   "your member. Fix: `spendguard saas link` (verifies it) or set saas.contributor. "
+                   "Solo/local? export SPENDGUARD_ALLOW_ANON=1")
+
+
 def _persist_contributor(email):
     """Write the verified contributor email to the USER-level ~/.spendguard/saas.json (applies across the user's
     repos; repo-local .spendguard.json can still override). Idempotent."""
@@ -261,6 +282,9 @@ def push_rollup(since=None, dry=False):
     c = conn()
     if c.get("visibility", "private") == "private":
         return {"skipped": "visibility=private — nothing leaves this machine"}
+    cok, cwhy = contributor_ok()
+    if not cok:
+        return {"skipped": cwhy}   # don't push un-attributable rows (phantom member)
     payload = {"visibility": c.get("visibility"), "day_totals": _rollup_rows(since=since),
                "guarded_totals": _guarded_rows(since=since)}
     if dry:
@@ -273,6 +297,9 @@ def push_insights():
     c = conn()
     if c.get("visibility", "private") == "private":
         return {"skipped": "visibility=private — nothing leaves this machine"}
+    cok, cwhy = contributor_ok()
+    if not cok:
+        return {"skipped": cwhy}
     try:
         from . import share
         abstracts = share.scrubbed_abstracts() if hasattr(share, "scrubbed_abstracts") else []
@@ -295,6 +322,9 @@ def push_workdone(since=None, by="month", dry=False):
     c = conn()
     if c.get("visibility", "private") == "private":
         return {"skipped": "visibility=private — nothing leaves this machine"}
+    cok, cwhy = contributor_ok()
+    if not cok:
+        return {"skipped": cwhy}
     from . import workdone
     flt = _project_filter(c)
     work = []
@@ -412,6 +442,9 @@ def sync(if_due=False, since=None):
         d, why = due()
         if not d:
             return {"skipped": why}
+    cok, cwhy = contributor_ok()
+    if not cok:
+        return {"skipped": cwhy}   # one clear message, not three skip-notes
     try:
         from . import ledger_sync
         ledger_sync.reconcile_into_ledger(since=since)   # batch provider-truth gap → ledger
@@ -478,7 +511,9 @@ def status():
     print(f"  url          : {c.get('url') or '(unset)'}")
     print(f"  api_key      : {'***set***' if c.get('api_key') else '(unset)'}  (server maps this key to your team/org)")
     print(f"  visibility   : {c.get('visibility', 'private')}  (private = nothing leaves this machine)")
-    print(f"  contributor  : {contributor() or '(unresolved)'}  (member_ref — set to your org email so it maps to your SaaS member)")
+    cok, cwhy = contributor_ok()
+    print(f"  contributor  : {'🟢' if cok else '🔴'} {contributor() or '(unresolved)'}  (member_ref — your org email maps you to your SaaS member)"
+          + ("" if cok else f"\n                 ⚠ {cwhy}"))
     print(f"  sync_interval: {c.get('sync_interval', 'daily')}  — {why}")
     print(f"  config file  : {config.saas_path()}")
     print(f"  status       : {'🟢 ' + reason if ok else '⚪ ' + reason}")

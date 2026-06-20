@@ -81,7 +81,8 @@ def cmd(argv=None):
         bad = M.ineffective(m, a.intent) if a.intent else None
         print(f"  {'⊘' if bad else '·'} {m}" + (f"  (skipped — ineffective: {bad[0]})" if bad else ""))
     if not a.run:
-        print("  estimate/preview only — pass --run with --prompt/--prompt-file to route a real call (WORKLOAD spend).")
+        from . import ui
+        ui.estimate_only(action="route a real call (needs --prompt / --prompt-file)", note="WORKLOAD spend")
         return 0
     prompt = a.prompt or (open(a.prompt_file).read() if a.prompt_file else None)
     if not prompt:

@@ -332,7 +332,7 @@ def synth(tdir=None, run=False, limit=40):
     from . import budget
     print(f"  meta budget: ${config.meta_cap():.2f}/day · spent today ${budget.meta_spent_today():.4f}")
     if not run:
-        print("  estimate-only. Re-run with --run to synthesize (gate enforces the meta cap).")
+        from . import ui; ui.estimate_only(action="synthesize from the conversations", cost=cost)
         return dict(requests=1, in_tok=in_tok, out_tok=out_tok, cost=cost, model=model)
 
     from . import adapters

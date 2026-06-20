@@ -79,8 +79,9 @@ def bootstrap(repo=None, transcripts=None, run=False, cap=50):
     if run:
         print("bootstrap complete — corpus + insights ready. Try: `spendguard advise` / `spendguard optimize --intent <X>`.")
     else:
-        print("bootstrap (estimate) complete — free corpus built. Re-run with --run to execute the caged "
-              "reasoning steps above (total projected cost is the sum of their estimates, meta-capped).")
+        print("bootstrap (estimate) complete — free corpus built. The caged reasoning steps above were NOT run.")
+        from . import ui
+        ui.estimate_only(action="execute the caged reasoning steps (total ≈ sum of the estimates above)")
     return 0
 
 
