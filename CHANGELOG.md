@@ -4,6 +4,8 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.2.7] — 2026-06-20
+
 ### Added
 - **`import spendguard` now actually gates** — closes the #1 adoption gap ("pip install ≠ gated"). Previously, the
   common `pip install llm-spendguard` + `import spendguard` path patched *nothing*, so spend went ungated SILENTLY
