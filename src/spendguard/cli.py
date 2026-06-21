@@ -117,6 +117,9 @@ def main(argv=None):
     if cmd in ("claude-code", "claudecode", "cc"):     # mine ~/.claude transcripts → CC spend + work (incremental)
         from . import claudecode
         return claudecode.main(rest)
+    if cmd == "chat":                                  # OPT-IN claude.ai chat adapter (session API, on-device, macOS)
+        from . import chat
+        return chat.main(rest)
     if cmd in ("fetch-io", "fetchio"):                # recover real prompt+output samples from providers (free)
         from . import callio
         return callio.main(rest)

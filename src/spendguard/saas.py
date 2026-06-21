@@ -210,12 +210,14 @@ def _project_filter(c):
 def _row_uid(row):
     """Client-side mirror of the server's core.mjs rowUid — MUST stay byte-identical so a local row and its server
     row share one id (cross-check). key = 'v1|member_ref|project(lower)|day|provider|model|kind|channel' → sha1[:24].
-    Compute from the SAME normalized values we send (project already lowercased, kind/channel already defaulted)."""
+    A `team` (chat rows) is appended as '|team:<lower>' so teamless rows keep their v1 ids (back-compat)."""
     import hashlib
-    key = "|".join(["v1", row.get("member_ref") or "", str(row.get("project") or "").lower(),
-                    row.get("day") or "", row.get("provider") or "", row.get("model") or "",
-                    row.get("kind") or "workload", row.get("channel") or "batch"])
-    return hashlib.sha1(key.encode()).hexdigest()[:24]
+    parts = ["v1", row.get("member_ref") or "", str(row.get("project") or "").lower(),
+             row.get("day") or "", row.get("provider") or "", row.get("model") or "",
+             row.get("kind") or "workload", row.get("channel") or "batch"]
+    if row.get("team"):
+        parts.append("team:" + str(row["team"]).lower())
+    return hashlib.sha1("|".join(parts).encode()).hexdigest()[:24]
 
 
 def _rollup_rows(since=None):
@@ -411,10 +413,41 @@ def complete_command(cmd_id, result):
     return _request("POST", "/v1/commands/complete", {"id": cmd_id, "result": result})
 
 
+def pull_taxonomy():
+    """GET the org's CANONICAL org→team×project taxonomy → cache locally as chat.org_taxonomy (so `chat classify`
+    uses the SAME structure as the rest of the org). Returns the server payload {version, taxonomy}."""
+    try:
+        t = _request("GET", "/v1/taxonomy")
+    except Exception as e:
+        return {"error": str(e)}
+    if t and t.get("taxonomy"):
+        import json as _j
+        p = config.CONFIG_JSON
+        try:
+            cfg = _j.loads(p.read_text()) if p.exists() else {}
+        except Exception:
+            cfg = {}
+        cfg.setdefault("chat", {})["org_taxonomy"] = {"version": t.get("version", 1), **(t["taxonomy"] or {})}
+        config.HOME.mkdir(parents=True, exist_ok=True)
+        p.write_text(_j.dumps(cfg, indent=2))
+        config._cfg._cache = None
+    return t
+
+
+def push_taxonomy():
+    """POST the local chat.taxonomy UP as the org canonical (curator action — version bumps server-side)."""
+    tx = config._cfg_get("chat", "taxonomy", None)
+    if not tx:
+        return {"skipped": "no local chat.taxonomy to push (run `spendguard chat discover --run` first)"}
+    return _request("POST", "/v1/taxonomy", {"taxonomy": tx, "member_ref": contributor()})
+
+
 def run_commands(since=None):
     """Drain the server's command queue and run each LOCALLY (the data + context live here), then report a
     SCRUBBED result. FREE today: reconcile (provider-vs-local leak) + deterministic re-tag. The LLM-residual
-    re-tag is gated/estimate-first (tag.estimate_llm_retag) and never auto-runs here."""
+    re-tag is gated/estimate-first (tag.estimate_llm_retag) and never auto-runs here. `attribute` = an ORG REQUEST
+    to run the chat-attribution loop: adopt the org taxonomy + run IF the member already consented (chat.enabled);
+    otherwise record the request as awaiting consent (never force-enables a member's personal-session adapter)."""
     ok, reason = ready()
     if not ok:
         return {"skipped": f"not connected: {reason}"}
@@ -437,6 +470,16 @@ def run_commands(since=None):
                 from . import tag
                 res["retagged"] = tag.retag_deterministic()
                 res["ambiguous"] = tag.ambiguous_count()   # remainder an LLM pass could resolve (gated, separate)
+            if kind == "attribute":                        # ORG REQUEST: run the chat-attribution loop (consent-gated)
+                from . import chat as _chat
+                pull_taxonomy()                            # adopt the org's canonical taxonomy first
+                if _chat._enabled():
+                    res["loop"] = _chat.loop(run=True, quiet=True)   # member already consented → run + sync
+                    res["status"] = "running"
+                else:
+                    _set_state(chat_request_pending=True,
+                               chat_requested_by=(c.get("params") or {}).get("by") or c.get("requested_by") or "")
+                    res["status"] = "awaiting_consent"     # surfaced via `spendguard chat status`; consent = `chat accept`
             if kind in ("reconcile", "retag", "full"):
                 push_rollup(since=since)                    # re-push the corrected/reconciled ledger
             complete_command(c["id"], res)
@@ -503,6 +546,11 @@ def sync(if_due=False, since=None):
     out = {"rollup": push_rollup(since=since), "insights": push_insights(),
            "workdone": push_workdone(since=since), "status": push_status(),
            "resources": res, "commands": run_commands(since=since)}
+    try:                                                  # claude.ai chat attribution loop (only if opted in)
+        from . import chat as _chat
+        out["chat"] = _chat.loop(run=True, quiet=True) if _chat._enabled() else {"skipped": "chat not enabled"}
+    except Exception as e:
+        out["chat"] = {"skipped": f"chat loop: {str(e)[:80]}"}
     _set_state(last_sync=time.time())
     return out
 

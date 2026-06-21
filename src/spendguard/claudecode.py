@@ -175,7 +175,7 @@ def day_totals(member_ref, project_filter=None):
         out.append({"day": r["day"], "provider": "anthropic", "model": r["model"], "kind": "workload",
                     "channel": "claude-code", "billed": False,    # USAGE VALUE, not $ billed — keep OUT of spend totals
                     "spend_micros": round(r["cost"] * 1_000_000),
-                    "calls": r["turns"], "in_tok": r["in_tok"], "out_tok": r["out_tok"],
+                    "calls": r["turns"], "in_tokens": r["in_tok"], "out_tokens": r["out_tok"],
                     "member_ref": member_ref, "project": proj})
     return out
 
@@ -325,7 +325,7 @@ def story(by="week", days=7, run=False):
         lines.append(f"- [{d['project']}] {(d['prompt'] or '(no prompt)')[:160]} | tools: {tl} | {len(d['files'])} files")
     prompt = f"Sessions ({len(digs)}, last {days}d):\n" + "\n".join(lines)
     model = config.advisor_model()
-    OUT = 900
+    OUT = 1500
     est = pricing.realtime_cost(model, _toklen(_STORY_SYS + prompt), OUT)
     print(f"work story + insights — {model} (caged under caps.meta ${config.meta_cap():.2f}/day)")
     print(f"  ESTIMATE (zero paid calls): {len(digs)} sessions · in~{_toklen(_STORY_SYS + prompt):,} out≤{OUT} -> ~${est:.4f}")
@@ -336,13 +336,8 @@ def story(by="week", days=7, run=False):
         r = adapters.call(model, prompt, max_tokens=OUT, system=_STORY_SYS)
     if r.get("error"):
         print("  error:", r["error"]); return 1
-    import json as _j, re as _re
-    m = _re.search(r"\{.*\}", r.get("text", ""), _re.S)
-    data = {}
-    try:
-        data = _j.loads(m.group(0)) if m else {}
-    except Exception:
-        pass
+    from .chat import _parse_story                         # tolerant parse (recovers story + insights if truncated)
+    data = _parse_story(r.get("text", ""))
     print("\n=== WORK STORY ===\n" + (data.get("story") or r.get("text", "")[:800]))
     print("\n=== WORK INSIGHTS (private — your IP, never pooled) ===")
     for ins in (data.get("insights") or []):

@@ -5,6 +5,29 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 ## [Unreleased]
 
 ### Added
+- **claude.ai chat adapter** (`spendguard chat test|show|discover|classify|work|story|sync|enable`, `chat.py`) —
+  **OPT-IN, on-device, macOS** (Path 2). The desktop app caches no conversations locally (it fetches live), so this
+  decrypts *your* `sessionKey` cookie (macOS Keychain → PBKDF2 → AES-128-CBC, Chromium format) and calls claude.ai's
+  internal API to digest your conversations into the same **work-done + usage-value** rows (channel=`claude-ai`,
+  billed=`false` — chat is on your plan). Incremental **watermark** by `updated_at`; 0600 cookie cache (no Keychain
+  re-prompt). **Value counts ALL content** — uploaded files reviewed (input), files generated/edited via tools +
+  thinking (output), not just the (often-empty) message text — attributed **per message-day** with a caching-aware
+  per-turn model (prior context at the cache-read rate). **Agentic, generic attribution** (nothing hardcoded):
+  `chat discover` reads your corpus and PROPOSES an `org → team × project` taxonomy (seeds with your current one,
+  prints a diff for periodic review) → `chat classify` assigns each conversation `{org, team, allocation:[{project,
+  pct}]}` (segmentation: a conversation's value SPLITS across the projects it touched → additive, no double-count).
+  `org → team` is the additive scope tree; `project[]` is the orthogonal/multi dimension. `chat work` = rows by
+  period, `chat story --run` = caged narrative + private work-insights. Both `discover`/`classify` are caged
+  (`spendguard:categorize`, estimate-first). ⚠️ unofficial + ToS-grey; **push gated** behind `chat.enabled`, runs
+  only on `chat sync`, org-routed to the matching connection. Token never logged / never leaves the machine.
+- **Chat attribution LOOP + activation** (`chat loop|status|accept|push-taxonomy`) — one engine behind two
+  activations. **User self-serve**: `chat enable` → `chat loop` (fetch new → classify unclassified → periodic
+  discover/reallocate → sync), folded into `saas sync --if-due` so it runs on the existing cadence. **Org-requested**:
+  the org enqueues an `attribute` command (dashboard) → the client pulls it on sync → `chat status` surfaces it →
+  `chat accept` **consents** (enables + pulls the org's canonical taxonomy via `/v1/taxonomy`). The loop NEVER
+  force-enables — org *requests*, member *consents*; it runs on the member's machine/session and only org→team×project
+  *value* rolls up. Periodic taxonomy review (`chat.discover_days`, `chat.auto_taxonomy`) proposes + reallocates.
+  `push-taxonomy` publishes a curator's local taxonomy as the org canonical (members then classify consistently).
 - **`claude-code work --by day|week|month|quarter`** — the *real* work-done: conversation-derived ROWS (what was
   **asked** + value + tools/files per session), bucketed by period. Replaces the shallow git-commit count as "what
   the spend bought."
@@ -20,6 +43,9 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
   usage *value* / API-equivalent, not literal billing.)
 
 ### Fixed
+- **Token counts were stored as 0 server-side** for `claude-code` (and would be for `claude-ai`) — the adapters sent
+  `in_tok`/`out_tok` but the ingest expects `in_tokens`/`out_tokens`, so token columns silently zeroed (spend/$ was
+  always correct). Adapters now send the canonical names. Server `/v1/ledger` channel allowlist gains `claude-ai`.
 - **`saas sync` now also pushes vast.ai GPU** (`resources.sync` folded in) — it was LLM-only, so remote-compute was
   never reconciled unless you ran `resources sync` separately. And `resources.sync` no longer 422s when a project
   has no attributed GPU (e.g. unlabeled instances) — it skips with a message pointing at the real fix (label vast.ai
