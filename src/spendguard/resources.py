@@ -17,8 +17,8 @@ import urllib.request
 
 from . import config
 
-_GPU_KW = re.compile(r"vast\.?ai|gpu\b|gliner|h100|h200|a100|3090|4090|cuda|fine-?tun|train(?:ing)?\b|"
-                     r"embed.*batch|checkpoint|epoch", re.I)
+_GPU_KW = re.compile(r"vast\.?ai|\bgpu\b|gliner|\b(?:h100|h200|a100|3090|4090|rtx)\b|\bcuda\b|fine-?tun|"
+                     r"training run|gpu (?:box|instance|fleet|fanout)", re.I)   # GPU-specific; NOT bare 'training'
 
 
 def _gpu_alignment(since):
@@ -26,13 +26,29 @@ def _gpu_alignment(since):
     mapping LLM batches use (conv.attribute_usage). chat convs + code sessions mentioning GPU work, carrying their
     CLASSIFIED (org, team, project), → {(day, project): {"w", "org", "team"}}. So the destroyed-instance gap lands
     on the project that actually ran the GPU (lmm GLiNER, manga2anime training), dated to those days + org-routable.
-    vast.ai has no per-day consumption AND no audit log, so conversations are the only context."""
+    vast.ai has no per-day consumption AND no audit log, so conversations are the only context. RESTRICTED to
+    GPU-capable scope (projects/teams that actually have GPU instances, by label) so a stray keyword can't land GPU
+    on a non-GPU project (GPU is only lmm + manga2anime here)."""
+    from . import attribution
+    taxo, _ = attribution.taxonomy()
+    ptmap = attribution.project_team_map(taxo)
+    gpu_projs, gpu_teams = set(), set()                     # the ground truth: where GPU instances actually ran
+    for i in _all_instances():
+        p = (project_of(i.get("label")) or "").lower()
+        if p:
+            gpu_projs.add(p)
+            org, team = ptmap.get(p, ("", ""))
+            if team:
+                gpu_teams.add(((org or "").lower(), team.lower()))
     agg = {}
 
     def add(day, org, team, proj):
         if not proj or day < since:
             return
-        e = agg.setdefault((day, proj.lower()), {"w": 0, "org": (org or "").lower(), "team": (team or "").lower()})
+        proj, org, team = proj.lower(), (org or "").lower(), (team or "").lower()
+        if gpu_projs and not (proj in gpu_projs or (org, team) in gpu_teams):
+            return                                          # not a GPU-capable project/team → exclude (no false-positive)
+        e = agg.setdefault((day, proj), {"w": 0, "org": org, "team": team})
         e["w"] += 1
     try:
         from . import chat
@@ -83,9 +99,17 @@ def _get(path):
         return json.loads(r.read().decode())
 
 
+def _label_map():
+    """Config `resources.vastai.label_map` ({substring: project}) FIRST (user-specific, e.g. m2a→manga2anime,
+    healiom_gpu→lmm), then DEFAULT_LABEL_MAP. So labels actually map to projects (the GPU ground truth)."""
+    cfg = config._cfg_get("resources", "vastai", {}) or {}
+    m = cfg.get("label_map") or {} if isinstance(cfg, dict) else {}
+    return [(str(k).lower(), v) for k, v in m.items()] + DEFAULT_LABEL_MAP
+
+
 def project_of(label, label_map=None):
     lab = (label or "").lower()
-    for sub, proj in (label_map or DEFAULT_LABEL_MAP):
+    for sub, proj in (label_map if label_map is not None else _label_map()):
         if sub in lab:
             return proj
     return ""   # unknown label → untagged (surfaced, not guessed)
@@ -269,12 +293,16 @@ def sync(dry=False):
     proj = (c.get("project") or budget._project() or "").lower()
     ref = saas.contributor()
     snapshot()                                             # RECORD live instances first (so destroyed ones survive)
+    from . import attribution
+    _ptmap = attribution.project_team_map(attribution.taxonomy()[0])
+    _team = lambda p: _ptmap.get((p or "").lower(), ("", ""))[1]
     allrows = gpu_rows_by_day()
     day_totals = [{
         "day": r["day"], "provider": "vastai", "model": r["gpu"], "kind": "gpu", "channel": "realtime",
         "spend_micros": round(r["cost"] * 1_000_000), "calls": len(r["instances"]),
-        "member_ref": ref, "project": proj,
-        "tags": ",".join(["remote-compute", "gpu", r["gpu"].replace(" ", ""), "instances:" + "/".join(str(x) for x in r["instances"])]),
+        "member_ref": ref, "project": proj, "team": _team(proj),
+        "tags": ",".join(["remote-compute", "gpu", r["gpu"].replace(" ", ""), "team:" + _team(proj),
+                          "instances:" + "/".join(str(x) for x in r["instances"])]),
     } for r in allrows if (r.get("project") or "") == proj and r["cost"] > 0]
     if c.get("owns_account"):                              # account-level GPU reconcile (one vast.ai account)
         # Only reconcile the blanket gap when this vast.ai account is SINGLE-PROJECT. A shared multi-project account
