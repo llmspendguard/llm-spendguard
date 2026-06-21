@@ -116,6 +116,7 @@ spendguard cache-stats | dedup --input f.jsonl --out u.jsonl | dedup-populate   
 # cold start / corpus
 spendguard bootstrap [--repo] [--transcripts]   # mine ALL history → corpus + insights (free, then estimate)
 spendguard fetch-io [--cap 50]                  # recover real prompt+output from providers (free)
+spendguard claude-code [show|sync]               # mine ~/.claude transcripts → Claude Code spend + work (incremental)
 spendguard backfill [--intent-map …]            # seed corpus + graph from the batch ledgers (free)
 spendguard mine-history {intents,graph,git} [--apply]   # reconstruct intents/edges from the repo (free)
 spendguard mine-conv {index,synth} [--run]      # mine session transcripts for the cost playbook

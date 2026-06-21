@@ -15,7 +15,7 @@ from .calls import context, set_context, feedback
 __all__ = ["install", "require", "register", "SpendGateRefused", "on_event", "context", "set_context", "feedback",
            "batch_cost", "realtime_cost", "estimate", "price", "normalize",
            "PRICING", "PRICING_VERIFIED", "PRICING_SOURCE"]
-__version__ = "0.2.8"
+__version__ = "0.2.9"
 
 
 def _auto_install():

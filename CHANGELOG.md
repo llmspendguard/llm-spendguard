@@ -4,6 +4,21 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+### Added
+- **Claude Code adapter** (`spendguard claude-code show|sync`, `claudecode.py`) — mines `~/.claude/projects/*.jsonl`
+  into **spend + work-done**, so Claude Code usage shows next to API/batch/GPU even on a subscription (CC meters
+  tokens regardless of billing). Per (project, model, day) cost ≈ tokens × canonical pricing (project = the session
+  cwd) + work-done (tool counts: Edit/Write/Bash/…, files touched). **Incremental + idempotent**: a per-session
+  **watermark** (`{lines, mtime}`) reads only NEW turns; a local per-day accumulator means `sync` pushes correct
+  full-day totals (channel=`claude-code`) that upsert cleanly as conversations grow. (Note: on a plan the $ is
+  usage *value* / API-equivalent, not literal billing.)
+
+### Fixed
+- **`saas sync` now also pushes vast.ai GPU** (`resources.sync` folded in) — it was LLM-only, so remote-compute was
+  never reconciled unless you ran `resources sync` separately. And `resources.sync` no longer 422s when a project
+  has no attributed GPU (e.g. unlabeled instances) — it skips with a message pointing at the real fix (label vast.ai
+  instances per project / set `resources.vastai.label_map`; destroyed instances are unrecoverable per-project).
+
 ## [0.2.8] — 2026-06-20
 
 ### Added

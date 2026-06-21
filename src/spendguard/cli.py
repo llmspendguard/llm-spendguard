@@ -114,6 +114,9 @@ def main(argv=None):
     if cmd in ("workdone", "work"):                    # work-done CONTEXT for spend (git + batch intents) → server
         from . import workdone
         return workdone.cmd(rest)
+    if cmd in ("claude-code", "claudecode", "cc"):     # mine ~/.claude transcripts → CC spend + work (incremental)
+        from . import claudecode
+        return claudecode.main(rest)
     if cmd in ("fetch-io", "fetchio"):                # recover real prompt+output samples from providers (free)
         from . import callio
         return callio.main(rest)
