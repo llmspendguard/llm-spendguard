@@ -5,7 +5,10 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 ## [Unreleased]
 
 ### Added
-- **`claude-code work --by day|week|month|quarter`** — the *real* work-done: conversation-derived ROWS (what was
+- **`claude-code work --by day|week|month|quarter`**
+- **`claude-code story --by … [--run]`** — caged synth over the work rows → a narrative **story** + private
+  **work-insights** (findings/decisions/gotchas/next — the WORK/domain knowledge, distinct from cost-efficiency
+  learnings; never pooled). Estimate-first, capped by caps.meta. — the *real* work-done: conversation-derived ROWS (what was
   **asked** + value + tools/files per session), bucketed by period. Replaces the shallow git-commit count as "what
   the spend bought." (Next: a caged LLM "story" synthesis per period + push to the dashboard.)
 - **Claude Code adapter** (`spendguard claude-code show|sync`, `claudecode.py`) — mines `~/.claude/projects/*.jsonl`

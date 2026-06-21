@@ -288,6 +288,69 @@ def work(by="week", days=None):
     return 0
 
 
+def _toklen(s):
+    try:
+        import tiktoken
+        return len(tiktoken.get_encoding("o200k_base").encode(s))
+    except Exception:
+        return max(1, len(s) // 4)
+
+
+_STORY_SYS = (
+    "You turn a developer's AI-assisted work SESSIONS into a WORK LOG. Each session line is: [project] what was "
+    "asked | tools used | files. Output STRICT JSON only (no prose outside it):\n"
+    '{"story": "<3-5 sentence first-person-plural narrative of what got DONE this period — concrete, no fluff, '
+    'no activity counts>",\n'
+    ' "insights": [{"type": "finding|decision|gotcha|next", "project": "<proj>", "text": "<a WORK/domain insight: '
+    'something LEARNED, a DECISION made, a GOTCHA discovered, or a NEXT step — about the work itself, NOT about '
+    'how to use LLMs/cost better>"}]}\n'
+    "Give 3-8 insights, substance over activity (what we now KNOW). These are the org's private knowledge.")
+
+
+def story(by="week", days=7, run=False):
+    """Caged synth over the period's work rows → a narrative STORY + private WORK INSIGHTS (findings/decisions/
+    gotchas/next — distinct from cost/LLM-usage learnings). Estimate-first; the LLM call is caged under caps.meta."""
+    from . import config, adapters, calls, pricing, ui
+    cutoff = (datetime.date.today() - datetime.timedelta(days=int(days))).isoformat() if days else None
+    digs = []
+    for path in sorted(glob.glob(os.path.join(_projects_dir(), "**", "*.jsonl"), recursive=True)):
+        d = _digest(path)
+        if (d["cost"] > 0 or d["tools"]) and (not cutoff or not d["day"] or d["day"] >= cutoff):
+            digs.append(d)
+    if not digs:
+        print("no sessions in range — nothing to synthesize."); return 0
+    lines = []
+    for d in sorted(digs, key=lambda x: -x["cost"])[:40]:
+        tl = ",".join(f"{k}×{v}" for k, v in sorted(d["tools"].items(), key=lambda x: -x[1])[:4])
+        lines.append(f"- [{d['project']}] {(d['prompt'] or '(no prompt)')[:160]} | tools: {tl} | {len(d['files'])} files")
+    prompt = f"Sessions ({len(digs)}, last {days}d):\n" + "\n".join(lines)
+    model = config.advisor_model()
+    OUT = 900
+    est = pricing.realtime_cost(model, _toklen(_STORY_SYS + prompt), OUT)
+    print(f"work story + insights — {model} (caged under caps.meta ${config.meta_cap():.2f}/day)")
+    print(f"  ESTIMATE (zero paid calls): {len(digs)} sessions · in~{_toklen(_STORY_SYS + prompt):,} out≤{OUT} -> ~${est:.4f}")
+    if not run:
+        ui.estimate_only(action="synthesize the work story + private insights", cost=est)
+        return 0
+    with calls.context(intent="spendguard:worklog"):     # caged → meta budget, excluded from the workload corpus
+        r = adapters.call(model, prompt, max_tokens=OUT, system=_STORY_SYS)
+    if r.get("error"):
+        print("  error:", r["error"]); return 1
+    import json as _j, re as _re
+    m = _re.search(r"\{.*\}", r.get("text", ""), _re.S)
+    data = {}
+    try:
+        data = _j.loads(m.group(0)) if m else {}
+    except Exception:
+        pass
+    print("\n=== WORK STORY ===\n" + (data.get("story") or r.get("text", "")[:800]))
+    print("\n=== WORK INSIGHTS (private — your IP, never pooled) ===")
+    for ins in (data.get("insights") or []):
+        print(f"  [{ins.get('type', '?'):<8}] ({ins.get('project', '?')}) {ins.get('text', '')}")
+    print(f"\n  (caged cost ${r.get('cost', 0):.4f}; intent spendguard:worklog)")
+    return 0
+
+
 def main(argv=None):
     argv = argv or []
     sub = argv[0] if argv else "show"
@@ -300,12 +363,14 @@ def main(argv=None):
             days = int(argv[argv.index("--days") + 1])
         except (ValueError, IndexError):
             pass
+    by = "week"
+    if "--by" in argv:
+        try:
+            by = argv[argv.index("--by") + 1]
+        except IndexError:
+            pass
     if sub == "work":                                   # conversation-derived work rows, bucketed by period
-        by = "week"
-        if "--by" in argv:
-            try:
-                by = argv[argv.index("--by") + 1]
-            except IndexError:
-                pass
         return work(by=by, days=days)
+    if sub == "story":                                  # caged narrative + private work-insights (estimate-first)
+        return story(by=by, days=days or 7, run="--run" in argv)
     return show(days=days)
