@@ -12,10 +12,11 @@ sourced from the PROD rollup (Part 1) + local content (Part 2). Same breakdown a
 Periods: day · week · month · quarter · ytd — all date-correct (the reconciled batch is spread across actual usage
 days, not lumped). Part 1 from /tmp/worklog_prod.json (scripts/worklog_pull.mjs); Part 2 from local content.
 """
-import json, collections, pathlib, argparse, datetime
+import os, json, collections, pathlib, argparse, datetime
 from spendguard import chat, config, pricing, claudecode
 
-HOME = pathlib.Path.home() / ".spendguard"
+HOME = config.HOME                                          # honor SPENDGUARD_HOME, don't reimplement
+PROD_JSON = os.environ.get("WORKLOG_PROD") or str(HOME / "worklog_prod.json")   # produced by server worklog_pull.mjs
 PLAN_SEAT = float(config._cfg_get("chat", "plan_seat_max", 200) or 200) + float(config._cfg_get("chat", "plan_seat_pro", 100) or 100)
 _CODE_DIGESTS = None
 
@@ -46,7 +47,7 @@ def _chat_signals(org, since):
 def _code_signals(org, since):
     global _CODE_DIGESTS
     try:
-        cls = json.loads((HOME / "claudecode_state.json").read_text()).get("cls", {})
+        cls = claudecode.load_cls()
     except Exception:
         cls = {}
     if _CODE_DIGESTS is None:
@@ -97,7 +98,7 @@ def _synth(items, run):
 
 
 def generate(org, period, label, today, scope_label="org", run=True):
-    data = json.loads(pathlib.Path("/tmp/worklog_prod.json").read_text())
+    data = json.loads(pathlib.Path(PROD_JSON).read_text())
     prod = data["periods"][period]
     members = data.get("members", 0) or 1
     since = prod["since"]
@@ -171,7 +172,7 @@ def generate(org, period, label, today, scope_label="org", run=True):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--org", default="Healiom")
+    ap.add_argument("--org", required=True, help="org name to render (matches the classified org)")
     ap.add_argument("--period", required=True, choices=["day", "week", "month", "quarter", "ytd"])
     ap.add_argument("--label", required=True)
     ap.add_argument("--today", default=datetime.date.today().isoformat())

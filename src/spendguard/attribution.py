@@ -15,6 +15,26 @@ def _toklen(s):
     return max(1, len(s or "") // 4)
 
 
+def iso_period(day, by):
+    """Bucket a YYYY-MM-DD day into a period key. Shared by chat + claudecode (was triplicated, and 'ytd' fell
+    through to month). by ∈ {day, week, month, quarter, ytd}."""
+    import datetime
+    try:
+        d = datetime.date.fromisoformat(day)
+    except Exception:
+        return day or "?"
+    if by == "day":
+        return day
+    if by == "week":
+        iso = d.isocalendar()
+        return f"{iso[0]}-W{iso[1]:02d}"
+    if by == "quarter":
+        return f"{d.year}-Q{(d.month - 1) // 3 + 1}"
+    if by == "ytd":
+        return f"{d.year}-YTD"
+    return f"{d.year}-{d.month:02d}"   # month (default)
+
+
 def taxonomy():
     from . import chat
     return chat._taxonomy()
@@ -34,7 +54,7 @@ _SYS = (
     "Classify each work item into the org taxonomy. Items are AI work sessions (chat or code); a repo/cwd name is an "
     "UMBRELLA — classify by the CONTENT, not the repo. Assign org (one of the listed), a team, and a project (reuse "
     "a known project/slug when it fits, else a short new slug under the right org/team). Output STRICT JSON only, "
-    'reusing the numeric keys: {"items":[{"i":<i>,"org":"<org>","team":"<team>","project":"<slug>"}]}.')
+    'reusing the numeric keys: {"items":[{"i":<i>,"org":"<org>","team":"<team>","project":"<slug>","confidence":<0-100>}]}.')
 
 
 def _prompt(taxo, batch):

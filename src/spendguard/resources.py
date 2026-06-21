@@ -25,10 +25,10 @@ def _gpu_alignment(since):
     """Cross-connect GPU spend to the CONVERSATIONS that ran it, for attribution — the same conversation→project
     mapping LLM batches use (conv.attribute_usage). chat convs + code sessions mentioning GPU work, carrying their
     CLASSIFIED (org, team, project), → {(day, project): {"w", "org", "team"}}. So the destroyed-instance gap lands
-    on the project that actually ran the GPU (lmm GLiNER, manga2anime training), dated to those days + org-routable.
-    vast.ai has no per-day consumption AND no audit log, so conversations are the only context. RESTRICTED to
-    GPU-capable scope (projects/teams that actually have GPU instances, by label) so a stray keyword can't land GPU
-    on a non-GPU project (GPU is only lmm + manga2anime here)."""
+    on the project that actually ran the GPU (e.g. an NER training run, a video-generation job), dated to those days
+    + org-routable. vast.ai has no per-day consumption AND no audit log, so conversations are the only context.
+    RESTRICTED to GPU-capable scope (projects/teams that actually have GPU instances, by label) so a stray keyword
+    can't land GPU on a non-GPU project."""
     from . import attribution
     taxo, _ = attribution.taxonomy()
     ptmap = attribution.project_team_map(taxo)
@@ -61,7 +61,7 @@ def _gpu_alignment(since):
         pass
     try:
         from . import claudecode
-        cls = json.loads((config.HOME / "claudecode_state.json").read_text()).get("cls", {})
+        cls = claudecode.load_cls()
         for d in claudecode._session_digests():
             if d.get("day", "") >= since and _GPU_KW.search((d.get("prompt") or "").lower()):
                 a = cls.get(d["sid"]) or {}
@@ -72,11 +72,10 @@ def _gpu_alignment(since):
 
 VAST_BASE = "https://console.vast.ai/api/v0"
 
-# label substring → project (first match wins). Override/extend via config: resources.vastai.label_map.
-DEFAULT_LABEL_MAP = [
-    ("vision", "vision-pipeline"), ("video", "vision-pipeline"), ("segment", "vision-pipeline"), ("render", "vision-pipeline"),
-    ("nlp", "nlp-pipeline"), ("embed", "nlp-pipeline"), ("ner", "nlp-pipeline"),
-]
+# label substring → project (first match wins). EMPTY by default on purpose: opinionated defaults would silently
+# mis-attribute a stranger's instance (e.g. "embed-test" → some project that isn't theirs). Each user sets their own
+# in config `resources.vastai.label_map` ({substring: project}), e.g. {"train": "ml-pipeline", "render": "video"}.
+DEFAULT_LABEL_MAP = []
 
 
 def _key():
@@ -100,8 +99,8 @@ def _get(path):
 
 
 def _label_map():
-    """Config `resources.vastai.label_map` ({substring: project}) FIRST (user-specific, e.g. m2a→manga2anime,
-    healiom_gpu→lmm), then DEFAULT_LABEL_MAP. So labels actually map to projects (the GPU ground truth)."""
+    """Config `resources.vastai.label_map` ({substring: project}) FIRST (user-specific, e.g. {"train": "ml-pipeline",
+    "render": "video"}), then DEFAULT_LABEL_MAP. So labels actually map to projects (the GPU ground truth)."""
     cfg = config._cfg_get("resources", "vastai", {}) or {}
     m = cfg.get("label_map") or {} if isinstance(cfg, dict) else {}
     return [(str(k).lower(), v) for k, v in m.items()] + DEFAULT_LABEL_MAP
@@ -318,7 +317,7 @@ def sync(dry=False):
                 # The remaining gap = instances destroyed BEFORE snapshotting began (unrecoverable from vast.ai —
                 # no per-day consumption, no audit log). CROSS-CONNECT to conversations: attribute by the (day,
                 # project, org, team) of the GPU-work convs/sessions, the same way LLM batches map via conv.
-                # attribute_usage. Org-routed (only this connection's org) so manga2anime GPU → Ensight, lmm → Healiom.
+                # attribute_usage. Org-routed (only this connection's org) so each project's GPU lands in its own org.
                 since = datetime.date.fromtimestamp(_month_start_ts()).isoformat()
                 conn_org = (c.get("org") or "").lower()
                 align = {k: v for k, v in _gpu_alignment(since).items()

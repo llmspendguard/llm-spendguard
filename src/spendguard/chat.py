@@ -534,18 +534,8 @@ def sync(dry=False):
 
 # ── work-done (rows + caged story) ───────────────────────────────────────────────────────────────────────────────
 def _iso_period(day, by):
-    try:
-        d = datetime.date.fromisoformat(day)
-    except Exception:
-        return day or "?"
-    if by == "day":
-        return day
-    if by == "week":
-        iso = d.isocalendar()
-        return f"{iso[0]}-W{iso[1]:02d}"
-    if by == "quarter":
-        return f"{d.year}-Q{(d.month - 1) // 3 + 1}"
-    return f"{d.year}-{d.month:02d}"
+    from . import attribution
+    return attribution.iso_period(day, by)   # shared (day/week/month/quarter/ytd) — was a local copy missing 'ytd'
 
 
 def work(by="week", days=None):
