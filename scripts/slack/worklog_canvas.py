@@ -1,25 +1,22 @@
 #!/usr/bin/env python
-"""Worklog canvas generator (basis for slack.py `slack push`). PER-ORG two-part canvas over the CANONICAL
-4-category $ model — sourced from the PROD rollup (Part 1, single source of truth) + local content (Part 2).
+"""Worklog canvas generator (basis for slack.py `slack push`). Two-part canvas over the CANONICAL cost/value model,
+sourced from the PROD rollup (Part 1) + local content (Part 2). Same breakdown at org / team / user (--scope-label).
 
   Part 1 · Spend & value
-    HARD $ (real money):  ① LLM API costs (provider × model)   ② Remote compute (provider × machine)
-                          + subscription $ you actually pay (the denominator)
-    ESTIMATED value (plan-covered, "what it'd cost at API rates"):  ③ est chat value (claude.ai)   ④ est code-chat
-                          value (Claude Code)   [⑤ est cowork value — placeholder, no source yet]
-  Part 2 · Work done — clean per-(team,project) bullets, SYNTHESIZED from classified chat summaries + code prompts
-                          (no titles, no bios). org→team×project everywhere — one taxonomy.
+    HARD $ (real money):  ① LLM API (provider × model)   ② Remote compute (provider × machine)   ⑥ Infra/storage (B2)
+                          + Subscription you pay = seats × ($200 Max + $100 ChatGPT Pro)/mo  (the denominator)
+    ESTIMATED value (plan-covered):  ③ est chat value (claude.ai)   ④ est code-chat value (Claude Code)
+                          ⑤ est cowork value (placeholder — no source yet)
+  Part 2 · Work done — clean per-(team,project) bullets synthesized from classified chat + code (no titles/bios).
 
-Part 1 numbers come from /tmp/worklog_prod.json (scripts/worklog_pull.mjs against prod). Part 2 work comes from the
-local chat cache + Claude Code classifications (prod stores no content by design). The shipped slack.py will pull
-Part 1 from a server endpoint with the connection key instead of the admin export.
+Periods: day · week · month · quarter · ytd — all date-correct (the reconciled batch is spread across actual usage
+days, not lumped). Part 1 from /tmp/worklog_prod.json (scripts/worklog_pull.mjs); Part 2 from local content.
 """
-import json, collections, pathlib, argparse
+import json, collections, pathlib, argparse, datetime
 from spendguard import chat, config, pricing, claudecode
 
 HOME = pathlib.Path.home() / ".spendguard"
-PLAN_MONTHLY = float(config._cfg_get("chat", "plan_monthly", 300) or 300)   # assumed Max + ChatGPT Pro; override in config
-PRORATE = {"day": 1 / 30.0, "week": 7 / 30.0, "month": 1.0}
+PLAN_SEAT = float(config._cfg_get("chat", "plan_seat_max", 200) or 200) + float(config._cfg_get("chat", "plan_seat_pro", 100) or 100)
 _CODE_DIGESTS = None
 
 
@@ -27,8 +24,12 @@ def _fmt(v):
     return f"${v:,.0f}" if abs(v) >= 100 else f"${v:,.2f}"
 
 
+def _months(since, today):
+    a = datetime.date.fromisoformat(since); b = datetime.date.fromisoformat(today)
+    return max((b - a).days, 1) / 30.44
+
+
 def _chat_signals(org, since):
-    """Local: chat work signals (auto-summaries) by team→project for Part 2."""
     st = chat._load_state()
     sig = collections.defaultdict(lambda: collections.defaultdict(list))
     for c in st.get("convs", {}).values():
@@ -43,7 +44,6 @@ def _chat_signals(org, since):
 
 
 def _code_signals(org, since):
-    """Local: Claude Code work signals (prompts) by team→project, using the CACHED classifications (no re-classify)."""
     global _CODE_DIGESTS
     try:
         cls = json.loads((HOME / "claudecode_state.json").read_text()).get("cls", {})
@@ -57,9 +57,8 @@ def _code_signals(org, since):
         if not a or a.get("org") != org or (d["day"] and d["day"] < since):
             continue
         team = a.get("team") or "—"
-        proj = a.get("project") or d["project"]
         if d.get("prompt"):
-            sig[team][proj].append(d["prompt"])
+            sig[team][a.get("project") or d["project"]].append(d["prompt"])
     return sig
 
 
@@ -74,18 +73,15 @@ def _synth(items, run):
     from spendguard import adapters, calls, ui
     lines = [f"{k}: " + (" || ".join(s[:200] for s in sigs[:5])[:900]) for k, sigs in items.items()]
     prompt = "Work signals by key:\n" + "\n".join(lines)
-    model = config.advisor_model()
-    OUT = 110 * len(items) + 400
+    model = config.advisor_model(); OUT = 110 * len(items) + 400
     if not run:
-        from spendguard import ui as _ui
-        _ui.estimate_only(action=f"synthesize work bullets for {len(items)} projects",
-                          cost=pricing.realtime_cost(model, chat._toklen(_SYS + prompt), OUT))
+        ui.estimate_only(action=f"synthesize work bullets for {len(items)} projects",
+                         cost=pricing.realtime_cost(model, chat._toklen(_SYS + prompt), OUT))
         return {}
     with calls.context(intent="spendguard:worklog"):
         r = adapters.call(model, prompt, max_tokens=OUT, system=_SYS)
     import re
-    txt = r.get("text", "")
-    m = re.search(r"\{.*\}", txt, re.S)
+    txt = r.get("text", ""); m = re.search(r"\{.*\}", txt, re.S)
     if m:
         try:
             return json.loads(m.group(0))
@@ -100,17 +96,20 @@ def _synth(items, run):
     return out
 
 
-def generate(org, period, label, run=True):
-    prod = json.loads(pathlib.Path("/tmp/worklog_prod.json").read_text())[period]
+def generate(org, period, label, today, scope_label="org", run=True):
+    data = json.loads(pathlib.Path("/tmp/worklog_prod.json").read_text())
+    prod = data["periods"][period]
+    members = data.get("members", 0) or 1
     since = prod["since"]
     llm, gpu = prod["llm_api"], prod["compute"]
-    chat_val = collections.defaultdict(float)
-    code_val = collections.defaultdict(float)
+    chat_val = collections.defaultdict(float); code_val = collections.defaultdict(float)
     for v in prod["value"]:
         (chat_val if v["channel"] == "claude-ai" else code_val)[v["team"]] += v["usd"]
     LLM = sum(x["usd"] for x in llm); GPU = sum(x["usd"] for x in gpu)
     CHAT = sum(chat_val.values()); CODE = sum(code_val.values())
-    sub = PLAN_MONTHLY * PRORATE.get(period, 1.0)
+    B2 = float(config._cfg_get("chat", "infra_b2_usd", 0) or 0)        # ⑥ — until a B2 adapter pulls real usage
+    months = _months(since, today)
+    sub = members * PLAN_SEAT * months
 
     csig = _chat_signals(org, since); ksig = _code_signals(org, since)
     teams = sorted(set(csig) | set(ksig), key=lambda t: -(chat_val.get(t, 0) + code_val.get(t, 0)))
@@ -122,12 +121,11 @@ def generate(org, period, label, run=True):
                 merged[p].extend(sg)
         for p, sg in merged.items():
             units.append((team, p, sg))
-    synth_in = {str(i): u[2] for i, u in enumerate(units) if u[2]}
-    bullets = _synth(synth_in, run) if synth_in else {}
+    bullets = _synth({str(i): u[2] for i, u in enumerate(units) if u[2]}, run) if units else {}
 
     o = []
-    o.append(f"> _{org} worklog · **Part 1 → finance/admin · Part 2 → team** · period: **{label}**. Canonical "
-             "spendguard rollup — Claude Code · web chat · LLM API · remote compute._\n")
+    o.append(f"> _{org} worklog · {scope_label} scope · **Part 1 → finance/admin · Part 2 → team** · period: "
+             f"**{label}**. Canonical spendguard rollup — Claude Code · web chat · LLM API · remote compute._\n")
     o.append("## Part 1 · Spend & value")
     o.append("_For finance / admin._\n")
     o.append("### Hard $ — real money")
@@ -140,11 +138,11 @@ def generate(org, period, label, run=True):
     if gpu:
         o.append("| Provider · machine | $ |\n|---|---:|")
         for x in gpu:
-            mc = x["machine"] if x["machine"] not in ("?",) else "(machine untracked)"
-            o.append(f"| {x['provider']} · {mc} | {_fmt(x['usd'])} |")
+            o.append(f"| {x['provider']} · {x['machine'] if x['machine']!='?' else '(machine untracked)'} | {_fmt(x['usd'])} |")
     else:
         o.append("_(none this period)_")
-    o.append(f"\n**Subscription you pay ≈ {_fmt(sub)}** this {period} _(assumed ${PLAN_MONTHLY:.0f}/mo Max + ChatGPT Pro — set in config)_\n")
+    o.append(f"\n**⑥ Infra / storage (B2): {_fmt(B2)}** — _no B2 adapter yet; set `chat.infra_b2_usd` or wire B2 billing (attributes by bucket→project)._")
+    o.append(f"\n**Subscription you pay ≈ {_fmt(sub)}** this {period} — _{members} seat(s) × ${PLAN_SEAT:.0f}/mo (Max $200 + ChatGPT Pro $100) × {months:.1f} mo. The denominator the est. value sits against._\n")
     o.append("### Estimated value — plan-covered (what it would cost at API rates, not money out)")
     o.append(f"**③ est chat value: {_fmt(CHAT)}** _(claude.ai / desktop)_   ·   **④ est code-chat value: {_fmt(CODE)}** _(Claude Code)_")
     o.append("| Team | est chat value | est code-chat value |\n|---|---:|---:|")
@@ -165,17 +163,19 @@ def generate(org, period, label, run=True):
             o.append("- _(activity captured)_")
         o.append("")
     o.append("---")
-    o.append(f"_spendguard · {label} · ① LLM API + ② remote compute = HARD $ (real money); ③ chat + ④ code-chat = "
-             "ESTIMATED plan-covered value (tokens × API price). One taxonomy: every $ and every work item rolls to "
-             "org → team × project._")
+    o.append(f"_spendguard · {label} · ① LLM API + ② compute + ⑥ infra = HARD $ (real money); ③ chat + ④ code-chat "
+             "(+⑤ cowork) = ESTIMATED plan-covered value. Subscription = what you pay. One taxonomy: every $ + work "
+             "item rolls to org → team × project._")
     return "\n".join(o)
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--org", default="Healiom")
-    ap.add_argument("--period", required=True, choices=["day", "week", "month"])
+    ap.add_argument("--period", required=True, choices=["day", "week", "month", "quarter", "ytd"])
     ap.add_argument("--label", required=True)
+    ap.add_argument("--today", default=datetime.date.today().isoformat())
+    ap.add_argument("--scope-label", default="org")
     ap.add_argument("--run", action="store_true")
     a = ap.parse_args()
-    print(generate(a.org, a.period, a.label, run=a.run))
+    print(generate(a.org, a.period, a.label, a.today, scope_label=a.scope_label, run=a.run))
