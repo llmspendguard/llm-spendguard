@@ -22,28 +22,37 @@ _GPU_KW = re.compile(r"vast\.?ai|gpu\b|gliner|h100|h200|a100|3090|4090|cuda|fine
 
 
 def _gpu_alignment(since):
-    """Days that actually had GPU work (chat + code signals mentioning vast.ai / GLiNER / training / H100 …) →
-    {day: weight}. vast.ai exposes no per-day consumption, so we attribute the historical destroyed-instance gap by
-    ALIGNMENT to when GPU work happened — not lumped on the reconcile day."""
-    w = collections.Counter()
+    """Cross-connect GPU spend to the CONVERSATIONS that ran it, for attribution — the same conversation→project
+    mapping LLM batches use (conv.attribute_usage). chat convs + code sessions mentioning GPU work, carrying their
+    CLASSIFIED (org, team, project), → {(day, project): {"w", "org", "team"}}. So the destroyed-instance gap lands
+    on the project that actually ran the GPU (lmm GLiNER, manga2anime training), dated to those days + org-routable.
+    vast.ai has no per-day consumption AND no audit log, so conversations are the only context."""
+    agg = {}
+
+    def add(day, org, team, proj):
+        if not proj or day < since:
+            return
+        e = agg.setdefault((day, proj.lower()), {"w": 0, "org": (org or "").lower(), "team": (team or "").lower()})
+        e["w"] += 1
     try:
         from . import chat
         for c in chat._load_state().get("convs", {}).values():
             blob = (c.get("title", "") + " " + c.get("summary", "") + " " + c.get("first_user", "")).lower()
             if _GPU_KW.search(blob):
                 for day in (c.get("days") or {}):
-                    if day >= since:
-                        w[day] += 1
+                    add(day, c.get("org"), c.get("team"), c.get("project") or c.get("ai_project"))
     except Exception:
         pass
     try:
         from . import claudecode
+        cls = json.loads((config.HOME / "claudecode_state.json").read_text()).get("cls", {})
         for d in claudecode._session_digests():
             if d.get("day", "") >= since and _GPU_KW.search((d.get("prompt") or "").lower()):
-                w[d["day"]] += 1
+                a = cls.get(d["sid"]) or {}
+                add(d["day"], a.get("org"), a.get("team"), a.get("project") or d.get("project"))
     except Exception:
         pass
-    return w
+    return agg
 
 VAST_BASE = "https://console.vast.ai/api/v0"
 
@@ -278,20 +287,29 @@ def sync(dry=False):
         if len(projs_present) <= 1:
             gap = round(account_gpu_total() - sum(r["cost"] for r in allrows), 2)
             if gap > 0.5:
-                # The remaining gap = instances destroyed BEFORE we started snapshotting (unrecoverable from vast.ai).
-                # DATE it by aligning to GPU-work days (not lumped on today); shrinks to ~0 as snapshot() records.
+                # The remaining gap = instances destroyed BEFORE snapshotting began (unrecoverable from vast.ai —
+                # no per-day consumption, no audit log). CROSS-CONNECT to conversations: attribute by the (day,
+                # project, org, team) of the GPU-work convs/sessions, the same way LLM batches map via conv.
+                # attribute_usage. Org-routed (only this connection's org) so manga2anime GPU → Ensight, lmm → Healiom.
                 since = datetime.date.fromtimestamp(_month_start_ts()).isoformat()
-                align = _gpu_alignment(since)
-                tot = sum(align.values())
-                model = "(pre-recording, aligned)" if tot else "(destroyed/untracked)"
-                spread = ([(day, gap * w / tot) for day, w in align.items()] if tot
-                          else [(datetime.date.today().isoformat(), gap)])
-                for day, amt in spread:
-                    if amt > 0.005:
-                        day_totals.append({
-                            "day": day, "provider": "vastai", "model": model, "kind": "gpu", "channel": "realtime",
-                            "spend_micros": round(amt * 1_000_000), "calls": 0, "member_ref": ref, "project": proj,
-                            "tags": f"remote-compute,gpu,reconstructed,{proj}"})
+                conn_org = (c.get("org") or "").lower()
+                align = {k: v for k, v in _gpu_alignment(since).items()
+                         if not (conn_org and v["org"] and v["org"] != conn_org)}    # org-route
+                tot = sum(v["w"] for v in align.values())
+                if tot:
+                    for (day, aproj), v in align.items():
+                        amt = gap * v["w"] / tot
+                        if amt > 0.005:
+                            day_totals.append({
+                                "day": day, "provider": "vastai", "model": "(reconstructed, conv-aligned)", "kind": "gpu",
+                                "channel": "realtime", "spend_micros": round(amt * 1_000_000), "calls": 0,
+                                "member_ref": ref, "project": aproj, "team": v["team"],
+                                "tags": f"remote-compute,gpu,reconstructed,team:{v['team']}"})
+                else:
+                    day_totals.append({
+                        "day": datetime.date.today().isoformat(), "provider": "vastai", "model": "(destroyed/untracked)",
+                        "kind": "gpu", "channel": "realtime", "spend_micros": round(gap * 1_000_000), "calls": 0,
+                        "member_ref": ref, "project": proj, "tags": f"remote-compute,gpu,destroyed,{proj}"})
     for row in day_totals:                                # per-row id, local↔server cross-check (gpu rows too)
         row["uid"] = saas._row_uid(row)
     payload = {"visibility": c.get("visibility"), "day_totals": day_totals}
