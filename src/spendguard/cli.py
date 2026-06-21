@@ -69,6 +69,9 @@ def main(argv=None):
     if cmd in ("install-hook", "gate-venv"):          # gate every process in another venv (other repos)
         from . import setup
         return setup.cmd_install_hook(rest)
+    if cmd == "schedule":                             # install the OS-native scheduler (launchd/cron/schtasks)
+        from . import schedule
+        return schedule.main(rest)
     if cmd == "install-skills":                       # deploy the / slash-commands into ~/.claude/skills
         from . import setup
         return setup.cmd_install_skills(rest)

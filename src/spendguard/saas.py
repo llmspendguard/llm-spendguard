@@ -524,6 +524,11 @@ def sync(if_due=False, since=None):
     ok, reason = ready()
     if not ok:
         return {"skipped": f"not connected: {reason}"}
+    try:                                                  # record GPU instances EVERY run (cheap, free) so a frequent
+        from . import resources as _r                     # scheduler captures short-lived/destroyed instances even
+        _r.snapshot()                                     # when the full push isn't due yet
+    except Exception:
+        pass
     if if_due:
         d, why = due()
         if not d:
