@@ -5,6 +5,9 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 ## [Unreleased]
 
 ### Added
+- **`claude-code work --by day|week|month|quarter`** — the *real* work-done: conversation-derived ROWS (what was
+  **asked** + value + tools/files per session), bucketed by period. Replaces the shallow git-commit count as "what
+  the spend bought." (Next: a caged LLM "story" synthesis per period + push to the dashboard.)
 - **Claude Code adapter** (`spendguard claude-code show|sync`, `claudecode.py`) — mines `~/.claude/projects/*.jsonl`
   into **spend + work-done**, so Claude Code usage shows next to API/batch/GPU even on a subscription (CC meters
   tokens regardless of billing). Per (project, model, day) cost ≈ tokens × canonical pricing (project = the session

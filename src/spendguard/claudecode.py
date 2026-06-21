@@ -206,6 +206,88 @@ def sync(dry=False):
         raise
 
 
+def _iso_period(day, by):
+    try:
+        d = datetime.date.fromisoformat(day)
+    except Exception:
+        return day or "?"
+    if by == "day":
+        return day
+    if by == "week":
+        iso = d.isocalendar()
+        return f"{iso[0]}-W{iso[1]:02d}"
+    if by == "quarter":
+        return f"{d.year}-Q{(d.month - 1) // 3 + 1}"
+    return f"{d.year}-{d.month:02d}"   # month
+
+
+def _digest(path):
+    """Full per-session digest = a WORK ROW: project, primary day, models, value$, turns, tools, files, and the
+    first user prompt (what was ASKED — the 'what the spend was for'). Re-reads the whole session (on-demand)."""
+    proj = None; days = {}; models = set(); cost = 0.0; turns = 0; tools = {}; files = []; prompt = ""; branch = ""
+    recs, _ = _scan_new_lines(path, 0)
+    for r in recs:
+        if proj is None and r.get("cwd"):
+            proj = _project_of(r.get("cwd"))
+        if not branch and r.get("gitBranch"):
+            branch = r.get("gitBranch")
+        day = (r.get("timestamp") or "")[:10]
+        msg = r.get("message") or {}
+        if not prompt and (r.get("type") == "user" or msg.get("role") == "user"):
+            c = msg.get("content")
+            t = c if isinstance(c, str) else (" ".join(b.get("text", "") for b in c if isinstance(b, dict) and b.get("type") == "text") if isinstance(c, list) else "")
+            t = (t or "").strip().replace("\n", " ")
+            if t and not t.startswith("<") and "tool_result" not in t[:40] and "[Request interrupted" not in t:
+                prompt = t[:200]
+        u = msg.get("usage") or {}; model = msg.get("model")
+        if u and model:
+            cu, _a, _b = _row_cost(model, u); cost += cu; turns += 1; models.add(model)
+            if day:
+                days[day] = days.get(day, 0) + cu
+        c = msg.get("content")
+        if isinstance(c, list):
+            for b in c:
+                if isinstance(b, dict) and b.get("type") == "tool_use":
+                    tools[b.get("name", "?")] = tools.get(b.get("name", "?"), 0) + 1
+                    inp = b.get("input") or {}
+                    for fk in _TOOL_FILE_KEYS:
+                        if inp.get(fk) and os.path.basename(str(inp[fk])) not in files:
+                            files.append(os.path.basename(str(inp[fk])))
+    primary = max(days, key=days.get) if days else ((recs[0].get("timestamp") or "")[:10] if recs else "")
+    return {"project": proj or "claude-code", "day": primary, "models": sorted(models), "cost": round(cost, 4),
+            "turns": turns, "tools": tools, "files": files, "prompt": prompt, "branch": branch}
+
+
+def work(by="week", days=None):
+    """Conversation-derived WORK DONE — per-session rows (what was asked + cost) bucketed by day/week/month/quarter."""
+    cutoff = (datetime.date.today() - datetime.timedelta(days=int(days))).isoformat() if days else None
+    digs = []
+    for path in sorted(glob.glob(os.path.join(_projects_dir(), "**", "*.jsonl"), recursive=True)):
+        d = _digest(path)
+        if d["cost"] <= 0 and not d["tools"]:
+            continue
+        if cutoff and d["day"] and d["day"] < cutoff:
+            continue
+        digs.append(d)
+    buckets = {}
+    for d in digs:
+        p = _iso_period(d["day"], by)
+        b = buckets.setdefault(p, {"value": 0.0, "sessions": 0, "rows": []})
+        b["value"] += d["cost"]; b["sessions"] += 1; b["rows"].append(d)
+    print(f"WORK DONE — by {by}{' · last %sd' % days if days else ''} · from Claude Code conversations (value = usage $)\n")
+    for p in sorted(buckets, reverse=True):
+        b = buckets[p]
+        print(f"  ▸ {p}  —  ${b['value']:.2f} value · {b['sessions']} sessions")
+        for d in sorted(b["rows"], key=lambda x: -x["cost"])[:8]:
+            tl = " · ".join(f"{k}×{v}" for k, v in sorted(d["tools"].items(), key=lambda x: -x[1])[:3])
+            print(f"     {('$%.2f' % d['cost']):>8}  {d['project'][:13]:<14} {(d['prompt'] or '(no prompt captured)')[:66]}")
+            if tl:
+                print(f"     {'':>8}  {'':<14} └ {tl} · {len(d['files'])} files")
+        print()
+    print("  ↑ per-session ROWS (what was asked + $). NEXT: a caged LLM 'story' synthesis per period + push to the dashboard.")
+    return 0
+
+
 def main(argv=None):
     argv = argv or []
     sub = argv[0] if argv else "show"
@@ -218,4 +300,12 @@ def main(argv=None):
             days = int(argv[argv.index("--days") + 1])
         except (ValueError, IndexError):
             pass
+    if sub == "work":                                   # conversation-derived work rows, bucketed by period
+        by = "week"
+        if "--by" in argv:
+            try:
+                by = argv[argv.index("--by") + 1]
+            except IndexError:
+                pass
+        return work(by=by, days=days)
     return show(days=days)
