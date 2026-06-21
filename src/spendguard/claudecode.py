@@ -160,29 +160,78 @@ def show(days=None):
     return 0
 
 
-def day_totals(member_ref, project_filter=None):
-    """Full per-(project, model, day) CC rows → server day_totals (channel=claude-code). Built from the FULL local
-    accumulator so the server upsert is correct as sessions grow. project_filter (set) limits to a repo's project(s)."""
-    st, _ = update()
-    _save_state(st)
+def _session_digests(days=None):
+    """Per-SESSION digests (the cwd is an umbrella, so each session is classified on its own content)."""
+    cutoff = (datetime.date.today() - datetime.timedelta(days=int(days))).isoformat() if days else None
     out = []
-    for r in st["ledger"].values():
-        if r.get("_work") or r["cost"] <= 0:
+    for path in sorted(glob.glob(os.path.join(_projects_dir(), "**", "*.jsonl"), recursive=True)):
+        d = _digest(path)
+        if d["cost"] <= 0 and not d["tools"]:
             continue
-        proj = (r["project"] or "").lower()
-        if project_filter is not None and proj not in project_filter:
+        if cutoff and d["day"] and d["day"] < cutoff:
             continue
-        out.append({"day": r["day"], "provider": "anthropic", "model": r["model"], "kind": "workload",
-                    "channel": "claude-code", "billed": False,    # USAGE VALUE, not $ billed — keep OUT of spend totals
-                    "spend_micros": round(r["cost"] * 1_000_000),
-                    "calls": r["turns"], "in_tokens": r["in_tok"], "out_tokens": r["out_tok"],
-                    "member_ref": member_ref, "project": proj})
+        d["sid"] = os.path.basename(path)[:48]
+        out.append(d)
     return out
 
 
+def classify(run=False, days=None, recls=False):
+    """Classify Claude Code sessions into org→team×project via the SHARED classifier + taxonomy (NOT the cwd repo
+    name — that's an umbrella). Caged, estimate-first. Stored per session in state.cls; reused by day_totals/sync."""
+    from . import attribution
+    st = _load_state()
+    cls = st.setdefault("cls", {})
+    todo = [d for d in _session_digests(days) if d.get("prompt") and (recls or d["sid"] not in cls)]
+    if not todo:
+        print("claude-code: nothing to classify (run `claude-code show` to mine first; --reclassify to redo).")
+        return 0
+    taxo, _ = attribution.taxonomy()
+    items = [{"id": d["sid"], "text": f"[{d['project']}] {d['prompt']}"} for d in todo]
+    res = attribution.classify_items(items, taxo, run)
+    if not run:
+        return 0
+    cls.update(res)
+    _save_state(st)
+    print(f"claude-code: classified {len(res)}/{len(todo)} sessions into org→team×project.")
+    return 0
+
+
+def day_totals(member_ref, org_label=None):
+    """Per-(team, project, model, day) CC rows → server (channel=claude-code, billed=false). Each session maps to its
+    CLASSIFIED org→team×project (state.cls); `team` rides along for org→team scope attribution. org_label keeps only
+    sessions whose classified org matches (or are unclassified) — for org-routed push."""
+    st = _load_state()
+    cls = st.get("cls", {})
+    agg = {}
+    for d in _session_digests():
+        if d["cost"] <= 0:
+            continue
+        a = cls.get(d["sid"])
+        if a is None:
+            if org_label:                                  # org-routed push: skip unclassified (avoid cross-org pollution)
+                continue
+            a = {}                                         # local view: include with cwd fallback (no team)
+        org = a.get("org", "")
+        if org_label and org and org.lower() != org_label.lower():
+            continue
+        team = (a.get("team") or "").lower()
+        proj = (a.get("project") or d["project"] or "claude-code").lower()
+        model = d.get("model") or ""
+        key = f"{team}|{proj}|{model}|{d['day']}"
+        e = agg.setdefault(key, {"team": team, "project": proj, "model": model, "day": d["day"],
+                                 "cost": 0.0, "in": 0, "out": 0, "n": 0})
+        e["cost"] += d["cost"]; e["in"] += d.get("in_tok", 0); e["out"] += d.get("out_tok", 0); e["n"] += 1
+    return [{"day": e["day"], "provider": "anthropic", "model": e["model"], "kind": "workload",
+             "channel": "claude-code", "billed": False, "spend_micros": round(e["cost"] * 1_000_000),
+             "calls": e["n"], "in_tokens": e["in"], "out_tokens": e["out"],
+             "member_ref": member_ref, "project": e["project"], "team": e["team"],
+             "tags": ("team:" + e["team"]) if e["team"] else ""}
+            for e in agg.values() if e["day"]]
+
+
 def sync(dry=False):
-    """Push Claude Code spend (channel=claude-code) → the server, like resources.sync. Honors visibility +
-    contributor; filtered to this connection's project(s)."""
+    """Push Claude Code spend (channel=claude-code) → the server. Honors visibility + contributor; ORG-ROUTED by the
+    session's classified org (only rows whose org matches THIS connection — or are unclassified — push here)."""
     from . import saas
     c = saas.conn()
     if c.get("visibility", "private") == "private":
@@ -190,14 +239,13 @@ def sync(dry=False):
     cok, cwhy = saas.contributor_ok()
     if not cok:
         return {"skipped": cwhy}
-    flt = saas._project_filter(c)
-    rows = day_totals(saas.contributor(), project_filter=flt)
+    rows = day_totals(saas.contributor(), org_label=c.get("org"))
     for r in rows:
         r["uid"] = saas._row_uid(r)
     if dry:
         return {"day_totals": rows}
     if not rows:
-        return {"skipped": "no Claude Code spend for this connection's project(s)"}
+        return {"skipped": "no Claude Code spend for this connection's org"}
     try:
         return saas._request("POST", "/v1/ledger", {"visibility": c.get("visibility"), "day_totals": rows})
     except RuntimeError as e:
@@ -225,6 +273,7 @@ def _digest(path):
     """Full per-session digest = a WORK ROW: project, primary day, models, value$, turns, tools, files, and the
     first user prompt (what was ASKED — the 'what the spend was for'). Re-reads the whole session (on-demand)."""
     proj = None; days = {}; models = set(); cost = 0.0; turns = 0; tools = {}; files = []; prompt = ""; branch = ""
+    in_tok = out_tok = 0; modelcost = {}
     recs, _ = _scan_new_lines(path, 0)
     for r in recs:
         if proj is None and r.get("cwd"):
@@ -241,7 +290,8 @@ def _digest(path):
                 prompt = t[:200]
         u = msg.get("usage") or {}; model = msg.get("model")
         if u and model:
-            cu, _a, _b = _row_cost(model, u); cost += cu; turns += 1; models.add(model)
+            cu, ai, bo = _row_cost(model, u); cost += cu; turns += 1; models.add(model)
+            in_tok += ai; out_tok += bo; modelcost[model] = modelcost.get(model, 0) + cu
             if day:
                 days[day] = days.get(day, 0) + cu
         c = msg.get("content")
@@ -254,8 +304,10 @@ def _digest(path):
                         if inp.get(fk) and os.path.basename(str(inp[fk])) not in files:
                             files.append(os.path.basename(str(inp[fk])))
     primary = max(days, key=days.get) if days else ((recs[0].get("timestamp") or "")[:10] if recs else "")
+    dominant = max(modelcost, key=modelcost.get) if modelcost else (sorted(models)[0] if models else "")
     return {"project": proj or "claude-code", "day": primary, "models": sorted(models), "cost": round(cost, 4),
-            "turns": turns, "tools": tools, "files": files, "prompt": prompt, "branch": branch}
+            "turns": turns, "tools": tools, "files": files, "prompt": prompt, "branch": branch,
+            "in_tok": in_tok, "out_tok": out_tok, "model": dominant}
 
 
 def work(by="week", days=None):
@@ -364,6 +416,8 @@ def main(argv=None):
             by = argv[argv.index("--by") + 1]
         except IndexError:
             pass
+    if sub == "classify":                               # classify sessions into org→team×project (caged, est-first)
+        return classify(run="--run" in argv, days=days, recls="--reclassify" in argv)
     if sub == "work":                                   # conversation-derived work rows, bucketed by period
         return work(by=by, days=days)
     if sub == "story":                                  # caged narrative + private work-insights (estimate-first)

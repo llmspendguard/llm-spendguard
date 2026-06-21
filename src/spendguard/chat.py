@@ -26,7 +26,8 @@ _KEYCHAIN_SERVICE = "Claude Safe Storage"
 _BASE = "https://claude.ai/api"
 _DETAIL_Q = "?tree=True&rendering_mode=messages&render_all_tools=true"
 _UNCLASSIFIED = "claude-chat"        # placeholder project until `chat classify` assigns the real one
-_DIGEST_V = 3                        # bump → re-digest cached convs on next refresh (preserves classification)
+_DIGEST_V = 4                        # bump → re-digest cached convs on next refresh (preserves classification)
+_IMG_EXT = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".heic", ".svg")
 _UA = os.environ.get("SPENDGUARD_CHAT_UA") or (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/126.0.0.0 Safari/537.36")
@@ -178,14 +179,35 @@ def _clean_summary(s):
     return _re.sub(r"\s+", " ", s).strip()
 
 
+def _is_image(d):
+    fk = str(d.get("file_kind") or d.get("file_type") or "").lower()
+    return "image" in fk or str(d.get("file_name") or "").lower().endswith(_IMG_EXT)
+
+
+def _img_tokens():
+    """Per-image VISION input-token estimate. claude.ai exposes no dimensions/usage, so a flat estimate (config
+    chat.image_tokens, default 1500 ≈ a mid-size image) — slide/screenshot-heavy work is otherwise badly undercounted
+    (image attachments carry NO extracted_content, so text-length counts ~none of their vision tokens)."""
+    try:
+        return int(config._cfg_get("chat", "image_tokens", 1500) or 1500)
+    except Exception:
+        return 1500
+
+
 def _content_toks(m):
     """(input_toks, output_toks) for ONE message across ALL content — the heavy claude.ai work lives outside `.text`
-    (often empty): uploaded files REVIEWED (`attachments.extracted_content`) = input; files GENERATED/EDITED via
-    tools (`tool_use`) + thinking = output; tool RESULTS fed back (`tool_result`) = input."""
+    (often empty): uploaded files REVIEWED (`attachments.extracted_content`) + IMAGES (vision) = input; files
+    GENERATED/EDITED via tools (`tool_use`) + thinking = output; tool RESULTS fed back (`tool_result`) = input."""
     sender = m.get("sender")
     in_t = out_t = 0
+    imgtok = _img_tokens()
     for a in (m.get("attachments") or []):                 # uploaded files reviewed → input context
         in_t += _toklen(a.get("extracted_content") or "")
+        if _is_image(a):                                   # image attachment (no extracted text) → vision tokens
+            in_t += imgtok
+    for f in (m.get("files") or []):                       # claude.ai `files` carry the uploaded IMAGES (slide shots…)
+        if _is_image(f):
+            in_t += imgtok
     blocks = m.get("content") if isinstance(m.get("content"), list) else None
     if blocks:
         for b in blocks:

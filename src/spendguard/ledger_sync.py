@@ -154,14 +154,15 @@ def reconcile_into_ledger(since=None):
         proj = (conv._project_of(links[bid].get("snippet", "")) if bid in links else "") or \
                (conv._project_of(b2i[bid]) if b2i.get(bid) else "") or ""
         prov_by_proj[(proj or fallback, day)] = prov_by_proj.get((proj or fallback, day), 0.0) + cost
-    # match by PROJECT TOTAL, not (project, day): provider-billing day ≠ gate-record day, so a per-day match
-    # would fail to subtract the gate-attributed spend and double-count it. Record each project's gap on its
-    # latest provider day.
-    prov_proj_total, prov_proj_day = {}, {}
+    # match by PROJECT TOTAL, not (project, day): provider-billing day ≠ gate-record day, so a per-day match would
+    # fail to subtract the gate-attributed spend and double-count it. But the gap must be DATED correctly (else
+    # day/week/month/quarter periods are wrong) → SPREAD each project's NET gap across its actual provider-usage
+    # days, proportional to provider $/day. Spreading the NET (not re-matching) avoids the per-day double-count.
+    prov_proj_total, prov_proj_days = {}, {}
     for (proj, day), pv in prov_by_proj.items():
         prov_proj_total[proj] = prov_proj_total.get(proj, 0.0) + pv
-        if day > prov_proj_day.get(proj, ""):
-            prov_proj_day[proj] = day
+        prov_proj_days.setdefault(proj, {})
+        prov_proj_days[proj][day] = prov_proj_days[proj].get(day, 0.0) + pv
     gate_proj_total = {}
     for (proj, _day), gv in budget.gate_by_project_day(kind="batch", since=since).items():
         gate_proj_total[proj] = gate_proj_total.get(proj, 0.0) + gv
@@ -172,7 +173,12 @@ def reconcile_into_ledger(since=None):
     for proj, pv in prov_proj_total.items():
         gap = pv - gate_proj_total.get(proj, 0.0)             # provider billed more than the gate saw for this project
         if gap > 0.01:
-            budget.record_reconciled(prov_proj_day.get(proj, since), "(reconciled)", gap, project=proj)
+            days = prov_proj_days.get(proj, {})
+            tot = sum(days.values()) or 1.0
+            for day, v in sorted(days.items()):              # spread the net gap across actual usage days (dated correctly)
+                share = gap * (v / tot)
+                if share > 0.005:
+                    budget.record_reconciled(day, "(reconciled)", round(share, 6), project=proj)
             gap_usd += gap
             gap_rows += 1
             by_project[proj] = round(gap, 2)
