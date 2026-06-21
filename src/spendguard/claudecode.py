@@ -130,26 +130,33 @@ def update(st=None):
     return st, {"sessions_updated": touched, "new_lines": added_lines, "new_cost": round(added_cost, 4)}
 
 
-def show():
+def show(days=None):
     st, passinfo = update()
     _save_state(st)
-    spend = [v for v in st["ledger"].values() if not v.get("_work")]
+    cutoff = None
+    if days:
+        cutoff = (datetime.date.today() - datetime.timedelta(days=int(days))).isoformat()
+    spend = [v for v in st["ledger"].values() if not v.get("_work") and (not cutoff or v["day"] >= cutoff)]
     work = [v for v in st["ledger"].values() if v.get("_work")]
     byproj = {}
     for r in spend:
         p = byproj.setdefault(r["project"], {"cost": 0.0, "turns": 0, "models": set()})
         p["cost"] += r["cost"]; p["turns"] += r["turns"]; p["models"].add(r["model"])
     total = sum(p["cost"] for p in byproj.values())
-    print(f"Claude Code spend (from {st and len(st['sessions'])} sessions; +{passinfo['new_lines']} new lines this pass):\n")
-    print(f"  {'project':<22}{'$ spend':>10}{'turns':>9}  models")
+    span = sorted(r["day"] for r in spend)
+    rng = f"{span[0]} → {span[-1]} ({len(set(span))} days)" if span else "no data"
+    print(f"Claude Code USAGE VALUE — {len(st['sessions'])} sessions · {rng}{' · last %sd' % days if days else ' · ALL-TIME'}\n")
+    print(f"  {'project':<22}{'value $':>10}{'turns':>9}  models")
     for proj, p in sorted(byproj.items(), key=lambda x: -x[1]["cost"]):
         wk = next((w for w in work if w["project"] == proj), None)
         print(f"  {proj[:21]:<22}{('$%.2f' % p['cost']):>10}{p['turns']:>9}  {', '.join(sorted(m for m in p['models'] if m))[:40]}")
         if wk:
             tools = ", ".join(f"{k}×{v}" for k, v in sorted(wk["tools"].items(), key=lambda x: -x[1])[:5])
             print(f"  {'':<22}└ work: {tools}  ·  {len(wk['files'])} files touched")
-    print(f"\n  {'TOTAL':<22}{('$%.2f' % total):>10}")
-    print("  (spend ≈ tokens × canonical pricing; `claude-code sync` pushes it to the dashboard as channel=claude-code)")
+    print(f"\n  {'TOTAL VALUE':<22}{('$%.2f' % total):>10}")
+    print("  ⚠ this is USAGE VALUE (tokens × API pricing) — what it WOULD cost at API rates, NOT $ billed. On a")
+    print("    subscription it's covered by the flat plan: \"~$X of value for your $Y/mo plan\". `claude-code sync`")
+    print("    pushes it as channel=claude-code, billed=false, so the dashboard keeps it OUT of actual spend.")
     return 0
 
 
@@ -166,7 +173,8 @@ def day_totals(member_ref, project_filter=None):
         if project_filter is not None and proj not in project_filter:
             continue
         out.append({"day": r["day"], "provider": "anthropic", "model": r["model"], "kind": "workload",
-                    "channel": "claude-code", "spend_micros": round(r["cost"] * 1_000_000),
+                    "channel": "claude-code", "billed": False,    # USAGE VALUE, not $ billed — keep OUT of spend totals
+                    "spend_micros": round(r["cost"] * 1_000_000),
                     "calls": r["turns"], "in_tok": r["in_tok"], "out_tok": r["out_tok"],
                     "member_ref": member_ref, "project": proj})
     return out
@@ -204,4 +212,10 @@ def main(argv=None):
     if sub == "sync":
         print("claude-code sync:", sync(dry="--dry" in argv))
         return 0
-    return show()
+    days = None
+    if "--days" in argv:
+        try:
+            days = int(argv[argv.index("--days") + 1])
+        except (ValueError, IndexError):
+            pass
+    return show(days=days)
