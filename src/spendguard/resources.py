@@ -11,9 +11,39 @@ import json
 import os
 import pathlib
 import time
+import re
+import collections
 import urllib.request
 
 from . import config
+
+_GPU_KW = re.compile(r"vast\.?ai|gpu\b|gliner|h100|h200|a100|3090|4090|cuda|fine-?tun|train(?:ing)?\b|"
+                     r"embed.*batch|checkpoint|epoch", re.I)
+
+
+def _gpu_alignment(since):
+    """Days that actually had GPU work (chat + code signals mentioning vast.ai / GLiNER / training / H100 …) →
+    {day: weight}. vast.ai exposes no per-day consumption, so we attribute the historical destroyed-instance gap by
+    ALIGNMENT to when GPU work happened — not lumped on the reconcile day."""
+    w = collections.Counter()
+    try:
+        from . import chat
+        for c in chat._load_state().get("convs", {}).values():
+            blob = (c.get("title", "") + " " + c.get("summary", "") + " " + c.get("first_user", "")).lower()
+            if _GPU_KW.search(blob):
+                for day in (c.get("days") or {}):
+                    if day >= since:
+                        w[day] += 1
+    except Exception:
+        pass
+    try:
+        from . import claudecode
+        for d in claudecode._session_digests():
+            if d.get("day", "") >= since and _GPU_KW.search((d.get("prompt") or "").lower()):
+                w[d["day"]] += 1
+    except Exception:
+        pass
+    return w
 
 VAST_BASE = "https://console.vast.ai/api/v0"
 
@@ -57,6 +87,58 @@ def instances():
     return d.get("instances", d) if isinstance(d, dict) else (d or [])
 
 
+def _history_path():
+    return config.HOME / "resources_history.json"
+
+
+def _load_history():
+    try:
+        return json.loads(_history_path().read_text())
+    except Exception:
+        return {}
+
+
+def snapshot():
+    """Record each LIVE instance's reconstruction state (id → gpu/dph/start/end/label/last_seen), so DESTROYED
+    instances stay reconstructable per-day. vast.ai exposes NO per-day consumption AND drops destroyed instances
+    from the API (the invoice/CSV export is top-ups only) — so we must persist their state while they're live.
+    Idempotent (latest state per id). Runs on every `saas sync` + can be cron'd (`resources snapshot`)."""
+    hist = _load_history()
+    now = time.time()
+    rec = 0
+    for i in instances():
+        iid = str(i.get("id") or "")
+        if not iid or not float(i.get("dph_total") or 0) or not i.get("start_date"):
+            continue
+        hist[iid] = {"id": i.get("id"), "gpu_name": i.get("gpu_name"), "dph_total": float(i.get("dph_total") or 0),
+                     "start_date": i.get("start_date"), "end_date": i.get("end_date"),
+                     "label": i.get("label") or "", "status": i.get("actual_status"), "last_seen": now}
+        rec += 1
+    try:
+        config.HOME.mkdir(parents=True, exist_ok=True)
+        _history_path().write_text(json.dumps(hist))
+    except Exception:
+        pass
+    return {"recorded": rec, "total_tracked": len(hist)}
+
+
+def _all_instances():
+    """Live instances UNION recorded history — so destroyed instances (gone from the API) are reconstructed from
+    their last snapshot. Live state overrides history; a destroyed instance's runtime is capped at last_seen."""
+    live = {str(i.get("id")): i for i in instances() if i.get("id")}
+    merged = []
+    hist = _load_history()
+    for iid, h in hist.items():
+        if iid in live:
+            continue
+        h = dict(h)
+        if not h.get("end_date"):                          # destroyed while running → cap at last seen
+            h["end_date"] = h.get("last_seen")
+        merged.append(h)
+    merged.extend(live.values())
+    return merged
+
+
 def gpu_rows(now=None, label_map=None):
     """Per (project, gpu) cumulative GPU cost-to-date from CURRENTLY-visible instances, attributed by label.
     cost = dph_total × hours since start (running → now; exited keeps its last-seen runtime). Destroyed
@@ -64,7 +146,7 @@ def gpu_rows(now=None, label_map=None):
     the LLM unattributed gap). Returns rows ready to map into ledger pushes."""
     now = now or time.time()
     agg = {}
-    for i in instances():
+    for i in _all_instances():
         dph = float(i.get("dph_total") or 0)
         start = i.get("start_date") or 0
         if not dph or not start:
@@ -103,7 +185,7 @@ def gpu_rows_by_day(since_ts=None, now=None, label_map=None):
     now = now or time.time()
     since_ts = since_ts if since_ts is not None else _month_start_ts()
     agg = {}
-    for i in instances():
+    for i in _all_instances():
         dph = float(i.get("dph_total") or 0)
         start = i.get("start_date") or 0
         if not dph or not start:
@@ -177,6 +259,7 @@ def sync(dry=False):
     c = saas.conn()
     proj = (c.get("project") or budget._project() or "").lower()
     ref = saas.contributor()
+    snapshot()                                             # RECORD live instances first (so destroyed ones survive)
     allrows = gpu_rows_by_day()
     day_totals = [{
         "day": r["day"], "provider": "vastai", "model": r["gpu"], "kind": "gpu", "channel": "realtime",
@@ -195,11 +278,20 @@ def sync(dry=False):
         if len(projs_present) <= 1:
             gap = round(account_gpu_total() - sum(r["cost"] for r in allrows), 2)
             if gap > 0.5:
-                day_totals.append({
-                    "day": datetime.date.today().isoformat(), "provider": "vastai", "model": "(destroyed/untracked)",
-                    "kind": "gpu", "channel": "realtime", "spend_micros": round(gap * 1_000_000), "calls": 0,
-                    "member_ref": ref, "project": proj, "tags": f"remote-compute,gpu,destroyed,{proj}",
-                })
+                # The remaining gap = instances destroyed BEFORE we started snapshotting (unrecoverable from vast.ai).
+                # DATE it by aligning to GPU-work days (not lumped on today); shrinks to ~0 as snapshot() records.
+                since = datetime.date.fromtimestamp(_month_start_ts()).isoformat()
+                align = _gpu_alignment(since)
+                tot = sum(align.values())
+                model = "(pre-recording, aligned)" if tot else "(destroyed/untracked)"
+                spread = ([(day, gap * w / tot) for day, w in align.items()] if tot
+                          else [(datetime.date.today().isoformat(), gap)])
+                for day, amt in spread:
+                    if amt > 0.005:
+                        day_totals.append({
+                            "day": day, "provider": "vastai", "model": model, "kind": "gpu", "channel": "realtime",
+                            "spend_micros": round(amt * 1_000_000), "calls": 0, "member_ref": ref, "project": proj,
+                            "tags": f"remote-compute,gpu,reconstructed,{proj}"})
     for row in day_totals:                                # per-row id, local↔server cross-check (gpu rows too)
         row["uid"] = saas._row_uid(row)
     payload = {"visibility": c.get("visibility"), "day_totals": day_totals}
@@ -219,6 +311,9 @@ def sync(dry=False):
 def cmd(argv=None):
     argv = argv or []
     sub = argv[0] if argv else "show"
+    if sub == "snapshot":                                  # record live instances → history (cron this; runs on sync too)
+        print("resources snapshot:", snapshot())
+        return 0
     if sub == "sync":
         print("resources sync:", sync(dry="--dry" in argv))
         return 0
