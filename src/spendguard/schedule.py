@@ -73,7 +73,11 @@ def _windows(interval, remove):
         subprocess.run(["schtasks", "/delete", "/tn", "SpendguardSync", "/f"], capture_output=True)
         return {"removed": True, "scheduler": "schtasks"}
     sc = "DAILY" if interval == "daily" else "HOURLY"
-    r = subprocess.run(["schtasks", "/create", "/tn", "SpendguardSync", "/sc", sc, "/tr", " ".join(_cmd()), "/f"],
+    # Task Scheduler re-splits the /tr string on spaces, so the python path (commonly "C:\\Program Files\\...")
+    # MUST be quoted or the task fails to start. Quote the executable; the rest of the argv has no spaces.
+    exe, *rest = _cmd()
+    tr = " ".join([f'"{exe}"', *rest])
+    r = subprocess.run(["schtasks", "/create", "/tn", "SpendguardSync", "/sc", sc, "/tr", tr, "/f"],
                        capture_output=True, text=True)
     return {"installed": "schtasks", "scheduler": "schtasks", "interval": interval, "ok": r.returncode == 0}
 
