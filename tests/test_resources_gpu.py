@@ -73,5 +73,21 @@ resources.record_recovered({"id": 99, "gpu_name": "H100 SXM", "dph_total": 3.61,
                             "start_date": now - 2 * 86400, "end_date": now - 1 * 86400, "label": "healiom_gpu_h100"})
 ck("record_recovered: destroyed box enters _all_instances", "99" in {str(i.get("id")) for i in resources._all_instances()})
 
+# ── discovery: the deterministic parsing layer under the agentic LLM read (tolerant id/gpu/dph extraction) ────────
+resources.project_of = lambda label, label_map=None: ("lmm" if "healiom" in (label or "").lower()
+                                                      else "manga2anime" if "m2a" in (label or "").lower() else "")
+obj = ('{"id": 40272086, "gpu_name": "H100 SXM", "dph_total": 3.61, "start_date": 1781000000, '
+       '"end_date": 1781100000, "label": "healiom_gpu_h100", "actual_status": "exited"}')
+o1 = resources._parse_instances(obj, seen_ts=1781100000)
+ck("_parse_instances: API object → id+gpu+dph+end", o1 and o1[0]["id"] == "40272086" and o1[0]["dph_total"] == 3.61 and o1[0].get("end_date") == 1781100000)
+o2 = resources._parse_instances("id=41120359 GTX 1070 Ti status=running $0.099/hr label=m2a-kr", seen_ts=1781000000)
+ck("_parse_instances: formatted print → id+gpu+label", o2 and o2[0]["id"] == "41120359" and o2[0].get("label") == "m2a-kr")
+# _consolidate classifies by RUNTIME CERTAINTY: real exit → complete ($ reconstructable); running-only → identity
+c1 = resources._consolidate(o1, now=1781200000)
+ck("_consolidate: real start+exit → complete + project from label", len(c1["complete"]) == 1 and c1["complete"][0]["project"] == "lmm")
+c2 = resources._consolidate(o2, now=1781200000)
+ck("_consolidate: running box (no real exit) → identity_only, runtime NOT fabricated",
+   len(c2["identity_only"]) == 1 and c2["identity_only"][0]["project"] == "manga2anime" and c2["identity_only"][0]["end_date"] is None)
+
 print(("\n[FAIL] " if fails else "\n[OK] ") + f"resources_gpu: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

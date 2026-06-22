@@ -11,6 +11,10 @@ import json
 import os
 import pathlib
 import time
+import re
+import glob
+import collections
+import datetime
 import urllib.request
 
 from . import config
@@ -233,6 +237,217 @@ def compute_exceeded():
     return None
 
 
+def _parse_instances(text, seen_ts=None):
+    """Extract vast.ai instance records mentioned in a transcript TEXT blob — the API responses are right there in
+    the conversation (the assistant queried vast.ai). Tolerant of API JSON, python-repr, and formatted prints.
+    Returns [{id, gpu_name?, dph_total?, start_date?, end_date?, label?, status?, seen_ts}]. PURE → testable."""
+    out = []
+    # form A — an instance object (anchor on dph_total; pull fields from the window around it; ' or " quoting)
+    for m in re.finditer(r"dph_total", text):
+        w = text[max(0, m.start() - 400):m.start() + 400]
+        idm = re.search(r"['\"]?(?:id|new_contract)['\"]?\s*[:=]\s*(4\d{7})", w)
+        if not idm:
+            continue
+        rec = {"id": idm.group(1), "seen_ts": seen_ts}
+        g = re.search(r"['\"]?gpu_name['\"]?\s*[:=]\s*['\"]([^'\",}]+)", w)
+        if g:
+            rec["gpu_name"] = g.group(1).strip()
+        d = re.search(r"['\"]?dph_total['\"]?\s*[:=]\s*([0-9.]+)", w)
+        if d:
+            rec["dph_total"] = float(d.group(1))
+        s = re.search(r"['\"]?start_date['\"]?\s*[:=]\s*([0-9.]+)", w)
+        if s:
+            rec["start_date"] = float(s.group(1))
+        e = re.search(r"['\"]?end_date['\"]?\s*[:=]\s*([0-9.]+)", w)
+        if e:
+            rec["end_date"] = float(e.group(1))
+        lb = re.search(r"['\"]?label['\"]?\s*[:=]\s*['\"]?([A-Za-z0-9_\-]+)", w)
+        if lb and lb.group(1) not in ("None", "null"):
+            rec["label"] = lb.group(1)
+        st = re.search(r"['\"]?(?:actual_status|cur_state)['\"]?\s*[:=]\s*['\"]?(\w+)", w)
+        if st:
+            rec["status"] = st.group(1)
+        out.append(rec)
+    # form B — a formatted print: "id=40272086 H100 SXM status=running $3.61/hr label=foo"
+    for m in re.finditer(r"id=(4\d{7})\s+([A-Za-z0-9 ]+?)\s+(?:x\d+\s+)?(?:status=(\w+)\s+)?\$([0-9.]+)\s*/\s*hr(?:\s+label=(\S+))?", text):
+        rec = {"id": m.group(1), "gpu_name": m.group(2).strip(), "dph_total": float(m.group(4)), "seen_ts": seen_ts}
+        if m.group(3):
+            rec["status"] = m.group(3)
+        if m.group(5) and m.group(5) not in ("None", "null"):
+            rec["label"] = m.group(5)
+        out.append(rec)
+    return out
+
+
+def _consolidate(observations, now=None):
+    """Merge per-instance observations (from _parse_instances) into one record each, and classify by RUNTIME
+    CERTAINTY. Transcripts are not telemetry: a box "mentioned" later isn't running then, so observation/mention
+    timestamps must NOT bound runtime (that inflated an H100 to $980). So:
+      - IDENTITY (id, gpu_name, dph_total, label, real start_date) — reliable from the API objects in transcripts.
+      - END — trusted ONLY from a real `end_date` < now (an exited box reports it). Far-future contract ends are
+        ignored. A box never seen with a real end → runtime UNKNOWN.
+    Returns {complete: [...with real start+end → $ reconstructable], identity_only: [...box existed, runtime
+    unknown → surface, don't fabricate $]}."""
+    now = now or time.time()
+    agg = {}
+    for r in observations:
+        a = agg.setdefault(r["id"], collections.defaultdict(list))
+        for k in ("gpu_name", "dph_total", "start_date", "end_date", "label", "status"):
+            if r.get(k) is not None:
+                a[k].append(r[k])
+    complete, identity = [], []
+    for iid, a in agg.items():
+        dph = max(a["dph_total"]) if a["dph_total"] else None
+        if not dph:                                          # need at least a rate to be a real instance, not noise
+            continue
+        gpu = collections.Counter(a["gpu_name"]).most_common(1)[0][0] if a["gpu_name"] else "?"
+        label = collections.Counter(a["label"]).most_common(1)[0][0] if a["label"] else ""
+        starts = [s for s in a["start_date"] if 0 < s < now]
+        real_ends = [e for e in a["end_date"] if e and e < now + 3600]   # exited boxes only; ignore contract ends
+        base = {"id": iid, "gpu_name": gpu, "dph_total": dph, "label": label, "project": project_of(label),
+                "start_date": min(starts) if starts else None}
+        if starts and real_ends and max(real_ends) > min(starts):
+            complete.append({**base, "end_date": max(real_ends)})    # real start + real exit → $ reconstructable
+        else:
+            identity.append({**base, "end_date": None, "runtime": "unknown (transcripts ≠ telemetry)"})
+    return {"complete": complete, "identity_only": identity}
+
+
+def discover(record=False, now=None):
+    """Mine ALL Claude Code transcripts for vast.ai instance records and reconstruct boxes the snapshot recorder
+    never captured (destroyed before recording began) — from REAL API data in the conversations, not estimates.
+    record=True → record_recovered any instance not already live/in-history, so the account reconcile auto-fills
+    (no hand-written recovery scripts). This makes destroyed-box recovery part of the sync/reconcile PROCESS."""
+    from . import claudecode
+    obs = []
+    for path in glob.glob(os.path.join(claudecode._projects_dir(), "**", "*.jsonl"), recursive=True):
+        try:
+            for ln in open(path, errors="ignore"):
+                if "dph_total" not in ln and "/hr" not in ln:
+                    continue
+                ts = None
+                mt = re.search(r'"timestamp":"(20\d\d-\d\d-\d\dT[\d:]+)', ln)
+                if mt:
+                    try:
+                        ts = datetime.datetime.fromisoformat(mt.group(1)).replace(tzinfo=datetime.timezone.utc).timestamp()
+                    except Exception:
+                        ts = None
+                obs.extend(_parse_instances(ln, ts))
+        except Exception:
+            continue
+    con = _consolidate(obs, now=now)
+    known = {str(i.get("id")) for i in _all_instances()}
+    recorded = []
+    if record:                                              # only RUNTIME-CERTAIN boxes (real exit) → no fabricated $
+        for i in con["complete"]:
+            if str(i["id"]) in known:
+                continue
+            record_recovered({k: v for k, v in i.items() if k != "project"} | {"source": "recovered-discovered"})
+            recorded.append(i["id"])
+    # per-project summary of every box discovered (identity is reliable even when runtime isn't) → confirms the
+    # account's tenants/split + flags destroyed boxes whose $ must come from the account anchor, not transcripts.
+    by_proj = collections.Counter()
+    for i in con["complete"] + con["identity_only"]:
+        by_proj[i["project"] or "(unlabeled)"] += 1
+    uncaptured = [i for i in con["complete"] + con["identity_only"] if str(i["id"]) not in known]
+    return {"complete": con["complete"], "identity_only": con["identity_only"], "recorded": recorded,
+            "by_project": dict(by_proj), "uncaptured": uncaptured}
+
+
+_GPU_DISCOVER_SYS = ("You read software-engineering session transcripts and extract VAST.AI GPU INSTANCE facts for "
+                     "cost attribution. CRITICAL: distinguish instances that were ACTUALLY rented/run from mere "
+                     "discussion, planning, or offer-browsing (scanning GPUs available to rent). Only report real "
+                     "rented instances. 'mentioned in a later message' does NOT mean it was running then.")
+
+_GPU_DISCOVER_PROMPT = """From these excerpts of ONE session, list every vast.ai GPU instance ACTUALLY launched/run
+(not offers browsed, not hypotheticals). Per instance give JSON fields:
+ id (vast instance/contract id, ~8 digits) · gpu (e.g. "H100 SXM") · dph (float $/hr) · label (or "") ·
+ project (infer: healiom_*/gliner/sapbert/clinical/A100-embedding → "lmm"; m2a/manga/anime/H200-training/fleet →
+ "manga2anime"; else "") · launched ("YYYY-MM-DD" or null) · destroyed ("YYYY-MM-DD", "running", or null) ·
+ runtime_hours (best estimate of ACTUAL run time, or null) · confidence (0-100 it was a real rented instance).
+Return ONLY JSON: {"instances":[...]}. Excerpts:
+%s"""
+
+
+def _gpu_session_excerpts(max_sessions=None, max_chars=12000):
+    """Cheap deterministic PRE-FILTER for the agentic pass: per transcript, gather the HIGH-SIGNAL vast.ai instance
+    lines — launches (new_contract), instance objects (dph_total/gpu_name/start_date), formatted prints
+    (id=… $/hr), and teardowns (destroy/stopped) — into a bounded excerpt. (Generic 'gpu'/'instance' prose is
+    skipped; it's noise that buried the real data in the first cut.) Returns [(session_id, excerpt)] for sessions
+    that actually rented GPUs, so the LLM reads the lifecycle, not chatter."""
+    from . import claudecode
+    sig = re.compile(r"dph_total|new_contract|gpu_name|id=4\d{7}|\$\s*[0-9.]+\s*/\s*hr|"
+                     r"status\s*[:=]\s*(?:running|exited)|destroy|stopped|--label\s|start_date", re.I)
+    gate = re.compile(r"dph_total|new_contract", re.I)        # session must carry REAL instance data
+    out = []
+    for path in sorted(glob.glob(os.path.join(claudecode._projects_dir(), "**", "*.jsonl"), recursive=True)):
+        sid = os.path.basename(path).replace(".jsonl", "")
+        buf, n, has = [], 0, False
+        try:
+            for ln in open(path, errors="ignore"):
+                if gate.search(ln):
+                    has = True
+                if n < max_chars and sig.search(ln):
+                    seg = re.sub(r"\x1b\[[0-9;]*m", "", ln)[:800]
+                    buf.append(seg)
+                    n += len(seg)
+        except Exception:
+            continue
+        if has and buf:
+            out.append((sid, "\n".join(buf)[:max_chars]))
+    out.sort(key=lambda x: -len(x[1]))
+    return out[:max_sessions] if max_sessions else out
+
+
+def discover_agentic(run=False, record=False, max_sessions=None, now=None):
+    """AGENTIC GPU discovery — a caged LLM reads the GPU-relevant transcript excerpts and extracts real instance
+    lifecycle + attribution (id/gpu/dph/label/project/launched/destroyed/runtime/confidence). This is what the
+    brittle regex `_parse_instances` could NOT do: tell a real run from discussion/offers, infer destroy dates,
+    map labels→projects. Caged + estimate-first (run=False → cost only). record=True → record_recovered the
+    confidently-real, not-already-known instances so the account reconcile auto-fills. Same agentic pattern as
+    attribution.classify_items / conv.attribute_usage — the shared 'LLM reads conversations to attribute spend'."""
+    from . import adapters, calls, ui, pricing
+    sessions = _gpu_session_excerpts(max_sessions)
+    model = config.advisor_model()
+    est = sum(pricing.realtime_cost(model, max(1, len(_GPU_DISCOVER_SYS + (_GPU_DISCOVER_PROMPT % ex)) // 4), 800)
+              for _, ex in sessions)
+    if not run:
+        ui.estimate_only(action=f"agentic GPU discovery: LLM reads {len(sessions)} GPU-active sessions", cost=est)
+        return {"sessions": len(sessions), "est_cost": round(est, 4), "instances": []}
+    merged = {}
+    for sid, ex in sessions:
+        with calls.context(intent="spendguard:gpu_discover"):
+            r = adapters.call(model, _GPU_DISCOVER_PROMPT % ex, max_tokens=1500, system=_GPU_DISCOVER_SYS)
+        if r.get("error"):
+            continue
+        m = re.search(r"\{.*\}", r.get("text", ""), re.S)
+        try:
+            items = (json.loads(m.group(0)).get("instances") if m else []) or []
+        except Exception:
+            items = []
+        for it in items:
+            iid = str(it.get("id") or "").strip()
+            if not re.fullmatch(r"\d{6,9}", iid) or int(it.get("confidence") or 0) < 60:
+                continue
+            prev = merged.get(iid)
+            if not prev or int(it.get("confidence") or 0) > int(prev.get("confidence") or 0):
+                merged[iid] = {**it, "id": iid, "project": (it.get("project") or project_of(it.get("label")) or "").lower()}
+    insts = list(merged.values())
+    recorded = []
+    if record:
+        known = {str(i.get("id")) for i in _all_instances()}
+        for it in insts:
+            if it["id"] in known or not it.get("dph") or not it.get("runtime_hours"):
+                continue
+            end = now or time.time()
+            start = end - float(it["runtime_hours"]) * 3600
+            record_recovered({"id": it["id"], "gpu_name": it.get("gpu") or "?", "dph_total": float(it["dph"]),
+                              "start_date": start, "end_date": end, "label": it.get("label") or it["project"],
+                              "source": "recovered-agentic", "confidence": it.get("confidence")})
+            recorded.append(it["id"])
+    return {"sessions": len(sessions), "instances": insts, "recorded": recorded}
+
+
 def _reconcile(allrows, account_total, conn, ptmap):
     """Account-anchored, label-attributed GPU reconcile (PURE → testable). Every row's project comes from its
     instance LABEL (the GPU ground truth); `ptmap` maps project → (org, team). This connection pushes ONLY its own
@@ -320,6 +535,16 @@ def cmd(argv=None):
         return 0
     if sub == "sync":
         print("resources sync:", sync(dry="--dry" in argv))
+        return 0
+    if sub == "discover":                                  # mine transcripts → destroyed-box identity + attribution
+        if "--agentic" in argv:                            # LLM reads conversations (caged, estimate-first)
+            r = discover_agentic(run="--run" in argv, record="--record" in argv)
+            import collections as _c
+            byp = _c.Counter((i.get("project") or "(unattributed)") for i in r.get("instances", []))
+            print(f"agentic discover: {len(r.get('instances', []))} instances over {r['sessions']} sessions; by project {dict(byp)}; recorded {len(r.get('recorded', []))}")
+        else:                                              # free deterministic identity scan
+            r = discover(record="--record" in argv)
+            print(f"discover: by project {r['by_project']}; {len(r['uncaptured'])} uncaptured; recorded {len(r['recorded'])}")
         return 0
     # show: per-project attributed + the account reconcile gap
     rows = gpu_rows_by_day()
