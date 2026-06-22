@@ -122,11 +122,26 @@ def _otel(event):
     span.end()
 
 
+EVENT_V = 1   # event-envelope version — lets a consumer branch on shape as the event evolves
+
+
+def envelope(event):
+    """Normalize an event into the standard message envelope: { v, type, id, ts, ...payload }. PURE + tolerant —
+    fills any missing envelope field, preserves everything else, never raises. `type` defaults from the event's
+    `kind` (batch|realtime|…) so existing emitters need no change; `id` is a unique event id; `ts` is UTC ISO."""
+    import uuid
+    e = dict(event or {})
+    e.setdefault("v", EVENT_V)
+    e.setdefault("type", e.get("kind") or "event")
+    e.setdefault("id", uuid.uuid4().hex)
+    e.setdefault("ts", datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"))
+    return e
+
+
 def emit(event):
     """Best-effort fan-out. NEVER raises (observability must not break enforcement)."""
     try:
-        event = dict(event)
-        event.setdefault("ts", datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"))
+        event = envelope(event)   # versioned, typed, id'd, timestamped envelope (tolerant — preserves payload)
         for fn in list(_callbacks):
             try:
                 fn(event)
