@@ -185,41 +185,9 @@ def batch_links(tdir=None):
     return links
 
 
-def batch_context(batch_id, turns=10, maxchars=3500, tdir=None):
-    """The real pre/post conversation context for a batch: up to `turns` message turns BEFORE and AFTER the batch
-    was first mentioned in its transcript — the 'why before / outcome after', not just a one-line snippet. Each
-    side capped at maxchars. Returns {before, at, after} (empty if the batch isn't in any transcript)."""
-    info = batch_links(tdir).get(batch_id)
-    if not info:
-        return {"before": "", "at": "", "after": ""}
-    try:
-        lines = open(info["path"], errors="ignore").read().splitlines()
-    except Exception:
-        return {"before": "", "at": "", "after": ""}
-    seq, hit = [], None
-    for ln in lines:
-        try:
-            obj = json.loads(ln)
-        except Exception:
-            continue
-        txt = _text_of(obj)
-        if not txt:
-            continue
-        role = obj.get("type") or (obj.get("message") or {}).get("role") or "?"
-        seq.append((role, " ".join(txt.split())))
-        if hit is None and batch_id in txt:
-            hit = len(seq) - 1
-    if hit is None:
-        return {"before": "", "at": "", "after": ""}
-    fmt = lambda chunk: "\n".join(f"[{r}] {t}" for r, t in chunk)[-maxchars:]
-    return {"before": fmt(seq[max(0, hit - turns):hit]),
-            "at": seq[hit][1][:300],
-            "after": fmt(seq[hit + 1:hit + 1 + turns])[:maxchars]}
-
-
 def batch_contexts(tdir=None, turns=10, maxchars=3500):
     """{batch_id: {conv, before, at, after}} for every batch referenced in a transcript — ONE pass over the files
-    (efficient bulk version of batch_context, for linking the whole corpus). ~`turns` turns before/after each."""
+    (one pass over the transcripts, for linking the whole corpus). ~`turns` turns before/after each."""
     index, _ = build_index(tdir)
     run_ids = _run_ids()
     out = {}

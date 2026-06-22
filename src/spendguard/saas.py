@@ -67,7 +67,13 @@ def _request(method, path, payload=None, timeout=15):
     if not ok:
         raise RuntimeError(f"spendguard SaaS not connected: {reason}")
     c = conn()
-    url = c["url"].rstrip("/") + path
+    base = c["url"].rstrip("/")
+    # The Bearer key (the org identity) rides every request, so the destination must be trusted. `saas_config`
+    # overlays a repo-local `.spendguard.json` walking up the tree — a planted `url` could exfiltrate the key or
+    # SSRF an internal host. Require https:// (localhost exempt for dev) — never send the key in cleartext / to an IP.
+    if not (base.startswith("https://") or base.startswith("http://localhost") or base.startswith("http://127.0.0.1")):
+        raise RuntimeError(f"refusing to send the saas key to a non-https url ({base[:40]}…) — set saas.url to https://")
+    url = base + path
     data = json.dumps(payload).encode() if payload is not None else None
     req = urllib.request.Request(url, data=data, method=method)
     req.add_header("Authorization", f"Bearer {c['api_key']}")

@@ -15,8 +15,14 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
   rollup + taxonomy (no stubs). Slack Canvas push prototyped via MCP.
 - **Shared classifier** (`attribution.py`) — one `org → team × project` classifier + taxonomy for chat AND code
   (claudecode now classifies sessions per-content, not by cwd). `resources.snapshot()` records vast.ai instances so
-  destroyed ones stay reconstructable per-day; the residual gap is conversation-aligned (same mapping LLM batches
-  use), restricted to GPU-capable projects/teams; instance label→project via config `resources.vastai.label_map`.
+  destroyed ones stay reconstructable; instance label→project via config `resources.vastai.label_map`.
+- **Unified reconcile loop** (`reconcile.py`) — every spend source (LLM + GPU; subscription/storage as adapters are
+  added) runs the SAME loop via a `Source` adapter: truth_total − captured = gap → agentic attribution (a caged LLM
+  reads the conversations) → residual, **account-anchored** (only `owns_account` reconciles a shared account) with
+  the unrecoverable remainder surfaced as an **explicit residual** (never dumped on a project/org). `reconcile all`
+  prints the unified view. GPU destroyed-box recovery is now part of this: `resources discover [--agentic]` mines
+  transcripts for instance identity + attribution. (Replaced the earlier conversation-alignment gap-spread, which
+  could leak a shared account's gap cross-org.)
 - **claude.ai chat adapter** (`spendguard chat test|show|discover|classify|work|story|sync|enable`, `chat.py`) —
   **OPT-IN, on-device, macOS** (Path 2). The desktop app caches no conversations locally (it fetches live), so this
   decrypts *your* `sessionKey` cookie (macOS Keychain → PBKDF2 → AES-128-CBC, Chromium format) and calls claude.ai's

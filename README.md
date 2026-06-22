@@ -92,6 +92,7 @@ spendguard saas [status|ping|push|pull]      # opt-in roll-up; partner not super
 # see the money
 spendguard report [--alert-threshold 150] [--email]   # daily/weekly/monthly + ledger-leak alert + top learnings
 spendguard reconcile openai|anthropic [--by-day]      # actual billed batch spend from the provider
+spendguard reconcile all                              # UNIFIED view: every source (LLM+GPU) via one account-anchored loop
 spendguard reconcile-ledger [--since DATE]            # local gate ledger vs provider billing → find LEAKS
 spendguard calls [--intent X]                # per-intent cost + good% + $/good (opt-in corpus)
 spendguard estimate --items N --from-sample f.jsonl --packs 1,30
@@ -116,7 +117,7 @@ spendguard cache-stats | dedup --input f.jsonl --out u.jsonl | dedup-populate   
 # work-done attribution (org → team × project), all sources
 spendguard claude-code [show|sync|classify|work|story]   # mine ~/.claude → Claude Code spend + work (incremental, classified)
 spendguard chat [test|show|discover|classify|loop|work|story|sync|status|accept]   # claude.ai chat adapter (OPT-IN, on-device, macOS)
-spendguard resources [show|snapshot|sync]        # vast.ai GPU → org/team/project (snapshot records destroyed instances)
+spendguard resources [show|snapshot|sync|discover]   # vast.ai GPU → org/team/project (discover [--agentic] recovers destroyed boxes)
 
 # cold start / corpus
 spendguard bootstrap [--repo] [--transcripts]   # mine ALL history → corpus + insights (free, then estimate)

@@ -89,6 +89,25 @@ c2 = resources._consolidate(o2, now=1781200000)
 ck("_consolidate: running box (no real exit) → identity_only, runtime NOT fabricated",
    len(c2["identity_only"]) == 1 and c2["identity_only"][0]["project"] == "manga2anime" and c2["identity_only"][0]["end_date"] is None)
 
+# ── discover_agentic: validates UNTRUSTED LLM output (confidence filter, id-width guard, dedup-by-confidence) ──
+import contextlib as _ctx
+from spendguard import adapters as _adapters, calls as _calls
+resources._gpu_session_excerpts = lambda max_sessions=None: [("sess1", "vast box excerpt")]
+_calls.context = lambda **k: _ctx.nullcontext()
+_adapters.call = lambda *a, **k: {"cost": 0.0, "error": None, "text": (
+    '{"instances":['
+    '{"id":"40272086","gpu":"H100 SXM","dph":3.61,"label":"healiom_gpu_h100","project":"lmm","runtime_hours":24,"confidence":90},'
+    '{"id":"5","gpu":"X","dph":1,"confidence":95},'               # too-short id → rejected by the \\d{6,10} guard
+    '{"id":"40999999","gpu":"A100","dph":1.1,"confidence":40}'    # confidence < 60 → dropped
+    ']}')}
+resources.instances = lambda: []
+_ag = resources.discover_agentic(run=True, record=False, now=now)
+_ids = {i["id"] for i in _ag["instances"]}
+ck("discover_agentic: keeps the valid high-confidence instance", "40272086" in _ids)
+ck("discover_agentic: rejects too-short id (guard)", "5" not in _ids)
+ck("discover_agentic: drops confidence<60", "40999999" not in _ids)
+
+
 # ── phantom-spend guard: a DESTROYED running box (far-future CONTRACT end_date) must be capped at last_seen ──
 # vast.ai sets a running box's end_date to contract-expiry (far future). Once destroyed (gone from live), the old
 # `if not end_date` cap missed it → it accrued dph × every day since, forever. Cap at last_seen instead.
