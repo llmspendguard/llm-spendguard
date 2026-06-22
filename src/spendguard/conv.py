@@ -16,7 +16,7 @@ Two stages:
 
 CLI: `spendguard mine-conv {index,synth} [--transcripts PATH] [--limit N] [--run]`.
 """
-import os, re, json, glob
+import os, re, json, glob, hashlib
 from . import config, calls, learn
 
 _DEFAULT_TDIR = os.path.expanduser("~/.claude/projects")
@@ -123,52 +123,40 @@ def build_index(tdir=None, rebuild=False):
     return out, scanned
 
 
-# NOTE: these keyword patterns are EXAMPLES showing how a snippet's vocabulary → a project tag (two distinct
-# example domains: an NLP/text pipeline and a vision/image pipeline). Adjust them to YOUR projects' domain
-# keywords — the defaults won't match an unrelated codebase.
-_PROJECT_RULES = [
-    ("nlp-pipeline", r"embedding|entity|\bner\b|extract|classif|corpus|ontolog|tokeniz|sentiment"),
-    ("vision-pipeline", r"image|frame|video|segment|detect|caption|render|\bvae\b"),
-]
-
-
-def _project_of(snippet):
-    s = (snippet or "").lower()
-    for proj, pat in _PROJECT_RULES:
-        if re.search(pat, s):
-            return proj
-    return ""
-
-
 def attribute_usage(since="2026-06-01", tdir=None):
-    """Proper accounting: match actual provider USAGE (per-batch cost) to PROJECTS via the conversation that ran
-    each batch (batch id → transcript → content), instead of a blanket 'unattributed' bucket. Uses the
-    timestamps/content already indexed. Returns {total, batches, linked, by_project:{proj:$}}. Free (no spend)."""
+    """Proper accounting: match actual provider USAGE (per-batch cost) to PROJECTS via the AGENTIC per-subconversation
+    attribution — batch id → the segment that ran it → its LLM-classified project (cwd as a prior the LLM confirms).
+    NEVER a regex keyword guess. Reads the cached classification (run `spendguard accounting --run` to refresh it).
+    Returns {total, batches, linked, by_project:{proj:$}}. Free (reads the cache)."""
     from . import backfill
     costs = {}
     for _prov, _model, cost, _it, _ot, day, bid in (backfill._openai_rows() + backfill._anthropic_rows()):
         if (day or "") >= since:
             costs[bid] = costs.get(bid, 0.0) + cost
-    links = batch_links(tdir)
+    bmap = batch_project_map(tdir)
     by_project = {}
     linked = 0
     for bid, c in costs.items():
-        if bid in links:
+        b = bmap.get(bid)
+        if b:
             linked += 1
-            p = _project_of(links[bid]["snippet"]) or "linked-unclear"
+            p = b.get("project") or b.get("prior") or "linked-unclear"
         else:
-            p = "no-conversation"
+            p = "no-conversation"            # batch ran outside any indexed transcript → genuinely no evidence
         by_project[p] = round(by_project.get(p, 0.0) + c, 4)
     return {"total": round(sum(costs.values()), 2), "batches": len(costs), "linked": linked, "by_project": by_project}
 
 
 def attribute_cmd(argv=None):
+    run = "--run" in (argv or [])
+    attribute_segments(run=run)              # run=False → print the estimate (no spend); --run → classify (caged)
     r = attribute_usage()
-    print(f"usage→project by conversation evidence (MTD): ${r['total']:.2f} · {r['batches']} batches · {r['linked']} linked")
+    print(f"usage→project by AGENTIC per-subconversation attribution (MTD): ${r['total']:.2f} · "
+          f"{r['batches']} batches · {r['linked']} linked")
     for p, c in sorted(r["by_project"].items(), key=lambda x: -x[1]):
         pct = (100 * c / r["total"]) if r["total"] else 0
         print(f"  {p:22} ${c:9.2f}  ({pct:.0f}%)")
-    print("  (linked-unclear / no-conversation = candidates for the gated LLM-residual tagger)")
+    print("  (no-conversation = batch ran outside any indexed transcript; `accounting --run` refreshes the LLM pass)")
     return 0
 
 
@@ -183,6 +171,143 @@ def batch_links(tdir=None):
             for bid in ev.get("runs", []):
                 links.setdefault(bid, {"conv": conv, "path": path, "snippet": (ev.get("text") or "")[:200], "ts": ev.get("ts")})
     return links
+
+
+# ─────────────────────────── AGENTIC per-subconversation attribution ───────────────────────────
+# A transcript (one Claude Code session) can span SEVERAL projects. Attribution must therefore work at the
+# SUBCONVERSATION level: split the session at each user ask, and classify each segment on its own — with the
+# repo/cwd as a PRIOR the LLM confirms or overrides (never a regex keyword guess). Spend (a batch id, a realtime
+# span) attributes to the segment that produced it. Magnitude still comes from provider truth; the LLM only decides
+# WHERE it lands. Cached per segment id, so re-runs don't re-pay.
+
+def _basename(cwd):
+    return os.path.basename(str(cwd or "").rstrip("/"))
+
+
+def _seg_id(sid, ts, prompt):
+    return hashlib.sha1("|".join([sid or "", ts or "", (prompt or "")[:120]]).encode()).hexdigest()[:16]
+
+
+def _is_user_ask(obj, txt):
+    """A genuine user ask (starts a new subconversation) — not a tool_result echo, system line, or interrupt."""
+    t = obj.get("type") or (obj.get("message") or {}).get("role")
+    if t != "user":
+        return ""
+    s = (txt or "").strip()
+    if not s or s.startswith("<") or "tool_result" in s[:40] or "[Request interrupted" in s:
+        return ""
+    return s
+
+
+def segment_records(records, sid="", cwd_default=""):
+    """PURE (no file IO, offline-testable): split ONE transcript's records into subconversation segments. A segment
+    opens at each user ask and runs until the next; it carries the ask (prompt), the cwd PRIOR, the batch ids that
+    appear in its span, and the time. Returns a list of segment dicts."""
+    segs, cur, cwd = [], None, cwd_default
+
+    def _flush():
+        if cur and (cur["batch_ids"] or cur["prompt"]):
+            segs.append(cur)
+
+    for obj in records:
+        if not isinstance(obj, dict):
+            continue
+        if obj.get("cwd"):
+            cwd = obj.get("cwd")
+        txt = _text_of(obj)
+        ts = obj.get("timestamp") or ""
+        ask = _is_user_ask(obj, txt)
+        if ask:
+            _flush()
+            cur = {"sid": sid, "cwd": cwd, "project_prior": _basename(cwd), "prompt": ask[:200],
+                   "batch_ids": set(), "ts": ts, "day": (ts or "")[:10]}
+        if cur is None:                                   # spend/text before any user ask → a headless segment
+            cur = {"sid": sid, "cwd": cwd, "project_prior": _basename(cwd), "prompt": "",
+                   "batch_ids": set(), "ts": ts, "day": (ts or "")[:10]}
+        if not cur["cwd"] and cwd:
+            cur["cwd"] = cwd; cur["project_prior"] = _basename(cwd)
+        for bid in _BID.findall(txt or ""):
+            cur["batch_ids"].add(bid)
+    _flush()
+    for s in segs:
+        s["seg_id"] = _seg_id(s["sid"], s["ts"], s["prompt"])
+        s["batch_ids"] = sorted(s["batch_ids"])
+    return segs
+
+
+def segments(tdir=None):
+    """All subconversation segments across every transcript (file IO shell over segment_records). The session cwd is
+    read from the records themselves (reliable), not the path slug (which is lossy for hyphenated dir names)."""
+    tdir = tdir or _DEFAULT_TDIR
+    files = sorted(glob.glob(os.path.join(tdir, "**", "*.jsonl"), recursive=True)) if os.path.isdir(tdir) else [tdir]
+    out = []
+    for path in files:
+        sid = os.path.splitext(os.path.basename(path))[0]
+        try:
+            recs = [json.loads(ln) for ln in open(path, errors="ignore").read().splitlines() if ln.strip()]
+        except Exception:
+            continue
+        out += segment_records([r for r in recs if isinstance(r, dict)], sid=sid)
+    return out
+
+
+_SEG_CACHE = os.path.join(str(config.HOME), "seg_attribution.json")
+
+
+def _load_seg_cache():
+    try:
+        return json.load(open(_SEG_CACHE))
+    except Exception:
+        return {}
+
+
+def _save_seg_cache(d):
+    try:
+        os.makedirs(os.path.dirname(_SEG_CACHE), exist_ok=True)
+        json.dump(d, open(_SEG_CACHE, "w"))
+    except Exception:
+        pass
+
+
+def attribute_segments(tdir=None, run=False, recls=False):
+    """AGENTIC: classify each subconversation into org→team×project via the SHARED LLM classifier (cwd as a PRIOR it
+    confirms/overrides). Estimate-first (run=False → estimate only). Cached per seg_id, so only NEW segments are
+    (re)classified — re-runs don't re-pay. Returns the full {seg_id: {org,team,project,confidence}} cache (run=True),
+    or an estimate summary (run=False)."""
+    from . import attribution
+    segs = segments(tdir)
+    cache = {} if recls else _load_seg_cache()
+    todo = [s for s in segs if s["prompt"] and (recls or s["seg_id"] not in cache)]
+    if not todo:
+        return cache if run else {"estimate_only": True, "segments": len(segs), "to_classify": 0, "cost": 0.0}
+    taxo, _ = attribution.taxonomy()
+    items = [{"id": s["seg_id"], "text": f"[repo:{s['project_prior']}] {s['prompt']}"} for s in todo]
+    res = attribution.classify_items(items, taxo, run)     # estimate-first lives INSIDE classify_items
+    if not run:
+        return {"estimate_only": True, "segments": len(segs), "to_classify": len(todo)}
+    cache.update(res)
+    _save_seg_cache(cache)
+    return cache
+
+
+def batch_project_map(tdir=None):
+    """{batch_id: {org,team,project,confidence,prior,seg_id}} — AGENTIC per-subconversation attribution of every
+    batch to its project, via the segment that ran it + the cached classification. When a segment isn't classified
+    yet, the cwd PRIOR (the repo) is used as the project — NEVER a regex keyword guess, NEVER a blanket
+    'unattributed' for evidenced spend. Run `attribute_segments --run` to populate the agentic cache."""
+    cache = _load_seg_cache()
+    out = {}
+    for s in segments(tdir):
+        cls = cache.get(s["seg_id"])
+        for bid in s["batch_ids"]:
+            if bid in out:
+                continue
+            if cls and (cls.get("project") or cls.get("org")):
+                out[bid] = {**cls, "prior": s["project_prior"], "seg_id": s["seg_id"], "evidenced": True}
+            else:                                          # evidenced (we KNOW the repo) but not yet LLM-classified
+                out[bid] = {"org": "", "team": "", "project": (s["project_prior"] or "").lower(),
+                            "confidence": 0, "prior": s["project_prior"], "seg_id": s["seg_id"], "evidenced": True}
+    return out
 
 
 def batch_contexts(tdir=None, turns=10, maxchars=3500):

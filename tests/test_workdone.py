@@ -82,13 +82,20 @@ def seed_io(ts, intent, model):
         db.commit()
 
 
-# entity-extract intent → conv._project_of maps to "nlp-pipeline"; two calls same day same intent → count 2
+# two entity-extract calls same day → count 2; one video-caption; one unlabeled (empty intent)
 seed_io("2026-06-15T10:00:00", "entity-extract", "gpt-5.5")
 seed_io("2026-06-15T11:00:00", "entity-extract", "gpt-5.5")
-# video-caption intent → matches "video"/"caption" → maps to "vision-pipeline"
 seed_io("2026-06-16T09:00:00", "video-caption", "claude-opus-4-8")
-# unlabeled intent (empty) on a day with no project signal → falls to "" (untagged) in build()
 seed_io("2026-06-17T08:00:00", "", "some-model")
+
+# AGENTIC attribution (mocked classifier): each batch → its subconversation's project. seed_io's batch id is
+# "batch_"+ts+intent → entity-extract → nlp-pipeline, video-caption → vision-pipeline, the empty one → unmapped ("").
+from spendguard import conv
+conv.batch_project_map = lambda tdir=None: {
+    "batch_2026-06-15T10:00:00entity-extract": {"project": "nlp-pipeline"},
+    "batch_2026-06-15T11:00:00entity-extract": {"project": "nlp-pipeline"},
+    "batch_2026-06-16T09:00:00video-caption": {"project": "vision-pipeline"},
+}
 
 SINCE = "2026-06-15"
 

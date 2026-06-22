@@ -16,11 +16,10 @@ def ck(name, cond):
     if not cond:
         fails.append(name)
 
-# ── conv._project_of: text → project via the rule patterns (case-insensitive); no match → "" ──
-ck("conv project: 'extract entities from the corpus' → nlp-pipeline", conv._project_of("Extract entities from the CORPUS") == "nlp-pipeline")
-ck("conv project: 'caption each video frame' → vision-pipeline", conv._project_of("caption each video frame") == "vision-pipeline")
-ck("conv project: unrelated text → '' (unclassified)", conv._project_of("schedule a meeting about budgets") == "")
-ck("conv project: empty/None → ''", conv._project_of("") == "" and conv._project_of(None) == "")
+# ── attribution is AGENTIC now: the regex keyword matcher conv._project_of/_PROJECT_RULES was REMOVED (it silently
+#    mis-attributed real projects → 'unattributed'; see test_segment_attribution.py). Guard: it must not come back. ──
+ck("regex attribution removed (agentic-only): conv._project_of gone", not hasattr(conv, "_project_of"))
+ck("regex attribution removed: conv._PROJECT_RULES gone", not hasattr(conv, "_PROJECT_RULES"))
 
 # ── conv._dedup_top: rank by _score (desc), drop near-identical text, cap at k ──
 events = [

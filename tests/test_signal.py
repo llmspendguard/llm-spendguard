@@ -43,8 +43,8 @@ _seed("summarize", "claude-opus-4-8", "B2", "c3", None, 200, 80)
 backfill._openai_rows = lambda: [("openai", "gpt-5.5", 4.0, 200, 100, "2026-06-10", "B1"),
                                  ("openai", "claude-opus-4-8", 30.0, 200, 80, "2026-06-10", "B2")]
 backfill._anthropic_rows = lambda: []
-# deterministic project mapping by intent/model
-conv._project_of = lambda s: {"extract": "lmm", "summarize": "lmm", "gpt-5.5": "lmm", "claude-opus-4-8": "lmm"}.get((s or "").lower(), "")
+# deterministic AGENTIC attribution (mocked classifier): each batch → its subconversation's project
+conv.batch_project_map = lambda tdir=None: {"B1": {"project": "lmm"}, "B2": {"project": "lmm"}}
 # keep it OFFLINE: cancellation_rows() (called inside build() too) must not hit the provider. Stub the batch fetch
 # to empty so the test is hermetic + deterministic regardless of any OPENAI_API_KEY in the environment.
 from spendguard import reconcile_openai

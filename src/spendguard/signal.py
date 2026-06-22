@@ -19,9 +19,10 @@ def build(since=None):
     rows = db.execute("SELECT COALESCE(NULLIF(intent,''),''), model, batch, COUNT(*), "
                       "SUM(quality IS NOT NULL), SUM(quality='good'), SUM(COALESCE(in_tok,0)), SUM(COALESCE(out_tok,0)) "
                       "FROM call_io GROUP BY intent, model, batch").fetchall()
+    bmap = conv.batch_project_map()           # AGENTIC: batch → its subconversation's classified project
     agg = {}
     for intent, model, batch, n, judged, good, itok, otok in rows:
-        proj = conv._project_of(intent) or conv._project_of(model) or ""
+        proj = (bmap.get(batch, {}).get("project") or "").lower()   # per-batch agentic attribution (no regex)
         key = (proj, intent, model)
         a = agg.setdefault(key, dict(project=proj, intent=intent, model=model, calls=0, cost=0.0,
                                      judged=0, good=0, tin=0, tout=0, batches=set()))
@@ -61,17 +62,13 @@ def cancellation_rows():
     cost control; completed requests still bill'). Surfaced as a signal row per project: full billed cost = waste,
     with the recommendation. Attributed by conversation/intent evidence. Free (provider GETs)."""
     import datetime
-    from . import conv, callio, pricing
+    from . import conv, pricing
     try:
         from .reconcile_openai import load_key, fetch_batches
         batches = list(fetch_batches(load_key()))
     except Exception:
         return []
-    links = conv.batch_links()
-    try:
-        b2i = {b: i for b, i in callio._db().execute("SELECT batch, COALESCE(NULLIF(intent,''),'') FROM call_io GROUP BY batch")}
-    except Exception:
-        b2i = {}
+    bmap = conv.batch_project_map()           # AGENTIC: cancelled batch → its subconversation's classified project
     by_proj = {}
     for b in batches:
         if b.get("status") != "cancelled":
@@ -82,8 +79,7 @@ def cancellation_rows():
             continue                                            # nothing completed → genuinely $0
         bid = b["id"]
         cost = pricing.batch_cost(b["model"], it, ot, (u.get("input_tokens_details") or {}).get("cached_tokens", 0))
-        proj = (conv._project_of(links[bid]["snippet"]) if bid in links else "") or \
-               (conv._project_of(b2i[bid]) if b2i.get(bid) else "") or "unattributed"
+        proj = (bmap.get(bid, {}).get("project") or "") or "unattributed"
         a = by_proj.setdefault(proj, {"cost": 0.0, "n": 0})
         a["cost"] += cost; a["n"] += 1
     day = datetime.date.today().isoformat()

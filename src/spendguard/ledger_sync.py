@@ -141,20 +141,17 @@ def reconcile_into_ledger(since=None):
             (_c.get("project") or budget._project() or "unattributed").strip().lower()
     except Exception:
         fallback = "unattributed"
-    # Attribute the gap BY PROJECT using conversation/intent evidence (batch id → conversation → project), so the
-    # provider-truth gap lands on nlp-pipeline / vision-pipeline / … instead of one blanket 'unattributed' bucket.
-    from . import backfill, conv, callio
-    links = conv.batch_links()
-    try:
-        b2i = {b: i for b, i in callio._db().execute("SELECT batch, COALESCE(NULLIF(intent,''),'') FROM call_io GROUP BY batch")}
-    except Exception:
-        b2i = {}
+    # Attribute the gap BY PROJECT, AGENTICALLY: each batch → the SUBCONVERSATION that ran it → that segment's
+    # LLM-classified project (with the repo/cwd as a PRIOR the LLM confirms/overrides). NEVER a regex keyword guess.
+    # An evidenced batch (we know which repo ran it) always gets a real project; only a batch with NO conversation
+    # at all falls to `fallback`. Populate the agentic cache with `spendguard accounting --run` (estimate-first).
+    from . import backfill, conv
+    bmap = conv.batch_project_map()
     prov_by_proj = {}   # (project, day) -> provider $ (evidence-attributed)
     for _pn, _model, cost, _it, _ot, day, bid in (backfill._openai_rows() + backfill._anthropic_rows()):
         if (day or "") < since:
             continue
-        proj = (conv._project_of(links[bid].get("snippet", "")) if bid in links else "") or \
-               (conv._project_of(b2i[bid]) if b2i.get(bid) else "") or ""
+        proj = (bmap.get(bid, {}).get("project") or "").lower()   # agentic per-subconversation attribution
         prov_by_proj[(proj or fallback, day)] = prov_by_proj.get((proj or fallback, day), 0.0) + cost
     # match by PROJECT TOTAL, not (project, day): provider-billing day ≠ gate-record day, so a per-day match would
     # fail to subtract the gate-attributed spend and double-count it. But the gap must be DATED correctly (else

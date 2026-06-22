@@ -186,14 +186,13 @@ ro.load_key = lambda: "sk-test"
 
 print("-- reconcile_into_ledger: fully stubbed providers → per-project gap rows, idempotent --")
 # stub every provider/network source the function reaches into
-from spendguard import report, backfill, conv, callio, saas
+from spendguard import report, backfill, conv, saas
 report.openai_by_day = lambda: ({DAYS[1]: 40.0}, 0)
 ra.cost_by_day = lambda since=None: ({DAYS[1]: 5.0}, {})
 # evidence rows (provider-billed) used for per-project attribution; no conversation links → fallback project
 backfill._openai_rows = lambda: [("openai", "gpt-5.5", 40.0, 1_000_000, 0, DAYS[1], "bx-oai")]
 backfill._anthropic_rows = lambda: [("anthropic", "claude-opus-4-8", 5.0, 100, 100, DAYS[1], "bx-anth")]
-conv.batch_links = lambda tdir=None: {}                 # no transcript indexing
-callio._db = lambda: budget._db()                       # call_io lives in the isolated db (empty)
+conv.batch_project_map = lambda tdir=None: {}           # no conversation evidence → batches hit the fallback
 saas.conn = lambda: {"project": "nlp-pipeline", "projects": ["nlp-pipeline"]}   # single-project → fallback = 'nlp-pipeline'
 
 summ = LS.reconcile_into_ledger(since=SINCE)
@@ -227,42 +226,40 @@ check("openai error recorded", "openai" in summ3["errors"])
 check("anthropic error recorded", "anthropic" in summ3["errors"])
 check("both dropped from providers_ok", summ3["providers_ok"] == [])
 
-print("-- reconcile_into_ledger: per-project attribution via conversation link + b2i intent, day<since skipped --")
+print("-- reconcile_into_ledger: AGENTIC per-subconversation attribution, day<since skipped --")
 report.openai_by_day = lambda: ({DAYS[1]: 40.0}, 0)
 ra.cost_by_day = lambda since=None: ({}, {})
 backfill._openai_rows = lambda: [
-    ("openai", "gpt-5.5", 40.0, 1_000_000, 0, DAYS[1], "bx-linked"),   # attributed via conv link → vision
-    ("openai", "gpt-5.5", 5.0, 100, 100, "2026-05-01", "bx-old"),       # day < since → skipped (line 141)
-    ("openai", "gpt-5.5", 9.0, 100, 100, DAYS[1], "bx-intent"),         # attributed via b2i intent text → vision
+    ("openai", "gpt-5.5", 40.0, 1_000_000, 0, DAYS[1], "bx-linked"),   # agentic → vision-pipeline
+    ("openai", "gpt-5.5", 5.0, 100, 100, "2026-05-01", "bx-old"),       # day < since → skipped
+    ("openai", "gpt-5.5", 9.0, 100, 100, DAYS[1], "bx-intent"),         # agentic → vision-pipeline
     # the gate-recorded nlp batch IS also provider-billed (every gated batch is). Including it keeps the fixture
     # realistic (provider_total ≥ gate_total) so the double-count cap is a no-op here — gate $30 + vision $49 = $79.
-    ("openai", "gpt-5.5", 30.0, 1_000_000, 0, DAYS[1], "bx-nlp"),       # no link/intent → fallback nlp-pipeline
+    ("openai", "gpt-5.5", 30.0, 1_000_000, 0, DAYS[1], "bx-nlp"),       # no segment evidence → fallback nlp-pipeline
 ]
 backfill._anthropic_rows = lambda: []
-# bx-linked → a snippet that _project_of routes to 'vision-pipeline'
-conv.batch_links = lambda tdir=None: {"bx-linked": {"snippet": "video segment caption frames"}}
-# bx-intent → an intent string that routes to 'vision-pipeline' via the b2i path
-callio._db = lambda: budget._db()
-budget._db().execute("CREATE TABLE IF NOT EXISTS call_io (batch TEXT, intent TEXT)")
-budget._db().execute("DELETE FROM call_io")
-# route the b2i intent to vision-pipeline too, so the attributed gap survives the gate-spend subtraction
-budget._db().execute("INSERT INTO call_io (batch, intent) VALUES (?,?)", ("bx-intent", "video caption frames"))
-budget._db().commit()
+# the AGENTIC classifier (mocked) attributes bx-linked + bx-intent → vision-pipeline. Fixtures are NOT regex-shaped;
+# the resolver is the (mocked) per-subconversation classification, exactly as in prod. bx-nlp has no segment → fallback.
+conv.batch_project_map = lambda tdir=None: {
+    "bx-linked": {"project": "vision-pipeline", "evidenced": True},
+    "bx-intent": {"project": "vision-pipeline", "evidenced": True},
+}
 saas.conn = lambda: {"project": "nlp-pipeline", "projects": ["nlp-pipeline"]}
 summ_attr = LS.reconcile_into_ledger(since=SINCE)
-# bx-linked ($40, conv link) + bx-intent ($9, b2i) both → vision-pipeline (no gate spend there) → a real gap row
-check("vision-pipeline gap from link + b2i intent = $49", abs(summ_attr["gap_by_project"].get("vision-pipeline", 0) - 49.0) < 1e-9)
+# bx-linked ($40) + bx-intent ($9) both → vision-pipeline (no gate spend there) → a real gap row
+check("vision-pipeline gap from agentic attribution = $49", abs(summ_attr["gap_by_project"].get("vision-pipeline", 0) - 49.0) < 1e-9)
 check("nlp-pipeline has gate spend = provider → its gap suppressed (not in bucket)", "nlp-pipeline" not in summ_attr["gap_by_project"])
 check("provider_total = $79 (vision $49 + nlp $30; pre-since bx-old excluded)", abs(summ_attr["provider_total"] - 79.0) < 1e-9)
 check("NO double-count: gate_attributed + ungoverned ≤ provider_total", summ_attr["gate_attributed"] + summ_attr["ungoverned"] <= summ_attr["provider_total"] + 0.01)
+# THE REGRESSION GUARD: bx-linked/bx-intent are evidenced → they MUST NOT land in 'unattributed'
+check("evidenced batches never fall to 'unattributed'", summ_attr["gap_by_project"].get("unattributed", 0) < 1e-9)
 
 print("-- reconcile_into_ledger: cross-classifier mismatch is CAPPED at provider truth (no double-count) --")
 # gate recorded $30 under nlp (the seed). Provider evidence attributes the SAME $30 to vision (different classifier).
 # Without the account-net cap: ledger = gate $30 + reconciled $30 = $60 = 2× the real $30. The cap holds it to $30.
 report.openai_by_day = lambda: ({DAYS[1]: 30.0}, 0)
 backfill._openai_rows = lambda: [("openai", "gpt-5.5", 30.0, 100, 0, DAYS[1], "bx-vis")]
-conv.batch_links = lambda tdir=None: {"bx-vis": {"snippet": "video segment caption frames"}}   # → vision-pipeline
-budget._db().execute("DELETE FROM call_io"); budget._db().commit()
+conv.batch_project_map = lambda tdir=None: {"bx-vis": {"project": "vision-pipeline", "evidenced": True}}
 summ_cap = LS.reconcile_into_ledger(since=SINCE)
 check("double-count capped: gate + reconciled ≤ provider ($30, not $60)",
       summ_cap["gate_attributed"] + summ_cap["ungoverned"] <= summ_cap["provider_total"] + 0.01)
@@ -273,28 +270,26 @@ report.openai_by_day = lambda: ({DAYS[1]: 40.0}, 0)
 ra.cost_by_day = lambda since=None: ({}, {})
 backfill._openai_rows = lambda: [("openai", "gpt-5.5", 40.0, 1_000_000, 0, DAYS[1], "bx-multi")]
 backfill._anthropic_rows = lambda: []
+conv.batch_project_map = lambda tdir=None: {}                            # no conversation evidence at all
 saas.conn = lambda: {"projects": ["nlp-pipeline", "vision-pipeline"]}   # >1 project → fallback = 'unattributed'
 summ4 = LS.reconcile_into_ledger(since=SINCE)
-check("no-evidence gap lands in 'unattributed'", "unattributed" in summ4["gap_by_project"])
+check("no-evidence (no segment) gap lands in 'unattributed'", "unattributed" in summ4["gap_by_project"])
 
-print("-- reconcile_into_ledger: saas.conn + callio._db raising → tolerated (except paths) --")
+print("-- reconcile_into_ledger: saas.conn raising → tolerated (except path) --")
 def conn_boom():
     raise RuntimeError("no saas")
-def db_boom():
-    raise RuntimeError("no call_io db")
 saas.conn = conn_boom
-callio._db = db_boom        # the b2i intent lookup try/except → empty b2i
+conv.batch_project_map = lambda tdir=None: {}
 summ5 = LS.reconcile_into_ledger(since=SINCE)
 check("saas error → still attributes a gap", summ5["ungoverned"] > 0)
-check("callio._db error tolerated (b2i empty)", isinstance(summ5["gap_by_project"], dict))
+check("gap_by_project is a dict", isinstance(summ5["gap_by_project"], dict))
 
 print("-- reconcile_into_ledger: connected NON-owner (owns_account=false) skips the shared-account gap --")
 report.openai_by_day = lambda: ({DAYS[1]: 40.0}, 0)
 ra.cost_by_day = lambda since=None: ({}, {})
 backfill._openai_rows = lambda: [("openai", "gpt-5.5", 40.0, 1_000_000, 0, DAYS[1], "bx-shared")]
 backfill._anthropic_rows = lambda: []
-callio._db = lambda: budget._db()   # restore (db_boom was set just above)
-conv.batch_links = lambda tdir=None: {}
+conv.batch_project_map = lambda tdir=None: {}
 saas.conn = lambda: {"enabled": True, "project": "vision-pipeline", "owns_account": False}
 summ_no = LS.reconcile_into_ledger(since=SINCE)
 check("non-owner reconcile is skipped", bool(summ_no.get("skipped")))
