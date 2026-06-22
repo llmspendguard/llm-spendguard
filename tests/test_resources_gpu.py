@@ -1,6 +1,6 @@
 """vast.ai GPU reconstruction — per-UTC-day cost split, snapshot → history, and live∪history merge so DESTROYED
 instances (gone from the API) stay reconstructable. Pure given injected instance dicts; no network. Isolated home."""
-import os, sys, tempfile, time
+import os, sys, tempfile, datetime
 
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
@@ -15,7 +15,11 @@ def ck(name, cond):
     if not cond:
         fails.append(name)
 
-now = time.time()
+# Anchor to a FIXED UTC midnight so the per-UTC-day split is exact regardless of wall-clock time or the host's
+# timezone. gpu_rows_by_day buckets on UTC-midnight boundaries — with a real `time.time()` a 24h instance straddles
+# two UTC days (no single $48 day) UNLESS `now` happens to be near UTC midnight. That made this test pass locally
+# and FAIL on CI's clock. Whole-UTC-day instances off a midnight anchor are deterministic everywhere.
+now = datetime.datetime(2026, 6, 10, 0, 0, 0, tzinfo=datetime.timezone.utc).timestamp()
 inst1 = {"id": 1, "gpu_name": "H100", "dph_total": 2.0, "start_date": now - 3 * 86400, "end_date": now - 2 * 86400, "label": "train-a"}
 inst2 = {"id": 2, "gpu_name": "A100", "dph_total": 1.0, "start_date": now - 1 * 86400, "end_date": now, "label": "train-b"}
 resources.instances = lambda: [inst1, inst2]

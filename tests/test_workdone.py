@@ -210,7 +210,10 @@ finally:
 # ─────────────────────────── push_workdone: dry-run payload (REAL fn — run before cmd test monkeypatches it) ───────────────────────────
 print("-- push_workdone: dry-run builds the /v1/work payload, filtered to the connection's project --")
 import spendguard.saas as _saas
-_saas.conn = lambda: {"enabled": True, "visibility": "org", "project": "nlp-pipeline", "url": "https://x", "api_key": "k"}
+# contributor email REQUIRED — push_workdone gates on contributor_ok(), which needs a real email (else the server
+# can't map the member). Set it here so the test is deterministic: without it, a CI runner with no git user.email
+# falls back to an anon usr_<hex> → push_workdone returns {skipped}, and `.get("work")` would be None.
+_saas.conn = lambda: {"enabled": True, "visibility": "org", "project": "nlp-pipeline", "url": "https://x", "api_key": "k", "contributor": "tester@x.test"}
 workdone.rollup = lambda since=None, by="month": [
     {"period": "2026-06", "project": "nlp-pipeline", "active_days": 3, "n_commits": 5, "n_batch_calls": 7,
      "commits": ["x" * 250, "short"], "intents": {"entity-extract": 7}},
