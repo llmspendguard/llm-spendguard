@@ -163,7 +163,7 @@ def _resolve_org(ck):
 
 # ── value (per message-day, with caching) + digest ──────────────────────────────────────────────────────────────
 def _toklen(s):
-    return max(1, len(s or "") // 4)                       # chars/4 — claude.ai exposes no token counts
+    return max(1, len(s) // 4) if s else 0                 # chars/4 — claude.ai exposes no token counts; empty → 0
 
 
 def _msg_text(m):

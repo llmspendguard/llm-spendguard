@@ -5,6 +5,18 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 ## [Unreleased]
 
 ### Added
+- **`spendguard schedule [--daily] [--remove]`** (`schedule.py`) — installable cross-platform scheduler (macOS
+  launchd · Linux crontab · Windows schtasks) that runs `saas sync --if-due` on a cadence; idempotent, zero deps.
+  `saas sync` now snapshots vast.ai GPU every run so a frequent schedule captures short-lived/destroyed instances.
+- **Worklog / 4(+2)-category model** (`scripts/slack/worklog_canvas.py`, server `worklog_pull.mjs`) — per-org,
+  two-part (finance + team) rollup over the canonical model: ① LLM API (provider×model) · ② remote compute
+  (provider×machine) · ⑥ infra/B2 = hard $; ③ est chat value · ④ est code-chat value (·⑤ cowork) = plan-covered
+  estimate; + subscription line. Periods day/week/month/quarter/ytd, scope org/team/user. Sourced from the prod
+  rollup + taxonomy (no stubs). Slack Canvas push prototyped via MCP.
+- **Shared classifier** (`attribution.py`) — one `org → team × project` classifier + taxonomy for chat AND code
+  (claudecode now classifies sessions per-content, not by cwd). `resources.snapshot()` records vast.ai instances so
+  destroyed ones stay reconstructable per-day; the residual gap is conversation-aligned (same mapping LLM batches
+  use), restricted to GPU-capable projects/teams; instance label→project via config `resources.vastai.label_map`.
 - **claude.ai chat adapter** (`spendguard chat test|show|discover|classify|work|story|sync|enable`, `chat.py`) —
   **OPT-IN, on-device, macOS** (Path 2). The desktop app caches no conversations locally (it fetches live), so this
   decrypts *your* `sessionKey` cookie (macOS Keychain → PBKDF2 → AES-128-CBC, Chromium format) and calls claude.ai's
@@ -43,6 +55,12 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
   usage *value* / API-equivalent, not literal billing.)
 
 ### Fixed
+- **Deep-review pass** (portability + correctness): `resources.DEFAULT_LABEL_MAP` is now **empty** (the shipped
+  vision/nlp-pipeline defaults silently mis-attributed a stranger's GPU); `iso_period` gained the missing **`ytd`**
+  branch (was advertised but fell through to month) and is shared (was triplicated); `attribution.classify_items`
+  prompt now requests `confidence` (was read but never asked → always 0); `_toklen("")` → 0 (was 1); genericized
+  real project/org names leaked in `resources.py` docstrings; `claudecode.load_cls()` replaces hardcoded state-file
+  reads; the reconcile gap is **spread across actual usage days** (was lumped on the reconcile day → daily≈monthly).
 - **Token counts were stored as 0 server-side** for `claude-code` (and would be for `claude-ai`) — the adapters sent
   `in_tok`/`out_tok` but the ingest expects `in_tokens`/`out_tokens`, so token columns silently zeroed (spend/$ was
   always correct). Adapters now send the canonical names. Server `/v1/ledger` channel allowlist gains `claude-ai`.

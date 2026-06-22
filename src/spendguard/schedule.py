@@ -41,9 +41,14 @@ def _macos(interval, remove):
         if p.exists():
             p.unlink()
         return {"removed": str(p)}
-    secs = 86400 if interval == "daily" else 3600
-    plist = {"Label": LABEL, "ProgramArguments": _cmd(), "StartInterval": secs, "RunAtLoad": False,
+    plist = {"Label": LABEL, "ProgramArguments": _cmd(), "RunAtLoad": False,
              "StandardErrorPath": _logpath(), "StandardOutPath": _logpath()}
+    if interval == "daily":
+        # fire at a fixed wall-clock time (00:00), matching cron `0 0 * * *` / schtasks /sc DAILY. StartInterval
+        # would drift from load time and pause across sleep; StartCalendarInterval is anchored to the clock.
+        plist["StartCalendarInterval"] = {"Hour": 0, "Minute": 0}
+    else:
+        plist["StartInterval"] = 3600   # hourly: simplest faithful equivalent of cron `0 * * * *`
     p.parent.mkdir(parents=True, exist_ok=True)
     with open(p, "wb") as f:
         plistlib.dump(plist, f)

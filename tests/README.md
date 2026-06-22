@@ -27,4 +27,15 @@ exercise pure logic. None spend money.
 | `test_cascade.py` | routing (cheap-first, escalate-on-fail) + default verifier. |
 | `test_ledger.py` | local ledger `by_day` / kind filters / `ledger_start` / workload-excludes-meta. |
 | `test_brief.py` | slugify + scale-from-task. |
+| `test_attribution.py` | shared classifier: `iso_period` buckets (incl. the `ytd` regression), `project_team_map`, `classify_items` parse + confidence + tolerant recovery (caged call stubbed). |
+| `test_chat_value.py` | claude.ai chat **value math**: all-content token accounting (text/tool/thinking/tool_result/image), caching-aware per-turn model, per-day attribution, allocation split. |
+| `test_resources_gpu.py` | vast.ai GPU reconstruction: per-UTC-day cost split, snapshot→history, live∪history merge so destroyed instances stay reconstructable, empty default label map. |
+| `test_claudecode.py` | `~/.claude` transcript digest, per-session classification, day totals. |
+| `test_workdone.py` | work-done rollup shaping (project/team, chats vs code sessions). |
+| `test_saas.py`, `test_saas_rollup.py` | `/v1` push contract: scrubbed rollups, channel/kind/billed split, taxonomy pull/push, command queue. |
+| `test_ledger_sync.py` | reconcile gap spread across actual usage days (not lumped on the reconcile day). |
+| `test_reconcile*.py` | provider-billing reconciliation (OpenAI + Anthropic) vs the local ledger. |
 | `test_runner.py` | the pytest entry that runs all of the above as subprocesses. |
+
+This table is representative, not exhaustive — every `test_*.py` in this directory is collected and run by
+`test_runner.py`. Adding a `test_*.py` file is enough; no registration needed.

@@ -113,10 +113,14 @@ spendguard cache-audit | cache-test --script f.py [--run]   # prompt-caching: fi
 spendguard cascade --ladder cheap,…,strong --intent X [--prompt …] --run           # cheap→verify→escalate
 spendguard cache-stats | dedup --input f.jsonl --out u.jsonl | dedup-populate      # response cache + batch dedup
 
+# work-done attribution (org → team × project), all sources
+spendguard claude-code [show|sync|classify|work|story]   # mine ~/.claude → Claude Code spend + work (incremental, classified)
+spendguard chat [test|show|discover|classify|loop|work|story|sync|status|accept]   # claude.ai chat adapter (OPT-IN, on-device, macOS)
+spendguard resources [show|snapshot|sync]        # vast.ai GPU → org/team/project (snapshot records destroyed instances)
+
 # cold start / corpus
 spendguard bootstrap [--repo] [--transcripts]   # mine ALL history → corpus + insights (free, then estimate)
 spendguard fetch-io [--cap 50]                  # recover real prompt+output from providers (free)
-spendguard claude-code [show|sync]               # mine ~/.claude transcripts → Claude Code spend + work (incremental)
 spendguard backfill [--intent-map …]            # seed corpus + graph from the batch ledgers (free)
 spendguard mine-history {intents,graph,git} [--apply]   # reconstruct intents/edges from the repo (free)
 spendguard mine-conv {index,synth} [--run]      # mine session transcripts for the cost playbook
@@ -124,6 +128,7 @@ spendguard validate                             # re-check learnings vs the curr
 
 # setup
 spendguard init | config                        # guided setup / show resolved config
+spendguard schedule [--daily] [--remove]        # install the OS-native scheduler (launchd/cron/schtasks)
 ```
 
 ### The workflow it's built around
