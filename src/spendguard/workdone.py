@@ -103,12 +103,95 @@ def rollup(since=None, by="day"):
     return out
 
 
+# ── TIER 2: the caged "what was accomplished" SUMMARY. A small LLM turns the local work signals (commit subjects +
+# intent counts — content stays on-device) into 2-3 factual sentences per project. CAGED by caps.meta (intent
+# spendguard:*), ESTIMATE-FIRST (default dry; --run to spend). Only the scrubbed SUMMARY is pushed, never the
+# signals. The system prompt forbids secrets/paths/identities; the gate's denylist + the server re-validate.
+_META = "spendguard"
+_SUMMARY_SYS = ("You write a 2-3 sentence, factual, past-tense summary of what was ACCOMPLISHED on a software "
+    "project this period, from work signals (commit subjects + LLM-task intents and counts). Describe the WORK and "
+    "its outcome. ABSOLUTELY NO secrets, API keys, file paths, URLs, person names, emails, or other PII — describe "
+    "what was built, not who or where. If the signals are thin, say so in one line. Output only the summary prose.")
+_SUMMARY_OUT = 220
+
+
+def _summary_prompt(project, commits, intents):
+    """PURE: the per-project prompt from local work signals. Testable; no I/O."""
+    top = sorted((intents or {}).items(), key=lambda x: -x[1])[:12]
+    lines = [f"Project: {project}"]
+    if commits:
+        lines.append(f"Commit subjects ({len(commits)}):")
+        lines += [f"- {str(c)[:160]}" for c in list(commits)[:30]]
+    if top:
+        lines.append("LLM task intents (intent × count): " + ", ".join(f"{k}×{v}" for k, v in top))
+    lines.append("Summarize what was accomplished, 2-3 sentences.")
+    return "\n".join(lines)
+
+
+def _aggregate_by_project(since=None):
+    """{project: {commits, intents}} for the period — the input to the summarizer (this month, all periods folded)."""
+    by = {}
+    for r in rollup(since=since, by="month"):
+        p = r.get("project") or "(untagged)"
+        e = by.setdefault(p, {"commits": [], "intents": {}})
+        e["commits"].extend(r.get("commits") or [])
+        for k, v in (r.get("intents") or {}).items():
+            e["intents"][k] = e["intents"].get(k, 0) + v
+    return {p: e for p, e in by.items() if e["commits"] or e["intents"]}
+
+
+def _summaries_path():
+    from . import config
+    config.HOME.mkdir(parents=True, exist_ok=True)
+    return config.HOME / "work_summaries.json"
+
+
+def load_summaries():
+    import json
+    p = _summaries_path()
+    try:
+        return json.load(open(p)) if p.exists() else {}
+    except Exception:
+        return {}
+
+
+def summarize(since=None, run=False, model=None):
+    """Generate (or estimate) the scrubbed per-project work summary. Estimate-first: default returns a zero-spend
+    {projects, est_usd, model}; with run=True it makes the CAGED calls (gate → caps.meta), caches {project: summary}
+    to ~/.spendguard/work_summaries.json, and returns {summarized, model}. push_workdone attaches the cache."""
+    import json
+    from . import config, pricing
+    model = model or config.advisor_model()
+    byproj = _aggregate_by_project(since)
+    prompts = {p: _summary_prompt(p, e["commits"], e["intents"]) for p, e in byproj.items()}
+    est = round(sum(pricing.realtime_cost(model, len(pr) // 4 + 80, _SUMMARY_OUT) for pr in prompts.values()), 4)
+    if not run:
+        from . import ui
+        ui.estimate_only(action=f"summarize {len(prompts)} projects' work (caged · caps.meta)", cost=est)
+        return {"projects": len(prompts), "est_usd": est, "model": model}
+    from . import calls, adapters
+    out = {}
+    with calls.context(intent=f"{_META}:worksummary"):
+        for p, pr in prompts.items():
+            r = adapters.call(model, pr, max_tokens=_SUMMARY_OUT, system=_SUMMARY_SYS)   # gate → meta cap
+            txt = (r.get("text") or "").strip()
+            if txt and not r.get("error"):
+                out[p] = txt[:800]
+    json.dump(out, open(_summaries_path(), "w"), indent=2)
+    return {"projects": len(prompts), "summarized": len(out), "model": model, "est_usd": est}
+
+
 def cmd(argv=None):
     ap = argparse.ArgumentParser(prog="spendguard workdone")
     ap.add_argument("--since", help="YYYY-MM-DD (default: start of this month)")
     ap.add_argument("--by", choices=["day", "week", "month"], default="day")
     ap.add_argument("--push", action="store_true", help="push the work-done roll-up to the server")
+    ap.add_argument("--summarize", action="store_true", help="generate the caged per-project 'what was accomplished' summary (ESTIMATE-ONLY unless --run)")
+    ap.add_argument("--run", action="store_true", help="with --summarize: actually spend (caged by caps.meta)")
     a = ap.parse_args(argv or [])
+    if a.summarize:
+        print("workdone summarize:", summarize(since=a.since, run=a.run))
+        return 0
     if a.push:
         from . import saas
         # push monthly periods regardless of the display --by, to match the dashboard's current-month view

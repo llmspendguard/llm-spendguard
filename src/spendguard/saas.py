@@ -351,6 +351,7 @@ def push_workdone(since=None, by="month", dry=False):
         return {"skipped": cwhy}
     from . import workdone
     flt = _project_filter(c)
+    summaries = {str(k).lower(): v for k, v in workdone.load_summaries().items()}   # scrubbed "what was accomplished"
     work = []
     for r in workdone.rollup(since=since, by=by):
         proj = (r.get("project") or "").lower()
@@ -363,6 +364,7 @@ def push_workdone(since=None, by="month", dry=False):
             "n_batch_calls": int(r.get("n_batch_calls") or 0),
             "commits": [str(s)[:200] for s in (r.get("commits") or [])][:100],
             "intents": {str(k): int(v) for k, v in (r.get("intents") or {}).items()},
+            "summary": summaries.get(proj, ""),   # caged on-device digest (empty until `workdone --summarize --run`)
         })
     if not work:
         return {"skipped": "no work in range for this connection's project(s)"}
