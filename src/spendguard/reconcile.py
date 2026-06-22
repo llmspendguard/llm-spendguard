@@ -50,11 +50,19 @@ def residual(truth_total, *captured_sums):
 
 
 def residual_warning(truth_total, resid, frac=0.10, floor=25.0):
-    """A large residual means a source/tenant is UNDER-attributed (destroyed/ungated spend not yet recovered).
-    Surface it loudly instead of letting it float or get silently dumped. Returns a message or None."""
-    if truth_total and resid > max(floor, frac * truth_total):
-        return (f"residual ${resid:.2f} is {resid / truth_total * 100:.0f}% of the account — a source/tenant is "
-                "UNDER-attributed; recover its destroyed/ungated spend (or it floats). Durable fix: capture at source.")
+    """A large residual (either direction) is a problem to surface loudly, not hide. POSITIVE = UNDER-attributed
+    (destroyed/ungated spend not yet recovered → it floats). NEGATIVE = OVER-attributed / STALE (the ledger
+    attributes more than the provider currently bills → re-run reconcile). Returns a message or None."""
+    if not truth_total:
+        return None
+    thresh = max(floor, frac * truth_total)
+    pct = resid / truth_total * 100
+    if resid > thresh:
+        return (f"residual ${resid:.2f} ({pct:.0f}% of account) — UNDER-attributed; recover its destroyed/ungated "
+                "spend (or it floats). Durable fix: capture at source.")
+    if resid < -thresh:
+        return (f"residual ${resid:.2f} ({pct:.0f}%) — OVER-attributed / STALE: the ledger attributes more than the "
+                "provider currently bills. Re-run reconcile to rebuild against fresh provider truth.")
     return None
 
 
@@ -73,6 +81,45 @@ class Source:
 
     def attribute_gap(self, gap, since=None):
         return []
+
+
+def all_sources(ptmap=None, since=None):
+    """Run the one loop for EVERY spend source (LLM + GPU today; subscription/storage as adapters are added) → a
+    unified, account-anchored reconciliation: {source_name: run(Source)}. Lazy imports avoid module cycles."""
+    if ptmap is None:
+        try:
+            from . import attribution
+            ptmap = attribution.project_team_map(attribution.taxonomy()[0])
+        except Exception:
+            ptmap = {}
+    out = {}
+    try:
+        from .ledger_sync import LLMSource
+        out["llm"] = run(LLMSource(since=since), ptmap, since)
+    except Exception as e:
+        out["llm"] = {"error": str(e)[:160]}
+    try:
+        from .resources import GPUSource
+        out["gpu"] = run(GPUSource(), ptmap, since)
+    except Exception as e:
+        out["gpu"] = {"error": str(e)[:160]}
+    return out
+
+
+def report(ptmap=None, since=None):
+    """Print the unified reconciliation across all sources — truth vs captured vs residual per source, account-
+    anchored, with the under-attribution warning. The single source-of-truth view."""
+    res = all_sources(ptmap, since)
+    print("reconcile — all spend sources (truth − captured = residual; account-anchored):")
+    for name, r in res.items():
+        if r.get("error"):
+            print(f"  {name:6} ERROR: {r['error']}")
+            continue
+        print(f"  {name:6} truth ${r['truth_total']:9.2f}  captured ${r['captured']:9.2f}  "
+              f"attributed ${r['attributed']:8.2f}  residual ${r['residual']:9.2f}  by_org={r['by_org']}")
+        if r.get("warning"):
+            print(f"         ⚠  {r['warning']}")
+    return res
 
 
 def run(source, ptmap, since=None, warn_frac=0.10):

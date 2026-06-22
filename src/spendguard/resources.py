@@ -481,6 +481,30 @@ def record_recovered(box):
     return {"recovered": str(b["id"]), "total_tracked": len(hist)}
 
 
+class GPUSource:
+    """reconcile.Source adapter for vast.ai GPU spend. truth = account top-ups (owner only); captured = per-box
+    rows attributed by instance LABEL → project (live ∪ recorded ∪ recovered); the gap is filled by EXPLICIT
+    recovery (discover/record_recovered), so attribute_gap returns [] and the residual is surfaced. Lets the
+    shared reconcile.run() produce the GPU reconciliation in the same shape as LLM/subscription/storage."""
+    name = "gpu"
+
+    def __init__(self, conn=None):
+        from . import saas
+        self._conn = conn if conn is not None else saas.conn()
+
+    def conn(self):
+        return self._conn
+
+    def truth_total(self, since=None):
+        return account_gpu_total() if self._conn.get("owns_account") else 0.0
+
+    def captured(self, since=None):
+        return [{"cost": r["cost"], "project": r.get("project") or ""} for r in gpu_rows_by_day() if r["cost"] > 0]
+
+    def attribute_gap(self, gap, since=None):
+        return []                                          # recovery is explicit: discover --agentic / record_recovered
+
+
 def sync(dry=False):
     """Push THIS repo's GPU spend (instances whose LABEL maps to this repo's project), per-day, via this repo's key
     → its org (`_reconcile` → `mine`). Account-anchored: the unrecoverable remainder is returned as an EXPLICIT

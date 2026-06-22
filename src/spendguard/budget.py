@@ -125,6 +125,19 @@ def by_provider_day(kind=None, since=None):
     return {(p, d): float(c or 0) for p, d, c in rows}
 
 
+def reconciled_by_project(since=None):
+    """{project: $} of RECONCILED rows only (the provider-truth gap that reconcile_into_ledger attributed by
+    conversation evidence). The 'attributed' side of the reconcile loop, complement to gate_by_project_day."""
+    cond, args = ["model = ?"], [_RECONCILED]
+    if since:
+        cond.append("day >= ?"); args.append(since)
+    where = "WHERE " + " AND ".join(cond)
+    with _lock:
+        rows = _db().execute(f"SELECT COALESCE(NULLIF(project,''),'unattributed'), COALESCE(SUM(cost),0) "
+                             f"FROM charges {where} GROUP BY 1", args).fetchall()
+    return {p: float(c or 0) for p, c in rows}
+
+
 def gate_by_project_day(kind=None, since=None):
     """{(project, day): $} of GATE-recorded (attributed) spend — excludes reconciled rows. Used to compute the
     per-project gap so the provider-truth gap is attributed by evidence, not dumped in one 'unattributed' bucket."""

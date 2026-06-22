@@ -38,6 +38,10 @@ def main(argv=None):
         return report.main()
     if cmd == "reconcile":
         sub = rest[0] if rest else "openai"
+        if sub == "all":                                  # unified view: every spend source through the one loop
+            from . import reconcile
+            reconcile.report()
+            return 0
         if sub == "anthropic":
             from . import reconcile_anthropic as r
         else:

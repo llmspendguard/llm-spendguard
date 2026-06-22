@@ -324,6 +324,64 @@ def sync(since=None):
     return dict(provider=p_tot, local=l_tot, coverage=cov, leak=leak)
 
 
+def _provider_total(since):
+    """Provider-billed LLM total (the TRUTH) since `since` — OpenAI + Anthropic, as billed."""
+    total = 0.0
+    try:
+        from .report import openai_by_day
+        oai, _ = openai_by_day()
+        total += sum(v for d, v in oai.items() if d >= since)
+    except Exception:
+        pass
+    try:
+        from . import reconcile_anthropic as anth
+        an, _ = anth.cost_by_day(since=since)
+        total += sum(v for d, v in an.items() if d >= since)
+    except Exception:
+        pass
+    return round(total, 2)
+
+
+def _gate_captured_rows(since):
+    """Gate-recorded (attributed) batch LLM spend by project — the CAPTURED side, as reconcile.Source rows."""
+    from . import budget
+    by = {}
+    for (proj, _day), gv in budget.gate_by_project_day(kind="batch", since=since).items():
+        by[proj] = by.get(proj, 0.0) + gv
+    return [{"cost": round(v, 2), "project": p} for p, v in by.items()]
+
+
+class LLMSource:
+    """reconcile.Source adapter for LLM provider spend. truth = provider billing (OpenAI + Anthropic); captured =
+    gate-recorded batch by project; the gap is attributed by conversation/intent evidence INSIDE
+    reconcile_into_ledger (batch→conv→project), so attribute_gap returns [] here and the residual is surfaced."""
+    name = "llm"
+
+    def __init__(self, conn=None, since=None):
+        from . import saas
+        try:
+            self._conn = conn if conn is not None else saas.conn()
+        except Exception:
+            self._conn = {}
+        self._since = since or datetime.date.today().replace(day=1).isoformat()
+
+    def conn(self):
+        return self._conn
+
+    def truth_total(self, since=None):
+        return _provider_total(since or self._since)
+
+    def captured(self, since=None):
+        return _gate_captured_rows(since or self._since)
+
+    def attribute_gap(self, gap, since=None):
+        # the gap that reconcile_into_ledger already attributed by conversation/intent evidence (batch→conv→project),
+        # stored as reconciled rows. If reconcile hasn't run, this is empty → the residual warns to run it.
+        from . import budget
+        return [{"cost": round(v, 2), "project": p}
+                for p, v in budget.reconciled_by_project(since or self._since).items()]
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="spendguard reconcile-ledger")
     ap.add_argument("--since", help="YYYY-MM-DD (default: start of this month)")

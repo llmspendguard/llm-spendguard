@@ -26,8 +26,10 @@ rows = [{"cost": 250.0, "project": "lmm"}, {"cost": 300.0, "project": "manga2ani
 ck("residual = truth − Σcaptured", reconcile.residual(900.0, 600.0) == 300.0)
 ck("rollup_by_org maps project→org (unlabeled → (untagged))",
    reconcile.rollup_by_org(rows, ptmap) == {"Healiom": 250.0, "Ensight": 300.0, "(untagged)": 50.0})
-ck("residual_warning fires when residual is large", reconcile.residual_warning(1000.0, 300.0) is not None)
-ck("residual_warning silent when residual ≈ buffer", reconcile.residual_warning(1000.0, 20.0) is None)
+ck("residual_warning: large POSITIVE → under-attributed", "UNDER" in (reconcile.residual_warning(1000.0, 300.0) or ""))
+ck("residual_warning: large NEGATIVE → over-attributed/stale", "OVER" in (reconcile.residual_warning(1000.0, -300.0) or ""))
+ck("residual_warning silent when |residual| ≈ buffer (both directions)",
+   reconcile.residual_warning(1000.0, 20.0) is None and reconcile.residual_warning(1000.0, -50.0) is None)
 
 # ── the loop via a Source adapter — identical shape for ANY spend source ──
 class FakeSource(reconcile.Source):
@@ -50,6 +52,24 @@ class NonOwner(FakeSource):
     def conn(self):
         return {"enabled": True, "owns_account": False}
 ck("run: non-owner skips the agentic gap attribution (no cross-tenant claim)", reconcile.run(NonOwner(), ptmap)["attributed"] == 0.0)
+
+# ── the REAL source adapters conform to the interface + run() drives them identically (stubbed I/O, no network) ──
+from spendguard import resources, ledger_sync
+resources.account_gpu_total = lambda since=None: 1000.0
+resources.gpu_rows_by_day = lambda since_ts=None, now=None, label_map=None: [
+    {"cost": 250.0, "project": "lmm"}, {"cost": 300.0, "project": "manga2anime"}]
+rg = reconcile.run(resources.GPUSource(conn={"owns_account": True}), ptmap)
+ck("GPUSource via run(): truth 1000, captured 550, residual 450",
+   rg["truth_total"] == 1000.0 and rg["captured"] == 550.0 and rg["residual"] == 450.0)
+ck("GPUSource by_org: lmm→Healiom, m2a→Ensight", rg["by_org"].get("Healiom") == 250.0 and rg["by_org"].get("Ensight") == 300.0)
+ck("GPUSource non-owner → truth 0 (doesn't claim shared account)",
+   reconcile.run(resources.GPUSource(conn={"enabled": True, "owns_account": False}), ptmap)["truth_total"] == 0.0)
+
+ledger_sync._provider_total = lambda since: 800.0
+ledger_sync._gate_captured_rows = lambda since: [{"cost": 600.0, "project": "lmm"}]
+rl = reconcile.run(ledger_sync.LLMSource(conn={"owns_account": True}, since="2026-06-01"), ptmap)
+ck("LLMSource via run(): truth 800, captured 600, residual 200",
+   rl["truth_total"] == 800.0 and rl["captured"] == 600.0 and rl["residual"] == 200.0)
 
 print(("\n[FAIL] " if fails else "\n[OK] ") + f"reconcile_core: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)
