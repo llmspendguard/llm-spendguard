@@ -3,7 +3,7 @@
 Covers: per-turn cost from usage × pricing · project from cwd · work-done (tools + files) · the watermark
 (re-run with no new lines = no double-count; append a turn = only the new line read + accumulated).
 """
-import os, sys, json, tempfile, time
+import os, sys, json, tempfile
 
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"

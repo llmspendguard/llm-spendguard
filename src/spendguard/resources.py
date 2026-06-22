@@ -12,7 +12,6 @@ import os
 import pathlib
 import time
 import re
-import collections
 import urllib.request
 
 from . import config

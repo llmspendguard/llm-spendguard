@@ -2,7 +2,6 @@
 `spendguard schedule` wires the OS-native scheduler to run the roll-up on a cadence (snapshot GPU every run + push
 when due), and `schedule --remove` tears it down. macOS → launchd LaunchAgent; Linux → crontab; Windows → schtasks.
 Idempotent + removable. Same philosophy as `install-hook`: the package owns its own setup, zero extra deps."""
-import os
 import sys
 import subprocess
 import pathlib
@@ -53,7 +52,8 @@ def _macos(interval, remove):
     with open(p, "wb") as f:
         plistlib.dump(plist, f)
     r = subprocess.run(["launchctl", "load", str(p)], capture_output=True, text=True)
-    return {"installed": str(p), "scheduler": "launchd", "interval": interval, "every_s": secs,
+    when = "00:00 daily" if interval == "daily" else "every 3600s"
+    return {"installed": str(p), "scheduler": "launchd", "interval": interval, "when": when,
             "loaded": r.returncode == 0, "err": (r.stderr.strip()[:120] or None)}
 
 

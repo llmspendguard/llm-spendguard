@@ -17,7 +17,6 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 from anthropic.resources.messages import batches as ab          # noqa: E402
 ab.Batches.create = lambda self, *a, **k: "ANTHROPIC_SUBMIT_OK"
 
-import spendguard                                                # noqa: E402
 from spendguard import gate as spend_gate, calls                # noqa: E402
 import anthropic                                                 # noqa: E402
 
