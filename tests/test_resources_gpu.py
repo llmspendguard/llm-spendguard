@@ -43,48 +43,35 @@ ck("DEFAULT_LABEL_MAP empty (no opinionated defaults)", resources.DEFAULT_LABEL_
 ck("unlabeled → no project (until user configures)", resources.project_of("train-a") == "")
 
 
-# ── account-gap reconcile guard: never dump a SHARED account's gap on this connection's org ──────────────────────
-# Regression for the prod bug where manga2anime's destroyed-H200 gap ($900) landed on Healiom: the guard dropped
-# empty-project instances, so a foreign/unlabeled box didn't mark the account as multi-project. sync() must only
-# reconstruct the blanket gap when EVERY instance belongs to THIS connection's project.
-from spendguard import saas, attribution
-saas.conn = lambda: {"enabled": True, "visibility": "org", "owns_account": True, "project": "lmm",
-                     "org": "Healiom", "contributor": "t@x.test", "url": "https://x", "api_key": "k"}
-saas.contributor = lambda: "t@x.test"
-saas._row_uid = lambda row: "uid_" + str(row.get("project")) + str(row.get("day")) + str(row.get("model"))[:6]
-resources.snapshot = lambda: None
-resources.account_gpu_total = lambda since_ts=None: 1000.0          # big account total → gap = 1000 - attributed
-resources._month_start_ts = lambda: now - 30 * 86400
-resources._gpu_alignment = lambda since: {("2026-06-10", "lmm"): {"w": 1.0, "org": "healiom", "team": "clinical-ai"}}
-attribution.taxonomy = lambda: ({"orgs": ["Healiom"], "teams": [], "projects": []},)
-attribution.project_team_map = lambda taxo: {"lmm": ("Healiom", "clinical-ai")}
-
-
-def _recon_rows(payload):
-    return [r for r in payload["day_totals"] if str(r.get("model", "")).startswith("(reconstructed")]
-
-
-# CASE 1 — a foreign instance (manga2anime) is present → SHARED account → NO blanket-gap reconstruction.
-resources.gpu_rows_by_day = lambda since_ts=None, now=None, label_map=None: [
+# ── account-anchored, label-attributed reconcile (replaces the buggy conv-alignment gap-dump) ────────────────────
+# _reconcile is PURE + deterministic: rows (project from instance LABEL) + account_total + conn + ptmap →
+# {mine, captured, account_total, residual, by_org}. Properties tested: (1) this connection pushes ONLY its own
+# project's boxes — a SHARED account can't leak cross-org; (2) every dollar traces to a labelled box (no fabricated
+# flat $/day rows); (3) the unrecoverable remainder is an EXPLICIT residual, never dumped on a project; (4) residual
+# → 0 when every box is captured (proves the process reconciles to the account given complete inputs).
+ptmap = {"lmm": ("Healiom", "clinical-ai"), "manga2anime": ("Ensight", "")}
+rows = [
     {"day": "2026-06-10", "gpu": "A100 SXM4", "cost": 250.0, "instances": [1], "project": "lmm"},
-    {"day": "2026-06-12", "gpu": "RTX 3090", "cost": 5.0, "instances": [2], "project": "manga2anime"},  # FOREIGN
+    {"day": "2026-06-11", "gpu": "H100 SXM", "cost": 200.0, "instances": [2], "project": "lmm"},
+    {"day": "2026-06-12", "gpu": "H200 NVL", "cost": 300.0, "instances": [3], "project": "manga2anime"},  # foreign org
+    {"day": "2026-06-12", "gpu": "RTX 3090", "cost": 50.0, "instances": [4], "project": ""},               # unlabeled
 ]
-p1 = resources.sync(dry=True)
-ck("shared account (foreign instance) → no reconstructed gap rows", _recon_rows(p1) == [])
-ck("shared account → only this project's real instances pushed", all(r["project"] == "lmm" for r in p1["day_totals"]))
+rec = resources._reconcile(rows, 900.0, {"project": "lmm"}, ptmap)
+ck("reconcile: mine = only THIS project's boxes (no cross-org leak)", {r["gpu"] for r in rec["mine"]} == {"A100 SXM4", "H100 SXM"})
+ck("reconcile: mine all project=lmm", all(r["project"] == "lmm" for r in rec["mine"]))
+ck("reconcile: mine sums to $450 (A100+H100)", round(sum(r["cost"] for r in rec["mine"]), 2) == 450.0)
+ck("reconcile: by_org attributes by label", rec["by_org"].get("Healiom") == 450.0 and rec["by_org"].get("Ensight") == 300.0)
+ck("reconcile: unlabeled box → (untagged), not a real org", rec["by_org"].get("(untagged)") == 50.0)
+ck("reconcile: residual = account − Σ all boxes, explicit (900−800=100)", rec["residual"] == 100.0)
 
-# CASE 2 — an UNLABELED instance (project '') is also foreign → still no reconstruction (the exact prod miss).
-resources.gpu_rows_by_day = lambda since_ts=None, now=None, label_map=None: [
-    {"day": "2026-06-10", "gpu": "A100 SXM4", "cost": 250.0, "instances": [1], "project": "lmm"},
-    {"day": "2026-06-12", "gpu": "RTX 3090", "cost": 5.0, "instances": [2], "project": ""},  # UNLABELED → foreign
-]
-ck("unlabeled instance present → still no reconstructed gap (the prod miss)", _recon_rows(resources.sync(dry=True)) == [])
+# full recovery: Σ boxes == account_total → residual 0 (the reconcile-to-account property)
+ck("reconcile: residual → 0 when every box captured/recovered", resources._reconcile(rows, 800.0, {"project": "lmm"}, ptmap)["residual"] == 0.0)
 
-# CASE 3 — genuinely single-project account (every instance is this project) → gap IS reconstructed.
-resources.gpu_rows_by_day = lambda since_ts=None, now=None, label_map=None: [
-    {"day": "2026-06-10", "gpu": "A100 SXM4", "cost": 250.0, "instances": [1], "project": "lmm"},
-]
-ck("single-project account → gap reconstructed (this project's own destroyed boxes)", len(_recon_rows(resources.sync(dry=True))) > 0)
+# record_recovered: a box destroyed before snapshotting is reconstructable → flows through _all_instances
+resources.instances = lambda: []                       # no live boxes; rely solely on recovered history
+resources.record_recovered({"id": 99, "gpu_name": "H100 SXM", "dph_total": 3.61,
+                            "start_date": now - 2 * 86400, "end_date": now - 1 * 86400, "label": "healiom_gpu_h100"})
+ck("record_recovered: destroyed box enters _all_instances", "99" in {str(i.get("id")) for i in resources._all_instances()})
 
 print(("\n[FAIL] " if fails else "\n[OK] ") + f"resources_gpu: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

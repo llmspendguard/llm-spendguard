@@ -11,63 +11,15 @@ import json
 import os
 import pathlib
 import time
-import re
 import urllib.request
 
 from . import config
 
-_GPU_KW = re.compile(r"vast\.?ai|\bgpu\b|gliner|\b(?:h100|h200|a100|3090|4090|rtx)\b|\bcuda\b|fine-?tun|"
-                     r"training run|gpu (?:box|instance|fleet|fanout)", re.I)   # GPU-specific; NOT bare 'training'
-
-
-def _gpu_alignment(since):
-    """Cross-connect GPU spend to the CONVERSATIONS that ran it, for attribution — the same conversation→project
-    mapping LLM batches use (conv.attribute_usage). chat convs + code sessions mentioning GPU work, carrying their
-    CLASSIFIED (org, team, project), → {(day, project): {"w", "org", "team"}}. So the destroyed-instance gap lands
-    on the project that actually ran the GPU (e.g. an NER training run, a video-generation job), dated to those days
-    + org-routable. vast.ai has no per-day consumption AND no audit log, so conversations are the only context.
-    RESTRICTED to GPU-capable scope (projects/teams that actually have GPU instances, by label) so a stray keyword
-    can't land GPU on a non-GPU project."""
-    from . import attribution
-    taxo, _ = attribution.taxonomy()
-    ptmap = attribution.project_team_map(taxo)
-    gpu_projs, gpu_teams = set(), set()                     # the ground truth: where GPU instances actually ran
-    for i in _all_instances():
-        p = (project_of(i.get("label")) or "").lower()
-        if p:
-            gpu_projs.add(p)
-            org, team = ptmap.get(p, ("", ""))
-            if team:
-                gpu_teams.add(((org or "").lower(), team.lower()))
-    agg = {}
-
-    def add(day, org, team, proj):
-        if not proj or day < since:
-            return
-        proj, org, team = proj.lower(), (org or "").lower(), (team or "").lower()
-        if gpu_projs and not (proj in gpu_projs or (org, team) in gpu_teams):
-            return                                          # not a GPU-capable project/team → exclude (no false-positive)
-        e = agg.setdefault((day, proj), {"w": 0, "org": org, "team": team})
-        e["w"] += 1
-    try:
-        from . import chat
-        for c in chat._load_state().get("convs", {}).values():
-            blob = (c.get("title", "") + " " + c.get("summary", "") + " " + c.get("first_user", "")).lower()
-            if _GPU_KW.search(blob):
-                for day in (c.get("days") or {}):
-                    add(day, c.get("org"), c.get("team"), c.get("project") or c.get("ai_project"))
-    except Exception:
-        pass
-    try:
-        from . import claudecode
-        cls = claudecode.load_cls()
-        for d in claudecode._session_digests():
-            if d.get("day", "") >= since and _GPU_KW.search((d.get("prompt") or "").lower()):
-                a = cls.get(d["sid"]) or {}
-                add(d["day"], a.get("org"), a.get("team"), a.get("project") or d.get("project"))
-    except Exception:
-        pass
-    return agg
+# NOTE: the old conversation-alignment gap reconstruction (`_gpu_alignment` + `_GPU_KW`) was REMOVED. It spread the
+# blanket account gap across conversation-matched projects with a flat per-day weight — which (a) dumped a SHARED
+# account's gap cross-org (manga2anime's destroyed H200 landed on Healiom) and (b) fabricated flat $/day rows not tied
+# to any real box. Replaced by `_reconcile` below: account-anchored + label-attributed (every dollar traces to an
+# instance label → project → org), with the unrecoverable remainder surfaced as an EXPLICIT residual, never dumped.
 
 VAST_BASE = "https://console.vast.ai/api/v0"
 
@@ -281,11 +233,47 @@ def compute_exceeded():
     return None
 
 
+def _reconcile(allrows, account_total, conn, ptmap):
+    """Account-anchored, label-attributed GPU reconcile (PURE → testable). Every row's project comes from its
+    instance LABEL (the GPU ground truth); `ptmap` maps project → (org, team). This connection pushes ONLY its own
+    project's boxes (`mine`); the account remainder is surfaced as an EXPLICIT `residual` (= account_total − Σ all
+    recorded boxes), NEVER dumped on a project/org — so a SHARED vast.ai account can't leak cross-org and no flat
+    per-day rows are fabricated. `by_org` is a diagnostic of where the recorded spend landed. residual → 0 only when
+    every box is captured/recovered AND account_total is true consumption (top-ups carry a balance buffer)."""
+    proj = (conn.get("project") or "").lower()
+    captured = round(sum(r["cost"] for r in allrows), 2)
+    residual = round((account_total or 0) - captured, 2)
+    by_org = {}
+    for r in allrows:
+        org = ptmap.get((r.get("project") or "").lower(), ("", ""))[0] or "(untagged)"
+        by_org[org] = round(by_org.get(org, 0.0) + r["cost"], 2)
+    mine = [r for r in allrows if (r.get("project") or "") == proj and r["cost"] > 0]
+    return {"mine": mine, "captured": captured, "account_total": round(account_total or 0, 2),
+            "residual": residual, "by_org": by_org}
+
+
+def record_recovered(box):
+    """Record a box DESTROYED before snapshotting began, reconstructed from evidence (e.g. session transcripts), so
+    it flows through the normal reconcile. Same shape as a live instance + `source:"recovered"` (id, gpu_name,
+    dph_total, start_date, end_date, label). Idempotent by id. The runtime is an ESTIMATE — the durable fix is
+    continuous `snapshot()` so boxes are captured live, not reconstructed after the fact."""
+    hist = _load_history()
+    b = dict(box)
+    b["source"] = "recovered"
+    b.setdefault("last_seen", b.get("end_date"))
+    hist[str(b["id"])] = b
+    try:
+        _history_path().write_text(json.dumps(hist))
+    except Exception:
+        pass
+    return {"recovered": str(b["id"]), "total_tracked": len(hist)}
+
+
 def sync(dry=False):
-    """Push THIS repo's GPU spend (instances whose label maps to this repo's project), per-day, via this repo's
-    key → its org. The owns_account connection ALSO reconciles: gap = vast.ai account total − Σ attributed →
-    pushed as 'unattributed' remote-compute (destroyed/untracked instances), mirroring the LLM unattributed gap."""
-    import datetime
+    """Push THIS repo's GPU spend (instances whose LABEL maps to this repo's project), per-day, via this repo's key
+    → its org (`_reconcile` → `mine`). Account-anchored: the unrecoverable remainder is returned as an EXPLICIT
+    `residual` (account total − Σ recorded boxes), surfaced for visibility but NEVER dumped on a project/org (a
+    shared vast.ai account would otherwise leak cross-org). snapshot() runs first so live boxes are captured."""
     from . import saas, budget
     c = saas.conn()
     proj = (c.get("project") or budget._project() or "").lower()
@@ -295,66 +283,33 @@ def sync(dry=False):
     _ptmap = attribution.project_team_map(attribution.taxonomy()[0])
     _team = lambda p: _ptmap.get((p or "").lower(), ("", ""))[1]
     allrows = gpu_rows_by_day()
+    rec = _reconcile(allrows, account_gpu_total() if c.get("owns_account") else 0, c, _ptmap)
     day_totals = [{
         "day": r["day"], "provider": "vastai", "model": r["gpu"], "kind": "gpu", "channel": "realtime",
         "spend_micros": round(r["cost"] * 1_000_000), "calls": len(r["instances"]),
         "member_ref": ref, "project": proj, "team": _team(proj),
         "tags": ",".join(["remote-compute", "gpu", r["gpu"].replace(" ", ""), "team:" + _team(proj),
                           "instances:" + "/".join(str(x) for x in r["instances"])]),
-    } for r in allrows if (r.get("project") or "") == proj and r["cost"] > 0]
-    if c.get("owns_account"):                              # account-level GPU reconcile (one vast.ai account)
-        # Only reconcile the blanket gap when this vast.ai account is SINGLE-PROJECT. A shared multi-project account
-        # (e.g. nlp-pipeline A100 + vision-pipeline H200) makes the destroyed/untracked gap CROSS-ORG — dumping it as this
-        # org's 'unattributed' would pull another org's GPU spend in (and vast.ai exposes no per-instance billing to
-        # split it, and prepaid top-ups are lumpy = a balance buffer, not consumption). So: multi-project account →
-        # push only per-project attributed consumption (each org reconciles its own); single-project → the gap is
-        # this project's (the "primary task" rule), not 'unattributed'.
-        # Reconcile the blanket gap ONLY for a genuinely single-project account this connection FULLY owns: every
-        # recorded instance must map to THIS connection's project. Any instance with a different OR UNRECOGNIZED
-        # (empty-label) project means the vast.ai account is shared — its gap is cross-org (another project's
-        # destroyed boxes) and must NOT be dumped here. (Counting only non-empty projects let an unlabeled foreign
-        # box slip through, so manga2anime's destroyed H200 gap landed on Healiom.) Under-count beats mis-attribute.
-        foreign = [r for r in allrows if (r.get("project") or "") != proj]
-        if allrows and not foreign:
-            gap = round(account_gpu_total() - sum(r["cost"] for r in allrows), 2)
-            if gap > 0.5:
-                # The remaining gap = instances destroyed BEFORE snapshotting began (unrecoverable from vast.ai —
-                # no per-day consumption, no audit log). CROSS-CONNECT to conversations: attribute by the (day,
-                # project, org, team) of the GPU-work convs/sessions, the same way LLM batches map via conv.
-                # attribute_usage. Org-routed (only this connection's org) so each project's GPU lands in its own org.
-                since = datetime.date.fromtimestamp(_month_start_ts()).isoformat()
-                conn_org = (c.get("org") or "").lower()
-                align = {k: v for k, v in _gpu_alignment(since).items()
-                         if not (conn_org and v["org"] and v["org"] != conn_org)}    # org-route
-                tot = sum(v["w"] for v in align.values())
-                if tot:
-                    for (day, aproj), v in align.items():
-                        amt = gap * v["w"] / tot
-                        if amt > 0.005:
-                            day_totals.append({
-                                "day": day, "provider": "vastai", "model": "(reconstructed, conv-aligned)", "kind": "gpu",
-                                "channel": "realtime", "spend_micros": round(amt * 1_000_000), "calls": 0,
-                                "member_ref": ref, "project": aproj, "team": v["team"],
-                                "tags": f"remote-compute,gpu,reconstructed,team:{v['team']}"})
-                else:
-                    day_totals.append({
-                        "day": datetime.date.today().isoformat(), "provider": "vastai", "model": "(destroyed/untracked)",
-                        "kind": "gpu", "channel": "realtime", "spend_micros": round(gap * 1_000_000), "calls": 0,
-                        "member_ref": ref, "project": proj, "tags": f"remote-compute,gpu,destroyed,{proj}"})
+    } for r in rec["mine"]]
     for row in day_totals:                                # per-row id, local↔server cross-check (gpu rows too)
         row["uid"] = saas._row_uid(row)
+    reconcile = {"account_total": rec["account_total"], "captured": rec["captured"],
+                 "residual": rec["residual"], "by_org": rec["by_org"]}
     payload = {"visibility": c.get("visibility"), "day_totals": day_totals}
     if dry:
-        return payload
+        return {**payload, "reconcile": reconcile}
     ok, reason = saas.ready()
     if not ok:
-        return {"skipped": f"not connected: {reason}"}
+        return {"skipped": f"not connected: {reason}", "reconcile": reconcile}
     if c.get("visibility", "private") == "private":
-        return {"skipped": "visibility=private"}
+        return {"skipped": "visibility=private", "reconcile": reconcile}
     if not day_totals:                                    # nothing attributed to THIS project → don't 422 the push
         return {"skipped": "no attributed GPU for this project — label your vast.ai instances (include the project "
-                "in the instance label) or set resources.vastai.label_map; destroyed instances are unrecoverable per-project"}
-    return saas._request("POST", "/v1/ledger", payload)
+                "in the instance label) or set resources.vastai.label_map", "reconcile": reconcile}
+    res = saas._request("POST", "/v1/ledger", payload)
+    if isinstance(res, dict):
+        res["reconcile"] = reconcile
+    return res
 
 
 def cmd(argv=None):
