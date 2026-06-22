@@ -29,6 +29,11 @@ jobs:
         run: |
           SPENDGUARD_COVERAGE=1 pytest
           coverage combine
-          coverage report --fail-under=30   # regression floor; ~35% today (raised from 15 after the coverage pass)
+          # Two floors: a whole-package regression floor, and a HIGH bar on the money-critical core (the gate,
+          # ledger, reconcile, pricing, attribution). The package number is dragged by I/O-adapter modules
+          # (chat→claude.ai, saas push, transcript parsers, paid-call tools) that are integration- not unit-tested
+          # by design; the core is where correctness must be proven. Today: package ~42%, core ~81%.
+          coverage report --fail-under=40
+          coverage report --fail-under=78 --include="*/gate.py,*/guard.py,*/budget.py,*/reconcile.py,*/ledger_sync.py,*/pricing.py,*/attribution.py,*/adapters.py,*/tag.py,*/backfill.py"
       - name: Price-literal audit (FAILS the build on a mispriced literal)
         run: SPENDGUARD_AUDIT_DIR=src/spendguard spendguard audit --ci
