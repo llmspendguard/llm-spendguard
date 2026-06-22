@@ -9,6 +9,7 @@ or fails *open* with a logged warning (non-interactive), never a crash.
 
 <div class="grid cards" markdown>
 
+- :material-book-open-variant: **[Solution Specification](SOLUTION-SPEC.md)** — the whole story end to end (start here).
 - :material-rocket-launch: **[60-second quickstart](#quickstart)** — install, gate a call, see it work.
 - :material-sitemap: **[Architecture](ARCHITECTURE.md)** — the gate chokepoint + the extensibility seams.
 - :material-robot: **[Using with Claude & agents](USING-WITH-CLAUDE.md)** — make every assistant session gated.

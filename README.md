@@ -5,6 +5,10 @@ prices from a verified table, and **learns the cheapest config that still keeps 
 and enforces it. Zero required dependencies; install is one line; it never breaks a job (fail-open).
 Learn more at https://llmspendguard.com · **[Docs & quickstart →](https://docs.llmspendguard.com/)**
 
+> 📘 **New here? Read the [Solution Specification](docs/SOLUTION-SPEC.md)** — the whole story end to end: why it
+> exists, the value, the journey of a dollar (call → gate → ledger → reconcile → push), the design, and how it's
+> tested, secured, and operated.
+
 ## Why llm-spendguard?
 Cost overruns don't announce themselves — they slip in silently: a hardcoded price that drifted from the
 real rate, a forgotten model swap, under-batching that re-bills a shared prompt every request, a job
