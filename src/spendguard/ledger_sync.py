@@ -169,23 +169,34 @@ def reconcile_into_ledger(since=None):
     for (proj, _day), gv in budget.gate_by_project_day(kind="batch", since=since).items():
         gate_proj_total[proj] = gate_proj_total.get(proj, 0.0) + gv
     budget.clear_reconciled(since)
+    provider_total = round(sum(prov_proj_total.values()), 2)   # evidence-based total — same source as the gaps
+    local_total = round(sum(gate_proj_total.values()), 2)
+    # Cap total reconciled at the ACCOUNT net gap (provider − gate). The per-project positive gaps (provider_proj −
+    # gate_proj, negatives dropped) can sum to MORE than the true account gap when a batch is gated under one project
+    # key but evidence-attributed to ANOTHER (gate_proj=0 → the full provider $ is written as a reconciled row while
+    # the original gate row still stands → DOUBLE-COUNT, total > provider). Scaling the positive gaps down to the
+    # account net guarantees gate + reconciled ≤ provider_total. Account-anchored magnitude, evidence-weighted split.
+    account_net = max(0.0, round(provider_total - local_total, 2))
+    pos = {proj: (pv - gate_proj_total.get(proj, 0.0)) for proj, pv in prov_proj_total.items()}
+    pos = {proj: g for proj, g in pos.items() if g > 0.01}
+    overshoot = round(sum(pos.values()), 2)
+    scale = (account_net / overshoot) if (overshoot > account_net and overshoot > 0) else 1.0
     gap_usd = 0.0
     gap_rows = 0
     by_project = {}
-    for proj, pv in prov_proj_total.items():
-        gap = pv - gate_proj_total.get(proj, 0.0)             # provider billed more than the gate saw for this project
-        if gap > 0.01:
-            days = prov_proj_days.get(proj, {})
-            tot = sum(days.values()) or 1.0
-            for day, v in sorted(days.items()):              # spread the net gap across actual usage days (dated correctly)
-                share = gap * (v / tot)
-                if share > 0.005:
-                    budget.record_reconciled(day, "(reconciled)", round(share, 6), project=proj)
-            gap_usd += gap
-            gap_rows += 1
-            by_project[proj] = round(gap, 2)
-    provider_total = round(sum(prov_proj_total.values()), 2)   # evidence-based total — same source as the gaps
-    local_total = round(sum(gate_proj_total.values()), 2)
+    for proj, gap in pos.items():
+        gap = round(gap * scale, 6)
+        if gap <= 0.01:
+            continue
+        days = prov_proj_days.get(proj, {})
+        tot = sum(days.values()) or 1.0
+        for day, v in sorted(days.items()):                  # spread the (capped) gap across actual usage days
+            share = gap * (v / tot)
+            if share > 0.005:
+                budget.record_reconciled(day, "(reconciled)", round(share, 6), project=proj)
+        gap_usd += gap
+        gap_rows += 1
+        by_project[proj] = round(gap, 2)
     audit = audit_completeness()                  # triple-check: every batch accounted, nothing silently dropped
     return dict(since=since, provider_total=provider_total, gate_attributed=local_total,
                 ungoverned=round(gap_usd, 2), gap_rows=gap_rows, gap_by_project=by_project,
@@ -325,21 +336,22 @@ def sync(since=None):
 
 
 def _provider_total(since):
-    """Provider-billed LLM total (the TRUTH) since `since` — OpenAI + Anthropic, as billed."""
-    total = 0.0
+    """Provider-billed LLM total (the TRUTH) since `since` — OpenAI + Anthropic, as billed. Returns None (UNKNOWN)
+    if EITHER provider fetch fails — never a silent partial/zero that would masquerade as 'fully reconciled'."""
+    total, err = 0.0, False
     try:
         from .report import openai_by_day
         oai, _ = openai_by_day()
         total += sum(v for d, v in oai.items() if d >= since)
     except Exception:
-        pass
+        err = True
     try:
         from . import reconcile_anthropic as anth
         an, _ = anth.cost_by_day(since=since)
         total += sum(v for d, v in an.items() if d >= since)
     except Exception:
-        pass
-    return round(total, 2)
+        err = True
+    return None if err else round(total, 2)
 
 
 def _gate_captured_rows(since):

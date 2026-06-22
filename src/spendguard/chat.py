@@ -60,10 +60,20 @@ def _decrypt(enc, key):
     if not enc or bytes(enc[:3]) not in (b"v10", b"v11"):
         return None, None
     ct = bytes(enc[3:])
-    iv = (b" " * 16).hex()
-    r = subprocess.run(["openssl", "enc", "-d", "-aes-128-cbc", "-nopad", "-K", key.hex(), "-iv", iv],
-                       input=ct, capture_output=True)
-    pt = r.stdout or b""
+    iv = b" " * 16
+    try:
+        # IN-PROCESS AES — the key NEVER appears in a command line. (Passing it to `openssl -K <hex>` puts the
+        # cookie-decryption key in argv, which is world-readable via `ps`/proc for the brief decrypt window.)
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+        d = Cipher(algorithms.AES(key), modes.CBC(iv)).decryptor()
+        pt = d.update(ct) + d.finalize()
+    except ImportError:
+        # Fallback when `cryptography` isn't installed: openssl, with the key on argv (briefly ps-visible). Install
+        # `llm-spendguard[chat]` for the in-process path. Chat is opt-in + on-device, so this fallback is last-resort.
+        sys.stderr.write("  ⚠ decrypting via openssl (key briefly on argv) — `pip install llm-spendguard[chat]` for in-process AES\n")
+        r = subprocess.run(["openssl", "enc", "-d", "-aes-128-cbc", "-nopad", "-K", key.hex(), "-iv", iv.hex()],
+                           input=ct, capture_output=True)
+        pt = r.stdout or b""
     if pt:
         pad = pt[-1]
         if 1 <= pad <= 16 and pt[-pad:] == bytes([pad]) * pad:
@@ -128,13 +138,21 @@ def _cookies(use_cache=True):
         except Exception:
             pass
     out = _decrypt_cookies()
-    if cache_on:
+    if cache_on and out:
         try:
             config.HOME.mkdir(parents=True, exist_ok=True)
-            p.write_text(json.dumps(out))
-            os.chmod(p, 0o600)
+            os.chmod(config.HOME, 0o700)
+            # Create 0600 ATOMICALLY (O_CREAT with mode) — never a world-readable window. The cache holds the
+            # decrypted sessionKey in plaintext; a write_text()-then-chmod left it 0644 until the chmod, and if the
+            # chmod threw it stayed 0644 forever. os.open with mode 0o600 closes both.
+            fd = os.open(str(p), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                os.write(fd, json.dumps(out).encode())
+            finally:
+                os.close(fd)
+            os.chmod(p, 0o600)                              # belt-and-suspenders if the file pre-existed at a looser mode
         except Exception:
-            pass
+            _clear_cookie_cache()                          # never leave a half-written / wrong-mode secret on disk
     return out
 
 

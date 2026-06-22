@@ -119,8 +119,14 @@ def _all_instances():
         if iid in live:
             continue
         h = dict(h)
-        if not h.get("end_date"):                          # destroyed while running → cap at last seen
-            h["end_date"] = h.get("last_seen")
+        # A DESTROYED box (not in live) is alive only until its last sighting. vast.ai sets a RUNNING box's
+        # end_date to the far-future CONTRACT expiry, not its stop time — so capping only `if not end_date` let a
+        # destroyed running box accrue phantom spend forever (dph × every day since). Cap at last_seen unless there's
+        # a genuine early exit (end_date BEFORE the last sighting). A recovered box (end_date == last_seen) is kept.
+        ls = h.get("last_seen")
+        ed = h.get("end_date")
+        if ls and (not ed or ed > ls):
+            h["end_date"] = ls
         merged.append(h)
     merged.extend(live.values())
     return merged
@@ -208,7 +214,7 @@ def account_gpu_total(since_ts=None):
     try:
         inv = (_get("users/current/invoices/") or {}).get("invoices", [])
     except Exception:
-        return 0.0
+        return None   # UNKNOWN (fetch failed) — NOT $0. $0 would masquerade as "no spend / fully reconciled".
     return round(sum(abs(float(i.get("amount") or 0)) for i in inv
                      if not i.get("is_credit") and (i.get("timestamp") or 0) >= since_ts), 2)
 
@@ -221,8 +227,8 @@ def compute_exceeded():
     from . import config
     cm = config.class_cap("compute", "monthly")
     if cm is not None:
-        spent = account_gpu_total()                       # month-to-date account charges (proxy)
-        if spent > cm:
+        spent = account_gpu_total()                       # month-to-date account charges (proxy); None = fetch failed
+        if spent is not None and spent > cm:
             return ("compute-monthly", cm, round(spent, 2))
     cd = config.class_cap("compute", "daily")
     if cd is not None:
@@ -243,12 +249,15 @@ def _parse_instances(text, seen_ts=None):
     Returns [{id, gpu_name?, dph_total?, start_date?, end_date?, label?, status?, seen_ts}]. PURE → testable."""
     out = []
     # form A — an instance object (anchor on dph_total; pull fields from the window around it; ' or " quoting)
-    for m in re.finditer(r"dph_total", text):
-        w = text[max(0, m.start() - 400):m.start() + 400]
-        idm = re.search(r"['\"]?(?:id|new_contract)['\"]?\s*[:=]\s*(4\d{7})", w)
-        if not idm:
+    # form A — instance objects. Anchor on each id (width-tolerant \d{6,10}, boundary-anchored so a 9-digit id
+    # isn't truncated to 8), and read each object's fields ONLY in the span up to the NEXT id — so two objects on
+    # one line (a list response) don't cross-contaminate (the old ±400 window let the 2nd object inherit the 1st's id).
+    ids = [(m.start(), m.group(1)) for m in re.finditer(r"['\"]?(?:id|new_contract)['\"]?\s*[:=]\s*(\d{6,10})\b", text)]
+    for k, (pos, iid) in enumerate(ids):
+        w = text[pos:(ids[k + 1][0] if k + 1 < len(ids) else len(text))]
+        if "dph_total" not in w and "gpu_name" not in w:   # this id isn't an instance object (e.g. a machine/offer id)
             continue
-        rec = {"id": idm.group(1), "seen_ts": seen_ts}
+        rec = {"id": iid, "seen_ts": seen_ts}
         g = re.search(r"['\"]?gpu_name['\"]?\s*[:=]\s*['\"]([^'\",}]+)", w)
         if g:
             rec["gpu_name"] = g.group(1).strip()
@@ -269,7 +278,7 @@ def _parse_instances(text, seen_ts=None):
             rec["status"] = st.group(1)
         out.append(rec)
     # form B — a formatted print: "id=40272086 H100 SXM status=running $3.61/hr label=foo"
-    for m in re.finditer(r"id=(4\d{7})\s+([A-Za-z0-9 ]+?)\s+(?:x\d+\s+)?(?:status=(\w+)\s+)?\$([0-9.]+)\s*/\s*hr(?:\s+label=(\S+))?", text):
+    for m in re.finditer(r"id=(\d{6,10})\s+([A-Za-z0-9 ]+?)\s+(?:x\d+\s+)?(?:status=(\w+)\s+)?\$([0-9.]+)\s*/\s*hr(?:\s+label=(\S+))?", text):
         rec = {"id": m.group(1), "gpu_name": m.group(2).strip(), "dph_total": float(m.group(4)), "seen_ts": seen_ts}
         if m.group(3):
             rec["status"] = m.group(3)
@@ -427,7 +436,7 @@ def discover_agentic(run=False, record=False, max_sessions=None, now=None):
             items = []
         for it in items:
             iid = str(it.get("id") or "").strip()
-            if not re.fullmatch(r"\d{6,9}", iid) or int(it.get("confidence") or 0) < 60:
+            if not re.fullmatch(r"\d{6,10}", iid) or int(it.get("confidence") or 0) < 60:
                 continue
             prev = merged.get(iid)
             if not prev or int(it.get("confidence") or 0) > int(prev.get("confidence") or 0):

@@ -89,5 +89,18 @@ c2 = resources._consolidate(o2, now=1781200000)
 ck("_consolidate: running box (no real exit) → identity_only, runtime NOT fabricated",
    len(c2["identity_only"]) == 1 and c2["identity_only"][0]["project"] == "manga2anime" and c2["identity_only"][0]["end_date"] is None)
 
+# ── phantom-spend guard: a DESTROYED running box (far-future CONTRACT end_date) must be capped at last_seen ──
+# vast.ai sets a running box's end_date to contract-expiry (far future). Once destroyed (gone from live), the old
+# `if not end_date` cap missed it → it accrued dph × every day since, forever. Cap at last_seen instead.
+import json as _json
+resources.instances = lambda: []                           # destroyed: gone from the live API
+_hist = {"7777": {"id": 7777, "gpu_name": "H100", "dph_total": 2.0,
+                  "start_date": now - 3 * 86400, "end_date": now + 300 * 86400,   # far-future contract end
+                  "last_seen": now - 2 * 86400, "status": "running"}}
+resources._history_path().write_text(_json.dumps(_hist))
+_cost = sum(r["cost"] for r in resources.gpu_rows_by_day(since_ts=now - 5 * 86400, now=now))
+# real runtime = start (−3d) → last_seen (−2d) = 24h × $2 = $48; NOT capped-at-now (48h=$96) or contract-end (huge)
+ck("destroyed running box capped at last_seen (no phantom spend)", abs(_cost - 48.0) < 2.0)
+
 print(("\n[FAIL] " if fails else "\n[OK] ") + f"resources_gpu: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

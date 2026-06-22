@@ -45,14 +45,21 @@ def rollup_by_org(rows, ptmap, cost_key="cost", proj_key="project"):
 
 
 def residual(truth_total, *captured_sums):
-    """truth − Σ(captured/attributed). The unrecoverable remainder — SURFACED, never dumped on a project/org."""
-    return round((truth_total or 0.0) - sum(captured_sums), 2)
+    """truth − Σ(captured/attributed). The unrecoverable remainder — SURFACED, never dumped on a project/org.
+    truth_total is None = UNKNOWN (the external fetch failed) → residual is None, not a misleading number."""
+    if truth_total is None:
+        return None
+    return round(truth_total - sum(captured_sums), 2)
 
 
 def residual_warning(truth_total, resid, frac=0.10, floor=25.0):
     """A large residual (either direction) is a problem to surface loudly, not hide. POSITIVE = UNDER-attributed
     (destroyed/ungated spend not yet recovered → it floats). NEGATIVE = OVER-attributed / STALE (the ledger
-    attributes more than the provider currently bills → re-run reconcile). Returns a message or None."""
+    attributes more than the provider currently bills → re-run reconcile). truth_total=None = the external bill
+    couldn't be read → say so (don't pretend it reconciled). Returns a message or None."""
+    if truth_total is None:
+        return ("truth UNKNOWN — the account/provider bill could not be read (key/network). These numbers are NOT "
+                "reconciled; fix the fetch before trusting them. (A failed fetch must never read as $0 / 100% covered.)")
     if not truth_total:
         return None
     thresh = max(floor, frac * truth_total)
@@ -115,8 +122,9 @@ def report(ptmap=None, since=None):
         if r.get("error"):
             print(f"  {name:6} ERROR: {r['error']}")
             continue
-        print(f"  {name:6} truth ${r['truth_total']:9.2f}  captured ${r['captured']:9.2f}  "
-              f"attributed ${r['attributed']:8.2f}  residual ${r['residual']:9.2f}  by_org={r['by_org']}")
+        fmt = lambda v: "  unknown" if v is None else f"${v:9.2f}"   # None truth/residual = fetch failed, not $0
+        print(f"  {name:6} truth {fmt(r['truth_total'])}  captured {fmt(r['captured'])}  "
+              f"attributed {fmt(r['attributed'])}  residual {fmt(r['residual'])}  by_org={r['by_org']}")
         if r.get("warning"):
             print(f"         ⚠  {r['warning']}")
     return res
@@ -127,8 +135,12 @@ def run(source, ptmap, since=None, warn_frac=0.10):
     residual/by_org/warning/rows) — the same shape for LLM, GPU, subscription, storage."""
     ok, why = owner_ok(source.conn())
     cap = list(source.captured(since) or [])
-    truth = source.truth_total(since) or 0.0
+    truth = source.truth_total(since)                      # None = UNKNOWN (fetch failed); 0.0 = genuinely zero
     cap_sum = round(sum(r.get("cost") or 0.0 for r in cap), 2)
+    if truth is None:                                      # can't reconcile against an unread bill — surface it, don't fake it
+        return {"source": source.name, "owner_ok": ok, "owner_reason": why, "truth_total": None,
+                "captured": cap_sum, "attributed": 0.0, "residual": None,
+                "by_org": rollup_by_org(cap, ptmap), "warning": residual_warning(None, None), "rows": cap}
     gap = round(truth - cap_sum, 2)
     attr = list(source.attribute_gap(gap, since) or []) if (ok and gap > 0.5) else []
     attr_sum = round(sum(r.get("cost") or 0.0 for r in attr), 2)

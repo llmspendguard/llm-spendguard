@@ -71,5 +71,21 @@ rl = reconcile.run(ledger_sync.LLMSource(conn={"owns_account": True}, since="202
 ck("LLMSource via run(): truth 800, captured 600, residual 200",
    rl["truth_total"] == 800.0 and rl["captured"] == 600.0 and rl["residual"] == 200.0)
 
+# ── truth UNKNOWN (fetch failed) must NOT read as $0/reconciled — the silent-undercount guard ──
+ck("residual: None truth → None (not a number)", reconcile.residual(None, 500.0) is None)
+ck("residual_warning: None truth → UNKNOWN (loud, not silent)", "UNKNOWN" in (reconcile.residual_warning(None, None) or ""))
+
+class FetchFail(reconcile.Source):
+    name = "ff"
+    def conn(self):
+        return {"owns_account": True}
+    def truth_total(self, since=None):
+        return None                                        # the external bill couldn't be read
+    def captured(self, since=None):
+        return [{"cost": 100.0, "project": "lmm"}]
+rf = reconcile.run(FetchFail(), ptmap)
+ck("run: None truth → residual None + UNKNOWN warning (never $0/100%-covered)",
+   rf["residual"] is None and "UNKNOWN" in (rf["warning"] or "") and rf["captured"] == 100.0)
+
 print(("\n[FAIL] " if fails else "\n[OK] ") + f"reconcile_core: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

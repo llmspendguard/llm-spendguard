@@ -231,9 +231,12 @@ print("-- reconcile_into_ledger: per-project attribution via conversation link +
 report.openai_by_day = lambda: ({DAYS[1]: 40.0}, 0)
 ra.cost_by_day = lambda since=None: ({}, {})
 backfill._openai_rows = lambda: [
-    ("openai", "gpt-5.5", 40.0, 1_000_000, 0, DAYS[1], "bx-linked"),   # attributed via conv link
+    ("openai", "gpt-5.5", 40.0, 1_000_000, 0, DAYS[1], "bx-linked"),   # attributed via conv link → vision
     ("openai", "gpt-5.5", 5.0, 100, 100, "2026-05-01", "bx-old"),       # day < since → skipped (line 141)
-    ("openai", "gpt-5.5", 9.0, 100, 100, DAYS[1], "bx-intent"),         # attributed via b2i intent text
+    ("openai", "gpt-5.5", 9.0, 100, 100, DAYS[1], "bx-intent"),         # attributed via b2i intent text → vision
+    # the gate-recorded nlp batch IS also provider-billed (every gated batch is). Including it keeps the fixture
+    # realistic (provider_total ≥ gate_total) so the double-count cap is a no-op here — gate $30 + vision $49 = $79.
+    ("openai", "gpt-5.5", 30.0, 1_000_000, 0, DAYS[1], "bx-nlp"),       # no link/intent → fallback nlp-pipeline
 ]
 backfill._anthropic_rows = lambda: []
 # bx-linked → a snippet that _project_of routes to 'vision-pipeline'
@@ -249,8 +252,21 @@ saas.conn = lambda: {"project": "nlp-pipeline", "projects": ["nlp-pipeline"]}
 summ_attr = LS.reconcile_into_ledger(since=SINCE)
 # bx-linked ($40, conv link) + bx-intent ($9, b2i) both → vision-pipeline (no gate spend there) → a real gap row
 check("vision-pipeline gap from link + b2i intent = $49", abs(summ_attr["gap_by_project"].get("vision-pipeline", 0) - 49.0) < 1e-9)
-check("nlp-pipeline has gate spend → its gap suppressed (not in bucket)", "nlp-pipeline" not in summ_attr["gap_by_project"])
-check("pre-`since` row (bx-old) excluded from totals", abs(summ_attr["provider_total"] - 49.0) < 1e-9)
+check("nlp-pipeline has gate spend = provider → its gap suppressed (not in bucket)", "nlp-pipeline" not in summ_attr["gap_by_project"])
+check("provider_total = $79 (vision $49 + nlp $30; pre-since bx-old excluded)", abs(summ_attr["provider_total"] - 79.0) < 1e-9)
+check("NO double-count: gate_attributed + ungoverned ≤ provider_total", summ_attr["gate_attributed"] + summ_attr["ungoverned"] <= summ_attr["provider_total"] + 0.01)
+
+print("-- reconcile_into_ledger: cross-classifier mismatch is CAPPED at provider truth (no double-count) --")
+# gate recorded $30 under nlp (the seed). Provider evidence attributes the SAME $30 to vision (different classifier).
+# Without the account-net cap: ledger = gate $30 + reconciled $30 = $60 = 2× the real $30. The cap holds it to $30.
+report.openai_by_day = lambda: ({DAYS[1]: 30.0}, 0)
+backfill._openai_rows = lambda: [("openai", "gpt-5.5", 30.0, 100, 0, DAYS[1], "bx-vis")]
+conv.batch_links = lambda tdir=None: {"bx-vis": {"snippet": "video segment caption frames"}}   # → vision-pipeline
+budget._db().execute("DELETE FROM call_io"); budget._db().commit()
+summ_cap = LS.reconcile_into_ledger(since=SINCE)
+check("double-count capped: gate + reconciled ≤ provider ($30, not $60)",
+      summ_cap["gate_attributed"] + summ_cap["ungoverned"] <= summ_cap["provider_total"] + 0.01)
+check("vision gap scaled toward 0 (account net = provider − gate = 0)", summ_cap["gap_by_project"].get("vision-pipeline", 0) < 0.5)
 
 print("-- reconcile_into_ledger: multi-project saas → 'unattributed' fallback bucket --")
 report.openai_by_day = lambda: ({DAYS[1]: 40.0}, 0)
