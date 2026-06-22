@@ -36,6 +36,7 @@ extra_css:
 nav:
   - Home: index.md
   - Solution spec: SOLUTION-SPEC.md
+  - Architecting Win (quality playbook): spendguard_architecting_win.md
   - Architecture: ARCHITECTURE.md
   - Using with Claude & agents: USING-WITH-CLAUDE.md
   - Work attribution: work-attribution.md
