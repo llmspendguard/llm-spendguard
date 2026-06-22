@@ -572,9 +572,20 @@ def sync(if_due=False, since=None):
         res = _resources.sync()
     except Exception as e:
         res = {"skipped": f"resources unavailable: {str(e)[:80]}"}
+    # PRE-PUSH TRUST GATE (fail-closed): never push a ledger that's far above provider billing — that's the
+    # double-count signature. The 2x prod incident is exactly what this stops at the source.
+    tg = {}
+    try:
+        from . import trust
+        tg = trust.check(since=since, with_server=False)
+        if tg.get("ledger_verdict", {}).get("level") == "alarm":
+            return {"skipped": "TRUST GATE — push blocked", "trust": tg["ledger_verdict"]["msg"],
+                    "fix": "run `spendguard trust` + `spendguard reconcile-ledger`; do not push until recorded ≈ provider-billed"}
+    except Exception:
+        pass   # trust check must never *break* the sync — only block a clearly-bad one
     out = {"rollup": push_rollup(since=since), "insights": push_insights(),
            "workdone": push_workdone(since=since), "status": push_status(),
-           "resources": res, "commands": run_commands(since=since)}
+           "resources": res, "commands": run_commands(since=since), "trust": tg.get("ledger_verdict")}
     try:                                                  # claude.ai chat attribution loop (only if opted in)
         from . import chat as _chat
         out["chat"] = _chat.loop(run=True, quiet=True) if _chat._enabled() else {"skipped": "chat not enabled"}

@@ -170,6 +170,9 @@ def main(argv=None):
     if cmd in ("reconcile-ledger", "ledger-sync", "leaks"):   # local ledger vs provider billing → find leaks
         from . import ledger_sync
         return ledger_sync.main(rest)
+    if cmd in ("trust", "trust-check"):               # provider billing vs recorded — the daily double-count guard
+        from . import trust
+        return trust.cmd(rest)
     if cmd in ("cross-check", "crosscheck"):          # free price drift check vs OpenRouter's public JSON
         from . import pricing as p
         try:
