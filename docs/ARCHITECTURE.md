@@ -197,9 +197,11 @@ restructured — as three thin layers so the **logic lives in the unit-tested co
 
 This is the **same map/reduce shape as reconcile** (`Source` adapters *map* each source → records; the portfolio
 residual *reduces* them) and it composes with the coverage strategy: the pure middle is what the **78% money-core
-gate** measures; the I/O shells stay thin and integration-tested. **Status:** `report.py` is refactored as the
-reference; `saas.py` / `chat.py` / `conv.py` / `claudecode.py` are the tracked follow-ups to pull their pure
-transforms out the same way.
+gate** measures; the I/O shells stay thin and integration-tested. **Status:** applied across the heavy I/O modules
+— `report.build_rows`, `saas.build_rollup_rows`/`build_guarded_rows`, and the (already-separated) pure transforms
+in `chat.py` (`_value_breakdown`/`_digest_conv`/`_day_rows`), `conv.py` (`_project_of`/`_dedup_top`), and
+`claudecode.py` (`_row_cost`/`_project_of`) are each pure + offline-tested, with the network/file reads in thin
+shells. (Several were already cleanly structured by design — the gap there was test coverage, now closed.)
 
 ---
 
