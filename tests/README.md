@@ -34,7 +34,10 @@ exercise pure logic. None spend money.
 | `test_workdone.py` | work-done rollup shaping (project/team, chats vs code sessions). |
 | `test_saas.py`, `test_saas_rollup.py` | `/v1` push contract: scrubbed rollups, channel/kind/billed split, taxonomy pull/push, command queue. |
 | `test_ledger_sync.py` | reconcile gap spread across actual usage days (not lumped on the reconcile day). |
-| `test_reconcile*.py` | provider-billing reconciliation (OpenAI + Anthropic) vs the local ledger. |
+| `test_reconcile_anthropic.py` | provider-billing reconciliation (OpenAI + Anthropic) vs the local ledger. |
+| `test_reconcile_core.py` | the shared reconcile loop: owner-anchor guard, residual math, direction-aware warnings, the `Source` adapter, both real adapters (LLM + GPU) stubbed, None-truth (fetch-failed) safety. |
+| `test_reconcile_e2e.py` | end-to-end **"does it all add up"**: a known dated ledger trimmed by date → trim exactness/monotonicity/pivot-closure, per-source loop residual constant under trim, org-rollup closes, the **portfolio grand total reconciles across LLM+GPU**, and UNKNOWN-truth never reads as $0/100%-covered. |
+| `test_schedule.py` | the installable scheduler: macOS launchd (daily=clock-anchored vs hourly=interval), Windows schtasks `/tr` quoting (python path with spaces), Linux crontab marker idempotency + safe removal, unsupported-platform fallback. |
 | `test_runner.py` | the pytest entry that runs all of the above as subprocesses. |
 
 This table is representative, not exhaustive — every `test_*.py` in this directory is collected and run by
