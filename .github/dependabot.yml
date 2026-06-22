@@ -1,0 +1,16 @@
+# Dependabot — weekly dependency + GitHub Actions update PRs. Keeps the (optional) SDKs, dev tooling, and CI
+# actions patched without manual tracking. Security updates are raised immediately regardless of schedule.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: "/"
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+    groups:
+      dev-dependencies:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5

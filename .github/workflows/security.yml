@@ -1,0 +1,48 @@
+name: security
+on:
+  push: { branches: [main] }
+  pull_request:
+  schedule:
+    - cron: "0 7 * * 1"   # weekly deep pass (Mon 07:00 UTC)
+
+# Automated security baseline for the public client: SAST (CodeQL), secret scanning (TruffleHog, verified-only), and
+# a dependency audit. CodeQL uploads to GitHub code scanning (free on public repos). TruffleHog fails ONLY on a
+# *verified* (live) secret — test fixtures + placeholder keys can't verify, so there are no false positives and no
+# allowlist to maintain. The dependency audit is report-only — Dependabot raises the actual fix PRs — so a newly-
+# disclosed CVE never blocks an unrelated change.
+permissions:
+  contents: read
+  security-events: write   # CodeQL SARIF upload
+
+jobs:
+  codeql:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with: { languages: python }
+      - uses: github/codeql-action/analyze@v3
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }   # whole tree + history
+      # The gitleaks ACTION requires a paid license for org repos; the TruffleHog binary is free. --only-verified
+      # means it confirms a candidate is a LIVE key before failing, so fake/example keys never trip it.
+      - name: TruffleHog (verified secrets only)
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin
+          trufflehog filesystem . --only-verified --fail --no-update
+
+  dep-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: pip-audit (report-only; Dependabot raises fix PRs)
+        run: |
+          pip install pip-audit
+          pip install -e ".[openai,anthropic,dev]"
+          pip-audit || echo "::warning::pip-audit found advisories — see Dependabot for fix PRs"
