@@ -226,18 +226,15 @@ def _row_uid(row):
     return hashlib.sha1("|".join(parts).encode()).hexdigest()[:24]
 
 
-def _rollup_rows(since=None):
-    """Build the structured /v1/ledger day_totals from the local ledger, stamping this install's contributor and
-    the project tag, and filtering to the project(s) this connection owns. Maps the local `kind`
-    (batch|realtime|meta) to the server's kind (workload|meta) + channel (batch|realtime) and $ → micros.
-    Pure (no network) so it can be tested + dry-run."""
-    from . import budget
-    try:
-        raw = budget.by_dims(since=since)
-    except Exception:
-        raw = []
-    ref = contributor()
-    flt = _project_filter(conn())
+# ── PURE transforms (fetch→transform→load): the scrubbing + filter + shaping live here, no network/DB, so they're
+#    unit-testable on their own (tests/test_saas_payload.py). The thin shells below do the I/O (budget/guard read,
+#    contributor/conn resolve) then hand off; push_rollup does the send. Same map/reduce shape as reconcile/report.
+
+def build_rollup_rows(raw, ref, flt):
+    """Ledger dim-rows → scrubbed /v1 day_totals. `flt` = a set of projects this connection owns (None = push all).
+    Filters out other projects (no cross-attribution), maps local kind (batch|realtime|meta) → server kind
+    (workload|meta) + channel, $ → micros, stamps the contributor `ref` (except the reconciled 'unattributed' gap),
+    and computes the cross-check uid. Emits ONLY the contract fields — never prompts/content (scrub by construction)."""
     out = []
     for r in raw:
         proj = (r.get("project") or "").lower()
@@ -258,21 +255,10 @@ def _rollup_rows(since=None):
     return out
 
 
-def _guarded_rows(since=None):
-    """Per (day, project, source) cumulant SUMS of guarded spend (cache/block/cascade/…), filtered to this
-    connection's project(s). Cumulants add → the server rolls up to any scope and recovers the distribution."""
-    from . import guard
-    try:
-        rows = guard.by_dims_guarded(since=since)
-    except Exception:
-        return []
-    c = conn()
-    ps = c.get("projects")
-    base = set()
-    if isinstance(ps, list) and ps:
-        base = set(str(x).strip().lower() for x in ps if x)
-    elif c.get("project"):
-        base = {str(c["project"]).strip().lower()}
+def build_guarded_rows(rows, base):
+    """Guarded cumulant rows → scrubbed /v1 guarded_totals. `base` = a set of this connection's project(s) (empty =
+    push all of them; guarded sources are never llmseg/unattributed, so it doesn't widen like the ledger filter).
+    Cumulants pass through (they add → the server recovers the distribution at any scope)."""
     out = []
     for r in rows:
         proj = (r.get("project") or "").lower()
@@ -281,6 +267,36 @@ def _guarded_rows(since=None):
         out.append({"day": r["day"], "project": proj, "source": r["source"], "n": int(r["n"]),
                     "k1": r["k1"], "k2": r["k2"], "k3": r["k3"], "k4": r["k4"]})
     return out
+
+
+def _conn_project_base(c):
+    """PURE: the connection's own project set (no llmseg/unattributed widening) — used for the guarded filter."""
+    ps = c.get("projects")
+    if isinstance(ps, list) and ps:
+        return set(str(x).strip().lower() for x in ps if x)
+    if c.get("project"):
+        return {str(c["project"]).strip().lower()}
+    return set()
+
+
+def _rollup_rows(since=None):
+    """I/O shell: read the local ledger (DB) + resolve contributor/filter, then hand to build_rollup_rows (pure)."""
+    from . import budget
+    try:
+        raw = budget.by_dims(since=since)
+    except Exception:
+        raw = []
+    return build_rollup_rows(raw, contributor(), _project_filter(conn()))
+
+
+def _guarded_rows(since=None):
+    """I/O shell: read guarded cumulants (DB), then hand to build_guarded_rows (pure)."""
+    from . import guard
+    try:
+        rows = guard.by_dims_guarded(since=since)
+    except Exception:
+        return []
+    return build_guarded_rows(rows, _conn_project_base(conn()))
 
 
 def push_rollup(since=None, dry=False):
