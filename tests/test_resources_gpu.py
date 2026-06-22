@@ -42,5 +42,49 @@ ck("destroyed instance still in per-day rows", abs(sum(r["cost"] for r in rows2)
 ck("DEFAULT_LABEL_MAP empty (no opinionated defaults)", resources.DEFAULT_LABEL_MAP == [])
 ck("unlabeled → no project (until user configures)", resources.project_of("train-a") == "")
 
+
+# ── account-gap reconcile guard: never dump a SHARED account's gap on this connection's org ──────────────────────
+# Regression for the prod bug where manga2anime's destroyed-H200 gap ($900) landed on Healiom: the guard dropped
+# empty-project instances, so a foreign/unlabeled box didn't mark the account as multi-project. sync() must only
+# reconstruct the blanket gap when EVERY instance belongs to THIS connection's project.
+from spendguard import saas, attribution
+saas.conn = lambda: {"enabled": True, "visibility": "org", "owns_account": True, "project": "lmm",
+                     "org": "Healiom", "contributor": "t@x.test", "url": "https://x", "api_key": "k"}
+saas.contributor = lambda: "t@x.test"
+saas._row_uid = lambda row: "uid_" + str(row.get("project")) + str(row.get("day")) + str(row.get("model"))[:6]
+resources.snapshot = lambda: None
+resources.account_gpu_total = lambda since_ts=None: 1000.0          # big account total → gap = 1000 - attributed
+resources._month_start_ts = lambda: now - 30 * 86400
+resources._gpu_alignment = lambda since: {("2026-06-10", "lmm"): {"w": 1.0, "org": "healiom", "team": "clinical-ai"}}
+attribution.taxonomy = lambda: ({"orgs": ["Healiom"], "teams": [], "projects": []},)
+attribution.project_team_map = lambda taxo: {"lmm": ("Healiom", "clinical-ai")}
+
+
+def _recon_rows(payload):
+    return [r for r in payload["day_totals"] if str(r.get("model", "")).startswith("(reconstructed")]
+
+
+# CASE 1 — a foreign instance (manga2anime) is present → SHARED account → NO blanket-gap reconstruction.
+resources.gpu_rows_by_day = lambda since_ts=None, now=None, label_map=None: [
+    {"day": "2026-06-10", "gpu": "A100 SXM4", "cost": 250.0, "instances": [1], "project": "lmm"},
+    {"day": "2026-06-12", "gpu": "RTX 3090", "cost": 5.0, "instances": [2], "project": "manga2anime"},  # FOREIGN
+]
+p1 = resources.sync(dry=True)
+ck("shared account (foreign instance) → no reconstructed gap rows", _recon_rows(p1) == [])
+ck("shared account → only this project's real instances pushed", all(r["project"] == "lmm" for r in p1["day_totals"]))
+
+# CASE 2 — an UNLABELED instance (project '') is also foreign → still no reconstruction (the exact prod miss).
+resources.gpu_rows_by_day = lambda since_ts=None, now=None, label_map=None: [
+    {"day": "2026-06-10", "gpu": "A100 SXM4", "cost": 250.0, "instances": [1], "project": "lmm"},
+    {"day": "2026-06-12", "gpu": "RTX 3090", "cost": 5.0, "instances": [2], "project": ""},  # UNLABELED → foreign
+]
+ck("unlabeled instance present → still no reconstructed gap (the prod miss)", _recon_rows(resources.sync(dry=True)) == [])
+
+# CASE 3 — genuinely single-project account (every instance is this project) → gap IS reconstructed.
+resources.gpu_rows_by_day = lambda since_ts=None, now=None, label_map=None: [
+    {"day": "2026-06-10", "gpu": "A100 SXM4", "cost": 250.0, "instances": [1], "project": "lmm"},
+]
+ck("single-project account → gap reconstructed (this project's own destroyed boxes)", len(_recon_rows(resources.sync(dry=True))) > 0)
+
 print(("\n[FAIL] " if fails else "\n[OK] ") + f"resources_gpu: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

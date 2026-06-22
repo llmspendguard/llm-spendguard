@@ -309,8 +309,13 @@ def sync(dry=False):
         # split it, and prepaid top-ups are lumpy = a balance buffer, not consumption). So: multi-project account →
         # push only per-project attributed consumption (each org reconciles its own); single-project → the gap is
         # this project's (the "primary task" rule), not 'unattributed'.
-        projs_present = {(r.get("project") or "") for r in allrows if r.get("project")}
-        if len(projs_present) <= 1:
+        # Reconcile the blanket gap ONLY for a genuinely single-project account this connection FULLY owns: every
+        # recorded instance must map to THIS connection's project. Any instance with a different OR UNRECOGNIZED
+        # (empty-label) project means the vast.ai account is shared — its gap is cross-org (another project's
+        # destroyed boxes) and must NOT be dumped here. (Counting only non-empty projects let an unlabeled foreign
+        # box slip through, so manga2anime's destroyed H200 gap landed on Healiom.) Under-count beats mis-attribute.
+        foreign = [r for r in allrows if (r.get("project") or "") != proj]
+        if allrows and not foreign:
             gap = round(account_gpu_total() - sum(r["cost"] for r in allrows), 2)
             if gap > 0.5:
                 # The remaining gap = instances destroyed BEFORE snapshotting began (unrecoverable from vast.ai —
