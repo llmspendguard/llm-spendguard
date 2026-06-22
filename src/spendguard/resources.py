@@ -455,16 +455,13 @@ def _reconcile(allrows, account_total, conn, ptmap):
     recorded boxes), NEVER dumped on a project/org — so a SHARED vast.ai account can't leak cross-org and no flat
     per-day rows are fabricated. `by_org` is a diagnostic of where the recorded spend landed. residual → 0 only when
     every box is captured/recovered AND account_total is true consumption (top-ups carry a balance buffer)."""
+    from . import reconcile
     proj = (conn.get("project") or "").lower()
     captured = round(sum(r["cost"] for r in allrows), 2)
-    residual = round((account_total or 0) - captured, 2)
-    by_org = {}
-    for r in allrows:
-        org = ptmap.get((r.get("project") or "").lower(), ("", ""))[0] or "(untagged)"
-        by_org[org] = round(by_org.get(org, 0.0) + r["cost"], 2)
     mine = [r for r in allrows if (r.get("project") or "") == proj and r["cost"] > 0]
     return {"mine": mine, "captured": captured, "account_total": round(account_total or 0, 2),
-            "residual": residual, "by_org": by_org}
+            "residual": reconcile.residual(account_total, captured),       # shared core: truth − captured
+            "by_org": reconcile.rollup_by_org(allrows, ptmap)}             # shared core: project→org rollup
 
 
 def record_recovered(box):
@@ -558,12 +555,10 @@ def cmd(argv=None):
         print(f"  {p:14} ${c:8.2f}")
     print(f"  {'— attributed':14} ${attributed:8.2f}")
     print(f"  {'account total':14} ${truth:8.2f}  (vast.ai charges; top-up proxy)")
-    residual = round(truth - attributed, 2)
+    from . import reconcile
+    residual = reconcile.residual(truth, attributed)
     print(f"  {'→ residual':14} ${residual:8.2f}  (account − attributed; should ≈ unspent balance buffer)")
-    # Process self-check: a LARGE residual means a project/tenant is UNDER-recovered (destroyed boxes not yet
-    # reconstructed) — surface it loudly so it gets attributed, never silently dumped or ignored.
-    if truth and residual > max(25.0, 0.10 * truth):
-        print(f"  ⚠  residual is {residual / truth * 100:.0f}% of the account — a project/tenant is UNDER-recovered. "
-              "Recover its destroyed boxes (resources.record_recovered, evidence-anchored) so the gap lands on the "
-              "right org, not floating. Durable fix: schedule snapshot() so boxes are captured live.")
+    w = reconcile.residual_warning(truth, residual)         # shared core: flags an under-attributed source/tenant
+    if w:
+        print("  ⚠  " + w + " (GPU: resources.record_recovered / discover --agentic; or schedule snapshot()).")
     return 0

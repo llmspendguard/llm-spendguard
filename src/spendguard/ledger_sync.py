@@ -105,8 +105,10 @@ def reconcile_into_ledger(since=None):
         _conn = _saas.conn()
     except Exception:
         _conn = {}
-    if _conn.get("enabled") and not _conn.get("owns_account"):
-        return dict(since=since, skipped="not the account owner (owns_account=false); the owner connection reconciles the shared provider-account gap",
+    from . import reconcile                                 # shared reconcile core (same account-anchor guard as GPU)
+    _ok, _why = reconcile.owner_ok(_conn)
+    if not _ok:
+        return dict(since=since, skipped=_why,
                     provider_total=0.0, gate_attributed=0.0, ungoverned=0.0, gap_rows=0, gap_by_project={}, errors={})
     prov = {}   # (provider, day) -> $ billed (truth)
     errors = {}   # NEVER silently undercount — a failed/partial provider fetch must be visible, not hidden
