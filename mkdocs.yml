@@ -35,6 +35,7 @@ extra_css:
 
 nav:
   - Home: index.md
+  - Solution spec: SOLUTION-SPEC.md
   - Architecture: ARCHITECTURE.md
   - Using with Claude & agents: USING-WITH-CLAUDE.md
   - Work attribution: work-attribution.md

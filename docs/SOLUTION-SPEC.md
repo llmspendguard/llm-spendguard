@@ -3,8 +3,8 @@
 > The single authoritative document for the **client**: why it exists, the value it delivers, how a dollar of LLM
 > spend flows through it, the principles that make it work, the complete design, and how it's tested, secured,
 > operated, and extended. It is the umbrella over the focused docs ([ARCHITECTURE](ARCHITECTURE.md),
-> [learning-advisor](learning-advisor.md), [work-attribution](work-attribution.md), the [README](../README.md)
-> command reference, [SECURITY](../SECURITY.md)) — read this for the *whole story*; follow the links for depth. The
+> [learning-advisor](learning-advisor.md), [work-attribution](work-attribution.md), the [README](https://github.com/llmspendguard/llm-spendguard/blob/main/README.md)
+> command reference, [SECURITY](https://github.com/llmspendguard/llm-spendguard/blob/main/SECURITY.md)) — read this for the *whole story*; follow the links for depth. The
 > server half of the system has its own [Solution Specification](https://github.com/llmspendguard/llm-spendguard-server/blob/main/docs/SOLUTION-SPEC.md).
 
 **Status:** continuously developed; pip-published. **Audience:** an engineer or technical buyer who needs to
@@ -64,7 +64,7 @@ on my own machine, without shipping my prompts anywhere.*"
 | **The security-conscious buyer** | Prompts and keys never leave the device; the server only ever sees scrubbed aggregates; fail-closed enforcement; a published [threat model](https://github.com/llmspendguard/llm-spendguard-server/blob/main/docs/THREAT-MODEL.md). |
 
 The quantified upside is twofold: **avoided overspend** (caps + estimate-first stop the $200-surprise class of bug)
-and **realized savings** (cache/cascade/advisor), both measured — see [§8](#8-reconciliation--proof-it-adds-up) and
+and **realized savings** (cache/cascade/advisor), both measured — see [§8](#8-reconciliation-proof-it-adds-up) and
 `guard.py`'s savings distribution.
 
 ## 4. Solution overview
@@ -104,7 +104,7 @@ the [server spec](https://github.com/llmspendguard/llm-spendguard-server/blob/ma
 5. **Reconcile against truth.** On demand (or on schedule), `reconcile.py` reads each provider's *actual billing*
    (read-only) as `truth_total`, sums what the gate `captured`, and computes `residual = truth − captured −
    attributed`. The unattributed remainder is **surfaced**, never dumped on a project. This is the
-   "[does it add up](#8-reconciliation--proof-it-adds-up)" guarantee.
+   "[does it add up](#8-reconciliation-proof-it-adds-up)" guarantee.
 6. **Push (optional).** `saas.py` sends *scrubbed aggregates* over HTTPS with a Bearer ingest key — `(scope,
    member, project, day, provider, model, spend, tokens)` and scrubbed insight abstracts. **No prompts, no keys,
    no PII.** `schedule.py` can run this daily/hourly via the OS-native scheduler. → the server takes over.
@@ -118,7 +118,7 @@ the [server spec](https://github.com/llmspendguard/llm-spendguard-server/blob/ma
   which must be confirmed before submission. Never cancel a running job as cost control — completed requests bill.
 - **Account-anchored reconciliation.** Magnitude comes from *billed truth + captured*; the agentic layer only
   decides *attribution* (who/what), never *how much*; and only the **account-owner** reconciles a shared account's
-  gap (so a non-owner can't claim another tenant's spend). See [§8](#8-reconciliation--proof-it-adds-up).
+  gap (so a non-owner can't claim another tenant's spend). See [§8](#8-reconciliation-proof-it-adds-up).
 - **The caged advisor.** spendguard's *own* LLM use (recommendations, classification) runs under a separate
   **meta-budget** (`caps.meta`, default $2/day) and is estimate-first — the tool can't overspend while telling you
   to spend less.
@@ -138,7 +138,7 @@ no other code changes. State is a single SQLite ledger under `~/.spendguard/` (c
 which makes the gate **cross-process** (a fleet of workers shares one cap). The kill switch (`GATE_DISABLE=1` or a
 flag file) and `require()` give explicit control of enforcement. Full module map: [ARCHITECTURE.md](ARCHITECTURE.md).
 
-## 8. Reconciliation — proof it adds up
+## 8. Reconciliation: proof it adds up
 
 The reconcile core (`reconcile.py`) is one loop shared by every spend source via a `Source` adapter (LLM batches +
 realtime, GPU/vast, and future subscription/storage). For each source:
@@ -173,7 +173,7 @@ with a loud warning — a failed fetch never masquerades as "$0 / 100% covered."
 
 Prompts, outputs, and provider keys **never leave the device**; the optional push is scrubbed aggregates only and
 refuses any non-HTTPS URL. The claude.ai chat adapter (opt-in) decrypts its session key in-process (never on argv,
-never logged). The caged advisor can't overspend. Full surface + disclosure policy: [SECURITY.md](../SECURITY.md);
+never logged). The caged advisor can't overspend. Full surface + disclosure policy: [SECURITY.md](https://github.com/llmspendguard/llm-spendguard/blob/main/SECURITY.md);
 system threat model: [THREAT-MODEL.md](https://github.com/llmspendguard/llm-spendguard-server/blob/main/docs/THREAT-MODEL.md).
 
 ## 11. Operations
@@ -202,9 +202,9 @@ paid-call `compare`/`cachetest` dev tools) — integration-tested instead. Roadm
 
 ## 14. Appendices
 
-- **CLI reference:** the [README](../README.md#cli--full-command-reference) (`enforce`, `reconcile`, `report`,
+- **CLI reference:** the [README](https://github.com/llmspendguard/llm-spendguard/blob/main/README.md#cli--full-command-reference) (`enforce`, `reconcile`, `report`,
   `schedule`, `resources`, `advise`, `optimize`, `brief`, `worklog`, `tag`, `experiment`, `compare`, `bootstrap`, …).
 - **Env knobs:** `SPENDGUARD_HOME`, `GATE_DISABLE`, `GATE_ALLOW`, `GATE_CAP`, per-class `GATE_<CLASS>_<WINDOW>`,
-  `GATE_META_BUDGET`, `SPENDGUARD_SAAS_KEY`, `SPENDGUARD_PRICES` — see [README §Knobs](../README.md#knobs-env).
+  `GATE_META_BUDGET`, `SPENDGUARD_SAAS_KEY`, `SPENDGUARD_PRICES` — see [README §Knobs](https://github.com/llmspendguard/llm-spendguard/blob/main/README.md#knobs-env).
 - **Learning advisor** (cold start, corpus, living insights, collective learning): [learning-advisor.md](learning-advisor.md).
 - **Server contract + the other half of the journey:** [server Solution Spec](https://github.com/llmspendguard/llm-spendguard-server/blob/main/docs/SOLUTION-SPEC.md).
