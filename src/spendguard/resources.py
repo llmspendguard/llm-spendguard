@@ -333,5 +333,12 @@ def cmd(argv=None):
         print(f"  {p:14} ${c:8.2f}")
     print(f"  {'— attributed':14} ${attributed:8.2f}")
     print(f"  {'account total':14} ${truth:8.2f}  (vast.ai charges; top-up proxy)")
-    print(f"  {'→ ungoverned':14} ${max(0, truth - attributed):8.2f}  (destroyed/untracked instances)")
+    residual = round(truth - attributed, 2)
+    print(f"  {'→ residual':14} ${residual:8.2f}  (account − attributed; should ≈ unspent balance buffer)")
+    # Process self-check: a LARGE residual means a project/tenant is UNDER-recovered (destroyed boxes not yet
+    # reconstructed) — surface it loudly so it gets attributed, never silently dumped or ignored.
+    if truth and residual > max(25.0, 0.10 * truth):
+        print(f"  ⚠  residual is {residual / truth * 100:.0f}% of the account — a project/tenant is UNDER-recovered. "
+              "Recover its destroyed boxes (resources.record_recovered, evidence-anchored) so the gap lands on the "
+              "right org, not floating. Durable fix: schedule snapshot() so boxes are captured live.")
     return 0
