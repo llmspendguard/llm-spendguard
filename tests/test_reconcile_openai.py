@@ -41,17 +41,22 @@ print("-- load_key(): resolves from env (no network, no real ~/.spendguard) --")
 os.environ["OPENAI_API_KEY"] = "sk-test-OFFLINE-123"
 check("load_key returns env key", ro.load_key() == "sk-test-OFFLINE-123")
 
-print("-- load_key(): missing key -> sys.exit (SystemExit), never a network call --")
+print("-- load_key(): missing key -> RAISES (not sys.exit), never a network call --")
 # Stub config.api_key to '' (a repo-local ./.env may hold a real key; never depend on its
-# absence and never read it). load_key imports api_key from .config at call time.
+# absence and never read it). load_key imports api_key from .config at call time. It must RAISE a normal
+# Exception (KeyMissing), NOT sys.exit — SystemExit is a BaseException that escapes the `except Exception`
+# guards in degradable callers (leak_line / `spendguard doctor`) and aborts them.
 import spendguard.config as _cfg
 _orig_api_key = _cfg.api_key
 _cfg.api_key = lambda name: ""
 try:
     ro.load_key()
-    check("missing key exits", False)
-except SystemExit as e:
-    check("missing key exits", "OPENAI_API_KEY not found" in str(e.code))
+    check("missing key raises", False)
+except SystemExit:
+    check("missing key must NOT sys.exit (it would escape except-Exception guards)", False)
+except Exception as e:
+    check("missing key raises KeyMissing with a clear message",
+          isinstance(e, ro.KeyMissing) and "OPENAI_API_KEY not found" in str(e))
 finally:
     _cfg.api_key = _orig_api_key
 

@@ -14,17 +14,24 @@ KEY ACCOUNTING RULES baked in:
   * billed = COMPLETED + CANCELLED batches (cancelled bills for completed requests!)
   * failed = $0 ; in_progress/finalizing = not yet metered (reported separately)
 """
-import sys, json, argparse, urllib.request, datetime
+import json, argparse, urllib.request, datetime
 from collections import defaultdict
 
 from .pricing import batch_cost, normalize, PRICING_SOURCE, PRICING_VERIFIED
+
+
+class KeyMissing(RuntimeError):
+    """No provider key configured. A RAISE (not sys.exit) so degradable callers — leak_line, `spendguard doctor`,
+    signal.cancellation_rows — can swallow it via `except Exception` and degrade gracefully; the CLI catches it for
+    a clean one-line exit. (sys.exit raised SystemExit, a BaseException that slipped past those `except Exception`
+    guards and aborted `spendguard doctor` on a machine with no OPENAI_API_KEY.)"""
 
 
 def load_key():
     from .config import api_key
     k = api_key("OPENAI_API_KEY")
     if not k:
-        sys.exit("OPENAI_API_KEY not found")
+        raise KeyMissing("OPENAI_API_KEY not found (set it or add to ~/.spendguard/.env)")
     return k
 
 

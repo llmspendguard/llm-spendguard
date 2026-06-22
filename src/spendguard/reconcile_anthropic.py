@@ -13,7 +13,7 @@ Opus judge running via ThreadPool) are NOT captured — that needs an Admin API 
 
   python scripts/reconcile_anthropic_spend.py [--since YYYY-MM-DD] [--by-day]
 """
-import os, sys, json, argparse, urllib.request, socket
+import os, json, argparse, urllib.request, socket
 
 from . import pricing
 from .config import ANTHROPIC_CACHE as CACHE_PATH, api_key as _api_key
@@ -24,7 +24,9 @@ socket.setdefaulttimeout(60)
 def _key():
     k = _api_key("ANTHROPIC_API_KEY")
     if not k:
-        sys.exit("ANTHROPIC_API_KEY not found")
+        # RAISE, not sys.exit: SystemExit is a BaseException that escapes `except Exception` guards in degradable
+        # callers (leak_line / `spendguard doctor`). The CLI catches RuntimeError for a clean one-line exit.
+        raise RuntimeError("ANTHROPIC_API_KEY not found (set it or add to ~/.spendguard/.env)")
     return k
 
 

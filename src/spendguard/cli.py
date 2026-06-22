@@ -47,7 +47,11 @@ def main(argv=None):
         else:
             from . import reconcile_openai as r
         sys.argv = ["reconcile"] + rest[1:]
-        return r.main()
+        try:
+            return r.main()
+        except RuntimeError as e:                          # e.g. a missing provider key — clean one-line exit, no traceback
+            print(e)
+            return 1
     if cmd == "estimate":
         from . import estimate as e
         sys.argv = ["estimate"] + rest
