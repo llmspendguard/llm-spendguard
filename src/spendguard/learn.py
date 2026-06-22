@@ -49,8 +49,16 @@ def _db():
                     id TEXT PRIMARY KEY, ts TEXT, type TEXT, label TEXT, attrs TEXT)""")
                 c.execute("""CREATE TABLE IF NOT EXISTS graph_edges(
                     src TEXT, dst TEXT, rel TEXT, ts TEXT, attrs TEXT)""")
+                # ── seg_attribution: the AGENTIC per-subconversation attribution decisions, recorded so we NEVER
+                #    redo / re-pay for them. source ∈ prior(free, recomputable — not stored) | llm | human(final, wins).
+                #    The convergence loop re-runs only rows that are absent / not-llm-or-human / below confidence τ. ──
+                c.execute("""CREATE TABLE IF NOT EXISTS seg_attribution(
+                    seg_id TEXT PRIMARY KEY, content_hash TEXT, sid TEXT, cwd TEXT, prompt TEXT,
+                    project TEXT, org TEXT, team TEXT, confidence INTEGER,
+                    source TEXT, model TEXT, ts TEXT, batch_ids TEXT)""")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_ins_intent ON insights(intent)")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_gn_type ON graph_nodes(type)")
+                c.execute("CREATE INDEX IF NOT EXISTS idx_seg_source ON seg_attribution(source)")
                 c.commit()
                 _conn = c
     return _conn

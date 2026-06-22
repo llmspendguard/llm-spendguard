@@ -81,5 +81,15 @@ ck("evidenced flag set on all linked batches", all(b.get("evidenced") for b in b
 ck("legacy regex attribution conv._project_of has been REMOVED (agentic-only)",
    not hasattr(conv, "_project_of") and not hasattr(conv, "_PROJECT_RULES"))
 
+# ── 5. PERSISTENCE in the base sqlite: decisions survive + are reused, human beats llm (never redo/re-pay) ──
+conv._seg_put_cls("h1", {"project": "lmm", "org": "Healiom", "confidence": 90}, source="llm", model="m")
+ck("decision persisted + retrievable from the base sqlite", conv._seg_get_all().get("h1", {}).get("project") == "lmm")
+conv._seg_put_cls("h1", {"project": "manga2anime", "org": "Ensight", "confidence": 95}, source="human")
+ck("human override wins", conv._seg_get_all()["h1"]["project"] == "manga2anime")
+conv._seg_put_cls("h1", {"project": "lmm", "confidence": 99}, source="llm", model="m")   # llm tries to change it
+ck("llm NEVER overwrites a human override (durable)", conv._seg_get_all()["h1"]["project"] == "manga2anime")
+conv._seg_put_cls("lowc", {"project": "documents", "confidence": 40}, source="llm", model="m")
+ck("low-confidence decision recorded (the convergence loop re-runs it)", conv._seg_get_all()["lowc"]["confidence"] == 40)
+
 print(("\n[FAIL] " if fails else "\n[OK] ") + f"segment-attribution: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

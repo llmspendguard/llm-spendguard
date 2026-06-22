@@ -251,54 +251,105 @@ def segments(tdir=None):
     return out
 
 
-_SEG_CACHE = os.path.join(str(config.HOME), "seg_attribution.json")
+# ── persistence: agentic decisions live in the BASE SQLITE (learn._db / config.db_path()) so we NEVER redo / re-pay
+#    for them. source ∈ llm | human (priors are free + recomputed, never stored). 'human' is final and beats the llm. ──
+_SEG_TAU = 70   # below this confidence (or a non-llm/human source) → the convergence loop re-runs the segment
+
+
+def _content_hash(seg):
+    return hashlib.sha1("|".join([seg.get("cwd") or "", (seg.get("prompt") or "")[:200],
+                                  ",".join(seg.get("batch_ids") or [])]).encode()).hexdigest()[:16]
+
+
+def _seg_get_all():
+    """{seg_id: {project,org,team,confidence,source,model}} — every recorded agentic/human attribution decision."""
+    from . import learn
+    out = {}
+    try:
+        with learn._lock:
+            for r in learn._db().execute(
+                    "SELECT seg_id, project, org, team, confidence, source, model FROM seg_attribution"):
+                out[r[0]] = {"project": r[1] or "", "org": r[2] or "", "team": r[3] or "",
+                             "confidence": int(r[4] or 0), "source": r[5] or "", "model": r[6] or ""}
+    except Exception:
+        pass
+    return out
+
+
+def _seg_put_cls(seg_id, cls, source="llm", model="", seg=None):
+    """Record ONE attribution decision in the base sqlite. An llm write NEVER overwrites a human override."""
+    from . import learn
+    with learn._lock:
+        db = learn._db()
+        cur = db.execute("SELECT source FROM seg_attribution WHERE seg_id=?", (seg_id,)).fetchone()
+        if cur and cur[0] == "human" and source != "human":
+            return                                         # human is final
+        seg = seg or {}
+        db.execute(
+            "INSERT OR REPLACE INTO seg_attribution"
+            "(seg_id,content_hash,sid,cwd,prompt,project,org,team,confidence,source,model,ts,batch_ids) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (seg_id, _content_hash(seg), seg.get("sid", ""), seg.get("cwd", ""), (seg.get("prompt") or "")[:300],
+             (cls.get("project") or ""), (cls.get("org") or ""), (cls.get("team") or ""),
+             int(cls.get("confidence") or 0), source, model, learn._now(),
+             json.dumps(seg.get("batch_ids") or [])))
+        db.commit()
 
 
 def _load_seg_cache():
-    try:
-        return json.load(open(_SEG_CACHE))
-    except Exception:
-        return {}
+    """Back-compat alias: the recorded decisions keyed by seg_id (now sqlite-backed, was JSON)."""
+    return _seg_get_all()
 
 
 def _save_seg_cache(d):
-    try:
-        os.makedirs(os.path.dirname(_SEG_CACHE), exist_ok=True)
-        json.dump(d, open(_SEG_CACHE, "w"))
-    except Exception:
-        pass
+    """Back-compat bulk writer (seg_id -> cls) → sqlite. Entries default to source='llm' unless they carry 'source'."""
+    for seg_id, cls in (d or {}).items():
+        _seg_put_cls(seg_id, cls, source=(cls.get("source") or "llm"))
 
 
-def attribute_segments(tdir=None, run=False, recls=False):
-    """AGENTIC: classify each subconversation into org→team×project via the SHARED LLM classifier (cwd as a PRIOR it
-    confirms/overrides). Estimate-first (run=False → estimate only). Cached per seg_id, so only NEW segments are
-    (re)classified — re-runs don't re-pay. Returns the full {seg_id: {org,team,project,confidence}} cache (run=True),
-    or an estimate summary (run=False)."""
+def attribute_segments(tdir=None, run=False, recls=False, spend_only=True, tau=_SEG_TAU):
+    """AGENTIC: classify each subconversation into org→team×project via the shared LLM classifier (cwd as a PRIOR it
+    confirms/overrides), and RECORD each decision in the base sqlite so we never re-pay. Estimate-first (run=False →
+    estimate only). Scopes to SPEND-BEARING segments by default (the core-mission $ attribution), and re-classifies
+    only segments that are absent / not-llm-or-human / below confidence τ — the convergence loop's small step.
+    Returns the recorded store (run=True) or an estimate summary (run=False)."""
     from . import attribution
     segs = segments(tdir)
-    cache = {} if recls else _load_seg_cache()
-    todo = [s for s in segs if s["prompt"] and (recls or s["seg_id"] not in cache)]
+    if spend_only:
+        segs = [s for s in segs if s["batch_ids"]]         # only segments that OWN spend
+    store = {} if recls else _seg_get_all()
+
+    def _needs(s):
+        if recls:
+            return True
+        cur = store.get(s["seg_id"])
+        return (cur is None) or (cur.get("source") not in ("llm", "human")) or (cur.get("confidence", 0) < tau)
+
+    todo = [s for s in segs if s["prompt"] and _needs(s)]
     if not todo:
-        return cache if run else {"estimate_only": True, "segments": len(segs), "to_classify": 0, "cost": 0.0}
+        return _seg_get_all() if run else {"estimate_only": True, "segments": len(segs), "to_classify": 0}
     taxo, _ = attribution.taxonomy()
     items = [{"id": s["seg_id"], "text": f"[repo:{s['project_prior']}] {s['prompt']}"} for s in todo]
     res = attribution.classify_items(items, taxo, run)     # estimate-first lives INSIDE classify_items
     if not run:
         return {"estimate_only": True, "segments": len(segs), "to_classify": len(todo)}
-    cache.update(res)
-    _save_seg_cache(cache)
-    return cache
+    by_id = {s["seg_id"]: s for s in todo}
+    model = config.advisor_model()
+    for sid_, cls in res.items():
+        _seg_put_cls(sid_, cls, source="llm", model=model, seg=by_id.get(sid_))
+    return _seg_get_all()
 
 
 def batch_project_map(tdir=None):
-    """{batch_id: {org,team,project,confidence,prior,seg_id}} — AGENTIC per-subconversation attribution of every
-    batch to its project, via the segment that ran it + the cached classification. When a segment isn't classified
-    yet, the cwd PRIOR (the repo) is used as the project — NEVER a regex keyword guess, NEVER a blanket
-    'unattributed' for evidenced spend. Run `attribute_segments --run` to populate the agentic cache."""
-    cache = _load_seg_cache()
+    """{batch_id: {org,team,project,confidence,source,prior,seg_id,evidenced}} — AGENTIC per-subconversation
+    attribution of every batch to its project, via the segment that ran it + the RECORDED decision (base sqlite).
+    When a segment isn't classified yet, the cwd PRIOR (the repo) is the project — NEVER a regex keyword guess,
+    NEVER a blanket 'unattributed' for evidenced spend. `spendguard accounting --run` populates the agentic
+    decisions (then cached forever in sqlite)."""
+    store = _seg_get_all()
     out = {}
     for s in segments(tdir):
-        cls = cache.get(s["seg_id"])
+        cls = store.get(s["seg_id"])
         for bid in s["batch_ids"]:
             if bid in out:
                 continue
@@ -306,7 +357,8 @@ def batch_project_map(tdir=None):
                 out[bid] = {**cls, "prior": s["project_prior"], "seg_id": s["seg_id"], "evidenced": True}
             else:                                          # evidenced (we KNOW the repo) but not yet LLM-classified
                 out[bid] = {"org": "", "team": "", "project": (s["project_prior"] or "").lower(),
-                            "confidence": 0, "prior": s["project_prior"], "seg_id": s["seg_id"], "evidenced": True}
+                            "confidence": 0, "source": "prior", "prior": s["project_prior"],
+                            "seg_id": s["seg_id"], "evidenced": True}
     return out
 
 
