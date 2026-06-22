@@ -182,6 +182,25 @@ the repo or `config.json`.
 The team/org roll-up is a clean client seam pointed at a *separate* server repo: a documented `/v1` HTTP
 contract, one Bearer key as identity, scrubbed data only, fail-safe until the server exists. Covered in §6.
 
+### 2g. `fetch → transform → load` — the pure-core seam (decoupling the I/O modules)
+
+The modules that talk to the outside world (provider billing in `report.py`, the claude.ai adapter in `chat.py`,
+the `/v1` push in `saas.py`, the transcript parsers in `conv.py`/`claudecode.py`) are structured — or being
+restructured — as three thin layers so the **logic lives in the unit-tested core, not behind the network**:
+
+- **fetch** — a thin shell that does the I/O and returns plain data (e.g. `report.openai_by_day()` → a
+  `{day: $}` map). Mockable; not where correctness lives.
+- **transform** — a **pure** function over that data: no network, no printing, no DB. This is where the arithmetic
+  / shaping / scrubbing lives, so it's directly unit-testable. `report.build_rows(...)` is the reference example
+  (the report's subtotal/total roll-up — `test/test_report_build.py` proves it with zero network).
+- **load** — a thin shell that emits (print / HTTP push / DB write).
+
+This is the **same map/reduce shape as reconcile** (`Source` adapters *map* each source → records; the portfolio
+residual *reduces* them) and it composes with the coverage strategy: the pure middle is what the **78% money-core
+gate** measures; the I/O shells stay thin and integration-tested. **Status:** `report.py` is refactored as the
+reference; `saas.py` / `chat.py` / `conv.py` / `claudecode.py` are the tracked follow-ups to pull their pure
+transforms out the same way.
+
 ---
 
 ## 3. Enforcement levels — per-batch / daily / monthly / meta · real-time vs batch

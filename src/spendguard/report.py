@@ -61,6 +61,23 @@ def sum_window(by_day, lo, hi=None):
     return sum(v for d, v in by_day.items() if d >= lo and (hi is None or d <= hi))
 
 
+def build_rows(oai, an, rt, gpu, tstr, week_start, month_start):
+    """PURE transform: assemble the report's (name, today, 7d, month) rows + the LLM subtotal + the grand TOTAL
+    from the already-fetched per-source by-day maps. No network, no printing — so the report's arithmetic (the
+    subtotal/total roll-up) is unit-testable on its own. The fetch (openai_by_day/cost_by_day/gpu_by_day) and the
+    load (printing in _run) stay at the I/O edges; this is the map/reduce middle. Returns the ordered row list;
+    the last entry is the grand total the alert threshold tracks."""
+    def row(name, bd):
+        return (name, sum_window(bd, tstr), sum_window(bd, week_start), sum_window(bd, month_start))
+    r_oai = row("OpenAI batch (gpt-5.5)", oai)
+    r_an = row("Anthropic batch (Opus)", an)
+    r_rt = row("Real-time (gate-logged)", rt)
+    llm_sub = ("LLM subtotal", r_oai[1] + r_an[1] + r_rt[1], r_oai[2] + r_an[2] + r_rt[2], r_oai[3] + r_an[3] + r_rt[3])
+    r_gpu = row("Remote compute (vast.ai GPU)", gpu)
+    total = ("TOTAL (LLM + compute)", llm_sub[1] + r_gpu[1], llm_sub[2] + r_gpu[2], llm_sub[3] + r_gpu[3])
+    return [r_oai, r_an, r_rt, llm_sub, r_gpu, total]
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--alert-threshold", type=float, help="ALERT if TODAY combined exceeds this $")
@@ -105,23 +122,16 @@ def _run(a):
     from . import gate
     rt, _rt_models = gate.realtime_by_day(since=month_start)  # real-time spend the gate logged
 
-    def row(name, bd):
-        return (name, sum_window(bd, tstr), sum_window(bd, week_start), sum_window(bd, month_start))
-
     gpu, gpu_err = gpu_by_day(month_start)               # remote compute (vast.ai GPU) — free instance GETs
 
-    r_oai = row("OpenAI batch (gpt-5.5)", oai)
-    r_an = row("Anthropic batch (Opus)", an)
-    r_rt = row("Real-time (gate-logged)", rt)
-    llm_sub = ("LLM subtotal", r_oai[1] + r_an[1] + r_rt[1], r_oai[2] + r_an[2] + r_rt[2], r_oai[3] + r_an[3] + r_rt[3])
-    r_gpu = row("Remote compute (vast.ai GPU)", gpu)
-    total = ("TOTAL (LLM + compute)", llm_sub[1] + r_gpu[1], llm_sub[2] + r_gpu[2], llm_sub[3] + r_gpu[3])
-    combined = total                                     # the alert threshold tracks the grand total (LLM + compute)
+    # transform (pure) → the report rows + grand total; the alert threshold tracks the last row (grand total).
+    rows = build_rows(oai, an, rt, gpu, tstr, week_start, month_start)
+    combined = rows[-1]
 
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%MZ")
     print(f"LLM AND REMOTE COMPUTE SPEND REPORT — {stamp}  (priced via pricing.py {pricing.PRICING_VERIFIED})")
     print(f"{'source':<30}{'today':>11}{'last 7d':>12}{'month':>12}")
-    for name, t, w, m in (r_oai, r_an, r_rt, llm_sub, r_gpu, total):
+    for name, t, w, m in rows:
         if name == "Remote compute (vast.ai GPU)":
             print("  " + "-" * 61)                       # divider: LLM subtotal above, compute below
         print(f"{name:<30}{'$%.2f'%t:>11}{'$%.2f'%w:>12}{'$%.2f'%m:>12}")
