@@ -403,6 +403,45 @@ def session_classification(sid):
     return {"project": (p or "").lower(), "org": o or "", "team": t or ""}
 
 
+_RT_EVIDENCE = re.compile(
+    r"(\$\s?[0-9]+\.[0-9]+\s*/\s*clip|===\s*USAGE\s*===|[0-9]+\s+in\s*/\s*[0-9]+\s+out|aggregate cost|total cost|"
+    r"loop_results|calls?\s*/\s*clip|input_tokens|output_tokens|haiku|sonnet)", re.I)
+
+
+def remote_llm_excerpts(tdir=None, max_sessions=None, window=600):
+    """Per-session excerpts of the RECORDED remote-LLM cost evidence — per-clip $ rates, '=== USAGE ===' token
+    prints, aggregate-cost lines, calls/clip — i.e. the numbers the vast.ai boxes PRINTED into the transcript while
+    running Haiku/Sonnet. This is the input to the agentic remote-realtime reconstruction (the box calls never hit
+    the local gate). Returns [(sid, excerpt)] for sessions that carry such evidence."""
+    tdir = tdir or _DEFAULT_TDIR
+    files = sorted(glob.glob(os.path.join(tdir, "**", "*.jsonl"), recursive=True)) if os.path.isdir(tdir) else [tdir]
+    out = []
+    for path in files:
+        sid = os.path.splitext(os.path.basename(path))[0]
+        hits = []
+        try:
+            for ln in open(path, errors="ignore"):
+                ln = ln.strip()
+                if not ln:
+                    continue
+                try:
+                    obj = json.loads(ln)
+                except Exception:
+                    continue
+                txt = _text_of(obj)
+                if txt and _RT_EVIDENCE.search(txt):
+                    m = _RT_EVIDENCE.search(txt)
+                    a = max(0, m.start() - 120)
+                    hits.append(" ".join(txt[a:a + window].split()))
+        except Exception:
+            continue
+        if hits:
+            out.append((sid, "\n".join(hits[:14])[:4500]))
+        if max_sessions and len(out) >= max_sessions:
+            break
+    return out
+
+
 def batch_contexts(tdir=None, turns=10, maxchars=3500):
     """{batch_id: {conv, before, at, after}} for every batch referenced in a transcript — ONE pass over the files
     (one pass over the transcripts, for linking the whole corpus). ~`turns` turns before/after each."""

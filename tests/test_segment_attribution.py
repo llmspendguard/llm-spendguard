@@ -109,5 +109,22 @@ ck("session_classification rolls a conversation up to its dominant org/project (
 ck("session_classification: unclassified session → None (never a fake attribution)",
    conv.session_classification("NO-SUCH-SESSION") is None)
 
+# ── 7. remote-realtime reconstruction (vast.ai box LLM calls): batch ids EXCLUDED (realtime must NOT re-count batch),
+#       attributed via session_classification, deduped. classifier mocked (offline, zero spend). ──
+from spendguard import resources, adapters
+conv.remote_llm_excerpts = lambda tdir=None, max_sessions=None: [("SESS1", "box ran haiku on clips; cross-check msgbatch_01VW")]
+conv._seg_put_cls("rt1", {"project": "manga2anime", "org": "Ensight", "confidence": 90}, source="llm",
+                  seg={"sid": "SESS1", "prompt": "fleet caption run"})
+adapters.call = lambda *a, **k: {"error": None, "cost": 0.0, "text":
+    '{"runs":[{"model":"haiku","clips":2526,"usd":3.0,"executed":true,"basis":"$3 for 2526 clips x 5 frames","confidence":80},'
+    '{"model":"opus","clips":0,"usd":0.27,"executed":true,"basis":"cross-check opus msgbatch_01VW","confidence":85},'
+    '{"model":"sonnet","clips":10,"usd":1.0,"executed":false,"basis":"planned only","confidence":90}]}'}
+rr = resources.reconstruct_remote_llm(run=True)
+ck("remote realtime keeps the EXECUTED box realtime run ($3.00)", abs(rr["total"] - 3.0) < 1e-9)
+ck("remote realtime EXCLUDES batch-id runs (no double-count vs the batch ledger)",
+   all("msgbatch" not in (x.get("basis") or "") for x in rr["rows"]))
+ck("remote realtime drops PLANNED/not-executed runs", all(x["model"] != "sonnet" for x in rr["rows"]))
+ck("remote realtime attributed to the session's org via session_classification (Ensight)", rr["by_org"].get("Ensight") == 3.0)
+
 print(("\n[FAIL] " if fails else "\n[OK] ") + f"segment-attribution: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)
