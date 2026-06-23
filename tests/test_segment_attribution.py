@@ -58,16 +58,26 @@ _SEGS = [
      "prompt": "corpus catalog", "batch_ids": ["msgbatch_bbbbbbbbbbbbbbbbbb"], "ts": "2026-06-01T11:00:00Z", "day": "2026-06-01"},
     {"seg_id": "s3", "sid": "A", "cwd": "/x/lmm", "project_prior": "lmm",
      "prompt": "not classified yet", "batch_ids": ["batch_cccccccccccccccccccc"], "ts": "2026-06-01T12:00:00Z", "day": "2026-06-01"},
+    # s4: ran IN the lmm repo (prior=lmm) but the work was actually manga2anime — the human used the "wrong" chat.
+    {"seg_id": "s4", "sid": "A", "cwd": "/x/lmm", "project_prior": "lmm",
+     "prompt": "scene-graph captioning for the anime fleet", "batch_ids": ["batch_dddddddddddddddddddd"], "ts": "2026-06-01T13:00:00Z", "day": "2026-06-01"},
 ]
 conv.segments = lambda tdir=None: _SEGS                      # stand in for the file scan (offline)
-# MOCKED agentic result (what classify_items WOULD return) — s1/s2 classified; s3 deliberately NOT (cache miss)
-conv._save_seg_cache({"s1": {"org": "Healiom", "team": "LMM", "project": "lmm", "confidence": 90},
-                      "s2": {"org": "Ensight", "team": "anime", "project": "manga2anime", "confidence": 88}})
+# MOCKED agentic result (what classify_items WOULD return) — s1/s2 classified; s3 deliberately NOT (cache miss);
+# s4 = the OVERRIDE: prior is lmm (it ran there) but the CONTENT is manga2anime, so the classifier returns manga2anime.
+conv._save_seg_cache({"s1": {"org": "Healiom", "team": "lmm", "project": "lmm", "confidence": 90},
+                      "s2": {"org": "manga2anime", "team": "engineering", "project": "manga2anime", "confidence": 88},
+                      "s4": {"org": "manga2anime", "team": "engineering", "project": "manga2anime", "confidence": 86}})
 bmap = conv.batch_project_map()
 ck("batch → agentic project (lmm/Healiom)",
    bmap["batch_aaaaaaaaaaaaaaaaaaaa"]["project"] == "lmm" and bmap["batch_aaaaaaaaaaaaaaaaaaaa"]["org"] == "Healiom")
-ck("batch → agentic project (manga2anime/Ensight)",
-   bmap["msgbatch_bbbbbbbbbbbbbbbbbb"]["org"] == "Ensight")
+ck("batch → agentic project (manga2anime)",
+   bmap["msgbatch_bbbbbbbbbbbbbbbbbb"]["org"] == "manga2anime")
+# THE OVERRIDE (the core agentic point): s4 RAN in the lmm repo (prior=lmm) but its work was manga2anime — the
+# classifier OVERRIDES the cwd prior, so the batch follows the CONTENT, not the repo it happened to run in. A human
+# using the "wrong" chat for some work must NOT mis-attribute the spend.
+ck("LLM OVERRIDES the cwd prior: lmm-repo batch whose work is manga2anime → manga2anime, NOT the lmm prior",
+   bmap["batch_dddddddddddddddddddd"]["project"] == "manga2anime" and bmap["batch_dddddddddddddddddddd"]["org"] == "manga2anime")
 # s3: EVIDENCED (we know the repo=lmm) but no LLM result yet → the cwd PRIOR, never '' / unattributed
 ck("evidenced-but-unclassified batch → cwd PRIOR (lmm), NOT unattributed",
    bmap["batch_cccccccccccccccccccc"]["project"] == "lmm")
