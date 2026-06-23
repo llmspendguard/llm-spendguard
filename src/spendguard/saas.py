@@ -635,16 +635,34 @@ def sync(if_due=False, since=None):
     return out
 
 
+# est-VALUE channels (billed=false): claude-code / claude-ai usage value. These are NOT in the local actual-$ ledger
+# (they're re-derived from transcripts + pushed by the chat loop, idempotently), so crosscheck — which models the
+# ACTUAL-$ axis (batch · realtime · GPU) — must EXCLUDE them from the server side, else every est-value row reads as
+# a false 'server_only' and in_sync is permanently False. The est-value axis is reconciled by the chat loop, not here.
+_EST_VALUE_CHANNELS = {"claude-code", "claude-ai"}
+
+
+def _is_actual_row(row):
+    """True if a server ledger row is on the ACTUAL-$ axis (what crosscheck's local set models). Prefer the explicit
+    `billed` flag when the server provides it; fall back to the channel convention for older servers (pre-billed-in-GET)."""
+    b = row.get("billed")
+    if b is not None:
+        return bool(b)
+    return (row.get("channel") or "") not in _EST_VALUE_CHANNELS
+
+
 def crosscheck(since=None):
-    """Cross-check the LOCAL ledger against the SERVER, row by row, via the per-row uid. GET /v1/ledger (this
-    key's scope) and diff vs locally-computed rows → matched · value-drift · local-only (pushed-but-missing or
-    never pushed) · server-only (stale, should be pruned). The trust layer over the sync. Free (no spend)."""
+    """Cross-check the LOCAL ACTUAL-$ ledger against the SERVER, row by row, via the per-row uid. GET /v1/ledger (this
+    key's scope) and diff vs locally-computed rows → matched · value-drift · local-only (pushed-but-missing or never
+    pushed) · server-only (stale, should be pruned). Scoped to the ACTUAL-$ axis (batch · realtime · GPU); est-VALUE
+    rows (claude-code/claude-ai, billed=false) are excluded — they're reconciled by the chat loop, not here, so they'd
+    otherwise read as false server_only. The trust layer over the sync. Free (no spend)."""
     import datetime
     since = since or datetime.date.today().replace(day=1).isoformat()
     ok, reason = ready()
     if not ok:
         return {"error": f"not connected: {reason}"}
-    local = {r["uid"]: r for r in _rollup_rows(since=since)}        # LLM ledger rows
+    local = {r["uid"]: r for r in _rollup_rows(since=since)}        # LLM ledger rows (actual-$)
     try:                                                            # + GPU rows (best-effort; hits vast.ai)
         from . import resources
         for r in resources.sync(dry=True).get("day_totals", []):
@@ -655,7 +673,7 @@ def crosscheck(since=None):
         resp = _request("GET", "/v1/ledger?since=" + since)
     except Exception as e:
         return {"error": str(e)}
-    srv = {row["uid"]: row for row in (resp.get("rows") or [])}
+    srv = {row["uid"]: row for row in (resp.get("rows") or []) if _is_actual_row(row)}   # ACTUAL-$ axis only
     matched = 0
     drift, local_only, server_only = [], [], []
     for uid, lr in local.items():

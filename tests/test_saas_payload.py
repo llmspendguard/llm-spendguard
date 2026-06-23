@@ -46,6 +46,15 @@ ck("org-mode: _conn_project_base is also org-based (guarded rows follow the same
 ck("org-mode: unknown/typo'd org → empty set = push NOTHING (fail-closed, never cross-org push-all)",
    saas._project_filter({"org": "Nonexistent"}) == set())
 
+# ── crosscheck axis: _is_actual_row keeps the ACTUAL-$ axis, drops est-VALUE (claude-code/claude-ai, billed=false) ──
+# Guards the false 'server_only' bug: crosscheck models actual-$ locally, so est-value rows must be excluded server-side
+# (else in_sync is permanently False). `billed` flag wins when present; channel convention is the pre-billed fallback.
+ck("is_actual: explicit billed=true → actual", saas._is_actual_row({"billed": True, "channel": "claude-code"}) is True)
+ck("is_actual: explicit billed=false → NOT actual (flag beats channel)", saas._is_actual_row({"billed": False, "channel": "batch"}) is False)
+ck("is_actual: no flag + batch/realtime → actual", saas._is_actual_row({"channel": "batch"}) and saas._is_actual_row({"channel": "realtime"}))
+ck("is_actual: no flag + claude-code/claude-ai → est-value, excluded", not saas._is_actual_row({"channel": "claude-code"}) and not saas._is_actual_row({"channel": "claude-ai"}))
+ck("is_actual: no flag + unknown channel → actual (don't silently drop)", saas._is_actual_row({}) is True)
+
 # ── build_rollup_rows: filter + kind/channel map + $→micros + contributor stamp + uid + scrub ──
 raw = [
     {"day": "2026-06-22", "provider": "openai", "model": "gpt-5.5", "kind": "batch", "cost": 2.5, "calls": 3, "project": "lmm"},
