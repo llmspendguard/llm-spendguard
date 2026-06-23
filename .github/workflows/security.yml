@@ -28,14 +28,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }   # whole tree + history
-      # The gitleaks ACTION requires a paid license for org repos; the TruffleHog binary is free. --only-verified
-      # means it confirms a candidate is a LIVE key before failing, so fake/example keys never trip it.
+      # The official TruffleHog action, pinned to a SHA (no `curl | sh` — the action vendors the integrity-checked
+      # binary). --only-verified confirms a candidate is a LIVE key before failing, so fake/example keys never trip it;
+      # path: ./ = a filesystem scan of the whole tree (matches the prior `trufflehog filesystem .`).
       - name: TruffleHog (verified secrets only)
-        run: |
-          # Integrity-pinned: install.sh fetched from the IMMUTABLE v3.95.6 tag (not mutable `main`), and the script
-          # verifies the release binary's sha256 against the release checksums before installing the pinned version.
-          curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/v3.95.6/scripts/install.sh | sh -s -- -b /usr/local/bin v3.95.6
-          trufflehog filesystem . --only-verified --fail --no-update
+        uses: trufflesecurity/trufflehog@30d5bb91af1a771378349dbbb0c82129392acf70  # v3.95.6 — 3rd-party action, SHA-pinned
+        with:
+          path: ./
+          extra_args: --only-verified --fail
 
   dep-audit:
     runs-on: ubuntu-latest
