@@ -85,6 +85,12 @@ _rep.admin_realtime_total = lambda since=None: None         # admin oracle on, b
 rn = reconcile.run(ledger_sync.RealtimeSource(conn={"owns_account": True}, since="2026-06-01"), ptmap)
 ck("RealtimeSource: no admin key → truth None (gate-coverage-dependent, never a fake $0)", rn["truth_total"] is None)
 os.environ.pop("SPENDGUARD_ADMIN_ORACLE", None)            # default-off again (offline) for the rest of the suite
+# CLIENT INVARIANT — the client needs NO admin key: with the flag OFF, truth is None even if the oracle COULD answer
+# (the OPT-IN FLAG gates it, not the key) → a client never reads/needs an admin key; realtime still reconciles (gate).
+_rep.admin_realtime_total = lambda since=None: 9999.0       # oracle COULD return a value...
+rc = reconcile.run(ledger_sync.RealtimeSource(conn={"owns_account": True}, since="2026-06-01"), ptmap)
+ck("CLIENT needs NO admin key: flag OFF → admin oracle NOT consulted (truth None), realtime still reconciles via gate",
+   rc["truth_total"] is None and rc["captured"] == 18.0)
 
 # ── truth UNKNOWN (fetch failed) must NOT read as $0/reconciled — the silent-undercount guard ──
 ck("residual: None truth → None (not a number)", reconcile.residual(None, 500.0) is None)
