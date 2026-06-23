@@ -29,6 +29,27 @@ Consequence for the segmenter: it must capture not only batch-ids but also vast.
 evidence, so realtime and GPU units link to their segment too. Magnitude always comes from the source's truth; the
 agentic classifier only decides WHERE it lands; Σ attributed ≤ truth; the convergence loop reconciles all three.
 
+## 1c. REALTIME accounting is CORE and the standard process needs NO admin key (settled — stop re-litigating)
+This has been re-derived too many times. The standard, ongoing realtime process is **admin-key-free**; the admin key
+is a **DEV-only cross-check**, never a runtime dependency. Concretely:
+
+- **FORWARD (the standard capture):** every realtime call runs UNDER THE GATE, which intercepts the SDK (openai
+  `chat.completions`, anthropic `messages`; `RT_INTERCEPTORS`) and records the ACTUAL input/output tokens at call
+  time (`gate._rt_record` → `realtime_log.jsonl` + the ledger). Exact, inline, no admin key. This is why "run it under
+  the gate" is the mandate — ungated realtime is the only way spend escapes (that was the $1.4k historical gap).
+- **HISTORICAL (one-time):** pre-gate / ungated realtime is NOT chat-reconstructable, so it is recovered ONCE via the
+  admin **usage** oracle (`realtime_oracle.by_project_day`, tokens×pricing, timing-matched per project), **recorded**
+  into the ledger by `reconcile_realtime` under `SPENDGUARD_ADMIN_ORACLE` (dev). Once recorded it persists — the
+  keyless client pushes it and the daily no-key sync PRESERVES it (record once).
+- **The admin key's ONLY job** is dev-time cross-checking (does the gate-captured realtime match the provider usage
+  truth?) + that one-time backfill. The shipped client / daily scheduler reads NO admin key: every admin path is
+  gated behind `SPENDGUARD_ADMIN_ORACLE` (off by default).
+
+ENFORCED, not just stated: `test_gate` (gate captures realtime inline, no key), `test_reconcile_core` (flag OFF →
+oracle not consulted, realtime still reconciles via the gate — the CLIENT-needs-no-admin-key invariant),
+`test_ledger_sync` (oracle records per-project; the no-key path preserves the markers — record once). If realtime ever
+regresses to needing an admin key for normal running, those fail.
+
 ## 2. Attribution is agentic, per-subconversation, prior-confirmed
 - A transcript (one session) can span MULTIPLE projects → attribution is at the **subconversation** level, not the
   whole session.
