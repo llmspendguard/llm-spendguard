@@ -21,6 +21,9 @@ venv/
 .spendguard/
 *.env
 .env
+.env*
+*~
+.*~
 saas.json
 email.json
 !saas.example.json
