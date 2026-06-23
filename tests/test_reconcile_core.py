@@ -87,5 +87,19 @@ rf = reconcile.run(FetchFail(), ptmap)
 ck("run: None truth → residual None + UNKNOWN warning (never $0/100%-covered)",
    rf["residual"] is None and "UNKNOWN" in (rf["warning"] or "") and rf["captured"] == 100.0)
 
+# ── cross-source COMPLETENESS verdict: the SYSTEM surfaces an under-reconstructed source (e.g. realtime remote) ──
+comp_ok = reconcile.completeness({
+    "batch": {"truth_total": 800.0, "residual": 10.0},        # reconciled (within buffer)
+    "realtime": {"truth_total": 500.0, "residual": 400.0},    # UNDER — remote box calls not reconstructed
+    "gpu": {"truth_total": None, "residual": None},           # truth unreadable → unknown
+})
+ck("completeness: not complete when a source is under/unknown", comp_ok["complete"] is False)
+ck("completeness: batch reconciled", comp_ok["sources"]["batch"]["status"] == "reconciled")
+ck("completeness: realtime flagged UNDER with the unreconstructed gap", comp_ok["sources"]["realtime"]["status"] == "under" and comp_ok["sources"]["realtime"]["gap"] == 400.0)
+ck("completeness: unknown-truth source never reads as complete", comp_ok["sources"]["gpu"]["status"] == "unknown")
+ck("completeness: msg names the UNDER source (system surfaces the gap, not the human)", "realtime: UNDER" in comp_ok["msg"])
+allgood = reconcile.completeness({"batch": {"truth_total": 800.0, "residual": 5.0}, "gpu": {"truth_total": 100.0, "residual": -3.0}})
+ck("completeness: all within buffer → complete", allgood["complete"] is True and allgood["msg"] == "all sources reconciled")
+
 print(("\n[FAIL] " if fails else "\n[OK] ") + f"reconcile_core: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

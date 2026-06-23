@@ -1,5 +1,22 @@
 # llm-spendguard — agent operating doctrine
 
+## #0 GROUND BEFORE YOU ACT (the anti-dysfunction rule)
+The recurring failure here is acting from the LOCAL task instead of from the SYSTEM — narrowing scope, re-deriving,
+and re-building things that already exist, which forces the same corrections again and again ("be agentic", "all
+sources", "use what's already there"). Stop it at the source: **before changing any subsystem, GROUND first.**
+
+Before writing code for a subsystem, do these IN ORDER and state the answers explicitly:
+1. **What already implements this?** Find + read the existing code/pattern (e.g. `reconcile.Source`, `classify_items`,
+   `batch_project_map`, `discover_agentic`). Extend it; do NOT rebuild. If you're describing a capability as missing,
+   prove it's missing first.
+2. **Is it agentic, and across ALL sources?** Meaning→LLM; and the change must hold for batch · realtime ·
+   remote-compute, not one of them (see `docs/AGENTIC.md` §1b).
+3. **Cross-check vs GROUND TRUTH, not rigged fixtures.** Σ attributed ≤ provider/account truth.
+4. **What guard makes this un-regressable?** (test/lint/assert — see #anti-amnesia below.)
+
+If you can't answer 1–4, you are not ready to write code. This rule exists because doctrine you don't consult at the
+moment of acting is just wall-paper.
+
 ## #1 lens: AGENTIC AT HEART
 llm-spendguard is **agentic at heart**, and that is the lens for evaluating EVERY development decision here.
 Before writing or changing anything, ask: *is this the agentic choice?*

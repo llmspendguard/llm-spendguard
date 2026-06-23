@@ -13,6 +13,22 @@ attribution, discovery, or context.
   is a *meaning* decision dressed as mechanics. It silently misclassified real work into "unattributed" and no test
   caught it. Banned. Regex may find a *string*; it may never decide *what work this was*.
 
+## 1b. ONE agentic process across ALL spend sources — batch · realtime · remote-compute
+There are THREE spend sources and they all go through the SAME agentic attributor. No source gets a non-agentic
+shortcut (that is how realtime ended up on a fallback and GPU on a label-map while only batch was agentic — the
+exact mistake to never repeat). Each source is a `reconcile.Source` (truth_total = magnitude; captured; attribute_gap),
+and `attribute_gap` is the SAME segment classifier for every source:
+
+| source | magnitude (truth) | link to a segment (the SAME agentic classifier attributes it) |
+|---|---|---|
+| **batch** | OpenAI/Anthropic batch ledgers | a `batch_…` id appears in a transcript → segment |
+| **realtime** | gate realtime log + **reconstructed-from-conversations** | the segment active at the call; for REMOTE realtime (LLM calls run on vast.ai boxes) the VOLUME is reconstructed from the fleet-orchestration conversation |
+| **remote compute** (vast.ai GPU) | vast.ai billing | the conversation that launched/configured the instance → project · org · **user** |
+
+Consequence for the segmenter: it must capture not only batch-ids but also vast.ai instance refs / remote-run
+evidence, so realtime and GPU units link to their segment too. Magnitude always comes from the source's truth; the
+agentic classifier only decides WHERE it lands; Σ attributed ≤ truth; the convergence loop reconciles all three.
+
 ## 2. Attribution is agentic, per-subconversation, prior-confirmed
 - A transcript (one session) can span MULTIPLE projects → attribution is at the **subconversation** level, not the
   whole session.

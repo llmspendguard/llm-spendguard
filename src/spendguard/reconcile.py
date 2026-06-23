@@ -113,9 +113,41 @@ def all_sources(ptmap=None, since=None):
     return out
 
 
+def completeness(results):
+    """Cross-source completeness verdict — the SYSTEM (not a human) surfaces an UNDER-reconstructed source, so a
+    missing source (e.g. realtime remote calls run on vast.ai boxes that were never reconstructed) can't hide. Per
+    source: reconciled | under (unrecovered spend floats) | over (stale, attributes more than billed) | unknown
+    (truth unreadable — NEVER read as complete). Returns {complete, sources:{name:{status,gap}}, msg}. PURE."""
+    src, complete = {}, True
+    for name, r in (results or {}).items():
+        if r.get("error"):
+            src[name] = {"status": "error", "gap": None}; complete = False; continue
+        truth, resid = r.get("truth_total"), r.get("residual")
+        if truth is None:
+            src[name] = {"status": "unknown", "gap": None}; complete = False; continue
+        thresh = max(25.0, 0.10 * truth)
+        if resid is not None and resid > thresh:
+            src[name] = {"status": "under", "gap": round(resid, 2)}; complete = False
+        elif resid is not None and resid < -thresh:
+            src[name] = {"status": "over", "gap": round(resid, 2)}; complete = False
+        else:
+            src[name] = {"status": "reconciled", "gap": round(resid or 0.0, 2)}
+    if complete:
+        msg = "all sources reconciled"
+    else:
+        bits = []
+        for n, s in src.items():
+            if s["status"] == "under":
+                bits.append(f"{n}: UNDER (${s['gap']} unreconstructed — recover/attribute it)")
+            elif s["status"] in ("over", "unknown", "error"):
+                bits.append(f"{n}: {s['status'].upper()}")
+        msg = "INCOMPLETE — " + "; ".join(bits)
+    return {"complete": complete, "sources": src, "msg": msg}
+
+
 def report(ptmap=None, since=None):
     """Print the unified reconciliation across all sources — truth vs captured vs residual per source, account-
-    anchored, with the under-attribution warning. The single source-of-truth view."""
+    anchored, with the under-attribution warning + a CROSS-SOURCE completeness verdict. The single source-of-truth view."""
     res = all_sources(ptmap, since)
     print("reconcile — all spend sources (truth − captured = residual; account-anchored):")
     for name, r in res.items():
@@ -127,6 +159,8 @@ def report(ptmap=None, since=None):
               f"attributed {fmt(r['attributed'])}  residual {fmt(r['residual'])}  by_org={r['by_org']}")
         if r.get("warning"):
             print(f"         ⚠  {r['warning']}")
+    comp = completeness(res)
+    print(f"  {'✅' if comp['complete'] else '❌'} COMPLETENESS: {comp['msg']}")
     return res
 
 
