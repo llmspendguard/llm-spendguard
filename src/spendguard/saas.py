@@ -205,21 +205,44 @@ def link(open_browser=True, timeout=900):
     return {"error": "timed out waiting for approval"}
 
 
+def _org_projects(org):
+    """All project slugs the shared taxonomy maps to `org` — so a connection pushes EVERY project the AGENTIC
+    attribution mints under its org (concept-model, medical-taxonomy, …), not a hand-maintained list that drifts
+    from reality (the bug that dropped 80% of the corrected attribution from the push). Empty set on any failure."""
+    if not org:
+        return set()
+    try:
+        from . import attribution
+        ptmap = attribution.project_team_map(attribution.taxonomy()[0])
+        return {p for p, (o, _t) in ptmap.items() if (o or "").lower() == str(org).lower()}
+    except Exception:
+        return set()
+
+
 def _project_filter(c):
     """Which project(s) THIS connection pushes → so one shared ledger can serve several repos/orgs without
-    cross-attributing. `projects` (list) or `project` (single) in the config; None = push all. spendguard's own
-    meta ('llmseg') always rides along so each org can see + call out the small spendguard overhead."""
+    cross-attributing. ORG-BASED when `org` is set (every taxonomy project the AGENTIC attribution maps to that org —
+    so newly-minted projects like concept-model/medical-taxonomy are never silently dropped); else the explicit
+    `projects`/`project` list (legacy back-compat); None = push all.
+
+    The account OWNER (owns_account) also absorbs the reconciled 'unattributed' residual (provider truth − Σ attributed)
+    — the gap belongs to whoever owns the provider account. In legacy static mode it also pulls in spendguard's own
+    'llmseg' meta; in ORG mode it does NOT — 'llmseg' is a real project the taxonomy already assigns to its own org
+    (Ensight), so it rides with THAT org's connection, never leaking the meta cross-org or double-counting it."""
+    org = (c.get("org") or "").strip()
+    if org:                              # ORG-BASED (authoritative): every project the taxonomy maps to this org
+        base = _org_projects(org)
+        if c.get("owns_account"):
+            base.add("unattributed")     # owner absorbs the residual gap (NOT llmseg — that's Ensight's own project)
+        return base                      # fail-CLOSED: an empty/typo'd org pushes NOTHING, never cross-org push-all
+    # ── legacy static-list mode (no `org` configured) ──
     ps = c.get("projects")
-    base = set()
     if isinstance(ps, list) and ps:
         base = set(str(x).strip().lower() for x in ps if x)
     elif c.get("project"):
         base = {str(c["project"]).strip().lower()}
-    if not base:
-        return None                # no project configured → push everything
-    # account-level / shared spend (the reconciled 'unattributed' gap + spendguard's own 'llmseg' meta) belongs to
-    # exactly ONE org — the connection that runs reconcile. Only it opts in via owns_account, so other repos
-    # (e.g. vision-pipeline → its org) don't double-count the shared provider-account gap.
+    else:
+        return None                      # nothing configured at all → push everything (legacy default)
     if c.get("owns_account"):
         base.add("llmseg")
         base.add("unattributed")
@@ -283,7 +306,11 @@ def build_guarded_rows(rows, base):
 
 
 def _conn_project_base(c):
-    """PURE: the connection's own project set (no llmseg/unattributed widening) — used for the guarded filter."""
+    """The connection's own project set (no llmseg/unattributed widening) — used for the guarded filter. ORG-BASED
+    when `org` is set (every taxonomy project under the org); else the explicit projects/project list; empty = all."""
+    org = (c.get("org") or "").strip()
+    if org:
+        return _org_projects(org)
     ps = c.get("projects")
     if isinstance(ps, list) and ps:
         return set(str(x).strip().lower() for x in ps if x)

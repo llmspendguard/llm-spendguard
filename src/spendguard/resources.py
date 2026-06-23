@@ -596,15 +596,24 @@ def reconstruct_remote_llm(run=False, max_sessions=None, model_org_hints=None):
 
 def _reconcile(allrows, account_total, conn, ptmap):
     """Account-anchored, label-attributed GPU reconcile (PURE → testable). Every row's project comes from its
-    instance LABEL (the GPU ground truth); `ptmap` maps project → (org, team). This connection pushes ONLY its own
-    project's boxes (`mine`); the account remainder is surfaced as an EXPLICIT `residual` (= account_total − Σ all
-    recorded boxes), NEVER dumped on a project/org — so a SHARED vast.ai account can't leak cross-org and no flat
-    per-day rows are fabricated. `by_org` is a diagnostic of where the recorded spend landed. residual → 0 only when
-    every box is captured/recovered AND account_total is true consumption (top-ups carry a balance buffer)."""
-    from . import reconcile
-    proj = (conn.get("project") or "").lower()
+    instance LABEL / timing-match (the GPU ground truth); `ptmap` maps project → (org, team). This connection pushes
+    ONLY the boxes whose project is in ITS SCOPE (`mine`) — ORG-BASED when the connection is org-scoped (every project
+    the taxonomy maps to its org, so all of an org's boxes ride one connection, each KEEPING ITS OWN project), else its
+    single legacy `project`. A SHARED vast.ai account can't leak cross-org: an org-scoped connection fails CLOSED when
+    its scope is empty (pushes nothing, never all). The account remainder is an EXPLICIT `residual` (= account_total −
+    Σ all recorded boxes), NEVER dumped on a project/org — and no flat per-day rows are fabricated. `by_org` is a
+    diagnostic of where the recorded spend landed. residual → 0 only when every box is captured/recovered AND
+    account_total is true consumption (top-ups carry a balance buffer)."""
+    from . import reconcile, saas
+    base = saas._conn_project_base(conn)              # ORG-BASED scope (or legacy single-project / static list)
+    org_scoped = bool((conn.get("org") or "").strip())
+    def _in_scope(r):
+        p = (r.get("project") or "").lower()
+        if base:
+            return p in base
+        return False if org_scoped else True          # org set but empty scope → fail-CLOSED; true standalone → all
     captured = round(sum(r["cost"] for r in allrows), 2)
-    mine = [r for r in allrows if (r.get("project") or "") == proj and r["cost"] > 0]
+    mine = [r for r in allrows if r["cost"] > 0 and _in_scope(r)]
     return {"mine": mine, "captured": captured, "account_total": round(account_total or 0, 2),
             "residual": reconcile.residual(account_total, captured),       # shared core: truth − captured
             "by_org": reconcile.rollup_by_org(allrows, ptmap)}             # shared core: project→org rollup
@@ -652,27 +661,32 @@ class GPUSource:
 
 
 def sync(dry=False):
-    """Push THIS repo's GPU spend (instances whose LABEL maps to this repo's project), per-day, via this repo's key
-    → its org (`_reconcile` → `mine`). Account-anchored: the unrecoverable remainder is returned as an EXPLICIT
-    `residual` (account total − Σ recorded boxes), surfaced for visibility but NEVER dumped on a project/org (a
-    shared vast.ai account would otherwise leak cross-org). snapshot() runs first so live boxes are captured."""
-    from . import saas, budget
+    """Push the connection's GPU spend per-day, via its key → its org. ORG-SCOPED: every box whose (timing-matched)
+    project is in this connection's org rides one push, EACH ROW KEEPING ITS OWN project/team (not collapsed onto a
+    single repo) — the same agentic, per-item attribution as the LLM ledger. Account-anchored: the unrecoverable
+    remainder is an EXPLICIT `residual` (account total − Σ recorded boxes), surfaced but NEVER dumped on a project/org
+    (a shared vast.ai account would otherwise leak cross-org). snapshot() runs first so live boxes are captured."""
+    from . import saas
     c = saas.conn()
-    proj = (c.get("project") or budget._project() or "").lower()
     ref = saas.contributor()
     snapshot()                                             # RECORD live instances first (so destroyed ones survive)
     from . import attribution
     _ptmap = attribution.project_team_map(attribution.taxonomy()[0])
-    _team = lambda p: _ptmap.get((p or "").lower(), ("", ""))[1]
+    _meta = lambda p: _ptmap.get((p or "").lower(), ("", ""))      # (org, team) for a project
     allrows = gpu_rows_by_day()
     rec = _reconcile(allrows, account_gpu_total() if c.get("owns_account") else 0, c, _ptmap)
-    day_totals = [{
-        "day": r["day"], "provider": "vastai", "model": r["gpu"], "kind": "gpu", "channel": "realtime",
-        "spend_micros": round(r["cost"] * 1_000_000), "calls": len(r["instances"]),
-        "member_ref": ref, "project": proj, "team": _team(proj),
-        "tags": ",".join(["remote-compute", "gpu", r["gpu"].replace(" ", ""), "team:" + _team(proj),
-                          "instances:" + "/".join(str(x) for x in r["instances"])]),
-    } for r in rec["mine"]]
+    day_totals = []
+    for r in rec["mine"]:
+        rp = (r.get("project") or "").lower()
+        org, team = _meta(rp)
+        day_totals.append({
+            "day": r["day"], "provider": "vastai", "model": r["gpu"], "kind": "gpu", "channel": "realtime",
+            "spend_micros": round(r["cost"] * 1_000_000), "calls": len(r["instances"]),
+            "member_ref": saas.identity_for_org(org, ref),        # the org's contributor (per-row, org-correct)
+            "project": rp, "team": team,                          # ← each box keeps ITS OWN timing-matched project
+            "tags": ",".join(["remote-compute", "gpu", r["gpu"].replace(" ", ""), "team:" + team,
+                              "instances:" + "/".join(str(x) for x in r["instances"])]),
+        })
     for row in day_totals:                                # per-row id, local↔server cross-check (gpu rows too)
         row["uid"] = saas._row_uid(row)
     reconcile = {"account_total": rec["account_total"], "captured": rec["captured"],
@@ -685,8 +699,8 @@ def sync(dry=False):
         return {"skipped": f"not connected: {reason}", "reconcile": reconcile}
     if c.get("visibility", "private") == "private":
         return {"skipped": "visibility=private", "reconcile": reconcile}
-    if not day_totals:                                    # nothing attributed to THIS project → don't 422 the push
-        return {"skipped": "no attributed GPU for this project — label your vast.ai instances (include the project "
+    if not day_totals:                                    # nothing attributed to THIS org → don't 422 the push
+        return {"skipped": "no attributed GPU for this org/scope — label your vast.ai instances (include the project "
                 "in the instance label) or set resources.vastai.label_map", "reconcile": reconcile}
     res = saas._request("POST", "/v1/ledger", payload)
     if isinstance(res, dict):

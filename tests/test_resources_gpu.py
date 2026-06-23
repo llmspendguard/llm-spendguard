@@ -121,5 +121,29 @@ _cost = sum(r["cost"] for r in resources.gpu_rows_by_day(since_ts=now - 5 * 8640
 # real runtime = start (−3d) → last_seen (−2d) = 24h × $2 = $48; NOT capped-at-now (48h=$96) or contract-end (huge)
 ck("destroyed running box capped at last_seen (no phantom spend)", abs(_cost - 48.0) < 2.0)
 
+# ── ORG-BASED GPU push: ONE connection pushes EVERY box in its org, each KEEPING ITS OWN timing-matched project ──
+# Guards the bug where the GPU push collapsed every box onto a single cwd-derived `project` (dropping Healiom's GPU
+# entirely once the connection went org-scoped, and risking an Ensight box leaking into Healiom). The per-instance
+# attribution is agentic (timing-match); the push must RESPECT it, not flatten it — same doctrine as the LLM ledger.
+from spendguard import attribution as _attr
+_attr.taxonomy = lambda *a, **k: ({}, {})
+_attr.project_team_map = lambda *a, **k: {"lmm": ("Healiom", "clinical-ai"),
+                                          "concept-model": ("Healiom", "clinical-ai"),
+                                          "manga2anime": ("Ensight", "engineering")}
+orows = [
+    {"day": "2026-06-10", "gpu": "H100", "cost": 100.0, "instances": [1], "project": "lmm"},
+    {"day": "2026-06-11", "gpu": "A100", "cost": 80.0, "instances": [2], "project": "concept-model"},
+    {"day": "2026-06-12", "gpu": "H200", "cost": 300.0, "instances": [3], "project": "manga2anime"},  # Ensight — excluded
+]
+ro = resources._reconcile(orows, 600.0, {"org": "Healiom", "owns_account": True}, _attr.project_team_map())
+ck("org-GPU: mine = ALL Healiom boxes (lmm + concept-model), Ensight box NOT pulled in",
+   {r["project"] for r in ro["mine"]} == {"lmm", "concept-model"})
+ck("org-GPU: each box keeps its OWN project (not collapsed onto one) → $180 captured for this org",
+   round(sum(r["cost"] for r in ro["mine"]), 2) == 180.0)
+ck("org-GPU: unknown/empty-scope org → fail-CLOSED (no boxes), never cross-org push-all",
+   resources._reconcile(orows, 600.0, {"org": "Nonexistent"}, _attr.project_team_map())["mine"] == [])
+ck("org-GPU: legacy single-project conn still scopes to that one project (back-compat)",
+   {r["project"] for r in resources._reconcile(orows, 600.0, {"project": "lmm"}, _attr.project_team_map())["mine"]} == {"lmm"})
+
 print(("\n[FAIL] " if fails else "\n[OK] ") + f"resources_gpu: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

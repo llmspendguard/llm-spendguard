@@ -26,6 +26,26 @@ ck("_project_filter: owns_account adds the shared llmseg + unattributed",
 ck("_conn_project_base: does NOT widen (guarded sources aren't shared)",
    saas._conn_project_base({"project": "lmm", "owns_account": True}) == {"lmm"})
 
+# ── ORG-BASED filter: push EVERY taxonomy project under the connection's org (the agentic-attribution-safe path) ──
+# Guards the bug that dropped concept-model/medical-taxonomy from the push because they weren't in a static list,
+# AND the cross-org leak (llmseg is Ensight's — it must NOT ride along on a Healiom org connection).
+from spendguard import attribution as _attr
+_PT = {"lmm": ("Healiom", "clinical-ai"), "concept-model": ("Healiom", "clinical-ai"),
+       "medical-taxonomy": ("Healiom", "clinical-ai"), "manga2anime": ("Ensight", "engineering"),
+       "llmseg": ("Ensight", "engineering")}
+_attr.taxonomy = lambda *a, **k: ({}, {})            # org-mode reads project_team_map, not the raw taxonomy
+_attr.project_team_map = lambda *a, **k: _PT
+ck("org-mode: Healiom connection pushes EVERY Healiom project (concept-model/medical-taxonomy NOT dropped)",
+   saas._project_filter({"org": "Healiom"}) == {"lmm", "concept-model", "medical-taxonomy"})
+ck("org-mode: owner also absorbs 'unattributed' residual — but NOT 'llmseg' (that's Ensight's, no cross-org leak)",
+   saas._project_filter({"org": "Healiom", "owns_account": True}) == {"lmm", "concept-model", "medical-taxonomy", "unattributed"})
+ck("org-mode: Ensight connection gets ITS projects (incl llmseg), none of Healiom's",
+   saas._project_filter({"org": "Ensight"}) == {"manga2anime", "llmseg"})
+ck("org-mode: _conn_project_base is also org-based (guarded rows follow the same scope)",
+   saas._conn_project_base({"org": "Healiom"}) == {"lmm", "concept-model", "medical-taxonomy"})
+ck("org-mode: unknown/typo'd org → empty set = push NOTHING (fail-closed, never cross-org push-all)",
+   saas._project_filter({"org": "Nonexistent"}) == set())
+
 # ── build_rollup_rows: filter + kind/channel map + $→micros + contributor stamp + uid + scrub ──
 raw = [
     {"day": "2026-06-22", "provider": "openai", "model": "gpt-5.5", "kind": "batch", "cost": 2.5, "calls": 3, "project": "lmm"},
