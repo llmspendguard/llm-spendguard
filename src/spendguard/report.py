@@ -50,6 +50,72 @@ def gpu_by_day(since):
         return {}, str(e)[:80]
 
 
+def admin_realtime_total(since=None):
+    """AUTHORITATIVE realtime LLM $ (OpenAI + Anthropic) via the providers' ADMIN USAGE APIs, priced by pricing.py
+    (cache-discounted; usage×pricing — the cost APIs are unreliable). DEV-ONLY cross-check: needs OPENAI_ADMIN_KEY /
+    ANTHROPIC_ADMIN_KEY. Returns the total $, or None if NEITHER admin key is set (the shipped client has none → its
+    realtime is the gate's inline true-up, verified by `spendguard coverage`, not a provider call). Realtime is split
+    out via OpenAI's per-row `batch` flag and Anthropic's `service_tier`."""
+    import datetime as _dt, json as _j, urllib.request as _u, urllib.parse as _p
+    from .config import api_key
+    from .pricing import realtime_cost
+    from .resources import _norm_model
+    since = since or _dt.date.today().replace(day=1).isoformat()
+    total, any_key = 0.0, False
+
+    def _paged(url, headers):
+        out, page = [], None
+        for _ in range(60):
+            u = url + ("&page=" + _p.quote(page) if page else "")
+            with _u.urlopen(_u.Request(u, headers=headers), timeout=90) as r:
+                d = _j.loads(r.read())
+            out += d.get("data", [])
+            if d.get("has_more") and d.get("next_page"):
+                page = d["next_page"]
+            else:
+                break
+        return out
+
+    ok = api_key("OPENAI_ADMIN_KEY")
+    if ok:
+        any_key = True
+        try:
+            start = int(_dt.datetime.fromisoformat(since + "T00:00:00+00:00").timestamp())
+            url = "https://api.openai.com/v1/organization/usage/completions?" + _p.urlencode(
+                [("start_time", start), ("bucket_width", "1d"), ("limit", "31"), ("group_by[]", "model"), ("group_by[]", "batch")])
+            for b in _paged(url, {"Authorization": "Bearer " + ok}):
+                for rr in b.get("results", []):
+                    if rr.get("batch"):
+                        continue
+                    try:
+                        total += realtime_cost(_norm_model(rr.get("model") or ""), int(rr.get("input_tokens") or 0),
+                                               int(rr.get("output_tokens") or 0), cached_in_tok=int(rr.get("input_cached_tokens") or 0))
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    ak = api_key("ANTHROPIC_ADMIN_KEY")
+    if ak:
+        any_key = True
+        try:
+            url = "https://api.anthropic.com/v1/organizations/usage_report/messages?" + _p.urlencode(
+                [("starting_at", since + "T00:00:00Z"), ("bucket_width", "1d"), ("limit", "31"), ("group_by[]", "model"), ("group_by[]", "service_tier")])
+            for b in _paged(url, {"x-api-key": ak, "anthropic-version": "2023-06-01"}):
+                for rr in b.get("results", []):
+                    if "batch" in (rr.get("service_tier") or "").lower():
+                        continue
+                    try:
+                        total += realtime_cost(_norm_model(rr.get("model") or ""),
+                                               int(rr.get("uncached_input_tokens") or rr.get("input_tokens") or 0),
+                                               int(rr.get("output_tokens") or 0), cached_in_tok=int(rr.get("cache_read_input_tokens") or 0))
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+    return round(total, 2) if any_key else None
+
+
 def windows(today):
     month_start = today.replace(day=1).strftime("%Y-%m-%d")
     week_start = (today - datetime.timedelta(days=6)).strftime("%Y-%m-%d")

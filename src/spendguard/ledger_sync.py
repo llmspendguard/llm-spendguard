@@ -391,6 +391,47 @@ class LLMSource:
                 for p, v in budget.reconciled_by_project(since or self._since).items()]
 
 
+class RealtimeSource:
+    """reconcile.Source adapter for REALTIME LLM. captured = gate-recorded realtime by project — the INLINE true-up:
+    actual response tokens recorded AT CALL TIME (exact, no admin key, no reconstruction). truth = the providers'
+    admin USAGE report (dev cross-check) when an admin key is present, else None — without it there is no provider
+    realtime check and correctness rests on gate COVERAGE (`spendguard coverage`). attribute_gap=[]: realtime is NOT
+    chat-reconstructable (proven — the tokens aren't in the transcripts), so a large residual is a COVERAGE gap to
+    surface (ungated calls), never to fill with a guess. This makes the daily cross-check cover batch + realtime + GPU."""
+    name = "realtime"
+
+    def __init__(self, conn=None, since=None):
+        from . import saas
+        try:
+            self._conn = conn if conn is not None else saas.conn()
+        except Exception:
+            self._conn = {}
+        self._since = since or datetime.date.today().replace(day=1).isoformat()
+
+    def conn(self):
+        return self._conn
+
+    def truth_total(self, since=None):
+        # The admin usage oracle is DEV-ONLY + a network call, so it's OPT-IN (SPENDGUARD_ADMIN_ORACLE=1) — the
+        # default reconcile stays offline + the shipped client (no admin key) never calls it. None = no provider
+        # check; realtime correctness then rests on gate COVERAGE, which the completeness verdict surfaces.
+        import os
+        if not os.environ.get("SPENDGUARD_ADMIN_ORACLE"):
+            return None
+        from .report import admin_realtime_total
+        return admin_realtime_total(since or self._since)     # None unless an admin key is also set
+
+    def captured(self, since=None):
+        from . import budget
+        by = {}
+        for (proj, _day), v in budget.gate_by_project_day(kind="realtime", since=since or self._since).items():
+            by[proj] = by.get(proj, 0.0) + v
+        return [{"cost": round(v, 2), "project": p} for p, v in by.items()]
+
+    def attribute_gap(self, gap, since=None):
+        return []                                             # not chat-reconstructable; residual = coverage gap, surfaced
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="spendguard reconcile-ledger")
     ap.add_argument("--since", help="YYYY-MM-DD (default: start of this month)")

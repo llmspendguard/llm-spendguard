@@ -32,18 +32,21 @@ resources.gpu_rows_by_day = lambda *a, **k: [{"cost": 250.0, "project": "lmm"}, 
 ptmap = {"lmm": ("Healiom", "clinical-ai"), "manga2anime": ("Ensight", "")}
 
 res = reconcile.all_sources(ptmap, since="2026-06-01")
-ck("all_sources returns both sources keyed by name", set(res.keys()) == {"llm", "gpu"})
+ck("all_sources returns all three sources keyed by name", set(res.keys()) == {"llm", "realtime", "gpu"})
 ck("all_sources llm: truth 800 − captured 600 → residual 200", res["llm"]["truth_total"] == 800.0 and res["llm"]["residual"] == 200.0)
 ck("all_sources gpu: truth 1000 − captured 550 → residual 450", res["gpu"]["truth_total"] == 1000.0 and res["gpu"]["residual"] == 450.0)
 ck("all_sources gpu by_org splits across orgs", res["gpu"]["by_org"].get("Healiom") == 250.0 and res["gpu"]["by_org"].get("Ensight") == 300.0)
+# realtime: admin oracle OFF by default → truth None (offline, client-safe); captured = gate realtime (empty here)
+ck("all_sources realtime: truth None (admin oracle opt-in off → no network), present in the cross-check",
+   res["realtime"]["truth_total"] is None)
 
 # report() prints AND returns the same dict — call it (covers the print/format + None-formatting branches)
 rep = reconcile.report(ptmap, since="2026-06-01")
-ck("report() returns the same {llm,gpu} reconciliation it prints", set(rep.keys()) == {"llm", "gpu"})
+ck("report() returns the same {llm,realtime,gpu} reconciliation it prints", set(rep.keys()) == {"llm", "realtime", "gpu"})
 
 # all_sources with ptmap=None exercises the taxonomy-fallback branch (empty taxonomy in an isolated home → {})
 res2 = reconcile.all_sources(None, since="2026-06-01")
-ck("all_sources(None) still runs (derives ptmap from taxonomy, falls back to {})", set(res2.keys()) == {"llm", "gpu"})
+ck("all_sources(None) still runs (derives ptmap from taxonomy, falls back to {})", set(res2.keys()) == {"llm", "realtime", "gpu"})
 
 # a source whose adapter raises is captured as {error: ...}, never crashes the unified view
 ledger_sync._provider_total = lambda since: (_ for _ in ()).throw(RuntimeError("provider down"))

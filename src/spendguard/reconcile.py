@@ -102,9 +102,14 @@ def all_sources(ptmap=None, since=None):
     out = {}
     try:
         from .ledger_sync import LLMSource
-        out["llm"] = run(LLMSource(since=since), ptmap, since)
+        out["llm"] = run(LLMSource(since=since), ptmap, since)   # batch LLM (provider ledger truth)
     except Exception as e:
         out["llm"] = {"error": str(e)[:160]}
+    try:
+        from .ledger_sync import RealtimeSource
+        out["realtime"] = run(RealtimeSource(since=since), ptmap, since)
+    except Exception as e:
+        out["realtime"] = {"error": str(e)[:160]}
     try:
         from .resources import GPUSource
         out["gpu"] = run(GPUSource(), ptmap, since)

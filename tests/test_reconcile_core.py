@@ -71,6 +71,21 @@ rl = reconcile.run(ledger_sync.LLMSource(conn={"owns_account": True}, since="202
 ck("LLMSource via run(): truth 800, captured 600, residual 200",
    rl["truth_total"] == 800.0 and rl["captured"] == 600.0 and rl["residual"] == 200.0)
 
+# ── RealtimeSource: captured = gate INLINE true-up (actual tokens at call time); truth = admin oracle (dev) or None ──
+os.environ["SPENDGUARD_ADMIN_ORACLE"] = "1"                 # opt in to the dev oracle (default off = offline)
+from spendguard import budget as _bud, report as _rep
+_bud.gate_by_project_day = lambda kind=None, since=None: ({("lmm", "2026-06-01"): 18.0} if kind == "realtime" else {})
+_rep.admin_realtime_total = lambda since=None: 1400.0      # dev oracle: an admin key is present
+rr = reconcile.run(ledger_sync.RealtimeSource(conn={"owns_account": True}, since="2026-06-01"), ptmap)
+ck("RealtimeSource: captured $18 (gate) vs truth $1400 (admin) → residual $1382 surfaced as the COVERAGE gap",
+   rr["captured"] == 18.0 and rr["truth_total"] == 1400.0 and rr["residual"] == 1382.0)
+ck("RealtimeSource: attribute_gap=[] (realtime is not chat-reconstructable; gap is coverage, not filled)",
+   rr["attributed"] == 0.0)
+_rep.admin_realtime_total = lambda since=None: None         # admin oracle on, but no admin key → None
+rn = reconcile.run(ledger_sync.RealtimeSource(conn={"owns_account": True}, since="2026-06-01"), ptmap)
+ck("RealtimeSource: no admin key → truth None (gate-coverage-dependent, never a fake $0)", rn["truth_total"] is None)
+os.environ.pop("SPENDGUARD_ADMIN_ORACLE", None)            # default-off again (offline) for the rest of the suite
+
 # ── truth UNKNOWN (fetch failed) must NOT read as $0/reconciled — the silent-undercount guard ──
 ck("residual: None truth → None (not a number)", reconcile.residual(None, 500.0) is None)
 ck("residual_warning: None truth → UNKNOWN (loud, not silent)", "UNKNOWN" in (reconcile.residual_warning(None, None) or ""))
