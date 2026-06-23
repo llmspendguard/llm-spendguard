@@ -2,6 +2,7 @@
 
   spendguard status | on | off          # kill-switch control
   spendguard report [--alert-threshold N]
+  spendguard receipt [--json]             # running tally (today/7d/month); also auto-emitted per flow
   spendguard reconcile openai|anthropic [--since DATE] [--by-day]
   spendguard estimate --items N ...
   spendguard audit [--ci]
@@ -101,6 +102,9 @@ def main(argv=None):
     if cmd == "calls":
         from . import calls
         return calls.cmd_summary(rest)
+    if cmd == "receipt":                               # running tally (today/7d/month) → stdout; for the in-chat hook
+        from . import receipt
+        return receipt.cli(rest)
     if cmd == "backfill":
         from . import backfill
         return backfill.main(rest)

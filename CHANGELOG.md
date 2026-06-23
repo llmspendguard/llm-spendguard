@@ -14,6 +14,15 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
   modules (chat→claude.ai, saas push, transcript parsers, paid-call tools) are integration-tested, not unit-tested.
 
 ### Added
+- **Inline spend receipts + an always-on tally (`receipt.py`, `spendguard receipt`).** After every gated FLOW
+  (a `with spendguard.context(...)` block, a batch submit at the gate, or a CLI command) spendguard emits a compact
+  receipt — what ran · in/out tokens · est→actual · the running **today / 7d / month** tally — so what it tracked is
+  visible AS IT HAPPENS. The two axes stay SEPARATE and are never summed: **actual-$** (billed, from the gate ledger)
+  vs **est-value** (Claude Code + claude.ai plan usage, stamped per-source so they sum, with an as-of date). Per-FLOW,
+  never per-call. Verbosity via `receipts.level` / `SPENDGUARD_RECEIPTS` = `off | footer | flow | verbose` (default
+  `flow`); auto-emit → stderr (never corrupts piped stdout), `spendguard receipt` → stdout. Zero LLM, no admin key.
+  Two Claude Code hook protocols built in: `receipt --statusline` (always-on footer: `cwd · model · ctx% · tally`)
+  and `receipt --stop-hook` (a per-turn `systemMessage` line in the transcript).
 - **`spendguard schedule [--daily] [--remove]`** (`schedule.py`) — installable cross-platform scheduler (macOS
   launchd · Linux crontab · Windows schtasks) that runs `saas sync --if-due` on a cadence; idempotent, zero deps.
   `saas sync` now snapshots vast.ai GPU every run so a frequent schedule captures short-lived/destroyed instances.

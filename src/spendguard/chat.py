@@ -448,6 +448,14 @@ def show(days=None, refresh=True):
         except Exception as e:
             print(f"  (live refresh skipped: {e})\n")
     rows = _day_rows(st, days)
+    # Stamp claude.ai est-value windows (from the FULL history, not the day-filtered view) so `spendguard receipt`
+    # and the in-chat footer sum claude-code + claude-ai. billed=false → stays out of actual-$. Best-effort.
+    try:
+        from . import receipt
+        receipt.stamp_est_value([{"day": r["day"], "spend_micros": round(r["value"] * 1_000_000), "billed": False}
+                                 for r in _day_rows(st, None) if r.get("day")], source="claude-ai")
+    except Exception:
+        pass
     tree = {}                                              # org → team → project (value), the additive scope view
     for r in rows:
         o = tree.setdefault(r["org"] or "∅", {"value": 0.0, "convs": set(), "teams": {}})

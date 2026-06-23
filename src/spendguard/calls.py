@@ -52,13 +52,65 @@ def set_context(intent: Optional[str] = None, chain: Optional[str] = None) -> No
 
 @contextlib.contextmanager
 def context(intent: Optional[str] = None, chain: Optional[str] = None):
-    """`with spendguard.context(intent='loinc-typing', chain='run-42'): ...` tags the calls inside."""
+    """`with spendguard.context(intent='loinc-typing', chain='run-42'): ...` tags the calls inside.
+
+    On exit it emits a per-FLOW spend receipt (what ran · tokens · est→actual · running tally) — see receipt.py.
+    The receipt is verbosity-gated, goes to stderr, and is fully guarded: it NEVER raises into your code."""
     prev = getattr(_local, "ctx", None)
     set_context(intent=intent, chain=chain)
+    start = (_max_rowid(), _flow_start_usd())          # flow window: (last call rowid, billed-$ so far)
     try:
         yield
     finally:
+        ctx = current()
         _local.ctx = prev or {}
+        try:
+            from . import receipt
+            receipt.emit_flow(ctx.get("intent"), ctx.get("chain"), start)
+        except Exception:
+            pass
+
+
+# ── flow aggregation (powers the per-flow receipt; degrades gracefully when call-logging is off) ──
+def _flow_start_usd() -> float:
+    try:
+        from . import budget
+        return budget.spent_since("1970-01-01")            # all workload billed-$ to date (cheap; small table)
+    except Exception:
+        return 0.0
+
+
+def _max_rowid() -> int:
+    if not enabled():
+        return 0
+    try:
+        with _lock:
+            r = _db().execute("SELECT COALESCE(MAX(rowid),0) FROM calls").fetchone()
+        return int(r[0] or 0)
+    except Exception:
+        return 0
+
+
+def flow_agg(since_rowid: int = 0, chain: Optional[str] = None):
+    """Aggregate the calls logged since `since_rowid` (a flow window) → {n, in_tok, out_tok, cost, caller}, or None
+    when per-call logging is off/unavailable (the receipt then falls back to the always-on budget-$ delta)."""
+    if not enabled():
+        return None
+    try:
+        q = ("SELECT COUNT(*), COALESCE(SUM(in_tok),0), COALESCE(SUM(out_tok),0), "
+             "COALESCE(SUM(cost),0.0), MAX(caller) FROM calls WHERE rowid > ?")
+        a = [int(since_rowid or 0)]
+        if chain:
+            q += " AND chain = ?"
+            a.append(chain)
+        with _lock:
+            row = _db().execute(q, a).fetchone()
+        if not row or not row[0]:
+            return None
+        return {"n": int(row[0]), "in_tok": int(row[1] or 0), "out_tok": int(row[2] or 0),
+                "cost": float(row[3] or 0.0), "caller": row[4]}
+    except Exception:
+        return None
 
 
 def caller():

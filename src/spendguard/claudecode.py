@@ -149,6 +149,17 @@ def show(days=None):
         cutoff = (datetime.date.today() - datetime.timedelta(days=int(days))).isoformat()
     spend = [v for v in st["ledger"].values() if not v.get("_work") and (not cutoff or v["day"] >= cutoff)]
     work = [v for v in st["ledger"].values() if v.get("_work")]
+    # Stamp the est-value windows (from the FULL ledger, not the day-filtered `spend`) so `spendguard receipt` and the
+    # in-chat footer can show plan-usage cheaply. billed=false → it stays out of actual-$; channel keyed so claude.ai
+    # doesn't clobber it. Best-effort.
+    try:
+        from . import receipt
+        receipt.stamp_est_value(
+            [{"day": v["day"], "spend_micros": round(v["cost"] * 1_000_000), "billed": False}
+             for v in st["ledger"].values() if not v.get("_work") and v.get("day")],
+            source="claude-code")
+    except Exception:
+        pass
     byproj = {}
     for r in spend:
         p = byproj.setdefault(r["project"], {"cost": 0.0, "turns": 0, "models": set()})

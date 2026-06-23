@@ -12,6 +12,11 @@ attribution, discovery, or context.
 - **The anti-pattern that broke us:** using regex keywords to DECIDE a project — `re.search("embedding|corpus", text)`
   is a *meaning* decision dressed as mechanics. It silently misclassified real work into "unattributed" and no test
   caught it. Banned. Regex may find a *string*; it may never decide *what work this was*.
+- **Readout is mechanics, not meaning** (so a reviewer doesn't ask "why isn't the receipt agentic?"): the inline
+  receipts / running tally (`receipt.py`) only *display* spend that attribution has already decided — sum, format,
+  window today/7d/month. No judgement → deterministic by design (and so: zero LLM, no admin key, safe to emit every
+  flow). The one rule it still enforces is the system invariant: the two axes (actual-$ billed vs est-value plan)
+  are shown SEPARATELY and never summed.
 
 ## 1b. ONE agentic process across ALL spend sources — batch · realtime · remote-compute
 There are THREE spend sources and they all go through the SAME agentic attributor. No source gets a non-agentic

@@ -129,15 +129,27 @@ def _log(rec):
     _emit({**rec, "kind": rec.get("kind", "batch")})
 
 
+def _submit_receipt(est):
+    """After the gate APPROVES a batch, show the running tally next to the estimate — the per-flow receipt for a
+    submit (the gate already printed the est). Verbosity-gated, stderr, fully guarded: must NEVER affect the gate's
+    decision or raise. The batch's ACTUAL cost trues up later at reconcile; this shows the est + the billed tally."""
+    try:
+        from . import receipt
+        if receipt.level() in ("flow", "verbose"):
+            print(receipt.render_tally(), file=sys.stderr)
+    except Exception:
+        pass
+
+
 def _decide(est):
     """Proceed (return) if under cap or allowed; raise SpendGateRefused to block."""
     cap = _cap()
     line = (f"[spend_gate] {est['provider']} {est.get('model')} · {est['requests']} req · "
             f"in~{est['in_tok']:,} out≤{est['out_tok']:,} -> ~${est['cost']:.2f} (cap ${cap:.0f})")
     if est["cost"] <= cap:
-        _log({**est, "decision": "under_cap"}); print(line + "  OK", file=sys.stderr); return
+        _log({**est, "decision": "under_cap"}); print(line + "  OK", file=sys.stderr); _submit_receipt(est); return
     if _allow():
-        _log({**est, "decision": "allowed_env"}); print(line + "  ALLOWED (GATE_ALLOW=1)", file=sys.stderr); return
+        _log({**est, "decision": "allowed_env"}); print(line + "  ALLOWED (GATE_ALLOW=1)", file=sys.stderr); _submit_receipt(est); return
     print(f"\n*** SPEND GATE: this single batch is projected at ${est['cost']:.2f}, over the ${cap:.0f} cap. ***\n"
           f"{line}\nBetter first: pack 25–40 items/request · trim max_tokens · use the cheaper executor "
           f"(opus-4.8 output < gpt-5.5) · split the scope. (raise GATE_CAP or GATE_ALLOW=1 to force.)", file=sys.stderr)
@@ -147,7 +159,7 @@ def _decide(est):
         except Exception:
             ans = ""
         if ans in ("yes", "y"):
-            _log({**est, "decision": "allowed_prompt"}); return
+            _log({**est, "decision": "allowed_prompt"}); _submit_receipt(est); return
         _log({**est, "decision": "refused_prompt"})
         from . import guard
         guard.record_saving("block", est["cost"])     # guarded: a blocked submission's spend, prevented
