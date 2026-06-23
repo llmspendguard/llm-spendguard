@@ -115,6 +115,19 @@ def contributor():
     return config.machine_id()   # persisted usr_<hex> — never empty, no user@host leak
 
 
+def identity_for_org(org, default=None):
+    """PER-USER attribution: the contributor (member_ref) for a given ORG. So a spend unit attributed agentically to
+    an org also carries the right USER — e.g. a vast.ai box classified to Ensight → ash@ensight.ai, while Healiom
+    work → ash@healiom.com — even though one machine pushes both. Config-driven (`identities` map {org: email}); NO
+    hardcoding. Falls back to the connection contributor when an org isn't mapped."""
+    ids = conn().get("identities") or {}
+    if isinstance(ids, dict) and org:
+        for k, v in ids.items():
+            if str(k).lower() == str(org).lower() and v:
+                return str(v).lower()[:128]
+    return (default or contributor())
+
+
 def contributor_ok():
     """(ok, reason) — is the contributor identity adequate for the CURRENT SaaS mode?
 

@@ -146,7 +146,7 @@ def gpu_rows(now=None, label_map=None):
             continue
         end = i.get("end_date") or now
         hours = max(0.0, (min(end, now) - start) / 3600.0)
-        proj = project_of(i.get("label"), label_map)
+        proj = (i.get("project") or "").lower() or project_of(i.get("label"), label_map)   # agentic (session) first, label-map fallback
         gpu = i.get("gpu_name") or "?"
         a = agg.setdefault((proj, gpu), {"project": proj, "gpu": gpu, "instance_ids": [], "labels": set(),
                                          "dph_total": 0.0, "hours": 0.0, "cost": 0.0, "running": 0})
@@ -185,7 +185,7 @@ def gpu_rows_by_day(since_ts=None, now=None, label_map=None):
             continue
         end = min(i.get("end_date") or now, now)
         t = max(start, since_ts)
-        proj = project_of(i.get("label"), label_map)
+        proj = (i.get("project") or "").lower() or project_of(i.get("label"), label_map)   # agentic (session) first, label-map fallback
         gpu = i.get("gpu_name") or "?"
         while t < end:                                     # walk day by day, clipping to each UTC day
             day = datetime.datetime.fromtimestamp(t, datetime.timezone.utc).strftime("%Y-%m-%d")
@@ -442,7 +442,7 @@ def discover_agentic(run=False, record=False, max_sessions=None, now=None):
     map labels→projects. Caged + estimate-first (run=False → cost only). record=True → record_recovered the
     confidently-real, not-already-known instances so the account reconcile auto-fills. Same agentic pattern as
     attribution.classify_items / conv.attribute_usage — the shared 'LLM reads conversations to attribute spend'."""
-    from . import adapters, calls, ui, pricing
+    from . import adapters, calls, ui, pricing, conv
     sessions = _gpu_session_excerpts(max_sessions)
     hints = _gpu_project_hints()                           # the USER'S projects/label_map — never hardcoded
     model = config.advisor_model()
@@ -468,7 +468,10 @@ def discover_agentic(run=False, record=False, max_sessions=None, now=None):
                 continue
             prev = merged.get(iid)
             if not prev or int(it.get("confidence") or 0) > int(prev.get("confidence") or 0):
-                merged[iid] = {**it, "id": iid, "project": (it.get("project") or project_of(it.get("label")) or "").lower()}
+                sc = conv.session_classification(sid) or {}   # AGENTIC: the box's session classification is PRIMARY
+                merged[iid] = {**it, "id": iid, "sid": sid,
+                               "project": (sc.get("project") or it.get("project") or project_of(it.get("label")) or "").lower(),
+                               "org": sc.get("org") or "", "team": sc.get("team") or ""}
     insts = list(merged.values())
     recorded = []
     if record:

@@ -97,5 +97,17 @@ rec = conv.seg_record("det1")
 ck("determination stored (the LLM's classification, as JSON)", bool(rec) and (rec["determination"] or {}).get("project") == "lmm")
 ck("seg_record keeps conv id + model + source (decide redo-when-needed)", rec["sid"] == "S9" and rec["model"] == "claude-x" and rec["source"] == "llm")
 
+# ── 6. session_classification: the SHARED primitive for NON-batch units (GPU instance, remote realtime) — the
+#       conversation that launched the box / ran the fleet rolls up to its dominant org/project (highest confidence) ──
+conv._seg_put_cls("sc-a", {"project": "manga2anime", "org": "Ensight", "team": "anime", "confidence": 92},
+                  source="llm", model="m", seg={"sid": "SESS1", "prompt": "fleet caption run"})
+conv._seg_put_cls("sc-b", {"project": "manga2anime", "org": "Ensight", "confidence": 70},
+                  source="llm", model="m", seg={"sid": "SESS1", "prompt": "more"})
+sc = conv.session_classification("SESS1")
+ck("session_classification rolls a conversation up to its dominant org/project (GPU + realtime use this)",
+   bool(sc) and sc["org"] == "Ensight" and sc["project"] == "manga2anime")
+ck("session_classification: unclassified session → None (never a fake attribution)",
+   conv.session_classification("NO-SUCH-SESSION") is None)
+
 print(("\n[FAIL] " if fails else "\n[OK] ") + f"segment-attribution: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

@@ -383,6 +383,26 @@ def batch_project_map(tdir=None):
     return out
 
 
+def session_classification(sid):
+    """The dominant {org,team,project} for a whole CONVERSATION (sid), from its classified segments. This is the
+    shared primitive for attributing NON-batch units that link to a session rather than a batch-id — a vast.ai GPU
+    instance launched in that session, or remote realtime (Haiku/Sonnet) run by that session's fleet. Same agentic
+    classifier as batch; just rolled up to the session. Highest-confidence classified segment wins (ties → latest).
+    Returns None if the session has no agentic/human classification yet."""
+    from . import learn
+    rows = []
+    with learn._lock:
+        for r in learn._db().execute(
+                "SELECT project,org,team,confidence,ts FROM seg_attribution "
+                "WHERE sid=? AND source IN ('llm','human') AND (project<>'' OR org<>'')", (sid,)):
+            rows.append(r)
+    if not rows:
+        return None
+    rows.sort(key=lambda r: (int(r[3] or 0), r[4] or ""), reverse=True)
+    p, o, t, _c, _ts = rows[0]
+    return {"project": (p or "").lower(), "org": o or "", "team": t or ""}
+
+
 def batch_contexts(tdir=None, turns=10, maxchars=3500):
     """{batch_id: {conv, before, at, after}} for every batch referenced in a transcript — ONE pass over the files
     (one pass over the transcripts, for linking the whole corpus). ~`turns` turns before/after each."""
