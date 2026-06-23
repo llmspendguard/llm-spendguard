@@ -138,15 +138,19 @@ def gpu_rows(now=None, label_map=None):
     instances aren't listed here — their spend is in the vast.ai invoice total (the GPU reconcile gap, mirroring
     the LLM unattributed gap). Returns rows ready to map into ledger pushes."""
     now = now or time.time()
+    from . import conv
+    insts = list(_all_instances())
+    attrib = conv.instance_attributions(insts)   # TIMING MATCH: vast.ai cost+window ⨝ conversation active then → org/project
     agg = {}
-    for i in _all_instances():
+    for i in insts:
         dph = float(i.get("dph_total") or 0)
         start = i.get("start_date") or 0
         if not dph or not start:
             continue
         end = i.get("end_date") or now
         hours = max(0.0, (min(end, now) - start) / 3600.0)
-        proj = (i.get("project") or "").lower() or project_of(i.get("label"), label_map)   # agentic (session) first, label-map fallback
+        proj = ((attrib.get(str(i.get("id"))) or {}).get("project")                  # timing-matched conversation (primary)
+                or (i.get("project") or "").lower() or project_of(i.get("label"), label_map))   # stored, then label-map fallback
         gpu = i.get("gpu_name") or "?"
         a = agg.setdefault((proj, gpu), {"project": proj, "gpu": gpu, "instance_ids": [], "labels": set(),
                                          "dph_total": 0.0, "hours": 0.0, "cost": 0.0, "running": 0})
@@ -177,15 +181,19 @@ def gpu_rows_by_day(since_ts=None, now=None, label_map=None):
     import datetime
     now = now or time.time()
     since_ts = since_ts if since_ts is not None else _month_start_ts()
+    from . import conv
+    insts = list(_all_instances())
+    attrib = conv.instance_attributions(insts)   # TIMING MATCH: vast.ai cost+window ⨝ conversation active then → org/project
     agg = {}
-    for i in _all_instances():
+    for i in insts:
         dph = float(i.get("dph_total") or 0)
         start = i.get("start_date") or 0
         if not dph or not start:
             continue
         end = min(i.get("end_date") or now, now)
         t = max(start, since_ts)
-        proj = (i.get("project") or "").lower() or project_of(i.get("label"), label_map)   # agentic (session) first, label-map fallback
+        proj = ((attrib.get(str(i.get("id"))) or {}).get("project")                  # timing-matched conversation (primary)
+                or (i.get("project") or "").lower() or project_of(i.get("label"), label_map))   # stored, then label-map fallback
         gpu = i.get("gpu_name") or "?"
         while t < end:                                     # walk day by day, clipping to each UTC day
             day = datetime.datetime.fromtimestamp(t, datetime.timezone.utc).strftime("%Y-%m-%d")

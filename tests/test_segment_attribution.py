@@ -126,5 +126,18 @@ ck("remote realtime EXCLUDES batch-id runs (no double-count vs the batch ledger)
 ck("remote realtime drops PLANNED/not-executed runs", all(x["model"] != "sonnet" for x in rr["rows"]))
 ck("remote realtime attributed to the session's org via session_classification (Ensight)", rr["by_org"].get("Ensight") == 3.0)
 
+# ── 8. GPU TIMING MATCH: a vast.ai instance's run window ⨝ the conversation active then → org/project. This is the
+#       "combine vast.ai cost (window) + LLM attribution" join: vast gives the window; the matched conversation the org. ──
+import datetime as _dt
+_t = _dt.datetime(2026, 6, 10, 12, 0, 0, tzinfo=_dt.timezone.utc)
+conv.segments = lambda tdir=None: [{"sid": "GSESS", "seg_id": "g1", "ts": _t.isoformat(),
+                                    "prompt": "fleet box run", "batch_ids": [], "project_prior": "manga2anime", "cwd": "/x"}]
+conv._seg_put_cls("g1", {"project": "manga2anime", "org": "Ensight", "confidence": 90}, source="llm",
+                  seg={"sid": "GSESS", "prompt": "fleet box run"})
+att = conv.instance_attributions([{"id": "7777777", "label": "caption", "start_date": _t.timestamp() - 3600, "end_date": _t.timestamp() + 3600}])
+ck("GPU instance timing-matched to the conversation active in its window → Ensight", att.get("7777777", {}).get("org") == "Ensight")
+att2 = conv.instance_attributions([{"id": "8888888", "label": "x", "start_date": _t.timestamp() + 99999, "end_date": _t.timestamp() + 199999}])
+ck("GPU instance with NO overlapping conversation → unmatched (never a fake attribution)", "8888888" not in att2)
+
 print(("\n[FAIL] " if fails else "\n[OK] ") + f"segment-attribution: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

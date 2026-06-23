@@ -442,6 +442,40 @@ def remote_llm_excerpts(tdir=None, max_sessions=None, window=600):
     return out
 
 
+def instance_attributions(instances, tdir=None):
+    """TIMING MATCH for GPU: join each vast.ai instance to the conversation that was running while it was up. vast.ai
+    gives the authoritative COST + run window ([start_date, end_date] unix); this resolves the ATTRIBUTION by finding
+    the conversations ACTIVE in that window (segments whose transcript ts falls inside it) and taking their
+    session_classification. A segment that mentions the instance id or label is weighted far higher (a direct
+    reference beats mere temporal overlap). ONE pass over the transcripts for the whole instance list. Returns
+    {instance_id: {org,team,project,match}}. The combine-vast.ai-cost-with-LLM-attribution join."""
+    import datetime
+    ts_segs = []
+    for s in segments(tdir):
+        try:
+            u = datetime.datetime.fromisoformat((s.get("ts") or "").replace("Z", "+00:00")).timestamp()
+        except Exception:
+            continue
+        ts_segs.append((u, s["sid"], (s.get("prompt") or "").lower()))
+    out = {}
+    for inst in instances or []:
+        iid = str(inst.get("id") or "")
+        start = float(inst.get("start_date") or 0)
+        end = float(inst.get("end_date") or 0) or (start + 1)
+        hints = [h for h in (iid.lower(), str(inst.get("label") or "").lower()) if h]
+        score = {}
+        for u, sid, blob in ts_segs:
+            if not (start <= u <= end):
+                continue
+            score[sid] = score.get(sid, 0) + (5 if any(h in blob for h in hints) else 1)
+        for sid, _w in sorted(score.items(), key=lambda x: -x[1]):
+            c = session_classification(sid)
+            if c:
+                out[iid] = {**c, "match": "timing"}
+                break
+    return out
+
+
 def batch_contexts(tdir=None, turns=10, maxchars=3500):
     """{batch_id: {conv, before, at, after}} for every batch referenced in a transcript — ONE pass over the files
     (one pass over the transcripts, for linking the whole corpus). ~`turns` turns before/after each."""
