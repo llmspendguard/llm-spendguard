@@ -28,7 +28,7 @@ jobs:
           pip install twine
           twine check dist/*
       - name: Publish to PyPI (trusted publishing)
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # release/v1 — 3rd-party action pinned to SHA
       - name: GitHub Release from CHANGELOG
         env:
           GH_TOKEN: ${{ github.token }}
