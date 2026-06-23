@@ -663,19 +663,26 @@ def crosscheck(since=None):
     if not ok:
         return {"error": f"not connected: {reason}"}
     local = {r["uid"]: r for r in _rollup_rows(since=since)}        # LLM ledger rows (actual-$)
-    try:                                                            # + GPU rows (best-effort; hits vast.ai)
+    gpu_ok = True                                                   # can we VERIFY GPU rows this run?
+    try:                                                            # + GPU rows (resilient: a vast.ai flake → history)
         from . import resources
-        for r in resources.sync(dry=True).get("day_totals", []):
+        gpu_rows = resources.sync(dry=True).get("day_totals", [])
+        for r in gpu_rows:
             local[r["uid"]] = r
+        # GPU source is "dark" only if we derived NOTHING and have no live-or-recorded instance to derive from —
+        # then we can't tell a server GPU row from stale, so don't call it server_only (it'd false-fail in_sync).
+        if not gpu_rows and not resources._all_instances():
+            gpu_ok = False
     except Exception:
-        pass
+        gpu_ok = False
     try:
         resp = _request("GET", "/v1/ledger?since=" + since)
     except Exception as e:
         return {"error": str(e)}
     srv = {row["uid"]: row for row in (resp.get("rows") or []) if _is_actual_row(row)}   # ACTUAL-$ axis only
+    _is_gpu = lambda row: (row.get("provider") == "vastai") or (row.get("kind") == "gpu")
     matched = 0
-    drift, local_only, server_only = [], [], []
+    drift, local_only, server_only, gpu_unverified = [], [], [], []
     for uid, lr in local.items():
         if uid in srv:
             sm, lm = int(srv[uid].get("spend_micros") or 0), int(lr.get("spend_micros") or 0)
@@ -689,12 +696,19 @@ def crosscheck(since=None):
                                "usd": round(int(lr.get("spend_micros") or 0) / 1e6, 2)})
     for uid, sr in srv.items():
         if uid not in local:
-            server_only.append({"uid": uid, "project": sr.get("project"), "day": str(sr.get("day")),
-                                "usd": round(int(sr.get("spend_micros") or 0) / 1e6, 2), "version": sr.get("version")})
-    return {"since": since, "local_rows": len(local), "server_rows": len(srv),
-            "matched": matched, "value_drift": len(drift), "local_only": len(local_only), "server_only": len(server_only),
-            "in_sync": not (drift or local_only or server_only),
-            "samples": {"value_drift": drift[:10], "local_only": local_only[:10], "server_only": server_only[:10]}}
+            row = {"uid": uid, "project": sr.get("project"), "day": str(sr.get("day")),
+                   "usd": round(int(sr.get("spend_micros") or 0) / 1e6, 2), "version": sr.get("version")}
+            # GPU source unreachable this run → can't confirm vastai rows; bucket as UNVERIFIED, never false server_only
+            (gpu_unverified if (not gpu_ok and _is_gpu(sr)) else server_only).append(row)
+    out = {"since": since, "local_rows": len(local), "server_rows": len(srv),
+           "matched": matched, "value_drift": len(drift), "local_only": len(local_only), "server_only": len(server_only),
+           "in_sync": not (drift or local_only or server_only),       # gpu_unverified ≠ out-of-sync (couldn't check)
+           "samples": {"value_drift": drift[:10], "local_only": local_only[:10], "server_only": server_only[:10]}}
+    if gpu_unverified:                                               # surface, don't hide: GPU couldn't be cross-checked
+        out["gpu_unverified"] = len(gpu_unverified)
+        out["note"] = "GPU source unreachable — vastai rows not cross-checked this run (not counted as drift)"
+        out["samples"]["gpu_unverified"] = gpu_unverified[:10]
+    return out
 
 
 def status():

@@ -37,6 +37,13 @@ agentic classifier only decides WHERE it lands; Σ attributed ≤ truth; the con
 - Spend (a batch, a realtime span) attributes to the **segment that produced it** → that segment's classified
   project/org. Magnitude comes from provider TRUTH; the LLM only decides WHERE it lands. Σ attributed ≤ provider truth,
   always.
+- **A KEY does not imply an org. Given a SET of org keys (one machine, several orgs/keys), the org↔spend resolution is
+  AGENTIC — it resolves to what MAKES SENSE from the evidence, not from which key happened to push.** A shared provider
+  key serves multiple orgs; the same machine holds several org keys. So: the AGENTIC attribution of the segment/box
+  decides the org (per §1/§2), and the key is just the push credential that must MATCH that resolved org — never the
+  other way round. The push SCOPE follows from the resolved org (the taxonomy's org→projects), not a hand-kept list —
+  that drift is exactly what dropped concept-model/medical-taxonomy and leaked Ensight's llmseg into Healiom. Corollary:
+  a connection that can't resolve its org to a scope fails CLOSED (push nothing) rather than guessing or pushing all.
 
 ## 3. The convergence loop (small + large) — converge on CORRECT, not "ran once"
 Agentic work is a LOOP that self-corrects until a measurable correctness criterion is met.

@@ -70,7 +70,13 @@ def project_of(label, label_map=None):
 
 
 def instances():
-    d = _get("instances/")
+    # Live vast.ai fetch. NEVER raises: a network/API flake returns [] so every caller (snapshot, _all_instances,
+    # gpu_rows_by_day, sync, crosscheck) falls back to RECORDED HISTORY instead of erroring out. A transient outage
+    # must not zero the GPU set — that's what produced false `server_only`/in_sync=False in the cross-check.
+    try:
+        d = _get("instances/")
+    except Exception:
+        return []
     return d.get("instances", d) if isinstance(d, dict) else (d or [])
 
 

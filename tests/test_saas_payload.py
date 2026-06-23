@@ -87,5 +87,45 @@ ck("guarded: filters to base (manga2anime dropped)", len(g) == 1 and g[0]["proje
 ck("guarded: cumulants pass through", g[0]["k1"] == 10.0 and g[0]["n"] == 5)
 ck("guarded: empty base → push all", len(saas.build_guarded_rows(grows, set())) == 2)
 
+# ── crosscheck robustness: a vast.ai outage must NOT turn correctly-pushed GPU rows into false server_only ──
+# Regression guard for the flaky-fetch bug seen on 2026-06-23 (one run gave server_only=10, the re-run gave 0 /
+# in_sync=True). When the GPU source is dark, server vastai rows are UNVERIFIED (couldn't check), never 'stale'.
+from spendguard import resources as _res
+saas.ready = lambda: (True, "")
+saas._rollup_rows = lambda since=None: [{"uid": "batch1", "project": "lmm", "spend_micros": 1_000_000}]
+
+# (A) GPU source DARK (sync(dry) empty + no instances): a local-only vastai server row → gpu_unverified, in_sync stays True
+saas._request = lambda *a, **k: {"rows": [
+    {"uid": "batch1", "project": "lmm", "provider": "openai", "kind": "workload", "channel": "batch", "spend_micros": 1_000_000, "billed": True},
+    {"uid": "gpu1", "project": "lmm", "provider": "vastai", "kind": "gpu", "channel": "realtime", "spend_micros": 4_200_000, "billed": True},
+]}
+_res.sync = lambda dry=False: {"day_totals": []}
+_res._all_instances = lambda: []
+ccA = saas.crosscheck(since="2026-06-01")
+ck("crosscheck: GPU source dark → vastai server row is gpu_unverified, NOT server_only",
+   ccA.get("gpu_unverified") == 1 and ccA["server_only"] == 0)
+ck("crosscheck: gpu_unverified alone does NOT flip in_sync (couldn't check ≠ drift)", ccA["in_sync"] is True and ccA["matched"] == 1)
+
+# (B) DARK source but a genuinely-stale NON-gpu row is still flagged server_only (we don't suppress real drift)
+saas._request = lambda *a, **k: {"rows": [
+    {"uid": "batch1", "project": "lmm", "provider": "openai", "kind": "workload", "channel": "batch", "spend_micros": 1_000_000, "billed": True},
+    {"uid": "stale1", "project": "lmm", "provider": "openai", "kind": "workload", "channel": "batch", "spend_micros": 500_000, "billed": True},
+    {"uid": "gpu1", "project": "lmm", "provider": "vastai", "kind": "gpu", "channel": "realtime", "spend_micros": 4_200_000, "billed": True},
+]}
+ccB = saas.crosscheck(since="2026-06-01")
+ck("crosscheck: real stale NON-gpu row still server_only even when GPU is dark",
+   ccB["server_only"] == 1 and ccB.get("gpu_unverified") == 1 and ccB["in_sync"] is False)
+
+# (C) GPU source OK → the GPU row is derived locally + matches; nothing unverified, in_sync True
+_res.sync = lambda dry=False: {"day_totals": [{"uid": "gpu1", "project": "lmm", "spend_micros": 4_200_000}]}
+_res._all_instances = lambda: [{"id": 1}]
+saas._request = lambda *a, **k: {"rows": [
+    {"uid": "batch1", "project": "lmm", "provider": "openai", "kind": "workload", "channel": "batch", "spend_micros": 1_000_000, "billed": True},
+    {"uid": "gpu1", "project": "lmm", "provider": "vastai", "kind": "gpu", "channel": "realtime", "spend_micros": 4_200_000, "billed": True},
+]}
+ccC = saas.crosscheck(since="2026-06-01")
+ck("crosscheck: GPU source OK → GPU row matches, none unverified, in_sync True",
+   "gpu_unverified" not in ccC and ccC["matched"] == 2 and ccC["in_sync"] is True)
+
 print(("\n[FAIL] " if fails else "\n[OK] ") + f"saas_payload: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)
