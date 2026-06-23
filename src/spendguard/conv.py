@@ -446,6 +446,55 @@ def remote_llm_excerpts(tdir=None, max_sessions=None, window=600):
     return out
 
 
+_RT_USAGE = re.compile(
+    r"(\d{2,8})\s*in\s*/\s*(\d{1,8})\s*out"                       # "276 in / 154 out"
+    r"|input_tokens['\"]?\s*[:=]\s*(\d+)[^\n]{0,60}?output_tokens['\"]?\s*[:=]\s*(\d+)", re.I)
+_RT_MODELS = (("opus", "claude-opus-4-8"), ("sonnet", "claude-sonnet-4-6"), ("haiku", "claude-haiku-4-5"),
+              ("gpt-5", "gpt-5.5"), ("gpt5", "gpt-5.5"), ("gpt", "gpt-5.5"))
+
+
+def realtime_token_tally(tdir=None):
+    """SHIPPED (NO admin key): derive realtime LLM $ from the CONVERSATIONS — the admin-key-free counterpart to the
+    timing oracle. For each transcript: extract every realtime call's printed token usage ('=== USAGE === N in / M
+    out', input_tokens/output_tokens), skip batch (batch-id context), attach the model from nearby text, PRICE via
+    pricing.py, and attribute the session to its org via session_classification. Returns {total, by_org, calls}.
+    NOTE: only counts usage the transcript actually PRINTED — a lower bound vs the admin oracle when runs logged only
+    samples; the durable fix for full coverage is inline capture (gate) going forward."""
+    from . import pricing
+    tdir = tdir or _DEFAULT_TDIR
+    files = sorted(glob.glob(os.path.join(tdir, "**", "*.jsonl"), recursive=True)) if os.path.isdir(tdir) else [tdir]
+    by_org, total, calls = {}, 0.0, 0
+    for path in files:
+        sid = os.path.splitext(os.path.basename(path))[0]
+        try:
+            text = open(path, errors="ignore").read()
+        except Exception:
+            continue
+        sess = {}
+        for m in _RT_USAGE.finditer(text):
+            a, b = (int(m.group(1)), int(m.group(2))) if m.group(1) else (int(m.group(3)), int(m.group(4)))
+            if a < 10 or a > 5_000_000:
+                continue
+            win = text[max(0, m.start() - 120):m.start() + 60].lower()
+            if "msgbatch_" in win or re.search(r"batch_[0-9a-f]{6,}", win) or ".batches." in win:
+                continue                                          # batch usage display → counted in the ledger
+            model = next((c for k, c in _RT_MODELS if k in win), None)
+            if not model:
+                continue
+            e = sess.setdefault(model, [0, 0]); e[0] += a; e[1] += b; calls += 1
+        if not sess:
+            continue
+        org = (session_classification(sid) or {}).get("org") or "(unattributed)"
+        for model, (i, o) in sess.items():
+            try:
+                c = pricing.realtime_cost(model, i, o)
+            except Exception:
+                c = 0.0
+            total += c
+            by_org[org] = round(by_org.get(org, 0.0) + c, 4)
+    return {"total": round(total, 2), "by_org": {k: round(v, 2) for k, v in by_org.items()}, "calls": calls}
+
+
 def instance_attributions(instances, tdir=None):
     """TIMING MATCH for GPU: join each vast.ai instance to the conversation that was running while it was up. vast.ai
     gives the authoritative COST + run window ([start_date, end_date] unix); this resolves the ATTRIBUTION by finding

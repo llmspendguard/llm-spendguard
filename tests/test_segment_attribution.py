@@ -141,5 +141,17 @@ ck("GPU instance timing-matched to the conversation active in its window → Ens
 att2 = conv.instance_attributions([{"id": "8888888", "label": "x", "start_date": _t.timestamp() + 99999, "end_date": _t.timestamp() + 199999}])
 ck("GPU instance with NO overlapping conversation → unmatched (never a fake attribution)", "8888888" not in att2)
 
+# ── 9. conversation-derived realtime tally (NO admin key): prices PRINTED token usage, skips batch-id lines ──
+import tempfile as _tf, os as _os
+_td = _tf.mkdtemp(prefix="sg-rt-"); _os.makedirs(_os.path.join(_td, "p"))
+with open(_os.path.join(_td, "p", "s.jsonl"), "w") as _f:
+    _f.write(json.dumps({"type": "assistant", "message": {"role": "assistant",
+             "content": "=== USAGE === 1000000 in / 200000 out  (opus realtime judge)"}}) + "\n")
+    _f.write(json.dumps({"type": "assistant", "message": {"role": "assistant",
+             "content": "submitted msgbatch_01ZZ1234567890 : 500000 in / 100000 out (batch — must skip)"}}) + "\n")
+rt = conv.realtime_token_tally(tdir=_td)
+ck("realtime tally prices PRINTED realtime token usage (>0, via pricing.py)", rt["total"] > 0)
+ck("realtime tally SKIPS batch-id usage lines (only the 1 realtime call counts)", rt["calls"] == 1)
+
 print(("\n[FAIL] " if fails else "\n[OK] ") + f"segment-attribution: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)
