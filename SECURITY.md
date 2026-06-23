@@ -44,3 +44,23 @@ impact. The SaaS server has its [own policy](https://github.com/llmspendguard/ll
 ## Supported versions
 
 The latest released version on PyPI is supported. Pin a version for reproducibility; upgrade for fixes.
+
+## Scanner findings — accepted false positives
+
+These static-analysis (Aikido) findings were reviewed by hand and are **confirmed false positives**. They are safe
+to mark **Ignore** in the scanner with the rationale below on record. Re-verify if the cited code changes.
+
+- **SQL injection — `calls.py`** (`summary()`, `tested_recently()`). Fully parameterized. The predicate strings are
+  STATIC (`"intent=?"`, `"intent NOT LIKE 'spendguard:%'"`) and every value is bound as a `?` parameter via the
+  driver; the one `IN (%s)` interpolation fills the placeholder **count** (`",".join("?" * len(kinds))`), never the
+  values. No user data is ever concatenated into a query string. (See the in-code comments at both call sites.)
+
+- **SSRF — `saas.py`, `resources.py` (+others making outbound HTTP).** The request host is the operator's OWN
+  configured endpoint (`saas.url`, default `https://llmspendguard.com`) plus fixed provider / vast.ai API hosts — not
+  attacker-influenced input. `_request()` already enforces an https-only guard (it refuses to send the API key to a
+  non-https or raw-IP URL). This is a local CLI acting on its own configuration, not a server proxying untrusted URLs.
+
+- **File inclusion / path traversal — `submit.py`, `share.py`, et al.** (`open(<path>)`). The paths are CLI arguments
+  supplied by the operator running the tool on their own machine (e.g. the batch `.jsonl` to cost-estimate and
+  submit). Reading a local file the operator explicitly named is the tool's purpose; there is no remote attacker in
+  the threat model who controls the path.
