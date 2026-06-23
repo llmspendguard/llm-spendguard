@@ -319,6 +319,31 @@ r2 = LS.reconcile_realtime(since=RT_D1)   # rebuild → must not double-count
 _mk2 = budget._db().execute("SELECT COALESCE(SUM(cost),0) FROM charges WHERE kind='realtime' AND model=?", (LS._RT_MARKER,)).fetchone()[0]
 check("reconcile_realtime: idempotent on re-run", abs(_mk2 - 3.0) < 1e-6 and abs(r2["imported"] - 3.0) < 1e-6)
 
+print("-- reconcile_realtime: admin-oracle path RECORDS timing-matched realtime per project (mirrors batch) --")
+import spendguard.realtime_oracle as RTO
+RTO.by_project_day = lambda since: (
+    [{"project": "lmm", "provider": "openai", "day": "2026-06-05", "cost": 900.0},
+     {"project": "manga2anime", "provider": "anthropic", "day": "2026-06-05", "cost": 100.0}],
+    {"ours_total": 1000.0, "other_org": 50.0, "by_org": {"Healiom": 900.0, "manga2anime": 100.0}})
+os.environ["SPENDGUARD_ADMIN_ORACLE"] = "1"
+ro_r = LS.reconcile_realtime(since="2026-06-01")
+check("oracle path used (source=admin-oracle)", ro_r.get("source") == "admin-oracle")
+check("oracle truth carried ($1000)", abs((ro_r.get("truth") or 0) - 1000.0) < 1e-6)
+from collections import defaultdict as _dd
+_rt = _dd(float)
+for row in budget.by_dims():
+    if row.get("kind") == "realtime" and row.get("model") == "(realtime-oracle)":
+        _rt[row["project"]] += float(row.get("cost") or 0)
+# scale = (truth − gate-live)/truth (gate-live ≈ 0 in the isolated home); assert per-project presence + the 900:100 ratio
+check("recorded realtime split per project (lmm + manga2anime)", _rt.get("lmm", 0) > 0 and _rt.get("manga2anime", 0) > 0)
+check("per-project realtime preserves the oracle's 9:1 split (lmm:manga2anime)",
+      abs(_rt["lmm"] / _rt["manga2anime"] - 9.0) < 0.3)
+# RECORD ONCE: the default (no-admin-key) path — what the daily scheduler runs — must PRESERVE the oracle markers
+os.environ.pop("SPENDGUARD_ADMIN_ORACLE", None)
+LS.reconcile_realtime(since="2026-06-01")
+_still = [row for row in budget.by_dims() if row.get("model") == "(realtime-oracle)"]
+check("default no-key reconcile PRESERVES oracle realtime (record once, daily sync never wipes it)", len(_still) >= 2)
+
 print("-- main(argv): exercises the CLI dry path (sync) --")
 LS._provider_batch_by_day = stub_provider
 check("main returns 0", LS.main(["--since", SINCE]) == 0)

@@ -204,23 +204,60 @@ def reconcile_into_ledger(since=None):
 
 
 _RT_MARKER = "(realtime-history)"   # marker model for realtime backfilled from the gate's realtime_log
+_RT_ORACLE_MARKER = "(realtime-oracle)"   # marker for realtime reconciled to the provider ADMIN-usage truth (timing-matched)
 
 
 def reconcile_realtime(since=None):
-    """Backfill the gate's realtime history into the LEDGER. Realtime is normally recorded live (gate → sqlite +
-    realtime_log.jsonl), but spend logged BEFORE the sqlite backend — or otherwise only in the log — never reaches the
-    ledger, so it doesn't push to the org. This imports realtime_log.jsonl as 'realtime' rows = max(0, log − gate-
-    recorded) per (provider, day). Idempotent (clears + rebuilds the marker rows each run). NOT provider-truth — it's
-    the gate's own complete log; catching UNGATED realtime would need the provider Usage/Admin API (separate). Project
-    fallback = the connection's single project (a single-project repo's realtime is all that project), else
-    'unattributed' — same rule as the batch reconcile. Zero spend (reads a local file)."""
+    """Reconcile REALTIME spend into the ledger — the source historically dropped (regular key = batch only; realtime
+    is NOT chat-reconstructable). Two paths:
+
+    ADMIN-ORACLE (dev; SPENDGUARD_ADMIN_ORACLE + admin keys): reconcile to the PROVIDER admin-usage TRUTH, timing-
+    matched per project (`realtime_oracle.by_project_day`) and RECORDED into the ledger — mirroring the batch reconcile
+    (truth − gate-live = gap, recorded per project). This is how the real ~$1.5k of historical realtime reaches the
+    org. Recording it (not just printing) means the no-admin-key CLIENT then PUSHES it like any other spend, and the
+    completeness verdict reads reconciled instead of UNDER. Record once, never re-derive.
+
+    DEFAULT (no admin key): import the gate's own realtime_log as the $-floor (max(0, log − gate-recorded) per
+    provider/day). The FORWARD fix for full coverage with no admin key is the gate's inline true-up (records actual
+    tokens at call time). Idempotent (clears + rebuilds the marker rows each run)."""
     from . import budget
     from .config import RT_LOG
     import os, json
     since = since or datetime.date.today().replace(day=1).isoformat()
+
+    # ── ADMIN-ORACLE PATH (dev): provider realtime truth, timing-matched per project, recorded ──
+    if os.environ.get("SPENDGUARD_ADMIN_ORACLE"):
+        try:
+            from . import realtime_oracle
+            rows, meta = realtime_oracle.by_project_day(since)
+            T = float(meta.get("ours_total") or 0.0)                 # OUR realtime truth (timing-matched)
+            if T > 0 and rows:
+                budget.clear_reconciled(since=since, model=_RT_ORACLE_MARKER)
+                budget.clear_reconciled(since=since, model=_RT_MARKER)   # oracle supersedes the log-floor markers
+                # gate-LIVE realtime (real recorded calls, non-marker) is a SUBSET of the oracle truth → record only the
+                # GAP (truth − gate-live), distributed by the oracle's per-project weights, so total == truth (no double).
+                G = sum(budget.by_provider_day(kind="realtime", since=since).values())
+                scale = max(0.0, T - G) / T
+                imported, n = 0.0, 0
+                for r in rows:
+                    amt = round(r["cost"] * scale, 6)
+                    if amt > 0.005:
+                        budget.record_reconciled(r["day"], r["provider"], amt, project=r["project"],
+                                                 kind="realtime", model=_RT_ORACLE_MARKER)
+                        imported += amt
+                        n += 1
+                return dict(since=since, source="admin-oracle", truth=round(T, 2), gate_live=round(G, 2),
+                            imported=round(imported, 2), rows=n, by_org=meta.get("by_org"), other_org=meta.get("other_org"))
+        except Exception as e:
+            pass   # admin oracle unreachable → fall through to the gate-log floor (never break the reconcile)
+
+    # ── DEFAULT PATH (no admin key): import the gate's realtime_log as the floor ──
+    # CRITICAL: do NOT touch _RT_ORACLE_MARKER here. Those rows are the historical realtime truth, RECORDED ONCE by a
+    # dev oracle run; the daily scheduler runs this path (no admin key) and must PERSIST them, not wipe them. The
+    # RT_LOG gap recorded below is ~0 once the oracle has run (log ≈ gate-live), so the two coexist without double.
     if not os.path.exists(RT_LOG):
         return dict(since=since, imported=0.0, rows=0)
-    budget.clear_reconciled(since=since, model=_RT_MARKER)        # rebuild from the log (idempotent)
+    budget.clear_reconciled(since=since, model=_RT_MARKER)        # rebuild ONLY our own log-floor markers (idempotent)
     log_pd = {}                                                  # (provider, day) -> $ in the gate's realtime log
     try:
         for ln in open(RT_LOG):
