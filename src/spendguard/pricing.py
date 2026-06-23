@@ -217,10 +217,14 @@ def estimate(model: str, n: int, avg_in: int, avg_out: int, batch: bool = True) 
 
 
 def verify():
-    """Self-check the few rates that have actually burned us."""
-    assert price("gpt-5.5")["batch_in"] == 2.50 and price("gpt-5.5")["batch_out"] == 15.00, "gpt-5.5 batch wrong"
-    assert price("gpt-5.5")["in_"] == 5.00 and price("gpt-5.5")["out"] == 30.00, "gpt-5.5 realtime wrong"
-    assert normalize("gpt-5.5-2026-04-23") == "gpt-5.5"
+    """Self-check the few rates that have actually burned us. Uses explicit raises, NOT assert — this guards the money
+    core, and `python -O` strips asserts, which would silently skip the price sanity-check exactly when it matters."""
+    def _need(cond, msg):
+        if not cond:
+            raise ValueError("pricing.verify: " + msg)
+    _need(price("gpt-5.5")["batch_in"] == 2.50 and price("gpt-5.5")["batch_out"] == 15.00, "gpt-5.5 batch wrong")
+    _need(price("gpt-5.5")["in_"] == 5.00 and price("gpt-5.5")["out"] == 30.00, "gpt-5.5 realtime wrong")
+    _need(normalize("gpt-5.5-2026-04-23") == "gpt-5.5", "gpt-5.5 normalize wrong")
     return True
 
 

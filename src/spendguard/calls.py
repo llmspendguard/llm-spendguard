@@ -188,6 +188,8 @@ def summary(intent=None):
     args = []
     if intent:
         cond.append("intent=?"); args.append(intent)
+    # SQLi-safe (scanner false positive): `cond` holds only STATIC predicate strings ("intent=?"); every VALUE is bound
+    # via `args` as a `?` parameter. The f-string below interpolates this fixed WHERE clause, never user data.
     where, args = ("WHERE " + " AND ".join(cond), tuple(args))
     with _lock:
         rows = _db().execute(
@@ -209,6 +211,8 @@ def tested_recently(intent, model=None, days=14, kinds=("realtime",)):
     try:
         import datetime as _dt
         since = (_dt.datetime.now() - _dt.timedelta(days=int(days))).isoformat()
+        # SQLi-safe (scanner false positive): `%s` is filled with the right COUNT of `?` placeholders, NOT values;
+        # the kind values go through `args`. (Parameterized — no user data is concatenated into the SQL string.)
         q = "SELECT COUNT(*) FROM calls WHERE intent=? AND ts>=? AND kind IN (%s)" % ",".join("?" * len(kinds))
         args = [intent, since, *kinds]
         if model:
