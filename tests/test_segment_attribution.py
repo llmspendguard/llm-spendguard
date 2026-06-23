@@ -10,7 +10,7 @@ fixtures were rigged to match the regex. These tests are the never-again guard:
 
 Offline, isolated home, zero spend.
 """
-import os, sys, tempfile
+import os, sys, tempfile, json
 
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
