@@ -36,3 +36,6 @@ site/
 .coverage.*
 htmlcov/
 coverage.xml
+
+# machine-local SaaS connection (org/team/key) — never commit
+.spendguard.json
