@@ -277,7 +277,9 @@ def _seg_get_all():
 
 
 def _seg_put_cls(seg_id, cls, source="llm", model="", seg=None):
-    """Record ONE attribution decision in the base sqlite. An llm write NEVER overwrites a human override."""
+    """Record ONE attribution decision in the base sqlite: conversation id (sid) · subconversation (seg_id+prompt) ·
+    the LLM's full DETERMINATION (cls as JSON — what it classified/extracted) · model · ts. So we never re-pay AND
+    can re-derive / selectively re-run when the model or prompt changes. An llm write NEVER overwrites a human one."""
     from . import learn
     with learn._lock:
         db = learn._db()
@@ -287,13 +289,32 @@ def _seg_put_cls(seg_id, cls, source="llm", model="", seg=None):
         seg = seg or {}
         db.execute(
             "INSERT OR REPLACE INTO seg_attribution"
-            "(seg_id,content_hash,sid,cwd,prompt,project,org,team,confidence,source,model,ts,batch_ids) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "(seg_id,content_hash,sid,cwd,prompt,project,org,team,confidence,source,model,ts,batch_ids,determination) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (seg_id, _content_hash(seg), seg.get("sid", ""), seg.get("cwd", ""), (seg.get("prompt") or "")[:300],
              (cls.get("project") or ""), (cls.get("org") or ""), (cls.get("team") or ""),
              int(cls.get("confidence") or 0), source, model, learn._now(),
-             json.dumps(seg.get("batch_ids") or [])))
+             json.dumps(seg.get("batch_ids") or []), json.dumps(cls)))
         db.commit()
+
+
+def seg_record(seg_id):
+    """Full recorded row for ONE segment incl. the stored DETERMINATION + model + ts — for audit / re-derive /
+    deciding whether to re-run. Returns None if not recorded."""
+    from . import learn
+    with learn._lock:
+        r = learn._db().execute(
+            "SELECT seg_id,sid,cwd,prompt,project,org,team,confidence,source,model,ts,determination "
+            "FROM seg_attribution WHERE seg_id=?", (seg_id,)).fetchone()
+    if not r:
+        return None
+    keys = ("seg_id", "sid", "cwd", "prompt", "project", "org", "team", "confidence", "source", "model", "ts", "determination")
+    out = dict(zip(keys, r))
+    try:
+        out["determination"] = json.loads(out["determination"]) if out["determination"] else None
+    except Exception:
+        pass
+    return out
 
 
 def _load_seg_cache():

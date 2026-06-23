@@ -90,6 +90,12 @@ conv._seg_put_cls("h1", {"project": "lmm", "confidence": 99}, source="llm", mode
 ck("llm NEVER overwrites a human override (durable)", conv._seg_get_all()["h1"]["project"] == "manga2anime")
 conv._seg_put_cls("lowc", {"project": "documents", "confidence": 40}, source="llm", model="m")
 ck("low-confidence decision recorded (the convergence loop re-runs it)", conv._seg_get_all()["lowc"]["confidence"] == 40)
+# the LLM's full DETERMINATION is remembered (conv id + segment + what it classified) → never re-pay, can re-derive
+conv._seg_put_cls("det1", {"project": "lmm", "org": "Healiom", "team": "LMM", "confidence": 88},
+                  source="llm", model="claude-x", seg={"sid": "S9", "prompt": "nightly", "batch_ids": ["batch_zzzzzzzzzzzzzzzzzzzz"]})
+rec = conv.seg_record("det1")
+ck("determination stored (the LLM's classification, as JSON)", bool(rec) and (rec["determination"] or {}).get("project") == "lmm")
+ck("seg_record keeps conv id + model + source (decide redo-when-needed)", rec["sid"] == "S9" and rec["model"] == "claude-x" and rec["source"] == "llm")
 
 print(("\n[FAIL] " if fails else "\n[OK] ") + f"segment-attribution: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

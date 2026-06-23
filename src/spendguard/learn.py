@@ -55,7 +55,13 @@ def _db():
                 c.execute("""CREATE TABLE IF NOT EXISTS seg_attribution(
                     seg_id TEXT PRIMARY KEY, content_hash TEXT, sid TEXT, cwd TEXT, prompt TEXT,
                     project TEXT, org TEXT, team TEXT, confidence INTEGER,
-                    source TEXT, model TEXT, ts TEXT, batch_ids TEXT)""")
+                    source TEXT, model TEXT, ts TEXT, batch_ids TEXT, determination TEXT)""")
+                # remember the LLM's actual DETERMINATION (what it extracted/classified for this conversation·segment),
+                # not just the final label — so we never re-pay AND can re-derive / selectively re-run when the model
+                # or prompt version changes. (migrate older dbs that predate the column.)
+                have_seg = {r[1] for r in c.execute("PRAGMA table_info(seg_attribution)").fetchall()}
+                if "determination" not in have_seg:
+                    c.execute("ALTER TABLE seg_attribution ADD COLUMN determination TEXT")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_ins_intent ON insights(intent)")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_gn_type ON graph_nodes(type)")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_seg_source ON seg_attribution(source)")
