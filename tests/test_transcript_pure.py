@@ -34,14 +34,16 @@ ck("conv dedup: identical text collapses to one", texts.count("the user said it 
 ck("conv dedup: highest-score event ranks first", top[0]["text"] == "the user said it cost $40")
 ck("conv dedup: caps at k", len(conv._dedup_top(events, k=1)) == 1)
 
-# ── claudecode._row_cost: $ from a usage dict, counting cache-read + cache-creation as input; returns (cost,in,out) ──
+# ── claudecode._row_cost: $ from a usage dict. Returns (cost, in, out, cached) — the token split is HONEST:
+#    in = new input + cache CREATION (full-priced), cached = cache READ (discounted). COST is unchanged (full breakdown). ──
 u = {"input_tokens": 1000, "output_tokens": 500, "cache_read_input_tokens": 200, "cache_creation_input_tokens": 100}
-cost, tin, tout = claudecode._row_cost("claude-opus-4-8", u)
+cost, tin, tout, tcached = claudecode._row_cost("claude-opus-4-8", u)
 exp = pricing.realtime_cost("claude-opus-4-8", 1000 + 100 + 200, 500, 200)
-ck("claudecode cost: matches pricing.realtime_cost (cache tokens count as input)", abs(cost - exp) < 1e-12)
-ck("claudecode cost: total in = input + cache_creation + cache_read, out passthrough", tin == 1300 and tout == 500)
-cost0, tin0, _ = claudecode._row_cost("totally-unknown-model", u)
-ck("claudecode cost: unknown model → $0 (never crashes), tokens still counted", cost0 == 0.0 and tin0 == 1300)
+ck("claudecode cost: matches pricing.realtime_cost (cost still uses the full cache breakdown)", abs(cost - exp) < 1e-12)
+ck("claudecode tokens: in = input + cache_creation (1100), cached = cache_read (200) — NOT lumped; out passthrough",
+   tin == 1100 and tcached == 200 and tout == 500)
+cost0, tin0, _, tcached0 = claudecode._row_cost("totally-unknown-model", u)
+ck("claudecode cost: unknown model → $0 (never crashes), tokens still split", cost0 == 0.0 and tin0 == 1100 and tcached0 == 200)
 
 # ── claudecode._project_of: cwd basename → project; empty → the 'claude-code' default ──
 ck("claudecode project: basename of cwd", claudecode._project_of("/Users/me/Documents/lmm") == "lmm")

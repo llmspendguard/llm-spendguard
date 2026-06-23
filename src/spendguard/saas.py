@@ -445,7 +445,9 @@ def push_status(dry=False):
         rows, _m, _t = pricing.cross_check_openrouter()
         for model, oi, ri, oo, ro, flag in rows:
             if flag == "DRIFT":
-                base = ri or oi or 1e-9
+                base = ri if ri else oi          # reference price, ours as fallback — NOT `... or 1e-9`: a real zero
+                if not base:                     # (e.g. embedding out=0) divided by 1e-9 yields a bogus astronomical %
+                    continue                     # neither price is meaningful → no drift % to report, skip the row
                 drift.append({"model": model, "pct": round(100 * abs((oi or 0) - (ri or 0)) / base)})
     except Exception:
         pass

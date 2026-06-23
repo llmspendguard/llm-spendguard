@@ -59,10 +59,14 @@ def _row_cost(model, u):
     out = int(u.get("output_tokens") or 0)
     cr = int(u.get("cache_read_input_tokens") or 0)
     cc = int(u.get("cache_creation_input_tokens") or 0)
+    # COST uses the full breakdown (cache_read priced at the discounted cached rate). The RETURNED token split is
+    # HONEST and un-lumped: in = new input + cache CREATION (both full-priced), cached = cache READ (discounted).
+    # Claude Code re-reads the whole context every turn, so cr dominates — lumping it into `in` would report a
+    # misleadingly huge "input" (20B+) when it's mostly cheap cache reads. Returns (cost, in, out, cached_read).
     try:
-        return pricing.realtime_cost(model, inp + cc + cr, out, cr), inp + cc + cr, out
+        return pricing.realtime_cost(model, inp + cc + cr, out, cr), inp + cc, out, cr
     except Exception:
-        return 0.0, inp + cc + cr, out
+        return 0.0, inp + cc, out, cr
 
 
 def _scan_new_lines(path, from_line):
@@ -112,11 +116,12 @@ def update(st=None):
             day = (r.get("timestamp") or "")[:10] or datetime.date.today().isoformat()
             proj = _project_of(r.get("cwd"))
             if u and model:
-                cost, intok, outtok = _row_cost(model, u)
+                cost, intok, outtok, crtok = _row_cost(model, u)
                 key = f"{proj}|{model}|{day}"
                 e = ledger.setdefault(key, {"project": proj, "model": model, "day": day,
-                                            "cost": 0.0, "in_tok": 0, "out_tok": 0, "turns": 0})
-                e["cost"] += cost; e["in_tok"] += intok; e["out_tok"] += outtok; e["turns"] += 1
+                                            "cost": 0.0, "in_tok": 0, "out_tok": 0, "cached_tok": 0, "turns": 0})
+                e["cost"] += cost; e["in_tok"] += intok; e["out_tok"] += outtok
+                e["cached_tok"] = e.get("cached_tok", 0) + crtok; e["turns"] += 1   # .get: old state entries predate the field
                 added_cost += cost
             content = msg.get("content")
             if isinstance(content, list):                   # work-done: tool usage + files touched
@@ -225,11 +230,12 @@ def day_totals(member_ref, org_label=None):
         model = d.get("model") or ""
         key = f"{team}|{proj}|{model}|{d['day']}"
         e = agg.setdefault(key, {"team": team, "project": proj, "model": model, "day": d["day"],
-                                 "cost": 0.0, "in": 0, "out": 0, "n": 0})
-        e["cost"] += d["cost"]; e["in"] += d.get("in_tok", 0); e["out"] += d.get("out_tok", 0); e["n"] += 1
+                                 "cost": 0.0, "in": 0, "out": 0, "cached": 0, "n": 0})
+        e["cost"] += d["cost"]; e["in"] += d.get("in_tok", 0); e["out"] += d.get("out_tok", 0)
+        e["cached"] += d.get("cached_tok", 0); e["n"] += 1
     return [{"day": e["day"], "provider": "anthropic", "model": e["model"], "kind": "workload",
              "channel": "claude-code", "billed": False, "spend_micros": round(e["cost"] * 1_000_000),
-             "calls": e["n"], "in_tokens": e["in"], "out_tokens": e["out"],
+             "calls": e["n"], "in_tokens": e["in"], "out_tokens": e["out"], "cached_in_tokens": e["cached"],
              "member_ref": member_ref, "project": e["project"], "team": e["team"],
              "tags": ("team:" + e["team"]) if e["team"] else ""}
             for e in agg.values() if e["day"]]
@@ -269,7 +275,7 @@ def _digest(path):
     """Full per-session digest = a WORK ROW: project, primary day, models, value$, turns, tools, files, and the
     first user prompt (what was ASKED — the 'what the spend was for'). Re-reads the whole session (on-demand)."""
     proj = None; days = {}; models = set(); cost = 0.0; turns = 0; tools = {}; files = []; prompt = ""; branch = ""
-    in_tok = out_tok = 0; modelcost = {}
+    in_tok = out_tok = cached_tok = 0; modelcost = {}
     recs, _ = _scan_new_lines(path, 0)
     for r in recs:
         if proj is None and r.get("cwd"):
@@ -286,8 +292,8 @@ def _digest(path):
                 prompt = t[:200]
         u = msg.get("usage") or {}; model = msg.get("model")
         if u and model:
-            cu, ai, bo = _row_cost(model, u); cost += cu; turns += 1; models.add(model)
-            in_tok += ai; out_tok += bo; modelcost[model] = modelcost.get(model, 0) + cu
+            cu, ai, bo, cr = _row_cost(model, u); cost += cu; turns += 1; models.add(model)
+            in_tok += ai; out_tok += bo; cached_tok += cr; modelcost[model] = modelcost.get(model, 0) + cu
             if day:
                 days[day] = days.get(day, 0) + cu
         c = msg.get("content")
@@ -303,7 +309,7 @@ def _digest(path):
     dominant = max(modelcost, key=modelcost.get) if modelcost else (sorted(models)[0] if models else "")
     return {"project": proj or "claude-code", "day": primary, "models": sorted(models), "cost": round(cost, 4),
             "turns": turns, "tools": tools, "files": files, "prompt": prompt, "branch": branch,
-            "in_tok": in_tok, "out_tok": out_tok, "model": dominant}
+            "in_tok": in_tok, "out_tok": out_tok, "cached_tok": cached_tok, "model": dominant}
 
 
 def work(by="week", days=None):

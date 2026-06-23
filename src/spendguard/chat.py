@@ -26,7 +26,8 @@ _KEYCHAIN_SERVICE = "Claude Safe Storage"
 _BASE = "https://claude.ai/api"
 _DETAIL_Q = "?tree=True&rendering_mode=messages&render_all_tools=true"
 _UNCLASSIFIED = "claude-chat"        # placeholder project until `chat classify` assigns the real one
-_DIGEST_V = 4                        # bump → re-digest cached convs on next refresh (preserves classification)
+_DIGEST_V = 5                        # bump → re-digest cached convs on next refresh (preserves classification)
+                                     # v5: per-day digest now carries cached_tok (cache-read split out from in_tok)
 _IMG_EXT = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".heic", ".svg")
 _UA = os.environ.get("SPENDGUARD_CHAT_UA") or (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -274,8 +275,10 @@ def _value_breakdown(detail):
             except Exception:
                 usd = 0.0
             day = (m.get("created_at") or "")[:10] or "?"
-            d = days.setdefault(day, {"value": 0.0, "in_tok": 0, "out_tok": 0, "turns": 0})
-            d["value"] += usd; d["in_tok"] += total_in; d["out_tok"] += out_t; d["turns"] += 1
+            d = days.setdefault(day, {"value": 0.0, "in_tok": 0, "out_tok": 0, "cached_tok": 0, "turns": 0})
+            # HONEST token split (value unchanged): in_tok = NEW input this turn (full-priced), cached_tok = prior
+            # context re-read at the cached rate. Lumping ctx into in_tok would report a misleadingly huge "input".
+            d["value"] += usd; d["in_tok"] += pending; d["out_tok"] += out_t; d["cached_tok"] += ctx; d["turns"] += 1
             ctx += pending + out_t
             pending = 0
     return model, days
@@ -419,7 +422,8 @@ def _day_rows(st, days=None):
                 rows.append({"day": day, "project": proj, "org": org, "team": team, "model": d.get("model") or "",
                              "title": d.get("title") or "", "summary": d.get("summary") or "", "uuid": d.get("uuid"),
                              "value": dd["value"] * frac, "in_tok": int(dd["in_tok"] * frac),
-                             "out_tok": int(dd["out_tok"] * frac), "turns": dd["turns"] if idx == 0 else 0})
+                             "out_tok": int(dd["out_tok"] * frac), "cached_tok": int(dd.get("cached_tok", 0) * frac),
+                             "turns": dd["turns"] if idx == 0 else 0})
     return rows
 
 
@@ -506,11 +510,12 @@ def day_totals(member_ref, org_label=None):
         team = (r.get("team") or "").lower()
         key = f"{team}|{r['project'].lower()}|{r['model']}|{r['day']}"
         e = rows.setdefault(key, {"team": team, "project": r["project"].lower(), "model": r["model"],
-                                  "day": r["day"], "value": 0.0, "in_tok": 0, "out_tok": 0, "convs": set()})
-        e["value"] += r["value"]; e["in_tok"] += r["in_tok"]; e["out_tok"] += r["out_tok"]; e["convs"].add(r["uuid"])
+                                  "day": r["day"], "value": 0.0, "in_tok": 0, "out_tok": 0, "cached_tok": 0, "convs": set()})
+        e["value"] += r["value"]; e["in_tok"] += r["in_tok"]; e["out_tok"] += r["out_tok"]
+        e["cached_tok"] += r.get("cached_tok", 0); e["convs"].add(r["uuid"])
     return [{"day": e["day"], "provider": "anthropic", "model": e["model"], "kind": "workload",
              "channel": "claude-ai", "billed": False, "spend_micros": round(e["value"] * 1_000_000),
-             "calls": len(e["convs"]), "in_tokens": e["in_tok"], "out_tokens": e["out_tok"],
+             "calls": len(e["convs"]), "in_tokens": e["in_tok"], "out_tokens": e["out_tok"], "cached_in_tokens": e["cached_tok"],
              "member_ref": member_ref, "project": e["project"], "team": e["team"],
              "tags": ("team:" + e["team"]) if e["team"] else ""}
             for e in rows.values() if e["day"]]

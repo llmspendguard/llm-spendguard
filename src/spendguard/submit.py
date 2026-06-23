@@ -41,7 +41,7 @@ def estimate_jsonl_cost(jsonl_path, model, batch=True, avg_out_tokens=None):
     n = 0
     in_tok = 0
     out_ceiling = 0
-    measured = avg_out_tokens is not None
+    measured = avg_out_tokens is not None and avg_out_tokens > 0   # 0/negative isn't a real sample → use the max_tokens ceiling, don't zero out output cost
     used_heuristic = False
     try:
         import tiktoken  # noqa

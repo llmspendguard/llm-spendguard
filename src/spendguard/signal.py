@@ -28,9 +28,12 @@ def build(since=None):
                                      judged=0, good=0, tin=0, tout=0, batches=set()))
         a["calls"] += n; a["judged"] += (judged or 0); a["good"] += (good or 0)
         a["tin"] += (itok or 0); a["tout"] += (otok or 0); a["batches"].add(batch)
-    # cost is per BATCH (full billed), counted once per (intent,model) group that owns the batch
+    # cost is per BATCH (full billed), counted once per (intent,model) group that owns the batch. EXCLUDE cancelled
+    # batches: cancellation_rows() surfaces their spend separately, so counting them in the live aggregate too would
+    # DOUBLE-count cancelled $ (it appears in call_io AND as a cancelled-waste row). Compute once, reuse below.
+    cancelled = _cancelled_billed()
     for a in agg.values():
-        a["cost"] = round(sum(bcost.get(b, 0.0) for b in a["batches"]), 6)
+        a["cost"] = round(sum(bcost.get(b, 0.0) for b in a["batches"] if b not in cancelled), 6)
 
     def recommend(a, gr):
         if gr is not None and gr < 0.7:
@@ -53,23 +56,23 @@ def build(since=None):
             tokens_in=a["tin"], tokens_out=a["tout"],
             context=(a["intent"] or "(none)")[:120], recommendation=recommend(a, gr),
         ))
-    out += cancellation_rows()                # cancelled-but-billed = loss, surfaced as waste
+    out += cancellation_rows(cancelled)       # cancelled-but-billed = loss; the ONLY place cancelled $ is counted
     return out
 
 
-def cancellation_rows():
-    """Cancelled-but-billed batches = LOSS — partial work billed then discarded (your protocol: 'never cancel as
-    cost control; completed requests still bill'). Surfaced as a signal row per project: full billed cost = waste,
-    with the recommendation. Attributed by conversation/intent evidence. Free (provider GETs)."""
-    import datetime
+def _cancelled_billed():
+    """Cancelled-but-billed batches → {bid: {model, cost, project}}. The provider still bills the requests that
+    COMPLETED before a cancel (the protocol's cautionary case), so this spend is real. AGENTIC project attribution.
+    Shared by build() — which EXCLUDES these bids from the live aggregate so they're not double-counted — and
+    cancellation_rows(), which surfaces them as waste. OpenAI GET (free); returns {} if unreachable."""
     from . import conv, pricing
     try:
         from .reconcile_openai import load_key, fetch_batches
         batches = list(fetch_batches(load_key()))
     except Exception:
-        return []
+        return {}
     bmap = conv.batch_project_map()           # AGENTIC: cancelled batch → its subconversation's classified project
-    by_proj = {}
+    out = {}
     for b in batches:
         if b.get("status") != "cancelled":
             continue
@@ -77,11 +80,24 @@ def cancellation_rows():
         it, ot = u.get("input_tokens", 0), u.get("output_tokens", 0)
         if not (it or ot):
             continue                                            # nothing completed → genuinely $0
-        bid = b["id"]
         cost = pricing.batch_cost(b["model"], it, ot, (u.get("input_tokens_details") or {}).get("cached_tokens", 0))
-        proj = (bmap.get(bid, {}).get("project") or "") or "unattributed"
-        a = by_proj.setdefault(proj, {"cost": 0.0, "n": 0})
-        a["cost"] += cost; a["n"] += 1
+        proj = (bmap.get(b["id"], {}).get("project") or "") or "unattributed"
+        out[b["id"]] = {"model": b["model"], "cost": cost, "project": proj}
+    return out
+
+
+def cancellation_rows(cancelled=None):
+    """Cancelled-but-billed batches = LOSS — partial work billed then discarded (your protocol: 'never cancel as
+    cost control; completed requests still bill'). Surfaced as a signal row per project: full billed cost = waste,
+    with the recommendation. `cancelled` may be the precomputed {bid:…} from build() (avoids a re-fetch AND keeps the
+    exclude-from-aggregate and the surfaced-waste in lockstep); None → fetch fresh. Free (provider GETs)."""
+    import datetime
+    if cancelled is None:
+        cancelled = _cancelled_billed()
+    by_proj = {}
+    for info in cancelled.values():
+        a = by_proj.setdefault(info["project"], {"cost": 0.0, "n": 0})
+        a["cost"] += info["cost"]; a["n"] += 1
     day = datetime.date.today().isoformat()
     return [dict(project=proj, intent="cancelled-batches", model="(various)", day=day,
                  calls=a["n"], cost_micros=round(a["cost"] * 1_000_000), judged=0, good_rate=0.0,

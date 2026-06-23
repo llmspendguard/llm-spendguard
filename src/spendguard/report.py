@@ -222,7 +222,9 @@ def _run(a):
               + ", ".join(f"{m}×{n}" for m, n in anth.UNKNOWN_MODELS.items()))
 
     # ── ledger leak check (provider billing vs what the gate recorded) ──
-    leaked = 0.0
+    # None = the check COULD NOT RUN. A swallowed failure must NEVER read as "no leak" ($0) — in a leak-detection
+    # tool a failed provider/ledger read is UNKNOWN and must be surfaced, not silently treated as clean.
+    leaked = None
     try:
         from . import ledger_sync
         c = ledger_sync._compute(month_start)
@@ -231,7 +233,7 @@ def _run(a):
         if line:
             print("  " + line)
     except Exception:
-        pass
+        print("  ⚠ leak check could not run (provider/ledger read failed) — leak status UNKNOWN, not $0")
 
     # ── top learnings (the advisor's confidence-scored insights) ──
     try:
@@ -250,7 +252,7 @@ def _run(a):
         print(f"\n*** ALERT: today total (LLM + compute) ${combined[1]:,.2f} exceeds ${a.alert_threshold:,.0f}. "
               f"Check `spendguard reconcile openai|anthropic --by-day` + `spendguard resources`. ***")
         rc = 2
-    if leaked > max(1.0, (a.alert_threshold or 1e9) * 0.1):
+    if leaked is not None and leaked > max(1.0, (a.alert_threshold or 1e9) * 0.1):
         print(f"\n*** ALERT: ~${leaked:.2f} provider-billed batch is NOT in the local ledger (ungoverned). "
               f"Run `spendguard reconcile-ledger`; install the gate on any repo/venv that's missing it. ***")
         rc = max(rc, 2)

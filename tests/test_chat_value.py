@@ -39,7 +39,10 @@ detail = {"model": "claude-opus-4-8", "chat_messages": [
 model, days = chat._value_breakdown(detail)
 ck("value split across the 2 days", set(days) == {"2026-06-01", "2026-06-02"})
 ck("value > 0", sum(d["value"] for d in days.values()) > 0)
-ck("day2 input includes the grown cached context", days["2026-06-02"]["in_tok"] > days["2026-06-01"]["in_tok"])
+# the grown prior context now shows up as CACHED tokens (broken out), NOT lumped into in_tok — which is per-turn NEW input
+ck("day2's grown context is CACHED (split out, not inflating in_tok)", days["2026-06-02"]["cached_tok"] > days["2026-06-01"]["cached_tok"])
+ck("in_tok = NEW input per turn (same human q both days → equal, not growing with context)",
+   days["2026-06-01"]["in_tok"] == days["2026-06-02"]["in_tok"] and days["2026-06-01"]["in_tok"] > 0)
 ck("turns counted per assistant message", days["2026-06-01"]["turns"] == 1)
 
 # _allocation: normalizes pct → fractions; falls back to the primary/single project

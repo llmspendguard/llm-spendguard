@@ -740,14 +740,17 @@ def cmd(argv=None):
         byproj[r["project"] or "(untagged)"] = byproj.get(r["project"] or "(untagged)", 0) + r["cost"]
     truth = account_gpu_total()
     attributed = sum(byproj.values())
+    # None = the vast.ai bill couldn't be read (UNKNOWN). Format it as "unknown", never crash on `:8.2f` and never
+    # fake it as $0 — same None-is-unknown discipline the reconcile core uses.
+    money = lambda v: "  unknown" if v is None else f"${v:8.2f}"
     print("vast.ai GPU (MTD), label-attributed per project:")
     for p, c in sorted(byproj.items(), key=lambda x: -x[1]):
         print(f"  {p:14} ${c:8.2f}")
     print(f"  {'— attributed':14} ${attributed:8.2f}")
-    print(f"  {'account total':14} ${truth:8.2f}  (vast.ai charges; top-up proxy)")
+    print(f"  {'account total':14} {money(truth)}  (vast.ai charges; top-up proxy)")
     from . import reconcile
     residual = reconcile.residual(truth, attributed)
-    print(f"  {'→ residual':14} ${residual:8.2f}  (account − attributed; should ≈ unspent balance buffer)")
+    print(f"  {'→ residual':14} {money(residual)}  (account − attributed; should ≈ unspent balance buffer)")
     w = reconcile.residual_warning(truth, residual)         # shared core: flags an under-attributed source/tenant
     if w:
         print("  ⚠  " + w + " (GPU: resources.record_recovered / discover --agentic; or schedule snapshot()).")

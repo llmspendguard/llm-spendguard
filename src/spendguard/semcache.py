@@ -49,11 +49,15 @@ def _unpack(b):
 
 
 def _embed(text):
-    """text-embedding-3-small (cheap; gate-metered). Returns a vector or None on failure."""
+    """text-embedding-3-small (cheap). Runs UNDER the gate as META — wrapped in calls.context(intent="spendguard:…")
+    like every other internal spendguard LLM call, so semcache's OWN embedding spend lands on the meta ledger + the
+    meta cap (caged), never as an ungoverned call inside the cost-governance tool. Returns a vector or None on failure."""
     try:
         from openai import OpenAI
-        r = OpenAI(api_key=config.api_key("OPENAI_API_KEY")).embeddings.create(
-            model="text-embedding-3-small", input=[text[:8000]])
+        from . import calls
+        with calls.context(intent="spendguard:semcache"):
+            r = OpenAI(api_key=config.api_key("OPENAI_API_KEY")).embeddings.create(
+                model="text-embedding-3-small", input=[text[:8000]])
         return r.data[0].embedding
     except Exception:
         return None
