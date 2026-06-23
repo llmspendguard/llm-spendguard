@@ -145,5 +145,24 @@ ck("org-GPU: unknown/empty-scope org → fail-CLOSED (no boxes), never cross-org
 ck("org-GPU: legacy single-project conn still scopes to that one project (back-compat)",
    {r["project"] for r in resources._reconcile(orows, 600.0, {"project": "lmm"}, _attr.project_team_map())["mine"]} == {"lmm"})
 
+# ── GPU attribution PRIORITY: the instance LABEL is GROUND TRUTH and WINS over the timing-match ──────────────────
+# A vast.ai box runs async — the chat open while it ran is often unrelated work. So a box LABELED m2a-* is manga2anime
+# even if a spendguard/lmm conversation was active in its window. Guards the bug where timing-match (primary) sent
+# manga2anime's $657 of labeled GPU to llm-spendguard. Timing-match is the fallback ONLY for an UNLABELED box.
+import datetime as _dt2
+_nn = _dt2.datetime(2026, 6, 10, 0, 0, 0, tzinfo=_dt2.timezone.utc).timestamp()
+resources._history_path().write_text("{}")                  # isolate: no leftover recorded boxes
+resources.instances = lambda: [
+    {"id": 901, "gpu_name": "H100", "dph_total": 2.0, "start_date": _nn - 86400, "end_date": _nn, "label": "m2a-train"},
+    {"id": 902, "gpu_name": "A100", "dph_total": 1.0, "start_date": _nn - 86400, "end_date": _nn, "label": "unlabeled-box"}]
+resources.project_of = lambda label, label_map=None: ("manga2anime" if "m2a" in (label or "")
+                                                      else "lmm" if "healiom" in (label or "") else "")
+from spendguard import conv as _conv
+_conv.instance_attributions = lambda insts: {"901": {"project": "lmm", "org": "Healiom"},      # timing-match says lmm…
+                                             "902": {"project": "lmm", "org": "Healiom"}}      # …for BOTH boxes
+_pr = {r["project"] for r in resources.gpu_rows_by_day(since_ts=_nn - 5 * 86400, now=_nn)}
+ck("GPU LABEL wins over timing-match: m2a-labeled box → manga2anime (NOT the lmm it timing-matched)", "manga2anime" in _pr)
+ck("GPU timing-match is the FALLBACK: an UNLABELED box still uses it → lmm", "lmm" in _pr)
+
 print(("\n[FAIL] " if fails else "\n[OK] ") + f"resources_gpu: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

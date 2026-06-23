@@ -155,8 +155,11 @@ def gpu_rows(now=None, label_map=None):
             continue
         end = i.get("end_date") or now
         hours = max(0.0, (min(end, now) - start) / 3600.0)
-        proj = ((attrib.get(str(i.get("id"))) or {}).get("project")                  # timing-matched conversation (primary)
-                or (i.get("project") or "").lower() or project_of(i.get("label"), label_map))   # stored, then label-map fallback
+        proj = (project_of(i.get("label"), label_map)                                # LABEL = the GPU ground truth (user-set) → PRIMARY
+                or (i.get("project") or "").lower()                                  # then a stored/agentic project, if any
+                or (attrib.get(str(i.get("id"))) or {}).get("project") or "")         # timing-match ONLY for an UNLABELED box
+    # NB: a vast.ai box is async — the chat open while it ran is often unrelated. Its LABEL (m2a-*, healiom_gpu*) is
+    # explicit ground truth, so it WINS over the timing-match (which is for shared-key LLM realtime, not labeled GPU).
         gpu = i.get("gpu_name") or "?"
         a = agg.setdefault((proj, gpu), {"project": proj, "gpu": gpu, "instance_ids": [], "labels": set(),
                                          "dph_total": 0.0, "hours": 0.0, "cost": 0.0, "running": 0})
@@ -198,8 +201,11 @@ def gpu_rows_by_day(since_ts=None, now=None, label_map=None):
             continue
         end = min(i.get("end_date") or now, now)
         t = max(start, since_ts)
-        proj = ((attrib.get(str(i.get("id"))) or {}).get("project")                  # timing-matched conversation (primary)
-                or (i.get("project") or "").lower() or project_of(i.get("label"), label_map))   # stored, then label-map fallback
+        proj = (project_of(i.get("label"), label_map)                                # LABEL = the GPU ground truth (user-set) → PRIMARY
+                or (i.get("project") or "").lower()                                  # then a stored/agentic project, if any
+                or (attrib.get(str(i.get("id"))) or {}).get("project") or "")         # timing-match ONLY for an UNLABELED box
+    # NB: a vast.ai box is async — the chat open while it ran is often unrelated. Its LABEL (m2a-*, healiom_gpu*) is
+    # explicit ground truth, so it WINS over the timing-match (which is for shared-key LLM realtime, not labeled GPU).
         gpu = i.get("gpu_name") or "?"
         while t < end:                                     # walk day by day, clipping to each UTC day
             day = datetime.datetime.fromtimestamp(t, datetime.timezone.utc).strftime("%Y-%m-%d")
