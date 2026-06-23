@@ -127,5 +127,18 @@ ccC = saas.crosscheck(since="2026-06-01")
 ck("crosscheck: GPU source OK → GPU row matches, none unverified, in_sync True",
    "gpu_unverified" not in ccC and ccC["matched"] == 2 and ccC["in_sync"] is True)
 
+# ── CROSS-REPO UID PARITY: the row uid is the local↔server cross-check key; if client _row_uid and server rowUid
+#    ever disagree, rows RE-KEY on the server (insert-as-new instead of update) → silent double-count. These GOLDEN
+#    uids are pinned IDENTICALLY in the server (test/uid_parity.test.mjs); if either side's algorithm drifts, its
+#    golden assertion fails. (The server also counts uid_mismatches live; saas.sync surfaces a loud alert if >0.) ──
+_UID_GOLDENS = [
+    ({"member_ref": "ash@healiom.com", "project": "lmm", "day": "2026-06-15", "provider": "openai",
+      "model": "gpt-5.5", "kind": "workload", "channel": "batch"}, "7de6f3c6547e9c653e7e29c2"),
+    ({"member_ref": "ash@ensight.ai", "project": "manga2anime", "day": "2026-06-15", "provider": "vastai",
+      "model": "H100", "kind": "gpu", "channel": "realtime", "team": "engineering"}, "f04218efdceb6fd00756eb4c"),
+]
+for _row, _g in _UID_GOLDENS:
+    ck(f"uid parity golden ({_row['project']}, team={'team' in _row}) == pinned server rowUid", saas._row_uid(_row) == _g)
+
 print(("\n[FAIL] " if fails else "\n[OK] ") + f"saas_payload: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

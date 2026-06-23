@@ -633,6 +633,21 @@ def sync(if_due=False, since=None):
         out["chat"] = _chat.loop(run=True, quiet=True) if _chat._enabled() else {"skipped": "chat not enabled"}
     except Exception as e:
         out["chat"] = {"skipped": f"chat loop: {str(e)[:80]}"}
+    try:                                                  # AUTO-FRESH living insights vs the CURRENT corpus every
+        from . import validate as _validate               # sync (cheap, deterministic, NO LLM) — re-checks each
+        out["validated"] = _validate.validate(verbose=False)   # learning: corroborate / contradict / decay-if-stale,
+    except Exception:                                     # so stale advice sinks without a manual `spendguard validate`.
+        pass
+    # UID-DRIFT early warning: the server recomputes each row's uid (rowUid) and counts disagreements with the client's
+    # _row_uid. A nonzero count means the two algorithms have drifted → rows RE-KEY (insert-as-new instead of update)
+    # = silent double-count. It otherwise lives only in this transient push response; surface it loudly here so the
+    # daily sync / status shows it. The durable guard is the cross-repo parity test (tests/test_uid_parity.py).
+    _um = sum(int((out.get(k) or {}).get("uid_mismatches") or 0) for k in ("rollup", "resources", "workdone", "chat")
+              if isinstance(out.get(k), dict))
+    if _um:
+        out["uid_mismatches"] = _um
+        out["alert"] = (f"uid MISMATCH x{_um}: client _row_uid disagrees with server rowUid — rows may re-key "
+                        f"(double-count). The uid algorithms have drifted; check core.mjs rowUid vs saas._row_uid.")
     _set_state(last_sync=time.time())
     return out
 

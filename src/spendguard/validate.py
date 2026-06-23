@@ -68,6 +68,25 @@ def _recheck(ins, known, perjob, present):
     return "unknown", "cited models still present but no 2-model cost gap to re-check"
 
 
+STALE_DAYS = 45   # an UNCORROBORATED lesson not re-confirmed in this many days starts to decay (sinks, never hard-expires)
+
+
+def _stale(ins):
+    """True if the insight hasn't been corroborated in STALE_DAYS (time-gated so daily auto-validate decays it at most
+    once per window, not 0.9^365). No timestamp → treat as stale."""
+    import datetime
+    ts = ins.get("last_validated") or ins.get("created") or ins.get("ts")
+    if not ts:
+        return True
+    try:
+        t = datetime.datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=datetime.timezone.utc)
+        return (datetime.datetime.now(datetime.timezone.utc) - t).days >= STALE_DAYS
+    except Exception:
+        return False
+
+
 def _apply(ins, verdict):
     """Lifecycle transition. Returns the fields to update (or None)."""
     conf = ins.get("confidence") or 0.5
@@ -88,6 +107,14 @@ def _apply(ins, verdict):
     elif verdict == "superseded":
         status, ver = "superseded", ver + 1
         conf *= 0.7
+    elif verdict == "unknown":
+        # unverifiable (free-form lesson / no 2-model cost gap): can't re-confirm it, so DON'T let it keep its
+        # confidence forever. If it's gone STALE_DAYS without corroboration (support<2), decay it so stale advice
+        # SINKS in the advisor's confidence-weighted ranking. Time-gated (`_stale`) → safe under daily auto-validate.
+        if support < 2 and _stale(ins):
+            conf = max(0.1, conf * 0.9)
+            if conf < 0.3 and status == "candidate":
+                status, ver = "stale", ver + 1   # visibly stale; advisor already filters by confidence/status
     return dict(confidence=round(conf, 3), support=support, contradiction=contra,
                 status=status, version=ver, last_validated=learn._now())
 
@@ -107,22 +134,22 @@ def validate(verbose=True):
         learn.update_insight(ins["id"], **fields)
         if fields["status"] == "active" and before != "active":
             promoted += 1
-        if fields["status"] in ("refuted", "superseded") and before not in ("refuted", "superseded"):
+        if fields["status"] in ("refuted", "superseded", "stale") and before not in ("refuted", "superseded", "stale"):
             refuted += 1
             if verbose:
                 print(f"  ↓ {fields['status']}: {ins['lesson'][:80]}  ({note})")
-    print(f"validate — {len(rows)} insights re-checked (cost-gap heuristic = cross-intent $/job, COARSE — "
-          f"a consistency check, not proof): "
-          f"{counts['support']} still-consistent, {counts['contradict']} contradicted, "
-          f"{counts['superseded']} superseded, {counts['unknown']} unverifiable.")
-    print(f"  → {promoted} promoted candidate→active; {refuted} demoted (refuted/superseded). "
-          f"Advisor now weights by current confidence + status.")
-    # show the current top active insights
-    act = [i for i in learn.insights_full() if (i.get("status") == "active")]
-    if act:
-        print("  top active learnings:")
-        for i in act[:6]:
-            print(f"    [{i['confidence']:.2f}] {i['lesson'][:90]}")
+    if verbose:   # quiet under the daily auto-validate (saas.sync runs it with verbose=False)
+        print(f"validate — {len(rows)} insights re-checked (cost-gap heuristic = cross-intent $/job, COARSE — "
+              f"a consistency check, not proof): "
+              f"{counts['support']} still-consistent, {counts['contradict']} contradicted, "
+              f"{counts['superseded']} superseded, {counts['unknown']} unverifiable.")
+        print(f"  → {promoted} promoted candidate→active; {refuted} demoted (refuted/superseded/stale). "
+              f"Advisor now weights by current confidence + status.")
+        act = [i for i in learn.insights_full() if (i.get("status") == "active")]
+        if act:
+            print("  top active learnings:")
+            for i in act[:6]:
+                print(f"    [{i['confidence']:.2f}] {i['lesson'][:90]}")
     return counts
 
 

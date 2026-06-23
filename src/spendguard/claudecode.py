@@ -192,7 +192,11 @@ def classify(run=False, days=None, recls=False):
     from . import attribution
     st = _load_state()
     cls = st.setdefault("cls", {})
-    todo = [d for d in _session_digests(days) if d.get("prompt") and (recls or d["sid"] not in cls)]
+    # Re-classify a session if it's unclassified OR its cached confidence is 0/missing. A 0 means it was never given a
+    # real confidence (stale cache from before confidence-capture, or a genuinely low-confidence read) → the
+    # convergence loop re-does it, so CC attributions never silently sit at confidence 0 (the chat path always has one).
+    todo = [d for d in _session_digests(days) if d.get("prompt")
+            and (recls or not (cls.get(d["sid"]) or {}).get("confidence"))]
     if not todo:
         print("claude-code: nothing to classify (run `claude-code show` to mine first; --reclassify to redo).")
         return 0

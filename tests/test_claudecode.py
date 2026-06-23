@@ -62,5 +62,24 @@ ck("append a turn → accumulated (only the new line read)", abs(spend3[0]["cost
 dt = [r for r in claudecode.day_totals("me@x.com") if r["project"] == "lmm"]
 ck("day_totals: channel=claude-code, provider=anthropic", dt and dt[0]["channel"] == "claude-code" and dt[0]["provider"] == "anthropic")
 
+# ── classify: CC attributions carry the LLM's confidence, and a stale/0-confidence session is RE-classified ──
+# Guards the bug where every CC session sat at confidence 0 (cached before confidence-capture + skipped on re-run),
+# so you couldn't tell a confident CC attribution from a guess on the largest work channel.
+from spendguard import attribution as _attr
+claudecode._session_digests = lambda days=None: [
+    {"sid": "S1", "project": "lmm", "prompt": "build the medical taxonomy"},
+    {"sid": "S2", "project": "lmm", "prompt": "caption anime clips"}]
+_attr.taxonomy = lambda *a, **k: ({}, True)
+_attr.classify_items = lambda items, taxo, run: {
+    "S1": {"org": "Healiom", "team": "lmm", "project": "lmm", "confidence": 88},
+    "S2": {"org": "manga2anime", "team": "engineering", "project": "manga2anime", "confidence": 76}}
+# seed S1 with a STALE 0-confidence cache entry (the bug's signature) — it must be re-done, not skipped
+_s = claudecode._load_state(); _s.setdefault("cls", {})["S1"] = {"org": "Healiom", "project": "lmm", "confidence": 0}
+claudecode._save_state(_s)
+claudecode.classify(run=True)
+_cls = claudecode._load_state().get("cls", {})
+ck("classify: stores the LLM confidence (S2 fresh → 76, not 0)", _cls.get("S2", {}).get("confidence") == 76)
+ck("classify: RE-does a stale 0-confidence session (S1 0 → 88), never leaves it at 0", _cls.get("S1", {}).get("confidence") == 88)
+
 print(f"\n{'[FAIL]' if fail else 'OK'} claudecode: {fail} failure(s)")
 sys.exit(1 if fail else 0)

@@ -10,6 +10,11 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 
 from spendguard import config, saas
 
+# Isolate the CWD too, not just SPENDGUARD_HOME: saas_config overlays the nearest `.spendguard.json` found walking up
+# from cwd, so running the suite from a repo that HAS one (e.g. llm-spendguard's own org config) would leak into these
+# assertions. Chdir into the temp home (no .spendguard.json above it) so config resolution is hermetic.
+os.chdir(str(config.HOME))
+
 def check(label, ok):
     print(f"  [{'OK' if ok else 'FAIL'}] {label}")
     assert ok, label
