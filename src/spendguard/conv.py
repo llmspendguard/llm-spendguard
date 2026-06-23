@@ -403,10 +403,13 @@ def session_classification(sid):
     return {"project": (p or "").lower(), "org": o or "", "team": t or ""}
 
 
+# COST signals only — NOT model names. Model names (haiku/opus/gpt) appear everywhere and drown the actual cost
+# evidence in noise; the run-OUTPUT cost lines (per-clip $, USAGE prints, aggregate/total cost, token totals) are
+# what's reconstructable. lmm's UNGATED realtime is mostly ESTIMATES in chat (rate tables, "~$X running"), which a
+# forensic tool must NOT book as spend — so lmm realtime is the GATE-CAPTURED figure, not a chat reconstruction.
 _RT_EVIDENCE = re.compile(
     r"(\$\s?[0-9]+\.[0-9]+\s*/\s*clip|===\s*USAGE\s*===|[0-9]+\s+in\s*/\s*[0-9]+\s+out|aggregate cost|total cost|"
-    r"loop_results|calls?\s*/\s*clip|input_tokens|output_tokens|"
-    r"haiku|sonnet|opus|gpt-?5|claude-opus|adjudicat|judge|realtime)", re.I)   # incl. lmm's opus/gpt realtime, not just box haiku/sonnet
+    r"loop_results|calls?\s*/\s*clip|input_tokens|output_tokens|haiku|sonnet)", re.I)
 
 
 def remote_llm_excerpts(tdir=None, max_sessions=None, window=600):

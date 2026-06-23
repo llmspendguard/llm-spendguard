@@ -510,7 +510,7 @@ _REMOTE_LLM_SYS = (
     "Empty runs if no executed ungated realtime LLM spend is evidenced.")
 
 
-def reconstruct_remote_llm(run=False, max_sessions=None):
+def reconstruct_remote_llm(run=False, max_sessions=None, model_org_hints=None):
     """AGENTIC realtime RECONSTRUCTION — LLM calls run on vast.ai BOXES never hit the local gate. A caged LLM reads
     each fleet session's RECORDED evidence (per-clip $ rates, USAGE prints, clip counts, aggregate cost) and
     reconstructs the remote LLM $, attributed via the SAME conv.session_classification → org/project (per-user via
@@ -526,8 +526,9 @@ def reconstruct_remote_llm(run=False, max_sessions=None):
         return {"sessions": len(sessions), "est_cost": round(est, 4), "by_org": {}, "rows": [], "total": 0.0}
     seen, rows = set(), []
     for sid, ex in sessions:
+        _u = (("models-by-org prior (corroborate the org, do NOT override): %s\n" % model_org_hints) if model_org_hints else "") + ex
         with calls.context(intent="spendguard:remote_llm_reconstruct"):
-            r = adapters.call(model, ex, max_tokens=900, system=_REMOTE_LLM_SYS)
+            r = adapters.call(model, _u, max_tokens=900, system=_REMOTE_LLM_SYS)
         if r.get("error"):
             continue
         m = re.search(r"\{.*\}", r.get("text", ""), re.S)
@@ -547,9 +548,13 @@ def reconstruct_remote_llm(run=False, max_sessions=None):
                 continue
             seen.add(sig)
             org = sc.get("org") or ""
+            ms = str(rn.get("model") or "").lower()
+            exp = next((o for k, o in (model_org_hints or {}).items() if k.lower() in ms), None)
+            consistent = (not exp) or (not org) or (str(exp).lower() == str(org).lower())   # forensic: does the model corroborate the session org?
             rows.append({"sid": sid, "project": sc.get("project") or "", "org": org, "team": sc.get("team") or "",
                          "member_ref": saas.identity_for_org(org), "model": rn.get("model"), "usd": usd,
-                         "clips": rn.get("clips"), "confidence": rn.get("confidence"), "basis": (rn.get("basis") or "")[:120]})
+                         "clips": rn.get("clips"), "confidence": rn.get("confidence"), "org_consistent": consistent,
+                         "basis": (rn.get("basis") or "")[:120]})
     by_org = {}
     for r_ in rows:
         k = r_["org"] or "(untagged)"
