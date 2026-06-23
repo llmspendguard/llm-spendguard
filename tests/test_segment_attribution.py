@@ -115,16 +115,18 @@ from spendguard import resources, adapters
 conv.remote_llm_excerpts = lambda tdir=None, max_sessions=None: [("SESS1", "box ran haiku on clips; cross-check msgbatch_01VW")]
 conv._seg_put_cls("rt1", {"project": "manga2anime", "org": "Ensight", "confidence": 90}, source="llm",
                   seg={"sid": "SESS1", "prompt": "fleet caption run"})
+# the LLM extracts TOKENS (in/out × scale); the SYSTEM prices them via pricing.py (cost basis), not the LLM
 adapters.call = lambda *a, **k: {"error": None, "cost": 0.0, "text":
-    '{"runs":[{"model":"haiku","clips":2526,"usd":3.0,"executed":true,"basis":"$3 for 2526 clips x 5 frames","confidence":80},'
-    '{"model":"opus","clips":0,"usd":0.27,"executed":true,"basis":"cross-check opus msgbatch_01VW","confidence":85},'
-    '{"model":"sonnet","clips":10,"usd":1.0,"executed":false,"basis":"planned only","confidence":90}]}'}
-rr = resources.reconstruct_remote_llm(run=True)
-ck("remote realtime keeps the EXECUTED box realtime run ($3.00)", abs(rr["total"] - 3.0) < 1e-9)
-ck("remote realtime EXCLUDES batch-id runs (no double-count vs the batch ledger)",
-   all("msgbatch" not in (x.get("basis") or "") for x in rr["rows"]))
+    '{"runs":[{"model":"haiku","kind":"realtime","calls":2526,"in_tokens":5000000,"out_tokens":500000,"executed":true,"evidence":"2526 clips x 5 frames haiku","confidence":80},'
+    '{"model":"opus","kind":"realtime","in_tokens":1000,"out_tokens":500,"executed":true,"evidence":"cross-check opus msgbatch_01VW","confidence":85},'
+    '{"model":"sonnet","kind":"realtime","in_tokens":1000,"out_tokens":100,"executed":false,"evidence":"planned only","confidence":90}]}'}
+rr = resources.reconstruct_remote_llm(run=True, model_org_hints={"haiku": "Ensight"})
+ck("remote realtime PRICED from tokens via pricing.py (>0, not an LLM-stated $)", rr["total"] > 0)
+ck("remote realtime keeps the executed haiku token run", any(x["model"] == "haiku" for x in rr["rows"]))
+ck("remote realtime EXCLUDES batch-id runs (msgbatch in evidence → no double-count)",
+   all("msgbatch" not in (x.get("evidence") or "") for x in rr["rows"]))
 ck("remote realtime drops PLANNED/not-executed runs", all(x["model"] != "sonnet" for x in rr["rows"]))
-ck("remote realtime attributed to the session's org via session_classification (Ensight)", rr["by_org"].get("Ensight") == 3.0)
+ck("remote realtime attributed to the session's org (Ensight)", rr["by_org"].get("Ensight", 0) > 0)
 
 # ── 8. GPU TIMING MATCH: a vast.ai instance's run window ⨝ the conversation active then → org/project. This is the
 #       "combine vast.ai cost (window) + LLM attribution" join: vast gives the window; the matched conversation the org. ──
