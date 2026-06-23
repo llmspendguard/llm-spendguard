@@ -18,7 +18,7 @@ jobs:
   codeql:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: github/codeql-action/init@v3
         with: { languages: python }
       - uses: github/codeql-action/analyze@v3
@@ -26,7 +26,7 @@ jobs:
   secrets:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { fetch-depth: 0 }   # whole tree + history
       # The official TruffleHog action, pinned to a SHA (no `curl | sh` — the action vendors the integrity-checked
       # binary). --only-verified confirms a candidate is a LIVE key before failing, so fake/example keys never trip it;
@@ -40,7 +40,7 @@ jobs:
   dep-audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - name: pip-audit (report-only; Dependabot raises fix PRs)
