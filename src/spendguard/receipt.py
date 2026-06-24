@@ -94,18 +94,21 @@ def stamp_est_value(rows, source: str = "claude-code") -> None:
     history so the month window is complete regardless of any report's day filter."""
     try:
         today, week, month = _windows()
-        acc = {"today": 0.0, "week": 0.0, "month": 0.0, "asof": today, "projects": {}}
+        acc = {"today": 0.0, "week": 0.0, "month": 0.0, "asof": today, "repos": {}}
         for r in rows or []:
             if r.get("billed"):                       # only the est-value axis belongs in this cache
                 continue
             day = r.get("day") or ""
             usd = (r.get("spend_micros") or 0) / 1_000_000
-            proj = (r.get("project") or "").strip().lower()
-            pa = acc["projects"].setdefault(proj, {"today": 0.0, "week": 0.0, "month": 0.0})
+            repo = (r.get("repo") or r.get("project") or "").strip().lower()       # git-root repo = the rollup
+            proj = (r.get("project") or repo).strip().lower()                      # classified project = the breakdown
+            ra = acc["repos"].setdefault(repo, {"today": 0.0, "week": 0.0, "month": 0.0, "projects": {}})
+            pa = ra["projects"].setdefault(proj, {"today": 0.0, "week": 0.0, "month": 0.0})
             for k, lo in (("today", today), ("week", week), ("month", month)):
                 if day >= lo:
                     acc[k] += usd                     # global window
-                    pa[k] += usd                      # per-project window (for scoped receipts)
+                    ra[k] += usd                      # repo rollup
+                    pa[k] += usd                      # classified-project breakdown
         p = _cache_path()
         p.parent.mkdir(parents=True, exist_ok=True)
         data = {}
@@ -119,28 +122,45 @@ def stamp_est_value(rows, source: str = "claude-code") -> None:
         pass
 
 
-def _est_tally(project=None):
-    """Cached est-value windows {today, week, month, asof} summed across sources. If `project` is given, scope to
-    that project's per-source buckets; else the global sum. None if never stamped."""
+def _est_tally(repo=None):
+    """Cached est-value windows {today, week, month, asof} summed across sources. If `repo` is given, scope to that
+    REPO's rollup (sum of its classified projects); else the global sum. None if never stamped."""
     try:
         data = json.loads(_cache_path().read_text())
         srcs = data.get("est_value_by_source")
         if srcs:
-            if project is None:
+            if repo is None:
                 pick = lambda s, k: s.get(k, 0)
             else:
-                pl = str(project).strip().lower()
-                pick = lambda s, k: (s.get("projects", {}).get(pl) or {}).get(k, 0)
+                rl = str(repo).strip().lower()
+                pick = lambda s, k: (s.get("repos", {}).get(rl) or {}).get(k, 0)
             return {"today": sum(pick(s, "today") for s in srcs.values()),
                     "week": sum(pick(s, "week") for s in srcs.values()),
                     "month": sum(pick(s, "month") for s in srcs.values()),
                     "asof": max((s.get("asof", "") for s in srcs.values()), default="")}
         d = data.get("est_value")                     # back-compat: older single-blob stamp (global only)
-        if project is None and isinstance(d, dict) and "today" in d:
+        if repo is None and isinstance(d, dict) and "today" in d:
             return d
     except Exception:
         pass
     return None
+
+
+def _est_breakdown(repo):
+    """The classified-PROJECT breakdown within a repo: {project: {today, week, month}} merged across sources. This
+    is the agentic detail under the repo rollup (e.g. lmm → concept-model / lmm-port / medical-taxonomy)."""
+    out = {}
+    try:
+        srcs = (json.loads(_cache_path().read_text()).get("est_value_by_source") or {})
+        rl = str(repo).strip().lower()
+        for s in srcs.values():
+            for proj, w in (((s.get("repos") or {}).get(rl) or {}).get("projects") or {}).items():
+                o = out.setdefault(proj, {"today": 0.0, "week": 0.0, "month": 0.0})
+                for k in ("today", "week", "month"):
+                    o[k] += w.get(k, 0)
+    except Exception:
+        pass
+    return out
 
 
 # ── the running tally (actual-$ always; est-value when cached) ────────────────
@@ -257,41 +277,41 @@ def render_line(t: Optional[dict] = None) -> str:
     return s
 
 
-def _conv_projects(conv=None, cwd=None):
+def _conv_repos(conv=None, cwd=None):
     """The repo(s) THIS conversation is relevant to (collapsed view): the cwd repo + any the conversation touched."""
-    projs = set()
+    repos = set()
     try:
         from . import budget
-        projs |= set(budget.projects_for_conv(conv or budget._conv()))
+        repos |= set(budget.projects_for_conv(conv or budget._conv()))
         cp = _project_for_cwd(cwd) if cwd else (budget._project() or None)
         if cp:
-            projs.add(cp)
+            repos.add(cp)
     except Exception:
         pass
-    return sorted(p for p in projs if p)
+    return sorted(r for r in repos if r)
 
 
-def _all_projects():
+def _all_repos():
     """Every repo with billed charges OR plan-value (expanded view)."""
-    projs = set()
+    repos = set()
     try:
         from . import budget
-        projs |= set(budget.all_projects())
+        repos |= set(budget.all_projects())
     except Exception:
         pass
     try:
         data = json.loads(_cache_path().read_text())
         for srec in (data.get("est_value_by_source") or {}).values():
-            projs |= set((srec.get("projects") or {}).keys())
+            repos |= set((srec.get("repos") or {}).keys())
     except Exception:
         pass
-    return sorted(p for p in projs if p)
+    return sorted(r for r in repos if r)
 
 
-def _sum_projects(projects):
+def _sum_repos(repos):
     am = em = 0.0
-    for p in projects:
-        t = tally(project=p)
+    for r in repos:
+        t = tally(project=r)
         am += (t.get("actual") or {}).get("month") or 0
         em += (t.get("est_value") or {}).get("month") or 0
     return {"actual_month": am, "est_month": em}
@@ -301,15 +321,37 @@ def _month_total(t):
     return ((t.get("actual") or {}).get("month") or 0) + ((t.get("est_value") or {}).get("month") or 0)
 
 
-def _render_scope(scope_all=False, conv=None, cwd=None, line=False, top=12):
-    """Contextual receipt: COLLAPSED (default) = this conversation's repo(s); EXPANDED (--all) = every repo RANKED
-    by month spend, top `top` shown + the long tail summarized (there are many incidental cwd-named buckets — the
-    ranking keeps it readable). Each repo scoped + proportional; the expanded view ends with the global total."""
+def _breakdown_line(repo, top=4):
+    """One indented line of a repo's top classified PROJECTS by month plan-value — the agentic breakdown under the
+    repo rollup. Empty when the repo has no project detail (e.g. an actual-$-only repo)."""
+    bd = _est_breakdown(repo)
+    items = sorted(((p, w.get("month") or 0) for p, w in bd.items() if p and p != repo), key=lambda x: -x[1])
+    items = [(p, m) for p, m in items if m > 0][:top]
+    if not items:
+        return None
+    return _INDENT + "  └ " + " · ".join(f"{p} {_k(m)}" for p, m in items)
+
+
+def _render_scope(scope_all=False, conv=None, cwd=None, line=False, top=12, breakdown=True):
+    """Contextual receipt, REPO > PROJECT: COLLAPSED (default) = this conversation's repo(s); EXPANDED (--all) =
+    every repo RANKED by month spend (top `top` + tail summarized). Each repo is a rollup line; underneath, its
+    classified-project breakdown (the agentic detail) — unless `line`/breakdown is off."""
     render = render_line if line else render_tally
+
+    def block(repo):
+        out = [render(tally(project=repo))]
+        if breakdown:
+            bl = _breakdown_line(repo)
+            if bl:
+                out.append(bl)
+        return out
+
     if scope_all:
-        ranked = sorted(((p, tally(project=p)) for p in _all_projects()), key=lambda pt: -_month_total(pt[1]))
-        ranked = [pt for pt in ranked if _month_total(pt[1]) > 0]            # drop $0 buckets
-        parts = [render(t) for _, t in ranked[:top]]
+        ranked = sorted(((r, tally(project=r)) for r in _all_repos()), key=lambda rt: -_month_total(rt[1]))
+        ranked = [rt for rt in ranked if _month_total(rt[1]) > 0]            # drop $0 buckets
+        parts = []
+        for r, _t in ranked[:top]:
+            parts += block(r)
         rest = ranked[top:]
         if rest:
             am = sum((t.get("actual") or {}).get("month") or 0 for _, t in rest)
@@ -318,13 +360,15 @@ def _render_scope(scope_all=False, conv=None, cwd=None, line=False, top=12):
         parts.append(render({**tally(), "scope": "all repos"}))
         return "\n".join(parts)
     # collapsed: this conversation's repo(s) + the rest summarized
-    shown = _conv_projects(conv, cwd)
+    shown = _conv_repos(conv, cwd)
     if not shown:
         return render(tally())
-    parts = [render(tally(project=p)) for p in shown]
-    hidden = [p for p in _all_projects() if p not in set(shown)]
+    parts = []
+    for r in shown:
+        parts += block(r)
+    hidden = [r for r in _all_repos() if r not in set(shown)]
     if hidden:
-        h = _sum_projects(hidden)
+        h = _sum_repos(hidden)
         parts.append(f"{_INDENT}▸ + {len(hidden)} more repos: billed {_k(h['actual_month'])}/mo · "
                      f"plan {_k(h['est_month'])}/mo  — `spendguard receipt --all`")
     return "\n".join(parts)

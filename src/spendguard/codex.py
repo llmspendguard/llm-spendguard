@@ -239,9 +239,10 @@ def show(days=None):
     # stamp from ALL digests (not the day-filtered view) so the month window is complete. billed=false → est-value.
     try:
         from . import receipt
+        _cls = _load_state().get("cls", {})        # repo (git-root) = rollup; classified project = breakdown
         receipt.stamp_est_value(
             [{"day": d["day"], "spend_micros": round(d["cost"] * 1_000_000), "billed": False,
-              "project": d.get("project")}
+              "repo": d["project"], "project": (_cls.get(d["sid"]) or {}).get("project") or d["project"]}
              for d in _session_digests(None)],
             source="codex")
     except Exception:

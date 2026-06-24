@@ -20,6 +20,11 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
   resolves the **git-root basename** (cached, via `config.git_root_project`), matching how actual-$ is tagged; a
   non-repo cwd falls back to its basename. Re-bucket existing data with `spendguard cc show --rebuild` /
   `codex show --rebuild` (collapsed ~80 → ~dozen real repos in practice; `lmm` reabsorbed its subdirs).
+- **Local receipt is now REPO > PROJECT (fully agentic, matches the dashboard).** Est-value is stamped two-level:
+  the **repo** (git-root) is the rollup, and the **classified project** (`cls[sid]` — the same agentic attribution
+  the server uses: `concept-model`, `lmm-port`, `investor-deck`, …) is the breakdown beneath it. `spendguard receipt
+  --all` shows each repo with its top classified projects indented (`_est_breakdown`); claude.ai chats roll up under
+  a synthetic `claude.ai` repo. So the local receipt and the server dashboard now attribute identically.
 - **OpenAI Codex models priced (parity with the Claude family).** `gpt-5.5-codex` / `gpt-5-codex` now normalize to
   their base GPT's published rates (codex bills at the base model — a verified alias, not a guess), so a Codex
   session on a `-codex` model id no longer `KeyError`s into a silent $0. `price()` tries an exact PRICING entry

@@ -185,9 +185,9 @@ ck("sinks: default is stderr", receipt._sinks() == ["stderr"])
 receipt.stamp_est_value([{"day": TODAY, "spend_micros": 3_000_000, "billed": False, "project": "lmm"},
                          {"day": TODAY, "spend_micros": 1_000_000, "billed": False, "project": "manga2anime"}],
                         source="claude-code")
-ck("est scope: lmm bucket isolated", abs(receipt._est_tally(project="lmm")["today"] - 3.0) < 1e-9)
-ck("est scope: manga2anime bucket isolated", abs(receipt._est_tally(project="manga2anime")["today"] - 1.0) < 1e-9)
-ck("est scope: unknown project → 0", receipt._est_tally(project="nope")["today"] == 0)
+ck("est scope: lmm bucket isolated", abs(receipt._est_tally(repo="lmm")["today"] - 3.0) < 1e-9)
+ck("est scope: manga2anime bucket isolated", abs(receipt._est_tally(repo="manga2anime")["today"] - 1.0) < 1e-9)
+ck("est scope: unknown project → 0", receipt._est_tally(repo="nope")["today"] == 0)
 ck("est scope: global still sums all projects", receipt._est_tally()["today"] >= 4.0)
 ts = receipt.tally(project="lmm")
 ck("tally(project): carries the scope label", ts.get("scope") == "lmm")
@@ -207,7 +207,16 @@ ck("proportional: defaults to assumed mix (Claude Max + Codex Pro) → plan_slic
 ck("_plan_usd: default total = Claude Max + Codex/ChatGPT Pro = $300", receipt._plan_usd() == (300.0, True))
 
 # ── contextual collapse/expand: conversation repo(s) vs all repos ──
-ck("_all_projects: includes est-only repos", {"lmm", "manga2anime"}.issubset(set(receipt._all_projects())))
+ck("_all_repos: includes est-only repos", {"lmm", "manga2anime"}.issubset(set(receipt._all_repos())))
+# repo > project breakdown: stamp 2-level (lmm repo → lmm-port + concept-model projects) and read it back
+receipt.stamp_est_value([{"day": TODAY, "spend_micros": 2_000_000, "billed": False, "repo": "lmm", "project": "lmm-port"},
+                         {"day": TODAY, "spend_micros": 1_000_000, "billed": False, "repo": "lmm", "project": "concept-model"},
+                         {"day": TODAY, "spend_micros": 1_000_000, "billed": False, "repo": "manga2anime", "project": "manga2anime"}],
+                        source="claude-code")
+ck("repo rollup = sum of its projects ($3)", abs(receipt._est_tally(repo="lmm")["today"] - 3.0) < 1e-9)
+_bd = receipt._est_breakdown("lmm")
+ck("breakdown: classified projects under the repo", abs(_bd.get("lmm-port", {}).get("today", 0) - 2.0) < 1e-9 and "concept-model" in _bd)
+ck("breakdown line renders the projects", "lmm-port" in (receipt._breakdown_line("lmm") or ""))
 out_all = receipt._render_scope(scope_all=True, line=True)
 ck("--all (expanded): lists each repo + an 'all repos' total", "[lmm]" in out_all and "[manga2anime]" in out_all and "all repos" in out_all)
 out_collapsed = receipt._render_scope(scope_all=False, cwd="/a/b/lmm", line=True)

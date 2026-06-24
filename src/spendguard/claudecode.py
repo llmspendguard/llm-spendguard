@@ -156,10 +156,11 @@ def show(days=None):
     # doesn't clobber it. Best-effort.
     try:
         from . import receipt
+        _cls = st.get("cls", {})       # repo (git-root) = rollup; classified project (cls[sid]) = breakdown, like the server
         receipt.stamp_est_value(
-            [{"day": v["day"], "spend_micros": round(v["cost"] * 1_000_000), "billed": False,
-              "project": v.get("project")}
-             for v in st["ledger"].values() if not v.get("_work") and v.get("day")],
+            [{"day": d["day"], "spend_micros": round(d["cost"] * 1_000_000), "billed": False,
+              "repo": d["project"], "project": (_cls.get(d["sid"]) or {}).get("project") or d["project"]}
+             for d in _session_digests() if d.get("day") and d.get("cost", 0) > 0],
             source="claude-code")
     except Exception:
         pass
