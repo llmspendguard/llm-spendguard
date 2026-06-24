@@ -32,8 +32,10 @@ def onstart_snippet(home: str = _DEFAULT_HOME, from_git: bool = False) -> str:
         "# --- spendguard: gate every python3 on this box (idempotent, secret-free) ---",
         f"export SPENDGUARD_HOME={shlex.quote(home)}",
         f"python3 -c 'import spendguard' 2>/dev/null || pip install -q {src}",
-        'python3 -m spendguard install-hook --user --python "$(command -v python3)" >/dev/null 2>&1 || true',
-        'python3 -m spendguard doctor 2>&1 | grep -q "ENFORCING HERE.*YES" '
+        # prefer the console script (present in every published build); fall back to `python3 -m` (editable/unreleased)
+        'SG="$(command -v spendguard || echo python3 -m spendguard)"',
+        '$SG install-hook --user --python "$(command -v python3)" >/dev/null 2>&1 || true',
+        '$SG doctor 2>&1 | grep -q "ENFORCING HERE.*YES" '
         '&& echo "[spendguard] box gated" || echo "[spendguard] WARN: gate NOT enforcing"',
     ])
 
@@ -45,7 +47,9 @@ def verify(ssh: str, timeout: int = 30, _run=None) -> tuple:
     e.g. 'ssh -i ~/.ssh/vastai_ed25519 -p 12345 root@1.2.3.4'."""
     run = _run or subprocess.run
     try:
-        r = run(f"{ssh} python3 -m spendguard doctor", shell=True, capture_output=True, text=True, timeout=timeout)
+        # console script (published) with `python3 -m` fallback (editable) — run the whole thing ON the box
+        r = run(f"{ssh} 'spendguard doctor 2>/dev/null || python3 -m spendguard doctor'",
+                shell=True, capture_output=True, text=True, timeout=timeout)
         out = (getattr(r, "stdout", "") or "") + (getattr(r, "stderr", "") or "")
         tail = out.split("ENFORCING HERE", 1)[1][:24] if "ENFORCING HERE" in out else ""
         ok = bool(tail) and "YES" in tail
