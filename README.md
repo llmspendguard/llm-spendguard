@@ -151,6 +151,19 @@ spendguard install-hook --venv /path/to/that-repo/.venv     # pip-installs spend
 Then every process in that venv is gated (kill switch: `GATE_DISABLE=1` or `spendguard off`). Until a repo
 is gated, its provider spend shows up in `reconcile-ledger` as a **leak** (billed but ungoverned).
 
+### Enforce the gate on remote / distributed compute (vast.ai, any SSH host)
+The gate only governs the interpreter it's loaded in — a freshly-spun-up box's `python3` is **ungated** until it's
+provisioned, so remote LLM scripts can spend silently. Make it structural — *gate at provision, verify before spend,
+sync before teardown*:
+```
+spendguard remote onstart                              # boot snippet → bake into the instance onstart (gates every python3)
+spendguard remote verify --ssh "ssh -p PORT root@HOST -i KEY"   # FAIL-CLOSED: exit≠0 if the box isn't ENFORCING → abort the launch
+spendguard remote sync   --ssh "ssh -p PORT root@HOST -i KEY" --project manga2anime   # roll the box ledger up to the org (idempotent)
+```
+On the box itself, an LLM script should also `import spendguard; spendguard.require()` (fail-closed in-process). Then
+an ungated box can't spend: provisioning gates it, `verify` refuses to launch if it didn't, `require()` aborts the
+script, and `sync` attributes the spend before the ephemeral box is destroyed.
+
 ### Always-on spend tally (inline receipts)
 After every gated **flow** — a `with spendguard.context(intent=…): …` block, a batch submit at the gate, or a CLI
 command — spendguard prints a compact receipt so what it tracked is visible the moment it happens:

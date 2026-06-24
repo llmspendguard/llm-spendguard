@@ -90,6 +90,9 @@ def main(argv=None):
     if cmd == "install-receipts":                      # surface the always-on tally in a host (claude-code|codex)
         from . import receipt
         return receipt.install_cli(rest)
+    if cmd == "remote":                                # enforce the gate on remote/distributed compute (vast.ai)
+        from . import remote
+        return remote.cmd(rest)
     if cmd == "coverage":                              # which interpreters/venvs are actually gated? (multi-version)
         from . import setup
         return setup.cmd_coverage(rest)

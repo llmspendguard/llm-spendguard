@@ -14,6 +14,14 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
   modules (chat→claude.ai, saas push, transcript parsers, paid-call tools) are integration-tested, not unit-tested.
 
 ### Added
+- **Enforce the gate on remote/distributed compute — `spendguard remote {onstart|verify|sync}`** (`remote.py`). The
+  gate only governs the interpreter it's loaded in, so a freshly-spun-up vast.ai box's `python3` is UNGATED until
+  provisioned. `remote onstart` emits the secret-free boot snippet that installs + hooks spendguard so EVERY python3
+  on the box is gated from boot (bake into the instance onstart — covers all scripts, not one). `remote verify --ssh
+  '<prefix>'` is a FAIL-CLOSED check (exit≠0 if the box isn't `ENFORCING`, so the orchestrator aborts rather than
+  spend ungated). `remote sync --ssh '<prefix>' --project X` pulls the box's realtime ledger and rolls it into the
+  local ledger under that project — IDEMPOTENTLY (keyed by `conv_id=remote:<label>`; re-sync replaces, never
+  double-counts). Principle: **gate at provision, verify before spend, sync before teardown.**
 - **Full OpenAI + Codex parity — accounting works the same for both providers and both coding agents.** New
   `codex.py` (+ `spendguard codex show|classify|sync`) mines `~/.codex/sessions/**` into est-value (channel=codex,
   billed=false — Codex on a ChatGPT/Codex plan is plan-covered, exactly like Claude Code), classified

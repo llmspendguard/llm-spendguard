@@ -99,6 +99,29 @@ def record(provider, model, kind, cost, project=None, conv_id=None):
         _db().commit()
 
 
+def ingest_remote(label, project, rows):
+    """Roll a REMOTE box's realtime spend into the local ledger, IDEMPOTENTLY. Deletes any prior rows for this box
+    (conv_id='remote:<label>') then inserts the current ones — so re-syncing a box REPLACES, never double-counts
+    (a box's captioning runs on a real API key → actual-$ billed, attributed to its project). Returns (n, total)."""
+    conv = "remote:" + str(label)
+    proj = (project or "").strip().lower()
+    n, total = 0, 0.0
+    with _lock:
+        db = _db()
+        db.execute("DELETE FROM charges WHERE conv_id = ?", (conv,))
+        for r in rows or []:
+            cost = float(r.get("cost") or 0)
+            if not cost:
+                continue
+            day = r.get("day") or datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+            db.execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project,conv_id) VALUES (?,?,?,?,?,?,?,?)",
+                       (day + "T00:00:00+00:00", day, r.get("provider") or "?", r.get("model") or "?",
+                        "remote", cost, proj, conv))
+            n += 1; total += cost
+        db.commit()
+    return n, total
+
+
 _RECONCILED = "(provider-batch)"   # marker model for reconciliation rows (the provider-truth gap), any project
 
 
