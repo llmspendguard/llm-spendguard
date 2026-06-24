@@ -155,7 +155,8 @@ def show(days=None):
     try:
         from . import receipt
         receipt.stamp_est_value(
-            [{"day": v["day"], "spend_micros": round(v["cost"] * 1_000_000), "billed": False}
+            [{"day": v["day"], "spend_micros": round(v["cost"] * 1_000_000), "billed": False,
+              "project": v.get("project")}
              for v in st["ledger"].values() if not v.get("_work") and v.get("day")],
             source="claude-code")
     except Exception:

@@ -102,11 +102,17 @@ def record(provider, model, kind, cost, project=None, conv_id=None):
 _RECONCILED = "(provider-batch)"   # marker model for reconciliation rows (the provider-truth gap), any project
 
 
-def spent_since(day):  # WORKLOAD spend only — excludes spendguard's own meta AND reconciled (historical) rows
+def spent_since(day, project=None, conv=None):  # WORKLOAD spend only — excludes meta AND reconciled (historical) rows
+    """Gate-recorded workload $ since `day`. Optionally SCOPE to a `project` (repo) and/or `conv` (conversation) —
+    the receipt uses this to show what's relevant to the current repo/conversation, not a global sum."""
+    cond = ["day >= ?", "(kind IS NULL OR kind != 'meta')", "(model IS NULL OR model <> ?)"]
+    args = [day, _RECONCILED]
+    if project is not None:
+        cond.append("LOWER(project) = ?"); args.append(str(project).strip().lower())
+    if conv is not None:
+        cond.append("conv_id = ?"); args.append(str(conv))
     with _lock:
-        r = _db().execute("SELECT COALESCE(SUM(cost),0) FROM charges WHERE day >= ? "
-                          "AND (kind IS NULL OR kind != 'meta') "
-                          "AND (model IS NULL OR model <> ?)", (day, _RECONCILED)).fetchone()
+        r = _db().execute("SELECT COALESCE(SUM(cost),0) FROM charges WHERE " + " AND ".join(cond), args).fetchone()
     return float(r[0] or 0)
 
 

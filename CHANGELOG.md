@@ -23,6 +23,12 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
   Chat Completions was gated, so modern OpenAI realtime (incl. Codex-style `responses` calls) was an un-gated
   actual-$ gap; now estimated pre-call + recorded post-call (incl. `input_tokens_details.cached_tokens`) like every
   other surface.
+- **Receipts scope to the relevant repo/conversation.** The tally is no longer a global sum — `tally(project, conv)`
+  scopes BOTH axes to the current repo (and conversation, via the ledger's `project`/`conv_id` columns + per-project
+  est-value buckets). The status line scopes to its session's cwd, the Stop hook + per-flow receipts to the running
+  repo; `spendguard receipt --project X` / `--cwd P` scope manually (no arg = global overview). Scope is shown as
+  `[project]`. NOTE: `statusLine`/Stop-hook are **terminal-CLI features** — they do not render in the desktop/web
+  app; there, use the inline per-flow receipt, `spendguard receipt`, or a file sink.
 - **`python -m spendguard …`** (`__main__.py`) — identical to the console script, but works where the script isn't
   on PATH (e.g. gating an ephemeral GPU box: `pip install llm-spendguard && python3 -m spendguard install-hook …`).
 - **Configurable receipt surfacing.** `receipts.sinks` / `SPENDGUARD_RECEIPTS_SINK` = `stderr` (default) | `stdout`

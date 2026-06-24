@@ -238,7 +238,8 @@ def show(days=None):
     try:
         from . import receipt
         receipt.stamp_est_value(
-            [{"day": d["day"], "spend_micros": round(d["cost"] * 1_000_000), "billed": False}
+            [{"day": d["day"], "spend_micros": round(d["cost"] * 1_000_000), "billed": False,
+              "project": d.get("project")}
              for d in _session_digests(None)],
             source="codex")
     except Exception:

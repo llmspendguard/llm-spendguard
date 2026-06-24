@@ -452,7 +452,8 @@ def show(days=None, refresh=True):
     # and the in-chat footer sum claude-code + claude-ai. billed=false → stays out of actual-$. Best-effort.
     try:
         from . import receipt
-        receipt.stamp_est_value([{"day": r["day"], "spend_micros": round(r["value"] * 1_000_000), "billed": False}
+        receipt.stamp_est_value([{"day": r["day"], "spend_micros": round(r["value"] * 1_000_000), "billed": False,
+                                  "project": r.get("project")}
                                  for r in _day_rows(st, None) if r.get("day")], source="claude-ai")
     except Exception:
         pass

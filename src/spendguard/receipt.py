@@ -94,18 +94,18 @@ def stamp_est_value(rows, source: str = "claude-code") -> None:
     history so the month window is complete regardless of any report's day filter."""
     try:
         today, week, month = _windows()
-        acc = {"today": 0.0, "week": 0.0, "month": 0.0, "asof": today}
+        acc = {"today": 0.0, "week": 0.0, "month": 0.0, "asof": today, "projects": {}}
         for r in rows or []:
             if r.get("billed"):                       # only the est-value axis belongs in this cache
                 continue
             day = r.get("day") or ""
             usd = (r.get("spend_micros") or 0) / 1_000_000
-            if day >= today:
-                acc["today"] += usd
-            if day >= week:
-                acc["week"] += usd
-            if day >= month:
-                acc["month"] += usd
+            proj = (r.get("project") or "").strip().lower()
+            pa = acc["projects"].setdefault(proj, {"today": 0.0, "week": 0.0, "month": 0.0})
+            for k, lo in (("today", today), ("week", week), ("month", month)):
+                if day >= lo:
+                    acc[k] += usd                     # global window
+                    pa[k] += usd                      # per-project window (for scoped receipts)
         p = _cache_path()
         p.parent.mkdir(parents=True, exist_ok=True)
         data = {}
@@ -119,18 +119,24 @@ def stamp_est_value(rows, source: str = "claude-code") -> None:
         pass
 
 
-def _est_tally():
-    """Cached est-value windows {today, week, month, asof} summed across sources, or None if never stamped."""
+def _est_tally(project=None):
+    """Cached est-value windows {today, week, month, asof} summed across sources. If `project` is given, scope to
+    that project's per-source buckets; else the global sum. None if never stamped."""
     try:
         data = json.loads(_cache_path().read_text())
         srcs = data.get("est_value_by_source")
         if srcs:
-            return {"today": sum(s.get("today", 0) for s in srcs.values()),
-                    "week": sum(s.get("week", 0) for s in srcs.values()),
-                    "month": sum(s.get("month", 0) for s in srcs.values()),
+            if project is None:
+                pick = lambda s, k: s.get(k, 0)
+            else:
+                pl = str(project).strip().lower()
+                pick = lambda s, k: (s.get("projects", {}).get(pl) or {}).get(k, 0)
+            return {"today": sum(pick(s, "today") for s in srcs.values()),
+                    "week": sum(pick(s, "week") for s in srcs.values()),
+                    "month": sum(pick(s, "month") for s in srcs.values()),
                     "asof": max((s.get("asof", "") for s in srcs.values()), default="")}
-        d = data.get("est_value")                     # back-compat: older single-blob stamp
-        if isinstance(d, dict) and "today" in d:
+        d = data.get("est_value")                     # back-compat: older single-blob stamp (global only)
+        if project is None and isinstance(d, dict) and "today" in d:
             return d
     except Exception:
         pass
@@ -138,20 +144,21 @@ def _est_tally():
 
 
 # ── the running tally (actual-$ always; est-value when cached) ────────────────
-def tally() -> dict:
-    """{'actual': {today, week, month}, 'est_value': {...}|None}. actual-$ from the gate ledger (cheap, local);
-    est-value from the stamped cache (best-effort, carries its own as-of date). The two are returned separately and
-    are NEVER added together."""
+def tally(project=None, conv=None) -> dict:
+    """{'actual': {today, week, month}, 'est_value': {...}|None, 'scope': project}. actual-$ from the gate ledger
+    (cheap, local); est-value from the stamped cache. Optionally SCOPE to `project` (repo) and/or `conv`
+    (conversation) so the receipt shows what's relevant to where you are, not a global sum. The two axes are
+    returned separately and are NEVER added together."""
     today, week, month = _windows()
     actual = {"today": None, "week": None, "month": None}
     try:
         from . import budget
-        actual = {"today": budget.spent_since(today),
-                  "week": budget.spent_since(week),
-                  "month": budget.spent_since(month)}
+        actual = {"today": budget.spent_since(today, project=project, conv=conv),
+                  "week": budget.spent_since(week, project=project, conv=conv),
+                  "month": budget.spent_since(month, project=project, conv=conv)}
     except Exception:
         pass
-    return {"actual": actual, "est_value": _est_tally()}
+    return {"actual": actual, "est_value": _est_tally(project), "scope": project}
 
 
 # ── rendering ─────────────────────────────────────────────────────────────--
@@ -174,8 +181,33 @@ def _tally_lines(t: dict) -> list:
 
 
 def render_tally(t: Optional[dict] = None) -> str:
-    lines = _tally_lines(t or tally())
-    return _PREFIX + ("\n" + _INDENT).join(lines)
+    t = t or tally()
+    scope = f"[{t['scope']}] " if t.get("scope") else ""
+    return _PREFIX + scope + ("\n" + _INDENT).join(_tally_lines(t))
+
+
+def _project_for_cwd(cwd):
+    """Derive the project (repo) tag for a cwd the SAME way the gate tags charges: repo-local .spendguard.json
+    `project` → git-root basename → cwd basename. So the scoped tally matches what the ledger recorded."""
+    if not cwd:
+        return None
+    try:
+        p = pathlib.Path(cwd) / ".spendguard.json"
+        if p.exists():
+            proj = (json.loads(p.read_text()).get("project") or "").strip().lower()
+            if proj:
+                return proj
+    except Exception:
+        pass
+    try:
+        import subprocess
+        root = subprocess.run(["git", "-C", str(cwd), "rev-parse", "--show-toplevel"],
+                              capture_output=True, text=True, timeout=2).stdout.strip()
+        if root:
+            return os.path.basename(root).lower()
+    except Exception:
+        pass
+    return (os.path.basename(str(cwd).rstrip("/")) or "").lower() or None
 
 
 def _k(x: Optional[float]) -> str:
@@ -188,7 +220,8 @@ def render_line(t: Optional[dict] = None) -> str:
     """One compact line for a status bar — both axes, still separate (billed vs plan), never summed."""
     t = t or tally()
     a = t.get("actual") or {}
-    s = f"◈ billed {_k(a.get('today'))}/d · {_k(a.get('month'))}/mo"
+    scope = f"[{t['scope']}] " if t.get("scope") else ""
+    s = f"◈ {scope}billed {_k(a.get('today'))}/d · {_k(a.get('month'))}/mo"
     ev = t.get("est_value")
     if ev:
         s += f"  ·  plan {_k(ev.get('today'))}/d · {_k(ev.get('month'))}/mo"
@@ -286,7 +319,13 @@ def emit_flow(intent, chain, start) -> None:
                 "actual": actual if actual else (agg or {}).get("cost"),
                 "est": (agg or {}).get("est"),
                 "caller": (agg or {}).get("caller")}
-        _out(render_flow(flow, lvl))
+        proj = None                                  # scope the tally to THIS flow's repo (the relevant scope)
+        try:
+            from . import budget
+            proj = budget._project() or None
+        except Exception:
+            pass
+        _out(render_flow(flow, lvl, tally(project=proj)))
     except Exception:
         pass
 
@@ -295,25 +334,37 @@ def cli(args) -> int:
     """`spendguard receipt [--footer|--flow|--json]` → prints the running tally to STDOUT (default --footer). This is
     what the Claude Code Stop hook runs to surface the tally in-chat; also handy to check the tally any time."""
     args = list(args or [])
+
+    def _arg(flag):
+        return args[args.index(flag) + 1] if flag in args and args.index(flag) + 1 < len(args) else None
+
+    def _cur_project():
+        try:
+            from . import budget
+            return budget._project() or None
+        except Exception:
+            return None
+
     try:
         if "--json" in args:
-            print(json.dumps(tally(), indent=2))
+            print(json.dumps(tally(project=_arg("--project")), indent=2))
             return 0
         if "--stop-hook" in args:
             # Claude Code Stop hook: a `systemMessage` is the ONLY hook output the USER sees in the transcript
-            # (plain stdout is debug-only). One concise line per turn-end. We don't read the event JSON on stdin.
-            print(json.dumps({"systemMessage": render_line()}))
+            # (plain stdout is debug-only). Scope to the current repo — the relevant scope, not a global sum.
+            print(json.dumps({"systemMessage": render_line(tally(project=_cur_project()))}))
             return 0
         if "--statusline" in args:
-            # Claude Code statusLine: session JSON arrives on stdin; we prepend cwd · model · ctx% to the tally.
+            # Claude Code statusLine: session JSON arrives on stdin; prepend cwd · model · ctx% and SCOPE the tally
+            # to the repo the session is in (derived from its cwd) so it shows what's relevant where you are.
             info = {}
             if not sys.stdin.isatty():           # guard: never block when run manually in a terminal
                 try:
                     info = json.loads(sys.stdin.read() or "{}")
                 except Exception:
                     info = {}
-            bits = []
             cwd = (info.get("workspace") or {}).get("current_dir") or info.get("cwd") or ""
+            bits = []
             if cwd:
                 bits.append(os.path.basename(str(cwd).rstrip("/")))
             model = (info.get("model") or {}).get("display_name")
@@ -327,12 +378,15 @@ def cli(args) -> int:
                 except Exception:
                     pass
             prefix = "  ·  ".join(bits)
-            print((prefix + "  ·  " if prefix else "") + render_line())
+            print((prefix + "  ·  " if prefix else "") + render_line(tally(project=_project_for_cwd(cwd))))
             return 0
+        # manual: --project X or --cwd P scopes to a repo; default = global overview
+        proj = _arg("--project") or (_project_for_cwd(_arg("--cwd")) if _arg("--cwd") else None)
+        t = tally(project=proj)
         if "--line" in args:                     # one compact line (manual / scripting)
-            print(render_line())
+            print(render_line(t))
             return 0
-        print(render_tally())                    # default / --footer: the two-line block
+        print(render_tally(t))                   # default / --footer: the two-line block
         return 0
     except Exception:
         # A status line / hook must NEVER break the caller. Emit nothing rather than an error.

@@ -54,7 +54,7 @@ ck("est-value: billed rows excluded; two sources SUM to $7.00", ev and abs(ev["t
 ck("est-value: carries an as-of date", ev and ev.get("asof") == TODAY)
 
 # ── the tally: two axes, separate, never summed ──────────────────────────────
-budget.spent_since = lambda day: {TODAY: 4.20, WEEK: 31.50, MONTH: 212.40}.get(day, 99.0)   # stub the gate ledger
+budget.spent_since = lambda day, project=None, conv=None: {TODAY: 4.20, WEEK: 31.50, MONTH: 212.40}.get(day, 99.0)   # stub the gate ledger
 t = receipt.tally()
 ck("tally: actual-$ windows from the gate ledger", t["actual"]["today"] == 4.20 and t["actual"]["month"] == 212.40)
 ck("tally: est-value present + distinct dict", t["est_value"] and abs(t["est_value"]["today"] - 7.0) < 1e-9)
@@ -114,7 +114,7 @@ ck("emit_flow: nothing happened since marker → silent", _emit_capture("idle", 
 
 # never-raises: a broken budget must not blow up the caller's flow
 _orig = budget.spent_since
-budget.spent_since = lambda day: (_ for _ in ()).throw(RuntimeError("boom"))
+budget.spent_since = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
 try:
     receipt.emit_flow("x", "y", (0, 0.0))   # must swallow
     ck("emit_flow: swallows internal errors (never raises into caller)", True)
@@ -176,6 +176,19 @@ receipt._out("hello-sink-line")
 del os.environ["SPENDGUARD_RECEIPTS_SINK"]
 ck("sink file: writes the receipt to the configured log", logf.exists() and "hello-sink-line" in logf.read_text())
 ck("sinks: default is stderr", receipt._sinks() == ["stderr"])
+
+# ── per-project SCOPING: est-value buckets by project; tally(project=…) scopes + labels both axes ──
+receipt.stamp_est_value([{"day": TODAY, "spend_micros": 3_000_000, "billed": False, "project": "lmm"},
+                         {"day": TODAY, "spend_micros": 1_000_000, "billed": False, "project": "manga2anime"}],
+                        source="claude-code")
+ck("est scope: lmm bucket isolated", abs(receipt._est_tally(project="lmm")["today"] - 3.0) < 1e-9)
+ck("est scope: manga2anime bucket isolated", abs(receipt._est_tally(project="manga2anime")["today"] - 1.0) < 1e-9)
+ck("est scope: unknown project → 0", receipt._est_tally(project="nope")["today"] == 0)
+ck("est scope: global still sums all projects", receipt._est_tally()["today"] >= 4.0)
+ts = receipt.tally(project="lmm")
+ck("tally(project): carries the scope label", ts.get("scope") == "lmm")
+ck("render: scope label shown in block + line", "[lmm]" in receipt.render_tally(ts) and "[lmm]" in receipt.render_line(ts))
+ck("_project_for_cwd: basename fallback", receipt._project_for_cwd("/a/b/MyRepo") == "myrepo")
 
 print(f"\n{'PASS' if not fails else 'FAIL'} — {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)
