@@ -14,6 +14,20 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
   modules (chat→claude.ai, saas push, transcript parsers, paid-call tools) are integration-tested, not unit-tested.
 
 ### Added
+- **Full OpenAI + Codex parity — accounting works the same for both providers and both coding agents.** New
+  `codex.py` (+ `spendguard codex show|classify|sync`) mines `~/.codex/sessions/**` into est-value (channel=codex,
+  billed=false — Codex on a ChatGPT/Codex plan is plan-covered, exactly like Claude Code), classified
+  org→team×project and **summed into the same receipt/tally** as Claude Code + claude.ai (per-source, never
+  clobbering). The token total comes from the cumulative `token_count` events; the model from `turn_context`. The
+  gate now also intercepts the OpenAI **Responses API** (`client.responses.create`, sync + async) — previously only
+  Chat Completions was gated, so modern OpenAI realtime (incl. Codex-style `responses` calls) was an un-gated
+  actual-$ gap; now estimated pre-call + recorded post-call (incl. `input_tokens_details.cached_tokens`) like every
+  other surface.
+- **Configurable receipt surfacing.** `receipts.sinks` / `SPENDGUARD_RECEIPTS_SINK` = `stderr` (default) | `stdout`
+  | `file:<path>` (comma-separated) controls WHERE the auto-emitted receipt goes — a **file sink** lets any host
+  without an in-chat hook (Codex, an editor, a tmux/menubar widget) display the tally by tailing the log.
+  `spendguard install-receipts [--host claude-code|codex] [--remove]` installs/removes the always-on surfacing
+  reproducibly (idempotent; backs up `settings.json`) instead of hand-editing it.
 - **Inline spend receipts + an always-on tally (`receipt.py`, `spendguard receipt`).** After every gated FLOW
   (a `with spendguard.context(...)` block, a batch submit at the gate, or a CLI command) spendguard emits a compact
   receipt — what ran · in/out tokens · est→actual · the running **today / 7d / month** tally — so what it tracked is

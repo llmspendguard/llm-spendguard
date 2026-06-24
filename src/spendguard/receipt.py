@@ -27,6 +27,7 @@ from __future__ import annotations
 import datetime as _dt
 import json
 import os
+import pathlib
 import sys
 from typing import Optional
 
@@ -228,9 +229,30 @@ def _learned_tip(intent: Optional[str]) -> Optional[str]:
 
 
 # ── emission ─────────────────────────────────────────────────────────────--
+def _sinks():
+    """WHERE auto-emitted receipts go: env SPENDGUARD_RECEIPTS_SINK → config receipts.sinks → 'stderr'.
+    Comma-separated; each is 'stderr' | 'stdout' | 'file:<path>'. The file sink is how a host with no in-chat hook
+    (Codex, an editor, a tmux/menubar widget) can display the tally — point it at a log and tail/render that."""
+    v = os.getenv("SPENDGUARD_RECEIPTS_SINK") or config._cfg_get("receipts", "sinks", "stderr") or "stderr"
+    return [s.strip() for s in str(v).split(",") if s.strip()]
+
+
 def _out(text: str) -> None:
-    if text:
-        print(text, file=sys.stderr, flush=True)
+    if not text:
+        return
+    for sink in _sinks():
+        try:
+            if sink == "stderr":
+                print(text, file=sys.stderr, flush=True)
+            elif sink == "stdout":
+                print(text, file=sys.stdout, flush=True)
+            elif sink.startswith("file:"):
+                p = pathlib.Path(os.path.expanduser(sink[5:]))
+                p.parent.mkdir(parents=True, exist_ok=True)
+                with open(p, "a") as f:
+                    f.write(text + "\n")
+        except Exception:
+            pass
 
 
 def emit_flow(intent, chain, start) -> None:
@@ -315,3 +337,73 @@ def cli(args) -> int:
     except Exception:
         # A status line / hook must NEVER break the caller. Emit nothing rather than an error.
         return 0
+
+
+# ── host installers — manage WHERE the always-on tally surfaces (reproducible, removable) ─────────
+def _spendguard_bin():
+    import shutil
+    return shutil.which("spendguard") or str(pathlib.Path(sys.prefix) / "bin" / "spendguard")
+
+
+def _install_claude_code(remove=False):
+    import shutil
+    sg = _spendguard_bin()
+    p = pathlib.Path.home() / ".claude" / "settings.json"
+    cfg = {}
+    if p.exists():
+        try:
+            cfg = json.loads(p.read_text())
+        except Exception:
+            cfg = {}
+        shutil.copy(p, p.with_suffix(".json.bak"))      # reversible
+    if remove:
+        if (cfg.get("statusLine") or {}).get("command", "").endswith("receipt --statusline"):
+            cfg.pop("statusLine", None)
+        hooks = cfg.get("hooks") or {}
+        stop = [g for g in (hooks.get("Stop") or [])
+                if not any(h.get("command", "").endswith("receipt --stop-hook") for h in (g.get("hooks") or []))]
+        if "Stop" in hooks:
+            if stop:
+                hooks["Stop"] = stop
+            else:
+                hooks.pop("Stop", None)
+            if not hooks:
+                cfg.pop("hooks", None)
+        action = "removed"
+    else:
+        cfg["statusLine"] = {"type": "command", "command": f"{sg} receipt --statusline", "padding": 0}
+        stop = cfg.setdefault("hooks", {}).setdefault("Stop", [])
+        if not any(h.get("command", "").endswith("receipt --stop-hook")
+                   for g in stop for h in (g.get("hooks") or [])):
+            stop.append({"hooks": [{"type": "command", "command": f"{sg} receipt --stop-hook", "timeout": 5}]})
+        action = "installed"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(cfg, indent=2) + "\n")
+    print(f"{action} spendguard receipts for Claude Code → {p}")
+    print("  restart Claude Code to apply" + ("" if remove else "  (status-line footer + per-turn notice)")
+          + (f"  ·  backup: {p.with_suffix('.json.bak').name}" if p.with_suffix('.json.bak').exists() else ""))
+    return 0
+
+
+def install_cli(args):
+    """`spendguard install-receipts [--host claude-code|codex] [--remove]` — manage the always-on in-chat tally."""
+    args = list(args or [])
+    host = "claude-code"
+    if "--host" in args:
+        try:
+            host = args[args.index("--host") + 1]
+        except IndexError:
+            pass
+    remove = "--remove" in args
+    if host in ("claude-code", "claude", "cc"):
+        return _install_claude_code(remove=remove)
+    if host == "codex":
+        # Codex has no in-chat hook: its `notify` runs a program but does NOT render output in the transcript
+        # (and is usually already taken). Use the inline receipt + a file sink any pane/editor can show.
+        print("Codex has no Claude-Code-style in-chat hook. spendguard already TRACKS Codex (channel=codex, "
+              "billed=false → est-value) via `spendguard codex show`. To surface the tally, use a file sink:")
+        print("  spendguard config set receipts.sinks 'stderr,file:~/.spendguard/receipt.log'")
+        print("then tail/show ~/.spendguard/receipt.log in a pane or editor. `spendguard receipt` prints it on demand.")
+        return 0
+    print(f"unknown host '{host}' (supported: claude-code | codex)")
+    return 1

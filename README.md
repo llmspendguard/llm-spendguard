@@ -160,28 +160,35 @@ spendguard ▸ loinc-typing · 42 calls · in 1.2M / out 300.0K · est $2.10 →
              est-value (plan, not billed) (as of 2026-06-23): today $1.4k · 7d $8.6k · month $20.2k
 ```
 The two axes are always kept **separate and never summed**: **actual-$** is money billed (the gate ledger, reconciles
-to provider truth); **est-value** is Claude Code + claude.ai usage *value* (what it would cost at API rates — covered
-by your plan). It's per-FLOW (not per-call), costs nothing (a local read, no LLM, no admin key), and the verbosity is
-`receipts.level` / `SPENDGUARD_RECEIPTS` = `off | footer | flow | verbose` (default `flow`). Check it any time:
+to provider truth); **est-value** is coding-agent usage *value* — **Claude Code + claude.ai + Codex** (what it would
+cost at API rates — covered by your plan), stamped per-source so they sum. It's per-FLOW (not per-call), costs nothing
+(a local read, no LLM, no admin key), and the verbosity is `receipts.level` / `SPENDGUARD_RECEIPTS` =
+`off | footer | flow | verbose` (default `flow`). Check it any time:
 ```
 spendguard receipt            # the two-line tally   ·   --line = one compact line   ·   --json = machine-readable
 ```
 
-**Surface it in your Claude Code chat.** Two built-in hook protocols (add to `~/.claude/settings.json`):
-```jsonc
-{
-  "statusLine": { "type": "command", "command": "/abs/path/to/spendguard receipt --statusline" },
-  "hooks": { "Stop": [ { "hooks": [ { "type": "command", "command": "/abs/path/to/spendguard receipt --stop-hook", "timeout": 5 } ] } ] }
-}
+**Surface it in your Claude Code chat** — one command (idempotent; backs up + can `--remove`):
 ```
-`--statusline` renders an always-on footer (`cwd · model · ctx% · tally`); `--stop-hook` emits a `systemMessage`
-line into the transcript at the end of each turn. Both are fully guarded — a hook can never block or break a turn.
+spendguard install-receipts --host claude-code      # adds a statusLine footer + a per-turn transcript notice
+```
+It registers two guarded hook protocols in `~/.claude/settings.json`: `receipt --statusline` (always-on footer:
+`cwd · model · ctx% · tally`) and `receipt --stop-hook` (a `systemMessage` line each turn). A hook can never block or
+break a turn. Restart Claude Code to apply.
+
+**Other hosts (Codex, editors, menubar).** Codex has no in-chat hook, but spendguard still TRACKS it
+(`spendguard codex show` → channel=codex, billed=false). To surface the tally anywhere, point a **sink** at a file
+and render that: `receipts.sinks` / `SPENDGUARD_RECEIPTS_SINK` = `stderr` (default) | `stdout` | `file:<path>`
+(comma-separated). e.g. `spendguard config set receipts.sinks 'stderr,file:~/.spendguard/receipt.log'`, then
+`tail -f ~/.spendguard/receipt.log` in a pane.
 
 ## Knobs (env)
 `GATE_CAP=<$>` (default 75) · `GATE_ALLOW=1` (permit one over-cap run) · `GATE_DISABLE=1` (off for one run)
 · `GATE_RT_BUDGET=<$>` (per-process realtime ceiling, default 50) · `SPENDGUARD_HOME=<dir>` (data/flag/log location,
 default `~/.spendguard`) · `SPENDGUARD_ENV=<path>` (.env for keys)
 · `SPENDGUARD_RECEIPTS=off|footer|flow|verbose` (inline-receipt verbosity, default `flow`; also `receipts.level` in config.json)
+· `SPENDGUARD_RECEIPTS_SINK=stderr|stdout|file:<path>` (where the auto-receipt goes, comma-sep; also `receipts.sinks`)
+· `SPENDGUARD_CC_DIR` / `SPENDGUARD_CODEX_DIR` (override the Claude Code / Codex session dirs for est-value mining)
 · `SPENDGUARD_NO_AUTOINSTALL=1` (don't gate on `import spendguard`) · `SPENDGUARD_REQUIRE=1` (fail-closed import —
 raise if an SDK is present but the gate can't enforce) · `SPENDGUARD_ALLOW_ANON=1` (allow team push with a
 non-email contributor; off by default so anon ids can't create phantom members)

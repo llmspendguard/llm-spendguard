@@ -167,5 +167,15 @@ sl = buf.getvalue()
 ck("--statusline: prefixes cwd · model · ctx% then the tally",
    "myrepo" in sl and "Opus 4.8" in sl and "12% ctx" in sl and "billed" in sl)
 
+# ── configurable sinks: a file sink routes the auto-emitted receipt to a log (any-host / Codex surfacing) ──
+import pathlib as _pl
+logf = _pl.Path(tempfile.mkdtemp()) / "r.log"
+os.environ["SPENDGUARD_RECEIPTS_SINK"] = f"file:{logf}"
+ck("sinks: env override parsed", receipt._sinks() == [f"file:{logf}"])
+receipt._out("hello-sink-line")
+del os.environ["SPENDGUARD_RECEIPTS_SINK"]
+ck("sink file: writes the receipt to the configured log", logf.exists() and "hello-sink-line" in logf.read_text())
+ck("sinks: default is stderr", receipt._sinks() == ["stderr"])
+
 print(f"\n{'PASS' if not fails else 'FAIL'} — {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

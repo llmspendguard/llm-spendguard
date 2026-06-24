@@ -87,6 +87,9 @@ def main(argv=None):
     if cmd == "install-rule":                          # drop the spendguard usage rule into a CLAUDE.md
         from . import setup
         return setup.cmd_install_rule(rest)
+    if cmd == "install-receipts":                      # surface the always-on tally in a host (claude-code|codex)
+        from . import receipt
+        return receipt.install_cli(rest)
     if cmd == "coverage":                              # which interpreters/venvs are actually gated? (multi-version)
         from . import setup
         return setup.cmd_coverage(rest)
@@ -132,6 +135,9 @@ def main(argv=None):
     if cmd in ("claude-code", "claudecode", "cc"):     # mine ~/.claude transcripts → CC spend + work (incremental)
         from . import claudecode
         return claudecode.main(rest)
+    if cmd == "codex":                                 # mine ~/.codex sessions → Codex est-value (channel=codex)
+        from . import codex
+        return codex.main(rest)
     if cmd == "chat":                                  # OPT-IN claude.ai chat adapter (session API, on-device, macOS)
         from . import chat
         return chat.main(rest)

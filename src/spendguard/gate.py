@@ -444,6 +444,27 @@ def _act_oai_chat(result):
     return None if not u else (getattr(u, "prompt_tokens", 0) or 0, getattr(u, "completion_tokens", 0) or 0)
 
 
+def _est_oai_resp(kw):
+    """OpenAI Responses API (client.responses.create) — the modern surface Codex + newer SDK code use. `input` is a
+    string OR a list of message/items; `instructions` is the system text; the output ceiling is max_output_tokens."""
+    n = 0
+    instr = kw.get("instructions")
+    if instr:
+        n += _content_tokens(instr)
+    inp = kw.get("input")
+    if isinstance(inp, str):
+        n += _content_tokens(inp)
+    elif isinstance(inp, list):
+        for m in inp:
+            n += _content_tokens(m.get("content", m.get("text", "")) if isinstance(m, dict) else str(m))
+    return kw.get("model"), n, (kw.get("max_output_tokens") or 0)
+
+
+def _act_oai_resp(result):
+    u = getattr(result, "usage", None)              # Responses usage = input_tokens / output_tokens (not prompt/completion)
+    return None if not u else (getattr(u, "input_tokens", 0) or 0, getattr(u, "output_tokens", 0) or 0)
+
+
 def _est_anth_msg(kw):
     n = 0
     s = kw.get("system")
@@ -466,10 +487,13 @@ def _cached_in(result):
     u = getattr(result, "usage", None)
     if not u:
         return 0
-    d = getattr(u, "prompt_tokens_details", None)
+    d = getattr(u, "prompt_tokens_details", None)         # OpenAI chat.completions
     if d is not None:
         return getattr(d, "cached_tokens", 0) or 0
-    return getattr(u, "cache_read_input_tokens", 0) or 0
+    d = getattr(u, "input_tokens_details", None)          # OpenAI Responses API
+    if d is not None:
+        return getattr(d, "cached_tokens", 0) or 0
+    return getattr(u, "cache_read_input_tokens", 0) or 0  # Anthropic
 
 
 def _rt_account(model, kw, result, est_fn, act_fn, latency=None):
@@ -556,6 +580,8 @@ RT_INTERCEPTORS = [
     # (module, class, method, est_fn, act_fn, is_async)
     ("openai.resources.chat.completions", "Completions", "create", _est_oai_chat, _act_oai_chat, False),
     ("openai.resources.chat.completions", "AsyncCompletions", "create", _est_oai_chat, _act_oai_chat, True),
+    ("openai.resources.responses", "Responses", "create", _est_oai_resp, _act_oai_resp, False),
+    ("openai.resources.responses", "AsyncResponses", "create", _est_oai_resp, _act_oai_resp, True),
     ("anthropic.resources.messages", "Messages", "create", _est_anth_msg, _act_anth_msg, False),
     ("anthropic.resources.messages", "AsyncMessages", "create", _est_anth_msg, _act_anth_msg, True),
 ]
