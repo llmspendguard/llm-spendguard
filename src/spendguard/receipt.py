@@ -425,7 +425,7 @@ def render_tree(scope_org=None) -> str:
         parts.append(f"  ▸ {(org or '(unclassified)'):<24}{_k(o['month']):>9}/mo")
         for team in sorted(o["teams"], key=lambda x: -o["teams"][x]["month"]):
             tm = o["teams"][team]
-            parts.append(f"      {(team or '(no team)'):<22}{_k(tm['month']):>9}")
+            parts.append(f"      {(team or 'other'):<22}{_k(tm['month']):>9}")
             for proj, pm in sorted(tm["projects"].items(), key=lambda x: -x[1])[:6]:
                 parts.append(f"         {(proj or '(untagged)'):<24}{_k(pm):>9}")
     return "\n".join(parts)
