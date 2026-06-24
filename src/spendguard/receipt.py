@@ -94,21 +94,23 @@ def stamp_est_value(rows, source: str = "claude-code") -> None:
     history so the month window is complete regardless of any report's day filter."""
     try:
         today, week, month = _windows()
-        acc = {"today": 0.0, "week": 0.0, "month": 0.0, "asof": today, "repos": {}}
+        # ORG → TEAM → PROJECT attribution (the useful axis, same as the server). Stored as flat cells keyed
+        # org|team|project; the tree is built on render. (Each row carries the agentic classification from cls.)
+        acc = {"today": 0.0, "week": 0.0, "month": 0.0, "asof": today, "cells": {}}
         for r in rows or []:
             if r.get("billed"):                       # only the est-value axis belongs in this cache
                 continue
             day = r.get("day") or ""
             usd = (r.get("spend_micros") or 0) / 1_000_000
-            repo = (r.get("repo") or r.get("project") or "").strip().lower()       # git-root repo = the rollup
-            proj = (r.get("project") or repo).strip().lower()                      # classified project = the breakdown
-            ra = acc["repos"].setdefault(repo, {"today": 0.0, "week": 0.0, "month": 0.0, "projects": {}})
-            pa = ra["projects"].setdefault(proj, {"today": 0.0, "week": 0.0, "month": 0.0})
+            org = (r.get("org") or "").strip().lower()
+            team = (r.get("team") or "").strip().lower()
+            proj = (r.get("project") or "").strip().lower()
+            ca = acc["cells"].setdefault(f"{org}|{team}|{proj}",
+                                         {"org": org, "team": team, "project": proj, "today": 0.0, "week": 0.0, "month": 0.0})
             for k, lo in (("today", today), ("week", week), ("month", month)):
                 if day >= lo:
-                    acc[k] += usd                     # global window
-                    ra[k] += usd                      # repo rollup
-                    pa[k] += usd                      # classified-project breakdown
+                    acc[k] += usd
+                    ca[k] += usd
         p = _cache_path()
         p.parent.mkdir(parents=True, exist_ok=True)
         data = {}
@@ -122,45 +124,70 @@ def stamp_est_value(rows, source: str = "claude-code") -> None:
         pass
 
 
-def _est_tally(repo=None):
-    """Cached est-value windows {today, week, month, asof} summed across sources. If `repo` is given, scope to that
-    REPO's rollup (sum of its classified projects); else the global sum. None if never stamped."""
+def _est_cells():
+    """All est-value cells across sources: [{org, team, project, today, week, month}]. The flat store the tree is
+    built from."""
+    out = []
+    try:
+        for s in (json.loads(_cache_path().read_text()).get("est_value_by_source") or {}).values():
+            out.extend((s.get("cells") or {}).values())
+    except Exception:
+        pass
+    return out
+
+
+def _est_tally(org=None, team=None, project=None):
+    """Est-value windows {today, week, month, asof} summed across sources, optionally scoped to an org / team /
+    project (the org→team→project attribution). No filter = global. None if never stamped."""
     try:
         data = json.loads(_cache_path().read_text())
         srcs = data.get("est_value_by_source")
         if srcs:
-            if repo is None:
-                pick = lambda s, k: s.get(k, 0)
-            else:
-                rl = str(repo).strip().lower()
-                pick = lambda s, k: (s.get("repos", {}).get(rl) or {}).get(k, 0)
-            return {"today": sum(pick(s, "today") for s in srcs.values()),
-                    "week": sum(pick(s, "week") for s in srcs.values()),
-                    "month": sum(pick(s, "month") for s in srcs.values()),
-                    "asof": max((s.get("asof", "") for s in srcs.values()), default="")}
+            if org is None and team is None and project is None:
+                return {"today": sum(s.get("today", 0) for s in srcs.values()),
+                        "week": sum(s.get("week", 0) for s in srcs.values()),
+                        "month": sum(s.get("month", 0) for s in srcs.values()),
+                        "asof": max((s.get("asof", "") for s in srcs.values()), default="")}
+            ol = None if org is None else org.strip().lower()
+            tl = None if team is None else team.strip().lower()
+            pl = None if project is None else project.strip().lower()
+            agg = {"today": 0.0, "week": 0.0, "month": 0.0}
+            for c in _est_cells():
+                if ol is not None and c.get("org") != ol:
+                    continue
+                if tl is not None and c.get("team") != tl:
+                    continue
+                if pl is not None and c.get("project") != pl:
+                    continue
+                for k in agg:
+                    agg[k] += c.get(k, 0)
+            agg["asof"] = max((s.get("asof", "") for s in srcs.values()), default="")
+            return agg
         d = data.get("est_value")                     # back-compat: older single-blob stamp (global only)
-        if repo is None and isinstance(d, dict) and "today" in d:
+        if org is None and team is None and project is None and isinstance(d, dict) and "today" in d:
             return d
     except Exception:
         pass
     return None
 
 
-def _est_breakdown(repo):
-    """The classified-PROJECT breakdown within a repo: {project: {today, week, month}} merged across sources. This
-    is the agentic detail under the repo rollup (e.g. lmm → concept-model / lmm-port / medical-taxonomy)."""
-    out = {}
-    try:
-        srcs = (json.loads(_cache_path().read_text()).get("est_value_by_source") or {})
-        rl = str(repo).strip().lower()
-        for s in srcs.values():
-            for proj, w in (((s.get("repos") or {}).get(rl) or {}).get("projects") or {}).items():
-                o = out.setdefault(proj, {"today": 0.0, "week": 0.0, "month": 0.0})
-                for k in ("today", "week", "month"):
-                    o[k] += w.get(k, 0)
-    except Exception:
-        pass
-    return out
+def _est_tree(scope_org=None):
+    """Nested ORG → TEAM → PROJECT plan-value tree (month) from the cells, optionally one org.
+    {org: {month, teams: {team: {month, projects: {project: month}}}}}."""
+    tree = {}
+    sl = None if scope_org is None else str(scope_org).strip().lower()
+    for c in _est_cells():
+        if sl is not None and c.get("org") != sl:
+            continue
+        m = c.get("month", 0)
+        if m <= 0:
+            continue
+        o = tree.setdefault(c.get("org") or "", {"month": 0.0, "teams": {}})
+        t = o["teams"].setdefault(c.get("team") or "", {"month": 0.0, "projects": {}})
+        o["month"] += m
+        t["month"] += m
+        t["projects"][c.get("project") or ""] = t["projects"].get(c.get("project") or "", 0.0) + m
+    return tree
 
 
 # ── the running tally (actual-$ always; est-value when cached) ────────────────
@@ -173,21 +200,19 @@ def tally(project=None, conv=None) -> dict:
     actual = {"today": None, "week": None, "month": None}
     try:
         from . import budget
-        actual = {"today": budget.spent_since(today, project=project, conv=conv),
-                  "week": budget.spent_since(week, project=project, conv=conv),
-                  "month": budget.spent_since(month, project=project, conv=conv)}
+        actual = {"today": budget.spent_since(today), "week": budget.spent_since(week), "month": budget.spent_since(month)}
     except Exception:
         pass
-    out = {"actual": actual, "est_value": _est_tally(project), "scope": project}
-    if project is not None and out["est_value"]:           # proportional plan share (this repo's slice of the plan)
-        g = _est_tally(None) or {}
-        gm, pm = (g.get("month") or 0), (out["est_value"].get("month") or 0)
-        if gm > 0:
-            out["est_pct"] = pm / gm
-            plan, assumed = _plan_usd()
-            if plan:
-                out["plan_slice"] = plan * (pm / gm)       # $ of the flat plan attributable to this repo
-                out["plan_assumed"] = assumed              # True → using the default plan mix (say so, never silent)
+    # GLOBAL headline (both axes). The org→team→project attribution is the tree (render_tree); proportional plan
+    # share rides on the global est (your repos' share of the whole plan). project/conv kept for call-compat.
+    out = {"actual": actual, "est_value": _est_tally()}
+    ev = out["est_value"]
+    if ev and (ev.get("month") or 0) > 0:
+        plan, assumed = _plan_usd()
+        if plan:
+            out["plan_usd"] = plan
+            out["plan_assumed"] = assumed
+            out["plan_mult"] = (ev.get("month") or 0) / plan      # how many × the flat plan the usage value is
     return out
 
 
@@ -374,6 +399,38 @@ def _render_scope(scope_all=False, conv=None, cwd=None, line=False, top=12, brea
     return "\n".join(parts)
 
 
+def _conv_org():
+    """The org this conversation/connection belongs to (the repo's .spendguard.json org) — the default tree scope."""
+    try:
+        from . import saas
+        return (saas.conn().get("org") or "").strip().lower() or None
+    except Exception:
+        return None
+
+
+def render_tree(scope_org=None) -> str:
+    """The receipt: a global billed/plan header, then the ORG → TEAM → PROJECT plan-value tree (the attribution,
+    matching the server). `scope_org` limits to one org (None = all orgs)."""
+    t = tally()
+    parts = [_PREFIX + ("\n" + _INDENT).join(_tally_lines(t))]
+    if t.get("plan_usd"):
+        parts.append(f"{_INDENT}plan ≈ ${t['plan_usd']:.0f}/mo{' (assumed)' if t.get('plan_assumed') else ''}"
+                     f"  →  {t.get('plan_mult', 0):.1f}× the plan in usage value")
+    tree = _est_tree(scope_org)
+    if not tree:
+        return "\n".join(parts)
+    parts.append(_INDENT + "org → team → project (plan value · month):")
+    for org in sorted(tree, key=lambda o: -tree[o]["month"]):
+        o = tree[org]
+        parts.append(f"  ▸ {(org or '(unclassified)'):<24}{_k(o['month']):>9}/mo")
+        for team in sorted(o["teams"], key=lambda x: -o["teams"][x]["month"]):
+            tm = o["teams"][team]
+            parts.append(f"      {(team or '(no team)'):<22}{_k(tm['month']):>9}")
+            for proj, pm in sorted(tm["projects"].items(), key=lambda x: -x[1])[:6]:
+                parts.append(f"         {(proj or '(untagged)'):<24}{_k(pm):>9}")
+    return "\n".join(parts)
+
+
 def render_flow(flow: dict, lvl: str, t: Optional[dict] = None) -> str:
     intent = flow.get("intent") or "(flow)"
     n = flow.get("n") or 0
@@ -493,16 +550,14 @@ def cli(args) -> int:
 
     try:
         if "--json" in args:
-            print(json.dumps(tally(project=_arg("--project")), indent=2))
+            print(json.dumps({"tally": tally(), "tree": _est_tree(None)}, indent=2))
             return 0
         if "--stop-hook" in args:
-            # Claude Code Stop hook: a `systemMessage` is the ONLY hook output the USER sees in the transcript
-            # (plain stdout is debug-only). Scope to the current repo — the relevant scope, not a global sum.
-            print(json.dumps({"systemMessage": render_line(tally(project=_cur_project()))}))
+            # Claude Code Stop hook: `systemMessage` is the ONLY hook output the user sees — one global line.
+            print(json.dumps({"systemMessage": render_line(tally())}))
             return 0
         if "--statusline" in args:
-            # Claude Code statusLine: session JSON arrives on stdin; prepend cwd · model · ctx% and SCOPE the tally
-            # to the repo the session is in (derived from its cwd) so it shows what's relevant where you are.
+            # Claude Code statusLine: session JSON on stdin; prepend cwd · model · ctx% to the global one-line tally.
             info = {}
             if not sys.stdin.isatty():           # guard: never block when run manually in a terminal
                 try:
@@ -524,17 +579,18 @@ def cli(args) -> int:
                 except Exception:
                     pass
             prefix = "  ·  ".join(bits)
-            print((prefix + "  ·  " if prefix else "") + render_line(tally(project=_project_for_cwd(cwd))))
+            print((prefix + "  ·  " if prefix else "") + render_line(tally()))
             return 0
-        # --project X = one repo · --all = every repo (expanded) · default = THIS conversation's repo(s) (collapsed)
-        line = "--line" in args
-        if "--project" in args:
-            t = tally(project=_arg("--project"))
-            print(render_line(t) if line else render_tally(t)); return 0
-        if "--cwd" in args:
-            t = tally(project=_project_for_cwd(_arg("--cwd")))
-            print(render_line(t) if line else render_tally(t)); return 0
-        print(_render_scope(scope_all="--all" in args, line=line)); return 0
+        if "--line" in args:                          # compact one-line global tally (scripting)
+            print(render_line(tally()))
+            return 0
+        # the ORG → TEAM → PROJECT tree: --all = every org · --org X = one org · default = the connection's org,
+        # falling back to ALL when that org has no attributed value (its taxonomy org may differ from the conn org).
+        scope = None if "--all" in args else (_arg("--org") if "--org" in args else _conv_org())
+        if scope and not _est_tree(scope):
+            scope = None
+        print(render_tree(scope_org=scope))
+        return 0
     except Exception:
         # A status line / hook must NEVER break the caller. Emit nothing rather than an error.
         return 0

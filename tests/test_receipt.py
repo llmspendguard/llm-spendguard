@@ -146,7 +146,7 @@ ck("cli: returns 0 and prints a (scoped) tally to stdout", rc == 0 and "actual-$
 buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
     receipt.cli(["--all"])
-ck("cli --all: includes the global 'all repos' total", "all repos" in buf.getvalue())
+ck("cli --all: renders the org → team → project tree", "org → team → project" in buf.getvalue())
 buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
     receipt.cli(["--json"])
@@ -181,46 +181,36 @@ del os.environ["SPENDGUARD_RECEIPTS_SINK"]
 ck("sink file: writes the receipt to the configured log", logf.exists() and "hello-sink-line" in logf.read_text())
 ck("sinks: default is stderr", receipt._sinks() == ["stderr"])
 
-# ── per-project SCOPING: est-value buckets by project; tally(project=…) scopes + labels both axes ──
-receipt.stamp_est_value([{"day": TODAY, "spend_micros": 3_000_000, "billed": False, "project": "lmm"},
-                         {"day": TODAY, "spend_micros": 1_000_000, "billed": False, "project": "manga2anime"}],
-                        source="claude-code")
-ck("est scope: lmm bucket isolated", abs(receipt._est_tally(repo="lmm")["today"] - 3.0) < 1e-9)
-ck("est scope: manga2anime bucket isolated", abs(receipt._est_tally(repo="manga2anime")["today"] - 1.0) < 1e-9)
-ck("est scope: unknown project → 0", receipt._est_tally(repo="nope")["today"] == 0)
-ck("est scope: global still sums all projects", receipt._est_tally()["today"] >= 4.0)
-ts = receipt.tally(project="lmm")
-ck("tally(project): carries the scope label", ts.get("scope") == "lmm")
-ck("render: scope label shown in block + line", "[lmm]" in receipt.render_tally(ts) and "[lmm]" in receipt.render_line(ts))
-ck("_project_for_cwd: basename fallback", receipt._project_for_cwd("/a/b/MyRepo") == "myrepo")
+# ── ORG → TEAM → PROJECT attribution: est-value cells + tree (the model — matches the server) ──
+receipt.stamp_est_value([
+    {"day": TODAY, "spend_micros": 3_000_000, "billed": False, "org": "Healiom", "team": "clinical-ai", "project": "medical-taxonomy"},
+    {"day": TODAY, "spend_micros": 2_000_000, "billed": False, "org": "Healiom", "team": "fundraising-exec", "project": "investor-deck"},
+    {"day": TODAY, "spend_micros": 1_000_000, "billed": False, "org": "manga2anime", "team": "", "project": "caption"},
+], source="claude-code")
+ck("est scope: ORG rollup (Healiom = 3+2 = $5)", abs(receipt._est_tally(org="Healiom")["today"] - 5.0) < 1e-9)
+ck("est scope: TEAM rollup (Healiom/clinical-ai = $3)", abs(receipt._est_tally(org="Healiom", team="clinical-ai")["today"] - 3.0) < 1e-9)
+ck("est scope: PROJECT (medical-taxonomy = $3)", abs(receipt._est_tally(project="medical-taxonomy")["today"] - 3.0) < 1e-9)
+ck("est scope: other org isolated (manga2anime = $1)", abs(receipt._est_tally(org="manga2anime")["today"] - 1.0) < 1e-9)
+ck("est scope: global sums all sources (≥ this source's $6)", receipt._est_tally()["today"] >= 6.0)
 
-# ── proportional plan share: repo est as % of total, + $ slice when a plan price is set ──
+tree = receipt._est_tree()
+ck("_est_tree: org → team → project nesting",
+   "healiom" in tree and "clinical-ai" in tree["healiom"]["teams"] and "medical-taxonomy" in tree["healiom"]["teams"]["clinical-ai"]["projects"])
+ck("_est_tree: org rollup month = Σ its teams ($5)", abs(tree["healiom"]["month"] - 5.0) < 1e-9)
+ck("_est_tree(scope_org): limits to one org", set(receipt._est_tree("manga2anime").keys()) == {"manga2anime"})
+
+rt = receipt.render_tree()
+ck("render_tree: shows org → team → project", "healiom" in rt.lower() and "clinical-ai" in rt and "medical-taxonomy" in rt)
+ck("render_tree: header is the global billed/plan tally", "actual-$ (billed)" in rt and "est-value" in rt)
+
+# ── global running tally (header / statusline line) + proportional plan multiple ──
+t = receipt.tally()
+ck("tally(): global, both axes present", t["actual"]["month"] is not None and t["est_value"] is not None)
 os.environ["SPENDGUARD_PLAN_USD"] = "200"
-tl = receipt.tally(project="lmm")
-ck("proportional: est_pct present (scoped + est exists)", tl.get("est_pct") is not None)
-ck("proportional: explicit plan price → plan_slice set, NOT assumed", tl.get("plan_slice") is not None and tl.get("plan_assumed") is False)
-ck("render_line: shows '% of plan'", "% of plan" in receipt.render_line(tl))
+ck("tally: plan multiple set when price given, not assumed", receipt.tally().get("plan_mult") is not None and receipt.tally().get("plan_assumed") is False)
 del os.environ["SPENDGUARD_PLAN_USD"]
-tl2 = receipt.tally(project="lmm")
-ck("proportional: defaults to assumed mix (Claude Max + Codex Pro) → plan_slice present + flagged assumed",
-   tl2.get("plan_slice") is not None and tl2.get("plan_assumed") is True and tl2.get("est_pct") is not None)
+ck("tally: defaults to assumed plan (Claude Max + Codex Pro)", receipt.tally().get("plan_assumed") is True)
 ck("_plan_usd: default total = Claude Max + Codex/ChatGPT Pro = $300", receipt._plan_usd() == (300.0, True))
-
-# ── contextual collapse/expand: conversation repo(s) vs all repos ──
-ck("_all_repos: includes est-only repos", {"lmm", "manga2anime"}.issubset(set(receipt._all_repos())))
-# repo > project breakdown: stamp 2-level (lmm repo → lmm-port + concept-model projects) and read it back
-receipt.stamp_est_value([{"day": TODAY, "spend_micros": 2_000_000, "billed": False, "repo": "lmm", "project": "lmm-port"},
-                         {"day": TODAY, "spend_micros": 1_000_000, "billed": False, "repo": "lmm", "project": "concept-model"},
-                         {"day": TODAY, "spend_micros": 1_000_000, "billed": False, "repo": "manga2anime", "project": "manga2anime"}],
-                        source="claude-code")
-ck("repo rollup = sum of its projects ($3)", abs(receipt._est_tally(repo="lmm")["today"] - 3.0) < 1e-9)
-_bd = receipt._est_breakdown("lmm")
-ck("breakdown: classified projects under the repo", abs(_bd.get("lmm-port", {}).get("today", 0) - 2.0) < 1e-9 and "concept-model" in _bd)
-ck("breakdown line renders the projects", "lmm-port" in (receipt._breakdown_line("lmm") or ""))
-out_all = receipt._render_scope(scope_all=True, line=True)
-ck("--all (expanded): lists each repo + an 'all repos' total", "[lmm]" in out_all and "[manga2anime]" in out_all and "all repos" in out_all)
-out_collapsed = receipt._render_scope(scope_all=False, cwd="/a/b/lmm", line=True)
-ck("default (collapsed): scoped to the cwd repo + offers --all", "[lmm]" in out_collapsed and ("more repo" in out_collapsed or "--all" in out_collapsed))
 
 print(f"\n{'PASS' if not fails else 'FAIL'} — {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

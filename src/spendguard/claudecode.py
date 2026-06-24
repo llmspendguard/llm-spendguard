@@ -156,10 +156,12 @@ def show(days=None):
     # doesn't clobber it. Best-effort.
     try:
         from . import receipt
-        _cls = st.get("cls", {})       # repo (git-root) = rollup; classified project (cls[sid]) = breakdown, like the server
+        _cls = st.get("cls", {})       # ORG → TEAM → PROJECT, the agentic classification (same as the server push)
         receipt.stamp_est_value(
             [{"day": d["day"], "spend_micros": round(d["cost"] * 1_000_000), "billed": False,
-              "repo": d["project"], "project": (_cls.get(d["sid"]) or {}).get("project") or d["project"]}
+              "org": (_cls.get(d["sid"]) or {}).get("org") or "",
+              "team": (_cls.get(d["sid"]) or {}).get("team") or "",
+              "project": (_cls.get(d["sid"]) or {}).get("project") or d["project"]}
              for d in _session_digests() if d.get("day") and d.get("cost", 0) > 0],
             source="claude-code")
     except Exception:

@@ -452,9 +452,9 @@ def show(days=None, refresh=True):
     # and the in-chat footer sum claude-code + claude-ai. billed=false → stays out of actual-$. Best-effort.
     try:
         from . import receipt
-        # chats have no repo → roll up under a synthetic "claude.ai", broken down by classified project
+        # ORG → TEAM → PROJECT, the agentic classification (chats already carry it)
         receipt.stamp_est_value([{"day": r["day"], "spend_micros": round(r["value"] * 1_000_000), "billed": False,
-                                  "repo": "claude.ai", "project": r.get("project") or "claude.ai"}
+                                  "org": r.get("org") or "", "team": r.get("team") or "", "project": r.get("project") or ""}
                                  for r in _day_rows(st, None) if r.get("day")], source="claude-ai")
     except Exception:
         pass
