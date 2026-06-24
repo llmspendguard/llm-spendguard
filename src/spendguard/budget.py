@@ -99,6 +99,26 @@ def record(provider, model, kind, cost, project=None, conv_id=None):
         _db().commit()
 
 
+def projects_for_conv(conv):
+    """Distinct repos (projects) THIS conversation touched — its workload charges. Powers the contextual receipt's
+    collapsed view (a conversation can span repos; this very chat touched llm-spendguard + manga2anime + lmm)."""
+    if not conv:
+        return []
+    with _lock:
+        rows = _db().execute("SELECT DISTINCT project FROM charges WHERE conv_id = ? AND project != '' "
+                             "AND (kind IS NULL OR kind != 'meta')", (str(conv),)).fetchall()
+    return sorted(r[0] for r in rows if r[0])
+
+
+def all_projects():
+    """All repos with workload charges (the expanded all-repos view)."""
+    with _lock:
+        rows = _db().execute("SELECT DISTINCT project FROM charges WHERE project != '' "
+                             "AND (kind IS NULL OR kind != 'meta') AND (model IS NULL OR model <> ?)",
+                             (_RECONCILED,)).fetchall()
+    return sorted(r[0] for r in rows if r[0])
+
+
 def ingest_remote(label, project, rows):
     """Roll a REMOTE box's realtime spend into the local ledger, IDEMPOTENTLY. Deletes any prior rows for this box
     (conv_id='remote:<label>') then inserts the current ones — so re-syncing a box REPLACES, never double-counts

@@ -40,9 +40,14 @@ When you WRITE or RUN code that calls an LLM:
 4. **Estimate before you spend.** For any paid batch, do a SEPARATE zero-spend estimate run (count + $ est),
    confirm, then submit. Never cancel/kill a running job as cost control — completed requests still bill.
 5. Prefer the **Batch API** for non-interactive work; keep a per-job cost estimate + approval for large batches.
+6. **Surface the receipt.** After substantive LLM/spend work in a turn, show the contextual spend receipt —
+   `spendguard receipt` (scoped to THIS repo + its proportional plan share; `--all` expands to every repo). In the
+   desktop/web app there is no auto status line, so this is how the running tally stays visible each turn; in a
+   terminal the status line does it automatically.
 
 Setup (one-time): `spendguard install-hook --venv <venv>` (or `--user --python <interp>` for system python),
-then `spendguard doctor`. Kill switch: `GATE_DISABLE=1` or `spendguard off`.
+then `spendguard doctor`. Surface the tally: `spendguard install-receipts` (terminal status line) and this rule
+(desktop/web). Kill switch: `GATE_DISABLE=1` or `spendguard off`.
 """ + _RULE_END + "\n"
 
 

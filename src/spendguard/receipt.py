@@ -158,7 +158,26 @@ def tally(project=None, conv=None) -> dict:
                   "month": budget.spent_since(month, project=project, conv=conv)}
     except Exception:
         pass
-    return {"actual": actual, "est_value": _est_tally(project), "scope": project}
+    out = {"actual": actual, "est_value": _est_tally(project), "scope": project}
+    if project is not None and out["est_value"]:           # proportional plan share (this repo's slice of the plan)
+        g = _est_tally(None) or {}
+        gm, pm = (g.get("month") or 0), (out["est_value"].get("month") or 0)
+        if gm > 0:
+            out["est_pct"] = pm / gm
+            plan = _plan_usd()
+            if plan:
+                out["plan_slice"] = plan * (pm / gm)       # $ of the flat plan attributable to this repo
+    return out
+
+
+def _plan_usd():
+    """Monthly plan price ($) if the operator set one (config `subscription.plan_usd` / env SPENDGUARD_PLAN_USD) —
+    lets the receipt show the $ slice of the flat plan a repo is using. None → show % only."""
+    v = os.getenv("SPENDGUARD_PLAN_USD") or config._cfg_get("subscription", "plan_usd", None)
+    try:
+        return float(v) if v else None
+    except (TypeError, ValueError):
+        return None
 
 
 # ── rendering ─────────────────────────────────────────────────────────────--
@@ -225,7 +244,82 @@ def render_line(t: Optional[dict] = None) -> str:
     ev = t.get("est_value")
     if ev:
         s += f"  ·  plan {_k(ev.get('today'))}/d · {_k(ev.get('month'))}/mo"
+        if t.get("est_pct") is not None:
+            s += f" ({t['est_pct'] * 100:.0f}% of plan" + (f" ≈{_k(t['plan_slice'])}" if t.get("plan_slice") is not None else "") + ")"
     return s
+
+
+def _conv_projects(conv=None, cwd=None):
+    """The repo(s) THIS conversation is relevant to (collapsed view): the cwd repo + any the conversation touched."""
+    projs = set()
+    try:
+        from . import budget
+        projs |= set(budget.projects_for_conv(conv or budget._conv()))
+        cp = _project_for_cwd(cwd) if cwd else (budget._project() or None)
+        if cp:
+            projs.add(cp)
+    except Exception:
+        pass
+    return sorted(p for p in projs if p)
+
+
+def _all_projects():
+    """Every repo with billed charges OR plan-value (expanded view)."""
+    projs = set()
+    try:
+        from . import budget
+        projs |= set(budget.all_projects())
+    except Exception:
+        pass
+    try:
+        data = json.loads(_cache_path().read_text())
+        for srec in (data.get("est_value_by_source") or {}).values():
+            projs |= set((srec.get("projects") or {}).keys())
+    except Exception:
+        pass
+    return sorted(p for p in projs if p)
+
+
+def _sum_projects(projects):
+    am = em = 0.0
+    for p in projects:
+        t = tally(project=p)
+        am += (t.get("actual") or {}).get("month") or 0
+        em += (t.get("est_value") or {}).get("month") or 0
+    return {"actual_month": am, "est_month": em}
+
+
+def _month_total(t):
+    return ((t.get("actual") or {}).get("month") or 0) + ((t.get("est_value") or {}).get("month") or 0)
+
+
+def _render_scope(scope_all=False, conv=None, cwd=None, line=False, top=12):
+    """Contextual receipt: COLLAPSED (default) = this conversation's repo(s); EXPANDED (--all) = every repo RANKED
+    by month spend, top `top` shown + the long tail summarized (there are many incidental cwd-named buckets — the
+    ranking keeps it readable). Each repo scoped + proportional; the expanded view ends with the global total."""
+    render = render_line if line else render_tally
+    if scope_all:
+        ranked = sorted(((p, tally(project=p)) for p in _all_projects()), key=lambda pt: -_month_total(pt[1]))
+        ranked = [pt for pt in ranked if _month_total(pt[1]) > 0]            # drop $0 buckets
+        parts = [render(t) for _, t in ranked[:top]]
+        rest = ranked[top:]
+        if rest:
+            am = sum((t.get("actual") or {}).get("month") or 0 for _, t in rest)
+            em = sum((t.get("est_value") or {}).get("month") or 0 for _, t in rest)
+            parts.append(f"{_INDENT}▸ + {len(rest)} smaller repos: billed {_k(am)}/mo · plan {_k(em)}/mo")
+        parts.append(render({**tally(), "scope": "all repos"}))
+        return "\n".join(parts)
+    # collapsed: this conversation's repo(s) + the rest summarized
+    shown = _conv_projects(conv, cwd)
+    if not shown:
+        return render(tally())
+    parts = [render(tally(project=p)) for p in shown]
+    hidden = [p for p in _all_projects() if p not in set(shown)]
+    if hidden:
+        h = _sum_projects(hidden)
+        parts.append(f"{_INDENT}▸ + {len(hidden)} more repos: billed {_k(h['actual_month'])}/mo · "
+                     f"plan {_k(h['est_month'])}/mo  — `spendguard receipt --all`")
+    return "\n".join(parts)
 
 
 def render_flow(flow: dict, lvl: str, t: Optional[dict] = None) -> str:
@@ -380,14 +474,15 @@ def cli(args) -> int:
             prefix = "  ·  ".join(bits)
             print((prefix + "  ·  " if prefix else "") + render_line(tally(project=_project_for_cwd(cwd))))
             return 0
-        # manual: --project X or --cwd P scopes to a repo; default = global overview
-        proj = _arg("--project") or (_project_for_cwd(_arg("--cwd")) if _arg("--cwd") else None)
-        t = tally(project=proj)
-        if "--line" in args:                     # one compact line (manual / scripting)
-            print(render_line(t))
-            return 0
-        print(render_tally(t))                   # default / --footer: the two-line block
-        return 0
+        # --project X = one repo · --all = every repo (expanded) · default = THIS conversation's repo(s) (collapsed)
+        line = "--line" in args
+        if "--project" in args:
+            t = tally(project=_arg("--project"))
+            print(render_line(t) if line else render_tally(t)); return 0
+        if "--cwd" in args:
+            t = tally(project=_project_for_cwd(_arg("--cwd")))
+            print(render_line(t) if line else render_tally(t)); return 0
+        print(_render_scope(scope_all="--all" in args, line=line)); return 0
     except Exception:
         # A status line / hook must NEVER break the caller. Emit nothing rather than an error.
         return 0
@@ -425,11 +520,15 @@ def _install_claude_code(remove=False):
                 cfg.pop("hooks", None)
         action = "removed"
     else:
-        cfg["statusLine"] = {"type": "command", "command": f"{sg} receipt --statusline", "padding": 0}
+        # SPENDGUARD_NO_AUTOINSTALL=1 → the read-only receipt skips patching the SDKs (0.6s → ~0.05s warm path)
+        cfg["statusLine"] = {"type": "command",
+                             "command": f"env SPENDGUARD_NO_AUTOINSTALL=1 {sg} receipt --statusline", "padding": 0}
         stop = cfg.setdefault("hooks", {}).setdefault("Stop", [])
         if not any(h.get("command", "").endswith("receipt --stop-hook")
                    for g in stop for h in (g.get("hooks") or [])):
-            stop.append({"hooks": [{"type": "command", "command": f"{sg} receipt --stop-hook", "timeout": 5}]})
+            stop.append({"hooks": [{"type": "command",
+                                    "command": f"env SPENDGUARD_NO_AUTOINSTALL=1 {sg} receipt --stop-hook",
+                                    "timeout": 5}]})
         action = "installed"
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(cfg, indent=2) + "\n")

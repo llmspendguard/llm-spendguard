@@ -14,6 +14,14 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
   modules (chat→claude.ai, saas push, transcript parsers, paid-call tools) are integration-tested, not unit-tested.
 
 ### Added
+- **Contextual + proportional receipt (no MCP needed).** `spendguard receipt` now defaults to **this conversation's
+  repo(s)** (collapsed, via the ledger's `conv_id` + cwd) and `--all` expands to **every repo, ranked by spend** with
+  the long tail summarized. Each repo shows its **proportional plan share** — est-value as a % of total plan usage,
+  plus the **$ slice** of the flat plan when a price is set (`subscription.plan_usd` / `SPENDGUARD_PLAN_USD`). The
+  in-chat hooks now run with `SPENDGUARD_NO_AUTOINSTALL=1` so the read-only receipt **skips patching the SDKs** —
+  **0.6s → ~0.05s** (it never needed the gate). And `spendguard install-rule` now tells the assistant to surface the
+  receipt each turn — the desktop/web answer, since statusLine is terminal-only. (We chose NOT to ship an MCP server:
+  it adds per-machine install complexity and still can't auto-display every turn off-CLI — net negative here.)
 - **Enforce the gate on remote/distributed compute — `spendguard remote {onstart|verify|sync}`** (`remote.py`). The
   gate only governs the interpreter it's loaded in, so a freshly-spun-up vast.ai box's `python3` is UNGATED until
   provisioned. `remote onstart` emits the secret-free boot snippet that installs + hooks spendguard so EVERY python3

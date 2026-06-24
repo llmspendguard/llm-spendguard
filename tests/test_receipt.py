@@ -142,7 +142,11 @@ ck("context(): respects level off (no emit)", buf.getvalue() == "")
 buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
     rc = receipt.cli([])
-ck("cli: returns 0 and prints the tally to stdout", rc == 0 and "spendguard ▸ actual-$ (billed)" in buf.getvalue())
+ck("cli: returns 0 and prints a (scoped) tally to stdout", rc == 0 and "actual-$ (billed)" in buf.getvalue())
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    receipt.cli(["--all"])
+ck("cli --all: includes the global 'all repos' total", "all repos" in buf.getvalue())
 buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
     receipt.cli(["--json"])
@@ -189,6 +193,23 @@ ts = receipt.tally(project="lmm")
 ck("tally(project): carries the scope label", ts.get("scope") == "lmm")
 ck("render: scope label shown in block + line", "[lmm]" in receipt.render_tally(ts) and "[lmm]" in receipt.render_line(ts))
 ck("_project_for_cwd: basename fallback", receipt._project_for_cwd("/a/b/MyRepo") == "myrepo")
+
+# ── proportional plan share: repo est as % of total, + $ slice when a plan price is set ──
+os.environ["SPENDGUARD_PLAN_USD"] = "200"
+tl = receipt.tally(project="lmm")
+ck("proportional: est_pct present (scoped + est exists)", tl.get("est_pct") is not None)
+ck("proportional: plan_slice set when plan price configured", tl.get("plan_slice") is not None)
+ck("render_line: shows '% of plan'", "% of plan" in receipt.render_line(tl))
+del os.environ["SPENDGUARD_PLAN_USD"]
+ck("proportional: no plan_slice without a plan price (still shows %)",
+   receipt.tally(project="lmm").get("plan_slice") is None and receipt.tally(project="lmm").get("est_pct") is not None)
+
+# ── contextual collapse/expand: conversation repo(s) vs all repos ──
+ck("_all_projects: includes est-only repos", {"lmm", "manga2anime"}.issubset(set(receipt._all_projects())))
+out_all = receipt._render_scope(scope_all=True, line=True)
+ck("--all (expanded): lists each repo + an 'all repos' total", "[lmm]" in out_all and "[manga2anime]" in out_all and "all repos" in out_all)
+out_collapsed = receipt._render_scope(scope_all=False, cwd="/a/b/lmm", line=True)
+ck("default (collapsed): scoped to the cwd repo + offers --all", "[lmm]" in out_collapsed and ("more repo" in out_collapsed or "--all" in out_collapsed))
 
 print(f"\n{'PASS' if not fails else 'FAIL'} — {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)
