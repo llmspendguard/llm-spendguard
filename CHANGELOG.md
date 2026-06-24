@@ -23,6 +23,8 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
   Chat Completions was gated, so modern OpenAI realtime (incl. Codex-style `responses` calls) was an un-gated
   actual-$ gap; now estimated pre-call + recorded post-call (incl. `input_tokens_details.cached_tokens`) like every
   other surface.
+- **`python -m spendguard …`** (`__main__.py`) — identical to the console script, but works where the script isn't
+  on PATH (e.g. gating an ephemeral GPU box: `pip install llm-spendguard && python3 -m spendguard install-hook …`).
 - **Configurable receipt surfacing.** `receipts.sinks` / `SPENDGUARD_RECEIPTS_SINK` = `stderr` (default) | `stdout`
   | `file:<path>` (comma-separated) controls WHERE the auto-emitted receipt goes — a **file sink** lets any host
   without an in-chat hook (Codex, an editor, a tmux/menubar widget) display the tally by tailing the log.
