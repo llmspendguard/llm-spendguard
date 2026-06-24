@@ -198,11 +198,13 @@ ck("_project_for_cwd: basename fallback", receipt._project_for_cwd("/a/b/MyRepo"
 os.environ["SPENDGUARD_PLAN_USD"] = "200"
 tl = receipt.tally(project="lmm")
 ck("proportional: est_pct present (scoped + est exists)", tl.get("est_pct") is not None)
-ck("proportional: plan_slice set when plan price configured", tl.get("plan_slice") is not None)
+ck("proportional: explicit plan price → plan_slice set, NOT assumed", tl.get("plan_slice") is not None and tl.get("plan_assumed") is False)
 ck("render_line: shows '% of plan'", "% of plan" in receipt.render_line(tl))
 del os.environ["SPENDGUARD_PLAN_USD"]
-ck("proportional: no plan_slice without a plan price (still shows %)",
-   receipt.tally(project="lmm").get("plan_slice") is None and receipt.tally(project="lmm").get("est_pct") is not None)
+tl2 = receipt.tally(project="lmm")
+ck("proportional: defaults to assumed mix (Claude Max + Codex Pro) → plan_slice present + flagged assumed",
+   tl2.get("plan_slice") is not None and tl2.get("plan_assumed") is True and tl2.get("est_pct") is not None)
+ck("_plan_usd: default total = Claude Max + Codex/ChatGPT Pro = $300", receipt._plan_usd() == (300.0, True))
 
 # ── contextual collapse/expand: conversation repo(s) vs all repos ──
 ck("_all_projects: includes est-only repos", {"lmm", "manga2anime"}.issubset(set(receipt._all_projects())))

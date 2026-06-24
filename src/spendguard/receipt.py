@@ -164,20 +164,36 @@ def tally(project=None, conv=None) -> dict:
         gm, pm = (g.get("month") or 0), (out["est_value"].get("month") or 0)
         if gm > 0:
             out["est_pct"] = pm / gm
-            plan = _plan_usd()
+            plan, assumed = _plan_usd()
             if plan:
                 out["plan_slice"] = plan * (pm / gm)       # $ of the flat plan attributable to this repo
+                out["plan_assumed"] = assumed              # True → using the default plan mix (say so, never silent)
     return out
 
 
+# Default subscription mix — MIRRORS the server's ASSUMED (app/page.tsx): the common setup is Claude Max + a
+# Codex/ChatGPT Pro seat. Declare your real mix in config `subscription.plans` (a list of {name, usd}) or set
+# `subscription.plan_usd` / SPENDGUARD_PLAN_USD to override.
+_DEFAULT_PLANS = (("Claude Max", 100.0), ("Codex/ChatGPT Pro", 200.0))
+
+
 def _plan_usd():
-    """Monthly plan price ($) if the operator set one (config `subscription.plan_usd` / env SPENDGUARD_PLAN_USD) —
-    lets the receipt show the $ slice of the flat plan a repo is using. None → show % only."""
+    """Monthly subscription $ for the proportional plan slice → (usd, assumed). Order: explicit
+    `subscription.plan_usd`/SPENDGUARD_PLAN_USD → sum of configured `subscription.plans` → DEFAULT (Claude Max +
+    Codex/ChatGPT Pro, $300; assumed=True so the UI can say so, like the server does — never silently wrong)."""
     v = os.getenv("SPENDGUARD_PLAN_USD") or config._cfg_get("subscription", "plan_usd", None)
-    try:
-        return float(v) if v else None
-    except (TypeError, ValueError):
-        return None
+    if v:
+        try:
+            return float(v), False
+        except (TypeError, ValueError):
+            pass
+    plans = config._cfg_get("subscription", "plans", None)
+    if isinstance(plans, list) and plans:
+        try:
+            return float(sum(float(p.get("usd", 0)) for p in plans)), False
+        except Exception:
+            pass
+    return float(sum(u for _, u in _DEFAULT_PLANS)), True
 
 
 # ── rendering ─────────────────────────────────────────────────────────────--
