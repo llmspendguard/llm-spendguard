@@ -13,6 +13,18 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
   ledger, reconcile, pricing, attribution, …) — today 81%. The package number is held lower on purpose: I/O-adapter
   modules (chat→claude.ai, saas push, transcript parsers, paid-call tools) are integration-tested, not unit-tested.
 
+### Fixed
+- **Est-value buckets by REPO (git-root), not cwd basename — the attribution-quality fix.** Claude Code / Codex
+  est-value was keyed by the session's cwd *basename*, so one repo's work fragmented across its subdirs
+  (`lmm/scripts/fanout` → `fanout`) and incidental dirs leaked in — `--all` showed ~80 buckets. Now `_project_of`
+  resolves the **git-root basename** (cached, via `config.git_root_project`), matching how actual-$ is tagged; a
+  non-repo cwd falls back to its basename. Re-bucket existing data with `spendguard cc show --rebuild` /
+  `codex show --rebuild` (collapsed ~80 → ~dozen real repos in practice; `lmm` reabsorbed its subdirs).
+- **OpenAI Codex models priced (parity with the Claude family).** `gpt-5.5-codex` / `gpt-5-codex` now normalize to
+  their base GPT's published rates (codex bills at the base model — a verified alias, not a guess), so a Codex
+  session on a `-codex` model id no longer `KeyError`s into a silent $0. `price()` tries an exact PRICING entry
+  first, so a verified codex/o-series entry can still override. `-latest` is also stripped.
+
 ### Added
 - **Contextual + proportional receipt (no MCP needed).** `spendguard receipt` now defaults to **this conversation's
   repo(s)** (collapsed, via the ledger's `conv_id` + cwd) and `--all` expands to **every repo, ranked by spend** with

@@ -49,9 +49,11 @@ def load_cls():
 
 
 def _project_of(cwd):
+    """Bucket by the REPO (git-root basename), not the session's cwd — so subdirs (lmm/scripts/fanout) collapse to
+    the repo (lmm) and match how actual-$ is tagged, instead of fragmenting est-value across dozens of cwd names."""
     if not cwd:
         return "claude-code"
-    return os.path.basename(str(cwd).rstrip("/")) or "claude-code"
+    return config.git_root_project(cwd) or os.path.basename(str(cwd).rstrip("/")).lower() or "claude-code"
 
 
 def _row_cost(model, u):
@@ -418,6 +420,10 @@ def story(by="week", days=7, run=False):
 
 def main(argv=None):
     argv = argv or []
+    if "--rebuild" in argv:                        # re-bucket: clear the accumulator + watermarks, re-mine at repo level
+        st = _load_state(); st["ledger"] = {}; st["sessions"] = {}; _save_state(st)
+        print("claude-code: state reset — re-mining all transcripts with repo-level (git-root) buckets")
+        argv = [a for a in argv if a != "--rebuild"]
     sub = argv[0] if argv else "show"
     if sub == "sync":
         print("claude-code sync:", sync(dry="--dry" in argv))

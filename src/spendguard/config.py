@@ -40,6 +40,31 @@ def _cfg_get(section, key, default=None):
     return (_cfg().get(section) or {}).get(key, default)
 
 
+_GITROOT_CACHE = {}
+
+
+def git_root_project(cwd):
+    """Repo name for a cwd = the git-root basename, lowercased (so a session's SUBDIR — lmm/scripts/fanout —
+    collapses to the repo, `lmm`, instead of fragmenting into `fanout`). Matches how the gate tags actual-$ charges
+    (budget._project). Cached per dir; returns None when cwd isn't inside a git repo (caller falls back to basename)."""
+    if not cwd:
+        return None
+    key = str(cwd)
+    if key in _GITROOT_CACHE:
+        return _GITROOT_CACHE[key]
+    out = None
+    try:
+        import subprocess
+        root = subprocess.run(["git", "-C", key, "rev-parse", "--show-toplevel"],
+                              capture_output=True, text=True, timeout=2).stdout.strip()
+        if root:
+            out = os.path.basename(root).strip().lower() or None
+    except Exception:
+        out = None
+    _GITROOT_CACHE[key] = out
+    return out
+
+
 def cap():
     """Per-batch hard cap ($). env GATE_CAP → config.json caps.per_batch → 75."""
     v = os.getenv("GATE_CAP")

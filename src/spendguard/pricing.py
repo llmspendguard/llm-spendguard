@@ -173,14 +173,21 @@ def freshness(today=None):
 
 
 def normalize(model: str) -> str:
-    """'gpt-5.5-2026-04-23' / 'claude-haiku-4-5-20251001' -> base id. Strips a trailing
-    date snapshot in either -YYYY-MM-DD (OpenAI) or -YYYYMMDD (Anthropic) form."""
+    """Map a model id to its canonical priced base. Strips, in order: a trailing date snapshot (-YYYY-MM-DD OpenAI
+    or -YYYYMMDD Anthropic), a '-latest' alias, and the '-codex' coding variant. Codex variants (gpt-5.5-codex,
+    gpt-5-codex) bill at their base GPT's published token rates — OpenAI prices codex at the base model — so this
+    is a verified alias, not a guess; an explicit PRICING entry still wins (see price())."""
     if model is None:
         raise ValueError("model is None")
-    return re.sub(r"-\d{4}-\d{2}-\d{2}$|-\d{8}$", "", model.strip())
+    m = re.sub(r"-\d{4}-\d{2}-\d{2}$|-\d{8}$", "", model.strip())
+    m = re.sub(r"-latest$", "", m)
+    m = re.sub(r"-codex$", "", m)
+    return m
 
 
 def price(model: str) -> dict:
+    if model in PRICING:                          # an explicit verified entry (codex/dated/o-series) always wins
+        return PRICING[model]
     m = normalize(model)
     if m not in PRICING:
         raise KeyError(

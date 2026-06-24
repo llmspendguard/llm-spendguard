@@ -231,18 +231,10 @@ def _project_for_cwd(cwd):
         if p.exists():
             proj = (json.loads(p.read_text()).get("project") or "").strip().lower()
             if proj:
-                return proj
+                return proj                       # the repo's own configured project name wins
     except Exception:
         pass
-    try:
-        import subprocess
-        root = subprocess.run(["git", "-C", str(cwd), "rev-parse", "--show-toplevel"],
-                              capture_output=True, text=True, timeout=2).stdout.strip()
-        if root:
-            return os.path.basename(root).lower()
-    except Exception:
-        pass
-    return (os.path.basename(str(cwd).rstrip("/")) or "").lower() or None
+    return config.git_root_project(cwd) or (os.path.basename(str(cwd).rstrip("/")) or "").lower() or None
 
 
 def _k(x: Optional[float]) -> str:

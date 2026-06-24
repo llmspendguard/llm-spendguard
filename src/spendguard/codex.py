@@ -48,9 +48,11 @@ def load_cls():
 
 
 def _project_of(cwd):
+    """Bucket by the REPO (git-root basename), not the session's cwd — so subdirs collapse to the repo and match
+    how actual-$ is tagged, instead of fragmenting est-value across many cwd names."""
     if not cwd:
         return "codex"
-    return os.path.basename(str(cwd).rstrip("/")) or "codex"
+    return config.git_root_project(cwd) or os.path.basename(str(cwd).rstrip("/")).lower() or "codex"
 
 
 def _digest(path):
@@ -260,6 +262,10 @@ def show(days=None):
 
 def main(argv=None):
     argv = argv or []
+    if "--rebuild" in argv:                        # re-bucket existing sessions after the git-root _project_of change
+        st = _load_state(); st["sessions"] = {}; _save_state(st)
+        print("codex: digest cache cleared — re-mining all sessions with repo-level (git-root) buckets")
+        argv = [a for a in argv if a != "--rebuild"]
     sub = argv[0] if argv else "show"
     if sub == "sync":
         print("codex sync:", sync(dry="--dry" in argv))
