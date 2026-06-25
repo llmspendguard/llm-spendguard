@@ -446,6 +446,70 @@ def remote_llm_excerpts(tdir=None, max_sessions=None, window=600):
     return out
 
 
+def session_chunks(tdir=None, max_chars=14000, max_sessions=None, sids=None, since=None):
+    """Per-session CHUNKS of the substantive transcript (assistant text + tool OUTPUTS — where the work, the LLM-call
+    invocations, and their printed usage/results live), NOT regex-pre-filtered. This is the input to the AGENTIC
+    realtime reconstruction: the caged LLM READS the conversation and decides what's a realtime run + its tokens.
+    Regex pre-selection (remote_llm_excerpts) is too naive — it hides the lmm classification / co-occurrence / stats
+    sessions that did the BULK of the realtime work (Opus + GPT-5.5 too, not just haiku/sonnet). Mechanical content
+    selection (tool outputs + text, capped) only BOUNDS the input; the model still does all the finding. Yields
+    (sid, chunk)."""
+    tdir = tdir or _DEFAULT_TDIR
+    files = sorted(glob.glob(os.path.join(tdir, "**", "*.jsonl"), recursive=True)) if os.path.isdir(tdir) else [tdir]
+    n = 0
+    for path in files:
+        sid = os.path.splitext(os.path.basename(path))[0]
+        if sids is not None and sid not in sids:
+            continue
+        buf = []
+        try:
+            for ln in open(path, errors="ignore"):
+                ln = ln.strip()
+                if not ln:
+                    continue
+                try:
+                    obj = json.loads(ln)
+                except Exception:
+                    continue
+                if since and (obj.get("timestamp") or "")[:10] < since:
+                    continue                                     # time-window: skip messages older than `since` (YYYY-MM-DD)
+                # RICHER than _text_of: include tool_use COMMANDS/scripts (the python/curl that MADE the API calls —
+                # the "not shown messages" with the call + per-item prompt) AND tool_result OUTPUTS (printed usage /
+                # scale / results) AND assistant text (the work narrative + item counts). All three are needed for the
+                # LLM to find a realtime run and multiply per-call tokens × loop scale.
+                m = obj.get("message") or {}
+                cc = m.get("content")
+                parts = []
+                if isinstance(cc, str):
+                    parts.append(cc)
+                elif isinstance(cc, list):
+                    for b in cc:
+                        if not isinstance(b, dict):
+                            continue
+                        ty = b.get("type")
+                        if ty == "text" and b.get("text"):
+                            parts.append(b["text"])
+                        elif ty == "tool_use":
+                            inp = b.get("input") or {}
+                            parts.append((inp.get("command") or inp.get("code") or inp.get("content") or json.dumps(inp))[:6000])
+                        elif ty == "tool_result":
+                            tc = b.get("content")
+                            parts.append(tc if isinstance(tc, str) else (" ".join(x.get("text", "") for x in tc if isinstance(x, dict)) if isinstance(tc, list) else ""))
+                t = "\n".join(p for p in parts if p)
+                if t and len(t) > 30:
+                    buf.append(" ".join(t.split())[:6000])       # cap any single huge paste so one read can't dominate
+        except Exception:
+            continue
+        blob = "\n".join(buf)
+        if len(blob) < 200:
+            continue
+        for i in range(0, len(blob), max_chars):
+            yield sid, blob[i:i + max_chars]
+        n += 1
+        if max_sessions and n >= max_sessions:
+            break
+
+
 _RT_USAGE = re.compile(
     r"(\d{2,8})\s*in\s*/\s*(\d{1,8})\s*out"                       # "276 in / 154 out"
     r"|input_tokens['\"]?\s*[:=]\s*(\d+)[^\n]{0,60}?output_tokens['\"]?\s*[:=]\s*(\d+)", re.I)

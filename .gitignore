@@ -39,3 +39,4 @@ coverage.xml
 
 # machine-local SaaS connection (org/team/key) — never commit
 .spendguard.json
+scripts/reconstruct/realtime_find_batch_state.*

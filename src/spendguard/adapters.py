@@ -62,7 +62,13 @@ def call(model, prompt, max_tokens=512, system=None):
             from openai import OpenAI
             c = OpenAI(api_key=key, base_url=spec["base_url"])
             msgs = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": prompt}]
-            r = c.chat.completions.create(model=raw, messages=msgs, max_tokens=max_tokens)
+            try:                                              # gpt-5+ require max_completion_tokens; older models take max_tokens
+                r = c.chat.completions.create(model=raw, messages=msgs, max_completion_tokens=max_tokens)
+            except Exception as e:
+                if "max_completion_tokens" in str(e) or "max_tokens" in str(e):
+                    r = c.chat.completions.create(model=raw, messages=msgs, max_tokens=max_tokens)
+                else:
+                    raise
             text = r.choices[0].message.content
             in_tok, out_tok = r.usage.prompt_tokens, r.usage.completion_tokens
         dt = time.time() - t0
