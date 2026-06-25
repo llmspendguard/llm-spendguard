@@ -1,12 +1,20 @@
 # SpendLedger — Schema & Interface (review)
 
 The single in-process gateway to spend data (a context/data provider; MCP-style, **not** a server). **No consumer
-writes raw SQL** — the class owns the schema and all queries/joins, returns dicts (JSON columns deserialised), and
-routes the agentic *attribution* through one path. Deterministic SQL for queries; the LLM is used **only** for
-attribution (meaning), and that determination is **recorded** so re-runs read it (repeatable, not re-guessed).
+writes raw SQL** — the class owns the schema and all queries/joins, returns dicts, and routes the agentic
+*attribution* through one path. Deterministic SQL for queries; the LLM is used **only** for attribution (meaning),
+**recorded** so re-runs read it (repeatable).
 
-**Status:** Steps 1–2 built + validated (12/12 tests, `tests/test_spend_ledger.py`). Steps 3–5 planned.
-File: `src/spendguard/ledger.py`. DB: `~/.spendguard/spend.db` (shared with `seg_attribution`, `calls`, `charges`).
+**Built to financial-systems standards:**
+- **Money = integer micro-USD** (`*_micros`, ×1e6) — never float; sums are exact.
+- **Time = UTC canonical** (`ts_utc`) + source-local (`tz`/`local_datetime`); accounting `day`/`period` derived in the
+  **reporting tz** (`SPENDGUARD_REPORTING_TZ`); **transaction date** (`occurred_at`) ≠ **posting date** (`recorded_at`).
+- **Append-only + correct-by-reversal** — never UPDATE a fact; `status` / `revision` / `reverses_id` / `superseded_by`.
+- **Tamper-evident** — `row_hash = sha256(content + prev_hash)` chain; `verify_chain()`.
+- **Self-contained record + link-ids** — snapshots cost/attribution/rates + `seg_id`/`call_id`/`conv_id`/`batch_id`/`model`.
+
+**Status:** v3 schema built + validated (**18/18** tests, `tests/test_spend_ledger.py`). Attribution engine (Step 3) +
+migration + consumer hookup planned. File: `src/spendguard/ledger.py`. DB: `~/.spendguard/spend.db`.
 
 ---
 
@@ -23,31 +31,44 @@ File: `src/spendguard/ledger.py`. DB: `~/.spendguard/spend.db` (shared with `seg
 | `source` | TEXT | `gate` \| `reconstruction` \| `batch-api` \| `gpu` \| `est-chat` |
 | `content_hash` | TEXT | content fingerprint (from `seg_attribution`) |
 
-### Time
+### Time — UTC canonical; accounting day/period in the reporting tz
 | column | type | purpose |
 |---|---|---|
-| `ts`, `day` | TEXT | event timestamp / date |
-| `window_start`, `window_end` | TEXT | range for a reconstructed run that spans time |
-| `eligibility_window` | TEXT | the period this spend is eligible to (**per-period split**) |
+| `ts_utc` | TEXT | canonical **UTC**, tz-aware ISO-8601 — ordering + math |
+| `occurred_at` | TEXT | **transaction date** — when the spend happened (UTC) |
+| `recorded_at` | TEXT | **posting date** — when we booked it (UTC) |
+| `tz`, `local_datetime` | TEXT | source zone + wall-clock (date-boundary context) |
+| `day`, `period` | TEXT | accounting day (YYYY-MM-DD) / period (YYYY-MM) in the **reporting tz** |
+| `eligibility_window`, `window_start/end` | TEXT | period eligibility + reconstructed-run range |
 
-### Cost — separate columns (the core fix)
+### Cost — integer **micro-USD**, separate columns (the core fix)
 | column | type | purpose |
 |---|---|---|
-| `batch_usd` | REAL | Batch-API spend |
-| `realtime_usd` | REAL | realtime/per-item spend |
-| `est_chat_usd` | REAL | Claude Code/Codex plan usage (`billed=0`) — the **est-value** axis |
-| `remote_compute_usd` | REAL | remote compute (vast.ai GPU) |
-| `subscription_usd` | REAL | flat plan fee (Max/Pro), attributed proportionally by plan-usage |
-| `cost_type` | TEXT | `batch`\|`realtime`\|`est_chat`\|`remote_compute`\|`subscription` — categorical label, **filled as applicable** |
-| `billed` | INT | 1 for real $; 0 for est_chat |
-| `is_meta` | INT | spendguard's OWN spend (usage-pulls/reconstruction) — **excluded from workload rollups** |
-| `cost_basis` | TEXT | `printed` \| `estimated` \| `gate-measured` \| `provider-reconciled` (**forensic confidence**) |
+| `batch_micros` | INT | Batch-API spend (micro-USD) |
+| `realtime_micros` | INT | realtime/per-item |
+| `est_chat_micros` | INT | Claude Code/Codex plan usage — the **est-value** axis (`billed=0`) |
+| `remote_compute_micros` | INT | vast.ai GPU |
+| `subscription_micros` | INT | flat plan fee (Max/Pro), attributed proportionally |
+| `currency` | TEXT | default `USD` (+ `fx_rate`/`base_micros` for multi-currency) |
+| `cost_type` | TEXT | `batch`\|`realtime`\|`est_chat`\|`remote_compute`\|`subscription` — filled as applicable |
+| `billed` | INT | 1 real $; 0 est_chat |
+| `is_meta` | INT | spendguard's OWN spend — **excluded from workload rollups** |
+| `cost_basis` | TEXT | `printed`\|`estimated`\|`gate-measured`\|`provider-reconciled` (**forensic confidence**) |
 | `amount_confidence` | REAL | 0.0–1.0 |
-| `rate_in`, `rate_out` | REAL | $/1M-tokens **snapshotted from `pricing.price(model)`** (realtime `in_`/`out` vs `batch_in`/`batch_out`) → `cost = tokens × rate` is auditable |
+| `rate_in`, `rate_out` | REAL | $/1M-tokens snapshot from `pricing.price(model)` → `cost = tokens × rate` auditable |
 
-> **A row carries its cost in exactly one column.** `billed = batch + realtime + remote_compute + subscription`
-> (REAL $); `est_value = est_chat` — the two axes are **never summed**. (`rollup` sums every `COST_COL` generically,
-> so adding a column can't drift the total.)
+> **Money is integer micros — never float** (summing thousands of sub-cent amounts is exact). `billed = batch +
+> realtime + remote_compute + subscription`; `est_value = est_chat` — never summed. `rollup` returns exact micros +
+> a `*_usd` display value.
+
+### Lifecycle · integrity · provenance · billing
+| group | columns |
+|---|---|
+| **lifecycle** (append-only) | `status` (posted\|reconciled\|superseded\|reversed\|void), `revision`, `reverses_id`, `superseded_by` |
+| **integrity** (tamper-evident) | `prev_hash`, `row_hash` (= `sha256(content + prev_hash)`; `verify_chain()`) |
+| **reconciliation/close** | `reconciled`, `reconciled_vs`, `reconciled_at`, `reconciliation_id`, `gap_flag`, `period_closed`, `recon_marker` |
+| **provenance** | `recorded_by`, `ingest_version`, `schema_version`, `evidence_uri` |
+| **billing / multi-entity** | `account_id`, `customer_id`, `cost_center`, `engagement`, `billable`, `invoice_id` |
 
 ### Provider / model
 | column | type | purpose |
@@ -148,6 +169,7 @@ SpendLedger(db_path=None)          # opens the canonical db (config.db_path()), 
 | `query(since=, until=, where=, limit=) -> list[dict]` | events | `where` = exact-match column filters; `since/until` filter `day` |
 | `rollup(group_by=, since=, until=, where=) -> dict` | breakdown | the 4-column split + `billed` + `est_value`; `group_by=None` → totals; `"org"` → per-org |
 | `by_repo(repo, since=, until=) -> dict` | breakdown | repo-scoped rollup — **charm = $0 remote** (a filter, can't leak) |
+| `verify_chain() -> (ok, bad_id)` | bool + id | recomputes the hash chain; proves no row was altered (tamper-evidence) |
 
 ```python
 # record (a reconstructed realtime run)
@@ -156,9 +178,10 @@ led.record({"source":"reconstruction","kind":"realtime","usd":220.0,
             "org":"Healiom","team":"lmm","projects":["lmm"],"cwd":"~/Documents/claude/lmm","repo":"lmm",
             "attr_what":"loinc stem pass","attr_why":"cwd=lmm","attr_how":"cwd-match"})
 
-led.rollup()       # {batch_usd, realtime_usd, est_chat_usd, remote_compute_usd, subscription_usd, billed, est_value, n}
-led.rollup("org")                  # {"Healiom": {...}, "Ensight": {...}}
-led.by_repo("charm")               # {... remote_compute_usd: 0.0, billed: 26.0 ...}
+led.rollup()       # {<cost>_micros, <cost>_usd, billed_micros, billed_usd, est_value_micros, est_value_usd, n}
+led.rollup("org")                  # {"Healiom": {...}, "Ensight": {...}}  (is_meta excluded unless include_meta=True)
+led.by_repo("charm")               # {... remote_compute_usd: 0.0, billed_usd: 26.0 ...}
+led.verify_chain()                 # (True, None) — tamper-evidence over the whole ledger
 ```
 
 ### Planned (Steps 3–5)
@@ -183,3 +206,7 @@ led.by_repo("charm")               # {... remote_compute_usd: 0.0, billed: 26.0 
 6. **Attribution is recorded with its reasoning** — every $ has `attr_what/why/how`, and a re-run reads the
    determination (deterministic) rather than re-asking the LLM.
 7. **No raw SQL outside `SpendLedger`** (to be enforced by a CI guard in Step 5).
+8. **Money is integer micros — exact** — `rollup` sums micros (no float drift); `*_usd` is a display conversion.
+9. **Time is UTC; transaction ≠ posting** — `occurred_at` drives the accounting `day`/`period` (reporting tz); `recorded_at` is the booking time.
+10. **Append-only + correct-by-reversal** — facts are never UPDATEd; corrections are a reversal/supersede + new row.
+11. **Tamper-evident** — `verify_chain()` recomputes the `row_hash` chain; any altered row is detected.
