@@ -225,33 +225,15 @@ def reconcile_realtime(since=None):
     import os, json
     since = since or datetime.date.today().replace(day=1).isoformat()
 
-    # ── ADMIN-ORACLE PATH (dev): provider realtime truth, timing-matched per project, recorded ──
-    if os.environ.get("SPENDGUARD_ADMIN_ORACLE"):
-        try:
-            from . import realtime_oracle
-            rows, meta = realtime_oracle.by_project_day(since)
-            T = float(meta.get("ours_total") or 0.0)                 # OUR realtime truth (timing-matched)
-            if T > 0 and rows:
-                budget.clear_reconciled(since=since, model=_RT_ORACLE_MARKER)
-                budget.clear_reconciled(since=since, model=_RT_MARKER)   # oracle supersedes the log-floor markers
-                # gate-LIVE realtime (real recorded calls, non-marker) is a SUBSET of the oracle truth → record only the
-                # GAP (truth − gate-live), distributed by the oracle's per-project weights, so total == truth (no double).
-                G = sum(budget.by_provider_day(kind="realtime", since=since).values())
-                scale = max(0.0, T - G) / T
-                imported, n = 0.0, 0
-                for r in rows:
-                    amt = round(r["cost"] * scale, 6)
-                    if amt > 0.005:
-                        budget.record_reconciled(r["day"], r["provider"], amt, project=r["project"],
-                                                 kind="realtime", model=_RT_ORACLE_MARKER)
-                        imported += amt
-                        n += 1
-                return dict(since=since, source="admin-oracle", truth=round(T, 2), gate_live=round(G, 2),
-                            imported=round(imported, 2), rows=n, by_org=meta.get("by_org"), other_org=meta.get("other_org"))
-        except Exception as e:
-            pass   # admin oracle unreachable → fall through to the gate-log floor (never break the reconcile)
+    # ADMIN KEYS ARE DEV-ASSIST ONLY — they can NEVER be part of the main path. The admin-oracle-into-ledger block that
+    # used to live HERE (record provider admin-usage truth as realtime spend) is DELETED on purpose: it made admin a
+    # production reconcile input, the exact thing we forbid. The realtime axis is reconstructed AGENTICALLY from the
+    # conversations — `resources.reconstruct_remote_llm` reads each session's recorded token records, classifies every
+    # run (if it isn't batch it's realtime), prices the in/out tokens via pricing.py, attributes via the same
+    # session_classification as batch — and is recorded by the CORE reconcile as its own marker. Admin appears ONLY in a
+    # separate DEV cross-check (`scripts/audit/…`) that INDICATES the reconstruction's gap; it never writes the ledger.
 
-    # ── DEFAULT PATH (no admin key): import the gate's realtime_log as the floor ──
+    # ── gate realtime_log floor (forward inline true-up; no admin, no network) ──
     # CRITICAL: do NOT touch _RT_ORACLE_MARKER here. Those rows are the historical realtime truth, RECORDED ONCE by a
     # dev oracle run; the daily scheduler runs this path (no admin key) and must PERSIST them, not wipe them. The
     # RT_LOG gap recorded below is ~0 once the oracle has run (log ≈ gate-live), so the two coexist without double.
