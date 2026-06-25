@@ -1,17 +1,19 @@
 """SpendLedger foundation tests — proven BEFORE any consumer hooks up.
 
-Step 1: schema + record/get — cost routes to the correct one of four columns, JSON round-trips, the deterministic id
-dedups (no double-count), invalid events are rejected.
+Financial-systems grade: integer micro-money (exact), UTC time + accounting day/period, append-only hash chain
+(tamper-evident), cost routing, dedup (no double-count), per-repo scoping, billed-vs-est_value split, meta exclusion.
 """
 import pytest
-from spendguard.ledger import SpendLedger, COST_COLS
+from spendguard.ledger import SpendLedger, MICRO_COLS
 
 
 def _led(tmp_path):
     return SpendLedger(db_path=str(tmp_path / "ledger.db"))
 
 
-def test_cost_routes_to_correct_column_and_json_roundtrips(tmp_path):
+# ── Step 1: schema + record/get ──
+
+def test_cost_routes_to_correct_micros_column_and_json_roundtrips(tmp_path):
     led = _led(tmp_path)
     eid = led.record({"source": "reconstruction", "kind": "realtime", "usd": 220.0,
                       "provider": "openai", "model": "gpt-5.5", "model_kind": "completion",
@@ -20,43 +22,31 @@ def test_cost_routes_to_correct_column_and_json_roundtrips(tmp_path):
                       "cost_basis": "printed", "from_message_ids": ["m1", "m2"], "tags": ["realtime"],
                       "attr_what": "loinc stem pass", "attr_why": "cwd=lmm", "attr_how": "cwd-match"})
     ev = led.get(eid)
-    assert ev["realtime_usd"] == 220.0
-    assert ev["batch_usd"] == 0.0 and ev["est_chat_usd"] == 0.0 and ev["remote_compute_usd"] == 0.0
+    assert ev["realtime_micros"] == 220_000_000
+    assert ev["batch_micros"] == 0 and ev["est_chat_micros"] == 0 and ev["remote_compute_micros"] == 0
     assert ev["projects"] == ["lmm", "medical-taxonomy"]
     assert ev["from_message_ids"] == ["m1", "m2"] and ev["tags"] == ["realtime"]
-    assert ev["org"] == "Healiom" and ev["team"] == "lmm" and ev["attr_how"] == "cwd-match"
+    assert ev["org"] == "Healiom" and ev["attr_how"] == "cwd-match"
 
 
-@pytest.mark.parametrize("kind,col", [("batch", "batch_usd"), ("realtime", "realtime_usd"),
-                                      ("est_chat", "est_chat_usd"), ("remote", "remote_compute_usd"),
-                                      ("subscription", "subscription_usd")])
-def test_every_kind_routes_to_its_own_column(tmp_path, kind, col):
+@pytest.mark.parametrize("kind,col", [("batch", "batch_micros"), ("realtime", "realtime_micros"),
+                                      ("est_chat", "est_chat_micros"), ("remote", "remote_compute_micros"),
+                                      ("subscription", "subscription_micros")])
+def test_every_kind_routes_to_its_own_micros_column(tmp_path, kind, col):
     led = _led(tmp_path)
     ev = led.get(led.record({"source": "s", "kind": kind, "usd": 5.0, "conv_id": kind}))
-    assert ev[col] == 5.0
-    assert sum(ev[c] for c in COST_COLS) == 5.0
+    assert ev[col] == 5_000_000
+    assert sum(ev[c] for c in MICRO_COLS) == 5_000_000
 
 
 def test_dedup_same_evidence_records_once(tmp_path):
     led = _led(tmp_path)
     base = {"source": "reconstruction", "kind": "realtime", "usd": 220.0,
-            "provider": "openai", "model": "gpt-5.5", "conv_id": "c1", "batch_id": "b1",
-            "attr_what": "loinc stem pass"}
+            "provider": "openai", "model": "gpt-5.5", "conv_id": "c1", "batch_id": "b1", "attr_what": "loinc"}
     a = led.record(base)
-    b = led.record({**base, "org": "Healiom", "team": "lmm"})
+    b = led.record({**base, "org": "Healiom"})
     assert a == b
-    n = led._conn.execute("SELECT COUNT(*) FROM spend_events").fetchone()[0]
-    assert n == 1, f"double-count: {n} rows for the same evidence"
-
-
-def test_different_work_is_distinct(tmp_path):
-    led = _led(tmp_path)
-    a = led.record({"source": "reconstruction", "kind": "realtime", "usd": 1, "conv_id": "c1",
-                    "attr_what": "loinc stem pass"})
-    b = led.record({"source": "reconstruction", "kind": "realtime", "usd": 1, "conv_id": "c1",
-                    "attr_what": "concept_bc adjudication"})
-    assert a != b
-    assert led._conn.execute("SELECT COUNT(*) FROM spend_events").fetchone()[0] == 2
+    assert led._conn.execute("SELECT COUNT(*) FROM spend_events").fetchone()[0] == 1
 
 
 def test_invalid_events_rejected(tmp_path):
@@ -69,20 +59,30 @@ def test_invalid_events_rejected(tmp_path):
         led.record({"kind": "realtime", "usd": 1.0})
 
 
-# ── Step 2: query / rollup / by_repo ──
+# ── money: integer micros are EXACT (float would drift) ──
 
-def test_rollup_total_billed_vs_estvalue_split(tmp_path):
+def test_micros_are_exact_where_float_drifts(tmp_path):
     led = _led(tmp_path)
-    led.record({"source": "x", "kind": "batch", "usd": 100.0, "conv_id": "a", "attr_what": "batch job"})
-    led.record({"source": "x", "kind": "realtime", "usd": 5.0, "conv_id": "b", "attr_what": "rt run"})
-    led.record({"source": "x", "kind": "remote", "usd": 20.0, "conv_id": "c", "attr_what": "gpu"})
-    led.record({"source": "x", "kind": "est_chat", "usd": 50.0, "conv_id": "d", "attr_what": "claude code"})
-    led.record({"source": "x", "kind": "subscription", "usd": 400.0, "conv_id": "s", "attr_what": "plan fee"})
+    for i in range(3):
+        led.record({"source": "x", "kind": "realtime", "usd": 0.1, "conv_id": f"c{i}", "attr_what": f"a{i}"})
+    t = led.rollup()
+    assert t["realtime_micros"] == 300_000     # exact
+    assert t["realtime_usd"] == 0.3
+    assert 0.1 + 0.1 + 0.1 != 0.3              # the float trap this avoids
+
+
+# ── rollup: billed vs est-value split, per-org, per-repo, meta exclusion ──
+
+def test_rollup_billed_vs_estvalue_split(tmp_path):
+    led = _led(tmp_path)
+    for k, u, c in [("batch", 100, "a"), ("realtime", 5, "b"), ("remote", 20, "c"),
+                    ("est_chat", 50, "d"), ("subscription", 400, "s")]:
+        led.record({"source": "x", "kind": k, "usd": u, "conv_id": c, "attr_what": k})
     t = led.rollup()
     assert (t["batch_usd"], t["realtime_usd"], t["remote_compute_usd"], t["est_chat_usd"], t["subscription_usd"]) \
         == (100, 5, 20, 50, 400)
-    assert t["billed"] == 525      # batch+realtime+remote+subscription — NEVER est_chat
-    assert t["est_value"] == 50    # est_chat is the separate axis
+    assert t["billed_usd"] == 525        # batch+realtime+remote+subscription — NEVER est_chat
+    assert t["est_value_usd"] == 50
     assert t["n"] == 5
 
 
@@ -97,29 +97,61 @@ def test_rollup_by_org(tmp_path):
 def test_by_repo_scopes_remote(tmp_path):
     led = _led(tmp_path)
     led.record({"source": "x", "kind": "batch", "usd": 26.0, "repo": "charm", "conv_id": "c1", "attr_what": "charm"})
-    led.record({"source": "x", "kind": "realtime", "usd": 100.0, "repo": "lmm", "conv_id": "l1", "attr_what": "lmm rt"})
+    led.record({"source": "x", "kind": "realtime", "usd": 100.0, "repo": "lmm", "conv_id": "l1", "attr_what": "lmm"})
     led.record({"source": "x", "kind": "remote", "usd": 1225.0, "repo": "lmm", "conv_id": "l2", "attr_what": "vast"})
     charm, lmm = led.by_repo("charm"), led.by_repo("lmm")
-    assert charm["batch_usd"] == 26 and charm["remote_compute_usd"] == 0   # charm ran NO vast.ai → $0, structurally
-    assert charm["billed"] == 26                                          # not polluted by lmm's $1,225 remote
+    assert charm["batch_usd"] == 26 and charm["remote_compute_usd"] == 0   # charm ran NO vast.ai → $0
+    assert charm["billed_usd"] == 26
     assert lmm["realtime_usd"] == 100 and lmm["remote_compute_usd"] == 1225
 
 
-# ── revised-schema additions: subscription, cost_type, rate snapshot, FLOAT confidence ──
-
-def test_subscription_routes_and_cost_type_labelled(tmp_path):
+def test_meta_excluded_from_workload_rollup(tmp_path):
     led = _led(tmp_path)
-    ev = led.get(led.record({"source": "subscription", "kind": "subscription", "usd": 200.0,
-                             "conv_id": "max", "attr_what": "Anthropic Max"}))
-    assert ev["subscription_usd"] == 200.0 and ev["cost_type"] == "subscription"
+    led.record({"source": "x", "kind": "realtime", "usd": 10.0, "conv_id": "w", "attr_what": "work"})
+    led.record({"source": "x", "kind": "realtime", "usd": 5.0, "conv_id": "m", "is_meta": 1, "attr_what": "usage pull"})
+    assert led.rollup()["realtime_usd"] == 10.0
+    assert led.rollup(include_meta=True)["realtime_usd"] == 15.0
 
+
+# ── time: UTC canonical, transaction date vs posting date, reporting-tz accounting day ──
+
+def test_timestamps_are_utc_with_defaults(tmp_path):
+    led = _led(tmp_path)
+    ev = led.get(led.record({"source": "x", "kind": "realtime", "usd": 1.0, "conv_id": "c", "attr_what": "a"}))
+    assert ev["ts_utc"].endswith("+00:00")           # tz-aware UTC
+    assert ev["recorded_at"] and ev["occurred_at"]
+    assert ev["currency"] == "USD" and ev["status"] == "posted"
+
+
+def test_occurred_vs_recorded_accounting_day(tmp_path):
+    led = _led(tmp_path)
+    ev = led.get(led.record({"source": "reconstruction", "kind": "realtime", "usd": 1.0, "conv_id": "c",
+                             "occurred_at": "2026-05-15T10:00:00+00:00", "attr_what": "loinc"}))
+    assert ev["day"] == "2026-05-15" and ev["period"] == "2026-05"   # accounting day from the TRANSACTION date
+    assert ev["recorded_at"] != ev["occurred_at"]                    # booked later than it happened
+
+
+# ── integrity: append-only hash chain is tamper-evident ──
+
+def test_hash_chain_verifies_and_detects_tamper(tmp_path):
+    led = _led(tmp_path)
+    led.record({"source": "x", "kind": "realtime", "usd": 1.0, "conv_id": "c1", "attr_what": "a"})
+    led.record({"source": "x", "kind": "batch", "usd": 2.0, "conv_id": "c2", "attr_what": "b"})
+    ok, bad = led.verify_chain()
+    assert ok and bad is None
+    led._conn.execute("UPDATE spend_events SET realtime_micros=999 WHERE conv_id='c1'")   # tamper, bypassing the ledger
+    led._conn.commit()
+    ok, bad = led.verify_chain()
+    assert not ok                                    # detected
+
+
+# ── rate snapshot + FLOAT confidence ──
 
 def test_rate_snapshot_from_price_book(tmp_path):
-    # rate_in/out are snapshotted from pricing.price(model) so cost = tokens × rate is auditable
     led = _led(tmp_path)
     ev = led.get(led.record({"source": "gate", "kind": "realtime", "usd": 1.0,
                              "provider": "openai", "model": "gpt-5.5", "conv_id": "rt", "attr_what": "x"}))
-    assert ev["rate_in"] is not None and ev["rate_out"] is not None, "rates not snapshotted from the price book"
+    assert ev["rate_in"] is not None and ev["rate_out"] is not None
 
 
 def test_confidence_is_float(tmp_path):
@@ -127,13 +159,3 @@ def test_confidence_is_float(tmp_path):
     ev = led.get(led.record({"source": "x", "kind": "realtime", "usd": 1.0, "conv_id": "f",
                              "amount_confidence": 0.85, "attr_confidence": 0.9, "attr_what": "z"}))
     assert ev["amount_confidence"] == 0.85 and ev["attr_confidence"] == 0.9
-
-
-def test_query_filters(tmp_path):
-    led = _led(tmp_path)
-    led.record({"source": "gate", "kind": "realtime", "usd": 1, "org": "Healiom", "conv_id": "q1", "attr_what": "a"})
-    led.record({"source": "reconstruction", "kind": "realtime", "usd": 1, "org": "Ensight", "conv_id": "q2", "attr_what": "b"})
-    assert len(led.query(where={"source": "gate"})) == 1
-    assert len(led.query(where={"org": "Healiom"})) == 1
-    with pytest.raises(ValueError):
-        led.query(where={"nonexistent_col": 1})

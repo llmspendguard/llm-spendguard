@@ -2,14 +2,19 @@
 
 Every read/write of spend goes through this class. No consumer writes raw SQL against `spend_events` — the class owns
 the schema and ALL queries/joins, returns typed dicts (JSON columns deserialised), and routes the agentic ATTRIBUTION
-through one path so every event is attributed + recorded the same way. Deterministic SQL for queries; the LLM is used
-ONLY for attribution (meaning), and that determination is RECORDED so re-runs read it (repeatable, not re-guessed).
+through one path. Deterministic SQL for queries; the LLM is used ONLY for attribution (meaning), recorded so re-runs
+read it (repeatable).
 
-ONE forensic row per spend EVENT. The four cost types are SEPARATE columns (batch / realtime / est_chat / remote) so a
-rollup is `SUM(col)` — never a leaky `GROUP BY kind`. Identity + lineage + the attribution audit make every $ explainable.
-
-Built foundation-first: schema → SCRUD → queries → attribution, each reviewed/tested/validated before any consumer
-hooks up. Enforced by tests/test_ledger.py (round-trip, dedup, cost-routing) and a guard against raw SQL elsewhere.
+Designed to financial-systems standards:
+- **Money is integer micro-units** of `currency` (`*_micros`, ×1e6) — never float. Sums are exact.
+- **Time** is UTC-canonical (`ts_utc`) with source-local (`tz`/`local_datetime`); the accounting `day`/`period` are
+  derived in the REPORTING tz (`SPENDGUARD_REPORTING_TZ`, default UTC). Transaction date (`occurred_at`) is separate
+  from posting date (`recorded_at`).
+- **Append-only + correct-by-reversal** — never UPDATE a financial fact; supersede or post a reversal (`status`,
+  `reverses_id`, `revision`).
+- **Tamper-evident** — each row carries `row_hash = sha256(content + prev_hash)` (a hash chain; `verify_chain()`).
+- **Self-contained record + link-ids** — snapshots cost/attribution/rates, plus `seg_id`/`call_id`/`conv_id`/
+  `batch_id`/`model` links to source evidence.
 """
 import os
 import json
@@ -18,33 +23,43 @@ import hashlib
 import datetime
 from . import config
 
-# ── the forensic schema — explicit + reviewable ──────────────────────────────────────────────────────
+SCHEMA_VERSION = 3
+
 _DDL = """
 CREATE TABLE IF NOT EXISTS spend_events (
   -- identity / dedup
   id            TEXT PRIMARY KEY,          -- deterministic evidence hash (re-record = no-op)
   dedup_key     TEXT,                      -- natural key (message-id / batch+custom_id) — kills double-count
-  source        TEXT,                      -- gate | reconstruction | batch-api | gpu | est-chat
+  source        TEXT,                      -- gate | reconstruction | batch-api | gpu | est-chat | subscription
   content_hash  TEXT,
-  -- time
-  ts            TEXT,
-  day           TEXT,
+  schema_version INTEGER DEFAULT 3,
+  -- time: UTC canonical + source-local; accounting day/period derived in the reporting tz
+  ts_utc        TEXT,                      -- canonical UTC, tz-aware ISO-8601 (…+00:00) — ordering + math
+  occurred_at   TEXT,                      -- TRANSACTION date: when the spend HAPPENED (UTC)
+  recorded_at   TEXT,                      -- POSTING date: when we booked it (UTC)
+  tz            TEXT,                      -- source zone (e.g. America/Los_Angeles)
+  local_datetime TEXT,                     -- wall-clock at the source
+  day           TEXT,                      -- accounting day (YYYY-MM-DD) in the reporting tz
+  period        TEXT,                      -- accounting period (YYYY-MM) in the reporting tz
+  eligibility_window TEXT,                 -- the period this spend is eligible to
   window_start  TEXT,
   window_end    TEXT,
-  eligibility_window TEXT,                 -- the period this spend is eligible to (per-period split)
-  -- cost: separate columns (a row has ONE non-zero; rollup = SUM(col))
-  batch_usd          REAL DEFAULT 0,
-  realtime_usd       REAL DEFAULT 0,
-  est_chat_usd       REAL DEFAULT 0,       -- Claude Code/Codex plan usage (the est-value axis; billed=0)
-  remote_compute_usd REAL DEFAULT 0,       -- remote compute (vast.ai GPU)
-  subscription_usd   REAL DEFAULT 0,       -- flat plan fee (Max/Pro), attributed proportionally by plan-usage
-  cost_type          TEXT,                 -- batch|realtime|est_chat|remote_compute|subscription (categorical, filled as applicable)
-  billed             INTEGER DEFAULT 1,
-  is_meta            INTEGER DEFAULT 0,    -- spendguard's OWN spend (usage-pulls/reconstruction) — excluded from workload rollups
-  cost_basis         TEXT,                 -- printed | estimated | gate-measured | provider-reconciled
-  amount_confidence  REAL,                 -- 0.0–1.0
-  rate_in            REAL,                 -- $/token input, snapshotted from pricing.price(model) — makes cost=tokens×rate auditable
-  rate_out           REAL,                 -- $/token output
+  -- money: INTEGER micro-units of `currency` (never float; exact sums)
+  currency      TEXT DEFAULT 'USD',
+  batch_micros          INTEGER DEFAULT 0,
+  realtime_micros       INTEGER DEFAULT 0,
+  est_chat_micros       INTEGER DEFAULT 0, -- Claude Code/Codex plan usage (est-value axis; billed=0)
+  remote_compute_micros INTEGER DEFAULT 0, -- vast.ai GPU
+  subscription_micros   INTEGER DEFAULT 0, -- flat plan fee (Max/Pro), attributed proportionally
+  cost_type     TEXT,                      -- batch|realtime|est_chat|remote_compute|subscription (filled as applicable)
+  billed        INTEGER DEFAULT 1,
+  is_meta       INTEGER DEFAULT 0,         -- spendguard's OWN spend — excluded from workload rollups
+  cost_basis    TEXT,                      -- printed | estimated | gate-measured | provider-reconciled
+  amount_confidence REAL,                  -- 0.0–1.0
+  rate_in       REAL,                      -- $/1M tokens (price-book snapshot) — cost = tokens×rate auditable
+  rate_out      REAL,
+  fx_rate       REAL,                      -- to base currency (1.0 for USD)
+  base_micros   INTEGER,                   -- amount in base currency micros
   -- provider / model
   provider      TEXT,
   model         TEXT,
@@ -65,12 +80,19 @@ CREATE TABLE IF NOT EXISTS spend_events (
   projects      TEXT,                      -- JSON array (multi-project)
   project_primary TEXT,
   member_ref    TEXT,
-  -- lineage / evidence
+  -- billing / multi-entity
+  account_id    TEXT,
+  customer_id   TEXT,
+  cost_center   TEXT,
+  engagement    TEXT,
+  billable      INTEGER DEFAULT 0,
+  invoice_id    TEXT,
+  -- lineage / evidence / links
   conv_id       TEXT,
-  seg_id        TEXT,                       -- link → seg_attribution (the determination)
-  call_id       TEXT,                       -- link → calls (the gate's per-call record)
+  seg_id        TEXT,                      -- → seg_attribution (the determination)
+  call_id       TEXT,                      -- → calls (the gate's per-call record)
   cwd           TEXT,
-  batch_id      TEXT,                        -- link → provider batch
+  batch_id      TEXT,                      -- → provider batch
   from_message_ids  TEXT,                  -- JSON array
   prior_message_ids TEXT,                  -- JSON array
   post_message_ids  TEXT,                  -- JSON array
@@ -80,22 +102,36 @@ CREATE TABLE IF NOT EXISTS spend_events (
   prompt_hash   TEXT,
   prompt_snip   TEXT,
   output_snip   TEXT,
+  evidence_uri  TEXT,                      -- transcript file:line / batch-result url
   -- attribution audit (why · what · how)
   attr_what     TEXT,
   attr_why      TEXT,
-  attr_how      TEXT,                       -- cwd-match | lineage | llm | batch-map | gate-inline
+  attr_how      TEXT,                      -- cwd-match | lineage | llm | batch-map | gate-inline
   attr_reason   TEXT,
-  attr_confidence REAL,                     -- 0.0–1.0
+  attr_confidence REAL,                    -- 0.0–1.0
   attr_source   TEXT,
   attr_model    TEXT,
   attr_ts       TEXT,
   attr_version  TEXT,
-  -- reconciliation / lifecycle
-  reconciled    INTEGER DEFAULT 0,
-  reconciled_vs TEXT,                       -- provider | admin-dev-xcheck
-  gap_flag      TEXT,
+  -- record provenance
+  recorded_by   TEXT,                      -- which process wrote the row
+  ingest_version TEXT,
+  -- lifecycle / correction (append-only; correct by reversal, never UPDATE a fact)
+  status        TEXT DEFAULT 'posted',     -- posted | reconciled | superseded | reversed | void
+  revision      INTEGER DEFAULT 1,
+  reverses_id   TEXT,                      -- this entry reverses that one
   superseded_by TEXT,
+  -- reconciliation / close
+  reconciled    INTEGER DEFAULT 0,
+  reconciled_vs TEXT,                      -- provider | admin-dev-xcheck
+  reconciled_at TEXT,
+  reconciliation_id TEXT,
+  gap_flag      TEXT,
+  period_closed INTEGER DEFAULT 0,
   recon_marker  TEXT,
+  -- integrity (tamper-evidence: hash chain)
+  prev_hash     TEXT,
+  row_hash      TEXT,
   -- quality / governance
   quality       TEXT,
   quality_src   TEXT,
@@ -103,26 +139,55 @@ CREATE TABLE IF NOT EXISTS spend_events (
   cache_hit     INTEGER DEFAULT 0,
   savings_cv    REAL,
   -- free
-  tags          TEXT                        -- JSON array
+  tags          TEXT                       -- JSON array
 )
 """
 
-COST_COLS = ("batch_usd", "realtime_usd", "est_chat_usd", "remote_compute_usd", "subscription_usd")
-BILLED_COLS = ("batch_usd", "realtime_usd", "remote_compute_usd", "subscription_usd")   # REAL $; est_chat is est-value
-_KIND_TO_COL = {"batch": "batch_usd", "realtime": "realtime_usd",
-                "est_chat": "est_chat_usd", "est-chat": "est_chat_usd", "estchat": "est_chat_usd",
-                "remote": "remote_compute_usd", "remote_compute": "remote_compute_usd", "gpu": "remote_compute_usd",
-                "subscription": "subscription_usd", "sub": "subscription_usd"}
-_COL_TO_KIND = {"batch_usd": "batch", "realtime_usd": "realtime", "est_chat_usd": "est_chat",
-                "remote_compute_usd": "remote_compute", "subscription_usd": "subscription"}
+MICRO_COLS = ("batch_micros", "realtime_micros", "est_chat_micros", "remote_compute_micros", "subscription_micros")
+BILLED_MICRO_COLS = ("batch_micros", "realtime_micros", "remote_compute_micros", "subscription_micros")  # est_chat = est-value
+_KIND_TO_MICRO = {"batch": "batch_micros", "realtime": "realtime_micros",
+                  "est_chat": "est_chat_micros", "est-chat": "est_chat_micros", "estchat": "est_chat_micros",
+                  "remote": "remote_compute_micros", "remote_compute": "remote_compute_micros", "gpu": "remote_compute_micros",
+                  "subscription": "subscription_micros", "sub": "subscription_micros"}
+_MICRO_TO_KIND = {"batch_micros": "batch", "realtime_micros": "realtime", "est_chat_micros": "est_chat",
+                  "remote_compute_micros": "remote_compute", "subscription_micros": "subscription"}
 _JSON_COLS = ("projects", "from_message_ids", "prior_message_ids", "post_message_ids", "tags")
-# stable evidence signature for the deterministic id (NO wall-clock ts → re-record dedups)
 _EVIDENCE = ("source", "conv_id", "batch_id", "script", "model", "prompt_hash", "in_tok", "out_tok", "attr_what")
-_INDEXES = ("org", "day", "conv_id", "source", "batch_id", "dedup_key", "reconciled", "model_kind")
+_HASH_FIELDS = ("id", "currency") + MICRO_COLS + ("org", "projects", "occurred_at", "source", "cost_type", "is_meta")
+_INDEXES = ("org", "day", "period", "conv_id", "source", "batch_id", "dedup_key", "reconciled", "model_kind", "status")
+
+
+def _now_utc():
+    return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+
+
+def _reporting_tz():
+    return os.getenv("SPENDGUARD_REPORTING_TZ") or "UTC"
+
+
+def _day_period(ts_iso, tzname):
+    """Accounting day (YYYY-MM-DD) + period (YYYY-MM) for an instant, in the REPORTING tz — the boundary is undefined
+    without a tz (23:30 PT is a different calendar day than UTC)."""
+    try:
+        dt = datetime.datetime.fromisoformat(ts_iso)
+        if tzname and tzname != "UTC":
+            from zoneinfo import ZoneInfo
+            dt = dt.astimezone(ZoneInfo(tzname))
+        return dt.date().isoformat(), dt.strftime("%Y-%m")
+    except Exception:
+        return (ts_iso or "")[:10], (ts_iso or "")[:7]
+
+
+def micros(usd):
+    return int(round(float(usd) * 1_000_000))
+
+
+def to_usd(micros_val):
+    return round((micros_val or 0) / 1_000_000, 6)
 
 
 class SpendLedger:
-    """The one door to spend_events: SCRUD + every query + attribution, returning dicts/JSON. Consumers never SQL."""
+    """The one door to spend_events: SCRUD + every query + attribution. Money in integer micros; append-only; chained."""
 
     def __init__(self, db_path=None):
         self.db_path = db_path or config.db_path()
@@ -135,60 +200,89 @@ class SpendLedger:
         for ix in _INDEXES:
             self._conn.execute(f"CREATE INDEX IF NOT EXISTS idx_se_{ix} ON spend_events({ix})")
         self._conn.commit()
-        return [r[1] for r in self._conn.execute("PRAGMA table_info(spend_events)")]   # the real column set
+        return [r[1] for r in self._conn.execute("PRAGMA table_info(spend_events)")]
 
     @staticmethod
     def _evidence_id(ev):
-        """Deterministic id from a stable evidence signature (no wall-clock) — re-recording the same event is a
-        no-op, which is how double-count is killed structurally. A caller can pass an explicit dedup_key for control."""
         key = ev.get("dedup_key") or "|".join(str(ev.get(k) or "") for k in _EVIDENCE)
         return hashlib.sha256(key.encode()).hexdigest()[:20]
 
-    # ── C: create (validated write) ──
+    @staticmethod
+    def _row_hash(ev, prev_hash):
+        body = json.dumps({k: ev.get(k) for k in _HASH_FIELDS}, sort_keys=True, default=str)
+        return hashlib.sha256((body + (prev_hash or "")).encode()).hexdigest()
+
+    # ── C: create (validated, append-only, chained) ──
     def record(self, ev):
-        """Validated write. A (kind, usd) pair routes to exactly one cost column; JSON fields serialise; idempotent
-        on the deterministic id. Returns the id. Re-recording the same evidence inserts nothing (no double-count)."""
+        """Validated write. (kind, usd) → the right micro column; UTC times + reporting-tz day/period; rate snapshot;
+        deterministic id (dedup); hash-chained. Re-recording the same evidence is a no-op (no double-count, no chain
+        advance). Returns the id."""
         ev = dict(ev)
         kind = (ev.pop("kind", None) or "").lower()
         usd = ev.pop("usd", None)
         if kind and usd is not None:
-            col = _KIND_TO_COL.get(kind)
+            col = _KIND_TO_MICRO.get(kind)
             if not col:
                 raise ValueError(f"unknown spend kind {kind!r}; expected "
                                  "batch | realtime | est_chat | remote | subscription")
-            ev[col] = float(usd)
-        nz = [c for c in COST_COLS if float(ev.get(c) or 0)]
+            ev[col] = micros(usd)
+        for mc in MICRO_COLS:                                  # accept *_usd convenience for any cost type
+            ucol = mc.replace("_micros", "_usd")
+            if ucol in ev and ev.get(mc) is None:
+                ev[mc] = micros(ev.pop(ucol))
+        nz = [c for c in MICRO_COLS if int(ev.get(c) or 0)]
         if not nz:
-            raise ValueError("spend event has no cost in any of batch/realtime/est_chat/remote_compute/subscription")
+            raise ValueError("spend event has no cost in any micros column "
+                             "(batch/realtime/est_chat/remote_compute/subscription)")
         if not ev.get("dedup_key") and not ev.get("source"):
             raise ValueError("spend event needs a dedup_key or a source")
-        ev.setdefault("cost_type", _COL_TO_KIND[nz[0]] if len(nz) == 1 else None)   # categorical, filled as applicable
-        # snapshot $/token rates from the price book so cost = tokens × rate is auditable (connects to pricing.py)
+        ev.setdefault("currency", "USD")
+        ev.setdefault("cost_type", _MICRO_TO_KIND[nz[0]] if len(nz) == 1 else None)
+        # time: UTC canonical + source-local + reporting-tz accounting day/period (from the TRANSACTION date)
+        now = _now_utc()
+        ev.setdefault("ts_utc", now)
+        ev.setdefault("recorded_at", now)
+        ev.setdefault("occurred_at", ev["ts_utc"])
+        loc = datetime.datetime.now().astimezone()
+        ev.setdefault("tz", getattr(loc.tzinfo, "key", None) or loc.tzname() or "")
+        ev.setdefault("local_datetime", loc.isoformat(timespec="seconds"))
+        d, p = _day_period(ev["occurred_at"], _reporting_tz())
+        ev.setdefault("day", d)
+        ev.setdefault("period", p)
+        # rate snapshot from the price book (cost = tokens × rate auditable)
         if ev.get("model") and (ev.get("rate_in") is None or ev.get("rate_out") is None):
             try:
                 from . import pricing
-                p = pricing.price(ev["model"]) or {}          # per-1M rates: in_/out (realtime), batch_in/batch_out
+                pr = pricing.price(ev["model"]) or {}
                 bt = ev.get("cost_type") == "batch"
-                ev.setdefault("rate_in", p.get("batch_in" if bt else "in_"))
-                ev.setdefault("rate_out", p.get("batch_out" if bt else "out"))
+                ev.setdefault("rate_in", pr.get("batch_in" if bt else "in_"))
+                ev.setdefault("rate_out", pr.get("batch_out" if bt else "out"))
             except Exception:
                 pass
-        ev.setdefault("ts", datetime.datetime.now().isoformat(timespec="seconds"))
-        ev.setdefault("day", (ev["ts"] or "")[:10])
+        ev.setdefault("schema_version", SCHEMA_VERSION)
+        ev.setdefault("status", "posted")
+        ev.setdefault("revision", 1)
         ev["id"] = ev.get("id") or self._evidence_id(ev)
-        for jc in _JSON_COLS:
+        if self._conn.execute("SELECT 1 FROM spend_events WHERE id=?", (ev["id"],)).fetchone():
+            return ev["id"]                                   # already booked — no double-count, chain not advanced
+        for c in MICRO_COLS:                                  # normalise hashed defaults so record() == verify_chain()
+            ev.setdefault(c, 0)
+        ev.setdefault("is_meta", 0)
+        for jc in _JSON_COLS:                                 # serialise JSON BEFORE hashing → identical content both sides
             if jc in ev and not isinstance(ev.get(jc), (str, type(None))):
                 ev[jc] = json.dumps(ev[jc])
+        prev = self._conn.execute("SELECT row_hash FROM spend_events ORDER BY rowid DESC LIMIT 1").fetchone()
+        ev["prev_hash"] = prev[0] if prev else ""
+        ev["row_hash"] = self._row_hash(ev, ev["prev_hash"])
         cols = [c for c in self._cols if c in ev]
         self._conn.execute(
-            f"INSERT OR IGNORE INTO spend_events ({','.join(cols)}) VALUES ({','.join('?' for _ in cols)})",
+            f"INSERT INTO spend_events ({','.join(cols)}) VALUES ({','.join('?' for _ in cols)})",
             [ev.get(c) for c in cols])
         self._conn.commit()
         return ev["id"]
 
     # ── R: read ──
     def get(self, eid):
-        """One event → dict (JSON columns deserialised), or None."""
         r = self._conn.execute("SELECT * FROM spend_events WHERE id=?", (eid,)).fetchone()
         return self._row(r) if r else None
 
@@ -216,39 +310,55 @@ class SpendLedger:
 
     # ── S: search / query ──
     def query(self, since=None, until=None, where=None, limit=None):
-        """Flexible read → list of event dicts. `where` = exact-match column filters (org, team, source, provider,
-        model_kind, repo, reconciled, …); since/until filter on day."""
         w, args = self._where(since, until, where)
         sql = "SELECT * FROM spend_events WHERE 1=1" + w + " ORDER BY day"
         if limit:
             sql += f" LIMIT {int(limit)}"
         return [self._row(r) for r in self._conn.execute(sql, args).fetchall()]
 
-    # ── rollup: the cost breakdown, billed vs est-value split (the hard cost rule, computed ONCE) ──
-    def rollup(self, group_by=None, since=None, until=None, where=None):
-        """{group: {batch_usd, realtime_usd, est_chat_usd, remote_compute_usd, subscription_usd, billed, est_value, n}}.
+    # ── rollup: the cost breakdown, billed vs est-value split (computed ONCE; exact integer micros + usd) ──
+    def rollup(self, group_by=None, since=None, until=None, where=None, include_meta=False):
+        """{group: {<cost>_micros, <cost>_usd, billed_micros, billed_usd, est_value_micros, est_value_usd, n}}.
         group_by=None → one totals dict. billed = batch+realtime+remote_compute+subscription (REAL $); est_value =
-        est_chat (the SEPARATE axis, NEVER summed in). Sums every COST_COL generically — adding a column can't drift it."""
+        est_chat (separate, never summed). is_meta excluded unless include_meta. Exact integer micros; usd is display."""
         cols = [group_by] if isinstance(group_by, str) else list(group_by or [])
         for g in cols:
             if g not in self._cols:
                 raise ValueError(f"unknown group_by column {g!r}")
         w, args = self._where(since, until, where)
-        sums = ", ".join(f"ROUND(SUM({c}),6)" for c in COST_COLS)
+        if not include_meta:
+            w += " AND COALESCE(is_meta,0)=0"
+        sums = ", ".join(f"SUM({c})" for c in MICRO_COLS)
         sel = (", ".join(cols) + ", " if cols else "") + sums + ", COUNT(*)"
         sql = f"SELECT {sel} FROM spend_events WHERE 1=1" + w + (" GROUP BY " + ", ".join(cols) if cols else "")
 
         def pack(row):
-            vals = {c: (row[len(cols) + i] or 0) for i, c in enumerate(COST_COLS)}
-            return {**vals, "billed": round(sum(vals[c] for c in BILLED_COLS), 6),
-                    "est_value": vals["est_chat_usd"], "n": row[-1]}
+            vals = {c: int(row[len(cols) + i] or 0) for i, c in enumerate(MICRO_COLS)}
+            billed = sum(vals[c] for c in BILLED_MICRO_COLS)
+            out = {**vals, "billed_micros": billed, "est_value_micros": vals["est_chat_micros"], "n": row[-1]}
+            out["billed_usd"] = to_usd(billed)
+            out["est_value_usd"] = to_usd(vals["est_chat_micros"])
+            for c in MICRO_COLS:
+                out[c.replace("_micros", "_usd")] = to_usd(vals[c])
+            return out
         rows = self._conn.execute(sql, args).fetchall()
-        empty = {**{c: 0 for c in COST_COLS}, "billed": 0, "est_value": 0, "n": 0}
+        empty = pack([0] * (len(cols) + len(MICRO_COLS)) + [0])
         if not cols:
             return pack(rows[0]) if rows and rows[0][-1] else empty
         return {(tuple(row[i] for i in range(len(cols))) if len(cols) > 1 else row[0]): pack(row) for row in rows}
 
     def by_repo(self, repo, since=None, until=None):
-        """Repo-scoped 4-column rollup — the receipt's per-repo view. charm = ONLY charm's events (so e.g. $0 remote
-        when charm ran no vast.ai). The scoping bug ('charm shows global $1,225 remote') can't recur: it's a filter."""
+        """Repo-scoped rollup — charm = ONLY charm's events (so e.g. $0 remote when it ran no vast.ai). A filter,
+        so the 'charm shows global $1,225 remote' scoping bug cannot recur."""
         return self.rollup(since=since, until=until, where={"repo": repo})
+
+    # ── integrity: tamper-evidence ──
+    def verify_chain(self):
+        """Recompute the hash chain in insertion order; return (ok, first_bad_id|None). Proves no row was altered."""
+        prev = ""
+        for r in self._conn.execute("SELECT * FROM spend_events ORDER BY rowid"):
+            ev = {k: r[k] for k in r.keys()}                   # RAW stored values (JSON cols stay as stored strings)
+            if self._row_hash(ev, prev) != r["row_hash"]:
+                return False, r["id"]
+            prev = r["row_hash"]
+        return True, None
