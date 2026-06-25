@@ -349,8 +349,14 @@ def push_rollup(since=None, dry=False):
     cok, cwhy = contributor_ok()
     if not cok:
         return {"skipped": cwhy}   # don't push un-attributable rows (phantom member)
-    payload = {"visibility": c.get("visibility"), "day_totals": _rollup_rows(since=since),
+    rows = _rollup_rows(since=since)
+    payload = {"visibility": c.get("visibility"), "day_totals": rows,
                "guarded_totals": _guarded_rows(since=since)}
+    if since is None:               # FULL push → declare a complete-set REPLACE per (channel, billed) so the server
+        sel = {}                    # prunes this contributor's orphaned rows (from re-classification / re-derivation)
+        for r in rows:              # → re-syncs can't re-stack into a double-count. Windowed pushes (since set) don't.
+            sel[(r.get("channel") or "batch", bool(r.get("billed", True)))] = True
+        payload["replace"] = [{"channel": ch, "billed": b} for (ch, b) in sel]
     if dry:
         return payload
     return _request("POST", "/v1/ledger", payload)

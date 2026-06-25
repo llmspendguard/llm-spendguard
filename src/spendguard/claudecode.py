@@ -290,7 +290,10 @@ def sync(dry=False):
     if not rows:
         return {"skipped": "no Claude Code spend for this connection's org"}
     try:
-        return saas._request("POST", "/v1/ledger", {"visibility": c.get("visibility"), "day_totals": rows})
+        # day_totals() is the COMPLETE per-session est-value set → declare a replace so the server prunes this
+        # contributor's orphaned claude-code rows (re-classification / dedup re-bucketing) instead of stacking them.
+        return saas._request("POST", "/v1/ledger", {"visibility": c.get("visibility"), "day_totals": rows,
+                                                    "replace": [{"channel": "claude-code", "billed": False}]})
     except RuntimeError as e:
         if " 404" in str(e) or " 405" in str(e):
             return {"skipped": "server has no /v1/ledger endpoint yet"}
