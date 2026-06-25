@@ -97,7 +97,8 @@ def update(st=None):
     st = st or _load_state()
     sessions = st.setdefault("sessions", {})
     ledger = st.setdefault("ledger", {})
-    added_cost, added_lines, touched = 0.0, 0, 0
+    counted = st.setdefault("counted_ids", {})     # message.id → 1: each assistant API response counted ONCE across
+    added_cost, added_lines, touched = 0.0, 0, 0   # ALL files (resume/branch/compaction replays messages into new ones)
     for path in sorted(glob.glob(os.path.join(_projects_dir(), "**", "*.jsonl"), recursive=True)):
         try:
             mtime = os.path.getmtime(path)
@@ -113,6 +114,14 @@ def update(st=None):
         touched += 1
         for r in recs:
             msg = r.get("message") or {}
+            mid = msg.get("id")
+            # Count each assistant API response ONCE. Resume/branch/compaction REPLAYS earlier messages into NEW
+            # transcript files; without this dedup the same message.id (its usage + tool_use) is summed once per
+            # file → est-value AND work-done inflate ~2.4x. message.id is the globally-unique API response id.
+            if mid:
+                if mid in counted:
+                    continue
+                counted[mid] = 1
             u = msg.get("usage") or {}
             model = msg.get("model")
             day = (r.get("timestamp") or "")[:10] or datetime.date.today().isoformat()
@@ -192,8 +201,9 @@ def _session_digests(days=None):
     """Per-SESSION digests (the cwd is an umbrella, so each session is classified on its own content)."""
     cutoff = (datetime.date.today() - datetime.timedelta(days=int(days))).isoformat() if days else None
     out = []
+    seen = set()                                           # count each message.id ONCE across resume/branch replays
     for path in sorted(glob.glob(os.path.join(_projects_dir(), "**", "*.jsonl"), recursive=True)):
-        d = _digest(path)
+        d = _digest(path, seen)
         if d["cost"] <= 0 and not d["tools"]:
             continue
         if cutoff and d["day"] and d["day"] < cutoff:
@@ -292,9 +302,11 @@ def _iso_period(day, by):
     return attribution.iso_period(day, by)   # shared (day/week/month/quarter/ytd) — was a local copy missing 'ytd'
 
 
-def _digest(path):
+def _digest(path, seen=None):
     """Full per-session digest = a WORK ROW: project, primary day, models, value$, turns, tools, files, and the
-    first user prompt (what was ASKED — the 'what the spend was for'). Re-reads the whole session (on-demand)."""
+    first user prompt (what was ASKED — the 'what the spend was for'). Re-reads the whole session (on-demand).
+    Pass a shared `seen` set across sessions to count each assistant message.id ONCE — resume/branch/compaction
+    replays earlier messages into new transcript files, so without it the est-value/work double-counts (~2.4x)."""
     proj = None; days = {}; models = set(); cost = 0.0; turns = 0; tools = {}; files = []; prompt = ""; branch = ""
     in_tok = out_tok = cached_tok = 0; modelcost = {}
     recs, _ = _scan_new_lines(path, 0)
@@ -311,6 +323,11 @@ def _digest(path):
             t = (t or "").strip().replace("\n", " ")
             if t and not t.startswith("<") and "tool_result" not in t[:40] and "[Request interrupted" not in t:
                 prompt = t[:200]
+        mid = msg.get("id")
+        if mid is not None and seen is not None:           # count each API response ONCE across replayed files
+            if mid in seen:
+                continue
+            seen.add(mid)
         u = msg.get("usage") or {}; model = msg.get("model")
         if u and model:
             cu, ai, bo, cr = _row_cost(model, u); cost += cu; turns += 1; models.add(model)
@@ -337,8 +354,9 @@ def work(by="week", days=None):
     """Conversation-derived WORK DONE — per-session rows (what was asked + cost) bucketed by day/week/month/quarter."""
     cutoff = (datetime.date.today() - datetime.timedelta(days=int(days))).isoformat() if days else None
     digs = []
+    seen = set()                                           # count each message.id ONCE across resume/branch replays
     for path in sorted(glob.glob(os.path.join(_projects_dir(), "**", "*.jsonl"), recursive=True)):
-        d = _digest(path)
+        d = _digest(path, seen)
         if d["cost"] <= 0 and not d["tools"]:
             continue
         if cutoff and d["day"] and d["day"] < cutoff:
@@ -388,8 +406,9 @@ def story(by="week", days=7, run=False):
     from . import config, adapters, calls, pricing, ui
     cutoff = (datetime.date.today() - datetime.timedelta(days=int(days))).isoformat() if days else None
     digs = []
+    seen = set()                                           # count each message.id ONCE across resume/branch replays
     for path in sorted(glob.glob(os.path.join(_projects_dir(), "**", "*.jsonl"), recursive=True)):
-        d = _digest(path)
+        d = _digest(path, seen)
         if (d["cost"] > 0 or d["tools"]) and (not cutoff or not d["day"] or d["day"] >= cutoff):
             digs.append(d)
     if not digs:
@@ -424,8 +443,8 @@ def story(by="week", days=7, run=False):
 def main(argv=None):
     argv = argv or []
     if "--rebuild" in argv:                        # re-bucket: clear the accumulator + watermarks, re-mine at repo level
-        st = _load_state(); st["ledger"] = {}; st["sessions"] = {}; _save_state(st)
-        print("claude-code: state reset — re-mining all transcripts with repo-level (git-root) buckets")
+        st = _load_state(); st["ledger"] = {}; st["sessions"] = {}; st["counted_ids"] = {}; _save_state(st)
+        print("claude-code: state reset — re-mining all transcripts with repo-level buckets + per-message-id dedup")
         argv = [a for a in argv if a != "--rebuild"]
     sub = argv[0] if argv else "show"
     if sub == "sync":

@@ -63,23 +63,26 @@ t = receipt.tally()
 ck("tally: actual-$ windows from the gate ledger", t["actual"]["today"] == 4.20 and t["actual"]["month"] == 212.40)
 ck("tally: est-value present + distinct dict", t["est_value"] and abs(t["est_value"]["today"] - 7.0) < 1e-9)
 out = receipt.render_tally(t)
-ck("render_tally: actual-$ and est-value are SEPARATE lines", "actual-$ (billed)" in out and "est-value (plan, not billed)" in out)
-ck("render_tally: no combined total (axes never summed)", "11.20" not in out and "$11" not in out)  # 4.20+7.00 must NOT appear
-ck("render_tally: actual today shown", "today $4.20" in out)
+ck("render_tally: real-$ (API+subs+remote) and est-value are SEPARATE", "real $ this month" in out and "est sub value (plan usage, NOT billed)" in out)
+# HARD RULE: the two axes are never summed. real month = API 212.40 + subs 400 = 612.40; est month = 7.00. Neither
+# real+est (619.40) nor API+est (219.40) may ever appear as one number.
+ck("render_tally: no combined total (axes never summed)", "619.40" not in out and "219.40" not in out)
+ck("render_tally: API today shown", "today $4.20" in out)
 
 # ── render_flow: est → actual variance + the tally underneath ────────────────
 flow = {"intent": "loinc-typing", "n": 42, "in_tok": 1_200_000, "out_tok": 300_000, "est": 2.10, "actual": 1.87}
 rf = receipt.render_flow(flow, "flow", t)
 ck("render_flow: what + calls + tokens", "loinc-typing" in rf and "42 calls" in rf and "in 1.2M / out 300.0K" in rf)
 ck("render_flow: est → actual + variance", "est $2.10 → actual $1.87" in rf and "(−11%)" in rf)
-ck("render_flow: running tally is included underneath", "actual-$ (billed)" in rf and "month $212.40" in rf)
+ck("render_flow: running tally is included underneath", "real $ this month" in rf and "$212.40" in rf)
 flow_noest = {"intent": "x", "n": 1, "actual": 0.5}
-ck("render_flow: no estimate → actual only (no arrow)", "→" not in receipt.render_flow(flow_noest, "flow", t))
+# no est→actual arrow in the flow HEAD (the tally line below may carry a '→ N× subscription' note — check head only)
+ck("render_flow: no estimate → actual only (no arrow)", "→" not in receipt.render_flow(flow_noest, "flow", t).split("\n")[0])
 
 # ── render_line: one compact line for a status bar, both axes still separate ──
 ln = receipt.render_line(t)
 ck("render_line: single line", "\n" not in ln)
-ck("render_line: billed + plan both present, labelled", "billed" in ln and "plan" in ln)
+ck("render_line: real-$ + est value both present, labelled, separate", "real" in ln and "est value" in ln and "::" in ln)
 ck("render_line: _k compacts ≥$1000 to k, keeps small values plain",
    receipt._k(2015.43) == "$2.0k" and receipt._k(212.40) == "$212" and receipt._k(None) == "—")
 
@@ -146,7 +149,7 @@ ck("context(): respects level off (no emit)", buf.getvalue() == "")
 buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
     rc = receipt.cli([])
-ck("cli: returns 0 and prints a (scoped) tally to stdout", rc == 0 and "actual-$ (billed)" in buf.getvalue())
+ck("cli: returns 0 and prints a (scoped) tally to stdout", rc == 0 and "real $ this month" in buf.getvalue())
 buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
     receipt.cli(["--all"])
@@ -162,7 +165,7 @@ buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
     receipt.cli(["--stop-hook"])
 hk = _json.loads(buf.getvalue())   # MUST be valid JSON — Claude Code parses it
-ck("--stop-hook: valid JSON, systemMessage carries the tally", "systemMessage" in hk and "billed" in hk["systemMessage"])
+ck("--stop-hook: valid JSON, systemMessage carries the tally", "systemMessage" in hk and "real" in hk["systemMessage"] and "est value" in hk["systemMessage"])
 
 _real_stdin = receipt.sys.stdin
 receipt.sys.stdin = io.StringIO('{"workspace":{"current_dir":"/a/b/myrepo"},'
@@ -173,7 +176,7 @@ with contextlib.redirect_stdout(buf):
 receipt.sys.stdin = _real_stdin
 sl = buf.getvalue()
 ck("--statusline: prefixes cwd · model · ctx% then the tally",
-   "myrepo" in sl and "Opus 4.8" in sl and "12% ctx" in sl and "billed" in sl)
+   "myrepo" in sl and "Opus 4.8" in sl and "12% ctx" in sl and "real" in sl)
 
 # ── configurable sinks: a file sink routes the auto-emitted receipt to a log (any-host / Codex surfacing) ──
 import pathlib as _pl
@@ -205,7 +208,7 @@ ck("_est_tree(scope_org): limits to one org", set(receipt._est_tree("manga2anime
 
 rt = receipt.render_tree()
 ck("render_tree: shows org → team → project", "healiom" in rt.lower() and "clinical-ai" in rt and "medical-taxonomy" in rt)
-ck("render_tree: header is the global billed/plan tally", "actual-$ (billed)" in rt and "est-value" in rt)
+ck("render_tree: header is the global real-$ / est-value tally", "real $ this month" in rt and "est sub value" in rt)
 
 # ── global running tally (header / statusline line) + proportional plan multiple ──
 t = receipt.tally()
@@ -213,8 +216,8 @@ ck("tally(): global, both axes present", t["actual"]["month"] is not None and t[
 os.environ["SPENDGUARD_PLAN_USD"] = "200"
 ck("tally: plan multiple set when price given, not assumed", receipt.tally().get("plan_mult") is not None and receipt.tally().get("plan_assumed") is False)
 del os.environ["SPENDGUARD_PLAN_USD"]
-ck("tally: defaults to assumed plan (Claude Max + Codex Pro)", receipt.tally().get("plan_assumed") is True)
-ck("_plan_usd: default total = Claude Max + Codex/ChatGPT Pro = $300", receipt._plan_usd() == (300.0, True))
+ck("tally: defaults to assumed plan (Anthropic Max + OpenAI Pro)", receipt.tally().get("plan_assumed") is True)
+ck("_plan_usd: default total = Anthropic Max + OpenAI Pro = $400", receipt._plan_usd() == (400.0, True))
 
 print(f"\n{'PASS' if not fails else 'FAIL'} — {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

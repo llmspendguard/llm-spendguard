@@ -62,6 +62,29 @@ ck("append a turn → accumulated (only the new line read)", abs(spend3[0]["cost
 dt = [r for r in claudecode.day_totals("me@x.com") if r["project"] == "lmm"]
 ck("day_totals: channel=claude-code, provider=anthropic", dt and dt[0]["channel"] == "claude-code" and dt[0]["provider"] == "anthropic")
 
+# ── REGRESSION: resume/branch/compaction REPLAYS messages into NEW transcript files. Each assistant message.id must
+# be counted ONCE — both cost paths (update()→ledger via counted_ids, _digest/_session_digests via a shared seen).
+# This is the ~2.37x est-value double-count: 29k of 41k message ids were replayed across files and summed per-file. ──
+RCC = tempfile.mkdtemp(prefix="cc-resume-")
+os.environ["SPENDGUARD_CC_DIR"] = RCC
+os.makedirs(os.path.join(RCC, "p"), exist_ok=True)
+def _idturn(mid, intok=1000, outtok=500):
+    return json.dumps({"type": "assistant", "cwd": "/x/lmm", "timestamp": "2026-06-21T10:00:00Z",
+                       "message": {"role": "assistant", "id": mid, "model": "claude-opus-4-8",
+                                   "content": [{"type": "text", "text": "ok"}],
+                                   "usage": {"input_tokens": intok, "output_tokens": outtok,
+                                             "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}}})
+open(os.path.join(RCC, "p", "a.jsonl"), "w").write(_idturn("m1") + "\n" + _idturn("m2") + "\n")
+open(os.path.join(RCC, "p", "b.jsonl"), "w").write(_idturn("m2") + "\n" + _idturn("m3") + "\n")  # resume: replays m2
+_one = pricing.realtime_cost("claude-opus-4-8", 1000, 500, 0)
+_dtot = sum(d["cost"] for d in claudecode._session_digests())
+ck("dedup: _session_digests counts each message.id ONCE (m1,m2,m3 — not 4)", abs(_dtot - 3 * _one) < 1e-6)
+_rst, _ = claudecode.update({"ledger": {}, "sessions": {}, "counted_ids": {}})
+_rtot = sum(e["cost"] for e in _rst["ledger"].values() if not e.get("_work"))
+ck("dedup: update() ledger counts each message.id ONCE (not 4)", abs(_rtot - 3 * _one) < 1e-6)
+ck("dedup: counted_ids holds exactly the 3 unique ids", len(_rst["counted_ids"]) == 3)
+os.environ["SPENDGUARD_CC_DIR"] = CC                              # restore for the classify section below
+
 # ── classify: CC attributions carry the LLM's confidence, and a stale/0-confidence session is RE-classified ──
 # Guards the bug where every CC session sat at confidence 0 (cached before confidence-capture + skipped on re-run),
 # so you couldn't tell a confident CC attribution from a guess on the largest work channel.

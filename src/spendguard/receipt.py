@@ -190,42 +190,82 @@ def _est_tree(scope_org=None):
     return tree
 
 
-# ── the running tally (actual-$ always; est-value when cached) ────────────────
-def tally(project=None, conv=None) -> dict:
-    """{'actual': {today, week, month}, 'est_value': {...}|None, 'scope': project}. actual-$ from the gate ledger
-    (cheap, local); est-value from the stamped cache. Optionally SCOPE to `project` (repo) and/or `conv`
-    (conversation) so the receipt shows what's relevant to where you are, not a global sum. The two axes are
-    returned separately and are NEVER added together."""
-    today, week, month = _windows()
-    actual = {"today": None, "week": None, "month": None}
+# ── remote-compute (GPU) cache — the billed REMOTE component, stamped by resources.sync ───────────
+def stamp_remote(rows) -> None:
+    """Persist BILLED remote-compute (GPU/vast.ai) windows so the receipt can show the Remote component without
+    re-hitting the provider. `rows` are day_totals-shaped (day + spend_micros + billed); only billed remote rows
+    count. Best-effort; never raises. Mirrors stamp_est_value (which holds the NON-billed est-value axis)."""
     try:
-        from . import budget
-        actual = {"today": budget.spent_since(today), "week": budget.spent_since(week), "month": budget.spent_since(month)}
+        today, week, month = _windows()
+        acc = {"today": 0.0, "week": 0.0, "month": 0.0, "asof": today}
+        for r in rows or []:
+            if r.get("billed") is False:               # remote compute is real billed $ (default billed=True)
+                continue
+            day = r.get("day") or ""
+            usd = (r.get("spend_micros") or 0) / 1_000_000
+            for k, lo in (("today", today), ("week", week), ("month", month)):
+                if day >= lo:
+                    acc[k] += usd
+        p = _cache_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            data = json.loads(p.read_text())
+        except Exception:
+            data = {}
+        data["remote"] = acc
+        p.write_text(json.dumps(data, indent=0))
     except Exception:
         pass
-    # GLOBAL headline (both axes). The org→team→project attribution is the tree (render_tree); proportional plan
-    # share rides on the global est (your repos' share of the whole plan). project/conv kept for call-compat.
-    out = {"actual": actual, "est_value": _est_tally()}
+
+
+def _remote_tally():
+    """Billed remote-compute windows {today, week, month, asof}, or None if resources.sync never stamped it."""
+    try:
+        d = json.loads(_cache_path().read_text()).get("remote")
+        if isinstance(d, dict) and "month" in d:
+            return d
+    except Exception:
+        pass
+    return None
+
+
+# ── the running tally — REAL $ (API + Subscription + Remote) and est-value, NEVER summed ─────────
+def tally(project=None, conv=None) -> dict:
+    """The two axes, returned SEPARATELY and never added together:
+      • REAL $ (money out the door) = `api` (per-token API billing, from the gate ledger) + `subscription` (the flat
+        plan fee — Anthropic Max, OpenAI Pro, …) + `remote` (billed GPU/vast.ai, cached by resources.sync).
+      • `est_value` = the value of subscription-covered usage (Claude Code/claude.ai/Codex), NOT billed.
+    `real_month` = api.month + subscription + remote.month. `actual` is kept as an alias of `api` for back-compat."""
+    today, week, month = _windows()
+    api = {"today": None, "week": None, "month": None}
+    try:
+        from . import budget
+        api = {"today": budget.spent_since(today), "week": budget.spent_since(week), "month": budget.spent_since(month)}
+    except Exception:
+        pass
+    remote = _remote_tally()                       # billed GPU/remote compute (None until resources.sync stamps it)
+    sub, sub_assumed = _plan_usd()                 # flat monthly subscription fee — a REAL cost (out the door)
+    out = {"api": api, "actual": api, "remote": remote, "subscription": sub, "subscription_assumed": sub_assumed,
+           "est_value": _est_tally()}
+    out["real_month"] = (api.get("month") or 0) + (sub or 0) + ((remote or {}).get("month") or 0)
     ev = out["est_value"]
-    if ev and (ev.get("month") or 0) > 0:
-        plan, assumed = _plan_usd()
-        if plan:
-            out["plan_usd"] = plan
-            out["plan_assumed"] = assumed
-            out["plan_mult"] = (ev.get("month") or 0) / plan      # how many × the flat plan the usage value is
+    if ev and (ev.get("month") or 0) > 0 and sub:
+        out["plan_usd"] = sub
+        out["plan_assumed"] = sub_assumed
+        out["plan_mult"] = (ev.get("month") or 0) / sub      # est-value as a multiple of the subscription FEE (ROI)
     return out
 
 
-# Default subscription mix — MIRRORS the server's ASSUMED (app/page.tsx): the common setup is Claude Max + a
-# Codex/ChatGPT Pro seat. Declare your real mix in config `subscription.plans` (a list of {name, usd}) or set
-# `subscription.plan_usd` / SPENDGUARD_PLAN_USD to override.
-_DEFAULT_PLANS = (("Claude Max", 100.0), ("Codex/ChatGPT Pro", 200.0))
+# Default subscription mix — MIRRORS the server's ASSUMED (app/page.tsx): Anthropic Max (20×) + an OpenAI/ChatGPT
+# Pro seat. These flat fees are REAL costs (out the door). Declare your real mix in config `subscription.plans`
+# (a list of {name, usd}) or set `subscription.plan_usd` / SPENDGUARD_PLAN_USD to override.
+_DEFAULT_PLANS = (("Anthropic Max", 200.0), ("OpenAI Pro", 200.0))
 
 
 def _plan_usd():
     """Monthly subscription $ for the proportional plan slice → (usd, assumed). Order: explicit
-    `subscription.plan_usd`/SPENDGUARD_PLAN_USD → sum of configured `subscription.plans` → DEFAULT (Claude Max +
-    Codex/ChatGPT Pro, $300; assumed=True so the UI can say so, like the server does — never silently wrong)."""
+    `subscription.plan_usd`/SPENDGUARD_PLAN_USD → sum of configured `subscription.plans` → DEFAULT (Anthropic Max +
+    OpenAI Pro, $400; assumed=True so the UI can say so, like the server does — never silently wrong)."""
     v = os.getenv("SPENDGUARD_PLAN_USD") or config._cfg_get("subscription", "plan_usd", None)
     if v:
         try:
@@ -247,16 +287,27 @@ _INDENT = " " * len("spendguard ▸ ")            # align continuation lines und
 
 
 def _tally_lines(t: dict) -> list:
-    """The running-tally line(s): actual-$ always; est-value when cached. The two axes are SEPARATE lines and are
-    never combined into a single number."""
-    a = t.get("actual") or {}
-    lines = [f"actual-$ (billed): today {_money(a.get('today'))} · "
-             f"7d {_money(a.get('week'))} · month {_money(a.get('month'))}"]
+    """The running-tally line(s). HARD RULE: REAL $ (money out the door) is shown as NAMED components — API
+    (per-token) + Subscription (flat plan fee) + Remote (GPU/compute) — then est-value (plan usage, NOT billed) on
+    a SEPARATE line after '::'. The two axes are never combined into one number (that mixed total is the confusion
+    this exists to prevent)."""
+    api = t.get("api") or t.get("actual") or {}
+    rem = t.get("remote") or {}
+    sub = t.get("subscription") or 0
+    am, rm = api.get("month"), rem.get("month")
+    real = (am or 0) + (sub or 0) + (rm or 0)
+    parts = [f"API {_money(am)}"]
+    if sub:
+        parts.append(f"subs {_money(sub)}{'*' if t.get('subscription_assumed') else ''}")
+    parts.append(f"remote {_money(rm)}" if rm is not None else "remote —")
+    extra = "" if (am is None) else f"  (billed; API today {_money(api.get('today'))} · 7d {_money(api.get('week'))})"
+    lines = [f"real $ this month: {_money(real)}  =  " + "  +  ".join(parts) + extra]
     ev = t.get("est_value")
     if ev:
         asof = f" (as of {ev['asof']})" if ev.get("asof") else ""
-        lines.append(f"est-value (plan, not billed){asof}: today {_money(ev.get('today'))} · "
-                     f"7d {_money(ev.get('week'))} · month {_money(ev.get('month'))}")
+        mult = f"  →  {t['plan_mult']:.0f}× the subscription" if t.get("plan_mult") else ""
+        lines.append(f":: est sub value (plan usage, NOT billed){asof}: month {_money(ev.get('month'))}"
+                     f" · today {_money(ev.get('today'))} · 7d {_money(ev.get('week'))}{mult}")
     return lines
 
 
@@ -289,16 +340,22 @@ def _k(x: Optional[float]) -> str:
 
 
 def render_line(t: Optional[dict] = None) -> str:
-    """One compact line for a status bar — both axes, still separate (billed vs plan), never summed."""
+    """One compact status-bar line — REAL $ (API + subs + remote) then est-value, SEPARATE, never summed."""
     t = t or tally()
-    a = t.get("actual") or {}
+    api = t.get("api") or t.get("actual") or {}
+    rem = t.get("remote") or {}
+    sub = t.get("subscription") or 0
+    real = (api.get("month") or 0) + (sub or 0) + ((rem.get("month")) or 0)
     scope = f"[{t['scope']}] " if t.get("scope") else ""
-    s = f"◈ {scope}billed {_k(a.get('today'))}/d · {_k(a.get('month'))}/mo"
+    bits = [f"API {_k(api.get('month'))}"]
+    if sub:
+        bits.append(f"subs {_k(sub)}")
+    if rem.get("month") is not None:
+        bits.append(f"remote {_k(rem.get('month'))}")
+    s = f"◈ {scope}real {_k(real)}/mo = " + " + ".join(bits)
     ev = t.get("est_value")
     if ev:
-        s += f"  ·  plan {_k(ev.get('today'))}/d · {_k(ev.get('month'))}/mo"
-        if t.get("est_pct") is not None:
-            s += f" ({t['est_pct'] * 100:.0f}% of plan" + (f" ≈{_k(t['plan_slice'])}" if t.get("plan_slice") is not None else "") + ")"
+        s += f"  ::  est value {_k(ev.get('month'))}/mo"
     return s
 
 
@@ -412,14 +469,11 @@ def render_tree(scope_org=None) -> str:
     """The receipt: a global billed/plan header, then the ORG → TEAM → PROJECT plan-value tree (the attribution,
     matching the server). `scope_org` limits to one org (None = all orgs)."""
     t = tally()
-    parts = [_PREFIX + ("\n" + _INDENT).join(_tally_lines(t))]
-    if t.get("plan_usd"):
-        parts.append(f"{_INDENT}plan ≈ ${t['plan_usd']:.0f}/mo{' (assumed)' if t.get('plan_assumed') else ''}"
-                     f"  →  {t.get('plan_mult', 0):.1f}× the plan in usage value")
+    parts = [_PREFIX + ("\n" + _INDENT).join(_tally_lines(t))]   # header already splits real $ + est-value
     tree = _est_tree(scope_org)
     if not tree:
         return "\n".join(parts)
-    parts.append(_INDENT + "org → team → project (plan value · month):")
+    parts.append(_INDENT + "org → team → project (est sub value · month — NOT billed):")
     for org in sorted(tree, key=lambda o: -tree[o]["month"]):
         o = tree[org]
         parts.append(f"  ▸ {(org or '(unclassified)'):<24}{_k(o['month']):>9}/mo")
