@@ -32,16 +32,19 @@ CREATE TABLE IF NOT EXISTS spend_events (
   window_start  TEXT,
   window_end    TEXT,
   eligibility_window TEXT,                 -- the period this spend is eligible to (per-period split)
-  -- cost: FOUR separate columns (a row has ONE non-zero; rollup = SUM(col))
-  batch_usd     REAL DEFAULT 0,
-  realtime_usd  REAL DEFAULT 0,
-  est_chat_usd  REAL DEFAULT 0,            -- Claude Code/Codex plan usage (billed=0)
-  remote_usd    REAL DEFAULT 0,
-  billed        INTEGER DEFAULT 1,
-  cost_basis    TEXT,                      -- printed | estimated | gate-measured | provider-reconciled
-  amount_confidence INTEGER,
-  rate_in       REAL,
-  rate_out      REAL,
+  -- cost: separate columns (a row has ONE non-zero; rollup = SUM(col))
+  batch_usd          REAL DEFAULT 0,
+  realtime_usd       REAL DEFAULT 0,
+  est_chat_usd       REAL DEFAULT 0,       -- Claude Code/Codex plan usage (the est-value axis; billed=0)
+  remote_compute_usd REAL DEFAULT 0,       -- remote compute (vast.ai GPU)
+  subscription_usd   REAL DEFAULT 0,       -- flat plan fee (Max/Pro), attributed proportionally by plan-usage
+  cost_type          TEXT,                 -- batch|realtime|est_chat|remote_compute|subscription (categorical, filled as applicable)
+  billed             INTEGER DEFAULT 1,
+  is_meta            INTEGER DEFAULT 0,    -- spendguard's OWN spend (usage-pulls/reconstruction) — excluded from workload rollups
+  cost_basis         TEXT,                 -- printed | estimated | gate-measured | provider-reconciled
+  amount_confidence  REAL,                 -- 0.0–1.0
+  rate_in            REAL,                 -- $/token input, snapshotted from pricing.price(model) — makes cost=tokens×rate auditable
+  rate_out           REAL,                 -- $/token output
   -- provider / model
   provider      TEXT,
   model         TEXT,
@@ -64,9 +67,10 @@ CREATE TABLE IF NOT EXISTS spend_events (
   member_ref    TEXT,
   -- lineage / evidence
   conv_id       TEXT,
-  seg_id        TEXT,
+  seg_id        TEXT,                       -- link → seg_attribution (the determination)
+  call_id       TEXT,                       -- link → calls (the gate's per-call record)
   cwd           TEXT,
-  batch_id      TEXT,
+  batch_id      TEXT,                        -- link → provider batch
   from_message_ids  TEXT,                  -- JSON array
   prior_message_ids TEXT,                  -- JSON array
   post_message_ids  TEXT,                  -- JSON array
@@ -81,7 +85,7 @@ CREATE TABLE IF NOT EXISTS spend_events (
   attr_why      TEXT,
   attr_how      TEXT,                       -- cwd-match | lineage | llm | batch-map | gate-inline
   attr_reason   TEXT,
-  attr_confidence INTEGER,
+  attr_confidence REAL,                     -- 0.0–1.0
   attr_source   TEXT,
   attr_model    TEXT,
   attr_ts       TEXT,
@@ -95,7 +99,7 @@ CREATE TABLE IF NOT EXISTS spend_events (
   -- quality / governance
   quality       TEXT,
   quality_src   TEXT,
-  quality_conf  INTEGER,
+  quality_conf  REAL,
   cache_hit     INTEGER DEFAULT 0,
   savings_cv    REAL,
   -- free
@@ -103,10 +107,14 @@ CREATE TABLE IF NOT EXISTS spend_events (
 )
 """
 
-COST_COLS = ("batch_usd", "realtime_usd", "est_chat_usd", "remote_usd")
+COST_COLS = ("batch_usd", "realtime_usd", "est_chat_usd", "remote_compute_usd", "subscription_usd")
+BILLED_COLS = ("batch_usd", "realtime_usd", "remote_compute_usd", "subscription_usd")   # REAL $; est_chat is est-value
 _KIND_TO_COL = {"batch": "batch_usd", "realtime": "realtime_usd",
                 "est_chat": "est_chat_usd", "est-chat": "est_chat_usd", "estchat": "est_chat_usd",
-                "remote": "remote_usd", "remote_compute": "remote_usd", "gpu": "remote_usd"}
+                "remote": "remote_compute_usd", "remote_compute": "remote_compute_usd", "gpu": "remote_compute_usd",
+                "subscription": "subscription_usd", "sub": "subscription_usd"}
+_COL_TO_KIND = {"batch_usd": "batch", "realtime_usd": "realtime", "est_chat_usd": "est_chat",
+                "remote_compute_usd": "remote_compute", "subscription_usd": "subscription"}
 _JSON_COLS = ("projects", "from_message_ids", "prior_message_ids", "post_message_ids", "tags")
 # stable evidence signature for the deterministic id (NO wall-clock ts → re-record dedups)
 _EVIDENCE = ("source", "conv_id", "batch_id", "script", "model", "prompt_hash", "in_tok", "out_tok", "attr_what")
@@ -146,12 +154,25 @@ class SpendLedger:
         if kind and usd is not None:
             col = _KIND_TO_COL.get(kind)
             if not col:
-                raise ValueError(f"unknown spend kind {kind!r}; expected batch | realtime | est_chat | remote")
+                raise ValueError(f"unknown spend kind {kind!r}; expected "
+                                 "batch | realtime | est_chat | remote | subscription")
             ev[col] = float(usd)
-        if not any(float(ev.get(c) or 0) for c in COST_COLS):
-            raise ValueError("spend event has no cost in any of batch/realtime/est_chat/remote")
+        nz = [c for c in COST_COLS if float(ev.get(c) or 0)]
+        if not nz:
+            raise ValueError("spend event has no cost in any of batch/realtime/est_chat/remote_compute/subscription")
         if not ev.get("dedup_key") and not ev.get("source"):
             raise ValueError("spend event needs a dedup_key or a source")
+        ev.setdefault("cost_type", _COL_TO_KIND[nz[0]] if len(nz) == 1 else None)   # categorical, filled as applicable
+        # snapshot $/token rates from the price book so cost = tokens × rate is auditable (connects to pricing.py)
+        if ev.get("model") and (ev.get("rate_in") is None or ev.get("rate_out") is None):
+            try:
+                from . import pricing
+                p = pricing.price(ev["model"]) or {}          # per-1M rates: in_/out (realtime), batch_in/batch_out
+                bt = ev.get("cost_type") == "batch"
+                ev.setdefault("rate_in", p.get("batch_in" if bt else "in_"))
+                ev.setdefault("rate_out", p.get("batch_out" if bt else "out"))
+            except Exception:
+                pass
         ev.setdefault("ts", datetime.datetime.now().isoformat(timespec="seconds"))
         ev.setdefault("day", (ev["ts"] or "")[:10])
         ev["id"] = ev.get("id") or self._evidence_id(ev)
@@ -203,29 +224,28 @@ class SpendLedger:
             sql += f" LIMIT {int(limit)}"
         return [self._row(r) for r in self._conn.execute(sql, args).fetchall()]
 
-    # ── rollup: the 4-column breakdown, billed vs est-value split (the hard cost rule, computed ONCE) ──
+    # ── rollup: the cost breakdown, billed vs est-value split (the hard cost rule, computed ONCE) ──
     def rollup(self, group_by=None, since=None, until=None, where=None):
-        """{group: {batch_usd, realtime_usd, est_chat_usd, remote_usd, billed, est_value, n}}. group_by=None → one
-        totals dict. billed = batch+realtime+remote (REAL $); est_value = est_chat (the SEPARATE axis, NEVER summed in).
-        Subscription is a flat plan fee added at the DISPLAY layer, not per event."""
+        """{group: {batch_usd, realtime_usd, est_chat_usd, remote_compute_usd, subscription_usd, billed, est_value, n}}.
+        group_by=None → one totals dict. billed = batch+realtime+remote_compute+subscription (REAL $); est_value =
+        est_chat (the SEPARATE axis, NEVER summed in). Sums every COST_COL generically — adding a column can't drift it."""
         cols = [group_by] if isinstance(group_by, str) else list(group_by or [])
         for g in cols:
             if g not in self._cols:
                 raise ValueError(f"unknown group_by column {g!r}")
         w, args = self._where(since, until, where)
-        sel = (", ".join(cols) + ", " if cols else "") + (
-            "ROUND(SUM(batch_usd),4), ROUND(SUM(realtime_usd),4), ROUND(SUM(est_chat_usd),4), "
-            "ROUND(SUM(remote_usd),4), COUNT(*)")
+        sums = ", ".join(f"ROUND(SUM({c}),6)" for c in COST_COLS)
+        sel = (", ".join(cols) + ", " if cols else "") + sums + ", COUNT(*)"
         sql = f"SELECT {sel} FROM spend_events WHERE 1=1" + w + (" GROUP BY " + ", ".join(cols) if cols else "")
 
         def pack(row):
-            b, r, e, m, n = (row[-5] or 0), (row[-4] or 0), (row[-3] or 0), (row[-2] or 0), row[-1]
-            return {"batch_usd": b, "realtime_usd": r, "est_chat_usd": e, "remote_usd": m,
-                    "billed": round(b + r + m, 4), "est_value": e, "n": n}
+            vals = {c: (row[len(cols) + i] or 0) for i, c in enumerate(COST_COLS)}
+            return {**vals, "billed": round(sum(vals[c] for c in BILLED_COLS), 6),
+                    "est_value": vals["est_chat_usd"], "n": row[-1]}
         rows = self._conn.execute(sql, args).fetchall()
+        empty = {**{c: 0 for c in COST_COLS}, "billed": 0, "est_value": 0, "n": 0}
         if not cols:
-            return pack(rows[0]) if rows and rows[0][-1] else \
-                {"batch_usd": 0, "realtime_usd": 0, "est_chat_usd": 0, "remote_usd": 0, "billed": 0, "est_value": 0, "n": 0}
+            return pack(rows[0]) if rows and rows[0][-1] else empty
         return {(tuple(row[i] for i in range(len(cols))) if len(cols) > 1 else row[0]): pack(row) for row in rows}
 
     def by_repo(self, repo, since=None, until=None):
