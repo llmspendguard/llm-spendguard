@@ -215,6 +215,18 @@ def clean():
     out = {"realtime_total": total, "printed": printed, "by_org": by_org, "excluded": buckets,
            "kept": kept, "inflated_dropped": inflated}
     json.dump(out, open(STATE + ".clean", "w"), indent=2)
+    # stable cache the reconcile loop READS (admin-free realtime axis). TIGHTEN here: printed-$ = ground truth (full),
+    # soft estimates halved (they overshoot ~2x). Org-level for now; per-project/per-month needs collect to keep those.
+    def _tight(r):
+        return r["usd"] if r.get("basis") == "printed" else round(r["usd"] * 0.5, 2)
+    cache = {"since": SINCE, "total": round(sum(_tight(r) for r in kept), 2),
+             "note": "2-month window; org-level; per-project + per-month split is a refinement",
+             "rows": [{"org": r.get("org") or "(untagged)",
+                       "provider": "openai" if "gpt" in (r.get("model") or "").lower() else "anthropic",
+                       "usd": _tight(r)} for r in kept]}
+    cache_path = os.path.expanduser("~/.spendguard/realtime_reconstruction.json")
+    json.dump(cache, open(cache_path, "w"), indent=2)
+    print("  wrote reconcile cache:", cache_path, "(tightened total $%.2f)" % cache["total"])
     print("=== CLEANED REALTIME (embeddings/batch/meta removed, inflated estimates dropped) ===")
     print("  CORRECTED realtime $%.2f  (printed-$ %.2f / estimated %.2f)  across %d runs"
           % (total, printed, total - printed, len(kept)))

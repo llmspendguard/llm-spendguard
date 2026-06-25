@@ -205,6 +205,42 @@ def reconcile_into_ledger(since=None):
 
 _RT_MARKER = "(realtime-history)"   # marker model for realtime backfilled from the gate's realtime_log
 _RT_ORACLE_MARKER = "(realtime-oracle)"   # marker for realtime reconciled to the provider ADMIN-usage truth (timing-matched)
+_RT_RECON_MARKER = "(realtime-reconstructed)"   # realtime reconstructed AGENTICALLY from conversations (admin-free, production)
+
+
+def record_realtime_reconstruction(since=None):
+    """WIRE the agentic realtime reconstruction into the ledger (ADMIN-FREE, production realtime axis). The expensive
+    FIND runs PERIODICALLY (scripts/reconstruct/realtime_find_batch.py: find→consolidate→clean) and writes a tightened
+    cache (~/.spendguard/realtime_reconstruction.json: embeddings/batch/spendguard-meta excluded, printed-$ ground truth,
+    soft estimates halved). THIS read-and-record is cheap and idempotent — marker rows (kind=realtime, _RT_RECON_MARKER)
+    that are reversible + excluded from gate/cap, so re-running rebuilds them. Admin NEVER writes here (dev cross-check
+    only). NOTE: org-level + recorded at the window start (per-project-within-org + per-month split are refinements —
+    needs the reconstruction to carry per-run project + session date)."""
+    from . import budget
+    import os, json
+    cache = os.path.expanduser("~/.spendguard/realtime_reconstruction.json")
+    if not os.path.exists(cache):
+        return dict(recorded=0.0, rows=0, note="no reconstruction cache (run the periodic find/clean first)")
+    try:
+        data = json.load(open(cache))
+    except Exception:
+        return dict(recorded=0.0, rows=0, note="cache unreadable")
+    day = since or data.get("since") or datetime.date.today().replace(day=1).isoformat()
+    budget.clear_reconciled(model=_RT_RECON_MARKER)              # idempotent rebuild
+    org_project = {"healiom": "lmm", "ensight": "llm-spendguard", "personal": "personal-admin"}   # org → representative project
+    agg = {}
+    for r in data.get("rows", []):
+        proj = org_project.get((r.get("org") or "").lower(), "unattributed")
+        k = (proj, r.get("provider") or "?")
+        agg[k] = agg.get(k, 0.0) + float(r.get("usd") or 0)
+    rec, n = 0.0, 0
+    for (proj, prov), usd in agg.items():
+        if usd <= 0:
+            continue
+        budget.record_reconciled(day=day, provider=prov, cost=round(usd, 2), project=proj,
+                                 kind="realtime", model=_RT_RECON_MARKER)
+        rec += usd; n += 1
+    return dict(recorded=round(rec, 2), rows=n, day=day)
 
 
 def reconcile_realtime(since=None):
@@ -232,6 +268,9 @@ def reconcile_realtime(since=None):
     # run (if it isn't batch it's realtime), prices the in/out tokens via pricing.py, attributes via the same
     # session_classification as batch — and is recorded by the CORE reconcile as its own marker. Admin appears ONLY in a
     # separate DEV cross-check (`scripts/audit/…`) that INDICATES the reconstruction's gap; it never writes the ledger.
+
+    # ── PRODUCTION realtime axis: fold in the agentic conversational reconstruction (admin-free, from the cache) ──
+    record_realtime_reconstruction()
 
     # ── gate realtime_log floor (forward inline true-up; no admin, no network) ──
     # CRITICAL: do NOT touch _RT_ORACLE_MARKER here. Those rows are the historical realtime truth, RECORDED ONCE by a
