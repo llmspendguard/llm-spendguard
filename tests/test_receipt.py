@@ -9,11 +9,15 @@ Guards the invariants the feature exists to hold:
 """
 import os, sys, io, tempfile, contextlib
 
+# Set unconditionally (before any spendguard import) so they hold whether THIS script self-isolates OR an external
+# runner (test_runner.py) already provided the isolated SPENDGUARD_HOME + SPENDGUARD_TEST_ISOLATED. Previously these
+# lived inside the self-isolation block, so under test_runner the flow-aggregation tests ran with calls logging off.
+os.environ["SPENDGUARD_CALLS"] = "1"            # exercise the rich per-call flow aggregation
+os.environ.pop("SPENDGUARD_RECEIPTS", None)     # default level = flow
+
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-receipt-")
-    os.environ["SPENDGUARD_CALLS"] = "1"            # exercise the rich per-call flow aggregation
-    os.environ.pop("SPENDGUARD_RECEIPTS", None)     # default level = flow
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 from spendguard import receipt, calls, budget

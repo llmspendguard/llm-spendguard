@@ -10,10 +10,13 @@ Guards:
 """
 import os, sys, io, json, tempfile, contextlib, pathlib
 
+# CODEX_DIR must exist whether THIS script self-isolates OR test_runner.py provides isolation (it sets SPENDGUARD_HOME
+# + SPENDGUARD_TEST_ISOLATED but NOT CODEX_DIR). setdefault so both paths get a valid session dir. Before any import.
+os.environ.setdefault("SPENDGUARD_CODEX_DIR", tempfile.mkdtemp(prefix="spendguard-codex-sess-"))
+
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-codex-home-")
-    os.environ["SPENDGUARD_CODEX_DIR"] = tempfile.mkdtemp(prefix="spendguard-codex-sess-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 from spendguard import codex, pricing, gate, receipt

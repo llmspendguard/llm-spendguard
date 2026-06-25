@@ -668,3 +668,7 @@ def install_cli(args):
         return 0
     print(f"unknown host '{host}' (supported: claude-code | codex)")
     return 1
+
+
+if __name__ == "__main__":      # `python -m spendguard.receipt [--all|--org X|--line|--stop-hook|--statusline]`
+    raise SystemExit(cli(sys.argv[1:]))
