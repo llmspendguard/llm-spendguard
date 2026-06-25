@@ -465,15 +465,40 @@ def _conv_org():
         return None
 
 
+def _two_axis_table(t: dict) -> list:
+    """The two axes as a TABLE — `Actual $` and `Est value $` in SEPARATE columns. Each row sits in ONE column (the
+    other shows —); the columns total INDEPENDENTLY and are NEVER added into one number. This is the hard rule: an
+    est-value row is $0 in the Actual column, so the two can never be silently mixed."""
+    api = (t.get("api") or {}).get("month")
+    rem = (t.get("remote") or {}).get("month")
+    sub = t.get("subscription") or 0
+    ev = t.get("est_value") or {}
+    evm = ev.get("month")
+    asof = f" (as of {ev['asof']})" if ev.get("asof") else ""
+    cell = lambda x: (_money(x) if x is not None else "—")
+    LW = 32
+    rows = [("API (batch + realtime)", api, None),
+            ("Remote compute (vast.ai)", rem, None),
+            ("Subscription (Max + Pro)", (sub or None), None),
+            ("Plan usage (Claude Code·Codex·ai)", None, evm)]
+    out = [f"{'':<{LW}}{'Actual $':>12}{'Est value $':>14}    ← two axes, never added"]
+    for label, a, e in rows:
+        out.append(f"{label:<{LW}}{cell(a):>12}{cell(e):>14}")
+    out.append("─" * (LW + 26))
+    out.append(f"{('TOTAL' + asof):<{LW}}{_money((api or 0) + (rem or 0) + (sub or 0)):>12}{cell(evm):>14}")
+    return out
+
+
 def render_tree(scope_org=None) -> str:
-    """The receipt: a global billed/plan header, then the ORG → TEAM → PROJECT plan-value tree (the attribution,
-    matching the server). `scope_org` limits to one org (None = all orgs)."""
+    """The receipt: the two-axis Actual$ | Est-value$ TABLE, then the ORG → TEAM → PROJECT est-value tree (the
+    attribution, matching the server). `scope_org` limits to one org (None = all orgs)."""
     t = tally()
-    parts = [_PREFIX + ("\n" + _INDENT).join(_tally_lines(t))]   # header already splits real $ + est-value
+    parts = [_PREFIX + "spend this month"]
+    parts += [_INDENT + ln for ln in _two_axis_table(t)]
     tree = _est_tree(scope_org)
     if not tree:
         return "\n".join(parts)
-    parts.append(_INDENT + "org → team → project (est sub value · month — NOT billed):")
+    parts.append(_INDENT + "Est value $ by org → team → project (plan usage — NOT billed):")
     for org in sorted(tree, key=lambda o: -tree[o]["month"]):
         o = tree[org]
         parts.append(f"  ▸ {(org or '(unclassified)'):<24}{_k(o['month']):>9}/mo")

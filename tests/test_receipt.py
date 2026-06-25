@@ -149,7 +149,7 @@ ck("context(): respects level off (no emit)", buf.getvalue() == "")
 buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
     rc = receipt.cli([])
-ck("cli: returns 0 and prints a (scoped) tally to stdout", rc == 0 and "real $ this month" in buf.getvalue())
+ck("cli: returns 0 and prints a (scoped) tally to stdout", rc == 0 and "Actual $" in buf.getvalue() and "Est value $" in buf.getvalue())
 buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
     receipt.cli(["--all"])
@@ -208,7 +208,19 @@ ck("_est_tree(scope_org): limits to one org", set(receipt._est_tree("manga2anime
 
 rt = receipt.render_tree()
 ck("render_tree: shows org → team → project", "healiom" in rt.lower() and "clinical-ai" in rt and "medical-taxonomy" in rt)
-ck("render_tree: header is the global real-$ / est-value tally", "real $ this month" in rt and "est sub value" in rt)
+ck("render_tree: header is the two-axis Actual$ | Est-value$ TABLE", "Actual $" in rt and "Est value $" in rt and "never added" in rt)
+
+# ── two-axis TABLE: Actual $ and Est value $ are SEPARATE COLUMNS, totalled independently, never one number ──
+tt = receipt.tally()
+tbl = receipt._two_axis_table(tt)
+joined = "\n".join(tbl)
+ck("_two_axis_table: header names both columns", "Actual $" in tbl[0] and "Est value $" in tbl[0])
+ck("_two_axis_table: billed components in Actual col (API/Remote/Subscription rows present)",
+   any("API" in r for r in tbl) and any("Remote" in r for r in tbl) and any("Subscription" in r for r in tbl))
+ck("_two_axis_table: plan-usage row is est-value with — in the Actual column (a $0 actual, never mixed)",
+   any("Plan usage" in r and "—" in r for r in tbl))
+ck("_two_axis_table: TOTAL row carries BOTH column totals, separately (not summed)",
+   any(r.startswith("TOTAL") for r in tbl))
 
 # ── global running tally (header / statusline line) + proportional plan multiple ──
 t = receipt.tally()
