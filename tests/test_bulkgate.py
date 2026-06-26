@@ -135,5 +135,23 @@ bulkgate.record_estimate(sig_c, "compute", 50.0, 1)
 bulkgate.record_tested(sig_c, 1, verified=True)
 ck("compute: big launch with estimate+test → passes", bulkgate.check_compute(sig_c, est_usd=50.0, hours=8) == "pass")
 
+# ── 15. warn-mode realtime burst logs ONCE per sig (dedup — a big un-adopted loop must not spam) ──
+os.environ["SPENDGUARD_ENFORCE"] = "warn"
+sig_wd = bulkgate.sig(OPUS, template_id="warnloop", template_version="v1", schema_name="s")
+for _ in range(bulkgate.preview_max() + 5):                # well past the test sample, in warn mode
+    bulkgate.check_realtime(sig_wd, OPUS, est_usd=0.05)
+blocks_path = os.path.join(os.path.dirname(config.db_path()), "gate_blocks.jsonl")
+wb = 0
+if os.path.exists(blocks_path):
+    for ln in open(blocks_path):
+        try:
+            o = json.loads(ln)
+        except Exception:
+            continue
+        if o.get("sig") == sig_wd and o.get("decision") == "would-block":
+            wb += 1
+ck("warn-mode burst logged ONCE despite preview_max+5 calls (dedup)", wb == 1)
+os.environ["SPENDGUARD_ENFORCE"] = "block"
+
 print(("[OK]" if not fails else "[FAIL]") + " bulkgate: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)

@@ -286,6 +286,31 @@ _PREFIX = "spendguard ▸ "
 _INDENT = " " * len("spendguard ▸ ")            # align continuation lines under the first
 
 
+def _gate_blocks_line():
+    """Make the test-first ENFORCEMENT visible (spec §9): this-month counts of blocked / would-block / overridden
+    bulk runs from gate_blocks.jsonl. Returns a line, or None if there's nothing to show (no events / no file)."""
+    try:
+        import time as _t
+        path = os.path.join(os.path.dirname(config.db_path()), "gate_blocks.jsonl")
+        if not os.path.exists(path):
+            return None
+        mstart = _t.mktime(_t.strptime(_t.strftime("%Y-%m-01"), "%Y-%m-%d"))
+        c = {"blocked": 0, "would-block": 0, "override": 0}
+        for ln in open(path):
+            try:
+                o = json.loads(ln)
+            except Exception:
+                continue
+            if (o.get("ts") or 0) >= mstart and o.get("decision") in c:
+                c[o["decision"]] += 1
+        if not any(c.values()):
+            return None
+        return ("test-first gate (mo): %d blocked · %d would-block · %d overridden"
+                % (c["blocked"], c["would-block"], c["override"]))
+    except Exception:
+        return None
+
+
 def _tally_lines(t: dict) -> list:
     """The running-tally line(s). HARD RULE: REAL $ (money out the door) is shown as NAMED components — API
     (per-token) + Subscription (flat plan fee) + Remote (GPU/compute) — then est-value (plan usage, NOT billed) on
@@ -308,6 +333,9 @@ def _tally_lines(t: dict) -> list:
         mult = f"  →  {t['plan_mult']:.0f}× the subscription" if t.get("plan_mult") else ""
         lines.append(f":: est sub value (plan usage, NOT billed){asof}: month {_money(ev.get('month'))}"
                      f" · today {_money(ev.get('today'))} · 7d {_money(ev.get('week'))}{mult}")
+    gb = _gate_blocks_line()
+    if gb:
+        lines.append(gb)
     return lines
 
 

@@ -309,6 +309,7 @@ def test_job(sig, run_fn, n=None, verify_fn=None):
 
 
 _rt_window = {}    # sig -> [recent call timestamps] — in-process burst tracking for the realtime gate
+_rt_warned = {}    # sig -> last warn ts — warn-mode log dedup (a big un-adopted loop must not spam one line per call)
 
 
 def rt_window_sec():
@@ -330,7 +331,12 @@ def check_realtime(sig, model, est_usd=0.0, force=False):
         n = len(w)
     if n <= preview_max():
         return "preview"                                         # still within the allowed test sample
-    return check_bulk(sig, model, n, (float(est_usd or 0.0)) * n, force=force)   # cumulative burst est
+    if mode() == "warn":                                         # warn-mode dedup: log/record the burst ONCE per window
+        last = _rt_warned.get(sig, 0)
+        if now - last < rt_window_sec():
+            return "allow:warn"                                  # already flagged this burst — enforce silently
+        _rt_warned[sig] = now
+    return check_bulk(sig, model, n, (float(est_usd or 0.0)) * n, force=force)   # cumulative burst est (block mode stops at the cap)
 
 
 @contextlib.contextmanager

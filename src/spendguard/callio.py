@@ -228,6 +228,13 @@ def fetch_anthropic(client, batch_id, intent, model, cap, sample_n, jsonl_inputs
             continue
         txt = "".join(blk.text for blk in r.message.content if getattr(blk, "type", None) == "text")
         out_tok = getattr(getattr(r.message, "usage", None), "output_tokens", 0)
+        try:                                              # batch-LINE truncation: anthropic stop_reason states the fact
+            from . import bulkgate
+            if not (intent or "").startswith("spendguard:"):
+                bulkgate.note_response(bulkgate.sig(model or "", template_id=intent or None), model or "",
+                                       out_tok, finish_reason=getattr(r.message, "stop_reason", None))
+        except Exception:
+            pass
         prompt = (jsonl_inputs or {}).get(res.custom_id, "")
         if record(intent, "anthropic", model, batch_id, res.custom_id, prompt, txt, out_tok=out_tok):
             added += 1
