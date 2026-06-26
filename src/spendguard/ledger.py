@@ -20,6 +20,7 @@ import json
 import sqlite3
 import hashlib
 import datetime
+import contextlib
 from . import config
 
 SCHEMA_VERSION = 4
@@ -222,7 +223,22 @@ class SpendLedger:
         self.db_path = db_path or config.db_path()
         self._conn = sqlite3.connect(self.db_path, timeout=10, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        self._defer = False                              # bulk(): defer per-row commits (still audits every row)
         self._cols = self._ensure_schema()
+
+    @contextlib.contextmanager
+    def bulk(self):
+        """Defer per-row commits for a bulk load (e.g. a one-time migration), committing once on exit — every row is
+        still inserted + audited, only the fsync is batched. Use ONLY for trusted bulk ingest, not concurrent writers."""
+        self._defer = True
+        try:
+            yield self
+            self._conn.commit()
+        finally:
+            self._defer = False
+
+    def flush(self):
+        self._conn.commit()
 
     def _ensure_schema(self):
         for ddl in (_DDL_EVENTS, _DDL_AUDIT, _DDL_LOCKS):
@@ -320,7 +336,8 @@ class SpendLedger:
                            [ev.get(c) for c in cols])
         self._audit(ev["id"], ev.get("recorded_by") or ev.get("source") or "?", "ingest", "(create)", None,
                     f"{ev.get('cost_type')} {to_usd(sum(int(ev.get(c) or 0) for c in MICRO_COLS))} USD", "ingested")
-        self._conn.commit()
+        if not self._defer:
+            self._conn.commit()
         return ev["id"]
 
     # ── U: update an OPEN row (refuses if locked; logs every field) ──
@@ -482,6 +499,18 @@ class SpendLedger:
 
     def by_repo(self, repo, since=None, until=None):
         return self.rollup(since=since, until=until, where={"repo": repo})
+
+    def sum_usd(self, since=None, until=None, where=None, include_meta=True, **filters):
+        """Total USD across ALL cost columns (exact, summed in micros) for the filter — the simple Σ primitive for
+        verification + headline totals. **filters are column equality shortcuts (e.g. source='migrate:charges').
+        include_meta defaults True (a true grand total); voided/reversed rows are excluded."""
+        w, args = self._where(since, until, {**(where or {}), **filters})
+        if not include_meta:
+            w += " AND COALESCE(is_meta,0)=0"
+        w += " AND COALESCE(status,'') NOT IN ('void')"
+        sums = " + ".join(f"COALESCE(SUM({c}),0)" for c in MICRO_COLS)
+        r = self._conn.execute(f"SELECT {sums} FROM spend_events WHERE 1=1" + w, args).fetchone()
+        return to_usd(int(r[0] or 0))
 
     # ── integrity: the AUDIT LOG is hash-chained (not the live row) ──
     def verify_audit_chain(self):
