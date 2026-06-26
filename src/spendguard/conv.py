@@ -375,7 +375,9 @@ def batch_project_map(tdir=None):
             if bid in out:
                 continue
             if cls and (cls.get("project") or cls.get("org")):
-                out[bid] = {**cls, "prior": s["project_prior"], "seg_id": s["seg_id"], "evidenced": True}
+                out[bid] = {**cls, "org": _canon(cls.get("org")), "team": _canon(cls.get("team")),
+                            "project": _canon(cls.get("project")), "prior": s["project_prior"],
+                            "seg_id": s["seg_id"], "evidenced": True}
             else:                                          # evidenced (we KNOW the repo) but not yet LLM-classified
                 out[bid] = {"org": "", "team": "", "project": (s["project_prior"] or "").lower(),
                             "confidence": 0, "source": "prior", "prior": s["project_prior"],
@@ -400,7 +402,7 @@ def session_classification(sid):
         return None
     rows.sort(key=lambda r: (int(r[3] or 0), r[4] or ""), reverse=True)
     p, o, t, _c, _ts = rows[0]
-    return {"project": (p or "").lower(), "org": o or "", "team": t or ""}
+    return {"project": _canon(p), "org": _canon(o), "team": _canon(t)}
 
 
 def _match_segment(evidence, segs, store):
@@ -435,6 +437,12 @@ def _match_segment(evidence, segs, store):
     return None
 
 
+def _canon(s):
+    """Canonical taxonomy name — case-INSENSITIVE: lowercased. org/team/project are matched + returned lowercased so
+    'Ensight'/'ensight' (or any case) never split in rollups. Display can prettify; identity is lowercase."""
+    return (s or "").strip().lower()
+
+
 def resolve(evidence, tdir=None, classify_on_miss=False):
     """UNIFIED agentic attribution for ANY spend event (batch · realtime · remote/GPU) — the ONE engine all three cost
     paths share. Map the event to the SEGMENT that ran it (mechanical: batch_id / seg_id / cwd within the session), then
@@ -448,14 +456,14 @@ def resolve(evidence, tdir=None, classify_on_miss=False):
     if seg is not None:
         cls = store.get(seg["seg_id"])
         if cls and (cls.get("project") or cls.get("org")):
-            return {"org": cls.get("org", ""), "team": cls.get("team", ""), "project": (cls.get("project") or "").lower(),
+            return {"org": _canon(cls.get("org")), "team": _canon(cls.get("team")), "project": _canon(cls.get("project")),
                     "confidence": int(cls.get("confidence") or 0), "source": cls.get("source") or "llm",
                     "how": "batch-map" if evidence.get("batch_id") else "segment-cwd",
                     "seg_id": seg["seg_id"], "prior": seg.get("project_prior"), "evidenced": True}
         if classify_on_miss and seg.get("prompt"):
             cls = _classify_one_segment(seg)                  # AGENTIC, recorded
             if cls and (cls.get("project") or cls.get("org")):
-                return {"org": cls.get("org", ""), "team": cls.get("team", ""), "project": (cls.get("project") or "").lower(),
+                return {"org": _canon(cls.get("org")), "team": _canon(cls.get("team")), "project": _canon(cls.get("project")),
                         "confidence": int(cls.get("confidence") or 0), "source": "llm", "how": "llm",
                         "seg_id": seg["seg_id"], "prior": seg.get("project_prior"), "evidenced": True}
         return {"org": "", "team": "", "project": (seg.get("project_prior") or "").lower(), "confidence": 0,

@@ -24,7 +24,7 @@ def test_resolve_unifies_batch_realtime_remote(monkeypatch):
     remote = conv.resolve({"conv_id": "conv1", "cwd": "/Users/x/Documents/claude/lmm", "host": "vast-123"})
     # all three → the SAME determination via the SAME resolver (the unification)
     for r in (batch, realtime, remote):
-        assert (r["org"], r["team"], r["project"]) == ("Healiom", "lmm", "lmm")
+        assert (r["org"], r["team"], r["project"]) == ("healiom", "lmm", "lmm")   # taxonomy names lowercased (case-insensitive)
         assert r["seg_id"] == "S1" and r["source"] == "llm"
     assert batch["how"] == "batch-map"            # mechanical id match
     assert realtime["how"] == "segment-cwd" and remote["how"] == "segment-cwd"
@@ -46,8 +46,8 @@ def test_resolve_picks_right_segment_within_a_multi_project_session(monkeypatch)
     _patch(monkeypatch, [lmm, m2a], {
         "A": {"org": "Healiom", "team": "lmm", "project": "lmm", "confidence": 95, "source": "llm"},
         "B": {"org": "Ensight", "team": "manga2anime", "project": "manga2anime", "confidence": 95, "source": "llm"}})
-    assert conv.resolve({"conv_id": "conv1", "cwd": "/x/lmm"})["org"] == "Healiom"
-    assert conv.resolve({"conv_id": "conv1", "cwd": "/x/manga2anime"})["org"] == "Ensight"
+    assert conv.resolve({"conv_id": "conv1", "cwd": "/x/lmm"})["org"] == "healiom"
+    assert conv.resolve({"conv_id": "conv1", "cwd": "/x/manga2anime"})["org"] == "ensight"
     assert conv.resolve({"batch_id": "batch_bbbbbb222222"})["project"] == "manga2anime"
 
 

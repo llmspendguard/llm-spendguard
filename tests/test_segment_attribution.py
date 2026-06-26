@@ -115,7 +115,7 @@ conv._seg_put_cls("sc-b", {"project": "manga2anime", "org": "Ensight", "confiden
                   source="llm", model="m", seg={"sid": "SESS1", "prompt": "more"})
 sc = conv.session_classification("SESS1")
 ck("session_classification rolls a conversation up to its dominant org/project (GPU + realtime use this)",
-   bool(sc) and sc["org"] == "Ensight" and sc["project"] == "manga2anime")
+   bool(sc) and sc["org"] == "ensight" and sc["project"] == "manga2anime")   # taxonomy names are case-insensitive → lowercase
 ck("session_classification: unclassified session → None (never a fake attribution)",
    conv.session_classification("NO-SUCH-SESSION") is None)
 
@@ -136,7 +136,7 @@ ck("remote realtime keeps the executed haiku token run", any(x["model"] == "haik
 ck("remote realtime EXCLUDES batch-id runs (msgbatch in evidence → no double-count)",
    all("msgbatch" not in (x.get("evidence") or "") for x in rr["rows"]))
 ck("remote realtime drops PLANNED/not-executed runs", all(x["model"] != "sonnet" for x in rr["rows"]))
-ck("remote realtime attributed to the session's org (Ensight)", rr["by_org"].get("Ensight", 0) > 0)
+ck("remote realtime attributed to the session's org (ensight)", rr["by_org"].get("ensight", 0) > 0)
 
 # ── 8. GPU TIMING MATCH: a vast.ai instance's run window ⨝ the conversation active then → org/project. This is the
 #       "combine vast.ai cost (window) + LLM attribution" join: vast gives the window; the matched conversation the org. ──
@@ -147,7 +147,7 @@ conv.segments = lambda tdir=None: [{"sid": "GSESS", "seg_id": "g1", "ts": _t.iso
 conv._seg_put_cls("g1", {"project": "manga2anime", "org": "Ensight", "confidence": 90}, source="llm",
                   seg={"sid": "GSESS", "prompt": "fleet box run"})
 att = conv.instance_attributions([{"id": "7777777", "label": "caption", "start_date": _t.timestamp() - 3600, "end_date": _t.timestamp() + 3600}])
-ck("GPU instance timing-matched to the conversation active in its window → Ensight", att.get("7777777", {}).get("org") == "Ensight")
+ck("GPU instance timing-matched to the conversation active in its window → ensight", att.get("7777777", {}).get("org") == "ensight")
 att2 = conv.instance_attributions([{"id": "8888888", "label": "x", "start_date": _t.timestamp() + 99999, "end_date": _t.timestamp() + 199999}])
 ck("GPU instance with NO overlapping conversation → unmatched (never a fake attribution)", "8888888" not in att2)
 
