@@ -537,54 +537,211 @@ def _cached_in(result):
     return getattr(u, "cache_read_input_tokens", 0) or 0  # Anthropic
 
 
-def _rt_account(model, kw, result, est_fn, act_fn, latency=None):
-    try:
-        output = finish = None
-        if kw.get("stream"):                       # can't read a stream's usage without consuming it → ESTIMATE, but
-            _, in_tok, out_tok = est_fn(kw)        #   size OUTPUT from this call-class's MEASURED history (the per-sig
-            try:                                   #   telemetry the gate records on non-stream calls), not the
-                from . import bulkgate             #   max_tokens CEILING — which over-counts streaming spend 2-5x.
-                _it = (_calls.current().get("intent") or "").strip()
-                if not _it.startswith("spendguard:"):
-                    mt = bulkgate.maxtokens(bulkgate.sig(model or "", template_id=_it or None))
-                    if (mt.get("n") or 0) >= 5 and mt.get("p99"):
-                        out_tok = min(out_tok or 10 ** 9, int(mt["p99"] * 1.5))   # measured typical, capped — not the ceiling
-            except Exception:
-                pass
-        else:
-            act = act_fn(result)
-            if act:
-                in_tok, out_tok = act
-            else:
-                _, in_tok, out_tok = est_fn(kw)
-            output = _output_text(result); finish = _finish(result)
-        cached = 0 if kw.get("stream") else _cached_in(result)
-        prov = "anthropic" if str(model).startswith("claude") else "openai"   # o3/embeddings are OpenAI, not "gpt"
-        # normalize to OpenAI token semantics (input INCLUDES cached) before pricing: Anthropic's
-        # input_tokens EXCLUDES cache_read, so add it back or _cost double-subtracts and under-bills ~2x.
-        in_for_cost = (in_tok + cached) if prov == "anthropic" else in_tok
-        cost = pricing.realtime_cost(model, in_for_cost, out_tok, cached) if model else 0.0
-        if _meta_intent():                            # meta call → meta ledger only (not workload realtime)
-            from . import budget
-            budget.record_meta(prov, model, cost)
-            if _calls.enabled():
-                _calls.record(prov, model, "realtime", cost, in_tok=in_tok, out_tok=out_tok, latency=latency,
-                              prompt=_prompt_text(kw), output=output, finish=finish)
-            return
-        _rt_record(prov, model, cost, in_tok=in_tok, out_tok=out_tok, cached=cached)
-        try:                                              # max_tokens TRUNCATION detection (the API states it — a fact,
-            from . import bulkgate                        # not a guess) + per-sig output telemetry for data-driven bounds
-            _intent = (_calls.current().get("intent") or "").strip()
-            if not _intent.startswith("spendguard:"):
-                bulkgate.note_response(bulkgate.sig(model or "", template_id=_intent or None),
-                                       model or "", out_tok, kw.get("max_tokens"), locals().get("finish"))
-        except Exception:
-            pass
+def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, finish=None):
+    """Record ONE realtime call's usage → cost · cross-process ledger · max_tokens truncation telemetry · call log.
+    Shared by _rt_account (non-stream) AND the streaming proxy (which captures ACTUAL usage as the stream is consumed)."""
+    prov = "anthropic" if str(model).startswith("claude") else "openai"   # o3/embeddings are OpenAI, not "gpt"
+    # normalize to OpenAI token semantics (input INCLUDES cached) before pricing: Anthropic's input_tokens EXCLUDES
+    # cache_read, so add it back or _cost double-subtracts and under-bills ~2x.
+    in_for_cost = (in_tok + cached) if prov == "anthropic" else in_tok
+    cost = pricing.realtime_cost(model, in_for_cost, out_tok, cached) if model else 0.0
+    if _meta_intent():                            # meta call → meta ledger only (not workload realtime)
+        from . import budget
+        budget.record_meta(prov, model, cost)
         if _calls.enabled():
             _calls.record(prov, model, "realtime", cost, in_tok=in_tok, out_tok=out_tok, latency=latency,
                           prompt=_prompt_text(kw), output=output, finish=finish)
+        return
+    _rt_record(prov, model, cost, in_tok=in_tok, out_tok=out_tok, cached=cached)
+    try:                                              # max_tokens TRUNCATION detection (a fact) + per-sig telemetry
+        from . import bulkgate
+        _intent = (_calls.current().get("intent") or "").strip()
+        if not _intent.startswith("spendguard:"):
+            bulkgate.note_response(bulkgate.sig(model or "", template_id=_intent or None),
+                                   model or "", out_tok, kw.get("max_tokens"), finish)
+    except Exception:
+        pass
+    if _calls.enabled():
+        _calls.record(prov, model, "realtime", cost, in_tok=in_tok, out_tok=out_tok, latency=latency,
+                      prompt=_prompt_text(kw), output=output, finish=finish)
+
+
+def _stream_out_estimate(model, kw, est_fn):
+    """Fallback when a stream's usage couldn't be captured: size output from the call-class's MEASURED history
+    (per-sig p99×1.5), capped at the max_tokens ceiling (the ceiling alone over-counts streaming 2-5x)."""
+    _, in_tok, out_tok = est_fn(kw)
+    try:
+        from . import bulkgate
+        _it = (_calls.current().get("intent") or "").strip()
+        if not _it.startswith("spendguard:"):
+            mt = bulkgate.maxtokens(bulkgate.sig(model or "", template_id=_it or None))
+            if (mt.get("n") or 0) >= 5 and mt.get("p99"):
+                out_tok = min(out_tok or 10 ** 9, int(mt["p99"] * 1.5))
+    except Exception:
+        pass
+    return in_tok, out_tok
+
+
+def _rt_account(model, kw, result, est_fn, act_fn, latency=None):
+    """Record a NON-streaming realtime call from its actual usage (act_fn), else the estimate. Streaming calls are
+    recorded by the stream proxy on exhaustion; reaching here for a stream is the wrap-FAILED fallback → estimate."""
+    try:
+        if kw.get("stream"):
+            in_tok, out_tok = _stream_out_estimate(model, kw, est_fn)
+            _record_rt(model, kw, in_tok, out_tok, 0, latency)
+            return
+        act = act_fn(result)
+        if act:
+            in_tok, out_tok = act
+        else:
+            _, in_tok, out_tok = est_fn(kw)
+        _record_rt(model, kw, in_tok, out_tok, _cached_in(result), latency, _output_text(result), _finish(result))
     except Exception as e:
         print(f"[spend_gate] WARN real-time accounting failed ({e})", file=sys.stderr)
+
+
+def _pull_usage(chunk, acc):
+    """Accumulate token usage from ONE streaming chunk — OpenAI chat's final chunk `.usage` (needs stream_options
+    include_usage), OpenAI Responses' `.response.usage`, Anthropic's message_start (input) + message_delta (output) —
+    plus the finish/stop reason. Best-effort: unknown chunk shapes are ignored (fail-open)."""
+    try:
+        u = getattr(chunk, "usage", None)                    # OpenAI chat final chunk / Anthropic message_delta
+        if u is not None:
+            for src, dst in (("prompt_tokens", "in"), ("input_tokens", "in"),
+                             ("completion_tokens", "out"), ("output_tokens", "out")):
+                v = getattr(u, src, None)
+                if v:
+                    acc[dst] = int(v)
+            for dattr in ("prompt_tokens_details", "input_tokens_details"):
+                d = getattr(u, dattr, None)
+                if d is not None and getattr(d, "cached_tokens", None):
+                    acc["cached"] = int(d.cached_tokens)
+            if getattr(u, "cache_read_input_tokens", None):
+                acc["cached"] = int(u.cache_read_input_tokens)
+        m = getattr(chunk, "message", None)                  # Anthropic message_start carries input usage
+        mu = getattr(m, "usage", None) if m is not None else None
+        if mu is not None:
+            if getattr(mu, "input_tokens", None):
+                acc["in"] = int(mu.input_tokens)
+            if getattr(mu, "output_tokens", None):
+                acc["out"] = int(mu.output_tokens)
+        resp = getattr(chunk, "response", None)              # OpenAI Responses API: final event .response.usage
+        ru = getattr(resp, "usage", None) if resp is not None else None
+        if ru is not None:
+            if getattr(ru, "input_tokens", None):
+                acc["in"] = int(ru.input_tokens)
+            if getattr(ru, "output_tokens", None):
+                acc["out"] = int(ru.output_tokens)
+        ch = getattr(chunk, "choices", None)                 # OpenAI finish_reason
+        if ch and getattr(ch[0], "finish_reason", None):
+            acc["finish"] = ch[0].finish_reason
+        d = getattr(chunk, "delta", None)                    # Anthropic message_delta stop_reason
+        sr = getattr(chunk, "stop_reason", None) or (getattr(d, "stop_reason", None) if d is not None else None)
+        if sr:
+            acc["finish"] = sr
+    except Exception:
+        pass
+
+
+def _observe_stream(stream, model, kw, est_fn, t0, is_async):
+    """Wrap a streaming response in a TRANSPARENT proxy that passes every chunk through, captures usage as it streams,
+    and on exhaustion records the ACTUAL usage (or the estimate if none was emitted) — 'capture as it happens'.
+    Returns the proxy; raises only if a proxy can't be built (caller falls back to the estimate). Fail-open inside."""
+    acc = {}
+
+    def _done():
+        try:
+            if acc.get("in") or acc.get("out"):
+                _record_rt(model, kw, acc.get("in", 0), acc.get("out", 0), acc.get("cached", 0),
+                           time.time() - t0, finish=acc.get("finish"))
+            else:                                            # usage not emitted (e.g. include_usage off) → estimate
+                in_tok, out_tok = _stream_out_estimate(model, kw, est_fn)
+                _record_rt(model, kw, in_tok, out_tok, 0, time.time() - t0)
+        except Exception:
+            pass
+
+    return (_AsyncStreamProxy if is_async else _StreamProxy)(stream, acc, _done)
+
+
+class _StreamProxy:
+    """Sync transparent proxy over a streaming response: observe iteration (capture usage), delegate everything else
+    (.response/.close/...) so the consumer sees a normal stream. Records on exhaustion OR context-manager exit."""
+    def __init__(self, stream, acc, done):
+        object.__setattr__(self, "_sg", [stream, acc, done, False])
+
+    def _fire(self):
+        sg = object.__getattribute__(self, "_sg")
+        if not sg[3]:
+            sg[3] = True
+            sg[2]()
+
+    def __iter__(self):
+        sg = object.__getattribute__(self, "_sg")
+        try:
+            for chunk in sg[0]:
+                _pull_usage(chunk, sg[1])
+                yield chunk
+        finally:
+            self._fire()
+
+    def __enter__(self):
+        object.__getattribute__(self, "_sg")[0].__enter__()
+        return self
+
+    def __exit__(self, *a):
+        r = object.__getattribute__(self, "_sg")[0].__exit__(*a)
+        self._fire()
+        return r
+
+    def __getattr__(self, name):
+        return getattr(object.__getattribute__(self, "_sg")[0], name)
+
+
+class _AsyncStreamProxy:
+    """Async transparent proxy — same as _StreamProxy for `async for` / `async with`."""
+    def __init__(self, stream, acc, done):
+        object.__setattr__(self, "_sg", [stream, acc, done, False])
+
+    def _fire(self):
+        sg = object.__getattribute__(self, "_sg")
+        if not sg[3]:
+            sg[3] = True
+            sg[2]()
+
+    async def __aiter__(self):
+        sg = object.__getattribute__(self, "_sg")
+        try:
+            async for chunk in sg[0]:
+                _pull_usage(chunk, sg[1])
+                yield chunk
+        finally:
+            self._fire()
+
+    async def __aenter__(self):
+        await object.__getattribute__(self, "_sg")[0].__aenter__()
+        return self
+
+    async def __aexit__(self, *a):
+        r = await object.__getattribute__(self, "_sg")[0].__aexit__(*a)
+        self._fire()
+        return r
+
+    def __getattr__(self, name):
+        return getattr(object.__getattribute__(self, "_sg")[0], name)
+
+
+def _inject_usage(kw, est_fn):
+    """For OpenAI CHAT streaming, request usage in the final chunk (stream_options include_usage) so the gate can
+    CAPTURE actual tokens. Anthropic streams + OpenAI Responses carry usage natively (no injection). No-op otherwise."""
+    try:
+        if kw.get("stream") and est_fn is _est_oai_chat:
+            so = kw.get("stream_options")
+            if so is None:
+                kw["stream_options"] = {"include_usage": True}
+            elif isinstance(so, dict):
+                so.setdefault("include_usage", True)
+    except Exception:
+        pass
 
 
 def _wrap_rt(orig, est_fn, act_fn, is_async):
@@ -592,21 +749,33 @@ def _wrap_rt(orig, est_fn, act_fn, is_async):
         @functools.wraps(orig)
         async def w(self, *a, **kw):
             if not _disabled():
-                m, i, o = est_fn(kw); _rt_precheck(None, m, i, o)
+                m, i, o = est_fn(kw); _rt_precheck(None, m, i, o); _inject_usage(kw, est_fn)
             t0 = time.time()
             r = await orig(self, *a, **kw)
             if not _disabled():
-                _rt_account(kw.get("model"), kw, r, est_fn, act_fn, time.time() - t0)
+                if kw.get("stream"):                          # capture actual usage as the stream is consumed
+                    try:
+                        return _observe_stream(r, kw.get("model"), kw, est_fn, t0, True)
+                    except Exception:
+                        _rt_account(kw.get("model"), kw, r, est_fn, act_fn, time.time() - t0)   # wrap failed → estimate
+                else:
+                    _rt_account(kw.get("model"), kw, r, est_fn, act_fn, time.time() - t0)
             return r
     else:
         @functools.wraps(orig)
         def w(self, *a, **kw):
             if not _disabled():
-                m, i, o = est_fn(kw); _rt_precheck(None, m, i, o)
+                m, i, o = est_fn(kw); _rt_precheck(None, m, i, o); _inject_usage(kw, est_fn)
             t0 = time.time()
             r = orig(self, *a, **kw)
             if not _disabled():
-                _rt_account(kw.get("model"), kw, r, est_fn, act_fn, time.time() - t0)
+                if kw.get("stream"):
+                    try:
+                        return _observe_stream(r, kw.get("model"), kw, est_fn, t0, False)
+                    except Exception:
+                        _rt_account(kw.get("model"), kw, r, est_fn, act_fn, time.time() - t0)
+                else:
+                    _rt_account(kw.get("model"), kw, r, est_fn, act_fn, time.time() - t0)
             return r
     w._spend_gated = True
     return w
