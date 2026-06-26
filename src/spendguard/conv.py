@@ -403,6 +403,84 @@ def session_classification(sid):
     return {"project": (p or "").lower(), "org": o or "", "team": t or ""}
 
 
+def _match_segment(evidence, segs, store):
+    """Find the SEGMENT that ran a spend event — MECHANICAL only (exact id/cwd match; never a meaning decision):
+    explicit seg_id → the batch_id's segment → within the session, the segment whose cwd matches the run (tie-break:
+    the one referencing the script, else highest-confidence-classified, else latest). Returns the segment or None."""
+    sid = evidence.get("conv_id") or evidence.get("sid")
+    seg_id, bid, cwd, script = evidence.get("seg_id"), evidence.get("batch_id"), evidence.get("cwd"), evidence.get("script") or ""
+    if seg_id:
+        for s in segs:
+            if s["seg_id"] == seg_id:
+                return s
+    if bid:
+        for s in segs:
+            if bid in (s.get("batch_ids") or []):
+                return s
+    if sid:
+        insess = [s for s in segs if s.get("sid") == sid]
+        cand = insess
+        if cwd:
+            cm = [s for s in insess if s.get("cwd") and
+                  (s["cwd"] == cwd or cwd.startswith(s["cwd"]) or s["cwd"].startswith(cwd))]
+            cand = cm or insess
+        if len(cand) == 1:
+            return cand[0]
+        if len(cand) > 1:
+            if script:
+                sm = [s for s in cand if script in (s.get("prompt") or "")]
+                cand = sm or cand
+            cand.sort(key=lambda s: (int((store.get(s["seg_id"]) or {}).get("confidence", 0)), s.get("ts") or ""), reverse=True)
+            return cand[0]
+    return None
+
+
+def resolve(evidence, tdir=None, classify_on_miss=False):
+    """UNIFIED agentic attribution for ANY spend event (batch · realtime · remote/GPU) — the ONE engine all three cost
+    paths share. Map the event to the SEGMENT that ran it (mechanical: batch_id / seg_id / cwd within the session), then
+    return that segment's RECORDED agentic determination (org/team/project; cwd was the PRIOR the LLM confirmed). On an
+    unclassified segment: classify_on_miss=True → classify it now (LLM, recorded); else the cwd PRIOR (the repo, source
+    ='prior') — NEVER a regex keyword guess, NEVER blanket 'unattributed' for evidenced spend. Generalises
+    batch_project_map. `evidence` keys: batch_id | conv_id/sid + cwd + script | seg_id | host/label."""
+    store = _seg_get_all()
+    segs = segments(tdir)
+    seg = _match_segment(evidence, segs, store)
+    if seg is not None:
+        cls = store.get(seg["seg_id"])
+        if cls and (cls.get("project") or cls.get("org")):
+            return {"org": cls.get("org", ""), "team": cls.get("team", ""), "project": (cls.get("project") or "").lower(),
+                    "confidence": int(cls.get("confidence") or 0), "source": cls.get("source") or "llm",
+                    "how": "batch-map" if evidence.get("batch_id") else "segment-cwd",
+                    "seg_id": seg["seg_id"], "prior": seg.get("project_prior"), "evidenced": True}
+        if classify_on_miss and seg.get("prompt"):
+            cls = _classify_one_segment(seg)                  # AGENTIC, recorded
+            if cls and (cls.get("project") or cls.get("org")):
+                return {"org": cls.get("org", ""), "team": cls.get("team", ""), "project": (cls.get("project") or "").lower(),
+                        "confidence": int(cls.get("confidence") or 0), "source": "llm", "how": "llm",
+                        "seg_id": seg["seg_id"], "prior": seg.get("project_prior"), "evidenced": True}
+        return {"org": "", "team": "", "project": (seg.get("project_prior") or "").lower(), "confidence": 0,
+                "source": "prior", "how": "cwd-prior", "seg_id": seg["seg_id"],
+                "prior": seg.get("project_prior"), "evidenced": True}
+    sc = session_classification(evidence.get("conv_id") or evidence.get("sid") or "")
+    if sc:
+        return {**sc, "confidence": 0, "source": "session", "how": "session-fallback",
+                "seg_id": None, "prior": None, "evidenced": bool(evidence.get("cwd"))}
+    return {"org": "", "team": "", "project": "", "confidence": 0, "source": "none", "how": "none",
+            "seg_id": None, "prior": None, "evidenced": False}
+
+
+def _classify_one_segment(seg):
+    """Classify ONE segment via the shared LLM classifier + record it (resolve's agentic miss path)."""
+    from . import attribution
+    taxo, _ = attribution.taxonomy()
+    res = attribution.classify_items(
+        [{"id": seg["seg_id"], "text": f"[repo:{seg.get('project_prior')}] {seg.get('prompt')}"}], taxo, run=True)
+    cls = (res or {}).get(seg["seg_id"])
+    if cls:
+        _seg_put_cls(seg["seg_id"], cls, source="llm", model=config.advisor_model(), seg=seg)
+    return cls
+
+
 # COST signals only — NOT model names. Model names (haiku/opus/gpt) appear everywhere and drown the actual cost
 # evidence in noise; the run-OUTPUT cost lines (per-clip $, USAGE prints, aggregate/total cost, token totals) are
 # what's reconstructable. lmm's UNGATED realtime is mostly ESTIMATES in chat (rate tables, "~$X running"), which a
