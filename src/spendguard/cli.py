@@ -69,6 +69,9 @@ def main(argv=None):
         for prov, models in sorted(p.providers().items()):
             print(f"{prov} ({len(models)}): {', '.join(sorted(models))}")
         return 0
+    if cmd == "coverage":                               # which LLM-calling venvs aren't gated (ungated realtime sources)
+        from . import coverage
+        return coverage.cmd(rest)
     if cmd == "maxtokens":                              # data-driven max_tokens bound for a call-class sig
         from . import bulkgate
         if not rest:
