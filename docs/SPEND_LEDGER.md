@@ -17,8 +17,9 @@ writes raw SQL** — the class owns the schema and all queries/joins, returns di
   the live row — so enrichment stays flexible while every change stays provable.
 - **Self-contained record + link-ids** — snapshots cost/attribution/rates + `seg_id`/`call_id`/`conv_id`/`batch_id`/`model`.
 
-**Status:** v3 schema built + validated (**18/18** tests, `tests/test_spend_ledger.py`). Attribution engine (Step 3) +
-migration + consumer hookup planned. File: `src/spendguard/ledger.py`. DB: `~/.spendguard/spend.db`.
+**Status:** v4 schema + **lifecycle/audit built + validated** (**22/22** tests, `tests/test_spend_ledger.py`):
+record/update/lock_period/reverse/adjust/history + `spend_audit` hash chain. Attribution engine (Step 3) + migration +
+consumer hookup planned. File: `src/spendguard/ledger.py`. DB: `~/.spendguard/spend.db`.
 
 ---
 

@@ -4,7 +4,7 @@ Financial-systems grade: integer micro-money (exact), UTC time + accounting day/
 (tamper-evident), cost routing, dedup (no double-count), per-repo scoping, billed-vs-est_value split, meta exclusion.
 """
 import pytest
-from spendguard.ledger import SpendLedger, MICRO_COLS
+from spendguard.ledger import SpendLedger, MICRO_COLS, LockedError
 
 
 def _led(tmp_path):
@@ -120,7 +120,7 @@ def test_timestamps_are_utc_with_defaults(tmp_path):
     ev = led.get(led.record({"source": "x", "kind": "realtime", "usd": 1.0, "conv_id": "c", "attr_what": "a"}))
     assert ev["ts_utc"].endswith("+00:00")           # tz-aware UTC
     assert ev["recorded_at"] and ev["occurred_at"]
-    assert ev["currency"] == "USD" and ev["status"] == "posted"
+    assert ev["currency"] == "USD" and ev["status"] == "draft"   # newly ingested
 
 
 def test_occurred_vs_recorded_accounting_day(tmp_path):
@@ -131,18 +131,64 @@ def test_occurred_vs_recorded_accounting_day(tmp_path):
     assert ev["recorded_at"] != ev["occurred_at"]                    # booked later than it happened
 
 
-# ── integrity: append-only hash chain is tamper-evident ──
+# ── lifecycle & controls (Xero/Intuit): mutable until locked, audit-logged, hash-chained ──
 
-def test_hash_chain_verifies_and_detects_tamper(tmp_path):
+def test_update_logs_to_audit_and_bumps_revision(tmp_path):
     led = _led(tmp_path)
-    led.record({"source": "x", "kind": "realtime", "usd": 1.0, "conv_id": "c1", "attr_what": "a"})
-    led.record({"source": "x", "kind": "batch", "usd": 2.0, "conv_id": "c2", "attr_what": "b"})
-    ok, bad = led.verify_chain()
+    a = led.record({"source": "gate", "kind": "realtime", "usd": 1.0, "conv_id": "c", "attr_what": "x"})
+    assert led.get(a)["status"] == "draft" and led.get(a)["revision"] == 1
+    n = led.update(a, {"org": "Healiom", "status": "posted", "attr_how": "cwd-match"}, actor="attr", reason="cwd=lmm")
+    assert n == 3                                       # three fields changed
+    ev = led.get(a)
+    assert ev["org"] == "Healiom" and ev["status"] == "posted" and ev["revision"] == 2
+    hist = led.history(a)
+    assert hist[0]["pass"] == "ingest"                 # creation logged first
+    assert any(h["field"] == "org" and h["new_value"] == "Healiom" and h["actor"] == "attr" for h in hist)
+
+
+def test_protected_fields_cannot_be_updated(tmp_path):
+    led = _led(tmp_path)
+    a = led.record({"source": "gate", "kind": "realtime", "usd": 1.0, "conv_id": "c", "attr_what": "x"})
+    with pytest.raises(ValueError):
+        led.update(a, {"period": "2099-01"})           # identity/period is immutable → reverse/adjust
+
+
+def test_lock_refuses_update_and_new_post_then_reverse(tmp_path):
+    led = _led(tmp_path)
+    a = led.record({"source": "gate", "kind": "realtime", "usd": 10.0, "conv_id": "c",
+                    "occurred_at": "2026-05-10T00:00:00+00:00", "attr_what": "x"})
+    assert led.lock_period("2026-05", reason="close May", actor="ash") == 1
+    assert led.get(a)["status"] == "locked"
+    with pytest.raises(LockedError):
+        led.update(a, {"org": "Healiom"})              # locked row is immutable
+    with pytest.raises(LockedError):
+        led.record({"source": "gate", "kind": "realtime", "usd": 1.0, "conv_id": "late",
+                    "occurred_at": "2026-05-11T00:00:00+00:00", "attr_what": "late"})   # no posting into a closed period
+    rid = led.reverse(a, actor="ash", reason="wrong")  # correction = reversal into the open period
+    rev = led.get(rid)
+    assert rev["realtime_micros"] == -10_000_000 and rev["reverses_id"] == a
+    assert led.get(a)["realtime_micros"] == 10_000_000  # original untouched
+
+
+def test_reversed_pair_nets_to_zero(tmp_path):
+    led = _led(tmp_path)
+    a = led.record({"source": "gate", "kind": "realtime", "usd": 10.0, "conv_id": "c",
+                    "occurred_at": "2026-05-10T00:00:00+00:00", "attr_what": "x"})
+    led.lock_period("2026-05")
+    led.reverse(a)
+    assert led.rollup()["realtime_usd"] == 0.0          # +10 (May) and −10 (reversal) net out
+
+
+def test_audit_chain_verifies_and_detects_tamper(tmp_path):
+    led = _led(tmp_path)
+    a = led.record({"source": "x", "kind": "realtime", "usd": 1.0, "conv_id": "c1", "attr_what": "a"})
+    led.update(a, {"org": "Healiom"}, actor="attr", reason="cwd=lmm")
+    ok, bad = led.verify_audit_chain()
     assert ok and bad is None
-    led._conn.execute("UPDATE spend_events SET realtime_micros=999 WHERE conv_id='c1'")   # tamper, bypassing the ledger
+    led._conn.execute("UPDATE spend_audit SET new_value='Ensight' WHERE event_id=? AND field='org'", (a,))
     led._conn.commit()
-    ok, bad = led.verify_chain()
-    assert not ok                                    # detected
+    ok, bad = led.verify_audit_chain()
+    assert not ok                                       # the immutable log detects the alteration
 
 
 # ── rate snapshot + FLOAT confidence ──
