@@ -27,7 +27,7 @@ def ck(name, cond):
 
 # isolated home has no taxonomy/transcripts → pin the repo→org map + make resolve hermetic (no real transcript reads)
 conv._prior_index = lambda: {"lmm": ("healiom", "lmm"), "manga2anime": ("ensight", "manga2anime"),
-                             "llmseg": ("ensight", "llm-spendguard")}
+                             "llm-spendguard": ("ensight", "llm-spendguard")}
 conv.segments = lambda *a, **k: []
 conv._seg_get_all = lambda: {}
 
@@ -38,7 +38,7 @@ def ins(ts, provider, model, kind, cost, project, conv_id="c1"):
 
 ins("2026-06-01T10:00:00+00:00", "openai", "gpt-5.5", "realtime", 1.50, "lmm")
 ins("2026-06-01T11:00:00+00:00", "anthropic", "claude-haiku-4-5", "batch", 2.00, "manga2anime")
-ins("2026-06-01T12:00:00+00:00", "anthropic", "claude-opus-4-8", "meta", 0.25, "llmseg")
+ins("2026-06-01T12:00:00+00:00", "anthropic", "claude-opus-4-8", "meta", 0.25, "llm-spendguard")   # spendguard's own meta
 ins("2026-06-02T00:00:00+00:00", "openai", "(provider-batch)", "batch", 10.00, "lmm")   # reconciliation MARKER
 ins("2026-06-03T09:00:00+00:00", "openai", "gpt-5.5", "realtime", 0.75, "lmm")           # dup-cost pair A
 ins("2026-06-03T09:00:00+00:00", "openai", "gpt-5.5", "realtime", 0.75, "lmm")           # dup-cost pair B (diff rowid)

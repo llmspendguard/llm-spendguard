@@ -109,8 +109,8 @@ def cancellation_rows(cancelled=None):
 
 def push(dry=False):
     """Push THIS repo's project signal (scrubbed) → /v1/signal via the repo key. Same project filter as the
-    ledger roll-up: the connection's own project(s), plus 'unattributed'/'llmseg' iff it owns_account — so the
-    account-owner (nlp-pipeline) also carries the shared no-evidence cancellation loss, and other repos don't double-count."""
+    ledger roll-up: the connection's own project(s), plus 'unattributed'/'llm-spendguard' (own meta) iff it owns_account
+    — so the account-owner also carries the shared no-evidence cancellation loss, and other repos don't double-count."""
     from . import saas
     c = saas.conn()
     flt = saas._project_filter(c)

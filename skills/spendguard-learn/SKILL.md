@@ -37,5 +37,5 @@ Recommendations are suggestions — never auto-applied.
 Each charge carries a `project` tag (the WHAT) alongside the contributor (WHO); the SaaS roll-up groups by
 `(org/team × user × project)`. Most rows tag deterministically (repo/config); `spendguard saas commands` runs
 the server-requested **reconcile + re-tag** pass. The LLM-residual re-tag (classifying the ambiguous remainder
-with a small model) is **estimate-first + capped**, and its cost is billed to project `llmseg` — never auto-run;
+with a small model) is **estimate-first + capped**, and its cost is billed to project `llm-spendguard` — never auto-run;
 follow the estimate → confirm → run protocol like any paid batch.

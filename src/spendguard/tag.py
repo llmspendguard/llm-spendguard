@@ -1,21 +1,21 @@
 """Smart project tagging — the cascade that decides which project/work a charge belongs to.
 
-  1. deterministic (FREE): repo/cwd/config + kind (meta → 'llmseg'). Covers most rows at zero cost.
+  1. deterministic (FREE): repo/cwd/config + kind (meta → 'llm-spendguard'). Covers most rows at zero cost.
   2. corpus context (FREE): the `calls` log's intent/caller, the `conv` frame — refine the deterministic guess.
   3. LLM residual (CAPPED, gated, estimate-first): only the still-ambiguous remainder; a small batched model
-     classifies {project}. That cost is spendguard's own → tagged 'llmseg'. Never auto-run — it spends, so it
+     classifies {project}. That cost is spendguard's own → tagged 'llm-spendguard' (kind='meta'). Never auto-run — it spends, so it
      follows the API spend protocol (estimate → confirm → run, with a meta-budget cap). See estimate_llm_retag().
 """
 
 
 def retag_deterministic():
-    """FREE pass: fill EMPTY project tags from context (meta → 'llmseg', else the repo/config project). Never
+    """FREE pass: fill EMPTY project tags from context (meta → 'llm-spendguard', else the repo/config project). Never
     overrides an existing tag. Returns the number of rows changed."""
     from . import budget
     proj = budget._project()
     db = budget._db()
     with budget._lock:
-        a = db.execute("UPDATE charges SET project='llmseg' WHERE (project IS NULL OR project='') AND kind='meta'").rowcount
+        a = db.execute("UPDATE charges SET project='llm-spendguard' WHERE (project IS NULL OR project='') AND kind='meta'").rowcount
         b = db.execute("UPDATE charges SET project=? WHERE (project IS NULL OR project='')", (proj,)).rowcount
         db.commit()
     return int(a or 0) + int(b or 0)
@@ -62,4 +62,4 @@ def estimate_llm_retag():
     # tiny classifier on a short conversation/intent snippet; pack ~25/req on a nano model. Rough upper bound.
     model = "gpt-5-nano"
     est_usd = round(n / 25 * 0.0008, 4)   # ~packed reqs × a conservative per-req cost
-    return {"rows": n, "est_usd": est_usd, "model": model, "note": "meta cost → billed to project 'llmseg'"}
+    return {"rows": n, "est_usd": est_usd, "model": model, "note": "meta cost → billed to project 'llm-spendguard'"}

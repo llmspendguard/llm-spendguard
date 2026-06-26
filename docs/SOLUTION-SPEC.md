@@ -99,7 +99,7 @@ the [server spec](https://github.com/llmspendguard/llm-spendguard-server/blob/ma
    bug *in the gate itself* → fail-**open** (your call proceeds; governance must never break the call path).
 4. **Record.** The actual cost is written to the local SQLite ledger (`budget.record`) tagged with provider, model,
    kind (batch/realtime/meta), and a **project** resolved by `tag.py`'s free deterministic cascade (repo/cwd/config;
-   `meta` → spendguard's own `llmseg`). Guarded savings (a cache hit, a blocked call, a cascade downgrade) are
+   `meta` → spendguard's own `llm-spendguard`). Guarded savings (a cache hit, a blocked call, a cascade downgrade) are
    recorded by `guard.py` as a lognormal distribution (cumulants that add).
 5. **Reconcile against truth.** On demand (or on schedule), `reconcile.py` reads each provider's *actual billing*
    (read-only) as `truth_total`, sums what the gate `captured`, and computes `residual = truth − captured −

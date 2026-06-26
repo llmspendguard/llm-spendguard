@@ -227,13 +227,13 @@ def _project_filter(c):
 
     The account OWNER (owns_account) also absorbs the reconciled 'unattributed' residual (provider truth − Σ attributed)
     — the gap belongs to whoever owns the provider account. In legacy static mode it also pulls in spendguard's own
-    'llmseg' meta; in ORG mode it does NOT — 'llmseg' is a real project the taxonomy already assigns to its own org
-    (Ensight), so it rides with THAT org's connection, never leaking the meta cross-org or double-counting it."""
+    meta (project 'llm-spendguard', kind='meta'); in ORG mode it does NOT — 'llm-spendguard' is a real project the
+    taxonomy assigns to its own org (Ensight), so it rides with THAT org's connection, never leaking cross-org."""
     org = (c.get("org") or "").strip()
     if org:                              # ORG-BASED (authoritative): every project the taxonomy maps to this org
         base = _org_projects(org)
         if c.get("owns_account"):
-            base.add("unattributed")     # owner absorbs the residual gap (NOT llmseg — that's Ensight's own project)
+            base.add("unattributed")     # owner absorbs the residual gap (NOT llm-spendguard — that's Ensight's project)
         return base                      # fail-CLOSED: an empty/typo'd org pushes NOTHING, never cross-org push-all
     # ── legacy static-list mode (no `org` configured) ──
     ps = c.get("projects")
@@ -244,7 +244,7 @@ def _project_filter(c):
     else:
         return None                      # nothing configured at all → push everything (legacy default)
     if c.get("owns_account"):
-        base.add("llmseg")
+        base.add("llm-spendguard")       # spendguard's own meta rides with the account owner in legacy mode
         base.add("unattributed")
     return base
 
@@ -293,7 +293,7 @@ def build_rollup_rows(raw, ref, flt):
 
 def build_guarded_rows(rows, base):
     """Guarded cumulant rows → scrubbed /v1 guarded_totals. `base` = a set of this connection's project(s) (empty =
-    push all of them; guarded sources are never llmseg/unattributed, so it doesn't widen like the ledger filter).
+    push all of them; guarded sources are never meta/unattributed, so it doesn't widen like the ledger filter).
     Cumulants pass through (they add → the server recovers the distribution at any scope)."""
     out = []
     for r in rows:
@@ -306,7 +306,7 @@ def build_guarded_rows(rows, base):
 
 
 def _conn_project_base(c):
-    """The connection's own project set (no llmseg/unattributed widening) — used for the guarded filter. ORG-BASED
+    """The connection's own project set (no meta/unattributed widening) — used for the guarded filter. ORG-BASED
     when `org` is set (every taxonomy project under the org); else the explicit projects/project list; empty = all."""
     org = (c.get("org") or "").strip()
     if org:

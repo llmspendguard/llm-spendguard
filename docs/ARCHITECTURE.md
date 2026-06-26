@@ -280,7 +280,7 @@ A cost governor on a live submit path must never break a legitimate job. The who
 spendguard's own LLM calls (`optimize` / `experiment` / `reconstruct` / `mine` / `review` / `brief --llm`)
 run inside `calls.context(intent="spendguard:*")`. The gate detects that intent (`_meta_intent`) and routes
 the call to a **separate `caps.meta` budget** ($2/day default) and a `kind='meta'` ledger
-(`budget.record_meta`, tagged project `llmseg`) — both for batch (`_meta_gate`) and real-time
+(`budget.record_meta`, tagged project `llm-spendguard`) — both for batch (`_meta_gate`) and real-time
 (`_rt_precheck` / `_rt_account`). The advisor also **excludes** `spendguard:*` from the corpus it analyzes,
 so the governor can't overspend governing or pollute its own learning. Same gate patches enforce it; the CLI
 calls `install()` so it holds even when run as `spendguard <cmd>`. The advisor models themselves

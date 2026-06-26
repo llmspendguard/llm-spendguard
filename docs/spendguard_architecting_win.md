@@ -180,7 +180,7 @@ money-critical core to 81%; the I/O adapters are integration-tested, not unit-te
 - [ ] **Data-driven, never faked**: every number on a screen traces to real data (grep the source — a literal like
       `$9080.53` in code is a red flag); no placeholder/sample data in prod paths.
 - [ ] **Plain-English lead, detail on demand**: lead with the answer + a one-line interpretation; tuck statistics/
-      jargon into a disclosure. De-jargon internal tags (`llmseg` → "our own cost").
+      jargon into a disclosure. De-jargon internal tags (`llm-spendguard` → "our own cost").
 - [ ] **Honest labels**: "estimated", "value (not billed)", "≥ X certain" — never overstate. Lead with the bigger
       lever (e.g. a $632 loss over a $58 saving).
 - [ ] **No redundant surfaces**: two panels showing the same thing → merge.

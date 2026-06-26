@@ -68,7 +68,7 @@ regresses to needing an admin key for normal running, those fail.
   key serves multiple orgs; the same machine holds several org keys. So: the AGENTIC attribution of the segment/box
   decides the org (per §1/§2), and the key is just the push credential that must MATCH that resolved org — never the
   other way round. The push SCOPE follows from the resolved org (the taxonomy's org→projects), not a hand-kept list —
-  that drift is exactly what dropped concept-model/medical-taxonomy and leaked Ensight's llmseg into Healiom. Corollary:
+  that drift is exactly what dropped concept-model/medical-taxonomy and leaked Ensight's llm-spendguard into Healiom. Corollary:
   a connection that can't resolve its org to a scope fails CLOSED (push nothing) rather than guessing or pushing all.
 
 ## 3. The convergence loop (small + large) — converge on CORRECT, not "ran once"

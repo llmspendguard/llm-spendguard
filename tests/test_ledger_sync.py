@@ -36,7 +36,7 @@ budget._db().execute("INSERT INTO charges (ts,day,provider,model,kind,cost,proje
 budget._db().execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project) VALUES (?,?,?,?,?,?,?)",
                      (DAYS[1] + "T00:00:00+00:00", DAYS[1], "openai", "gpt-5.5", "realtime", 4.0, "nlp-pipeline"))
 budget._db().execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project) VALUES (?,?,?,?,?,?,?)",
-                     (DAYS[1] + "T00:00:00+00:00", DAYS[1], "anthropic", "claude-opus-4-8", "meta", 1.5, "llmseg"))
+                     (DAYS[1] + "T00:00:00+00:00", DAYS[1], "anthropic", "claude-opus-4-8", "meta", 1.5, "llm-spendguard"))
 budget._db().commit()
 
 SINCE = DAYS[0]

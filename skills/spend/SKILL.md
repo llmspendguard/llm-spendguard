@@ -44,7 +44,7 @@ spendguard resources sync      # push THIS repo's GPU spend → its org (provide
 - **user** = `contributor` (set it to your **org email** so the server maps it to your member). Defaults to
   git `user.email`, then `$USER@host`.
 - **project** = the WHAT (the repo/work). Defaults to the git repo name; set `project` per repo to be explicit.
-- **`llmseg`** = spendguard's OWN meta spend (the advisor/learning calls) — always tagged separately and shown
+- **`llm-spendguard`** = spendguard's OWN meta spend (the advisor/learning calls) — always tagged separately and shown
   called-out on the dashboard.
 
 **Per-repo connection** lives in a gitignored `.spendguard.json` at the repo root (overlays the global
@@ -53,5 +53,5 @@ spendguard resources sync      # push THIS repo's GPU spend → its org (provide
 { "enabled": true, "url": "https://llmspendguard.com",
   "api_key": "sg_team_…", "contributor": "you@org.com", "project": "your-repo", "visibility": "org" }
 ```
-The push only sends rows for this connection's `project` (+ `llmseg`), so one machine's ledger never
+The push only sends rows for this connection's `project` (+ `llm-spendguard`), so one machine's ledger never
 cross-attributes to the wrong org.

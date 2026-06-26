@@ -21,8 +21,8 @@ def _insert(day, kind, cost, project, model="gpt-5.5"):
                              (day + "T00:00:00+00:00", day, "openai", model, kind, cost, project))
         budget._db().commit()
 
-# ── retag_deterministic: meta → 'llmseg'; empty workload → the repo project; existing tags untouched ──
-_insert("2026-06-01", "meta", 1.0, "")          # → llmseg
+# ── retag_deterministic: meta → 'llm-spendguard'; empty workload → the repo project; existing tags untouched ──
+_insert("2026-06-01", "meta", 1.0, "")          # → llm-spendguard
 _insert("2026-06-01", "batch", 2.0, "")         # → repo project (budget._project())
 _insert("2026-06-02", "batch", 3.0, "already")  # must NOT be overridden
 proj = budget._project()
@@ -33,7 +33,7 @@ def _proj_of(kind, cost):
     with budget._lock:
         r = budget._db().execute("SELECT project FROM charges WHERE kind=? AND cost=?", (kind, cost)).fetchone()
     return r[0]
-ck("meta row → 'llmseg'", _proj_of("meta", 1.0) == "llmseg")
+ck("meta row → 'llm-spendguard'", _proj_of("meta", 1.0) == "llm-spendguard")
 ck("empty workload row → the repo project", _proj_of("batch", 2.0) == proj and proj not in ("", None))
 ck("already-tagged row is NOT overridden", _proj_of("batch", 3.0) == "already")
 ck("re-running is a no-op (nothing empty left)", tag.retag_deterministic() == 0)
@@ -57,7 +57,7 @@ ck("after move: both rows are 'vision-pipeline', none left as documents", n_vp =
 est = tag.estimate_llm_retag()
 exp = round(tag.ambiguous_count() / 25 * 0.0008, 4)
 ck("estimate_llm_retag returns {rows, est_usd, model, note}, est = rows/25*0.0008",
-   est["rows"] == tag.ambiguous_count() and est["est_usd"] == exp and est["model"] == "gpt-5-nano" and "llmseg" in est["note"])
+   est["rows"] == tag.ambiguous_count() and est["est_usd"] == exp and est["model"] == "gpt-5-nano" and "llm-spendguard" in est["note"])
 
 # ── cmd: dispatch + return codes ──
 ck("cmd move → 0", tag.cmd(["move", "a", "b"]) == 0)

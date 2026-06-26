@@ -44,7 +44,7 @@ ledger matches what actually happened.
 
 ## 4. Push the reconciled truth
 ```
-spendguard saas push           # sends the reconciled ledger (attributed + 'unattributed' gap + llmseg) to the org
+spendguard saas push           # sends the reconciled ledger (attributed + 'unattributed' gap + llm-spendguard) to the org
 spendguard saas sync           # reconcile + push + run any server-queued reconcile/re-tag in one step
 ```
 The dashboard then shows the real total, a **Governed %** (attributed ÷ total), and the ungoverned $ to chase.

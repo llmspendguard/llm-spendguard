@@ -227,7 +227,8 @@ def clear_reconciled(since=None, model=None):
 
 # ── spendguard's own advisor LLM use (segregated: own cap, own line, excluded from workload) ──
 def record_meta(provider, model, cost):
-    record(provider, model, "meta", cost, project="llmseg")   # spendguard's own spend → its own project tag
+    # spendguard's OWN spend → the llm-spendguard project, kept distinct by kind='meta' (NOT a separate project tag).
+    record(provider, model, "meta", cost, project="llm-spendguard")
 
 
 def meta_spent_since(day):
