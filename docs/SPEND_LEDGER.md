@@ -5,12 +5,16 @@ writes raw SQL** — the class owns the schema and all queries/joins, returns di
 *attribution* through one path. Deterministic SQL for queries; the LLM is used **only** for attribution (meaning),
 **recorded** so re-runs read it (repeatable).
 
-**Built to financial-systems standards:**
+**Built to financial-systems standards (Xero / QuickBooks-style — flexibility with controls):**
 - **Money = integer micro-USD** (`*_micros`, ×1e6) — never float; sums are exact.
 - **Time = UTC canonical** (`ts_utc`) + source-local (`tz`/`local_datetime`); accounting `day`/`period` derived in the
   **reporting tz** (`SPENDGUARD_REPORTING_TZ`); **transaction date** (`occurred_at`) ≠ **posting date** (`recorded_at`).
-- **Append-only + correct-by-reversal** — never UPDATE a fact; `status` / `revision` / `reverses_id` / `superseded_by`.
-- **Tamper-evident** — `row_hash = sha256(content + prev_hash)` chain; `verify_chain()`.
+- **Multi-pass enrichment with controls** — a spend event is **mutable across passes** (ingest → attribute → reconcile)
+  until its period is **locked** (Xero *lock date* / QuickBooks *close the books*). Once locked it's immutable;
+  corrections are **adjusting / reversing entries**, never edits. Lifecycle: `status` draft → posted → reconciled → locked.
+- **The audit trail is the immutable record** — every change is appended to **`spend_audit`** (who · when · field ·
+  old→new · pass), which is append-only + **hash-chained** (`verify_audit_chain()`). Integrity lives in the *log*, not
+  the live row — so enrichment stays flexible while every change stays provable.
 - **Self-contained record + link-ids** — snapshots cost/attribution/rates + `seg_id`/`call_id`/`conv_id`/`batch_id`/`model`.
 
 **Status:** v3 schema built + validated (**18/18** tests, `tests/test_spend_ledger.py`). Attribution engine (Step 3) +
@@ -61,14 +65,16 @@ migration + consumer hookup planned. File: `src/spendguard/ledger.py`. DB: `~/.s
 > realtime + remote_compute + subscription`; `est_value = est_chat` — never summed. `rollup` returns exact micros +
 > a `*_usd` display value.
 
-### Lifecycle · integrity · provenance · billing
+### Lifecycle · reconciliation · provenance · billing  *(integrity → `spend_audit`, §1d)*
 | group | columns |
 |---|---|
-| **lifecycle** (append-only) | `status` (posted\|reconciled\|superseded\|reversed\|void), `revision`, `reverses_id`, `superseded_by` |
-| **integrity** (tamper-evident) | `prev_hash`, `row_hash` (= `sha256(content + prev_hash)`; `verify_chain()`) |
-| **reconciliation/close** | `reconciled`, `reconciled_vs`, `reconciled_at`, `reconciliation_id`, `gap_flag`, `period_closed`, `recon_marker` |
+| **lifecycle** (mutable until locked) | `status` (draft\|posted\|reconciled\|locked\|reversed\|void), `revision`, `locked`, `locked_at`, `lock_reason`, `reverses_id`, `adjusts_id`, `superseded_by` |
+| **reconciliation/close** | `reconciled`, `reconciled_vs`, `reconciled_at`, `reconciliation_id`, `gap_flag`, `period_closed` |
 | **provenance** | `recorded_by`, `ingest_version`, `schema_version`, `evidence_uri` |
 | **billing / multi-entity** | `account_id`, `customer_id`, `cost_center`, `engagement`, `billable`, `invoice_id` |
+
+> The live row carries **no** `row_hash` — it's mutable across passes. Integrity is the append-only **`spend_audit`**
+> log (§1d), which *is* hash-chained.
 
 ### Provider / model
 | column | type | purpose |
@@ -136,9 +142,9 @@ migration + consumer hookup planned. File: `src/spendguard/ledger.py`. DB: `~/.s
 
 ## 1b. Table relationships — denormalized record + link-ids
 
-`spend_events` is the **one canonical ledger** — an immutable, self-contained financial record that **snapshots** the
-determined cost + attribution + rates at record time (re-attribution **supersedes**, never mutates history). It also
-carries **link-ids** to the source evidence for drill-down:
+`spend_events` is the **one canonical ledger** — a self-contained financial record that **snapshots** cost + attribution
++ rates, **mutable across passes while open and immutable once locked** (§1c), with every change logged to `spend_audit`
+(§1d). It also carries **link-ids** to the source evidence for drill-down:
 
 | link-id | → table | role |
 |---|---|---|
@@ -149,8 +155,46 @@ carries **link-ids** to the source evidence for drill-down:
 | `model` | `model_facts` | the **price book** → `rate_in/out` snapshot from it |
 
 `seg_attribution` = attribution **cache** · `model_facts` = **price book** · `calls` = raw gate capture (feeds) ·
-`charges` = the old ledger → **migrated + retired**. So: "all in one row" (self-contained, immutable) **plus**
-link-ids (traceable to evidence) — the standard accounting shape (journal entries referencing source documents).
+`charges` = the old ledger → **migrated + retired**. So: "all in one row" (self-contained) **plus** link-ids (traceable
+to evidence) — the standard accounting shape (journal entries referencing source documents).
+
+---
+
+## 1c. Lifecycle & controls — the Xero / Intuit model
+
+A spend event is **enriched across passes**, not written once: **mutable while open, immutable once locked.**
+
+**States** (`status`): `draft → posted → reconciled → locked`; plus `reversed` / `void`.
+- **draft** — ingested (gate / batch-api / reconstruction); cost present, attribution may be pending.
+- **posted** — attribution pass done (`org`/`team`/`projects` + `attr_*`).
+- **reconciled** — cross-checked vs provider truth (`reconciled`, `reconciliation_id`).
+- **locked** — its period is closed (`lock_date`) or `status=locked` → **immutable**.
+
+**Controls (the "appropriate controls"):**
+- Every pass **UPDATEs** the row **and appends to `spend_audit`** — no silent change.
+- **Lock** = a per-period `lock_date` (close the month) **or** row `status=locked`. `record`/`update` **refuse** to
+  modify a row that is locked or whose `period ≤ lock_date`.
+- **Corrections after lock** = **reverse** (a new row negating the original, `reverses_id`) and/or **adjust** (a new
+  corrected row, `adjusts_id`). The locked row is never touched — exactly like a posted journal entry.
+- Optional **period seal** at close (a hash over the period's final rows) as an extra anchor.
+
+## 1d. `spend_audit` — the append-only, hash-chained change log
+
+The immutable forensic record: one row per change to a spend event. **Never edited or deleted.**
+
+| column | purpose |
+|---|---|
+| `id` | PK |
+| `event_id` | → `spend_events.id` |
+| `ts` | UTC of the change |
+| `actor` | who/what (gate, attribution-v2, reconcile-run, user) |
+| `pass` | ingest \| attribute \| reconcile \| adjust \| lock \| reverse |
+| `field`, `old_value`, `new_value` | the change (one row per field) |
+| `reason` | why |
+| `prev_hash`, `row_hash` | **hash chain** — `verify_audit_chain()` proves the log was not altered |
+
+Integrity lives **here** (append-only), so the live `spend_events` row can be freely enriched while every change stays
+provable. `history(event_id)` returns a row's full change timeline.
 
 ---
 
@@ -167,9 +211,8 @@ SpendLedger(db_path=None)          # opens the canonical db (config.db_path()), 
 | `record(ev) -> id` | event id | validated write; `(kind, usd)` routes to the right cost column; deterministic id → **dedup** |
 | `get(eid) -> dict\|None` | event dict | JSON columns deserialised |
 | `query(since=, until=, where=, limit=) -> list[dict]` | events | `where` = exact-match column filters; `since/until` filter `day` |
-| `rollup(group_by=, since=, until=, where=) -> dict` | breakdown | the 4-column split + `billed` + `est_value`; `group_by=None` → totals; `"org"` → per-org |
-| `by_repo(repo, since=, until=) -> dict` | breakdown | repo-scoped rollup — **charm = $0 remote** (a filter, can't leak) |
-| `verify_chain() -> (ok, bad_id)` | bool + id | recomputes the hash chain; proves no row was altered (tamper-evidence) |
+| `rollup(group_by=, since=, until=, where=, include_meta=) -> dict` | breakdown | exact micros + `*_usd`; `billed` vs `est_value`; meta excluded by default |
+| `by_repo(repo, since=, until=) -> dict` | breakdown | repo-scoped — **charm = $0 remote** (a filter, can't leak) |
 
 ```python
 # record (a reconstructed realtime run)
@@ -181,17 +224,19 @@ led.record({"source":"reconstruction","kind":"realtime","usd":220.0,
 led.rollup()       # {<cost>_micros, <cost>_usd, billed_micros, billed_usd, est_value_micros, est_value_usd, n}
 led.rollup("org")                  # {"Healiom": {...}, "Ensight": {...}}  (is_meta excluded unless include_meta=True)
 led.by_repo("charm")               # {... remote_compute_usd: 0.0, billed_usd: 26.0 ...}
-led.verify_chain()                 # (True, None) — tamper-evidence over the whole ledger
 ```
 
 ### Planned (Steps 3–5)
 
 | method | role |
 |---|---|
-| `attribute(event)` | the **one** agentic path: per-segment, cwd-anchored, temp=0, joins `seg_attribution`, writes `attr_*`; **convergence loop** (classify → cross-check Σ-per-org vs provider truth → re-attribute only uncertain → until stable). `record()` routes through it. |
-| `reattribute(filter)` | re-run attribution over a slice (e.g. fix lmm-in-Ensight) |
-| `reconcile(provider_truth)` | set `reconciled`/`gap_flag`; mark Σ-per-org vs truth |
-| `clear(marker)` / `supersede(...)` | idempotent rebuild |
+| `update(id, changes, actor, reason)` | mutate an OPEN row; **refuses if locked / period ≤ lock_date**; logs every field to `spend_audit` |
+| `attribute(id, …)` | the **one** agentic pass: per-segment, cwd-anchored, temp=0, `seg_attribution` join, writes `attr_*`; **convergence loop** (classify → cross-check Σ-per-org vs provider truth → re-attribute uncertain → until stable). Update + log. |
+| `reconcile(id, …)` | cross-check vs provider truth; set `reconciled`/`reconciliation_id`/`gap_flag`. Update + log. |
+| `lock_period(period, reason)` | close a period → its rows become immutable; optional period **seal** (hash over final rows) |
+| `reverse(id, …)` / `adjust(id, …)` | post-lock corrections — new rows (`reverses_id`/`adjusts_id`); the locked row is never touched |
+| `history(id) -> list` | the row's full change timeline (from `spend_audit`) |
+| `verify_audit_chain() -> (ok, bad_id)` | recompute the `spend_audit` hash chain — proves the log wasn't altered |
 | `export(scope)` | dashboard payload (consumers call this, never SQL) |
 
 ---
@@ -208,5 +253,6 @@ led.verify_chain()                 # (True, None) — tamper-evidence over the w
 7. **No raw SQL outside `SpendLedger`** (to be enforced by a CI guard in Step 5).
 8. **Money is integer micros — exact** — `rollup` sums micros (no float drift); `*_usd` is a display conversion.
 9. **Time is UTC; transaction ≠ posting** — `occurred_at` drives the accounting `day`/`period` (reporting tz); `recorded_at` is the booking time.
-10. **Append-only + correct-by-reversal** — facts are never UPDATEd; corrections are a reversal/supersede + new row.
-11. **Tamper-evident** — `verify_chain()` recomputes the `row_hash` chain; any altered row is detected.
+10. **Mutable until locked** — a row is enriched across passes (`update`/`attribute`/`reconcile`); `record`/`update` **refuse** a row that is `locked` or whose `period ≤ lock_date`.
+11. **Corrections after lock = adjusting entries** — never edit a locked row; post a `reverse`/`adjust` (new row, `reverses_id`/`adjusts_id`).
+12. **Audit trail is the immutable record** — every change appends to `spend_audit`; that log is **hash-chained** and `verify_audit_chain()` proves it wasn't altered.
