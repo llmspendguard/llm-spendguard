@@ -9,18 +9,23 @@ regex guess. This does NOT touch the `charges` table (additive); it backfills th
 onto it. Kept separate from SpendLedger so the ledger never imports the legacy store.
 """
 import sqlite3
-from . import config, conv, budget
+from . import config, conv, budget, ledger_sync
 from . import ledger as _ledger
 
 # charge.kind → (record kind, is_meta). meta = spendguard's OWN realtime LLM use → realtime micros, flagged is_meta.
 _KIND = {"realtime": ("realtime", 0), "batch": ("batch", 0), "meta": ("realtime", 1),
          "remote": ("remote", 0), "est_chat": ("est_chat", 0)}
 
+# Reconciliation rows carry a KNOWN sentinel model (not a real model). Sourced from the constants that WRITE them, so
+# this stays in lock-step if a new marker is added — single source of truth, no "(...)" heuristic to misfire.
+_RECON_MARKERS = frozenset({budget._RECONCILED, ledger_sync._RT_MARKER})
+
 
 def _is_marker(model):
-    """A reconciliation row inserted by budget.record_reconciled carries a parenthesized MARKER model
-    (e.g. '(provider-batch)') instead of a real model — it's provider-truth, not a metered call."""
-    return bool(model) and model.startswith("(")
+    """A reconciliation row (budget.record_reconciled / realtime backfill) carries a known sentinel model instead of a
+    real model — it's provider-truth, not a metered call. DETERMINISTIC exact match against the known sentinels
+    (NOT a 'starts with (' guess, which could misfire on a future real model name)."""
+    return model in _RECON_MARKERS
 
 
 def to_spend_events(led=None, src_path=None, since=None):
