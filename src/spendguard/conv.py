@@ -435,6 +435,25 @@ def _match_segment(evidence, segs, store):
     return None
 
 
+def _canonical_org(org):
+    """Map a classified org to the taxonomy's canonical spelling (case-insensitive) so 'Ensight'/'ensight' don't split
+    in rollups. Falls back to the given value if the taxonomy is unavailable / the org isn't listed."""
+    if not org:
+        return org
+    try:
+        from . import attribution
+        taxo = attribution.taxonomy()
+        if isinstance(taxo, tuple):
+            taxo = taxo[0]                                 # taxonomy() returns (taxo, project_team_map)
+        for o in (taxo.get("orgs") or []):
+            name = o.get("name") if isinstance(o, dict) else o
+            if name and str(name).lower() == str(org).lower():
+                return name
+    except Exception:
+        pass
+    return org
+
+
 def resolve(evidence, tdir=None, classify_on_miss=False):
     """UNIFIED agentic attribution for ANY spend event (batch · realtime · remote/GPU) — the ONE engine all three cost
     paths share. Map the event to the SEGMENT that ran it (mechanical: batch_id / seg_id / cwd within the session), then
@@ -448,14 +467,14 @@ def resolve(evidence, tdir=None, classify_on_miss=False):
     if seg is not None:
         cls = store.get(seg["seg_id"])
         if cls and (cls.get("project") or cls.get("org")):
-            return {"org": cls.get("org", ""), "team": cls.get("team", ""), "project": (cls.get("project") or "").lower(),
+            return {"org": _canonical_org(cls.get("org", "")), "team": cls.get("team", ""), "project": (cls.get("project") or "").lower(),
                     "confidence": int(cls.get("confidence") or 0), "source": cls.get("source") or "llm",
                     "how": "batch-map" if evidence.get("batch_id") else "segment-cwd",
                     "seg_id": seg["seg_id"], "prior": seg.get("project_prior"), "evidenced": True}
         if classify_on_miss and seg.get("prompt"):
             cls = _classify_one_segment(seg)                  # AGENTIC, recorded
             if cls and (cls.get("project") or cls.get("org")):
-                return {"org": cls.get("org", ""), "team": cls.get("team", ""), "project": (cls.get("project") or "").lower(),
+                return {"org": _canonical_org(cls.get("org", "")), "team": cls.get("team", ""), "project": (cls.get("project") or "").lower(),
                         "confidence": int(cls.get("confidence") or 0), "source": "llm", "how": "llm",
                         "seg_id": seg["seg_id"], "prior": seg.get("project_prior"), "evidenced": True}
         return {"org": "", "team": "", "project": (seg.get("project_prior") or "").lower(), "confidence": 0,
@@ -463,8 +482,8 @@ def resolve(evidence, tdir=None, classify_on_miss=False):
                 "prior": seg.get("project_prior"), "evidenced": True}
     sc = session_classification(evidence.get("conv_id") or evidence.get("sid") or "")
     if sc:
-        return {**sc, "confidence": 0, "source": "session", "how": "session-fallback",
-                "seg_id": None, "prior": None, "evidenced": bool(evidence.get("cwd"))}
+        return {**sc, "org": _canonical_org(sc.get("org", "")), "confidence": 0, "source": "session",
+                "how": "session-fallback", "seg_id": None, "prior": None, "evidenced": bool(evidence.get("cwd"))}
     return {"org": "", "team": "", "project": "", "confidence": 0, "source": "none", "how": "none",
             "seg_id": None, "prior": None, "evidenced": False}
 
