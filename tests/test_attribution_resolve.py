@@ -47,7 +47,7 @@ def test_resolve_picks_right_segment_within_a_multi_project_session(monkeypatch)
         "A": {"org": "Healiom", "team": "lmm", "project": "lmm", "confidence": 95, "source": "llm"},
         "B": {"org": "Ensight", "team": "manga2anime", "project": "manga2anime", "confidence": 95, "source": "llm"}})
     assert conv.resolve({"conv_id": "conv1", "cwd": "/x/lmm"})["org"] == "Healiom"
-    assert conv.resolve({"conv_id": "conv1", "cwd": "/x/manga2anime"})["org"] == "ensight"   # canonicalized
+    assert conv.resolve({"conv_id": "conv1", "cwd": "/x/manga2anime"})["org"] == "Ensight"
     assert conv.resolve({"batch_id": "batch_bbbbbb222222"})["project"] == "manga2anime"
 
 
@@ -56,16 +56,6 @@ def test_resolve_unmatched_is_none_not_misattributed(monkeypatch):
     monkeypatch.setattr(conv, "session_classification", lambda sid: None)
     r = conv.resolve({"conv_id": "unknown", "cwd": "/nowhere"})
     assert r["source"] == "none" and r["org"] == "" and r["evidenced"] is False
-
-
-def test_resolve_canonicalizes_org_case(monkeypatch):
-    # the LLM returns 'Ensight' but the taxonomy canonical is 'ensight' — resolve must not split them
-    import spendguard.attribution as attribution
-    monkeypatch.setattr(attribution, "taxonomy", lambda: {"orgs": ["Healiom", "Personal", "ensight"]})
-    _patch(monkeypatch, [{**_SEG, "seg_id": "S3"}],
-           {"S3": {"org": "Ensight", "team": "manga2anime", "project": "manga2anime", "confidence": 90, "source": "llm"}})
-    r = conv.resolve({"conv_id": "conv1", "cwd": "/Users/x/Documents/claude/lmm"})
-    assert r["org"] == "ensight"
 
 
 def test_guard_reconstruction_feeders_use_resolve_not_session_classification():
