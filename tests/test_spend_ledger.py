@@ -205,3 +205,18 @@ def test_confidence_is_float(tmp_path):
     ev = led.get(led.record({"source": "x", "kind": "realtime", "usd": 1.0, "conv_id": "f",
                              "amount_confidence": 0.85, "attr_confidence": 0.9, "attr_what": "z"}))
     assert ev["amount_confidence"] == 0.85 and ev["attr_confidence"] == 0.9
+
+
+# ── Step 3a: the attribution pass (deterministic plumbing the agentic determiner feeds) ──
+
+def test_attribute_pass_posts_and_logs(tmp_path):
+    led = _led(tmp_path)
+    a = led.record({"source": "reconstruction", "kind": "realtime", "usd": 220.0, "conv_id": "c",
+                    "cwd": "/Users/x/Documents/claude/lmm", "attr_what": "loinc stem pass"})
+    assert led.get(a)["status"] == "draft" and led.get(a)["org"] is None
+    led.attribute(a, org="Healiom", team="lmm", projects=["lmm"], attr_how="cwd-match",
+                  attr_why="cwd=lmm", attr_confidence=0.95, attr_source="ledger-attr", actor="attr-v1")
+    ev = led.get(a)
+    assert ev["org"] == "Healiom" and ev["team"] == "lmm" and ev["projects"] == ["lmm"]
+    assert ev["status"] == "posted" and ev["attr_how"] == "cwd-match" and ev["attr_confidence"] == 0.95
+    assert any(h["pass"] == "attribute" and h["field"] == "org" and h["actor"] == "attr-v1" for h in led.history(a))

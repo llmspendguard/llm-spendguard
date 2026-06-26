@@ -348,6 +348,22 @@ class SpendLedger:
         self._conn.commit()
         return applied
 
+    # ── the attribution PASS (draft → posted). Deterministic plumbing; the agentic determiner feeds it. ──
+    def attribute(self, eid, *, org=None, team=None, projects=None, project_primary=None, member_ref=None,
+                  seg_id=None, attr_what=None, attr_why=None, attr_how=None, attr_reason=None,
+                  attr_confidence=None, attr_source=None, attr_model=None, actor="attribution", reason=""):
+        """Apply an attribution determination to an OPEN event (org/team/projects + `attr_*`, status → posted), logged
+        to `spend_audit`. The agentic determiner (cwd-anchored, seg_attribution join + LLM, convergence loop) computes
+        the values and calls THIS — so every attribution is recorded identically + traceably, and a re-run reads the
+        recorded determination rather than re-asking the LLM."""
+        changes = {k: v for k, v in {
+            "org": org, "team": team, "projects": projects, "project_primary": project_primary,
+            "member_ref": member_ref, "seg_id": seg_id, "attr_what": attr_what, "attr_why": attr_why,
+            "attr_how": attr_how, "attr_reason": attr_reason, "attr_confidence": attr_confidence,
+            "attr_source": attr_source, "attr_model": attr_model, "attr_ts": _now_utc(), "status": "posted",
+        }.items() if v is not None}
+        return self.update(eid, changes, actor=actor, reason=reason, pass_="attribute")
+
     # ── period close (lock) ──
     def lock_period(self, period, reason="", actor="?"):
         """Close a period: everything in/before `period` becomes immutable. Returns the count locked."""
