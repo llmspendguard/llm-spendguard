@@ -182,6 +182,110 @@ def check_bulk(sig, model, count, est_usd, force=False):
         % (sig, model, count, float(est_usd or 0), st["estimated"], st["tested"], st["verified"], pm))
 
 
+# ── max_tokens: truncation DETECTION (the API states it — a fact, not a guess) + data-driven bounds (measure the
+#    output distribution) — keyed by the SAME call-class sig. The single chokepoint sees both the request's max_tokens
+#    and the response usage, so this protects every repo with zero per-repo work. ──
+def _calls_db():
+    db = _db()
+    db.execute("CREATE TABLE IF NOT EXISTS gate_calls "
+               "(sig TEXT, model TEXT, out_tok INTEGER, max_tokens INTEGER, truncated INTEGER, ts REAL)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_gatecalls_sig ON gate_calls(sig)")
+    return db
+
+
+def is_truncated(finish_reason, out_tok=None, max_tokens=None):
+    """Did the response get CUT OFF at the cap? The API says so: Anthropic stop_reason=='max_tokens', OpenAI
+    finish_reason=='length'. Belt-and-suspenders: out_tok hitting max_tokens exactly. A fact, not a guess."""
+    if (finish_reason or "").lower() in ("length", "max_tokens"):
+        return True
+    return bool(out_tok and max_tokens and int(out_tok) >= int(max_tokens))
+
+
+def note_response(sig, model, out_tok, max_tokens=None, finish_reason=None):
+    """Record one response's output size + whether it TRUNCATED, keyed by call-class sig. Truncation → loud warning
+    (you paid for input + a cut-off output and got corrupt data) + a per-sig count; the sizes feed maxtokens() bounds.
+    The single place that sees both sides of every call → every repo protected automatically."""
+    trunc = is_truncated(finish_reason, out_tok, max_tokens)
+    try:
+        with _lock:
+            _calls_db().execute("INSERT INTO gate_calls (sig,model,out_tok,max_tokens,truncated,ts) VALUES (?,?,?,?,?,?)",
+                                (sig, model, int(out_tok or 0), int(max_tokens or 0), int(trunc), time.time()))
+            _db().commit()
+    except Exception:
+        pass
+    if trunc:
+        import sys
+        print("[bulkgate] TRUNCATED %s (%s): output hit max_tokens=%s (out=%s) → incomplete/corrupt result. "
+              "Size it from data: `spendguard maxtokens %s`." % (sig, model, max_tokens, out_tok, sig), file=sys.stderr)
+    return trunc
+
+
+def _pctl(vals, p):
+    if not vals:
+        return 0
+    v = sorted(vals)
+    k = (len(v) - 1) * p
+    f = int(k)
+    return int(v[f] if f + 1 >= len(v) else v[f] + (v[f + 1] - v[f]) * (k - f))
+
+
+def maxtokens(sig, current_max=None):
+    """Data-driven max_tokens bound for a call-class from its OBSERVED output distribution — turns 'guess' into
+    'measure'. Returns {n, p50, p95, p99, max, recommend=p99*1.5, truncations, warn}. warn if current_max < p95
+    (TRUNCATION RISK) or >> p99 (cost-estimate inflation → false cap trips). For packed calls, feed per-ITEM out_tok."""
+    with _lock:
+        rows = _calls_db().execute("SELECT out_tok,truncated FROM gate_calls WHERE sig=? AND out_tok>0", (sig,)).fetchall()
+    outs = [r[0] for r in rows]
+    trunc = sum(r[1] for r in rows)
+    if not outs:
+        return {"sig": sig, "n": 0, "recommend": None, "truncations": trunc, "warn": None}
+    p95, p99 = _pctl(outs, 0.95), _pctl(outs, 0.99)
+    warn = None
+    if current_max is not None:
+        if current_max < p95:
+            warn = "max_tokens %d < p95 %d — TRUNCATION RISK" % (current_max, p95)
+        elif current_max > p99 * 3:
+            warn = "max_tokens %d >> p99 %d — inflates worst-case estimate (false cap trips)" % (current_max, p99)
+    return {"sig": sig, "n": len(outs), "p50": _pctl(outs, 0.50), "p95": p95, "p99": p99, "max": max(outs),
+            "recommend": int(p99 * 1.5), "truncations": trunc, "warn": warn}
+
+
+def truncated_recently(sig, window_sec=None):
+    """Did this sig TRUNCATE in the recent window? A truncated sample is NOT a passing test — it must not authorize a
+    bulk run, so the max_tokens bug is structurally caught by the SAME gate (test_job flips verified→False on it)."""
+    cut = time.time() - (window_sec or rt_window_sec())
+    with _lock:
+        r = _calls_db().execute("SELECT COALESCE(SUM(truncated),0) FROM gate_calls WHERE sig=? AND ts>=?", (sig, cut)).fetchone()
+    return bool(r and r[0])
+
+
+def check_compute(sig, est_usd, hours=None, force=False):
+    """REMOTE-COMPUTE (GPU / vast.ai) test-first gate — the same estimate+test rule as check_bulk, on the compute-$
+    axis. A big/long launch (est_usd > bulk_min_usd) needs a FRESH estimate + a verified SHORT test run (a small/short
+    instance that proved the workload before scaling fleet×duration) — record_tested after that short run. Composes
+    with the cap in resources.compute_exceeded. Consumers call this before launching; raises GateBlocked in block mode."""
+    if float(est_usd or 0) <= bulk_min_usd():
+        return "trivial"
+    if status(sig)["fresh"]:
+        return "pass"
+    forced = bool(force) or os.getenv("GATE_FORCE") == "1"
+    m = mode()
+    if m == "off":
+        return "allow:off"
+    tag = "compute(%sh)" % hours if hours else "compute"
+    if forced:
+        _log_block(sig, tag, int(hours or 0), est_usd, "override")
+        return "allow:force"
+    if m == "warn":
+        _log_block(sig, tag, int(hours or 0), est_usd, "would-block")
+        return "allow:warn"
+    _log_block(sig, tag, int(hours or 0), est_usd, "blocked")
+    raise GateBlocked(
+        "BLOCKED compute %s: a ~$%.2f%s launch needs estimate+test FIRST — a SHORT test instance that verified the "
+        "workload, then re-run. estimate_job(sig,'compute',worst_case_usd,1) + test_job. Override (logged): GATE_FORCE=1."
+        % (sig, float(est_usd or 0), (" over %sh" % hours) if hours else ""))
+
+
 def estimate_job(sig, model, est_usd, est_count):
     """First-class unblock helper (ships IN spendguard so consumers adopt it, not hand-roll it): record the WORST-CASE
     estimate. = record_estimate; named to read as step 1 of estimate → test → run."""
@@ -194,7 +298,13 @@ def test_job(sig, run_fn, n=None, verify_fn=None):
     the output is correct (None → trust that it ran). Step 2 of estimate → test → run."""
     n = min(int(n or preview_max()), preview_max())
     out = run_fn(n)
-    record_tested(sig, n, verified=(True if verify_fn is None else bool(verify_fn(out))))
+    ok = True if verify_fn is None else bool(verify_fn(out))
+    if truncated_recently(sig):                          # a SILENTLY-TRUNCATED sample is NOT a passing test —
+        ok = False                                       # it must not authorize the bulk run (the max_tokens bug,
+        import sys                                        # caught structurally by the same gate)
+        print("[bulkgate] test for %s TRUNCATED → recording verified=FALSE. Raise max_tokens "
+              "(`spendguard maxtokens %s`) and re-test." % (sig, sig), file=sys.stderr)
+    record_tested(sig, n, verified=ok)
     return out
 
 

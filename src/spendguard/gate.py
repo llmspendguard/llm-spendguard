@@ -563,6 +563,14 @@ def _rt_account(model, kw, result, est_fn, act_fn, latency=None):
                               prompt=_prompt_text(kw), output=output, finish=finish)
             return
         _rt_record(prov, model, cost, in_tok=in_tok, out_tok=out_tok, cached=cached)
+        try:                                              # max_tokens TRUNCATION detection (the API states it — a fact,
+            from . import bulkgate                        # not a guess) + per-sig output telemetry for data-driven bounds
+            _intent = (_calls.current().get("intent") or "").strip()
+            if not _intent.startswith("spendguard:"):
+                bulkgate.note_response(bulkgate.sig(model or "", template_id=_intent or None),
+                                       model or "", out_tok, kw.get("max_tokens"), locals().get("finish"))
+        except Exception:
+            pass
         if _calls.enabled():
             _calls.record(prov, model, "realtime", cost, in_tok=in_tok, out_tok=out_tok, latency=latency,
                           prompt=_prompt_text(kw), output=output, finish=finish)

@@ -11,13 +11,14 @@ from .pricing import (batch_cost, realtime_cost, estimate, price, normalize,
 from .gate import install, require, register, SpendGateRefused
 from .emit import on_event
 from .calls import context, set_context, feedback
-from .bulkgate import (estimate_job, test_job, gated_batch, check_bulk,
-                       record_estimate, record_tested, GateBlocked)
+from .bulkgate import (estimate_job, test_job, gated_batch, check_bulk, check_realtime, check_compute,
+                       record_estimate, record_tested, note_response, maxtokens, is_truncated, GateBlocked)
 
 __all__ = ["install", "require", "register", "SpendGateRefused", "on_event", "context", "set_context", "feedback",
            "batch_cost", "realtime_cost", "estimate", "price", "normalize",
            "PRICING", "PRICING_VERIFIED", "PRICING_SOURCE",
-           "estimate_job", "test_job", "gated_batch", "check_bulk", "record_estimate", "record_tested", "GateBlocked"]
+           "estimate_job", "test_job", "gated_batch", "check_bulk", "check_realtime", "check_compute",
+           "record_estimate", "record_tested", "note_response", "maxtokens", "is_truncated", "GateBlocked"]
 __version__ = "0.2.9"
 
 

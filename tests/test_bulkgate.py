@@ -102,5 +102,38 @@ bulkgate.record_estimate(sig_rt, OPUS, 5.0, 200)
 bulkgate.record_tested(sig_rt, pm, verified=True)
 ck("realtime burst with fresh estimate+test → passes", bulkgate.check_realtime(sig_rt, OPUS, est_usd=0.05) == "pass")
 
+# ── 12. max_tokens TRUNCATION detection (the API states it — a fact, not a guess) + data-driven bounds ──
+ck("is_truncated: anthropic stop_reason=max_tokens", bulkgate.is_truncated("max_tokens"))
+ck("is_truncated: openai finish_reason=length", bulkgate.is_truncated("length"))
+ck("is_truncated: out_tok hitting the cap exactly", bulkgate.is_truncated("stop", out_tok=240, max_tokens=240))
+ck("is_truncated: a clean stop is NOT truncated", not bulkgate.is_truncated("stop", out_tok=100, max_tokens=240))
+
+sig_mt = bulkgate.sig(OPUS, template_id="cards", template_version="v1", schema_name="card")
+for o in (250, 256, 300, 331, 362, 478):                  # observed clean outputs (warden describe-card shape)
+    bulkgate.note_response(sig_mt, OPUS, o, max_tokens=550, finish_reason="stop")
+bulkgate.note_response(sig_mt, OPUS, 240, max_tokens=240, finish_reason="length")    # one truncation
+mt = bulkgate.maxtokens(sig_mt, current_max=240)
+ck("maxtokens: counts the truncation", mt["truncations"] == 1)
+ck("maxtokens: recommends ~p99*1.5 (measured, not guessed)", mt["recommend"] >= mt["p99"] and mt["recommend"] > 240)
+ck("maxtokens: warns max_tokens 240 < p95 (TRUNCATION RISK)", "TRUNCATION RISK" in (mt["warn"] or ""))
+
+# ── 13. a TRUNCATED test sample → verified=False → the bulk run still BLOCKS (the killer integration) ──
+sig_tt = bulkgate.sig(OPUS, template_id="trunc", template_version="v1", schema_name="s")
+bulkgate.record_estimate(sig_tt, OPUS, 10.0, 5000)
+def _trunc_run(k):
+    for _ in range(k):
+        bulkgate.note_response(sig_tt, OPUS, 240, max_tokens=240, finish_reason="length")   # every sample truncates
+    return [1] * k
+bulkgate.test_job(sig_tt, _trunc_run, n=5)
+ck("truncated sample → verified=False → bulk still BLOCKS", raised(lambda: bulkgate.check_bulk(sig_tt, OPUS, 5000, 10.0)))
+
+# ── 14. REMOTE-COMPUTE gate (same estimate+test rule, on the compute-$ axis) ──
+sig_c = bulkgate.sig("gpu:a100", template_id="render", template_version="v1", schema_name="frames")
+ck("compute: trivial $ → allowed", bulkgate.check_compute(sig_c, est_usd=0.20) == "trivial")
+ck("compute: big launch, no estimate/test → blocks", raised(lambda: bulkgate.check_compute(sig_c, est_usd=50.0, hours=8)))
+bulkgate.record_estimate(sig_c, "compute", 50.0, 1)
+bulkgate.record_tested(sig_c, 1, verified=True)
+ck("compute: big launch with estimate+test → passes", bulkgate.check_compute(sig_c, est_usd=50.0, hours=8) == "pass")
+
 print(("[OK]" if not fails else "[FAIL]") + " bulkgate: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)

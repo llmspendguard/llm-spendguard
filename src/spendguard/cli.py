@@ -69,6 +69,22 @@ def main(argv=None):
         for prov, models in sorted(p.providers().items()):
             print(f"{prov} ({len(models)}): {', '.join(sorted(models))}")
         return 0
+    if cmd == "maxtokens":                              # data-driven max_tokens bound for a call-class sig
+        from . import bulkgate
+        if not rest:
+            print("usage: spendguard maxtokens <sig> [current_max]   (sig from a TRUNCATED warning, or bulkgate.sig(...))")
+            return 2
+        cur = int(rest[1]) if len(rest) > 1 and str(rest[1]).isdigit() else None
+        mt = bulkgate.maxtokens(rest[0], current_max=cur)
+        if not mt.get("n"):
+            print(f"no observed outputs for sig {rest[0]} yet (run a few calls first; truncations seen: {mt.get('truncations',0)})")
+            return 0
+        print(f"sig {mt['sig']}  n={mt['n']}  truncations={mt['truncations']}")
+        print(f"  output tokens: p50={mt['p50']}  p95={mt['p95']}  p99={mt['p99']}  max={mt['max']}")
+        print(f"  → recommend max_tokens = {mt['recommend']}  (p99 × 1.5 — measured, not guessed)")
+        if mt.get("warn"):
+            print(f"  ⚠ {mt['warn']}")
+        return 0
     if cmd == "config":
         from . import setup
         return setup.cmd_config(rest)
