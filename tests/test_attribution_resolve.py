@@ -66,3 +66,30 @@ def test_guard_reconstruction_feeders_use_resolve_not_session_classification():
     src = open(resources.__file__).read()
     assert "session_classification(" not in src, \
         "a reconstruction feeder calls session_classification() directly — route attribution through conv.resolve()"
+
+
+def test_resolve_cwd_prior_maps_repo_to_org_not_untagged(monkeypatch):
+    """GUARD (Bug B): an unclassified segment's cwd-prior must carry org+team via the taxonomy — NOT leave org blank,
+    which surfaced real lmm runs as false '(untagged)'. The repo prior 'lmm' → org 'healiom'."""
+    seg = {**_SEG, "seg_id": "S9", "sid": "conv9", "project_prior": "lmm", "batch_ids": []}
+    _patch(monkeypatch, [seg], {})                              # segment matched but not LLM-classified → cwd-prior path
+    monkeypatch.setattr(conv, "_prior_index", lambda: {"lmm": ("healiom", "lmm")})   # taxonomy-derived repo→org
+    r = conv.resolve({"conv_id": "conv9", "cwd": "/x/lmm"})
+    assert r["how"] == "cwd-prior" and r["source"] == "prior"
+    assert r["org"] == "healiom" and r["team"] == "lmm" and r["project"] == "lmm"   # org no longer blank
+    assert r["evidenced"] is True
+
+
+def test_self_analysis_session_detected_for_contam_exclusion(monkeypatch):
+    """GUARD (self-contamination): a session whose work IS spendguard (project 'llm-spendguard') must be flagged as a
+    self-analysis session, so its realtime tells are treated as ECHOES, not independent evidence — the exact bug where
+    lmm's printed $ discussed in a spendguard session got booked as ensight spend. A real workload session is NOT flagged
+    (it remains valid evidence)."""
+    sg = {**_SEG, "seg_id": "SG", "sid": "sgconv", "cwd": "/x/llm-spendguard", "project_prior": "llm-spendguard"}
+    lmm = {**_SEG, "seg_id": "LM", "sid": "lmconv", "cwd": "/x/lmm", "project_prior": "lmm"}
+    _patch(monkeypatch, [sg, lmm], {
+        "SG": {"org": "Ensight", "team": "llm-spendguard", "project": "llm-spendguard", "confidence": 95, "source": "llm"},
+        "LM": {"org": "Healiom", "team": "lmm", "project": "lmm", "confidence": 95, "source": "llm"}})
+    assert conv._is_spendguard_session("sgconv") is True       # spendguard's own analysis → echoes, exclude as evidence
+    assert conv._is_spendguard_session("lmconv") is False      # a real workload session → valid evidence, keep
+    assert conv._is_spendguard_session("") is False            # no session → not self-analysis

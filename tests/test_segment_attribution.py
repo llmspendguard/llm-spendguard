@@ -69,8 +69,8 @@ conv._save_seg_cache({"s1": {"org": "Healiom", "team": "lmm", "project": "lmm", 
                       "s2": {"org": "manga2anime", "team": "engineering", "project": "manga2anime", "confidence": 88},
                       "s4": {"org": "manga2anime", "team": "engineering", "project": "manga2anime", "confidence": 86}})
 bmap = conv.batch_project_map()
-ck("batch → agentic project (lmm/Healiom)",
-   bmap["batch_aaaaaaaaaaaaaaaaaaaa"]["project"] == "lmm" and bmap["batch_aaaaaaaaaaaaaaaaaaaa"]["org"] == "Healiom")
+ck("batch → agentic project (lmm/Healiom)",   # org canonical is lowercase (case-insensitive taxonomy)
+   bmap["batch_aaaaaaaaaaaaaaaaaaaa"]["project"] == "lmm" and bmap["batch_aaaaaaaaaaaaaaaaaaaa"]["org"] == "healiom")
 ck("batch → agentic project (manga2anime)",
    bmap["msgbatch_bbbbbbbbbbbbbbbbbb"]["org"] == "manga2anime")
 # THE OVERRIDE (the core agentic point): s4 RAN in the lmm repo (prior=lmm) but its work was manga2anime — the

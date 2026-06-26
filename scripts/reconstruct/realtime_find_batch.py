@@ -24,8 +24,13 @@ CONSOLIDATE_MODEL = "claude-opus-4-8"
 
 
 def gather(tell_only=True):
-    """Last-2-month chunks, batch-known removed; tell_only keeps only realtime-tell chunks (call-code OR printed-$)."""
+    """Last-2-month chunks, batch-known removed; tell_only keeps only realtime-tell chunks (call-code OR printed-$).
+    EXCLUDES spendguard's own cost-analysis sessions from the evidence corpus — they echo OTHER projects' printed $
+    (self-contamination) and spendguard's own LLM calls are gated already. Forensic rule: a reconstruction must not
+    treat its own analysis output as evidence."""
     raw = list(conv.session_chunks(max_chars=14000, since=SINCE))
+    _segs, _store = conv.segments(), conv._seg_get_all()
+    raw = [(s, e) for (s, e) in raw if not conv._is_spendguard_session(s, segs=_segs, store=_store)]
     sent = [(s, e) for (s, e) in raw if not (resources._BATCH_CTX.search(e) and not resources._RT_TELL.search(e))]
     if tell_only:
         sent = [(s, e) for (s, e) in sent if resources._RT_TELL.search(e)]
@@ -108,22 +113,33 @@ def collect():
     if not frags:
         return
     from spendguard import adapters
-    def consolidate(items):
+    import concurrent.futures as _cf
+    import time as _time
+
+    def consolidate(items, _retry=2):
         with calls.context(intent="spendguard:realtime_find_batch_consolidate"):
             r = adapters.call(CONSOLIDATE_MODEL, json.dumps(items)[:90000], max_tokens=4000,
                               system=resources._RT_CONSOLIDATE_SYS)
-        return _parse_runs(r.get("text", ""))           # tolerant parse — never lose a group to truncation
-    GROUP = 25                                           # small groups so each group's run-list fits under max_tokens (no truncation loss)
+        out = _parse_runs(r.get("text", ""))            # tolerant parse — never lose a group to truncation
+        if (not out or r.get("error")) and _retry > 0:  # zero/error from a group → back off + retry (don't silently lose it)
+            _time.sleep(2)
+            return consolidate(items, _retry - 1)
+        return out
+    GROUP = 25                                          # small groups so each group's run-list fits under max_tokens
+    groups = [frags[i:i + GROUP] for i in range(0, len(frags), GROUP)]
     group_runs = []
-    for i in range(0, len(frags), GROUP):
-        group_runs.extend(consolidate(frags[i:i + GROUP]))
-    merged = {}                                          # MECHANICAL cross-group run-identity (no final-merge truncation)
+    with _cf.ThreadPoolExecutor(max_workers=6) as ex:  # PARALLEL (6-wide) — ~6× faster than sequential, under rate limits
+        for res in ex.map(consolidate, groups):
+            group_runs.extend(res)
+    print("consolidated %d groups (parallel) -> %d run-fragments" % (len(groups), len(group_runs)))
+    merged = {}                                         # MECHANICAL cross-group run-identity (no final-merge truncation)
     for rn in group_runs:
         ms = resources._norm_model(rn.get("model")); rn["model"] = ms
         pu = rn.get("printed_usd")
         key = (str(rn.get("name") or "")[:40].lower(), ms, round(float(pu), 2) if pu not in (None, "", 0) else None)
         merged.setdefault(key, rn)
     runs = list(merged.values())
+    _segs, _store = conv.segments(), conv._seg_get_all()   # cache ONCE for the resolve loop (was re-read per run = the hang)
     # PRICE (printed-$ = ground truth, else estimate) + attribute via session_classification
     rows, by_org = [], {}
     for rn in runs:
@@ -143,11 +159,14 @@ def collect():
         if usd <= 0:
             continue
         sid0 = (rn.get("sessions") or [None])[0]
-        sc = (conv.session_classification(sid0) if sid0 else {}) or {}
+        # UNIFIED attribution: the SEGMENT that ran this run (conv.resolve), NOT the coarse session rollup
+        sc = conv.resolve({"conv_id": sid0, "script": rn.get("name")}, segs=_segs, store=_store) if sid0 else {}
         org = sc.get("org") or "(untagged)"
         by_org[org] = round(by_org.get(org, 0.0) + usd, 2)
         rows.append({"name": rn.get("name"), "model": ms, "usd": usd, "basis": basis, "org": org,
-                     "calls": rn.get("calls"), "reasoning": (rn.get("reasoning") or "")[:120]})
+                     "team": sc.get("team"), "project": sc.get("project"), "how": sc.get("how"),
+                     "sessions": rn.get("sessions"), "calls": rn.get("calls"),
+                     "reasoning": (rn.get("reasoning") or "")[:120]})
     total = round(sum(r["usd"] for r in rows), 2)
     pr = round(sum(r["usd"] for r in rows if r["basis"] == "printed"), 2)
     json.dump({"total": total, "printed": pr, "by_org": by_org, "runs": rows}, open(STATE + ".result", "w"), indent=2)
@@ -197,9 +216,12 @@ def clean():
             rr = adapters.call(CONSOLIDATE_MODEL, json.dumps(grp), max_tokens=4000, system=_RECLASSIFY_SYS)
         for t in _parse_tags(rr.get("text", "")):
             tag_by_idx[int(t["idx"])] = t
-    # apply: sum REALTIME only; bucket the rest
+    # apply: sum REALTIME only; bucket the rest. Re-RESOLVE org fresh here (picks up the taxonomy repo→org fix) and
+    # drop SELF-CONTAMINATED runs — those evidenced ONLY in spendguard's own cost-analysis sessions, which echo other
+    # projects' printed $ (booking them = a forensic tool counting its own output as spend) or are already-gated.
+    _segs, _store = conv.segments(), conv._seg_get_all()
     buckets = {"REALTIME": 0.0, "EMBEDDING": 0.0, "BATCH": 0.0, "META": 0.0, "?": 0.0}
-    by_org, kept, inflated = {}, [], []
+    by_org, kept, inflated, selfcontam = {}, [], [], []
     for idx, r in enumerate(runs):
         t = tag_by_idx.get(idx, {"tag": "?", "inflated": False})
         tag = t.get("tag", "?")
@@ -207,13 +229,21 @@ def clean():
         if tag == "REALTIME":
             if t.get("inflated") and r.get("basis") == "estimated":
                 inflated.append(r); continue          # drop inflated estimates (conservative); list them for review
-            org = r.get("org") or "(untagged)"
+            sess = r.get("sessions") or []
+            if sess and all(conv._is_spendguard_session(s, segs=_segs, store=_store) for s in sess):
+                selfcontam.append(r); continue        # self-contamination: only-evidence is spendguard's own analysis
+            sid0 = sess[0] if sess else None
+            sc = conv.resolve({"conv_id": sid0, "script": r.get("name")}, segs=_segs, store=_store) if sid0 else {}
+            org = sc.get("org") or "(untagged)"
+            r["org"], r["team"], r["project"], r["how"] = org, sc.get("team"), sc.get("project"), sc.get("how")
             by_org[org] = round(by_org.get(org, 0.0) + r["usd"], 2)
             kept.append(r)
     total = round(sum(r["usd"] for r in kept), 2)
     printed = round(sum(r["usd"] for r in kept if r.get("basis") == "printed"), 2)
+    selfcontam_usd = round(sum(r["usd"] for r in selfcontam), 2)
     out = {"realtime_total": total, "printed": printed, "by_org": by_org, "excluded": buckets,
-           "kept": kept, "inflated_dropped": inflated}
+           "self_contaminated_usd": selfcontam_usd, "kept": kept, "inflated_dropped": inflated,
+           "self_contaminated": selfcontam}
     json.dump(out, open(STATE + ".clean", "w"), indent=2)
     # stable cache the reconcile loop READS (admin-free realtime axis). TIGHTEN here: printed-$ = ground truth (full),
     # soft estimates halved (they overshoot ~2x). Org-level for now; per-project/per-month needs collect to keep those.
@@ -227,13 +257,14 @@ def clean():
     cache_path = os.path.expanduser("~/.spendguard/realtime_reconstruction.json")
     json.dump(cache, open(cache_path, "w"), indent=2)
     print("  wrote reconcile cache:", cache_path, "(tightened total $%.2f)" % cache["total"])
-    print("=== CLEANED REALTIME (embeddings/batch/meta removed, inflated estimates dropped) ===")
+    print("=== CLEANED REALTIME (embeddings/batch/meta/self-contam removed, inflated estimates dropped) ===")
     print("  CORRECTED realtime $%.2f  (printed-$ %.2f / estimated %.2f)  across %d runs"
           % (total, printed, total - printed, len(kept)))
     print("  by org:", by_org)
-    print("  EXCLUDED: embeddings $%.0f · batch $%.0f · spendguard-meta $%.0f · inflated-est dropped $%.0f (%d)"
+    print("  EXCLUDED: embeddings $%.0f · batch $%.0f · spendguard-meta $%.0f · inflated-est dropped $%.0f (%d) · "
+          "self-contam $%.0f (%d, only-evidence=spendguard analysis sessions)"
           % (buckets["EMBEDDING"], buckets["BATCH"], buckets["META"],
-             round(sum(r["usd"] for r in inflated), 2), len(inflated)))
+             round(sum(r["usd"] for r in inflated), 2), len(inflated), selfcontam_usd, len(selfcontam)))
     print("  top kept realtime runs:")
     for r in sorted(kept, key=lambda x: -x["usd"])[:12]:
         print("   %-32s %-9s %-9s $%8.2f" % (str(r.get("name"))[:32], r.get("model"), r.get("basis"), r["usd"]))

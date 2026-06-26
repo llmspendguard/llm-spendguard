@@ -16,7 +16,7 @@ Two stages:
 
 CLI: `spendguard mine-conv {index,synth} [--transcripts PATH] [--limit N] [--run]`.
 """
-import os, re, json, glob, hashlib
+import os, re, json, glob, hashlib, functools
 from . import config, calls, learn
 
 _DEFAULT_TDIR = os.path.expanduser("~/.claude/projects")
@@ -379,7 +379,8 @@ def batch_project_map(tdir=None):
                             "project": _canon(cls.get("project")), "prior": s["project_prior"],
                             "seg_id": s["seg_id"], "evidenced": True}
             else:                                          # evidenced (we KNOW the repo) but not yet LLM-classified
-                out[bid] = {"org": "", "team": "", "project": (s["project_prior"] or "").lower(),
+                o, t = _prior_org_team(s["project_prior"])  # repo PRIOR → org+team via taxonomy (consistent w/ resolve)
+                out[bid] = {"org": o, "team": t, "project": (s["project_prior"] or "").lower(),
                             "confidence": 0, "source": "prior", "prior": s["project_prior"],
                             "seg_id": s["seg_id"], "evidenced": True}
     return out
@@ -443,15 +444,55 @@ def _canon(s):
     return (s or "").strip().lower()
 
 
-def resolve(evidence, tdir=None, classify_on_miss=False):
+@functools.lru_cache(maxsize=1)
+def _prior_index():
+    """{name(lower): (org, team)} derived FROM THE TAXONOMY (orgs < teams < projects, most-specific wins) — the lookup
+    that turns a bare repo/cwd PRIOR ('lmm', 'manga2anime') into its org+team WITHOUT re-classifying. Taxonomy-derived,
+    not a hardcoded repo→org table: a repo only maps if the taxonomy names it (else it stays unattributed, never a
+    guess). Cached; call `_prior_index.cache_clear()` if the taxonomy changes in-process (tests)."""
+    from . import attribution
+    taxo, _ = attribution.taxonomy()
+    idx = {}
+    for org in (taxo.get("orgs") or []):
+        nm = org.get("name") if isinstance(org, dict) else org
+        if nm:
+            idx[_canon(nm)] = (_canon(nm), "")
+    for team in (taxo.get("teams") or []):          # a team named like the repo → that team's org
+        if team.get("name"):
+            idx[_canon(team["name"])] = (_canon(team.get("org")), _canon(team["name"]))
+    for proj in (taxo.get("projects") or []):        # projects last = most specific (override team/org collisions)
+        if proj.get("name"):
+            idx[_canon(proj["name"])] = (_canon(proj.get("org")), _canon(proj.get("team")))
+    return idx
+
+
+def _prior_org_team(prior):
+    """Map a repo/cwd PRIOR to (org, team) via the taxonomy index; ('', '') when the repo isn't in the taxonomy
+    (genuinely ambiguous → stays untagged rather than a regex guess). Fixes the cwd-prior path setting project but
+    leaving org blank (which surfaced lmm runs as false '(untagged)')."""
+    return _prior_index().get(_canon(prior), ("", ""))
+
+
+def _is_spendguard_session(sid, segs=None, store=None):
+    """True if a session's work IS spendguard itself (cost reconstruction/analysis OR spendguard-dev) — project resolves
+    to 'llm-spendguard'. Such sessions must NOT be primary EVIDENCE for realtime workload reconstruction: spendguard's
+    own LLM calls are gated (counting them from chat = double-count), and its cost-analysis sessions ECHO other projects'
+    numbers (e.g. lmm's printed $) — booking those echoes as spend is self-contamination. This is the forensic 'don't
+    treat your own analysis output as evidence' rule, decided from the RECORDED agentic classification (not a regex)."""
+    if not sid:
+        return False
+    return (resolve({"conv_id": sid}, segs=segs, store=store).get("project") or "") == "llm-spendguard"
+
+
+def resolve(evidence, tdir=None, classify_on_miss=False, segs=None, store=None):
     """UNIFIED agentic attribution for ANY spend event (batch · realtime · remote/GPU) — the ONE engine all three cost
     paths share. Map the event to the SEGMENT that ran it (mechanical: batch_id / seg_id / cwd within the session), then
     return that segment's RECORDED agentic determination (org/team/project; cwd was the PRIOR the LLM confirmed). On an
     unclassified segment: classify_on_miss=True → classify it now (LLM, recorded); else the cwd PRIOR (the repo, source
     ='prior') — NEVER a regex keyword guess, NEVER blanket 'unattributed' for evidenced spend. Generalises
     batch_project_map. `evidence` keys: batch_id | conv_id/sid + cwd + script | seg_id | host/label."""
-    store = _seg_get_all()
-    segs = segments(tdir)
+    store = _seg_get_all() if store is None else store      # callers pass cached segs/store → no transcript re-read per run
+    segs = segments(tdir) if segs is None else segs
     seg = _match_segment(evidence, segs, store)
     if seg is not None:
         cls = store.get(seg["seg_id"])
@@ -466,9 +507,11 @@ def resolve(evidence, tdir=None, classify_on_miss=False):
                 return {"org": _canon(cls.get("org")), "team": _canon(cls.get("team")), "project": _canon(cls.get("project")),
                         "confidence": int(cls.get("confidence") or 0), "source": "llm", "how": "llm",
                         "seg_id": seg["seg_id"], "prior": seg.get("project_prior"), "evidenced": True}
-        return {"org": "", "team": "", "project": (seg.get("project_prior") or "").lower(), "confidence": 0,
+        prior = seg.get("project_prior")
+        o, t = _prior_org_team(prior)                     # map the repo PRIOR → org+team via taxonomy (was: org left blank)
+        return {"org": o, "team": t, "project": _canon(prior), "confidence": 0,
                 "source": "prior", "how": "cwd-prior", "seg_id": seg["seg_id"],
-                "prior": seg.get("project_prior"), "evidenced": True}
+                "prior": prior, "evidenced": True}
     sc = session_classification(evidence.get("conv_id") or evidence.get("sid") or "")
     if sc:
         return {**sc, "confidence": 0, "source": "session", "how": "session-fallback",
