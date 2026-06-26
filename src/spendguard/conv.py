@@ -72,13 +72,15 @@ def _events_in(path, run_ids):
             continue
         bids = [b for b in set(_BID.findall(txt)) if b in run_ids]
         costs = _COST.findall(txt)
-        sigs = sorted(set(s.lower() for s in _SIG.findall(txt)))
-        if not bids and not (costs and sigs):
+        sigs = sorted(set(s.lower() for s in _SIG.findall(txt)))   # _SIG.findall = mechanical TAG extraction (fine), not the gate
+        # GATE on the BROAD cost-DOMAIN cut, NOT the narrow _SIG topic words (which dropped real cost events that
+        # didn't happen to contain pack/cancel/wrong/etc). The downstream synth LLM decides meaning on the candidates.
+        if not bids and not costs and not _EVIDENCE_CANDIDATE.search(txt):
             continue
         role = obj.get("type") or (obj.get("message") or {}).get("role")
         # window the snippet around the first signal so we keep the relevant sentence
         anchor = 0
-        m = _COST.search(txt) or _SIG.search(txt)
+        m = _COST.search(txt) or _EVIDENCE_CANDIDATE.search(txt)
         if m:
             anchor = max(0, m.start() - 80)
         out.append(dict(role=role, ts=obj.get("timestamp"), runs=bids,
@@ -540,7 +542,8 @@ def _classify_one_segment(seg):
 _EVIDENCE_CANDIDATE = re.compile(
     r"\$\s?[0-9]|[0-9][0-9,]*\s*(?:tokens?|tok\b|/\s*clip)|[0-9]+\s+in\s*/\s*[0-9]+\s+out|input_tokens|output_tokens|"
     r"\busage\b|\bcost(s|ed|ing)?\b|\bspend(s|ing)?\b|\bpriced?\b|\bbill(s|ed|ing)?\b|per[- ]call|max_tokens|"
-    r"\bbatch(es)?\b|msgbatch_|\.batches\.|\bcancel|\bre-?runs?\b|\bcharge[sd]?\b|\brequests?\b|\bgpu\b|vast\.ai|\bmoney\b|\bwaste",
+    r"\bbatch(es)?\b|msgbatch_|\.batches\.|\bcancel|\bre-?runs?\b|\bcharge[sd]?\b|\brequests?\b|\bgpu\b|vast\.ai|\bmoney\b|\bwaste|"
+    r"loop_results|calls?\s*/\s*clip|aggregate cost|total cost|===\s*USAGE",   # + remote/GPU box cost-print shapes
     re.I)   # BROAD cost-DOMAIN recall (money/token/run/batch/billing vocab) — NOT problem-topic keywords like the OLD
             # _SIG (fix/bug/wrong, which WERE the decision). Over-recall is fine: the LLM filters; we must never DROP.
 
@@ -658,15 +661,6 @@ def classify_evidence(chunks, run=False, batch_size=20):
     return res
 
 
-# COST signals only — NOT model names. Model names (haiku/opus/gpt) appear everywhere and drown the actual cost
-# evidence in noise; the run-OUTPUT cost lines (per-clip $, USAGE prints, aggregate/total cost, token totals) are
-# what's reconstructable. lmm's UNGATED realtime is mostly ESTIMATES in chat (rate tables, "~$X running"), which a
-# forensic tool must NOT book as spend — so lmm realtime is the GATE-CAPTURED figure, not a chat reconstruction.
-_RT_EVIDENCE = re.compile(
-    r"(\$\s?[0-9]+\.[0-9]+\s*/\s*clip|===\s*USAGE\s*===|[0-9]+\s+in\s*/\s*[0-9]+\s+out|aggregate cost|total cost|"
-    r"loop_results|calls?\s*/\s*clip|input_tokens|output_tokens|haiku|sonnet)", re.I)
-
-
 def remote_llm_excerpts(tdir=None, max_sessions=None, window=600):
     """Per-session excerpts of the RECORDED remote-LLM cost evidence — per-clip $ rates, '=== USAGE ===' token
     prints, aggregate-cost lines, calls/clip — i.e. the numbers the vast.ai boxes PRINTED into the transcript while
@@ -688,8 +682,8 @@ def remote_llm_excerpts(tdir=None, max_sessions=None, window=600):
                 except Exception:
                     continue
                 txt = _text_of(obj)
-                if txt and _RT_EVIDENCE.search(txt):
-                    m = _RT_EVIDENCE.search(txt)
+                m = _EVIDENCE_CANDIDATE.search(txt) if txt else None   # shared BROAD cost-domain cut (was the narrow
+                if m:                                                  # _RT_EVIDENCE which leaned on model-name topic)
                     a = max(0, m.start() - 120)
                     hits.append(" ".join(txt[a:a + window].split()))
         except Exception:

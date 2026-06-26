@@ -202,11 +202,10 @@ def enrich_graph():
 
 
 # ─────────────────────────── git evolution mining ───────────────────────────
-_SIGNAL = re.compile(r"\b(fix|bug|wrong|revert|expensive|cost|overcharg|cancel|rerun|re-run|waste|dup)", re.I)
-
-
 def mine_git(repo, apply=False, max_commits=400):
-    """Weak quality signals from git history of the batch-id artifacts. Zero spend (read-only git log)."""
+    """Weak quality signals from git history of the batch-id artifacts. Commit-subject relevance is decided
+    AGENTICALLY — conv.classify_evidence cost_lesson (nano, ~free, recorded, caged by caps.meta) — replacing the old
+    _SIGNAL keyword regex (fix|bug|wrong…) that decided by topic word and silently dropped real cost commits."""
     if not os.path.isdir(os.path.join(repo, ".git")):
         print(f"  {repo} is not a git repo — skipping git mining.")
         return dict(commits=0, signals=0)
@@ -217,12 +216,16 @@ def mine_git(repo, apply=False, max_commits=400):
     except Exception as e:
         print(f"  git log failed: {e}")
         return dict(commits=0, signals=0)
+    from . import conv                                          # AGENTIC commit-subject relevance (cost_lesson)
+    rows = [l.split("\t", 2) for l in out.splitlines() if "\t" in l and len(l.split("\t", 2)) == 3]
+    ev = conv.classify_evidence([{"id": r[0], "text": r[2]} for r in rows], run=True) if rows else {}
+    cost_commit = {r[0] for r in rows if ev.get(r[0], {}).get("cost_lesson")}
     commits, signals = 0, 0
     cur = None
     for line in out.splitlines():
         if "\t" in line and len(line.split("\t", 2)) == 3:
             h, ciso, subj = line.split("\t", 2)
-            cur = (h, ciso, subj, _SIGNAL.search(subj) is not None)
+            cur = (h, ciso, subj, h in cost_commit)            # agentic cost-relevance (was _SIGNAL keyword match)
             commits += 1
         elif line.strip().endswith("batch_id.json") or "batch_ids" in line:
             if cur and cur[3]:
