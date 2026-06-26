@@ -540,8 +540,17 @@ def _cached_in(result):
 def _rt_account(model, kw, result, est_fn, act_fn, latency=None):
     try:
         output = finish = None
-        if kw.get("stream"):                       # can't read a stream's usage without consuming it
-            _, in_tok, out_tok = est_fn(kw)
+        if kw.get("stream"):                       # can't read a stream's usage without consuming it → ESTIMATE, but
+            _, in_tok, out_tok = est_fn(kw)        #   size OUTPUT from this call-class's MEASURED history (the per-sig
+            try:                                   #   telemetry the gate records on non-stream calls), not the
+                from . import bulkgate             #   max_tokens CEILING — which over-counts streaming spend 2-5x.
+                _it = (_calls.current().get("intent") or "").strip()
+                if not _it.startswith("spendguard:"):
+                    mt = bulkgate.maxtokens(bulkgate.sig(model or "", template_id=_it or None))
+                    if (mt.get("n") or 0) >= 5 and mt.get("p99"):
+                        out_tok = min(out_tok or 10 ** 9, int(mt["p99"] * 1.5))   # measured typical, capped — not the ceiling
+            except Exception:
+                pass
         else:
             act = act_fn(result)
             if act:
