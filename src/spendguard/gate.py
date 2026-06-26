@@ -296,10 +296,38 @@ def _batch1_check(est):
     _emit({"kind": "batch", "provider": prov, "model": mdl, "cost": cost, "decision": "batch1_warned"})  # warn, allow
 
 
+def _bulkgate_check(est):
+    """TEST-FIRST + ESTIMATE-FIRST enforcement (defense-in-depth, universal — every installed-hook consumer gets it).
+    For a bulk batch (> preview_max requests), require a FRESH estimate + verified test for its call-class sig, else
+    block. Sig = the consumer's stamped est['sg_sig'] if present, else a fallback from model + intent. Default mode is
+    `warn` (logs would-block, allows) so it doesn't break consumers on day one; SPENDGUARD_ENFORCE=block to enforce.
+    Fail-OPEN on any internal error (never break a legit job because the gate itself hiccuped)."""
+    from . import bulkgate
+    try:
+        n = int(est.get("requests", 0) or 0)
+        if n <= bulkgate.preview_max():
+            return
+        intent = ""
+        try:
+            intent = (_calls.current().get("intent") or "").strip()
+        except Exception:
+            pass
+        if intent.startswith("spendguard:"):
+            return                                                       # our own meta calls — not workload bulk
+        model = est.get("model") or ""
+        s = est.get("sg_sig") or bulkgate.sig(model, template_id=intent or None, prompt=est.get("prompt_sample"))
+        bulkgate.check_bulk(s, model, n, float(est.get("cost", 0) or 0))  # warn→log+allow; block→raise GateBlocked
+    except bulkgate.GateBlocked:
+        raise                                                            # a real block — propagate (stops the batch)
+    except Exception as e:
+        print(f"[spend_gate] WARN bulkgate check failed ({e}); allowing (fail-open)", file=sys.stderr)
+
+
 def _decide_and_account(est):
     if _meta_gate(est["cost"], est.get("model"), est.get("provider")):   # spendguard's own use → meta cap
         return
     _batch1_check(est)            # batch-1 discipline: warn/refuse a LARGE batch for an untested intent (may raise)
+    _bulkgate_check(est)          # estimate+test-first: sig-keyed flags, blocks an unestimated/untested bulk (may raise)
     _budget_check(est["cost"], est.get("model"), est.get("provider"), "batch")   # daily/monthly (sqlite)
     _decide(est)                                                                  # per-batch cap (may raise)
     _budget_record(est["cost"], est.get("model"), est.get("provider"), "batch")  # ledger (sqlite)
@@ -412,6 +440,19 @@ def _rt_precheck(provider, model, in_tok, est_out):
                 raise SpendGateRefused(f"spendguard meta budget ${config.meta_cap():.0f}/day would be exceeded "
                                        f"(projected ${ex[2]:.2f}). Raise caps.meta or set GATE_ALLOW=1.")
         return
+    try:                                              # REALTIME BURST test-first gate — a loop of realtime calls is the
+        from . import bulkgate                        # discouraged alternative to Batch; same estimate+test-first rule.
+        intent = ""
+        try:
+            intent = (_calls.current().get("intent") or "").strip()
+        except Exception:
+            pass
+        if not intent.startswith("spendguard:"):
+            bulkgate.check_realtime(bulkgate.sig(model or "", template_id=intent or None), model or "", est)
+    except bulkgate.GateBlocked:
+        raise                                         # untested burst in block mode → stop the loop
+    except Exception:
+        pass                                          # fail-open (never break a legit call on a gate hiccup)
     _budget_check(est, model, provider, "realtime")   # cross-process daily/monthly cap (sqlite backend)
     with _rt_lock:
         projected = _rt_spent + est
@@ -724,6 +765,13 @@ def _cli(cmd="status"):
         if not enforcing:
             print("    fix: run under a gated venv, `spendguard install-hook --venv <v>` / `--user`, "
                   "or `import spendguard; spendguard.require()` at the top of the script.")
+        try:
+            from . import bulkgate
+            _bm = bulkgate.mode()
+            print(f"  ENFORCING bulk test+estimate: {'🟢 ' + _bm.upper() if _bm != 'off' else '🔴 OFF'}"
+                  f"  (>{bulkgate.preview_max()} reqs needs fresh estimate+test; SPENDGUARD_ENFORCE=off|warn|block)")
+        except Exception:
+            pass
         print(f"  flag file : {FLAG}  ({'present → off' if os.path.exists(FLAG) else 'absent'})")
         print(f"  env       : GATE_DISABLE={os.getenv('GATE_DISABLE','')!r}  GATE_ALLOW={os.getenv('GATE_ALLOW','')!r}  GATE_CAP={os.getenv('GATE_CAP') or '(default 75)'}")
         try:
