@@ -627,7 +627,7 @@ def classify_evidence(chunks, run=False, batch_size=20):
     todo = [c for c in cands if _chash(c["text"]) not in cached]
     if not todo:
         return res
-    model = config.advisor_judge_model()              # bulk HAIKU recall model; cost via the meta rail (caged)
+    model = config.recall_model()                     # cheapest capable (nano) — whole-corpus recall ~<10c; caged by caps.meta
     batches = [todo[i:i + batch_size] for i in range(0, len(todo), batch_size)]
     bodies = ["\n".join("%d: %s" % (i, (c["text"] or "")[:600]) for i, c in enumerate(b)) for b in batches]
     if not run:

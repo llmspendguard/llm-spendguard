@@ -6,6 +6,7 @@ with register_provider(...). Calls go through the openai/anthropic SDKs, so the 
 already meters + budgets them.
 """
 import time
+import re
 from . import config, pricing
 
 # name -> {base_url, key_env, prefixes, kind}
@@ -38,8 +39,10 @@ def provider_for(model):
     raise ValueError(f"unknown provider for model {model!r} — use 'provider:model' or register_provider()")
 
 
-def call(model, prompt, max_tokens=512, system=None):
-    """Run one prompt against one model. Returns a result dict (never raises)."""
+def call(model, prompt, max_tokens=512, system=None, reasoning=None):
+    """Run one prompt against one model. Returns a result dict (never raises). `reasoning` (minimal|low|medium|high)
+    sets reasoning effort for gpt-5/o-series reasoning models; defaults to 'minimal' for them (default-medium reasoning
+    eats the token budget → empty output, and costs more — wrong for simple classify/extract calls)."""
     prov = provider_for(model)
     raw = model.split(":", 1)[1] if ":" in model else model
     spec = PROVIDERS[prov]
@@ -62,11 +65,20 @@ def call(model, prompt, max_tokens=512, system=None):
             from openai import OpenAI
             c = OpenAI(api_key=key, base_url=spec["base_url"])
             msgs = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": prompt}]
+            okw = {"model": raw, "messages": msgs}
+            # gpt-5 / o-series are REASONING models: at default (medium) reasoning the token budget is spent on hidden
+            # reasoning and the completion comes back EMPTY (+ costs more). For our simple classify/extract calls use
+            # 'minimal' (the caller may override). Non-reasoning models reject the param → dropped on the retry below.
+            if re.match(r"(gpt-5|o[134])", raw, re.I):
+                okw["reasoning_effort"] = reasoning or "minimal"
             try:                                              # gpt-5+ require max_completion_tokens; older models take max_tokens
-                r = c.chat.completions.create(model=raw, messages=msgs, max_completion_tokens=max_tokens)
+                r = c.chat.completions.create(max_completion_tokens=max_tokens, **okw)
             except Exception as e:
-                if "max_completion_tokens" in str(e) or "max_tokens" in str(e):
-                    r = c.chat.completions.create(model=raw, messages=msgs, max_tokens=max_tokens)
+                if "reasoning_effort" in str(e):              # model doesn't accept it → drop + retry
+                    okw.pop("reasoning_effort", None)
+                    r = c.chat.completions.create(max_completion_tokens=max_tokens, **okw)
+                elif "max_completion_tokens" in str(e) or "max_tokens" in str(e):
+                    r = c.chat.completions.create(max_tokens=max_tokens, **okw)
                 else:
                     raise
             text = r.choices[0].message.content

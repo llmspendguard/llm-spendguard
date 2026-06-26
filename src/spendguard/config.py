@@ -119,6 +119,15 @@ def advisor_judge_model():
     return os.getenv("SPENDGUARD_ADVISOR_JUDGE_MODEL") or _cfg_get("advisor", "judge_model", "claude-haiku-4-5")
 
 
+def recall_model():
+    """Model for the AGENTIC RECALL pass (conv.classify_evidence — "is this chunk spend evidence / a cost lesson?").
+    A high-volume, simple yes/no classification over the whole corpus, so default to the CHEAPEST capable model
+    (gpt-5-nano, $0.05/1M in) — whole-corpus recall lands <10c (~free), which is what lets it replace the keyword
+    pre-filters everywhere (incl. the old 'free' index stages) instead of preserving them. Capped by caps.meta.
+    Configurable: env SPENDGUARD_RECALL_MODEL > config.json advisor.recall_model > default (gpt-5-nano)."""
+    return os.getenv("SPENDGUARD_RECALL_MODEL") or _cfg_get("advisor", "recall_model", "gpt-5-nano")
+
+
 def validate_advisor():
     """Both advisor models MUST be priced in pricing.py (else the meta estimate/cap can't be computed).
     Returns a list of human-readable problems (empty = OK)."""
