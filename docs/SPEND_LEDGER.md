@@ -242,6 +242,28 @@ led.by_repo("charm")               # {... remote_compute_usd: 0.0, billed_usd: 2
 
 ---
 
+## 2b. Attribution — the unified agentic resolver (Step 3)
+
+**One** engine for all three cost paths (batch · realtime · remote) — the doctrine's "must hold across all sources."
+The org/project decision is **agentic**; only the id-lookup is mechanical.
+
+- **Common classification (agentic, recorded):** `conv.attribute_segments` classifies each spend-bearing **segment**
+  (subconversation) → org/team/project via the shared LLM classifier, **cwd as a prior it confirms/overrides**,
+  recorded in `seg_attribution` (never re-pay); re-classifies only absent/low-confidence segments — the **convergence loop**.
+- **`attribution.resolve(evidence)`** — the unified resolver: `evidence` (`batch_id` | `conv_id`+`cwd`+`script`+time |
+  GPU `host/label`) → the **segment** that ran the spend → its recorded determination. Extends `batch_project_map` to
+  all three event types; **classifies (LLM) on a miss**, records it — never a cwd-basename guess.
+- **Agentic boundary:** segment→org/project and ambiguous event→segment matching are **LLM** (recorded). Only matching
+  a clean `batch_id` and reading a recorded decision are mechanical. **No regex decides meaning.**
+- **All three feeders** (batch/realtime/remote reconstruction) do the same: `spend_events` → `resolve()` →
+  `ledger.attribute()`. Realtime/remote stop using the coarse `session_classification`.
+- **Tests:** (a) *unification/wiring* — seed `seg_attribution` with a recorded lmm decision → batch+realtime+remote
+  events in `cwd=…/lmm` all resolve to Healiom/lmm via the *same* resolver (deterministic read of an agentic decision);
+  (b) *agentic correctness* — `attribute_segments` classifies a known lmm segment right (small live/cached) — meaning
+  tested where it's decided; (c) *integration* — Σ-per-org ≤ provider truth.
+- **Guards (anti-amnesia):** a $-path importing `session_classification` fails CI; `resolve` returning a project with
+  no recorded determination behind it fails.
+
 ## 3. Design invariants (what the tests enforce)
 
 1. **Separate cost columns, never mixed** — a row's cost is in exactly one (`cost_type` labels which); rollups `SUM(col)`.
