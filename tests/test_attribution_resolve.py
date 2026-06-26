@@ -56,3 +56,13 @@ def test_resolve_unmatched_is_none_not_misattributed(monkeypatch):
     monkeypatch.setattr(conv, "session_classification", lambda sid: None)
     r = conv.resolve({"conv_id": "unknown", "cwd": "/nowhere"})
     assert r["source"] == "none" and r["org"] == "" and r["evidenced"] is False
+
+
+def test_guard_reconstruction_feeders_use_resolve_not_session_classification():
+    """GUARD (anti-amnesia): the realtime/remote/GPU feeders must attribute via the unified resolve(), NEVER the coarse
+    session_classification — the exact bug that mis-attributed lmm -> llm-spendguard. resolve() may use it as a
+    last-resort fallback inside conv.py; the spend feeders in resources.py may not call it directly."""
+    from spendguard import resources
+    src = open(resources.__file__).read()
+    assert "session_classification(" not in src, \
+        "a reconstruction feeder calls session_classification() directly — route attribution through conv.resolve()"

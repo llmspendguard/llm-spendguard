@@ -488,7 +488,7 @@ def discover_agentic(run=False, record=False, max_sessions=None, now=None):
                 continue
             prev = merged.get(iid)
             if not prev or int(it.get("confidence") or 0) > int(prev.get("confidence") or 0):
-                sc = conv.session_classification(sid) or {}   # AGENTIC: the box's session classification is PRIMARY
+                sc = conv.resolve({"conv_id": sid, "label": it.get("label")}) or {}   # UNIFIED resolver — box session → segment
                 merged[iid] = {**it, "id": iid, "sid": sid,
                                "project": (sc.get("project") or it.get("project") or project_of(it.get("label")) or "").lower(),
                                "org": sc.get("org") or "", "team": sc.get("team") or ""}
@@ -574,7 +574,7 @@ def reconstruct_remote_llm(run=False, max_sessions=None, model_org_hints=None, f
             runs = (json.loads(m.group(0)).get("runs") if m else []) or []
         except Exception:
             runs = []
-        sc = conv.session_classification(sid) or {}
+        sc = conv.resolve({"conv_id": sid}) or {}   # UNIFIED resolver — the box's session → its segment determination
         for rn in runs:
             ev = str(rn.get("evidence") or rn.get("basis") or "")
             in_tok, out_tok = int(rn.get("in_tokens") or 0), int(rn.get("out_tokens") or 0)
@@ -715,10 +715,13 @@ def reconstruct_realtime_llm(run=False, sids=None, max_sessions=None, max_chars=
         if usd <= 0:
             continue
         sid0 = (rn.get("sessions") or [None])[0]
-        sc = (conv.session_classification(sid0) if sid0 else {}) or {}
+        # UNIFIED attribution: the SEGMENT that ran this run, not the coarse session rollup — conv.resolve (the same
+        # engine batch + remote use), NOT session_classification. The run name is the script signal for the segment.
+        sc = conv.resolve({"conv_id": sid0, "script": rn.get("name")}) if sid0 else {}
         rows.append({"name": rn.get("name"), "model": ms, "calls": rn.get("calls"), "basis": basis,
                      "in_tokens": rn.get("total_in"), "out_tokens": rn.get("total_out"), "usd": usd,
-                     "org": sc.get("org") or "", "project": sc.get("project") or "",
+                     "org": sc.get("org") or "", "team": sc.get("team") or "", "project": sc.get("project") or "",
+                     "attr_how": sc.get("how"), "seg_id": sc.get("seg_id"),
                      "sessions": rn.get("sessions"), "confidence": rn.get("confidence"),
                      "reasoning": (rn.get("reasoning") or "")[:160]})
     by_org = {}
