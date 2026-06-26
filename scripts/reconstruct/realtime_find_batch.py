@@ -24,16 +24,20 @@ CONSOLIDATE_MODEL = "claude-opus-4-8"
 
 
 def gather(tell_only=True):
-    """Last-2-month chunks, batch-known removed; tell_only keeps only realtime-tell chunks (call-code OR printed-$).
-    EXCLUDES spendguard's own cost-analysis sessions from the evidence corpus — they echo OTHER projects' printed $
-    (self-contamination) and spendguard's own LLM calls are gated already. Forensic rule: a reconstruction must not
-    treat its own analysis output as evidence."""
+    """Last-2-month chunks, batch-known removed; tell_only keeps only chunks that are realtime SPEND EVIDENCE.
+    Relevance is decided AGENTICALLY by conv.classify_evidence (nano, ~free, recorded) — NOT by a keyword regex; the
+    old resources._RT_TELL keyword filter decided 'is this a tell?' by keyword and silently dropped tells. _BATCH_CTX
+    stays (a deterministic batch-id match — mechanical extraction, not a meaning decision). EXCLUDES spendguard's own
+    cost-analysis sessions (self-contamination — they echo OTHER projects' printed $; their LLM calls are gated)."""
     raw = list(conv.session_chunks(max_chars=14000, since=SINCE))
     _segs, _store = conv.segments(), conv._seg_get_all()
     raw = [(s, e) for (s, e) in raw if not conv._is_spendguard_session(s, segs=_segs, store=_store)]
-    sent = [(s, e) for (s, e) in raw if not (resources._BATCH_CTX.search(e) and not resources._RT_TELL.search(e))]
+    ev = conv.classify_evidence([{"id": i, "text": e} for i, (s, e) in enumerate(raw)], run=True)  # AGENTIC recall
+    def is_tell(i):
+        return bool(ev.get(i, {}).get("spend_evidence"))
+    sent = [(s, e) for i, (s, e) in enumerate(raw) if not (resources._BATCH_CTX.search(e) and not is_tell(i))]
     if tell_only:
-        sent = [(s, e) for (s, e) in sent if resources._RT_TELL.search(e)]
+        sent = [(s, e) for i, (s, e) in enumerate(raw) if is_tell(i)]
     return sent
 
 

@@ -635,20 +635,26 @@ def classify_evidence(chunks, run=False, batch_size=20):
                   for b, body in zip(batches, bodies))
         ui.estimate_only(action="agentic recall: classify %d cost-candidate chunks (spend-evidence + lesson)" % len(todo), cost=est)
         return res
-    for b, body in zip(batches, bodies):
+    import concurrent.futures as _cf
+
+    def _run_batch(arg):                                  # one nano call per batch; PARALLEL (corpus = 100s of batches)
+        b, body = arg
         with calls.context(intent="spendguard:classify_evidence"):
             r = adapters.call(model, body, max_tokens=25 * len(b) + 200, system=_EVIDENCE_SYS)
-        if r.get("error"):
-            continue
-        for o in _parse_evidence(r.get("text", "")):
-            try:
-                src = b[int(o["i"])]
-            except (KeyError, ValueError, IndexError, TypeError):
-                continue
-            c = {"spend_evidence": bool(o.get("spend_evidence")),
-                 "kind": (o.get("kind") or "none").lower().strip(), "cost_lesson": bool(o.get("cost_lesson"))}
-            res[src["id"]] = c
-            _evidence_put(_chash(src["text"]), c, model)
+        return b, r
+    with _cf.ThreadPoolExecutor(max_workers=8) as ex:
+        for b, r in ex.map(_run_batch, zip(batches, bodies)):
+            if r.get("error"):
+                continue                                  # a failed batch leaves its chunks at _NONE_EV — see note below
+            for o in _parse_evidence(r.get("text", "")):
+                try:
+                    src = b[int(o["i"])]
+                except (KeyError, ValueError, IndexError, TypeError):
+                    continue
+                c = {"spend_evidence": bool(o.get("spend_evidence")),
+                     "kind": (o.get("kind") or "none").lower().strip(), "cost_lesson": bool(o.get("cost_lesson"))}
+                res[src["id"]] = c
+                _evidence_put(_chash(src["text"]), c, model)   # learn._lock serializes the sqlite write
     return res
 
 
