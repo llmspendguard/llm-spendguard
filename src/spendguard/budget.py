@@ -284,10 +284,15 @@ def by_dims(since=None):
     return [dict(day=d, provider=p, model=m, kind=k, project=pr, cost=float(c or 0), calls=int(n)) for d, p, m, k, pr, c, n in rows]
 
 
-def ledger_start():
-    """Earliest day in the local ledger — spend before this wasn't recorded locally (pre-ledger)."""
+def ledger_start(kind=None):
+    """Earliest day in the local ledger — spend before this wasn't recorded locally (pre-ledger). With `kind`,
+    the earliest day for THAT axis: axes start recording at different times (realtime began long before batch),
+    so a per-axis cutoff is what keeps the leak check from mislabeling one axis's pre-history as a leak."""
     with _lock:
-        r = _db().execute("SELECT MIN(day) FROM charges").fetchone()
+        if kind:
+            r = _db().execute("SELECT MIN(day) FROM charges WHERE kind=?", (kind,)).fetchone()
+        else:
+            r = _db().execute("SELECT MIN(day) FROM charges").fetchone()
     return r[0] if r and r[0] else None
 
 

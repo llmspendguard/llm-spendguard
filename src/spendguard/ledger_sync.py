@@ -34,20 +34,36 @@ def _provider_batch_by_day(since):
 
 
 def _compute(since=None):
-    """Compute the local-vs-provider reconciliation WITHOUT printing — for the report/monitor."""
+    """Local-vs-provider batch reconciliation WITHOUT printing. Answers TWO questions that must NOT be conflated:
+      • LEAK = provider batch truth that is NOT in the ledger AT ALL (neither gate-recorded NOR already reconciled/
+        backfilled). This is the alarm — genuinely ungoverned spend — so it is measured vs local INCLUDING the
+        backfill (the `(provider-batch)` reconciled rows ARE accounted; excluding them would re-flag a gap a prior
+        reconcile already absorbed).
+      • capture_rate = how much the gate recorded LIVE (excl backfill). A quality signal ("are we capturing at the
+        source, or leaning on after-the-fact reconcile?"), NOT a leak.
+    The batch window opens at the first batch row in the ledger (cutoff = ledger_start('batch')), NOT the global
+    ledger_start: realtime started recording weeks before batch, so the global start would drag in pre-batch-recording
+    history and mislabel it as a leak. Provider batch before the batch cutoff is pre-ledger (expected)."""
     from . import budget
     since = since or datetime.date.today().replace(day=1).isoformat()
     prov, pending = _provider_batch_by_day(since)
-    local_batch = budget.by_day(kind="batch", since=since, exclude_reconciled=True)   # reconciled rows ARE provider truth — don't count them as local
-    cutoff = budget.ledger_start() or since
+    accounted = budget.by_day(kind="batch", since=since, exclude_reconciled=False)    # gate-recorded + backfill = what the ledger accounts for
+    gate_only = budget.by_day(kind="batch", since=since, exclude_reconciled=True)     # what the gate captured LIVE (capture-rate signal)
+    cutoff = budget.ledger_start("batch") or budget.ledger_start() or since
     post_p = sum(v for d, v in prov.items() if d >= cutoff)
-    post_l = sum(v for d, v in local_batch.items() if d >= cutoff)
-    leak = sum(max(0.0, prov.get(d, 0) - local_batch.get(d, 0))
-               for d in prov if d >= cutoff and prov.get(d, 0) - local_batch.get(d, 0) > max(0.5, 0.05 * prov.get(d, 0)))
-    return dict(since=since, cutoff=cutoff, prov=prov, local_batch=local_batch,
+    post_a = sum(v for d, v in accounted.items() if d >= cutoff)
+    post_g = sum(v for d, v in gate_only.items() if d >= cutoff)
+    pre_ledger = sum(v for d, v in prov.items() if d < cutoff)                         # provider batch before batch-recording existed
+    # leak = NET account residual since the cutoff (provider truth not yet reconciled), NOT the sum of per-day positive
+    # gaps: reconcile_into_ledger caps accounted ≤ provider at the TOTAL, then SPREADS the backfill across provider-usage
+    # days — so per-day positive gaps are offset by over-recording on gate-record days (a day-spread artifact), and
+    # summing them overstates the leak (the $507 vs the true $27). The net is what's genuinely unaccounted.
+    leak = max(0.0, round(post_p - post_a, 2))
+    return dict(since=since, cutoff=cutoff, prov=prov, local_batch=accounted, gate_batch=gate_only, pre_ledger=pre_ledger,
                 local_rt=budget.by_day(kind="realtime", since=since), meta=budget.by_day(kind="meta", since=since),
-                pending=pending, post_p=post_p, post_l=post_l, leak=leak,
-                coverage=(post_l / post_p * 100) if post_p else 100.0)
+                pending=pending, post_p=post_p, post_l=post_a, post_g=post_g, leak=leak,
+                coverage=(post_a / post_p * 100) if post_p else 100.0,
+                capture_rate=(post_g / post_p * 100) if post_p else 100.0)
 
 
 def audit_completeness():
@@ -313,63 +329,78 @@ def reconcile_realtime(since=None):
 
 
 def leak_line(since=None):
-    """One-line leak alert for the report (or None if clean / nothing to compare)."""
+    """One-line batch status for the report/doctor (or None if nothing to compare). Distinguishes:
+      • a real LEAK — provider truth NOT in the ledger at all (alarm, ungoverned spend);
+      • a capture-rate gap — gate didn't record it live, but reconcile backfilled it (accounted, just not captured
+        at the source — informational, NOT an alarm);
+      • pre-batch-recording history — provider batch before the gate tracked batch (expected; one reconcile absorbs it).
+    Reporting a capture-rate gap as a LEAK is the bug this fixes: it cried '~$1.9k ungoverned, install the gate' when
+    every batch since recording began was in fact accounted."""
     try:
         c = _compute(since)
     except Exception:
         return None
-    if c["leak"] > 0.5:
-        return (f"⚠️ LEDGER LEAK: ~${c['leak']:.2f} provider-billed batch not in the local ledger since "
-                f"{c['cutoff']} (coverage {c['coverage']:.0f}%) — run `spendguard reconcile-ledger`.")
-    if c["post_p"] > 0:
-        return f"ledger coverage {c['coverage']:.0f}% of provider batch since {c['cutoff']} (no material leak)."
-    return None
+    if c["post_p"] <= 0 and c.get("pre_ledger", 0) <= 0.5:
+        return None
+    post_p, leak, cap, pre = c["post_p"], c["leak"], c.get("capture_rate", 100.0), c.get("pre_ledger", 0.0)
+    # A material NET shortfall means provider truth hasn't been reconciled into the ledger yet (stale/never-run
+    # reconcile) — `spendguard saas reconcile` (free) closes it. It is NOT "ungoverned spend / install the gate":
+    # reconcile always absorbs the $ gap; ungated SOURCES are `spendguard coverage`'s job, not this metric's.
+    if leak > max(2.0, 0.03 * post_p):
+        return (f"ledger batch: ${leak:.2f} behind provider since {c['cutoff']} ({c['coverage']:.0f}% accounted) "
+                f"— run `spendguard saas reconcile` (free) to refresh.")
+    cap_s = f"gate captured {cap:.0f}% live" + ("" if cap >= 80 else " — `spendguard coverage` lists any ungated sources")
+    pre_s = f"; ${pre:.0f} pre-batch-recording (one reconcile absorbs it)" if pre > 0.5 else ""
+    return f"ledger batch: ✓ {c['coverage']:.0f}% accounted, no material leak — {cap_s}{pre_s}."
 
 
 def sync(since=None):
     from . import budget
     since = since or datetime.date.today().replace(day=1).isoformat()
     prov, pending = _provider_batch_by_day(since)
-    local_batch = budget.by_day(kind="batch", since=since, exclude_reconciled=True)   # exclude provider-truth rows from the local side
+    accounted = budget.by_day(kind="batch", since=since, exclude_reconciled=False)    # gate-recorded + reconciled backfill = ACCOUNTED
+    gate_only = budget.by_day(kind="batch", since=since, exclude_reconciled=True)     # what the gate captured LIVE (capture-rate)
     local_rt = budget.by_day(kind="realtime", since=since)
     meta = budget.by_day(kind="meta", since=since)
-    lstart = budget.ledger_start()
+    cutoff = budget.ledger_start("batch") or budget.ledger_start() or since          # the batch axis started recording here
 
-    print(f"reconcile-ledger — local gate ledger vs provider billing, since {since}")
-    if lstart and lstart > since:
-        print(f"  ⚠ local ledger only has data since {lstart}; provider spend before that is pre-ledger "
-              f"(expected gap, not a true leak).")
-    print(f"\n  {'day':<12}{'provider batch':>15}{'local batch':>13}{'diff':>11}  status")
-    days = sorted(set(prov) | set(local_batch))
-    p_tot = l_tot = leak = post_p = post_l = 0.0
-    cutoff = lstart or since
+    print(f"reconcile-ledger — provider billing vs the local ledger (batch), since {since}")
+    print("  accounted = gate-recorded LIVE + reconciled-from-provider backfill.  leak = NET provider truth unaccounted.")
+    if cutoff and cutoff > since:
+        print(f"  ⚠ batch recording began {cutoff}; provider batch before that is pre-ledger (expected, not a leak).")
+    print(f"\n  {'day':<12}{'provider':>11}{'accounted':>11}{'gate live':>11}{'Δ vs prov':>11}  status")
+    days = sorted(set(prov) | set(accounted))
+    p_tot = a_tot = g_tot = post_p = post_a = post_g = 0.0
     for d in days:
-        p, l = prov.get(d, 0.0), local_batch.get(d, 0.0)
-        diff = p - l
-        p_tot += p; l_tot += l
-        pre = d < cutoff
-        if pre:
+        p, a, g = prov.get(d, 0.0), accounted.get(d, 0.0), gate_only.get(d, 0.0)
+        p_tot += p; a_tot += a; g_tot += g
+        gap = p - a                                          # signed: provider − accounted on THIS day (day-spread noise)
+        if d < cutoff:
             status = "· pre-ledger (expected)"
         else:
-            post_p += p; post_l += l
-            if diff > max(0.5, 0.05 * p):
-                status, leak = "⚠️ LEAK (billed, not gated)", leak + diff
-            elif diff < -max(0.5, 0.05 * max(p, l)):
-                status = "over-recorded (est>actual?)"
+            post_p += p; post_a += a; post_g += g
+            # per-day +/- gaps are a day-spread artifact (the backfill is spread by provider $/day, not matched to the
+            # gate-record day), so they are NOT per-day leaks — only the NET (below) is. Label them descriptively.
+            if gap > max(0.5, 0.05 * p):
+                status = "under-covered (day-spread)"
+            elif gap < -max(0.5, 0.05 * max(p, a)):
+                status = "over-covered (day-spread)"
             else:
                 status = "ok"
-        print(f"  {d:<12}{('$%.2f' % p):>15}{('$%.2f' % l):>13}{('$%+.2f' % diff):>11}  {status}")
-    print(f"  {'TOTAL':<12}{('$%.2f' % p_tot):>15}{('$%.2f' % l_tot):>13}{('$%+.2f' % (p_tot - l_tot)):>11}")
-    cov = (post_l / post_p * 100) if post_p else 100.0
-    print(f"\n  since the ledger went live ({cutoff}): provider ${post_p:.2f} vs local ${post_l:.2f} "
-          f"→ coverage {cov:.0f}%")
-    if leak > 0.5:
-        print(f"  ⚠ ~${leak:.2f} provider-billed batch since {cutoff} is NOT in the local ledger — "
-              f"ungoverned spend (a non-gated venv/process/repo). Install the gate there.")
+        print(f"  {d:<12}{('$%.2f' % p):>11}{('$%.2f' % a):>11}{('$%.2f' % g):>11}{('$%+.2f' % gap):>11}  {status}")
+    print(f"  {'TOTAL':<12}{('$%.2f' % p_tot):>11}{('$%.2f' % a_tot):>11}{('$%.2f' % g_tot):>11}")
+    cov = (post_a / post_p * 100) if post_p else 100.0
+    cap = (post_g / post_p * 100) if post_p else 100.0
+    leak = max(0.0, round(post_p - post_a, 2))                # the ONE honest leak number: net provider − accounted
+    print(f"\n  since batch recording began ({cutoff}): provider ${post_p:.2f} vs accounted ${post_a:.2f} → {cov:.0f}% accounted")
+    print(f"  of that, the gate captured ${post_g:.2f} LIVE ({cap:.0f}%); the rest was reconciled from provider truth.")
+    if leak > max(2.0, 0.03 * post_p):
+        print(f"  ⚠ ${leak:.2f} net provider batch since {cutoff} isn't reconciled yet — run `spendguard saas reconcile` "
+              f"(free) to refresh. (Not 'ungoverned': reconcile closes the $ gap; `spendguard coverage` finds ungated sources.)")
     elif post_p > 0:
-        print("  ✓ no material leak since the ledger went live — provider batch billing is accounted for.")
+        print(f"  ✓ no material leak — ${leak:.2f} net unreconciled (staleness only); every provider batch is accounted.")
     else:
-        print("  (no provider batch billing since the ledger went live yet — re-run after the next gated batch.)")
+        print("  (no provider batch billing since recording began yet — re-run after the next gated batch.)")
     print(f"  real-time (local-only, no provider cross-check w/o Admin key): ${sum(local_rt.values()):.2f}")
     print(f"  spendguard meta (advisor): ${sum(meta.values()):.2f}")
     # work done this month — context for the spend above (git commits + LLM intents per project). Same data the
@@ -387,7 +418,7 @@ def sync(since=None):
         pass
     if pending:
         print(f"  ({pending:,} OpenAI requests in flight — not yet billed)")
-    return dict(provider=p_tot, local=l_tot, coverage=cov, leak=leak)
+    return dict(provider=p_tot, local=a_tot, gate=g_tot, coverage=cov, capture_rate=cap, leak=leak)
 
 
 def _provider_total(since):
