@@ -27,9 +27,23 @@ jobs:
         run: |
           pip install twine
           twine check dist/*
-      - name: Publish to PyPI (trusted publishing)
+      - name: Publish to PyPI (trusted publishing + PEP 740 attestations)
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # release/v1 — 3rd-party action pinned to SHA
-      - name: GitHub Release from CHANGELOG
+        with:
+          attestations: true       # Sigstore-backed PEP 740 provenance on PyPI (uses the OIDC id-token above)
+      - name: SBOM (CycloneDX) — full dependency surface incl. [all] extras
+        run: |
+          python -m pip install ".[all]" cyclonedx-bom
+          cyclonedx-py environment -o sbom.cdx.json
+          python - <<'PY'
+          import json; d=json.load(open("sbom.cdx.json"))
+          print("SBOM components:", len(d.get("components", [])))
+          PY
+      - name: Sign artifacts (Sigstore — keyless, GitHub OIDC identity)
+        run: |
+          python -m pip install sigstore
+          python -m sigstore sign dist/*.tar.gz dist/*.whl   # → dist/*.sigstore.json transparency-log bundles
+      - name: GitHub Release from CHANGELOG (+ SBOM + signatures)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -41,4 +55,16 @@ jobs:
             p {print}
           ' CHANGELOG.md > notes.md
           [ -s notes.md ] || echo "Release $GITHUB_REF_NAME" > notes.md
-          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md dist/*
+          {
+            echo ""
+            echo "---"
+            echo "**Supply chain:** PyPI upload carries PEP 740 attestations (Sigstore). Release assets include a"
+            echo "CycloneDX SBOM (\`sbom.cdx.json\`) and Sigstore bundles (\`*.sigstore.json\`) — verify with:"
+            echo '```'
+            echo "python -m sigstore verify identity dist/llm_spendguard-$VER*.whl \\"
+            echo "  --cert-identity https://github.com/llmspendguard/llm-spendguard/.github/workflows/release.yml@refs/tags/$GITHUB_REF_NAME \\"
+            echo "  --cert-oidc-issuer https://token.actions.githubusercontent.com"
+            echo '```'
+          } >> notes.md
+          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md \
+            dist/*.tar.gz dist/*.whl dist/*.sigstore.json sbom.cdx.json

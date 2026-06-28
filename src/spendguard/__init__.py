@@ -19,7 +19,7 @@ __all__ = ["install", "require", "register", "SpendGateRefused", "on_event", "co
            "PRICING", "PRICING_VERIFIED", "PRICING_SOURCE",
            "estimate_job", "test_job", "gated_batch", "check_bulk", "check_realtime", "check_compute",
            "record_estimate", "record_tested", "note_response", "maxtokens", "is_truncated", "GateBlocked"]
-__version__ = "0.2.9"
+__version__ = "0.2.10"
 
 
 def _auto_install():

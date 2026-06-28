@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "llm-spendguard"
-version = "0.2.9"
+version = "0.2.10"
 description = "A pre-spend GATE + learning advisor for LLM API cost: caps every call, prices from a verified table, and learns the cheapest config that keeps quality."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -33,7 +33,7 @@ anthropic = ["anthropic>=0.40"]
 otel = ["opentelemetry-sdk"]
 chat = ["cryptography>=3"]   # in-process AES for the claude.ai cookie decrypt (keeps the key out of argv)
 all = ["openai>=1.0", "tiktoken", "anthropic>=0.40", "opentelemetry-sdk", "cryptography>=3"]
-dev = ["pytest>=7", "build", "twine", "ruff>=0.6", "coverage[toml]>=7"]
+dev = ["pytest>=7", "build", "twine", "ruff>=0.6", "coverage[toml]>=7", "hypothesis>=6"]
 
 [project.scripts]
 spendguard = "spendguard.cli:main"

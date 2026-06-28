@@ -679,7 +679,10 @@ class _StreamProxy:
         sg = object.__getattribute__(self, "_sg")
         try:
             for chunk in sg[0]:
-                _pull_usage(chunk, sg[1])
+                try:
+                    _pull_usage(chunk, sg[1])     # usage capture is best-effort — NEVER let it drop a chunk
+                except Exception:
+                    pass
                 yield chunk
         finally:
             self._fire()
@@ -712,7 +715,10 @@ class _AsyncStreamProxy:
         sg = object.__getattribute__(self, "_sg")
         try:
             async for chunk in sg[0]:
-                _pull_usage(chunk, sg[1])
+                try:
+                    _pull_usage(chunk, sg[1])     # usage capture is best-effort — NEVER let it drop a chunk
+                except Exception:
+                    pass
                 yield chunk
         finally:
             self._fire()
@@ -744,38 +750,62 @@ def _inject_usage(kw, est_fn):
         pass
 
 
+def _rt_precheck_guard(est_fn, kw):
+    """PRE-call: estimate + realtime precheck + usage injection, FAIL-OPEN. Only a DELIBERATE enforcement decision
+    (SpendGateRefused / bulkgate.GateBlocked) propagates to block the call; ANY other error — a bug in est_fn, a
+    gate hiccup — is swallowed so a legitimate call is never broken. Mirrors the batch path's `_guard`."""
+    from . import bulkgate
+    try:
+        m, i, o = est_fn(kw)
+        _rt_precheck(None, m, i, o)
+        _inject_usage(kw, est_fn)
+    except (SpendGateRefused, bulkgate.GateBlocked):
+        raise                                                 # deliberate enforcement — propagate
+    except Exception as e:
+        print(f"[spend_gate] WARN realtime precheck error ({e}); allowing (fail-open)", file=sys.stderr)
+
+
+def _account_failopen(r, model, kw, est_fn, act_fn, t0, is_async):
+    """POST-call: record usage, FAIL-OPEN. Returns exactly what the caller must receive — a transparent stream proxy
+    for streams (yields the same chunks), else `r` UNCHANGED. NEVER raises and NEVER substitutes a different value,
+    so accounting can fail any way it likes without altering or breaking the call's result."""
+    try:
+        if kw.get("stream"):                                  # capture actual usage as the stream is consumed
+            try:
+                return _observe_stream(r, model, kw, est_fn, t0, is_async)
+            except Exception:
+                _rt_account(model, kw, r, est_fn, act_fn, time.time() - t0)   # proxy build failed → estimate, keep r
+                return r
+        _rt_account(model, kw, r, est_fn, act_fn, time.time() - t0)
+        return r
+    except Exception as e:
+        print(f"[spend_gate] WARN realtime accounting failed ({e}); call unaffected", file=sys.stderr)
+        return r
+
+
 def _wrap_rt(orig, est_fn, act_fn, is_async):
+    # Two fail-open halves around the real call: pre-check (only deliberate enforcement may block) and post-account
+    # (never raises, never alters the result). The user's LLM call must be untouched by any gate bug. See
+    # tests/test_gate_properties.py for the invariants this upholds.
     if is_async:
         @functools.wraps(orig)
         async def w(self, *a, **kw):
             if not _disabled():
-                m, i, o = est_fn(kw); _rt_precheck(None, m, i, o); _inject_usage(kw, est_fn)
+                _rt_precheck_guard(est_fn, kw)
             t0 = time.time()
             r = await orig(self, *a, **kw)
             if not _disabled():
-                if kw.get("stream"):                          # capture actual usage as the stream is consumed
-                    try:
-                        return _observe_stream(r, kw.get("model"), kw, est_fn, t0, True)
-                    except Exception:
-                        _rt_account(kw.get("model"), kw, r, est_fn, act_fn, time.time() - t0)   # wrap failed → estimate
-                else:
-                    _rt_account(kw.get("model"), kw, r, est_fn, act_fn, time.time() - t0)
+                r = _account_failopen(r, kw.get("model"), kw, est_fn, act_fn, t0, True)
             return r
     else:
         @functools.wraps(orig)
         def w(self, *a, **kw):
             if not _disabled():
-                m, i, o = est_fn(kw); _rt_precheck(None, m, i, o); _inject_usage(kw, est_fn)
+                _rt_precheck_guard(est_fn, kw)
             t0 = time.time()
             r = orig(self, *a, **kw)
             if not _disabled():
-                if kw.get("stream"):
-                    try:
-                        return _observe_stream(r, kw.get("model"), kw, est_fn, t0, False)
-                    except Exception:
-                        _rt_account(kw.get("model"), kw, r, est_fn, act_fn, time.time() - t0)
-                else:
-                    _rt_account(kw.get("model"), kw, r, est_fn, act_fn, time.time() - t0)
+                r = _account_failopen(r, kw.get("model"), kw, est_fn, act_fn, t0, False)
             return r
     w._spend_gated = True
     return w

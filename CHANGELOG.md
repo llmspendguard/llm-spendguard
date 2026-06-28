@@ -4,6 +4,20 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+### Security / hardening
+- **Gate fail-open hardening + property/fuzz tests.** The gate sits in the call path of every LLM call, so it now
+  upholds two invariants under fuzzing (`tests/test_gate_properties.py`, Hypothesis): **passthrough** — it returns
+  the underlying call's result unchanged (same object for non-stream; same chunks, in order, for a stream); and
+  **fail-open** — only a deliberate enforcement decision (`SpendGateRefused` / `GateBlocked`) may raise into the
+  caller, while ANY other internal error (estimator bug, precheck hiccup, accounting failure, stream-proxy error) is
+  swallowed and the call proceeds. The realtime wrapper got explicit pre-call (`_rt_precheck_guard`) and post-call
+  (`_account_failopen`) guards to match the batch path's `_guard`, and the streaming proxy now guards per-chunk usage
+  capture so a usage-parsing bug can never drop a chunk. The fuzzer caught both gaps before they could ship.
+- **Signed releases + SBOM.** `release.yml` now publishes to PyPI with **PEP 740 attestations** (Sigstore-backed
+  provenance), signs the sdist+wheel with **Sigstore** (keyless, via the GitHub OIDC identity → `*.sigstore.json`
+  bundles on the GitHub Release), and attaches a **CycloneDX SBOM** (`sbom.cdx.json`) covering the full dependency
+  surface incl. `[all]` extras. Release notes include the `sigstore verify` command.
+
 ### Testing
 - **Coverage pass on the money-critical core + a scoped CI gate.** New offline tests for `tag.py` (attribution
   cascade, 0→100%), `guard.py` (the guarded-spend lognormal cumulants, 43→100%), `signal.py` (efficiency roll-up,
