@@ -13,8 +13,17 @@ from .emit import on_event
 from .calls import context, set_context, feedback
 from .bulkgate import (estimate_job, test_job, gated_batch, check_bulk, check_realtime, check_compute,
                        record_estimate, record_tested, note_response, maxtokens, is_truncated, GateBlocked)
+from .litellm_adapter import install as _install_litellm
 
-__all__ = ["install", "require", "register", "SpendGateRefused", "on_event", "context", "set_context", "feedback",
+
+def install_litellm() -> bool:
+    """Capture LiteLLM-routed spend (Bedrock, Vertex/Gemini, Cohere, … — anything LiteLLM normalizes) into the same
+    ledger as the SDK gate. Call once, AFTER `import litellm`. Returns True if litellm is present and now wired.
+    (The startup gate auto-wires it only if litellm is already imported, so this explicit call is the reliable path.)"""
+    return _install_litellm(force=True)
+
+
+__all__ = ["install", "require", "register", "install_litellm", "SpendGateRefused", "on_event", "context", "set_context", "feedback",
            "batch_cost", "realtime_cost", "estimate", "price", "normalize",
            "PRICING", "PRICING_VERIFIED", "PRICING_SOURCE",
            "estimate_job", "test_job", "gated_batch", "check_bulk", "check_realtime", "check_compute",

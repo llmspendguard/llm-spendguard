@@ -4,6 +4,17 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+### Provider breadth
+- **Azure OpenAI — covered for free.** `AzureOpenAI` / `AsyncAzureOpenAI` reuse the same `openai.resources` classes
+  the gate patches, so their `.create` IS the gated method — no Azure-specific code. Locked by
+  `tests/test_provider_coverage.py` so it can't silently regress.
+- **LiteLLM coverage (`spendguard.install_litellm()`).** Captures spend for ANY provider LiteLLM normalizes
+  (Bedrock, Vertex/Gemini, Cohere, Mistral, …) via LiteLLM's native success-callback — recorded into the SAME
+  realtime ledger as the SDK gate (priced through `pricing.py`), so it rolls up + reconciles identically. SKIPS
+  openai/azure (already captured by the SDK gate) to avoid double-counting; fail-open; idempotent. Heavy/optional,
+  so the startup gate only auto-wires it if `litellm` is already imported — LiteLLM users add the one-liner after
+  `import litellm`. (Bedrock/Vertex direct-SDK adapters via `register()` are the next step.)
+
 ### Security / hardening
 - **Gate fail-open hardening + property/fuzz tests.** The gate sits in the call path of every LLM call, so it now
   upholds two invariants under fuzzing (`tests/test_gate_properties.py`, Hypothesis): **passthrough** — it returns

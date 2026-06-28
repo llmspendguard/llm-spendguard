@@ -930,6 +930,11 @@ def install(cap: "float | None" = None) -> None:
             pass
         except Exception as e:
             print(f"[spend_gate] WARN rt-patch {spec[0]}.{spec[1]}.{spec[2]} skipped: {e}", file=sys.stderr)
+    try:                                        # LiteLLM coverage (Bedrock/Vertex/Cohere/… via LiteLLM) — wire only
+        from . import litellm_adapter           # if litellm is ALREADY imported; never force-import a heavy optional
+        litellm_adapter.install(force=False)    # dep at startup. Users call spendguard.install_litellm() explicitly.
+    except Exception:
+        pass
 
 
 def _any_patched():
