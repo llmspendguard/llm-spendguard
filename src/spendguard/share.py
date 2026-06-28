@@ -13,22 +13,18 @@ community) that must be locally corroborated by `validate` before the advisor le
 
 CLI: `spendguard insights {list,export,import}`.
 """
-import re, json
+import json
 from . import learn
-
-# $1,127 · $49/job · $0.04/job · 12.50/1M → stripped (identity). Ratios like "26x"/"~10×" are KEPT (generalizable).
-_DOLLAR = re.compile(r"\$\s?[\d,]+(?:\.\d+)?(?:\s?/\s?(?:job|Mout|M|1M|1k))?", re.I)
-_BARE_PRICE = re.compile(r"\b\d+\.\d{2}\s?/\s?\d+(?:\.\d+)?\b")          # 2.50/15.00 style
 
 
 def _scrub_text(s, intent=None):
+    """Deterministic de-id floor for any rule-text that leaves this machine: strips $-amounts (ratios like
+    "26x" are KEPT — the generalizable signal), the private intent label, and emails / keys / SSNs / phones /
+    … per the configured `deid.engine`. The single scrubber the SaaS abstract push also relies on. See deid.py."""
     if not s:
         return s
-    out = _DOLLAR.sub("$X", s)
-    out = _BARE_PRICE.sub("$X/$Y", out)
-    if intent:                                                          # drop the private intent label
-        out = re.sub(re.escape(intent), "<task>", out, flags=re.I)
-    return out.strip()
+    from . import deid
+    return deid.redact(s, drop=[intent] if intent else None).strip()
 
 
 def scrub(ins):

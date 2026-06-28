@@ -395,7 +395,7 @@ def push_workdone(since=None, by="month", dry=False):
     cok, cwhy = contributor_ok()
     if not cok:
         return {"skipped": cwhy}
-    from . import workdone
+    from . import workdone, deid
     flt = _project_filter(c)
     summaries = {str(k).lower(): v for k, v in workdone.load_summaries().items()}   # scrubbed "what was accomplished"
     work = []
@@ -408,9 +408,11 @@ def push_workdone(since=None, by="month", dry=False):
             "active_days": int(r.get("active_days") or 0),
             "n_commits": int(r.get("n_commits") or 0),
             "n_batch_calls": int(r.get("n_batch_calls") or 0),
-            "commits": [str(s)[:200] for s in (r.get("commits") or [])][:100],
+            # de-id at the wire: commit subjects are RAW git text and the summary is an LLM digest only
+            # *instructed* to scrub — neither is a guarantee, so both pass through the deterministic floor.
+            "commits": [deid.redact(str(s)[:200]) for s in (r.get("commits") or [])][:100],
             "intents": {str(k): int(v) for k, v in (r.get("intents") or {}).items()},
-            "summary": summaries.get(proj, ""),   # caged on-device digest (empty until `workdone --summarize --run`)
+            "summary": deid.redact(summaries.get(proj, "")),   # caged on-device digest (empty until `workdone --summarize --run`)
         })
     if not work:
         return {"skipped": "no work in range for this connection's project(s)"}

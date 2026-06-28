@@ -32,7 +32,8 @@ openai = ["openai>=1.0", "tiktoken"]
 anthropic = ["anthropic>=0.40"]
 otel = ["opentelemetry-sdk"]
 chat = ["cryptography>=3"]   # in-process AES for the claude.ai cookie decrypt (keeps the key out of argv)
-all = ["openai>=1.0", "tiktoken", "anthropic>=0.40", "opentelemetry-sdk", "cryptography>=3"]
+deid = ["presidio-analyzer>=2.2", "presidio-anonymizer>=2.2"]   # opt-in NER de-id; the regex floor needs no deps
+all = ["openai>=1.0", "tiktoken", "anthropic>=0.40", "opentelemetry-sdk", "cryptography>=3"]   # excl. deid (heavy spaCy)
 dev = ["pytest>=7", "build", "twine", "ruff>=0.6", "coverage[toml]>=7", "hypothesis>=6"]
 
 [project.scripts]

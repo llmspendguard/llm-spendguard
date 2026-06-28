@@ -4,6 +4,21 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+### De-identification of egress text (privacy)
+- **Every text field that leaves this machine now passes through a deterministic de-id floor at the wire.** New
+  `spendguard.deid` module: a typed denylist (email, US phone, SSN, credit-card w/ Luhn, IPv4/IPv6, common API-key
+  & bearer/JWT shapes, PEM private-key blocks) + the legacy `$`-amount scrub — while generalizable signal (ratios
+  like "26x", model names) is KEPT. Wired into **all three** prose egress paths: insight abstracts (`share`), and
+  the work-done **commit subjects** and **caged summary** (`saas.push_workdone`) — the latter two were previously
+  pushed with only an LLM *instruction* to scrub, never a guarantee.
+- **Client-configurable + opt-in NER.** `deid.engine` = `regex` (default, zero-dep floor) · `presidio` (floor +
+  Microsoft Presidio for names/locations/dates — `pip install llm-spendguard[deid]`, degrades to the floor and
+  warns once if absent, never blocks egress) · `off` (no redaction — a deliberate footgun for trusted data).
+  `deid.entities` restricts which types are masked. De-id is a SAFETY/extraction step (regex+NER), not a meaning
+  decision — the agentic boundary (project/intent/quality → LLM) is untouched. Fails open toward privacy; never
+  raises. Guard: `tests/test_deid.py` (every class masked, signal survives, Presidio-absent fallback, and the
+  egress **wiring** — `share._scrub_text` + `push_workdone` commits/summary actually route through deid).
+
 ### Central caps (org/team policy → client)
 - **The gate now applies org/team spending caps pulled from the dashboard.** `spendguard saas sync` pulls the
   scope's effective caps from `GET /v1/policy` (set per org/team in the dashboard's Caps tab) into config.json

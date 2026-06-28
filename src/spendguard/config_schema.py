@@ -97,6 +97,17 @@ SETTINGS = [
     dict(section="calls", key="snippet_len", store="config.json:calls.snippet_len", env=None, default=200,
          kind="float", secret=False, desc="Max characters of prompt/output snippet to store."),
 
+    # ── de-identification (client-side redaction of the text that leaves on the opt-in sync paths) ──
+    dict(section="deid", key="engine", store="config.json:deid.engine", env="SPENDGUARD_DEID_ENGINE",
+         default="regex", kind="enum:regex,presidio,off", secret=False,
+         desc="Redact PII/PHI from the text that leaves this machine (insight abstracts, work summaries, commit "
+              "subjects). regex = built-in deterministic floor (email/phone/SSN/credit-card/IP/keys/$, zero deps); "
+              "presidio = floor + Microsoft Presidio NER for names/locations/dates (needs `pip install "
+              "llm-spendguard[deid]`; falls back to the floor if absent); off = NO redaction (footgun, trusted data only)."),
+    dict(section="deid", key="entities", store="config.json:deid.entities", env="SPENDGUARD_DEID_ENTITIES", default=None,
+         kind="string|null", secret=False,
+         desc="Comma-list restricting which entity types are redacted (e.g. EMAIL,PHONE,SSN,API_KEY). null = all."),
+
     # ── saas / team roll-up (client seam — points at the FUTURE separate server repo, llmspendguard.com) ──
     # ONE key is the identity: the server resolves user→team→org hierarchy from it. The client holds no ids.
     dict(section="saas", key="enabled", store="saas.json:enabled", env="SPENDGUARD_SAAS", default=False,

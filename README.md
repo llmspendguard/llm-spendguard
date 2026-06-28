@@ -394,6 +394,22 @@ it without adding a dependency:
 All of it is **fail-open** (an estimation/patch error logs and lets the call proceed) and needs **no required
 dependencies** — the SDKs and OTel are optional extras.
 
+## Privacy — what leaves this machine (de-identification)
+Nothing leaves until you opt in past `visibility=private`, and the roll-up itself carries only **scrubbed
+aggregates** — never prompts, outputs, or `$` amounts. The little prose that *does* sync (generalizable insight
+rules, git commit subjects, a caged "what was accomplished" summary) passes through a deterministic **de-id floor
+at the wire**: emails, phones, SSNs, credit cards (Luhn-checked), IPs, API keys / bearer tokens / JWTs, and
+private-key blocks become typed tags (`<EMAIL>`, `<API_KEY>`, …) — while the generalizable signal (ratios like
+"26x", model names) is kept. Configurable + opt-in:
+- `deid.engine=regex` — the built-in floor (default, **zero deps**).
+- `deid.engine=presidio` — adds Microsoft Presidio NER for names / locations / dates (`pip install
+  llm-spendguard[deid]`; if it isn't installed it degrades to the floor and warns once — egress is never blocked).
+- `deid.engine=off` — no redaction (a deliberate footgun for fully-trusted private data).
+
+De-id is local, fails **open toward privacy** (on any error the floor still runs), and is a tool *toward* HIPAA
+Safe Harbor — not compliance by itself (you still need a BAA). It's a safety/extraction step, so it's regex + NER,
+not an LLM — the agentic decisions (project / intent / quality) stay with the model.
+
 ## Safety
 Fail-**open**: any estimation or patch error logs a warning and lets the call proceed — the gate
 never breaks a job by accident. Only the deliberate over-cap stop blocks. Disable instantly with
