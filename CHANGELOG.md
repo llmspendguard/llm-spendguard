@@ -13,7 +13,17 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
   realtime ledger as the SDK gate (priced through `pricing.py`), so it rolls up + reconciles identically. SKIPS
   openai/azure (already captured by the SDK gate) to avoid double-counting; fail-open; idempotent. Heavy/optional,
   so the startup gate only auto-wires it if `litellm` is already imported — LiteLLM users add the one-liner after
-  `import litellm`. (Bedrock/Vertex direct-SDK adapters via `register()` are the next step.)
+  `import litellm`. Records LiteLLM's OWN computed cost (`response_cost`) so exotic providers are priced even when
+  `prices.json` doesn't carry them.
+- **Direct AWS Bedrock (`spendguard.install_bedrock()`).** Patches botocore's dispatch and records bedrock-runtime
+  usage — Converse from `response['usage']`, InvokeModel from response headers (no body consumption) — for teams on
+  boto3 directly (not via LiteLLM). Capture-focused, strictly fail-open (never alters/blocks the AWS call).
+- **Direct Google Gemini / Vertex (`spendguard.install_vertex()`).** Patches google-genai `generate_content`
+  (sync + async), recording `usage_metadata`, labelled `provider=google`. Same fail-open contract.
+- **Unpriced models degrade gracefully.** `_record_rt` now accepts an explicit cost + provider, and a model missing
+  from `prices.json` records its TOKENS at $0 with a visible warn (never a guessed price, never a silent drop) — add
+  the sourced rate to `prices.json`, or route through LiteLLM for automatic cross-provider pricing. Guarded by
+  `tests/test_provider_coverage.py` (21 checks: Azure-free · LiteLLM record/skip/fail-open · Bedrock · Vertex).
 
 ### Security / hardening
 - **Gate fail-open hardening + property/fuzz tests.** The gate sits in the call path of every LLM call, so it now

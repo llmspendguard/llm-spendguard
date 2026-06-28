@@ -537,14 +537,22 @@ def _cached_in(result):
     return getattr(u, "cache_read_input_tokens", 0) or 0  # Anthropic
 
 
-def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, finish=None):
+def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, finish=None, cost=None, provider=None):
     """Record ONE realtime call's usage → cost · cross-process ledger · max_tokens truncation telemetry · call log.
-    Shared by _rt_account (non-stream) AND the streaming proxy (which captures ACTUAL usage as the stream is consumed)."""
-    prov = "anthropic" if str(model).startswith("claude") else "openai"   # o3/embeddings are OpenAI, not "gpt"
-    # normalize to OpenAI token semantics (input INCLUDES cached) before pricing: Anthropic's input_tokens EXCLUDES
-    # cache_read, so add it back or _cost double-subtracts and under-bills ~2x.
-    in_for_cost = (in_tok + cached) if prov == "anthropic" else in_tok
-    cost = pricing.realtime_cost(model, in_for_cost, out_tok, cached) if model else 0.0
+    Shared by _rt_account (non-stream), the streaming proxy (ACTUAL usage as the stream is consumed), and the
+    provider-breadth adapters (LiteLLM / Bedrock / Vertex). `cost` lets a caller supply an authoritative price (e.g.
+    LiteLLM's own computed cost) instead of re-pricing; `provider` overrides the inferred ledger label."""
+    prov = provider or ("anthropic" if str(model).startswith("claude") else "openai")   # o3/embeddings are OpenAI
+    if cost is None:
+        # normalize to OpenAI token semantics (input INCLUDES cached) before pricing: Anthropic's input_tokens
+        # EXCLUDES cache_read, so add it back or _cost double-subtracts and under-bills ~2x.
+        in_for_cost = (in_tok + cached) if prov == "anthropic" else in_tok
+        try:
+            cost = pricing.realtime_cost(model, in_for_cost, out_tok, cached) if model else 0.0
+        except Exception:     # unpriced model (e.g. a new Bedrock/Vertex one) → keep the TOKENS, $0 + a visible flag.
+            cost = 0.0         # NOT a guessed price (discipline); surfaced so the price can be added, never silently dropped.
+            print(f"[spend_gate] WARN no price for '{model}' — recorded {in_tok}+{out_tok} tok at $0 "
+                  f"(add it to prices.json with a source)", file=sys.stderr)
     if _meta_intent():                            # meta call → meta ledger only (not workload realtime)
         from . import budget
         budget.record_meta(prov, model, cost)
@@ -930,11 +938,12 @@ def install(cap: "float | None" = None) -> None:
             pass
         except Exception as e:
             print(f"[spend_gate] WARN rt-patch {spec[0]}.{spec[1]}.{spec[2]} skipped: {e}", file=sys.stderr)
-    try:                                        # LiteLLM coverage (Bedrock/Vertex/Cohere/… via LiteLLM) — wire only
-        from . import litellm_adapter           # if litellm is ALREADY imported; never force-import a heavy optional
-        litellm_adapter.install(force=False)    # dep at startup. Users call spendguard.install_litellm() explicitly.
-    except Exception:
-        pass
+    import importlib
+    for _mod in ("litellm_adapter", "bedrock_adapter", "vertex_adapter"):
+        try:                                    # provider breadth (LiteLLM / direct Bedrock / direct Vertex) — wire
+            importlib.import_module("." + _mod, __package__).install(force=False)   # only if the underlying SDK is
+        except Exception:                        # ALREADY imported; never force-import a heavy optional dep at startup.
+            pass                                 # Users call spendguard.install_{litellm,bedrock,vertex}() explicitly.
 
 
 def _any_patched():

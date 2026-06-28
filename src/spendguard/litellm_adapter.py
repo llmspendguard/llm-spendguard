@@ -40,7 +40,15 @@ def record_litellm(kwargs, response_obj, start_time=None, end_time=None):
         in_tok, out_tok = _usage(response_obj)
         if not (in_tok or out_tok):
             return                                  # nothing to record (e.g. an embeddings/stream event w/o usage here)
-        gate._record_rt(model, {"model": model}, in_tok, out_tok)   # one ledger path: cost via pricing.py + budget + calls
+        # Prefer LiteLLM's OWN computed cost — it maintains an accurate cross-provider price table, so Bedrock/Vertex/
+        # Cohere/… are priced even when our prices.json doesn't carry them. Falls back to our pricing (cost=None) for
+        # models LiteLLM didn't cost. Label the ledger with LiteLLM's provider so the row reconciles to the right place.
+        cost = (kwargs or {}).get("response_cost")
+        try:
+            cost = float(cost) if cost is not None else None
+        except (TypeError, ValueError):
+            cost = None
+        gate._record_rt(model, {"model": model}, in_tok, out_tok, cost=cost, provider=prov or None)
     except Exception as e:
         print(f"[spend_gate] WARN litellm capture failed ({e}); call unaffected", file=sys.stderr)
 
