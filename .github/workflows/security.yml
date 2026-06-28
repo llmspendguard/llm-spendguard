@@ -31,11 +31,16 @@ jobs:
       # The official TruffleHog action, pinned to a SHA (no `curl | sh` — the action vendors the integrity-checked
       # binary). --only-verified confirms a candidate is a LIVE key before failing, so fake/example keys never trip it;
       # path: ./ = a filesystem scan of the whole tree (matches the prior `trufflehog filesystem .`).
+      # base:"" + head:HEAD force a FULL history+tree scan; without them the action's default base resolves to HEAD,
+      # so base==head → it errors "BASE and HEAD commits are the same" and exits 1 WITHOUT scanning (red, but never
+      # actually scanning). The action also appends --fail itself, so don't repeat it in extra_args.
       - name: TruffleHog (verified secrets only)
         uses: trufflesecurity/trufflehog@30d5bb91af1a771378349dbbb0c82129392acf70  # v3.95.6 — 3rd-party action, SHA-pinned
         with:
           path: ./
-          extra_args: --only-verified --fail
+          base: ""
+          head: HEAD
+          extra_args: --only-verified
 
   dep-audit:
     runs-on: ubuntu-latest

@@ -431,6 +431,20 @@ def _month_total(t):
     return ((t.get("actual") or {}).get("month") or 0) + ((t.get("est_value") or {}).get("month") or 0)
 
 
+def _est_breakdown(repo):
+    """{project: {"month": m}} — est-value cells under `repo` (matched as a team OR project name), aggregated by
+    project. The per-project detail `_breakdown_line` renders; empty (→ no breakdown line) when there's no finer
+    split (e.g. `repo` already IS the leaf project, or an actual-$-only repo with no est-value cells)."""
+    rl = (repo or "").strip().lower()
+    bd = {}
+    for c in _est_cells():
+        if rl and c.get("team") != rl and c.get("project") != rl:
+            continue
+        p = c.get("project") or ""
+        bd.setdefault(p, {"month": 0.0})["month"] += c.get("month", 0) or 0
+    return bd
+
+
 def _breakdown_line(repo, top=4):
     """One indented line of a repo's top classified PROJECTS by month plan-value — the agentic breakdown under the
     repo rollup. Empty when the repo has no project detail (e.g. an actual-$-only repo)."""
