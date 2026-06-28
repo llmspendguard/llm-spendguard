@@ -4,6 +4,15 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+### Central caps (org/team policy → client)
+- **The gate now applies org/team spending caps pulled from the dashboard.** `spendguard saas sync` pulls the
+  scope's effective caps from `GET /v1/policy` (set per org/team in the dashboard's Caps tab) into config.json
+  `policy`. `config.class_cap()` then applies them: an **enforced** cap is a hard ceiling — effective = min(local,
+  enforced), applied even with no local cap, and a dev's local config may only *tighten* it, never loosen (the
+  Enterprise lock). An **advisory** cap is the org's *suggestion* only — surfaced (via `policy_caps()`) but it never
+  changes the effective cap, preserving "partner, not supervisor" for the OSS/Community path. Guard:
+  `tests/test_central_caps.py` (enforced ceiling, advisory-is-suggestion, env interplay, pull persistence, fail-open).
+
 ### Provider breadth
 - **Azure OpenAI — covered for free.** `AzureOpenAI` / `AsyncAzureOpenAI` reuse the same `openai.resources` classes
   the gate patches, so their `.create` IS the gated method — no Azure-specific code. Locked by

@@ -506,6 +506,30 @@ def pull_taxonomy():
     return t
 
 
+def pull_policy():
+    """GET the org/team's EFFECTIVE spending caps (server-set, by class × window, each advisory or enforced) → cache
+    into config.json `policy` so the gate applies them on the next call: advisory = the org's SUGGESTION (the dev's
+    local cap still wins — partner, not supervisor); enforced = a hard ceiling the local config can only tighten,
+    never loosen. Best-effort; never raises. Returns the server payload {caps, asof}."""
+    try:
+        pol = _request("GET", "/v1/policy")
+    except Exception as e:
+        return {"error": str(e)}
+    if isinstance(pol, dict) and "caps" in pol:
+        import json as _j, datetime as _dt
+        p = config.CONFIG_JSON
+        try:
+            cfg = _j.loads(p.read_text()) if p.exists() else {}
+        except Exception:
+            cfg = {}
+        cfg["policy"] = {"caps": pol.get("caps") or {}, "asof": pol.get("asof"),
+                         "pulled_at": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")}
+        config.HOME.mkdir(parents=True, exist_ok=True)
+        p.write_text(_j.dumps(cfg, indent=2))
+        config._cfg._cache = None
+    return pol
+
+
 def push_taxonomy():
     """POST the local chat.taxonomy UP as the org canonical (curator action — version bumps server-side)."""
     tx = config._cfg_get("chat", "taxonomy", None)
@@ -633,7 +657,8 @@ def sync(if_due=False, since=None):
         pass   # trust check must never *break* the sync — only block a clearly-bad one
     out = {"rollup": push_rollup(since=since), "insights": push_insights(),
            "workdone": push_workdone(since=since), "status": push_status(),
-           "resources": res, "commands": run_commands(since=since), "trust": tg.get("ledger_verdict")}
+           "resources": res, "commands": run_commands(since=since), "trust": tg.get("ledger_verdict"),
+           "policy": pull_policy()}     # pull the org/team's effective caps so the gate applies them (advisory/enforced)
     try:                                                  # claude.ai chat attribution loop (only if opted in)
         from . import chat as _chat
         out["chat"] = _chat.loop(run=True, quiet=True) if _chat._enabled() else {"skipped": "chat not enabled"}

@@ -77,24 +77,51 @@ def rt_budget():
     return float(v) if v is not None else float(_cfg_get("caps", "realtime", 50))
 
 
+def _policy_cap(cls, window):
+    """The org/team's SERVER-pushed cap for (cls, window): {"usd", "mode"} or None. Cached in config.json `policy`
+    by `spendguard saas sync` (saas.pull_policy). mode = advisory | enforced."""
+    try:
+        node = ((_cfg().get("policy") or {}).get("caps") or {}).get(cls) or {}
+        v = node.get(window)
+        if isinstance(v, dict) and v.get("usd") is not None:
+            return {"usd": float(v["usd"]), "mode": v.get("mode", "advisory")}
+    except Exception:
+        pass
+    return None
+
+
+def policy_caps():
+    """The full server-pushed policy {caps:{cls:{window:{usd,mode}}}, asof, pulled_at} — for doctor/receipt to
+    surface an advisory org suggestion or an enforced ceiling. Empty dict when none pulled."""
+    return _cfg().get("policy") or {}
+
+
 def class_cap(cls, window):
     """Resource-class spend cap ($) — cls in {total, llm, compute}, window in {daily, monthly}. None = off.
-    Order: env GATE_{CLS}_{WINDOW} (e.g. GATE_LLM_DAILY, GATE_COMPUTE_MONTHLY, GATE_TOTAL_DAILY) → nested
-    config caps.{cls}.{window} → (for total only) legacy flat caps.{window}. Splitting LLM vs remote-compute vs
-    a total ceiling lets you set a tight LLM sub-limit under a higher overall cap."""
+    LOCAL order: env GATE_{CLS}_{WINDOW} (e.g. GATE_LLM_DAILY) → nested config caps.{cls}.{window} → (total only)
+    legacy flat caps.{window}. Then the SERVER policy (central caps): an ENFORCED org/team cap is a hard ceiling —
+    effective = min(local, enforced), applied even with no local cap (local may only TIGHTEN it, never loosen). An
+    ADVISORY policy cap is a suggestion only (surfaced by doctor/receipt) — it does NOT change the effective cap
+    (partner, not supervisor)."""
+    local = None
     env = os.getenv(f"GATE_{cls.upper()}_{window.upper()}")
     if env is not None:
-        return float(env)
-    caps = _cfg().get("caps") or {}
-    flat = caps.get(f"{cls}.{window}")                         # how init/config stores it: caps["llm.daily"]
-    if flat is not None:
-        return float(flat)
-    node = caps.get(cls)                                       # nested form: caps["llm"]["daily"]
-    if isinstance(node, dict) and node.get(window) is not None:
-        return float(node[window])
-    if cls == "total" and caps.get(window) is not None:        # legacy flat caps.daily/monthly == the total ceiling
-        return float(caps[window])
-    return None
+        local = float(env)
+    else:
+        caps = _cfg().get("caps") or {}
+        flat = caps.get(f"{cls}.{window}")                    # how init/config stores it: caps["llm.daily"]
+        if flat is not None:
+            local = float(flat)
+        else:
+            node = caps.get(cls)                              # nested form: caps["llm"]["daily"]
+            if isinstance(node, dict) and node.get(window) is not None:
+                local = float(node[window])
+            elif cls == "total" and caps.get(window) is not None:   # legacy flat caps.daily/monthly == total ceiling
+                local = float(caps[window])
+    pol = _policy_cap(cls, window)
+    if pol and pol.get("mode") == "enforced":                 # org-enforced ceiling; local may only tighten it
+        return pol["usd"] if local is None else min(local, pol["usd"])
+    return local
 
 
 def daily_cap():    return class_cap("total", "daily")          # back-compat: the total daily ceiling
