@@ -46,13 +46,19 @@ or call `spendguard.install()` at your app's entry point.
 |---|---|---|
 | `caps.per_batch` | **75** | Hard-stop any single batch projected over this many $. |
 | `caps.realtime` | **50** | Cumulative real-time $ cap (per process, or fleet-wide with sqlite). |
-| `caps.daily` / `caps.monthly` | off | Cross-process spend caps ($). Need `budget.backend = sqlite`. |
-| `budget.backend` | **memory** | `sqlite` for cross-process daily/monthly caps (a shared ledger). |
+| `caps.meta` | **2.0** | Daily $ cap for spendguard's OWN advisor LLM use (intent `spendguard:*`) — separate from workload caps. |
+| `caps.total.{daily,monthly}` | off (`null`) | Overall spend ceiling ($), LLM + remote-compute. Legacy flat `caps.daily`/`caps.monthly` still honored as this total. |
+| `caps.llm.{daily,monthly}` | off (`null`) | LLM (OpenAI+Anthropic) sub-cap ($) — **HARD, gate-enforced**. |
+| `caps.compute.{daily,monthly}` | off (`null`) | Remote-compute (vast.ai GPU) sub-cap ($) — **alert/soft** (launches don't hit the gate). |
+| `gate.enforce` | **warn** | Test-first rail for big batches: `off` / `warn` / `block` (the estimate→test→run sequence). |
+| `budget.backend` | **memory** | `sqlite` for cross-process daily/monthly caps (a shared ledger). Required for all `caps.{total,llm,compute}.*`. |
 | `budget.db_path` | `<home>/spend.db` | Where the SQLite ledger lives. |
+| `deid.engine` | **regex** | Redact PII/PHI from text that leaves on sync paths: `regex` (floor, zero deps) / `presidio` (floor + NER) / `off`. |
 | `emit.webhook` / `emit.otel` | off | Send each gated event to a webhook / OpenTelemetry. |
 | `email.provider` (+ `to`, `from_`, key) | off | Daily report delivery (resend or smtp). |
-| `gate.enforce` | **warn** | Test-first rail for big batches: `off` / `warn` / `block` (the estimate→test→run sequence). |
-| API keys | `keys.env` or env | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `DASHSCOPE_API_KEY`, `VAST_API_KEY`, `SPENDGUARD_SAAS_KEY`. |
+| `saas.*` | off (`enabled=false`) | Team/org roll-up client seam: `enabled`, `url`, `api_key` (Bearer, secret), `visibility` (`private`/`team`/`org`), `sync_interval`, `contributor`, `project`. Off until you connect a server. |
+| API keys | `keys.env` or env | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `DASHSCOPE_API_KEY`, `ZAI_API_KEY`, `VAST_API_KEY`, `SPENDGUARD_SAAS_KEY`. |
 
 Everything is optional — with nothing configured, the gate still runs with the $75 per-batch cap and
 prints the report locally. Tune anytime by re-running `spendguard init` or editing `~/.spendguard/config.json`.
+The full registry (every setting, default, valid options, secret-or-not) is `src/spendguard/config_schema.py`.

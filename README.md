@@ -83,34 +83,48 @@ config` (show current); see [Configuration](#configuration).
 # enforce / control
 spendguard status | on | off                 # kill switch (persistent flag)
 spendguard doctor                            # is the gate ENFORCING in THIS interpreter? (+ ledger-leak check)
-spendguard install-hook --venv <path>        # gate every process in ANOTHER venv/repo (--uninstall to remove)
+spendguard install-hook --venv <path>        # gate every process in ANOTHER venv/repo (--uninstall to remove; alias: gate-venv)
 spendguard install-hook --user [--python P]  # gate a python's per-USER site (system-python bypass; PEP668-safe, no pip)
 spendguard install-rule [--global|--project DIR]  # drop the spendguard rule into CLAUDE.md → every AI chat wires it in
 spendguard install-skills                    # deploy /spend + /spendguard-learn as Claude slash-commands
-spendguard coverage                          # across ALL pythons (3.11/3.14/…): which can call LLMs & which are GATED
+spendguard install-receipts --host claude-code|codex   # surface the always-on tally in a host (statusline + per-turn)
+spendguard coverage                          # which LLM-calling VENVS aren't gated (ungated realtime spend sources)
+spendguard gate-coverage                     # per-INTERPRETER gate check across EVERY python on the machine (3.11/3.14/…)
+spendguard remote onstart|verify|sync        # enforce the gate on remote/distributed compute (vast.ai / any SSH host)
 # in code, fail-closed:  import spendguard; spendguard.require()   # refuses to run if NOT actually gated
 
 # teams / orgs (client seam → future server repo, llmspendguard.com)
-spendguard saas [status|ping|push|pull]      # opt-in roll-up; partner not supervisor; private until you enable it
+spendguard saas [status|ping|link|push|pull|sync|reconcile|audit|crosscheck|commands]
+#   status/ping — connection · link — device-link (approve in browser → verified email = contributor)
+#   sync [--if-due] — roll-up push on cadence · push [--dry] — force now · pull — fetch pooled learnings
+#   reconcile / audit / crosscheck — reconcile local ledger to provider truth, completeness audit, local↔server row diff (all free)
+#   commands — drain + run server-enqueued work (reconcile / re-tag).  Opt-in; private until you enable it.
 
 # see the money
 spendguard receipt [--json|--line]                    # running today/7d/month tally; auto-emitted after every flow
 spendguard report [--alert-threshold 150] [--email]   # daily/weekly/monthly + ledger-leak alert + top learnings
 spendguard reconcile openai|anthropic [--by-day]      # actual billed batch spend from the provider
 spendguard reconcile all                              # UNIFIED view: every source (LLM+GPU) via one account-anchored loop
-spendguard reconcile-ledger [--since DATE]            # local gate ledger vs provider billing → find LEAKS
+spendguard reconcile-ledger [--since DATE]            # local gate ledger vs provider billing → find LEAKS (aliases: ledger-sync, leaks)
+spendguard trust                                      # provider billing vs recorded — the daily double-count guard (alias: trust-check)
 spendguard calls [--intent X]                # per-intent cost + good% + $/good (opt-in corpus)
 spendguard estimate --items N --from-sample f.jsonl --packs 1,30
-spendguard pricing | cross-check | check-prices | sync-prices   # canonical table · OpenRouter drift · freshness · LiteLLM sync
+spendguard maxtokens <sig> [current_max]     # data-driven max_tokens bound for a call-class (p99×1.5 — measured, not guessed)
+spendguard pricing | providers               # canonical price table · configured providers→models
+spendguard cross-check | check-prices | sync-prices | refresh-prices   # OpenRouter drift · freshness · LiteLLM sync · refresh
 spendguard audit [--ci]                       # fail if a script hardcodes a price ≠ the table
+spendguard compare --prompt "..." --models a,b,c --show   # one prompt across providers → cost + latency + output
 
 # plan / decide  (the briefing + advisor loop)
 spendguard brief --task "..."                 # "what we need to do" → pre-filled confirm-or-correct plan
 spendguard advise [--intent X] [--plan M]     # deterministic per-intent ranking by $/good (no spend)
+spendguard backtest --as-of DATE              # replay advise as of a past date
 spendguard optimize --intent X [--plan M]     # caged LLM recommendation (cheapest config that holds quality)
+spendguard mine                               # caged: synthesize confidence-scored insights + graph from the evidence
+spendguard reconstruct                        # caged: judge recovered call I/O → real good% / $/good
+spendguard review                             # caged: practice audit (was the usage SMART, not just what it cost)
 spendguard models [show <model>]              # per-model learnings, auto-applied (reasoning/cache/tokens)
 spendguard insights list|export|import        # living insights; opt-in scrubbed collective learning
-spendguard backtest --as-of DATE             # replay advise as of a past date
 
 # prove / run cheaper  (estimate-first, caged by caps.meta)
 spendguard experiment --intent X --model M... [--semantic embed|rubric] [--run]   # A/B cost↓ + same-output, graduated
@@ -120,16 +134,21 @@ spendguard cascade --ladder cheap,…,strong --intent X [--prompt …] --run    
 spendguard cache-stats | dedup --input f.jsonl --out u.jsonl | dedup-populate      # response cache + batch dedup
 
 # work-done attribution (org → team × project), all sources
-spendguard claude-code [show|sync|classify|work|story]   # mine ~/.claude → Claude Code spend + work (incremental, classified)
+spendguard claude-code [show|sync|classify|work|story]   # mine ~/.claude → Claude Code spend + work (incremental, classified; alias: cc)
+spendguard codex [show|sync|...]             # mine ~/.codex sessions → Codex est-value (channel=codex, billed=false)
 spendguard chat [test|show|discover|classify|loop|work|story|sync|status|accept]   # claude.ai chat adapter (OPT-IN, on-device, macOS)
 spendguard resources [show|snapshot|sync|discover]   # vast.ai GPU → org/team/project (discover [--agentic] recovers destroyed boxes)
+spendguard accounting                        # match actual provider USAGE → project via the conversations that ran each batch
+spendguard signal                            # per project·intent·model efficiency signal (cost+quality+waste+reco) → server
+spendguard workdone                          # work-done CONTEXT for spend (git + batch intents) → server (alias: work)
+spendguard tag                               # re-assign a project tag (fix cwd-fallback mistags)
 
 # cold start / corpus
 spendguard bootstrap [--repo] [--transcripts]   # mine ALL history → corpus + insights (free, then estimate)
 spendguard fetch-io [--cap 50]                  # recover real prompt+output from providers (free)
 spendguard backfill [--intent-map …]            # seed corpus + graph from the batch ledgers (free)
-spendguard mine-history {intents,graph,git} [--apply]   # reconstruct intents/edges from the repo (free)
-spendguard mine-conv {index,synth} [--run]      # mine session transcripts for the cost playbook
+spendguard mine-history {intents,graph,git} [--apply]   # reconstruct intents/edges from the repo (free; alias: history)
+spendguard mine-conv {index,synth} [--run]      # mine session transcripts for the cost playbook (alias: conv)
 spendguard validate                             # re-check learnings vs the current corpus (lifecycle)
 
 # setup
@@ -225,13 +244,14 @@ still work and are honored as the **total** ceiling. (Config storage accepts eit
 or the flat `caps["llm.daily"]` form — see `config.class_cap` / `config_schema.py`.)
 
 ## Pricing: layered, broad, low-maintenance
-Prices load in layers, lowest→highest precedence — so you get **2,700+ models across all providers** for free,
-your hand-verified rates always win, and you can override anything:
+Prices load in layers, lowest→highest precedence — so you get **~2,300 priced models across 80+ providers** for
+free, your hand-verified rates always win, and you can override anything:
 
 1. **LiteLLM community dataset** (breadth + freshness) — `spendguard sync-prices` fetches
    [LiteLLM's CI-maintained `model_prices_and_context_window.json`](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json)
-   (~2,300 priced models, 80+ providers), validates it (refuses an empty/bad fetch), and caches it to
-   `~/.spendguard/litellm_prices.json`. Read from cache only — **no network at import**.
+   (a ~2,700-entry dataset; the ~2,300 entries that carry a token price become priced models, 80+ providers),
+   validates it (refuses an empty/bad fetch), and caches it to `~/.spendguard/litellm_prices.json`. Read from
+   cache only — **no network at import**.
 2. **Curated `prices.json`** (shipped in the package) — your verified models (gpt-5.5, opus-4.8, …) override LiteLLM.
 3. **User override** — `~/.spendguard/prices.json` / `.yaml` / `$SPENDGUARD_PRICES` wins over everything.
 
@@ -350,14 +370,30 @@ Run one prompt across providers and table **cost + latency + output** — spendg
 spendguard compare --prompt "Summarize X in 3 bullets" \
   --models gpt-5.5,claude-opus-4-8,gemini-2.5-flash,deepseek-chat,qwen-max --show
 ```
-Built-in providers: **openai, anthropic, gemini, deepseek, qwen** (most via their OpenAI-compatible
-endpoints, so the gate already meters them). Keys resolve per provider from env / `~/.spendguard` / `./.env`
-(`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `DASHSCOPE_API_KEY` for Qwen).
-**Add another in one line:**
+Built-in providers: **openai, anthropic, gemini, deepseek, qwen, z.ai (GLM)** (all but Anthropic via their
+OpenAI-compatible endpoints, so the gate already meters them). Keys resolve per provider from env /
+`~/.spendguard` / `./.env` (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`,
+`DASHSCOPE_API_KEY` for Qwen, `ZAI_API_KEY` for z.ai/GLM). **Add another in one line:**
 ```python
 from spendguard.adapters import register_provider
 register_provider("together", "https://api.together.xyz/v1", "TOGETHER_API_KEY", ("meta-llama", "mistralai"))
 ```
+
+**First-class provider adapters (capture, not just `compare`).** Beyond the `compare` harness above, spendguard
+ships dedicated **spend-capture** adapters that record real usage into the same ledger the SDK gate uses — priced
+through `pricing.py`, fail-open, no double-counting:
+- **Azure OpenAI** — already covered by the OpenAI-SDK gate (Azure uses the OpenAI SDK); LiteLLM-routed Azure
+  traffic is deliberately skipped by the adapter below so it's counted once.
+- **LiteLLM** — `spendguard.install_litellm()` (after `import litellm`) registers a success-callback that captures
+  spend for **anything LiteLLM normalizes** (Bedrock, Vertex/Gemini, Cohere, Mistral, …) via LiteLLM's own
+  computed cost.
+- **AWS Bedrock (direct boto3)** — `spendguard.install_bedrock()` (after `import boto3`) patches botocore's
+  dispatch to record `Converse`/`InvokeModel` token usage. Not needed if you go through LiteLLM.
+- **Google Vertex / Gemini (direct google-genai)** — `spendguard.install_vertex()` (after importing the SDK)
+  captures `generate_content` usage (sync + async). Not needed if you go through LiteLLM.
+
+Each adapter auto-wires at startup **only if its SDK is already imported**; the explicit `install_*()` call is the
+reliable path (it force-imports and wires) since these are heavy/optional deps the startup gate won't force-load.
 
 ## Call context & cost-per-good-result (opt-in)
 Beyond *cost*, spendguard can record per-call **context** to build a cost+**quality** corpus. Off by default

@@ -23,13 +23,14 @@ choice. Greater visibility is something a user turns **on** — the partner mind
 ## Two repos
 
 - **`llm-spendguard` (this repo, open):** the client — gate, pricing, ledger, advisor, learnings. Each user
-  has their **own** ledger here. It gains a small, optional **sync** capability: with a `team_id`/`org_id` +
-  token in config, it pushes its ledger summary + scrubbed learnings to the SaaS for aggregation. No server
-  code lives here.
+  has their **own** ledger here. It gains a small, optional **sync** capability: with a single **Bearer key**
+  in config (the server maps it to your user→team→org — the client holds no `team_id`/`org_id`), it pushes its
+  ledger summary + scrubbed learnings to the SaaS for aggregation. No server code lives here.
 - **`llm-spendguard-server` (separate repo, the SaaS — e.g. llmspendguard.com):** login / create account / credit
-  card / define team & org → get **team/org ids** to drop in your client config. It ingests members' pushed
-  data and provides: cross-member **visibility** dashboards, **aggregate learnings**, **aggregate advice**,
-  and rollup reporting. This is the open-core → hosted-collaboration layer; **build it as its own repo.**
+  card / define team & org → get **one server key** to paste into your client config (the server maps that key to
+  your team/org — no ids in the client). It ingests members' pushed data and provides: cross-member **visibility**
+  dashboards, **aggregate learnings**, **aggregate advice**, and rollup reporting. This is the open-core →
+  hosted-collaboration layer; **build it as its own repo.**
 
 The client never depends on the server (works fully standalone, fail-open). The server is purely additive
 visibility/aggregation over what users opt to send.
