@@ -28,11 +28,16 @@ def ck(name, cond):
         fails.append(name)
 
 # ── build a synthetic Codex session in the real on-disk layout (sessions/YYYY/MM/DD/rollout-*.jsonl) ──
-sess_dir = pathlib.Path(os.environ["SPENDGUARD_CODEX_DIR"]) / "2026" / "06" / "23"
+# Date it TODAY (not a fixed date) so its est-value lands in the CURRENT day/month bucket no matter when CI
+# runs. A hardcoded date silently drops out of the "month" tally once the month rolls over — that's exactly
+# the July-1 month-boundary failure this guards against; keep it relative.
+import datetime as _dt
+_d = _dt.date.today(); _iso = _d.isoformat()
+sess_dir = pathlib.Path(os.environ["SPENDGUARD_CODEX_DIR"]) / _d.strftime("%Y") / _d.strftime("%m") / _d.strftime("%d")
 sess_dir.mkdir(parents=True, exist_ok=True)
-session = sess_dir / "rollout-2026-06-23T10-00-00-abc.jsonl"
+session = sess_dir / f"rollout-{_iso}T10-00-00-abc.jsonl"
 rows = [
-    {"type": "session_meta", "payload": {"session_id": "abc", "timestamp": "2026-06-23T10:00:00Z",
+    {"type": "session_meta", "payload": {"session_id": "abc", "timestamp": f"{_iso}T10:00:00Z",
                                           "cwd": "/Users/x/Documents/myproj", "model_provider": "openai"}},
     {"type": "turn_context", "payload": {"model": "gpt-5.5", "effort": "high"}},
     {"type": "event_msg", "payload": {"type": "user_message", "message": "build the LOINC mapper"}},
