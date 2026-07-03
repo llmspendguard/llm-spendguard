@@ -72,6 +72,9 @@ def main(argv=None):
     if cmd == "coverage":                               # which LLM-calling venvs aren't gated (ungated realtime sources)
         from . import coverage
         return coverage.cmd(rest)
+    if cmd == "gate-coverage":                          # per-INTERPRETER gate check across every python on the machine
+        from . import setup
+        return setup.cmd_coverage(rest)
     if cmd == "maxtokens":                              # data-driven max_tokens bound for a call-class sig
         from . import bulkgate
         if not rest:
@@ -112,9 +115,6 @@ def main(argv=None):
     if cmd == "remote":                                # enforce the gate on remote/distributed compute (vast.ai)
         from . import remote
         return remote.cmd(rest)
-    if cmd == "coverage":                              # which interpreters/venvs are actually gated? (multi-version)
-        from . import setup
-        return setup.cmd_coverage(rest)
     if cmd == "saas":                                  # team/org roll-up client seam (→ future server repo)
         from . import saas
         return saas.cmd(rest)

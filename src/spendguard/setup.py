@@ -118,7 +118,7 @@ def _probe(interp):
 def coverage(extra=None):
     """Show, across EVERY python on this machine (you use 3.11/3.14/…), which can make LLM calls and which
      are actually GATED. The gate is per-interpreter, so this is how you confirm nothing is silently ungated.
-     `spendguard coverage [interp_or_venv ...]`."""
+     `spendguard gate-coverage [interp_or_venv ...]` (distinct from `coverage`, which reports per-VENV realtime capture)."""
     import glob, sys as _sys
     from pathlib import Path
     cands = [_sys.executable, "/usr/bin/python3"]
