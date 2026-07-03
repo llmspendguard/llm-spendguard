@@ -6,6 +6,17 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [0.3.0] — 2026-07-02
 
+### Configuration — two files, placeholder secrets, documented enums
+- **`spendguard init` now scaffolds `~/.spendguard/keys.env`** (chmod 600) with a blank placeholder for every
+  secret — LLM provider keys, `VAST_API_KEY` (remote compute), and `SPENDGUARD_SAAS_KEY` (the team/org roll-up key).
+  The file is **loaded into the environment on `import spendguard`** (`config.load_key_files`), so a user's own
+  `openai.OpenAI()` / `anthropic.Anthropic()` calls pick the keys up too — a real env var always wins and blank
+  placeholders are skipped (prod / CI / secret-managers are never clobbered). Legacy `~/.spendguard/.env` still honored.
+- **`gate.enforce` (the estimate→test→run rail) and `VAST_API_KEY` are now in the config registry** (`config_schema`),
+  so `spendguard config` lists them and the enum is documented in one place: `gate.enforce` = `off | warn | block`.
+- README **Configuration** section now documents the two files + an enum table (`gate.enforce`, `deid.engine`,
+  `saas.visibility`, `saas.sync_interval`, `budget.backend`). Guard: `tests/test_keys_env.py`.
+
 ### De-identification of egress text (privacy)
 - **Every text field that leaves this machine now passes through a deterministic de-id floor at the wire.** New
   `spendguard.deid` module: a typed denylist (email, US phone, SSN, credit-card w/ Luhn, IPv4/IPv6, common API-key

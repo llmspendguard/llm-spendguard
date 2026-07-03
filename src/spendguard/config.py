@@ -20,6 +20,41 @@ RT_LOG = HOME / "realtime_log.jsonl"          # real-time spend log (per-day-per
 
 
 CONFIG_JSON = HOME / "config.json"             # operational (non-secret) config: caps, budget, emit
+KEYS_ENV = HOME / "keys.env"                    # SECRETS: LLM/compute/org keys (KEY=value lines), loaded at import
+
+
+def _iter_env_file(path):
+    """Yield (key, value) from a KEY=value dotenv file — tolerant of comments, blanks, `export `, and quotes.
+    Never raises (financial setup must not crash on a malformed line)."""
+    try:
+        if not path.exists():
+            return
+        for ln in path.read_text().splitlines():
+            s = ln.strip()
+            if not s or s.startswith("#") or "=" not in s:
+                continue
+            k, v = s.split("=", 1)
+            k = k.strip()
+            if k.startswith("export "):
+                k = k[len("export "):].strip()
+            yield k, v.strip().strip('"').strip("'")
+    except Exception:
+        return
+
+
+def load_key_files():
+    """Load the secret files (~/.spendguard/keys.env, then legacy ~/.spendguard/.env, then $SPENDGUARD_ENV) into
+    os.environ, so BOTH spendguard AND the user's OWN clients — openai.OpenAI() / anthropic.Anthropic(), which
+    read their key from the environment — pick the keys up after a plain `import spendguard`. A REAL environment
+    variable ALWAYS wins (a set var is never overwritten) and blank placeholders are skipped, so prod / CI /
+    secret-managers are never clobbered. Idempotent; fail-open (never raises at import)."""
+    for p in (KEYS_ENV, HOME / ".env", *( [Path(os.environ["SPENDGUARD_ENV"])] if os.environ.get("SPENDGUARD_ENV") else [] )):
+        for k, v in _iter_env_file(p):
+            if k and v and k not in os.environ:          # real env wins; keys.env wins over legacy .env; blanks skipped
+                os.environ[k] = v
+
+
+load_key_files()      # at import — keys are in the environment before any provider client is constructed
 
 
 def _cfg():
@@ -313,7 +348,8 @@ def api_key(name):
     if os.getenv("SPENDGUARD_ENV"):
         candidates.append(Path(os.getenv("SPENDGUARD_ENV")))
     candidates.append(Path.cwd() / ".env")
-    candidates.append(HOME / ".env")           # stable home (~/.spendguard/.env) — found from any directory
+    candidates.append(HOME / "keys.env")       # the scaffolded secrets file (primary) — found from any directory
+    candidates.append(HOME / ".env")           # legacy stable-home .env (still honored for existing installs)
     for envp in candidates:
         try:
             if envp.exists():

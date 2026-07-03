@@ -45,6 +45,13 @@ SETTINGS = [
          kind="float", secret=False,
          desc="Daily $ cap for spendguard's OWN advisor LLM use (intent spendguard:*) — separate from workload caps."),
 
+    # ── gate enforcement: the estimate → test → run rail for big batches ──
+    dict(section="gate", key="enforce", store="config.json:gate.enforce", env="SPENDGUARD_ENFORCE", default="warn",
+         kind="enum:off,warn,block", secret=False,
+         desc="Test-first enforcement for batches over the size threshold (the estimate → test → run sequence): "
+              "off = no requirement; warn = log a 'would-block' when a batch runs without a fresh estimate+test "
+              "(default); block = hard-require a fresh estimate → test before the batch runs."),
+
     # ── learning advisor (Layer 2 — its own LLM use, caged by caps.meta + intent spendguard:*) ──
     dict(section="advisor", key="model", store="config.json:advisor.model", env="SPENDGUARD_ADVISOR_MODEL",
          default="claude-opus-4-8", kind="string", secret=False,
@@ -147,6 +154,9 @@ SETTINGS = [
     dict(section="keys", key="GEMINI_API_KEY", store="env", env="GEMINI_API_KEY", default=None, kind="string", secret=True, desc="Gemini (compare)."),
     dict(section="keys", key="DEEPSEEK_API_KEY", store="env", env="DEEPSEEK_API_KEY", default=None, kind="string", secret=True, desc="DeepSeek (compare)."),
     dict(section="keys", key="DASHSCOPE_API_KEY", store="env", env="DASHSCOPE_API_KEY", default=None, kind="string", secret=True, desc="Qwen / Alibaba Model Studio (compare)."),
+
+    # ── remote-compute key (metered into the same ledger; goes in keys.env like the LLM keys) ──
+    dict(section="keys", key="VAST_API_KEY", store="env", env="VAST_API_KEY", default=None, kind="string", secret=True, desc="Vast.ai remote GPU compute — meters vast.ai spend into the same ledger."),
 ]
 
 

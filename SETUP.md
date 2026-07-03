@@ -1,7 +1,8 @@
 # spendguard setup
 
-Two ways to configure spendguard. Both write to `~/.spendguard/` (config + secrets, gitignored);
-API keys stay in your environment / `.env`.
+Two ways to configure spendguard. Everything lives in **two files** under `~/.spendguard/`: non-secret settings
+in `config.json`, and your keys (LLM · vast.ai · org) in `keys.env` — which spendguard loads into the environment
+on `import`, so your own `openai` / `anthropic` clients see them too. A real environment variable always wins.
 
 ---
 
@@ -12,7 +13,8 @@ Point Claude (Claude Code / the desktop app) at this repo and paste:
 > Install the spendguard package from this repo (`pip install -e .`), then run the guided setup:
 > read `src/spendguard/config_schema.py`, and for each setting ask me one question at a time with its
 > default and valid options, then write my answers to `~/.spendguard/config.json` and
-> `~/.spendguard/email.json` (never put API keys in those files — tell me which env vars to set).
+> `~/.spendguard/email.json`, and scaffold `~/.spendguard/keys.env` with a blank placeholder per secret key
+> (real keys go in keys.env or the environment — never in config.json).
 > Finally enable the gate by adding `import spendguard; spendguard.install()` to the venv `sitecustomize.py`,
 > and run `spendguard config` and `spendguard sync-prices` to confirm.
 
@@ -24,7 +26,7 @@ settings the code actually has. That registry is what makes this self-describing
 
 ```bash
 pip install -e .            # or: pip install spendguard
-spendguard init            # interactive: writes ~/.spendguard/config.json (+ email.json)
+spendguard init            # interactive: writes config.json + scaffolds keys.env (placeholders to fill)
 spendguard config          # show resolved settings + where each came from
 spendguard sync-prices     # cache LiteLLM prices (breadth + freshness)
 ```
@@ -47,7 +49,8 @@ or call `spendguard.install()` at your app's entry point.
 | `budget.db_path` | `<home>/spend.db` | Where the SQLite ledger lives. |
 | `emit.webhook` / `emit.otel` | off | Send each gated event to a webhook / OpenTelemetry. |
 | `email.provider` (+ `to`, `from_`, key) | off | Daily report delivery (resend or smtp). |
-| API keys | from env | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `DASHSCOPE_API_KEY`. |
+| `gate.enforce` | **warn** | Test-first rail for big batches: `off` / `warn` / `block` (the estimate→test→run sequence). |
+| API keys | `keys.env` or env | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `DASHSCOPE_API_KEY`, `VAST_API_KEY`, `SPENDGUARD_SAAS_KEY`. |
 
 Everything is optional — with nothing configured, the gate still runs with the $75 per-batch cap and
 prints the report locally. Tune anytime by re-running `spendguard init` or editing `~/.spendguard/config.json`.

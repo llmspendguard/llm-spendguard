@@ -76,7 +76,7 @@ Or auto-install for every process in a venv — drop this in `sitecustomize.py`:
 import spendguard; spendguard.install()
 ```
 Configure with `spendguard init` (interactive — or `init --quick` for non-interactive defaults) / `spendguard
-config` (show current); see [Configuration](#configuration-prices-providers-models).
+config` (show current); see [Configuration](#configuration).
 
 ## CLI — full command reference
 ```
@@ -238,7 +238,46 @@ your hand-verified rates always win, and you can override anything:
 If nothing loads, a built-in table in `pricing.py` is the final fallback (never breaks). Run `spendguard sync-prices`
 once (and periodically) to refresh; that's the primary freshness mechanism — `check-prices`/`refresh-prices` are backups.
 
-## Configuration (prices, providers, models)
+## Configuration
+Everything lives in **two files** under `~/.spendguard/` (both scaffolded by `spendguard init`); a real
+environment variable always overrides either, so prod / CI / secret-managers Just Work. `spendguard config`
+prints the resolved value + source for every setting.
+
+**① `keys.env` — secrets** (chmod 600). Loaded into the environment on `import spendguard`, so your **own**
+`openai.OpenAI()` / `anthropic.Anthropic()` calls pick the keys up too — no separate export needed. Fill only the
+blanks you use:
+```bash
+OPENAI_API_KEY=            # + ANTHROPIC_API_KEY / GEMINI_API_KEY / DEEPSEEK_API_KEY / DASHSCOPE_API_KEY
+VAST_API_KEY=              # remote GPU compute (vast.ai), metered into the same ledger
+SPENDGUARD_SAAS_KEY=       # team/org roll-up key from llmspendguard.com (optional)
+```
+
+**② `config.json` — operational (non-secret)**:
+```jsonc
+{
+  "caps": { "per_batch": 75, "realtime": 50, "meta": 2.0,           // $ — meta = spendguard's own advisor budget
+            "llm": {"monthly": null}, "compute": {"monthly": null}, "total": {"monthly": null} },
+  "gate": { "enforce": "warn" },        // the estimate→test→run rail
+  "deid": { "engine": "regex" },        // redact text that leaves this machine
+  "saas": { "enabled": false, "visibility": "team", "sync_interval": "daily", "project": null }
+}
+```
+
+**Enums (the exact strings):**
+| setting | values | meaning |
+|---|---|---|
+| `gate.enforce` | `off` · `warn` · `block` | test-first rail — `off` = none; `warn` = log a "would-block" when a big batch runs without a fresh estimate+test *(default)*; `block` = hard-require estimate → test first |
+| `deid.engine` | `regex` · `presidio` · `off` | egress de-id — regex floor *(default)* · floor + Presidio NER · none |
+| `saas.visibility` | `private` · `team` · `org` | how far your scrubbed roll-up goes (`private` = nothing leaves) |
+| `saas.sync_interval` | `off` · `hourly` · `daily` · `weekly` | roll-up push cadence |
+| `budget.backend` | `memory` · `sqlite` | per-process cap vs a shared cross-process ledger |
+
+**Budgets:** `caps.meta` = spendguard's own advisor spend; `caps.{llm,compute,total}.{daily,monthly}` = your workload
+ceilings; **per-repo** = tag the repo via `saas.project` (or a repo-local `.spendguard.json`) and set org/team caps
+centrally in the dashboard. The full registry — every setting, default, valid options, secret-or-not — is
+`src/spendguard/config_schema.py` (it drives `spendguard init` and `spendguard config`).
+
+## Pricing configuration
 The curated/override files use this structure (`src/spendguard/prices.json`, `~/.spendguard/prices.json`, or `$SPENDGUARD_PRICES`):
 ```json
 { "_meta": {"verified": "2026-06-13", "source": "https://…", "stale_after_days": 45},

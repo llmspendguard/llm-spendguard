@@ -342,8 +342,8 @@ def cmd_config(argv=None):
             else:
                 disp = v
             print(f"  {s['key']:<20} {str(disp):<28} {src}")
-    print(f"\nfiles: {config.CONFIG_JSON} · {config.HOME / 'email.json'} · {config.saas_path()}")
-    print("API keys come from env / ./.env (never written to config files).")
+    print(f"\nfiles: {config.CONFIG_JSON} (config) · {config.KEYS_ENV} (secrets) · {config.saas_path()} · {config.HOME / 'email.json'}")
+    print("Secrets (LLM / compute / org keys) live in keys.env or the environment — never in the config files.")
     return 0
 
 
@@ -397,6 +397,42 @@ def _chat_caps():
     if caps and r.get("cost"):
         print(f"  parsed your budgets (caged cost ${r['cost']:.4f}).")
     return caps
+
+
+def _scaffold_keys_env():
+    """Write ~/.spendguard/keys.env with commented placeholders for every secret key (LLM providers, vast.ai,
+    the team/org roll-up key) — ONLY if it doesn't already exist, so real keys are never clobbered. chmod 600.
+    Returns (path, created?). The file is loaded into the environment on `import spendguard` (config.load_key_files),
+    so both spendguard and the user's own openai/anthropic clients pick the keys up. A real env var always wins."""
+    import os
+    p = config.KEYS_ENV
+    if p.exists():
+        return p, False
+    key_names = [s["env"] for s in config_schema.SETTINGS if s["section"] == "keys" and s.get("env")]
+    llm = [k for k in key_names if k != "VAST_API_KEY"]
+    lines = [
+        "# spendguard secrets — fill the ones you use (blank = that provider/feature is off).",
+        "# Loaded into the environment on `import spendguard`; a REAL env var always wins. Keep private (chmod 600).",
+        "",
+        "# ── LLM provider keys ──",
+        *[f"{k}=" for k in llm],
+        "",
+        "# ── Remote compute ──",
+        "VAST_API_KEY=",
+        "",
+        "# ── Team/org roll-up key from llmspendguard.com (dashboard → keys) ──",
+        "SPENDGUARD_SAAS_KEY=",
+    ]
+    try:
+        config.HOME.mkdir(parents=True, exist_ok=True)
+        p.write_text("\n".join(lines) + "\n")
+        try:
+            os.chmod(p, 0o600)
+        except Exception:
+            pass
+        return p, True
+    except Exception:
+        return p, False
 
 
 def cmd_init(argv=None):
@@ -496,11 +532,14 @@ def cmd_init(argv=None):
     else:
         print("\nRunning LOCAL-ONLY (no account). Connect a team anytime: `spendguard init --connect`, or "
               "`spendguard saas link` once you have an org key.")
+    kp, created = _scaffold_keys_env()
     keys = ", ".join(s["env"] for s in config_schema.SETTINGS if s["section"] == "keys")
-    print(f"Set API keys in your environment or ./.env: {keys}")
+    print(f"\nSecrets → {kp}" + ("  (scaffolded with placeholders — fill the ones you use)" if created
+                                 else "  (already present)"))
+    print(f"  holds: {keys}, SPENDGUARD_SAAS_KEY — loaded into the env on `import spendguard`; a real env var wins.")
     # Pre-flight: do the keys actually RESOLVE here? This is exactly the silent gap that broke reconcile/report
     # after a repo move (cwd-relative .env lost the keys). Same check as `spendguard doctor`, surfaced at setup.
-    print("  key pre-flight (reconcile/report are blind without these — put missing ones in ~/.spendguard/.env, "
+    print("  key pre-flight (reconcile/report are blind without these — put missing ones in keys.env, "
           "which is cwd-independent):")
     for prov, name in (("openai", "OPENAI_API_KEY"), ("anthropic", "ANTHROPIC_API_KEY")):
         try:
