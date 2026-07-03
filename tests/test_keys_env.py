@@ -47,7 +47,7 @@ p, created = setup._scaffold_keys_env()
 ck("_scaffold_keys_env creates the file", created and p.exists())
 body = p.read_text()
 for name in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "DEEPSEEK_API_KEY",
-             "DASHSCOPE_API_KEY", "VAST_API_KEY", "SPENDGUARD_SAAS_KEY"):
+             "DASHSCOPE_API_KEY", "VAST_API_KEY", "SPENDGUARD_SAAS_KEY", "ZAI_API_KEY"):
     ck(f"scaffold has a {name}= placeholder", (name + "=") in body)
 ck("scaffold placeholders are BLANK (no leaked values)", "sk-" not in body)
 ck("scaffold is idempotent (won't clobber an existing file)", setup._scaffold_keys_env()[1] is False)
@@ -59,6 +59,18 @@ ck("gate.enforce is in the schema", len(enf) == 1)
 ck("gate.enforce enum = off,warn,block", bool(enf) and enf[0]["kind"] == "enum:off,warn,block")
 ck("gate.enforce default = warn", bool(enf) and enf[0]["default"] == "warn")
 ck("VAST_API_KEY is in the schema", any(s["key"] == "VAST_API_KEY" for s in config_schema.SETTINGS))
+
+# ── z.ai / GLM provider wired: key in schema (→ keys.env), routes glm- models, priced (stub) ──
+from spendguard import adapters, pricing
+ck("ZAI_API_KEY is in the schema", any(s["key"] == "ZAI_API_KEY" for s in config_schema.SETTINGS))
+ck("adapters routes a glm- model to the zai provider", adapters.provider_for("glm-5.2") == "zai")
+ck("zai provider uses ZAI_API_KEY", adapters.PROVIDERS["zai"]["key_env"] == "ZAI_API_KEY")
+try:
+    _pr = pricing.price("glm-5.2")
+    ck("glm-5.2 resolves a (stub) price", bool(_pr) and float(_pr.get("in_") or 0) > 0)
+except Exception:
+    ck("glm-5.2 resolves a (stub) price", False)
+
 config.CONFIG_JSON.write_text('{"gate": {"enforce": "block"}}')
 config._cfg._cache = None
 ck("config gate.enforce=block drives bulkgate.mode()", bulkgate.mode() == "block")

@@ -21,6 +21,8 @@ PROVIDERS = {
                   "key_env": "DEEPSEEK_API_KEY", "prefixes": ("deepseek",), "kind": "openai"},
     "qwen":      {"base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
                   "key_env": "DASHSCOPE_API_KEY", "prefixes": ("qwen", "qwq"), "kind": "openai"},
+    "zai":       {"base_url": "https://api.z.ai/api/paas/v4",   # z.ai / Zhipu GLM — OpenAI-compatible (verify base_url with your key)
+                  "key_env": "ZAI_API_KEY", "prefixes": ("glm-",), "kind": "openai"},
 }
 
 

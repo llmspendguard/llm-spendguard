@@ -17,6 +17,11 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 - README **Configuration** section now documents the two files + an enum table (`gate.enforce`, `deid.engine`,
   `saas.visibility`, `saas.sync_interval`, `budget.backend`). Guard: `tests/test_keys_env.py`.
 
+### Providers
+- **z.ai / Zhipu GLM** — `glm-*` models route to the new OpenAI-compatible `zai` provider; the key is
+  `ZAI_API_KEY` (goes in keys.env, scaffolded automatically). glm-5.2 ships a clearly-flagged **STUB** price in
+  `prices.json` — replace it with z.ai's published per-1M rates before relying on its cost numbers.
+
 ### De-identification of egress text (privacy)
 - **Every text field that leaves this machine now passes through a deterministic de-id floor at the wire.** New
   `spendguard.deid` module: a typed denylist (email, US phone, SSN, credit-card w/ Luhn, IPv4/IPv6, common API-key

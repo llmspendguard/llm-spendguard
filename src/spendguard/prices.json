@@ -200,6 +200,18 @@
           "batch_out": 0.1
         }
       }
+    },
+    "zai": {
+      "_note": "z.ai / Zhipu GLM (OpenAI-compatible). glm-5.2 rates below are an UNVERIFIED STUB (GLM-4.6-tier placeholder) — replace with z.ai's published per-1M prices before relying on cost numbers. batch = 50% of realtime.",
+      "models": {
+        "glm-5.2": {
+          "in_": 0.6,
+          "out": 2.2,
+          "cached_in": 0.11,
+          "batch_in": 0.3,
+          "batch_out": 1.1
+        }
+      }
     }
   }
 }

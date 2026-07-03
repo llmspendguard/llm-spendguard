@@ -154,6 +154,7 @@ SETTINGS = [
     dict(section="keys", key="GEMINI_API_KEY", store="env", env="GEMINI_API_KEY", default=None, kind="string", secret=True, desc="Gemini (compare)."),
     dict(section="keys", key="DEEPSEEK_API_KEY", store="env", env="DEEPSEEK_API_KEY", default=None, kind="string", secret=True, desc="DeepSeek (compare)."),
     dict(section="keys", key="DASHSCOPE_API_KEY", store="env", env="DASHSCOPE_API_KEY", default=None, kind="string", secret=True, desc="Qwen / Alibaba Model Studio (compare)."),
+    dict(section="keys", key="ZAI_API_KEY", store="env", env="ZAI_API_KEY", default=None, kind="string", secret=True, desc="z.ai / Zhipu (GLM models, e.g. glm-5.2) — OpenAI-compatible."),
 
     # ── remote-compute key (metered into the same ledger; goes in keys.env like the LLM keys) ──
     dict(section="keys", key="VAST_API_KEY", store="env", env="VAST_API_KEY", default=None, kind="string", secret=True, desc="Vast.ai remote GPU compute — meters vast.ai spend into the same ledger."),
