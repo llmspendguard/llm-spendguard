@@ -65,11 +65,12 @@ ck("None passthrough", deid.redact(None) is None)
 ck("non-str passthrough", deid.redact(12345) == 12345)
 ck("empty passthrough", deid.redact("   ") == "   ")
 
-# ── Presidio selected but NOT installed → degrades to the floor, no crash ──
+# ── Presidio engine: masks + never raises, whether or not Presidio is installed ──
 deid._PRESIDIO = None  # reset the memoized probe
 got = deid.redact("email bob@x.com", engine="presidio")
-ck("presidio-absent falls back to floor (masks + no raise)", "<EMAIL>" in got)
-ck("presidio probe cached as unavailable", deid._PRESIDIO is False)
+ck("presidio engine masks + never raises (floor if absent, NER if present)", "<EMAIL>" in got)
+ck("presidio probe resolves to a definite state (False=absent, tuple=ready)",
+   deid._PRESIDIO is False or isinstance(deid._PRESIDIO, tuple))
 
 # ── config-driven engine + env override ──
 from spendguard import config

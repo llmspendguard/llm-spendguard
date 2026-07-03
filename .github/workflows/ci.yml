@@ -18,7 +18,7 @@ jobs:
       - name: Install (with provider SDKs + test deps)
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[openai,anthropic,dev]"
+          pip install -e ".[openai,anthropic,otel,chat,dev]"
       - name: Lint (ruff — pyflakes + bugbear correctness rules)
         run: ruff check src tests
       - name: Pricing self-check
@@ -34,6 +34,6 @@ jobs:
           # (chat→claude.ai, saas push, transcript parsers, paid-call tools) that are integration- not unit-tested
           # by design; the core is where correctness must be proven. Today: package ~42%, core ~81%.
           coverage report --fail-under=40
-          coverage report --fail-under=78 --include="*/gate.py,*/guard.py,*/budget.py,*/reconcile.py,*/ledger_sync.py,*/pricing.py,*/attribution.py,*/adapters.py,*/tag.py,*/backfill.py"
+          coverage report --fail-under=78 --include="*/gate.py,*/guard.py,*/budget.py,*/reconcile.py,*/ledger_sync.py,*/pricing.py,*/attribution.py,*/adapters.py,*/tag.py,*/backfill.py,*/deid.py,*/litellm_adapter.py,*/bedrock_adapter.py"
       - name: Price-literal audit (FAILS the build on a mispriced literal)
         run: SPENDGUARD_AUDIT_DIR=src/spendguard spendguard audit --ci
