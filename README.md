@@ -239,9 +239,26 @@ If nothing loads, a built-in table in `pricing.py` is the final fallback (never 
 once (and periodically) to refresh; that's the primary freshness mechanism — `check-prices`/`refresh-prices` are backups.
 
 ## Configuration
-Everything lives in **two files** under `~/.spendguard/` (both scaffolded by `spendguard init`); a real
-environment variable always overrides either, so prod / CI / secret-managers Just Work. `spendguard config`
-prints the resolved value + source for every setting.
+
+**Where everything lives.** `pip install llm-spendguard` installs only the **code** (into your environment's
+`site-packages`). All of your **config + data** lives under **`~/.spendguard/`** (override with `SPENDGUARD_HOME`) —
+created by `spendguard init` and at runtime, **never by pip**. You only ever edit **two** files; the rest is
+auto-generated (logs, ledger, caches) and safe to ignore or delete.
+
+| file | what it is | you edit? |
+|---|---|---|
+| `config.json` | caps · `gate.enforce` · `deid` · budget · saas settings | ✎ **yes** (or `spendguard init`) |
+| `keys.env` | secrets — LLM / vast.ai / org keys | ✎ **yes** (paste your keys) |
+| `saas.json` | team/org connection, if you connect one | `init --connect` |
+| `email.json` | daily-report email (optional) | `init` |
+| `prices.json` | your price overrides (optional; wins over the shipped table) | optional |
+| `spend.db` | the SQLite spend ledger (when `budget.backend=sqlite`) | auto |
+| `gate_log.jsonl` · `realtime_log.jsonl` · `report.log` | audit logs | auto |
+| `identity.json` · `*_state.json` · `*_cache.json` | contributor id + caches/state | auto |
+| `disabled` | kill-switch flag (`spendguard off` touches it) | auto |
+
+A real **environment variable always overrides** the files (so prod / CI / secret-managers Just Work), and
+`spendguard config` prints the resolved value + source for every setting. The two files you edit:
 
 **① `keys.env` — secrets** (chmod 600). Loaded into the environment on `import spendguard`, so your **own**
 `openai.OpenAI()` / `anthropic.Anthropic()` calls pick the keys up too — no separate export needed. Fill only the

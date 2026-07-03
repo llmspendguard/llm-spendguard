@@ -1,8 +1,10 @@
 # spendguard setup
 
-Two ways to configure spendguard. Everything lives in **two files** under `~/.spendguard/`: non-secret settings
-in `config.json`, and your keys (LLM · vast.ai · org) in `keys.env` — which spendguard loads into the environment
-on `import`, so your own `openai` / `anthropic` clients see them too. A real environment variable always wins.
+Two ways to configure spendguard. `pip install` puts only the **code** in site-packages; your **config + data**
+live under **`~/.spendguard/`** (override with `SPENDGUARD_HOME`), created by `spendguard init` — never by pip. You
+edit **two files**: non-secret settings in `config.json`, and your keys (LLM · vast.ai · org) in `keys.env` — which
+spendguard loads into the environment on `import`, so your own `openai` / `anthropic` clients see them too. A real
+environment variable always wins. (Full file map: README → Configuration.)
 
 ---
 
