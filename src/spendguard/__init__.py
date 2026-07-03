@@ -43,7 +43,7 @@ __all__ = ["install", "require", "register", "install_litellm", "install_bedrock
            "PRICING", "PRICING_VERIFIED", "PRICING_SOURCE",
            "estimate_job", "test_job", "gated_batch", "check_bulk", "check_realtime", "check_compute",
            "record_estimate", "record_tested", "note_response", "maxtokens", "is_truncated", "GateBlocked"]
-__version__ = "0.2.10"
+__version__ = "0.3.0"
 
 
 def _auto_install():

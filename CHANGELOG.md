@@ -4,6 +4,8 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-07-02
+
 ### De-identification of egress text (privacy)
 - **Every text field that leaves this machine now passes through a deterministic de-id floor at the wire.** New
   `spendguard.deid` module: a typed denylist (email, US phone, SSN, credit-card w/ Luhn, IPv4/IPv6, common API-key
