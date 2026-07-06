@@ -2,7 +2,7 @@
 
 All notable changes to **llm-spendguard**. Format loosely follows Keep a Changelog; dates are UTC.
 
-## [Unreleased]
+## [0.3.1] — 2026-07-06
 
 ### Realized efficiency + loss-led guarded framing (#47)
 - **`spendguard realized [--sync]`** — MEASURED before/after $ per call around each insight's adoption
