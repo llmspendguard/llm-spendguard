@@ -235,6 +235,15 @@ def _run(a):
     except Exception:
         print("  ⚠ leak check could not run (provider/ledger read failed) — leak status UNKNOWN, not $0")
 
+    # ── daily anomaly check (the automated gut: both 2× P0s were "today looks about double") ──
+    try:
+        from . import anomaly
+        for ln in anomaly.lines({"OpenAI batch": oai, "Anthropic batch": an,
+                                 "Real-time": rt, "Remote compute (GPU)": gpu}, tstr):
+            print(ln)
+    except Exception:
+        print("  ⚠ anomaly check could not run — status UNKNOWN, not clean")
+
     # ── top learnings (the advisor's confidence-scored insights) ──
     try:
         from . import learn

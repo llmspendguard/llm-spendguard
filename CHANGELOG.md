@@ -4,6 +4,14 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+### Daily anomaly detection (the automated gut check)
+- **The daily report now z-scores TODAY against each source's own history** (median/MAD — robust to prior
+  legit spikes) and prints `ANOMALY` lines (email included) when a day is statistically wild (z≥3.5) AND
+  material (≥$5, ≥1.5× median — both real double-count P0s were ~1.8–2× systematic inflation, so a 2× gate
+  would have missed them). A synthesized TOTAL series catches a spike hiding in a source too new to judge
+  alone. A failed check prints UNKNOWN, never silence. Guard: `tests/test_anomaly.py` (14 checks incl. the
+  report wiring). New module: `anomaly.py` — pure, zero new data plumbing.
+
 ### Provider plugin API (community-sized provider additions)
 - **`pip install spendguard-provider-<x>` is now all a user does.** New `spendguard.providers` entry-point
   group: `spendguard.install()` discovers installed plugin packages and activates each (zero-arg, idempotent
