@@ -18,7 +18,7 @@ def ck(name, cond):
 
 report.openai_by_day = lambda: ({"2026-07-01": 12.5, "2026-07-02": 0.0}, 0)
 anth.cost_by_day = lambda since=None: ({"2026-07-01": 3.25, "2026-07-03": 8.0}, {})
-report.gpu_by_day = lambda since: {"2026-07-02": 4.0}
+report.gpu_by_day = lambda since: ({"2026-07-02": 4.0}, None)   # REAL shape: (by_day, error)
 
 rs = truth.rows(since="2026-07-01")
 ck("all three sources merged", {r["provider"] for r in rs} == {"openai", "anthropic", "vastai"})

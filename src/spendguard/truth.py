@@ -24,7 +24,7 @@ def rows(since=None):
     out = []
     oai, _pending = report.openai_by_day()
     an, _models = anth.cost_by_day(since=since)
-    gpu = report.gpu_by_day(since)
+    gpu, _gpu_err = report.gpu_by_day(since)   # (by_day, error) — error → empty dict, vastai just absent this run
     for provider, by_day in (("openai", oai), ("anthropic", an), ("vastai", gpu)):
         for day, usd in sorted(by_day.items()):
             if day >= since and float(usd) > 0:
