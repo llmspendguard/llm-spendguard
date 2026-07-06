@@ -4,6 +4,8 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-07-06
+
 ### Prompt-efficiency loop (`spendguard prompts` + pluggable judges)
 - **`spendguard prompts`** — zero-spend lint over the call corpus, per intent (≥5 calls), ranked by
   measured $ at stake: `boilerplate` (a shared prefix ≥60 chars re-sent every call → cache/template it),
@@ -52,7 +54,6 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
   `tests/test_provider_plugin.py`.
 
 
-## [0.3.0] — 2026-07-02
 
 ### Configuration — two files, placeholder secrets, documented enums
 - **`spendguard init` now scaffolds `~/.spendguard/keys.env`** (chmod 600) with a blank placeholder for every
