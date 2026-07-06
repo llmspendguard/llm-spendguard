@@ -49,5 +49,14 @@ across any language/machine is the key-holding proxy on the roadmap).
 
 ## Slash commands
 
-`spendguard install-skills` deploys the `/spend` and `/spendguard-learn` slash-commands into
-`~/.claude/skills/` so you can check status and run the advisor from inside Claude Code.
+`spendguard install-skills` deploys the spendguard slash-commands into `~/.claude/skills/`:
+
+| skill | what it runs |
+|---|---|
+| `/spend` | quick status: today/7d/month, leak check, top learnings, SaaS connection |
+| `/spendguard-reconcile` | make the ledger TRUE vs provider billing; surface leaks; push the dashboard |
+| `/spendguard-learn` | backfill the cost+quality corpus; run the advisor + backtests |
+| `/spendguard-prompts` | the prompt lab: lint → batch-1 → graded A/B → promote (docs/PROMPT-EFFICIENCY.md) |
+| `/spendguard-close` | the monthly close: truth push (owner) → close view → the org statement + residual |
+
+All are zero-model-spend by default; experiments are caged + estimate-first.

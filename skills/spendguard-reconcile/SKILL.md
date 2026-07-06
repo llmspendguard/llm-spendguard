@@ -52,3 +52,10 @@ The dashboard then shows the real total, a **Governed %** (attributed ÷ total),
 ## Principle
 The number must be **correct, current, and reconciled** — otherwise it's not trustworthy. Reconcile before
 reporting; never present the gate ledger alone as "spend" when provider billing is available.
+
+## 4. Sync provider truth (feeds the org statement)
+```
+spendguard truth --push        # owner connection only; a non-owner is refused (account-anchor guard)
+```
+The org server's monthly close statement (`/statements`) reconciles its ledger against these rows — after a
+reconcile session, push truth so the statement's per-provider residual reflects what you just fixed.

@@ -42,7 +42,7 @@ from the corpus it analyzes) so the governor can't overspend governing.
 
 **Docs:** [Architecture + diagrams](docs/ARCHITECTURE.md) · [Use with Claude/Cursor](docs/USING-WITH-CLAUDE.md) · [Methodology](docs/README.md) · [Roadmap (teams/orgs/SaaS)](docs/ROADMAP.md) · [Module map](src/spendguard/README.md) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md) · [Setup](SETUP.md)
 
-**Use with an AI assistant:** `spendguard install-rule --global` writes a rule into `CLAUDE.md` so **every** Claude/Cursor conversation routes the LLM code it builds through spendguard — then `spendguard install-skills` adds `/spend` (status) and `/spendguard-learn` (advisor) as slash-commands. See [Use with Claude](docs/USING-WITH-CLAUDE.md).
+**Use with an AI assistant:** `spendguard install-rule --global` writes a rule into `CLAUDE.md` so **every** Claude/Cursor conversation routes the LLM code it builds through spendguard — then `spendguard install-skills` adds the slash-commands: `/spend` (status), `/spendguard-reconcile` (trust the number), `/spendguard-learn` (advisor), `/spendguard-prompts` (the prompt lab), `/spendguard-close` (monthly close). See [Use with Claude](docs/USING-WITH-CLAUDE.md).
 **Teams & orgs:** each user keeps their own ledger + sets their own caps (partner, not supervisor); opt-in roll-up for shared visibility + pooled learnings via the SaaS (separate repo). The client (this package) is **production-ready and fully standalone**. The team/org dashboard (a separate server) is **in development** — see [ROADMAP.md](docs/ROADMAP.md).
 
 ## Quickstart
@@ -86,7 +86,7 @@ spendguard doctor                            # is the gate ENFORCING in THIS int
 spendguard install-hook --venv <path>        # gate every process in ANOTHER venv/repo (--uninstall to remove; alias: gate-venv)
 spendguard install-hook --user [--python P]  # gate a python's per-USER site (system-python bypass; PEP668-safe, no pip)
 spendguard install-rule [--global|--project DIR]  # drop the spendguard rule into CLAUDE.md → every AI chat wires it in
-spendguard install-skills                    # deploy /spend + /spendguard-learn as Claude slash-commands
+spendguard install-skills                    # deploy the 5 slash-commands (/spend, /spendguard-{reconcile,learn,prompts,close})
 spendguard install-receipts --host claude-code|codex   # surface the always-on tally in a host (statusline + per-turn)
 spendguard coverage                          # which LLM-calling VENVS aren't gated (ungated realtime spend sources)
 spendguard gate-coverage                     # per-INTERPRETER gate check across EVERY python on the machine (3.11/3.14/…)
@@ -107,7 +107,10 @@ spendguard reconcile openai|anthropic [--by-day]      # actual billed batch spen
 spendguard reconcile all                              # UNIFIED view: every source (LLM+GPU) via one account-anchored loop
 spendguard reconcile-ledger [--since DATE]            # local gate ledger vs provider billing → find LEAKS (aliases: ledger-sync, leaks)
 spendguard trust                                      # provider billing vs recorded — the daily double-count guard (alias: trust-check)
+spendguard truth [--push]                             # per-day provider-truth totals (owner connection only) → the org statement's yardstick
+spendguard close [--month YYYY-MM] [--csv f.csv]      # monthly close, client view: truth totals + open-month leak line (full statement: /statements)
 spendguard calls [--intent X]                # per-intent cost + good% + $/good (opt-in corpus)
+spendguard prompts [--intent X] [--json]     # prompt-efficiency lint: boilerplate/context/truncation/model-mix, ranked by $ at stake
 spendguard estimate --items N --from-sample f.jsonl --packs 1,30
 spendguard maxtokens <sig> [current_max]     # data-driven max_tokens bound for a call-class (p99×1.5 — measured, not guessed)
 spendguard pricing | providers               # canonical price table · configured providers→models
