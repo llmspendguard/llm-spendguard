@@ -4,6 +4,18 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+### Prompt-efficiency loop (`spendguard prompts` + pluggable judges)
+- **`spendguard prompts`** — zero-spend lint over the call corpus, per intent (≥5 calls), ranked by
+  measured $ at stake: `boilerplate` (a shared prefix ≥60 chars re-sent every call → cache/template it),
+  `context_spread` (input p95 ≥ 3× p50 → stuffing), `truncation` (finish=length → max_tokens ≈ p99×1.5),
+  `model_mix` (the intent already runs ≥2× cheaper elsewhere → measured cascade candidate). Every finding
+  carries its exact next command; prices from pricing.py only. Guard: `tests/test_prompt_lint.py`.
+- **Pluggable equivalence judges** — `equivalence.grade` (and `spendguard experiment --semantic`) now
+  accepts `custom:<module.fn>`: your own callable `(ref, out) -> 0..1` (wrap promptfoo assertions, schema
+  validators, domain checks). The custom score rides the same promote/keep decision as the built-in ladder.
+- **The documented loop** — `docs/PROMPT-EFFICIENCY.md`: lint → batch-1 of the same shape → graduated A/B
+  (`experiment`, caged + estimate-first) → promote-and-keep with the insight lifecycle re-validating wins.
+
 ### Monthly close (`spendguard close`) + truth in the daily sync
 - **`spendguard close [--month YYYY-MM] [--csv]`** — the client half of the monthly close: provider-truth
   totals per provider for the month (same numbers `truth --push` syncs), the ledger leak line for the open

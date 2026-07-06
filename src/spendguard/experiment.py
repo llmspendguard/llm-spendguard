@@ -327,7 +327,8 @@ def main(argv=None):
     ap.add_argument("--instruction", action="append", help="an output-format instruction variant (repeatable)")
     ap.add_argument("--n", type=int, default=20, help="samples to test per variant")
     ap.add_argument("--reconsider", action="store_true", help="also test models previously marked ineffective")
-    ap.add_argument("--semantic", choices=["embed", "rubric"], help="for PROSE outputs: add a caged semantic "
+    ap.add_argument("--semantic", help="judge tier: embed | rubric | custom:<module.fn> (your own callable "
+                    "(ref,out)->0..1 — wrap promptfoo assertions or any domain check). For PROSE outputs: a caged semantic "
                     "equivalence tier (embed=embedding cosine, rubric=LLM judge) — costs extra, meta-capped")
     ap.add_argument("--run", action="store_true", help="actually call (default: estimate). Caged by caps.meta.")
     a = ap.parse_args(argv)

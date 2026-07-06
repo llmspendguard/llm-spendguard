@@ -226,6 +226,9 @@ def main(argv=None):
     if cmd == "validate":                             # living insights — re-check learnings vs current corpus
         from . import validate
         return validate.main(rest)
+    if cmd == "prompts":                              # prompt-efficiency lint over the call corpus (zero spend)
+        from . import prompts
+        return prompts.main()
     if cmd == "close":                                # monthly close, client view (provider-truth totals + leak line)
         from . import close
         return close.main()

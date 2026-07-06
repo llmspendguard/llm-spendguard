@@ -109,6 +109,15 @@ def grade(ref, out, mode="auto", model=None):
     scores reordered/set-style or free-text-valued JSON as different. When order/format varies or values
     are free text, pass mode='embed'/'rubric' — those CAGED semantic tiers now apply even to JSON (they
     used to be silently skipped for any JSON pair)."""
+    if isinstance(mode, str) and mode.startswith("custom:"):
+        # PLUGGABLE judge: mode='custom:<module.path:fn|module.path.fn>' — a user callable (ref, out) -> 0..1.
+        # This is the bring-your-own-eval seam (wrap a promptfoo assertion set, a domain checker, anything);
+        # the callable's number rides the same promote/keep decisions as the built-in ladder.
+        import importlib
+        path = mode.split(":", 1)[1]
+        modpath, _, fn = path.replace(":", ".").rpartition(".")
+        judge = getattr(importlib.import_module(modpath), fn)
+        return max(0.0, min(1.0, float(judge(ref, out)))), "custom"
     if _norm(ref) == _norm(out):
         return 1.0, "exact"
     if mode == "embed":                       # explicit semantic tier — applies even to JSON

@@ -42,6 +42,7 @@ nav:
   - Using with Claude & agents: USING-WITH-CLAUDE.md
   - Work attribution: work-attribution.md
   - Learning advisor: learning-advisor.md
+  - Prompt efficiency (the measured loop): PROMPT-EFFICIENCY.md
   - Adding a provider (plugin API): PROVIDERS.md
   - Incidents (severity + postmortem rule): INCIDENTS.md
   - Waivers (consciously-skipped gates): WAIVERS.md
