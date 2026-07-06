@@ -9,7 +9,7 @@ an outage. Severity is judged by the two invariants the gate property-tests enfo
 | **2** | Spend misstated ≥2× · a provider adapter drops/double-counts usage · de-id floor bypassed on an egress path | fix within days; note in CHANGELOG | both 2× double-count P0s during the build (Jun 22/25) |
 | **3** | Wrong estimate/price for a model · noisy warning · doc drift | next release | price-drift catches (cross-checked vs OpenRouter) |
 
-**Reporting:** security → [SECURITY.md](../SECURITY.md) (private disclosure); everything else → GitHub
+**Reporting:** security → [SECURITY.md](https://github.com/llmspendguard/llm-spendguard/blob/main/SECURITY.md) (private disclosure); everything else → GitHub
 Issues. **Postmortem rule (the anti-amnesia rule):** every Sev-1/2 fix ships WITH the test/lint/assert
 that makes recurrence impossible — an incident closed without a gate is not closed. The build's full
 20-incident→gate log lives in the maintainer's build history; the guards it produced live in `tests/`.
