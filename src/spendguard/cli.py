@@ -226,6 +226,9 @@ def main(argv=None):
     if cmd == "validate":                             # living insights — re-check learnings vs current corpus
         from . import validate
         return validate.main(rest)
+    if cmd == "truth":                                # per-day provider-truth totals; --push syncs (keys stay local)
+        from . import truth
+        return truth.main()
     if cmd == "insights":                             # list / export(scrubbed) / import community learnings
         from . import share
         return share.main(rest)

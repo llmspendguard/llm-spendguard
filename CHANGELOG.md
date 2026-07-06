@@ -4,6 +4,13 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+### Provider-truth sync (`spendguard truth`)
+- **Per-day provider totals → the org server; keys never leave the machine.** `truth.rows()` reuses the
+  report's own fetchers (openai/anthropic/vastai) and `spendguard truth --push` sends only {day, provider,
+  usd} to `POST /v1/truth` (visibility-gated; a server without the endpoint yet → friendly skip). This is
+  the client half of API-based invoice-grade reconciliation — the server's monthly close statement will
+  show variance vs these numbers. Guard: `tests/test_truth_sync.py`.
+
 ### Daily anomaly detection (the automated gut check)
 - **The daily report now z-scores TODAY against each source's own history** (median/MAD — robust to prior
   legit spikes) and prints `ANOMALY` lines (email included) when a day is statistically wild (z≥3.5) AND
