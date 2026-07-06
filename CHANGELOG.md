@@ -4,6 +4,15 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+### Monthly close (`spendguard close`) + truth in the daily sync
+- **`spendguard close [--month YYYY-MM] [--csv]`** — the client half of the monthly close: provider-truth
+  totals per provider for the month (same numbers `truth --push` syncs), the ledger leak line for the open
+  month, CSV export, and a pointer to the org server's full attributed statement (`/statements`: real-$
+  classes, projects, teams, and the ledger-vs-truth residual NAMED per provider; est plan value on its own
+  axis, never summed). Guard: `tests/test_close.py`.
+- **`saas sync` now pushes provider truth automatically** (`out["truth"]`), so a daily-synced org gets
+  statement variance with zero extra steps — fail-open, visibility-gated, keys stay local.
+
 ### Provider-truth sync (`spendguard truth`)
 - **Per-day provider totals → the org server; keys never leave the machine.** `truth.rows()` reuses the
   report's own fetchers (openai/anthropic/vastai) and `spendguard truth --push` sends only {day, provider,

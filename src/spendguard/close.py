@@ -1,0 +1,74 @@
+"""Monthly CLOSE (client view) — the local half of the close statement.
+
+Prints the month's PROVIDER-TRUTH totals (computed locally from the providers' own usage/cost APIs —
+same rows `spendguard truth --push` syncs), and for the CURRENT month adds the ledger leak line
+(accounted-vs-provider, the completeness verdict). The full attributed statement — classes, projects,
+teams, per-provider residual — lives on the org server (`/statements`, CSV export), which reconciles
+its ledger against the truth rows this machine pushes. `--csv` writes the local view for records.
+
+CLI: `spendguard close [--month YYYY-MM] [--csv PATH]`. Zero LLM spend.
+"""
+import datetime
+
+
+def month_window(month):
+    """(start, end) ISO dates for YYYY-MM."""
+    y, m = int(month[:4]), int(month[5:7])
+    start = f"{month}-01"
+    end = f"{y + 1}-01-01" if m == 12 else f"{y}-{m + 1:02d}-01"
+    return start, end
+
+
+def build(month):
+    """{month, providers: [{provider, usd, days}], total_usd, current_month} from local provider truth."""
+    from . import truth
+    start, end = month_window(month)
+    per = {}
+    days = {}
+    for r in truth.rows(since=start):
+        if start <= r["day"] < end:
+            per[r["provider"]] = per.get(r["provider"], 0.0) + r["usd"]
+            days.setdefault(r["provider"], set()).add(r["day"])
+    providers = [{"provider": p, "usd": round(v, 6), "days": len(days[p])}
+                 for p, v in sorted(per.items(), key=lambda kv: -kv[1])]
+    return {"month": month, "providers": providers,
+            "total_usd": round(sum(p["usd"] for p in providers), 6),
+            "current_month": month == datetime.date.today().strftime("%Y-%m")}
+
+
+def to_csv(stmt):
+    lines = [f"# Monthly close (client provider-truth view),{stmt['month']}",
+             f"total_usd,{stmt['total_usd']:.2f}", "", "provider,usd,days"]
+    lines += [f"{p['provider']},{p['usd']:.2f},{p['days']}" for p in stmt["providers"]]
+    return "\n".join(lines) + "\n"
+
+
+def main(argv=None):
+    import sys, argparse
+    ap = argparse.ArgumentParser(prog="spendguard close",
+                                 description="monthly close, client view: provider-truth totals (+ leak line for the current month)")
+    ap.add_argument("--month", default=datetime.date.today().strftime("%Y-%m"), help="YYYY-MM (default: current)")
+    ap.add_argument("--csv", help="also write the close to this CSV path")
+    a = ap.parse_args(sys.argv[2:] if argv is None else argv)
+    if not (len(a.month) == 7 and a.month[4] == "-"):
+        print("close: --month must be YYYY-MM"); return 2
+    s = build(a.month)
+    print(f"monthly close — {s['month']}   provider truth Σ ${s['total_usd']:,.2f}")
+    for p in s["providers"]:
+        print(f"  {p['provider']:<12} ${p['usd']:>10,.2f}   ({p['days']} billed days)")
+    if not s["providers"]:
+        print("  (no provider spend found for this month)")
+    if s["current_month"]:
+        try:                                        # accounted-vs-provider completeness for the open month
+            from . import ledger_sync
+            line = ledger_sync.leak_line(month_window(a.month)[0])
+            if line:
+                print("  " + line)
+        except Exception:
+            print("  ⚠ leak check could not run — accounted-vs-truth UNKNOWN for the open month")
+    print("  full attributed statement (classes/projects/teams + named residual): your org server → /statements")
+    if a.csv:
+        with open(a.csv, "w") as f:
+            f.write(to_csv(s))
+        print(f"  wrote {a.csv}")
+    return 0

@@ -661,6 +661,11 @@ def sync(if_due=False, since=None):
            "workdone": push_workdone(since=since), "status": push_status(),
            "resources": res, "commands": run_commands(since=since), "trust": tg.get("ledger_verdict"),
            "policy": pull_policy()}     # pull the org/team's effective caps so the gate applies them (advisory/enforced)
+    try:                                                  # provider-truth totals (keys stay local) → the server's
+        from . import truth as _truth                     # monthly close statement reconciles ledger vs these
+        out["truth"] = _truth.push(since=since)
+    except Exception as e:
+        out["truth"] = {"skipped": f"truth push: {str(e)[:80]}"}
     try:                                                  # claude.ai chat attribution loop (only if opted in)
         from . import chat as _chat
         out["chat"] = _chat.loop(run=True, quiet=True) if _chat._enabled() else {"skipped": "chat not enabled"}
