@@ -944,6 +944,11 @@ def install(cap: "float | None" = None) -> None:
             importlib.import_module("." + _mod, __package__).install(force=False)   # only if the underlying SDK is
         except Exception:                        # ALREADY imported; never force-import a heavy optional dep at startup.
             pass                                 # Users call spendguard.install_{litellm,bedrock,vertex}() explicitly.
+    try:                                         # third-party providers: `pip install spendguard-provider-X` is all a
+        from . import provider_plugins           # user does — entry points activate here, fail-open per plugin
+        provider_plugins.load()                  # (recipe: docs/PROVIDERS.md; conformance: spendguard.provider_kit)
+    except Exception as e:
+        print(f"[spend_gate] WARN provider plugins skipped: {e}", file=sys.stderr)
 
 
 def _any_patched():

@@ -4,6 +4,18 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+### Provider plugin API (community-sized provider additions)
+- **`pip install spendguard-provider-<x>` is now all a user does.** New `spendguard.providers` entry-point
+  group: `spendguard.install()` discovers installed plugin packages and activates each (zero-arg, idempotent
+  `activate()`), FAIL-OPEN per plugin — a broken plugin warns once and is skipped, never breaking the gate,
+  other plugins, or the user's calls (`provider_plugins.py`). Recipe: `docs/PROVIDERS.md` (3 levels:
+  pricing-only / `register_provider` adapter / full `gate.register` interception).
+- **Conformance kit** (`spendguard.provider_kit`): third-party provider packages prove themselves in their
+  own CI — `assert_conformance(activate, name=..., sample_model=...)` checks registration, pricing via
+  `pricing.price()` (never hardcoded), idempotence, and loader fail-open containment. Guard:
+  `tests/test_provider_plugin.py`.
+
+
 ## [0.3.0] — 2026-07-02
 
 ### Configuration — two files, placeholder secrets, documented enums
