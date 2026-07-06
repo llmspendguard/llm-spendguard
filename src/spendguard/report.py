@@ -244,6 +244,22 @@ def _run(a):
     except Exception:
         print("  ⚠ anomaly check could not run — status UNKNOWN, not clean")
 
+    # ── realized efficiency (measured) + auto-fresh learnings (caged, cadence-gated) ──
+    try:
+        from . import realized as _realized
+        rres = _realized.sync_to_guarded()
+        if rres.get("synced_usd"):
+            print(f"  realized efficiency: ${rres['synced_usd']:,.2f} newly measured across {rres['intents']} intent(s) → guarded(source=realized)")
+    except Exception:
+        pass                                        # measurement must never break the report
+    try:
+        from . import review as _review
+        fres = _review.auto_fresh()
+        if fres.get("ran"):
+            print(f"  learnings auto-refreshed ({fres['mode']}) — caged under caps.meta")
+    except Exception:
+        pass
+
     # ── top learnings (the advisor's confidence-scored insights) ──
     try:
         from . import learn

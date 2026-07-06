@@ -150,3 +150,37 @@ def main(argv=None):
     a = ap.parse_args(argv)
     review(run=a.run, top=a.top)
     return 0
+
+
+_FRESH_INTERVALS = {"weekly": 7 * 86400, "daily": 86400}
+
+
+def auto_fresh(now=None):
+    """#49 — auto-refresh Learnings from recent activity, on the advisor.auto_fresh cadence (off|weekly|daily).
+    Runs the SAME caged review as `spendguard review --run` but small (top 3 intents) and only when due
+    (state: ~/.spendguard/review_state.json). Bounded by caps.meta like all advisor spend; returns a summary
+    dict and NEVER raises (the daily report calls this — a refresh failure must not break the report)."""
+    import json, time
+    from . import config
+    try:
+        mode = str(config._cfg_get("advisor", "auto_fresh", "weekly")).lower()
+        import os
+        mode = (os.getenv("SPENDGUARD_AUTO_FRESH") or mode).lower()
+        interval = _FRESH_INTERVALS.get(mode)
+        if not interval:
+            return {"skipped": f"auto_fresh={mode}"}
+        state_p = config.HOME / "review_state.json"
+        try:
+            state = json.loads(state_p.read_text())
+        except Exception:
+            state = {}
+        now = time.time() if now is None else now
+        last = float(state.get("last_fresh", 0))
+        if now - last < interval:
+            return {"skipped": f"not due (every {mode})", "last_fresh": last}
+        review(run=True, top=3)                      # caged (caps.meta), estimate-first inside
+        state["last_fresh"] = now
+        state_p.write_text(json.dumps(state))
+        return {"ran": True, "mode": mode}
+    except Exception as e:
+        return {"error": str(e)[:120]}

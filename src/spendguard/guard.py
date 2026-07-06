@@ -13,8 +13,9 @@ import math
 from . import budget
 
 # per-source confidence → coefficient of variation (lower confidence ⇒ wider spread). certain ⟂ counterfactual.
-CONFIDENCE = {"cache": 0.95, "block": 0.70, "cascade": 0.90, "advisor": 0.50, "plan": 0.60}
-CERTAIN = ("cache", "block", "cascade")   # vs counterfactual: advisor, plan
+CONFIDENCE = {"cache": 0.95, "block": 0.70, "cascade": 0.90, "advisor": 0.50, "plan": 0.60,
+              "realized": 0.90}           # realized = MEASURED before/after per-call delta (realized.py), not a counterfactual
+CERTAIN = ("cache", "block", "cascade", "realized")   # vs counterfactual: advisor, plan
 
 
 def _db():

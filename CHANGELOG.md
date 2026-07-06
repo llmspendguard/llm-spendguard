@@ -4,6 +4,22 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+### Realized efficiency + loss-led guarded framing (#47)
+- **`spendguard realized [--sync]`** — MEASURED before/after $ per call around each insight's adoption
+  (the corpus that priced the calls is the ruler): realized = Δrate × after_calls, regressions shown, not
+  hidden. `--sync` records new positive deltas into the guarded pipeline as **source=`realized`**
+  (incremental + idempotent via `realized_state.json`) — the dashboard's "≥ certain" floor now includes
+  measured wins, and the panel headline is loss-led ("would have cost ~$X MORE without the guardrails").
+  The daily report syncs automatically. Guard: `tests/test_realized.py` (12).
+- **Auto-fresh Learnings (#49)** — `advisor.auto_fresh` = `off|weekly|daily` (default weekly): the daily
+  report now runs a SMALL caged review (top-3 intents, caps.meta-bounded, estimate-first) when due, so
+  Learnings track recent activity without manual `review --run`. State in `review_state.json`; a refresh
+  failure never breaks the report. Guard: `tests/test_auto_fresh.py`.
+- **`spendguard close --account`** — the account-level reconciliation view for SHARED provider accounts:
+  account-wide truth + the machine accounted-vs-provider line, with the explicit caveat that each org's
+  statement residual includes its siblings (the honest lens incident #23 pointed at).
+
+
 ## [0.3.0] — 2026-07-06
 
 ### Prompt-efficiency loop (`spendguard prompts` + pluggable judges)

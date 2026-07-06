@@ -108,9 +108,10 @@ spendguard reconcile all                              # UNIFIED view: every sour
 spendguard reconcile-ledger [--since DATE]            # local gate ledger vs provider billing → find LEAKS (aliases: ledger-sync, leaks)
 spendguard trust                                      # provider billing vs recorded — the daily double-count guard (alias: trust-check)
 spendguard truth [--push]                             # per-day provider-truth totals (owner connection only) → the org statement's yardstick
-spendguard close [--month YYYY-MM] [--csv f.csv]      # monthly close, client view: truth totals + open-month leak line (full statement: /statements)
+spendguard close [--month YYYY-MM] [--csv] [--account]  # monthly close, client view; --account = shared-account axis (truth is account-wide)
 spendguard calls [--intent X]                # per-intent cost + good% + $/good (opt-in corpus)
 spendguard prompts [--intent X] [--json]     # prompt-efficiency lint: boilerplate/context/truncation/model-mix, ranked by $ at stake
+spendguard realized [--intent X] [--sync]    # MEASURED before/after $/call around insight adoptions (no counterfactuals); --sync → guarded
 spendguard estimate --items N --from-sample f.jsonl --packs 1,30
 spendguard maxtokens <sig> [current_max]     # data-driven max_tokens bound for a call-class (p99×1.5 — measured, not guessed)
 spendguard pricing | providers               # canonical price table · configured providers→models

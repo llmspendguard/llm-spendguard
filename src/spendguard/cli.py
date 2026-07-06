@@ -226,6 +226,9 @@ def main(argv=None):
     if cmd == "validate":                             # living insights — re-check learnings vs current corpus
         from . import validate
         return validate.main(rest)
+    if cmd == "realized":                             # measured before/after $ per call around insight adoptions
+        from . import realized
+        return realized.main()
     if cmd == "prompts":                              # prompt-efficiency lint over the call corpus (zero spend)
         from . import prompts
         return prompts.main()

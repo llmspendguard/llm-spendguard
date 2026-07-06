@@ -49,6 +49,9 @@ def main(argv=None):
                                  description="monthly close, client view: provider-truth totals (+ leak line for the current month)")
     ap.add_argument("--month", default=datetime.date.today().strftime("%Y-%m"), help="YYYY-MM (default: current)")
     ap.add_argument("--csv", help="also write the close to this CSV path")
+    ap.add_argument("--account", action="store_true",
+                    help="ACCOUNT-level view: provider truth is account-wide; on a shared account each org's "
+                         "statement residual includes its siblings — this view shows the account axis whole")
     a = ap.parse_args(sys.argv[2:] if argv is None else argv)
     if not (len(a.month) == 7 and a.month[4] == "-"):
         print("close: --month must be YYYY-MM"); return 2
@@ -66,6 +69,17 @@ def main(argv=None):
                 print("  " + line)
         except Exception:
             print("  ⚠ leak check could not run — accounted-vs-truth UNKNOWN for the open month")
+    if a.account:
+        print("  ── account axis (shared provider account) ──")
+        print("  truth above is ACCOUNT-wide: on a shared account, each org's /statements residual includes")
+        print("  its sibling orgs' spend. Machine-accounted vs provider for the open month:")
+        try:
+            from . import ledger_sync
+            line = ledger_sync.leak_line(month_window(a.month)[0])
+            print("  " + (line or "leak line unavailable"))
+        except Exception:
+            print("  ⚠ accounted-vs-provider check could not run — UNKNOWN, not zero")
+        print("  per-org residuals: each org's /statements (owner org carries the account truth)")
     print("  full attributed statement (classes/projects/teams + named residual): your org server → /statements")
     if a.csv:
         with open(a.csv, "w") as f:

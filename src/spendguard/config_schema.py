@@ -56,6 +56,10 @@ SETTINGS = [
     dict(section="advisor", key="model", store="config.json:advisor.model", env="SPENDGUARD_ADVISOR_MODEL",
          default="claude-opus-4-8", kind="string", secret=False,
          desc="Model for the advisor's REASONING (insight synthesis + `optimize`). Realtime; must exist in pricing.py."),
+    dict(section="advisor", key="auto_fresh", store="config.json:advisor.auto_fresh", env="SPENDGUARD_AUTO_FRESH",
+         default="weekly", kind="enum:off,weekly,daily", secret=False,
+         desc="Auto-refresh Learnings from RECENT activity (caged review of the top intents, caps.meta-bounded) "
+              "when the daily report runs. off = manual `spendguard review --run` only."),
     dict(section="advisor", key="judge_model", store="config.json:advisor.judge_model", env="SPENDGUARD_ADVISOR_JUDGE_MODEL",
          default="claude-haiku-4-5", kind="string", secret=False,
          desc="Model for BULK quality reconstruction/judging. Batch API; must exist in pricing.py."),
