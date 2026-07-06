@@ -39,6 +39,11 @@ def push(since=None, dry=False):
     c = saas.conn()
     if c.get("visibility", "private") == "private":
         return {"skipped": "visibility=private — nothing leaves this machine"}
+    if c.get("enabled") and not c.get("owns_account"):
+        # Account-anchor guard (same rule as reconcile): provider truth is ACCOUNT-level. On a shared account,
+        # only the owns_account connection may claim it — a non-owner pushing the same totals to ITS org
+        # double-counts truth and turns both orgs' statement residuals into fiction (caught live 2026-07-05).
+        return {"skipped": "not the account owner (owns_account=false) — the owner connection pushes provider truth"}
     payload = {"truth": rows(since)}
     if dry:
         return payload
