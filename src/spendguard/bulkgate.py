@@ -190,6 +190,7 @@ def _calls_db():
     db.execute("CREATE TABLE IF NOT EXISTS gate_calls "
                "(sig TEXT, model TEXT, out_tok INTEGER, max_tokens INTEGER, truncated INTEGER, ts REAL)")
     db.execute("CREATE INDEX IF NOT EXISTS idx_gatecalls_sig ON gate_calls(sig)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_gatecalls_model ON gate_calls(model)")  # model-level fill obs (calibrate)
     return db
 
 

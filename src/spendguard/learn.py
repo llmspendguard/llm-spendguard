@@ -49,6 +49,8 @@ def _db():
                     id TEXT PRIMARY KEY, ts TEXT, type TEXT, label TEXT, attrs TEXT)""")
                 c.execute("""CREATE TABLE IF NOT EXISTS graph_edges(
                     src TEXT, dst TEXT, rel TEXT, ts TEXT, attrs TEXT)""")
+                c.execute("CREATE INDEX IF NOT EXISTS idx_ge_rel ON graph_edges(rel)")  # rebuild DELETEs + per-rel counts
+                c.execute("CREATE INDEX IF NOT EXISTS idx_ge_src ON graph_edges(src)")  # node→edge joins (review, advisor)
                 # ── seg_attribution: the AGENTIC per-subconversation attribution decisions, recorded so we NEVER
                 #    redo / re-pay for them. source ∈ prior(free, recomputable — not stored) | llm | human(final, wins).
                 #    The convergence loop re-runs only rows that are absent / not-llm-or-human / below confidence τ. ──

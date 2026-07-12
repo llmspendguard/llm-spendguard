@@ -140,6 +140,7 @@ def _db():
                     quality TEXT, quality_src TEXT, quality_conf REAL)""")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_calls_chain ON calls(chain)")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_calls_intent ON calls(intent)")
+                c.execute("CREATE INDEX IF NOT EXISTS idx_calls_ts ON calls(ts)")  # as_of/since range reads (calibrate, advise)
                 if "quality_conf" not in [r[1] for r in c.execute("PRAGMA table_info(calls)").fetchall()]:
                     c.execute("ALTER TABLE calls ADD COLUMN quality_conf REAL")  # migrate older dbs
                 c.commit()

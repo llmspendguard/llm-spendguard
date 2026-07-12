@@ -4,6 +4,16 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+### SQLite index audit — every query planned, every hot path indexed, drift impossible
+- Audited every extractable SQL statement in the codebase with `EXPLAIN QUERY PLAN` against the full
+  schema. Added the missing indexes at each table's creation site (existing installs upgrade on next
+  open): `calls(ts)` (as_of/since range reads), `gate_calls(model)` (model-level fill observations),
+  `graph_edges(rel)`+`(src)` (rebuild deletes, node joins), `charges(conv_id)` (chat↔charge
+  attribution joins), `cost_predictions(paired_ts)` (pair scans). Verified on the live corpus: the
+  four former table-scans now run as indexed SEARCHes. Guard: `tests/test_sql_index_audit.py` —
+  asserts the required index inventory AND plans ~40 extracted queries, failing on any unindexed scan
+  of a growth-prone table unless it is a registered whole-corpus aggregate.
+
 ### Fast doctor + suite speed/offline gates (incident #25)
 - **`spendguard doctor` is instant**: the leak verdict is read from `leak_line.json`, written as a
   byproduct wherever `leak_line()` already computes (daily report / reconcile / close) and shown WITH

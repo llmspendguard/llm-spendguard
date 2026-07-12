@@ -421,8 +421,17 @@ def _rt_record(provider, model, cost, in_tok=0, out_tok=0, cached=0):
         _rt_flush()
     _m = pricing.normalize(model) if model else "?"
     _budget_record(cost, _m, provider, "realtime")   # cross-process ledger (sqlite backend)
-    _emit({"kind": "realtime", "provider": provider, "model": _m, "cost": cost, "decision": "recorded",
-           "in_tok": in_tok, "out_tok": out_tok, "cached_in_tok": cached})
+    _ev = {"kind": "realtime", "provider": provider, "model": _m, "cost": cost, "decision": "recorded",
+           "in_tok": in_tok, "out_tok": out_tok, "cached_in_tok": cached}
+    try:                       # the call's PURPOSE rides on the event (intent/chain)
+        _cur = _calls.current()
+        if (_cur.get("intent") or "").strip():
+            _ev["intent"] = _cur["intent"].strip()
+        if (_cur.get("chain") or "").strip():
+            _ev["chain"] = _cur["chain"].strip()
+    except Exception:
+        pass
+    _emit(_ev)
 
 
 def _rt_precheck(provider, model, in_tok, est_out):

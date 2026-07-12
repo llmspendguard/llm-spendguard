@@ -67,6 +67,7 @@ def _con():
         user TEXT, project TEXT,
         actual_in INTEGER, actual_out INTEGER, actual_usd REAL, actual_calls INTEGER,
         paired_ts TEXT)""")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_cp_paired ON cost_predictions(paired_ts)")  # pair() scans unpaired
     return c
 
 

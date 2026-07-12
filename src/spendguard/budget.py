@@ -28,6 +28,7 @@ def _db():
                 if "conv_id" not in cols:                      # conversation/chat id per call (links to the chat)
                     c.execute("ALTER TABLE charges ADD COLUMN conv_id TEXT DEFAULT ''")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_day ON charges(day)")
+                c.execute("CREATE INDEX IF NOT EXISTS idx_charges_conv ON charges(conv_id)")  # chat↔charge joins (attribution)
                 c.commit()
                 _conn = c
     return _conn
