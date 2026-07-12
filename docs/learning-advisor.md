@@ -7,6 +7,16 @@ reconstruction by mining post-event conversation + script/git evolution, and ric
 This is #6 (record cost+quality) taken to **action**: a loop that recommends **considering** history
 (not parroting it) and gets better as it runs.
 
+## Sibling: the learned COST estimator (`spendguard calibrate`)
+The advisor recommends *which config*; `calibrate` predicts *what it will cost* — correcting the naive
+tokens×price estimate from YOUR captured actuals, per (activity, model, transport): output-fill of
+max_tokens, out-per-in, $-residual vs the price table, input-ratio from paired predictions. Empirical-
+Bayes shrinkage over local exact → org (fetched shared prior) → model → global; every answer carries
+`{level, n_obs, basis, naive_usd}`. Verified by a held-out backtest that must beat naive (reference
+corpus: median error 18%→10%). Org sharing = sufficient statistics only (`{n, p50, p90}`, de-identified
+labels — never prompts/outputs/$) via `calibrate push|fetch`, auto on the daily report. Zero LLM spend
+per estimate. Full flow + the 3-call consumer pattern: README §Learned cost estimator.
+
 ## Principle: *considering* history, not *from* history
 - **From history** = lookup: replay the past winner. Assumes the past transfers directly.
 - **Considering history** = a **learning advisor** that uses history as *evidence/priors* and reasons over it
