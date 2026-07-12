@@ -25,9 +25,11 @@ jobs:
         run: spendguard pricing
       - name: Price freshness (warns if stale; non-fatal here)
         run: spendguard check-prices || true
-      - name: Test suite + coverage (offline — no network, no spend)
+      - name: Test suite + coverage (offline — ENFORCED by the runner's dead proxy + stripped keys)
         run: |
-          SPENDGUARD_COVERAGE=1 pytest
+          # -n auto: every test file is an isolated subprocess with its own temp home, so they are
+          # embarrassingly parallel (one live-billing hog once made the serial suite read as 24 min).
+          SPENDGUARD_COVERAGE=1 pytest -n auto
           coverage combine
           # Two floors: a whole-package regression floor, and a HIGH bar on the money-critical core (the gate,
           # ledger, reconcile, pricing, attribution). The package number is dragged by I/O-adapter modules

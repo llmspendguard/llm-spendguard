@@ -24,6 +24,12 @@ ck("ts is a UTC ISO timestamp", isinstance(e["ts"], str) and e["ts"][:4].isdigit
 ck("payload preserved verbatim", e["provider"] == "openai" and e["cost"] == 1.5 and e["kind"] == "batch")
 
 ck("empty event → type 'event', still fully enveloped", (lambda x: x["v"] == emit.EVENT_V and x["type"] == "event" and "id" in x and "ts" in x)(emit.envelope({})))
+
+# attribution context rides on EVERY event — the same conv/project the ledger records,
+# so consumers (dashboards) can attach the event to the exact conversation that spent
+ck("envelope carries conv_id (ledger-consistent attribution)", isinstance(e.get("conv_id"), str) and len(e["conv_id"]) > 0)
+ck("envelope carries project (repo attribution)", isinstance(e.get("project"), str) and len(e["project"]) > 0)
+ck("explicit conv_id is respected (not overwritten)", emit.envelope({"conv_id": "given"})["conv_id"] == "given")
 ck("explicit type is respected (not overwritten by kind)", emit.envelope({"type": "savings", "kind": "batch"})["type"] == "savings")
 ck("unique ids across calls", emit.envelope({})["id"] != emit.envelope({})["id"])
 

@@ -53,6 +53,15 @@ def test_script(script):
     env = dict(os.environ)
     env["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-pytest-")
     env["SPENDGUARD_TEST_ISOLATED"] = "1"            # tests skip their own re-exec; use this isolated home
+    # OFFLINE, ENFORCED: the suite once inherited real provider keys and `doctor`'s leak check silently
+    # pulled 30 days of LIVE provider billing inside a "offline" test — 213s of network in one file.
+    # A dead proxy makes any accidental external call fail in milliseconds (loud, not slow); localhost
+    # servers tests spin up themselves stay reachable via no_proxy. Real keys are stripped — a test that
+    # needs a key sets its own fake one.
+    env["http_proxy"] = env["https_proxy"] = env["HTTP_PROXY"] = env["HTTPS_PROXY"] = "http://127.0.0.1:9"
+    env["no_proxy"] = env["NO_PROXY"] = "localhost,127.0.0.1"
+    for k in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "VAST_API_KEY", "GEMINI_API_KEY"):
+        env.pop(k, None)
     if COVERAGE:
         env["COVERAGE_PROCESS_START"] = RCFILE
         # with the .pth hook → plain python (coverage starts at startup, traces sitecustomize imports);

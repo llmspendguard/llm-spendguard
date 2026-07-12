@@ -126,15 +126,23 @@ EVENT_V = 1   # event-envelope version — lets a consumer branch on shape as th
 
 
 def envelope(event):
-    """Normalize an event into the standard message envelope: { v, type, id, ts, ...payload }. PURE + tolerant —
-    fills any missing envelope field, preserves everything else, never raises. `type` defaults from the event's
-    `kind` (batch|realtime|…) so existing emitters need no change; `id` is a unique event id; `ts` is UTC ISO."""
+    """Normalize an event into the standard message envelope: { v, type, id, ts, conv_id, project, ...payload }.
+    Tolerant — fills any missing envelope field, preserves everything else, never raises. `type` defaults from the
+    event's `kind` (batch|realtime|…) so existing emitters need no change; `id` is a unique event id; `ts` is UTC
+    ISO. `conv_id`/`project` are the SAME attribution the ledger records (budget._conv/_project) so a consumer
+    (e.g. a live dashboard) can attach the event to the exact conversation/repo that spent the money."""
     import uuid
     e = dict(event or {})
     e.setdefault("v", EVENT_V)
     e.setdefault("type", e.get("kind") or "event")
     e.setdefault("id", uuid.uuid4().hex)
     e.setdefault("ts", datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"))
+    try:
+        from . import budget as _budget
+        e.setdefault("conv_id", _budget._conv())
+        e.setdefault("project", _budget._project())
+    except Exception:
+        pass
     return e
 
 
