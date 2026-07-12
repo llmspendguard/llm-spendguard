@@ -7,12 +7,15 @@ and guarantees none touch the real ~/.spendguard. `pytest` from the repo root ru
 import os
 import sys
 import glob
+import time
 import atexit
 import tempfile
 import sysconfig
 import subprocess
 
 import pytest
+
+FILE_BUDGET_S = 30   # hard per-file wall budget (slowest legit file ≈ 18s; the 213s hog hid under "green")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
@@ -70,7 +73,16 @@ def test_script(script):
                else [sys.executable, "-m", "coverage", "run", "-p", "--rcfile", RCFILE, script])
     else:
         cmd = [sys.executable, script]
+    t0 = time.monotonic()
     r = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=600, cwd=REPO)
+    took = time.monotonic() - t0
     out = r.stdout + r.stderr
     assert r.returncode == 0, f"{os.path.basename(script)} exited {r.returncode}\n{out}"
     assert "[FAIL]" not in r.stdout and "FAIL:" not in r.stdout, f"{os.path.basename(script)} reported a failure\n{out}"
+    # PER-FILE TIME BUDGET — the standing gate from incident #25: one file silently spent 213s on live
+    # provider billing for weeks because slow ≠ red. Every run measures every file as a byproduct (no
+    # separate profiler to remember to run); a hog now FAILS the suite the day it appears. Genuinely
+    # heavy files raise the budget here, on purpose, in review — never by drifting.
+    assert took <= FILE_BUDGET_S, (
+        f"{os.path.basename(script)} took {took:.1f}s (> {FILE_BUDGET_S}s budget) — a sleep, live network "
+        f"call, or runaway loop is hiding in an 'offline' test. Profile it: time python {script}")

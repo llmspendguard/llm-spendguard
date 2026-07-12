@@ -33,7 +33,7 @@ def main(argv=None):
             pass
     if cmd in ("status", "on", "off", "doctor"):
         from . import gate
-        return gate._cli(cmd)
+        return gate._cli(cmd, live="--live" in rest)   # doctor --live forces the full provider pull
     if cmd == "report":
         from . import report
         sys.argv = ["report"] + rest

@@ -82,7 +82,7 @@ config` (show current); see [Configuration](#configuration).
 ```
 # enforce / control
 spendguard status | on | off                 # kill switch (persistent flag)
-spendguard doctor                            # is the gate ENFORCING in THIS interpreter? (+ ledger-leak check)
+spendguard doctor [--live]                   # is the gate ENFORCING here? + CACHED leak verdict w/ age (--live = full pull)
 spendguard install-hook --venv <path>        # gate every process in ANOTHER venv/repo (--uninstall to remove; alias: gate-venv)
 spendguard install-hook --user [--python P]  # gate a python's per-USER site (system-python bypass; PEP668-safe, no pip)
 spendguard install-rule [--global|--project DIR]  # drop the spendguard rule into CLAUDE.md → every AI chat wires it in

@@ -4,6 +4,19 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+### Fast doctor + suite speed/offline gates (incident #25)
+- **`spendguard doctor` is instant**: the leak verdict is read from `leak_line.json`, written as a
+  byproduct wherever `leak_line()` already computes (daily report / reconcile / close) and shown WITH
+  ITS AGE ("as of 2.1h ago"); no cache = honest "leak status UNKNOWN — run reconcile", never a silent
+  skip; `--live` forces the full ~30-day provider pull (previously the default: 3.5 min per doctor).
+- **Test suite 23 min → ~25 s** and un-regressable: the runner injects a dead proxy + strips provider
+  keys (an accidental live call inside the "offline" suite — the very bug that hid doctor's provider
+  pull for weeks — now fails in milliseconds, loudly), runs `pytest -n auto`, and enforces a per-file
+  30s wall budget every run (a future hog fails the suite the day it appears). Direct collection of a
+  script-style test (`pytest tests/test_x.py`) errors immediately with the canonical command instead
+  of hanging. Guards: `tests/test_gate_cli.py` (doctor <2s + cached/UNKNOWN wording), `test_runner.py`
+  budget assert, `tests/conftest.py`.
+
 ### Learned cost estimator (`spendguard calibrate`)
 - **`calibrate.py`** — predicts a planned job's $ from YOUR captured history, correcting the naive
   estimate (input≈len/4 · output=max_tokens · flat realtime price) where it predictably misses:

@@ -983,7 +983,7 @@ def require(cap: "float | None" = None) -> None:
             "a gated venv, or `pip install llm-spendguard` and `import spendguard` before the SDK is used.")
 
 
-def _cli(cmd="status"):
+def _cli(cmd="status", live=False):
     if cmd == "off":
         open(FLAG, "w").write("disabled\n")
         print(f"🔴 spend gate DISABLED (persistent). Re-enable: spendguard on\n  flag: {FLAG}")
@@ -1047,15 +1047,30 @@ def _cli(cmd="status"):
                     print("  saas      : ⚪ off (set up a per-repo .spendguard.json to push this repo to the server)")
             except Exception:
                 pass
-            try:                                   # ungoverned spend (bypass detection)
+            try:                                   # ungoverned spend (bypass detection) — CACHED verdict.
+                # A health check must be FAST: the live leak computation pulls ~30 days of provider billing
+                # (measured 3.5 min) and already runs in the daily report/reconcile, which persist it as a
+                # byproduct. Read that, show its AGE; no cache = honest UNKNOWN, never a silent skip.
+                # `spendguard doctor --live` forces the full pull.
                 from . import ledger_sync
-                line = ledger_sync.leak_line()
-                if line:
-                    print(f"  ledger    : {line}")
+                if live:
+                    line = ledger_sync.leak_line()
+                    print(f"  ledger    : {line}" if line else "  ledger    : (nothing to compare yet)")
+                else:
+                    cached = ledger_sync.cached_leak_line()
+                    if cached is None:
+                        print("  ledger    : leak status UNKNOWN — run `spendguard reconcile` (free) "
+                              "or `spendguard doctor --live`")
+                    else:
+                        cline, age = cached
+                        age_s = f"{age/3600:.1f}h" if age >= 3600 else f"{age/60:.0f}m"
+                        print(f"  ledger    : {cline or 'nothing to compare'}  (as of {age_s} ago — "
+                              f"`spendguard reconcile` refreshes)")
             except Exception:
-                pass
+                print("  ledger    : leak status UNKNOWN — check could not run")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(_cli(sys.argv[1] if len(sys.argv) > 1 else "status"))
+    sys.exit(_cli(sys.argv[1] if len(sys.argv) > 1 else "status",
+                  live="--live" in sys.argv[2:]))

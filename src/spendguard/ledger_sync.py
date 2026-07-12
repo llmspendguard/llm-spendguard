@@ -328,18 +328,26 @@ def reconcile_realtime(since=None):
     return dict(since=since, imported=round(imported, 4), rows=rows)
 
 
-def leak_line(since=None):
-    """One-line batch status for the report/doctor (or None if nothing to compare). Distinguishes:
-      • a real LEAK — provider truth NOT in the ledger at all (alarm, ungoverned spend);
-      • a capture-rate gap — gate didn't record it live, but reconcile backfilled it (accounted, just not captured
-        at the source — informational, NOT an alarm);
-      • pre-batch-recording history — provider batch before the gate tracked batch (expected; one reconcile absorbs it).
-    Reporting a capture-rate gap as a LEAK is the bug this fixes: it cried '~$1.9k ungoverned, install the gate' when
-    every batch since recording began was in fact accounted."""
+def _leak_cache_path():
+    from . import config
+    return config.HOME / "leak_line.json"
+
+
+def cached_leak_line():
+    """(line_or_None, age_seconds) from the LAST computed leak line, or None if never computed.
+    Data efficiency: the provider pull behind leak_line() takes minutes; it already runs in the daily
+    report / reconcile / close, and each run persists its verdict here as a byproduct. Fast readers
+    (`spendguard doctor`) reuse that knowledge with its age instead of re-pulling 30 days of billing."""
+    import json
+    import time
     try:
-        c = _compute(since)
+        d = json.loads(_leak_cache_path().read_text())
+        return d.get("line"), max(0.0, time.time() - float(d["ts"]))
     except Exception:
         return None
+
+
+def _render_leak_line(c):
     if c["post_p"] <= 0 and c.get("pre_ledger", 0) <= 0.5:
         return None
     post_p, leak, cap, pre = c["post_p"], c["leak"], c.get("capture_rate", 100.0), c.get("pre_ledger", 0.0)
@@ -352,6 +360,30 @@ def leak_line(since=None):
     cap_s = f"gate captured {cap:.0f}% live" + ("" if cap >= 80 else " — `spendguard coverage` lists any ungated sources")
     pre_s = f"; ${pre:.0f} pre-batch-recording (one reconcile absorbs it)" if pre > 0.5 else ""
     return f"ledger batch: ✓ {c['coverage']:.0f}% accounted, no material leak — {cap_s}{pre_s}."
+
+
+def leak_line(since=None):
+    """One-line batch status for the report (or None if nothing to compare). Distinguishes:
+      • a real LEAK — provider truth NOT in the ledger at all (alarm, ungoverned spend);
+      • a capture-rate gap — gate didn't record it live, but reconcile backfilled it (accounted, just not captured
+        at the source — informational, NOT an alarm);
+      • pre-batch-recording history — provider batch before the gate tracked batch (expected; one reconcile absorbs it).
+    Reporting a capture-rate gap as a LEAK is the bug this fixes: it cried '~$1.9k ungoverned, install the gate' when
+    every batch since recording began was in fact accounted.
+    Every SUCCESSFUL computation (including a 'nothing to compare' None — that too is knowledge) persists to
+    leak_line.json for cached_leak_line() readers; a failed compute is NOT cached (failure isn't knowledge)."""
+    try:
+        c = _compute(since)
+    except Exception:
+        return None
+    line = _render_leak_line(c)
+    try:
+        import json
+        import time
+        _leak_cache_path().write_text(json.dumps({"line": line, "ts": time.time()}))
+    except Exception:
+        pass
+    return line
 
 
 def sync(since=None):
