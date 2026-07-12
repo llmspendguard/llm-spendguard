@@ -79,6 +79,8 @@ def main():
     ap.add_argument("--mode", default="batch", choices=["batch", "realtime"])
     ap.add_argument("--assume-cache", action="store_true", help="credit prompt-cache on the repeated prefix (only if prefix >= model min)")
     ap.add_argument("--cap-dollars", type=float, help="flag any projection above this (sanity bound)")
+    ap.add_argument("--label", help="activity/intent — adds the LEARNED estimate from your history "
+                                    "(spendguard calibrate) next to this naive projection")
     a = ap.parse_args()
 
     if a.from_sample:
@@ -117,6 +119,16 @@ def main():
         print(f"  (vs {bm} @ pack=1 = ${p1['cost']:,.2f} — packing saves ${p1['cost']-br['cost']:,.2f})")
     if a.cap_dollars and br["cost"] > a.cap_dollars:
         print(f"  *** even the cheapest option exceeds --cap-dollars ${a.cap_dollars}: shrink scope or prompt before running. ***")
+    if a.label:                # the LEARNED correction next to the naive projection (zero spend)
+        try:
+            from . import calibrate
+            per_req_in = prefix + bp * in_per
+            lr = calibrate.estimate(a.label, n=br["n_req"], model=bm, transport=mode,
+                                    est_in_tokens=per_req_in, est_out_max=bp * out_per)
+            print(f"  learned ({a.label}): ${lr['p50_usd']:,.2f} p50 … ${lr['p90_usd']:,.2f} p90 "
+                  f"[basis={lr['basis']}, level={lr['level']}, n_obs={lr['n_obs']}] — history-corrected")
+        except Exception as e:
+            print(f"  learned ({a.label}): no calibration yet ({e}) — history will sharpen this")
     print("\nNext: pick a row, run that config, then verify with reconcile_openai_spend.py --estimate <$cost>")
 
 

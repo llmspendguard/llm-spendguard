@@ -259,6 +259,17 @@ def _run(a):
             print(f"  learnings auto-refreshed ({fres['mode']}) — caged under caps.meta")
     except Exception:
         pass
+    try:
+        from . import calibrate as _calibrate
+        pres = _calibrate.pair()                    # join logged job predictions to captured actuals
+        if pres.get("paired"):
+            print(f"  calibration: {pres['paired']} job prediction(s) paired to actuals → estimator sharpened")
+        _calibrate.push_shared()                    # org loop: contribute stats up, pull the aggregate down
+        fres2 = _calibrate.fetch_shared()           # (both no-ops when visibility=private / server lacks it)
+        if fres2.get("cells"):
+            print(f"  calibration: org prior refreshed ({fres2['cells']} shared cells) — estimates shrink toward the org")
+    except Exception:
+        pass
 
     # ── top learnings (the advisor's confidence-scored insights) ──
     try:

@@ -5,6 +5,7 @@
   spendguard receipt [--json]             # running tally (today/7d/month); also auto-emitted per flow
   spendguard reconcile openai|anthropic [--since DATE] [--by-day]
   spendguard estimate --items N ...
+  spendguard calibrate predict|show|pair|backtest   # LEARNED estimator: your history corrects the naive $
   spendguard audit [--ci]
   spendguard pricing                      # print the canonical table
 """
@@ -54,9 +55,14 @@ def main(argv=None):
             print(e)
             return 1
     if cmd == "estimate":
-        from . import estimate as e
+        # explicit submodule import: `from . import estimate` returns pricing.estimate (the function
+        # __init__ re-exports), which shadows the submodule and broke this dispatch silently
+        from .estimate import main as estimate_main
         sys.argv = ["estimate"] + rest
-        return e.main()
+        return estimate_main()
+    if cmd == "calibrate":                            # learned estimator over the captured corpus (zero spend)
+        from . import calibrate
+        return calibrate.main(rest)
     if cmd == "audit":
         from . import audit as a
         sys.argv = ["audit"] + rest

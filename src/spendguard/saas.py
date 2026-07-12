@@ -384,6 +384,43 @@ def push_insights():
         raise
 
 
+def push_calibration(cells=None):
+    """Push this install's learned-estimator SUFFICIENT STATISTICS — per (label, model, transport,
+    quantity) only {n, p50, p90}: aggregate ratios, never prompts, outputs, or raw calls. Labels ride
+    through de-id like every text egress. The server aggregates across members so the whole org's
+    history becomes each member's PRIOR (`spendguard calibrate fetch`). Honors visibility."""
+    c = conn()
+    if c.get("visibility", "private") == "private":
+        return {"skipped": "visibility=private — nothing leaves this machine"}
+    cok, cwhy = contributor_ok()
+    if not cok:
+        return {"skipped": cwhy}
+    if cells is None:
+        from . import calibrate
+        cells = calibrate.cell_stats()
+    if not cells:
+        return {"skipped": "no calibration cells yet — run some gated work first"}
+    try:
+        return _request("POST", "/v1/calibration", {"member": contributor(), "cells": cells})
+    except RuntimeError as e:
+        # an older server may not implement calibration yet — never break the sync loop over it
+        if " 404" in str(e) or " 405" in str(e):
+            return {"skipped": "server has no /v1/calibration endpoint yet"}
+        raise
+
+
+def fetch_calibration():
+    """Pull the ORG-AGGREGATED calibration cells (n-weighted across members). The caller
+    (calibrate.fetch_shared) caches them; estimate() uses them as the shrinkage PRIOR — the org's
+    experience under your local stats, never instead of them."""
+    try:
+        return _request("GET", "/v1/calibration")
+    except RuntimeError as e:
+        if " 404" in str(e) or " 405" in str(e):
+            return {"skipped": "server has no /v1/calibration endpoint yet", "cells": []}
+        raise
+
+
 def push_workdone(since=None, by="month", dry=False):
     """Push the WORK-DONE roll-up — git commit subjects + LLM batch-intent counts per period·project — so the
     dashboard reads "spent $X, here's what got done." Tier-1: deterministic + FREE (no diffs, no prompts). Honors

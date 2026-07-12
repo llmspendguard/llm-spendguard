@@ -109,7 +109,7 @@ ck("is_truncated: out_tok hitting the cap exactly", bulkgate.is_truncated("stop"
 ck("is_truncated: a clean stop is NOT truncated", not bulkgate.is_truncated("stop", out_tok=100, max_tokens=240))
 
 sig_mt = bulkgate.sig(OPUS, template_id="cards", template_version="v1", schema_name="card")
-for o in (250, 256, 300, 331, 362, 478):                  # observed clean outputs (warden describe-card shape)
+for o in (250, 256, 300, 331, 362, 478):                  # observed clean outputs (a real describe-card job's shape)
     bulkgate.note_response(sig_mt, OPUS, o, max_tokens=550, finish_reason="stop")
 bulkgate.note_response(sig_mt, OPUS, 240, max_tokens=240, finish_reason="length")    # one truncation
 mt = bulkgate.maxtokens(sig_mt, current_max=240)

@@ -2,6 +2,38 @@
 
 All notable changes to **llm-spendguard**. Format loosely follows Keep a Changelog; dates are UTC.
 
+## [Unreleased]
+
+### Learned cost estimator (`spendguard calibrate`)
+- **`calibrate.py`** — predicts a planned job's $ from YOUR captured history, correcting the naive
+  estimate (input≈len/4 · output=max_tokens · flat realtime price) where it predictably misses:
+  models rarely fill max_tokens, tokenizers drift, batch ≠ realtime, caching lands. Learns quantile
+  distributions per (activity label, model) — FILL (out÷max_tokens, from the existing `gate_calls`
+  truncation telemetry), OUT_PER_IN, $ RESIDUAL vs the pricing table, and IN_RATIO (from paired
+  predictions) — with empirical-Bayes shrinkage across an exact→model→global hierarchy; sparse cells
+  borrow strength, zero data degrades to the naive answer. Every prediction returns `{p50_usd,
+  p90_usd, level, n_obs, basis, naive_usd}` — confidence is part of the answer. Pure sqlite
+  statistics: zero LLM spend per estimate; prices only via `pricing.py`.
+- **Prediction↔actual loop** — `calibrate.record_estimate(job_id, …)` logs a caller's prediction
+  (distinct from `bulkgate.record_estimate`, which authorizes worst-case spend); the gate captures
+  the actuals; `calibrate pair` joins them (exact via `calls.context(chain=job_id)`, else
+  label+model inside the pairing window; a closed window with no actuals stays visible as expired —
+  UNKNOWN never reads as $0). The daily report auto-pairs. Consumers wire in with three calls:
+  `estimate(...)` before, `record_estimate(...)` at submit, `calls.context(intent=label,
+  chain=job_id)` around the run — no spendguard changes needed per consumer.
+- **Ship gate met (backtest on the real corpus)** — `spendguard calibrate backtest` time-splits each
+  cell 70/30 and scores held-out median abs % error, naive vs learned, with naive given PERFECT input
+  knowledge: overall 18%→10%; worst naive cells corrected 2978%→23%, 5427%→385%, 124%→12%; the one
+  regressed cell is printed, not hidden. Surfaced in `spendguard estimate --label` and `advise`.
+- **Org-shared learning (`calibrate push|fetch`)** — members share SUFFICIENT STATISTICS only
+  (`{n, p50, p90}` per cell; labels de-identified; never prompts/outputs/$) via `POST /v1/calibration`;
+  `fetch` caches the n-weighted org aggregate and `estimate()` shrinks toward it: the org's experience
+  is the PRIOR, local stats always on top (an exact-label org cell outranks local cross-model pools,
+  never local cell evidence). Auto push+fetch+pair ride the daily report; `visibility=private` shares
+  nothing. Also fixed in this arc: the `spendguard estimate` CLI dispatch was silently broken
+  (`__init__`'s `pricing.estimate` re-export shadowed the submodule) — fixed + regression-guarded.
+  Guard: `tests/test_calibrate.py` (32).
+
 ## [0.3.1] — 2026-07-06
 
 ### Realized efficiency + loss-led guarded framing (#47)

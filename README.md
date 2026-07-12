@@ -112,7 +112,10 @@ spendguard close [--month YYYY-MM] [--csv] [--account]  # monthly close, client 
 spendguard calls [--intent X]                # per-intent cost + good% + $/good (opt-in corpus)
 spendguard prompts [--intent X] [--json]     # prompt-efficiency lint: boilerplate/context/truncation/model-mix, ranked by $ at stake
 spendguard realized [--intent X] [--sync]    # MEASURED before/after $/call around insight adoptions (no counterfactuals); --sync → guarded
-spendguard estimate --items N --from-sample f.jsonl --packs 1,30
+spendguard estimate --items N --from-sample f.jsonl --packs 1,30 [--label X]   # --label adds the LEARNED correction
+spendguard calibrate predict --label X --n N --model M [--transport batch] [--in-tokens T] [--out-max T]
+                                             # LEARNED estimator: your captured history corrects the naive $
+spendguard calibrate show | pair | backtest  # what's learned + confidence · join predictions↔actuals · MAPE vs naive
 spendguard maxtokens <sig> [current_max]     # data-driven max_tokens bound for a call-class (p99×1.5 — measured, not guessed)
 spendguard pricing | providers               # canonical price table · configured providers→models
 spendguard cross-check | check-prices | sync-prices | refresh-prices   # OpenRouter drift · freshness · LiteLLM sync · refresh
@@ -423,6 +426,34 @@ the conversation that ran each batch; remote-compute rows route by instance labe
 remainder can be resolved by a small, **capped, estimate-first** LLM pass (never auto-run). The result is a
 clean P&L by team / project / intent with no manual entry. (Mechanism: `tag.py` cascade, `signal.py` per
 project·intent·model roll-up, `conv.py` batch→conversation attribution, `saas.py` `org→team→user` push.)
+
+## Learned cost estimator — *spendguard learns to estimate YOUR work correctly* (`spendguard calibrate`)
+The naive estimate (input ≈ len(prompt)/4 · output = max_tokens · flat price) misses in a predictable,
+per-activity way: models rarely fill max_tokens, tokenizers differ, batch ≠ realtime, caching lands.
+`calibrate` closes the loop with the actuals spendguard already captures — per (activity, model) quantile
+calibrations (output-fill, out-per-in, $-residual, input-ratio) with empirical-Bayes shrinkage across an
+exact → model → global hierarchy. Zero LLM spend per estimate; prices only from `pricing.py`; every answer
+carries its confidence (`level`, `n_obs`). Verified by a held-out backtest (`calibrate backtest`) that must
+beat naive MAPE — on the reference corpus: overall 18%→10%, worst cells 2978%→23%.
+
+**The org learns together** (`calibrate push` / `calibrate fetch`, auto on the daily report when a team
+server is connected): each member shares only SUFFICIENT STATISTICS — per (label, model, transport,
+quantity) `{n, p50, p90}`, labels de-identified, never prompts/outputs/$ — and pulls back the n-weighted
+org aggregate. The org's experience becomes each member's estimation PRIOR; your own history always sits
+on top (an exact-label org cell outranks your generic cross-model pools, never your own cell evidence).
+Visibility-gated: `visibility=private` shares nothing.
+
+Any job runner wires in with three calls — **no spendguard-side changes per consumer**:
+```python
+from spendguard import calibrate, calls
+
+est = calibrate.estimate("stage:describe", n=1200, model="gpt-5.5", transport="batch",
+                         est_in_tokens=prompt_tokens, est_out_max=max_tokens)   # plan with p50/p90
+calibrate.record_estimate(job_id, "stage:describe", "gpt-5.5", est["p50_usd"],
+                          est_in=prompt_tokens, est_out_max=max_tokens, n=1200, transport="batch")
+with calls.context(intent="stage:describe", chain=job_id):                      # exact pairing key
+    run_the_job()          # the gate captures the actuals; `spendguard report` pairs + sharpens nightly
+```
 
 ## Learning advisor — *recommend considering history* (Layer 1 deterministic · Layer 2 LLM)
 - **`spendguard advise [--intent X] [--plan MODEL]`** — pure-SQL ranking of your corpus by `$/good` (or `$/M out`

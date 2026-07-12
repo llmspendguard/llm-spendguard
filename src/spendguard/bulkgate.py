@@ -1,6 +1,6 @@
 """TEST-FIRST + ESTIMATE-FIRST enforcement — make it structurally impossible to run a BULK paid LLM job without a
 zero-spend ESTIMATE and a verified small-sample TEST. The protocol used to exist only as discipline and got skipped
-(a warden opus escalation spent ~$5.61 unestimated + untested, then crashed). This makes the gate BLOCK instead.
+(a real consumer's opus escalation spent ~$5.61 unestimated + untested, then crashed). This makes the gate BLOCK instead.
 
 How: two flags — `estimated` and `tested` — attach to a CALL-CLASS SIGNATURE (model + template + schema), persist in
 sqlite (survive a fresh `python`), and `check_bulk` REFUSES a bulk submit whose sig lacks FRESH flags. The only path to
@@ -346,7 +346,7 @@ def gated_batch(sig, model):
             job.estimate(worst_case_usd, count)     # record_estimate
             job.test(n, run_fn, verify_fn=None)     # runs a <=preview_max sample (allowed), verifies, record_tested
             job.run(count, est_usd, submit_fn)      # check_bulk (raises if estimate/test missing) → submit_fn()
-    warden's batchpool becomes a CONSUMER of this, not a reimplementation."""
+    a consumer's batch pool becomes a CONSUMER of this, not a reimplementation."""
     class _Job:
         def estimate(self, est_usd, count):
             record_estimate(sig, model, est_usd, count)

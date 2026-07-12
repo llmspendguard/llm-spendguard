@@ -63,6 +63,11 @@ SETTINGS = [
     dict(section="advisor", key="judge_model", store="config.json:advisor.judge_model", env="SPENDGUARD_ADVISOR_JUDGE_MODEL",
          default="claude-haiku-4-5", kind="string", secret=False,
          desc="Model for BULK quality reconstruction/judging. Batch API; must exist in pricing.py."),
+    dict(section="calibrate", key="pair_horizon_hours", store="(env only)", env="SPENDGUARD_PAIR_HORIZON_H",
+         default="24", kind="number", secret=False,
+         desc="Learned-estimator pairing window: a logged job prediction (`calibrate.record_estimate`) collects "
+              "its captured actuals for this many hours (chain==job_id matches pair regardless). After it closes "
+              "with no actuals the prediction is marked expired — visible UNKNOWN, never $0."),
 
     # ── budget backend ──
     dict(section="budget", key="backend", store="config.json:budget.backend", env=None, default="memory",

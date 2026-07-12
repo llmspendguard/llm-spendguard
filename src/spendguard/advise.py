@@ -77,6 +77,12 @@ def advise(intent=None, plan=None, as_of=None):
         print("  ⚠️ no quality labels here yet — this ranks COST only. Add judge/feedback or Layer-2 mining for quality.")
     print(f"  ⚠️ {sum(r[1]['jobs'] for r in rows)} jobs; confounds possible — confirm head-to-head with "
           f"`spendguard compare` on a fixed sample. (history proposes, compare disposes.)")
+    try:                        # learned-calibration confidence (fill ratios etc.) — see `spendguard calibrate`
+        from . import calibrate as _cal
+        for ln in _cal.summary_lines():
+            print("  " + ln)
+    except Exception:
+        pass
     return 0
 
 
