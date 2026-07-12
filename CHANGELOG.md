@@ -2,7 +2,7 @@
 
 All notable changes to **llm-spendguard**. Format loosely follows Keep a Changelog; dates are UTC.
 
-## [Unreleased]
+## [0.4.0] — 2026-07-12
 
 ### SQLite index audit — every query planned, every hot path indexed, drift impossible
 - Audited every extractable SQL statement in the codebase with `EXPLAIN QUERY PLAN` against the full
