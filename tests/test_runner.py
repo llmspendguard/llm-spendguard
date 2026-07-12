@@ -15,7 +15,12 @@ import subprocess
 
 import pytest
 
-FILE_BUDGET_S = 30   # hard per-file wall budget (slowest legit file ≈ 18s; the 213s hog hid under "green")
+# Hard per-file wall budget. Calibration: slowest legit file ≈ 18s bare, but CI runs with COVERAGE
+# tracing (~10× CPU on the heaviest modules) + `-n auto` contention on 2-vCPU runners — observed 48s
+# for a file that takes 1.6s locally. 120s holds everywhere while still catching the incident-#25
+# class (a 213s live-billing pull); accidental NETWORK is caught in milliseconds by the dead proxy
+# below regardless — this budget is the backstop for sleeps and runaway loops.
+FILE_BUDGET_S = 120
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
