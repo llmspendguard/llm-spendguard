@@ -92,6 +92,17 @@ def _estimate_openai_jsonl(data: bytes):
         model = model or body.get("model")
         for m in body.get("messages", []):
             in_tok += _content_tokens(m.get("content", ""))
+        if not body.get("messages") and body.get("input") is not None:
+            # embeddings (and Responses-style) batch bodies carry `input`, not `messages` — these used
+            # to estimate as $0, so the cap could never see an embeddings batch coming.
+            inp = body["input"]
+            for item in (inp if isinstance(inp, list) else [inp]):
+                if isinstance(item, str):
+                    in_tok += _ct(item)
+                elif isinstance(item, list):
+                    in_tok += len(item)              # pre-tokenized int array
+                elif isinstance(item, int):
+                    in_tok += 1
         out += body.get("max_tokens", body.get("max_completion_tokens", 0)) or 0
     cost = pricing.batch_cost(model, in_tok, out) if model else 0.0
     return dict(provider="openai", model=model, requests=n, in_tok=in_tok, out_tok=out, cost=cost)
@@ -515,6 +526,26 @@ def _act_oai_resp(result):
     return None if not u else (getattr(u, "input_tokens", 0) or 0, getattr(u, "output_tokens", 0) or 0)
 
 
+def _est_oai_embeddings(kw):
+    """OpenAI embeddings (client.embeddings.create) — input is a string, a list of strings, or
+    pre-tokenized int arrays; output tokens are always 0 (the table prices embedding out at $0)."""
+    inp = kw.get("input")
+    n = 0
+    for item in (inp if isinstance(inp, list) else [inp]):
+        if isinstance(item, str):
+            n += _ct(item)
+        elif isinstance(item, list):                 # already token ids — the count IS the length
+            n += len(item)
+        elif isinstance(item, int):
+            n += 1
+    return kw.get("model"), n, 0
+
+
+def _act_oai_embeddings(result):
+    u = getattr(result, "usage", None)               # embeddings usage = prompt_tokens/total_tokens only
+    return None if not u else ((getattr(u, "prompt_tokens", 0) or 0), 0)
+
+
 def _est_anth_msg(kw):
     n = 0
     s = kw.get("system")
@@ -858,6 +889,8 @@ RT_INTERCEPTORS = [
     ("openai.resources.responses", "AsyncResponses", "create", _est_oai_resp, _act_oai_resp, True),
     ("anthropic.resources.messages", "Messages", "create", _est_anth_msg, _act_anth_msg, False),
     ("anthropic.resources.messages", "AsyncMessages", "create", _est_anth_msg, _act_anth_msg, True),
+    ("openai.resources.embeddings", "Embeddings", "create", _est_oai_embeddings, _act_oai_embeddings, False),
+    ("openai.resources.embeddings", "AsyncEmbeddings", "create", _est_oai_embeddings, _act_oai_embeddings, True),
 ]
 
 

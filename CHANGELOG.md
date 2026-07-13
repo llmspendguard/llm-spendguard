@@ -2,6 +2,18 @@
 
 All notable changes to **llm-spendguard**. Format loosely follows Keep a Changelog; dates are UTC.
 
+## [Unreleased]
+
+### Embeddings: fully captured (two blind spots closed)
+- **Realtime `client.embeddings.create` is now intercepted** (sync + async): estimated from the input
+  (strings, lists, or pre-tokenized id arrays), checked against the realtime budget like any other call,
+  accounted at the table price (out=0), and recorded to the corpus. Previously invisible: not patched,
+  not recorded, and not provider-reconcilable without an admin key.
+- **Batch JSONL bodies carrying `input`** (embeddings / Responses-style) are now estimated — they used
+  to count $0 input, so the pre-spend cap could never see an embeddings batch coming (actuals were
+  already trued up at reconcile; now the GATE sees them too, priced at the batch rate).
+  Guard: `tests/test_gate_embeddings.py` (12).
+
 ## [0.4.0] — 2026-07-12
 
 ### SQLite index audit — every query planned, every hot path indexed, drift impossible

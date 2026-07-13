@@ -25,7 +25,8 @@ it reconstructs *what* you should do cheaper, and won't let "cheaper" cost you q
 ## What it does
 **Enforce → see → plan → prove → learn.**
 - **gate** — overlay on the OpenAI/Anthropic SDKs (auto-installs via `sitecustomize.py`): estimates every
-  batch/real-time call, **hard-stops** over a cap (per-batch + cross-process daily/monthly) — then *asks* if interactive.
+  batch/real-time call — chat, Responses API, Anthropic messages, **and embeddings** (realtime + batch
+  `input` bodies) — **hard-stops** over a cap (per-batch + cross-process daily/monthly) — then *asks* if interactive.
 - **pricing** — one canonical, verifiable table (layered from LiteLLM + curated + override), cross-checked
   vs OpenRouter; an `audit` fails CI if any code hardcodes a disagreeing price.
 - **reconcile** — actual $ from real billed tokens; **`reconcile-ledger`** compares the local ledger to
