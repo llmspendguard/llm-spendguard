@@ -179,7 +179,14 @@ def normalize(model: str) -> str:
     is a verified alias, not a guess; an explicit PRICING entry still wins (see price())."""
     if model is None:
         raise ValueError("model is None")
-    m = re.sub(r"-\d{4}-\d{2}-\d{2}$|-\d{8}$", "", model.strip())
+    m = model.strip()
+    if m.startswith("ft:"):
+        # fine-tuned ids are ft:BASE[:org][::job] — the PRICE identity is ft:<canonical BASE>. The org/job
+        # suffix never changes the rate; the ft prefix ALWAYS does (ft inference bills above base, so
+        # resolving to the bare base would systematically under-price — see price()).
+        base = m.split(":", 2)[1]
+        return "ft:" + normalize(base)
+    m = re.sub(r"-\d{4}-\d{2}-\d{2}$|-\d{8}$", "", m)
     m = re.sub(r"-latest$", "", m)
     m = re.sub(r"-codex$", "", m)
     return m
@@ -189,12 +196,24 @@ def price(model: str) -> dict:
     if model in PRICING:                          # an explicit verified entry (codex/dated/o-series) always wins
         return PRICING[model]
     m = normalize(model)
-    if m not in PRICING:
+    if m in PRICING:
+        return PRICING[m]
+    if m.startswith("ft:"):
+        # the LiteLLM breadth layer keys fine-tunes by DATED base (ft:gpt-4o-mini-2024-07-18) — accept a
+        # dated variant of the same base. NEVER fall back to the bare base price: ft inference bills higher,
+        # and a silent under-price is worse than the loud $0-and-WARN the caller gets from this KeyError.
+        for k in PRICING:
+            if k.startswith(m + "-"):
+                return PRICING[k]
         raise KeyError(
-            f"No canonical price for model {model!r} (normalized {m!r}). "
-            f"Add it to scripts/pricing.py with a source — DO NOT guess a price."
+            f"No price for fine-tuned model {model!r} (looked for {m!r} and dated variants). "
+            f"Run `spendguard sync-prices` (the LiteLLM layer carries ft rates) or add it with a source — "
+            f"the BASE price is NOT a substitute (ft inference bills above base)."
         )
-    return PRICING[m]
+    raise KeyError(
+        f"No canonical price for model {model!r} (normalized {m!r}). "
+        f"Add it to scripts/pricing.py with a source — DO NOT guess a price."
+    )
 
 
 def _cost(model, in_tok, out_tok, cached_in_tok, batch):

@@ -34,6 +34,22 @@ try:
 except KeyError:
     check("raises KeyError on unknown", True)
 
+print("-- fine-tuned (ft:) resolution: ft entry or LOUD failure, NEVER the base price --")
+check("ft normalize strips org+job, keeps ft + canonical base",
+      P.normalize("ft:gpt-4o-mini-2024-07-18:acme::job123") == "ft:gpt-4o-mini")
+check("ft normalize bare", P.normalize("ft:gpt-4o-mini") == "ft:gpt-4o-mini")
+P.PRICING["ft:gpt-4o-mini"] = {"in_": 0.3, "out": 1.2, "cached_in": 0.15, "batch_in": 0.15, "batch_out": 0.6}
+check("ft id resolves to the ft entry", P.price("ft:gpt-4o-mini:acme::j1")["in_"] == 0.3)
+del P.PRICING["ft:gpt-4o-mini"]
+P.PRICING["ft:gpt-4o-mini-2024-07-18"] = {"in_": 0.3, "out": 1.2, "cached_in": 0.15, "batch_in": 0.15, "batch_out": 0.6}
+check("ft id resolves via a DATED variant (LiteLLM layer keys)", P.price("ft:gpt-4o-mini:acme::j1")["out"] == 1.2)
+del P.PRICING["ft:gpt-4o-mini-2024-07-18"]
+try:
+    P.price("ft:gpt-4o-mini:acme::j1")               # base gpt-4o-mini IS priced — must NOT be used
+    check("unpriced ft NEVER falls back to the base price (raises)", False)
+except KeyError as e:
+    check("unpriced ft NEVER falls back to the base price (raises)", "BASE price is NOT a substitute" in str(e))
+
 print("-- cached tokens never INFLATE cost (clamp) --")
 no_cache = P.realtime_cost("gpt-5.5", 1000, 0, 0)
 over = P.realtime_cost("gpt-5.5", 1000, 0, 2000)          # cached > input → must clamp, not inflate
