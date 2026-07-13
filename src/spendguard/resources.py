@@ -18,6 +18,7 @@ import datetime
 import urllib.request
 
 from . import config
+from . import gpu_port
 
 # NOTE: the old conversation-alignment gap reconstruction (`_gpu_alignment` + `_GPU_KW`) was REMOVED. It spread the
 # blanket account gap across conversation-matched projects with a flat per-day weight — which (a) dumped a SHARED
@@ -55,18 +56,14 @@ def _get(path):
 
 def _label_map():
     """Config `resources.vastai.label_map` ({substring: project}) FIRST (user-specific, e.g. {"train": "ml-pipeline",
-    "render": "video"}), then DEFAULT_LABEL_MAP. So labels actually map to projects (the GPU ground truth)."""
-    cfg = config._cfg_get("resources", "vastai", {}) or {}
-    m = cfg.get("label_map") or {} if isinstance(cfg, dict) else {}
-    return [(str(k).lower(), v) for k, v in m.items()] + DEFAULT_LABEL_MAP
+    "render": "video"}), then DEFAULT_LABEL_MAP. So labels actually map to projects (the GPU ground truth).
+    The config read is the shared gpu_port.label_map — every provider adapter resolves labels the same way."""
+    return gpu_port.label_map("vastai") + DEFAULT_LABEL_MAP
 
 
 def project_of(label, label_map=None):
-    lab = (label or "").lower()
-    for sub, proj in (label_map if label_map is not None else _label_map()):
-        if sub in lab:
-            return proj
-    return ""   # unknown label → untagged (surfaced, not guessed)
+    # unknown label → "" (untagged — surfaced, not guessed); shared matcher, same semantics as always
+    return gpu_port.project_of(label, label_map if label_map is not None else _label_map())
 
 
 def instances():
@@ -179,15 +176,12 @@ def gpu_rows(now=None, label_map=None):
 
 
 def _month_start_ts():
-    import datetime
-    t = datetime.datetime.now(datetime.timezone.utc)
-    return datetime.datetime(t.year, t.month, 1, tzinfo=datetime.timezone.utc).timestamp()
+    return gpu_port.month_start_ts()                       # shared default window (all GPU providers)
 
 
 def gpu_rows_by_day(since_ts=None, now=None, label_map=None):
     """Per (project, gpu, day) GPU cost — each instance's cost SPLIT across the UTC days it ran (dph × hours that
     day), not lumped on today. Attributed by label → project. since_ts defaults to the start of this month."""
-    import datetime
     now = now or time.time()
     since_ts = since_ts if since_ts is not None else _month_start_ts()
     from . import conv
@@ -200,23 +194,19 @@ def gpu_rows_by_day(since_ts=None, now=None, label_map=None):
         if not dph or not start:
             continue
         end = min(i.get("end_date") or now, now)
-        t = max(start, since_ts)
         proj = (project_of(i.get("label"), label_map)                                # LABEL = the GPU ground truth (user-set) → PRIMARY
                 or (i.get("project") or "").lower()                                  # then a stored/agentic project, if any
                 or (attrib.get(str(i.get("id"))) or {}).get("project") or "")         # timing-match ONLY for an UNLABELED box
     # NB: a vast.ai box is async — the chat open while it ran is often unrelated. Its LABEL (m2a-*, healiom_gpu*) is
     # explicit ground truth, so it WINS over the timing-match (which is for shared-key LLM realtime, not labeled GPU).
         gpu = i.get("gpu_name") or "?"
-        while t < end:                                     # walk day by day, clipping to each UTC day
-            day = datetime.datetime.fromtimestamp(t, datetime.timezone.utc).strftime("%Y-%m-%d")
-            d0 = datetime.datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=datetime.timezone.utc).timestamp()
-            de = d0 + 86400
-            hours = (min(end, de) - t) / 3600.0
+        # the ONE per-UTC-day splitting math, shared with every GPU provider adapter (gpu_port.day_slices —
+        # extracted from the day-walk that always lived here; identical behavior, guarded by this file's tests)
+        for day, hours in gpu_port.day_slices(start, end, since_ts):
             a = agg.setdefault((proj, gpu, day), {"project": proj, "gpu": gpu, "day": day, "cost": 0.0, "hours": 0.0, "instances": set()})
             a["cost"] += dph * hours
             a["hours"] += hours
             a["instances"].add(i.get("id"))
-            t = de
     rows = []
     for a in agg.values():
         a["instances"] = sorted(a["instances"])

@@ -110,11 +110,22 @@ def all_sources(ptmap=None, since=None):
         out["realtime"] = run(RealtimeSource(since=since), ptmap, since)
     except Exception as e:
         out["realtime"] = {"error": str(e)[:160]}
+    # GPU / remote-compute: EVERY source in the gpu_port registry through the same loop — vast.ai (key "gpu")
+    # + the port adapters (gpu:runpod / gpu:modal / gpu:lambdalabs) + any plugin-registered provider. An
+    # UNCONFIGURED adapter's factory returns None → silently skipped (never an error, never fake data).
     try:
-        from .resources import GPUSource
-        out["gpu"] = run(GPUSource(), ptmap, since)
+        from . import gpu_port
+        gpu_sources = gpu_port.sources()
     except Exception as e:
-        out["gpu"] = {"error": str(e)[:160]}
+        gpu_sources, out["gpu"] = {}, {"error": str(e)[:160]}
+    for key, factory in gpu_sources.items():
+        try:
+            src = factory()
+            if src is None:
+                continue
+            out[key] = run(src, ptmap, since)
+        except Exception as e:
+            out[key] = {"error": str(e)[:160]}
     return out
 
 

@@ -121,6 +121,59 @@ def _load():
 PRICING = _load()
 
 
+def _load_units():
+    """UNIT_PRICES {kind: {model[:variant]: usd}} for non-token billing — kinds: `image` (per image,
+    variant 'WxH:quality'), `audio_second` (transcription $/second), `tts_char` ($/character),
+    `training_token` (fine-tune training $/token). Layered like PRICING, lowest→highest:
+    LiteLLM cache per-unit fields (input_cost_per_second / *_per_character / *_per_image — provenance:
+    the synced upstream table)  →  curated prices.json `unit_prices`. NOTHING is guessed: an absent
+    unit price surfaces as a loud unpriced-call WARN at the gate, never a made-up number."""
+    units = {"image": {}, "audio_second": {}, "tts_char": {}, "training_token": {}, "web_search_call": {}}
+    home = os.environ.get("SPENDGUARD_HOME") or os.path.expanduser("~/.spendguard")
+    lit = os.path.join(home, "litellm_prices.json")
+    if os.path.exists(lit):
+        try:
+            for model, r in (json.load(open(lit)).get("unit_models") or {}).items():
+                if r.get("input_cost_per_second"):
+                    units["audio_second"][model] = float(r["input_cost_per_second"])
+                per_char = r.get("input_cost_per_character") or r.get("output_cost_per_character")
+                if per_char:
+                    units["tts_char"][model] = float(per_char)
+                per_img = r.get("output_cost_per_image") or r.get("input_cost_per_image")
+                if per_img:
+                    units["image"][model] = float(per_img)
+        except Exception as e:
+            import sys
+            sys.stderr.write(f"[pricing] WARN could not load LiteLLM unit prices ({e})\n")
+    for path in _candidate_files():
+        try:
+            for kind, entries in (_read(path).get("unit_prices") or {}).items():
+                if kind in units:
+                    units[kind].update({k: float(v) for k, v in entries.items()})
+        except Exception:
+            pass
+    return units
+
+
+UNIT_PRICES = _load_units()
+
+
+def unit_price(kind: str, model: str, variant: str = None) -> float:
+    """$ per unit for non-token billing. Lookup: exact `model:variant` → `model` (normalized too).
+    Raises KeyError when unpriced — callers record the call at $0 with a LOUD warn (never guess)."""
+    table = UNIT_PRICES.get(kind)
+    if table is None:
+        raise KeyError(f"unknown unit kind {kind!r}")
+    for key in ((f"{model}:{variant}",) if variant else ()) + (model, normalize(model)):
+        if key in table:
+            return table[key]
+    raise KeyError(
+        f"No {kind} unit price for {model!r}"
+        + (f" (variant {variant!r})" if variant else "")
+        + " — add it to prices.json `unit_prices` with a source or run `spendguard sync-prices`."
+    )
+
+
 def providers():
     """{provider: [model, ...]} — the configured services and models."""
     out = {}

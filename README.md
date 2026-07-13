@@ -146,6 +146,7 @@ spendguard claude-code [show|sync|classify|work|story]   # mine ~/.claude → Cl
 spendguard codex [show|sync|...]             # mine ~/.codex sessions → Codex est-value (channel=codex, billed=false)
 spendguard chat [test|show|discover|classify|loop|work|story|sync|status|accept]   # claude.ai chat adapter (OPT-IN, on-device, macOS)
 spendguard resources [show|snapshot|sync|discover]   # vast.ai GPU → org/team/project (discover [--agentic] recovers destroyed boxes)
+#   more GPU clouds: RunPod / Modal / Lambda adapters ride `reconcile all` when their key is set (docs/PROVIDERS.md §GPU)
 spendguard accounting                        # match actual provider USAGE → project via the conversations that ran each batch
 spendguard signal                            # per project·intent·model efficiency signal (cost+quality+waste+reco) → server
 spendguard workdone                          # work-done CONTEXT for spend (git + batch intents) → server (alias: work)
@@ -294,6 +295,7 @@ blanks you use:
 ```bash
 OPENAI_API_KEY=            # + ANTHROPIC_API_KEY / GEMINI_API_KEY / DEEPSEEK_API_KEY / DASHSCOPE_API_KEY
 VAST_API_KEY=              # remote GPU compute (vast.ai), metered into the same ledger
+RUNPOD_API_KEY=            # + MODAL_TOKEN_ID/MODAL_TOKEN_SECRET / LAMBDA_API_KEY — more GPU clouds, same ledger
 SPENDGUARD_SAAS_KEY=       # team/org roll-up key from llmspendguard.com (optional)
 ```
 

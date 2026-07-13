@@ -59,6 +59,26 @@ def _finish(result):
         return None
 
 
+def _call_orig(orig, self, a, kw):
+    """Run the REAL SDK call with the raw-HTTP layer suppressed — the SDKs ride httpx underneath, and
+    without this flag http_capture would record every gated SDK call a second time."""
+    from . import http_capture
+    tok = http_capture.in_sdk_call.set(True)
+    try:
+        return orig(self, *a, **kw)
+    finally:
+        http_capture.in_sdk_call.reset(tok)
+
+
+async def _call_orig_async(orig, self, a, kw):
+    from . import http_capture
+    tok = http_capture.in_sdk_call.set(True)
+    try:
+        return await orig(self, *a, **kw)
+    finally:
+        http_capture.in_sdk_call.reset(tok)
+
+
 class SpendGateRefused(RuntimeError):
     """Raised to block a submission the user/policy declined. Propagates out of the SDK call."""
 
@@ -446,11 +466,17 @@ def _rt_record(provider, model, cost, in_tok=0, out_tok=0, cached=0):
 
 
 def _rt_precheck(provider, model, in_tok, est_out):
-    global _rt_warned, _rt_bypass
     try:
         est = pricing.realtime_cost(model, in_tok, est_out) if model else 0.0
     except Exception:
         est = 0.0
+    _rt_precheck_usd(provider, model, est)
+
+
+def _rt_precheck_usd(provider, model, est):
+    """The $-denominated core of the realtime precheck — token surfaces price first (_rt_precheck);
+    unit surfaces (images/audio/TTS) arrive here with dollars directly."""
+    global _rt_warned, _rt_bypass
     if _meta_intent():                                # spendguard's own use → separate meta cap, skip workload
         if not _allow():
             from . import budget, config
@@ -644,8 +670,39 @@ def _rt_account(model, kw, result, est_fn, act_fn, latency=None):
         else:
             _, in_tok, out_tok = est_fn(kw)
         _record_rt(model, kw, in_tok, out_tok, _cached_in(result), latency, _output_text(result), _finish(result))
+        _record_tool_fees(model, kw, result)
     except Exception as e:
         print(f"[spend_gate] WARN real-time accounting failed ({e})", file=sys.stderr)
+
+
+def _tool_fee_count(result):
+    """How many PER-CALL-billed tool invocations this response carried — OpenAI Responses output items of
+    type web_search_call, or Anthropic usage.server_tool_use.web_search_requests. Token usage never
+    includes these fees; without this they'd only ever appear as a day-level reconcile residual."""
+    n = 0
+    try:
+        for item in (getattr(result, "output", None) or []):
+            if getattr(item, "type", None) == "web_search_call":
+                n += 1
+        stu = getattr(getattr(result, "usage", None), "server_tool_use", None)
+        n += int(getattr(stu, "web_search_requests", 0) or 0)
+    except Exception:
+        pass
+    return n
+
+
+def _record_tool_fees(model, kw, result):
+    """Record per-call tool fees as their own ledger entry (a SECOND row — fees are not tokens and
+    hiding them inside a token row would be unauditable). Unpriced → $0 + loud warn, never silent."""
+    n = _tool_fee_count(result)
+    if not n:
+        return
+    try:
+        fee = n * pricing.unit_price("web_search_call", model)
+    except KeyError:
+        _warn_unpriced_unit("web_search_call", model)
+        fee = 0.0
+    _record_rt(model, kw, 0, 0, cost=fee)
 
 
 def _pull_usage(chunk, acc):
@@ -841,7 +898,7 @@ def _wrap_rt(orig, est_fn, act_fn, is_async):
             if not _disabled():
                 _rt_precheck_guard(est_fn, kw)
             t0 = time.time()
-            r = await orig(self, *a, **kw)
+            r = await _call_orig_async(orig, self, a, kw)
             if not _disabled():
                 r = _account_failopen(r, kw.get("model"), kw, est_fn, act_fn, t0, True)
             return r
@@ -851,7 +908,7 @@ def _wrap_rt(orig, est_fn, act_fn, is_async):
             if not _disabled():
                 _rt_precheck_guard(est_fn, kw)
             t0 = time.time()
-            r = orig(self, *a, **kw)
+            r = _call_orig(orig, self, a, kw)
             if not _disabled():
                 r = _account_failopen(r, kw.get("model"), kw, est_fn, act_fn, t0, False)
             return r
@@ -894,6 +951,165 @@ RT_INTERCEPTORS = [
 ]
 
 
+# ── UNIT surfaces (non-token billing: images / transcription / TTS / fine-tune jobs) ──────────────
+# est_usd_fn(kw) → (model, est_usd) for the $-direct precheck; act_fn(kw, result) does its OWN
+# recording (each surface's actuals live in a different place). Unpriced units → the call is still
+# RECORDED at $0 with a loud per-model warn (visibility without guessing) — same discipline as an
+# unpriced model. All fail-open: only deliberate enforcement may block, accounting never breaks a call.
+_unit_warned = set()
+
+
+def _warn_unpriced_unit(kind, model):
+    if (kind, model) not in _unit_warned:
+        _unit_warned.add((kind, model))
+        print(f"[spend_gate] WARN no {kind} unit price for '{model}' — recorded at $0 "
+              f"(add prices.json unit_prices.{kind} with a source, or `spendguard sync-prices`)", file=sys.stderr)
+
+
+def _est_usd_images(kw):
+    model = kw.get("model") or ""
+    n = int(kw.get("n") or 1)
+    variant = f"{kw.get('size') or ''}:{kw.get('quality') or ''}".strip(":")
+    try:
+        return model, n * pricing.unit_price("image", model, variant or None)
+    except KeyError:
+        return model, 0.0
+
+
+def _act_images(kw, result):
+    model = kw.get("model") or ""
+    n = len(getattr(result, "data", None) or []) or int(kw.get("n") or 1)
+    variant = f"{kw.get('size') or ''}:{kw.get('quality') or ''}".strip(":")
+    try:
+        cost = n * pricing.unit_price("image", model, variant or None)
+    except KeyError:
+        _warn_unpriced_unit("image", model)
+        cost = 0.0
+    _record_rt(model, kw, 0, 0, cost=cost, provider="openai")
+
+
+def _est_usd_transcription(kw):
+    return kw.get("model") or "", 0.0                # duration unknown pre-call — actuals carry the $
+
+
+def _act_transcription(kw, result):
+    model = kw.get("model") or ""
+    u = getattr(result, "usage", None)               # gpt-4o-transcribe bills TOKENS and reports usage
+    if u is not None and getattr(u, "input_tokens", None) is not None:
+        _record_rt(model, kw, getattr(u, "input_tokens", 0) or 0, getattr(u, "output_tokens", 0) or 0,
+                   provider="openai")
+        return
+    dur = getattr(result, "duration", None)          # whisper verbose_json reports seconds
+    if dur:
+        try:
+            cost = float(dur) * pricing.unit_price("audio_second", model)
+        except KeyError:
+            _warn_unpriced_unit("audio_second", model)
+            cost = 0.0
+        _record_rt(model, kw, 0, 0, cost=cost, provider="openai")
+        return
+    print(f"[spend_gate] WARN transcription on '{model}' returned neither usage nor duration — recorded "
+          f"at $0 (request response_format=verbose_json so seconds are billable-visible)", file=sys.stderr)
+    _record_rt(model, kw, 0, 0, cost=0.0, provider="openai")
+
+
+def _est_usd_speech(kw):
+    model = kw.get("model") or ""
+    chars = len(kw.get("input") or "")
+    try:
+        return model, chars * pricing.unit_price("tts_char", model)
+    except KeyError:
+        return model, 0.0
+
+
+def _act_speech(kw, result):
+    model = kw.get("model") or ""
+    chars = len(kw.get("input") or "")               # deterministic: TTS bills the input characters
+    try:
+        cost = chars * pricing.unit_price("tts_char", model)
+    except KeyError:
+        _warn_unpriced_unit("tts_char", model)
+        cost = 0.0
+    _record_rt(model, kw, 0, 0, cost=cost, provider="openai")
+
+
+def _est_usd_finetune(kw):
+    return kw.get("model") or "", 0.0                # training tokens unknown until the job runs
+
+
+def _act_finetune(kw, result):
+    """A fine-tune job's training cost lands at RECONCILE (provider billing) — the submission itself is
+    recorded LOUDLY so an unestimated paid operation is never invisible between now and then."""
+    model = kw.get("model") or ""
+    job_id = getattr(result, "id", None) or ""
+    print(f"[spend_gate] fine-tune job {job_id or '(id unknown)'} on '{model}' submitted — training cost is "
+          f"UNESTIMATED here and will land at reconcile from provider billing.", file=sys.stderr)
+    _log({"kind": "finetune_job", "provider": "openai", "model": model, "job": job_id,
+          "decision": "unestimated_submission"})
+
+
+def _wrap_rt_units(orig, est_usd_fn, act_fn, is_async):
+    if is_async:
+        @functools.wraps(orig)
+        async def w(self, *a, **kw):
+            if not _disabled():
+                try:
+                    m, usd = est_usd_fn(kw)
+                    _rt_precheck_usd(None, m, usd)
+                except SpendGateRefused:
+                    raise
+                except Exception as e:
+                    print(f"[spend_gate] WARN unit precheck error ({e}); allowing (fail-open)", file=sys.stderr)
+            r = await _call_orig_async(orig, self, a, kw)
+            if not _disabled():
+                try:
+                    act_fn(kw, r)
+                except Exception as e:
+                    print(f"[spend_gate] WARN unit accounting failed ({e}); call unaffected", file=sys.stderr)
+            return r
+    else:
+        @functools.wraps(orig)
+        def w(self, *a, **kw):
+            if not _disabled():
+                try:
+                    m, usd = est_usd_fn(kw)
+                    _rt_precheck_usd(None, m, usd)
+                except SpendGateRefused:
+                    raise
+                except Exception as e:
+                    print(f"[spend_gate] WARN unit precheck error ({e}); allowing (fail-open)", file=sys.stderr)
+            r = _call_orig(orig, self, a, kw)
+            if not _disabled():
+                try:
+                    act_fn(kw, r)
+                except Exception as e:
+                    print(f"[spend_gate] WARN unit accounting failed ({e}); call unaffected", file=sys.stderr)
+            return r
+    w._spend_gated = True
+    return w
+
+
+def _apply_units(module_path, class_name, method, est_usd_fn, act_fn, is_async):
+    import importlib
+    cls = getattr(importlib.import_module(module_path), class_name)
+    cur = getattr(cls, method)
+    if getattr(cur, "_spend_gated", False):
+        return
+    setattr(cls, method, _wrap_rt_units(cur, est_usd_fn, act_fn, is_async))
+
+
+UNIT_INTERCEPTORS = [
+    ("openai.resources.images", "Images", "generate", _est_usd_images, _act_images, False),
+    ("openai.resources.images", "AsyncImages", "generate", _est_usd_images, _act_images, True),
+    ("openai.resources.audio.transcriptions", "Transcriptions", "create", _est_usd_transcription, _act_transcription, False),
+    ("openai.resources.audio.transcriptions", "AsyncTranscriptions", "create", _est_usd_transcription, _act_transcription, True),
+    ("openai.resources.audio.speech", "Speech", "create", _est_usd_speech, _act_speech, False),
+    ("openai.resources.audio.speech", "AsyncSpeech", "create", _est_usd_speech, _act_speech, True),
+    ("openai.resources.fine_tuning.jobs", "Jobs", "create", _est_usd_finetune, _act_finetune, False),
+    ("openai.resources.fine_tuning.jobs", "AsyncJobs", "create", _est_usd_finetune, _act_finetune, True),
+]
+
+
 # ── Interceptor registry — adding a provider/surface = one entry + a gate_fn ──
 # Each entry: (module_path, class_name, method, gate_fn(kw, args), is_async)
 # gate_fn estimates from the call's kwargs/args and calls _decide() (which may raise
@@ -931,13 +1147,13 @@ def _wrap(orig, gate_fn, is_async):
         async def w(self, *a, **kw):
             if not _disabled():
                 _guard(gate_fn, kw, a)   # only SpendGateRefused propagates; all else fails open
-            return await orig(self, *a, **kw)
+            return await _call_orig_async(orig, self, a, kw)
     else:
         @functools.wraps(orig)
         def w(self, *a, **kw):
             if not _disabled():
                 _guard(gate_fn, kw, a)
-            return orig(self, *a, **kw)
+            return _call_orig(orig, self, a, kw)
     w._spend_gated = True
     return w
 
@@ -980,6 +1196,13 @@ def install(cap: "float | None" = None) -> None:
             pass
         except Exception as e:
             print(f"[spend_gate] WARN rt-patch {spec[0]}.{spec[1]}.{spec[2]} skipped: {e}", file=sys.stderr)
+    for spec in UNIT_INTERCEPTORS:             # non-token billing (images / transcription / TTS / ft jobs)
+        try:
+            _apply_units(*spec)
+        except ModuleNotFoundError:
+            pass
+        except Exception as e:
+            print(f"[spend_gate] WARN unit-patch {spec[0]}.{spec[1]}.{spec[2]} skipped: {e}", file=sys.stderr)
     import importlib
     for _mod in ("litellm_adapter", "bedrock_adapter", "vertex_adapter"):
         try:                                    # provider breadth (LiteLLM / direct Bedrock / direct Vertex) — wire
@@ -991,12 +1214,17 @@ def install(cap: "float | None" = None) -> None:
         provider_plugins.load()                  # (recipe: docs/PROVIDERS.md; conformance: spendguard.provider_kit)
     except Exception as e:
         print(f"[spend_gate] WARN provider plugins skipped: {e}", file=sys.stderr)
+    try:                                         # raw-HTTP visibility net (capture-first, never blocks) — SDK-originated
+        from . import http_capture               # traffic is suppressed via the _call_orig ContextVar (no double count)
+        http_capture.install()
+    except Exception as e:
+        print(f"[spend_gate] WARN raw-HTTP capture skipped: {e}", file=sys.stderr)
 
 
 def _any_patched():
     """True iff at least one SDK surface is actually gated in THIS interpreter (enforcement is live here)."""
     import importlib
-    for spec in INTERCEPTORS + _EXTRA + RT_INTERCEPTORS:
+    for spec in INTERCEPTORS + _EXTRA + RT_INTERCEPTORS + UNIT_INTERCEPTORS:
         module_path, class_name, method = spec[0], spec[1], spec[2]
         try:
             cls = getattr(importlib.import_module(module_path), class_name)

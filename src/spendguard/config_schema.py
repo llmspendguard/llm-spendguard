@@ -46,6 +46,11 @@ SETTINGS = [
          desc="Daily $ cap for spendguard's OWN advisor LLM use (intent spendguard:*) — separate from workload caps."),
 
     # ── gate enforcement: the estimate → test → run rail for big batches ──
+    dict(section="gate", key="http_capture", store="(env only)", env="SPENDGUARD_HTTP_CAPTURE", default="on",
+         kind="enum:on,off", secret=False,
+         desc="Raw-HTTP visibility net: parse usage from httpx/requests calls made straight at provider hosts "
+              "(no SDK) into the realtime ledger; unparseable provider responses log a loud unmetered event. "
+              "Capture-only (never blocks); SDK calls are suppressed (no double count)."),
     dict(section="gate", key="enforce", store="config.json:gate.enforce", env="SPENDGUARD_ENFORCE", default="warn",
          kind="enum:off,warn,block", secret=False,
          desc="Test-first enforcement for batches over the size threshold (the estimate → test → run sequence): "
@@ -165,8 +170,16 @@ SETTINGS = [
     dict(section="keys", key="DASHSCOPE_API_KEY", store="env", env="DASHSCOPE_API_KEY", default=None, kind="string", secret=True, desc="Qwen / Alibaba Model Studio (compare)."),
     dict(section="keys", key="ZAI_API_KEY", store="env", env="ZAI_API_KEY", default=None, kind="string", secret=True, desc="z.ai / Zhipu (GLM models, e.g. glm-5.2) — OpenAI-compatible."),
 
-    # ── remote-compute key (metered into the same ledger; goes in keys.env like the LLM keys) ──
+    # ── remote-compute keys (metered into the same ledger; go in keys.env like the LLM keys) ──
     dict(section="keys", key="VAST_API_KEY", store="env", env="VAST_API_KEY", default=None, kind="string", secret=True, desc="Vast.ai remote GPU compute — meters vast.ai spend into the same ledger."),
+    dict(section="keys", key="RUNPOD_API_KEY", store="env", env="RUNPOD_API_KEY", default=None, kind="string", secret=True,
+         desc="RunPod remote GPU compute — meters pod spend (RunPod's own costPerHr via GraphQL myself.pods) into the same ledger."),
+    dict(section="keys", key="MODAL_TOKEN_ID", store="env", env="MODAL_TOKEN_ID", default=None, kind="string", secret=True,
+         desc="Modal token id (pairs with MODAL_TOKEN_SECRET) — meters Modal's workspace billing report into the same ledger."),
+    dict(section="keys", key="MODAL_TOKEN_SECRET", store="env", env="MODAL_TOKEN_SECRET", default=None, kind="string", secret=True,
+         desc="Modal token secret (pairs with MODAL_TOKEN_ID)."),
+    dict(section="keys", key="LAMBDA_API_KEY", store="env", env="LAMBDA_API_KEY", default=None, kind="string", secret=True,
+         desc="Lambda (lambdalabs.com GPU cloud) — lists instances + their provider-priced $/hr into the same ledger."),
 ]
 
 

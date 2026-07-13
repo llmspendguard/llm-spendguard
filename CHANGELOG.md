@@ -4,6 +4,48 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+### Every remaining spend channel captured (ft / units / tool fees / raw HTTP / Gemini embeddings)
+- **Fine-tuned models priced correctly**: `ft:BASE:org::job` resolves to the table's `ft:BASE` entry (or a
+  dated LiteLLM-layer variant); an unpriced ft id fails LOUDLY — the base price is never a substitute
+  (ft inference bills above base). Guard: test_pricing ft block (5).
+- **Gemini embeddings**: `google.genai embed_content` (sync+async) joins the vertex capture — per-embedding
+  `statistics.token_count`, provider='google', fail-open. Guard: `tests/test_vertex_embed.py` (7).
+- **Non-token surfaces**: images.generate, audio.transcriptions (token-billing 4o-transcribe AND
+  per-second whisper), audio.speech (per-character), fine_tuning.jobs.create (recorded as a LOUD
+  unestimated submission — its $ lands at reconcile) — all budget-enforced via a new $-direct precheck.
+  Unit prices come from a new `pricing.unit_price()` (curated `unit_prices` + LiteLLM per-unit fields);
+  the SHIPPED table carries no invented numbers — unpriced units record at $0 with a per-model warn.
+  Guard: `tests/test_gate_units.py` (15).
+- **Per-call tool fees**: web-search invocations (Responses `web_search_call` items, Anthropic
+  `server_tool_use.web_search_requests`) are counted and recorded as their OWN fee row — token usage
+  never contains them. Vector-store/file storage stays reconcile-absorbed (day-level), documented.
+- **Raw-HTTP capture** (`http_capture.py`): httpx/requests calls straight at provider hosts are parsed
+  for usage (chat/messages/embeddings shapes) into the same realtime ledger; unparseable provider
+  responses log a LOUD `raw_http_unmetered` event. SDK-originated traffic is suppressed via a
+  ContextVar around every gated call — no double count. Capture-first: never blocks, never alters a
+  request. Knob `SPENDGUARD_HTTP_CAPTURE=off`. Guard: `tests/test_http_capture_toolfees.py` (14).
+
+### GPU-provider port + RunPod / Modal / Lambda adapters (remote compute beyond vast.ai)
+- **`gpu_port.py`** — the explicit port every GPU provider implements (`GPUProvider`: `configured()`,
+  normalized `instances()`), with the per-UTC-day dph×hours splitting math EXTRACTED from the vast.ai
+  implementation into one shared helper (`day_slices` / `cost_by_day`); `resources.py` now calls it, behavior
+  identical (its tests pass unchanged, plus an explicit equivalence check). Includes the GPU-source REGISTRY
+  `reconcile.all_sources` iterates — vast.ai (`"gpu"`) and every adapter ride `spendguard reconcile all`
+  through the same loop, and third-party plugins join via `gpu_port.register_source` from their existing
+  `spendguard.providers` entry-point `activate()`.
+- **Adapters against DOCUMENTED provider APIs** — RunPod (`RUNPOD_API_KEY`, GraphQL `myself{pods}`, RunPod's
+  own `costPerHr`), Modal (`MODAL_TOKEN_ID`+`MODAL_TOKEN_SECRET`, the documented `modal.billing`
+  workspace report — per-app per-day BILLED $, which is also the account truth), Lambda (`LAMBDA_API_KEY`,
+  `GET /api/v1/instances`, Lambda's own `price_cents_per_hour`). Never a hardcoded $/hr table.
+- **Honesty over coverage** — an unconfigured provider is silently skipped (never an error, never fake data);
+  a row the API doesn't price is `{"unpriced": true}`; a runtime the API doesn't expose (Lambda's listing has
+  no launch timestamp; RunPod's stopped pods) is `{"untimed": true}` — visible UNKNOWN, never $0-clean; a
+  provider with no billing endpoint reconciles with truth `unknown`, never "covered". Attribution mirrors
+  vast: instance label → project via config `resources.<provider>.label_map` (empty default — no guessing).
+  Guard: `tests/test_gpu_port.py` (55 checks, offline against documented payload shapes — fixture doc-URLs
+  cited inline; NOT live-verified); the runner now also strips the new provider keys. Recipe:
+  `docs/PROVIDERS.md` §GPU.
+
 ### Embeddings: fully captured (two blind spots closed)
 - **Realtime `client.embeddings.create` is now intercepted** (sync + async): estimated from the input
   (strings, lists, or pre-tokenized id arrays), checked against the realtime budget like any other call,

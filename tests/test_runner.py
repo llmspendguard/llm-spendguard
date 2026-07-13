@@ -68,7 +68,8 @@ def test_script(script):
     # needs a key sets its own fake one.
     env["http_proxy"] = env["https_proxy"] = env["HTTP_PROXY"] = env["HTTPS_PROXY"] = "http://127.0.0.1:9"
     env["no_proxy"] = env["NO_PROXY"] = "localhost,127.0.0.1"
-    for k in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "VAST_API_KEY", "GEMINI_API_KEY"):
+    for k in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "VAST_API_KEY", "GEMINI_API_KEY",
+              "RUNPOD_API_KEY", "MODAL_TOKEN_ID", "MODAL_TOKEN_SECRET", "LAMBDA_API_KEY"):
         env.pop(k, None)
     if COVERAGE:
         env["COVERAGE_PROCESS_START"] = RCFILE
