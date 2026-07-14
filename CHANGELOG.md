@@ -2,7 +2,7 @@
 
 All notable changes to **llm-spendguard**. Format loosely follows Keep a Changelog; dates are UTC.
 
-## [Unreleased]
+## [0.5.0] — 2026-07-13
 
 ### Every remaining spend channel captured (ft / units / tool fees / raw HTTP / Gemini embeddings)
 - **Fine-tuned models priced correctly**: `ft:BASE:org::job` resolves to the table's `ft:BASE` entry (or a
