@@ -4,6 +4,19 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+### Prices keep themselves fresh (`pricing.refresh_days`) + per-UNIT rates now flow from LiteLLM
+- `sync.refresh_if_stale()` runs at the top of every `saas sync` (which the installed `spendguard
+  schedule` agent already runs on a cadence): re-fetches the LiteLLM price cache only when it is older
+  than `pricing.refresh_days` (default 1; env `SPENDGUARD_PRICES_REFRESH_DAYS`; 0 = manual only) — an
+  hourly agent still refreshes at most once a day. Strictly fail-open (a failed fetch keeps the existing
+  cache + curated prices.json) and reloads the in-process table so the same run already prices with
+  fresh rates. No dedicated price scheduler — it rides the sync, like the true-down rides the reconcile.
+- Fixed the missing pipe for unit billing: `pricing._load_units` reads a `unit_models` section the sync
+  never wrote (unit-billed entries have no token rate and were dropped entirely). `sync-prices` now
+  passes through per-unit cost fields ($/second, $/character, $/image — 353 models), so transcription /
+  TTS / flat-rate image capture price themselves; curated `unit_prices` still win, and truly unpriced
+  units still fail loud, never guessed. Guard: `tests/test_price_refresh.py` (16 checks).
+
 ### Estimate→actual TRUE-DOWN at reconcile (`ledger_sync.true_down`, rides the daily cadence)
 - The gate records a batch's cost at SUBMIT time — an estimate (the batch id doesn't exist yet). The
   provider later bills the actuals per batch. Reconcile now nets the two: per (provider, model), the

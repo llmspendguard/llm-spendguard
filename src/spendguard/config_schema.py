@@ -63,6 +63,15 @@ SETTINGS = [
               "off = no requirement; warn = log a 'would-block' when a batch runs without a fresh estimate+test "
               "(default); block = hard-require a fresh estimate → test before the batch runs."),
 
+    # ── pricing freshness (the LiteLLM breadth layer; curated prices.json always wins) ──
+    dict(section="pricing", key="refresh_days", store="config.json:pricing.refresh_days", env="SPENDGUARD_PRICES_REFRESH_DAYS",
+         default=1, kind="float", secret=False,
+         desc="Auto-refresh the LiteLLM price cache when older than this many days, at the top of every `saas sync` "
+              "(the installed `spendguard schedule` agent runs sync on a cadence, so prices stay current with no "
+              "dedicated price scheduler; an hourly agent still refreshes at most once per this window). Fail-open: "
+              "a failed fetch keeps the existing cache + curated prices.json. 0 = never auto-refresh (manual "
+              "`spendguard sync-prices` only)."),
+
     # ── learning advisor (Layer 2 — its own LLM use, caged by caps.meta + intent spendguard:*) ──
     dict(section="advisor", key="model", store="config.json:advisor.model", env="SPENDGUARD_ADVISOR_MODEL",
          default="claude-opus-4-8", kind="string", secret=False,

@@ -13,12 +13,24 @@ LITELLM_URL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_pric
 CACHE = str(config.HOME / "litellm_prices.json")
 
 
+# Per-unit billing fields passed through to the cache's `unit_models` section — pricing._load_units reads
+# exactly these to price transcription ($/second), TTS ($/character) and flat-rate images ($/image). Unit-billed
+# entries usually have NO input_cost_per_token, so they must be captured BEFORE the token-rate skip below.
+_UNIT_COST_FIELDS = ("input_cost_per_second", "output_cost_per_second",
+                     "input_cost_per_character", "output_cost_per_character",
+                     "input_cost_per_image", "output_cost_per_image")
+
+
 def _convert(raw):
-    """LiteLLM per-token entries → spendguard per-1M rate dicts. Batch falls back to 50% of realtime."""
-    models, provs = {}, {}
+    """LiteLLM per-token entries → spendguard per-1M rate dicts (+ per-UNIT entries passed through for
+    _load_units: whisper $/s, tts $/char, dall-e $/image). Batch falls back to 50% of realtime."""
+    models, provs, unit_models = {}, {}, {}
     for name, e in raw.items():
         if not isinstance(e, dict) or name.startswith("sample_"):
             continue
+        u = {k: float(e[k]) for k in _UNIT_COST_FIELDS if e.get(k) is not None}
+        if u:
+            unit_models[name] = u
         ic = e.get("input_cost_per_token")
         if ic is None:
             continue
@@ -36,7 +48,7 @@ def _convert(raw):
         }
         models[name] = {k: round(v, 6) for k, v in rate.items()}
         provs[name] = e.get("litellm_provider", "?")
-    return models, provs
+    return models, provs, unit_models
 
 
 def _validate(models):
@@ -56,15 +68,55 @@ def _validate(models):
 def sync():
     req = urllib.request.Request(LITELLM_URL, headers={"User-Agent": "spendguard-sync/0.1"})
     raw = json.load(urllib.request.urlopen(req, context=config.ssl_context(), timeout=60))
-    models, provs = _convert(raw)
+    models, provs, unit_models = _convert(raw)
     ok, msgs = _validate(models)
     if not ok:
         raise RuntimeError("LiteLLM data failed validation: " + "; ".join(msgs))
     out = {"_fetched": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
-           "_source": LITELLM_URL, "models": models, "providers": provs}
+           "_source": LITELLM_URL, "models": models, "providers": provs, "unit_models": unit_models}
     os.makedirs(os.path.dirname(CACHE), exist_ok=True)
     json.dump(out, open(CACHE, "w"))
     return len(models), msgs
+
+
+DEFAULT_REFRESH_DAYS = 1   # pricing.refresh_days default: the LiteLLM dataset is CI-updated, daily is plenty
+
+
+def cache_age_days():
+    """Age of the LiteLLM price cache in days, or None if absent/unreadable (= needs a fetch)."""
+    try:
+        ts = datetime.datetime.fromisoformat(json.load(open(CACHE))["_fetched"])
+        return max(0.0, (datetime.datetime.now(datetime.timezone.utc) - ts).total_seconds() / 86400.0)
+    except Exception:
+        return None
+
+
+def refresh_if_stale():
+    """Keep the price table fresh WITHOUT a dedicated scheduler: called at the top of every `saas sync` (which the
+    installed `spendguard schedule` agent already runs on a cadence), it re-fetches only when the cache is older
+    than `pricing.refresh_days` (default 1; 0 disables) — so an hourly scheduler still refreshes at most once a
+    day. Strictly fail-open: a failed fetch leaves the existing cache + curated prices.json in effect and reports
+    the error instead of raising. On success the in-process pricing table is reloaded so THIS run (reconcile's
+    batch pricing, unit/ft: lookups) already uses the fresh rates."""
+    from . import config
+    try:
+        days = float(os.environ.get("SPENDGUARD_PRICES_REFRESH_DAYS")
+                     or config._cfg_get("pricing", "refresh_days", DEFAULT_REFRESH_DAYS))
+    except Exception:
+        days = float(DEFAULT_REFRESH_DAYS)
+    if days <= 0:
+        return {"skipped": "pricing.refresh_days=0"}
+    age = cache_age_days()
+    if age is not None and age < days:
+        return {"fresh": True, "age_days": round(age, 2)}
+    try:
+        n, msgs = sync()
+        import importlib
+        from . import pricing
+        importlib.reload(pricing)                       # same in-place reload main() uses — existing refs stay valid
+        return {"refreshed": True, "models": n, "notes": msgs[:3]}
+    except Exception as e:
+        return {"error": str(e)[:120], "note": "existing cache + curated prices.json still in effect"}
 
 
 def main(argv=None):

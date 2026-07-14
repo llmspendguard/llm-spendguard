@@ -664,6 +664,12 @@ def sync(if_due=False, since=None):
         _r.snapshot()                                     # when the full push isn't due yet
     except Exception:
         pass
+    prices = {}
+    try:                                                  # keep the LiteLLM price layer fresh (self-limits to once per
+        from . import sync as _price_sync                 # pricing.refresh_days) so unit/ft:/new-model rates price
+        prices = _price_sync.refresh_if_stale()           # themselves — rides this sync, no dedicated price scheduler
+    except Exception:
+        pass
     if if_due:
         d, why = due()
         if not d:
@@ -697,6 +703,7 @@ def sync(if_due=False, since=None):
     out = {"rollup": push_rollup(since=since), "insights": push_insights(),
            "workdone": push_workdone(since=since), "status": push_status(),
            "resources": res, "commands": run_commands(since=since), "trust": tg.get("ledger_verdict"),
+           "prices": prices,
            "policy": pull_policy()}     # pull the org/team's effective caps so the gate applies them (advisory/enforced)
     try:                                                  # provider-truth totals (keys stay local) → the server's
         from . import truth as _truth                     # monthly close statement reconciles ledger vs these
