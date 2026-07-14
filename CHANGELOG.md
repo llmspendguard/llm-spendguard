@@ -2,7 +2,7 @@
 
 All notable changes to **llm-spendguard**. Format loosely follows Keep a Changelog; dates are UTC.
 
-## [Unreleased]
+## [0.6.0] — 2026-07-14
 
 ### Autotune: learned max_tokens applied at call time (`gate.autotune = off|suggest|apply`)
 - What `spendguard maxtokens` measures becomes a default you can't forget: at call time the gate
