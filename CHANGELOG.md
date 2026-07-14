@@ -2,6 +2,30 @@
 
 All notable changes to **llm-spendguard**. Format loosely follows Keep a Changelog; dates are UTC.
 
+## [Unreleased]
+
+### Autotune: learned max_tokens applied at call time (`gate.autotune = off|suggest|apply`)
+- What `spendguard maxtokens` measures becomes a default you can't forget: at call time the gate
+  compares the caller's `max_tokens` with the call-class's OBSERVED output distribution. `suggest`
+  (default) prints the delta once per class; `apply` SHRINKS a wasteful cap to the measured p99×1.5 —
+  never raises a cap, never adds one, vetoed under 30 observations or by ANY truncation history (one
+  truncation permanently backs the class off — the recorded truncation counter IS the backoff state),
+  per-call opt-out `autotune=False`, every application logged. No counterfactual "saving" is recorded:
+  the value is accurate estimates + runaway-output protection. Guard: `tests/test_gate_autotune.py` (12).
+
+### Subscription executor (`advisor.executor = api|claude-code`)
+- spendguard's OWN meta prompts (insight synthesis, auto-fresh, judging) can ride the flat-fee plan:
+  a one-shot headless `claude -p --output-format json --max-turns 1` (no agent loop, no tools; the
+  provider key env var is stripped from the child so a plan call can never silently become metered).
+  Recorded at $0 on the BILLED axis (kind=`subscription`); plan value lands on the est-value axis via
+  the existing claude-code pipeline. Any failure falls back to the caged API path — degrade, never
+  break. Guard: `tests/test_subscription_exec.py` (12).
+
+### Run-rate month-end forecast in `spendguard close`
+- Open month with ≥5 observed days: "month-end ~$X (p50) … $Y (p90)" = MTD + remaining days × the
+  month's own daily median/p90 — labeled an extrapolation, never shown for closed months or thin data.
+  (The org statement on the server gained the same line.) Guard: forecast block in `test_auto_fresh.py`.
+
 ## [0.5.0] — 2026-07-13
 
 ### Every remaining spend channel captured (ft / units / tool fees / raw HTTP / Gemini embeddings)

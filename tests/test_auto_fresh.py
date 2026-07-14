@@ -45,6 +45,24 @@ del os.environ["SPENDGUARD_AUTO_FRESH"]
 from spendguard import close, truth, ledger_sync
 truth.rows = lambda since=None: [{"day": "2026-06-01", "provider": "openai", "usd": 10.0}]
 ledger_sync.leak_line = lambda since: "accounted $9.50 vs provider $10.00 — leak $0.50"
+
+# ── run-rate forecast: open month, 6 observed days at $10/day → p50 = MTD + remaining×$10 ──
+import datetime
+_today = datetime.date.today()
+_days = [(_today.replace(day=1) + datetime.timedelta(days=i)).isoformat() for i in range(6)]
+truth.rows = lambda since=None: [{"day": d, "provider": "openai", "usd": 10.0} for d in _days]
+fs = close.build(_today.strftime("%Y-%m"))
+_last = (datetime.date(_today.year + (_today.month == 12), _today.month % 12 + 1, 1)
+         - datetime.timedelta(days=1)).day
+ck("forecast present for the open month with ≥5 observed days", "forecast" in fs)
+ck("run-rate math: MTD + remaining × daily median ($10/day flat)",
+   abs(fs["forecast"]["p50_usd"] - (60.0 + (_last - _today.day) * 10.0)) < 1e-6
+   and fs["forecast"]["p50_usd"] == fs["forecast"]["p90_usd"])   # flat series → p50 == p90
+fs2 = close.build((_today.replace(day=1) - datetime.timedelta(days=1)).strftime("%Y-%m"))
+ck("no forecast for a CLOSED month (nothing to extrapolate)", "forecast" not in fs2)
+truth.rows = lambda since=None: [{"day": _days[0], "provider": "openai", "usd": 10.0}]
+ck("<5 observed days → no forecast (honest, not noisy)", "forecast" not in close.build(_today.strftime("%Y-%m")))
+truth.rows = lambda since=None: [{"day": "2026-06-01", "provider": "openai", "usd": 10.0}]
 import io, contextlib
 buf = io.StringIO()
 with contextlib.redirect_stdout(buf):

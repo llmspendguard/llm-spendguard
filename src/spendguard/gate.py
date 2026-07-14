@@ -855,12 +855,80 @@ def _inject_usage(kw, est_fn):
         pass
 
 
+AUTOTUNE_MIN_OBS = 30          # a call-class needs this many observed outputs before autotune trusts them
+AUTOTUNE_SLACK = 1.2           # only act when the caller's cap exceeds the recommendation by this factor
+_autotune_said = set()         # one suggest/apply line per (sig, mode) per process — informative, not spammy
+
+
+def _autotune_mode():
+    v = os.environ.get("SPENDGUARD_AUTOTUNE")
+    if v is not None:
+        return v.strip().lower()
+    try:
+        from . import config
+        return str(config._cfg_get("gate", "autotune", "suggest")).lower()
+    except Exception:
+        return "suggest"
+
+
+def _autotune(kw, model):
+    """Learned max_tokens at CALL TIME — the anti-amnesia principle applied to spend: what `spendguard
+    maxtokens` measures becomes a default you can't forget. Modes (gate.autotune / SPENDGUARD_AUTOTUNE):
+      off      nothing
+      suggest  print the measured delta once per call-class (default — visibility, zero risk)
+      apply    SHRINK a wasteful cap to the measured p99×1.5 — logged, visible, per-call override
+               via kw autotune=False; NEVER raises a cap, NEVER adds one where the caller set none.
+    Self-healing vetoes: < AUTOTUNE_MIN_OBS observations, or ANY truncation history on the class — and
+    because every response's truncation is recorded per-sig (note_response), one truncated output after
+    a clamp permanently vetoes further clamps for that class. Honest accounting: no counterfactual
+    'saving' is recorded — the value is accurate estimates + runaway-output protection, not a claimed $.
+    """
+    mode = _autotune_mode()
+    if mode not in ("suggest", "apply") or kw.pop("autotune", None) is False:
+        return
+    cap = kw.get("max_tokens")
+    if not cap or not model:
+        return
+    from . import bulkgate
+    intent = ""
+    try:
+        intent = (_calls.current().get("intent") or "").strip()
+    except Exception:
+        pass
+    sig = bulkgate.sig(model, template_id=intent or None)
+    b = bulkgate.maxtokens(sig, cap)
+    if not b or (b.get("n") or 0) < AUTOTUNE_MIN_OBS or (b.get("truncations") or 0) > 0:
+        return
+    rec = int(b["recommend"])
+    if rec <= 0 or cap <= rec * AUTOTUNE_SLACK:
+        return
+    key = (sig, mode)
+    if mode == "apply":
+        kw["max_tokens"] = rec
+        _log({"kind": "autotune", "sig": sig, "model": model, "intent": intent or None,
+              "from": cap, "to": rec, "n_obs": b["n"], "p99": b.get("p99")})
+        if key not in _autotune_said:
+            _autotune_said.add(key)
+            print(f"[spend_gate] AUTOTUNE max_tokens {cap} → {rec} for '{intent or model}' "
+                  f"(measured p99 {b.get('p99')}, n={b['n']}, 0 truncations — kw autotune=False to opt out)",
+                  file=sys.stderr)
+    elif key not in _autotune_said:
+        _autotune_said.add(key)
+        print(f"[spend_gate] autotune(suggest): max_tokens {cap} vs measured p99×1.5 = {rec} for "
+              f"'{intent or model}' (n={b['n']}) — gate.autotune=apply clamps this automatically",
+              file=sys.stderr)
+
+
 def _rt_precheck_guard(est_fn, kw):
-    """PRE-call: estimate + realtime precheck + usage injection, FAIL-OPEN. Only a DELIBERATE enforcement decision
-    (SpendGateRefused / bulkgate.GateBlocked) propagates to block the call; ANY other error — a bug in est_fn, a
-    gate hiccup — is swallowed so a legitimate call is never broken. Mirrors the batch path's `_guard`."""
+    """PRE-call: autotune + estimate + realtime precheck + usage injection, FAIL-OPEN. Only a DELIBERATE
+    enforcement decision (SpendGateRefused / bulkgate.GateBlocked) propagates to block the call; ANY other
+    error — a bug in est_fn, a gate hiccup — is swallowed so a legitimate call is never broken."""
     from . import bulkgate
     try:
+        try:
+            _autotune(kw, (est_fn(kw) or (None,))[0])
+        except Exception:
+            pass                                              # autotune must never affect the call
         m, i, o = est_fn(kw)
         _rt_precheck(None, m, i, o)
         _inject_usage(kw, est_fn)

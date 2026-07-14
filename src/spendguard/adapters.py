@@ -41,6 +41,16 @@ def provider_for(model):
     raise ValueError(f"unknown provider for model {model!r} — use 'provider:model' or register_provider()")
 
 
+def _executor():
+    v = __import__("os").environ.get("SPENDGUARD_ADVISOR_EXECUTOR")
+    if v:
+        return v.strip().lower()
+    try:
+        return str(config._cfg_get("advisor", "executor", "api")).lower()
+    except Exception:
+        return "api"
+
+
 def call(model, prompt, max_tokens=512, system=None, reasoning=None):
     """Run one prompt against one model. Returns a result dict (never raises). `reasoning` (minimal|low|medium|high)
     sets reasoning effort for gpt-5/o-series reasoning models; defaults to 'minimal' for them (default-medium reasoning
@@ -48,8 +58,27 @@ def call(model, prompt, max_tokens=512, system=None, reasoning=None):
     prov = provider_for(model)
     raw = model.split(":", 1)[1] if ":" in model else model
     spec = PROVIDERS[prov]
-    key = config.api_key(spec["key_env"])
     base = {"provider": prov, "model": raw, "text": None, "in_tok": 0, "out_tok": 0, "latency": 0.0, "cost": None}
+    # SUBSCRIPTION EXECUTOR (advisor.executor=claude-code): spendguard's own meta prompts ride the
+    # flat-fee plan — $0 on the billed axis (recorded kind='subscription'); the plan VALUE is counted
+    # by the claude-code est-value pipeline from the session transcript. Needs NO API key. Any failure
+    # falls back to the caged API path below — degrade, never break.
+    if prov == "anthropic" and _executor() == "claude-code":
+        from . import subscription_exec
+        s = subscription_exec.run_prompt(prompt, system=system)
+        if not s.get("error"):
+            try:
+                from . import calls
+                calls.record("anthropic", raw, "subscription", 0.0,
+                             in_tok=s["in_tok"], out_tok=s["out_tok"], latency=s["latency"])
+            except Exception:
+                pass
+            return {**base, "text": s["text"], "in_tok": s["in_tok"], "out_tok": s["out_tok"],
+                    "latency": s["latency"], "cost": 0.0, "executor": "claude-code", "error": None}
+        import sys as _sys
+        print(f"[spendguard] subscription executor unavailable ({s['error']}) — falling back to metered API",
+              file=_sys.stderr)
+    key = config.api_key(spec["key_env"])
     if not key:
         return {**base, "error": f"no key ({spec['key_env']})"}
     t0 = time.time()

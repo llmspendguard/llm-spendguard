@@ -46,6 +46,12 @@ SETTINGS = [
          desc="Daily $ cap for spendguard's OWN advisor LLM use (intent spendguard:*) — separate from workload caps."),
 
     # ── gate enforcement: the estimate → test → run rail for big batches ──
+    dict(section="gate", key="autotune", store="config.json:gate.autotune", env="SPENDGUARD_AUTOTUNE", default="suggest",
+         kind="enum:off,suggest,apply", secret=False,
+         desc="Learned max_tokens at call time: suggest prints the measured delta (p99×1.5 vs your cap) once per "
+              "call-class; apply SHRINKS a wasteful cap to the measured bound — never raises or adds one, vetoed "
+              "by <30 observations or ANY truncation history (one truncation permanently backs the class off), "
+              "per-call opt-out kw autotune=False. Every application is logged."),
     dict(section="gate", key="http_capture", store="(env only)", env="SPENDGUARD_HTTP_CAPTURE", default="on",
          kind="enum:on,off", secret=False,
          desc="Raw-HTTP visibility net: parse usage from httpx/requests calls made straight at provider hosts "
@@ -68,6 +74,12 @@ SETTINGS = [
     dict(section="advisor", key="judge_model", store="config.json:advisor.judge_model", env="SPENDGUARD_ADVISOR_JUDGE_MODEL",
          default="claude-haiku-4-5", kind="string", secret=False,
          desc="Model for BULK quality reconstruction/judging. Batch API; must exist in pricing.py."),
+    dict(section="advisor", key="executor", store="config.json:advisor.executor", env="SPENDGUARD_ADVISOR_EXECUTOR",
+         default="api", kind="enum:api,claude-code", secret=False,
+         desc="Where spendguard's OWN meta prompts run: api = metered Anthropic API under caps.meta (default); "
+              "claude-code = a one-shot headless `claude -p` on your flat-fee PLAN ($0 billed; value counted on "
+              "the est-value axis; the provider key env var is stripped from the child process so the call can "
+              "never silently become metered). Falls back to the API path on any failure."),
     dict(section="calibrate", key="pair_horizon_hours", store="(env only)", env="SPENDGUARD_PAIR_HORIZON_H",
          default="24", kind="number", secret=False,
          desc="Learned-estimator pairing window: a logged job prediction (`calibrate.record_estimate`) collects "

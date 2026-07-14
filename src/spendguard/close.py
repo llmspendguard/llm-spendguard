@@ -20,20 +20,37 @@ def month_window(month):
 
 
 def build(month):
-    """{month, providers: [{provider, usd, days}], total_usd, current_month} from local provider truth."""
+    """{month, providers: [{provider, usd, days}], total_usd, current_month, forecast?} from local
+    provider truth. For the OPEN month with ≥5 observed days, forecast = MTD + remaining calendar days ×
+    the observed daily median (p50) / 90th-percentile (p90) — a RUN-RATE projection, labeled as such
+    (it extrapolates the month's own daily distribution; it does not model planned jobs)."""
     from . import truth
     start, end = month_window(month)
     per = {}
     days = {}
+    by_day = {}
     for r in truth.rows(since=start):
         if start <= r["day"] < end:
             per[r["provider"]] = per.get(r["provider"], 0.0) + r["usd"]
             days.setdefault(r["provider"], set()).add(r["day"])
+            by_day[r["day"]] = by_day.get(r["day"], 0.0) + r["usd"]
     providers = [{"provider": p, "usd": round(v, 6), "days": len(days[p])}
                  for p, v in sorted(per.items(), key=lambda kv: -kv[1])]
-    return {"month": month, "providers": providers,
-            "total_usd": round(sum(p["usd"] for p in providers), 6),
-            "current_month": month == datetime.date.today().strftime("%Y-%m")}
+    today = datetime.date.today()
+    out = {"month": month, "providers": providers,
+           "total_usd": round(sum(p["usd"] for p in providers), 6),
+           "current_month": month == today.strftime("%Y-%m")}
+    if out["current_month"] and len(by_day) >= 5:
+        daily = sorted(by_day.values())
+        p50 = daily[len(daily) // 2]
+        p90 = daily[min(len(daily) - 1, int(0.9 * (len(daily) - 1) + 0.999))]
+        last_dom = (datetime.date(today.year + (today.month == 12), today.month % 12 + 1, 1)
+                    - datetime.timedelta(days=1)).day
+        remaining = max(0, last_dom - today.day)
+        out["forecast"] = {"days_observed": len(by_day), "remaining_days": remaining,
+                           "p50_usd": round(out["total_usd"] + remaining * p50, 2),
+                           "p90_usd": round(out["total_usd"] + remaining * p90, 2)}
+    return out
 
 
 def to_csv(stmt):
@@ -62,6 +79,10 @@ def main(argv=None):
     if not s["providers"]:
         print("  (no provider spend found for this month)")
     if s["current_month"]:
+        f = s.get("forecast")
+        if f:
+            print(f"  run-rate forecast: month-end ~${f['p50_usd']:,.2f} (p50) … ${f['p90_usd']:,.2f} (p90) "
+                  f"— {f['days_observed']} observed days × {f['remaining_days']} remaining (extrapolation, not a plan)")
         try:                                        # accounted-vs-provider completeness for the open month
             from . import ledger_sync
             line = ledger_sync.leak_line(month_window(a.month)[0])
