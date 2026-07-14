@@ -144,6 +144,17 @@ def ingest_remote(label, project, rows):
 
 
 _RECONCILED = "(provider-batch)"   # marker model for reconciliation rows (the provider-truth gap), any project
+# Realtime reconcile marker models (ledger_sync's _RT_MARKER/_RT_ORACLE_MARKER/_RT_RECON_MARKER — a drift guard in
+# tests/test_true_down.py asserts the two stay identical). These rows MIRROR truth from another source (gate log /
+# admin oracle / conversational reconstruction), so exclude_reconciled must drop them along with _RECONCILED — the
+# trust check compares "what the gate recorded live" against those very sources, and counting a mirror row on the
+# recorded side double-counts it (the $13.74 realtime drift bug).
+_RT_MARKERS = ("(realtime-history)", "(realtime-oracle)", "(realtime-reconstructed)")
+_MARKER_MODELS = (_RECONCILED,) + _RT_MARKERS
+# True-down correction rows carry the REAL model (so by_dims NETS them against the estimate rows per
+# (day,provider,model,kind,project) — the server ingest clamps negative cost, so a standalone negative marker-model
+# row would be dropped there) and mark themselves via conv_id instead.
+_TRUE_DOWN_CONV = "(true-down)"
 
 
 def spent_since(day, project=None, conv=None):  # WORKLOAD spend only — excludes meta AND reconciled (historical) rows
@@ -226,6 +237,47 @@ def clear_reconciled(since=None, model=None):
         _db().commit()
 
 
+# ── estimate→actual true-down (ledger_sync.true_down writes these; the gate's batch rows are PRE-SUBMIT
+#    estimates, so once the provider bills the actuals the ledger must come down to the billed truth) ──
+def gate_batch_cells(since=None):
+    """{(project, provider, model, day): $} of GATE-LIVE batch rows — the estimate base the true-down corrects.
+    Excludes every reconcile marker model AND prior true-down rows (idempotence: corrections never feed the next
+    correction). Full-dimension sibling of gate_by_project_day."""
+    cond = ["kind='batch'", f"(model IS NULL OR model NOT IN ({','.join('?' * len(_MARKER_MODELS))}))",
+            "(conv_id IS NULL OR conv_id <> ?)"]
+    args = list(_MARKER_MODELS) + [_TRUE_DOWN_CONV]
+    if since:
+        cond.append("day >= ?"); args.append(since)
+    with _lock:
+        rows = _db().execute("SELECT COALESCE(NULLIF(project,''),'unattributed'), COALESCE(provider,'?'), "
+                             "COALESCE(model,'?'), day, COALESCE(SUM(cost),0) FROM charges WHERE "
+                             + " AND ".join(cond) + " GROUP BY 1, 2, 3, day", args).fetchall()
+    return {(pr, p, m, d): float(c or 0) for pr, p, m, d, c in rows}
+
+
+def record_true_down(day, provider, model, delta, project):
+    """Insert ONE negative batch correction row: estimate − billed for this cell's share. Carries the REAL model
+    (so by_dims nets it against the estimate rows before the SaaS push) and the true-down conv_id sentinel (so it
+    is identifiable/clearable without a marker model). The original estimate rows are NEVER mutated — the ledger
+    keeps both the estimate and the correction (forensic: what we thought + what it actually billed)."""
+    with _lock:
+        _db().execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project,conv_id) VALUES (?,?,?,?,?,?,?,?)",
+                      (day + "T00:00:00+00:00", day, provider or "?", model or "?", "batch",
+                       -abs(float(delta)), project or "unattributed", _TRUE_DOWN_CONV))
+        _db().commit()
+
+
+def clear_true_down(since=None):
+    """Remove prior true-down rows in the window so the correction is rebuilt idempotently each reconcile
+    (billed actuals only grow as in-flight batches land, so each rebuild converges on the final billed $)."""
+    with _lock:
+        if since:
+            _db().execute("DELETE FROM charges WHERE conv_id=? AND day >= ?", (_TRUE_DOWN_CONV, since))
+        else:
+            _db().execute("DELETE FROM charges WHERE conv_id=?", (_TRUE_DOWN_CONV,))
+        _db().commit()
+
+
 # ── spendguard's own advisor LLM use (segregated: own cap, own line, excluded from workload) ──
 def record_meta(provider, model, cost):
     # spendguard's OWN spend → the llm-spendguard project, kept distinct by kind='meta' (NOT a separate project tag).
@@ -252,15 +304,19 @@ def meta_exceeded(pending=0.0):
 
 def by_day(kind=None, exclude_meta=False, since=None, exclude_reconciled=False):
     """{day: total$} from the local ledger, optionally filtered by kind / excluding meta / excluding reconciled
-    (provider-truth) rows / since a date. exclude_reconciled is essential for the LEAK check: reconciled rows ARE
-    the provider truth, so counting them as 'local gate-recorded' would make coverage exceed 100%."""
+    (provider-truth) rows / since a date. exclude_reconciled is essential for the LEAK check AND the trust check:
+    reconciled rows MIRROR truth from another source (provider batch / gate log / reconstruction), so counting them
+    as 'local gate-recorded' double-counts against that very source (coverage >100%, trust ratio inflated). It
+    excludes ALL marker models; true-down correction rows are NOT markers (they correct the gate's own estimates)
+    and stay included."""
     cond, args = [], []
     if kind:
         cond.append("kind=?"); args.append(kind)
     if exclude_meta:
         cond.append("(kind IS NULL OR kind != 'meta')")
     if exclude_reconciled:
-        cond.append("(model IS NULL OR model <> ?)"); args.append(_RECONCILED)
+        cond.append(f"(model IS NULL OR model NOT IN ({','.join('?' * len(_MARKER_MODELS))}))")
+        args.extend(_MARKER_MODELS)
     if since:
         cond.append("day >= ?"); args.append(since)
     where = ("WHERE " + " AND ".join(cond)) if cond else ""

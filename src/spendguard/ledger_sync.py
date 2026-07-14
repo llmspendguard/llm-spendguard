@@ -105,11 +105,91 @@ def audit_completeness():
     return audit
 
 
+def true_down(since=None, billed_rows=None):
+    """ESTIMATE→ACTUAL true-down: bring the gate's PRE-SUBMIT batch estimate rows down to the provider-BILLED
+    actuals. The gate records a batch's cost when it is submitted (the batch id does not exist yet, so estimate
+    rows carry no batch id — structural, see gate._decide_and_account); the provider later bills the actual token
+    usage per batch. This nets the two per (provider, model): billed = Σ per-batch actuals (both providers, from
+    the reconcile caches via backfill's per-batch rows — grounded in batch ids on the ACTUALS side), and the
+    over-estimate Δ = max(0, estimates − billed) is written as NEGATIVE correction rows spread across the estimate
+    cells (project × day) proportionally. Under-estimates are NOT touched here — provider>recorded is the gap
+    machinery's job (two one-way valves that meet at billed truth).
+
+    Correction rows carry the REAL model + the true-down conv_id sentinel; original estimate rows are NEVER
+    mutated (forensic: the ledger keeps what we thought AND what it billed; by_dims nets them for the push).
+    Idempotent: the window's corrections are cleared + rebuilt from current billed truth each run, so a re-run is
+    a no-op and an IN-FLIGHT batch (estimate recorded, not yet billed) that trues down today self-heals tomorrow
+    when its actuals land. A provider whose billed fetch FAILED is skipped entirely — unknown must never read as
+    $0 billed, or real estimates would be zeroed. REALTIME is untouched on purpose: gate realtime rows already
+    record ACTUAL tokens at call time (the inline true-up), and without an admin key there are no per-call
+    provider actuals to true down to.
+
+    `billed_rows` = {"openai": [(prov, model, cost, in, out, day, batch_id), ...] | None, "anthropic": ...};
+    None/absent = fetch that provider here (None after a failed fetch = skip). Returns the correction summary."""
+    from . import budget
+    since = since or datetime.date.today().replace(day=1).isoformat()
+    if billed_rows is None:
+        billed_rows = {}
+        from . import backfill
+        for prov_name, fetch in (("openai", lambda: backfill._openai_rows()),
+                                 ("anthropic", lambda: backfill._anthropic_rows())):
+            try:
+                billed_rows[prov_name] = fetch()
+            except Exception:
+                billed_rows[prov_name] = None
+    budget.clear_true_down(since)                       # rebuild the window's corrections from current billed truth
+    # JOIN on the NORMALIZED model: gate estimate rows record the id the caller submitted (often the dated snapshot,
+    # e.g. claude-haiku-4-5-20251001) while the billed caches key the base name — an exact-string join misses those,
+    # trues real billed spend to $0 and dumps it on the gap machinery (right total, degraded attribution). The
+    # correction ROW still carries the cell's ORIGINAL model so by_dims nets it against the very rows it corrects.
+    from . import pricing
+
+    def _join_model(m):
+        try:
+            return pricing.normalize(m or "?")
+        except Exception:
+            return m or "?"
+    billed = {}                                          # (provider, normalized model) -> billed $ in the window
+    for prov_name, rows in billed_rows.items():
+        if rows is None:
+            continue                                     # billed truth UNKNOWN for this provider → never true down
+        for _p, model, cost, _it, _ot, day, _bid in rows:
+            if (day or "") < since:
+                continue
+            k = (prov_name, _join_model(model))
+            billed[k] = billed.get(k, 0.0) + float(cost or 0)
+    cells = budget.gate_batch_cells(since)               # (project, provider, model, day) -> gate estimate $
+    est = {}                                             # (provider, normalized model) -> Σ estimates
+    for (_proj, prov_name, model, _day), v in cells.items():
+        k = (prov_name, _join_model(model))
+        est[k] = est.get(k, 0.0) + v
+    trued, by_model = 0.0, {}
+    for (prov_name, jmodel), est_total in est.items():
+        if billed_rows.get(prov_name) is None:
+            continue                                     # skipped provider (fetch failed)
+        delta = est_total - billed.get((prov_name, jmodel), 0.0)
+        if delta <= 0.01 or est_total <= 0:
+            continue                                     # billed ≥ estimate (or nothing recorded) → nothing to true down
+        for (proj, p2, m2, day), v in cells.items():
+            if (p2, _join_model(m2)) != (prov_name, jmodel) or v <= 0:
+                continue
+            share = delta * (v / est_total)
+            if share > 0.005:
+                budget.record_true_down(day, prov_name, m2, round(share, 6), project=proj)
+        trued += delta
+        by_model[f"{prov_name}:{jmodel}"] = round(delta, 2)
+    return dict(since=since, trued_down=round(trued, 2), by_model=by_model,
+                skipped=[p for p, r in billed_rows.items() if r is None])
+
+
 def reconcile_into_ledger(since=None):
-    """Make the LOCAL ledger reflect PROVIDER-billed batch truth: write the per-(provider,day) GAP between
-    provider billing and gate-recorded batch as 'unattributed' rows. Idempotent (rebuilds them). The gate-recorded
-    spend stays attributed (project/user); the gap = pre-ledger / ungated / ungoverned. Zero model spend (provider
-    GETs are free). Returns a summary. This is what makes the ledger correct + the dashboard show the real total."""
+    """Make the LOCAL ledger reflect PROVIDER-billed batch truth, from BOTH sides: (1) true_down() nets the gate's
+    batch ESTIMATE rows down to billed actuals (estimate bias / failed batches never billed), then (2) the
+    per-(provider,day) GAP between provider billing and gate-recorded batch is written as attributed rows
+    (provider > recorded = pre-ledger / ungated / ungoverned). Idempotent (rebuilds both). The gate-recorded
+    spend stays attributed (project/user). Zero model spend (provider GETs are free). Returns a summary. This is
+    what makes the ledger correct + the dashboard show the real total, and it rides the existing daily reconcile
+    cadence — no separate scheduler."""
     from . import budget
     since = since or datetime.date.today().replace(day=1).isoformat()
     # Only the account-OWNER connection reconciles the SHARED provider-account gap. A connected non-owner
@@ -144,7 +224,19 @@ def reconcile_into_ledger(since=None):
                 prov[("anthropic", d)] = prov.get(("anthropic", d), 0.0) + v
     except Exception as e:
         errors["anthropic"] = str(e)[:140]
-    local = budget.by_provider_day(kind="batch", since=since)   # gate-recorded (attributed) batch, by provider/day
+    # Per-batch billed actuals, fetched ONCE and shared by the true-down and the evidence-attribution loop below.
+    # A failed side is None (skip-that-provider in true_down; the loop just sees no evidence rows) and lands in
+    # `errors` — a partial fetch must be visible, never silently treated as $0 billed.
+    from . import backfill, conv
+    _billed_rows = {}
+    for _prov_name, _fetch in (("openai", backfill._openai_rows), ("anthropic", backfill._anthropic_rows)):
+        try:
+            _billed_rows[_prov_name] = _fetch()
+        except Exception as e:
+            _billed_rows[_prov_name] = None
+            errors.setdefault(_prov_name, str(e)[:140])
+    td = true_down(since=since, billed_rows=_billed_rows)       # estimates → billed actuals FIRST, so every
+    local = budget.by_provider_day(kind="batch", since=since)   # gate-side read below sees corrected numbers
     # Fallback project for batches with NO conversation evidence: a single-project repo's LLM provider account is
     # entirely THAT project (e.g. Acme's OpenAI/Anthropic spend is all 'nlp-pipeline'), so a no-evidence batch is the
     # repo's project, not truly 'unattributed' — that bucket is for genuinely MULTI-project repos only. This is the
@@ -161,10 +253,9 @@ def reconcile_into_ledger(since=None):
     # LLM-classified project (with the repo/cwd as a PRIOR the LLM confirms/overrides). NEVER a regex keyword guess.
     # An evidenced batch (we know which repo ran it) always gets a real project; only a batch with NO conversation
     # at all falls to `fallback`. Populate the agentic cache with `spendguard accounting --run` (estimate-first).
-    from . import backfill, conv
     bmap = conv.batch_project_map()
     prov_by_proj = {}   # (project, day) -> provider $ (evidence-attributed)
-    for _pn, _model, cost, _it, _ot, day, bid in (backfill._openai_rows() + backfill._anthropic_rows()):
+    for _pn, _model, cost, _it, _ot, day, bid in ((_billed_rows.get("openai") or []) + (_billed_rows.get("anthropic") or [])):
         if (day or "") < since:
             continue
         proj = (bmap.get(bid, {}).get("project") or "").lower()   # agentic per-subconversation attribution
@@ -212,6 +303,7 @@ def reconcile_into_ledger(since=None):
         by_project[proj] = round(gap, 2)
     audit = audit_completeness()                  # triple-check: every batch accounted, nothing silently dropped
     return dict(since=since, provider_total=provider_total, gate_attributed=local_total,
+                true_down=td,
                 ungoverned=round(gap_usd, 2), gap_rows=gap_rows, gap_by_project=by_project,
                 coverage=round(local_total / provider_total * 100, 1) if provider_total else 100.0,
                 errors=errors, providers_ok=[p for p in ("openai", "anthropic") if p not in errors],

@@ -2,6 +2,30 @@
 
 All notable changes to **llm-spendguard**. Format loosely follows Keep a Changelog; dates are UTC.
 
+## [Unreleased]
+
+### Estimate→actual TRUE-DOWN at reconcile (`ledger_sync.true_down`, rides the daily cadence)
+- The gate records a batch's cost at SUBMIT time — an estimate (the batch id doesn't exist yet). The
+  provider later bills the actuals per batch. Reconcile now nets the two: per (provider, model), the
+  over-estimate Δ = estimates − billed (from the per-batch reconcile caches, both providers) is written
+  as NEGATIVE correction rows spread proportionally across the estimate cells (project × day). Original
+  estimate rows are NEVER mutated (forensic: the ledger keeps what we thought AND what it billed);
+  corrections carry the REAL model + a `(true-down)` conv_id sentinel, so `by_dims` NETS them per
+  dimension before any SaaS push (the server clamps negative cost — netted rows never trip it).
+  Idempotent per window (cleared + rebuilt from current billed truth each run): a re-run is a no-op and
+  an in-flight batch that trues down today self-heals when its actuals land. A provider whose billed
+  fetch FAILED is skipped — unknown must never read as $0 billed. Under-estimates stay the gap
+  machinery's job (two one-way valves meeting at billed truth). Runs FIRST inside
+  `reconcile_into_ledger`, so the gap/attribution math sees corrected numbers; summary gains a
+  `true_down` block. No new scheduler — it rides the existing daily reconcile.
+- Trust check is now APPLES-TO-APPLES, axis by axis (`trust._ledger_llm_total`): batch = gate estimates
+  netted with true-downs ↔ provider-billed batch; realtime = gate-live rows ↔ the gate's own realtime
+  log. `budget.by_day(exclude_reconciled=True)` now excludes ALL reconcile mirror markers (provider-batch
+  + realtime history/oracle/reconstructed), killing the phantom drift where mirror rows inflated only the
+  recorded side. Fixes the standing ALARM (recorded 1.40× billed) that fail-closed blocked `saas sync`.
+- Guard: `tests/test_true_down.py` (24 checks — netting, proportional attribution, idempotence,
+  in-flight self-heal, failed-fetch skip, marker drift, trust verdict flip, full reconcile integration).
+
 ## [0.6.0] — 2026-07-14
 
 ### Autotune: learned max_tokens applied at call time (`gate.autotune = off|suggest|apply`)

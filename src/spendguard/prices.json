@@ -4,7 +4,8 @@
     "source": "https://developers.openai.com/api/docs/pricing",
     "note": "USD per 1M tokens. batch = 50% of realtime. Edit here (or ~/.spendguard/prices.json) \u2014 do not hardcode prices in code.",
     "stale_after_days": 45,
-    "qwen_source": "https://www.eesel.ai/blog/qwen-pricing (Alibaba Model Studio list prices, 2026-06-14)"
+    "qwen_source": "https://www.eesel.ai/blog/qwen-pricing (Alibaba Model Studio list prices, 2026-06-14)",
+    "anthropic_source": "https://platform.claude.com/docs/en/docs/about-claude/pricing (verified 2026-07-14; claude-sonnet-5 on introductory $2/$10 through 2026-08-31, then $3/$15)"
   },
   "providers": {
     "openai": {
@@ -110,6 +111,14 @@
           "cached_in": 0.5,
           "batch_in": 2.5,
           "batch_out": 12.5
+        },
+        "claude-sonnet-5": {
+          "in_": 2.0,
+          "out": 10.0,
+          "cached_in": 0.2,
+          "batch_in": 1.0,
+          "batch_out": 5.0,
+          "_note": "INTRODUCTORY pricing through 2026-08-31; reverts to 3/15 (batch 1.5/7.5, cached 0.3) on 2026-09-01. Re-verify then."
         },
         "claude-sonnet-4-6": {
           "in_": 3.0,

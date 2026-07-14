@@ -61,11 +61,19 @@ def provider_truth(since=None):
 
 
 def _ledger_llm_total(since):
-    """What the LOCAL ledger recorded as LLM workload (batch + realtime, excluding meta + reconciled-truth rows) —
-    the captured side that must reconcile to provider truth."""
+    """What the LOCAL ledger recorded as LLM workload — the captured side that must reconcile to provider truth.
+    APPLES-TO-APPLES with provider_truth(), axis by axis:
+      • batch: gate estimate rows NETTED with their true-down corrections (ledger_sync.true_down brings estimates
+        to billed actuals at reconcile) ↔ truth's provider-billed batch. Excludes '(provider-batch)' backfill —
+        those rows MIRROR the provider side and would double-count against it.
+      • realtime: gate-live rows (actual tokens recorded at call time) ↔ truth's gate realtime_log (the same
+        capture). Excludes the realtime reconcile markers (history/oracle/reconstructed) — they mirror sources
+        that are NOT in provider_truth, so counting them here inflates only the recorded side (the old +$13
+        phantom drift).
+    Meta is excluded on both sides (it's spendguard's own spend, tracked separately)."""
     from . import budget
     by = budget.by_day(kind="batch", since=since, exclude_reconciled=True)
-    rt = budget.by_day(kind="realtime", since=since)
+    rt = budget.by_day(kind="realtime", since=since, exclude_reconciled=True)
     return round(sum(by.values()) + sum(rt.values()), 2)
 
 
