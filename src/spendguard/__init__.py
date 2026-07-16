@@ -43,7 +43,13 @@ __all__ = ["install", "require", "register", "install_litellm", "install_bedrock
            "PRICING", "PRICING_VERIFIED", "PRICING_SOURCE",
            "estimate_job", "test_job", "gated_batch", "check_bulk", "check_realtime", "check_compute",
            "record_estimate", "record_tested", "note_response", "maxtokens", "is_truncated", "GateBlocked"]
-__version__ = "0.3.0"
+# Version comes from the INSTALLED package metadata (single source: pyproject.toml) — a hardcoded literal
+# here shipped as "0.3.0" for four releases before anyone noticed. Editable/source-tree fallback: "0.0.0.dev0".
+try:
+    from importlib.metadata import version as _pkg_version
+    __version__ = _pkg_version("llm-spendguard")
+except Exception:
+    __version__ = "0.0.0.dev0"
 
 
 def _auto_install():

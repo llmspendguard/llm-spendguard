@@ -2,6 +2,13 @@
 
 All notable changes to **llm-spendguard**. Format loosely follows Keep a Changelog; dates are UTC.
 
+## [0.7.1] — 2026-07-16
+
+### Fixed
+- `spendguard.__version__` reported "0.3.0" — a hardcoded literal never bumped for four releases. It now
+  reads the installed package metadata (single source: pyproject.toml; source-tree fallback 0.0.0.dev0).
+  Guard: `tests/test_version_dunder.py` fails on any future drift.
+
 ## [0.7.0] — 2026-07-16
 
 ### N subscriptions at once: Codex lane + executor pool (`advisor.executor = codex | pool`)
