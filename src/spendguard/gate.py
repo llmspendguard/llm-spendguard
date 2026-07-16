@@ -1406,6 +1406,12 @@ def _cli(cmd="status", live=False):
                               f"`spendguard reconcile` refreshes)")
             except Exception:
                 print("  ledger    : leak status UNKNOWN — check could not run")
+            try:                                          # subscription-lane activation: silent-by-design at call
+                from . import lanes                       # time (degrade to API), so doctor is where a dead lane
+                for _ln in lanes.summary_lines():         # must become VISIBLE with its exact activation step
+                    print("  " + _ln)
+            except Exception:
+                pass
     return 0
 
 

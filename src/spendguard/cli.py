@@ -244,6 +244,9 @@ def main(argv=None):
     if cmd == "truth":                                # per-day provider-truth totals; --push syncs (keys stay local)
         from . import truth
         return truth.main()
+    if cmd == "lanes":                                # subscription-lane activation status (+ --probe live check)
+        from . import lanes
+        return lanes.main(rest)
     if cmd == "keys":                                 # per-KEY spend (which workspace/project key) — local-only
         import datetime as _dt
         from . import budget, config as _c

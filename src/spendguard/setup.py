@@ -549,6 +549,18 @@ def cmd_init(argv=None):
         print(f"    {prov:<9}: {'🟢 resolved' if k else '🔴 MISSING — ' + prov + ' spend will be INVISIBLE to reconcile/report'}")
     if (cfgjson.get("budget") or {}).get("backend") == "sqlite":
         print(f"SQLite budget ledger will be created at {config.db_path()} on first charge.")
+    # Subscription lanes: if the executor covers a plan lane, tell the user EXACTLY what activates it —
+    # at call time a dead lane degrades silently to the metered API, so setup is where it must be said.
+    try:
+        from . import lanes as _lanes
+        _ll = _lanes.summary_lines()
+        if _ll:
+            print()
+            for _l in _ll:
+                print(_l)
+            print("  Verify end-to-end: `spendguard lanes --probe` (one tiny plan-billed prompt per lane, $0).")
+    except Exception:
+        pass
     # Cold-start the cost advisor from your OWN history (so day-one recommendations aren't empty).
     print("\nSeed the advisor: `spendguard bootstrap` mines your past provider batches (free retrieval) into a "
           "starter cost+quality corpus — the paid reasoning step is caged by caps.meta + estimate-first (opt-in --run).")

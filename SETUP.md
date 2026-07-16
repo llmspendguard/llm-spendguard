@@ -58,7 +58,7 @@ or call `spendguard.install()` at your app's entry point.
 | `email.provider` (+ `to`, `from_`, key) | off | Daily report delivery (resend or smtp). |
 | `saas.*` | off (`enabled=false`) | Team/org roll-up client seam: `enabled`, `url`, `api_key` (Bearer, secret), `visibility` (`private`/`team`/`org`), `sync_interval`, `contributor`, `project`. Off until you connect a server. |
 | API keys | `keys.env` or env | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `DASHSCOPE_API_KEY`, `ZAI_API_KEY`, `VAST_API_KEY`, `SPENDGUARD_SAAS_KEY`. |
-| `advisor.executor` | **api** | Where spendguard's own meta prompts run: `api` (metered, caps.meta) / `claude-code` (Anthropic plan) / `codex` (ChatGPT plan) / `pool` (both lanes, each serving its own provider; failures cool the lane and fall back to the API). |
+| `advisor.executor` | **api** | Where spendguard's own meta prompts run: `api` (metered, caps.meta) / `claude-code` (Anthropic plan) / `codex` (ChatGPT plan) / `pool` (both lanes, each serving its own provider; failures cool the lane and fall back to the API). Activation status prints at the end of `init` and in `doctor`; verify live with `spendguard lanes --probe` (one tiny plan-billed prompt per lane, $0). |
 | `key_profile` (repo `.spendguard.json`) | off | Per-repo key selection: keys.env holds `<VAR>__<profile>` entries (e.g. `ANTHROPIC_API_KEY__lmm=…`); the repo's profile picks them. Real env always wins. |
 
 Everything is optional — with nothing configured, the gate still runs with the $75 per-batch cap and

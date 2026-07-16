@@ -2,6 +2,20 @@
 
 All notable changes to **llm-spendguard**. Format loosely follows Keep a Changelog; dates are UTC.
 
+## [0.7.2] — 2026-07-16
+
+### Lane activation is now PROMPTED, not discovered (`spendguard lanes [--probe]`)
+- A plan lane that isn't installed/logged in degrades silently to the metered API at call time (by
+  design — never break) — which meant a user could set `advisor.executor = pool` and never learn why
+  their plans weren't carrying the work. Now `spendguard init` (tail) and `spendguard doctor` print a
+  per-lane activation block whenever the executor covers a lane: CLI found or the install step, login
+  verified or the exact command (`claude` → `/login` / `codex` sign-in), plus the consequence line
+  ("until active, prompts fall back to the metered API — billed"). `spendguard lanes --probe` verifies
+  end-to-end with one tiny plan-billed prompt per enabled lane ($0).
+- Auth detection is artifact-based and honest about its limits: a macOS keychain item alone reads
+  🟡 unverified, never 🟢 — it can belong to the desktop app while the CLI is logged out (found live).
+  Only the CLI's own credentials file (or the probe) proves a lane. Guard: `tests/test_lanes.py`.
+
 ## [0.7.1] — 2026-07-16
 
 ### Fixed
