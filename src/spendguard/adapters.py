@@ -65,7 +65,7 @@ def call(model, prompt, max_tokens=512, system=None, reasoning=None):
     # falls back to the caged API path below — degrade, never break.
     if prov == "anthropic" and _executor() == "claude-code":
         from . import subscription_exec
-        s = subscription_exec.run_prompt(prompt, system=system)
+        s = subscription_exec.run_prompt(prompt, system=system, model=raw)   # honor the chosen tier on the plan too
         if not s.get("error"):
             try:
                 from . import calls

@@ -43,11 +43,21 @@ os.environ[KEY_ENV] = "sk-test-not-real"
 r = se.run_prompt("evidence table…", system="You are the advisor.")
 ck("headless one-shot: -p + json output + --max-turns 1 (no agent loop)",
    seen["cmd"][:2] == ["claude", "-p"] and "--max-turns" in seen["cmd"] and "json" in seen["cmd"])
+ck("no model requested → no --model flag (CLI default)", "--model" not in seen["cmd"])
 ck("system prompt rides --append-system-prompt", "--append-system-prompt" in seen["cmd"])
 ck("the provider key env var is STRIPPED from the child (plan login only, never metered)",
    KEY_ENV not in seen["env"] and "PATH" in seen["env"])
 ck("result + usage parsed", r["text"] == "SYNTHESIZED INSIGHT" and r["in_tok"] == 900 and r["out_tok"] == 120
    and r["error"] is None)
+
+print("-- plan-window smartness: the requested tier is honored, never upgraded to the default model --")
+se.run_prompt("cheap classify…", model="claude-haiku-4-5-20251001")
+ck("haiku-class request → --model haiku",
+   "--model" in seen["cmd"] and seen["cmd"][seen["cmd"].index("--model") + 1] == "haiku")
+se.run_prompt("judge…", model="claude-opus-4-8")
+ck("opus-class request → --model opus", seen["cmd"][seen["cmd"].index("--model") + 1] == "opus")
+se.run_prompt("mystery…", model="some-future-model-9")
+ck("unknown family → no --model (degrade to CLI default, never error)", "--model" not in seen["cmd"])
 
 # failure shapes → {error}, never raises
 se.subprocess.run = lambda *a, **k: types.SimpleNamespace(returncode=1, stdout="", stderr="rate limited by plan")

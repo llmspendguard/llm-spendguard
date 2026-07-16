@@ -4,6 +4,14 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+### Subscription executor honors the chosen model tier (plan-window smartness)
+- `advisor.executor = claude-code` used to run every meta prompt on the CLI's DEFAULT model (the top
+  tier), silently upgrading haiku-class classify/judge prompts and burning the scarcest plan window.
+  The executor now maps the requested API model to the matching `--model haiku|sonnet|opus` family
+  alias — the advisor's cheapest-adequate-tier choice holds on the plan exactly as it does on the API.
+  Unknown family → CLI default (degrade, never error). Guard: tier checks in
+  `tests/test_subscription_exec.py`.
+
 ### Prices keep themselves fresh (`pricing.refresh_days`) + per-UNIT rates now flow from LiteLLM
 - `sync.refresh_if_stale()` runs at the top of every `saas sync` (which the installed `spendguard
   schedule` agent already runs on a cadence): re-fetches the LiteLLM price cache only when it is older

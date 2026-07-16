@@ -31,11 +31,29 @@ def available() -> bool:
     return shutil.which("claude") is not None
 
 
-def run_prompt(prompt, system=None, timeout=TIMEOUT_S):
-    """→ {text, in_tok, out_tok, latency, error} from one headless plan-billed completion."""
+def _model_alias(model):
+    """Requested API model id → Claude Code `--model` family alias (mechanical substring extraction, not a
+    meaning decision). PLAN-WINDOW SMARTNESS: the advisor already picks the cheapest adequate tier for each
+    meta task on the API path — the executor must honor that same tier, or every meta prompt silently runs on
+    the CLI's DEFAULT model (the top tier) and burns the scarcest plan window. Unknown family → None (CLI
+    default), so a new model family degrades to today's behavior rather than erroring."""
+    m = (model or "").lower()
+    for family in ("haiku", "sonnet", "opus"):
+        if family in m:
+            return family
+    return None
+
+
+def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S):
+    """→ {text, in_tok, out_tok, latency, error} from one headless plan-billed completion. `model` = the
+    API model id the caller would have used — mapped to the matching plan tier so subscription execution
+    never upgrades a haiku-class meta prompt to the default (top) tier."""
     if not available():
         return {"error": "claude CLI not found"}
     cmd = ["claude", "-p", prompt, "--output-format", "json", "--max-turns", "1"]
+    alias = _model_alias(model)
+    if alias:
+        cmd += ["--model", alias]
     if system:
         cmd += ["--append-system-prompt", system]
     env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
