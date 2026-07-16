@@ -4,6 +4,33 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+### N subscriptions at once: Codex lane + executor pool (`advisor.executor = codex | pool`)
+- New `codex_exec` lane runs OPENAI-model meta prompts headlessly on the ChatGPT plan (`codex exec
+  --json --output-last-message`), mirroring the claude-code lane's guarantees: OPENAI_API_KEY stripped
+  from the child (a plan call can never silently become metered), $0 on the billed axis
+  (kind='subscription', executor 'codex'), plan value on the est-value axis via the codex pipeline,
+  and {error} → fallback on ANY mismatch. Usage parses by field name from the event stream (tolerant
+  of CLI schema drift; absent usage = 0 tokens, never a guess). Live verify pending a codex install —
+  the defensive parse + fallback mean interface drift degrades to the API path, never breaks.
+- `pool` enables BOTH plan lanes at once, provider-respecting by design: anthropic-model prompts ride
+  the Anthropic plan, openai-model prompts ride the ChatGPT plan, never cross-provider substitution —
+  the recorded model is always the model that answered. A lane failure (window exhausted, CLI missing)
+  cools that lane for `advisor.pool_cooldown_s` (default 900s) so bursts go straight to the API.
+  Guards: `tests/test_codex_exec.py`, `tests/test_executor_pool.py`.
+
+### Per-repo keys: profiles, and per-key spend attribution
+- KEY PROFILES: one global `keys.env` holds every workspace/project-scoped key as `<VAR>__<profile>`
+  entries; a repo's `.spendguard.json` `key_profile` (or $SPENDGUARD_KEY_PROFILE) selects them.
+  Precedence: real environment → profile entry → unsuffixed entry; suffixed entries never leak without
+  their profile. Pairs with provider-side scoping (OpenAI project keys / Anthropic workspace keys) so
+  the provider's own billing splits per repo and reconcile can cross-check each repo against its own
+  workspace truth. (`config.load_key_files` now runs at the END of the config module so profile
+  resolution can read the repo config — importers still get keys before any client is constructed.)
+- KEY FINGERPRINT: every charge is stamped with the serving key's `sha256[:8]:last4` (env-resolved
+  proxy, documented; LOCAL-ONLY — the roll-up push never selects it). `budget.by_key()` +
+  `spendguard keys` show $ and calls per (provider, key); reconcile/true-down marker rows carry no
+  key. Guard: `tests/test_key_profiles.py`.
+
 ### Subscription executor honors the chosen model tier (plan-window smartness)
 - `advisor.executor = claude-code` used to run every meta prompt on the CLI's DEFAULT model (the top
   tier), silently upgrading haiku-class classify/judge prompts and burning the scarcest plan window.

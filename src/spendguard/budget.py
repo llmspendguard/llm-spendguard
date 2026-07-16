@@ -27,8 +27,11 @@ def _db():
                     c.execute("ALTER TABLE charges ADD COLUMN project TEXT DEFAULT ''")
                 if "conv_id" not in cols:                      # conversation/chat id per call (links to the chat)
                     c.execute("ALTER TABLE charges ADD COLUMN conv_id TEXT DEFAULT ''")
+                if "key_fp" not in cols:                       # which provider key served the call (sha8:last4, local-only)
+                    c.execute("ALTER TABLE charges ADD COLUMN key_fp TEXT DEFAULT ''")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_day ON charges(day)")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_charges_conv ON charges(conv_id)")  # chat↔charge joins (attribution)
+                c.execute("CREATE INDEX IF NOT EXISTS idx_charges_keyfp ON charges(key_fp)")  # per-key spend view
                 c.commit()
                 _conn = c
     return _conn
@@ -92,11 +95,15 @@ def record(provider, model, kind, cost, project=None, conv_id=None):
         return
     proj = project if project is not None else _project()
     conv = conv_id if conv_id is not None else _conv()
+    try:
+        fp = config.key_fingerprint(provider)          # which key served this call (env-resolved proxy; ''=unknown)
+    except Exception:
+        fp = ""
     now = datetime.datetime.now(datetime.timezone.utc)
     with _lock:
-        _db().execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project,conv_id) VALUES (?,?,?,?,?,?,?,?)",
+        _db().execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project,conv_id,key_fp) VALUES (?,?,?,?,?,?,?,?,?)",
                       (now.isoformat(timespec="seconds"), now.strftime("%Y-%m-%d"),
-                       provider or "?", model or "?", kind, float(cost), proj or "", conv or ""))
+                       provider or "?", model or "?", kind, float(cost), proj or "", conv or "", fp))
         _db().commit()
 
 
@@ -339,6 +346,24 @@ def by_dims(since=None):
             f"GROUP BY day, provider, model, kind, project", args
         ).fetchall()
     return [dict(day=d, provider=p, model=m, kind=k, project=pr, cost=float(c or 0), calls=int(n)) for d, p, m, k, pr, c, n in rows]
+
+
+def by_key(since=None):
+    """{(provider, key_fp): {'cost': $, 'calls': n}} of gate-recorded workload — per-KEY spend (which
+    workspace/project key did this money flow through?). Excludes meta and every reconcile marker row
+    (mirror/backfill rows carry no key). key_fp '' groups as '(none)' — rows recorded before key stamping
+    existed, or where no key env was resolvable. LOCAL-ONLY view; fingerprints never leave the machine."""
+    cond = ["(kind IS NULL OR kind != 'meta')",
+            f"(model IS NULL OR model NOT IN ({','.join('?' * len(_MARKER_MODELS))}))",
+            "(conv_id IS NULL OR conv_id <> ?)"]
+    args = list(_MARKER_MODELS) + [_TRUE_DOWN_CONV]
+    if since:
+        cond.append("day >= ?"); args.append(since)
+    with _lock:
+        rows = _db().execute("SELECT COALESCE(provider,'?'), COALESCE(NULLIF(key_fp,''),'(none)'), "
+                             "COALESCE(SUM(cost),0), COUNT(*) FROM charges WHERE "
+                             + " AND ".join(cond) + " GROUP BY 1, 2", args).fetchall()
+    return {(p, fp): {"cost": float(c or 0), "calls": int(n)} for p, fp, c, n in rows}
 
 
 def ledger_start(kind=None):

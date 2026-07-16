@@ -42,19 +42,76 @@ def _iter_env_file(path):
         return
 
 
+_KEYS_SET_BY_SPENDGUARD = set()   # vars WE set from the key files this process — a profile may override
+                                  # these; a var the USER'S environment set is never touched.
+
+
+def _key_profile():
+    """Active key profile name: $SPENDGUARD_KEY_PROFILE, else the repo's `.spendguard.json` `key_profile`.
+    None = no profile (unsuffixed keys only)."""
+    v = os.environ.get("SPENDGUARD_KEY_PROFILE")
+    if v:
+        return v.strip() or None
+    try:
+        return (saas_config().get("key_profile") or "").strip() or None
+    except Exception:
+        return None
+
+
 def load_key_files():
     """Load the secret files (~/.spendguard/keys.env, then legacy ~/.spendguard/.env, then $SPENDGUARD_ENV) into
     os.environ, so BOTH spendguard AND the user's OWN clients — openai.OpenAI() / anthropic.Anthropic(), which
     read their key from the environment — pick the keys up after a plain `import spendguard`. A REAL environment
     variable ALWAYS wins (a set var is never overwritten) and blank placeholders are skipped, so prod / CI /
-    secret-managers are never clobbered. Idempotent; fail-open (never raises at import)."""
+    secret-managers are never clobbered. Idempotent; fail-open (never raises at import).
+
+    KEY PROFILES (per-repo key selection): one global keys.env can hold every workspace/project-scoped key as
+    `<VAR>__<profile>` entries (e.g. `ANTHROPIC_API_KEY__lmm=…`). When a profile is active (`key_profile` in the
+    repo's .spendguard.json, or $SPENDGUARD_KEY_PROFILE), those entries override the unsuffixed defaults for
+    their base var — so each repo picks its own provider key without editing any source or per-repo secrets.
+    Precedence, highest first: real environment → active profile entry → unsuffixed file entry. Suffixed
+    entries never leak into env under any other (or no) profile."""
+    entries = {}
     for p in (KEYS_ENV, HOME / ".env", *( [Path(os.environ["SPENDGUARD_ENV"])] if os.environ.get("SPENDGUARD_ENV") else [] )):
         for k, v in _iter_env_file(p):
-            if k and v and k not in os.environ:          # real env wins; keys.env wins over legacy .env; blanks skipped
-                os.environ[k] = v
+            if k and v and k not in entries:             # first file wins per var (keys.env over legacy .env)
+                entries[k] = v
+    for k, v in entries.items():
+        if "__" in k:
+            continue                                     # profile entries apply only via their own profile below
+        if k not in os.environ:
+            os.environ[k] = v
+            _KEYS_SET_BY_SPENDGUARD.add(k)
+    prof = _key_profile()
+    if prof:
+        suffix = "__" + prof
+        for k, v in entries.items():
+            if not k.endswith(suffix):
+                continue
+            base = k[: -len(suffix)]
+            if not base or (base in os.environ and base not in _KEYS_SET_BY_SPENDGUARD):
+                continue                                 # a REAL environment variable always wins
+            os.environ[base] = v
+            _KEYS_SET_BY_SPENDGUARD.add(base)
 
 
-load_key_files()      # at import — keys are in the environment before any provider client is constructed
+# Provider → key env var, for the ledger's key fingerprint (named mapping, no hardcoded keys). Local-only.
+_PROVIDER_KEY_ENV = {"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY", "gemini": "GEMINI_API_KEY"}
+
+
+def key_fingerprint(provider):
+    """Short non-secret fingerprint of the key currently serving `provider` — `<sha256[:8]>:<last4>` — stamped
+    on every charge so per-key spend is attributable/reconcilable (which workspace/project key did this?). The
+    env-resolved key is a PROXY for the key the consumer's client used (clients overwhelmingly read the env;
+    an explicit api_key= differing from env would be mis-fingerprinted — documented limitation). last4 matches
+    what provider dashboards display. '' when the provider has no known key env or no key set. LOCAL-ONLY:
+    the roll-up push never selects this column."""
+    var = _PROVIDER_KEY_ENV.get((provider or "").lower())
+    key = os.environ.get(var, "") if var else ""
+    if not key:
+        return ""
+    import hashlib
+    return hashlib.sha256(key.encode()).hexdigest()[:8] + ":" + key[-4:]
 
 
 def _cfg():
@@ -360,3 +417,9 @@ def api_key(name):
         except Exception:
             pass
     return ""
+
+
+# Load the key files at IMPORT — but at the END of the module (not mid-file): profile resolution reads
+# saas_config()/_project_saas above, which must be defined first. The module body completes before any
+# importer's code runs, so keys are still in the environment before any provider client is constructed.
+load_key_files()

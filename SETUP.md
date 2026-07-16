@@ -58,7 +58,26 @@ or call `spendguard.install()` at your app's entry point.
 | `email.provider` (+ `to`, `from_`, key) | off | Daily report delivery (resend or smtp). |
 | `saas.*` | off (`enabled=false`) | Team/org roll-up client seam: `enabled`, `url`, `api_key` (Bearer, secret), `visibility` (`private`/`team`/`org`), `sync_interval`, `contributor`, `project`. Off until you connect a server. |
 | API keys | `keys.env` or env | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `DASHSCOPE_API_KEY`, `ZAI_API_KEY`, `VAST_API_KEY`, `SPENDGUARD_SAAS_KEY`. |
+| `advisor.executor` | **api** | Where spendguard's own meta prompts run: `api` (metered, caps.meta) / `claude-code` (Anthropic plan) / `codex` (ChatGPT plan) / `pool` (both lanes, each serving its own provider; failures cool the lane and fall back to the API). |
+| `key_profile` (repo `.spendguard.json`) | off | Per-repo key selection: keys.env holds `<VAR>__<profile>` entries (e.g. `ANTHROPIC_API_KEY__lmm=…`); the repo's profile picks them. Real env always wins. |
 
 Everything is optional — with nothing configured, the gate still runs with the $75 per-batch cap and
 prints the report locally. Tune anytime by re-running `spendguard init` or editing `~/.spendguard/config.json`.
 The full registry (every setting, default, valid options, secret-or-not) is `src/spendguard/config_schema.py`.
+
+## Per-repo keys (workspace/project scoping) + per-key spend
+
+One global `~/.spendguard/keys.env` can hold every workspace/project-scoped key:
+
+```
+ANTHROPIC_API_KEY=sk-ant-default…            # default for repos with no profile
+ANTHROPIC_API_KEY__lmm=sk-ant-lmm-ws…        # the lmm repo's Anthropic WORKSPACE key
+OPENAI_API_KEY__lmm=sk-proj-lmm…             # the lmm repo's OpenAI PROJECT key
+```
+
+and each repo's `.spendguard.json` picks its own with `"key_profile": "lmm"` (or set
+`SPENDGUARD_KEY_PROFILE`). A real environment variable always beats both. Pair the profile with
+provider-side scoping — an OpenAI **project key** and an Anthropic **workspace key** per repo — and the
+provider's own billing then splits per repo, so reconcile cross-checks each repo against its own
+workspace truth instead of the shared account total. Every charge is stamped with the serving key's
+fingerprint (`sha256[:8]:last4`, local-only, never pushed); `spendguard keys` shows $ per key.

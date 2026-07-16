@@ -244,6 +244,24 @@ def main(argv=None):
     if cmd == "truth":                                # per-day provider-truth totals; --push syncs (keys stay local)
         from . import truth
         return truth.main()
+    if cmd == "keys":                                 # per-KEY spend (which workspace/project key) — local-only
+        import datetime as _dt
+        from . import budget, config as _c
+        since = None
+        for i, a in enumerate(rest):
+            if a == "--since" and i + 1 < len(rest):
+                since = rest[i + 1]
+        since = since or _dt.date.today().replace(day=1).isoformat()
+        prof = _c._key_profile()
+        print(f"per-key workload spend since {since}" + (f"  (active key profile: {prof})" if prof else ""))
+        rows = sorted(budget.by_key(since=since).items(), key=lambda x: -x[1]["cost"])
+        if not rows:
+            print("  (no workload charges in the window)")
+        for (prov, fp), v in rows:
+            note = "  ← rows before key stamping / no key env resolved" if fp == "(none)" else ""
+            print(f"  {prov:<11}{fp:<16}${v['cost']:>10.2f}  {v['calls']:>6} calls{note}")
+        print("  (fingerprint = sha256[:8]:last4 of the serving key — local-only, never pushed)")
+        return 0
     if cmd == "insights":                             # list / export(scrubbed) / import community learnings
         from . import share
         return share.main(rest)

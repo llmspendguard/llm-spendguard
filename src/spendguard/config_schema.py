@@ -84,11 +84,25 @@ SETTINGS = [
          default="claude-haiku-4-5", kind="string", secret=False,
          desc="Model for BULK quality reconstruction/judging. Batch API; must exist in pricing.py."),
     dict(section="advisor", key="executor", store="config.json:advisor.executor", env="SPENDGUARD_ADVISOR_EXECUTOR",
-         default="api", kind="enum:api,claude-code", secret=False,
-         desc="Where spendguard's OWN meta prompts run: api = metered Anthropic API under caps.meta (default); "
-              "claude-code = a one-shot headless `claude -p` on your flat-fee PLAN ($0 billed; value counted on "
-              "the est-value axis; the provider key env var is stripped from the child process so the call can "
-              "never silently become metered). Falls back to the API path on any failure."),
+         default="api", kind="enum:api,claude-code,codex,pool", secret=False,
+         desc="Where spendguard's OWN meta prompts run: api = metered API under caps.meta (default); "
+              "claude-code = one-shot headless `claude -p` on the Anthropic plan (anthropic-model prompts only); "
+              "codex = headless `codex exec` on the ChatGPT plan (openai-model prompts only); pool = BOTH lanes, "
+              "each serving its own provider — a prompt never runs on a different provider's plan than the model "
+              "the advisor chose ($0 billed; value on the est-value axis; the provider key env var is stripped "
+              "from the child so a plan call can never silently become metered). Any lane failure cools that "
+              "lane (advisor.pool_cooldown_s) and falls back to the API path."),
+    dict(section="advisor", key="pool_cooldown_s", store="config.json:advisor.pool_cooldown_s", env="SPENDGUARD_POOL_COOLDOWN_S",
+         default=900, kind="float", secret=False,
+         desc="After a subscription lane fails (plan window exhausted, CLI missing), skip that lane for this many "
+              "seconds (in-process) so bursts of meta prompts go straight to the API instead of hammering a dead lane."),
+    dict(section="keys", key="key_profile", store=".spendguard.json:key_profile", env="SPENDGUARD_KEY_PROFILE",
+         default=None, kind="string|null", secret=False,
+         desc="Per-repo key selection: with key_profile=<name>, provider keys resolve from `<VAR>__<name>` entries "
+              "in ~/.spendguard/keys.env (e.g. ANTHROPIC_API_KEY__lmm) instead of the unsuffixed defaults — so one "
+              "global keys.env holds every workspace/project-scoped key and each repo picks its own. A REAL "
+              "environment variable always wins. Pair with provider-side scoping (OpenAI project keys / Anthropic "
+              "workspace keys) to get per-repo billing truth from the provider itself."),
     dict(section="calibrate", key="pair_horizon_hours", store="(env only)", env="SPENDGUARD_PAIR_HORIZON_H",
          default="24", kind="number", secret=False,
          desc="Learned-estimator pairing window: a logged job prediction (`calibrate.record_estimate`) collects "

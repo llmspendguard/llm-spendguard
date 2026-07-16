@@ -51,6 +51,48 @@ def _executor():
         return "api"
 
 
+# ── subscription lanes (executor=pool uses both; each serves ONLY its own provider's prompts) ──
+# A lane failure (window exhausted, CLI missing, parse mismatch) puts THAT lane on an in-process
+# cooldown so a burst of meta prompts doesn't hammer a dead lane — during cooldown calls go straight
+# to the caged API. Provider-respecting on purpose: a claude-model prompt never silently runs on the
+# ChatGPT plan (or vice versa) — the recorded model must be the model that answered.
+_LANES = {"anthropic": ("claude-code", "subscription_exec"), "openai": ("codex", "codex_exec")}
+_lane_cooldown = {}   # lane name -> unix ts until which it is cooling
+
+
+def _pool_cooldown_s():
+    import os as _os
+    try:
+        return float(_os.environ.get("SPENDGUARD_POOL_COOLDOWN_S")
+                     or config._cfg_get("advisor", "pool_cooldown_s", 900))
+    except Exception:
+        return 900.0
+
+
+def _lane_cooling(lane):
+    return time.time() < _lane_cooldown.get(lane, 0)
+
+
+def _lane_cool(lane):
+    _lane_cooldown[lane] = time.time() + _pool_cooldown_s()
+
+
+def _lane_for(prov):
+    """(lane_name, exec_module) if the configured executor covers this provider's prompts, else None.
+    `pool` enables every provider's lane; a single-lane setting enables only its own provider."""
+    ex = _executor()
+    lane, mod = _LANES.get(prov, (None, None))
+    if lane is None or ex not in ("pool", lane):
+        return None
+    if _lane_cooling(lane):
+        return None
+    import importlib
+    try:
+        return lane, importlib.import_module(f".{mod}", __package__)
+    except Exception:
+        return None
+
+
 def call(model, prompt, max_tokens=512, system=None, reasoning=None):
     """Run one prompt against one model. Returns a result dict (never raises). `reasoning` (minimal|low|medium|high)
     sets reasoning effort for gpt-5/o-series reasoning models; defaults to 'minimal' for them (default-medium reasoning
@@ -59,25 +101,27 @@ def call(model, prompt, max_tokens=512, system=None, reasoning=None):
     raw = model.split(":", 1)[1] if ":" in model else model
     spec = PROVIDERS[prov]
     base = {"provider": prov, "model": raw, "text": None, "in_tok": 0, "out_tok": 0, "latency": 0.0, "cost": None}
-    # SUBSCRIPTION EXECUTOR (advisor.executor=claude-code): spendguard's own meta prompts ride the
-    # flat-fee plan — $0 on the billed axis (recorded kind='subscription'); the plan VALUE is counted
-    # by the claude-code est-value pipeline from the session transcript. Needs NO API key. Any failure
-    # falls back to the caged API path below — degrade, never break.
-    if prov == "anthropic" and _executor() == "claude-code":
-        from . import subscription_exec
-        s = subscription_exec.run_prompt(prompt, system=system, model=raw)   # honor the chosen tier on the plan too
+    # SUBSCRIPTION LANES (advisor.executor = claude-code | codex | pool): spendguard's own meta prompts
+    # ride the matching flat-fee plan — $0 on the billed axis (recorded kind='subscription'); plan VALUE
+    # is counted by the matching est-value pipeline (claude-code / codex session logs). Needs NO API key.
+    # Any lane failure cools that lane and falls back to the caged API path below — degrade, never break.
+    _lane = _lane_for(prov)
+    if _lane:
+        lane_name, lane_mod = _lane
+        s = lane_mod.run_prompt(prompt, system=system, model=raw)   # honor the chosen tier on the plan too
         if not s.get("error"):
             try:
                 from . import calls
-                calls.record("anthropic", raw, "subscription", 0.0,
+                calls.record(prov, raw, "subscription", 0.0,
                              in_tok=s["in_tok"], out_tok=s["out_tok"], latency=s["latency"])
             except Exception:
                 pass
             return {**base, "text": s["text"], "in_tok": s["in_tok"], "out_tok": s["out_tok"],
-                    "latency": s["latency"], "cost": 0.0, "executor": "claude-code", "error": None}
+                    "latency": s["latency"], "cost": 0.0, "executor": lane_name, "error": None}
+        _lane_cool(lane_name)
         import sys as _sys
-        print(f"[spendguard] subscription executor unavailable ({s['error']}) — falling back to metered API",
-              file=_sys.stderr)
+        print(f"[spendguard] {lane_name} lane unavailable ({s['error']}) — cooling {int(_pool_cooldown_s())}s, "
+              f"falling back to metered API", file=_sys.stderr)
     key = config.api_key(spec["key_env"])
     if not key:
         return {**base, "error": f"no key ({spec['key_env']})"}
