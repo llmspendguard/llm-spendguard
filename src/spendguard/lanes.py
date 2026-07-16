@@ -47,10 +47,13 @@ def status():
     ex = _executor()
     out = []
     for lane, provider, mod, auth_fn, login in (
+        # No static login URL exists to print: each CLI generates a ONE-TIME OAuth link when you start its
+        # login (and prints it if the browser doesn't open) — the command below is the link-generator.
         ("claude-code", "anthropic", subscription_exec, _claude_auth,
-         "run `claude` then `/login` (choose your subscription account)"),
+         "run `claude` then `/login`, sign in with your SUBSCRIPTION account — and if it offers to use a "
+         "detected ANTHROPIC_API_KEY, choose No: Yes meters every call to the API instead of your plan"),
         ("codex", "openai", codex_exec, _codex_auth,
-         "run `codex` and sign in with your ChatGPT account"),
+         "run `codex` and sign in with your ChatGPT account (not an API key)"),
     ):
         cli = mod._bin()
         auth = auth_fn() if cli else "missing"

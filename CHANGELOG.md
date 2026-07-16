@@ -2,6 +2,14 @@
 
 All notable changes to **llm-spendguard**. Format loosely follows Keep a Changelog; dates are UTC.
 
+## [Unreleased]
+
+### Lane activation text warns about the API-key trap
+- The claude CLI's onboarding offers to use a detected ANTHROPIC_API_KEY — choosing Yes silently meters
+  every Claude Code call to the API instead of the plan (hit live during activation). The init/doctor/
+  `lanes` activation instructions now say to choose No and sign in with the subscription account, and
+  note that login links are one-time CLI-generated (no static URL exists to print).
+
 ## [0.7.2] — 2026-07-16
 
 ### Lane activation is now PROMPTED, not discovered (`spendguard lanes [--probe]`)
