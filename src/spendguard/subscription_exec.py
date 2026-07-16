@@ -27,8 +27,19 @@ import time
 TIMEOUT_S = 300               # meta prompts are small; a hung CLI must not stall the daily report
 
 
+def _bin():
+    """Host claude CLI via config.resolve_cli ($SPENDGUARD_CLAUDE_BIN pin → PATH → well-known user-local
+    dirs) — daemons (launchd/cron) run with a minimal PATH that misses nvm/~/.local installs. NOTE: the
+    desktop app's embedded claude-code-vm binary is a Linux VM executable, NOT host-runnable — only real
+    host installs resolve."""
+    if shutil.which("claude"):                    # fast path (also what the offline tests stub)
+        return shutil.which("claude")
+    from . import config
+    return config.resolve_cli("claude", "SPENDGUARD_CLAUDE_BIN")
+
+
 def available() -> bool:
-    return shutil.which("claude") is not None
+    return _bin() is not None
 
 
 def _model_alias(model):
@@ -48,9 +59,10 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S):
     """→ {text, in_tok, out_tok, latency, error} from one headless plan-billed completion. `model` = the
     API model id the caller would have used — mapped to the matching plan tier so subscription execution
     never upgrades a haiku-class meta prompt to the default (top) tier."""
-    if not available():
+    exe = _bin()
+    if not exe:
         return {"error": "claude CLI not found"}
-    cmd = ["claude", "-p", prompt, "--output-format", "json", "--max-turns", "1"]
+    cmd = [exe, "-p", prompt, "--output-format", "json", "--max-turns", "1"]
     alias = _model_alias(model)
     if alias:
         cmd += ["--model", alias]

@@ -29,8 +29,17 @@ import time
 TIMEOUT_S = 300               # meta prompts are small; a hung CLI must not stall the daily report
 
 
+def _bin():
+    """Host codex CLI via config.resolve_cli ($SPENDGUARD_CODEX_BIN pin → PATH → well-known user-local
+    dirs) — daemons run with a minimal PATH that misses nvm/~/.local installs."""
+    if shutil.which("codex"):                     # fast path (also what the offline tests stub)
+        return shutil.which("codex")
+    from . import config
+    return config.resolve_cli("codex", "SPENDGUARD_CODEX_BIN")
+
+
 def available() -> bool:
-    return shutil.which("codex") is not None
+    return _bin() is not None
 
 
 def _usage_from_events(stdout):
@@ -66,7 +75,8 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S):
     prepended to the prompt (codex exec has no separate system slot for one-shot prompt mode); `model`
     is accepted for interface parity with the claude lane but not forwarded — the plan's default model
     serves meta prompts (Codex model selection is plan-managed; forcing ids couples us to CLI churn)."""
-    if not available():
+    exe = _bin()
+    if not exe:
         return {"error": "codex CLI not found"}
     full = (f"{system.strip()}\n\n{prompt}" if system else prompt)
     env = {k: v for k, v in os.environ.items() if k != "OPENAI_API_KEY"}
@@ -75,7 +85,7 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S):
     try:
         fd, out_file = tempfile.mkstemp(prefix="spendguard-codex-", suffix=".txt")
         os.close(fd)
-        cmd = ["codex", "exec", full, "--json", "--output-last-message", out_file]
+        cmd = [exe, "exec", full, "--json", "--output-last-message", out_file]
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
         except subprocess.TimeoutExpired:

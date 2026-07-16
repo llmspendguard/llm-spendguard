@@ -42,7 +42,8 @@ os.environ[KEY_ENV] = "sk-test-not-real"
 
 r = se.run_prompt("evidence table…", system="You are the advisor.")
 ck("headless one-shot: -p + json output + --max-turns 1 (no agent loop)",
-   seen["cmd"][:2] == ["claude", "-p"] and "--max-turns" in seen["cmd"] and "json" in seen["cmd"])
+   seen["cmd"][0].endswith("claude") and seen["cmd"][1] == "-p"
+   and "--max-turns" in seen["cmd"] and "json" in seen["cmd"])
 ck("no model requested → no --model flag (CLI default)", "--model" not in seen["cmd"])
 ck("system prompt rides --append-system-prompt", "--append-system-prompt" in seen["cmd"])
 ck("the provider key env var is STRIPPED from the child (plan login only, never metered)",
@@ -65,7 +66,9 @@ ck("non-zero exit → error (caller falls back)", "rate limited" in se.run_promp
 se.subprocess.run = lambda *a, **k: types.SimpleNamespace(returncode=0, stdout="not json", stderr="")
 ck("unparseable output → error", se.run_prompt("x")["error"] is not None)
 se.shutil.which = lambda name: None
-ck("CLI absent → error", "not found" in se.run_prompt("x")["error"])
+os.environ["SPENDGUARD_CLAUDE_BIN"] = "/nonexistent/claude"   # explicit pin that's missing = fail LOUD, no
+ck("CLI absent → error", "not found" in se.run_prompt("x")["error"])  # well-known-dir substitution (dev machines
+del os.environ["SPENDGUARD_CLAUDE_BIN"]                        # have a real claude the resolver would find)
 se.shutil.which = lambda name: "/usr/local/bin/claude"
 
 # ── adapters.call routing: plan first, corpus row at $0 billed, API fallback on error ──

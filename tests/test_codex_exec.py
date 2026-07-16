@@ -47,7 +47,8 @@ os.environ[KEY_ENV] = "sk-test-not-real"
 print("-- happy path: exec + json + last-message file; usage = max over cumulative events --")
 r = ce.run_prompt("judge this insight…", system="You are the advisor.")
 ck("cmd is `codex exec … --json --output-last-message <file>`",
-   seen["cmd"][:2] == ["codex", "exec"] and "--json" in seen["cmd"] and "--output-last-message" in seen["cmd"])
+   seen["cmd"][0].endswith("codex") and seen["cmd"][1] == "exec"
+   and "--json" in seen["cmd"] and "--output-last-message" in seen["cmd"])
 ck("system prompt is PREPENDED into the prompt arg (no separate slot)",
    seen["cmd"][2].startswith("You are the advisor.") and "judge this insight…" in seen["cmd"][2])
 ck("the provider key env var is STRIPPED from the child (plan login only)",
@@ -71,7 +72,19 @@ ck("no usage events at all → 0 tokens, never a guess",
    (lambda: (ce.__dict__.__setitem__("_probe", None),))
    and ce._usage_from_events("not json\n{\"type\":\"noise\"}") == (0, 0))
 ce.shutil.which = lambda name: None
+os.environ["SPENDGUARD_CODEX_BIN"] = "/nonexistent/codex"     # missing pin = fail LOUD (see claude twin test)
 ck("CLI absent → error (pool skips the lane)", ce.run_prompt("x")["error"] == "codex CLI not found")
+del os.environ["SPENDGUARD_CODEX_BIN"]
+
+print("-- resolver: an explicit env pin wins over PATH when it exists --")
+import tempfile as _tf
+_pin = os.path.join(_tf.mkdtemp(prefix="sg-pin-"), "codex")
+open(_pin, "w").write("#!/bin/sh\n")
+os.chmod(_pin, 0o755)
+os.environ["SPENDGUARD_CODEX_BIN"] = _pin
+from spendguard import config as _cfg
+ck("pinned binary resolves", _cfg.resolve_cli("codex", "SPENDGUARD_CODEX_BIN") == _pin)
+del os.environ["SPENDGUARD_CODEX_BIN"]
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_codex_exec: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

@@ -2,7 +2,7 @@
 
 All notable changes to **llm-spendguard**. Format loosely follows Keep a Changelog; dates are UTC.
 
-## [Unreleased]
+## [0.7.0] — 2026-07-16
 
 ### N subscriptions at once: Codex lane + executor pool (`advisor.executor = codex | pool`)
 - New `codex_exec` lane runs OPENAI-model meta prompts headlessly on the ChatGPT plan (`codex exec
@@ -10,8 +10,15 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
   from the child (a plan call can never silently become metered), $0 on the billed axis
   (kind='subscription', executor 'codex'), plan value on the est-value axis via the codex pipeline,
   and {error} → fallback on ANY mismatch. Usage parses by field name from the event stream (tolerant
-  of CLI schema drift; absent usage = 0 tokens, never a guess). Live verify pending a codex install —
-  the defensive parse + fallback mean interface drift degrades to the API path, never breaks.
+  of CLI schema drift; absent usage = 0 tokens, never a guess). VERIFIED LIVE: a pool call answered on
+  the ChatGPT plan at $0 with real usage captured. Note the CLI's own harness adds ~13K input tokens
+  per call — plan tokens, fine at meta volume.
+- CLI resolution for daemons (`config.resolve_cli`): launchd/cron run with a minimal PATH that misses
+  nvm/~/.local installs, so the lanes resolve their CLIs via $SPENDGUARD_CLAUDE_BIN/$SPENDGUARD_CODEX_BIN
+  pin → PATH → well-known user-local dirs (newest executable wins). An explicit pin that doesn't exist
+  fails LOUD — never a silent substitute. (The desktop app's embedded claude-code-vm binary is a Linux
+  VM executable, not host-runnable — only real host installs count; the claude lane needs a one-time
+  `claude /login` on a fresh CLI install.)
 - `pool` enables BOTH plan lanes at once, provider-respecting by design: anthropic-model prompts ride
   the Anthropic plan, openai-model prompts ride the ChatGPT plan, never cross-provider substitution —
   the recorded model is always the model that answered. A lane failure (window exhausted, CLI missing)

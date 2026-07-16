@@ -95,6 +95,32 @@ def load_key_files():
             _KEYS_SET_BY_SPENDGUARD.add(base)
 
 
+# Well-known user-local CLI install dirs, for hosts where PATH doesn't carry them (launchd/cron daemons run
+# with a minimal PATH that misses ~/.local/bin and nvm's versioned bins — the subscription lanes must still
+# find the plan CLIs there). Globs allowed; newest executable wins.
+_CLI_SEARCH_DIRS = ("~/.claude/local", "~/.local/bin", "/usr/local/bin", "/opt/homebrew/bin",
+                    "~/.nvm/versions/node/*/bin")
+
+
+def resolve_cli(name, env_var=None):
+    """Absolute path of a host CLI or None: $<env_var> pin → PATH → well-known user-local dirs. An explicit
+    env pin that doesn't exist returns None (fail LOUD at the pin, never silently substitute another binary)."""
+    import shutil
+    import glob as _glob
+    pin = os.environ.get(env_var) if env_var else None
+    if pin:
+        return pin if (Path(pin).exists() and os.access(pin, os.X_OK)) else None
+    w = shutil.which(name)
+    if w:
+        return w
+    hits = []
+    for d in _CLI_SEARCH_DIRS:
+        for p in _glob.glob(str(Path(d).expanduser() / name)):
+            if os.access(p, os.X_OK):
+                hits.append(Path(p))
+    return str(max(hits, key=lambda c: c.stat().st_mtime)) if hits else None
+
+
 # Provider → key env var, for the ledger's key fingerprint (named mapping, no hardcoded keys). Local-only.
 _PROVIDER_KEY_ENV = {"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY", "gemini": "GEMINI_API_KEY"}
 
