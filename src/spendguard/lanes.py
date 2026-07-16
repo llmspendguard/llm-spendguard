@@ -19,9 +19,48 @@ CODEX_AUTH = Path.home() / ".codex" / "auth.json"                 # codex CLI lo
 _CLAUDE_KEYCHAIN_SERVICE = "Claude Code-credentials"              # may be the desktop app's → 'unknown' only
 
 _PROBE_PROMPT = "Reply with exactly: OK"
+# Probe with an EXPLICIT cheap tier: a probe with no --model runs on the CLI's default-model setting, which
+# can be stale (live 2026-07-16: a 404 on an old sonnet snapshot) — real lane calls always pass the advisor's
+# tier, so the probe must too or it reports a failure the lane would never hit.
+_PROBE_TIER = {"claude-code": "haiku", "codex": None}
+
+
+def _probe_cache_path():
+    from . import config
+    return config.HOME / "lanes_probe.json"
+
+
+def _last_probe_ok(lane):
+    """(True, iso-day) if the last recorded probe of this lane succeeded — the definitive auth evidence on
+    macOS, where the claude CLI stores login in the keychain and no credentials file ever appears."""
+    import json
+    try:
+        r = json.loads(_probe_cache_path().read_text()).get(lane) or {}
+        return (bool(r.get("ok")), (r.get("ts") or "")[:10])
+    except Exception:
+        return (False, "")
+
+
+def _record_probe(lane, ok):
+    import datetime
+    import json
+    p = _probe_cache_path()
+    try:
+        d = json.loads(p.read_text()) if p.exists() else {}
+    except Exception:
+        d = {}
+    d[lane] = {"ok": bool(ok), "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")}
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(d))
+    except Exception:
+        pass
 
 
 def _claude_auth():
+    ok, day = _last_probe_ok("claude-code")
+    if ok:
+        return "ok"                       # a successful live probe is the definitive evidence
     if CLAUDE_CREDS.exists():
         return "ok"
     if sys.platform == "darwin":
@@ -77,8 +116,10 @@ def probe():
         if not ln["enabled"]:
             res.append(dict(lane=ln["lane"], skipped="not enabled by advisor.executor"))
             continue
-        r = mods[ln["lane"]].run_prompt(_PROBE_PROMPT)
-        res.append(dict(lane=ln["lane"], ok=not r.get("error"), error=r.get("error"),
+        r = mods[ln["lane"]].run_prompt(_PROBE_PROMPT, model=_PROBE_TIER.get(ln["lane"]))
+        ok = not r.get("error")
+        _record_probe(ln["lane"], ok)     # persisted: the definitive auth evidence status()/doctor read back
+        res.append(dict(lane=ln["lane"], ok=ok, error=r.get("error"),
                         text=(r.get("text") or "")[:40], latency=round(r.get("latency") or 0, 1)))
     return res
 

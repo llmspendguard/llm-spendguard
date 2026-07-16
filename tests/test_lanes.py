@@ -68,11 +68,20 @@ else:
 lanes.subprocess.run = real_run
 
 print("-- probe: routes each enabled lane through its CLI; disabled lanes skipped --")
-subscription_exec.run_prompt = lambda p, system=None, model=None, timeout=None: {"text": "OK", "in_tok": 5, "out_tok": 2, "latency": 1.2, "error": None}
+probe_seen = {}
+def _claude_probe(p, system=None, model=None, timeout=None):
+    probe_seen["claude_model"] = model
+    return {"text": "OK", "in_tok": 5, "out_tok": 2, "latency": 1.2, "error": None}
+subscription_exec.run_prompt = _claude_probe
 codex_exec.run_prompt = lambda p, system=None, model=None, timeout=None: {"error": "plan window exhausted"}
 res = {r["lane"]: r for r in lanes.probe()}
 ck("live lane reports ok", res["claude-code"]["ok"] and res["claude-code"]["text"] == "OK")
+ck("probe pins an explicit cheap tier (immune to a stale CLI default model)",
+   probe_seen["claude_model"] == "haiku")
 ck("dead lane reports its error", not res["codex"]["ok"] and "window" in res["codex"]["error"])
+s2 = {ln["lane"]: ln for ln in lanes.status()["lanes"]}
+ck("a successful probe persists as definitive auth evidence (macOS keychain can't prove login)",
+   s2["claude-code"]["auth"] == "ok")
 os.environ["SPENDGUARD_ADVISOR_EXECUTOR"] = "claude-code"
 res = {r["lane"]: r for r in lanes.probe()}
 ck("single-lane executor probes only its lane", res["codex"].get("skipped") and res["claude-code"]["ok"])
