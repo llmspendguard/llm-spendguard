@@ -4,6 +4,19 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+### `spendguard config set` works (it was a documented NO-OP) + honest subscription line
+- `config set <section.key> <value>` was documented in four places — including step 5 "Set caps that matter" of
+  the docs-site quickstart — and did nothing: `cmd_config` never read argv, so it printed the config table and
+  exited 0. A new user "set" three caps on a caps tool and set none. Now registry-driven: writes the store each
+  setting's schema names, coerces + validates by `kind`, `null` unsets (back to the default), did-you-mean on a
+  typo, refuses secrets (→ keys.env) and knobs another file owns, and warns when a live env var still overrides.
+- The receipt's two-axis table DROPPED the `subscription_assumed` flag: an ASSUMED $400 default was printed as
+  fact in the column headed **Actual $**, and hardcoded "Subscription (Max + Pro)" even for someone on a single
+  $20 plan. Now the row + TOTAL carry `*` with a footnote naming the exact fix command, and the label is built
+  from the RESOLVED plans. New registered knobs `subscription.plan_usd` / `subscription.plans` — the footnote's
+  fix command previously pointed at a setting `config set` couldn't set.
+  Guard: `tests/test_config_set.py` (24 checks, sweeping all 59 registered knobs).
+
 ### Moonshot / Kimi is a first-class provider — and vendor-hosted ids finally price
 - **Kimi**: `MOONSHOT_API_KEY` + `https://api.moonshot.ai/v1` (OpenAI-compatible). Prefixes cover the whole
   family (`kimi*`, `moonshot-*`), so kimi-k2.5 / k2.6 / kimi-latest — and any future Kimi id — route and

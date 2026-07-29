@@ -63,6 +63,17 @@ SETTINGS = [
               "off = no requirement; warn = log a 'would-block' when a batch runs without a fresh estimate+test "
               "(default); block = hard-require a fresh estimate → test before the batch runs."),
 
+    # ── subscription (flat plan fees — a REAL cost line, and the denominator the est-value axis sits against) ──
+    dict(section="subscription", key="plan_usd", store="config.json:subscription.plan_usd", env="SPENDGUARD_PLAN_USD",
+         default=None, kind="float|null", secret=False,
+         desc="Your total MONTHLY subscription fee (Claude Max / ChatGPT Pro / seats). Until set, the receipt "
+              "shows an ASSUMED default marked with * — an assumed number is never presented as an actual charge. "
+              "Set this and the * disappears. (Per-plan breakdown: `subscription.plans` = [{name, usd}, …].)"),
+    dict(section="subscription", key="plans", store="config.json:subscription.plans", default=None,
+         kind="json|null", secret=False,
+         desc="Optional per-plan breakdown [{\"name\":\"Claude Max\",\"usd\":200}, …] — sums to the subscription "
+              "line and NAMES it on the receipt (the label is built from these, never hardcoded)."),
+
     # ── pricing freshness (the LiteLLM breadth layer; curated prices.json always wins) ──
     dict(section="pricing", key="refresh_days", store="config.json:pricing.refresh_days", env="SPENDGUARD_PRICES_REFRESH_DAYS",
          default=1, kind="float", secret=False,

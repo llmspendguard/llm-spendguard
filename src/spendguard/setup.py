@@ -326,10 +326,78 @@ def _coerce(ans, kind):
         opts = kind[5:].split("|")[0].split(",")
         if ans not in opts:
             print(f"  (warning: '{ans}' not in {opts})")
+    if kind.startswith("json"):
+        import json as _json
+        return _json.loads(ans)          # structured knobs (e.g. subscription.plans) — invalid JSON raises, loudly
     return ans
 
 
+def _write_store(s, value):
+    """Persist one setting to the file its schema `store` names. Returns (path, note) or raises ValueError for a
+    store this command can't own (secrets live in keys.env / the real env, never in config.json)."""
+    import json
+    store = s["store"]
+    if store.startswith("config.json:"):
+        sec, key = store[len("config.json:"):].split(".", 1)
+        p = config.CONFIG_JSON
+        try:
+            cfg = json.loads(p.read_text()) if p.exists() else {}
+        except Exception:
+            raise ValueError(f"{p} is not valid JSON — fix or remove it first")
+        cfg.setdefault(sec, {})
+        if value is None:
+            cfg[sec].pop(key, None)                     # explicit null = unset → fall back to the default
+        else:
+            cfg[sec][key] = value
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(cfg, indent=2) + "\n")
+        config._cfg._cache = None                       # drop the process cache so a read-back shows the new value
+        return p, None
+    if store in ("env", "(env only)"):
+        raise ValueError(f"{s['key']} is read from the environment"
+                         + (f" (${s['env']})" if s.get("env") else "")
+                         + (" — put secrets in " + str(config.KEYS_ENV) if s["secret"] else ""))
+    raise ValueError(f"{s['key']} lives in {store} — edit that file (or use the command that owns it)")
+
+
 def cmd_config(argv=None):
+    argv = list(argv or [])
+    # `config set <dotted.key> <value>` — the documented way to set caps. It was a NO-OP for four releases
+    # (argv was never read): the docs-site quickstart's "set caps" step printed a confident config table and
+    # changed nothing, on a tool whose whole job is caps. Driven by the SETTINGS registry, so every knob is
+    # settable and validated the same way `init` does it.
+    if argv and argv[0] == "set":
+        if len(argv) < 3:
+            print("usage: spendguard config set <section.key> <value>   (value 'null' unsets → default)")
+            print("  e.g. spendguard config set caps.per_batch 30 · caps.llm.daily 50 · gate.autotune apply")
+            return 2
+        dotted, raw = argv[1], " ".join(argv[2:])
+        by_dotted = {f"{s['section']}.{s['key']}": s for s in config_schema.SETTINGS}
+        s = by_dotted.get(dotted)
+        if not s:
+            import difflib
+            near = difflib.get_close_matches(dotted, by_dotted, n=3, cutoff=0.5)
+            print(f"unknown setting {dotted!r}" + (f" — did you mean: {', '.join(near)}?" if near else ""))
+            print("  `spendguard config` lists every setting with its current value + source.")
+            return 2
+        try:
+            value = _coerce(raw, s["kind"])
+            path, _ = _write_store(s, value)
+        except ValueError as e:
+            print(f"cannot set {dotted}: {e}")
+            return 2
+        except Exception as e:
+            print(f"cannot set {dotted}: {e}")
+            return 1
+        shown = "***set***" if s["secret"] else ("(unset → default)" if value is None else value)
+        print(f"{dotted} = {shown}   → {path}")
+        now, src = _resolve(s)
+        if src.startswith("env:"):                      # a live env var still wins — say so, don't pretend
+            print(f"  ⚠ an environment variable ({src[4:]}) overrides this at runtime; current effective value: {now}")
+        return 0
+    if argv and argv[0] not in ("show", "list"):
+        print(f"unknown config subcommand {argv[0]!r} — `config` (show all) or `config set <section.key> <value>`")
+        return 2
     print(f"spendguard config  (home: {config.HOME})\n")
     for sec, items in config_schema.sections().items():
         print(f"[{sec}]")
@@ -343,6 +411,7 @@ def cmd_config(argv=None):
                 disp = v
             print(f"  {s['key']:<20} {str(disp):<28} {src}")
     print(f"\nfiles: {config.CONFIG_JSON} (config) · {config.KEYS_ENV} (secrets) · {config.saas_path()} · {config.HOME / 'email.json'}")
+    print("change one: `spendguard config set <section.key> <value>`  (e.g. config set caps.per_batch 30; 'null' unsets)")
     print("Secrets (LLM / compute / org keys) live in keys.env or the environment — never in the config files.")
     return 0
 

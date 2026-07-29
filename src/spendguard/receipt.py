@@ -281,6 +281,20 @@ def _plan_usd():
     return float(sum(u for _, u in _DEFAULT_PLANS)), True
 
 
+def _plan_label():
+    """Label for the subscription row — the RESOLVED plan names, never a hardcoded pair. `Subscription (Max + Pro)`
+    was printed verbatim even for someone on a single $20 Claude Pro plan; the label must describe THEIR plans (the
+    hard cost-display rule: every named component is real, and an assumed number says so)."""
+    plans = config._cfg_get("subscription", "plans", None)
+    if isinstance(plans, list) and plans:
+        names = [str(p.get("name") or "plan").strip() for p in plans if isinstance(p, dict)]
+        if names:
+            return "Subscription (" + " + ".join(names[:3]) + (", …" if len(names) > 3 else "") + ")"
+    if os.getenv("SPENDGUARD_PLAN_USD") or config._cfg_get("subscription", "plan_usd", None):
+        return "Subscription (configured)"
+    return "Subscription (" + " + ".join(n for n, _ in _DEFAULT_PLANS) + ")"
+
+
 # ── rendering ─────────────────────────────────────────────────────────────--
 _PREFIX = "spendguard ▸ "
 _INDENT = " " * len("spendguard ▸ ")            # align continuation lines under the first
@@ -518,16 +532,25 @@ def _two_axis_table(t: dict) -> list:
     evm = ev.get("month")
     asof = f" (as of {ev['asof']})" if ev.get("asof") else ""
     cell = lambda x: (_money(x) if x is not None else "—")
-    LW = 32
+    LW = 34
+    # An ASSUMED plan fee is not an "Actual $" — it's a default nobody confirmed. The tally already carries
+    # `subscription_assumed`; this renderer used to DROP it and print $400 as fact under the Actual column (and
+    # label it "Max + Pro" even for a single $20 plan). Mark it, footnote it, and taint the TOTAL the same way.
+    assumed = bool(t.get("subscription_assumed")) and (sub or 0) > 0
+    star = "*" if assumed else ""
     rows = [("API (batch + realtime)", api, None),
             ("Remote compute (vast.ai)", rem, None),
-            ("Subscription (Max + Pro)", (sub or None), None),
+            (_plan_label() + star, (sub or None), None),
             ("Plan usage (Claude Code·Codex·ai)", None, evm)]
     out = [f"{'':<{LW}}{'Actual $':>12}{'Est value $':>14}    ← two axes, never added"]
     for label, a, e in rows:
         out.append(f"{label:<{LW}}{cell(a):>12}{cell(e):>14}")
     out.append("─" * (LW + 26))
-    out.append(f"{('TOTAL' + asof):<{LW}}{_money((api or 0) + (rem or 0) + (sub or 0)):>12}{cell(evm):>14}")
+    total = f"{_money((api or 0) + (rem or 0) + (sub or 0))}{star}"
+    out.append(f"{('TOTAL' + asof):<{LW}}{total:>12}{cell(evm):>14}")
+    if assumed:
+        out.append(f"* subscription is an ASSUMED default ({_money(sub)}), not a measured charge — set yours with "
+                   f"`spendguard config set subscription.plan_usd <amount>`")
     return out
 
 
