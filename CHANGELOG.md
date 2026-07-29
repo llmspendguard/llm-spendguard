@@ -4,6 +4,23 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+### Moonshot / Kimi is a first-class provider — and vendor-hosted ids finally price
+- **Kimi**: `MOONSHOT_API_KEY` + `https://api.moonshot.ai/v1` (OpenAI-compatible). Prefixes cover the whole
+  family (`kimi*`, `moonshot-*`), so kimi-k2.5 / k2.6 / kimi-latest — and any future Kimi id — route and
+  price themselves the day the synced table carries them: no code change, no hardcoded rate. Mainland-China
+  accounts override the base_url with `register_provider()`.
+- **The bug that made "breadth" a lie**: the synced LiteLLM table keys most non-first-party models as
+  `vendor/model` (`moonshot/kimi-k2.5`, `zai/glm-4.6`) while callers pass the bare id their SDK takes — so
+  `price()` raised "no canonical price" for EVERY GLM and Kimi id with a real published rate sitting in the
+  cache. `price(model, provider=None)` now resolves bare ids against vendor-qualified keys (raw first, so
+  `kimi-latest` isn't eaten by the `-latest` alias strip), accepts `provider:model` / `provider=` to pin a
+  vendor exactly, ignores deep reseller paths (`bedrock/<region>/…`, `cloudflare/@cf/…` are a different
+  vendor's resale rate), and RAISES on vendors that disagree on price rather than picking one.
+- **Removed a fabricated price**: prices.json shipped a hand-typed `glm-5.2` STUB (0.6/2.2) that overrode the
+  live layer and under-priced the real z.ai 5-series (glm-5 = 1.0/3.2) by ~40% — a guessed number beating
+  real data in an accounting tool. The zai block is now empty by policy; unpriced ids fail LOUD.
+  Guard: `tests/test_pricing_vendor_ids.py` (30 checks).
+
 ### Lane activation text warns about the API-key trap
 - The claude CLI's onboarding offers to use a detected ANTHROPIC_API_KEY — choosing Yes silently meters
   every Claude Code call to the API instead of the plan (hit live during activation). The init/doctor/

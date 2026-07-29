@@ -245,12 +245,50 @@ def normalize(model: str) -> str:
     return m
 
 
-def price(model: str) -> dict:
+def _vendor_qualified(m, provider=None):
+    """Resolve a BARE model id against the LiteLLM breadth layer, which keys most non-first-party models as
+    `vendor/model` (`moonshot/kimi-k2.5`, `zai/glm-4.6`) while callers pass the bare id their SDK takes.
+    Without this the whole breadth layer is unreachable for those vendors — every GLM/Kimi call raised
+    'no canonical price' even though a real published rate was sitting in the cache.
+
+    `provider` (when the caller knows it) pins the FIRST-PARTY vendor: exact, no inference. Without it, scan
+    for `*/m` candidates, restricted to single-slash vendor-level keys — deep reseller paths
+    (`bedrock/ap-south-1/…`, `cloudflare/@cf/…`) are a DIFFERENT vendor's resale rate, not this call's price.
+    Candidates that disagree on $ raise (ambiguous → pass provider=); identical $ is safe to use. Never a guess:
+    every value returned is a published rate from the synced source."""
+    if provider:
+        k = f"{provider}/{m}"
+        if k in PRICING:
+            return PRICING[k]
+    cands = {k: v for k, v in PRICING.items() if k.endswith("/" + m) and k.count("/") == 1}
+    if not cands:
+        return None
+    rates = {(v.get("in_"), v.get("out"), v.get("batch_in"), v.get("batch_out")) for v in cands.values()}
+    if len(rates) > 1:
+        raise KeyError(
+            f"Ambiguous price for {m!r}: vendors {sorted(k.split('/')[0] for k in cands)} publish DIFFERENT "
+            f"rates. Pass the provider (`provider:{m}` / provider=) so the right one is billed — spendguard "
+            f"will not pick for you."
+        )
+    return next(iter(cands.values()))
+
+
+def price(model: str, provider: str = None) -> dict:
     if model in PRICING:                          # an explicit verified entry (codex/dated/o-series) always wins
         return PRICING[model]
+    if ":" in model and not model.startswith("ft:"):
+        provider, model = model.split(":", 1)     # 'provider:model' form carries its own answer
+        if model in PRICING:
+            return PRICING[model]
+    v = _vendor_qualified(model, provider)        # RAW first: `kimi-latest` is a real id, not a '-latest' alias
+    if v:
+        return v
     m = normalize(model)
     if m in PRICING:
         return PRICING[m]
+    v = _vendor_qualified(m, provider)            # normalized (dated snapshot stripped) against the same layer
+    if v:
+        return v
     if m.startswith("ft:"):
         # the LiteLLM breadth layer keys fine-tunes by DATED base (ft:gpt-4o-mini-2024-07-18) — accept a
         # dated variant of the same base. NEVER fall back to the bare base price: ft inference bills higher,
@@ -264,13 +302,14 @@ def price(model: str) -> dict:
             f"the BASE price is NOT a substitute (ft inference bills above base)."
         )
     raise KeyError(
-        f"No canonical price for model {model!r} (normalized {m!r}). "
-        f"Add it to scripts/pricing.py with a source — DO NOT guess a price."
+        f"No canonical price for model {model!r} (normalized {m!r}, vendor-qualified lookups tried). "
+        f"Run `spendguard sync-prices` (2,400+ models incl. most vendor-hosted ids), or add it to prices.json "
+        f"WITH A SOURCE — DO NOT guess a price."
     )
 
 
-def _cost(model, in_tok, out_tok, cached_in_tok, batch):
-    p = price(model)
+def _cost(model, in_tok, out_tok, cached_in_tok, batch, provider=None):
+    p = price(model, provider)
     if batch:
         pin, pout, pcache = p["batch_in"], p["batch_out"], p.get("cached_in", 0.0) * 0.5
     else:
@@ -280,14 +319,16 @@ def _cost(model, in_tok, out_tok, cached_in_tok, batch):
     return (fresh_in * pin + cached_in_tok * pcache + out_tok * pout) / 1_000_000
 
 
-def batch_cost(model: str, in_tok: int, out_tok: int = 0, cached_in_tok: int = 0) -> float:
-    """Actual/forecast cost ($) of `in_tok`+`out_tok` via the Batch API (50% off)."""
-    return _cost(model, in_tok, out_tok, cached_in_tok, batch=True)
+def batch_cost(model: str, in_tok: int, out_tok: int = 0, cached_in_tok: int = 0, provider: str = None) -> float:
+    """Actual/forecast cost ($) of `in_tok`+`out_tok` via the Batch API (50% off). `provider` pins the vendor
+    when the model id is bare and several vendors host it (see _vendor_qualified)."""
+    return _cost(model, in_tok, out_tok, cached_in_tok, batch=True, provider=provider)
 
 
-def realtime_cost(model: str, in_tok: int, out_tok: int = 0, cached_in_tok: int = 0) -> float:
-    """Actual/forecast cost ($) of `in_tok`+`out_tok` for a real-time call."""
-    return _cost(model, in_tok, out_tok, cached_in_tok, batch=False)
+def realtime_cost(model: str, in_tok: int, out_tok: int = 0, cached_in_tok: int = 0, provider: str = None) -> float:
+    """Actual/forecast cost ($) of `in_tok`+`out_tok` for a real-time call. `provider` pins the vendor when the
+    model id is bare and several vendors host it (see _vendor_qualified)."""
+    return _cost(model, in_tok, out_tok, cached_in_tok, batch=False, provider=provider)
 
 
 def estimate(model: str, n: int, avg_in: int, avg_out: int, batch: bool = True) -> float:

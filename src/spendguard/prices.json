@@ -211,16 +211,8 @@
       }
     },
     "zai": {
-      "_note": "z.ai / Zhipu GLM (OpenAI-compatible). glm-5.2 rates below are an UNVERIFIED STUB (GLM-4.6-tier placeholder) — replace with z.ai's published per-1M prices before relying on cost numbers. batch = 50% of realtime.",
-      "models": {
-        "glm-5.2": {
-          "in_": 0.6,
-          "out": 2.2,
-          "cached_in": 0.11,
-          "batch_in": 0.3,
-          "batch_out": 1.1
-        }
-      }
+      "_note": "z.ai / Zhipu GLM and Moonshot Kimi carry NO curated rates on purpose: the synced breadth layer (`spendguard sync-prices`, refreshed daily) publishes real per-1M rates for the whole zai/* and moonshot/* families, and pricing.price() now resolves a bare id (glm-4.6, kimi-k2.5) against them. A curated entry here would OVERRIDE that live data — which is exactly how a hand-typed glm-5.2 STUB (0.6/2.2) came to under-price the real z.ai 5-series (1.0/3.2) by ~40%. Add an entry here ONLY with a verified source URL + date; otherwise an unpriced id fails LOUD, which is the correct accounting behavior.",
+      "models": {}
     }
   }
 }

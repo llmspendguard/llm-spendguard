@@ -60,16 +60,22 @@ ck("gate.enforce enum = off,warn,block", bool(enf) and enf[0]["kind"] == "enum:o
 ck("gate.enforce default = warn", bool(enf) and enf[0]["default"] == "warn")
 ck("VAST_API_KEY is in the schema", any(s["key"] == "VAST_API_KEY" for s in config_schema.SETTINGS))
 
-# ── z.ai / GLM provider wired: key in schema (→ keys.env), routes glm- models, priced (stub) ──
+# ── OpenAI-compatible vendors wired: key in schema (→ keys.env) + model routing. Pricing comes from the
+#    SYNCED breadth layer (absent in this isolated home on purpose), never from a hand-typed stub: the old
+#    assertion here demanded a "(stub) price" for glm-5.2, which is exactly how a fabricated 0.6/2.2 rate
+#    survived while under-pricing the real z.ai 5-series by ~40%. Unpriced MUST be loud, not invented.
 from spendguard import adapters, pricing
 ck("ZAI_API_KEY is in the schema", any(s["key"] == "ZAI_API_KEY" for s in config_schema.SETTINGS))
+ck("MOONSHOT_API_KEY is in the schema", any(s["key"] == "MOONSHOT_API_KEY" for s in config_schema.SETTINGS))
 ck("adapters routes a glm- model to the zai provider", adapters.provider_for("glm-5.2") == "zai")
+ck("adapters routes a kimi model to the moonshot provider", adapters.provider_for("kimi-k2.5") == "moonshot")
 ck("zai provider uses ZAI_API_KEY", adapters.PROVIDERS["zai"]["key_env"] == "ZAI_API_KEY")
+ck("moonshot provider uses MOONSHOT_API_KEY", adapters.PROVIDERS["moonshot"]["key_env"] == "MOONSHOT_API_KEY")
 try:
-    _pr = pricing.price("glm-5.2")
-    ck("glm-5.2 resolves a (stub) price", bool(_pr) and float(_pr.get("in_") or 0) > 0)
-except Exception:
-    ck("glm-5.2 resolves a (stub) price", False)
+    pricing.price("glm-5.2")
+    ck("an id with NO published rate fails loud (never a fabricated stub)", False)
+except KeyError:
+    ck("an id with NO published rate fails loud (never a fabricated stub)", True)
 
 config.CONFIG_JSON.write_text('{"gate": {"enforce": "block"}}')
 config._cfg._cache = None

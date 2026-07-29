@@ -23,6 +23,11 @@ PROVIDERS = {
                   "key_env": "DASHSCOPE_API_KEY", "prefixes": ("qwen", "qwq"), "kind": "openai"},
     "zai":       {"base_url": "https://api.z.ai/api/paas/v4",   # z.ai / Zhipu GLM — OpenAI-compatible (verify base_url with your key)
                   "key_env": "ZAI_API_KEY", "prefixes": ("glm-",), "kind": "openai"},
+    "moonshot":  {"base_url": "https://api.moonshot.ai/v1",     # Moonshot AI (Kimi) — OpenAI-compatible.
+                  # Prefixes cover the WHOLE family (kimi-k2/k2.5/k2.6/kimi-latest and any future kimi-*), so a
+                  # newer Kimi routes + prices itself the day the synced table carries it — no code change, no
+                  # hardcoded rate. Mainland-China accounts use api.moonshot.cn: register_provider() to override.
+                  "key_env": "MOONSHOT_API_KEY", "prefixes": ("kimi", "moonshot-"), "kind": "openai"},
 }
 
 
