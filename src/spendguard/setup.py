@@ -242,8 +242,8 @@ def install_hook(venv=None, uninstall=False, install_pkg=True, user=False, pytho
                         capture_output=True, text=True)
     print(kk.stdout.strip() or ("  keys: (check failed) " + kk.stderr.strip()[-120:]))
     print("  that interpreter is now gated (kill switch: GATE_DISABLE=1 or `spendguard off`).")
-    print("  next: `spendguard doctor` — verifies keys + SaaS push readiness for this repo. Add keys to "
-          "~/.spendguard/.env (cwd-independent) if MISSING; add a per-repo .spendguard.json to push this repo to the server.")
+    print(f"  next: `spendguard doctor` — verifies keys + SaaS push readiness for this repo. Add keys to "
+          f"{config.KEYS_ENV} (cwd-independent) if MISSING; add a per-repo .spendguard.json to push this repo to the server.")
     return 0
 
 

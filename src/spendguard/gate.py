@@ -172,18 +172,64 @@ def _submit_receipt(est):
         pass
 
 
+def _calibrate_est(est):
+    """Attach the LEARNED expectation to a batch estimate: {cost_p50, cost_p90, basis, n_obs}.
+
+    `est['cost']` is a CEILING — the estimators sum each request's max_tokens as if every one runs to the limit
+    (gate.py:126/147). That's the right basis for a fail-safe CAP, but it is NOT what the job will cost: real
+    output fill runs ~40-55% of max_tokens, so a human reading '~$16' for a job that bills $0.60 correctly stops
+    trusting the number (reported live 2026-07-16, ~27×). spendguard already learns the fill/opi/residual
+    quantiles per (label, model, transport) — this reads them so the DISPLAYED number is grounded, while the
+    ceiling stays the thing the cap compares. Zero spend, fully guarded: no calibration → no claim."""
+    try:
+        from . import calibrate, calls as _calls
+        n = int(est.get("requests") or 0)
+        if n <= 0 or not est.get("model") or not est.get("out_tok"):
+            return None
+        try:
+            label = (_calls.current().get("intent") or "").strip()
+        except Exception:
+            label = ""
+        r = calibrate.estimate(label or "batch", n=n, model=est["model"], transport="batch",
+                               est_in_tokens=max(1, int(est["in_tok"] / n)),
+                               est_out_max=max(1, int(est["out_tok"] / n)))
+        p50, p90 = r.get("p50_usd"), r.get("p90_usd")
+        if p50 is None:
+            return None
+        return {"cost_p50": float(p50), "cost_p90": float(p90 or p50),
+                "basis": r.get("level"), "n_obs": int(r.get("n_obs") or 0)}
+    except Exception:
+        return None                                   # never let the nicety break or delay a gate decision
+
+
+def _est_line(est):
+    """The human-facing cost phrase: the LIKELY cost first (learned), the ceiling named as a ceiling."""
+    c = est.get("_cal")
+    if not c:
+        return f"~${est['cost']:.2f} (ceiling: every request maxing out; no learned history yet)"
+    return (f"~${c['cost_p50']:.2f} likely · ${c['cost_p90']:.2f} p90 "
+            f"(learned from {c['n_obs']:,} obs @{c['basis']}) · ceiling ${est['cost']:.2f}")
+
+
 def _decide(est):
-    """Proceed (return) if under cap or allowed; raise SpendGateRefused to block."""
+    """Proceed (return) if under cap or allowed; raise SpendGateRefused to block. The CAP compares the CEILING on
+    purpose — a cap is fail-safe, it must bound what COULD be spent — but every printed number leads with the
+    learned expectation so the warning is a usable budget signal (see _calibrate_est)."""
     cap = _cap()
+    est.setdefault("_cal", _calibrate_est(est))
     line = (f"[spend_gate] {est['provider']} {est.get('model')} · {est['requests']} req · "
-            f"in~{est['in_tok']:,} out≤{est['out_tok']:,} -> ~${est['cost']:.2f} (cap ${cap:.0f})")
+            f"in~{est['in_tok']:,} out≤{est['out_tok']:,} -> {_est_line(est)} (cap ${cap:.0f})")
     if est["cost"] <= cap:
         _log({**est, "decision": "under_cap"}); print(line + "  OK", file=sys.stderr); _submit_receipt(est); return
     if _allow():
         _log({**est, "decision": "allowed_env"}); print(line + "  ALLOWED (GATE_ALLOW=1)", file=sys.stderr); _submit_receipt(est); return
-    print(f"\n*** SPEND GATE: this single batch is projected at ${est['cost']:.2f}, over the ${cap:.0f} cap. ***\n"
-          f"{line}\nBetter first: pack 25–40 items/request · trim max_tokens · use the cheaper executor "
-          f"(opus-4.8 output < gpt-5.5) · split the scope. (raise GATE_CAP or GATE_ALLOW=1 to force.)", file=sys.stderr)
+    _c = est.get("_cal")
+    _proj = (f"could reach ${est['cost']:.2f} if every request runs to its max_tokens "
+             f"(likely ~${_c['cost_p50']:.2f})" if _c else f"is projected at ${est['cost']:.2f}")
+    print(f"\n*** SPEND GATE: this single batch {_proj}, over the ${cap:.0f} cap. ***\n"
+          f"{line}\nBetter first: pack 25–40 items/request · trim max_tokens (the ceiling IS your max_tokens × "
+          f"requests) · use the cheaper executor (opus-4.8 output < gpt-5.5) · split the scope. "
+          f"(raise GATE_CAP or GATE_ALLOW=1 to force.)", file=sys.stderr)
     if sys.stdin and sys.stdin.isatty():
         try:
             ans = input(f"Allow this ${est['cost']:.2f} submission anyway? type 'yes' to proceed: ").strip().lower()
@@ -306,7 +352,10 @@ def _batch1_check(est):
     if _calls.tested_recently(intent, None, days):                    # any realtime test of this intent counts
         return                                                        # (a prompt/tool bug shows on any model)
     prov, mdl = est.get("provider"), est.get("model")
-    print(f"\n*** [spend_gate] BATCH-1 CHECK: a {n:,}-request '{intent}' batch ({mdl}, ~${cost:.2f}) with NO "
+    est.setdefault("_cal", _calibrate_est(est))
+    _c = est.get("_cal")
+    _amt = (f"~${_c['cost_p50']:.2f} likely, ${est['cost']:.2f} ceiling" if _c else f"~${cost:.2f}")
+    print(f"\n*** [spend_gate] BATCH-1 CHECK: a {n:,}-request '{intent}' batch ({mdl}, {_amt}) with NO "
           f"realtime/batch-1 test of this intent in the last {days}d. The #1 batch waste is a prompt/tool bug a "
           f"1–5 item realtime test catches for ~$0 — run that first (PROMPT-CHECK → batch-1). ***", file=sys.stderr)
     if sys.stdin and sys.stdin.isatty():
@@ -1364,7 +1413,7 @@ def _cli(cmd="status", live=False):
             from . import config
             for prov, name in (("openai", "OPENAI_API_KEY"), ("anthropic", "ANTHROPIC_API_KEY")):
                 k = config.api_key(name)
-                print(f"  key {prov:<9}: {'🟢 resolved' if k else '🔴 MISSING — reconcile/report will see NO ' + prov + ' spend (add to ~/.spendguard/.env)'}")
+                print(f"  key {prov:<9}: {'🟢 resolved' if k else '🔴 MISSING — reconcile/report will see NO ' + prov + f' spend (add it to {config.KEYS_ENV})'}")
         except Exception:
             pass
         if cmd == "doctor":

@@ -31,7 +31,9 @@ def load_key():
     from .config import api_key
     k = api_key("OPENAI_API_KEY")
     if not k:
-        raise KeyMissing("OPENAI_API_KEY not found (set it or add to ~/.spendguard/.env)")
+        # name the file `init` actually CREATES (keys.env), not the legacy .env nothing scaffolds.
+        from .config import KEYS_ENV
+        raise KeyMissing(f"OPENAI_API_KEY not found (set it in the environment, or add it to {KEYS_ENV})")
     return k
 
 

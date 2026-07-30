@@ -4,6 +4,22 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+### The gate's cost warning is a budget signal again (reported ~27× over)
+- A batch that billed $0.60 warned at ~$16. The RATE was right (batch_cost); the OUTPUT assumption was not — both
+  estimators sum each request's `max_tokens` as if every request runs to the limit, while real fill is ~40-55%.
+  The gate now attaches the LEARNED expectation (`calibrate`'s already-measured fill/opi quantiles) and every
+  human-facing line leads with it: `~$0.60 likely · $1.10 p90 (learned from 1,666 obs @model) · ceiling $16.20`.
+  The CAP still compares the ceiling on purpose — a cap must bound what COULD be spent — and the over-cap prompt
+  now says "could reach $X if every request runs to its max_tokens (likely ~$Y)". No calibration → the ceiling is
+  shown and NAMED a ceiling; a fabricated "likely" is never invented, and a failing learner never reaches the gate.
+
+### Key-missing errors name keys.env, not the legacy .env
+- Four user-facing messages (gate doctor, both reconcilers, the install-hook tail) told users to add keys to
+  `~/.spendguard/.env` — the LEGACY path, still read for back-compat but created by nothing — while `init`
+  scaffolds `keys.env`. Users were sent to write a file the tool doesn't make. All four now print the resolved
+  `config.KEYS_ENV`, and a guard fails if any source file ever prints legacy-.env instructions again.
+  Guard: `tests/test_estimate_signal.py` (21 checks).
+
 ### `spendguard config set` works (it was a documented NO-OP) + honest subscription line
 - `config set <section.key> <value>` was documented in four places — including step 5 "Set caps that matter" of
   the docs-site quickstart — and did nothing: `cmd_config` never read argv, so it printed the config table and

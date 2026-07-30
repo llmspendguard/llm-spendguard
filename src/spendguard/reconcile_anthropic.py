@@ -16,7 +16,7 @@ Opus judge running via ThreadPool) are NOT captured — that needs an Admin API 
 import os, json, argparse, urllib.request, socket
 
 from . import pricing
-from .config import ANTHROPIC_CACHE as CACHE_PATH, api_key as _api_key
+from .config import ANTHROPIC_CACHE as CACHE_PATH, api_key as _api_key, KEYS_ENV as _KEYS_ENV
 CACHE_PATH = str(CACHE_PATH)
 socket.setdefaulttimeout(60)
 
@@ -26,7 +26,9 @@ def _key():
     if not k:
         # RAISE, not sys.exit: SystemExit is a BaseException that escapes `except Exception` guards in degradable
         # callers (leak_line / `spendguard doctor`). The CLI catches RuntimeError for a clean one-line exit.
-        raise RuntimeError("ANTHROPIC_API_KEY not found (set it or add to ~/.spendguard/.env)")
+        # name the file `init` actually CREATES (keys.env). Pointing at the legacy .env sent users to write a
+        # file nothing scaffolds — reported live 2026-07-16 ("I thought we moved to keys.env?").
+        raise RuntimeError(f"ANTHROPIC_API_KEY not found (set it in the environment, or add it to {_KEYS_ENV})")
     return k
 
 
