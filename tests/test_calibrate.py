@@ -148,7 +148,7 @@ import inspect
 import importlib
 from spendguard import cli, report, advise
 naive_est = importlib.import_module("spendguard.estimate")   # __init__ exports estimate() the function
-ck("CLI wired: `spendguard calibrate`", '"calibrate"' in inspect.getsource(cli.main))
+ck("CLI wired: `spendguard calibrate`", '"calibrate"' in inspect.getsource(cli))
 ck("report auto-pairs predictions each run", "calibrate" in inspect.getsource(report._run))
 ck("advise surfaces calibration confidence", "summary_lines" in inspect.getsource(advise.advise))
 ck("naive `spendguard estimate --label` prints the learned correction",

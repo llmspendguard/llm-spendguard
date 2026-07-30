@@ -4,6 +4,25 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+### `spendguard run -- <cmd>` is the new default way to gate (startup hooks are no longer step one)
+- `install-hook` writes `sitecustomize`/`usercustomize` into a venv. On **2026-03-24 litellm 1.82.8 shipped a
+  malicious `litellm_init.pth`** that ran a credential stealer at every interpreter start; startup-hook abuse is
+  now MITRE T1546.018, endpoint tools ship detections for site-customize file creation, and PEP 648 (which would
+  have blessed a sanctioned version) was rejected. A cost tool in the same category as the compromised package
+  should not ask strangers to let it write startup hooks as step one.
+- `spendguard run -- python job.py` does what `ddtrace-run` / `opentelemetry-instrument` do: a generated bootstrap
+  dir on the CHILD's PYTHONPATH, then exec. Nothing is written into site-packages, nothing persists after the
+  process exits, the effect is scoped to that one command, and not using the wrapper is the complete uninstall.
+  It CHAINS to a host's own sitecustomize instead of shadowing it, is fail-open, and `spendguard run --show`
+  prints the exact bytes that will execute (generated locally — never downloaded). `install-hook` remains
+  supported and is still the most complete option for a machine you own; it is now the documented opt-in.
+- A missing prerequisite is now ONE clean line instead of a traceback: `cli.main` wraps the dispatch and catches
+  RuntimeError (the `KeyMissing` base) — `spendguard report` on a fresh install used to dump 14 lines ending in
+  `KeyMissing` while the reconcile branch handled the identical condition properly. Also handles broken pipes
+  (`spendguard report | head`) and Ctrl-C.
+  Guard: `tests/test_runner_wrapper.py` (24 checks incl. an end-to-end proof that a child is armed before its own
+  code runs, only under the wrapper, and that a host sitecustomize still executes).
+
 ### The gate's cost warning is a budget signal again (reported ~27× over)
 - A batch that billed $0.60 warned at ~$16. The RATE was right (batch_cost); the OUTPUT assumption was not — both
   estimators sum each request's `max_tokens` as if every request runs to the limit, while real fill is ~40-55%.

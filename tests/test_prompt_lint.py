@@ -68,7 +68,7 @@ ck("custom judge score clamped to 0..1",
 
 import inspect
 from spendguard import cli
-ck("CLI wired: `spendguard prompts`", '"prompts"' in inspect.getsource(cli.main))
+ck("CLI wired: `spendguard prompts`", '"prompts"' in inspect.getsource(cli))
 
 print(("[OK]" if not fails else "[FAIL]") + " prompt-lint: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)

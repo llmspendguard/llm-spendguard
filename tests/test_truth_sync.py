@@ -47,7 +47,7 @@ ck("server without /v1/truth → friendly skip, no raise", "skipped" in truth.pu
 
 import inspect
 from spendguard import cli
-ck("CLI wired: `spendguard truth`", '"truth"' in inspect.getsource(cli.main))
+ck("CLI wired: `spendguard truth`", '"truth"' in inspect.getsource(cli))
 
 print(("[OK]" if not fails else "[FAIL]") + " truth-sync: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)

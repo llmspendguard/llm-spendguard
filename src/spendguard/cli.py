@@ -13,6 +13,22 @@ import sys
 
 
 def main(argv=None):
+    """CLI entry. Wraps the dispatch so a MISSING PREREQUISITE (no provider key, no config) exits with one clean
+    line instead of a raw traceback: `spendguard report` on a fresh install used to dump 14 lines ending in
+    `KeyMissing`, while the reconcile branch caught the identical condition properly. A first run must never look
+    like a crash — that is the whole first impression."""
+    try:
+        return _dispatch(argv)
+    except RuntimeError as e:                             # KeyMissing subclasses RuntimeError
+        print(f"spendguard: {e}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        return 130
+    except BrokenPipeError:                               # `spendguard report | head` — not an error
+        return 0
+
+
+def _dispatch(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     cmd = argv[0] if argv else "status"
     rest = argv[1:]
@@ -244,6 +260,9 @@ def main(argv=None):
     if cmd == "truth":                                # per-day provider-truth totals; --push syncs (keys stay local)
         from . import truth
         return truth.main()
+    if cmd == "run":                                  # gate ONE command via the child's PYTHONPATH (no site-packages
+        from . import runner                          # write, nothing persists) — the DEFAULT way to gate since 0.8
+        return runner.main(rest)
     if cmd == "lanes":                                # subscription-lane activation status (+ --probe live check)
         from . import lanes
         return lanes.main(rest)
