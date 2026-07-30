@@ -260,6 +260,9 @@ def _dispatch(argv=None):
     if cmd == "truth":                                # per-day provider-truth totals; --push syncs (keys stay local)
         from . import truth
         return truth.main()
+    if cmd == "scan":                                 # THE FIRST RUN: local transcripts only — no key, no network,
+        from . import scan                            # no LLM, no writes outside SPENDGUARD_HOME. Safe via uvx.
+        return scan.main(rest)
     if cmd == "run":                                  # gate ONE command via the child's PYTHONPATH (no site-packages
         from . import runner                          # write, nothing persists) — the DEFAULT way to gate since 0.8
         return runner.main(rest)

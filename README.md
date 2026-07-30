@@ -1,13 +1,59 @@
 # llm-spendguard
 
-A pre-spend **governor** for LLM API cost (OpenAI + Anthropic): it caps every call before the spend,
-prices from a verified table, and **learns the cheapest config that still keeps quality** — then proves
-and enforces it. Zero required dependencies; install is one line; it never breaks a job (fail-open).
+**Know what an LLM job will cost before you run it — and prove your ledger matches the provider's bill.**
+
+```bash
+uvx --from llm-spendguard spendguard scan        # 10 seconds. No key, no config, nothing leaves your machine.
+```
+
+That reads the coding-agent transcripts already on your disk and tells you what that work costs at API rates.
+Nothing is installed into your interpreter and nothing is uploaded — see [what leaves your
+machine](#what-leaves-your-machine).
+
+Then, when you want the guard rails:
+
+```bash
+spendguard run -- python your_job.py   # gate ONE command: cost estimate before submit + hard caps
+spendguard reconcile all               # your ledger vs the provider's actual bill, with the gap NAMED
+```
+
+Four things it does that the observability and gateway tools don't:
+
+1. **Estimates a batch before you submit it** — not after the tokens are billed.
+2. **Refuses to price a model it doesn't know**, loudly, instead of logging $0. (Elsewhere a $0 price can also
+   silently exempt the call from your budget cap — an unknown model becomes an *uncapped* model.)
+3. **Reconciles to the actual invoice** and names the residual as ungoverned spend, with a published error rate —
+   see **[ACCURACY.md](ACCURACY.md)**.
+4. **Learns the cheaper config and proves it's safe** before adopting it (measure → test for output equivalence →
+   adopt only if quality holds → apply → remember what failed).
+
+Zero required dependencies. Fail-open by design: a cost tool must never be the reason your job doesn't run.
 Learn more at https://llmspendguard.com · **[Docs & quickstart →](https://docs.llmspendguard.com/)**
 
 > 📘 **New here? Read the [Solution Specification](docs/SOLUTION-SPEC.md)** — the whole story end to end: why it
 > exists, the value, the journey of a dollar (call → gate → ledger → reconcile → push), the design, and how it's
 > tested, secured, and operated.
+
+## What leaves your machine
+
+Three modes. **The default is local-only** — you have to opt in to each of the other two.
+
+| Mode | What leaves | How to turn it on |
+|---|---|---|
+| **Local-only (default)** | **Nothing.** `scan`, `run`, the gate, the ledger, `reconcile`, `trust` all work with no network except the providers' own free billing endpoints, which send *nothing* — they only read your usage. | — (this is the default) |
+| **LLM attribution** (opt-in) | Excerpts of local coding-agent transcripts go to a model provider so an LLM can classify which project/team spend belongs to. De-identified first (`deid.engine`). | you run `spendguard chat …` / `accounting --run` |
+| **Team dashboard** (opt-in) | Per-day, per-model **roll-ups only**: day, provider, model, kind, project, $ and token counts. **No prompts, no outputs, no keys.** | you configure `saas.json` and run `saas sync` |
+
+Two things worth stating plainly, because they are the questions a careful reviewer asks first:
+
+- **Your API keys never leave the machine and are never sent to our server.** Provider billing is read locally with
+  your key; only the resulting numbers are pushed, and only if you connect a team dashboard.
+- **Coding-agent transcripts can contain secrets** (a `.env` echoed into a session, a pasted credential). That is
+  exactly why LLM attribution is opt-in and de-identified rather than on by default — and why `scan`, the command
+  we ask you to run first, never sends them anywhere.
+
+`spendguard run --show` prints the exact bootstrap that will execute in your process. Nothing is downloaded at
+runtime, ever.
 
 ## Why llm-spendguard?
 Cost overruns don't announce themselves — they slip in silently: a hardcoded price that drifted from the
@@ -59,7 +105,7 @@ registry, and wires up the gate. Details: [SETUP.md](SETUP.md).
 
 **B) pip + code.**
 ```
-pip install llm-spendguard      # once published to PyPI
+pip install llm-spendguard
 # or, from a clone of this repo:
 pip install -e .
 ```

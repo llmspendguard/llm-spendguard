@@ -4,6 +4,24 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+### `spendguard scan` — a first run that costs nothing and takes 10 seconds
+- The front door was `pip install` → `install-hook` → `doctor` → edit your script → run it gated: four steps and a
+  venv mutation before a single number. And `report`, the obvious first command, does a live provider-billing pull
+  measured at **over three minutes** on a keyless install — a first impression that hangs is worse than none.
+- `spendguard scan` reads the Claude Code / Codex transcripts already on disk and prints what that work costs at
+  API rates. **No key, no network, no LLM call, no writes outside SPENDGUARD_HOME** — safe to run via
+  `uvx --from llm-spendguard spendguard scan` on a machine you don't own. Measured 8.7s cold on 970 sessions.
+  It presents the EXISTING readers rather than re-parsing transcripts, and keeps the two axes separate: est plan
+  value is labelled as such, shown beside a $0.00 billed line, and never summed.
+  Guard: `tests/test_scan_firstrun.py` (21 checks incl. no-network/no-LLM assertions on the module source).
+- `ACCURACY.md`: the error rate against provider truth, with a reproducible worked example (batch exact; realtime
+  +4.4% over two months) and an explicit **what we do NOT capture** list. Nobody else in this category publishes
+  one — the best of them tell you to check an invoice by hand.
+- README front door rewritten: `uvx` scan first, the four things nobody else does, a **"what leaves your machine"**
+  table (local-only default; LLM attribution and team sync both opt-in), and the stale
+  `pip install llm-spendguard # once published to PyPI` line finally removed — it had been on PyPI for 12 releases.
+  GitHub description + topics set (the repo card was blank).
+
 ### `spendguard run -- <cmd>` is the new default way to gate (startup hooks are no longer step one)
 - `install-hook` writes `sitecustomize`/`usercustomize` into a venv. On **2026-03-24 litellm 1.82.8 shipped a
   malicious `litellm_init.pth`** that ran a credential stealer at every interpreter start; startup-hook abuse is
