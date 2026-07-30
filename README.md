@@ -381,9 +381,11 @@ spendguard compare --prompt "Summarize X in 3 bullets" \
   --models gpt-5.5,claude-opus-4-8,gemini-2.5-flash,deepseek-chat,qwen-max --show
 ```
 Built-in providers: **openai, anthropic, gemini, deepseek, qwen, z.ai (GLM)** (all but Anthropic via their
-OpenAI-compatible endpoints, so the gate already meters them). Keys resolve per provider from env /
-`~/.spendguard` / `./.env` (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`,
-`DASHSCOPE_API_KEY` for Qwen, `ZAI_API_KEY` for z.ai/GLM). **Add another in one line:**
+OpenAI-compatible endpoints, so the gate already meters them). **Keys live in ONE place: `~/.spendguard/keys.env`**
+(created by `spendguard init`, chmod 600, loaded into the environment on `import spendguard`) — a real environment
+variable always wins, so CI/secret-managers are never clobbered. Per provider: `OPENAI_API_KEY`,
+`ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `DASHSCOPE_API_KEY` (Qwen), `ZAI_API_KEY` (z.ai/GLM),
+`MOONSHOT_API_KEY` (Kimi). **Add another in one line:**
 ```python
 from spendguard.adapters import register_provider
 register_provider("together", "https://api.together.xyz/v1", "TOGETHER_API_KEY", ("meta-llama", "mistralai"))

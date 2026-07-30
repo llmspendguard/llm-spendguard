@@ -95,14 +95,22 @@ check(f"both errors mention keys.env ({len(msgs)} captured)",
 check("neither error sends the user to the legacy ~/.spendguard/.env",
       all("/.env" not in m.replace("keys.env", "") for m in msgs))
 
-print("-- no source file tells a user to write the legacy .env --")
+print("-- NOTHING (code or docs) tells a user to write the legacy .env — keys.env is the one answer --")
 import pathlib
+root = pathlib.Path(gate.__file__).parent.parent.parent          # repo root
+targets = list((root / "src" / "spendguard").glob("*.py")) + [root / "README.md", root / "SETUP.md",
+                                                              root / "scripts" / "README.md"]
+targets += list((root / "docs").glob("*.md"))
 bad = []
-for p in pathlib.Path(gate.__file__).parent.glob("*.py"):
+for p in targets:
+    if not p.exists() or p.name.startswith("test_"):
+        continue
     for i, ln in enumerate(p.read_text().splitlines(), 1):
+        # the loader/back-compat mentions are FINE — they must say "legacy" (or name KEYS_ENV) to prove they're
+        # describing history, not instructing the user.
         if "spendguard/.env" in ln and "legacy" not in ln.lower() and "KEYS_ENV" not in ln:
             bad.append(f"{p.name}:{i}")
-check(f"no user-facing legacy-.env instructions left: {bad}", not bad)
+check(f"no legacy-.env instructions in code OR docs: {bad}", not bad)
 
 print(f"\n{'[FAIL]' if failures else 'OK'} test_estimate_signal: {failures} failure(s)")
 sys.exit(1 if failures else 0)

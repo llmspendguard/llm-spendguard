@@ -14,8 +14,9 @@ aggregation server. In one run it:
 
 1. Installs the package (`pip install llm-spendguard`, falling back to an editable install from a synced
    checkout at `$SPENDGUARD_SRC` / `~/llm-spendguard`).
-2. Writes provider keys to the cwd-independent home (`~/.spendguard/.env`, `chmod 600`) so `reconcile`/`report`
-   resolve them from any directory.
+2. Writes provider keys to the cwd-independent home (`~/.spendguard/keys.env`, `chmod 600`) so `reconcile`/`report`
+   resolve them from any directory. (A bare `.env` in that home is still READ for back-compat with old installs,
+   but nothing creates it — `keys.env` is the one file to edit.)
 3. Writes a per-repo connection (`./.spendguard.json`, `chmod 600`) that pushes **this box's project** to its
    org via the org/team ingest key — `enabled`, `url`, `contributor`, `project`, `visibility: org`, daily sync.
 4. Gates the interpreter via `spendguard install-hook --user --python "$(command -v python3)"` so every call is
