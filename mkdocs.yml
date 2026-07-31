@@ -49,6 +49,7 @@ nav:
   - Adding a provider (plugin API): PROVIDERS.md
   - Incidents (severity + postmortem rule): INCIDENTS.md
   - Waivers (consciously-skipped gates): WAIVERS.md
+  - Launch plan: LAUNCH.md
   - Roadmap: ROADMAP.md
 
 markdown_extensions:
