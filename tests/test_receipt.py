@@ -231,5 +231,49 @@ del os.environ["SPENDGUARD_PLAN_USD"]
 ck("tally: defaults to assumed plan (Anthropic Max + OpenAI Pro)", receipt.tally().get("plan_assumed") is True)
 ck("_plan_usd: default total = Anthropic Max + OpenAI Pro = $400", receipt._plan_usd() == (400.0, True))
 
+print("\n-- the est-value cache re-buckets on READ: a stamp from last month is never printed as 'this month' --")
+# The bug this pins: stamp_est_value froze today/week/month at stamp time, so a receipt rendered weeks later
+# reported LAST month's window under the heading "spend this month". Two guards: re-window from the per-day
+# detail, and if a record predates that detail, say STALE out loud instead of printing it as current.
+import json as _json, datetime as _dtm
+_today = receipt._utc_today()
+_mstart = _today.replace(day=1)
+_prev = (_mstart - _dtm.timedelta(days=1))                     # a day in the PREVIOUS month
+_rows = [{"day": _today.strftime("%Y-%m-%d"), "spend_micros": 5_000_000, "billed": False, "project": "now"},
+         {"day": _prev.strftime("%Y-%m-%d"), "spend_micros": 90_000_000, "billed": False, "project": "old"}]
+receipt.stamp_est_value(_rows, source="test-src")
+_ev = receipt._est_tally()
+_mine = _json.loads(receipt._cache_path().read_text())["est_value_by_source"]["test-src"]
+ck("month window counts only THIS month's days ($5, not $95)",
+   round(receipt._rewindow(_mine)[0]["month"], 2) == 5.0)
+ck("a fresh stamp is not flagged stale", _ev.get("stale") is not True)
+ck("its caption is a plain as-of, no alarm", "STALE" not in receipt._asof_label(_ev))
+
+_p = receipt._cache_path()                                     # simulate a pre-0.8.3 record: frozen, no by_day
+_d = _json.loads(_p.read_text())
+_rec = _d["est_value_by_source"]["test-src"]
+_rec.pop("by_day", None)
+for _c in _rec["cells"].values():
+    _c.pop("by_day", None)
+_rec.update(month=9_999.0, week=9_999.0, today=9_999.0, asof=_prev.strftime("%Y-%m-%d"))
+_p.write_text(_json.dumps(_d))
+_ev2 = receipt._est_tally()
+ck("a frozen record from an earlier day is flagged stale", _ev2.get("stale") is True)
+ck("the stale SOURCE is named (so the remedy can be the right one)", "test-src" in (_ev2.get("stale_sources") or []))
+ck("the as-of shown is the STALE record's date, not the freshest source's",
+   _ev2.get("asof") == _prev.strftime("%Y-%m-%d"))
+_lab = receipt._asof_label(_ev2)
+ck("the caption says STALE and how old", "STALE" in _lab and "d old" in _lab)
+ck("an unknown source gets NO invented refresh command", "refresh:" not in _lab)
+ck("a known source gets the command that actually re-stamps it",
+   "spendguard cc" in receipt._asof_label(dict(_ev2, stale_sources=["claude-code"])) and
+   "spendguard codex" in receipt._asof_label(dict(_ev2, stale_sources=["codex"])))
+ck("every source that stamps has a refresh command mapped",
+   set(receipt._SOURCE_REFRESH) >= {"claude-code", "codex", "claude-ai"})
+_tbl = "\n".join(receipt._two_axis_table(receipt.tally()))
+ck("the staleness is attached to the PLAN USAGE row, not to TOTAL (actual $ is read live)",
+   "Plan usage (⚠ STALE" in _tbl and "TOTAL (⚠" not in _tbl)
+ck("the two axes still never merge into one number", "two axes, never added" in _tbl)
+
 print(f"\n{'PASS' if not fails else 'FAIL'} — {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

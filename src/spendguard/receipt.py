@@ -83,8 +83,30 @@ def _windows():
 
 
 # ── est-value cache (stamped by the heavier flows; read cheaply here) ─────────
+_BY_DAY_KEEP = 40      # days of per-day detail kept so a later read can re-bucket (a month window spans ≤31)
+
+
 def _cache_path():
     return config.HOME / _CACHE
+
+
+def _rewindow(rec):
+    """Re-bucket a stamped record against TODAY's windows using its per-day detail, and report whether it could.
+
+    Returns (windows, fresh). `fresh` is False for a pre-0.8.3 record (no `by_day`) stamped on an earlier day: its
+    today/week/month were frozen at stamp time, so they are NOT this month's — the reader must say so rather than
+    print a stale number as current."""
+    by_day = rec.get("by_day") or {}
+    today, week, month = _windows()
+    if by_day:
+        w = {"today": 0.0, "week": 0.0, "month": 0.0}
+        for day, usd in by_day.items():
+            for k, lo in (("today", today), ("week", week), ("month", month)):
+                if day >= lo:
+                    w[k] += usd
+        return w, True
+    frozen = {k: rec.get(k, 0) or 0 for k in ("today", "week", "month")}
+    return frozen, (rec.get("asof") or "") >= today
 
 
 def stamp_est_value(rows, source: str = "claude-code") -> None:
@@ -96,7 +118,8 @@ def stamp_est_value(rows, source: str = "claude-code") -> None:
         today, week, month = _windows()
         # ORG → TEAM → PROJECT attribution (the useful axis, same as the server). Stored as flat cells keyed
         # org|team|project; the tree is built on render. (Each row carries the agentic classification from cls.)
-        acc = {"today": 0.0, "week": 0.0, "month": 0.0, "asof": today, "cells": {}}
+        acc = {"today": 0.0, "week": 0.0, "month": 0.0, "asof": today, "cells": {}, "by_day": {}}
+        keep = (_utc_today() - _dt.timedelta(days=_BY_DAY_KEEP)).strftime("%Y-%m-%d")
         for r in rows or []:
             if r.get("billed"):                       # only the est-value axis belongs in this cache
                 continue
@@ -106,7 +129,14 @@ def stamp_est_value(rows, source: str = "claude-code") -> None:
             team = (r.get("team") or "").strip().lower()
             proj = (r.get("project") or "").strip().lower()
             ca = acc["cells"].setdefault(f"{org}|{team}|{proj}",
-                                         {"org": org, "team": team, "project": proj, "today": 0.0, "week": 0.0, "month": 0.0})
+                                         {"org": org, "team": team, "project": proj, "today": 0.0, "week": 0.0,
+                                          "month": 0.0, "by_day": {}})
+            # Keep the raw per-day totals (bounded window) so a LATER read re-buckets against ITS OWN windows.
+            # Without this the cache freezes June's "month" and a July receipt reports it as this month's — the
+            # exact stale-number-presented-as-current bug this tool exists to prevent.
+            if day >= keep:
+                acc["by_day"][day] = acc["by_day"].get(day, 0.0) + usd
+                ca["by_day"][day] = ca["by_day"].get(day, 0.0) + usd
             for k, lo in (("today", today), ("week", week), ("month", month)):
                 if day >= lo:
                     acc[k] += usd
@@ -130,7 +160,9 @@ def _est_cells():
     out = []
     try:
         for s in (json.loads(_cache_path().read_text()).get("est_value_by_source") or {}).values():
-            out.extend((s.get("cells") or {}).values())
+            for c in (s.get("cells") or {}).values():
+                w, _fresh = _rewindow(c)               # today's windows, not the ones frozen at stamp time
+                out.append(dict(c, **w))
     except Exception:
         pass
     return out
@@ -143,11 +175,19 @@ def _est_tally(org=None, team=None, project=None):
         data = json.loads(_cache_path().read_text())
         srcs = data.get("est_value_by_source")
         if srcs:
+            rew = [(k, s, _rewindow(s)) for k, s in srcs.items()]
+            stale_srcs = [(k, s) for k, s, (_w, fresh) in rew if not fresh]   # frozen records, stamped earlier
+            stale = bool(stale_srcs)
+            # When ANY source is stale the caption must describe the STALE one (its OLDEST date) and name it —
+            # reporting the freshest source's as-of would hide exactly the record the reader needs to distrust.
+            asof = (min((s.get("asof", "") for _k, s in stale_srcs), default="") if stale
+                    else max((s.get("asof", "") for s in srcs.values()), default=""))
+            names = [k for k, _s in stale_srcs]
             if org is None and team is None and project is None:
-                return {"today": sum(s.get("today", 0) for s in srcs.values()),
-                        "week": sum(s.get("week", 0) for s in srcs.values()),
-                        "month": sum(s.get("month", 0) for s in srcs.values()),
-                        "asof": max((s.get("asof", "") for s in srcs.values()), default="")}
+                return {"today": sum(w["today"] for _k, _s, (w, _f) in rew),
+                        "week": sum(w["week"] for _k, _s, (w, _f) in rew),
+                        "month": sum(w["month"] for _k, _s, (w, _f) in rew),
+                        "stale": stale, "stale_sources": names, "asof": asof}
             ol = None if org is None else org.strip().lower()
             tl = None if team is None else team.strip().lower()
             pl = None if project is None else project.strip().lower()
@@ -161,7 +201,9 @@ def _est_tally(org=None, team=None, project=None):
                     continue
                 for k in agg:
                     agg[k] += c.get(k, 0)
-            agg["asof"] = max((s.get("asof", "") for s in srcs.values()), default="")
+            agg["asof"] = asof
+            agg["stale"] = stale
+            agg["stale_sources"] = names
             return agg
         d = data.get("est_value")                     # back-compat: older single-blob stamp (global only)
         if org is None and team is None and project is None and isinstance(d, dict) and "today" in d:
@@ -169,6 +211,31 @@ def _est_tally(org=None, team=None, project=None):
     except Exception:
         pass
     return None
+
+
+# Which command re-stamps each source's est-value cache. The remedy printed on a stale receipt must be the
+# command that ACTUALLY refreshes that source — a plausible-but-wrong fix is worse than none, because the reader
+# runs it, sees no change, and stops believing the warning. Unknown source → no invented command.
+_SOURCE_REFRESH = {"claude-code": "spendguard cc", "codex": "spendguard codex", "claude-ai": "spendguard chat"}
+
+
+def _asof_label(ev):
+    """How to caption the est-value axis. A record with per-day detail is re-bucketed on read, so it is CURRENT
+    and just says when it was last refreshed. A frozen pre-0.8.3 record is not this month's number at all — say
+    STALE, say how old, and name the command that refreshes it. Never print a stale window as if it were today's."""
+    a = (ev or {}).get("asof")
+    if not a:
+        return ""
+    if not ev.get("stale"):
+        return f" (as of {a})"
+    try:
+        age = (_utc_today() - _dt.date.fromisoformat(a)).days
+        age_s = f", {age}d old" if age > 0 else ""
+    except Exception:
+        age_s = ""
+    cmds = [_SOURCE_REFRESH[s] for s in (ev.get("stale_sources") or []) if s in _SOURCE_REFRESH]
+    fix = f"; refresh: {' + '.join('`%s`' % c for c in cmds)}" if cmds else ""
+    return f" (⚠ STALE — windows frozen {a}{age_s}{fix})"
 
 
 def _est_tree(scope_org=None):
@@ -343,7 +410,7 @@ def _tally_lines(t: dict) -> list:
     lines = [f"real $ this month: {_money(real)}  =  " + "  +  ".join(parts) + extra]
     ev = t.get("est_value")
     if ev:
-        asof = f" (as of {ev['asof']})" if ev.get("asof") else ""
+        asof = _asof_label(ev)
         mult = f"  →  {t['plan_mult']:.0f}× the subscription" if t.get("plan_mult") else ""
         lines.append(f":: est sub value (plan usage, NOT billed){asof}: month {_money(ev.get('month'))}"
                      f" · today {_money(ev.get('today'))} · 7d {_money(ev.get('week'))}{mult}")
@@ -530,7 +597,7 @@ def _two_axis_table(t: dict) -> list:
     sub = t.get("subscription") or 0
     ev = t.get("est_value") or {}
     evm = ev.get("month")
-    asof = f" (as of {ev['asof']})" if ev.get("asof") else ""
+    asof = _asof_label(ev)
     cell = lambda x: (_money(x) if x is not None else "—")
     LW = 34
     # An ASSUMED plan fee is not an "Actual $" — it's a default nobody confirmed. The tally already carries
@@ -547,7 +614,12 @@ def _two_axis_table(t: dict) -> list:
         out.append(f"{label:<{LW}}{cell(a):>12}{cell(e):>14}")
     out.append("─" * (LW + 26))
     total = f"{_money((api or 0) + (rem or 0) + (sub or 0))}{star}"
-    out.append(f"{('TOTAL' + asof):<{LW}}{total:>12}{cell(evm):>14}")
+    out.append(f"{'TOTAL':<{LW}}{total:>12}{cell(evm):>14}")
+    # The as-of / STALE caption belongs to the EST-VALUE column only. Actual $ is read live from the ledger on
+    # every render; hanging a staleness marker off TOTAL would smear the est-value cache's age onto numbers that
+    # are current, which is its own kind of lie.
+    if asof:
+        out.append(f"Plan usage{asof}")
     if assumed:
         out.append(f"* subscription is an ASSUMED default ({_money(sub)}), not a measured charge — set yours with "
                    f"`spendguard config set subscription.plan_usd <amount>`")

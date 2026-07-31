@@ -5,6 +5,13 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 ## [Unreleased]
 
 ### Fixed
+- **The receipt reported LAST month's plan value under the heading "spend this month."** `stamp_est_value` froze
+  today/week/month at stamp time, so a receipt rendered weeks later replayed the stale window as current — on this
+  machine, $8,935 (June) where July was $6,758. The cache now keeps 40 days of per-day detail and the reader
+  re-buckets against ITS OWN windows, so the number is right however old the stamp is. A pre-0.8.3 frozen record
+  can't be re-bucketed, so it is labelled `⚠ STALE`, with its age and the command that re-stamps that specific
+  source (`spendguard cc` / `codex` / `chat` — never an invented one). The marker hangs off the PLAN USAGE row,
+  not TOTAL: actual $ is read live from the ledger every render and is not stale.
 - `spendguard run -- python job.py` (the line in every quick-start) dies on macOS, which ships `python3` and no
   bare `python` — the first copy-paste a new user makes hit a bare "command not found". It now names the binary
   this host actually has and echoes back the corrected command with their own args. Still a SUGGESTION only: the
