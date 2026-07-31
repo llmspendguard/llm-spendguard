@@ -15,6 +15,8 @@ or fails *open* with a logged warning (non-interactive), never a crash.
 - :material-sitemap: **[Architecture](ARCHITECTURE.md)** — the gate chokepoint + the extensibility seams.
 - :material-robot: **[Using with Claude & agents](USING-WITH-CLAUDE.md)** — make every assistant session gated.
 - :material-brain: **[Learning advisor](learning-advisor.md)** — recommend *considering* history, not parroting it.
+- :material-scale-balance: **[Accuracy](ACCURACY.md)** — how close these numbers are to your actual invoice, and
+  what we do **not** capture. Nobody else in this category publishes one.
 
 </div>
 
@@ -39,20 +41,45 @@ same work without losing quality.
 
 ## Quickstart
 
-### 1. Install
+### 1. See something real before you install anything
+
+```bash
+uvx --from llm-spendguard spendguard scan
+```
+
+Reads the Claude Code / Codex transcripts already on your disk and prints what that work costs at API rates.
+**No key, no config, no network, nothing leaves your machine** — about ten seconds. If you like what it shows,
+keep going.
+
+### 2. Install
 
 ```bash
 pip install llm-spendguard
 ```
 
-### 2. Turn on the gate
+### 3. Gate a command
 
-Two lines. Every OpenAI / Anthropic call in this process is now **estimated and capped before it spends**:
+The default way to govern a job is a **wrapper** — it puts the gate on that one command's `PYTHONPATH` and execs
+it, exactly like `ddtrace-run` or `opentelemetry-instrument`:
+
+```bash
+spendguard run -- python train.py      # estimated + capped before it spends; nothing installed into your venv
+spendguard run --show                  # prints the exact bootstrap that will execute — read every byte
+```
+
+Nothing is written into site-packages, nothing persists after the process exits, and not using the wrapper is the
+complete uninstall. (We default to this on purpose: writing `sitecustomize`/`.pth` startup hooks into someone's
+interpreter is the mechanism that shipped a credential stealer in another package in March 2026. See
+[Architecture](ARCHITECTURE.md).)
+
+In your own code, one line does the same for that process:
 
 ```python
-import spendguard
-spendguard.install()      # patches the OpenAI + Anthropic clients in-process; safe to call once at startup
+import spendguard          # importing it arms the gate for this process (idempotent, fail-open)
 ```
+
+Want it on for **every** process in a venv you own? That's still supported and is now an explicit opt-in:
+`spendguard install-hook --venv .venv` — and `spendguard install-hook --venv .venv --uninstall` removes it.
 
 Or let Claude (or any agent) set it up conversationally, picking your caps, projects, and providers — and
 optionally connecting a team:
