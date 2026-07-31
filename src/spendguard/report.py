@@ -13,7 +13,7 @@ Scope: BATCH spend both providers + GPU consumption from currently-visible vast.
 import sys, argparse, datetime
 from collections import defaultdict
 
-from . import pricing
+from . import config, pricing
 from .reconcile_openai import load_key, fetch_batches, day as oai_day
 from . import reconcile_anthropic as anth
 def openai_by_day():
@@ -60,7 +60,7 @@ def admin_realtime_total(since=None):
     from .config import api_key
     from .pricing import realtime_cost
     from .resources import _norm_model
-    since = since or _dt.date.today().replace(day=1).isoformat()
+    since = since or config.month_start_utc()
     total, any_key = 0.0, False
 
     def _paged(url, headers):

@@ -4,6 +4,7 @@ Decoupled from any host repo so the package is portable. Data (gate log, kill-sw
 flag, reconcile cache) lives under SPENDGUARD_HOME (default ~/.spendguard). API keys
 resolve from the environment first, then SPENDGUARD_ENV or ./.env.
 """
+import datetime
 import os
 from pathlib import Path
 
@@ -138,6 +139,22 @@ def key_fingerprint(provider):
         return ""
     import hashlib
     return hashlib.sha256(key.encode()).hexdigest()[:8] + ":" + key[-4:]
+
+
+def month_start_utc():
+    """First day of the CURRENT month in UTC, as 'YYYY-MM-DD' — the default `since` for every money window.
+
+    Every ledger day-key is written in UTC (budget.record, gate, ledger, receipt, report all use
+    datetime.now(timezone.utc)), but the default windows used to be built from `date.today()` — LOCAL time. West
+    of UTC that makes the month boundary wrong for 7-8 hours around the 1st: `trust`, `close` and the leak check
+    computed a residual that CHANGED depending on what time of day you ran them, and then silently self-corrected
+    — the hardest possible bug to chase in an accounting tool. One helper, used everywhere, kills the class."""
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-01")
+
+
+def today_utc():
+    """Today in UTC, as 'YYYY-MM-DD' — the same reason as month_start_utc()."""
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
 
 
 def _cfg():

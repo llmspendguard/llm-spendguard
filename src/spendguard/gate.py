@@ -1090,6 +1090,10 @@ def _est_usd_images(kw):
     try:
         return model, n * pricing.unit_price("image", model, variant or None)
     except KeyError:
+        # WARN in the ESTIMATE path too, not just the actuals. This value feeds the PRE-SPEND cap check, so an
+        # unpriced image model estimated at $0 can never trip a cap — and the user only learned about it after
+        # the money was gone. For a pre-spend gate that is exactly backwards.
+        _warn_unpriced_unit("image", model)
         return model, 0.0
 
 
@@ -1136,6 +1140,7 @@ def _est_usd_speech(kw):
     try:
         return model, chars * pricing.unit_price("tts_char", model)
     except KeyError:
+        _warn_unpriced_unit("tts_char", model)       # pre-spend path must be loud too — see _est_usd_images
         return model, 0.0
 
 

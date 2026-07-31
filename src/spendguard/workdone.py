@@ -12,6 +12,8 @@ TIER 2 (separate, caged + opt-in): an LLM pass synthesizes a day's raw activity 
 import argparse, datetime, os, subprocess
 from collections import defaultdict
 
+from . import config
+
 # repo path → project tag (the WHAT this work belongs to). Repos MUST be configured via config workdone.repos
 # (mapping absolute repo paths → project tags); there are no machine-specific defaults.
 DEFAULT_REPOS = {}
@@ -61,7 +63,7 @@ def _batch_intents(since):
 
 def build(since=None):
     """Per (day, project) work-done record: git commit subjects + batch intents + counts. Deterministic, free."""
-    since = since or datetime.date.today().replace(day=1).isoformat()
+    since = since or config.month_start_utc()
     by = defaultdict(lambda: {"commits": [], "intents": defaultdict(int)})
     for repo, proj in _repos().items():
         for day, subj in _git_commits(repo, since):

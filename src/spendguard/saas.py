@@ -756,8 +756,7 @@ def crosscheck(since=None):
     pushed) · server-only (stale, should be pruned). Scoped to the ACTUAL-$ axis (batch · realtime · GPU); est-VALUE
     rows (claude-code/claude-ai, billed=false) are excluded — they're reconciled by the chat loop, not here, so they'd
     otherwise read as false server_only. The trust layer over the sync. Free (no spend)."""
-    import datetime
-    since = since or datetime.date.today().replace(day=1).isoformat()
+    since = since or config.month_start_utc()
     ok, reason = ready()
     if not ok:
         return {"error": f"not connected: {reason}"}

@@ -12,7 +12,8 @@ real-time spend isn't provider-visible without an Admin key, so it's shown local
 LEAK (provider > local) = the important signal. Local > provider = estimate-over-actual / double-count.
 """
 import argparse
-import datetime
+
+from . import config
 
 
 def _provider_batch_by_day(since):
@@ -45,7 +46,7 @@ def _compute(since=None):
     ledger_start: realtime started recording weeks before batch, so the global start would drag in pre-batch-recording
     history and mislabel it as a leak. Provider batch before the batch cutoff is pre-ledger (expected)."""
     from . import budget
-    since = since or datetime.date.today().replace(day=1).isoformat()
+    since = since or config.month_start_utc()
     prov, pending = _provider_batch_by_day(since)
     accounted = budget.by_day(kind="batch", since=since, exclude_reconciled=False)    # gate-recorded + backfill = what the ledger accounts for
     gate_only = budget.by_day(kind="batch", since=since, exclude_reconciled=True)     # what the gate captured LIVE (capture-rate signal)
@@ -127,7 +128,7 @@ def true_down(since=None, billed_rows=None):
     `billed_rows` = {"openai": [(prov, model, cost, in, out, day, batch_id), ...] | None, "anthropic": ...};
     None/absent = fetch that provider here (None after a failed fetch = skip). Returns the correction summary."""
     from . import budget
-    since = since or datetime.date.today().replace(day=1).isoformat()
+    since = since or config.month_start_utc()
     if billed_rows is None:
         billed_rows = {}
         from . import backfill
@@ -191,7 +192,7 @@ def reconcile_into_ledger(since=None):
     what makes the ledger correct + the dashboard show the real total, and it rides the existing daily reconcile
     cadence — no separate scheduler."""
     from . import budget
-    since = since or datetime.date.today().replace(day=1).isoformat()
+    since = since or config.month_start_utc()
     # Only the account-OWNER connection reconciles the SHARED provider-account gap. A connected non-owner
     # (owns_account=false — e.g. one of several repos sharing one OpenAI/Anthropic account) must NOT claim it, or it
     # attributes OTHER repos' provider spend to its own project (the bug where vision-pipeline absorbed nlp-pipeline's
@@ -333,7 +334,7 @@ def record_realtime_reconstruction(since=None):
         data = json.load(open(cache))
     except Exception:
         return dict(recorded=0.0, rows=0, note="cache unreadable")
-    day = since or data.get("since") or datetime.date.today().replace(day=1).isoformat()
+    day = since or data.get("since") or config.month_start_utc()
     budget.clear_reconciled(model=_RT_RECON_MARKER)              # idempotent rebuild
     org_project = {"healiom": "lmm", "ensight": "llm-spendguard", "personal": "personal-admin"}   # org → representative project
     agg = {}
@@ -367,7 +368,7 @@ def reconcile_realtime(since=None):
     from . import budget
     from .config import RT_LOG
     import os, json
-    since = since or datetime.date.today().replace(day=1).isoformat()
+    since = since or config.month_start_utc()
 
     # ADMIN KEYS ARE DEV-ASSIST ONLY — they can NEVER be part of the main path. The admin-oracle-into-ledger block that
     # used to live HERE (record provider admin-usage truth as realtime spend) is DELETED on purpose: it made admin a
@@ -480,7 +481,7 @@ def leak_line(since=None):
 
 def sync(since=None):
     from . import budget
-    since = since or datetime.date.today().replace(day=1).isoformat()
+    since = since or config.month_start_utc()
     prov, pending = _provider_batch_by_day(since)
     accounted = budget.by_day(kind="batch", since=since, exclude_reconciled=False)    # gate-recorded + reconciled backfill = ACCOUNTED
     gate_only = budget.by_day(kind="batch", since=since, exclude_reconciled=True)     # what the gate captured LIVE (capture-rate)
@@ -585,7 +586,7 @@ class LLMSource:
             self._conn = conn if conn is not None else saas.conn()
         except Exception:
             self._conn = {}
-        self._since = since or datetime.date.today().replace(day=1).isoformat()
+        self._since = since or config.month_start_utc()
 
     def conn(self):
         return self._conn
@@ -619,7 +620,7 @@ class RealtimeSource:
             self._conn = conn if conn is not None else saas.conn()
         except Exception:
             self._conn = {}
-        self._since = since or datetime.date.today().replace(day=1).isoformat()
+        self._since = since or config.month_start_utc()
 
     def conn(self):
         return self._conn

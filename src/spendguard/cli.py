@@ -11,6 +11,67 @@
 """
 import sys
 
+# The command surface, grouped the way you'd actually use it. The module docstring used to be the entire help —
+# 10 of 60+ commands — printed for `--help`, `help`, `--version` AND every typo, always exiting 1.
+# `_all_commands()` cross-checks this table against the real dispatch, so help can't silently drift from code.
+_GROUPS = [
+    ("start here", [
+        ("scan", "what your local coding-agent work costs — no key, no network, 10s"),
+        ("init", "set your caps + identity (deterministic; --quick for defaults)"),
+        ("run", "`run -- <cmd>` gate ONE command; nothing written to your interpreter"),
+        ("doctor", "is the gate enforcing HERE? keys, lanes, ledger status"),
+    ]),
+    ("see the money", [
+        ("receipt", "running tally: today / 7d / month, two axes"),
+        ("report", "daily · weekly · monthly, per provider (+ leak alert)"),
+        ("reconcile", "`reconcile all|openai|anthropic` — ledger vs the provider's BILL"),
+        ("trust", "is what we recorded ≈ what you were billed?"),
+        ("close", "monthly close: provider truth + residual, named"),
+        ("keys", "spend per API key (which workspace/project key)"),
+        ("coverage", "which LLM-capable interpreters are NOT gated"),
+    ]),
+    ("spend less (measured, not guessed)", [
+        ("advise", "cheapest config that HELD quality, per intent"),
+        ("calibrate", "learned estimator: your history corrects the naive $"),
+        ("prompts", "lint the call corpus for prompt waste"),
+        ("experiment", "A/B a cheaper config with graded output-equivalence"),
+        ("maxtokens", "measured p99 bound for a call class (autotune's input)"),
+        ("realized", "what the changes actually saved"),
+    ]),
+    ("teams", [
+        ("saas", "`saas link|sync|push|reconcile` — org roll-up (opt-in)"),
+        ("lanes", "subscription lanes: run meta prompts on your plan"),
+        ("truth", "push provider-truth totals (owner only)"),
+    ]),
+    ("setup & plumbing", [
+        ("config", "`config` show all · `config set <section.key> <value>`"),
+        ("install-hook", "gate EVERY process in a venv (opt-in; --uninstall removes)"),
+        ("install-rule", "teach Claude/Cursor to route generated code through the gate"),
+        ("install-skills", "add the /spend, /spendguard-* slash commands"),
+        ("schedule", "OS-native daily sync (launchd / cron / schtasks)"),
+        ("sync-prices", "refresh the price breadth layer now"),
+        ("pricing", "print the canonical price table"),
+        ("audit", "fail CI if any code hardcodes a disagreeing price"),
+    ]),
+]
+
+
+def _all_commands():
+    return sorted({c for _g, items in _GROUPS for c, _d in items})
+
+
+def help_text():
+    out = ["spendguard — know what an LLM job will cost before you run it, and prove your ledger matches the bill.",
+           "", "usage: spendguard <command> [args]    ·    spendguard --version", ""]
+    for group, items in _GROUPS:
+        out.append(f"{group}:")
+        for cmd, desc in items:
+            out.append(f"  {cmd:<15} {desc}")
+        out.append("")
+    out += ["Not listed here: the deeper surface (bootstrap, insights, compare, experiment internals, tag, …).",
+            "Full reference: https://docs.llmspendguard.com/CLI/  ·  every setting: `spendguard config`"]
+    return "\n".join(out)
+
 
 def main(argv=None):
     """CLI entry. Wraps the dispatch so a MISSING PREREQUISITE (no provider key, no config) exits with one clean
@@ -276,7 +337,7 @@ def _dispatch(argv=None):
         for i, a in enumerate(rest):
             if a == "--since" and i + 1 < len(rest):
                 since = rest[i + 1]
-        since = since or _dt.date.today().replace(day=1).isoformat()
+        since = since or _dt.config.month_start_utc()
         prof = _c._key_profile()
         print(f"per-key workload spend since {since}" + (f"  (active key profile: {prof})" if prof else ""))
         rows = sorted(budget.by_key(since=since).items(), key=lambda x: -x[1]["cost"])
@@ -309,8 +370,20 @@ def _dispatch(argv=None):
         for prov, models in sorted(p.providers().items()):
             print(f"  {prov}: {len(models)} models")
         return 2 if stale else 0
-    print(__doc__)
-    return 1
+    # An explicit help request EXITS 0 and prints the real, grouped surface. Before this, `--help`, `-h`, `help`,
+    # `--version` and a typo all printed the same 9-line module docstring — 10 of 60+ commands — and exited 1.
+    if cmd in ("--help", "-h", "help", "--commands"):
+        print(help_text())
+        return 0
+    if cmd in ("--version", "-V", "version"):
+        from . import __version__
+        print(f"llm-spendguard {__version__}")
+        return 0
+    import difflib
+    near = difflib.get_close_matches(cmd, _all_commands(), n=3, cutoff=0.55)
+    print(f"unknown command {cmd!r}" + (f" — did you mean: {', '.join(near)}?" if near else ""), file=sys.stderr)
+    print("`spendguard --help` lists every command.", file=sys.stderr)
+    return 2
 
 
 if __name__ == "__main__":

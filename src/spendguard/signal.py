@@ -9,8 +9,8 @@ import datetime
 
 def build(since=None):
     """Per (project, intent, model) signal rows from the recovered call corpus + batch costs + quality."""
-    from . import callio, backfill, conv
-    since = since or datetime.date.today().replace(day=1).isoformat()
+    from . import config,  callio, backfill, conv
+    since = since or config.month_start_utc()
     bcost = {}
     for _prov, model, cost, _it, _ot, day, bid in (backfill._openai_rows() + backfill._anthropic_rows()):
         if (day or "") >= since:

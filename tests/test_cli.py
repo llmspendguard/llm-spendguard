@@ -23,7 +23,12 @@ resources.cmd = lambda rest=None: (seen.__setitem__("resources.cmd", list(rest o
 ck("`reconcile all` → reconcile.report, returns 0", cli.main(["reconcile", "all"]) == 0 and seen.get("reconcile.report"))
 ck("`resources discover` → resources.cmd(['discover'])", cli.main(["resources", "discover"]) == 0 and seen.get("resources.cmd") == ["discover"])
 ck("`resources sync` → resources.cmd(['sync'])", cli.main(["resources", "sync"]) == 0 and seen.get("resources.cmd") == ["sync"])
-ck("unknown command → returns 1 (prints help, no crash)", cli.main(["totally-bogus-xyz"]) == 1)
+# Unknown command now exits 2 — the shell convention for a USAGE error — with a did-you-mean, instead of the old
+# exit-1 dump of a 9-line docstring. Explicit help/version exit 0 (they are not errors). Details in
+# tests/test_deferred_fixes.py.
+ck("unknown command → exit 2 (usage error), no crash", cli.main(["totally-bogus-xyz"]) == 2)
+ck("`--help` exits 0 (an explicit help request is not an error)", cli.main(["--help"]) == 0)
+ck("`--version` exits 0", cli.main(["--version"]) == 0)
 
 print(("\n[FAIL] " if fails else "\n[OK] ") + f"cli: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

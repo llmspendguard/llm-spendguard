@@ -2,6 +2,25 @@
 
 All notable changes to **llm-spendguard**. Format loosely follows Keep a Changelog; dates are UTC.
 
+## [0.8.1] — 2026-07-16
+
+### Fixed — three deferred findings, all of them "the number changes depending on how you ask"
+- **UTC/local month-boundary drift.** Every ledger day-key is written in UTC, but all **15** default `since`
+  windows were built from `date.today()` — LOCAL. West of UTC that makes the month boundary wrong for 7-8 hours
+  around the 1st, so `trust`, `close` and the leak check computed a residual that **changed with the time of day
+  and then silently self-corrected** — the hardest possible bug to chase in an accounting tool. One helper
+  (`config.month_start_utc()` / `today_utc()`), used by all 7 modules; a guard fails if any module ever derives a
+  money window from local time again.
+- **Unpriced units were silently $0 in the PRE-SPEND path.** `_est_usd_images` / `_est_usd_speech` returned $0 on
+  an unknown model with no warning, while their `_act_*` twins warned. That estimate feeds the CAP check — so an
+  unpriced image/TTS model could never trip a cap, and the user was told only *after* the money was gone. Exactly
+  backwards for a pre-spend gate. Both now warn (deduped per model), still returning $0 rather than a guess.
+- **`--help` / `--version` didn't exist.** The 9-line module docstring — 10 of 60+ commands — printed for every
+  help request, every version request and every typo, always exiting 1. Now: grouped help by task (start here ·
+  see the money · spend less · teams · setup), `--version`, exit 0 for explicit help, exit 2 + did-you-mean for a
+  typo. A guard asserts every advertised command really dispatches, so help can't drift from the code.
+  Guard: `tests/test_deferred_fixes.py` (28 checks).
+
 ## [0.8.0] — 2026-07-16
 
 ### Fixed — plugin discovery WARNed on every import under Python 3.9 (our own minimum)

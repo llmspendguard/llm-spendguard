@@ -11,7 +11,8 @@ is the provider's own bill; everything else must reconcile to it, loudly, every 
 
 Free (provider GETs + one server GET). Run daily.
 """
-import datetime
+
+from . import config
 
 WARN_FRAC = 0.15      # |recorded − truth| / truth beyond this → WARN
 ALARM_RATIO = 1.4     # recorded ≥ this × truth → ALARM (almost certainly double-counting / accumulation)
@@ -37,7 +38,7 @@ def verdict(truth, recorded):
 def provider_truth(since=None):
     """The authoritative LLM $ this period (OpenAI + Anthropic batch billing + gate-logged realtime). Returns a float,
     or None if EITHER provider fetch fails — a partial/zero must never masquerade as the truth."""
-    since = since or datetime.date.today().replace(day=1).isoformat()
+    since = since or config.month_start_utc()
     total, ok = 0.0, True
     try:
         from .report import openai_by_day
@@ -80,7 +81,7 @@ def _ledger_llm_total(since):
 def check(since=None, with_server=True):
     """Pull provider truth + the local ledger (+ the server total, if connected) and return the verdicts. The
     daily trust report. Free."""
-    since = since or datetime.date.today().replace(day=1).isoformat()
+    since = since or config.month_start_utc()
     truth = provider_truth(since)
     ledger = _ledger_llm_total(since)
     out = {"since": since, "provider_truth": truth, "ledger": ledger}
