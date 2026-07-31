@@ -2,7 +2,7 @@
 
 All notable changes to **llm-spendguard**. Format loosely follows Keep a Changelog; dates are UTC.
 
-## [Unreleased]
+## [0.8.2] — 2026-07-16
 
 ### `spendguard sources` — one discovery, three signals, no interrogation
 - "How do I get my tool supported?" now has an answer that isn't "wait for us": a **transcript-source PORT**
