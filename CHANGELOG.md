@@ -2,7 +2,16 @@
 
 All notable changes to **llm-spendguard**. Format loosely follows Keep a Changelog; dates are UTC.
 
-## [0.8.2] — 2026-07-16
+## [Unreleased]
+
+### Fixed
+- `spendguard run -- python job.py` (the line in every quick-start) dies on macOS, which ships `python3` and no
+  bare `python` — the first copy-paste a new user makes hit a bare "command not found". It now names the binary
+  this host actually has and echoes back the corrected command with their own args. Still a SUGGESTION only: the
+  runner never execs a binary the user didn't name (same fail-loud-at-the-pin rule as `config.resolve_cli`).
+- CHANGELOG dates for 0.8.0–0.8.2 said 2026-07-16; all three were tagged 2026-07-30. Corrected to the tag dates.
+
+## [0.8.2] — 2026-07-30
 
 ### `spendguard sources` — one discovery, three signals, no interrogation
 - "How do I get my tool supported?" now has an answer that isn't "wait for us": a **transcript-source PORT**
@@ -21,7 +30,7 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
   Guard: `tests/test_sources_port.py` (24 checks incl. a third-party source appearing end-to-end, a broken source
   being skipped, and the no-source-code / no-network / no-key-leak boundaries).
 
-## [0.8.1] — 2026-07-16
+## [0.8.1] — 2026-07-30
 
 ### Fixed — three deferred findings, all of them "the number changes depending on how you ask"
 - **UTC/local month-boundary drift.** Every ledger day-key is written in UTC, but all **15** default `since`
@@ -40,7 +49,7 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
   typo. A guard asserts every advertised command really dispatches, so help can't drift from the code.
   Guard: `tests/test_deferred_fixes.py` (28 checks).
 
-## [0.8.0] — 2026-07-16
+## [0.8.0] — 2026-07-30
 
 ### Fixed — plugin discovery WARNed on every import under Python 3.9 (our own minimum)
 - `entry_points(group=…)` is 3.10+; on 3.9 it raises TypeError, so `[spendguard] WARN provider-plugin discovery

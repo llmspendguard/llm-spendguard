@@ -100,5 +100,21 @@ finally:
     cli._dispatch = _real
 check("a missing key exits 1 cleanly rather than raising", rc == 1)
 
+print("-- a missing command names the one this host DOES have (macOS has no bare `python`) --")
+import io, contextlib, shutil
+from spendguard import runner as _rn
+buf = io.StringIO()
+with contextlib.redirect_stderr(buf):
+    rc = _rn.main(["--", "python", "job.py"]) if not shutil.which("python") else 127
+err = buf.getvalue()
+check("exits 127 (the shell's own 'not found' code), never 0", rc == 127)
+if not shutil.which("python"):
+    check("it suggests python3 rather than dead-ending", "python3" in err and "try:" in err)
+    check("the suggestion carries the user's own args through", "job.py" in err)
+check("but it NEVER substitutes a binary the user didn't name (suggestion only)",
+      "execvpe(argv[0]" in inspect.getsource(_rn.main))
+check("a genuinely unknown command gets no invented suggestion",
+      _rn._near_miss("zzz-not-a-real-command") is None)
+
 print(f"\n{'[FAIL]' if failures else 'OK'} test_runner_wrapper: {failures} failure(s)")
 sys.exit(1 if failures else 0)

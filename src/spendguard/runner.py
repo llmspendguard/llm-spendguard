@@ -75,6 +75,18 @@ def child_env(env=None):
     return e
 
 
+def _near_miss(cmd):
+    """A same-tool name this host DOES have, or None. macOS ships `python3` with no bare `python`, so the very
+    first copy-pasted `spendguard run -- python job.py` dies on a bare "command not found" — one suggestion turns
+    a dead end into a fix. SUGGESTION ONLY: `run` never substitutes a binary the user didn't name (same rule as
+    config.resolve_cli — fail loud at the pin, never silently run something else)."""
+    import shutil
+    for cand in (cmd + "3", cmd[:-1] if cmd.endswith("3") else ""):
+        if cand and cand != cmd and shutil.which(cand):
+            return cand
+    return None
+
+
 def main(argv=None):
     argv = list(argv or [])
     if "--show" in argv:                  # reviewability: print the exact bytes that will execute
@@ -95,6 +107,9 @@ def main(argv=None):
         os.execvpe(argv[0], argv, env)    # replace this process → exit code, signals and stdio pass through natively
     except FileNotFoundError:
         print(f"spendguard run: command not found: {argv[0]}", file=sys.stderr)
+        alt = _near_miss(argv[0])
+        if alt:
+            print(f"  this host has {alt!r} — try: spendguard run -- {alt} " + " ".join(argv[1:]), file=sys.stderr)
         return 127
     except Exception as e:
         print(f"spendguard run: could not exec {argv[0]}: {e}", file=sys.stderr)
