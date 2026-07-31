@@ -54,6 +54,28 @@ check("no ambient warn helper survives in the package", not hasattr(spendguard, 
 src = open(spendguard.__file__).read()
 check("__init__ writes nothing to stderr at import", "stderr.write" not in src)
 
+print("-- silence holds on Python 3.9 too (our own minimum), where entry_points() takes no kwargs --")
+import importlib.metadata as _md
+from spendguard import provider_plugins as _pp
+_real_eps = _md.entry_points
+
+
+def _legacy_eps(*a, **k):                       # the 3.9 API: no kwargs, returns {group: [ep, ...]}
+    if k:
+        raise TypeError("entry_points() got an unexpected keyword argument 'group'")
+    return {_pp.GROUP: []}
+
+
+_md.entry_points = _legacy_eps
+_buf = io.StringIO()
+try:
+    with contextlib.redirect_stderr(_buf):
+        _pp.load()
+finally:
+    _md.entry_points = _real_eps
+check("plugin discovery is silent under the 3.9 entry_points API (it WARNed on every import)",
+      _buf.getvalue() == "")
+
 print("-- the check is exposed for the DIAGNOSTIC command instead --")
 check("shadowing_dists() is the queryable API", callable(spendguard.shadowing_dists))
 check("it reports clean for this environment", spendguard.shadowing_dists() == [])

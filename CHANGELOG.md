@@ -2,7 +2,13 @@
 
 All notable changes to **llm-spendguard**. Format loosely follows Keep a Changelog; dates are UTC.
 
-## [Unreleased]
+## [0.8.0] — 2026-07-16
+
+### Fixed — plugin discovery WARNed on every import under Python 3.9 (our own minimum)
+- `entry_points(group=…)` is 3.10+; on 3.9 it raises TypeError, so `[spendguard] WARN provider-plugin discovery
+  failed` printed on **every import** for anyone on the minimum supported version. Now falls back to the 3.9
+  dict API. Found by the new "a fresh import is silent" assertion, not by reading the code — which is the whole
+  argument for that assertion existing.
 
 ### Import-name shadowing is reported in `doctor` (quietly), and a stale artifact removed
 - `src/spendguard.egg-info` — a leftover from the v0.2.0 dist rename — was still claiming the `spendguard` import

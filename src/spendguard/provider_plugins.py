@@ -22,7 +22,14 @@ def load(eps=None):
     if eps is None:
         try:
             from importlib.metadata import entry_points
-            eps = entry_points(group=GROUP)
+            try:
+                eps = entry_points(group=GROUP)                    # 3.10+ selectable API
+            except TypeError:
+                # Python 3.9: entry_points() takes no kwargs and returns {group: [ep, ...]}. Without this the
+                # package printed a WARN to stderr on EVERY import under our own minimum supported version
+                # (requires-python >= 3.9) — caught by the "a fresh import is silent" assertion, not by anyone
+                # reading the code.
+                eps = entry_points().get(GROUP, [])
         except Exception as e:                                     # discovery itself fails open
             print(f"[spendguard] WARN provider-plugin discovery failed: {e}", file=sys.stderr)
             return dict(_LOADED)
