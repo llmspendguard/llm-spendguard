@@ -36,6 +36,15 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
   `pip install llm-spendguard # once published to PyPI` line finally removed — it had been on PyPI for 12 releases.
   GitHub description + topics set (the repo card was blank).
 
+### README split: 50K → 13K, nothing dropped
+- The README was 49,879 chars / 44 headings — a stranger decides in under 30 seconds, and the one genuinely novel
+  capability sat below heading 30. The CLI reference moved to **docs/CLI.md** and the knob-by-knob configuration +
+  subsystem prose to **docs/REFERENCE.md** (both in the docs-site nav); the README keeps the pain, the first
+  command, the four differentiators, what-leaves-your-machine, install, safety and a "where to go next" table.
+- Three claims corrected while moving them: the gate is no longer described as auto-installing via
+  `sitecustomize.py` (that's the opt-in now — the wrapper is the default), the team dashboard is **live** rather
+  than "in development", and a `#configuration` anchor that no longer resolved now points into the reference.
+
 ### `spendguard run -- <cmd>` is the new default way to gate (startup hooks are no longer step one)
 - `install-hook` writes `sitecustomize`/`usercustomize` into a venv. On **2026-03-24 litellm 1.82.8 shipped a
   malicious `litellm_init.pth`** that ran a credential stealer at every interpreter start; startup-hook abuse is

@@ -35,6 +35,8 @@ extra_css:
 
 nav:
   - Home: index.md
+  - CLI reference: CLI.md
+  - Configuration & subsystems: REFERENCE.md
   - Solution spec: SOLUTION-SPEC.md
   - Architecting Win (quality playbook): spendguard_architecting_win.md
   - Accuracy (vs your real invoice): ACCURACY.md
