@@ -4,6 +4,20 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+### Import-name shadowing is reported in `doctor` (quietly), and a stale artifact removed
+- `src/spendguard.egg-info` — a leftover from the v0.2.0 dist rename — was still claiming the `spendguard` import
+  name in the source tree, and every interpreter that loads this repo's `src/` saw it. Deleted (it is a build
+  artifact and already gitignored). That is what the check found on its very first run.
+- `spendguard.which_package()` / `shadowing_dists()` report which distributions provide the import name;
+  `spendguard doctor` shows a line only when something other than llm-spendguard claims it. **Deliberately silent
+  at import** — the first version printed an ambient stderr warning on every interpreter start, which fired during
+  unrelated work in another repo for what was a stale build artifact. Diagnostics belong in the diagnostic command.
+- README documents the `chat` extra properly instead of leaving it to be guessed at: opt-in twice, exactly which
+  cookie entries it reads, that the AES key comes from your own Keychain (which prompts you and which spendguard
+  cannot bypass), that the token is never logged/printed/pushed, the 0600 cache + TTL, and how to skip it.
+  Naming stays as decided: dist `llm-spendguard`, import + CLI `spendguard`, domain llmspendguard.com.
+  Guard: `tests/test_import_name_shadow.py` (13 checks, incl. "a fresh import is silent").
+
 ### `spendguard scan` — a first run that costs nothing and takes 10 seconds
 - The front door was `pip install` → `install-hook` → `doctor` → edit your script → run it gated: four steps and a
   venv mutation before a single number. And `report`, the obvious first command, does a live provider-billing pull

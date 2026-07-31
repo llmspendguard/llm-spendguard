@@ -55,6 +55,36 @@ Two things worth stating plainly, because they are the questions a careful revie
 `spendguard run --show` prints the exact bootstrap that will execute in your process. Nothing is downloaded at
 runtime, ever.
 
+<details>
+<summary><b>The <code>chat</code> extra reads your claude.ai session — here is exactly what it does and why</b></summary>
+
+The claude.ai desktop app caches **no** conversations on disk, so the only way to account for chat usage is
+claude.ai's own API, authenticated with the `sessionKey` cookie your browser already holds. That is why the
+optional `chat` extra decrypts a cookie — and we understand how that phrase reads in 2026, so here is the whole
+of it:
+
+- **It is opt-in twice**: you must install the `chat` extra *and* set `chat.enabled` (or `SPENDGUARD_CHAT_ENABLED`).
+  Nothing happens by default; `scan`, the gate, the ledger and reconcile never touch it.
+- **What it reads**: `~/Library/Application Support/Claude/Cookies` (the app's own Chromium cookie DB) and only
+  the entries `sessionKey`, `lastActiveOrg`, `cf_clearance`. The AES key comes from **your** macOS Keychain, which
+  prompts *you* for permission — spendguard cannot bypass that prompt, and you can deny it.
+- **Where the token goes**: nowhere. It authenticates requests to claude.ai from your machine. It is never logged,
+  never printed, never sent to our server, and never included in a roll-up. The decrypt happens in-process
+  (the `cryptography` dep exists precisely so the key is *not* passed on a command line where `ps` could see it).
+- **What is cached**: the cookie, `chmod 0600`, with a TTL (`chat.cookie_ttl_h`, default 12h), cleared on any 401.
+  Delete `~/.spendguard/` to purge it.
+- **What is pushed**: if — and only if — you connect a team dashboard, the same per-day roll-ups as everything
+  else. No conversation text, no titles, no token.
+- **Don't want any of that?** Skip the extra entirely. You keep the gate, the ledger, reconcile, `scan` and
+  Claude Code / Codex accounting; you lose only claude.ai chat value. Or set the session key yourself and no
+  cookie is ever read.
+
+Why it's worth having: chat is where a large share of plan-covered work actually happens, and leaving it out
+doesn't make the spend disappear — it makes your total quietly wrong, which is the one thing this project exists
+to prevent.
+
+</details>
+
 ## Why llm-spendguard?
 Cost overruns don't announce themselves — they slip in silently: a hardcoded price that drifted from the
 real rate, a forgotten model swap, under-batching that re-bills a shared prompt every request, a job

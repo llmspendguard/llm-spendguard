@@ -1461,6 +1461,15 @@ def _cli(cmd="status", live=False):
                     print("  " + _ln)
             except Exception:
                 pass
+            try:                                          # import-name shadowing: reported HERE (the diagnostic
+                import spendguard as _sg                  # command), never as an ambient warning on every start
+                _sh = _sg.shadowing_dists()
+                if _sh:
+                    print(f"  package   : ⚠ `spendguard` is also provided by {_sh} — last install wins, so this "
+                          f"may not be llm-spendguard. Usually a stale pre-rename egg-info; remove it or "
+                          f"`pip uninstall {' '.join(_sh)}`.")
+            except Exception:
+                pass
     return 0
 
 

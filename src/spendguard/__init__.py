@@ -52,6 +52,26 @@ except Exception:
     __version__ = "0.0.0.dev0"
 
 
+def which_package():
+    """Which installed distribution(s) provide the `spendguard` import name — normally just ['llm-spendguard'].
+
+    Two dists can claim one import name (a leftover pre-rename `spendguard` egg-info, or any unrelated package of
+    that name), and then whichever installed last wins. This reports it; `spendguard doctor` shows it when it's
+    interesting. DELIBERATELY SILENT at import: an ambient stderr warning on every interpreter start is noise —
+    it fires during unrelated work, in other repos, for something that is almost always a stale build artifact.
+    Diagnostics belong in the diagnostic command."""
+    try:
+        from importlib.metadata import packages_distributions
+        return sorted(packages_distributions().get("spendguard", []) or [])
+    except Exception:
+        return []
+
+
+def shadowing_dists():
+    """Distributions OTHER than llm-spendguard claiming the `spendguard` import name ([] = clean)."""
+    return [d for d in which_package() if d.replace("_", "-").lower() != "llm-spendguard"]
+
+
 def _auto_install():
     """Make `import spendguard` ACTUALLY GATE — close the #1 adoption gap: "pip install ≠ gated".
 
