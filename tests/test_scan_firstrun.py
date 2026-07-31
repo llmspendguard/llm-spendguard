@@ -51,7 +51,9 @@ print("-- an empty machine gets guidance, never a crash or a fake headline --")
 empty = scan.render({"Claude Code": {"sessions": 0, "days": [], "total_usd": 0.0, "projects": {}, "models": {},
                                      "error": None},
                      "Codex": {"sessions": 0, "days": [], "total_usd": 0.0, "projects": {}, "models": {}, "error": None}})
-check("says there's nothing to scan", "Nothing to scan yet" in empty)
+check("says no transcripts were found", "No agent transcripts found" in empty)
+check("does NOT dead-end — falls back to the sources discovery",
+      "providers with a key" in empty or "spendguard sources" in empty)
 check("no invented TOTAL on an empty machine", "TOTAL est value" not in empty)
 check("offers the API path instead", "reconcile all" in empty)
 
@@ -72,7 +74,13 @@ check("total still equals the sum of ALL projects ($55)", "$55.00" in o)
 print("-- collect(): reads the EXISTING transcript readers, no re-implementation --")
 import inspect
 csrc = inspect.getsource(scan.collect)
-check("delegates to claudecode/codex update()", "claudecode" in csrc and "codex" in csrc and "update()" in csrc)
+# scan now goes through the transcript PORT, which delegates to those same readers — so a third-party
+# tool appears here with no scan-side change (see tests/test_sources_port.py).
+check("delegates to the transcript PORT (not its own parsing)",
+      "sources" in csrc and "transcript_sources" in csrc)
+from spendguard import sources as _srcmod
+check("and the port delegates to the existing readers", "claudecode" in inspect.getsource(_srcmod)
+      and "codex" in inspect.getsource(_srcmod))
 check("no direct transcript globbing in scan (that lives in the readers)",
       "glob" not in inspect.getsource(scan) and "*.jsonl" not in inspect.getsource(scan))
 check("no network primitives anywhere in the module",

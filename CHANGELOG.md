@@ -2,6 +2,25 @@
 
 All notable changes to **llm-spendguard**. Format loosely follows Keep a Changelog; dates are UTC.
 
+## [Unreleased]
+
+### `spendguard sources` — one discovery, three signals, no interrogation
+- "How do I get my tool supported?" now has an answer that isn't "wait for us": a **transcript-source PORT**
+  (`sources.register`, same shape `gpu_port` uses for RunPod/Modal/Lambda). A source declares `NAME` / `detect()`
+  / `read()`, registers from a `spendguard.providers` entry point, and appears in **both** `sources` and `scan`
+  with zero changes on our side. A broken source warns once and is skipped — never fatal. Documented as Level 4
+  in docs/PROVIDERS.md; `scan` now goes through the port instead of hardcoding two readers.
+- **`spendguard sources`** answers "where can this machine spend?" from three signals it can see without asking:
+  providers with a resolvable key (split LLM vs remote compute — both real $, different caps and reconcilers),
+  agent tools on disk, and interpreters with an LLM SDK installed (gated or not, reusing `coverage.audit`).
+  Local, free, no LLM, ~1.4s. **It never reads your source code** — checking installed packages and known session
+  dirs answers better than grepping repos for `import openai`, and is far less invasive. Keys are reported as
+  present/absent; the value never appears in output or JSON.
+- `scan`'s empty state no longer dead-ends: a machine with no agent transcripts now sees its providers and its
+  ungated venvs, with the next command, instead of "nothing to scan yet".
+  Guard: `tests/test_sources_port.py` (24 checks incl. a third-party source appearing end-to-end, a broken source
+  being skipped, and the no-source-code / no-network / no-key-leak boundaries).
+
 ## [0.8.1] — 2026-07-16
 
 ### Fixed — three deferred findings, all of them "the number changes depending on how you ask"

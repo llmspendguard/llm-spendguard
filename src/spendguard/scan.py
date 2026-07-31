@@ -17,39 +17,21 @@ Rules it must not break:
 Designed to be the `uvx --from llm-spendguard spendguard scan` command: read-only, and safe to run on a laptop
 you don't own.
 """
-import datetime
 
 
 def collect(days=None):
-    """{source: {sessions, projects{name: usd}, models{name: usd}, days, total_usd}} from LOCAL transcripts only.
-    Never raises for a missing source — a machine with no Codex simply reports zero for it."""
+    """{source display name: {sessions, projects, models, days, total_usd, error}} — via the transcript PORT
+    (`sources.transcript_sources`), so a tool we've never heard of shows up here the moment its adapter is
+    installed. Never raises for a missing/broken source."""
+    from . import sources
     out = {}
-    for name, mod in (("Claude Code", "claudecode"), ("Codex", "codex")):
-        rec = {"sessions": 0, "projects": {}, "models": {}, "days": set(), "total_usd": 0.0, "error": None}
+    for _key, src in sources.transcript_sources():
+        name = getattr(src, "NAME", _key)
         try:
-            m = __import__(f"spendguard.{mod}", fromlist=["update"])
-            st, _pass = m.update()
-            try:
-                m._save_state(st)                      # keep the watermark so the next scan is incremental
-            except Exception:
-                pass
-            cutoff = ((datetime.date.today() - datetime.timedelta(days=int(days))).isoformat() if days else None)
-            for v in (st.get("ledger") or {}).values():
-                if v.get("_work") or (cutoff and (v.get("day") or "") < cutoff):
-                    continue
-                usd = float(v.get("cost") or 0)
-                if usd <= 0:
-                    continue
-                rec["total_usd"] += usd
-                rec["projects"][v.get("project") or "(unknown)"] = rec["projects"].get(v.get("project") or "(unknown)", 0.0) + usd
-                if v.get("model"):
-                    rec["models"][v["model"]] = rec["models"].get(v["model"], 0.0) + usd
-                if v.get("day"):
-                    rec["days"].add(v["day"])
-            rec["sessions"] = len(st.get("sessions") or {})
+            rec = src.read(days=days)
+            rec.setdefault("error", None)
         except Exception as e:
-            rec["error"] = str(e)[:100]
-        rec["days"] = sorted(rec["days"])
+            rec = {"sessions": 0, "projects": {}, "models": {}, "days": [], "total_usd": 0.0, "error": str(e)[:100]}
         out[name] = rec
     return out
 
@@ -73,8 +55,25 @@ def render(data, days=None):
         span = f"{r['days'][0]} → {r['days'][-1]}" if r["days"] else "—"
         lines.append(f"  {src:<13} {r['sessions']:>5} sessions · {len(r['days'])} active days · {span}")
     if not any_data:
-        lines += ["", "  Nothing to scan yet — this reads Claude Code / Codex transcripts on this machine.",
-                  "  If you have metered API spend instead, connect a key and run `spendguard reconcile all`."]
+        # EMPTY STATE: don't dead-end. Someone with no agent transcripts still has providers and interpreters —
+        # show what this machine CAN spend through, from the same discovery `spendguard sources` uses.
+        lines += ["", "  No agent transcripts found (Claude Code / Codex are built in; other tools plug in via",
+                  "  the `spendguard.providers` entry point). Here's what this machine can spend through anyway:", ""]
+        try:
+            from . import sources
+            d = sources.discover()
+            paid = [p["provider"] for p in d["providers"] if p["resolved"]]
+            lines.append(f"    providers with a key : {', '.join(paid) if paid else '(none — add one to keys.env)'}")
+            lines.append(f"    venvs that can spend : {len(d['venvs'])} ({len(d['ungated'])} NOT gated)")
+            lines += ["", "  Next:",
+                      "    spendguard reconcile all               # your ledger vs the provider's actual bill (free)"
+                      if paid else
+                      "    add a provider key to ~/.spendguard/keys.env, then `spendguard reconcile all`"]
+            if d["ungated"]:
+                lines.append(f"    spendguard install-hook --venv {d['ungated'][0]['venv']}")
+            lines.append("    spendguard sources                     # the full picture")
+        except Exception:
+            lines.append("    (run `spendguard sources` for what this machine can spend through)")
         return "\n".join(lines)
 
     projects, models = {}, {}

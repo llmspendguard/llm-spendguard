@@ -19,6 +19,7 @@ _GROUPS = [
         ("scan", "what your local coding-agent work costs — no key, no network, 10s"),
         ("init", "set your caps + identity (deterministic; --quick for defaults)"),
         ("run", "`run -- <cmd>` gate ONE command; nothing written to your interpreter"),
+        ("sources", "where can this machine spend? providers · agent tools · ungated venvs"),
         ("doctor", "is the gate enforcing HERE? keys, lanes, ledger status"),
     ]),
     ("see the money", [
@@ -321,6 +322,9 @@ def _dispatch(argv=None):
     if cmd == "truth":                                # per-day provider-truth totals; --push syncs (keys stay local)
         from . import truth
         return truth.main()
+    if cmd == "sources":                              # where CAN this machine spend: providers · agent tools ·
+        from . import sources                         # interpreters. One discovery, free, never reads your code.
+        return sources.main(rest)
     if cmd == "scan":                                 # THE FIRST RUN: local transcripts only — no key, no network,
         from . import scan                            # no LLM, no writes outside SPENDGUARD_HOME. Safe via uvx.
         return scan.main(rest)

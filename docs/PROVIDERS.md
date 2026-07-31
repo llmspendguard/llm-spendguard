@@ -25,6 +25,38 @@ it a spendguard provider: **fail-OPEN** (your wrapper may never alter the call's
 caller), degrade unpriced models to $0-plus-warn (never guess, never drop), and capture usage AT the
 source (forward-capture) rather than reconstructing later.
 
+## Level 4 — a TRANSCRIPT source (your coding agent)
+
+Levels 1–3 are about *making a call*. This one is about *counting work that already happened*: a coding agent
+(aider, Continue, Cline, Cursor, your in-house tool) that writes sessions to disk. Implement three things:
+
+```python
+NAME = "Aider"                       # display name
+
+def detect() -> bool:                # cheap: does this tool exist on this machine? no parsing here
+    return (pathlib.Path.home() / ".aider").exists()
+
+def read(days=None) -> dict:         # {sessions, days:[YYYY-MM-DD], total_usd, projects:{}, models:{}}
+    ...
+```
+
+Register it from your `spendguard.providers` entry-point activate():
+
+```python
+from spendguard import sources
+sources.register("aider", lambda: MyAiderSource())
+```
+
+It then appears in **both** `spendguard sources` and `spendguard scan` with no changes on our side. Rules the
+port enforces for you: a source that raises during `detect()` is skipped with one warning (never fatal, never
+breaks the other sources), and `read()` is never called for a source that doesn't detect.
+
+**Two things to get right**, because they're the house rules:
+- **Est value vs billed $.** If the tool runs on a flat-fee plan, its dollars are *estimated value* and must never
+  be summed into billed spend. If it runs on an API key, it's real billed $ and belongs in the ledger + reconcile.
+- **Don't read the user's source code.** Read your own session files. Grepping someone's repo is both more
+  invasive and less accurate than looking at what's installed.
+
 ## Packaging: the `spendguard.providers` entry point
 Publish as `spendguard-provider-<name>`. Installing it is ALL a user does — `spendguard.install()`
 discovers and activates it (fail-open per plugin: a broken plugin warns and is skipped, never breaking
