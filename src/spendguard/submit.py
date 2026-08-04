@@ -36,33 +36,41 @@ def _count_tokens(text, model):
         return max(1, len(text) // 4)  # heuristic fallback; flagged in result
 
 
-def estimate_jsonl_cost(jsonl_path, model, batch=True, avg_out_tokens=None):
-    """Project cost of an OpenAI /v1/chat/completions batch .jsonl. No paid calls."""
+def estimate_jsonl_cost(jsonl_path, model, batch=True, avg_out_tokens=None, provider="openai"):
+    """Project cost of a /v1/chat/completions batch .jsonl. No paid calls.
+
+    Image blocks are counted by their PIXELS via content_tokens, not by the length of their base64 — measuring
+    the payload over-stated real vision batches ~25× and refused every one of them at the cap."""
+    from . import content_tokens
     n = 0
     in_tok = 0
     out_ceiling = 0
+    media = False
+    img = 0
     measured = avg_out_tokens is not None and avg_out_tokens > 0   # 0/negative isn't a real sample → use the max_tokens ceiling, don't zero out output cost
     used_heuristic = False
     try:
         import tiktoken  # noqa
     except Exception:
         used_heuristic = True
+    tt = lambda s: _count_tokens(s, model)                        # noqa: E731 — one-line adapter for the counter
     for line in open(jsonl_path, errors="ignore"):
         line = line.strip()
         if not line:
             continue
         n += 1
         body = json.loads(line).get("body", {})
-        text = ""
         for m in body.get("messages", []):
-            c = m.get("content", "")
-            text += c if isinstance(c, str) else json.dumps(c)
-        in_tok += _count_tokens(text, model)
+            t, d = content_tokens.count_detail(m.get("content", ""), provider=provider,
+                                               model=body.get("model") or model, text_tokens=tt)
+            in_tok += t
+            img += d["images"] + d["pdf_pages"]
+            media = media or bool(d["images"] or d["pdf_pages"])
         out_ceiling += body.get("max_tokens", body.get("max_completion_tokens", 0) or 0)
     out_tok = int(avg_out_tokens * n) if measured else out_ceiling
     cost_fn = batch_cost if batch else realtime_cost
     cost = cost_fn(model, in_tok, out_tok)
-    return dict(requests=n, in_tok=in_tok, out_tok=out_tok, cost=cost,
+    return dict(requests=n, in_tok=in_tok, out_tok=out_tok, cost=cost, media=media, media_units=img,
                 out_basis=("measured avg" if measured else "max_tokens ceiling (conservative)"),
                 token_basis=("char/4 heuristic — install tiktoken for accuracy" if used_heuristic else "tiktoken"),
                 model=normalize(model), mode=("batch" if batch else "realtime"))

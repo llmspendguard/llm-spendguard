@@ -91,11 +91,16 @@ def _ct(text):
         return max(1, len(text) // 4)
 
 
-def _content_tokens(content):
+def _content_tokens(content, provider=None, model=None):
+    """Input tokens for one message's content. Delegates to content_tokens so IMAGES are counted by their
+    pixels — this used to json.dumps() the blocks and count the base64 payload as text, which over-stated real
+    vision batches ~25× (measured against billing) and made the cap refuse every image job. See
+    content_tokens.py for the provider formulas and tests/test_content_tokens.py for the ground truth."""
     if isinstance(content, str):
         return _ct(content)
     try:
-        return _ct(json.dumps(content, default=str))
+        from . import content_tokens
+        return content_tokens.count(content, provider=provider, model=model, text_tokens=_ct)
     except Exception:
         return _ct(str(content))
 
@@ -111,7 +116,7 @@ def _estimate_openai_jsonl(data: bytes):
         body = json.loads(line).get("body", {})
         model = model or body.get("model")
         for m in body.get("messages", []):
-            in_tok += _content_tokens(m.get("content", ""))
+            in_tok += _content_tokens(m.get("content", ""), provider="openai", model=model)
         if not body.get("messages") and body.get("input") is not None:
             # embeddings (and Responses-style) batch bodies carry `input`, not `messages` — these used
             # to estimate as $0, so the cap could never see an embeddings batch coming.
@@ -140,10 +145,10 @@ def _estimate_anthropic_requests(requests):
         model = model or g("model")
         sysp = g("system")
         if sysp:
-            in_tok += _content_tokens(sysp)
+            in_tok += _content_tokens(sysp, provider="anthropic", model=model)
         for m in (g("messages") or []):
             c = m.get("content") if isinstance(m, dict) else getattr(m, "content", "")
-            in_tok += _content_tokens(c)
+            in_tok += _content_tokens(c, provider="anthropic", model=model)
         out += (g("max_tokens") or 0)
     cost = pricing.batch_cost(model, in_tok, out) if model else 0.0
     return dict(provider="anthropic", model=model, requests=n, in_tok=in_tok, out_tok=out, cost=cost)
@@ -570,8 +575,10 @@ def _rt_precheck_usd(provider, model, est):
 
 
 def _est_oai_chat(kw):
-    return (kw.get("model"),
-            sum(_content_tokens(m.get("content", "")) for m in (kw.get("messages") or []) if isinstance(m, dict)),
+    _m = kw.get("model")
+    return (_m,
+            sum(_content_tokens(m.get("content", ""), provider="openai", model=_m)
+                for m in (kw.get("messages") or []) if isinstance(m, dict)),
             kw.get("max_tokens") or kw.get("max_completion_tokens") or 0)
 
 
@@ -584,15 +591,17 @@ def _est_oai_resp(kw):
     """OpenAI Responses API (client.responses.create) — the modern surface Codex + newer SDK code use. `input` is a
     string OR a list of message/items; `instructions` is the system text; the output ceiling is max_output_tokens."""
     n = 0
+    _m = kw.get("model")
     instr = kw.get("instructions")
     if instr:
-        n += _content_tokens(instr)
+        n += _content_tokens(instr, provider="openai", model=_m)
     inp = kw.get("input")
     if isinstance(inp, str):
-        n += _content_tokens(inp)
+        n += _content_tokens(inp, provider="openai", model=_m)
     elif isinstance(inp, list):
         for m in inp:
-            n += _content_tokens(m.get("content", m.get("text", "")) if isinstance(m, dict) else str(m))
+            n += _content_tokens(m.get("content", m.get("text", "")) if isinstance(m, dict) else str(m),
+                                 provider="openai", model=_m)
     return kw.get("model"), n, (kw.get("max_output_tokens") or 0)
 
 
@@ -623,12 +632,13 @@ def _act_oai_embeddings(result):
 
 def _est_anth_msg(kw):
     n = 0
+    _m = kw.get("model")
     s = kw.get("system")
     if s:
-        n += _content_tokens(s)
+        n += _content_tokens(s, provider="anthropic", model=_m)
     for m in (kw.get("messages") or []):
         c = m.get("content", "") if isinstance(m, dict) else getattr(m, "content", "")
-        n += _content_tokens(c)
+        n += _content_tokens(c, provider="anthropic", model=_m)
     return kw.get("model"), n, (kw.get("max_tokens") or 0)
 
 

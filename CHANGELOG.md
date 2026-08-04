@@ -5,6 +5,21 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 ## [Unreleased]
 
 ### Fixed
+- **The pre-spend estimate counted base64 image bytes as tokens — every vision batch was refused ~25–50× too
+  early.** Each estimator `json.dumps()`'d a message's content and counted the result as text, so a vision
+  request was charged for its ENCODED PAYLOAD instead of its pixels. Measured against real Anthropic billing:
+  200 448×448 panels estimated 10,174,860 input tokens against **234,300 billed** (26×); a 100-image filmstrip
+  batch was 23× over. An 800-page chunk estimated **$71.40** where the true cost is ~$2.17. A cap compared
+  against that number blocks work that costs pennies, which is how a gate stops being used.
+  New `content_tokens.py` counts what providers actually charge for — pixels, not bytes: Anthropic
+  `(w×h)/750` after the ≤1568px downscale, OpenAI's base+tiles after its rescale (with `detail: low` and the
+  published gpt-4o-mini multiplier). Dimensions come from the image HEADER — a ~96-byte decode regardless of
+  file size — so a 12 MB image costs the same to measure as a 12 KB one. PDFs are counted by PAGE, not by
+  byte. When pixels are genuinely unknowable (a remote URL we won't fetch) it falls back to a documented flat
+  per-image estimate and says so; it never falls back to measuring the payload.
+  Wired into **every** estimator — realtime chat, the Responses API, OpenAI batch `.jsonl`, Anthropic batch
+  requests, and the standalone submit gate — so no path is left counting bytes. `estimate_jsonl_cost` now also
+  reports `media` / `media_units`.
 - **The receipt reported LAST month's plan value under the heading "spend this month."** `stamp_est_value` froze
   today/week/month at stamp time, so a receipt rendered weeks later replayed the stale window as current — on this
   machine, $8,935 (June) where July was $6,758. The cache now keeps 40 days of per-day detail and the reader
