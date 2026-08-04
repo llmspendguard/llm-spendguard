@@ -105,6 +105,60 @@ def _content_tokens(content, provider=None, model=None):
         return _ct(str(content))
 
 
+_warned_once = set()
+
+
+def _warn_once(msg):
+    """One line per distinct problem. An 800-request batch that warns 800 times is a warning nobody reads."""
+    if msg not in _warned_once:
+        _warned_once.add(msg)
+        print(msg, file=sys.stderr)
+
+
+def _implausible_estimate(model, in_tok, requests):
+    """(True, facts) when this estimate is PHYSICALLY IMPOSSIBLE, not merely large; (False, {}) otherwise.
+
+    A request whose input exceeds the model's published context window is rejected by the provider, so an
+    estimate implying one cannot describe a real submission — it describes a broken estimator. This is a rail,
+    not a tuned threshold: the bound is the provider's own limit, and when we don't know the limit we say
+    nothing rather than invent one.
+
+    It exists because the base64-as-tokens bug (0.8.3) put 48,110,544 input tokens for a 10-request batch into
+    a real ledger — 4.8M per request against a 1M window — and NOTHING objected. The estimate became $54.51 of
+    spend that never happened, and the leak check stayed silent because it only ever looked for money that was
+    MISSING, never for money that was INVENTED.
+
+    `facts` carries the numbers (model, limit, in_tok, requests, per_req) so callers — and tests — can act on
+    values rather than parse a sentence."""
+    try:
+        lim = pricing.max_input_tokens(model)
+    except Exception:
+        lim = None
+    if not lim or not requests or in_tok <= 0:
+        return False, {}
+    per_req = in_tok / float(requests)
+    if per_req <= lim:
+        return False, {}
+    return True, {"model": model, "limit": int(lim), "in_tok": int(in_tok), "requests": int(requests),
+                  "per_req": per_req,
+                  "message": (f"{in_tok:,.0f} input tokens over {requests:,} request(s) = {per_req:,.0f} each, "
+                              f"but {model}'s context window is {lim:,}. The provider would reject that, so "
+                              f"the ESTIMATE is wrong — not the batch. Most often this is a payload being "
+                              f"counted as text (images/PDFs count by pixels/pages: see content_tokens.py).")}
+
+
+def _warn_implausible(model, in_tok, requests):
+    """Shout, and say what to do. Returns the facts dict (falsy when the estimate is plausible) so callers can
+    mark the record — a number we know is impossible must never enter the ledger looking like any other."""
+    bad, facts = _implausible_estimate(model, in_tok, requests)
+    if not bad:
+        return {}
+    _warn_once(f"[spend_gate] IMPOSSIBLE ESTIMATE — {facts['message']}\n"
+               f"  Recorded but QUARANTINED: excluded from every total, kept for audit. "
+               f"See it with `spendguard quarantine --list`.")
+    return facts
+
+
 def _estimate_openai_jsonl(data: bytes):
     in_tok = out = n = 0
     model = None
@@ -130,7 +184,8 @@ def _estimate_openai_jsonl(data: bytes):
                     in_tok += 1
         out += body.get("max_tokens", body.get("max_completion_tokens", 0)) or 0
     cost = pricing.batch_cost(model, in_tok, out) if model else 0.0
-    return dict(provider="openai", model=model, requests=n, in_tok=in_tok, out_tok=out, cost=cost)
+    return dict(provider="openai", model=model, requests=n, in_tok=in_tok, out_tok=out, cost=cost,
+                implausible=_warn_implausible(model, in_tok, n))
 
 
 def _estimate_anthropic_requests(requests):
@@ -151,7 +206,8 @@ def _estimate_anthropic_requests(requests):
             in_tok += _content_tokens(c, provider="anthropic", model=model)
         out += (g("max_tokens") or 0)
     cost = pricing.batch_cost(model, in_tok, out) if model else 0.0
-    return dict(provider="anthropic", model=model, requests=n, in_tok=in_tok, out_tok=out, cost=cost)
+    return dict(provider="anthropic", model=model, requests=n, in_tok=in_tok, out_tok=out, cost=cost,
+                implausible=_warn_implausible(model, in_tok, n))
 
 
 def _log(rec):
@@ -298,11 +354,15 @@ def _budget_check(cost, model, provider, kind):
                            f"Raise caps.{w.replace('-', '.')}, or set GATE_ALLOW=1.")
 
 
-def _budget_record(cost, model, provider, kind):
+def _budget_record(cost, model, provider, kind, quarantine=False):
+    """`quarantine` marks a row the gate PROVED impossible (input > the model's context window). It is still
+    written — deleting the forensic record of a bad estimate is how you lose the ability to explain the bug —
+    but it is tagged so every total excludes it and the receipt can show it as what it is."""
     from . import config
     if config.budget_backend() == "sqlite":
         from . import budget
-        budget.record(provider, model, kind, cost)
+        budget.record(provider, model, kind, cost,
+                      conv_id=(budget.QUARANTINE_CONV if quarantine else None))
 
 
 def _meta_intent():
@@ -415,7 +475,8 @@ def _decide_and_account(est):
     _bulkgate_check(est)          # estimate+test-first: sig-keyed flags, blocks an unestimated/untested bulk (may raise)
     _budget_check(est["cost"], est.get("model"), est.get("provider"), "batch")   # daily/monthly (sqlite)
     _decide(est)                                                                  # per-batch cap (may raise)
-    _budget_record(est["cost"], est.get("model"), est.get("provider"), "batch")  # ledger (sqlite)
+    _budget_record(est["cost"], est.get("model"), est.get("provider"), "batch",
+                   quarantine=bool(est.get("implausible")))                       # ledger (sqlite)
     if _calls.enabled():                                                          # job-level call-context row
         _calls.record(est.get("provider"), est.get("model"), "batch", est["cost"],
                       in_tok=est.get("in_tok", 0), out_tok=est.get("out_tok", 0))

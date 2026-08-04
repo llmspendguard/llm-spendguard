@@ -219,6 +219,27 @@ def _est_tally(org=None, team=None, project=None):
 _SOURCE_REFRESH = {"claude-code": "spendguard cc", "codex": "spendguard codex", "claude-ai": "spendguard chat"}
 
 
+def _quarantine_lines():
+    """Impossible estimates the gate caught, shown BELOW the total they are excluded from. Silence here would
+    be its own dishonesty: the row exists, it was almost counted as money, and the reader should know both."""
+    try:
+        from . import budget
+        rows = budget.quarantined_since(_windows()[2])
+    except Exception:
+        return []
+    if not rows:
+        return []
+    tot = sum(r["cost"] for r in rows)
+    n = sum(r["n"] for r in rows)
+    out = [f"⚠ EXCLUDED from the total: {n} impossible estimate(s) worth {_money(tot)} "
+           f"(input exceeded the model's context window — the estimator was wrong, not the batch)."]
+    for r in rows[:3]:
+        out.append(f"    {r['day']}  {r['model']:<20} {_money(r['cost']):>10}  {r['project'] or '(no project)'}")
+    if len(rows) > 3:
+        out.append(f"    … {len(rows) - 3} more")
+    return out
+
+
 def _asof_label(ev):
     """How to caption the est-value axis. A record with per-day detail is re-bucketed on read, so it is CURRENT
     and just says when it was last refreshed. A frozen pre-0.8.3 record is not this month's number at all — say
@@ -623,6 +644,7 @@ def _two_axis_table(t: dict) -> list:
     if assumed:
         out.append(f"* subscription is an ASSUMED default ({_money(sub)}), not a measured charge — set yours with "
                    f"`spendguard config set subscription.plan_usd <amount>`")
+    out += _quarantine_lines()
     return out
 
 

@@ -158,6 +158,33 @@ def _load_units():
 UNIT_PRICES = _load_units()
 
 
+def _load_context():
+    """{model: {max_input_tokens, max_output_tokens}} from the synced LiteLLM cache. These are LIMITS, not
+    prices — the upstream table is `model_prices_and_context_window.json` and carries both. Absent → {}, and
+    every caller must treat "unknown" as "no opinion" rather than inventing a bound."""
+    home = os.environ.get("SPENDGUARD_HOME") or os.path.expanduser("~/.spendguard")
+    try:
+        return json.load(open(os.path.join(home, "litellm_prices.json"))).get("context") or {}
+    except Exception:
+        return {}
+
+
+CONTEXT_LIMITS = _load_context()
+
+
+def max_input_tokens(model: str):
+    """The model's published input-context limit, or None if we don't know it. A request larger than this is
+    REJECTED by the provider, so an estimate implying one is impossible — that is what makes this a rail and
+    not a tuned threshold (see gate._implausible_estimate)."""
+    if not model:
+        return None
+    for key in (model, normalize(model)):
+        v = (CONTEXT_LIMITS.get(key) or {}).get("max_input_tokens")
+        if v:
+            return int(v)
+    return None
+
+
 def unit_price(kind: str, model: str, variant: str = None) -> float:
     """$ per unit for non-token billing. Lookup: exact `model:variant` → `model` (normalized too).
     Raises KeyError when unpriced — callers record the call at $0 with a LOUD warn (never guess)."""

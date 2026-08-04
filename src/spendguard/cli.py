@@ -241,6 +241,37 @@ def _dispatch(argv=None):
     if cmd in ("claude-code", "claudecode", "cc"):     # mine ~/.claude transcripts → CC spend + work (incremental)
         from . import claudecode
         return claudecode.main(rest)
+    if cmd == "quarantine":
+        # Repair for estimates already in the ledger that the plausibility rail now catches at record time.
+        # Operator-driven ON PURPOSE: the request count behind an old batch row is not always recoverable, and
+        # a repair that guessed it would repeat the bug it is repairing.
+        from . import budget, pricing, config as _cfg
+        rest_l = list(rest)
+        since = rest_l[rest_l.index("--since") + 1] if "--since" in rest_l else _cfg.month_start_utc()
+        if "--ts" in rest_l:
+            ts = rest_l[rest_l.index("--ts") + 1]
+            reason = rest_l[rest_l.index("--reason") + 1] if "--reason" in rest_l else "impossible estimate"
+            n = budget.quarantine_charge(ts, reason)
+            print(f"quarantined {n} row(s) at {ts} — excluded from every total, kept for audit."
+                  if n else f"no un-quarantined charge at {ts}")
+            return 0 if n else 1
+        rows = budget.suspect_batches(since)
+        if not rows:
+            print(f"no batch charges since {since}")
+            return 0
+        print(f"batch charges since {since} — check the per-request arithmetic before quarantining:\n")
+        print(f"  {'ts':<26}{'model':<20}{'cost':>10}  {'in_tok':>14}  {'ctx limit':>10}  caller")
+        for r in rows:
+            lim = pricing.max_input_tokens(r["model"])
+            flag = " ←" if (lim and r["in_tok"] and r["in_tok"] > lim) else ""
+            mark = " [quarantined]" if r["conv_id"] == budget.QUARANTINE_CONV else ""
+            print(f"  {r['ts']:<26}{r['model']:<20}{r['cost']:>10,.2f}  {(r['in_tok'] or 0):>14,}  "
+                  f"{(lim or 0):>10,}{flag}  {r['caller']}{mark}")
+        print("\n  ← the batch's TOTAL input already exceeds one request's context window. Divide by the number"
+              "\n    of requests it held: if that still exceeds the limit, the estimate was impossible."
+              "\n    Quarantine it with:  spendguard quarantine --ts <ts> --reason '<why>'")
+        return 0
+
     if cmd == "codex":                                 # mine ~/.codex sessions → Codex est-value (channel=codex)
         from . import codex
         return codex.main(rest)

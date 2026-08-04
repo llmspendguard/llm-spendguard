@@ -16,6 +16,9 @@ CACHE = str(config.HOME / "litellm_prices.json")
 # Per-unit billing fields passed through to the cache's `unit_models` section — pricing._load_units reads
 # exactly these to price transcription ($/second), TTS ($/character) and flat-rate images ($/image). Unit-billed
 # entries usually have NO input_cost_per_token, so they must be captured BEFORE the token-rate skip below.
+# Physical limits, not prices — used by the estimate plausibility rail.
+_CONTEXT_FIELDS = ("max_input_tokens", "max_output_tokens")
+
 _UNIT_COST_FIELDS = ("input_cost_per_second", "output_cost_per_second",
                      "input_cost_per_character", "output_cost_per_character",
                      "input_cost_per_image", "output_cost_per_image")
@@ -23,14 +26,23 @@ _UNIT_COST_FIELDS = ("input_cost_per_second", "output_cost_per_second",
 
 def _convert(raw):
     """LiteLLM per-token entries → spendguard per-1M rate dicts (+ per-UNIT entries passed through for
-    _load_units: whisper $/s, tts $/char, dall-e $/image). Batch falls back to 50% of realtime."""
-    models, provs, unit_models = {}, {}, {}
+    _load_units: whisper $/s, tts $/char, dall-e $/image; + CONTEXT limits for the plausibility rail).
+    Batch falls back to 50% of realtime.
+
+    The upstream file is literally `model_prices_and_context_window.json` — the limits ride along with the
+    prices for free. They are not a price, they are a PHYSICAL bound: a request whose input exceeds the
+    model's context window would be rejected by the API, so an estimate that implies one is arithmetically
+    impossible and must never be recorded as spend (see gate._implausible_estimate)."""
+    models, provs, unit_models, context = {}, {}, {}, {}
     for name, e in raw.items():
         if not isinstance(e, dict) or name.startswith("sample_"):
             continue
         u = {k: float(e[k]) for k in _UNIT_COST_FIELDS if e.get(k) is not None}
         if u:
             unit_models[name] = u
+        lim = {k: int(e[k]) for k in _CONTEXT_FIELDS if isinstance(e.get(k), (int, float))}
+        if lim:
+            context[name] = lim
         ic = e.get("input_cost_per_token")
         if ic is None:
             continue
@@ -48,7 +60,7 @@ def _convert(raw):
         }
         models[name] = {k: round(v, 6) for k, v in rate.items()}
         provs[name] = e.get("litellm_provider", "?")
-    return models, provs, unit_models
+    return models, provs, unit_models, context
 
 
 def _validate(models):
@@ -68,12 +80,13 @@ def _validate(models):
 def sync():
     req = urllib.request.Request(LITELLM_URL, headers={"User-Agent": "spendguard-sync/0.1"})
     raw = json.load(urllib.request.urlopen(req, context=config.ssl_context(), timeout=60))
-    models, provs, unit_models = _convert(raw)
+    models, provs, unit_models, context = _convert(raw)
     ok, msgs = _validate(models)
     if not ok:
         raise RuntimeError("LiteLLM data failed validation: " + "; ".join(msgs))
     out = {"_fetched": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
-           "_source": LITELLM_URL, "models": models, "providers": provs, "unit_models": unit_models}
+           "_source": LITELLM_URL, "models": models, "providers": provs, "unit_models": unit_models,
+           "context": context}
     os.makedirs(os.path.dirname(CACHE), exist_ok=True)
     json.dump(out, open(CACHE, "w"))
     return len(models), msgs

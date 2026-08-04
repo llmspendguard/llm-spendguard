@@ -2,6 +2,27 @@
 
 All notable changes to **llm-spendguard**. Format loosely follows Keep a Changelog; dates are UTC.
 
+## [Unreleased]
+
+### Added — the impossible-estimate rail (the other half of the base64 bug)
+- Fixing the estimator stopped NEW bad numbers; it did nothing about the one already recorded. A batch went into
+  a real ledger at **48,110,544 input tokens for 10 requests** — 4.8M each against a 1M context window — became a
+  **$54.51 charge** on a real project, and nothing objected. `reconcile-ledger` stayed quiet too: its leak check
+  only ever looked for money that was MISSING, never money that was INVENTED.
+- **`gate._implausible_estimate`** now rejects that class outright. A request larger than the model's published
+  context window is refused by the provider, so an estimate implying one describes a broken estimator, not a
+  batch — a physical bound, not a tuned threshold. When the limit is unknown it says nothing rather than invent
+  one. Limits come from the LiteLLM table spendguard already syncs (it is literally
+  `model_prices_and_context_window.json`; `sync` now passes the context fields through, same gap `unit_models`
+  had) and are read via `pricing.max_input_tokens`.
+- A caught estimate is **recorded and QUARANTINED**, never dropped: the row keeps its amount for forensics but is
+  excluded from `spent_since`, from `by_provider_day` (so reconcile compares like with like), and from the
+  receipt total — where it is **shown as an explicit exclusion** rather than silently vanishing.
+- **`spendguard quarantine`** lists batch charges with the per-request arithmetic beside each one, and
+  `--ts <ts> --reason <why>` tags a single row. Operator-driven on purpose: the request count behind an old
+  batch row is not always recoverable, and a repair that guessed the denominator would repeat the bug it is
+  repairing. The change is written to `spend_audit` with its before/after.
+
 ## [0.8.3] — 2026-08-04
 
 ### Fixed

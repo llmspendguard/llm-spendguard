@@ -80,15 +80,22 @@ RAW = {
     "tts-x": {"input_cost_per_character": 1.5e-05, "litellm_provider": "openai"},
     "dalle-x": {"input_cost_per_image": 0.04, "litellm_provider": "openai"},
     "gpt-x": {"input_cost_per_token": 1e-06, "output_cost_per_token": 2e-06, "litellm_provider": "openai"},
+    "ctx-x": {"input_cost_per_token": 1e-06, "output_cost_per_token": 2e-06, "max_input_tokens": 400000,
+              "litellm_provider": "openai"},
     "sample_spec": {"input_cost_per_token": 1},
 }
-models, provs, unit_models = price_sync._convert(RAW)
+models, provs, unit_models, context = price_sync._convert(RAW)
 check("unit-billed entries captured even with NO token rate",
       set(unit_models) == {"whisper-x", "tts-x", "dalle-x"})
 check("token model still converts (and is not a unit model)", "gpt-x" in models and "gpt-x" not in unit_models)
+# Context LIMITS ride along with the prices (the upstream file carries both). They are what makes the
+# impossible-estimate rail possible — see tests/test_estimate_plausibility.py.
+check("context limits are passed through when present", context.get("ctx-x", {}).get("max_input_tokens") == 400000)
+check("a model with no limit published gets NO invented one", "gpt-x" not in context)
 os.makedirs(os.path.dirname(price_sync.CACHE), exist_ok=True)
 json.dump({"_fetched": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
-           "models": models, "providers": provs, "unit_models": unit_models}, open(price_sync.CACHE, "w"))
+           "models": models, "providers": provs, "unit_models": unit_models,
+           "context": context}, open(price_sync.CACHE, "w"))
 from spendguard import pricing
 u = pricing._load_units()
 check("audio_second: whisper $0.0001/s from the cache", abs(u["audio_second"].get("whisper-x", 0) - 0.0001) < 1e-9)

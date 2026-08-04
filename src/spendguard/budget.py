@@ -162,13 +162,18 @@ _MARKER_MODELS = (_RECONCILED,) + _RT_MARKERS
 # (day,provider,model,kind,project) — the server ingest clamps negative cost, so a standalone negative marker-model
 # row would be dropped there) and mark themselves via conv_id instead.
 _TRUE_DOWN_CONV = "(true-down)"
+# An estimate we KNOW is impossible (input > the model's context window — see gate._implausible_estimate).
+# It is recorded, never deleted: a forensic record of what the estimator claimed. But it is quarantined out
+# of every spend total, because a number that cannot describe a real request must not read as money spent.
+QUARANTINE_CONV = "(impossible-estimate)"
 
 
 def spent_since(day, project=None, conv=None):  # WORKLOAD spend only — excludes meta AND reconciled (historical) rows
     """Gate-recorded workload $ since `day`. Optionally SCOPE to a `project` (repo) and/or `conv` (conversation) —
     the receipt uses this to show what's relevant to the current repo/conversation, not a global sum."""
-    cond = ["day >= ?", "(kind IS NULL OR kind != 'meta')", "(model IS NULL OR model <> ?)"]
-    args = [day, _RECONCILED]
+    cond = ["day >= ?", "(kind IS NULL OR kind != 'meta')", "(model IS NULL OR model <> ?)",
+            "(conv_id IS NULL OR conv_id <> ?)"]     # quarantined: impossible estimates are never spend
+    args = [day, _RECONCILED, QUARANTINE_CONV]
     if project is not None:
         cond.append("LOWER(project) = ?"); args.append(str(project).strip().lower())
     if conv is not None:
@@ -178,10 +183,65 @@ def spent_since(day, project=None, conv=None):  # WORKLOAD spend only — exclud
     return float(r[0] or 0)
 
 
+def suspect_batches(since):
+    """Batch charges since `since`, joined to their `calls` row for the token counts, so an operator can SEE
+    the arithmetic behind a number they doubt. Deliberately NOT automatic: recovering how many requests a
+    past batch held is not always possible, and a repair that guesses the denominator would be the same class
+    of mistake as the bug it is repairing. `spendguard quarantine --list` prints this; --ts acts on one row."""
+    with _lock:
+        # `calls` is created lazily (only when call logging is on), so its absence is NORMAL, not an error —
+        # without it we still list the charges, just with no token counts to divide.
+        has_calls = _db().execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='calls'").fetchone()
+        sql = ("SELECT c.ts, c.day, c.provider, c.model, c.cost, COALESCE(c.project,''), COALESCE(c.conv_id,''), "
+               "       k.in_tok, k.out_tok, COALESCE(k.caller,'') "
+               "FROM charges c LEFT JOIN calls k ON k.ts = c.ts AND k.model = c.model AND k.kind = 'batch' "
+               "WHERE c.kind='batch' AND c.day >= ? ORDER BY c.cost DESC") if has_calls else (
+               "SELECT c.ts, c.day, c.provider, c.model, c.cost, COALESCE(c.project,''), COALESCE(c.conv_id,''), "
+               "       NULL, NULL, '' FROM charges c WHERE c.kind='batch' AND c.day >= ? ORDER BY c.cost DESC")
+        rows = _db().execute(sql, (since,)).fetchall()
+    return [{"ts": t, "day": d, "provider": p_, "model": m, "cost": float(c or 0), "project": pr,
+             "conv_id": cv, "in_tok": i, "out_tok": o, "caller": cl}
+            for t, d, p_, m, c, pr, cv, i, o, cl in rows]
+
+
+def quarantine_charge(ts, reason=""):
+    """Tag ONE charge row (exact timestamp) as an impossible estimate. The row and its amount are untouched —
+    only its conv_id marker changes, so it drops out of every total while staying fully auditable. Returns the
+    number of rows tagged (0 = nothing matched that timestamp)."""
+    with _lock:
+        cur = _db().execute("UPDATE charges SET conv_id=? WHERE ts=? AND conv_id <> ?",
+                            (QUARANTINE_CONV, ts, QUARANTINE_CONV))
+        n = cur.rowcount
+        _db().commit()
+    try:                                       # audit trail: WHAT changed, WHY, and what it was before
+        _db().execute("INSERT INTO spend_audit (event_id, ts, actor, field, old_value, new_value, reason) "
+                      "VALUES (?,?,?,?,?,?,?)",
+                      (ts, datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+                       "quarantine_charge", "conv_id", "", QUARANTINE_CONV, reason))
+        _db().commit()
+    except Exception:
+        pass                                   # audit shape varies by migration; never block the repair
+    return n
+
+
+def quarantined_since(day):
+    """[{day, provider, model, cost, project}] of QUARANTINED rows since `day` — estimates the gate proved
+    impossible. They are kept (forensics: what the estimator claimed, and when) and excluded from every total,
+    so the honest thing is to SHOW them rather than let them vanish silently."""
+    with _lock:
+        rows = _db().execute(
+            "SELECT day, COALESCE(provider,'?'), COALESCE(model,'?'), COALESCE(SUM(cost),0), COALESCE(project,''), "
+            "COUNT(*) FROM charges WHERE day >= ? AND conv_id = ? GROUP BY day, provider, model, project "
+            "ORDER BY SUM(cost) DESC", (day, QUARANTINE_CONV)).fetchall()
+    return [{"day": d, "provider": p, "model": m, "cost": float(c or 0), "project": pr, "n": n}
+            for d, p, m, c, pr, n in rows]
+
+
 # ── reconciliation: make the LOCAL ledger reflect PROVIDER-billed truth (the gap = ungoverned/pre-ledger spend) ──
 def by_provider_day(kind=None, since=None):
     """{(provider, day): $} of GATE-recorded spend (excludes reconciled rows) — the attributed side of reconcile."""
-    cond, args = ["(model IS NULL OR model <> ?)"], [_RECONCILED]
+    cond = ["(model IS NULL OR model <> ?)", "(conv_id IS NULL OR conv_id <> ?)"]
+    args = [_RECONCILED, QUARANTINE_CONV]           # like-for-like vs provider truth: quarantine excluded
     if kind:
         cond.append("kind=?"); args.append(kind)
     if since:
@@ -209,7 +269,8 @@ def reconciled_by_project(since=None):
 def gate_by_project_day(kind=None, since=None):
     """{(project, day): $} of GATE-recorded (attributed) spend — excludes reconciled rows. Used to compute the
     per-project gap so the provider-truth gap is attributed by evidence, not dumped in one 'unattributed' bucket."""
-    cond, args = ["(model IS NULL OR model <> ?)"], [_RECONCILED]
+    cond = ["(model IS NULL OR model <> ?)", "(conv_id IS NULL OR conv_id <> ?)"]
+    args = [_RECONCILED, QUARANTINE_CONV]           # like-for-like vs provider truth: quarantine excluded
     if kind:
         cond.append("kind=?"); args.append(kind)
     if since:
