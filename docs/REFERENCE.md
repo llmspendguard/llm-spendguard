@@ -97,6 +97,43 @@ SPENDGUARD_SAAS_KEY=       # team/org roll-up key from llmspendguard.com (option
 | setting | values | meaning |
 |---|---|---|
 | `gate.enforce` | `off` · `warn` · `block` | test-first rail — `off` = none; `warn` = log a "would-block" when a big batch runs without a fresh estimate+test *(default)*; `block` = hard-require estimate → test first |
+
+### The test that authorizes a bulk run
+
+`gate.enforce` requires a small sample before a big batch. What the sample must PROVE is an **output contract** —
+declared once, checked against every item:
+
+```python
+from spendguard import bulkgate, output_contract
+
+sig = bulkgate.sig("claude-sonnet-5", template_id="page_read", template_version="v3", prompt=PROMPT)
+bulkgate.record_estimate(sig, "claude-sonnet-5", worst_case_usd, count)   # zero spend
+
+bulkgate.test_job(sig, run_fn,                       # runs a <=preview_max sample
+                  n=5,
+                  contract=["patient_id", "findings"],   # required keys — the cheapest useful contract
+                  items=pages[:5])                        # the REAL inputs it ran on
+
+bulkgate.check_bulk(sig, model, count, est_usd,      # raises GateBlocked unless the above holds
+                    contract=["patient_id", "findings"],
+                    data_sig=output_contract.data_signature(pages[:5]))
+```
+
+**Contract forms** — required keys · `"json"` · a JSON-Schema-lite dict (`type`/`required`/`properties`/`items`)
+· any callable returning a bool.
+
+**What it enforces**
+
+| condition | result |
+|---|---|
+| no `contract` and no `verify_fn` | recorded **UNVERIFIED** — nothing checked the output, so it authorizes nothing |
+| any item fails the contract | `verified=False`; the block message quotes the first real failure |
+| output only parses after stripping a fence/preamble | counted as **salvaged**, not clean — the downstream parser may not cope |
+| the contract changed since the test | authorization expires ("tested v1, ran v2") |
+| the test ran on different data | authorization expires (three toy rows ≠ the corpus) |
+
+Every item of the sample is checked, not just the first — the failure that costs money is the one at item 400.
+This is a **format** check; whether an answer is *correct* is a judgement and stays with the agentic quality path.
 | `deid.engine` | `regex` · `presidio` · `off` | egress de-id — regex floor *(default)* · floor + Presidio NER · none |
 | `saas.visibility` | `private` · `team` · `org` | how far your scrubbed roll-up goes (`private` = nothing leaves) |
 | `saas.sync_interval` | `off` · `hourly` · `daily` · `weekly` | roll-up push cadence |

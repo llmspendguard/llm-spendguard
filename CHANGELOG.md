@@ -2,6 +2,29 @@
 
 All notable changes to **llm-spendguard**. Format loosely follows Keep a Changelog; dates are UTC.
 
+## [0.8.5] — 2026-08-04
+
+### Added — the test that authorizes a bulk run now has to PROVE something
+- `test_job`'s verifier was optional, and `verify_fn=None` recorded `verified=1` ("None → trust that it ran").
+  A full paid batch could therefore be authorized by a sample that proved only that the API returned something
+  — the same DONE-not-CORRECT shape as counting base64 as tokens, and as a leak check that watched one
+  direction. **No contract and no verifier is now recorded UNVERIFIED**, with a stderr line saying so. The run
+  is still allowed under `warn`/`off` and via `GATE_FORCE=1`; the gate simply stops claiming a verification
+  that never happened.
+- **`output_contract.py`** — declare the shape once, check it against a real sample:
+  required keys · `"json"` · a JSON-Schema-lite dict (`type`/`required`/`properties`/`items`) · any callable.
+  **Every item** of the sample is checked, not just the first: the failure that costs money is item 1 parsing
+  and item 400 arriving with a sentence before the JSON. Output that only parses after stripping a code fence
+  or preamble is counted as **salvaged**, never silently as clean — the downstream parser may not cope, and you
+  would find out mid-batch.
+- **The test is bound to its contract AND its data.** `gate_ledger` now stores the contract's identity, a
+  fingerprint of the sample's inputs, and what the sample actually did (parsed / salvaged / failed / the first
+  real failure). Change the contract and the authorization expires ("tested v1, ran v2"); test on three toy rows
+  and it will not authorize a run over the real corpus. `check_bulk`'s block message names which of those
+  failed and quotes the actual failure.
+- Format only, by design: this decides whether output parses into the declared shape. Whether an answer is
+  *correct* is a judgement and stays with the agentic quality path.
+
 ## [0.8.4] — 2026-08-04
 
 ### Fixed — the leak check now watches BOTH directions

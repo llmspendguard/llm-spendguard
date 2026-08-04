@@ -44,6 +44,15 @@ def _db():
                     " estimated_at REAL, est_usd REAL, est_count INTEGER,"   # worst-case estimate (incl. escalation)
                     " tested_at REAL, test_n INTEGER, verified INTEGER,"     # a verified small-sample run happened
                     " updated_at REAL)")
+                # Additive, forward-only. `verified` alone said a test HAPPENED; these say what it PROVED —
+                # which contract the output was checked against, on which data, and what the sample did.
+                for col, decl in (("contract", "TEXT"), ("contract_hash", "TEXT"), ("data_sig", "TEXT"),
+                                  ("test_parsed", "INTEGER"), ("test_salvaged", "INTEGER"),
+                                  ("test_failed", "INTEGER"), ("test_failure", "TEXT")):
+                    try:
+                        c.execute(f"ALTER TABLE gate_ledger ADD COLUMN {col} {decl}")
+                    except sqlite3.OperationalError:
+                        pass                                  # already present
                 c.commit()
                 _conn = c
     return _conn
@@ -112,29 +121,62 @@ def record_estimate(sig, model, est_usd, est_count):
     return now
 
 
-def record_tested(sig, test_n, verified=True):
-    """Record that a verified small-sample (<= preview_max) run happened + its output was VERIFIED (sets tested_at)."""
+def record_tested(sig, test_n, verified=True, contract=None, result=None, data_sig=None):
+    """Record a small-sample test AND what it proved: which output CONTRACT the sample was checked against, on
+    which data (`data_sig`), and how the sample actually did (`result` from output_contract.check).
+
+    `verified` used to mean only "a test ran". It now means "the output matched the declared shape", which is
+    the claim a bulk run is actually relying on."""
+    from . import output_contract
     now = time.time()
+    desc = output_contract.describe(contract) if contract is not None else ""
+    chash = output_contract.contract_hash(contract) if contract is not None else ""
+    r = result.as_dict() if result is not None else {"parsed": 0, "salvaged": 0, "failed": 0, "first_failure": ""}
     with _lock:
         _db().execute(
-            "INSERT INTO gate_ledger (sig,tested_at,test_n,verified,updated_at) VALUES (?,?,?,?,?) "
+            "INSERT INTO gate_ledger (sig,tested_at,test_n,verified,contract,contract_hash,data_sig,"
+            " test_parsed,test_salvaged,test_failed,test_failure,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(sig) DO UPDATE SET tested_at=excluded.tested_at, test_n=excluded.test_n, "
-            "verified=excluded.verified, updated_at=excluded.updated_at",
-            (sig, now, int(test_n), int(bool(verified)), now))
+            "verified=excluded.verified, contract=excluded.contract, contract_hash=excluded.contract_hash, "
+            "data_sig=excluded.data_sig, test_parsed=excluded.test_parsed, test_salvaged=excluded.test_salvaged, "
+            "test_failed=excluded.test_failed, test_failure=excluded.test_failure, updated_at=excluded.updated_at",
+            (sig, now, int(test_n), int(bool(verified)), desc, chash, data_sig or "",
+             int(r["parsed"]), int(r["salvaged"]), int(r["failed"]), str(r["first_failure"])[:300], now))
         _db().commit()
     return now
 
 
-def status(sig):
-    """{estimated, tested, verified, fresh, ...} for this sig — freshness-aware. Used by check_bulk + the receipt/doctor."""
+def status(sig, contract=None, data_sig=None):
+    """{estimated, tested, verified, fresh, contract, …} for this sig — freshness-aware.
+
+    Pass the CURRENT `contract` / `data_sig` and freshness additionally requires that they MATCH what was
+    tested. A test proves something about a shape and a data distribution; carrying it over to a different
+    shape or a different corpus is the "tested v1, ran v2" hole the sig already closes for the prompt."""
+    from . import output_contract
     with _lock:
-        r = _db().execute("SELECT model,estimated_at,est_usd,est_count,tested_at,test_n,verified "
+        r = _db().execute("SELECT model,estimated_at,est_usd,est_count,tested_at,test_n,verified,"
+                          "contract,contract_hash,data_sig,test_parsed,test_salvaged,test_failed,test_failure "
                           "FROM gate_ledger WHERE sig=?", (sig,)).fetchone()
     if not r:
-        return {"sig": sig, "estimated": False, "tested": False, "verified": False, "fresh": False}
+        return {"sig": sig, "estimated": False, "tested": False, "verified": False, "fresh": False,
+                "contract": "", "contract_match": False, "data_match": False,
+                "reason": "never estimated or tested"}
     est_ok, test_ok = _fresh(r[1]), _fresh(r[4])
+    want_c = output_contract.contract_hash(contract) if contract is not None else None
+    c_match = True if want_c is None else (want_c == (r[8] or ""))
+    d_match = True if not data_sig else (str(data_sig) == (r[9] or ""))
+    fresh = est_ok and test_ok and bool(r[6]) and c_match and d_match
+    reason = ("" if fresh else
+              "estimate stale/missing" if not est_ok else
+              "test stale/missing" if not test_ok else
+              "the sample output did NOT match the declared contract" if not r[6] else
+              "the output contract CHANGED since the test" if not c_match else
+              "the test ran on DIFFERENT data")
     return {"sig": sig, "model": r[0], "estimated": est_ok, "est_usd": r[2], "est_count": r[3],
-            "tested": test_ok, "test_n": r[5], "verified": bool(r[6]), "fresh": est_ok and test_ok and bool(r[6])}
+            "tested": test_ok, "test_n": r[5], "verified": bool(r[6]), "fresh": fresh,
+            "contract": r[7] or "", "contract_match": c_match, "data_match": d_match, "data_sig": r[9] or "",
+            "parsed": r[10] or 0, "salvaged": r[11] or 0, "failed": r[12] or 0, "failure": r[13] or "",
+            "reason": reason}
 
 
 def _log_block(sig, model, count, est_usd, decision):
@@ -152,7 +194,7 @@ def _log_block(sig, model, count, est_usd, decision):
           % (decision.upper(), sig, model, count, float(est_usd or 0)), file=sys.stderr)
 
 
-def check_bulk(sig, model, count, est_usd, force=False):
+def check_bulk(sig, model, count, est_usd, force=False, contract=None, data_sig=None):
     """Call BEFORE a bulk submit. RAISES GateBlocked if this call-class lacks a FRESH estimate+verified-test — UNLESS:
       • it's a PREVIEW (count <= preview_max AND est_usd <= bulk_min_usd) — that IS the allowed test step,
       • mode is `off` (enforcement disabled), or `warn` (logs 'would-block' but allows — the roll-out grace period),
@@ -161,8 +203,8 @@ def check_bulk(sig, model, count, est_usd, force=False):
     pm, bm = preview_max(), bulk_min_usd()
     if count <= pm and float(est_usd or 0) <= bm:
         return "preview"                                          # the test step itself — always allowed
-    if status(sig)["fresh"]:
-        return "pass"                                            # fresh estimate + verified test → authorized
+    if status(sig, contract=contract, data_sig=data_sig)["fresh"]:
+        return "pass"                             # fresh estimate + contract-verified test on THIS data → authorized
     forced = bool(force) or os.getenv("GATE_FORCE") == "1"
     m = mode()
     if m == "off":
@@ -174,12 +216,21 @@ def check_bulk(sig, model, count, est_usd, force=False):
         _log_block(sig, model, count, est_usd, "would-block")
         return "allow:warn"
     _log_block(sig, model, count, est_usd, "blocked")
-    st = status(sig)
+    st = status(sig, contract=contract, data_sig=data_sig)
+    detail = ""
+    if st.get("failed"):
+        detail = (" The last sample FAILED the contract: %d/%d items — %s."
+                  % (st["failed"], (st.get("test_n") or 0), st.get("failure") or "?"))
+    elif st.get("salvaged"):
+        detail = (" The last sample only parsed after stripping a fence/preamble (%d items) — fix the prompt or "
+                  "widen the contract." % st["salvaged"])
     raise GateBlocked(
-        "BLOCKED %s (%s): bulk run of %d (~$%.2f) needs estimate+test FIRST "
-        "(estimated=%s tested=%s verified=%s). Run estimate_job(sig, model, worst_case_usd, count), then a "
-        "<=%d-item test_job(), verify, then re-run. Override (logged): GATE_FORCE=1."
-        % (sig, model, count, float(est_usd or 0), st["estimated"], st["tested"], st["verified"], pm))
+        "BLOCKED %s (%s): bulk run of %d (~$%.2f) needs estimate+test FIRST — %s "
+        "(estimated=%s tested=%s contract-verified=%s). Run estimate_job(sig, model, worst_case_usd, count), then "
+        "a <=%d-item test_job(sig, run_fn, contract=[...], items=[...]), then re-run.%s Override (logged): "
+        "GATE_FORCE=1."
+        % (sig, model, count, float(est_usd or 0), st.get("reason") or "not authorized",
+           st["estimated"], st["tested"], st["verified"], pm, detail))
 
 
 # ── max_tokens: truncation DETECTION (the API states it — a fact, not a guess) + data-driven bounds (measure the
@@ -293,19 +344,44 @@ def estimate_job(sig, model, est_usd, est_count):
     return record_estimate(sig, model, est_usd, est_count)
 
 
-def test_job(sig, run_fn, n=None, verify_fn=None):
-    """First-class unblock helper: run a <= preview_max SAMPLE (the gate allows it — that IS the test), (optionally)
-    auto-verify its output, and record the test. run_fn(n) executes the n-item sample; verify_fn(out)->bool confirms
-    the output is correct (None → trust that it ran). Step 2 of estimate → test → run."""
+def test_job(sig, run_fn, n=None, verify_fn=None, contract=None, items=None):
+    """Step 2 of estimate → test → run: execute a <= preview_max SAMPLE (the gate always allows it — it IS the
+    test), CHECK ITS OUTPUT against the declared shape, and record what happened.
+
+        test_job(sig, run_fn, n=5, contract=["patient_id", "findings"], items=pages[:5])
+
+    `contract` is checked against EVERY item of the sample (see output_contract) — the failure that matters is
+    the one at item 400, not item 1. `items` are the sample's INPUTS; their fingerprint is stored so a test on
+    three toy rows cannot authorize a run over the real corpus.
+
+    NO CONTRACT AND NO verify_fn → the test is recorded UNVERIFIED. It used to be recorded as verified ("None →
+    trust that it ran"), which authorized full batches on a sample that proved only that the API returned
+    something. The run is still allowed under `warn`/`off` and via GATE_FORCE — but the gate no longer claims a
+    verification that never happened."""
+    from . import output_contract
     n = min(int(n or preview_max()), preview_max())
     out = run_fn(n)
-    ok = True if verify_fn is None else bool(verify_fn(out))
+    res = output_contract.check(out if contract is not None else [], contract) if contract is not None else None
+    if contract is not None:
+        ok = res.clean
+        if not ok:
+            import sys
+            print("[bulkgate] test for %s did NOT satisfy the contract: %s" % (sig, res.summary()), file=sys.stderr)
+    elif verify_fn is not None:
+        ok = bool(verify_fn(out))
+    else:
+        ok = False
+        import sys
+        print("[bulkgate] test for %s recorded UNVERIFIED — no contract and no verify_fn, so nothing checked the "
+              "output. Pass contract=[...keys] / a schema / a callable to authorize a bulk run." % sig,
+              file=sys.stderr)
     if truncated_recently(sig):                          # a SILENTLY-TRUNCATED sample is NOT a passing test —
         ok = False                                       # it must not authorize the bulk run (the max_tokens bug,
         import sys                                        # caught structurally by the same gate)
         print("[bulkgate] test for %s TRUNCATED → recording verified=FALSE. Raise max_tokens "
               "(`spendguard maxtokens %s`) and re-test." % (sig, sig), file=sys.stderr)
-    record_tested(sig, n, verified=ok)
+    record_tested(sig, n, verified=ok, contract=contract, result=res,
+                  data_sig=output_contract.data_signature(items) if items else None)
     return out
 
 
@@ -349,18 +425,22 @@ def gated_batch(sig, model):
             job.run(count, est_usd, submit_fn)      # check_bulk (raises if estimate/test missing) → submit_fn()
     a consumer's batch pool becomes a CONSUMER of this, not a reimplementation."""
     class _Job:
+        _contract = None
+        _items = None
+
         def estimate(self, est_usd, count):
             record_estimate(sig, model, est_usd, count)
             return self
 
-        def test(self, n, run_fn, verify_fn=None):
-            n = min(int(n), preview_max())
-            out = run_fn(n)                                       # a <=preview_max sample — check_bulk allows it
-            ok = True if verify_fn is None else bool(verify_fn(out))
-            record_tested(sig, n, verified=ok)
-            return out
+        def test(self, n, run_fn, verify_fn=None, contract=None, items=None):
+            self._contract = contract                             # remembered so .run() asserts the SAME shape
+            self._items = items
+            return test_job(sig, run_fn, n=n, verify_fn=verify_fn, contract=contract, items=items)
 
         def run(self, count, est_usd, submit_fn, force=False):
-            check_bulk(sig, model, count, est_usd, force=force)   # raises GateBlocked if estimate/test missing
+            from . import output_contract
+            ds = output_contract.data_signature(self._items) if getattr(self, "_items", None) else None
+            check_bulk(sig, model, count, est_usd, force=force,   # raises GateBlocked if estimate/test missing
+                       contract=getattr(self, "_contract", None), data_sig=ds)
             return submit_fn()
     yield _Job()
