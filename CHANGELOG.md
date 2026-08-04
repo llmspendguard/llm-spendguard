@@ -2,7 +2,20 @@
 
 All notable changes to **llm-spendguard**. Format loosely follows Keep a Changelog; dates are UTC.
 
-## [Unreleased]
+## [0.8.4] — 2026-08-04
+
+### Fixed — the leak check now watches BOTH directions
+- `reconcile-ledger` reported "✓ no material leak" on a ledger claiming **235% of what the provider billed**. It
+  only ever measured provider-truth-not-in-the-ledger; money the ledger *invented* had nothing looking at it, which
+  is how an impossible $54.51 sat unnoticed for three days. `_compute` now also measures **overhang**
+  (accounted − provider), at the same materiality bar, and both the report and the one-line status say so. Some
+  overhang is expected — batch estimates are max_tokens ceilings until `true_down` nets them — so the message
+  names that first and points at reconcile; what survives a reconcile was never real.
+- **Quarantine reached only two of eight cost aggregators.** The first pass fixed `spent_since` and
+  `by_provider_day` and missed `by_day` (what the leak check reads — so the leak view still counted the invented
+  $54.51) and `by_dims` (the SaaS push payload — so the org dashboard would have received it). All eight now
+  exclude it, and a guard test scans the module for any `SUM(cost) FROM charges` query that doesn't, rather than
+  trusting a list someone has to maintain.
 
 ### Added — the impossible-estimate rail (the other half of the base64 bug)
 - Fixing the estimator stopped NEW bad numbers; it did nothing about the one already recorded. A batch went into

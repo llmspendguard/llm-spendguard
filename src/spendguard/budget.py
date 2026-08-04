@@ -256,7 +256,10 @@ def by_provider_day(kind=None, since=None):
 def reconciled_by_project(since=None):
     """{project: $} of RECONCILED rows only (the provider-truth gap that reconcile_into_ledger attributed by
     conversation evidence). The 'attributed' side of the reconcile loop, complement to gate_by_project_day."""
-    cond, args = ["model = ?"], [_RECONCILED]
+    # A quarantined row carries a real model so it cannot match `model = _RECONCILED` — but the exclusion is
+    # stated anyway rather than left as a fact someone has to re-derive. Cheap here, and the guard test
+    # requires every cost aggregator to say it out loud.
+    cond, args = ["model = ?", "(conv_id IS NULL OR conv_id <> ?)"], [_RECONCILED, QUARANTINE_CONV]
     if since:
         cond.append("day >= ?"); args.append(since)
     where = "WHERE " + " AND ".join(cond)
@@ -312,8 +315,8 @@ def gate_batch_cells(since=None):
     Excludes every reconcile marker model AND prior true-down rows (idempotence: corrections never feed the next
     correction). Full-dimension sibling of gate_by_project_day."""
     cond = ["kind='batch'", f"(model IS NULL OR model NOT IN ({','.join('?' * len(_MARKER_MODELS))}))",
-            "(conv_id IS NULL OR conv_id <> ?)"]
-    args = list(_MARKER_MODELS) + [_TRUE_DOWN_CONV]
+            "(conv_id IS NULL OR conv_id NOT IN (?, ?))"]
+    args = list(_MARKER_MODELS) + [_TRUE_DOWN_CONV, QUARANTINE_CONV]
     if since:
         cond.append("day >= ?"); args.append(since)
     with _lock:
@@ -377,7 +380,10 @@ def by_day(kind=None, exclude_meta=False, since=None, exclude_reconciled=False):
     as 'local gate-recorded' double-counts against that very source (coverage >100%, trust ratio inflated). It
     excludes ALL marker models; true-down correction rows are NOT markers (they correct the gate's own estimates)
     and stay included."""
-    cond, args = [], []
+    # Quarantined rows are excluded UNCONDITIONALLY, in every caller. They are estimates the gate proved
+    # impossible; counting them as "accounted" is what let an invented $54.51 sit inside a leak check that
+    # then reported no leak. A row that cannot describe a real request is not coverage of anything.
+    cond, args = ["(conv_id IS NULL OR conv_id <> ?)"], [QUARANTINE_CONV]
     if kind:
         cond.append("kind=?"); args.append(kind)
     if exclude_meta:
@@ -387,7 +393,7 @@ def by_day(kind=None, exclude_meta=False, since=None, exclude_reconciled=False):
         args.extend(_MARKER_MODELS)
     if since:
         cond.append("day >= ?"); args.append(since)
-    where = ("WHERE " + " AND ".join(cond)) if cond else ""
+    where = "WHERE " + " AND ".join(cond)
     with _lock:
         rows = _db().execute(f"SELECT day, COALESCE(SUM(cost),0) FROM charges {where} GROUP BY day", args).fetchall()
     return {d: float(v or 0) for d, v in rows}
@@ -396,10 +402,12 @@ def by_day(kind=None, exclude_meta=False, since=None, exclude_reconciled=False):
 def by_dims(since=None):
     """Per-day rows grouped by (day, provider, model, kind) for the SaaS roll-up push — the structured shape
     the server's /v1/ledger expects (vs by_day's flat {day: $}). Returns dicts with cost in $ and a call count."""
-    cond, args = [], []
+    # This is the SaaS PUSH payload. A quarantined row here would put an invented number on the org
+    # dashboard, where nobody has the local context to question it.
+    cond, args = ["(conv_id IS NULL OR conv_id <> ?)"], [QUARANTINE_CONV]
     if since:
         cond.append("day >= ?"); args.append(since)
-    where = ("WHERE " + " AND ".join(cond)) if cond else ""
+    where = "WHERE " + " AND ".join(cond)
     with _lock:
         rows = _db().execute(
             f"SELECT day, COALESCE(provider,'?'), COALESCE(model,'?'), COALESCE(kind,'workload'), "
@@ -416,8 +424,8 @@ def by_key(since=None):
     existed, or where no key env was resolvable. LOCAL-ONLY view; fingerprints never leave the machine."""
     cond = ["(kind IS NULL OR kind != 'meta')",
             f"(model IS NULL OR model NOT IN ({','.join('?' * len(_MARKER_MODELS))}))",
-            "(conv_id IS NULL OR conv_id <> ?)"]
-    args = list(_MARKER_MODELS) + [_TRUE_DOWN_CONV]
+            "(conv_id IS NULL OR conv_id NOT IN (?, ?))"]
+    args = list(_MARKER_MODELS) + [_TRUE_DOWN_CONV, QUARANTINE_CONV]
     if since:
         cond.append("day >= ?"); args.append(since)
     with _lock:

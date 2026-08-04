@@ -121,5 +121,54 @@ check("listing is READ-ONLY — it reports, it does not tag anything",
       budget.suspect_batches(DAY) is not None
       and len(budget.quarantined_since(DAY)) == len(q))
 
+print("-- EVERY cost aggregator excludes quarantine (the exclusion must not depend on remembering) --")
+# The first pass fixed spent_since and by_provider_day and MISSED by_day (the leak check) and by_dims (the
+# SaaS push payload) — so the leak view still counted the invented $54.51, and the org dashboard would have
+# received it. One reader that forgets is the whole bug back. This scans the module instead of trusting a list.
+import re as _re
+bsrc = pathlib.Path(inspect.getfile(budget)).read_text()
+_fns = _re.split(r"\ndef ", bsrc)
+missing = []
+for blk in _fns:
+    name = blk.split("(")[0].strip()
+    if "SUM(cost)" not in blk or "FROM charges" not in blk:
+        continue
+    if name in ("quarantined_since", "suspect_batches", "meta_spent_since"):
+        continue                      # these are ABOUT quarantined/meta rows, or scoped to kind='meta'
+    if "QUARANTINE_CONV" not in blk:
+        missing.append(name)
+check("no cost aggregator sums charges without excluding quarantine", not missing, f"missing in: {missing}")
+
+print("-- and the aggregators still RUN (a placeholder/arg mismatch is a silent SQL error) --")
+for _f, _kw in ((budget.by_provider_day, {"kind": "batch"}), (budget.gate_by_project_day, {"kind": "batch"}),
+                (budget.gate_batch_cells, {}), (budget.by_key, {}), (budget.by_dims, {}),
+                (budget.by_day, {"kind": "batch"})):
+    try:
+        _f(**_kw)
+        ok = True
+    except Exception as _e:
+        ok = False
+    check(f"{_f.__name__} executes", ok)
+
+print("-- the leak check alarms in BOTH directions (it only ever watched one) --")
+# A ledger that alarms on missing money but never on invented money reports a clean bill while claiming 2×
+# what the provider billed. That is precisely how the impossible $54.51 went unnoticed for three days.
+from spendguard import ledger_sync
+csrc = inspect.getsource(ledger_sync)
+check("_compute measures overhang, not just leak", "overhang" in inspect.getsource(ledger_sync._compute))
+check("the same materiality applies both ways (no softer bar for over-counting)",
+      "material = max(2.0, 0.03 * post_p)" in csrc)
+lr = inspect.getsource(ledger_sync._render_leak_line)
+check("the one-line status can report over-coverage", "ABOVE provider" in lr)
+# and it is arithmetic, not opinion: overhang = accounted − provider, floored at zero
+over = ledger_sync._compute.__doc__ is not None
+c_over = {"post_p": 100.0, "post_l": 150.0, "leak": 0.0, "overhang": 50.0, "coverage": 150.0,
+          "capture_rate": 100.0, "cutoff": "2026-08-01", "pre_ledger": 0.0}
+line = ledger_sync._render_leak_line(c_over)
+check("a 150%-accounted ledger does NOT read as '✓ no material leak'", "✓" not in line, line)
+check("…it names the amount above provider truth", "$50.00" in line, line)
+c_ok = dict(c_over, post_l=100.0, overhang=0.0, coverage=100.0)
+check("a matching ledger still reads clean", "✓" in ledger_sync._render_leak_line(c_ok))
+
 print(f"\n{'[FAIL]' if failures else 'OK'} test_estimate_plausibility: {failures} failure(s)")
 sys.exit(1 if failures else 0)

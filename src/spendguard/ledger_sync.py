@@ -60,9 +60,15 @@ def _compute(since=None):
     # days — so per-day positive gaps are offset by over-recording on gate-record days (a day-spread artifact), and
     # summing them overstates the leak (the $507 vs the true $27). The net is what's genuinely unaccounted.
     leak = max(0.0, round(post_p - post_a, 2))
+    # OVERHANG: the mirror of leak — the ledger claiming MORE than the provider billed. Until now nothing
+    # measured this, so an invented $54.51 sat inside a check that reported "no material leak". Two causes,
+    # and reconcile distinguishes them deterministically: (a) batch estimates recorded at the max_tokens
+    # CEILING that have not been trued down yet — expected, and true_down nets them to actual; (b) numbers
+    # that were never real. We report the size and name the action; what survives a reconcile is cause (b).
+    overhang = max(0.0, round(post_a - post_p, 2))
     return dict(since=since, cutoff=cutoff, prov=prov, local_batch=accounted, gate_batch=gate_only, pre_ledger=pre_ledger,
                 local_rt=budget.by_day(kind="realtime", since=since), meta=budget.by_day(kind="meta", since=since),
-                pending=pending, post_p=post_p, post_l=post_a, post_g=post_g, leak=leak,
+                pending=pending, post_p=post_p, post_l=post_a, post_g=post_g, leak=leak, overhang=overhang,
                 coverage=(post_a / post_p * 100) if post_p else 100.0,
                 capture_rate=(post_g / post_p * 100) if post_p else 100.0)
 
@@ -450,6 +456,13 @@ def _render_leak_line(c):
     if leak > max(2.0, 0.03 * post_p):
         return (f"ledger batch: ${leak:.2f} behind provider since {c['cutoff']} ({c['coverage']:.0f}% accounted) "
                 f"— run `spendguard saas reconcile` (free) to refresh.")
+    # The mirror direction gets the SAME materiality and the SAME prominence. A one-liner that can only ever
+    # say "✓ accounted" will report a clean bill on a ledger claiming double what the provider billed.
+    over = c.get("overhang", 0.0)
+    if over > max(2.0, 0.03 * post_p):
+        return (f"ledger batch: ${over:.2f} ABOVE provider since {c['cutoff']} ({c['coverage']:.0f}% accounted) "
+                f"— ceiling estimates not yet trued down; `spendguard saas reconcile` (free), then "
+                f"`spendguard quarantine` for whatever survives.")
     cap_s = f"gate captured {cap:.0f}% live" + ("" if cap >= 80 else " — `spendguard coverage` lists any ungated sources")
     pre_s = f"; ${pre:.0f} pre-batch-recording (one reconcile absorbs it)" if pre > 0.5 else ""
     return f"ledger batch: ✓ {c['coverage']:.0f}% accounted, no material leak — {cap_s}{pre_s}."
@@ -519,13 +532,24 @@ def sync(since=None):
     leak = max(0.0, round(post_p - post_a, 2))                # the ONE honest leak number: net provider − accounted
     print(f"\n  since batch recording began ({cutoff}): provider ${post_p:.2f} vs accounted ${post_a:.2f} → {cov:.0f}% accounted")
     print(f"  of that, the gate captured ${post_g:.2f} LIVE ({cap:.0f}%); the rest was reconciled from provider truth.")
-    if leak > max(2.0, 0.03 * post_p):
+    overhang = max(0.0, round(post_a - post_p, 2))
+    material = max(2.0, 0.03 * post_p)                        # same materiality both directions
+    if leak > material:
         print(f"  ⚠ ${leak:.2f} net provider batch since {cutoff} isn't reconciled yet — run `spendguard saas reconcile` "
               f"(free) to refresh. (Not 'ungoverned': reconcile closes the $ gap; `spendguard coverage` finds ungated sources.)")
     elif post_p > 0:
         print(f"  ✓ no material leak — ${leak:.2f} net unreconciled (staleness only); every provider batch is accounted.")
     else:
         print("  (no provider batch billing since recording began yet — re-run after the next gated batch.)")
+    # The mirror. A ledger that only ever alarms on MISSING money will happily report a clean bill while
+    # claiming 2× what the provider charged — which is exactly how an impossible estimate went unnoticed.
+    if overhang > material:
+        print(f"  ⚠ OVER-COVERED by ${overhang:.2f} ({cov:.0f}% of provider truth) — the ledger claims MORE than "
+              f"{('the provider billed')}. Batch estimates are max_tokens CEILINGS, so some overhang is expected "
+              f"until they are trued down: run `spendguard saas reconcile` (free), then re-check. Whatever "
+              f"survives that was never real spend — find it with `spendguard quarantine`.")
+    elif post_p > 0 and overhang > 0:
+        print(f"  ✓ no material over-count — ${overhang:.2f} above provider truth (unreconciled ceiling estimates).")
     print(f"  real-time (local-only, no provider cross-check w/o Admin key): ${sum(local_rt.values()):.2f}")
     print(f"  spendguard meta (advisor): ${sum(meta.values()):.2f}")
     # work done this month — context for the spend above (git commits + LLM intents per project). Same data the
