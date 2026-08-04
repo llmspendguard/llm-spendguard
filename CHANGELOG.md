@@ -2,7 +2,7 @@
 
 All notable changes to **llm-spendguard**. Format loosely follows Keep a Changelog; dates are UTC.
 
-## [Unreleased]
+## [0.8.3] — 2026-08-04
 
 ### Fixed
 - **The pre-spend estimate counted base64 image bytes as tokens — every vision batch was refused ~25–50× too
