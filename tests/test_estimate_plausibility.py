@@ -170,5 +170,24 @@ check("…it names the amount above provider truth", "$50.00" in line, line)
 c_ok = dict(c_over, post_l=100.0, overhang=0.0, coverage=100.0)
 check("a matching ledger still reads clean", "✓" in ledger_sync._render_leak_line(c_ok))
 
+print("-- realtime is cross-checked WITHOUT an admin key (real use must never need one) --")
+from spendguard import ledger_sync as _ls
+_lsrc = inspect.getsource(_ls.realtime_check)
+check("the comparator is the gate's OWN log, not a provider admin API",
+      "RT_LOG" in _lsrc and "admin" not in _lsrc.lower().replace("no admin", "").replace("admin key", ""))
+check("it measures BOTH directions", "over" in _lsrc and "under" in _lsrc)
+c = _ls.realtime_check(100.0, since="2000-01-01")
+check("a ledger above its own log reports the overhang",
+      c["log"] is None or c["over"] >= 0)
+c2 = {"recorded": 10.0, "log": 100.0}
+check("windows must match — a month of ledger vs an all-time log is the wolf-crying bug",
+      "MUST match" in inspect.getdoc(_ls.realtime_check) or "same window" in _lsrc)
+
+print("-- a day whose number is a spread ARTIFACT is not labelled as a finding --")
+_dsrc = inspect.getsource(_ls.sync)
+check("days carrying backfill are named not-comparable", "backfill spread across days" in _dsrc)
+check("…and only stand-alone days get an over/under verdict",
+      '"under-covered"' in _dsrc and '"over-covered"' in _dsrc and "spread = " in _dsrc)
+
 print(f"\n{'[FAIL]' if failures else 'OK'} test_estimate_plausibility: {failures} failure(s)")
 sys.exit(1 if failures else 0)

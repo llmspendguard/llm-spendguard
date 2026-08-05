@@ -446,6 +446,61 @@ def cached_leak_line():
         return None
 
 
+def realtime_check(recorded, since=None):
+    """Realtime, both directions, WITHOUT an admin key.
+
+    The comparator is the gate's OWN realtime log — every call the gate saw, written at call time. It is a
+    FLOOR, not a bill: it cannot see spend from an ungated interpreter (that is `spendguard coverage`'s job).
+    But it can prove the one thing nothing else was checking — that the LEDGER does not claim MORE than the
+    gate ever observed. A ledger above its own log has invented money, which is the failure mode the batch
+    lane already alarms on and realtime did not.
+
+    Admin keys stay out of this ON PURPOSE: they are a DEV cross-check only, and real use must never need one.
+
+    `since` MUST match the window `recorded` was summed over. The first run of this check compared one month of
+    ledger against an all-time log and reported $226 missing that was never missing — an alarm that cries wolf
+    is worse than no alarm, because the next real one gets ignored."""
+    import os, json
+    from .config import RT_LOG                 # the gate's own call log — written locally, no key, no network
+    log_total = 0.0
+    seen = False
+    try:
+        if os.path.exists(RT_LOG):
+            seen = True
+            for ln in open(RT_LOG):
+                try:
+                    r = json.loads(ln)
+                    if since and (r.get("day") or "") < since:     # same window as `recorded`, or it lies
+                        continue
+                    log_total += float(r.get("cost") or 0)
+                except Exception:
+                    continue
+    except Exception:
+        seen = False
+    if not seen:
+        return {"recorded": recorded, "log": None, "over": 0.0, "under": 0.0}
+    return {"recorded": recorded, "log": log_total,
+            "over": max(0.0, round(recorded - log_total, 2)),      # ledger claims MORE than the gate ever saw
+            "under": max(0.0, round(log_total - recorded, 2))}     # the gate saw calls the ledger never got
+
+
+def _print_realtime_check(recorded, since=None):
+    c = realtime_check(recorded, since=since)
+    if c["log"] is None:
+        print(f"  real-time: ${recorded:.2f} recorded — no gate log to cross-check against yet "
+              f"(the log is written as calls happen; no admin key is ever required).")
+        return
+    material = max(1.0, 0.05 * max(c["log"], recorded))
+    print(f"  real-time: ${recorded:.2f} recorded vs ${c['log']:.2f} the gate actually logged "
+          f"(local cross-check, no admin key)")
+    if c["over"] > material:
+        print(f"    ⚠ the ledger claims ${c['over']:.2f} MORE than the gate ever observed — that money was "
+              f"not seen being spent. Find it with `spendguard quarantine --list`.")
+    elif c["under"] > material:
+        print(f"    ⚠ ${c['under']:.2f} of logged calls never reached the ledger — recording is dropping "
+              f"calls (look for 'accounting FAILED' warnings), not a provider gap.")
+
+
 def _render_leak_line(c):
     if c["post_p"] <= 0 and c.get("pre_ledger", 0) <= 0.5:
         return None
@@ -517,12 +572,18 @@ def sync(since=None):
             status = "· pre-ledger (expected)"
         else:
             post_p += p; post_a += a; post_g += g
-            # per-day +/- gaps are a day-spread artifact (the backfill is spread by provider $/day, not matched to the
-            # gate-record day), so they are NOT per-day leaks — only the NET (below) is. Label them descriptively.
-            if gap > max(0.5, 0.05 * p):
-                status = "under-covered (day-spread)"
+            # A day that received SPREAD backfill is not comparable per-day at all: reconcile caps accounted ≤
+            # provider at the TOTAL, then spreads the backfill across provider-usage days rather than the days
+            # the gate recorded on. Labelling such a row "over-covered" states a finding where there is only an
+            # artifact — so it is now named as not-comparable, and a status is computed ONLY where the day
+            # stands on its own (no backfill). The NET, below, is the number that means something.
+            spread = (a - g) > max(0.01, 0.01 * max(p, a))     # this day carries reconciled backfill
+            if spread:
+                status = "— (backfill spread across days; compare the NET, not this row)"
+            elif gap > max(0.5, 0.05 * p):
+                status = "under-covered"
             elif gap < -max(0.5, 0.05 * max(p, a)):
-                status = "over-covered (day-spread)"
+                status = "over-covered"
             else:
                 status = "ok"
         print(f"  {d:<12}{('$%.2f' % p):>11}{('$%.2f' % a):>11}{('$%.2f' % g):>11}{('$%+.2f' % gap):>11}  {status}")
@@ -550,7 +611,7 @@ def sync(since=None):
               f"survives that was never real spend — find it with `spendguard quarantine`.")
     elif post_p > 0 and overhang > 0:
         print(f"  ✓ no material over-count — ${overhang:.2f} above provider truth (unreconciled ceiling estimates).")
-    print(f"  real-time (local-only, no provider cross-check w/o Admin key): ${sum(local_rt.values()):.2f}")
+    _print_realtime_check(sum(local_rt.values()), since=since)
     print(f"  spendguard meta (advisor): ${sum(meta.values()):.2f}")
     # work done this month — context for the spend above (git commits + LLM intents per project). Same data the
     # sync pushes to the org; shown here so a reconcile reports BOTH "what it cost" and "what got done".

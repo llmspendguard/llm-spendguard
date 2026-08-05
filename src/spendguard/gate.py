@@ -764,6 +764,7 @@ def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, 
             _calls.record(prov, model, "realtime", cost, in_tok=in_tok, out_tok=out_tok, latency=latency,
                           prompt=_prompt_text(kw), output=output, finish=finish)
         return
+    _calls.check_output(output)      # realtime output CONTRACT (no-op unless the flow declared one)
     _rt_record(prov, model, cost, in_tok=in_tok, out_tok=out_tok, cached=cached, basis=basis)
     try:                                              # max_tokens TRUNCATION detection (a fact) + per-sig telemetry
         from . import bulkgate

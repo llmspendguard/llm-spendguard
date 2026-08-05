@@ -752,12 +752,29 @@ def _out(text: str) -> None:
             pass
 
 
-def emit_flow(intent, chain, start) -> None:
+def _emit_contract_line(intent, t):
+    """One line, on stderr, when a flow's realtime outputs did not match the declared shape."""
+    import sys
+    bits = f"{t.get('parsed', 0)}/{t.get('n', 0)} parsed"
+    if t.get("salvaged"):
+        bits += f" · {t['salvaged']} salvaged (fence/preamble)"
+    if t.get("failed"):
+        bits += f" · {t['failed']} FAILED — first: {t.get('first') or '?'}"
+    print(f"{_PREFIX}contract [{intent or 'flow'}]: {bits}", file=sys.stderr)
+
+
+def emit_flow(intent, chain, start, contract=None) -> None:
     """Emit a per-flow receipt at a flow boundary (calls.context exit). `start` is the (rowid, usd) snapshot taken
     at flow enter. Guarded + level-gated; only acts at 'flow'/'verbose'. Silent if the flow neither called nor spent.
-    NEVER raises into the caller's code path."""
+    NEVER raises into the caller's code path.
+
+    `contract` is the flow's realtime output tally (see calls.context). A flow whose outputs stopped matching
+    their declared shape is reported UNCONDITIONALLY — a spend receipt that stays quiet while every response is
+    unparseable is the same DONE-not-CORRECT failure the batch gate was fixed for."""
     try:
         lvl = level()
+        if contract and contract.get("failed"):        # a broken contract is news at ANY verbosity
+            _emit_contract_line(intent, contract)
         if lvl not in ("flow", "verbose"):
             return
         start_rid, start_usd = (start or (0, 0.0))
@@ -777,6 +794,8 @@ def emit_flow(intent, chain, start) -> None:
         # if the flow did nothing measurable, stay quiet (don't spam empty receipts)
         if not n and not actual:
             return
+        if contract and contract.get("n") and not contract.get("failed"):
+            _emit_contract_line(intent, contract)     # clean runs say so: "397/397 parsed" is the evidence
         flow = {"intent": intent, "n": n,
                 "in_tok": (agg or {}).get("in_tok"),
                 "out_tok": (agg or {}).get("out_tok"),

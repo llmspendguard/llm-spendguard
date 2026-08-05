@@ -179,5 +179,38 @@ check("its .run asserts the SAME contract it was tested with", "_contract" in gs
 check("legacy verify_fn still works (no forced migration)",
       "verify_fn" in inspect.getsource(bulkgate.test_job))
 
+print("-- REALTIME gets the same check (a loop cannot be gated: the money goes call by call) --")
+from spendguard import calls
+buf = io.StringIO()
+with contextlib.redirect_stderr(buf):
+    with calls.context(intent="rt-extract", contract=KEYS):
+        calls.check_output(GOOD)
+        calls.check_output(GOOD)
+        t_mid = calls.contract_tally()
+        calls.check_output(MISSING)              # call 3 stops matching — the item-400 failure, live
+        t_end = calls.contract_tally()
+err = buf.getvalue()
+check("clean calls are counted", t_mid["parsed"] == 2 and t_mid["failed"] == 0)
+check("a failing call is counted", t_end["failed"] == 1)
+check("it WARNS while the loop is still running (not at the end)", "CONTRACT FAILED" in err)
+check("the warning names the call number and the reason",
+      "#3" in err and "findings" in err, err[:160])
+check("it says the loop is still spending", "still" in err and "spending" in err)
+check("the flow receipt reports the contract", "contract [rt-extract]" in err, err[-200:])
+
+print("-- and a realtime flow with NO contract is unaffected (opt-in, zero cost) --")
+buf2 = io.StringIO()
+with contextlib.redirect_stderr(buf2):
+    with calls.context(intent="plain"):
+        calls.check_output(PROSE)                # would fail any contract; none declared → nothing happens
+check("no contract declared → no contract output at all", "contract [" not in buf2.getvalue())
+check("check_output is a no-op without a contract", calls.contract_tally() == {})
+
+print("-- a broken contract cannot break the caller's loop --")
+with contextlib.redirect_stderr(io.StringIO()):
+    with calls.context(intent="boom", contract=lambda item: 1 / 0):
+        calls.check_output(GOOD)                 # raises inside the contract
+check("a raising contract does not propagate", True)
+
 print(f"\n{'[FAIL]' if failures else 'OK'} test_output_contract: {failures} failure(s)")
 sys.exit(1 if failures else 0)

@@ -2,6 +2,33 @@
 
 All notable changes to **llm-spendguard**. Format loosely follows Keep a Changelog; dates are UTC.
 
+## [0.8.7] — 2026-08-04
+
+### Added — realtime output contracts (the batch check, for a lane that cannot be gated)
+- `with spendguard.context(intent=..., contract=["patient_id", "findings"])` validates EVERY realtime response
+  against the declared shape as it is recorded. A batch can be refused before spending; a realtime loop cannot
+  — the money goes call by call — so this reports **early and loudly** instead of gating: the first failure
+  prints while the loop is still running, naming the call number and the reason, and the flow receipt reports
+  the tally. Opt-in and free when unused; a contract that raises can never break the caller's loop.
+
+### Added — realtime is now cross-checked BOTH ways, with NO admin key
+- The comparator is the gate's **own call log**, written locally at call time. It is a floor, not a bill, but it
+  proves the thing nothing was checking: that the ledger does not claim MORE than the gate ever observed
+  (invented money), and that logged calls are not vanishing before the ledger (dropped recording). Admin keys
+  stay a DEV-only cross-check — real use must never need one, and this path never touches them.
+- Its first run compared a month of ledger against an all-time log and reported $226 missing that was never
+  missing. The window is now required to match, and the docstring says why: an alarm that cries wolf is worse
+  than no alarm, because the next real one gets ignored.
+
+### Fixed — a spread artifact is no longer labelled as a finding
+- `reconcile-ledger`'s per-day rows called days "over-covered"/"under-covered" when reconcile had merely spread
+  backfill across provider-usage days rather than the days the gate recorded on. Days carrying backfill are now
+  named not-comparable, and only stand-alone days get a verdict. The NET remains the number that means
+  something.
+
+### Fixed
+- A flow's contract tally no longer leaks past its own `with` block (nested flows keep their own).
+
 ## [0.8.6] — 2026-08-04
 
 ### Fixed — lane parity (the asymmetry the last release introduced)

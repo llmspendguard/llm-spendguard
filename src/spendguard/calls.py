@@ -51,24 +51,68 @@ def set_context(intent: Optional[str] = None, chain: Optional[str] = None) -> No
 
 
 @contextlib.contextmanager
-def context(intent: Optional[str] = None, chain: Optional[str] = None):
+def context(intent: Optional[str] = None, chain: Optional[str] = None, contract=None):
     """`with spendguard.context(intent='loinc-typing', chain='run-42'): ...` tags the calls inside.
 
     On exit it emits a per-FLOW spend receipt (what ran · tokens · est→actual · running tally) — see receipt.py.
-    The receipt is verbosity-gated, goes to stderr, and is fully guarded: it NEVER raises into your code."""
+    The receipt is verbosity-gated, goes to stderr, and is fully guarded: it NEVER raises into your code.
+
+    `contract` gives a REALTIME loop the check a batch already gets: every response is validated against the
+    declared shape as it is recorded, and the flow reports how many parsed. The batch gate could refuse before
+    spending; a realtime loop cannot — the money is gone call by call — so this reports EARLY and LOUDLY rather
+    than gating. The failure it catches is the one that costs: call 1 parses, call 400 comes back with a
+    sentence before the JSON, and the loop keeps paying. See output_contract for the accepted forms."""
     prev = getattr(_local, "ctx", None)
     set_context(intent=intent, chain=chain)
+    prev_contract = getattr(_local, "contract", None)
+    prev_tally = getattr(_local, "contract_tally", None)
+    _local.contract = contract
+    _local.contract_tally = {"n": 0, "parsed": 0, "salvaged": 0, "failed": 0, "first": ""}
     start = (_max_rowid(), _flow_start_usd())          # flow window: (last call rowid, billed-$ so far)
     try:
         yield
     finally:
         ctx = current()
+        tally = getattr(_local, "contract_tally", None) if contract is not None else None
         _local.ctx = prev or {}
+        _local.contract = prev_contract
+        _local.contract_tally = prev_tally     # nested flows keep their own tally; none leaks past its block
         try:
             from . import receipt
-            receipt.emit_flow(ctx.get("intent"), ctx.get("chain"), start)
+            receipt.emit_flow(ctx.get("intent"), ctx.get("chain"), start, contract=tally)
         except Exception:
             pass
+
+
+def check_output(text):
+    """Validate ONE realtime response against the flow's declared contract, if any. Called by the gate as each
+    call is recorded; a no-op (and never a raise) when no contract is declared — the common case."""
+    c = getattr(_local, "contract", None)
+    if c is None or not text:
+        return
+    try:
+        from . import output_contract
+        ok, salvaged, why = output_contract.check_item(text, c)
+        t = getattr(_local, "contract_tally", None)
+        if t is None:
+            return
+        t["n"] += 1
+        if ok:
+            t["parsed"] += 1
+            t["salvaged"] += 1 if salvaged else 0
+        else:
+            t["failed"] += 1
+            if not t["first"]:
+                t["first"] = why
+                import sys
+                print(f"[spend_gate] CONTRACT FAILED on realtime call #{t['n']}: {why} — the loop is still "
+                      f"spending; stop it or widen the contract.", file=sys.stderr)
+    except Exception:
+        pass                                           # a broken contract must never break the user's loop
+
+
+def contract_tally():
+    return dict(getattr(_local, "contract_tally", {}) or {})
 
 
 # ── flow aggregation (powers the per-flow receipt; degrades gracefully when call-logging is off) ──
