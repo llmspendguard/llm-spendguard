@@ -554,6 +554,12 @@ _atexit.register(_rt_flush)
 
 
 def _rt_record(provider, model, cost, in_tok=0, out_tok=0, cached=0):
+    # LANE PARITY. The impossibility rail was wired into the two BATCH estimators only, which is exactly the
+    # asymmetry that lets a bug live: realtime records from actual usage when the SDK returns it, but falls
+    # back to the ESTIMATE when it doesn't (see _record_realtime) — the same path that produced the invented
+    # $54.51. One request, so the bound is simply in_tok vs the model's context window. It also catches a
+    # misread `usage` field, which no amount of estimator-fixing would.
+    _bad = _warn_implausible(model, int(in_tok or 0), 1) if in_tok else {}
     global _rt_spent, _rt_since_flush
     with _rt_lock:
         _rt_spent += cost
@@ -566,7 +572,7 @@ def _rt_record(provider, model, cost, in_tok=0, out_tok=0, cached=0):
     if flush:
         _rt_flush()
     _m = pricing.normalize(model) if model else "?"
-    _budget_record(cost, _m, provider, "realtime")   # cross-process ledger (sqlite backend)
+    _budget_record(cost, _m, provider, "realtime", quarantine=bool(_bad))   # cross-process ledger (sqlite)
     _ev = {"kind": "realtime", "provider": provider, "model": _m, "cost": cost, "decision": "recorded",
            "in_tok": in_tok, "out_tok": out_tok, "cached_in_tok": cached}
     try:                       # the call's PURPOSE rides on the event (intent/chain)

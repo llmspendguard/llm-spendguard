@@ -192,31 +192,50 @@ def suspect_batches(since):
         # `calls` is created lazily (only when call logging is on), so its absence is NORMAL, not an error —
         # without it we still list the charges, just with no token counts to divide.
         has_calls = _db().execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='calls'").fetchone()
-        sql = ("SELECT c.ts, c.day, c.provider, c.model, c.cost, COALESCE(c.project,''), COALESCE(c.conv_id,''), "
-               "       k.in_tok, k.out_tok, COALESCE(k.caller,'') "
+        # rowid is selected because it is the ONLY exact handle on a row: `ts` has second granularity and up
+        # to six charges can share one second, so a ts-targeted repair could tag five innocent charges.
+        sql = ("SELECT c.rowid, c.ts, c.day, c.provider, c.model, c.cost, COALESCE(c.project,''), "
+               "       COALESCE(c.conv_id,''), k.in_tok, k.out_tok, COALESCE(k.caller,'') "
                "FROM charges c LEFT JOIN calls k ON k.ts = c.ts AND k.model = c.model AND k.kind = 'batch' "
                "WHERE c.kind='batch' AND c.day >= ? ORDER BY c.cost DESC") if has_calls else (
-               "SELECT c.ts, c.day, c.provider, c.model, c.cost, COALESCE(c.project,''), COALESCE(c.conv_id,''), "
-               "       NULL, NULL, '' FROM charges c WHERE c.kind='batch' AND c.day >= ? ORDER BY c.cost DESC")
+               "SELECT c.rowid, c.ts, c.day, c.provider, c.model, c.cost, COALESCE(c.project,''), "
+               "       COALESCE(c.conv_id,''), NULL, NULL, '' "
+               "FROM charges c WHERE c.kind='batch' AND c.day >= ? ORDER BY c.cost DESC")
         rows = _db().execute(sql, (since,)).fetchall()
-    return [{"ts": t, "day": d, "provider": p_, "model": m, "cost": float(c or 0), "project": pr,
+    return [{"row": rid, "ts": t, "day": d, "provider": p_, "model": m, "cost": float(c or 0), "project": pr,
              "conv_id": cv, "in_tok": i, "out_tok": o, "caller": cl}
-            for t, d, p_, m, c, pr, cv, i, o, cl in rows]
+            for rid, t, d, p_, m, c, pr, cv, i, o, cl in rows]
 
 
-def quarantine_charge(ts, reason=""):
-    """Tag ONE charge row (exact timestamp) as an impossible estimate. The row and its amount are untouched —
-    only its conv_id marker changes, so it drops out of every total while staying fully auditable. Returns the
-    number of rows tagged (0 = nothing matched that timestamp)."""
+def quarantine_charge(ts=None, reason="", row=None):
+    """Tag ONE charge row as an impossible estimate. The row and its amount are untouched — only its conv_id
+    marker changes, so it drops out of every total while staying fully auditable.
+
+    Target by `row` (rowid — exact) or by `ts`. `charges.ts` has SECOND granularity and up to six charges can
+    share one second, so a ts that matches more than one row RAISES rather than tagging all of them: silently
+    excluding five innocent charges to quarantine one bad one would be a worse version of the bug this repairs.
+    Returns the number of rows tagged (0 = nothing matched)."""
     with _lock:
-        cur = _db().execute("UPDATE charges SET conv_id=? WHERE ts=? AND conv_id <> ?",
-                            (QUARANTINE_CONV, ts, QUARANTINE_CONV))
+        if row is not None:
+            cur = _db().execute("UPDATE charges SET conv_id=? WHERE rowid=? AND conv_id <> ?",
+                                (QUARANTINE_CONV, int(row), QUARANTINE_CONV))
+        else:
+            hits = _db().execute("SELECT rowid, model, cost FROM charges WHERE ts=? AND conv_id <> ?",
+                                 (ts, QUARANTINE_CONV)).fetchall()
+            if len(hits) > 1:
+                raise ValueError(
+                    "%d charges share the timestamp %s (%s) — refusing to quarantine all of them. Re-run with "
+                    "--row <rowid> for the one you mean; `spendguard quarantine --list` shows the rowids."
+                    % (len(hits), ts, ", ".join(f"row {h[0]}: {h[1]} ${h[2]:,.2f}" for h in hits)))
+            cur = _db().execute("UPDATE charges SET conv_id=? WHERE ts=? AND conv_id <> ?",
+                                (QUARANTINE_CONV, ts, QUARANTINE_CONV))
         n = cur.rowcount
         _db().commit()
     try:                                       # audit trail: WHAT changed, WHY, and what it was before
         _db().execute("INSERT INTO spend_audit (event_id, ts, actor, field, old_value, new_value, reason) "
                       "VALUES (?,?,?,?,?,?,?)",
-                      (ts, datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+                      (str(row if row is not None else ts),
+                       datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
                        "quarantine_charge", "conv_id", "", QUARANTINE_CONV, reason))
         _db().commit()
     except Exception:
@@ -357,8 +376,9 @@ def record_meta(provider, model, cost):
 
 def meta_spent_since(day):
     with _lock:
-        r = _db().execute("SELECT COALESCE(SUM(cost),0) FROM charges WHERE day >= ? AND kind='meta'",
-                          (day,)).fetchone()
+        r = _db().execute("SELECT COALESCE(SUM(cost),0) FROM charges WHERE day >= ? AND kind='meta' "
+                          "AND (conv_id IS NULL OR conv_id <> ?)",
+                          (day, QUARANTINE_CONV)).fetchone()
     return float(r[0] or 0)
 
 

@@ -79,6 +79,38 @@ def _utc_day(ts):
     return datetime.datetime.fromtimestamp(ts, datetime.timezone.utc).strftime("%Y-%m-%d")
 
 
+# A single instance cannot run more than 24 hours in a day, and cannot end before it started. Both are
+# PHYSICAL bounds, like the LLM context window — not tuned thresholds. Remote compute had no plausibility rail
+# at all: a wrong dph_usd or a skewed clock produced an invented number with nothing watching, which is the
+# same hole the batch lane had before 0.8.4.
+MAX_HOURS_PER_DAY = 24.0
+_impl_warned = set()
+
+
+def implausible_row(inst, now=None):
+    """(True, why) for a derived rate row that cannot describe real usage. Provider-BILLED rows (`usd`) are
+    never judged — they are the provider's own number and outrank any derivation we could do."""
+    if inst.get("usd") is not None:
+        return False, ""
+    start, dph = inst.get("start_ts"), inst.get("dph_usd")
+    if not start or not dph:
+        return False, ""                              # unpriced/untimed is already handled as UNKNOWN, not $0
+    end = inst.get("end_ts")
+    if end is not None and float(end) < float(start):
+        return True, (f"ends before it starts (start={start}, end={end}) — a negative duration cannot be "
+                      f"billed; check the adapter's timestamp units")
+    _now = now or time.time()
+    if float(start) > _now + 60:
+        return True, (f"starts in the FUTURE (start={start}, now={_now:.0f}) — usage cannot be billed before it "
+                      f"happens; the adapter is probably emitting milliseconds where seconds are expected")
+    end = min(float(end) if end is not None else _now, _now)
+    for day, hours in day_slices(float(start), end, 0):
+        if hours > MAX_HOURS_PER_DAY + 1e-6:
+            return True, (f"{hours:.1f} hours attributed to {day} for ONE instance — a day holds "
+                          f"{MAX_HOURS_PER_DAY:.0f}; the timestamps are wrong (seconds vs milliseconds?)")
+    return False, ""
+
+
 def cost_by_day(instances, since=None, now=None):
     """{YYYY-MM-DD: $} for NORMALIZED instance rows. Provider-billed rows (`usd` present) book whole to the UTC
     day of start_ts (they are already per-interval — splitting a billed $ would fabricate). Rate rows split
@@ -96,6 +128,14 @@ def cost_by_day(instances, since=None, now=None):
             continue
         dph = i.get("dph_usd")
         if not dph or not start:                           # unpriced / untimed → UNKNOWN, not $0 (visible on the row)
+            continue
+        bad, why = implausible_row(i, now)
+        if bad:                                            # cannot be real → contributes NOTHING, and says so
+            key = (i.get("id") or i.get("label") or "?", why[:40])
+            if key not in _impl_warned:
+                _impl_warned.add(key)
+                print(f"[gpu] IMPOSSIBLE ROW {i.get('id') or i.get('label') or '?'}: {why} — excluded from "
+                      f"cost (it stays visible in instances()).", file=sys.stderr)
             continue
         end = min(i.get("end_ts") or now, now)
         for day, hours in day_slices(float(start), end, since):
