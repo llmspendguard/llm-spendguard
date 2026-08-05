@@ -102,10 +102,14 @@ MATRIX = {
                               "what the LEAK CHECK reads — accounted = gate-recorded + backfill"),
     "by_dims":               ({"plain", "reconciled", "true_down", "meta"}, "the SaaS PUSH payload — the org needs backfill, never quarantine"),
     "by_key":                ({"plain"},                "per-key workload spend"),
+    # by_basis answers "what KIND of number is this", so it must see labelled AND unlabelled workload rows —
+    # everything except the three that are not workload spend at all.
+    "by_basis":              ({"plain", "true_down"},   "the basis breakdown of the headline Actual $"),
 }
 # Called the way PRODUCTION calls them — a matrix that only holds for argument-less calls would prove nothing
 # about the paths that actually run.
-CALLS = {"spent_since": ("2000-01-01",), "quarantined_since": ("2000-01-01",), "meta_spent_since": ("2000-01-01",)}
+CALLS = {"spent_since": ("2000-01-01",), "quarantined_since": ("2000-01-01",),
+         "meta_spent_since": ("2000-01-01",), "by_basis": ("2000-01-01",)}
 KWARGS = {"by_provider_day": {"kind": "batch"}, "gate_by_project_day": {"kind": "batch"}}
 
 
@@ -154,6 +158,28 @@ if shared_ts:
           refused and "--row" in why and "row " in why)
 else:
     check("(no shared timestamp in this fixture to test ambiguity with)", True)
+
+print("-- BASIS: every number says what KIND of number it is --")
+# "the receipt reads as $12,000" was a basis problem: a max_tokens CEILING and a provider bill were summed
+# into one figure with nothing saying which was which. The writer always knows; the reader never can.
+budget.record("anthropic", "test-model", "batch", 32.0, project="p1", basis=budget.BASIS_ESTIMATE)
+budget.record("anthropic", "test-model", "realtime", 64.0, project="p1", basis=budget.BASIS_BILLED)
+bb = budget.by_basis("2000-01-01")
+check("an estimate is labelled as one", abs(bb.get("estimate", {}).get("cost", 0) - 32.0) < 1e-6)
+check("provider-reported usage is labelled billed", abs(bb.get("billed", {}).get("cost", 0) - 64.0) < 1e-6)
+# The unlabelled bucket here nets NEGATIVE (a true-down correction is also unlabelled) — which is exactly why
+# the assertion is about the bucket EXISTING, not about its sign.
+check("rows written before basis existed read as UNLABELLED, not folded into billed",
+      "" in bb and abs(bb.get("billed", {}).get("cost", 0) - 64.0) < 1e-6, str(sorted(bb)))
+check("an unknown basis string is refused rather than stored", (
+    budget.record("anthropic", "test-model", "batch", 0.5, project="p1", basis="wishful") or True)
+    and budget.by_basis("2000-01-01").get("wishful") is None)
+check("quarantined rows never appear under any basis",
+      not any(abs(v["cost"] - AMOUNTS["quarantined"]) < 1e-6 for v in bb.values()))
+from spendguard import receipt as _rcpt
+line = "\n".join(_rcpt._basis_line())
+check("the receipt states the basis breakdown", "basis of the Actual $" in line, line)
+check("…naming estimate and billed separately", "estimate" in line and "billed" in line, line)
 
 print("-- the invariant behind the whole matrix --")
 q_counted = [n for n, (w, _) in MATRIX.items() if "quarantined" in w and n != "quarantined_since"]

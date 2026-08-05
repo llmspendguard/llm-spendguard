@@ -219,6 +219,28 @@ def _est_tally(org=None, team=None, project=None):
 _SOURCE_REFRESH = {"claude-code": "spendguard cc", "codex": "spendguard codex", "claude-ai": "spendguard chat"}
 
 
+def _basis_line():
+    """What KIND of number the Actual-$ column is. A total that mixes a provider bill with a max_tokens
+    ceiling is not wrong, but reading it as money already spent IS — and nothing on the receipt used to say
+    which was which. Unlabelled legacy rows are shown as unlabelled, never quietly counted as billed."""
+    try:
+        from . import budget
+        b = budget.by_basis(_windows()[2])
+    except Exception:
+        return []
+    tot = sum(v["cost"] for v in b.values())
+    if tot <= 0:
+        return []
+    order = [(budget.BASIS_BILLED, "billed"), (budget.BASIS_ESTIMATE, "estimate (ceiling until reconciled)"),
+             (budget.BASIS_RECONSTRUCTED, "reconstructed"), (budget.BASIS_ASSUMED, "assumed"),
+             ("", "unlabelled (recorded before basis existed)")]
+    # Sub-cent buckets render as "<$0.01" rather than "$0.00": a bucket that exists should not be displayed as
+    # if it held nothing, and rounding it away would be the small version of hiding money.
+    parts = [f"{lbl} " + ("<$0.01" if b[k]["cost"] < 0.005 else _money(b[k]["cost"]))
+             for k, lbl in order if b.get(k, {}).get("cost")]
+    return ["basis of the Actual $: " + " · ".join(parts)] if parts else []
+
+
 def _quarantine_lines():
     """Impossible estimates the gate caught, shown BELOW the total they are excluded from. Silence here would
     be its own dishonesty: the row exists, it was almost counted as money, and the reader should know both."""
@@ -644,6 +666,7 @@ def _two_axis_table(t: dict) -> list:
     if assumed:
         out.append(f"* subscription is an ASSUMED default ({_money(sub)}), not a measured charge — set yours with "
                    f"`spendguard config set subscription.plan_usd <amount>`")
+    out += _basis_line()
     out += _quarantine_lines()
     return out
 

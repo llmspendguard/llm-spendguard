@@ -29,6 +29,8 @@ def _db():
                     c.execute("ALTER TABLE charges ADD COLUMN conv_id TEXT DEFAULT ''")
                 if "key_fp" not in cols:                       # which provider key served the call (sha8:last4, local-only)
                     c.execute("ALTER TABLE charges ADD COLUMN key_fp TEXT DEFAULT ''")
+                if "basis" not in cols:                        # WHAT KIND of number this is (see BASES)
+                    c.execute("ALTER TABLE charges ADD COLUMN basis TEXT DEFAULT ''")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_day ON charges(day)")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_charges_conv ON charges(conv_id)")  # chat↔charge joins (attribution)
                 c.execute("CREATE INDEX IF NOT EXISTS idx_charges_keyfp ON charges(key_fp)")  # per-key spend view
@@ -90,7 +92,10 @@ def _conv():
     return _CONV
 
 
-def record(provider, model, kind, cost, project=None, conv_id=None):
+def record(provider, model, kind, cost, project=None, conv_id=None, basis=None):
+    """Write one charge. `basis` says WHAT KIND of number it is (estimate · billed · assumed · reconstructed) —
+    known for certain by the writer, unknowable by the reader, and the thing that makes a displayed figure
+    honest. Blank on legacy rows, which read as 'unlabelled' rather than being silently called billed."""
     if not cost:
         return
     proj = project if project is not None else _project()
@@ -101,9 +106,11 @@ def record(provider, model, kind, cost, project=None, conv_id=None):
         fp = ""
     now = datetime.datetime.now(datetime.timezone.utc)
     with _lock:
-        _db().execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project,conv_id,key_fp) VALUES (?,?,?,?,?,?,?,?,?)",
+        _db().execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project,conv_id,key_fp,basis) "
+                      "VALUES (?,?,?,?,?,?,?,?,?,?)",
                       (now.isoformat(timespec="seconds"), now.strftime("%Y-%m-%d"),
-                       provider or "?", model or "?", kind, float(cost), proj or "", conv or "", fp))
+                       provider or "?", model or "?", kind, float(cost), proj or "", conv or "", fp,
+                       basis if basis in BASES else ""))
         _db().commit()
 
 
@@ -166,6 +173,15 @@ _TRUE_DOWN_CONV = "(true-down)"
 # It is recorded, never deleted: a forensic record of what the estimator claimed. But it is quarantined out
 # of every spend total, because a number that cannot describe a real request must not read as money spent.
 QUARANTINE_CONV = "(impossible-estimate)"
+
+# BASIS — what KIND of number a row is. Every displayed figure needs this, or the reader has to infer it from
+# the row's shape and gets it wrong: "the receipt reads as $12,000" was exactly that. Not a confidence score
+# and not a judgement — it is a fact about where the number came from, known at write time by the writer.
+BASIS_ESTIMATE = "estimate"          # pre-spend projection (batch ceilings live here until true-down)
+BASIS_BILLED = "billed"              # the provider's own number, or usage the provider returned
+BASIS_ASSUMED = "assumed"            # a default nobody confirmed (e.g. the subscription fee)
+BASIS_RECONSTRUCTED = "reconstructed"  # derived after the fact from transcripts/logs, not from a bill
+BASES = (BASIS_ESTIMATE, BASIS_BILLED, BASIS_ASSUMED, BASIS_RECONSTRUCTED)
 
 
 def spent_since(day, project=None, conv=None):  # WORKLOAD spend only — excludes meta AND reconciled (historical) rows
@@ -256,6 +272,17 @@ def quarantined_since(day):
             for d, p, m, c, pr, n in rows]
 
 
+def by_basis(day):
+    """{basis: {'cost': $, 'n': rows}} since `day` — how much of the headline is a projection vs a bill.
+    Unlabelled legacy rows come back under '' and are shown as unknown, never folded into 'billed'."""
+    with _lock:
+        rows = _db().execute(
+            "SELECT COALESCE(basis,''), COALESCE(SUM(cost),0), COUNT(*) FROM charges WHERE day >= ? "
+            "AND (kind IS NULL OR kind != 'meta') AND (model IS NULL OR model <> ?) "
+            "AND (conv_id IS NULL OR conv_id <> ?) GROUP BY 1", (day, _RECONCILED, QUARANTINE_CONV)).fetchall()
+    return {b: {"cost": float(c or 0), "n": int(n)} for b, c, n in rows}
+
+
 # ── reconciliation: make the LOCAL ledger reflect PROVIDER-billed truth (the gap = ungoverned/pre-ledger spend) ──
 def by_provider_day(kind=None, since=None):
     """{(provider, day): $} of GATE-recorded spend (excludes reconciled rows) — the attributed side of reconcile."""
@@ -310,8 +337,11 @@ def record_reconciled(day, provider, cost, project="unattributed", kind="batch",
     gate/cap and rebuilt idempotently. Default marker '(provider-batch)' / kind 'batch'; the realtime backfill passes
     its own marker + kind='realtime'."""
     with _lock:
-        _db().execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project) VALUES (?,?,?,?,?,?,?)",
-                      (day + "T00:00:00+00:00", day, provider or "?", model or _RECONCILED, kind, float(cost), project or "unattributed"))
+        # basis=BILLED: a reconciliation row IS the provider's own number, not a projection of ours.
+        _db().execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project,basis) "
+                      "VALUES (?,?,?,?,?,?,?,?)",
+                      (day + "T00:00:00+00:00", day, provider or "?", model or _RECONCILED, kind,
+                       float(cost), project or "unattributed", BASIS_BILLED))
         _db().commit()
 
 

@@ -79,6 +79,16 @@ async def _call_orig_async(orig, self, a, kw):
         http_capture.in_sdk_call.reset(tok)
 
 
+def budget_basis_estimate():
+    from . import budget
+    return budget.BASIS_ESTIMATE
+
+
+def budget_basis_billed():
+    from . import budget
+    return budget.BASIS_BILLED
+
+
 class SpendGateRefused(RuntimeError):
     """Raised to block a submission the user/policy declined. Propagates out of the SDK call."""
 
@@ -354,14 +364,14 @@ def _budget_check(cost, model, provider, kind):
                            f"Raise caps.{w.replace('-', '.')}, or set GATE_ALLOW=1.")
 
 
-def _budget_record(cost, model, provider, kind, quarantine=False):
+def _budget_record(cost, model, provider, kind, quarantine=False, basis=None):
     """`quarantine` marks a row the gate PROVED impossible (input > the model's context window). It is still
     written — deleting the forensic record of a bad estimate is how you lose the ability to explain the bug —
     but it is tagged so every total excludes it and the receipt can show it as what it is."""
     from . import config
     if config.budget_backend() == "sqlite":
         from . import budget
-        budget.record(provider, model, kind, cost,
+        budget.record(provider, model, kind, cost, basis=basis,
                       conv_id=(budget.QUARANTINE_CONV if quarantine else None))
 
 
@@ -475,8 +485,8 @@ def _decide_and_account(est):
     _bulkgate_check(est)          # estimate+test-first: sig-keyed flags, blocks an unestimated/untested bulk (may raise)
     _budget_check(est["cost"], est.get("model"), est.get("provider"), "batch")   # daily/monthly (sqlite)
     _decide(est)                                                                  # per-batch cap (may raise)
-    _budget_record(est["cost"], est.get("model"), est.get("provider"), "batch",
-                   quarantine=bool(est.get("implausible")))                       # ledger (sqlite)
+    _budget_record(est["cost"], est.get("model"), est.get("provider"), "batch",   # ledger (sqlite)
+                   quarantine=bool(est.get("implausible")), basis=budget_basis_estimate())
     if _calls.enabled():                                                          # job-level call-context row
         _calls.record(est.get("provider"), est.get("model"), "batch", est["cost"],
                       in_tok=est.get("in_tok", 0), out_tok=est.get("out_tok", 0))
@@ -553,7 +563,7 @@ def _rt_flush():
 _atexit.register(_rt_flush)
 
 
-def _rt_record(provider, model, cost, in_tok=0, out_tok=0, cached=0):
+def _rt_record(provider, model, cost, in_tok=0, out_tok=0, cached=0, basis=None):
     # LANE PARITY. The impossibility rail was wired into the two BATCH estimators only, which is exactly the
     # asymmetry that lets a bug live: realtime records from actual usage when the SDK returns it, but falls
     # back to the ESTIMATE when it doesn't (see _record_realtime) — the same path that produced the invented
@@ -572,7 +582,8 @@ def _rt_record(provider, model, cost, in_tok=0, out_tok=0, cached=0):
     if flush:
         _rt_flush()
     _m = pricing.normalize(model) if model else "?"
-    _budget_record(cost, _m, provider, "realtime", quarantine=bool(_bad))   # cross-process ledger (sqlite)
+    _budget_record(cost, _m, provider, "realtime", quarantine=bool(_bad),   # cross-process ledger (sqlite)
+                   basis=basis or budget_basis_estimate())
     _ev = {"kind": "realtime", "provider": provider, "model": _m, "cost": cost, "decision": "recorded",
            "in_tok": in_tok, "out_tok": out_tok, "cached_in_tok": cached}
     try:                       # the call's PURPOSE rides on the event (intent/chain)
@@ -729,7 +740,8 @@ def _cached_in(result):
     return getattr(u, "cache_read_input_tokens", 0) or 0  # Anthropic
 
 
-def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, finish=None, cost=None, provider=None):
+def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, finish=None, cost=None,
+               provider=None, basis=None):
     """Record ONE realtime call's usage → cost · cross-process ledger · max_tokens truncation telemetry · call log.
     Shared by _rt_account (non-stream), the streaming proxy (ACTUAL usage as the stream is consumed), and the
     provider-breadth adapters (LiteLLM / Bedrock / Vertex). `cost` lets a caller supply an authoritative price (e.g.
@@ -752,7 +764,7 @@ def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, 
             _calls.record(prov, model, "realtime", cost, in_tok=in_tok, out_tok=out_tok, latency=latency,
                           prompt=_prompt_text(kw), output=output, finish=finish)
         return
-    _rt_record(prov, model, cost, in_tok=in_tok, out_tok=out_tok, cached=cached)
+    _rt_record(prov, model, cost, in_tok=in_tok, out_tok=out_tok, cached=cached, basis=basis)
     try:                                              # max_tokens TRUNCATION detection (a fact) + per-sig telemetry
         from . import bulkgate
         _intent = (_calls.current().get("intent") or "").strip()
@@ -787,15 +799,18 @@ def _rt_account(model, kw, result, est_fn, act_fn, latency=None):
     recorded by the stream proxy on exhaustion; reaching here for a stream is the wrap-FAILED fallback → estimate."""
     try:
         if kw.get("stream"):
+            # the stream wrap failed, so these are OUR projection, not the provider's count — say so.
             in_tok, out_tok = _stream_out_estimate(model, kw, est_fn)
-            _record_rt(model, kw, in_tok, out_tok, 0, latency)
+            _record_rt(model, kw, in_tok, out_tok, 0, latency, basis=budget_basis_estimate())
             return
         act = act_fn(result)
+        basis = budget_basis_billed() if act else budget_basis_estimate()   # the provider's own usage, or ours
         if act:
             in_tok, out_tok = act
         else:
             _, in_tok, out_tok = est_fn(kw)
-        _record_rt(model, kw, in_tok, out_tok, _cached_in(result), latency, _output_text(result), _finish(result))
+        _record_rt(model, kw, in_tok, out_tok, _cached_in(result), latency, _output_text(result), _finish(result),
+                   basis=basis)
         _record_tool_fees(model, kw, result)
     except Exception as e:
         print(f"[spend_gate] WARN real-time accounting failed ({e})", file=sys.stderr)
@@ -884,12 +899,15 @@ def _observe_stream(stream, model, kw, est_fn, t0, is_async):
         try:
             if acc.get("in") or acc.get("out"):
                 _record_rt(model, kw, acc.get("in", 0), acc.get("out", 0), acc.get("cached", 0),
-                           time.time() - t0, finish=acc.get("finish"))
+                           time.time() - t0, finish=acc.get("finish"), basis=budget_basis_billed())
             else:                                            # usage not emitted (e.g. include_usage off) → estimate
                 in_tok, out_tok = _stream_out_estimate(model, kw, est_fn)
-                _record_rt(model, kw, in_tok, out_tok, 0, time.time() - t0)
-        except Exception:
-            pass
+                _record_rt(model, kw, in_tok, out_tok, 0, time.time() - t0, basis=budget_basis_estimate())
+        except Exception as e:
+            # FAIL-OPEN, never fail-silent: a broken recorder must not break the user's stream, but a stream
+            # whose spend was dropped has to say so — otherwise realtime accounting can go quietly to zero.
+            print(f"[spend_gate] WARN stream accounting FAILED ({type(e).__name__}: {e}) — this call's "
+                  f"realtime spend was NOT recorded", file=sys.stderr)
 
     return (_AsyncStreamProxy if is_async else _StreamProxy)(stream, acc, _done)
 

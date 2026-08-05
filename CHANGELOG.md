@@ -2,6 +2,40 @@
 
 All notable changes to **llm-spendguard**. Format loosely follows Keep a Changelog; dates are UTC.
 
+## [0.8.6] — 2026-08-04
+
+### Fixed — lane parity (the asymmetry the last release introduced)
+- The impossibility rail shipped in 0.8.4 covered the two BATCH estimators only. **Realtime now carries it too**
+  (one request, so the bound is `in_tok` vs the context window). This matters because realtime records from
+  actual usage when the SDK returns it and falls back to the ESTIMATE when it does not — the same path that
+  produced the invented $54.51 — and the rail also catches a misread `usage` field, which no estimator fix
+  would.
+- **Remote compute had no plausibility rail at all.** `gpu_port` now rejects derived rate rows that cannot
+  describe real usage: negative durations, more than 24h attributed to one instance-day, and start timestamps
+  in the future (the seconds-vs-milliseconds mistake). Provider-BILLED rows are never judged — their number
+  outranks any derivation of ours.
+- **Stream accounting failed SILENTLY.** The stream done-handler swallowed every exception, so a broken
+  recorder dropped a call's realtime spend with nothing said. Still fail-open — a recorder must not break the
+  user's stream — but now loud about exactly what was not recorded.
+
+### Added — basis labels: every number says what KIND of number it is
+- `charges.basis` ∈ `estimate · billed · assumed · reconstructed`, stamped at write time by the writer (who
+  knows) rather than inferred by the reader (who cannot). Batch submits are `estimate` — a max_tokens ceiling
+  until true-down; realtime is `billed` when the provider returned usage and `estimate` when we fell back;
+  reconciliation rows are `billed`. Rows written before the column read as **unlabelled**, never quietly as
+  billed. The receipt shows the breakdown under the total: *"basis of the Actual $: billed $X · estimate
+  (ceiling until reconciled) $Y · unlabelled $Z"*.
+
+### Added — a behavioural matrix over every cost aggregator
+- `tests/test_ledger_marker_matrix.py` pins WHICH rows each of the eleven aggregators counts — quarantined,
+  reconciled, true-down, meta — by seeding distinct power-of-two amounts and decomposing each total. Not by
+  grepping for a marker name, which a query can mention without using. The right answer genuinely differs per
+  reader (the push payload needs backfill; `gate_batch_cells` must exclude true-down or it nets twice), so the
+  matrix is the reviewed answer and the arithmetic enforces it. New aggregators fail the test until declared.
+- It immediately found a real bug in the repair tool from 0.8.5: `charges.ts` has SECOND granularity and up to
+  six charges share one second, so `quarantine --ts` could have tagged five innocent rows. It now targets by
+  **rowid** and REFUSES an ambiguous timestamp instead of guessing.
+
 ## [0.8.5] — 2026-08-04
 
 ### Added — the test that authorizes a bulk run now has to PROVE something

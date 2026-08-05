@@ -26,8 +26,11 @@ class O:                                              # generic attr bag for moc
 
 # capture what the gate records (no ledger I/O)
 REC = []
-gate._record_rt = lambda model, kw, in_tok, out_tok, cached=0, latency=None, output=None, finish=None: \
-    REC.append({"model": model, "in": in_tok, "out": out_tok, "finish": finish})
+# **kw on purpose: a stub that pins today's signature turns any new recorder argument into a SILENT drop of
+# realtime accounting (the stream's done-handler is fail-open), which is how this test started failing for a
+# reason that had nothing to do with streaming.
+gate._record_rt = lambda model, kw, in_tok, out_tok, cached=0, latency=None, output=None, finish=None, **_kw: \
+    REC.append({"model": model, "in": in_tok, "out": out_tok, "finish": finish, "basis": _kw.get("basis")})
 
 
 class MockStream:                                     # an iterable stream with extra attrs (to test delegation)
