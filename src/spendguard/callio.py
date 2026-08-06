@@ -17,7 +17,22 @@ from . import config
 
 _conn = None
 _lock = threading.RLock()
-IO_SNIP = 800            # chars kept per prompt / per output — enough to judge, bounded
+# Chars kept per prompt / per output. 800 is enough for the caged JUDGE to rate an answer, and that is what
+# this cap was sized for. It is NOT enough to REPLAY a call: a prompt cut at 800 chars is a different task, so
+# a replay built on truncated rows measures something other than the work it claims to. Callers that need
+# fidelity raise it (`callio.snip_chars` in config) and re-run fetch_history — the provider input/output files
+# are still downloadable, so a full-fidelity refill costs no tokens.
+_IO_SNIP_DEFAULT = 800
+
+
+def snip_chars():
+    try:
+        return max(1, int(config._cfg_get("callio", "snip_chars", _IO_SNIP_DEFAULT)))
+    except Exception:
+        return _IO_SNIP_DEFAULT
+
+
+IO_SNIP = snip_chars()
 DEFAULT_CAP = 50         # samples per (intent, model)
 
 
@@ -74,7 +89,18 @@ def record(intent, provider, model, batch, custom_id, prompt, output, in_tok=0, 
                 "INSERT OR IGNORE INTO call_io (id,ts,intent,provider,model,batch,custom_id,prompt,output,"
                 "in_tok,out_tok,source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (cid, ts, intent, provider, model, batch, str(custom_id),
-                 (prompt or "")[:IO_SNIP], (output or "")[:IO_SNIP], int(in_tok or 0), int(out_tok or 0), source))
+                 (prompt or "")[:snip_chars()], (output or "")[:snip_chars()],
+                 int(in_tok or 0), int(out_tok or 0), source))
+            # INSERT OR IGNORE alone makes a refill a NO-OP: a row captured under a smaller snip cap keeps its
+            # truncated prompt forever, and `added: 0` reads as "nothing new to get" rather than "the fidelity
+            # you asked for was silently discarded". So when the row exists, GROW it — never shrink. A longer
+            # capture is strictly more of the same call; a shorter one would destroy fidelity we already paid
+            # (in retention window, not tokens) to obtain.
+            _db().execute(
+                "UPDATE call_io SET prompt=?, output=? WHERE batch=? AND custom_id=? "
+                "AND (LENGTH(?) > LENGTH(COALESCE(prompt,'')) OR LENGTH(?) > LENGTH(COALESCE(output,'')))",
+                ((prompt or "")[:snip_chars()], (output or "")[:snip_chars()], batch, str(custom_id),
+                 (prompt or "")[:snip_chars()], (output or "")[:snip_chars()]))
             _db().commit()
         return cid
     except Exception:

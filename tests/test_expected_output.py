@@ -27,7 +27,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 import io, json, pathlib, contextlib
-from spendguard import expected_output as eo, pricing, config
+from spendguard import bulkgate, expected_output as eo, pricing, config
 
 failures = 0
 def check(label, cond, extra=""):
@@ -60,10 +60,18 @@ check("…and the context window itself is still readable for what it IS",
       pricing.max_input_tokens(FAKE) == 8_191)
 
 print("-- precedence: measured → caller's bound → published ceiling → UNKNOWN --")
+# These assert the INVARIANTS, not one rung. The rung that fires depends on how much this machine has
+# measured, and a test pinned to "the ceiling is the answer" is what kept a ceiling BEING the answer: a
+# published limit is a BOUND, an estimate is an EXPECTATION, and using the first as the second over-states a
+# real answer ~100x (opus/gpt-5.5 publish 128,000; their real answers here ran 400-2,100).
 n, b = eo.expect(REAL, max_tokens=8_000)
-check("a caller's cap is used as their own hard bound", (n, b) == (8_000, "caller-cap"), f"{n} {b}")
+check("a caller's cap is never exceeded — they cannot receive more than they allowed", n <= 8_000, f"{n} {b}")
+check("...and the basis names which rung answered", b in ("learned", "model-history", "caller-cap"), f"{b}")
 n, b = eo.expect(REAL)
-check("no cap → the published OUTPUT ceiling, not the context window", (n, b) == (64_000, "model-max"), f"{n} {b}")
+check("no cap → never the CONTEXT WINDOW (a different field entirely)", n != pricing.max_input_tokens(REAL), f"{n}")
+check("no cap → never ABOVE the published output ceiling", n <= pricing.max_output_tokens(REAL), f"{n} {b}")
+check("no cap → a MEASUREMENT is preferred to the ceiling when one exists",
+      (b == "model-max") == (not bulkgate.model_outputs(REAL).get("p90")), f"{b}")
 n, b = eo.expect(FAKE)
 check("no cap and no real ceiling → UNKNOWN", (n, b) == (0, "unknown"), f"{n} {b}")
 check("…and 0 is returned WITH the unknown basis, never as a silent zero", b == "unknown")
@@ -144,17 +152,23 @@ for name, call in CASES:
     with contextlib.redirect_stderr(io.StringIO()):
         capped_v, uncapped_v = call(8_000), call(None)
     check(f"{name}: an ABSENT cap does not mean zero output", uncapped_v > 0, str(uncapped_v))
-    check(f"{name}: …it falls back to the model's real ceiling", uncapped_v == 64_000, str(uncapped_v))
-    check(f"{name}: a caller's cap is still honoured", capped_v == 8_000, str(capped_v))
+    check(f"{name}: …and never exceeds the model's real ceiling", uncapped_v <= 64_000, str(uncapped_v))
+    check(f"{name}: …and is never the CONTEXT WINDOW read as an output limit",
+          uncapped_v != pricing.max_input_tokens(REAL), str(uncapped_v))
+    check(f"{name}: a caller's cap is never exceeded", capped_v <= 8_000, str(capped_v))
+    check(f"{name}: a capped request never estimates MORE than an uncapped one", capped_v <= uncapped_v,
+          f"{capped_v} > {uncapped_v}")
 
 with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as fh:
     fh.write(json.dumps({"body": {"model": REAL, "messages": MSG}}) + chr(10))
     _jsonl = fh.name
 with contextlib.redirect_stderr(io.StringIO()):
     se = submit.estimate_jsonl_cost(_jsonl, REAL)
-check("submit.estimate_jsonl_cost: an absent cap does not mean zero output", se["out_tok"] == 64_000,
+check("submit.estimate_jsonl_cost: an absent cap does not mean zero output", se["out_tok"] > 0,
       str(se["out_tok"]))
-check("…and it reports the basis it used", se.get("out_basis") == "model-max", str(se.get("out_basis")))
+check("…and never above the model's published output ceiling", se["out_tok"] <= 64_000, str(se["out_tok"]))
+check("…and it NAMES the rung it used, so a reader can tell a measurement from a ceiling",
+      se.get("out_basis") in eo.BASES, str(se.get("out_basis")))
 os.unlink(_jsonl)
 
 print("-- an UNKNOWN output side is stated where the cap decision is read --")
@@ -180,10 +194,13 @@ with contextlib.redirect_stderr(io.StringIO()):
     uncapped = gate._estimate_openai_jsonl(json.dumps({"body": body}).encode())
 check("an uncapped request no longer estimates its output at ZERO", uncapped["out_tok"] > 0,
       str(uncapped["out_tok"]))
-check("it uses the model's real ceiling", uncapped["out_tok"] == 64_000)
-check("a capped one still honours the caller's bound", capped["out_tok"] == 8_000)
-check("the estimate says WHICH basis it used", uncapped.get("out_basis") == "model-max"
-      and capped.get("out_basis") == "caller-cap")
+check("it stays within the model's real ceiling", uncapped["out_tok"] <= 64_000, str(uncapped["out_tok"]))
+check("and the capped request is not estimated higher than the uncapped one",
+      capped["out_tok"] <= uncapped["out_tok"], f"{capped['out_tok']} {uncapped['out_tok']}")
+check("a capped one never exceeds the caller's bound", capped["out_tok"] <= 8_000, str(capped["out_tok"]))
+check("the estimate says WHICH basis it used — on both the capped and uncapped paths",
+      uncapped.get("out_basis") in eo.BASES and capped.get("out_basis") in eo.BASES,
+      f"{uncapped.get('out_basis')} / {capped.get('out_basis')}")
 
 print(f"\n{'[FAIL]' if failures else 'OK'} test_expected_output: {failures} failure(s)")
 sys.exit(1 if failures else 0)

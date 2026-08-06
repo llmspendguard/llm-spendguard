@@ -28,6 +28,11 @@ estimate and trip caps on work costing pennies — the false-refusal failure, ar
 """
 import sys
 
+# Every rung expect() can answer from, measured-first. A reader must be able to tell a MEASUREMENT
+# ("learned", "model-history") from a CEILING ("caller-cap", "model-max") from an admission ("unknown"),
+# because a ceiling presented as an expectation over-states a real answer by ~100x.
+BASES = ("learned", "model-history", "caller-cap", "model-max", "unknown")
+
 MIN_OBS = 20                 # below this a class's distribution is noise, not a measurement
 _warned = set()
 
@@ -49,6 +54,19 @@ def expect(model, sig=None, max_tokens=None):
                 return (min(learned, int(max_tokens)) if max_tokens else learned), "learned"
         except Exception:
             pass
+    # RUNG 2 — this model's measured output across ALL its call-classes. Broader than the class, but still a
+    # MEASUREMENT. Below this the only remaining answers are ceilings (the caller's cap, the model's published
+    # limit), and a ceiling used as an expectation over-states by ~100x: opus and gpt-5.5 both publish 128,000
+    # output tokens, while their real answers here ran 400-2,100. That gap is what made estimate-first unusable
+    # for any class without history.
+    try:
+        from . import bulkgate
+        mo = bulkgate.model_outputs(model)
+        if mo and (mo.get("n") or 0) >= MIN_OBS and mo.get("p90"):
+            broad = int(mo["p90"])
+            return (min(broad, int(max_tokens)) if max_tokens else broad), "model-history"
+    except Exception:
+        pass
     if max_tokens:
         return int(max_tokens), "caller-cap"
     try:

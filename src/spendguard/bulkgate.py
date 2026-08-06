@@ -347,6 +347,26 @@ def maxtokens(sig, current_max=None):
             "recommend": max(int(p99 * 1.5), floor), "truncations": trunc, "warn": warn}
 
 
+def model_outputs(model):
+    """The output distribution for a MODEL across every call-class, or {} if too little is recorded.
+
+    The rung between "this exact class is measured" and "fall back to the model's published ceiling". Without
+    it, a call-class with no history is estimated at the model's output ceiling — 128,000 tokens for opus and
+    gpt-5.5 — which over-states a real answer by roughly two orders of magnitude. Measured: an 8-prompt replay
+    estimated at $282 against $12 of real spend, and a 26-request job warned at ~$99.86. Conservative in the
+    right direction for a BOUND, useless as an EXPECTATION, and estimate-first stops being usable when the two
+    are confused. Same censoring as maxtokens(): a truncated response measures its cap, not the work."""
+    with _lock:
+        rows = _calls_db().execute(
+            "SELECT out_tok,truncated FROM gate_calls WHERE model=? AND out_tok>0", (model,)).fetchall()
+    outs = [r[0] for r in rows if not r[1]]
+    if not outs:
+        return {}
+    return {"model": model, "n": len(outs), "p50": _pctl(outs, 0.50), "p90": _pctl(outs, 0.90),
+            "p99": _pctl(outs, 0.99), "n_classes": len({r[0] for r in _calls_db().execute(
+                "SELECT DISTINCT sig FROM gate_calls WHERE model=? AND out_tok>0", (model,)).fetchall()})}
+
+
 def truncated_recently(sig, window_sec=None):
     """Did this sig TRUNCATE in the recent window? A truncated sample is NOT a passing test — it must not authorize a
     bulk run, so the max_tokens bug is structurally caught by the SAME gate (test_job flips verified→False on it)."""

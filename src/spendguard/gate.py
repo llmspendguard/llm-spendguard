@@ -1060,12 +1060,29 @@ def _autotune(kw, model):
     maxtokens` measures becomes a default you can't forget. Modes (gate.autotune / SPENDGUARD_AUTOTUNE):
       off      nothing
       suggest  print the measured delta once per call-class (default — visibility, zero risk)
-      apply    SHRINK a wasteful cap to the measured p99×1.5 — logged, visible, per-call override
-               via kw autotune=False; NEVER raises a cap, NEVER adds one where the caller set none.
-    Self-healing vetoes: < AUTOTUNE_MIN_OBS observations, or ANY truncation history on the class — and
-    because every response's truncation is recorded per-sig (note_response), one truncated output after
-    a clamp permanently vetoes further clamps for that class. Honest accounting: no counterfactual
-    'saving' is recorded — the value is accurate estimates + runaway-output protection, not a claimed $.
+      apply    move a cap TO the measured p99×1.5 — in BOTH directions. Logged, visible, per-call
+               override via kw autotune=False. Never adds a cap where the caller set none.
+
+    THE TWO DIRECTIONS ARE NOT SYMMETRIC, AND ONLY ONE OF THEM IS ABOUT MONEY.
+      RAISE (cap too low)  — the model is cut off mid-answer. You paid for the input and a partial output
+        and got a body that does not parse: an incomplete JSON object reads as 'no findings', not as 'no
+        answer'. That call is 100% waste. Measured on this ledger: 978 calls ended at max_tokens and 187 at
+        length, $23.57 — 8.3% of realtime spend — with claude-sonnet-4-6 truncating 19% of the time and
+        kimi-k3 20%.
+      SHRINK (cap wastefully large) — saves NOTHING. Billing is on tokens GENERATED, so a cap that is never
+        reached costs zero. Its only value is accurate worst-case estimates and runaway protection.
+
+    This function used to do only the second one, and vetoed itself whenever the class had ANY truncation
+    history — that is, it stood down precisely on the classes that were losing money, and acted only where
+    there was none to save. A guard pointed one way, which is the same defect as a leak check that watches
+    a single direction.
+
+    Vetoes now differ by direction, because the evidence differs. A SHRINK still demands a clean class
+    (>= AUTOTUNE_MIN_OBS complete outputs, zero truncations) — one truncated output after a clamp
+    permanently vetoes further clamps. A RAISE treats truncations as evidence FOR acting, and needs only
+    enough observations to know the size; it never exceeds the model's published output ceiling.
+
+    Honest accounting: no counterfactual 'saving' is recorded in either direction.
     """
     mode = _autotune_mode()
     if mode not in ("suggest", "apply") or kw.pop("autotune", None) is False:
@@ -1081,21 +1098,60 @@ def _autotune(kw, model):
         pass
     sig = bulkgate.sig(model, template_id=intent or None)
     b = bulkgate.maxtokens(sig, cap)
-    if not b or (b.get("n") or 0) < AUTOTUNE_MIN_OBS or (b.get("truncations") or 0) > 0:
+    if not b:
         return
-    rec = int(b["recommend"])
-    if rec <= 0 or cap <= rec * AUTOTUNE_SLACK:
+    rec = int(b.get("recommend") or 0)
+    if rec <= 0:
+        return
+    complete, cut = int(b.get("n") or 0), int(b.get("n_truncated") or 0)
+    p95 = int(b.get("p95") or 0)
+
+    # RAISE — the money direction. Evidence is a cap at or below what the class demonstrably produces, or
+    # any truncation at all. Truncated samples are censored out of the percentiles (they measure the cap,
+    # not the work) but they are exactly the signal that the cap is too small, so they COUNT toward whether
+    # we know enough to act. A cap can never be raised past what the provider will emit.
+    if cut > 0 or (p95 and cap < p95):
+        if complete + cut < AUTOTUNE_MIN_OBS:
+            return
+        ceiling = None
+        try:
+            from . import pricing
+            ceiling = pricing.max_output_tokens(model)
+        except Exception:
+            pass
+        target = min(rec, int(ceiling)) if ceiling else rec
+        if target <= cap:
+            return
+        key = (sig, "raise")
+        if mode == "apply":
+            kw["max_tokens"] = target
+        if key not in _autotune_said:
+            _autotune_said.add(key)
+            verb = "AUTOTUNE" if mode == "apply" else "AUTOTUNE (suggest)"
+            print(f"[spend_gate] {verb} max_tokens {cap} → {target} for '{intent or model}' — this class "
+                  f"TRUNCATED {cut}/{complete + cut} time(s); a cut-off answer is 100% waste, you were "
+                  f"billed for the input and a body that does not parse"
+                  + ("" if mode == "apply" else " (set gate.autotune=apply to act)"), file=sys.stderr)
+        if mode == "apply":
+            _log({"kind": "autotune", "direction": "raise", "sig": sig, "model": model,
+                  "intent": intent or None, "from": cap, "to": target, "n_obs": complete + cut,
+                  "n_truncated": cut, "p99": b.get("p99"), "ceiling": ceiling})
+        return
+
+    # SHRINK — costs nothing either way (billing is on tokens generated). Keeps the conservative vetoes.
+    if complete < AUTOTUNE_MIN_OBS or cut > 0 or cap <= rec * AUTOTUNE_SLACK:
         return
     key = (sig, mode)
     if mode == "apply":
         kw["max_tokens"] = rec
-        _log({"kind": "autotune", "sig": sig, "model": model, "intent": intent or None,
-              "from": cap, "to": rec, "n_obs": b["n"], "p99": b.get("p99")})
+        _log({"kind": "autotune", "direction": "shrink", "sig": sig, "model": model,
+              "intent": intent or None, "from": cap, "to": rec, "n_obs": complete, "p99": b.get("p99")})
         if key not in _autotune_said:
             _autotune_said.add(key)
             print(f"[spend_gate] AUTOTUNE max_tokens {cap} → {rec} for '{intent or model}' "
-                  f"(measured p99 {b.get('p99')}, n={b['n']}, 0 truncations — kw autotune=False to opt out)",
-                  file=sys.stderr)
+                  f"(measured p99 {b.get('p99')}, n={complete}, 0 truncations — sharpens the worst-case "
+                  f"estimate; saves no money, since you are billed on tokens GENERATED — "
+                  f"kw autotune=False to opt out)", file=sys.stderr)
     elif key not in _autotune_said:
         _autotune_said.add(key)
         print(f"[spend_gate] autotune(suggest): max_tokens {cap} vs measured p99×1.5 = {rec} for "

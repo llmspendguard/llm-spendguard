@@ -263,6 +263,50 @@ def _unpriced_lines():
     return out
 
 
+def _truncated_lines():
+    """Money spent on answers that were CUT OFF. In the total, because it was really billed — but named,
+    because it bought nothing.
+
+    The third member of the family: quarantine holds money that cannot be real, unpriced holds real usage
+    whose price is unknown, and this holds real money that produced no usable result. A call that ends at
+    max_tokens billed for the whole input and a partial body, and an incomplete JSON object reads downstream
+    as 'no findings' rather than 'no answer' — so it is worse than a visible failure. It was invisible here
+    because it sits inside a legitimate-looking total."""
+    try:
+        from . import config
+        import sqlite3
+        c = sqlite3.connect(config.db_path())
+        since = _windows()[2]
+        rows = c.execute(
+            "SELECT model, COUNT(*), COALESCE(SUM(cost),0) FROM calls "
+            "WHERE finish IN ('max_tokens','length') AND ts >= ? GROUP BY model ORDER BY 3 DESC", (since,)
+        ).fetchall()
+        allrows = c.execute("SELECT COUNT(*) FROM calls WHERE ts >= ?", (since,)).fetchone()
+    except Exception:
+        return []
+    rows = [r for r in rows if r[1]]
+    if not rows:
+        return []
+    n = sum(r[1] for r in rows)
+    usd = sum(r[2] for r in rows)
+    # The share is over CALLS, not dollars, and deliberately so. calls.cost holds per-call figures that are
+    # still estimates until reconcile trues them down, so dividing it into the reconciled total above would
+    # mix two different quantities and print a confident percentage from the wrong denominator — measured:
+    # the raw call-log sum was $10,548 against $65.91 of real API spend, which rendered the waste as "0.0%".
+    # A count ratio needs no reconciliation to be exact.
+    ncalls = (allrows[0] or 0) if allrows else 0
+    share = f" — {n}/{ncalls} calls ({n / ncalls * 100:.1f}%)" if ncalls else ""
+    out = [f"⚠ IN THE TOTAL, BUT WASTED: {n} call(s) ended at max_tokens/length{share}, "
+           f"${usd:,.2f} on the call log (pre-reconcile). You were billed for the input and a body that "
+           f"does not parse:"]
+    for m, k, c_ in rows[:3]:
+        out.append(f"    {str(m):<28} {k:>4} cut off   ${c_:>8.2f}   "
+                   f"spendguard maxtokens --model {m}   (gate.autotune=apply raises the cap automatically)")
+    if len(rows) > 3:
+        out.append(f"    … {len(rows) - 3} more model(s) — `spendguard maxtokens` for the measured bound")
+    return out
+
+
 def _quarantine_lines():
     """Impossible estimates the gate caught, shown BELOW the total they are excluded from. Silence here would
     be its own dishonesty: the row exists, it was almost counted as money, and the reader should know both."""
@@ -690,6 +734,7 @@ def _two_axis_table(t: dict) -> list:
                    f"`spendguard config set subscription.plan_usd <amount>`")
     out += _basis_line()
     out += _unpriced_lines()
+    out += _truncated_lines()
     out += _quarantine_lines()
     return out
 

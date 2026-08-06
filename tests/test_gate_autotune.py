@@ -55,9 +55,16 @@ with calls.context(intent=INTENT):
     kw = dict(model=MODEL, max_tokens=rec)              # caller already at the bound
     spend_gate._autotune(kw, MODEL)
     ck("a sane cap is untouched (slack respected)", kw["max_tokens"] == rec)
-    kw = dict(model=MODEL, max_tokens=100)              # caller BELOW the bound
+    # A cap BELOW the measured p95 is the money-losing setting: the model gets cut off, you are billed for
+    # the input plus a body that does not parse. This used to assert "NEVER raises a cap", which made the
+    # rail one-directional — it acted only where there was nothing to save (shrinking costs nothing; billing
+    # is on tokens GENERATED) and stood down where money was actually burning. Measured before the change:
+    # 978 calls ended at max_tokens and 187 at length, $23.57, 8.3% of realtime spend.
+    kw = dict(model=MODEL, max_tokens=100)              # caller BELOW the measured p95
     spend_gate._autotune(kw, MODEL)
-    ck("NEVER raises a cap", kw["max_tokens"] == 100)
+    ck("a cap below the measured p95 is RAISED, not left to truncate", kw["max_tokens"] > 100)
+    ck("...and it is raised TO the measured recommendation, not to an invented number",
+       kw["max_tokens"] == rec)
     kw = dict(model=MODEL)                              # caller set no cap
     spend_gate._autotune(kw, MODEL)
     ck("NEVER adds a cap where the caller set none", "max_tokens" not in kw)

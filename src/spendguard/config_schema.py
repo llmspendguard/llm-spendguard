@@ -103,6 +103,13 @@ SETTINGS = [
               "the advisor chose ($0 billed; value on the est-value axis; the provider key env var is stripped "
               "from the child so a plan call can never silently become metered). Any lane failure cools that "
               "lane (advisor.pool_cooldown_s) and falls back to the API path."),
+    dict(section="callio", key="snip_chars", store="config.json:callio.snip_chars", env="SPENDGUARD_CALLIO_SNIP",
+         default=800, kind="int", secret=False,
+         desc="Chars kept per recovered prompt / output in the call_io corpus. 800 is sized for the caged JUDGE "
+              "(enough to rate an answer) and is the storage-bounded default. It is NOT enough to REPLAY a call: "
+              "a prompt cut at 800 chars is a different task, so a replay built on truncated rows measures "
+              "something other than the work it names. Raise it and re-run `spendguard callio fetch` for a "
+              "full-fidelity refill — the provider input/output files are downloadable, so it costs no tokens."),
     dict(section="advisor", key="pool_cooldown_s", store="config.json:advisor.pool_cooldown_s", env="SPENDGUARD_POOL_COOLDOWN_S",
          default=900, kind="float", secret=False,
          desc="After a subscription lane fails (plan window exhausted, CLI missing), skip that lane for this many "
