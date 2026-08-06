@@ -41,7 +41,7 @@ def estimate_jsonl_cost(jsonl_path, model, batch=True, avg_out_tokens=None, prov
 
     Image blocks are counted by their PIXELS via content_tokens, not by the length of their base64 — measuring
     the payload over-stated real vision batches ~25× and refused every one of them at the cap."""
-    from . import content_tokens
+    from . import content_tokens, expected_output
     n = 0
     in_tok = 0
     out_ceiling = 0
@@ -66,12 +66,19 @@ def estimate_jsonl_cost(jsonl_path, model, batch=True, avg_out_tokens=None, prov
             in_tok += t
             img += d["images"] + d["pdf_pages"]
             media = media or bool(d["images"] or d["pdf_pages"])
-        out_ceiling += body.get("max_tokens", body.get("max_completion_tokens", 0) or 0)
+        # NOT the caller's cap: max_tokens is a blast-radius bound, not a statement about expected output,
+        # and an omitted one used to estimate output at ZERO. See expected_output.py.
+        _o, out_basis = expected_output.expect(body.get("model") or model,
+                                               max_tokens=(body.get("max_tokens")
+                                                           or body.get("max_completion_tokens")))
+        if out_basis == "unknown":
+            expected_output.warn_unknown(body.get("model") or model)
+        out_ceiling += _o
     out_tok = int(avg_out_tokens * n) if measured else out_ceiling
     cost_fn = batch_cost if batch else realtime_cost
     cost = cost_fn(model, in_tok, out_tok)
     return dict(requests=n, in_tok=in_tok, out_tok=out_tok, cost=cost, media=media, media_units=img,
-                out_basis=("measured avg" if measured else "max_tokens ceiling (conservative)"),
+                out_basis=("measured avg" if measured else out_basis),
                 token_basis=("char/4 heuristic — install tiktoken for accuracy" if used_heuristic else "tiktoken"),
                 model=normalize(model), mode=("batch" if batch else "realtime"))
 

@@ -214,6 +214,27 @@ def _load_context():
 CONTEXT_LIMITS = _load_context()
 
 
+def max_output_tokens(model: str):
+    """The model's published output ceiling, or None. Used as the LAST-RESORT expected-output figure when a
+    caller sets no max_tokens and the class has no measured history — and, for providers that REQUIRE the
+    field (Anthropic), as the honest 'deliberately huge' value instead of an invented constant."""
+    if not model:
+        return None
+    for key in (model, normalize(model)):
+        e = CONTEXT_LIMITS.get(key) or {}
+        v, ctx = e.get("max_output_tokens"), e.get("max_input_tokens")
+        if not v:
+            continue
+        # 961 of 2,572 upstream entries carry output == input: that is the CONTEXT WINDOW copied in where no
+        # output ceiling is published, not an output limit. Returning it would assume a 1M-token response and
+        # inflate every estimate — a field meaning one thing read as another, the same root as base64-as-tokens.
+        # Equal values are therefore treated as UNPUBLISHED, not as a limit.
+        if ctx and int(v) == int(ctx):
+            return None
+        return int(v)
+    return None
+
+
 def max_input_tokens(model: str):
     """The model's published input-context limit, or None if we don't know it. A request larger than this is
     REJECTED by the provider, so an estimate implying one is impossible — that is what makes this a rail and

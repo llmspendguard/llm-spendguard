@@ -2,6 +2,37 @@
 
 All notable changes to **llm-spendguard**. Format loosely follows Keep a Changelog; dates are UTC.
 
+## [0.9.0] — 2026-08-04
+
+### Fixed — the estimator no longer reads `max_tokens` as "expected output"
+- `max_tokens` had three readers, each meaning something different by it: the API a hard ceiling, a pipeline a
+  truncation risk, **the estimator an expected cost**. That last one was always wrong — you are billed on tokens
+  GENERATED, never on the cap — but it stayed invisible while everyone set a cap. Remove the cap (the correct fix
+  for a different problem) and the estimate collapsed: `out_tok 0`, so an 800-page job with a true cost of
+  **$28.16 estimated at $4.16**. Under-estimating is the sign that walks past a cap unchallenged.
+- **`expected_output.py`** decides it from measurement instead: the class's learned **p90** of COMPLETE outputs →
+  the caller's `max_tokens` as their own hard bound → the model's published `max_output_tokens` → **UNKNOWN, said
+  out loud, never 0**. Wired through all six estimator paths (realtime chat · Responses · Anthropic messages ·
+  both batch estimators · the submit gate), each proved by what it RETURNS rather than by what its source says.
+- **p90, not p99×1.5.** The cap-sizing recommendation is a worst case whose job is to size a termination bound;
+  using it as the expected cost over-states ~4× (measured on a real class: p90 2,419 vs recommend 9,422). Two
+  numbers, two jobs — the same separation, one level down.
+- **A published ceiling equal to the context window is rejected as unpublished.** 961 of 2,572 upstream entries
+  copy `max_input_tokens` into `max_output_tokens`; returning that would assume a 1M-token response and inflate
+  every estimate. A field meaning one thing read as another — the same root as base64-as-tokens.
+- The estimate line now states the output basis where a cap decision is actually read: `⚠ output: UNKNOWN … this
+  is a FLOOR`, or the ceiling named as a worst case.
+
+### Fixed — truncation measurement was a ratchet pointing the wrong way
+- `maxtokens()` computed percentiles over ALL outputs including truncated ones. A truncated output was cut AT its
+  cap, so it measures the cap, not the work: the more a class truncated, the lower its measured p99 went, and the
+  lower the advice went with it. Percentiles now come from COMPLETE outputs only, and the recommendation is
+  floored above any cap that already truncated. On a real class this moved the advice from chasing itself
+  downward to **9,422**.
+- The truncation warning fired **once per truncated call** — 327 identical lines on one real class, which is a
+  warning nobody reads. It now announces once per class and again at decade boundaries, carrying the **rate**
+  (the actionable number) and the fix.
+
 ## [0.8.9] — 2026-08-04
 
 ### Fixed — Moonshot batch was under-priced by 17%

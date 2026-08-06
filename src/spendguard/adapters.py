@@ -105,7 +105,12 @@ def call(model, prompt, max_tokens=512, system=None, reasoning=None):
     prov = provider_for(model)
     raw = model.split(":", 1)[1] if ":" in model else model
     spec = PROVIDERS[prov]
-    base = {"provider": prov, "model": raw, "text": None, "in_tok": 0, "out_tok": 0, "latency": 0.0, "cost": None}
+    # `finish_reason` is carried so callers can tell a COMPLETE answer from a TRUNCATED one.
+    # Without it a caller inspecting r["text"] cannot distinguish "the model said this" from
+    # "the model was cut off mid-sentence", and a truncated body that parses to nothing reads
+    # as a member with no findings. It is a declared field on every provider's response, so
+    # surfacing it is parsing, not inference.
+    base = {"provider": prov, "model": raw, "text": None, "in_tok": 0, "out_tok": 0, "latency": 0.0, "cost": None, "finish_reason": None}
     # SUBSCRIPTION LANES (advisor.executor = claude-code | codex | pool): spendguard's own meta prompts
     # ride the matching flat-fee plan — $0 on the billed axis (recorded kind='subscription'); plan VALUE
     # is counted by the matching est-value pipeline (claude-code / codex session logs). Needs NO API key.

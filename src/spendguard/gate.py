@@ -125,6 +125,22 @@ def _warn_once(msg):
         print(msg, file=sys.stderr)
 
 
+def _expected_out(model, kw=None, body=None, sig=None):
+    """Expected OUTPUT tokens for one request — measured, never assumed to be the caller's cap (and NEVER 0
+    when the caller sets none). See expected_output.py for the precedence and why it exists."""
+    from . import expected_output
+    cap = None
+    src = kw if kw is not None else (body or {})
+    for k in ("max_tokens", "max_completion_tokens", "max_output_tokens"):
+        if src.get(k):
+            cap = src[k]
+            break
+    n, basis = expected_output.expect(model, sig=sig, max_tokens=cap)
+    if basis == "unknown" and model:
+        expected_output.warn_unknown(model)
+    return n, basis
+
+
 def _implausible_estimate(model, in_tok, requests):
     """(True, facts) when this estimate is PHYSICALLY IMPOSSIBLE, not merely large; (False, {}) otherwise.
 
@@ -192,9 +208,11 @@ def _estimate_openai_jsonl(data: bytes):
                     in_tok += len(item)              # pre-tokenized int array
                 elif isinstance(item, int):
                     in_tok += 1
-        out += body.get("max_tokens", body.get("max_completion_tokens", 0)) or 0
+        _o, out_basis = _expected_out(body.get("model") or model, body=body)
+        out += _o
     cost = pricing.batch_cost(model, in_tok, out) if model else 0.0
     return dict(provider="openai", model=model, requests=n, in_tok=in_tok, out_tok=out, cost=cost,
+                out_basis=out_basis,
                 implausible=_warn_implausible(model, in_tok, n))
 
 
@@ -214,9 +232,11 @@ def _estimate_anthropic_requests(requests):
         for m in (g("messages") or []):
             c = m.get("content") if isinstance(m, dict) else getattr(m, "content", "")
             in_tok += _content_tokens(c, provider="anthropic", model=model)
-        out += (g("max_tokens") or 0)
+        _o, out_basis = _expected_out(g("model") or model, body={"max_tokens": g("max_tokens")})
+        out += _o
     cost = pricing.batch_cost(model, in_tok, out) if model else 0.0
     return dict(provider="anthropic", model=model, requests=n, in_tok=in_tok, out_tok=out, cost=cost,
+                out_basis=out_basis,
                 implausible=_warn_implausible(model, in_tok, n))
 
 
@@ -274,12 +294,20 @@ def _calibrate_est(est):
 
 
 def _est_line(est):
-    """The human-facing cost phrase: the LIKELY cost first (learned), the ceiling named as a ceiling."""
+    """The human-facing cost phrase: the LIKELY cost first (learned), the ceiling named as a ceiling, and the
+    OUTPUT BASIS said out loud when it is not measured — an estimate whose output side is unknown must not
+    resolve quietly to a number and slip past a cap (absence is unknown, never zero)."""
+    ob = est.get("out_basis")
+    tail = ""
+    if ob == "unknown":
+        tail = "  ⚠ output: UNKNOWN (no cap, no measured history, no published ceiling) — this is a FLOOR"
+    elif ob == "model-max":
+        tail = "  [output: the model's published ceiling — a true worst case; one measured run replaces it]"
     c = est.get("_cal")
     if not c:
-        return f"~${est['cost']:.2f} (ceiling: every request maxing out; no learned history yet)"
+        return f"~${est['cost']:.2f} (ceiling: every request maxing out; no learned history yet){tail}"
     return (f"~${c['cost_p50']:.2f} likely · ${c['cost_p90']:.2f} p90 "
-            f"(learned from {c['n_obs']:,} obs @{c['basis']}) · ceiling ${est['cost']:.2f}")
+            f"(learned from {c['n_obs']:,} obs @{c['basis']}) · ceiling ${est['cost']:.2f}{tail}")
 
 
 def _decide(est):
@@ -657,7 +685,7 @@ def _est_oai_chat(kw):
     return (_m,
             sum(_content_tokens(m.get("content", ""), provider="openai", model=_m)
                 for m in (kw.get("messages") or []) if isinstance(m, dict)),
-            kw.get("max_tokens") or kw.get("max_completion_tokens") or 0)
+            _expected_out(_m, kw=kw)[0])
 
 
 def _act_oai_chat(result):
@@ -680,7 +708,7 @@ def _est_oai_resp(kw):
         for m in inp:
             n += _content_tokens(m.get("content", m.get("text", "")) if isinstance(m, dict) else str(m),
                                  provider="openai", model=_m)
-    return kw.get("model"), n, (kw.get("max_output_tokens") or 0)
+    return _m, n, _expected_out(_m, kw=kw)[0]
 
 
 def _act_oai_resp(result):
@@ -717,7 +745,7 @@ def _est_anth_msg(kw):
     for m in (kw.get("messages") or []):
         c = m.get("content", "") if isinstance(m, dict) else getattr(m, "content", "")
         n += _content_tokens(c, provider="anthropic", model=_m)
-    return kw.get("model"), n, (kw.get("max_tokens") or 0)
+    return _m, n, _expected_out(_m, kw=kw)[0]
 
 
 def _act_anth_msg(result):

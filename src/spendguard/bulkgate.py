@@ -266,10 +266,39 @@ def note_response(sig, model, out_tok, max_tokens=None, finish_reason=None):
     except Exception:
         pass
     if trunc:
-        import sys
-        print("[bulkgate] TRUNCATED %s (%s): output hit max_tokens=%s (out=%s) → incomplete/corrupt result. "
-              "Size it from data: `spendguard maxtokens %s`." % (sig, model, max_tokens, out_tok, sig), file=sys.stderr)
+        _warn_truncated(sig, model, out_tok, max_tokens)
     return trunc
+
+
+_trunc_warned = {}          # sig -> count already seen this process
+_TRUNC_ANNOUNCE = (1, 10, 100, 1000)   # first, then at decade boundaries: enough to show it is not stopping
+
+
+def _warn_truncated(sig, model, out_tok, max_tokens):
+    """One line per class, then only at decade boundaries — carrying the RATE, which is the actionable number.
+    It used to print once per truncated call: a class truncating 327 times emitted 327 identical lines, which is
+    a warning nobody reads. Every other loud path in spendguard dedups; this one did not."""
+    import sys
+    n = _trunc_warned.get(sig, 0) + 1
+    _trunc_warned[sig] = n
+    if n not in _TRUNC_ANNOUNCE:
+        return
+    rate = ""
+    rec = None
+    try:
+        b = maxtokens(sig)
+        if b.get("trunc_rate"):
+            rate = " — %.1f%% of this class (%d/%d)" % (b["trunc_rate"] * 100, b["n_truncated"],
+                                                        b["n"] + b["n_truncated"])
+        rec = b.get("recommend")
+    except Exception:
+        pass
+    fix = ("raise max_tokens to >= %d, or omit it entirely (a cap never controlled cost — you are billed on "
+           "tokens GENERATED — and a low one destroys the call)" % rec) if rec else \
+          "raise max_tokens, or omit it entirely (a cap never controlled cost, and a low one destroys the call)"
+    print("[bulkgate] TRUNCATED %s (%s): output hit max_tokens=%s%s. The result is incomplete, and an incomplete "
+          "JSON body reads as 'no findings' rather than 'no answer'. Fix: %s"
+          % (sig, model, max_tokens, rate, fix), file=sys.stderr)
 
 
 def _pctl(vals, p):
@@ -287,19 +316,35 @@ def maxtokens(sig, current_max=None):
     (TRUNCATION RISK) or >> p99 (cost-estimate inflation → false cap trips). For packed calls, feed per-ITEM out_tok."""
     with _lock:
         rows = _calls_db().execute("SELECT out_tok,truncated FROM gate_calls WHERE sig=? AND out_tok>0", (sig,)).fetchall()
-    outs = [r[0] for r in rows]
-    trunc = sum(r[1] for r in rows)
+    # CENSORING: a truncated response was cut AT its cap, so its out_tok measures the CAP, not the work.
+    # Including those dragged every percentile down — and the recommendation with it, so the more a class
+    # truncated the lower the advice went. A ratchet pointing the wrong way. Percentiles come from COMPLETE
+    # outputs only; truncated ones are counted, and set a FLOOR (the work was at least that big).
+    outs = [r[0] for r in rows if not r[1]]
+    trunc_outs = [r[0] for r in rows if r[1]]
+    trunc = sum(1 for r in rows if r[1])
     if not outs:
-        return {"sig": sig, "n": 0, "recommend": None, "truncations": trunc, "warn": None}
-    p95, p99 = _pctl(outs, 0.95), _pctl(outs, 0.99)
+        return {"sig": sig, "n": 0, "n_truncated": trunc, "p90": None,
+                "trunc_rate": (trunc / float(len(rows)) if rows else 0.0),
+                "recommend": (int(max(trunc_outs) * 2) if trunc_outs else None), "truncations": trunc,
+                "warn": ("every observed output was TRUNCATED — the cap is too low to measure the real size"
+                         if trunc_outs else None)}
+    p90, p95, p99 = _pctl(outs, 0.90), _pctl(outs, 0.95), _pctl(outs, 0.99)
     warn = None
     if current_max is not None:
         if current_max < p95:
             warn = "max_tokens %d < p95 %d — TRUNCATION RISK" % (current_max, p95)
         elif current_max > p99 * 3:
             warn = "max_tokens %d >> p99 %d — inflates worst-case estimate (false cap trips)" % (current_max, p99)
-    return {"sig": sig, "n": len(outs), "p50": _pctl(outs, 0.50), "p95": p95, "p99": p99, "max": max(outs),
-            "recommend": int(p99 * 1.5), "truncations": trunc, "warn": warn}
+    # The recommendation can never sit below a cap that ALREADY truncated: that work was demonstrably bigger.
+    floor = int(max(trunc_outs) * 2) if trunc_outs else 0
+    rate = trunc / float(len(rows)) if rows else 0.0
+    if rate > 0 and not warn:
+        warn = "%.1f%% of calls TRUNCATED (%d/%d) — raise max_tokens to >= %d, or omit it entirely" % (
+            rate * 100, trunc, len(rows), max(int(p99 * 1.5), floor))
+    return {"sig": sig, "n": len(outs), "n_truncated": trunc, "trunc_rate": rate,
+            "p50": _pctl(outs, 0.50), "p90": p90, "p95": p95, "p99": p99, "max": max(outs),
+            "recommend": max(int(p99 * 1.5), floor), "truncations": trunc, "warn": warn}
 
 
 def truncated_recently(sig, window_sec=None):
