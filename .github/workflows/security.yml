@@ -34,13 +34,24 @@ jobs:
       # base:"" + head:HEAD force a FULL history+tree scan; without them the action's default base resolves to HEAD,
       # so base==head → it errors "BASE and HEAD commits are the same" and exits 1 WITHOUT scanning (red, but never
       # actually scanning). The action also appends --fail itself, so don't repeat it in extra_args.
+      # TWO pins are needed, and only having the first is what broke this on 2026-08-06. The action is
+      # SHA-pinned, but the action PULLS ghcr.io/trufflesecurity/trufflehog:latest — so the SCANNER floated
+      # from 3.95.6 to 3.96.0 on its own and the job went red with no repo change. `version` pins the image so
+      # the scan is actually reproducible; a SHA that pins only the wrapper is false confidence.
+      #
+      # --exclude-detectors=lob: 3.96.0 reported 4 "verified" Lob keys. All were pytest FUNCTION NAMES —
+      # Lob's key format is `test_` + 35 chars, and `test_rollup_no_filter_sends_all_projects` is exactly
+      # test_ + 35. We have no Lob dependency anywhere. Note this also means --only-verified is weaker than it
+      # reads: the tool claimed it VERIFIED a function name against Lob's API, so "verified" is not proof of a
+      # live credential. Re-enable this detector the day we actually integrate Lob.
       - name: TruffleHog (verified secrets only)
         uses: trufflesecurity/trufflehog@30d5bb91af1a771378349dbbb0c82129392acf70  # v3.95.6 — 3rd-party action, SHA-pinned
         with:
           path: ./
           base: ""
           head: HEAD
-          extra_args: --only-verified
+          version: 3.95.6                      # pin the SCANNER too, not just the wrapper
+          extra_args: --only-verified --exclude-detectors=lob
 
   dep-audit:
     runs-on: ubuntu-latest
