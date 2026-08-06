@@ -169,7 +169,14 @@ def call(model, prompt, max_tokens=512, system=None, reasoning=None, schema=None
                 kw["system"] = system
             if schema is not None:
                 kw.update(json_schema_request("anthropic", schema))
-            m = c.messages.create(**kw)
+            # STREAM, always. The SDK REFUSES a non-streaming request whose max_tokens implies a run over ten
+            # minutes ("Streaming is required for operations that may take longer than 10 minutes"), and the
+            # threshold is the SDK's, not ours — guessing it would be a magic number that silently rots when
+            # they change it. Streaming has no such bound, returns the identical final message and usage, and
+            # measured 20/20 with no latency penalty. So the cap can be sized from measured need, which is the
+            # whole point of a termination bound, without the transport vetoing it.
+            with c.messages.stream(**kw) as s:
+                m = s.get_final_message()
             # With a forced tool the answer arrives as tool_use.input, not as text — reading only text blocks
             # would return "" and look exactly like the empty-response failure.
             tu = [b for b in m.content if getattr(b, "type", None) == "tool_use"]
