@@ -7,6 +7,7 @@ already meters + budgets them.
 """
 import time
 import re
+import json
 from . import config, pricing
 
 # name -> {base_url, key_env, prefixes, kind}
@@ -98,7 +99,30 @@ def _lane_for(prov):
         return None
 
 
-def call(model, prompt, max_tokens=512, system=None, reasoning=None):
+def json_schema_request(kind, schema, name="result"):
+    """Per-vendor kwargs that make the VENDOR enforce the shape, instead of a prompt asking politely.
+
+      anthropic → a forced tool call: the model must emit tool_use conforming to input_schema
+      openai    → response_format json_schema with strict=True
+      others (OpenAI-compatible: GLM, Kimi, DeepSeek…) → response_format json_object, which guarantees
+                  parseable JSON but NOT the shape — so the local validator still has to run. Claiming
+                  otherwise would be assuming a capability we have not measured on those endpoints.
+
+    Enforcement guarantees the KEY exists. It does NOT guarantee the value means anything — `line_start: 0`
+    satisfies every strict schema ever written. That is what `nonempty` in output_contract is for."""
+    if not isinstance(schema, dict):
+        return {}
+    if kind == "anthropic":
+        return {"tools": [{"name": name, "description": "Return the result in this exact shape.",
+                           "input_schema": schema}],
+                "tool_choice": {"type": "tool", "name": name}}
+    if kind == "openai":
+        return {"response_format": {"type": "json_schema",
+                                    "json_schema": {"name": name, "schema": schema, "strict": True}}}
+    return {"response_format": {"type": "json_object"}}
+
+
+def call(model, prompt, max_tokens=512, system=None, reasoning=None, schema=None):
     """Run one prompt against one model. Returns a result dict (never raises). `reasoning` (minimal|low|medium|high)
     sets reasoning effort for gpt-5/o-series reasoning models; defaults to 'minimal' for them (default-medium reasoning
     eats the token budget → empty output, and costs more — wrong for simple classify/extract calls)."""
@@ -143,14 +167,22 @@ def call(model, prompt, max_tokens=512, system=None, reasoning=None):
             kw = {"model": raw, "max_tokens": max_tokens, "messages": [{"role": "user", "content": prompt}]}
             if system:
                 kw["system"] = system
+            if schema is not None:
+                kw.update(json_schema_request("anthropic", schema))
             m = c.messages.create(**kw)
-            text = "".join(b.text for b in m.content if getattr(b, "type", None) == "text")
+            # With a forced tool the answer arrives as tool_use.input, not as text — reading only text blocks
+            # would return "" and look exactly like the empty-response failure.
+            tu = [b for b in m.content if getattr(b, "type", None) == "tool_use"]
+            text = (json.dumps(tu[0].input) if tu
+                    else "".join(b.text for b in m.content if getattr(b, "type", None) == "text"))
             in_tok, out_tok = m.usage.input_tokens, m.usage.output_tokens
         else:
             from openai import OpenAI
             c = OpenAI(api_key=key, base_url=spec["base_url"])
             msgs = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": prompt}]
             okw = {"model": raw, "messages": msgs}
+            if schema is not None:
+                okw.update(json_schema_request("openai" if prov == "openai" else "compat", schema))
             # gpt-5 / o-series are REASONING models: at default (medium) reasoning the token budget is spent on hidden
             # reasoning and the completion comes back EMPTY (+ costs more). For our simple classify/extract calls use
             # 'minimal' (the caller may override). Non-reasoning models reject the param → dropped on the retry below.
@@ -159,7 +191,16 @@ def call(model, prompt, max_tokens=512, system=None, reasoning=None):
             try:                                              # gpt-5+ require max_completion_tokens; older models take max_tokens
                 r = c.chat.completions.create(max_completion_tokens=max_tokens, **okw)
             except Exception as e:
-                if "reasoning_effort" in str(e):              # model doesn't accept it → drop + retry
+                if "response_format" in str(e) or "json_schema" in str(e):
+                    # The endpoint refuses this enforcement mode. Fall back to no enforcement and let the
+                    # LOCAL validator catch a bad shape — a schema silently dropped is how "required" fields
+                    # come back as zeros with nothing objecting.
+                    import sys as _s
+                    print(f"[spendguard] {prov}/{raw} rejected response_format ({str(e)[:70]}) — sending "
+                          f"unenforced; output_contract still validates.", file=_s.stderr)
+                    okw.pop("response_format", None)
+                    r = c.chat.completions.create(max_completion_tokens=max_tokens, **okw)
+                elif "reasoning_effort" in str(e):            # model doesn't accept it → drop + retry
                     okw.pop("reasoning_effort", None)
                     r = c.chat.completions.create(max_completion_tokens=max_tokens, **okw)
                 elif "max_completion_tokens" in str(e) or "max_tokens" in str(e):

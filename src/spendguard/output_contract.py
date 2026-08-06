@@ -114,6 +114,16 @@ _JSON_TYPES = {"object": dict, "array": (list, tuple), "string": str, "number": 
                "integer": int, "boolean": bool, "null": type(None)}
 
 
+_EMPTY_VALUES = (0, 0.0, "", [], {}, None, False)
+
+
+def _is_empty(v):
+    """A required field present as 0 / "" / [] / null is ABSENCE wearing a value. Strict schema enforcement
+    guarantees the KEY exists — never that it means anything — which is how a reviewer returned
+    `line_start: 0, line_end: 0` for every finding and passed every check. Same invariant as unpriced ≠ $0."""
+    return any(v is e or v == e for e in _EMPTY_VALUES if type(v) is type(e) or v is e)
+
+
 def _check_schema(obj, schema, path="$"):
     """JSON-Schema-lite: type / required / properties / items. Deliberately small — a full validator is a
     dependency, and this exists to answer 'will my parser cope', not to be a spec-complete implementation.
@@ -130,6 +140,12 @@ def _check_schema(obj, schema, path="$"):
     for k in schema.get("required") or ():
         if not isinstance(obj, dict) or k not in obj:
             raise ValueError(f"{path}: missing required key {k!r}")
+    # `nonempty` is the answer to required-and-present-but-meaningless. Declared per field, checked mechanically
+    # (a value IS or is not 0/""/[]), never a judgement about whether the content is any good.
+    for k in schema.get("nonempty") or ():
+        if isinstance(obj, dict) and _is_empty(obj.get(k)):
+            raise ValueError(f"{path}.{k}: present but EMPTY ({obj.get(k)!r}) — a required field returned as "
+                             f"0/\"\"/[] is absence, not an answer")
     for k, sub in (schema.get("properties") or {}).items():
         if isinstance(obj, dict) and k in obj:
             _check_schema(obj[k], sub, f"{path}.{k}")
