@@ -112,8 +112,28 @@ print("-- no fabricated rates ship in prices.json (the stub that under-priced GL
 import json
 pj = json.load(open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                  "src", "spendguard", "prices.json")))
-zai = ((pj.get("providers") or {}).get("zai") or {}).get("models") or {}
-check("zai carries no hand-typed rates", zai == {})
+# The rule this guard exists for is "never ship an INVENTED rate" — it was written as "zai must be empty",
+# which cannot tell an invented number from a cited one. Now that two models are genuinely absent from the
+# synced table (glm-5.2, kimi-k3) and carry the vendor's own pricing URL, the guard tests the INTENT instead:
+# every curated entry must cite a source. That is STRICTER than emptiness — an uncited entry now fails
+# wherever it appears, not just under zai.
+# Provenance lives at ONE of two levels, and the guard must know which: the legacy openai/anthropic tables
+# cite a verified URL + date in _meta ("<prov>_source"), while a provider with no file-level source must cite
+# per entry. Requiring per-entry everywhere false-flagged 11 Anthropic rows that ARE documented; requiring it
+# nowhere is how a fabricated stub shipped. So: an entry is traceable if IT cites a source, or its provider does.
+_meta = pj.get("_meta") or {}
+uncited = []
+for _prov, _blk in (pj.get("providers") or {}).items():
+    _prov_cited = bool(str(_meta.get(f"{_prov}_source") or "").strip())
+    for _m, _r in (_blk.get("models") or {}).items():
+        if isinstance(_r, dict) and not _prov_cited and not str(_r.get("_source") or "").strip():
+            uncited.append(f"{_prov}/{_m}")
+if uncited:
+    print(f"      uncited entries: {uncited[:6]}")
+check("every shipped curated rate cites its source (no fabricated stubs, anywhere)", not uncited)
+_zai = ((pj.get("providers") or {}).get("zai") or {}).get("models") or {}
+check("the zai entries that DO ship are the sync-absent ones, each with a URL",
+      all("http" in (r.get("_source") or "") for r in _zai.values()))
 blob = json.dumps(pj).lower()
 check("no 'unverified stub' anywhere in the shipped price table", "unverified stub" not in blob)
 check("an unknown-vendor id is loud, not guessed", raises(lambda: pricing.price("totally-unknown-xyz")))

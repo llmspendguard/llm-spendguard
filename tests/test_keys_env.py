@@ -71,11 +71,16 @@ ck("adapters routes a glm- model to the zai provider", adapters.provider_for("gl
 ck("adapters routes a kimi model to the moonshot provider", adapters.provider_for("kimi-k2.5") == "moonshot")
 ck("zai provider uses ZAI_API_KEY", adapters.PROVIDERS["zai"]["key_env"] == "ZAI_API_KEY")
 ck("moonshot provider uses MOONSHOT_API_KEY", adapters.PROVIDERS["moonshot"]["key_env"] == "MOONSHOT_API_KEY")
+# glm-5.2 WAS the unpriced example here. It now ships a rate cited to z.ai's own pricing page, so the guard
+# moved to an id that genuinely has no published rate anywhere — the property being protected is "we never
+# invent one", not "this particular model stays unpriced forever".
 try:
-    pricing.price("glm-5.2")
+    pricing.price("glm-99-imaginary")
     ck("an id with NO published rate fails loud (never a fabricated stub)", False)
 except KeyError:
     ck("an id with NO published rate fails loud (never a fabricated stub)", True)
+_p = pricing.price("glm-5.2")
+ck("glm-5.2 is priced from a CITED source, not a guess", "http" in (_p.get("_source") or ""))
 
 config.CONFIG_JSON.write_text('{"gate": {"enforce": "block"}}')
 config._cfg._cache = None

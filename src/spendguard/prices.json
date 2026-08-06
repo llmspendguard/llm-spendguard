@@ -2,6 +2,7 @@
   "_meta": {
     "anthropic_source": "https://platform.claude.com/docs/en/docs/about-claude/pricing (verified 2026-07-14; claude-sonnet-5 on introductory $2/$10 through 2026-08-31, then $3/$15)",
     "note": "USD per 1M tokens. batch = 50% of realtime. Edit here (or ~/.spendguard/prices.json) \u2014 do not hardcode prices in code.",
+    "openai_source": "https://developers.openai.com/api/docs/pricing (verified 2026-06-13) \u2014 the same provenance pricing.PRICING_SOURCE carries; recorded here so the shipped table is self-describing",
     "qwen_source": "https://www.eesel.ai/blog/qwen-pricing (Alibaba Model Studio list prices, 2026-06-14)",
     "source": "https://developers.openai.com/api/docs/pricing",
     "stale_after_days": 45,
