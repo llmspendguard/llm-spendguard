@@ -177,11 +177,31 @@ class _AntMsg:
     usage = _AntUsage()
 
 
+class _FakeStream:
+    """The SDK's streaming context manager. The adapter MUST resolve it to the final message before reading
+    usage — a stream object has no .usage, and reading it would make token counts silently zero."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def get_final_message(self):
+        return _AntMsg()
+
+
 class _FakeMessages:
-    def create(self, *a, **k):
+    def stream(self, *a, **k):
         assert k["model"] == "claude-opus-4-8"
         assert k["messages"][0]["content"] == "hi"
-        return _AntMsg()
+        return _FakeStream()
+
+    def create(self, *a, **k):
+        # The adapter must NOT come here. Non-streaming is vetoed by the real SDK once max_tokens implies a
+        # run over ten minutes, and a cap sized from measured need exceeds that — so every correctly-capped
+        # call died with transport_error. A double that silently accepted create() would let that back in.
+        raise AssertionError("adapters.call used messages.create() — the anthropic path must stream")
 
 
 class _FakeAnthropic:

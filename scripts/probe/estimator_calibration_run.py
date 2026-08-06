@@ -23,9 +23,20 @@ THE THREE EXECUTION PATHS, and which one calibrates what
                   the anthropic lane and 13,838 on the openai lane. Not wrong; a different instrument. So
                   --route defaults to `api` HERE and nowhere else: advisor.executor is untouched.
 
+WHAT THIS MEASURES, AND WHAT IT DOES NOT
+  VALID: output VARIANCE (identical prompt, N calls), cross-model output size for one identical prompt, and
+  the estimator's machinery end-to-end (basis precedence, caps, budget reservation, the three paths).
+  NOT VALID: grading predicted-vs-actual for a class, because prompt_of() replays the class's SIZE with a
+  generic task. Output size follows the WORK, not the byte count: the 66-token `ground_shots` shape has a
+  measured p50 output of 71 tokens for its real prompt and produced 400-2,300 for the synthetic one. That
+  gap is the substitution, not estimator error, and reporting it as error would be a fabricated finding.
+  To calibrate against real work, replay real prompts from the call_io corpus. That is the honest next step.
+
 SAFETY
   --budget is a HARD stop, checked before every call: the run ends rather than exceeding it.
   --estimate is a separate zero-spend pass. Results are appended as they happen, so a partial run is data.
+  Observations are recorded under a CALIB_NS-prefixed sig so a synthetic prompt can never become the
+  learned distribution for a real call-class.
 """
 import argparse, concurrent.futures as cf, json, os, sqlite3, statistics, sys, threading
 
@@ -36,6 +47,7 @@ from spendguard import bulkgate, config, pricing, vendor_call as vc, expected_ou
 PANEL = [("anthropic", "claude-opus-4-8"), ("openai", "gpt-5.5"),
          ("moonshot", "kimi-k3"), ("zai", "glm-5.2")]
 DEADLINE_S = 180
+CALIB_NS = "spendguard-calibration:"   # keeps synthetic observations out of production call-class history
 FILLER = "def handle(rec):\n    x = rec.get('a')\n    return {'k': x, 'n': len(str(x))}\n\n"
 
 
@@ -67,6 +79,22 @@ def prompt_of(in_tok):
             + body)[: in_tok * 4]
 
 
+def score(pred_out, act_out, pred_usd, act_usd, seeding, unbilled_but_priced):
+    """(tok_err_pct, usd_err_pct, gradeable) — the ONE place a cell's error is decided.
+
+    Extracted and pure because the first version made this decision twice: once for the arithmetic and once
+    for the display, and only the display honoured `seeding`. The report then averaged 15 seeded guesses and
+    announced "median |token error| 767%". A prediction cannot be graded against the observations that
+    created it, and a call the API never billed is not the same measurement — both are UNGRADEABLE, which is
+    a different statement from "error unknown" and a very different one from "error large"."""
+    gradeable = bool(act_out) and not seeding and not unbilled_but_priced
+    if not gradeable:
+        return None, None, False
+    tok = ((act_out - pred_out) / pred_out * 100) if pred_out else None
+    usd = ((act_usd - pred_usd) / pred_usd * 100) if (act_usd > 0 and pred_usd) else None
+    return tok, usd, True
+
+
 def batch_history():
     """The BATCH side, free: estimate-vs-billed is already in the ledger."""
     c = sqlite3.connect(config.db_path())
@@ -76,6 +104,63 @@ def batch_history():
     corr = c.execute("SELECT COALESCE(SUM(cost),0) FROM charges WHERE conv_id='(true-down)' "
                      "AND day >= date('now','-30 day')").fetchone()[0] or 0
     return rows, corr
+
+
+def report(path, pct):
+    """What the run actually established. Rows that could not be scored are NAMED, never averaged away:
+    a mean over 20 cells of which 6 were unscoreable is a different number wearing the same label."""
+    if not os.path.exists(path):
+        print(f"no results at {path}")
+        return 1
+    rows = [json.loads(l) for l in open(path) if l.strip()]
+    rows = [r for r in rows if r.get("pct") == pct]
+    if not rows:
+        print(f"no rows at p{pct}")
+        return 1
+    def gradeable(r):
+        """Recorded intent, not an incidental non-null. A row is gradeable only if its prediction came from
+        history that existed BEFORE the row, and the call went through the API."""
+        return (not r.get("seeding")) and (not r.get("unbilled_but_priced")) and r.get("tok_err_pct") is not None
+    scored = [r for r in rows if gradeable(r)]
+    unscored = [r for r in rows if not gradeable(r)]
+    print(f"\nCALIBRATION REPORT — p{pct} shapes, {len(rows)} cells, "
+          f"{sum(r.get('calls', 0) for r in rows)} calls, ${sum(r.get('cell_usd', 0) for r in rows):,.2f} billed")
+
+    print("\n  VARIANCE — identical input, N calls. cv is the spread the estimator has to bound.")
+    print(f"  {'vendor':<11}{'cells':>6}{'calls':>7}{'med cv':>8}{'max cv':>8}{'widest cell (min-max out)':>34}")
+    for v in sorted({r["vendor"] for r in rows}):
+        vr = [r for r in rows if r["vendor"] == v and r.get("out_cv") is not None]
+        if not vr:
+            continue
+        w = max(vr, key=lambda r: r["out_cv"])
+        print(f"  {v:<11}{len(vr):>6}{sum(r.get('calls', 0) for r in vr):>7}"
+              f"{statistics.median(r['out_cv'] for r in vr):>8.2f}{max(r['out_cv'] for r in vr):>8.2f}"
+              f"{w['cls'][:16] + ' ' + format(w['out_min'], ',') + '-' + format(w['out_max'], ','):>34}")
+
+    print("\n  OUTPUT SIZE by class x vendor (median of N) — the quantity the estimator predicts")
+    vendors = sorted({r["vendor"] for r in rows})
+    print(f"  {'class':<24}" + "".join(f"{v:>12}" for v in vendors))
+    for cls_name in sorted({r["cls"] for r in rows}):
+        cells = {r["vendor"]: r for r in rows if r["cls"] == cls_name}
+        print(f"  {cls_name[:22]:<24}" + "".join(
+            (f"{cells[v]['actual_out']:>12,}" if v in cells and cells[v].get("actual_out") else f"{'—':>12}")
+            for v in vendors))
+
+    if scored:
+        errs = [abs(r["tok_err_pct"]) for r in scored]
+        print(f"\n  SCORED: {len(scored)} cells, median |token error| {statistics.median(errs):.0f}%")
+        print("    Read this as the estimator vs THIS harness's synthetic prompt, not vs the named class —")
+        print("    prompt_of() replays the class's size with a generic task. See the module docstring.")
+    if unscored:
+        print(f"\n  NOT SCORED: {len(unscored)} cells — a first observation cannot be graded against itself.")
+        for r in unscored[:6]:
+            why = ("NOT-API (lane or metering failure)" if r.get("unbilled_but_priced")
+                   else ("seeding — no per-(class,model) history yet" if r.get("seeding") else r.get("kind")))
+            print(f"    {r['cls'][:22]:<24}{r['vendor']:<11}{why}")
+        if len(unscored) > 6:
+            print(f"    ... and {len(unscored) - 6} more")
+        print("    These now HAVE history. Re-run to score them; that is the point of the seeding pass.")
+    return 0
 
 
 def main():
@@ -95,6 +180,9 @@ def main():
                          "subscription lanes serve — useful to observe the lanes, useless for calibration. "
                          "See the module docstring for the three paths.")
     ap.add_argument("--estimate", action="store_true")
+    ap.add_argument("--report", action="store_true",
+                    help="read the accumulated results and summarize. Zero spend, and the only place the "
+                         "run's conclusions are stated — a scrolling table is data, not a finding.")
     a = ap.parse_args()
 
     if a.route == "api":
@@ -126,11 +214,14 @@ def main():
         return 0
 
     out_path = os.path.join(str(config.HOME), "estimator_calibration.jsonl")
+    if a.report:
+        return report(out_path, a.pct)
     spent = 0.0
     print(f"\nreplaying — hard budget ${a.budget:,.2f}, results append to {out_path}\n")
     print(f"  {'class':<26}{'vendor':<10}{'kind':<14}{'basis':<10}{'pred out':>9}{'actual':>8}"
           f"{'tok err':>9}{'$ err':>8}{'lat':>7}")
     lock = threading.Lock()
+    worst = [0.0]        # the most expensive single call seen so far — the reservation floor (see below)
     fh_lock = threading.Lock()
     stop = threading.Event()
 
@@ -142,7 +233,12 @@ def main():
         # FIX 2: predict per (CLASS x MODEL), not per class. Output size is a property of the model as much as
         # the work: on the first run the same class over-ran 3.7x on gpt-5.5 and 25.4x on glm-5.2. A class p50
         # measured on OTHER models does not transfer, so the sig carries both.
-        sig = bulkgate.sig(m, template_id=r["cls"])
+        # NAMESPACED. These observations come from a SYNTHETIC prompt of the class's measured size, not from
+        # the class's real prompt — so they describe this harness's work, not `providers.py`'s. Writing them
+        # under the bare class id would put them in the exact bucket a production caller reads, and the
+        # estimator would then predict real work from a stand-in. (Checked: 0 collisions existed. The fix is
+        # for the next run, not this one.)
+        sig = bulkgate.sig(m, template_id=f"{CALIB_NS}{r['cls']}")
         pred_out, out_basis = expected_output.expect(m, sig=sig)
         seeding = out_basis != "learned"              # no per-model history yet → this run CREATES it
         if seeding:
@@ -152,16 +248,23 @@ def main():
         outs, costs, kinds, lats = [], [], [], []
         for _rep in range(max(1, a.repeats)):
             with lock:
-                if stop.is_set() or spent + pred_usd > a.budget:
+                # RESERVE before spending, so N threads cannot each pass the check and collectively overrun.
+                # Reserve max(prediction, worst call seen) — reserving the PREDICTION alone is not a bound:
+                # this run predicted 194 output tokens for a cell that generated 14,872, and the stop let it
+                # through because the reservation was two orders of magnitude too small. Measured overrun on
+                # the first run: $12.238 against $12.00. The floor ratchets up as the run learns what calls
+                # actually cost, so the residual is one call at the worst observed rate, not unbounded.
+                reserve = max(pred_usd, worst[0])
+                if stop.is_set() or spent + reserve > a.budget:
                     stop.set()
                     break
-                spent += pred_usd                     # RESERVE the estimate before spending it, so N threads
-                                                      # cannot each pass the check and collectively overrun.
+                spent += reserve
             res = vc.call(v, m, p, deadline_s=DEADLINE_S, purpose=f"calib:{r['cls']}",
                           max_tokens=cap or max(4096, r["p50_out"] * 3))
             real = res.cost or 0.0
             with lock:
-                spent += real - pred_usd              # settle the reservation against what was actually billed
+                spent += real - reserve               # settle the reservation against what was actually billed
+                worst[0] = max(worst[0], real)
             kinds.append(res.kind)
             lats.append(res.latency)
             costs.append(real)
@@ -183,9 +286,13 @@ def main():
         priced = bool(pricing.realtime_cost(m, 1000, 1000))
         billed = act_usd > 0
         unbilled_but_priced = priced and bool(outs) and not billed
+        # A SEEDED prediction cannot be scored against the very calls that created it — grading a guess
+        # against its own first observation measures nothing and produces a large, authoritative-looking
+        # number. `seeding` gates the arithmetic, not just the display; the first version of this gated only
+        # the display and the report then averaged 15 seeded guesses into "median error 767%".
         # Tokens from a non-API path are not the same measurement either, so they do not score.
-        tok_err = ((act_out - pred_out) / pred_out * 100) if (pred_out and outs and not unbilled_but_priced) else None
-        usd_err = ((act_usd - pred_usd) / pred_usd * 100) if (billed and pred_usd) else None
+        tok_err, usd_err, _gradeable = score(pred_out, act_out, pred_usd, act_usd, seeding,
+                                             unbilled_but_priced)
         mean_out = statistics.mean(outs) if outs else 0
         return {"cls": r["cls"], "vendor": v, "model": m, "kind": kinds[-1], "kinds": kinds, "sig": sig,
                 "pred_out": pred_out, "actual_out": act_out, "out_basis": out_basis,
@@ -229,7 +336,13 @@ def main():
                   f"{rec['pred_out']:>9,}{rec['actual_out']:>8,}{te}{ue}{rec['latency']:>6.1f}s{cvs}", flush=True)
     if stop.is_set():
         print(f"  BUDGET STOP at ${spent:,.3f} of ${a.budget:,.2f} — remaining cells not run")
+    over = spent - a.budget
     print(f"\nDONE — ${spent:,.3f} of ${a.budget:,.2f}. rows -> {out_path}")
+    if over > 0:
+        # Named, never rounded away. A pre-call check cannot un-bill a call already made, so the residual is
+        # real money and belongs in the output rather than in a silent rounding.
+        print(f"  OVERRAN by ${over:,.3f} ({over / a.budget * 100:.1f}%) — a call billed more than its "
+              f"reservation. The stop is a PRE-call check; it cannot unbill a completed request.")
     print("  cells marked `seed` had no per-(class,model) history and now DO — a second run scores them.")
     return 0
 
