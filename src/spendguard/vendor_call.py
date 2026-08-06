@@ -238,6 +238,61 @@ class JobLock:
         return False
 
 
+# Default API roots for the two vendors whose SDKs carry them implicitly (adapters records base_url=None for
+# those). Named, not scattered: discovery needs a URL even when the SDK would have supplied one.
+_DEFAULT_ROOT = {"openai": "https://api.openai.com/v1", "anthropic": "https://api.anthropic.com/v1"}
+_ANTHROPIC_VERSION = "2023-06-01"        # the version header their REST API requires
+
+
+def list_models(vendor, timeout_s=20):
+    """What this vendor SERVES right now — {"vendor", "models": [{id, max_output_tokens?}], "error"}.
+
+    INPUT invariant:  a vendor key present in adapters.PROVIDERS with a resolvable key.
+    OUTPUT invariant: `models` lists ids the vendor itself returned. NEVER a guess — the whole point is that a
+    caller stops hardcoding an id it has not confirmed exists (a guessed one 404'd).
+    Free: a GET against /models. No tokens, no generation, no spend."""
+    import urllib.request
+    from . import adapters
+    spec = adapters.PROVIDERS.get(str(vendor).strip().lower())
+    if not spec:
+        return {"vendor": vendor, "models": [], "error": f"unknown vendor {vendor!r}"}
+    key = config.api_key(spec["key_env"])
+    if not key:
+        return {"vendor": vendor, "models": [], "error": f"no key ({spec['key_env']})"}
+    root = (spec.get("base_url") or _DEFAULT_ROOT.get(spec["kind"]) or "").rstrip("/")
+    if not root:
+        return {"vendor": vendor, "models": [], "error": "no base_url and no default root for this kind"}
+    hdr = ({"x-api-key": key, "anthropic-version": _ANTHROPIC_VERSION} if spec["kind"] == "anthropic"
+           else {"Authorization": "Bearer " + key})
+    try:
+        req = urllib.request.Request(root + "/models", headers=hdr)
+        body = json.loads(urllib.request.urlopen(req, context=config.ssl_context(), timeout=timeout_s).read())
+    except Exception as e:
+        return {"vendor": vendor, "models": [], "error": f"{type(e).__name__}: {str(e)[:120]}"}
+    rows = body.get("data") if isinstance(body, dict) else body
+    out = []
+    for m in (rows or []):
+        if not isinstance(m, dict):
+            continue
+        mid = m.get("id") or m.get("name")
+        if not mid:
+            continue
+        # Some OpenAI-compatible vendors expose limits on the listing; take them ONLY when present.
+        lim = m.get("max_output_tokens") or m.get("max_tokens") or None
+        out.append({"id": mid, "max_output_tokens": int(lim) if isinstance(lim, (int, float)) and lim else None})
+    return {"vendor": vendor, "models": sorted(out, key=lambda r: r["id"]), "error": None}
+
+
+def serves(vendor, model):
+    """True/False/None — does this vendor serve this id RIGHT NOW? None when discovery itself failed, which is
+    'we could not check', not 'no' (absence is unknown, never a verdict)."""
+    d = list_models(vendor)
+    if d["error"]:
+        return None
+    ids = {m["id"] for m in d["models"]}
+    return model in ids or model.split(":", 1)[-1] in ids
+
+
 def fan_out(vendors, prompt, *, deadline_s, purpose="", system=None, schema=None, max_tokens=None):
     """Ask N vendors the same question. Returns {"results": [...], "ok": [...], "failed": [...], "n": N,
     "n_ok": k, "complete": k == N, "run_id": ...}.
