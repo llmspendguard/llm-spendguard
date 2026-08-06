@@ -2,6 +2,23 @@
 
 All notable changes to **llm-spendguard**. Format loosely follows Keep a Changelog; dates are UTC.
 
+## [0.8.8] — 2026-08-04
+
+### Fixed — an unknown price no longer records as $0
+- A model spendguard cannot price (e.g. `kimi-k3`, absent from all 2,391 synced entries) recorded its calls at
+  **$0 with a stderr warning**. The warning scrolls away; the ledger then says $0 forever — and $0 is a claim
+  that the work was free, which is the one thing we know it wasn't. Such calls are now recorded **UNPRICED**:
+  tokens kept, excluded from every total (so nothing reads as free), and named on the receipt with the exact
+  command that fixes them. It is the mirror of quarantine — that holds money which cannot be real, this holds
+  real usage whose price is unknown.
+- **122 upstream entries carried a ZERO token rate, and those were worse**: `price()` SUCCEEDED on them, so
+  real spend recorded at $0.00 with no warning at all. `sync` no longer caches an entry whose rates are
+  non-positive — a zero is a MISSING price, not a free one — and reports how many it skipped.
+- **`spendguard price <model> --in <$/1M> --out <$/1M> --source '<url>'`** supplies a verified rate.
+  `--source` is mandatory and stored with the entry: spendguard never invents a price (an invented glm-5.2 stub
+  once under-priced a model ~40%), so provenance is the price of entry. Non-positive rates are refused for the
+  same reason `sync` now skips them.
+
 ## [0.8.7] — 2026-08-04
 
 ### Added — realtime output contracts (the batch check, for a lane that cannot be gated)

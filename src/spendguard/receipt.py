@@ -241,6 +241,28 @@ def _basis_line():
     return ["basis of the Actual $: " + " · ".join(parts)] if parts else []
 
 
+def _unpriced_lines():
+    """Calls we could not price. The MIRROR of quarantine: that holds money that cannot be real, this holds
+    real usage whose price is unknown. Both stay out of the total; both must be visible, because a silent $0
+    is a claim that the work was free — and that is the one thing we know it wasn't."""
+    try:
+        from . import budget
+        rows = budget.unpriced_since(_windows()[2])
+    except Exception:
+        return []
+    if not rows:
+        return []
+    n = sum(r["calls"] for r in rows)
+    out = [f"⚠ NOT IN THE TOTAL: {n} call(s) on {len(rows)} model(s) spendguard cannot price — real usage, "
+           f"unknown $ (never counted as free):"]
+    for r in rows[:3]:
+        out.append(f"    {r['model']:<28} {r['calls']:>4} calls   "
+                   f"spendguard price {r['model']} --in <$/1M> --out <$/1M> --source '<url>'")
+    if len(rows) > 3:
+        out.append(f"    … {len(rows) - 3} more — `spendguard price` each, or `spendguard sync-prices`")
+    return out
+
+
 def _quarantine_lines():
     """Impossible estimates the gate caught, shown BELOW the total they are excluded from. Silence here would
     be its own dishonesty: the row exists, it was almost counted as money, and the reader should know both."""
@@ -667,6 +689,7 @@ def _two_axis_table(t: dict) -> list:
         out.append(f"* subscription is an ASSUMED default ({_money(sub)}), not a measured charge — set yours with "
                    f"`spendguard config set subscription.plan_usd <amount>`")
     out += _basis_line()
+    out += _unpriced_lines()
     out += _quarantine_lines()
     return out
 

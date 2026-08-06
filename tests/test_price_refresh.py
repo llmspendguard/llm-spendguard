@@ -82,9 +82,10 @@ RAW = {
     "gpt-x": {"input_cost_per_token": 1e-06, "output_cost_per_token": 2e-06, "litellm_provider": "openai"},
     "ctx-x": {"input_cost_per_token": 1e-06, "output_cost_per_token": 2e-06, "max_input_tokens": 400000,
               "litellm_provider": "openai"},
+    "free-x": {"input_cost_per_token": 0, "output_cost_per_token": 0, "litellm_provider": "openai"},
     "sample_spec": {"input_cost_per_token": 1},
 }
-models, provs, unit_models, context = price_sync._convert(RAW)
+models, provs, unit_models, context, zero_rate = price_sync._convert(RAW)
 check("unit-billed entries captured even with NO token rate",
       set(unit_models) == {"whisper-x", "tts-x", "dalle-x"})
 check("token model still converts (and is not a unit model)", "gpt-x" in models and "gpt-x" not in unit_models)
@@ -92,6 +93,11 @@ check("token model still converts (and is not a unit model)", "gpt-x" in models 
 # impossible-estimate rail possible — see tests/test_estimate_plausibility.py.
 check("context limits are passed through when present", context.get("ctx-x", {}).get("max_input_tokens") == 400000)
 check("a model with no limit published gets NO invented one", "gpt-x" not in context)
+# A ZERO rate is not a price, it is a MISSING one — and caching it is worse than caching nothing, because
+# price() then SUCCEEDS and real spend records at $0.00 with no warning at all. 122 upstream entries carry
+# zero rates; any of them would have silently swallowed spend.
+check("a zero-rate entry is NOT cached as a price", "free-x" not in models)
+check("…and is reported, not dropped in silence", "free-x" in zero_rate)
 os.makedirs(os.path.dirname(price_sync.CACHE), exist_ok=True)
 json.dump({"_fetched": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
            "models": models, "providers": provs, "unit_models": unit_models,

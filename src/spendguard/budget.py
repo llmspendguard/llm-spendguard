@@ -173,6 +173,10 @@ _TRUE_DOWN_CONV = "(true-down)"
 # It is recorded, never deleted: a forensic record of what the estimator claimed. But it is quarantined out
 # of every spend total, because a number that cannot describe a real request must not read as money spent.
 QUARANTINE_CONV = "(impossible-estimate)"
+# UNPRICED — a call we could not price. It is the MIRROR of quarantine: quarantine holds money that cannot be
+# real, this holds real usage whose price is unknown. Both must stay out of the total, and both must be SHOWN,
+# because $0 and "we don't know" are different claims and only one of them is true here.
+UNPRICED_CONV = "(unpriced)"
 
 # BASIS — what KIND of number a row is. Every displayed figure needs this, or the reader has to infer it from
 # the row's shape and gets it wrong: "the receipt reads as $12,000" was exactly that. Not a confidence score
@@ -181,7 +185,8 @@ BASIS_ESTIMATE = "estimate"          # pre-spend projection (batch ceilings live
 BASIS_BILLED = "billed"              # the provider's own number, or usage the provider returned
 BASIS_ASSUMED = "assumed"            # a default nobody confirmed (e.g. the subscription fee)
 BASIS_RECONSTRUCTED = "reconstructed"  # derived after the fact from transcripts/logs, not from a bill
-BASES = (BASIS_ESTIMATE, BASIS_BILLED, BASIS_ASSUMED, BASIS_RECONSTRUCTED)
+BASIS_UNPRICED = "unpriced"          # the call happened and the TOKENS are real; the $ is unknown, NOT zero
+BASES = (BASIS_ESTIMATE, BASIS_BILLED, BASIS_ASSUMED, BASIS_RECONSTRUCTED, BASIS_UNPRICED)
 
 
 def spent_since(day, project=None, conv=None):  # WORKLOAD spend only — excludes meta AND reconciled (historical) rows
@@ -259,6 +264,30 @@ def quarantine_charge(ts=None, reason="", row=None):
     return n
 
 
+def unpriced_since(day):
+    """[{model, provider, calls, in_tok, out_tok}] of calls recorded with NO price since `day`. The tokens are
+    real; only the dollars are unknown. Surfacing this is the difference between "we spent $0" and "we cannot
+    tell you what we spent" — and the second one is actionable (`spendguard price <model> …`)."""
+    with _lock:
+        rows = _db().execute(
+            "SELECT COALESCE(provider,'?'), COALESCE(model,'?'), COUNT(*) FROM charges "
+            "WHERE day >= ? AND conv_id = ? GROUP BY 1, 2 ORDER BY 3 DESC", (day, UNPRICED_CONV)).fetchall()
+    return [{"provider": p, "model": m, "calls": int(n)} for p, m, n in rows]
+
+
+def record_unpriced(provider, model, kind, in_tok=0, out_tok=0, project=None):
+    """Record that a call HAPPENED but could not be priced. cost=0 because we refuse to invent a number, but
+    the row is MARKED so no total treats it as 'free' and the receipt can name the model to price."""
+    now = datetime.datetime.now(datetime.timezone.utc)
+    with _lock:
+        _db().execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project,conv_id,basis) "
+                      "VALUES (?,?,?,?,?,?,?,?,?)",
+                      (now.isoformat(timespec="seconds"), now.strftime("%Y-%m-%d"), provider or "?",
+                       model or "?", kind, 0.0, (project if project is not None else _project()) or "",
+                       UNPRICED_CONV, BASIS_UNPRICED))
+        _db().commit()
+
+
 def quarantined_since(day):
     """[{day, provider, model, cost, project}] of QUARANTINED rows since `day` — estimates the gate proved
     impossible. They are kept (forensics: what the estimator claimed, and when) and excluded from every total,
@@ -279,15 +308,16 @@ def by_basis(day):
         rows = _db().execute(
             "SELECT COALESCE(basis,''), COALESCE(SUM(cost),0), COUNT(*) FROM charges WHERE day >= ? "
             "AND (kind IS NULL OR kind != 'meta') AND (model IS NULL OR model <> ?) "
-            "AND (conv_id IS NULL OR conv_id <> ?) GROUP BY 1", (day, _RECONCILED, QUARANTINE_CONV)).fetchall()
+            "AND (conv_id IS NULL OR conv_id NOT IN (?, ?)) GROUP BY 1",
+            (day, _RECONCILED, QUARANTINE_CONV, UNPRICED_CONV)).fetchall()
     return {b: {"cost": float(c or 0), "n": int(n)} for b, c, n in rows}
 
 
 # ── reconciliation: make the LOCAL ledger reflect PROVIDER-billed truth (the gap = ungoverned/pre-ledger spend) ──
 def by_provider_day(kind=None, since=None):
     """{(provider, day): $} of GATE-recorded spend (excludes reconciled rows) — the attributed side of reconcile."""
-    cond = ["(model IS NULL OR model <> ?)", "(conv_id IS NULL OR conv_id <> ?)"]
-    args = [_RECONCILED, QUARANTINE_CONV]           # like-for-like vs provider truth: quarantine excluded
+    cond = ["(model IS NULL OR model <> ?)", "(conv_id IS NULL OR conv_id NOT IN (?, ?))"]
+    args = [_RECONCILED, QUARANTINE_CONV, UNPRICED_CONV]           # like-for-like vs provider truth: quarantine excluded
     if kind:
         cond.append("kind=?"); args.append(kind)
     if since:
@@ -305,7 +335,7 @@ def reconciled_by_project(since=None):
     # A quarantined row carries a real model so it cannot match `model = _RECONCILED` — but the exclusion is
     # stated anyway rather than left as a fact someone has to re-derive. Cheap here, and the guard test
     # requires every cost aggregator to say it out loud.
-    cond, args = ["model = ?", "(conv_id IS NULL OR conv_id <> ?)"], [_RECONCILED, QUARANTINE_CONV]
+    cond, args = ["model = ?", "(conv_id IS NULL OR conv_id NOT IN (?, ?))"], [_RECONCILED, QUARANTINE_CONV, UNPRICED_CONV]
     if since:
         cond.append("day >= ?"); args.append(since)
     where = "WHERE " + " AND ".join(cond)
@@ -318,8 +348,8 @@ def reconciled_by_project(since=None):
 def gate_by_project_day(kind=None, since=None):
     """{(project, day): $} of GATE-recorded (attributed) spend — excludes reconciled rows. Used to compute the
     per-project gap so the provider-truth gap is attributed by evidence, not dumped in one 'unattributed' bucket."""
-    cond = ["(model IS NULL OR model <> ?)", "(conv_id IS NULL OR conv_id <> ?)"]
-    args = [_RECONCILED, QUARANTINE_CONV]           # like-for-like vs provider truth: quarantine excluded
+    cond = ["(model IS NULL OR model <> ?)", "(conv_id IS NULL OR conv_id NOT IN (?, ?))"]
+    args = [_RECONCILED, QUARANTINE_CONV, UNPRICED_CONV]           # like-for-like vs provider truth: quarantine excluded
     if kind:
         cond.append("kind=?"); args.append(kind)
     if since:
@@ -364,8 +394,8 @@ def gate_batch_cells(since=None):
     Excludes every reconcile marker model AND prior true-down rows (idempotence: corrections never feed the next
     correction). Full-dimension sibling of gate_by_project_day."""
     cond = ["kind='batch'", f"(model IS NULL OR model NOT IN ({','.join('?' * len(_MARKER_MODELS))}))",
-            "(conv_id IS NULL OR conv_id NOT IN (?, ?))"]
-    args = list(_MARKER_MODELS) + [_TRUE_DOWN_CONV, QUARANTINE_CONV]
+            "(conv_id IS NULL OR conv_id NOT IN (?, ?, ?))"]
+    args = list(_MARKER_MODELS) + [_TRUE_DOWN_CONV, QUARANTINE_CONV, UNPRICED_CONV]
     if since:
         cond.append("day >= ?"); args.append(since)
     with _lock:
@@ -407,8 +437,8 @@ def record_meta(provider, model, cost):
 def meta_spent_since(day):
     with _lock:
         r = _db().execute("SELECT COALESCE(SUM(cost),0) FROM charges WHERE day >= ? AND kind='meta' "
-                          "AND (conv_id IS NULL OR conv_id <> ?)",
-                          (day, QUARANTINE_CONV)).fetchone()
+                          "AND (conv_id IS NULL OR conv_id NOT IN (?, ?))",
+                          (day, QUARANTINE_CONV, UNPRICED_CONV)).fetchone()
     return float(r[0] or 0)
 
 
@@ -433,7 +463,7 @@ def by_day(kind=None, exclude_meta=False, since=None, exclude_reconciled=False):
     # Quarantined rows are excluded UNCONDITIONALLY, in every caller. They are estimates the gate proved
     # impossible; counting them as "accounted" is what let an invented $54.51 sit inside a leak check that
     # then reported no leak. A row that cannot describe a real request is not coverage of anything.
-    cond, args = ["(conv_id IS NULL OR conv_id <> ?)"], [QUARANTINE_CONV]
+    cond, args = ["(conv_id IS NULL OR conv_id NOT IN (?, ?))"], [QUARANTINE_CONV, UNPRICED_CONV]
     if kind:
         cond.append("kind=?"); args.append(kind)
     if exclude_meta:
@@ -454,7 +484,7 @@ def by_dims(since=None):
     the server's /v1/ledger expects (vs by_day's flat {day: $}). Returns dicts with cost in $ and a call count."""
     # This is the SaaS PUSH payload. A quarantined row here would put an invented number on the org
     # dashboard, where nobody has the local context to question it.
-    cond, args = ["(conv_id IS NULL OR conv_id <> ?)"], [QUARANTINE_CONV]
+    cond, args = ["(conv_id IS NULL OR conv_id NOT IN (?, ?))"], [QUARANTINE_CONV, UNPRICED_CONV]
     if since:
         cond.append("day >= ?"); args.append(since)
     where = "WHERE " + " AND ".join(cond)
@@ -474,8 +504,8 @@ def by_key(since=None):
     existed, or where no key env was resolvable. LOCAL-ONLY view; fingerprints never leave the machine."""
     cond = ["(kind IS NULL OR kind != 'meta')",
             f"(model IS NULL OR model NOT IN ({','.join('?' * len(_MARKER_MODELS))}))",
-            "(conv_id IS NULL OR conv_id NOT IN (?, ?))"]
-    args = list(_MARKER_MODELS) + [_TRUE_DOWN_CONV, QUARANTINE_CONV]
+            "(conv_id IS NULL OR conv_id NOT IN (?, ?, ?))"]
+    args = list(_MARKER_MODELS) + [_TRUE_DOWN_CONV, QUARANTINE_CONV, UNPRICED_CONV]
     if since:
         cond.append("day >= ?"); args.append(since)
     with _lock:

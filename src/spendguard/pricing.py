@@ -21,7 +21,7 @@ USAGE
 
 Run `python scripts/pricing.py` to print the table and self-check.
 """
-import re, os, json
+import re, os, json, datetime
 
 # per 1M tokens: realtime in/out, cached input, batch in/out  (batch == 50% of realtime).
 # This dict is the FALLBACK / source-of-record for the shipped prices.json. At runtime
@@ -62,6 +62,48 @@ PRICING_SOURCE = "https://developers.openai.com/api/docs/pricing"
 PRICING_VERIFIED = "2026-06-13"
 STALE_AFTER_DAYS = 45
 PROVIDERS = {}  # model -> provider, populated by _load
+
+
+def user_prices_path():
+    """Where a user's OWN verified prices live (highest precedence after $SPENDGUARD_PRICES)."""
+    home = os.environ.get("SPENDGUARD_HOME") or os.path.expanduser("~/.spendguard")
+    return os.path.join(home, "prices.json")
+
+
+def set_price(model, provider, in_usd, out_usd, source, batch_in=None, batch_out=None, cached_in=None):
+    """Record a VERIFIED price for a model spendguard cannot price. Rates are $ per 1M tokens.
+
+    `source` is REQUIRED and stored with the entry. That is the whole discipline: spendguard never invents a
+    price (a fabricated glm-5.2 stub once under-priced a model ~40%), so the only way one enters the table is a
+    human writing down where the number came from. Non-positive rates are refused — a $0 price is what makes
+    real spend record as free, silently."""
+    if not model or not provider:
+        raise ValueError("model and provider are both required")
+    if not source or not str(source).strip():
+        raise ValueError("a --source is required: prices enter this table only with provenance, never invented")
+    try:
+        in_usd, out_usd = float(in_usd), float(out_usd)
+    except (TypeError, ValueError):
+        raise ValueError("--in and --out must be numbers ($ per 1M tokens)")
+    if in_usd <= 0 or out_usd <= 0:
+        raise ValueError("rates must be positive — a $0 rate records real spend as free (see sync's zero-rate skip)")
+    path = user_prices_path()
+    try:
+        data = json.load(open(path)) if os.path.exists(path) else {}
+    except Exception:
+        data = {}
+    provs = data.setdefault("providers", {}).setdefault(str(provider).strip().lower(), {})
+    entry = {"in_": in_usd, "out": out_usd,
+             "cached_in": float(cached_in) if cached_in is not None else round(in_usd * 0.1, 6),
+             "batch_in": float(batch_in) if batch_in is not None else round(in_usd * 0.5, 6),
+             "batch_out": float(batch_out) if batch_out is not None else round(out_usd * 0.5, 6),
+             "_source": str(source).strip(),
+             "_added": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")}
+    provs.setdefault("models", {})[str(model).strip()] = entry
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as fh:
+        json.dump(data, fh, indent=2, sort_keys=True)
+    return path, entry
 
 
 def _candidate_files():

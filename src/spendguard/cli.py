@@ -241,6 +241,31 @@ def _dispatch(argv=None):
     if cmd in ("claude-code", "claudecode", "cc"):     # mine ~/.claude transcripts → CC spend + work (incremental)
         from . import claudecode
         return claudecode.main(rest)
+    if cmd == "price":
+        # Supply a VERIFIED price for a model spendguard cannot price. A --source is mandatory: spendguard
+        # never invents a rate (an invented glm-5.2 stub once under-priced a model ~40%), so provenance is
+        # the price of entry.
+        from . import pricing as _pr
+        r = list(rest)
+        if not r or r[0].startswith("-"):
+            print("usage: spendguard price <model> --in <$/1M> --out <$/1M> --source '<url or invoice>' "
+                  "[--provider <name>] [--batch-in X] [--batch-out Y] [--cached-in Z]")
+            return 2
+        model = r[0]
+        def _opt(flag, default=None):
+            return r[r.index(flag) + 1] if flag in r and r.index(flag) + 1 < len(r) else default
+        try:
+            path, entry = _pr.set_price(
+                model, _opt("--provider", "custom"), _opt("--in"), _opt("--out"), _opt("--source", ""),
+                batch_in=_opt("--batch-in"), batch_out=_opt("--batch-out"), cached_in=_opt("--cached-in"))
+        except ValueError as e:
+            print(f"refused: {e}")
+            return 2
+        print(f"priced {model}: ${entry['in_']}/1M in · ${entry['out']}/1M out  (source: {entry['_source']})")
+        print(f"  written to {path} — it now outranks the synced table, and past UNPRICED rows for this model")
+        print("  can be re-costed with `spendguard reconcile all`.")
+        return 0
+
     if cmd == "quarantine":
         # Repair for estimates already in the ledger that the plausibility rail now catches at record time.
         # Operator-driven ON PURPOSE: the request count behind an old batch row is not always recoverable, and

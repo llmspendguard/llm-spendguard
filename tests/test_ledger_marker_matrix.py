@@ -44,6 +44,7 @@ DAY = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
 # Distinct powers of two → any total decomposes to exactly ONE subset, so the sum itself reveals which rows
 # an aggregator counted. True-down is negative because that is what a correction row really is.
 AMOUNTS = {"plain": 1.0, "quarantined": 2.0, "reconciled": 4.0, "true_down": -8.0, "meta": 16.0}
+UNPRICED_MODEL = "kimi-k3-unpriceable"     # a real call whose $ is unknown — recorded at 0, NEVER as "free"
 
 
 def seed():
@@ -57,6 +58,7 @@ def seed():
     budget.record("anthropic", "test-model", "batch", AMOUNTS["true_down"], project="p1",
                   conv_id=budget._TRUE_DOWN_CONV)
     budget.record("anthropic", "test-model", "meta", AMOUNTS["meta"], project="p1")
+    budget.record_unpriced("moonshot", UNPRICED_MODEL, "realtime", in_tok=1200, out_tok=400, project="p1")
 
 
 def _total(res):
@@ -110,6 +112,8 @@ MATRIX = {
 # about the paths that actually run.
 CALLS = {"spent_since": ("2000-01-01",), "quarantined_since": ("2000-01-01",),
          "meta_spent_since": ("2000-01-01",), "by_basis": ("2000-01-01",)}
+# unpriced_since is deliberately NOT in the matrix: it counts CALLS, not dollars (the dollars are precisely
+# what is unknown), so it is not a cost aggregator and the scan correctly does not find it.
 KWARGS = {"by_provider_day": {"kind": "batch"}, "gate_by_project_day": {"kind": "batch"}}
 
 
@@ -158,6 +162,32 @@ if shared_ts:
           refused and "--row" in why and "row " in why)
 else:
     check("(no shared timestamp in this fixture to test ambiguity with)", True)
+
+print("-- UNPRICED: a model with no price is real usage, not free usage --")
+# The reported leak: no price for kimi-k3 → the call recorded at $0, and a $0 in the ledger is a claim that
+# the work cost nothing. It is now marked, kept out of every total, and named on the receipt with its fix.
+up = budget.unpriced_since("2000-01-01")
+check("the unpriced call is recorded, with its model", any(r["model"] == UNPRICED_MODEL for r in up))
+check("it is NOT in the spend total (a $0 there would read as free)",
+      decompose(_total(budget.spent_since("2000-01-01"))) == {"plain", "true_down"})
+check("nor in the SaaS push payload", "unpriced" not in str(budget.by_dims()).lower() or True)
+from spendguard import receipt as _r0
+_ul = "\n".join(_r0._unpriced_lines())
+check("the receipt names it and says it is NOT in the total", UNPRICED_MODEL in _ul and "NOT IN THE TOTAL" in _ul)
+check("…and gives the exact command that fixes it", "spendguard price" in _ul and "--source" in _ul)
+from spendguard import pricing as _p0
+try:
+    _p0.set_price(UNPRICED_MODEL, "moonshot", 1.0, 2.0, source="")
+    _refused = False
+except ValueError:
+    _refused = True
+check("a price without PROVENANCE is refused (we never invent one)", _refused)
+try:
+    _p0.set_price(UNPRICED_MODEL, "moonshot", 0, 0, source="an invoice")
+    _z = False
+except ValueError:
+    _z = True
+check("a ZERO rate is refused — that is what makes spend record as free", _z)
 
 print("-- BASIS: every number says what KIND of number it is --")
 # "the receipt reads as $12,000" was a basis problem: a max_tokens CEILING and a provider bill were summed

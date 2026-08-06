@@ -753,10 +753,21 @@ def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, 
         in_for_cost = (in_tok + cached) if prov == "anthropic" else in_tok
         try:
             cost = pricing.realtime_cost(model, in_for_cost, out_tok, cached) if model else 0.0
-        except Exception:     # unpriced model (e.g. a new Bedrock/Vertex one) → keep the TOKENS, $0 + a visible flag.
-            cost = 0.0         # NOT a guessed price (discipline); surfaced so the price can be added, never silently dropped.
-            print(f"[spend_gate] WARN no price for '{model}' — recorded {in_tok}+{out_tok} tok at $0 "
-                  f"(add it to prices.json with a source)", file=sys.stderr)
+        except Exception:     # unpriced model → keep the TOKENS, refuse to invent a price, and MARK the row.
+            # $0 and "we cannot price this" are different claims, and only the second is true. The row is
+            # recorded with the UNPRICED marker: excluded from every total (so it never reads as free) and
+            # SURFACED on the receipt with the one command that fixes it. A warning alone scrolls away; the
+            # ledger then says $0 forever, which is the capture leak.
+            cost = 0.0
+            try:
+                from . import budget
+                budget.record_unpriced(prov, model, "realtime", in_tok=in_tok, out_tok=out_tok)
+            except Exception:
+                pass
+            _warn_once(f"[spend_gate] NO PRICE for '{model}' — {in_tok}+{out_tok} tok recorded as UNPRICED "
+                       f"(NOT $0, and excluded from totals so it cannot read as free). Fix it with:\n"
+                       f"  spendguard price {model} --in <$/1M> --out <$/1M> --source '<url or invoice>'")
+            return
     if _meta_intent():                            # meta call → meta ledger only (not workload realtime)
         from . import budget
         budget.record_meta(prov, model, cost)

@@ -34,6 +34,7 @@ def _convert(raw):
     model's context window would be rejected by the API, so an estimate that implies one is arithmetically
     impossible and must never be recorded as spend (see gate._implausible_estimate)."""
     models, provs, unit_models, context = {}, {}, {}, {}
+    zero_rate = []                      # cached-as-$0 would be a silent capture leak; collected and reported
     for name, e in raw.items():
         if not isinstance(e, dict) or name.startswith("sample_"):
             continue
@@ -50,6 +51,13 @@ def _convert(raw):
             ic = float(ic); oc = float(e.get("output_cost_per_token") or 0)
         except (TypeError, ValueError):
             continue
+        # A ZERO rate is not a price — it is a missing one, and caching it is worse than caching nothing:
+        # price() SUCCEEDS, so real spend records at $0.00 with NO warning, where an absent entry at least
+        # raises and triggers the loud unpriced path. 122 upstream entries carry zero rates (rerank models,
+        # previews, free tiers) and any of them would have silently swallowed spend.
+        if ic <= 0 and oc <= 0:
+            zero_rate.append(name)
+            continue
         cc = e.get("cache_read_input_token_cost")
         bi = e.get("input_cost_per_token_batches"); bo = e.get("output_cost_per_token_batches")
         rate = {
@@ -60,7 +68,7 @@ def _convert(raw):
         }
         models[name] = {k: round(v, 6) for k, v in rate.items()}
         provs[name] = e.get("litellm_provider", "?")
-    return models, provs, unit_models, context
+    return models, provs, unit_models, context, zero_rate
 
 
 def _validate(models):
@@ -80,7 +88,7 @@ def _validate(models):
 def sync():
     req = urllib.request.Request(LITELLM_URL, headers={"User-Agent": "spendguard-sync/0.1"})
     raw = json.load(urllib.request.urlopen(req, context=config.ssl_context(), timeout=60))
-    models, provs, unit_models, context = _convert(raw)
+    models, provs, unit_models, context, zero_rate = _convert(raw)
     ok, msgs = _validate(models)
     if not ok:
         raise RuntimeError("LiteLLM data failed validation: " + "; ".join(msgs))
@@ -89,6 +97,9 @@ def sync():
            "context": context}
     os.makedirs(os.path.dirname(CACHE), exist_ok=True)
     json.dump(out, open(CACHE, "w"))
+    if zero_rate:
+        msgs.append(f"{len(zero_rate)} upstream entries have a ZERO token rate and were NOT cached "
+                    f"(a $0 price records real spend as free, silently) — e.g. {', '.join(zero_rate[:3])}")
     return len(models), msgs
 
 
