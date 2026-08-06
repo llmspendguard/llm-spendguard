@@ -83,6 +83,9 @@ RAW = {
     "ctx-x": {"input_cost_per_token": 1e-06, "output_cost_per_token": 2e-06, "max_input_tokens": 400000,
               "litellm_provider": "openai"},
     "free-x": {"input_cost_per_token": 0, "output_cost_per_token": 0, "litellm_provider": "openai"},
+    "moon-x": {"input_cost_per_token": 1e-06, "output_cost_per_token": 2e-06, "litellm_provider": "moonshot"},
+    "pub-x": {"input_cost_per_token": 1e-06, "output_cost_per_token": 2e-06, "litellm_provider": "moonshot",
+              "input_cost_per_token_batches": 1e-07, "output_cost_per_token_batches": 2e-07},
     "sample_spec": {"input_cost_per_token": 1},
 }
 models, provs, unit_models, context, zero_rate = price_sync._convert(RAW)
@@ -98,6 +101,13 @@ check("a model with no limit published gets NO invented one", "gpt-x" not in con
 # zero rates; any of them would have silently swallowed spend.
 check("a zero-rate entry is NOT cached as a price", "free-x" not in models)
 check("…and is reported, not dropped in silence", "free-x" in zero_rate)
+# Moonshot bills batch at 60% of standard, not the 50% every other provider uses. The generic fallback
+# UNDER-priced every Moonshot batch by 17%, and under-pricing is the dangerous direction for a spend gate.
+check("a provider with its own published batch fraction uses it, not the generic 50%",
+      abs(models["moon-x"]["batch_in"] - 0.6) < 1e-9)
+check("everyone else still gets the 50% convention", abs(models["gpt-x"]["batch_in"] - 0.5) < 1e-9)
+check("an explicitly PUBLISHED batch rate still wins over any fraction",
+      abs(models["pub-x"]["batch_in"] - 0.1) < 1e-9)
 os.makedirs(os.path.dirname(price_sync.CACHE), exist_ok=True)
 json.dump({"_fetched": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
            "models": models, "providers": provs, "unit_models": unit_models,

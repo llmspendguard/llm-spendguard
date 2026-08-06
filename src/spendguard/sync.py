@@ -16,6 +16,14 @@ CACHE = str(config.HOME / "litellm_prices.json")
 # Per-unit billing fields passed through to the cache's `unit_models` section — pricing._load_units reads
 # exactly these to price transcription ($/second), TTS ($/character) and flat-rate images ($/image). Unit-billed
 # entries usually have NO input_cost_per_token, so they must be captured BEFORE the token-rate skip below.
+# Batch pricing as a FRACTION of realtime, per provider, when upstream publishes no explicit batch rates.
+# 50% is the OpenAI/Anthropic convention and the default. Moonshot bills 60% of standard
+# (https://platform.kimi.ai/docs/pricing/batch.md, fetched 2026-08-04), so the generic fallback UNDER-priced
+# every Moonshot batch by 17% — and under-pricing is the dangerous direction for a spend gate. Only providers
+# with a PUBLISHED multiplier belong here: an invented one is worse than the default because it looks precise.
+BATCH_FRACTION_DEFAULT = 0.5
+BATCH_FRACTION_BY_PROVIDER = {"moonshot": 0.6}
+
 # Physical limits, not prices — used by the estimate plausibility rail.
 _CONTEXT_FIELDS = ("max_input_tokens", "max_output_tokens")
 
@@ -60,11 +68,13 @@ def _convert(raw):
             continue
         cc = e.get("cache_read_input_token_cost")
         bi = e.get("input_cost_per_token_batches"); bo = e.get("output_cost_per_token_batches")
+        bf = BATCH_FRACTION_BY_PROVIDER.get((e.get("litellm_provider") or "").strip().lower(),
+                                             BATCH_FRACTION_DEFAULT)
         rate = {
             "in_": ic * 1e6, "out": oc * 1e6,
             "cached_in": (float(cc) * 1e6 if cc is not None else ic * 1e6 * 0.1),
-            "batch_in": (float(bi) * 1e6 if bi is not None else ic * 1e6 * 0.5),
-            "batch_out": (float(bo) * 1e6 if bo is not None else oc * 1e6 * 0.5),
+            "batch_in": (float(bi) * 1e6 if bi is not None else ic * 1e6 * bf),   # published rate wins
+            "batch_out": (float(bo) * 1e6 if bo is not None else oc * 1e6 * bf),
         }
         models[name] = {k: round(v, 6) for k, v in rate.items()}
         provs[name] = e.get("litellm_provider", "?")

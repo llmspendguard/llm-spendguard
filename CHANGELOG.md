@@ -2,6 +2,21 @@
 
 All notable changes to **llm-spendguard**. Format loosely follows Keep a Changelog; dates are UTC.
 
+## [0.8.9] — 2026-08-04
+
+### Fixed — Moonshot batch was under-priced by 17%
+- Batch rates fall back to 50% of realtime when upstream publishes none — the OpenAI/Anthropic convention. **Moonshot
+  bills 60%** (https://platform.kimi.ai/docs/pricing/batch.md), so every batch-capable Moonshot model was recorded at
+  0.5× where the truth is 0.6×. Under-pricing is the dangerous direction for a spend gate. `sync` now applies a
+  per-provider batch fraction; only providers with a PUBLISHED multiplier are listed, and an explicitly published
+  batch rate still wins over any fraction.
+
+### Added — kimi-k3 is priced, from the vendor's own page
+- `$3.00/1M` in (cache-miss), `$15.00/1M` out, `$0.30/1M` cache-hit — from
+  https://platform.kimi.ai/docs/pricing/chat-k3.md, recorded with that URL as its stored `_source`. Its batch rates
+  are set to STANDARD, not discounted: Moonshot's Batch API does not support kimi-k3 at all, so a discount there
+  would price a mode the model cannot use.
+
 ## [0.8.8] — 2026-08-04
 
 ### Fixed — an unknown price no longer records as $0
