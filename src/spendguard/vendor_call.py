@@ -130,9 +130,20 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
     """
     if not deadline_s or deadline_s <= 0:
         raise ValueError("deadline_s is required and must be > 0: an unbounded call is how a 3h30m run happens")
+    cap_basis = "caller"
+    if max_tokens is None:
+        # NOT a default constant. A 512 fallback would be the same invented number that returned zero
+        # characters from two reasoning models — the registry answers this or nobody does.
+        max_tokens, cap_basis = output_cap(vendor, model, sig=purpose or None)
+        if max_tokens is None:
+            return Result(TRANSPORT_ERROR, vendor, model, prompt_sha=_sha(prompt), purpose=purpose,
+                          error=f"no measured output cap for {vendor}/{model} and none supplied. Record one: "
+                                f"vendor_call.record_cap('{vendor}', '{model}', <tokens>, method='probe'). "
+                                f"Guessing it is what returned HTTP 200 with zero characters.")
     started = time.time()
     sha = _sha(prompt)
     last = None
+    del cap_basis                       # recorded via the caps registry; not part of the result contract
     for attempt in range(1, max(1, int(attempts)) + 1):
         remaining = deadline_s - (time.time() - started)
         if remaining <= 0:
@@ -166,7 +177,7 @@ def _attempt(vendor, model, prompt, system, max_tokens, budget_s):
     def _run():
         try:
             box["r"] = adapters.call(model if ":" in model else f"{vendor}:{model}", prompt,
-                                     max_tokens=int(max_tokens) if max_tokens else 512, system=system)
+                                     max_tokens=int(max_tokens), system=system)
         except Exception as e:                      # adapters says it never raises; believe it, verify anyway
             box["r"] = {"error": f"{type(e).__name__}: {e}", "text": None}
 
@@ -291,6 +302,69 @@ def serves(vendor, model):
         return None
     ids = {m["id"] for m in d["models"]}
     return model in ids or model.split(":", 1)[-1] in ids
+
+
+# ── E: the MEASURED output-cap registry ───────────────────────────────────────────────────────────────────
+# max_tokens is a TERMINATION bound sized from measured need — not a cost control (billing is on tokens
+# generated) and never a guess. The probe that motivated this found both reasoning models returning HTTP 200
+# with ZERO characters at max_tokens=2000: the reasoning consumed the whole budget and `content` came back
+# empty. kimi-k3 needed >= 26,128 and glm-5.2 >= 30,069 against the 2,000 sent. Nobody would have guessed that.
+_CAP_FILE = "output_caps.json"
+CAP_UNKNOWN = None
+
+
+def _caps_path():
+    return config.HOME / _CAP_FILE
+
+
+def record_cap(vendor, model, max_output_tokens, method, source=""):
+    """Store a measured cap WITH its provenance. `method` says how it was obtained ('probe' · 'vendor-docs' ·
+    '/models') and the date is stamped here — a number without those is a guess wearing a registry's clothes."""
+    if not max_output_tokens or int(max_output_tokens) <= 0:
+        raise ValueError("a cap must be positive: zero or absent is the failure this registry exists to end")
+    path = _caps_path()
+    try:
+        data = json.loads(path.read_text()) if path.exists() else {}
+    except Exception:
+        data = {}
+    data[f"{vendor}/{model}"] = {"max_output_tokens": int(max_output_tokens), "method": method,
+                                 "source": source, "measured_at": time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                                                                                time.gmtime())}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2, sort_keys=True))
+    return data[f"{vendor}/{model}"]
+
+
+def caps():
+    try:
+        return json.loads(_caps_path().read_text())
+    except Exception:
+        return {}
+
+
+def output_cap(vendor, model, sig=None):
+    """(tokens, basis) — the termination bound for this (vendor, model). Precedence, all MEASURED or PUBLISHED,
+    never guessed: the recorded registry → this class's own observed need → the vendor's published ceiling →
+    (None, 'unknown'), which callers must treat as 'do not send a cap you invented'."""
+    rec = caps().get(f"{vendor}/{model}")
+    if rec and rec.get("max_output_tokens"):
+        return int(rec["max_output_tokens"]), "registry:" + (rec.get("method") or "?")
+    if sig:
+        try:
+            from . import bulkgate
+            b = bulkgate.maxtokens(sig)
+            if b and b.get("recommend"):
+                return int(b["recommend"]), "observed"
+        except Exception:
+            pass
+    try:
+        from . import pricing
+        lim = pricing.max_output_tokens(model)
+        if lim:
+            return int(lim), "vendor-published"
+    except Exception:
+        pass
+    return CAP_UNKNOWN, "unknown"
 
 
 def fan_out(vendors, prompt, *, deadline_s, purpose="", system=None, schema=None, max_tokens=None):
