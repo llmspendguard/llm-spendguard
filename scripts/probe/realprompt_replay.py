@@ -53,7 +53,8 @@ def corpus(limit, min_chars=40):
     cur = callio.snip_chars()
     c = sqlite3.connect(config.db_path())
     rows = c.execute(
-        "SELECT id, intent, model, prompt, out_tok FROM call_io "
+        "SELECT id, intent, model, prompt, out_tok, COALESCE(system,''), COALESCE(req_schema,''), "
+        "COALESCE(req_max_tokens,0) FROM call_io "
         "WHERE prompt IS NOT NULL AND out_tok > 0 AND LENGTH(prompt) >= ? ORDER BY LENGTH(prompt) DESC",
         (min_chars,)).fetchall()
     def is_cut(text):
@@ -70,7 +71,9 @@ def corpus(limit, min_chars=40):
             if by[k] and len(out) < limit:
                 r = by[k].pop(0)
                 out.append({"io_id": r[0], "intent": r[1] or "(none)", "origin_model": r[2],
-                            "prompt": r[3], "truth_out": int(r[4])})
+                            "prompt": r[3], "truth_out": int(r[4]),
+                            "system": r[5] or "", "req_schema": r[6] or "",
+                            "req_max_tokens": int(r[7] or 0)})
         i += 1
         if i > limit:
             break
@@ -162,6 +165,19 @@ def main():
         # DE-ID BEFORE EGRESS. These are real prompts recovered from real work; the synthetic harness had
         # nothing to protect and this one does. redact() fails open toward privacy and never raises.
         prompt = deid.redact(r["prompt"])
+        system = deid.redact(r["system"]) or None
+        # THE REQUEST SHAPE, not just the prompt. Sending the question without the system message and the
+        # output contract is a different call: measured on this very corpus, prompts whose originals were
+        # schema-forced came back 10-32x larger when replayed bare (truth 4 tokens -> 77-133), while the
+        # free-text ones landed within 10-31%. Replaying only the prompt and calling the gap "estimator
+        # error" would have been a fabricated finding.
+        schema = None
+        if r["req_schema"]:
+            try:
+                schema = json.loads(r["req_schema"]) or None
+            except Exception:
+                schema = None
+        faithful = bool(system or schema or r["req_max_tokens"])
         sig = bulkgate.sig(m, template_id=f"{REPLAY_NS}{r['intent']}")
         pred_out, out_basis = expected_output.expect(m, sig=sig)
         seeding = out_basis != "learned"
@@ -178,7 +194,8 @@ def main():
                     break
                 spent += reserve
             res = vc.call(v, m, prompt, deadline_s=DEADLINE_S, purpose=f"replay:{r['intent']}",
-                          max_tokens=cap or max(4096, r["truth_out"] * 4))
+                          system=system, schema=schema if isinstance(schema, dict) else None,
+                          max_tokens=(r["req_max_tokens"] or cap or max(4096, r["truth_out"] * 4)))
             real = res.cost or 0.0
             with lock:
                 spent += real - reserve
@@ -195,11 +212,16 @@ def main():
         act_usd = statistics.median(costs) if costs else 0.0
         priced = bool(pricing.realtime_cost(m, 1000, 1000))
         unbilled_but_priced = priced and bool(outs) and act_usd <= 0
-        tok_err, usd_err, gradeable = score(pred_out, act_out, pred_usd, act_usd, seeding, unbilled_but_priced)
+        # A row with no recorded request shape cannot be replayed faithfully, so it cannot be scored against
+        # its own recorded output — that comparison would be between two different calls.
+        tok_err, usd_err, gradeable = score(pred_out, act_out, pred_usd, act_usd,
+                                            seeding or not faithful, unbilled_but_priced)
         mean_out = statistics.mean(outs) if outs else 0
         return {"io_id": r["io_id"], "intent": r["intent"], "origin_model": r["origin_model"],
                 "prompt_chars": len(prompt), "truth_out": r["truth_out"],
                 "vendor": v, "model": m, "sig": sig, "is_origin_model": (m == r["origin_model"]),
+                "faithful": faithful, "had_system": bool(system), "had_schema": bool(schema),
+                "req_max_tokens": r["req_max_tokens"],
                 "calls": len(kinds), "ok": len(outs), "kinds": dict(collections.Counter(kinds)),
                 "pred_out": pred_out, "out_basis": out_basis, "seeding": seeding,
                 "actual_out": act_out, "out_min": (min(outs) if outs else None),
@@ -270,7 +292,14 @@ def report(path):
 
     # The calibration the synthetic harness could not do: the model that ACTUALLY ran this prompt has a true
     # recorded output size, so replayed-vs-truth is a like-for-like comparison of the same work.
-    origin = [r for r in rows if r["is_origin_model"] and r["ok"] and r["truth_out"]]
+    origin = [r for r in rows if r["is_origin_model"] and r["ok"] and r["truth_out"] and r.get("faithful")]
+    unfaithful = [r for r in rows if r["is_origin_model"] and r["ok"] and not r.get("faithful")]
+    if unfaithful:
+        print(f"\n  {len(unfaithful)} origin-model cell(s) NOT compared to their recorded output: the row "
+              f"stores no system message, output contract, or max_tokens, so the replay is a different call. "
+              f"Comparing anyway is how a 1,107% 'estimator error' gets reported when the real finding is "
+              f"that a schema-forced 4-token answer was replayed unconstrained. Re-fetch with "
+              f"`spendguard callio fetch` to capture the request shape.")
     if origin:
         print("\n  GROUND TRUTH — replayed output vs the size this model really produced for this prompt")
         print(f"  {'intent':<26}{'model':<18}{'truth':>9}{'replayed':>10}{'delta':>9}")

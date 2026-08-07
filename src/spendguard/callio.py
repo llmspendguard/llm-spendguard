@@ -54,6 +54,16 @@ def _db():
                     c.execute("ALTER TABLE call_io ADD COLUMN conv_id TEXT DEFAULT ''")
                 if "context" not in cols:                  # the pre/post chat context (why / outcome)
                     c.execute("ALTER TABLE call_io ADD COLUMN context TEXT DEFAULT ''")
+                # THE REQUEST SHAPE. A prompt alone does not describe a call. The same prompt under a forced
+                # JSON schema answers in 4 tokens and under no schema writes prose: measured on a replay of
+                # these very rows, the constrained intents came back 10-32x larger while the free-text ones
+                # landed within 10-31%. Without these fields a "replay" is a different call wearing the same
+                # name, and its predicted-vs-actual is a fabricated finding.
+                for col in ("system", "req_schema"):
+                    if col not in cols:
+                        c.execute(f"ALTER TABLE call_io ADD COLUMN {col} TEXT DEFAULT ''")
+                if "req_max_tokens" not in cols:
+                    c.execute("ALTER TABLE call_io ADD COLUMN req_max_tokens INTEGER DEFAULT 0")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_io_im ON call_io(intent, model)")
                 c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_io_key ON call_io(batch, custom_id)")
                 c.commit()
@@ -79,7 +89,8 @@ def counts():
                              "ORDER BY COUNT(*) DESC").fetchall()
 
 
-def record(intent, provider, model, batch, custom_id, prompt, output, in_tok=0, out_tok=0, source="batch_io"):
+def record(intent, provider, model, batch, custom_id, prompt, output, in_tok=0, out_tok=0, source="batch_io",
+           system=None, req_schema=None, req_max_tokens=0):
     """Insert one sample (idempotent on batch+custom_id). Returns id or None if duplicate."""
     cid = _uid()
     ts = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
@@ -87,10 +98,14 @@ def record(intent, provider, model, batch, custom_id, prompt, output, in_tok=0, 
         with _lock:
             _db().execute(
                 "INSERT OR IGNORE INTO call_io (id,ts,intent,provider,model,batch,custom_id,prompt,output,"
-                "in_tok,out_tok,source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                "in_tok,out_tok,source,system,req_schema,req_max_tokens) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (cid, ts, intent, provider, model, batch, str(custom_id),
                  (prompt or "")[:snip_chars()], (output or "")[:snip_chars()],
-                 int(in_tok or 0), int(out_tok or 0), source))
+                 int(in_tok or 0), int(out_tok or 0), source,
+                 (system or "")[:snip_chars()],
+                 (req_schema if isinstance(req_schema, str) else json.dumps(req_schema or ""))[:snip_chars()],
+                 int(req_max_tokens or 0)))
             # INSERT OR IGNORE alone makes a refill a NO-OP: a row captured under a smaller snip cap keeps its
             # truncated prompt forever, and `added: 0` reads as "nothing new to get" rather than "the fidelity
             # you asked for was silently discarded". So when the row exists, GROW it — never shrink. A longer
@@ -101,6 +116,17 @@ def record(intent, provider, model, batch, custom_id, prompt, output, in_tok=0, 
                 "AND (LENGTH(?) > LENGTH(COALESCE(prompt,'')) OR LENGTH(?) > LENGTH(COALESCE(output,'')))",
                 ((prompt or "")[:snip_chars()], (output or "")[:snip_chars()], batch, str(custom_id),
                  (prompt or "")[:snip_chars()], (output or "")[:snip_chars()]))
+            # The request shape backfills onto rows captured before it was stored — it is strictly new
+            # information, so fill only where we currently hold nothing.
+            if system or req_schema or req_max_tokens:
+                _db().execute(
+                    "UPDATE call_io SET system=COALESCE(NULLIF(system,''),?), "
+                    "req_schema=COALESCE(NULLIF(req_schema,''),?), "
+                    "req_max_tokens=CASE WHEN COALESCE(req_max_tokens,0)=0 THEN ? ELSE req_max_tokens END "
+                    "WHERE batch=? AND custom_id=?",
+                    ((system or "")[:snip_chars()],
+                     (req_schema if isinstance(req_schema, str) else json.dumps(req_schema or ""))[:snip_chars()],
+                     int(req_max_tokens or 0), batch, str(custom_id)))
             _db().commit()
         return cid
     except Exception:
@@ -226,16 +252,26 @@ def fetch_openai(client, batch_id, intent, model, cap, sample_n):
                     continue
                 cid = o.get("custom_id")
                 if cid in need:
-                    msgs = (o.get("body") or {}).get("messages") or []
+                    body_in = o.get("body") or {}
+                    msgs = body_in.get("messages") or []
                     pm = msgs[-1].get("content") if msgs else ""
                     want[cid]["prompt"] = pm if isinstance(pm, str) else json.dumps(pm)
+                    # The SYSTEM message and the output contract were being dropped here. Taking msgs[-1]
+                    # alone keeps the question and throws away the instructions that shaped the answer.
+                    sysm = next((m.get("content") for m in msgs if m.get("role") == "system"), "")
+                    want[cid]["system"] = sysm if isinstance(sysm, str) else json.dumps(sysm)
+                    rf = body_in.get("response_format") or body_in.get("tools")
+                    want[cid]["req_schema"] = json.dumps(rf) if rf else ""
+                    want[cid]["req_max_tokens"] = int(body_in.get("max_tokens")
+                                                      or body_in.get("max_completion_tokens") or 0)
                     need.discard(cid)
     added = 0
     for cid, d in want.items():
         if count(intent, model) >= cap:
             break
         if record(intent, "openai", model, batch_id, cid, d.get("prompt", ""), d["output"],
-                  out_tok=d.get("out_tok", 0)):
+                  out_tok=d.get("out_tok", 0), system=d.get("system"),
+                  req_schema=d.get("req_schema"), req_max_tokens=d.get("req_max_tokens", 0)):
             added += 1
     return added, None
 
