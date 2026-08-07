@@ -22,6 +22,7 @@ extending what exists rather than growing a second client layer to drift from th
 import hashlib
 import json
 import os
+import concurrent.futures as cf
 import threading
 import time
 
@@ -161,6 +162,17 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
             break
         if attempt < attempts and (deadline_s - (time.time() - started)) > backoff_s:
             time.sleep(backoff_s * attempt)
+    # Feed the TIME measurement on every outcome, the way note_response feeds the token one. A budget that is
+    # only ever guessed can never improve; recorded, the next caller's deadline comes from what this vendor
+    # actually does. Deadline hits are flagged so they are censored from the percentiles they would otherwise
+    # drag downward — the ratchet that recommends ever-shorter deadlines the more calls it kills.
+    if last is not None:
+        try:
+            from . import bulkgate
+            bulkgate.note_latency(bulkgate.sig(model, template_id=purpose or None), model, last.latency,
+                                  hit_deadline=(last.kind == DEADLINE_EXCEEDED))
+        except Exception:
+            pass
     if last is not None and last.ok and schema is not None:
         last = _apply_schema(last, schema)
     _persist(last)
@@ -368,6 +380,42 @@ def output_cap(vendor, model, sig=None):
     return CAP_UNKNOWN, "unknown"
 
 
+DEADLINE_SLACK = 2.0          # measured p99 x this. Slack for TIME, mirroring the cap's p99x1.5 for TOKENS.
+DEADLINE_FLOOR_S = 30.0       # never propose a budget so tight that a healthy call cannot finish
+DEADLINE_CEIL_S = 600.0       # and never an unbounded one — the 3h30m run is what this module exists to end
+
+
+def time_budget(vendor, model, sig=None, default_s=None):
+    """(seconds, basis) — how long this (vendor, model[, class]) is ALLOWED to take, sized from measurement.
+
+    THE EXACT TWIN OF output_cap(). A deadline is a termination bound for TIME, and every lesson from the token
+    bound transfers unchanged:
+      * one global number is always wrong for somebody — measured p90 across four vendors on identical prompts
+        ranged 20.6s (openai) to 116.8s (moonshot), and both harnesses had hardcoded 180s for all of them;
+      * too LOW destroys the call after you have already paid for the input (deadline_exceeded is 100% waste,
+        exactly like truncation), so it is never a cost control;
+      * too HIGH means waiting three minutes to learn a vendor is down;
+      * a call that HIT the budget measures the budget, not the work, so it is censored from the percentiles
+        and sets a floor instead.
+    Precedence, measured first: this class on this model -> this model anywhere -> the caller's own number ->
+    (None, "unknown"), which the caller must answer for rather than have a guess invented for them."""
+    from . import bulkgate
+    for scope, kwargs in (("class", {"sig": sig, "model": model}), ("model", {"model": model})):
+        if scope == "class" and not sig:
+            continue
+        d = bulkgate.latency(**kwargs)
+        if d and d.get("n", 0) >= 5 and d.get("p99"):
+            want = float(d["p99"]) * DEADLINE_SLACK
+            if d.get("floor"):
+                # Calls already died at this budget: the work is demonstrably slower than anything we
+                # completed, so the proposal can never sit below the budget that killed them.
+                want = max(want, float(d["floor"]) * DEADLINE_SLACK)
+            return max(DEADLINE_FLOOR_S, min(DEADLINE_CEIL_S, want)), f"measured:{scope}(n={d['n']})"
+    if default_s:
+        return float(default_s), "caller"
+    return None, "unknown"
+
+
 def fan_out(vendors, prompt, *, deadline_s, purpose="", system=None, schema=None, max_tokens=None):
     """Ask N vendors the same question. Returns {"results": [...], "ok": [...], "failed": [...], "n": N,
     "n_ok": k, "complete": k == N, "run_id": ...}.
@@ -375,18 +423,79 @@ def fan_out(vendors, prompt, *, deadline_s, purpose="", system=None, schema=None
     `complete` is the whole point. The harness that started this reported "45 findings from 4 reviewers" when
     zero of the four had answered, because the merge step read absence as success. A caller must branch on
     `complete` — and `consensus()` below refuses outright rather than trusting them to remember."""
-    results = [call(v, m, prompt, deadline_s=deadline_s, purpose=purpose, system=system, schema=schema,
-                    max_tokens=max_tokens) for v, m in vendors]
+    # CONCURRENT, not sequential. This was a list comprehension, so a four-vendor panel cost the SUM of four
+    # latencies rather than the slowest one — measured p90s of 20.6 + 116.8 + 24.0 + 180.0s means a review
+    # panel took over five minutes to do twenty seconds of parallel work, and the slowest vendor set the pace
+    # for every question asked. Each vendor gets its own MEASURED budget: one global deadline is generous for
+    # the fast vendor and marginal for the slow one at the same time.
+    def _one(v, m):
+        budget, _basis = time_budget(v, m, sig=purpose or None, default_s=deadline_s)
+        return call(v, m, prompt, deadline_s=budget or deadline_s, purpose=purpose, system=system,
+                    schema=schema, max_tokens=max_tokens)
+
+    with cf.ThreadPoolExecutor(max_workers=max(1, len(vendors))) as pool:
+        futs = {pool.submit(_one, v, m): (v, m) for v, m in vendors}
+        results = []
+        for fut in cf.as_completed(futs):
+            try:
+                results.append(fut.result())
+            except Exception as e:                     # a thread that died is a FAILED vendor, not a missing one
+                v, m = futs[fut]
+                results.append(Result(TRANSPORT_ERROR, v, m, error=f"{type(e).__name__}: {e}", purpose=purpose))
     ok = [r for r in results if r.ok]
     return {"results": results, "ok": ok, "failed": [r for r in results if not r.ok],
             "n": len(results), "n_ok": len(ok), "complete": len(ok) == len(results) and bool(results),
             "run_id": run_id()}
 
 
+def first_ok(vendors, prompt, *, deadline_s, need=1, purpose="", system=None, schema=None, max_tokens=None):
+    """Ask all vendors at once; return as soon as `need` of them have ANSWERED. For timeliness, not agreement.
+
+    fan_out waits for everybody, so its latency is the SLOWEST vendor's — and one vendor timing out at 180s
+    makes every question take 180s no matter how fast the other three were. When the job only needs an answer
+    (a classification, an extraction), waiting on the straggler buys nothing. Measured: z.ai exceeded a 180s
+    deadline on 9 of 40 calls while openai answered the same prompts with a p90 of 20.6s.
+
+    Returns the same dict shape as fan_out plus `waited_for`, and `complete` still means need was MET — a
+    caller that reads absence as success is the failure the whole module exists to prevent. Stragglers keep
+    running to completion in the background so their latency and usage are still recorded: abandoning a call
+    you already paid for teaches the estimator nothing."""
+    got, results = [], []
+
+    def _one(v, m):
+        budget, _b = time_budget(v, m, sig=purpose or None, default_s=deadline_s)
+        return call(v, m, prompt, deadline_s=budget or deadline_s, purpose=purpose, system=system,
+                    schema=schema, max_tokens=max_tokens)
+
+    pool = cf.ThreadPoolExecutor(max_workers=max(1, len(vendors)))
+    futs = {pool.submit(_one, v, m): (v, m) for v, m in vendors}
+    t0 = time.time()
+    try:
+        for fut in cf.as_completed(futs, timeout=deadline_s):
+            try:
+                r = fut.result()
+            except Exception as e:
+                v, m = futs[fut]
+                r = Result(TRANSPORT_ERROR, v, m, error=f"{type(e).__name__}: {e}", purpose=purpose)
+            results.append(r)
+            if r.ok:
+                got.append(r)
+                if len(got) >= max(1, int(need)):
+                    break
+    except cf.TimeoutError:
+        pass
+    finally:
+        pool.shutdown(wait=False)                      # stragglers finish and self-record; we stop WAITING
+    return {"results": results, "ok": got, "failed": [r for r in results if not r.ok],
+            "n": len(vendors), "n_ok": len(got), "need": int(need),
+            "complete": len(got) >= max(1, int(need)),
+            "waited_for": round(time.time() - t0, 1), "run_id": run_id()}
+
+
 def consensus(fan, require=None):
     """The ok results, ONLY if enough vendors answered in THIS run. Raises otherwise — because the failure
     being prevented is a report that says N-of-N when it had k. `require` defaults to all of them."""
-    need = len(fan["results"]) if require is None else int(require)
+    need = (fan.get("need") or len(fan["results"])) if require is None else int(require)
     if fan["n_ok"] < need:
         raise NotOk(
             "%d of %d vendors answered in run %s — refusing to report a %d-vendor result. Failures: %s"

@@ -242,6 +242,11 @@ def _calls_db():
                "(sig TEXT, model TEXT, out_tok INTEGER, max_tokens INTEGER, truncated INTEGER, ts REAL)")
     db.execute("CREATE INDEX IF NOT EXISTS idx_gatecalls_sig ON gate_calls(sig)")
     db.execute("CREATE INDEX IF NOT EXISTS idx_gatecalls_model ON gate_calls(model)")  # model-level fill obs (calibrate)
+    # TIME is the second termination bound, and it had no measurement at all. Same shape as out_tok: record
+    # what actually happened per call-class so a deadline can be sized rather than guessed.
+    db.execute("CREATE TABLE IF NOT EXISTS gate_latency "
+               "(sig TEXT, model TEXT, seconds REAL, hit_deadline INTEGER, ts REAL)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_gatelat_sig ON gate_latency(sig, model)")
     return db
 
 
@@ -251,6 +256,52 @@ def is_truncated(finish_reason, out_tok=None, max_tokens=None):
     if (finish_reason or "").lower() in ("length", "max_tokens"):
         return True
     return bool(out_tok and max_tokens and int(out_tok) >= int(max_tokens))
+
+
+def note_latency(sig, model, seconds, hit_deadline=False):
+    """Record how LONG one call took, keyed by call-class — the time analogue of note_response's out_tok.
+
+    Without this a deadline is a guess, and a guessed deadline fails the same way a guessed max_tokens does:
+    too low and the call dies after you have already paid for the input, too high and you wait three minutes
+    to learn a vendor is down. Measured across four vendors on identical prompts, p90 latency ranged 20.6s to
+    116.8s — a single global 180s was simultaneously far too generous for one and marginal for another."""
+    try:
+        with _lock:
+            _calls_db().execute(
+                "INSERT INTO gate_latency (sig,model,seconds,hit_deadline,ts) VALUES (?,?,?,?,?)",
+                (sig, model, float(seconds or 0), int(bool(hit_deadline)), time.time()))
+            _db().commit()
+    except Exception:
+        pass
+
+
+def latency(sig=None, model=None):
+    """{n, p50, p90, p99, max, deadline_hits, hit_rate} for a class and/or model, or {} if nothing measured.
+
+    CENSORING, same rule as maxtokens(): a call that hit its deadline was cut AT the budget, so it measures
+    the BUDGET, not the work. Including those would drag every percentile toward whatever budget happened to
+    be set — and the tighter the budget, the lower the 'measured' latency, which is a ratchet that recommends
+    ever-shorter deadlines the more calls it kills. Timed-out calls are counted and set a FLOOR instead."""
+    where, args = [], []
+    if sig:
+        where.append("sig=?"); args.append(sig)
+    if model:
+        where.append("model=?"); args.append(model)
+    q = "SELECT seconds,hit_deadline FROM gate_latency" + (" WHERE " + " AND ".join(where) if where else "")
+    try:
+        with _lock:
+            rows = _calls_db().execute(q, args).fetchall()
+    except Exception:
+        return {}
+    done = [r[0] for r in rows if not r[1] and r[0] > 0]
+    hits = [r[0] for r in rows if r[1]]
+    if not done:
+        return ({"n": 0, "deadline_hits": len(hits), "hit_rate": 1.0 if hits else 0.0,
+                 "floor": max(hits) if hits else None} if hits else {})
+    return {"n": len(done), "p50": _pctl(done, 0.50), "p90": _pctl(done, 0.90), "p99": _pctl(done, 0.99),
+            "max": max(done), "deadline_hits": len(hits),
+            "hit_rate": len(hits) / float(len(rows)) if rows else 0.0,
+            "floor": max(hits) if hits else None}
 
 
 def note_response(sig, model, out_tok, max_tokens=None, finish_reason=None):
