@@ -373,6 +373,10 @@ def _budget_check(cost, model, provider, kind):
     if config.budget_backend() != "sqlite" or _allow():
         return
     from . import budget
+    if budget.is_reading_history():
+        # Re-reading an already-billed batch is not spending, so a cap must not fire on it. Without this the
+        # gate refused every call for the rest of the day over $359.63 of charges that never happened.
+        return
     ex = budget.exceeded(cost, kind="llm")          # the gate governs LLM calls; checks the LLM sub-cap + total ceiling
     if not ex:
         return

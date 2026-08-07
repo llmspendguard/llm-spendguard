@@ -5,7 +5,7 @@ spend across ALL processes before allowing more. Default `backend = memory` keep
 real-time cap only (this module is then never touched). Per-call SQLite I/O is fine for moderate
 real-time volume; very high-volume loops should stay on the in-process cap.
 """
-import sqlite3, datetime, threading
+import contextlib, sqlite3, datetime, threading
 from . import config
 
 _conn = None
@@ -92,11 +92,44 @@ def _conv():
     return _CONV
 
 
+_reading = threading.local()
+
+
+@contextlib.contextmanager
+def reading_history(what=""):
+    """Inside this block, the gate is READING already-billed work — it is not spending.
+
+    WHY THIS EXISTS. Recovering a past batch means downloading its input file and parsing it. Those bytes
+    look exactly like a batch about to be submitted, so the gate estimated them as new spend: one read-only,
+    zero-token `callio.fetch_history()` pass wrote $359.63 of charges that never happened (plus $10,050 more
+    the impossibility rail caught), and the daily cap then refused every genuine call for the rest of the day.
+    A guard that blocks real work because of money nobody spent is worse than no guard — it teaches you to
+    turn it off.
+
+    This is NOT a spend bypass. It suppresses recording only for callers that are provably reading history
+    (the callio fetch paths), the HTTP GETs it covers are free, and any real call made inside a block would
+    still be metered by the provider — it just would not be double-counted here as a projection."""
+    prev = getattr(_reading, "on", False)
+    _reading.on = True
+    try:
+        yield
+    finally:
+        _reading.on = prev
+
+
+def is_reading_history():
+    return bool(getattr(_reading, "on", False))
+
+
 def record(provider, model, kind, cost, project=None, conv_id=None, basis=None):
     """Write one charge. `basis` says WHAT KIND of number it is (estimate · billed · assumed · reconstructed) —
     known for certain by the writer, unknowable by the reader, and the thing that makes a displayed figure
     honest. Blank on legacy rows, which read as 'unlabelled' rather than being silently called billed."""
     if not cost:
+        return
+    if is_reading_history():
+        # Re-reading a batch that already ran is not a new charge. Writing one here inflates today's total
+        # with money nobody spent, and the caps then act on the fiction.
         return
     proj = project if project is not None else _project()
     conv = conv_id if conv_id is not None else _conv()

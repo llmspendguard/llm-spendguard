@@ -269,45 +269,52 @@ def fetch_anthropic(client, batch_id, intent, model, cap, sample_n, jsonl_inputs
 
 def fetch_history(cap=DEFAULT_CAP, sample_n=None, limit_batches=None):
     """Fill call_io from provider batch I/O, bounded to `cap` per (intent, model). Zero token cost.
-    Skips a batch entirely once its (intent, model) quota is met — so total downloads stay bounded."""
-    sample_n = sample_n or cap
-    runs = _runs_with_intent()
-    oc = None
-    try:
-        oc = _oai_client()
-    except Exception:
-        pass
-    ac = None
-    try:
-        import anthropic
-        ac = anthropic.Anthropic(api_key=config.api_key("ANTHROPIC_API_KEY"))
-    except Exception:
-        pass
-    added_total, fetched, skipped_full, errors = 0, 0, 0, 0
-    for i, (bid, intent, model, prov) in enumerate(runs):
-        if limit_batches and fetched >= limit_batches:
-            break
-        if "embedding" in (model or "").lower():    # embeddings are vectors, not judgeable text output
-            continue
-        if count(intent, model) >= cap:
-            skipped_full += 1
-            continue
+    Skips a batch entirely once its (intent, model) quota is met — so total downloads stay bounded.
+
+    Runs inside budget.reading_history(): downloading a batch INPUT file hands the gate bytes that look
+    exactly like a batch about to be submitted, and it duly estimated them as new spend — one read-only pass
+    wrote $359.63 of charges for work that had already been billed months earlier, and the daily cap then
+    blocked every real call. "Zero token cost" in this docstring was true and still produced a bill."""
+    from . import budget
+    with budget.reading_history("callio.fetch_history"):
+        sample_n = sample_n or cap
+        runs = _runs_with_intent()
+        oc = None
         try:
-            if prov == "openai" and oc:
-                n, err = fetch_openai(oc, bid, intent, model, cap, sample_n)
-            elif prov == "anthropic" and ac:
-                n, err = fetch_anthropic(ac, bid, intent, model, cap, sample_n)
-            else:
-                continue
-            fetched += 1
-            added_total += n
-            if err and n == 0:
-                errors += 1
-            if fetched % 5 == 0:
-                print(f"  …{fetched} batches fetched, {added_total} samples so far", flush=True)
+            oc = _oai_client()
         except Exception:
-            errors += 1
-    return dict(added=added_total, batches_fetched=fetched, skipped_quota=skipped_full, errors=errors)
+            pass
+        ac = None
+        try:
+            import anthropic
+            ac = anthropic.Anthropic(api_key=config.api_key("ANTHROPIC_API_KEY"))
+        except Exception:
+            pass
+        added_total, fetched, skipped_full, errors = 0, 0, 0, 0
+        for i, (bid, intent, model, prov) in enumerate(runs):
+            if limit_batches and fetched >= limit_batches:
+                break
+            if "embedding" in (model or "").lower():    # embeddings are vectors, not judgeable text output
+                continue
+            if count(intent, model) >= cap:
+                skipped_full += 1
+                continue
+            try:
+                if prov == "openai" and oc:
+                    n, err = fetch_openai(oc, bid, intent, model, cap, sample_n)
+                elif prov == "anthropic" and ac:
+                    n, err = fetch_anthropic(ac, bid, intent, model, cap, sample_n)
+                else:
+                    continue
+                fetched += 1
+                added_total += n
+                if err and n == 0:
+                    errors += 1
+                if fetched % 5 == 0:
+                    print(f"  …{fetched} batches fetched, {added_total} samples so far", flush=True)
+            except Exception:
+                errors += 1
+        return dict(added=added_total, batches_fetched=fetched, skipped_quota=skipped_full, errors=errors)
 
 
 def main(argv=None):
