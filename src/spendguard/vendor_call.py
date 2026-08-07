@@ -43,6 +43,18 @@ _RUN_ID = None
 _lock = threading.RLock()
 
 
+class BadBound(ValueError):
+    """A caller supplied a bound that MEASUREMENT says will destroy the call. Raised before anything is sent.
+
+    This exists because the failure kept recurring and it was never a knowledge problem. Every call site is a
+    fresh chance to type a number, and a wrong one does not announce itself: max_tokens=2000 on kimi-k3
+    returned HTTP 200 with ZERO characters on 19 of 20 calls (reasoning consumed the budget), and a probe
+    written hours after that lesson still hardcoded 600. Advice in a docstring loses to a literal at the call
+    site, every time. So the library refuses the literal instead of describing why it is wrong.
+
+    The way to never see this: do not pass a bound. Omit max_tokens and the measured one is used."""
+
+
 class NotOk(RuntimeError):
     """Raised when a caller reads `.text` off a result that is not `ok`. The point is that this CANNOT be
     ignored: there is no path from a truncated or empty response to a string a caller can use by accident."""
@@ -131,11 +143,49 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
     """
     if not deadline_s or deadline_s <= 0:
         raise ValueError("deadline_s is required and must be > 0: an unbounded call is how a 3h30m run happens")
+    # INPUT BOUND, checked before a byte is sent. The provider will reject an over-window request anyway;
+    # the point is to fail here, naming the two numbers, instead of paying for a round trip and reading a
+    # provider error that does not say which field was too big. Same rail as the estimate-side impossibility
+    # check — a per-request input above the published context window is a physical bound, not a threshold.
+    try:
+        from . import pricing
+        window = pricing.max_input_tokens(model)
+        approx_in = (len(prompt or "") + len(system or "")) // 4
+        if window and approx_in > int(window):
+            raise BadBound(
+                f"{vendor}/{model}: this request's input is ~{approx_in:,} tokens but the model's context "
+                f"window is {int(window):,}. The provider would reject it. Split the work, or use a model "
+                f"with a larger window — never trim the prompt silently, which changes the task.")
+    except BadBound:
+        raise
+    except Exception:
+        pass
+
     cap_basis = "caller"
+    if max_tokens is not None:
+        # A CALLER-SUPPLIED CAP IS VALIDATED, NEVER TRUSTED. This was the hole: `max_tokens is None` took the
+        # measured path, and anything else was passed straight through. A literal below what this class
+        # demonstrably produces buys nothing (billing is on tokens GENERATED) and destroys the answer.
+        try:
+            from . import bulkgate
+            b = bulkgate.maxtokens(class_sig(model, purpose))
+            need = int(b.get("p95") or 0) if b else 0
+            floor = int(b.get("recommend") or 0) if b else 0
+            if need and int(max_tokens) < need:
+                raise BadBound(
+                    f"{vendor}/{model}: max_tokens={int(max_tokens):,} is below the measured p95 of "
+                    f"{need:,} for this call-class (n={b.get('n')}, {b.get('truncations') or 0} truncation(s) "
+                    f"already). A cap never controlled cost -- you are billed on tokens GENERATED -- and a "
+                    f"low one turns a paid call into an unparseable body. Omit max_tokens and the measured "
+                    f"bound ({floor or need:,}) is used, or pass that number deliberately.")
+        except BadBound:
+            raise
+        except Exception:
+            pass
     if max_tokens is None:
         # NOT a default constant. A 512 fallback would be the same invented number that returned zero
         # characters from two reasoning models — the registry answers this or nobody does.
-        max_tokens, cap_basis = output_cap(vendor, model, sig=purpose or None)
+        max_tokens, cap_basis = output_cap(vendor, model, sig=class_sig(model, purpose))
         if max_tokens is None:
             return Result(TRANSPORT_ERROR, vendor, model, prompt_sha=_sha(prompt), purpose=purpose,
                           error=f"no measured output cap for {vendor}/{model} and none supplied. Record one: "
@@ -169,7 +219,7 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
     if last is not None:
         try:
             from . import bulkgate
-            bulkgate.note_latency(bulkgate.sig(model, template_id=purpose or None), model, last.latency,
+            bulkgate.note_latency(class_sig(model, purpose), model, last.latency,
                                   hit_deadline=(last.kind == DEADLINE_EXCEEDED))
         except Exception:
             pass
@@ -355,6 +405,19 @@ def caps():
         return {}
 
 
+def class_sig(model, purpose):
+    """The ONE way a call-class is identified here, so lookups cannot miss what recording wrote.
+
+    They did. `call()` passed the raw purpose string ("panel:review") to output_cap, which forwards it to
+    bulkgate.maxtokens(sig) — but note_response STORES observations under bulkgate.sig(model, template_id=...),
+    a hash. The two never matched, so output_cap's middle rung, "this class's own observed need", never fired
+    once: every call silently fell through to the published ceiling or to `unknown`. A measured system whose
+    measurement is looked up under the wrong key is indistinguishable from one that never measured anything,
+    and it fails quietly in the direction of guessing."""
+    from . import bulkgate
+    return bulkgate.sig(model, template_id=purpose or None)
+
+
 def output_cap(vendor, model, sig=None):
     """(tokens, basis) — the termination bound for this (vendor, model). Precedence, all MEASURED or PUBLISHED,
     never guessed: the recorded registry → this class's own observed need → the vendor's published ceiling →
@@ -429,7 +492,7 @@ def fan_out(vendors, prompt, *, deadline_s, purpose="", system=None, schema=None
     # for every question asked. Each vendor gets its own MEASURED budget: one global deadline is generous for
     # the fast vendor and marginal for the slow one at the same time.
     def _one(v, m):
-        budget, _basis = time_budget(v, m, sig=purpose or None, default_s=deadline_s)
+        budget, _basis = time_budget(v, m, sig=class_sig(m, purpose), default_s=deadline_s)
         return call(v, m, prompt, deadline_s=budget or deadline_s, purpose=purpose, system=system,
                     schema=schema, max_tokens=max_tokens)
 
@@ -463,7 +526,7 @@ def first_ok(vendors, prompt, *, deadline_s, need=1, purpose="", system=None, sc
     got, results = [], []
 
     def _one(v, m):
-        budget, _b = time_budget(v, m, sig=purpose or None, default_s=deadline_s)
+        budget, _b = time_budget(v, m, sig=class_sig(m, purpose), default_s=deadline_s)
         return call(v, m, prompt, deadline_s=budget or deadline_s, purpose=purpose, system=system,
                     schema=schema, max_tokens=max_tokens)
 
