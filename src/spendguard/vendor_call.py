@@ -115,9 +115,36 @@ def _sha(s):
     return hashlib.sha256((s or "").encode("utf-8", "ignore")).hexdigest()[:16]
 
 
+# Documented provider identifiers for "we declined this request", checked against the structured error a
+# provider returns. NOT an attempt to interpret arbitrary prose — an unmatched error stays a transport fault.
+_POLICY_MARKERS = ("content_policy_violation", "content_filter", "invalid_prompt", "high risk",
+                   "safety", "prohibited_content", "content_policy")
+
+
+def _is_policy_rejection(err):
+    """True only when the provider's own error names a policy decision. Returns False on anything ambiguous:
+    mislabelling a transport blip as a refusal would suppress the retry that fixes it."""
+    if not err:
+        return False
+    t = str(err).lower()
+    if "error code: 4" not in t and "400" not in t and "403" not in t:
+        return False                              # 5xx / timeouts / connection resets are transport, always
+    return any(m in t for m in _POLICY_MARKERS)
+
+
 def _classify(r, want_text=True):
     """(kind, stop_reason) from an adapters result. Parsing declared fields, not inferring intent."""
     if r.get("error"):
+        # A PROVIDER-SIDE POLICY REJECTION IS A REFUSAL, NOT A TRANSPORT FAULT. The distinction is not
+        # cosmetic: transport faults are RETRIED, and a deterministic policy rejection retried three times
+        # is three times the latency and three times nothing. Measured on Moonshot — a source-code payload
+        # over ~16,000 chars returns HTTP 400 "the request was rejected because it was considered high
+        # risk" (param: prompt), every time, and the retries changed nothing.
+        # This reads the provider's own structured error fields (an HTTP status and a documented error
+        # identifier), which is FORMAT parsing on a fixed contract. It is deliberately conservative: an
+        # unrecognised 400 stays a transport error rather than being talked into a category.
+        if _is_policy_rejection(r.get("error")):
+            return REFUSED, "policy_rejection"
         return TRANSPORT_ERROR, r.get("finish_reason")
     fr = (r.get("finish_reason") or "").lower()
     txt = r.get("text")
@@ -396,6 +423,38 @@ def record_cap(vendor, model, max_output_tokens, method, source=""):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2, sort_keys=True))
     return data[f"{vendor}/{model}"]
+
+
+def record_input_limit(vendor, model, max_chars, method, source="", applies_to="any"):
+    """A MEASURED input ceiling, with what it applies to and how it was found.
+
+    Separate from the published context window, which is a different bound: this records a limit the provider
+    enforces for its own reasons. Measured on Moonshot by bisection — source-code payloads pass at 15,500
+    chars and are refused at 17,000 with "considered high risk", while PROSE of 40,000 chars passes fine. So
+    the ceiling is not a size limit and not a content filter but the interaction of the two, which is exactly
+    why it has an `applies_to` and why it is recorded rather than remembered."""
+    if not max_chars or int(max_chars) <= 0:
+        raise ValueError("a limit must be positive: zero or absent is the failure this registry exists to end")
+    path = _caps_path()
+    try:
+        data = json.loads(path.read_text())
+    except Exception:
+        data = {}
+    key = f"{vendor}/{model}"
+    rec = data.get(key) or {}
+    rec.setdefault("input_limits", {})[applies_to] = {
+        "max_chars": int(max_chars), "method": method, "source": source,
+        "measured": time.strftime("%Y-%m-%d")}
+    data[key] = rec
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2, sort_keys=True))
+    return rec["input_limits"][applies_to]
+
+
+def input_limit(vendor, model, applies_to="any"):
+    """The recorded limit for this kind of payload, or None. None means UNMEASURED, never unlimited."""
+    rec = caps().get(f"{vendor}/{model}") or {}
+    return (rec.get("input_limits") or {}).get(applies_to)
 
 
 def caps():

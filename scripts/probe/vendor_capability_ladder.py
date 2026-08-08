@@ -51,7 +51,13 @@ PANEL = [("anthropic", "claude-opus-4-8"), ("openai", "gpt-5.5"),
 
 # Measured this session: a terse instruction alone cut kimi-k3 from 28.4s to 14.9s and glm-5.2 from 25.9s to
 # 18.8s, with no model change and therefore no quality traded. It is standard on every rung, not an option.
-TERSE = ("Be terse. No preamble, no restatement of the input, no summary. Answer only what was asked.")
+# The anti-fence clause is here because MEASUREMENT put it here, not because it reads well: on the `review`
+# rung every single failure across three vendors was "salvaged — needed a fence stripped". The answer was
+# right and arrived inside a ```json block. Whether saying so out loud fixes it is an empirical question,
+# and the `review` rung is the experiment that answers it.
+TERSE = ("Be terse. No preamble, no restatement of the input, no summary. Answer only what was asked. "
+         "When asked for JSON, emit the raw JSON object only \u2014 no markdown code fence, no triple "
+         "backticks, no language tag, and no text before or after it.")
 
 
 def _repo_source(target_chars):
@@ -131,7 +137,7 @@ def rungs(big_chars):
          "system": TERSE, "schema": REVIEW_SCHEMA, "contract": REVIEW_SCHEMA},
         {"id": "strict", "why": "the provider's FORCED-schema path — known red on some vendors",
          "prompt": "Review this function and list every correctness issue.\n\n" + REVIEW_DIFF,
-         "system": TERSE, "schema": REVIEW_SCHEMA, "contract": REVIEW_SCHEMA},
+         "system": TERSE, "schema": REVIEW_SCHEMA, "contract": REVIEW_SCHEMA, "splittable": True},
     ]
 
 
@@ -165,7 +171,7 @@ def main():
         tot = 0.0
         print(f"{'rung':<10}{'input tok':>11}   why")
         for r in ladder:
-            it = len(r["prompt"]) // 4
+            it = len(r.get("head", "") + r.get("body", r.get("prompt", ""))) // 4
             print(f"  {r['id']:<8}{it:>11,}   {r['why']}")
             for _v, m in PANEL:
                 # Estimate output the way the gate would, not with a private guess.
@@ -185,16 +191,55 @@ def main():
     for r in ladder:
         for v, m in PANEL:
             oks, conform, lats, outs, kinds, why = 0, 0, [], [], {}, ""
+            # A vendor with a MEASURED input ceiling gets the work SPLIT to fit it, because that is what
+            # production would do — reviewing a large change file-by-file is normal, not a workaround. The
+            # split size comes from the recorded measurement (vendor_call.input_limit), never a literal, so
+            # it moves when the provider does. Every chunk must satisfy the contract: passing because one
+            # chunk of five answered would be the "45 findings from 4 reviewers who never replied" failure.
+            lim = vc.input_limit(v, m, "source_code") if r.get("splittable") else None
+            width = int(lim["max_chars"]) - 2000 if lim else 0
+
+            head, body = r.get("head", ""), r.get("body", r["prompt"])
+
+            def _split(w, head=head, body=body):
+                """Chunks that are each a COMPLETE request: the instruction plus a slice of the body.
+                head/body bound as defaults — a closure over the loop variables would silently review the
+                wrong rung's text once this is called from inside the retry loop."""
+                if not w or len(head) + len(body) <= w:
+                    return [head + body]
+                room = max(1000, w - len(head))
+                return [head + body[i:i + room] for i in range(0, len(body), room)]
+
+            parts = _split(width)
             for _ in range(a.repeats):
                 if spent > a.budget:
                     print(f"  BUDGET STOP at ${spent:,.3f}")
                     break
                 sig = vc.class_sig(m, f"ladder:{r['id']}")
                 budget_s, _b = vc.time_budget(v, m, sig=sig, default_s=300)
-                # NO max_tokens. The measured bound is used; a literal here is the recurring mistake.
-                res = vc.call(v, m, r["prompt"], deadline_s=budget_s or 300, purpose=f"ladder:{r['id']}",
-                              system=r["system"], schema=r["schema"])
-                spent += res.cost or 0.0
+                # ADAPTIVE, because the threshold is not a property of the vendor alone. Measured: Moonshot
+                # accepted 15,500 chars of source under a "summarise" instruction and refused 14,000 of the
+                # SAME source under a review instruction with a forced schema. A recorded number is the right
+                # STARTING point and the wrong stopping point, so a policy refusal halves the chunk and
+                # retries rather than trusting a figure measured under different conditions.
+                res, all_ok, worst = None, True, None
+                w = width
+                for _attempt in range(4):
+                    parts = _split(w)
+                    all_ok, worst = True, None
+                    for part in parts:
+                        # NO max_tokens. The measured bound is used; a literal is the recurring mistake.
+                        res = vc.call(v, m, part, deadline_s=budget_s or 300, purpose=f"ladder:{r['id']}",
+                                      system=r["system"], schema=r["schema"])
+                        spent += res.cost or 0.0
+                        if not res.ok:
+                            all_ok, worst = False, res
+                            break
+                    if all_ok or worst is None or worst.kind != vc.REFUSED:
+                        break                       # only a POLICY refusal is answered by a smaller payload
+                    w = (w or (len(head) + len(body))) // 2
+                if not all_ok:
+                    res = worst
                 kinds[res.kind] = kinds.get(res.kind, 0) + 1
                 if not res.ok:
                     continue
@@ -211,6 +256,11 @@ def main():
             rate = conform / float(n)
             ks = " ".join(f"{k}:{c}" for k, c in sorted(kinds.items()) if k != "ok")
             mark = "PASS" if rate >= a.pass_rate else "FAIL"
+            if len(parts) > 1:
+                # `w` is what actually worked, which is the recorded limit only until a refusal halves it.
+                # Reporting the recorded number here would print a figure the run did not use.
+                mark += f" (split x{len(parts)} @ {w:,} chars"
+                mark += f", recorded {lim['max_chars']:,})" if lim else ", no recorded limit)"
             print(f"  {r['id']:<9}{v:<11}{oks:>4}/{n:<4}{conform:>6}/{n:<3}"
                   f"{(statistics.median(lats) if lats else 0):>8.1f}s"
                   f"{(int(statistics.median(outs)) if outs else 0):>9,}  {mark} {ks} {why[:52]}", flush=True)

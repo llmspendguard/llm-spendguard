@@ -226,8 +226,15 @@ def spent_since(day, project=None, conv=None):  # WORKLOAD spend only — exclud
     """Gate-recorded workload $ since `day`. Optionally SCOPE to a `project` (repo) and/or `conv` (conversation) —
     the receipt uses this to show what's relevant to the current repo/conversation, not a global sum."""
     cond = ["day >= ?", "(kind IS NULL OR kind != 'meta')", "(model IS NULL OR model <> ?)",
-            "(conv_id IS NULL OR conv_id <> ?)"]     # quarantined: impossible estimates are never spend
-    args = [day, _RECONCILED, QUARANTINE_CONV]
+            "(conv_id IS NULL OR conv_id <> ?)",      # quarantined: impossible estimates are never spend
+            # RECONSTRUCTED rows RESTATE history. The money was real, but it was spent in its own period and
+            # already counted there — so summing it into THIS period double-counts, and a period CAP then
+            # fires on dollars that did not move today. Measured: a single reconstruction row of $10,409.24,
+            # covering months, was written with today's date and basis 'billed'; every cap saw a $10,480
+            # month against $70 of actual API spend and refused every call. A backfill must never be able to
+            # exhaust a live budget.
+            "(basis IS NULL OR basis <> ?)"]
+    args = [day, _RECONCILED, QUARANTINE_CONV, BASIS_RECONSTRUCTED]
     if project is not None:
         cond.append("LOWER(project) = ?"); args.append(str(project).strip().lower())
     if conv is not None:
