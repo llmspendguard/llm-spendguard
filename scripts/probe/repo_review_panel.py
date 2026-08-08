@@ -72,6 +72,7 @@ def main():
     ap.add_argument("--root", default="src/spendguard", help="directory to review")
     ap.add_argument("--pattern", default="*.py")
     ap.add_argument("--limit", type=int, default=0, help="0 = every matching file")
+    ap.add_argument("--only", default="", help="comma-separated filenames — review just these")
     ap.add_argument("--min-chars", type=int, default=1500, help="skip trivial files")
     ap.add_argument("--budget", type=float, default=25.0, help="HARD stop in $")
     ap.add_argument("--estimate", action="store_true")
@@ -80,6 +81,9 @@ def main():
     os.environ["SPENDGUARD_ADVISOR_EXECUTOR"] = "api"      # the API path: a lane reports session accounting
 
     ts = targets(a.root, a.pattern, a.limit, a.min_chars)
+    if a.only:
+        want = {x.strip() for x in a.only.split(",")}
+        ts = [t for t in ts if t["name"] in want]
     if not ts:
         print(f"no files matching {a.pattern} under {a.root}")
         return 1

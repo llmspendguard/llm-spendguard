@@ -170,7 +170,7 @@ def _openai_strict(schema):
     return s
 
 
-def call(model, prompt, max_tokens=512, system=None, reasoning=None, schema=None):
+def call(model, prompt, max_tokens=512, system=None, reasoning=None, schema=None, timeout_s=None):
     """Run one prompt against one model. Returns a result dict (never raises). `reasoning` (minimal|low|medium|high)
     sets reasoning effort for gpt-5/o-series reasoning models; defaults to 'minimal' for them (default-medium reasoning
     eats the token budget → empty output, and costs more — wrong for simple classify/extract calls)."""
@@ -211,7 +211,12 @@ def call(model, prompt, max_tokens=512, system=None, reasoning=None, schema=None
     try:
         if spec["kind"] == "anthropic":
             import anthropic
-            c = anthropic.Anthropic(api_key=key)
+            # A CLIENT-SIDE TIMEOUT IS THE ONLY THING THAT ACTUALLY CANCELS A REQUEST. A caller that merely
+            # stops waiting (thread.join(timeout=...)) leaves the request running to completion, and it BILLS:
+            # measured, a review that saw 18 results was billed for 146 calls, because every abandoned call
+            # finished on its own and the caller never learned it existed. Handing the SDK the same budget the
+            # caller is enforcing makes abandonment real.
+            c = anthropic.Anthropic(api_key=key, timeout=timeout_s) if timeout_s else anthropic.Anthropic(api_key=key)
             kw = {"model": raw, "max_tokens": max_tokens, "messages": [{"role": "user", "content": prompt}]}
             if system:
                 kw["system"] = system
@@ -233,7 +238,8 @@ def call(model, prompt, max_tokens=512, system=None, reasoning=None, schema=None
             in_tok, out_tok = m.usage.input_tokens, m.usage.output_tokens
         else:
             from openai import OpenAI
-            c = OpenAI(api_key=key, base_url=spec["base_url"])
+            c = (OpenAI(api_key=key, base_url=spec["base_url"], timeout=timeout_s) if timeout_s
+                 else OpenAI(api_key=key, base_url=spec["base_url"]))
             msgs = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": prompt}]
             okw = {"model": raw, "messages": msgs}
             if schema is not None:

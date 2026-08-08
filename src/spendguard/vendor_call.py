@@ -242,6 +242,10 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
     started = time.time()
     sha = _sha(prompt)
     last = None
+    # EVERY ATTEMPT BILLS. Returning only the final attempt's cost made retries invisible to the caller's
+    # budget, so a hard stop could not stop anything — the run that found this thought it had spent $1.98
+    # while the ledger recorded $13.12. The Result now carries what the CALL cost, not what its last try cost.
+    billed = 0.0
     del cap_basis                       # recorded via the caps registry; not part of the result contract
     for attempt in range(1, max(1, int(attempts)) + 1):
         remaining = deadline_s - (time.time() - started)
@@ -250,9 +254,11 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
                           latency=time.time() - started,
                           error=f"total deadline {deadline_s}s exhausted after {attempt - 1} attempt(s)")
         r = _attempt(vendor, model, prompt, system, max_tokens, remaining, schema=schema)
+        billed += float(r.get("cost") or 0.0)
         kind, stop = _classify(r)
         last = Result(kind, vendor, model, text=r.get("text"), stop_reason=stop,
-                      in_tok=r.get("in_tok") or 0, out_tok=r.get("out_tok") or 0, cost=r.get("cost"),
+                      in_tok=r.get("in_tok") or 0, out_tok=r.get("out_tok") or 0,
+                      cost=(billed if billed else r.get("cost")),
                       latency=time.time() - started, error=r.get("error"), prompt_sha=sha, purpose=purpose)
         # Retry ONLY transport failures. A truncation or an empty body is a deterministic result: repeating it
         # burns the deadline and the money to arrive at the same answer.
@@ -295,7 +301,8 @@ def _attempt(vendor, model, prompt, system, max_tokens, budget_s, schema=None):
         try:
             box["r"] = adapters.call(model if ":" in model else f"{vendor}:{model}", prompt,
                                      max_tokens=int(max_tokens), system=system,
-                                     schema=schema if isinstance(schema, dict) else None)
+                                     schema=schema if isinstance(schema, dict) else None,
+                                     timeout_s=budget_s)
         except Exception as e:                      # adapters says it never raises; believe it, verify anyway
             box["r"] = {"error": f"{type(e).__name__}: {e}", "text": None}
 
