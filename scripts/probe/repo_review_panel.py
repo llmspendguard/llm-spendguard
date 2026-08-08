@@ -75,6 +75,9 @@ def main():
     ap.add_argument("--only", default="", help="comma-separated filenames — review just these")
     ap.add_argument("--min-chars", type=int, default=1500, help="skip trivial files")
     ap.add_argument("--budget", type=float, default=25.0, help="HARD stop in $")
+    ap.add_argument("--tolerance", type=float, default=0.50,
+                    help="$ by which the caller's counter may lag the LEDGER before the run stops. The two "
+                         "should now agree; a gap means calls are billing that the caller cannot see.")
     ap.add_argument("--estimate", action="store_true")
     ap.add_argument("--out", default="")
     a = ap.parse_args()
@@ -102,8 +105,25 @@ def main():
         print(f"  {'TOTAL':<32} ${tot:>8,.2f}   (hard budget ${a.budget:,.2f})")
         return 0
 
+    ap_tol = a.tolerance
     out_path = a.out or os.path.join(str(config.HOME), "repo_review.jsonl")
     spent, started = 0.0, time.time()
+
+    def ledger_spent_since(t0):
+        """What the LEDGER says this run cost. The script's own counter is the thing under test, so it cannot
+        also be the thing that verifies it — an independent record is the only reason the previous run's
+        overspend was ever noticed."""
+        import sqlite3
+        try:
+            c = sqlite3.connect(config.db_path())
+            r = c.execute("SELECT COALESCE(SUM(cost),0) FROM calls WHERE ts >= ?", (t0,)).fetchone()
+            return float(r[0] or 0)
+        except Exception:
+            return -1.0
+
+    import datetime
+    t0_iso = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+    fh = open(out_path, "w")          # INCREMENTAL: a killed run must leave the findings it already paid for
     per_vendor = collections.defaultdict(lambda: {"files": 0, "ok": 0, "findings": 0, "kinds": {}})
     rows = []
     print(f"\nreviewing — hard budget ${a.budget:,.2f}, results -> {out_path}\n")
@@ -133,14 +153,28 @@ def main():
                 issues = []
             st["findings"] += len(issues)
             for it in issues:
-                rows.append({"file": t["path"], "vendor": r.vendor, "line": it.get("line"),
-                             "severity": str(it.get("severity", ""))[:24], "issue": str(it.get("issue", ""))[:400]})
+                row = {"file": t["path"], "vendor": r.vendor, "line": it.get("line"),
+                       "severity": str(it.get("severity", ""))[:24], "issue": str(it.get("issue", ""))[:400]}
+                rows.append(row)
+                fh.write(json.dumps(row) + "\n")
+        fh.flush()
+        # THE ACCOUNTING CHECK, every file. The previous run reported $1.98 while the ledger recorded $13.12,
+        # because abandoned and retried calls billed without ever producing a Result the caller could see. If
+        # the two numbers diverge again, the budget is unenforceable and the honest move is to STOP rather
+        # than keep spending against a figure we know is wrong.
+        led = ledger_spent_since(t0_iso)
+        drift = (led - spent) if led >= 0 else 0.0
+        flag = ""
+        if led >= 0 and spent > 0.05 and drift > max(ap_tol, spent * 0.25):
+            flag = f"  <-- LEDGER SAYS ${led:,.2f}, WE COUNTED ${spent:,.2f}"
         got = ",".join(f"{r.vendor[:4]}={'ok' if r.ok else r.kind[:4]}" for r in fan["results"])
-        print(f"  [{i:>3}/{len(ts)}] {t['name'][:30]:<32}{fan['n_ok']}/4  {got}  ${spent:,.2f}", flush=True)
-
-    with open(out_path, "w") as fh:
-        for r in rows:
-            fh.write(json.dumps(r) + "\n")
+        print(f"  [{i:>3}/{len(ts)}] {t['name'][:30]:<32}{fan['n_ok']}/4  {got}  "
+              f"${spent:,.2f} (ledger ${led:,.2f}){flag}", flush=True)
+        if flag:
+            print(f"\n  STOPPING: the caller's spend counter disagrees with the ledger by ${drift:,.2f}. "
+                  f"A hard stop that cannot see the money is not a hard stop.")
+            break
+    fh.close()
 
     print("\n  COVERAGE — how many files each vendor actually reviewed, not how many we asked it to")
     print(f"  {'vendor':<11}{'reviewed':>10}{'findings':>10}   not-ok")
