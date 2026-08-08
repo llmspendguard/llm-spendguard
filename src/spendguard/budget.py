@@ -225,7 +225,14 @@ BASES = (BASIS_ESTIMATE, BASIS_BILLED, BASIS_ASSUMED, BASIS_RECONSTRUCTED, BASIS
 def spent_since(day, project=None, conv=None):  # WORKLOAD spend only — excludes meta AND reconciled (historical) rows
     """Gate-recorded workload $ since `day`. Optionally SCOPE to a `project` (repo) and/or `conv` (conversation) —
     the receipt uses this to show what's relevant to the current repo/conversation, not a global sum."""
-    cond = ["day >= ?", "(kind IS NULL OR kind != 'meta')", "(model IS NULL OR model <> ?)",
+    # EXCLUDE EVERY MARKER MODEL, not just the reconciled one. `_MARKER_MODELS` existed and was referenced
+    # NOWHERE: someone worked out which synthetic rows must stay out of a period total, wrote the tuple, and
+    # never wired it in — so a $10,409.24 `(realtime-history)` backfill counted as this month's spend and
+    # every cap refused real work. Relabelling that row's basis fixed it for exactly as long as it took
+    # ledger_sync to rewrite the row, which is the difference between fixing a symptom and fixing a writer.
+    # A constant that records an intention without enforcing it is a comment with a type.
+    _marks = ",".join("?" * len(_MARKER_MODELS))
+    cond = ["day >= ?", "(kind IS NULL OR kind != 'meta')", f"(model IS NULL OR model NOT IN ({_marks}))",
             "(conv_id IS NULL OR conv_id <> ?)",      # quarantined: impossible estimates are never spend
             # RECONSTRUCTED rows RESTATE history. The money was real, but it was spent in its own period and
             # already counted there — so summing it into THIS period double-counts, and a period CAP then
@@ -234,7 +241,7 @@ def spent_since(day, project=None, conv=None):  # WORKLOAD spend only — exclud
             # month against $70 of actual API spend and refused every call. A backfill must never be able to
             # exhaust a live budget.
             "(basis IS NULL OR basis <> ?)"]
-    args = [day, _RECONCILED, QUARANTINE_CONV, BASIS_RECONSTRUCTED]
+    args = [day, *_MARKER_MODELS, QUARANTINE_CONV, BASIS_RECONSTRUCTED]
     if project is not None:
         cond.append("LOWER(project) = ?"); args.append(str(project).strip().lower())
     if conv is not None:

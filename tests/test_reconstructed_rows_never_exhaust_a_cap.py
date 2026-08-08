@@ -62,5 +62,21 @@ c.commit()
 check("a QUARANTINED impossible estimate stays out", budget.spent_since(today) == before,
       str(budget.spent_since(today)))
 
+# ── the exclusion must survive the WRITER rewriting the row ──────────────────────────────────────────
+# Relabelling the offending row's basis fixed the cap for exactly as long as it took ledger_sync to re-run
+# and set it back to 'billed'. The MODEL marker is what the writer keeps stable, so that is what the reader
+# must key on. `_MARKER_MODELS` already existed for this and was referenced nowhere.
+before = budget.spent_since(today)
+for marker in budget._MARKER_MODELS:
+    c.execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project,conv_id,key_fp,basis) "
+              "VALUES (?,?,?,?,?,?,?,?,?,?)",
+              (today + "T00:00:00+00:00", today, "openai", marker, "realtime", 9_999.0, "", "", "",
+               budget.BASIS_BILLED))          # basis='billed', exactly as the writer leaves it
+c.commit()
+check("every marker model stays out of the period, whatever basis the writer left",
+      budget.spent_since(today) == before, f"{before} -> {budget.spent_since(today)}")
+check(f"...and there are {len(budget._MARKER_MODELS)} of them, all wired in",
+      budget.exceeded(1.0) is None or budget.exceeded(1.0)[2] < 100, str(budget.exceeded(1.0)))
+
 print(f"\n{'[FAIL]' if failures else 'OK'} test_reconstructed_rows_never_exhaust_a_cap: {failures} failure(s)")
 sys.exit(1 if failures else 0)
