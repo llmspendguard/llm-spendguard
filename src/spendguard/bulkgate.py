@@ -307,8 +307,8 @@ def latency(sig=None, model=None):
         v = sorted(vals)
         return round(float(v[min(len(v) - 1, int(len(v) * q))]), 3)
 
-    return {"n": len(done), "p50": _sec(done, 0.50), "p90": _sec(done, 0.90), "p99": _sec(done, 0.99),
-            "max": max(done), "deadline_hits": len(hits),
+    return {"n": len(done), "p50": _sec(done, 0.50), "p90": _sec(done, 0.90), "p95": _sec(done, 0.95),
+            "p99": _sec(done, 0.99), "max": max(done), "deadline_hits": len(hits),
             "hit_rate": len(hits) / float(len(rows)) if rows else 0.0,
             "floor": max(hits) if hits else None}
 

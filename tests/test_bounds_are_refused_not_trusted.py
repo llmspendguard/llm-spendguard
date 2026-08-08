@@ -89,5 +89,49 @@ check("output_cap's OBSERVED rung actually fires (it never did: raw purpose vs h
 check("...and the observed cap is the measured recommendation, not a ceiling",
       cap == int(bulkgate.maxtokens(probe_sig)["recommend"]), str(cap))
 
+# ── the DEADLINE is a bound too, and it went unguarded while max_tokens was guarded ──────────────────
+# The asymmetry cost a whole experiment: a probe passed deadline_s=150 against a class whose calls really
+# take 56-116s, and most results came back `deadline_exceeded` — which reads as a vendor failure and is a
+# caller mistake. Below-measurement deadlines are self-inflicted, deterministic, and paid for: the input
+# bills whether or not you stay to hear the answer.
+dsig = vc.class_sig(MODEL, "deadline-probe")
+for _ in range(12):
+    bulkgate.note_latency(dsig, MODEL, 90.0)
+p95 = bulkgate.latency(sig=dsig, model=MODEL).get("p95")
+check("latency exposes p95 — the quantile a deadline is actually sized from", p95 == 90.0, str(p95))
+
+sent.clear()
+try:
+    vc.call("anthropic", MODEL, "hi", deadline_s=50, purpose="deadline-probe")
+    check("a deadline below the measured p95 is REFUSED", False, "the call went through")
+except vc.BadBound as e:
+    check("a deadline below the measured p95 is REFUSED", True)
+    check("...and it names the measured number and the remedy",
+          "90s" in str(e) and "time_budget" in str(e), str(e)[:100])
+check("nothing was SENT for an under-budgeted call", not sent)
+
+for _ in range(30):                       # the sig also needs an output-cap measurement, or call() stops
+    bulkgate.note_response(dsig, MODEL, 4000, 64000, "end_turn")   # earlier for lack of a cap, not a deadline
+_orig2 = vc._attempt
+vc._attempt = lambda *a, **k: sent.append(1) or {"text": "hi", "out_tok": 5, "finish_reason": "end_turn"}
+try:
+    r = vc.call("anthropic", MODEL, "hi", deadline_s=400, purpose="deadline-probe")
+    check("a generous deadline is accepted", r.ok, r.error or r.kind)
+finally:
+    vc._attempt = _orig2
+
+# A single observation is an anecdote, not a distribution: a validator that refuses on n=1 blocks real work
+# while citing a "measurement". This is the failure that broke test_vendor_call's deliberate 1s deadline.
+thin = vc.class_sig(MODEL, "thin-evidence-probe")
+bulkgate.note_latency(thin, MODEL, 90.0)
+try:
+    vc._attempt = lambda *a, **k: {"text": "hi", "out_tok": 5, "finish_reason": "end_turn"}
+    vc.call("anthropic", MODEL, "hi", deadline_s=1.0, purpose="thin-evidence-probe", max_tokens=100)
+    check(f"a bound is NOT refused on fewer than {vc.MIN_BOUND_OBS} observations", True)
+except vc.BadBound as e:
+    check(f"a bound is NOT refused on fewer than {vc.MIN_BOUND_OBS} observations", False, str(e)[:110])
+finally:
+    vc._attempt = _orig2
+
 print(f"\n{'[FAIL]' if failures else 'OK'} test_bounds_are_refused_not_trusted: {failures} failure(s)")
 sys.exit(1 if failures else 0)

@@ -170,6 +170,27 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
     """
     if not deadline_s or deadline_s <= 0:
         raise ValueError("deadline_s is required and must be > 0: an unbounded call is how a 3h30m run happens")
+    # THE DEADLINE IS VALIDATED TOO. max_tokens got this guard and deadline_s did not, and the asymmetry cost
+    # a whole experiment: a probe passed deadline_s=150 against a class whose calls really take 56-116s, and
+    # most results came back `deadline_exceeded` — which reads as a vendor failure and is a caller mistake.
+    # A deadline below what the class demonstrably needs is the same defect as a cap below what it produces:
+    # deterministic, self-inflicted, and paid for (the input bills whether or not you wait for the answer).
+    try:
+        from . import bulkgate
+        _lat = bulkgate.latency(sig=class_sig(model, purpose), model=model)
+        _need = (float(_lat.get("p95") or 0)
+                 if _lat and (_lat.get("n") or 0) >= MIN_BOUND_OBS else 0.0)
+        if _need and float(deadline_s) < _need:
+            raise BadBound(
+                f"{vendor}/{model}: deadline_s={float(deadline_s):.0f}s is below the measured p95 of "
+                f"{_need:.0f}s for this call-class (n={_lat.get('n')}). The call would be abandoned after "
+                f"the input was already billed. Omit it and use "
+                f"vendor_call.time_budget({vendor!r}, {model!r}, sig=...), or pass a number above the "
+                f"measurement deliberately.")
+    except BadBound:
+        raise
+    except Exception:
+        pass
     # INPUT BOUND, checked before a byte is sent. The provider will reject an over-window request anyway;
     # the point is to fail here, naming the two numbers, instead of paying for a round trip and reading a
     # provider error that does not say which field was too big. Same rail as the estimate-side impossibility
@@ -196,7 +217,7 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
         try:
             from . import bulkgate
             b = bulkgate.maxtokens(class_sig(model, purpose))
-            need = int(b.get("p95") or 0) if b else 0
+            need = int(b.get("p95") or 0) if b and (b.get("n") or 0) >= MIN_BOUND_OBS else 0
             floor = int(b.get("recommend") or 0) if b else 0
             if need and int(max_tokens) < need:
                 raise BadBound(
@@ -508,6 +529,12 @@ def output_cap(vendor, model, sig=None):
         pass
     return CAP_UNKNOWN, "unknown"
 
+
+# A GUARD MUST NOT FIRE ON EVIDENCE TOO THIN TO BE EVIDENCE. Both bound-validators refuse a caller's number
+# by citing a measurement, so there has to BE one: the first version refused deadline_s=1.0 against a "p95"
+# derived from a SINGLE observation, which is not a distribution, it is an anecdote wearing a percentile's
+# name. Matches the minimum time_budget already required before it will propose a number.
+MIN_BOUND_OBS = 5
 
 DEADLINE_SLACK = 2.0          # measured p99 x this. Slack for TIME, mirroring the cap's p99x1.5 for TOKENS.
 DEADLINE_FLOOR_S = 30.0       # never propose a budget so tight that a healthy call cannot finish
