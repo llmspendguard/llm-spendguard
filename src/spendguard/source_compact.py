@@ -7,10 +7,18 @@ comments are the largest removable mass in a heavily-documented codebase, and a 
 correctness defects reads the CODE, not the narration around it.
 
 WHAT IT KEEPS, and why the distinction matters
-  Every statement, signature, decorator, default and control-flow line is preserved EXACTLY, so line numbers
-  in a finding still point at real code. Only docstring expressions and comment tokens are removed, and a
-  docstring is replaced by `...` rather than deleted, because deleting the only statement in a stub function
-  changes the file from valid to unparseable — a "compression" that alters semantics is not compression.
+  Every statement, signature, decorator, default and control-flow line is preserved EXACTLY, AND SO IS ITS
+  LINE NUMBER. Removed lines are BLANKED, never deleted, so line N of the output is line N of the input.
+
+  That last part was claimed in this docstring before it was true, and the claim cost a real review: deleting
+  the lines shifted everything below them by up to 243 lines, so all 206 findings from a $6.25 four-vendor
+  run pointed at the wrong code. The findings were correct — `calls.py` really does call datetime.now()
+  without a timezone — but nobody could act on them without re-deriving the offset. A blank line costs one
+  character; the offset cost the usability of the entire run.
+
+  Only docstring expressions and comment tokens are removed, and a docstring is replaced by `...` rather than
+  deleted, because emptying the only statement in a stub function makes the file unparseable — a
+  "compression" that alters semantics is not compression.
 
 WHAT IT COSTS. Docstrings sometimes carry the INTENT that makes a defect visible ("callers must hold the
 lock", "sizes are in BYTES"). Stripping them can hide a bug that only reads as a bug against the stated
@@ -108,21 +116,19 @@ def compact(src, *, keep_module_doc=True, strip_comments=True):
             indent = len(lines[start - 1]) - len(lines[start - 1].lstrip())
             lines[start - 1] = " " * indent + "...\n"
             drop.discard(start)
-    kept = [ln for i, ln in enumerate(lines, 1) if i not in drop]
-    out = "".join(kept)
+    # BLANK, do not delete: line N out must be line N in, or every finding downstream points at the wrong
+    # code while looking perfectly plausible.
+    out = "".join("\n" if i in drop else ln for i, ln in enumerate(lines, 1))
     if strip_comments:
         out = _strip_comments(out)
-    # Blank lines are dropped ONLY where they are not inside a string literal. A blank line within a
-    # triple-quoted block is part of the value, and removing it changes the string — which is how the first
-    # version left five modules unparseable. The set comes from the lexer, not from looking at the text.
-    protected = _string_lines(out)
-    out = "".join(ln for i, ln in enumerate(out.splitlines(keepends=True), 1)
-                  if ln.strip() or i in protected)
+    # Blank lines STAY, for the same reason: dropping them renumbers the file. They cost one byte each,
+    # against a saving measured in hundreds of thousands.
     out = out if out.endswith("\n") else out + "\n"
     try:
         ast.parse(out)                      # VERIFY. A compressor that emits broken source is worse than none.
     except SyntaxError:
         return src, stats
     stats.update(out_chars=len(out), docstrings_removed=removed, ok=True,
+                 lines_preserved=(len(out.splitlines()) == len(src.splitlines())),
                  saved_pct=round((1 - len(out) / len(src)) * 100, 1) if src else 0.0)
     return out, stats

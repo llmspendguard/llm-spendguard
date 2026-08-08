@@ -83,6 +83,45 @@ def test_code_statements_are_preserved_exactly():
     check("code is preserved exactly — only prose is removed", not mismatched, str(mismatched[:4]))
 
 
+def test_line_numbers_are_preserved_exactly():
+    """The claim that cost a $6.25 review. This docstring asserted "line numbers in a finding still point at
+    real code" while the code DELETED lines — shifting everything below by up to 243 and pointing all 206
+    findings at the wrong place. The findings were correct; nobody could act on them. A blank line costs one
+    byte. Assert the property, not the intention."""
+    off = []
+    for f in sorted(REPO.glob("*.py")):
+        src = f.read_text()
+        out, st = compact(src)
+        if not st["ok"]:
+            continue
+        if len(out.splitlines()) != len(src.splitlines()):
+            off.append(f"{f.name}({len(src.splitlines())}->{len(out.splitlines())})")
+    check("compacting never renumbers a file", not off, str(off[:4]))
+
+
+def test_every_kept_line_is_byte_identical_at_the_same_index():
+    """Stronger than a line count. A non-blank output line must be a PREFIX of the input line at the SAME
+    index — which permits a trailing comment to be trimmed (the point of the exercise) while proving nothing
+    was moved, reordered, or rewritten. Asserting byte-equality instead would fail on every `code  # note`
+    line and prove only that the assertion was wrong."""
+    bad = []
+    for f in sorted(REPO.glob("*.py"))[:30]:
+        src = f.read_text()
+        out, st = compact(src)
+        if not st["ok"]:
+            continue
+        for i, (o, c) in enumerate(zip(src.splitlines(), out.splitlines()), 1):
+            # `...` is the ONE documented substitution: a body whose only statement was a docstring would
+            # otherwise be an empty block, which does not parse. Everything else must be a prefix.
+            if c.strip() == "...":
+                continue
+            if c.strip() and not o.rstrip().startswith(c.rstrip()):
+                bad.append(f"{f.name}:{i} {c.strip()[:40]!r} vs {o.strip()[:40]!r}")
+                break
+    check("a non-blank output line is the input line at the same index (comment trimmed at most)",
+          not bad, str(bad[:3]))
+
+
 def test_a_backslash_continuation_survives():
     """The exact defect that broke five modules."""
     src = 'x = 1\ny = \\\n    x + 1\n'
