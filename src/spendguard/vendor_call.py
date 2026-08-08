@@ -243,7 +243,14 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
     # only ever guessed can never improve; recorded, the next caller's deadline comes from what this vendor
     # actually does. Deadline hits are flagged so they are censored from the percentiles they would otherwise
     # drag downward — the ratchet that recommends ever-shorter deadlines the more calls it kills.
-    if last is not None:
+    # ONLY A CALL THAT DID THE WORK MEASURES THE WORK. A 400 comes back in under a second, and recording it
+    # as a completed observation drags the class p99 toward zero — which shrinks the next budget, which makes
+    # the next real call time out, which records another fast failure. A ratchet that tightens every time it
+    # fires. Measured: 30 policy refusals on one class gave p50=0s, p99=10s and a budget of 30s (the floor),
+    # against work that genuinely needs 15-30s per chunk. Deadline hits ARE recorded, censored, because they
+    # set a floor: the work was at least that long. Every other failure is counted in the call log for the
+    # reliability rate and contributes nothing to the timing distribution.
+    if last is not None and (last.ok or last.kind == DEADLINE_EXCEEDED):
         try:
             from . import bulkgate
             bulkgate.note_latency(class_sig(model, purpose), model, last.latency,

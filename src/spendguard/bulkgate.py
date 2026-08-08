@@ -298,7 +298,16 @@ def latency(sig=None, model=None):
     if not done:
         return ({"n": 0, "deadline_hits": len(hits), "hit_rate": 1.0 if hits else 0.0,
                  "floor": max(hits) if hits else None} if hits else {})
-    return {"n": len(done), "p50": _pctl(done, 0.50), "p90": _pctl(done, 0.90), "p99": _pctl(done, 0.99),
+    # FLOAT percentiles. _pctl is built for TOKEN COUNTS and returns an int, which silently destroys this
+    # measurement twice over: sub-second latencies all become 0, and a p99 of 0 is FALSY — so a caller
+    # testing `if d.get("p99")` skips the class rung and quietly falls back to the model-wide number without
+    # saying so. Observed as "p50: 0, p90: 7, p99: 10" on a class whose calls really took fractions of a
+    # second. Seconds are not tokens; they need the fractional part.
+    def _sec(vals, q):
+        v = sorted(vals)
+        return round(float(v[min(len(v) - 1, int(len(v) * q))]), 3)
+
+    return {"n": len(done), "p50": _sec(done, 0.50), "p90": _sec(done, 0.90), "p99": _sec(done, 0.99),
             "max": max(done), "deadline_hits": len(hits),
             "hit_rate": len(hits) / float(len(rows)) if rows else 0.0,
             "floor": max(hits) if hits else None}
