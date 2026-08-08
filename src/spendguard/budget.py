@@ -34,12 +34,42 @@ def _db():
                 c.execute("CREATE INDEX IF NOT EXISTS idx_day ON charges(day)")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_charges_conv ON charges(conv_id)")  # chat↔charge joins (attribution)
                 c.execute("CREATE INDEX IF NOT EXISTS idx_charges_keyfp ON charges(key_fp)")  # per-key spend view
+                _create_countable_view(c)
                 c.commit()
                 _conn = c
     return _conn
 
 
 _PROJECT = None
+
+
+COUNTABLE_VIEW = "countable_charges"
+
+
+def _create_countable_view(c):
+    """ONE definition of "money spent in a period", as a SQL view every reader can use.
+
+    THE REASON THIS EXISTS. `charges` holds rows that mean different things — real charges, pre-spend
+    estimates, provider-batch reconciliation, realtime backfills, quarantined impossibilities — and until now
+    EVERY reader rebuilt its own WHERE clause to exclude the ones that are not period spend. Twelve of them in
+    this module alone. Each one had to remember the full marker set, and they did not: in a single day a
+    $359.63 phantom from reading batch history blocked the daily cap, a $10,409.24 backfill dated today
+    blocked the monthly cap, relabelling that row's basis was undone by its writer, and `_MARKER_MODELS` sat
+    defined-and-unreferenced the whole time. Four incidents, one cause: no single answer to "what counts".
+
+    Rebuilt on every connect, so it always reflects the CURRENT marker set rather than whatever was true when
+    some database file was first created.
+
+    Deliberately NOT filtered here: `basis`. An estimate must still bind a pre-spend cap — that is the whole
+    point of estimating — so the view carries it and callers that want billed-only filter further."""
+    c.execute(f"DROP VIEW IF EXISTS {COUNTABLE_VIEW}")
+    marks = ",".join("'" + m.replace("'", "''") + "'" for m in _MARKER_MODELS)
+    c.execute(
+        f"CREATE VIEW {COUNTABLE_VIEW} AS SELECT * FROM charges WHERE "
+        f"(kind IS NULL OR kind != 'meta') "                       # meta is spendguard's own overhead, tracked apart
+        f"AND (model IS NULL OR model NOT IN ({marks})) "          # synthetic marker rows: reconciliation, backfills
+        f"AND (conv_id IS NULL OR conv_id != '{QUARANTINE_CONV}') "  # impossible estimates: never money
+        f"AND (basis IS NULL OR basis != '{BASIS_RECONSTRUCTED}')")  # a restatement of history, already counted
 
 
 def _project():
@@ -222,32 +252,23 @@ BASIS_UNPRICED = "unpriced"          # the call happened and the TOKENS are real
 BASES = (BASIS_ESTIMATE, BASIS_BILLED, BASIS_ASSUMED, BASIS_RECONSTRUCTED, BASIS_UNPRICED)
 
 
-def spent_since(day, project=None, conv=None):  # WORKLOAD spend only — excludes meta AND reconciled (historical) rows
-    """Gate-recorded workload $ since `day`. Optionally SCOPE to a `project` (repo) and/or `conv` (conversation) —
-    the receipt uses this to show what's relevant to the current repo/conversation, not a global sum."""
-    # EXCLUDE EVERY MARKER MODEL, not just the reconciled one. `_MARKER_MODELS` existed and was referenced
-    # NOWHERE: someone worked out which synthetic rows must stay out of a period total, wrote the tuple, and
-    # never wired it in — so a $10,409.24 `(realtime-history)` backfill counted as this month's spend and
-    # every cap refused real work. Relabelling that row's basis fixed it for exactly as long as it took
-    # ledger_sync to rewrite the row, which is the difference between fixing a symptom and fixing a writer.
-    # A constant that records an intention without enforcing it is a comment with a type.
-    _marks = ",".join("?" * len(_MARKER_MODELS))
-    cond = ["day >= ?", "(kind IS NULL OR kind != 'meta')", f"(model IS NULL OR model NOT IN ({_marks}))",
-            "(conv_id IS NULL OR conv_id <> ?)",      # quarantined: impossible estimates are never spend
-            # RECONSTRUCTED rows RESTATE history. The money was real, but it was spent in its own period and
-            # already counted there — so summing it into THIS period double-counts, and a period CAP then
-            # fires on dollars that did not move today. Measured: a single reconstruction row of $10,409.24,
-            # covering months, was written with today's date and basis 'billed'; every cap saw a $10,480
-            # month against $70 of actual API spend and refused every call. A backfill must never be able to
-            # exhaust a live budget.
-            "(basis IS NULL OR basis <> ?)"]
-    args = [day, *_MARKER_MODELS, QUARANTINE_CONV, BASIS_RECONSTRUCTED]
+def spent_since(day, project=None, conv=None):
+    """Gate-recorded workload $ since `day`, from the ONE definition of countable spend (COUNTABLE_VIEW).
+    Optionally SCOPE to a `project` (repo) and/or `conv` (conversation) — the receipt uses this to show what
+    is relevant to the current repo/conversation, not a global sum.
+
+    This used to carry its own hand-built exclusion list, which is how it came to be missing three of the
+    four marker models. The view is now the single answer to "what counts", so a reader cannot forget part
+    of it — there is nothing here left to forget."""
+    cond = ["day >= ?"]
+    args = [day]
     if project is not None:
         cond.append("LOWER(project) = ?"); args.append(str(project).strip().lower())
     if conv is not None:
         cond.append("conv_id = ?"); args.append(str(conv))
     with _lock:
-        r = _db().execute("SELECT COALESCE(SUM(cost),0) FROM charges WHERE " + " AND ".join(cond), args).fetchone()
+        r = _db().execute(f"SELECT COALESCE(SUM(cost),0) FROM {COUNTABLE_VIEW} WHERE "
+                          + " AND ".join(cond), args).fetchone()
     return float(r[0] or 0)
 
 
@@ -335,6 +356,7 @@ def record_unpriced(provider, model, kind, in_tok=0, out_tok=0, project=None):
         _db().commit()
 
 
+# RAW-CHARGES-OK: listing quarantined rows IS the job — the view removes exactly these
 def quarantined_since(day):
     """[{day, provider, model, cost, project}] of QUARANTINED rows since `day` — estimates the gate proved
     impossible. They are kept (forensics: what the estimator claimed, and when) and excluded from every total,
@@ -348,6 +370,7 @@ def quarantined_since(day):
             for d, p, m, c, pr, n in rows]
 
 
+# RAW-CHARGES-OK: the audit breakdown must show every basis, including the excluded ones
 def by_basis(day):
     """{basis: {'cost': $, 'n': rows}} since `day` — how much of the headline is a projection vs a bill.
     Unlabelled legacy rows come back under '' and are shown as unknown, never folded into 'billed'."""
@@ -362,7 +385,8 @@ def by_basis(day):
 
 # ── reconciliation: make the LOCAL ledger reflect PROVIDER-billed truth (the gap = ungoverned/pre-ledger spend) ──
 def by_provider_day(kind=None, since=None):
-    """{(provider, day): $} of GATE-recorded spend (excludes reconciled rows) — the attributed side of reconcile."""
+    """Reads COUNTABLE_VIEW: this query used to keep its own exclusion list and was missing marker models, so a
+    backfill row counted as period spend here too. {(provider, day): $} of GATE-recorded spend (excludes reconciled rows) — the attributed side of reconcile."""
     cond = ["(model IS NULL OR model <> ?)", "(conv_id IS NULL OR conv_id NOT IN (?, ?))"]
     args = [_RECONCILED, QUARANTINE_CONV, UNPRICED_CONV]           # like-for-like vs provider truth: quarantine excluded
     if kind:
@@ -371,11 +395,12 @@ def by_provider_day(kind=None, since=None):
         cond.append("day >= ?"); args.append(since)
     where = "WHERE " + " AND ".join(cond)
     with _lock:
-        rows = _db().execute(f"SELECT COALESCE(provider,'?'), day, COALESCE(SUM(cost),0) FROM charges {where} "
+        rows = _db().execute(f"SELECT COALESCE(provider,'?'), day, COALESCE(SUM(cost),0) FROM {COUNTABLE_VIEW} {where} "
                              f"GROUP BY provider, day", args).fetchall()
     return {(p, d): float(c or 0) for p, d, c in rows}
 
 
+# RAW-CHARGES-OK: reports the reconciliation marker rows the view excludes
 def reconciled_by_project(since=None):
     """{project: $} of RECONCILED rows only (the provider-truth gap that reconcile_into_ledger attributed by
     conversation evidence). The 'attributed' side of the reconcile loop, complement to gate_by_project_day."""
@@ -393,7 +418,8 @@ def reconciled_by_project(since=None):
 
 
 def gate_by_project_day(kind=None, since=None):
-    """{(project, day): $} of GATE-recorded (attributed) spend — excludes reconciled rows. Used to compute the
+    """Reads COUNTABLE_VIEW: this query used to keep its own exclusion list and was missing marker models, so a
+    backfill row counted as period spend here too. {(project, day): $} of GATE-recorded (attributed) spend — excludes reconciled rows. Used to compute the
     per-project gap so the provider-truth gap is attributed by evidence, not dumped in one 'unattributed' bucket."""
     cond = ["(model IS NULL OR model <> ?)", "(conv_id IS NULL OR conv_id NOT IN (?, ?))"]
     args = [_RECONCILED, QUARANTINE_CONV, UNPRICED_CONV]           # like-for-like vs provider truth: quarantine excluded
@@ -404,7 +430,7 @@ def gate_by_project_day(kind=None, since=None):
     where = "WHERE " + " AND ".join(cond)
     with _lock:
         rows = _db().execute(f"SELECT COALESCE(NULLIF(project,''),'unattributed'), day, COALESCE(SUM(cost),0) "
-                             f"FROM charges {where} GROUP BY 1, day", args).fetchall()
+                             f"FROM {COUNTABLE_VIEW} {where} GROUP BY 1, day", args).fetchall()
     return {(p, d): float(c or 0) for p, d, c in rows}
 
 
@@ -436,6 +462,7 @@ def clear_reconciled(since=None, model=None):
 
 # ── estimate→actual true-down (ledger_sync.true_down writes these; the gate's batch rows are PRE-SUBMIT
 #    estimates, so once the provider bills the actuals the ledger must come down to the billed truth) ──
+# RAW-CHARGES-OK: excludes true-down as well, which the view deliberately keeps
 def gate_batch_cells(since=None):
     """{(project, provider, model, day): $} of GATE-LIVE batch rows — the estimate base the true-down corrects.
     Excludes every reconcile marker model AND prior true-down rows (idempotence: corrections never feed the next
@@ -481,6 +508,7 @@ def record_meta(provider, model, cost):
     record(provider, model, "meta", cost, project="llm-spendguard")
 
 
+# RAW-CHARGES-OK: meta is deliberately the subject here, and the view drops it
 def meta_spent_since(day):
     with _lock:
         r = _db().execute("SELECT COALESCE(SUM(cost),0) FROM charges WHERE day >= ? AND kind='meta' "
@@ -500,6 +528,7 @@ def meta_exceeded(pending=0.0):
     return None
 
 
+# RAW-CHARGES-OK: carries its own kind/meta switch per caller; markers already excluded
 def by_day(kind=None, exclude_meta=False, since=None, exclude_reconciled=False):
     """{day: total$} from the local ledger, optionally filtered by kind / excluding meta / excluding reconciled
     (provider-truth) rows / since a date. exclude_reconciled is essential for the LEAK check AND the trust check:
@@ -526,6 +555,9 @@ def by_day(kind=None, exclude_meta=False, since=None, exclude_reconciled=False):
     return {d: float(v or 0) for d, v in rows}
 
 
+# RAW-CHARGES-OK: the SaaS PUSH payload deliberately carries backfill AND meta rows — the org
+# dashboard needs them. countable_charges strips both, so routing this through it silently
+# changed what we ship upstream; tests/test_ledger_marker_matrix.py caught it.
 def by_dims(since=None):
     """Per-day rows grouped by (day, provider, model, kind) for the SaaS roll-up push — the structured shape
     the server's /v1/ledger expects (vs by_day's flat {day: $}). Returns dicts with cost in $ and a call count."""
@@ -544,6 +576,7 @@ def by_dims(since=None):
     return [dict(day=d, provider=p, model=m, kind=k, project=pr, cost=float(c or 0), calls=int(n)) for d, p, m, k, pr, c, n in rows]
 
 
+# RAW-CHARGES-OK: excludes true-down as well, which the view deliberately keeps
 def by_key(since=None):
     """{(provider, key_fp): {'cost': $, 'calls': n}} of gate-recorded workload — per-KEY spend (which
     workspace/project key did this money flow through?). Excludes meta and every reconcile marker row

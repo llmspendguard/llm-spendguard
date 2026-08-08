@@ -122,8 +122,12 @@ def aggregators():
     appear here whether or not anyone remembered to mention it. (Finding the functions is format-determined;
     what they COUNT is settled by arithmetic below, never by reading the SQL.)"""
     src = pathlib.Path(inspect.getfile(budget)).read_text()
+    # An aggregator reads `charges` DIRECTLY or through the countable view. The scan must know both, or a
+    # function that moved to the view silently drops out of the matrix — and a matrix that stops watching a
+    # function is exactly as useless as never having listed it.
     return {blk.split("(")[0].strip(): blk for blk in re.split(r"\ndef ", src)
-            if "SUM(cost)" in blk and "FROM charges" in blk}
+            if "SUM(cost)" in blk and ("FROM charges" in blk or "COUNTABLE_VIEW" in blk
+                                       or "countable_charges" in blk)}
 
 
 found = aggregators()
