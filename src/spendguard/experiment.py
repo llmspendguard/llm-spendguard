@@ -52,7 +52,7 @@ def _equiv(ref, out, mode="auto", model=None):
     return equivalence.grade(ref, out, mode=mode, model=model)[0]
 
 
-def _call(model, prompt, max_out=400):
+def _call(model, prompt, max_out=400, effort=None):
     """One realtime call; returns (cost, in_tok, out_tok, text). models.apply_call_params handles each
     model's quirks (gpt-5 → reasoning='minimal' + max_completion_tokens) so we can't forget them."""
     from . import adapters, models
@@ -60,6 +60,11 @@ def _call(model, prompt, max_out=400):
     key = config.api_key(adapters.PROVIDERS[prov]["key_env"])
     kw = models.apply_call_params(model, {"model": model, "max_tokens": max_out,
                                           "messages": [{"role": "user", "content": prompt}]})
+    # EFFORT IS A VARIANT AXIS. It is the third bound (with max_tokens and the deadline) and was the only
+    # one still chosen by hand — measured, reasoning is 91% of an output bill and 92-98% of it is never seen.
+    # An explicit effort overrides the family default so an arm tests what it says it tests.
+    if effort:
+        kw["reasoning_effort"] = effort
     if prov == "anthropic":
         import anthropic
         m = anthropic.Anthropic(api_key=key).messages.create(**kw)
@@ -80,9 +85,16 @@ def _call(model, prompt, max_out=400):
     return pricing.realtime_cost(model, it, ot), it, ot, text
 
 
-def _variants(intent, base_model, models, instructions):
-    """Default variant set if none specified: terse-output + (a cheaper model if we can name one)."""
+def _variants(intent, base_model, models, instructions, efforts=None):
+    """Default variant set if none specified: terse-output + (a cheaper model if we can name one).
+    `efforts` adds the reasoning-effort axis: one arm per (model, tier), which is how a tier stops being a
+    literal somebody typed and becomes a measured property of the work."""
     vs = []
+    for m in (models or [base_model]):
+        for eff in (efforts or []):
+            vs.append(dict(label=f"effort:{m}:{eff}", model=m, instr="", effort=eff))
+    if vs:
+        return vs
     for ins in (instructions or []):
         vs.append(dict(label=f"instr:{ins[:18]}", model=base_model, instr="\n\n" + ins))
     for m in (models or []):

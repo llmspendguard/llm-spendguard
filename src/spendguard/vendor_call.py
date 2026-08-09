@@ -159,7 +159,7 @@ def _classify(r, want_text=True):
 
 
 def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_tokens=None, schema=None,
-         attempts=3, backoff_s=2.0):
+         attempts=3, backoff_s=2.0, reasoning=None):
     """Call ONE model, bounded by a TOTAL deadline, returning a typed Result. Never raises for a call failure.
 
     INPUT invariant:  deadline_s > 0 and bounds the WHOLE call including every retry.
@@ -270,7 +270,8 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
             return Result(DEADLINE_EXCEEDED, vendor, model, prompt_sha=sha, purpose=purpose,
                           latency=time.time() - started,
                           error=f"total deadline {deadline_s}s exhausted after {attempt - 1} attempt(s)")
-        r = _attempt(vendor, model, prompt, system, max_tokens, remaining, schema=schema)
+        r = _attempt(vendor, model, prompt, system, max_tokens, remaining, schema=schema,
+                     reasoning=reasoning)
         billed += float(r.get("cost") or 0.0)
         kind, stop = _classify(r)
         last = Result(kind, vendor, model, text=r.get("text"), stop_reason=stop,
@@ -312,7 +313,7 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
     return last
 
 
-def _attempt(vendor, model, prompt, system, max_tokens, budget_s, schema=None):
+def _attempt(vendor, model, prompt, system, max_tokens, budget_s, schema=None, reasoning=None):
     """One attempt, hard-bounded at `budget_s`. adapters.call has no timeout of its own, so the bound is
     enforced HERE by running it on a worker and abandoning it — a deadline checked only between attempts
     cannot bound a call that never returns, which is exactly what produced the 3h30m run."""
@@ -341,7 +342,7 @@ def _attempt(vendor, model, prompt, system, max_tokens, budget_s, schema=None):
             box["r"] = adapters.call(model if ":" in model else f"{vendor}:{model}", prompt,
                                      max_tokens=int(max_tokens), system=system,
                                      schema=schema if isinstance(schema, dict) else None,
-                                     timeout_s=budget_s)
+                                     timeout_s=budget_s, reasoning=reasoning)
         except Exception as e:                      # adapters says it never raises; believe it, verify anyway
             box["r"] = {"error": f"{type(e).__name__}: {e}", "text": None}
 
