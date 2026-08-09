@@ -494,22 +494,36 @@ def discover_efforts(vendor, model, refresh=False):
     rec = caps().get(f"{vendor}/{model}") or {}
     if not refresh and rec.get("efforts"):
         return rec["efforts"]
+    # FORCE THE API PATH. A subscription lane (claude-code / codex) serves the prompt without ever sending
+    # the provider's parameters, so every probe comes back clean and discovery concludes the endpoint
+    # supports everything. Measured: gpt-5.5 was reported as accepting `minimal` when the codex lane had
+    # answered it; the API rejects `minimal` with a 400. Third time in this project a lane has silently
+    # invalidated a measurement — capability probes belong on the path whose capability is in question.
+    import os as _os
+    _prev = _os.environ.get("SPENDGUARD_ADVISOR_EXECUTOR")
+    _os.environ["SPENDGUARD_ADVISOR_EXECUTOR"] = "api"
     ok, rejected, unknown = [], [], []
-    for eff in CANDIDATE_EFFORTS:
-        r = adapters.call(model if ":" in model else f"{vendor}:{model}", "Reply: OK",
-                          max_tokens=16, reasoning=eff, timeout_s=45)
-        err = str(r.get("error") or "")
-        # THE PARAMETER MAY HAVE BEEN DROPPED AND THE CALL RETRIED. That returns no error and looks exactly
-        # like acceptance — it is how the first version of this probe reported that every vendor supported
-        # every tier, including one that had rejected `auto` minutes earlier in a direct test.
-        if "reasoning_effort" in (r.get("dropped") or []):
-            rejected.append(eff)
-        elif not err:
-            ok.append(eff)
-        elif "effort" in err.lower():
-            rejected.append(eff)
+    try:
+        for eff in CANDIDATE_EFFORTS:
+            r = adapters.call(model if ":" in model else f"{vendor}:{model}", "Reply: OK",
+                              max_tokens=16, reasoning=eff, timeout_s=45)
+            err = str(r.get("error") or "")
+            # THE PARAMETER MAY HAVE BEEN DROPPED AND THE CALL RETRIED. That returns no error and looks exactly
+            # like acceptance — it is how the first version of this probe reported that every vendor supported
+            # every tier, including one that had rejected `auto` minutes earlier in a direct test.
+            if "reasoning_effort" in (r.get("dropped") or []):
+                rejected.append(eff)
+            elif not err:
+                ok.append(eff)
+            elif "effort" in err.lower():
+                rejected.append(eff)
+            else:
+                unknown.append(eff)                    # transport/other: evidence of nothing
+    finally:
+        if _prev is None:
+            _os.environ.pop("SPENDGUARD_ADVISOR_EXECUTOR", None)
         else:
-            unknown.append(eff)                    # transport/other: evidence of nothing
+            _os.environ["SPENDGUARD_ADVISOR_EXECUTOR"] = _prev
     if not ok and not rejected:
         return {}                                  # discovery itself failed: we know nothing, and say so
     out = {"accepted": ok, "rejected": rejected, "unknown": unknown, "method": "probe",

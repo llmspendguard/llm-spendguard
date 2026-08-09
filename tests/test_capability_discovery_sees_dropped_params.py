@@ -51,13 +51,47 @@ def test_a_provider_that_cannot_carry_the_param_is_NOT_reported_as_supporting_it
     src = inspect.getsource(vc.discover_efforts)
     check("non-openai request shapes return not_applicable",
           'not_applicable' in src and 'kind != "openai"' in src)
-    d = vc.discover_efforts("anthropic", "claude-opus-4-8")
-    check("...and anthropic is recorded that way, from the cache", bool(d.get("not_applicable")), str(d)[:80])
+    # Read the CACHE, never discover_efforts() — that probes live on a miss, and a test must not spend.
+    # In an isolated HOME the cache is empty, which is a valid state to assert nothing about.
+    cached = (vc.caps().get("anthropic/claude-opus-4-8") or {}).get("efforts")
+    check("...and anthropic is cached that way when a cache exists",
+          cached is None or bool(cached.get("not_applicable")), str(cached)[:80])
 
 
 def test_an_unmeasured_class_gets_NO_effort_rather_than_an_invented_one():
     eff, basis = vc.effort_policy("zai", "glm-5.2", sig="a-class-nobody-has-measured")
     check("unmeasured -> (None, 'unmeasured')", (eff, basis) == (None, "unmeasured"), f"{eff} {basis}")
+
+
+def test_discovery_forces_the_API_path():
+    """A subscription lane serves the prompt WITHOUT sending the provider's parameters, so every probe comes
+    back clean and discovery concludes the endpoint supports everything. Measured: gpt-5.5 was reported as
+    accepting `minimal` because the codex lane answered it; the API rejects `minimal` with a 400, exactly as
+    models.py's verified note has said all along. Third time in this project a lane silently invalidated a
+    measurement — a capability probe belongs on the path whose capability is in question."""
+    src = inspect.getsource(vc.discover_efforts)
+    check("discovery pins the executor to the API before probing",
+          'SPENDGUARD_ADVISOR_EXECUTOR"] = "api"' in src)
+    check("...and restores the caller's setting afterwards",
+          "finally:" in src and "_prev" in src,
+          "a probe must not leave the process routing differently than it found it")
+
+
+def test_discovery_agrees_with_the_independently_verified_registry():
+    """models.py carries a VERIFIED fact: gpt-5.5 rejects 'minimal'. Two independent sources of truth about
+    the same endpoint must not disagree — when they did, the probe was wrong."""
+    from spendguard import models
+    prof = str(models.profile("gpt-5.5"))
+    d = (vc.caps().get("openai/gpt-5.5") or {}).get("efforts") or {}
+    if not d:
+        check("no cached probe to cross-check (isolated run) — asserted nothing", True)
+        return
+    if "minimal" in prof and "REJECT" in prof.upper():
+        check("probe agrees with the verified registry that 'minimal' is rejected",
+              "minimal" in (d.get("rejected") or []),
+              f"registry says rejected; probe says accepted={d.get('accepted')}")
+    else:
+        check("registry has no verified claim to cross-check against", True)
 
 
 def test_transport_failures_are_unknown_not_rejections():
