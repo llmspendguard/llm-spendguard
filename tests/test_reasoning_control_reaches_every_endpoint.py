@@ -55,10 +55,28 @@ check("the drop-and-retry for endpoints that refuse it still exists",
       'reasoning_effort' in src and 'pop("reasoning_effort"' in src,
       "without it, a non-reasoning endpoint would 400 instead of silently proceeding")
 
-check("no INVENTED default — the parameter is sent only when a caller asks",
-      "reasoning or " not in src and "if reasoning:" in src,
+check("no INVENTED default — an unset effort comes from the RECORDED registry, not a literal",
+      '"minimal"' not in src.split("reasoning_effort")[0][-400:] and "models as _mf" in src,
       'defaulting everything to "minimal" is a hand-picked bound, and measurement showed it destroys the '
       'work: glm-5.2 reviewing calls.py at minimal returned 10 tokens and ZERO findings')
+
+check("an explicit caller argument still wins over the registry",
+      "eff = reasoning" in src,
+      "a caller that needs a specific tier must be able to ask for one")
+
+check("the VERIFIED fact binds at call time — a fact that is never applied is a note in a file",
+      "profile(raw)" in src,
+      "models.py carried gpt-5.5 reasoning='none' while gpt-5.5 returned EMPTY on 2 of 53 calls for "
+      "exactly the reason that fact records")
+
+
+def test_the_registry_actually_answers_for_the_models_we_use():
+    """The wiring is worthless if the registry has nothing to say. These values came from a verified family
+    fact (gpt-5.5) and from a measured A/B written back via models.add_fact (kimi-k3, glm-5.2)."""
+    from spendguard import models
+    for m, expect_set in (("gpt-5.5", True), ("kimi-k3", True), ("glm-5.2", True)):
+        got = (models.profile(m) or {}).get("reasoning")
+        check(f"{m} has a recorded effort", bool(got) and got != "?", repr(got))
 
 # No model id may be hardcoded into the reasoning decision — a new reasoning model must inherit the control
 # on the day it is added, without anyone editing a regex.

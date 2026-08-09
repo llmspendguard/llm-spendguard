@@ -60,7 +60,14 @@ def residual_warning(truth_total, resid, frac=0.10, floor=25.0):
     if truth_total is None:
         return ("truth UNKNOWN — the account/provider bill could not be read (key/network). These numbers are NOT "
                 "reconciled; fix the fetch before trusting them. (A failed fetch must never read as $0 / 100% covered.)")
-    if not truth_total:
+    if truth_total == 0:
+        # ZERO IS A MEASUREMENT, NOT AN ABSENCE. `if not truth_total` swallowed it four lines below a
+        # docstring promising that a failed fetch never reads as "$0 / 100% covered" — and a provider that
+        # billed NOTHING while we attributed spend to it is the loudest leak there is, not the quietest.
+        if resid:
+            return (f"provider truth is $0.00 but ${resid:.2f} is attributed to it — either the fetch "
+                    f"returned an empty bill that was read as zero, or spend is attributed to the wrong "
+                    f"account. Neither reconciles; do not treat this as covered.")
         return None
     thresh = max(floor, frac * truth_total)
     pct = resid / truth_total * 100

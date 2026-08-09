@@ -98,7 +98,8 @@ print("-- C: the deadline bounds the WHOLE call, retries included --")
 _real_attempt = vc._attempt
 
 
-def _unbounded_attempt(vendor, model, prompt, system, max_tokens, budget_s, schema=None):
+def _unbounded_attempt(vendor, model, prompt, system, max_tokens, budget_s, schema=None,
+                       reasoning=None):
     """The mutation: join WITHOUT a timeout — i.e. a deadline checked only BETWEEN attempts. This is the exact
     shape that produced the 3h30m run, so the probe must be able to tell it apart from the real thing."""
     import threading as _t
@@ -243,7 +244,7 @@ _outcomes = {"claude-opus-4-8": ("ok", '{"line_start": 116, "issue": "assumption
              "kimi-k3": ("transport", None),          # APIConnectionError, as measured
              "glm-5.2": ("empty", "")}                # HTTP 200, zero characters — the one that read as success
 
-def _panel_attempt(vendor, model, prompt, system, max_tokens, budget_s, schema=None):
+def _panel_attempt(vendor, model, prompt, system, max_tokens, budget_s, schema=None, reasoning=None):
     kind, text = _outcomes[model]
     if kind == "transport":
         return {"error": "APIConnectionError", "text": None}

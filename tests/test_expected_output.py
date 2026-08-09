@@ -78,13 +78,23 @@ check("…and 0 is returned WITH the unknown basis, never as a silent zero", b =
 
 print("-- the whole point: an absent cap is not free output --")
 buf = io.StringIO()
+# A MODEL NOBODY HAS WARNED ABOUT YET. expect() now emits the warning itself — that was the defect a
+# 4-vendor review found and two validators confirmed — so reusing FAKE here would test a dedup slot that
+# expect() had already consumed above, and read as "the warning never fires".
+DEDUP_PROBE = FAKE + "-dedup-probe"
 with contextlib.redirect_stderr(buf):
-    eo.warn_unknown(FAKE)
-    eo.warn_unknown(FAKE)
+    eo.warn_unknown(DEDUP_PROBE)
+    eo.warn_unknown(DEDUP_PROBE)
 err = buf.getvalue()
 # Assert the FACT and the countable behaviour, not the wording: expect() reports the basis structurally, and
 # the dedup is a number. Whether a sentence reads well is not something a unit test can settle.
 check("unknown output is announced at all", err.strip() != "")
+# The fix itself: expect() must not return its silent zero silently.
+buf2 = io.StringIO()
+with contextlib.redirect_stderr(buf2):
+    eo.expect(FAKE + "-expect-warns-probe")
+check("expect() ITSELF announces the unknown, without a caller having to remember",
+      buf2.getvalue().strip() != "", "warn_unknown existed and expect() never called it")
 check("exactly once per model, not once per call", len(err.strip().splitlines()) == 1, str(err.count(chr(10))))
 check("the basis itself says unknown — callers act on that, not on the prose",
       eo.expect(FAKE)[1] == "unknown")

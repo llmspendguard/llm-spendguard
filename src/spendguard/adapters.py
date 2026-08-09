@@ -277,8 +277,24 @@ def call(model, prompt, max_tokens=512, system=None, reasoning=None, schema=None
             #
             # Until a class has a measured effort, send NOTHING and let the vendor use its own default. An
             # invented bound is worse than no bound: no bound is at least honest about being unmeasured.
-            if reasoning:
-                okw["reasoning_effort"] = reasoning
+            # THE VERIFIED FACT MUST BIND, or it is a note in a file. models.py exists to be "the single
+            # place that knows each model family's quirks and APPLIES them", and its docstring names this
+            # exact failure: "'gpt-5 wants reasoning=none' sitting in memory while a call burns its whole
+            # budget on reasoning and returns empty". Measured: gpt-5.5 returned EMPTY on 2 of 53 validation
+            # calls for precisely that reason, while models.py had carried reasoning='none' for it all along.
+            #
+            # This is not an invented default. It is a RECORDED value with provenance — either a verified
+            # family fact or one an A/B wrote via models.add_fact() (kimi-k3='auto', glm-5.2='high' came
+            # from a measured run). An explicit caller argument still wins over both.
+            eff = reasoning
+            if not eff:
+                try:
+                    from . import models as _mf
+                    eff = (_mf.profile(raw) or {}).get("reasoning")
+                except Exception:
+                    eff = None
+            if eff and eff != "?":
+                okw["reasoning_effort"] = eff
             try:                                              # gpt-5+ require max_completion_tokens; older models take max_tokens
                 r = c.chat.completions.create(max_completion_tokens=max_tokens, **okw)
             except Exception as e:

@@ -76,6 +76,14 @@ def expect(model, sig=None, max_tokens=None):
         lim = None
     if lim:
         return int(lim), "model-max"
+    # THE WARNING THIS MODULE PROVIDES FOR THIS EXACT CASE WAS NEVER CALLED. warn_unknown() exists, says
+    # "an estimate that silently treats unknown output as ZERO is the bug this module exists to end" — and
+    # expect() returned the zero without ever emitting it. Confirmed by two independent validators against
+    # the source, found by two vendors: the module that forbids silent zeros was producing one.
+    #
+    # The 0 stays, because a caller doing arithmetic needs a number and any invented one would be worse.
+    # What changes is that it can no longer be silent: the basis says `unknown` AND the warning fires.
+    warn_unknown(model)
     return 0, "unknown"
 
 
