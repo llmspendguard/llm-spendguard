@@ -293,6 +293,11 @@ def call(model, prompt, max_tokens=512, system=None, reasoning=None, schema=None
                     r = c.chat.completions.create(max_completion_tokens=max_tokens, **okw)
                 elif "reasoning_effort" in str(e):            # model doesn't accept it → drop + retry
                     okw.pop("reasoning_effort", None)
+                    # SAY SO. A silently-dropped parameter makes the call succeed and makes any probe of
+                    # "does this endpoint support X" answer yes — the fallback that keeps the system robust
+                    # is exactly what blinds discovery. Recorded on the result so a caller can tell
+                    # "it worked" from "it worked WITHOUT what you asked for".
+                    base.setdefault("dropped", []).append("reasoning_effort")
                     r = c.chat.completions.create(max_completion_tokens=max_tokens, **okw)
                 elif "max_completion_tokens" in str(e) or "max_tokens" in str(e):
                     r = c.chat.completions.create(max_tokens=max_tokens, **okw)

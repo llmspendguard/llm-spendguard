@@ -460,6 +460,123 @@ def record_cap(vendor, model, max_output_tokens, method, source=""):
     return data[f"{vendor}/{model}"]
 
 
+# The candidate tiers to PROBE. Not a per-model decision and not a claim about what any model supports —
+# just the set of values worth trying, seeded from what providers have themselves told us (z.ai replied
+# "must be one of: none, minimal, low, medium, high"; kimi-k3 additionally accepts "auto"). Add to it and
+# discovery picks the new value up everywhere; nothing here is keyed to a model id.
+CANDIDATE_EFFORTS = ("none", "minimal", "low", "medium", "high", "auto")
+
+
+def discover_efforts(vendor, model, refresh=False):
+    """Which reasoning-effort values does this endpoint ACCEPT? PROBED, recorded, never hardcoded.
+
+    Why probe rather than parse the provider's error text: the enumeration z.ai returns is a gift, but its
+    FORMAT is the provider's and will drift, and every provider words it differently. Trying a value and
+    seeing whether it is accepted is the same question answered empirically, works for any endpoint, and
+    cannot rot into a regex that silently stops matching.
+
+    Nearly free: a rejected parameter is refused before inference, so it bills nothing, and an accepted one
+    is a two-token prompt. The result is cached in the caps registry with its provenance, so the probe runs
+    once per (vendor, model) rather than once per call."""
+    from . import adapters
+    # THE STRUCTURAL FACT COMES FIRST, BEFORE ANY CACHE. A provider whose request shape never carries this
+    # parameter cannot support it, and that is knowable without probing — so it must also OVERRIDE a stale
+    # cached answer. The first version checked the cache first and kept serving anthropic's incorrect
+    # "supports everything", recorded by the buggy probe, long after the probe was fixed. A wrong cached
+    # capability that outlives its fix is worse than no cache.
+    kind = (adapters.PROVIDERS.get(vendor) or {}).get("kind")
+    if kind != "openai":
+        out = {"accepted": [], "rejected": [], "not_applicable": True, "method": "request-shape",
+               "note": f"{vendor} uses the {kind} request shape, which has no reasoning_effort parameter",
+               "measured": time.strftime("%Y-%m-%d")}
+        _write_efforts(vendor, model, out)     # overwrite whatever was cached, including a wrong answer
+        return out
+    rec = caps().get(f"{vendor}/{model}") or {}
+    if not refresh and rec.get("efforts"):
+        return rec["efforts"]
+    ok, rejected, unknown = [], [], []
+    for eff in CANDIDATE_EFFORTS:
+        r = adapters.call(model if ":" in model else f"{vendor}:{model}", "Reply: OK",
+                          max_tokens=16, reasoning=eff, timeout_s=45)
+        err = str(r.get("error") or "")
+        # THE PARAMETER MAY HAVE BEEN DROPPED AND THE CALL RETRIED. That returns no error and looks exactly
+        # like acceptance — it is how the first version of this probe reported that every vendor supported
+        # every tier, including one that had rejected `auto` minutes earlier in a direct test.
+        if "reasoning_effort" in (r.get("dropped") or []):
+            rejected.append(eff)
+        elif not err:
+            ok.append(eff)
+        elif "effort" in err.lower():
+            rejected.append(eff)
+        else:
+            unknown.append(eff)                    # transport/other: evidence of nothing
+    if not ok and not rejected:
+        return {}                                  # discovery itself failed: we know nothing, and say so
+    out = {"accepted": ok, "rejected": rejected, "unknown": unknown, "method": "probe",
+           "measured": time.strftime("%Y-%m-%d")}
+    _write_efforts(vendor, model, out)
+    return out
+
+
+def _write_efforts(vendor, model, out):
+    path = _caps_path()
+    try:
+        data = json.loads(path.read_text())
+    except Exception:
+        data = {}
+    data.setdefault(f"{vendor}/{model}", {})["efforts"] = out
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2, sort_keys=True))
+
+
+def record_effort(vendor, model, effort, method, source="", sig=None):
+    """A MEASURED effort for a call-class, with how it was established. `sig` scopes it to a call-class;
+    without one it is the model-wide default. Mirrors record_cap: a number without provenance is a guess
+    wearing a registry's clothes."""
+    if not effort:
+        raise ValueError("an effort must be named: absent is not 'minimal', it is unmeasured")
+    path = _caps_path()
+    try:
+        data = json.loads(path.read_text())
+    except Exception:
+        data = {}
+    rec = data.setdefault(f"{vendor}/{model}", {})
+    slot = rec.setdefault("effort_by_sig" if sig else "effort", {} if sig else None)
+    entry = {"effort": effort, "method": method, "source": source, "measured": time.strftime("%Y-%m-%d")}
+    if sig:
+        slot[sig] = entry
+    else:
+        rec["effort"] = entry
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2, sort_keys=True))
+    return entry
+
+
+def effort_policy(vendor, model, sig=None):
+    """(effort, basis) — how hard this call should think. The THIRD bound, and the only one that was still
+    being set by hand after max_tokens and the deadline were measured.
+
+    Precedence, measured first, and NEVER an invented default:
+      measured:class   an A/B on THIS call-class settled it
+      measured:model   an A/B on this model settled it
+      unmeasured       (None) -> send nothing, let the vendor decide
+
+    `None` is the honest answer until a class has been measured. Sending "minimal" everywhere looked like a
+    saving and was measured to destroy the work: glm-5.2 reviewing calls.py at minimal returned 10 output
+    tokens and ZERO findings, where high returned 793 and found the real bug. Effort is also not monotonic —
+    kimi-k3 found MORE at minimal on pricing.py than at high — so it cannot be reasoned about from the
+    outside at all. It has to be run."""
+    rec = caps().get(f"{vendor}/{model}") or {}
+    if sig:
+        e = (rec.get("effort_by_sig") or {}).get(sig)
+        if e and e.get("effort"):
+            return e["effort"], f"measured:class({e.get('method')})"
+    e = rec.get("effort")
+    if isinstance(e, dict) and e.get("effort"):
+        return e["effort"], f"measured:model({e.get('method')})"
+    return None, "unmeasured"
+
+
 def record_input_limit(vendor, model, max_chars, method, source="", applies_to="any"):
     """A MEASURED input ceiling, with what it applies to and how it was found.
 
