@@ -6,7 +6,6 @@ with register_provider(...). Calls go through the openai/anthropic SDKs, so the 
 already meters + budgets them.
 """
 import time
-import re
 import json
 from . import config, pricing
 
@@ -253,11 +252,33 @@ def call(model, prompt, max_tokens=512, system=None, reasoning=None, schema=None
                             + [m for m in msgs if m.get("role") != "system"])
                 okw["messages"] = msgs
                 okw.update(sk)
-            # gpt-5 / o-series are REASONING models: at default (medium) reasoning the token budget is spent on hidden
-            # reasoning and the completion comes back EMPTY (+ costs more). For our simple classify/extract calls use
-            # 'minimal' (the caller may override). Non-reasoning models reject the param → dropped on the retry below.
-            if re.match(r"(gpt-5|o[134])", raw, re.I):
-                okw["reasoning_effort"] = reasoning or "minimal"
+            # REASONING IS BILLED AS OUTPUT, AND IT IS MOST OF THE BILL. Measured over a 4-vendor code review:
+            # 91% of the cost was output, and 92-98% of that output was reasoning nobody ever sees —
+            # glm-5.2 emitted 11,176 tokens per call to deliver 262 tokens of findings.
+            #
+            # This used to be gated on `re.match(r"(gpt-5|o[134])", raw)`: a hardcoded list of OpenAI's own
+            # model names. So the control reached the models that needed it LEAST and never reached kimi-k3
+            # or glm-5.2, which reason the most. Both accept the parameter — measured directly, minimal cut
+            # kimi-k3 from 316 output tokens to 92 (3.4x) and glm-5.2 from 898 to 60 (15x).
+            #
+            # It now goes to EVERY OpenAI-compatible endpoint. Nothing had to be guessed about which models
+            # support it, because the retry below already drops the parameter for any endpoint that refuses —
+            # the guard was protecting against a case that was already handled, at the cost of the saving.
+            # NO DEFAULT. Sending "minimal" to everything was a hand-picked bound wearing a cost saving,
+            # and MEASURED it destroys the work: glm-5.2 reviewing calls.py at minimal returned 10 output
+            # tokens and ZERO findings, where the same file at high returned 793 tokens and correctly found
+            # the naive-local-timestamp bug. The "96x cheaper" that came out of the first measurement was
+            # 96x cheaper because it had stopped reviewing.
+            #
+            # It is not even monotonic: kimi-k3 found MORE at minimal on pricing.py (3) than at high (2).
+            # Effort is a property of (call-class, model) and only measurement can settle it — the same rule
+            # already applied to max_tokens and to the deadline, and the only one of the three still being
+            # set by hand.
+            #
+            # Until a class has a measured effort, send NOTHING and let the vendor use its own default. An
+            # invented bound is worse than no bound: no bound is at least honest about being unmeasured.
+            if reasoning:
+                okw["reasoning_effort"] = reasoning
             try:                                              # gpt-5+ require max_completion_tokens; older models take max_tokens
                 r = c.chat.completions.create(max_completion_tokens=max_tokens, **okw)
             except Exception as e:
