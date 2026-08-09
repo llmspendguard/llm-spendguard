@@ -80,17 +80,20 @@ check("_rows as_of cutoff drops later calls", len(asof_rows) == 3)
 # ─────────────────────────── evidence: aggregation ───────────────────────────
 print("-- evidence: per-model jobs / cost / labeled / good --")
 agg = advise.evidence(intent="loinc-typing")
-check("evidence has both models", set(agg) == {"gpt-5.5", "claude-opus-4-8"})
-check("gpt-5.5 jobs == 3", agg["gpt-5.5"]["jobs"] == 3)
-check("gpt-5.5 cost == 3.0", abs(agg["gpt-5.5"]["cost"] - 3.0) < 1e-9)
-check("gpt-5.5 outtok == 600K", agg["gpt-5.5"]["outtok"] == 600_000)
+# KEYS ARE vendor:model. A bare model key merged two vendors hosting the same id into one
+# recommendation — the same collision fixed in pricing.py, where it mispriced 17 ids.
+check("evidence keys are vendor-qualified",
+      set(agg) == {"openai:gpt-5.5", "anthropic:claude-opus-4-8"})
+check("gpt-5.5 jobs == 3", agg["openai:gpt-5.5"]["jobs"] == 3)
+check("gpt-5.5 cost == 3.0", abs(agg["openai:gpt-5.5"]["cost"] - 3.0) < 1e-9)
+check("gpt-5.5 outtok == 600K", agg["openai:gpt-5.5"]["outtok"] == 600_000)
 # gpt-5.5: 2 good @0.95 → good == 1.9, labeled == 1.9
-check("gpt-5.5 weighted good == 1.9", abs(agg["gpt-5.5"]["good"] - 1.9) < 1e-9)
-check("gpt-5.5 labeled == 1.9", abs(agg["gpt-5.5"]["labeled"] - 1.9) < 1e-9)
+check("gpt-5.5 weighted good == 1.9", abs(agg["openai:gpt-5.5"]["good"] - 1.9) < 1e-9)
+check("gpt-5.5 labeled == 1.9", abs(agg["openai:gpt-5.5"]["labeled"] - 1.9) < 1e-9)
 # opus: 1 good + 1 bad, both @0.9 → labeled 1.8, good 0.9
-check("opus jobs == 2", agg["claude-opus-4-8"]["jobs"] == 2)
-check("opus labeled == 1.8 (good+bad)", abs(agg["claude-opus-4-8"]["labeled"] - 1.8) < 1e-9)
-check("opus weighted good == 0.9", abs(agg["claude-opus-4-8"]["good"] - 0.9) < 1e-9)
+check("opus jobs == 2", agg["anthropic:claude-opus-4-8"]["jobs"] == 2)
+check("opus labeled == 1.8 (good+bad)", abs(agg["anthropic:claude-opus-4-8"]["labeled"] - 1.8) < 1e-9)
+check("opus weighted good == 0.9", abs(agg["anthropic:claude-opus-4-8"]["good"] - 0.9) < 1e-9)
 
 
 # ─────────────────────────── advise: labeled ranking ($/good) ───────────────────────────

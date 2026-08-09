@@ -24,15 +24,46 @@ def _rows(as_of=None, intent=None):
         return calls._db().execute(q, args).fetchall()
 
 
+# Weight given to a quality label from a row that never recorded a confidence at all (legacy rows, written
+# before the field existed). Named rather than inlined so it is visible as a stated assumption: it is NOT
+# what an explicit confidence of 0.0 means, and the two must never collapse into the same number.
+_UNSTATED_CONFIDENCE = 0.7
+
+
+def _resolve_plan(plan, agg):
+    """Which aggregated row the user's `--plan` names, or None.
+
+    Rows are keyed `vendor:model` so two hosts of one model cannot merge. A user who types the bare model
+    is answered when exactly ONE vendor in the data hosts it, and REFUSED when several do — naming one of
+    them would be a recommendation about a vendor the user never chose. Same rule as pricing: when the data
+    is ambiguous, say so and ask, rather than pick and look confident."""
+    if plan in agg:
+        return plan
+    hits = [k for k, a in agg.items() if a["model"] == plan]
+    if len(hits) == 1:
+        return hits[0]
+    if len(hits) > 1:
+        print(f"  ⚠️ {len(hits)} vendors in this history host {plan!r} ({', '.join(sorted(hits))}) — "
+              f"pass the qualified form to compare one of them.")
+    return None
+
+
 def evidence(as_of=None, intent=None):
     agg = {}
     for prov, model, _intent, cost, intok, outtok, qual, qconf in _rows(as_of, intent):
-        a = agg.setdefault(model, dict(provider=prov, jobs=0, cost=0.0, outtok=0, good=0.0, labeled=0.0))
+        # KEYED BY VENDOR AND MODEL. A bare model key merges two vendors' rows into one recommendation —
+        # the same collision fixed in pricing.py, where 17 ids resolved to another vendor's rate. Here it
+        # would blend a cheap host's cost with an expensive one's and rank the average.
+        a = agg.setdefault(f"{prov}:{model}",
+                           dict(provider=prov, model=model, jobs=0, cost=0.0, outtok=0, good=0.0, labeled=0.0))
         a["jobs"] += 1
         a["cost"] += cost or 0
         a["outtok"] += outtok or 0
         if qual:
-            w = qconf or 0.7
+            # A STORED CONFIDENCE OF 0.0 IS A JUDGEMENT, NOT A MISSING ONE. `qconf or DEFAULT` promoted the
+            # labeller's explicit "I have no confidence in this" to the same weight as a normal label, which
+            # is the opposite of what it says. Only a row that never recorded a confidence gets the default.
+            w = qconf if qconf is not None else _UNSTATED_CONFIDENCE
             a["labeled"] += w
             if qual == "good":
                 a["good"] += w
@@ -59,20 +90,38 @@ def advise(intent=None, plan=None, as_of=None):
     print(f"spendguard advise — {scope}" + (f"  (as of {as_of})" if as_of else "") + "\n")
     print(f"{'model':<22}{'jobs':>6}{'$ total':>11}{'$/M out':>10}{'good%':>7}{'$/good':>10}")
     for model, a, permout, good_rate, per_good in rows:
+        # `is not None`, NOT truthiness. A computed 0.0 is a real measurement — a call served entirely from
+        # cache costs $0 per million output tokens — and rendering it as '—' tells the reader the number
+        # could not be computed when in fact it was, and it was the best result in the table.
         print(f"{model[:21]:<22}{a['jobs']:>6}{('$%.2f' % a['cost']):>11}"
-              f"{('$%.2f' % permout) if permout else '—':>10}"
+              f"{('$%.2f' % permout) if permout is not None else '—':>10}"
               f"{('%.0f%%' % (100*good_rate)) if good_rate is not None else '—':>7}"
-              f"{('$%.4f' % per_good) if per_good else '—':>10}")
+              f"{('$%.4f' % per_good) if per_good is not None else '—':>10}")
     best = rows[0][0]
     metric = "$/good-result" if labeled_any else "$/M output (quality not labeled here yet)"
     print(f"\n→ considering history, prefer: {best}  (lowest {metric})")
-    if plan and plan in agg and plan != best:
-        pr = next(r for r in rows if r[0] == plan)
+    plan_key = _resolve_plan(plan, agg) if plan else None
+    if plan_key and plan_key != best:
+        pr = next(r for r in rows if r[0] == plan_key)
         br = rows[0]
-        if labeled_any and pr[4] and br[4]:
-            print(f"  your plan {plan}: {(pr[4]-br[4])/pr[4]*100:.0f}% costlier per good result than {best}.")
-        elif pr[2] and br[2]:
-            print(f"  your plan {plan}: {(pr[2]-br[2])/pr[2]*100:.0f}% costlier per output token than {best}.")
+        plan = plan_key
+        # TWO FIXES HERE, and only one of the guards is a truthiness bug.
+        #
+        # `pr[4] and br[4]` skipped the comparison whenever EITHER side measured 0.0 — including the case
+        # worth printing most loudly, a plan costing real money against a best that costs nothing. The
+        # plan side becomes `is not None`.
+        #
+        # `br[4]` stays truthy on purpose: it is the DIVISOR, and a zero denominator is a mathematical
+        # impossibility rather than a missing value. Guarding a divisor is not the same mistake.
+        #
+        # The denominator itself was also wrong. "N% costlier THAN the best" is measured against the best,
+        # so (pr-br)/br. Dividing by pr answered a different question and understated every premium: a plan
+        # costing 3x the best reported 67% rather than 200%, and the ceiling was 100% no matter how bad it
+        # got — the number could never say "this is 10x".
+        if labeled_any and pr[4] is not None and br[4]:
+            print(f"  your plan {plan}: {(pr[4]-br[4])/br[4]*100:.0f}% costlier per good result than {best}.")
+        elif pr[2] is not None and br[2]:
+            print(f"  your plan {plan}: {(pr[2]-br[2])/br[2]*100:.0f}% costlier per output token than {best}.")
     if not labeled_any:
         print("  ⚠️ no quality labels here yet — this ranks COST only. Add judge/feedback or Layer-2 mining for quality.")
     print(f"  ⚠️ {sum(r[1]['jobs'] for r in rows)} jobs; confounds possible — confirm head-to-head with "

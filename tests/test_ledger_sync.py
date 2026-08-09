@@ -194,7 +194,10 @@ ra.cost_by_day = lambda since=None: ({DAYS[1]: 5.0}, {})
 backfill._openai_rows = lambda: [("openai", "gpt-5.5", 40.0, 1_000_000, 0, DAYS[1], "bx-oai")]
 backfill._anthropic_rows = lambda: [("anthropic", "claude-opus-4-8", 5.0, 100, 100, DAYS[1], "bx-anth")]
 conv.batch_project_map = lambda tdir=None: {}           # no conversation evidence → batches hit the fallback
-saas.conn = lambda: {"project": "nlp-pipeline", "projects": ["nlp-pipeline"]}   # single-project → fallback = 'nlp-pipeline'
+# owns_account is STATED. A connection that omits it is now refused rather than assumed to own the
+# account (reconcile.owner_ok) — absence is not permission, and this stub used to rely on it.
+saas.conn = lambda: {"project": "nlp-pipeline", "projects": ["nlp-pipeline"],
+                     "owns_account": True}   # single-project → fallback = 'nlp-pipeline'
 
 summ = LS.reconcile_into_ledger(since=SINCE)
 check("provider_total = 45 (40 + 5)", abs(summ["provider_total"] - 45.0) < 1e-9)
@@ -245,7 +248,7 @@ conv.batch_project_map = lambda tdir=None: {
     "bx-linked": {"project": "vision-pipeline", "evidenced": True},
     "bx-intent": {"project": "vision-pipeline", "evidenced": True},
 }
-saas.conn = lambda: {"project": "nlp-pipeline", "projects": ["nlp-pipeline"]}
+saas.conn = lambda: {"project": "nlp-pipeline", "projects": ["nlp-pipeline"], "owns_account": True}
 summ_attr = LS.reconcile_into_ledger(since=SINCE)
 # bx-linked ($40) + bx-intent ($9) both → vision-pipeline (no gate spend there) → a real gap row
 check("vision-pipeline gap from agentic attribution = $49", abs(summ_attr["gap_by_project"].get("vision-pipeline", 0) - 49.0) < 1e-9)
@@ -272,7 +275,8 @@ ra.cost_by_day = lambda since=None: ({}, {})
 backfill._openai_rows = lambda: [("openai", "gpt-5.5", 40.0, 1_000_000, 0, DAYS[1], "bx-multi")]
 backfill._anthropic_rows = lambda: []
 conv.batch_project_map = lambda tdir=None: {}                            # no conversation evidence at all
-saas.conn = lambda: {"projects": ["nlp-pipeline", "vision-pipeline"]}   # >1 project → fallback = 'unattributed'
+saas.conn = lambda: {"projects": ["nlp-pipeline", "vision-pipeline"],
+                     "owns_account": True}   # >1 project → fallback = 'unattributed'
 summ4 = LS.reconcile_into_ledger(since=SINCE)
 check("no-evidence (no segment) gap lands in 'unattributed'", "unattributed" in summ4["gap_by_project"])
 

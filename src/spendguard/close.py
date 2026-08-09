@@ -29,17 +29,34 @@ def build(month):
     per = {}
     days = {}
     by_day = {}
+    unusable = []
     for r in truth.rows(since=start):
         if start <= r["day"] < end:
-            per[r["provider"]] = per.get(r["provider"], 0.0) + r["usd"]
+            # A ROW THAT CANNOT BE ADDED UP IS NOT WORTH ZERO. `r["usd"]` went straight into the month's
+            # arithmetic: a None or a string from a provider export raises here, and `usd or 0` — the
+            # obvious "fix" — would silently drop real money out of a month-end close instead. Neither is
+            # acceptable in the number that closes the books, so an unusable row is EXCLUDED and NAMED,
+            # and the caller gets the count alongside the total.
+            usd = r["usd"]
+            if not isinstance(usd, (int, float)) or isinstance(usd, bool):
+                unusable.append({"provider": r.get("provider"), "day": r.get("day"), "usd": repr(usd)[:40]})
+                continue
+            per[r["provider"]] = per.get(r["provider"], 0.0) + usd
             days.setdefault(r["provider"], set()).add(r["day"])
-            by_day[r["day"]] = by_day.get(r["day"], 0.0) + r["usd"]
+            by_day[r["day"]] = by_day.get(r["day"], 0.0) + usd
     providers = [{"provider": p, "usd": round(v, 6), "days": len(days[p])}
                  for p, v in sorted(per.items(), key=lambda kv: -kv[1])]
     today = datetime.date.today()
     out = {"month": month, "providers": providers,
            "total_usd": round(sum(p["usd"] for p in providers), 6),
            "current_month": month == today.strftime("%Y-%m")}
+    if unusable:
+        # SURFACED, not swallowed. A close whose total silently omits rows is the failure this whole
+        # module exists to prevent; the count travels with the number it is missing from.
+        out["unusable_rows"] = unusable
+        import sys as _sys
+        _sys.stderr.write(f"[close] WARN {len(unusable)} truth row(s) had a non-numeric usd and are "
+                          f"EXCLUDED from the {month} total — e.g. {unusable[0]}\n")
     if out["current_month"] and len(by_day) >= 5:
         daily = sorted(by_day.values())
         p50 = daily[len(daily) // 2]

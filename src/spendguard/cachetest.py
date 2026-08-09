@@ -72,7 +72,9 @@ def cache_test(system, users, model=None, run=False):
     if not system or sys_tok < 200:
         print("cache-test — need a system block ≥200 tokens to be worth caching (give --script or --from-intent).")
         return dict(ok=False)
-    users = users or ["Item A.", "Item B.", "Item C."]
+    # `is None`, not truthiness: an explicitly empty list is the caller saying "no user turns", and
+    # `or` overrode that with three invented ones — a test that silently measured something else.
+    users = ["Item A.", "Item B.", "Item C."] if users is None else users
     n = len(users)
     p = pricing.price(model)
     base, read = p["in_"], p.get("cached_in", p["in_"])
@@ -118,9 +120,21 @@ def cache_test(system, users, model=None, run=False):
     for i, co in enumerate(calls_out):
         tag = "cold" if i == 0 else "warm"
         print(f"  {i+1:>2} {tag}  {co['in_']:>7}   {co['write']:>10}   {co['read']:>10}")
-    warm = calls_out[1:] or calls_out
+    # NO FALLBACK TO THE COLD CALL. `calls_out[1:] or calls_out` meant a single-call run measured cache
+    # ENGAGEMENT using the very call that populates the cache — the one call guaranteed to read 0 from
+    # it. That is not a weaker measurement, it is a measurement of the opposite thing.
+    warm = calls_out[1:]
+    if not warm:
+        # NOT MEASURED IS NOT NOT-ENGAGED. With no warm call there is no evidence either way, and letting
+        # this fall through would print "caching did NOT engage" — a confident negative finding produced by
+        # a run that could not have produced any finding. `engaged` is None so a caller can tell the three
+        # states apart: engaged, not engaged, and never tested.
+        print("\n  ? cache engagement NOT MEASURED — a single call only populates the cache; it cannot read "
+              "from it. Re-run with --n 2 or more.")
+        return dict(ok=True, engaged=None, calls=calls_out,
+                    why="only one call: no warm call to observe a cache read on")
     engaged = any(co["read"] > 0 for co in warm)
-    avg_read = sum(co["read"] for co in warm) / max(1, len(warm))
+    avg_read = sum(co["read"] for co in warm) / len(warm)
 
     print()
     if engaged:

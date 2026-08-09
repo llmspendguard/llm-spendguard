@@ -319,16 +319,33 @@ def quarantine_charge(ts=None, reason="", row=None):
             cur = _db().execute("UPDATE charges SET conv_id=? WHERE ts=? AND conv_id <> ?",
                                 (QUARANTINE_CONV, ts, QUARANTINE_CONV))
         n = cur.rowcount
+        # THE MUTATION AND ITS AUDIT ROW COMMIT TOGETHER, UNDER THE SAME LOCK.
+        #
+        # This block used to sit OUTSIDE `with _lock:` and after its own commit, which is two defects. The
+        # smaller one is the race: a concurrent writer can interleave between the mutation and its record.
+        # The larger one is that the mutation was already durable, so a failed audit write left a changed
+        # ledger with NO trace that anything changed it — and `except Exception: pass` meant nobody was
+        # told. A missing audit row is indistinguishable from a mutation that never happened, which is the
+        # exact failure this table exists to prevent: an accounting tool whose tamper record can go missing
+        # in silence has no tamper record.
+        audit_err = None
+        try:
+            _db().execute("INSERT INTO spend_audit (event_id, ts, actor, field, old_value, new_value, reason) "
+                          "VALUES (?,?,?,?,?,?,?)",
+                          (str(row if row is not None else ts),
+                           datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+                           "quarantine_charge", "conv_id", "", QUARANTINE_CONV, reason))
+        except Exception as e:
+            audit_err = e                      # audit shape varies by migration; never BLOCK the repair
         _db().commit()
-    try:                                       # audit trail: WHAT changed, WHY, and what it was before
-        _db().execute("INSERT INTO spend_audit (event_id, ts, actor, field, old_value, new_value, reason) "
-                      "VALUES (?,?,?,?,?,?,?)",
-                      (str(row if row is not None else ts),
-                       datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
-                       "quarantine_charge", "conv_id", "", QUARANTINE_CONV, reason))
-        _db().commit()
-    except Exception:
-        pass                                   # audit shape varies by migration; never block the repair
+    if audit_err is not None:
+        # LOUD, not fatal. Blocking the repair because an older schema lacks the table would be a different
+        # bug; letting the repair happen unrecorded and unmentioned is the one being fixed.
+        import sys as _sys
+        _sys.stderr.write(
+            f"[budget] WARN quarantine of {'row ' + str(row) if row is not None else 'ts ' + str(ts)} "
+            f"COMMITTED WITHOUT AN AUDIT ROW ({type(audit_err).__name__}: {str(audit_err)[:80]}). "
+            f"The ledger changed and spend_audit does not know it — run `spendguard migrate` and re-check.\n")
     return n
 
 

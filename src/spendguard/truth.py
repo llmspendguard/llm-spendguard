@@ -39,11 +39,20 @@ def push(since=None, dry=False):
     c = saas.conn()
     if c.get("visibility", "private") == "private":
         return {"skipped": "visibility=private — nothing leaves this machine"}
-    if c.get("enabled") and not c.get("owns_account"):
-        # Account-anchor guard (same rule as reconcile): provider truth is ACCOUNT-level. On a shared account,
-        # only the owns_account connection may claim it — a non-owner pushing the same totals to ITS org
-        # double-counts truth and turns both orgs' statement residuals into fiction (caught live 2026-07-05).
-        return {"skipped": "not the account owner (owns_account=false) — the owner connection pushes provider truth"}
+    # ACCOUNT-ANCHOR GUARD — ONE IMPLEMENTATION, in reconcile.owner_ok.
+    #
+    # Provider truth is ACCOUNT-level. On a shared account only the owner may claim it: a non-owner pushing
+    # the same totals to ITS org double-counts truth and turns both orgs' statement residuals into fiction
+    # (caught live 2026-07-05).
+    #
+    # This used to be its own copy of the rule — `c.get("enabled") and not c.get("owns_account")` — written
+    # out longhand beside reconcile's. When that expression was found to grant rights to a declared
+    # non-owner whose sync was merely switched off, the fix landed on one copy and this one kept the bug,
+    # on the path that actually SENDS data to an org. A rule stated twice is a rule that gets fixed once.
+    from . import reconcile as _reconcile
+    ok, why = _reconcile.owner_ok(c)
+    if not ok:
+        return {"skipped": why}
     payload = {"truth": rows(since)}
     if dry:
         return payload

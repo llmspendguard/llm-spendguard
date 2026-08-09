@@ -24,11 +24,30 @@ fix per source: capture at the source (the gate for LLM, scheduled snapshot for 
 
 def owner_ok(conn):
     """Account-anchor guard: only the owns_account connection reconciles a SHARED provider/vast account's gap — a
-    non-owner would attribute other tenants' spend to itself. Standalone/unconnected (no conn) reconciles fully."""
-    conn = conn or {}
-    if conn.get("enabled") and not conn.get("owns_account"):
-        return False, "not the account owner (owns_account=false) — the owner connection reconciles the shared-account gap"
-    return True, "account owner"
+    non-owner would attribute other tenants' spend to itself. Standalone/unconnected (no conn) reconciles fully.
+
+    OWNERSHIP IS A PROPERTY OF THE PROVIDER ACCOUNT, NOT OF THE SaaS CONNECTION, so `enabled` does not gate it.
+    This used to read `if conn.get("enabled") and not conn.get("owns_account")`, which let two cases through:
+
+      {"enabled": False, "owns_account": False}   a declared NON-OWNER, granted full reconcile rights because
+                                                  its sync happened to be switched off. The provider account is
+                                                  shared either way; turning off the upload does not stop the
+                                                  LOCAL ledger absorbing other tenants' spend as unattributed
+                                                  rows — and enabling sync later propagates the contamination.
+      {"enabled": False}                          ownership ABSENT, read as ownership GRANTED.
+
+    The second is this project's own invariant inverted, in the one guard whose job is to stop us claiming
+    other people's money. Absence is not permission. Ownership must be stated, and a connection that does not
+    state it is refused — the fail-closed direction, because the cost of wrongly refusing is a message telling
+    you which flag to set, and the cost of wrongly allowing is someone else's spend on your books."""
+    if not conn:
+        return True, "standalone (no connection) — no shared account is declared"
+    if conn.get("owns_account") is True:
+        return True, "account owner"
+    if "owns_account" not in conn:
+        return False, ("connection does not state owns_account — refusing rather than assuming ownership; "
+                       "set owns_account on the connection if this host owns the provider account")
+    return False, "not the account owner (owns_account=false) — the owner connection reconciles the shared-account gap"
 
 
 def org_of(project, ptmap):

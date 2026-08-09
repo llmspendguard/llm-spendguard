@@ -46,7 +46,9 @@ def _defaults(intent, task):
         gr = rates.get((it, m)) or {}
         bad_for = models.ineffective(m, intent)
         permodel.append(dict(model=m, jobs=jobs, cost=cost or 0,
-                             per=(cost / jobs) if jobs else None, good=gr.get("good_rate"),
+                             # `cost or 0`, matching the field above. A None cost with jobs>0 raised here
+                             # while the row beside it recorded 0 — two readings of one number in one dict.
+                             per=((cost or 0) / jobs) if jobs else None, good=gr.get("good_rate"),
                              denied=bool(bad_for)))
     primary = max(permodel, key=lambda d: d["jobs"], default=None)
     # recommend: cheapest non-denylisted model with acceptable/known quality; else primary
@@ -79,8 +81,11 @@ def brief(task, intent=None, run_llm=False):
     print(f"  2. quality bar    {d.get('qbar', 'define how good is checked (golden set / judge)')}")
     print(f"  3. scale          {_scale_default(task, d)}")
     print(f"  4. budget         estimate-first; "
-          f"{('historical ~$%.2f for this intent' % d['hist_cost']) if d.get('hist_cost') else 'set a ceiling'}"
-          + (f"; daily cap ${d['daily_cap']:.0f}" if d.get("daily_cap") else ""))
+          # `is not None`: a measured $0.00 of history is evidence (everything so far was cached or
+          # free), and telling the user to 'set a ceiling' instead discards a real measurement. Same
+          # for a daily cap of $0, which is the STRICTEST cap there is and read as no cap at all.
+          f"{('historical ~$%.2f for this intent' % d['hist_cost']) if d.get('hist_cost') is not None else 'set a ceiling'}"
+          + (f"; daily cap ${d['daily_cap']:.0f}" if d.get("daily_cap") is not None else ""))
     print(f"  5. output format  {d.get('sample') or 'specify the exact shape (terser = cheaper)'}")
     print("  6. test vs prod   TEST first (pilot + estimate), then promote the winner")
     print("\nADVISOR (per-intent history):")
@@ -90,7 +95,9 @@ def brief(task, intent=None, run_llm=False):
     if d.get("denylist"):
         print(f"  AVOID: {', '.join(d['denylist'])}  (proven ineffective for this intent)")
     for it, lesson, src, conf, _ev in d.get("insights", []):
-        print(f"  [{conf:.2f}] {lesson[:90]}")
+        # An insight with no recorded confidence is still an insight. Formatting None with %.2f raises
+        # and takes the whole brief down, so absence prints as absence and the lesson still shows.
+        print(f"  [{conf:.2f}]" if conf is not None else "  [ -- ]", (lesson or "")[:90])
     print(f"\n  → next: spendguard experiment --intent {intent} --model <cheap> ...  then  spendguard promote ...")
     print("  (I'll proceed on these defaults unless you change a line.)")
     if run_llm:
