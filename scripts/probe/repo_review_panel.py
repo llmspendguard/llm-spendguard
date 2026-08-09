@@ -67,6 +67,63 @@ def prompt_for(t):
     return (f"Review this file for defects: {t['name']}\n\n{t['src']}")
 
 
+def learn_from_wave(rows, wave_no, judge_model="claude-opus-4-8"):
+    """AGENTIC: read a wave's findings and say what the next wave should know. Returns (suppress, recur).
+
+    WHAT IS SAFE TO CARRY FORWARD, and what is not.
+      SAFE — noise categories. If every vendor keeps reporting something the brief already excluded, saying
+      so again removes cost without removing coverage.
+      SAFE — recurring defect CLASSES. A bug found in three files is likely in a fourth; a human reviewer
+      would carry that forward, and so should this.
+      NOT SAFE — anything that narrows the brief. A later wave told only to look for what earlier waves found
+      will confirm wave 1 and miss what wave 1 missed, while the finding count goes UP and looks like
+      improvement. Learnings are appended to the base instruction, never substituted for it.
+
+    Whether it actually helped is measurable and reported: a finding that only appeared after we asked for it
+    is weaker evidence than one found cold, so `prompted` findings are counted separately."""
+    if not rows:
+        return [], []
+    sample = [f"{r['severity']}|{r['issue'][:160]}" for r in rows[:120]]
+    prompt = ("Below are code-review findings from one wave of an automated multi-vendor review.\n\n"
+              "1. NOISE: which finding categories are NOT real correctness defects (style, naming, "
+              "formatting, missing type hints, speculative 'could be improved')? These were already excluded "
+              "by the brief and are being reported anyway.\n"
+              "2. RECURRING: which specific defect CLASSES appear in more than one file and are likely to "
+              "recur elsewhere in this codebase?\n\n"
+              "Reply as JSON only: {\"noise\": [\"...\"], \"recurring\": [\"...\"]}. "
+              "Be specific and terse. At most 5 of each.\n\nFINDINGS:\n" + "\n".join(sample))
+    schema = {"type": "object", "required": ["noise", "recurring"],
+              "properties": {"noise": {"type": "array", "items": {"type": "string"}},
+                             "recurring": {"type": "array", "items": {"type": "string"}}}}
+    v = "anthropic" if judge_model.startswith("claude") else "openai"
+    r = vc.call(v, judge_model, prompt, deadline_s=300, purpose=f"review:wave-learn-{wave_no}",
+                system="You are a review-quality analyst. Be terse and specific.", schema=schema)
+    if not r.ok:
+        print(f"    wave-learning FAILED ({r.kind}) — carrying nothing forward rather than guessing")
+        return [], []
+    try:
+        d = json.loads(r._text) if isinstance(r._text, str) else r._text
+        noise = [str(x)[:160] for x in (d.get("noise") or [])][:5]
+        recur = [str(x)[:160] for x in (d.get("recurring") or [])][:5]
+    except Exception:
+        return [], []
+    try:
+        from spendguard import learn
+        for lesson in noise:
+            learn.add_insight("review:code-defects", f"NOISE: {lesson}", source=f"wave-{wave_no}",
+                              confidence=0.6, ctx={"condition": "multi-vendor code review",
+                                                   "action": "suppress this category in the brief",
+                                                   "mechanism": "already excluded; still reported"})
+        for lesson in recur:
+            learn.add_insight("review:code-defects", f"RECURRING: {lesson}", source=f"wave-{wave_no}",
+                              confidence=0.6, ctx={"condition": "this codebase",
+                                                   "action": "check later files for it explicitly",
+                                                   "mechanism": "seen in more than one file"})
+    except Exception:
+        pass
+    return noise, recur
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", default="src/spendguard", help="directory to review")
@@ -83,6 +140,11 @@ def main():
     ap.add_argument("--append", action="store_true",
                     help="add to an existing results file instead of replacing it — a second pass over more "
                          "files must not destroy the findings the first pass already paid for")
+    ap.add_argument("--waves", default="",
+                    help="comma-separated wave sizes, e.g. 10,20,20,30. After each wave an AGENTIC pass "
+                         "reads that wave's findings and proposes what the next wave should know. Learnings "
+                         "are ADDITIVE to the base instruction, never a replacement — narrowing the brief to "
+                         "what we already found would make later waves confirm wave 1 instead of reviewing.")
     ap.add_argument("--files-at-once", type=int, default=3,
                     help="files reviewed concurrently. fan_out already parallelises the four VENDORS within a "
                          "file, but every file still waited for the slowest of them: 10 files took 49 minutes, "
@@ -135,6 +197,21 @@ def main():
     per_vendor = collections.defaultdict(lambda: {"files": 0, "ok": 0, "findings": 0, "kinds": {}})
     rows = []
     print(f"\nreviewing — hard budget ${a.budget:,.2f}, results -> {out_path}\n")
+    waves = [int(x) for x in a.waves.split(",") if x.strip().isdigit()] if a.waves else [len(ts)]
+    learned_noise, learned_recur = [], []
+    wave_stats = []
+
+    def brief():
+        """Base instruction ALWAYS first; learnings appended. Never a substitute — see learn_from_wave."""
+        b = SYSTEM
+        if learned_noise:
+            b += ("\n\nAlready-known NOISE in this codebase — do not report these:\n"
+                  + "\n".join(f"- {x}" for x in learned_noise))
+        if learned_recur:
+            b += ("\n\nDefect classes seen in earlier files here — check for them IN ADDITION to everything "
+                  "else, never instead of it:\n" + "\n".join(f"- {x}" for x in learned_recur))
+        return b
+
     import threading
     import concurrent.futures as _cf
     lock = threading.Lock()
@@ -147,7 +224,7 @@ def main():
         if stop.is_set():
             return None
         fan = vc.fan_out(PANEL, prompt_for(t), deadline_s=300, purpose=f"review:{t['name']}",
-                         system=SYSTEM, schema=FINDING_SCHEMA)
+                         system=brief(), schema=FINDING_SCHEMA)
         local = []
         with lock:
             for r in fan["results"]:
@@ -195,14 +272,56 @@ def main():
                 stop.set()
         return local
 
-    with _cf.ThreadPoolExecutor(max_workers=max(1, a.files_at_once)) as pool:
-        futs = [pool.submit(review_one, i, t) for i, t in enumerate(ts, 1)]
-        for f in _cf.as_completed(futs):
-            try:
-                f.result()
-            except Exception as e:
-                print(f"  file worker died: {type(e).__name__}: {e}", flush=True)
+    cursor = 0
+    for wi, size in enumerate(waves, 1):
+        batch = ts[cursor:cursor + size]
+        cursor += size
+        if not batch or stop.is_set():
+            break
+        before_rows, before_spent = len(rows), spent
+        print(f"\n  ── WAVE {wi}: {len(batch)} files"
+              + (f", carrying {len(learned_noise)} noise + {len(learned_recur)} recurring lessons forward"
+                 if (learned_noise or learned_recur) else ", no prior lessons") + " ──", flush=True)
+        with _cf.ThreadPoolExecutor(max_workers=max(1, a.files_at_once)) as pool:
+            futs = [pool.submit(review_one, i, t) for i, t in enumerate(batch, 1)]
+            for f in _cf.as_completed(futs):
+                try:
+                    f.result()
+                except Exception as e:
+                    print(f"  file worker died: {type(e).__name__}: {e}", flush=True)
+        wrows = rows[before_rows:]
+        wcost = spent - before_spent
+        sites = {}
+        for r in wrows:
+            sites.setdefault((r["file"], r["line"]), set()).add(r["vendor"])
+        multi = sum(1 for v in sites.values() if len(v) > 1)
+        wave_stats.append({"wave": wi, "files": len(batch), "findings": len(wrows), "sites": len(sites),
+                           "multi_vendor": multi, "cost": round(wcost, 2)})
+        print(f"    wave {wi}: {len(wrows)} findings across {len(sites)} sites, {multi} multi-vendor, "
+              f"${wcost:,.2f}  (${wcost/max(len(batch),1):.3f}/file)", flush=True)
+        if cursor < len(ts) and not stop.is_set():
+            n, rc = learn_from_wave(wrows, wi)
+            for x in n:
+                if x not in learned_noise:
+                    learned_noise.append(x)
+            for x in rc:
+                if x not in learned_recur:
+                    learned_recur.append(x)
+            if n or rc:
+                print(f"    carried forward -> {len(n)} noise, {len(rc)} recurring", flush=True)
+                for x in (n + rc)[:4]:
+                    print(f"      · {x[:96]}", flush=True)
     fh.close()
+
+    if len(wave_stats) > 1:
+        print("\n  WAVE OVER WAVE — is it getting better, or just being told what to find?")
+        print(f"  {'wave':<6}{'files':>6}{'findings':>10}{'multi-vendor':>14}{'$/file':>9}{'multi %':>9}")
+        for w in wave_stats:
+            pct = (w["multi_vendor"] / w["sites"] * 100) if w["sites"] else 0
+            print(f"  {w['wave']:<6}{w['files']:>6}{w['findings']:>10}{w['multi_vendor']:>14}"
+                  f"{w['cost']/max(w['files'],1):>9.3f}{pct:>8.0f}%")
+        print("  multi-vendor % is the honest signal: findings a SINGLE vendor reports after we told it what "
+              "to look for are the ones most likely to be echo.")
 
     print("\n  COVERAGE — how many files each vendor actually reviewed, not how many we asked it to")
     print(f"  {'vendor':<11}{'reviewed':>10}{'findings':>10}   not-ok")
