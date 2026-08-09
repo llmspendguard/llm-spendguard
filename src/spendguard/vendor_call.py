@@ -239,6 +239,23 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
                           error=f"no measured output cap for {vendor}/{model} and none supplied. Record one: "
                                 f"vendor_call.record_cap('{vendor}', '{model}', <tokens>, method='probe'). "
                                 f"Guessing it is what returned HTTP 200 with zero characters.")
+    # ATTRIBUTION AT THE CHOKEPOINT. `purpose` was recorded on every vendor_call result (400/400) and reached
+    # the LEDGER on none of them: 533 of 535 calls in a $25.29 session had no intent, so the money could be
+    # totalled and not explained. The information existed the whole time and never got to the consumer.
+    #
+    # The `caller` column made it worse, not better: fan_out runs vendors on a thread pool, so 450 calls and
+    # $24.66 were attributed to `threading.py:run:1024` — the worker frame, not the work. Concurrency added
+    # for speed silently destroyed the only attribution there was.
+    #
+    # Tagging here covers every caller at once, which is the point of having a chokepoint.
+    _ctx = None
+    if purpose:
+        try:
+            from . import calls as _calls
+            _ctx = _calls.context(intent=purpose, chain=run_id())
+            _ctx.__enter__()
+        except Exception:
+            _ctx = None
     started = time.time()
     sha = _sha(prompt)
     last = None
@@ -284,6 +301,11 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
                                   hit_deadline=(last.kind == DEADLINE_EXCEEDED))
         except Exception:
             pass
+    if _ctx is not None:
+        try:
+            _ctx.__exit__(None, None, None)
+        except Exception:
+            pass
     if last is not None and last.ok and schema is not None:
         last = _apply_schema(last, schema)
     _persist(last)
@@ -296,8 +318,25 @@ def _attempt(vendor, model, prompt, system, max_tokens, budget_s, schema=None):
     cannot bound a call that never returns, which is exactly what produced the 3h30m run."""
     from . import adapters
     box = {}
+    # CARRY THE CONTEXT ACROSS THE THREAD BOUNDARY. calls.record() reads intent/chain from a THREAD-LOCAL
+    # context, and this runs the adapter on a worker — so the tag is set on the calling thread and the ledger
+    # row is written on another one, with an empty context. "Thread-local; safe under ThreadPool" is true for
+    # isolation and precisely wrong for propagation: 533 of 535 calls in a $25.29 session were recorded with
+    # no intent for exactly this reason, and the `caller` column showed `threading.py:run:1024` — the worker
+    # frame — because the stack walk also happens on the wrong thread.
+    try:
+        from . import calls as _c
+        _parent_ctx = dict(_c.current() or {})
+    except Exception:
+        _parent_ctx = {}
 
     def _run():
+        if _parent_ctx:
+            try:
+                from . import calls as _c2
+                _c2.set_context(intent=_parent_ctx.get("intent"), chain=_parent_ctx.get("chain"))
+            except Exception:
+                pass
         try:
             box["r"] = adapters.call(model if ":" in model else f"{vendor}:{model}", prompt,
                                      max_tokens=int(max_tokens), system=system,
