@@ -286,15 +286,19 @@ def call(model, prompt, max_tokens=512, system=None, reasoning=None, schema=None
             # This is not an invented default. It is a RECORDED value with provenance — either a verified
             # family fact or one an A/B wrote via models.add_fact() (kimi-k3='auto', glm-5.2='high' came
             # from a measured run). An explicit caller argument still wins over both.
-            eff = reasoning
-            if not eff:
-                try:
-                    from . import models as _mf
-                    eff = (_mf.profile(raw) or {}).get("reasoning")
-                except Exception:
-                    eff = None
-            if eff and eff != "?":
-                okw["reasoning_effort"] = eff
+            #
+            # THE LOOKUP ITSELF LIVES IN models.apply_call_params AND NOWHERE ELSE. This block used to carry
+            # its own copy of it, which is how a fact store ends up applying to some calls and not others.
+            # The dialect is passed explicitly because this branch KNOWS it is speaking Chat Completions,
+            # while the model name alone does not: kimi-k3 and glm-5.2 match no family rule, so inferring the
+            # shape from the name would answer '?' and drop their measured facts on the floor.
+            if reasoning:
+                okw["reasoning_effort"] = reasoning        # explicit caller argument: applied, then respected
+            try:
+                from . import models as _mf
+                _mf.apply_call_params(raw, okw, dialect="openai")
+            except Exception:
+                pass                                        # a missing fact store must not break the call
             try:                                              # gpt-5+ require max_completion_tokens; older models take max_tokens
                 r = c.chat.completions.create(max_completion_tokens=max_tokens, **okw)
             except Exception as e:

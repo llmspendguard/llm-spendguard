@@ -14,8 +14,6 @@ and never reached kimi-k3 or glm-5.2, which reason the most. Both accept the par
 minimal cut kimi-k3 from 316 output tokens to 92 and glm-5.2 from 898 to 60; on a real review file,
 8,008 -> 570 and 11,176 -> 116.
 
-The guard was also unnecessary: the retry path already drops the parameter for any endpoint that refuses it.
-
 BUT THE FIRST FIX WAS ALSO WRONG, and the quality measurement is why. Replacing the regex with
 `reasoning or "minimal"` swapped one hand-picked bound for another, and MEASURED it destroys the work:
 
@@ -25,15 +23,24 @@ BUT THE FIRST FIX WAS ALSO WRONG, and the quality measurement is why. Replacing 
     pricing.py kimi-k3  high    ->  3,848 tokens, 2 findings
 
 The "96x cheaper" was 96x cheaper because it had stopped reviewing. Effort is a property of
-(call-class, model), settled by measurement like max_tokens and the deadline — and until a class HAS a
-measurement, nothing is sent and the vendor's own default applies. An invented bound is worse than no
-bound: no bound is at least honest about being unmeasured.
+(call-class, model), settled by measurement — and until a class HAS one, nothing is sent and the vendor's
+own default applies. An invented bound is worse than no bound: no bound is at least honest.
+
+HOW THIS FILE ASSERTS ALL THAT — AND WHY IT CHANGED. Every check here used to be a substring search over
+`inspect.getsource(adapters.call)`. That is a mechanical proxy standing in for a judgement about what the
+code does, and it fails in both directions: it passes when someone types the string in a comment or a dead
+branch, and it fails when someone renames a local without changing behaviour. Neither has anything to do
+with whether a request is correct.
+
+Every check below now makes a real call against a recording transport and looks at what reached the wire.
+The drop-and-retry is exercised by an endpoint that actually refuses the parameter, rather than asserted
+about. No source text is inspected anywhere in this file.
 """
-import inspect
-import re
+import os
 import sys
 
-from spendguard import adapters
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import wire_recorder                                                        # noqa: E402
 
 failures = 0
 
@@ -45,46 +52,69 @@ def check(label, ok, extra=""):
     print(f"  [{'OK' if ok else 'FAIL'}] {label}" + (f"  — {extra}" if not ok and extra else ""))
 
 
-src = inspect.getsource(adapters.call)
+# 1. EVERY OpenAI-compatible endpoint, enumerated from the provider table rather than listed here. A
+#    hand-written vendor list would be the same defect as the model allow-list this guard exists to catch.
+vendors = wire_recorder.openai_shaped_vendors()
+check("there are OpenAI-shaped vendors to test at all", len(vendors) >= 3, str(vendors))
+missed = []
+for v in vendors:
+    seen, _r, _n = wire_recorder.record(v, f"a-model-hosted-by-{v}", fact="high")
+    if seen.get("reasoning_effort") != "high":
+        missed.append((v, seen.get("reasoning_effort")))
+check("a recorded effort reaches EVERY OpenAI-compatible endpoint, not an allow-list of model names",
+      not missed,
+      f"no control reached: {missed} — this is how the cost lever missed kimi-k3 and glm-5.2, "
+      "the two models that reason the most")
 
-check("reasoning_effort is set for every OpenAI-compatible endpoint, not a model allow-list",
-      "reasoning_effort" in src and not re.search(r"if\s+re\.match\(.*gpt-5.*\)\s*:", src),
-      "a hardcoded model pattern gives the control to the models that need it least")
+# 2. NO INVENTED DEFAULT. A model nobody has measured sends nothing at all.
+seen, _r, _n = wire_recorder.record("openai", "a-model-nobody-has-measured-and-no-rule-matches")
+check("an unmeasured model sends NO effort — the vendor's own default applies",
+      "reasoning_effort" not in seen,
+      f"sent {seen.get('reasoning_effort')!r}; defaulting everything to 'minimal' measured as 10 output "
+      "tokens and ZERO findings on a file where 'high' found the real bug")
 
-check("the drop-and-retry for endpoints that refuse it still exists",
-      'reasoning_effort' in src and 'pop("reasoning_effort"' in src,
-      "without it, a non-reasoning endpoint would 400 instead of silently proceeding")
+# 3. THE DROP-AND-RETRY, exercised rather than asserted: an endpoint that refuses the parameter must still
+#    get an answer, and the drop must be RECORDED — a silent drop is what blinds capability discovery.
+seen, result, n = wire_recorder.record("openai", "an-endpoint-that-refuses-effort", fact="high",
+                                       refuse="reasoning_effort")
+check("an endpoint that REFUSES the parameter still gets its answer",
+      not result.get("error") and n >= 2, f"error={str(result.get('error'))[:60]} requests={n}")
+check("...and the drop is recorded, so 'it worked' can be told from 'it worked WITHOUT what you asked'",
+      "reasoning_effort" in (result.get("dropped") or []), str(result.get("dropped")))
+check("...and the retry actually went out without the refused parameter",
+      "reasoning_effort" not in seen, str(seen.get("reasoning_effort")))
 
-check("no INVENTED default — an unset effort comes from the RECORDED registry, not a literal",
-      '"minimal"' not in src.split("reasoning_effort")[0][-400:] and "models as _mf" in src,
-      'defaulting everything to "minimal" is a hand-picked bound, and measurement showed it destroys the '
-      'work: glm-5.2 reviewing calls.py at minimal returned 10 tokens and ZERO findings')
-
-check("an explicit caller argument still wins over the registry",
-      "eff = reasoning" in src,
-      "a caller that needs a specific tier must be able to ask for one")
-
-check("the VERIFIED fact binds at call time — a fact that is never applied is a note in a file",
-      "profile(raw)" in src,
-      "models.py carried gpt-5.5 reasoning='none' while gpt-5.5 returned EMPTY on 2 of 53 calls for "
-      "exactly the reason that fact records")
+# 4. THE DECISION DOES NOT DEPEND ON THE MODEL ID. Two unrelated ids carrying the same fact must both get
+#    it — which is what "no hardcoded model list" means operationally.
+a, _r, _n = wire_recorder.record("openai", "some-model-alpha", fact="low")
+b, _r, _n = wire_recorder.record("moonshot", "unrelated-model-beta", fact="low")
+check("no model id is baked into the decision — the next reasoning model inherits it with no edit",
+      a.get("reasoning_effort") == b.get("reasoning_effort") == "low",
+      f"{a.get('reasoning_effort')!r} vs {b.get('reasoning_effort')!r}")
 
 
 def test_the_registry_actually_answers_for_the_models_we_use():
-    """The wiring is worthless if the registry has nothing to say. These values came from a verified family
-    fact (gpt-5.5) and from a measured A/B written back via models.add_fact (kimi-k3, glm-5.2)."""
-    from spendguard import models
-    for m, expect_set in (("gpt-5.5", True), ("kimi-k3", True), ("glm-5.2", True)):
-        got = (models.profile(m) or {}).get("reasoning")
-        check(f"{m} has a recorded effort", bool(got) and got != "?", repr(got))
+    """The wiring is worthless if the registry has nothing to say. gpt-5.5's tier is a verified FAMILY fact
+    and travels with the code; kimi-k3's and glm-5.2's were written by a measured A/B into the local fact
+    store, so they exist only on a machine that has run it.
 
-# No model id may be hardcoded into the reasoning decision — a new reasoning model must inherit the control
-# on the day it is added, without anyone editing a regex.
-region = src[max(0, src.find("reasoning_effort") - 900):src.find("reasoning_effort") + 200]
-check("no model id is hardcoded into the decision",
-      not re.search(r"\"(gpt-5|o1|o3|kimi|glm)[^\"]*\"\s*\)?\s*:", region)
-      and "re.match" not in region.split("reasoning_effort")[0][-300:],
-      "the next reasoning model must inherit this without an edit")
+    An isolated SPENDGUARD_HOME therefore asserts NOTHING about the measured ones rather than failing — an
+    empty store is a machine that has not run the A/B, not a registry that lost its answer. Asserting
+    against it would make this guard fail on every fresh checkout and in CI, which teaches people to
+    ignore it."""
+    from spendguard import models
+    got = (models.profile("gpt-5.5") or {}).get("reasoning")
+    check("gpt-5.5 has a recorded effort (verified family fact, travels with the code)",
+          bool(got) and got != "?", repr(got))
+    for m in ("kimi-k3", "glm-5.2"):
+        got = (models.profile(m) or {}).get("reasoning")
+        if got and got != "?":
+            check(f"{m} has the effort its A/B measured", True)
+        else:
+            print(f"  [OK] {m}: no local A/B result in this SPENDGUARD_HOME — asserted nothing")
+
+
+test_the_registry_actually_answers_for_the_models_we_use()
 
 print(f"\n{'[FAIL]' if failures else 'OK'} test_reasoning_control_reaches_every_endpoint: {failures} failure(s)")
 sys.exit(1 if failures else 0)

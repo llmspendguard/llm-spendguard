@@ -58,9 +58,22 @@ def test_a_provider_that_cannot_carry_the_param_is_NOT_reported_as_supporting_it
           cached is None or bool(cached.get("not_applicable")), str(cached)[:80])
 
 
-def test_an_unmeasured_class_gets_NO_effort_rather_than_an_invented_one():
-    eff, basis = vc.effort_policy("zai", "glm-5.2", sig="a-class-nobody-has-measured")
-    check("unmeasured -> (None, 'unmeasured')", (eff, basis) == (None, "unmeasured"), f"{eff} {basis}")
+def test_an_unmeasured_model_gets_NO_effort_rather_than_an_invented_one():
+    """The PROPERTY has to outlive the module it was written in.
+
+    This used to call vendor_call.effort_policy(), one of two competing effort registries. That pair was
+    deleted (see test_one_place_decides_per_model_params.py — per-model POLICY lives in models.py; the caps
+    file here holds measured LIMITS), so the test now asks the surviving store the same question.
+
+    The answer must still be silence. Sending an invented tier is not a conservative default: measured,
+    glm-5.2 reviewing calls.py at `minimal` returned 10 output tokens and ZERO findings where `high`
+    returned 793 and found the real bug. Nothing is the only honest thing to send about a model nobody has
+    measured — the vendor's own default is at least chosen by someone who knows the model."""
+    from spendguard import models
+    kw = models.apply_call_params("a-model-nobody-has-measured-and-no-rule-matches",
+                                  {"model": "x"}, dialect="openai")
+    check("unmeasured -> nothing sent, vendor default applies",
+          "reasoning_effort" not in kw, str(kw))
 
 
 def test_discovery_forces_the_API_path():
@@ -81,17 +94,26 @@ def test_discovery_agrees_with_the_independently_verified_registry():
     """models.py carries a VERIFIED fact: gpt-5.5 rejects 'minimal'. Two independent sources of truth about
     the same endpoint must not disagree — when they did, the probe was wrong."""
     from spendguard import models
-    prof = str(models.profile("gpt-5.5"))
     d = (vc.caps().get("openai/gpt-5.5") or {}).get("efforts") or {}
-    if not d:
+    if not d or not d.get("accepted"):
         check("no cached probe to cross-check (isolated run) — asserted nothing", True)
         return
-    if "minimal" in prof and "REJECT" in prof.upper():
-        check("probe agrees with the verified registry that 'minimal' is rejected",
-              "minimal" in (d.get("rejected") or []),
-              f"registry says rejected; probe says accepted={d.get('accepted')}")
-    else:
-        check("registry has no verified claim to cross-check against", True)
+    want = (models.profile("gpt-5.5") or {}).get("reasoning")
+    if not want or want == "?":
+        check("registry has no verified tier to cross-check against", True)
+        return
+    # BOTH SIDES STRUCTURED. This used to grep the family rule's English `note` for the word "REJECT" —
+    # reading a fact out of prose, which is the very shape of bug this file exists to catch. The note says
+    # "'minimal' is REJECTED (400)" and the only way to consume it was a substring search that would go
+    # silently false the moment someone rewrote the sentence, taking the cross-check with it.
+    #
+    # The structured question is also the more useful one: the tier the registry tells every call to SEND
+    # must be one the endpoint was MEASURED to accept. That is the failure with teeth — a registry pointing
+    # production at a tier the API 400s on.
+    check("the tier the registry says to SEND is one the endpoint was measured to ACCEPT",
+          want in (d.get("accepted") or []),
+          f"registry says send {want!r}; probe measured accepted={d.get('accepted')} "
+          f"rejected={d.get('rejected')}")
 
 
 def test_transport_failures_are_unknown_not_rejections():

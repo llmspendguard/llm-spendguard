@@ -81,14 +81,30 @@ def profile(model):
     return p
 
 
-def apply_call_params(model, kw):
+def apply_call_params(model, kw, *, dialect=None):
     """Mutate a chat-call kwargs dict to use the model correctly — the AUTO-APPLY that prevents the
-    'forgot reasoning=none → empty output' class of bug. Returns kw."""
+    'forgot reasoning=none → empty output' class of bug. Returns kw.
+
+    THE ONLY PLACE that turns a per-model fact into a request parameter. Every caller — adapters, experiment,
+    cascade — comes through here. A second implementation is not a shortcut, it is a fact store that some
+    calls consult and others do not, which is indistinguishable from having no fact at all on the paths that
+    skipped it: measured, adapters.call carried its own inlined copy of this lookup while THIS function sat
+    unused on the one path where the empty-output bug actually happened.
+
+    `dialect` is the request SHAPE the caller has already chosen ('openai' for anything speaking Chat
+    Completions — openai, moonshot, z.ai — or 'anthropic' for the Messages API). It must be passed by anyone
+    who knows it, because the fallback (inferring from the model name via the family rules) answers '?' for
+    every model no rule matches. Silently, and in exactly the wrong direction: `kimi-k3` and `glm-5.2` both
+    have MEASURED reasoning facts written by an A/B, both speak the OpenAI shape, and both infer provider='?'
+    — so name-inference alone would drop the very facts the A/B was run to establish."""
     p = profile(model)
+    shape = dialect or p.get("provider")
     if p.get("tokens_param") == "max_completion_tokens" and "max_tokens" in kw:
         kw["max_completion_tokens"] = kw.pop("max_tokens")
-    if p.get("provider") == "openai" and p.get("reasoning"):
-        kw.setdefault("reasoning_effort", p["reasoning"])
+    eff = p.get("reasoning")
+    # '?' is the family-rule miss marker, not a tier any endpoint accepts. Sending it is a 400.
+    if shape == "openai" and eff and eff != "?":
+        kw.setdefault("reasoning_effort", eff)          # an explicit caller argument still wins
     return kw
 
 

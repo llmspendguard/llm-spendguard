@@ -583,52 +583,23 @@ def _write_efforts(vendor, model, out):
     path.write_text(json.dumps(data, indent=2, sort_keys=True))
 
 
-def record_effort(vendor, model, effort, method, source="", sig=None):
-    """A MEASURED effort for a call-class, with how it was established. `sig` scopes it to a call-class;
-    without one it is the model-wide default. Mirrors record_cap: a number without provenance is a guess
-    wearing a registry's clothes."""
-    if not effort:
-        raise ValueError("an effort must be named: absent is not 'minimal', it is unmeasured")
-    path = _caps_path()
-    try:
-        data = json.loads(path.read_text())
-    except Exception:
-        data = {}
-    rec = data.setdefault(f"{vendor}/{model}", {})
-    slot = rec.setdefault("effort_by_sig" if sig else "effort", {} if sig else None)
-    entry = {"effort": effort, "method": method, "source": source, "measured": time.strftime("%Y-%m-%d")}
-    if sig:
-        slot[sig] = entry
-    else:
-        rec["effort"] = entry
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, sort_keys=True))
-    return entry
-
-
-def effort_policy(vendor, model, sig=None):
-    """(effort, basis) — how hard this call should think. The THIRD bound, and the only one that was still
-    being set by hand after max_tokens and the deadline were measured.
-
-    Precedence, measured first, and NEVER an invented default:
-      measured:class   an A/B on THIS call-class settled it
-      measured:model   an A/B on this model settled it
-      unmeasured       (None) -> send nothing, let the vendor decide
-
-    `None` is the honest answer until a class has been measured. Sending "minimal" everywhere looked like a
-    saving and was measured to destroy the work: glm-5.2 reviewing calls.py at minimal returned 10 output
-    tokens and ZERO findings, where high returned 793 and found the real bug. Effort is also not monotonic —
-    kimi-k3 found MORE at minimal on pricing.py than at high — so it cannot be reasoned about from the
-    outside at all. It has to be run."""
-    rec = caps().get(f"{vendor}/{model}") or {}
-    if sig:
-        e = (rec.get("effort_by_sig") or {}).get(sig)
-        if e and e.get("effort"):
-            return e["effort"], f"measured:class({e.get('method')})"
-    e = rec.get("effort")
-    if isinstance(e, dict) and e.get("effort"):
-        return e["effort"], f"measured:model({e.get('method')})"
-    return None, "unmeasured"
+# WHERE EFFORT LIVES, and why there is no record_effort()/effort_policy() here any more.
+#
+# There were two registries. This module grew `record_effort` + `effort_policy` storing a chosen effort in
+# the caps file, while `models.py` — which predates it and whose entire purpose is per-model facts that
+# auto-apply — already had add_fact/profile. Nothing ever called the pair: the A/B correctly wrote its
+# verdict via models.add_fact(), so the copy here sat dead, one plausible import away from being the place a
+# future measurement got written and then never read. Two stores for one fact is worse than either store,
+# because the failure is silent in whichever half you did not use.
+#
+# The split that remains is a real one, along the line between what an endpoint IS and what we CHOOSE:
+#     caps registry (here)   MEASURED LIMITS of an endpoint — output_cap, input_limit, which effort tiers it
+#                            ACCEPTS. Facts about the vendor, discovered by probing, true regardless of us.
+#     models.py facts        WHAT WE SEND — the tier we picked, the tokens param, the cache mode. Decisions,
+#                            with provenance, applied at the chokepoint by models.apply_call_params().
+#
+# discover_efforts() above answers "what does it accept" and belongs here. The A/B's verdict answers "what
+# should we send" and belongs in models.py. Do not re-add a policy store to this file.
 
 
 def record_input_limit(vendor, model, max_chars, method, source="", applies_to="any"):

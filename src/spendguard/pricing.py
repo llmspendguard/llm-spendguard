@@ -28,40 +28,57 @@ import re, os, json, datetime
 # prices load from config (prices.json + optional user override); if that fails, this is used.
 _FALLBACK = {
     # ---- current flagship (on the live pricing page, verified 2026-06-13) ----
-    "gpt-5.5":      dict(in_=5.00,  out=30.00,  cached_in=0.50,  batch_in=2.50,  batch_out=15.00),
-    "gpt-5.5-pro":  dict(in_=30.00, out=180.00, cached_in=3.00,  batch_in=15.00, batch_out=90.00),
-    "gpt-5.4":      dict(in_=2.50,  out=15.00,  cached_in=0.25,  batch_in=1.25,  batch_out=7.50),
-    "gpt-5.4-mini": dict(in_=0.75,  out=4.50,   cached_in=0.075, batch_in=0.375, batch_out=2.25),
-    "gpt-5.4-nano": dict(in_=0.20,  out=1.25,   cached_in=0.02,  batch_in=0.10,  batch_out=0.625),
+    "gpt-5.5":      dict(provider="openai", in_=5.00,  out=30.00,  cached_in=0.50,  batch_in=2.50,  batch_out=15.00),
+    "gpt-5.5-pro":  dict(provider="openai", in_=30.00, out=180.00, cached_in=3.00,  batch_in=15.00, batch_out=90.00),
+    "gpt-5.4":      dict(provider="openai", in_=2.50,  out=15.00,  cached_in=0.25,  batch_in=1.25,  batch_out=7.50),
+    "gpt-5.4-mini": dict(provider="openai", in_=0.75,  out=4.50,   cached_in=0.075, batch_in=0.375, batch_out=2.25),
+    "gpt-5.4-nano": dict(provider="openai", in_=0.20,  out=1.25,   cached_in=0.02,  batch_in=0.10,  batch_out=0.625),
     # ---- legacy (not on current page; stable historical rates) ----
-    "gpt-5":        dict(in_=1.25,  out=10.00,  cached_in=0.125, batch_in=0.625, batch_out=5.00),
-    "gpt-5-mini":   dict(in_=0.25,  out=2.00,   cached_in=0.025, batch_in=0.125, batch_out=1.00),
-    "gpt-5-nano":   dict(in_=0.05,  out=0.40,   cached_in=0.005, batch_in=0.025, batch_out=0.20),
-    "gpt-4o":       dict(in_=2.50,  out=10.00,  cached_in=1.25,  batch_in=1.25,  batch_out=5.00),
-    "gpt-4o-mini":  dict(in_=0.15,  out=0.60,   cached_in=0.075, batch_in=0.075, batch_out=0.30),
-    "gpt-4.1-mini": dict(in_=0.40,  out=1.60,   cached_in=0.10,  batch_in=0.20,  batch_out=0.80),
-    "text-embedding-3-large": dict(in_=0.13, out=0.0, cached_in=0.0, batch_in=0.065, batch_out=0.0),
-    "text-embedding-3-small": dict(in_=0.02, out=0.0, cached_in=0.0, batch_in=0.010, batch_out=0.0),
+    "gpt-5":        dict(provider="openai", in_=1.25,  out=10.00,  cached_in=0.125, batch_in=0.625, batch_out=5.00),
+    "gpt-5-mini":   dict(provider="openai", in_=0.25,  out=2.00,   cached_in=0.025, batch_in=0.125, batch_out=1.00),
+    "gpt-5-nano":   dict(provider="openai", in_=0.05,  out=0.40,   cached_in=0.005, batch_in=0.025, batch_out=0.20),
+    "gpt-4o":       dict(provider="openai", in_=2.50,  out=10.00,  cached_in=1.25,  batch_in=1.25,  batch_out=5.00),
+    "gpt-4o-mini":  dict(provider="openai", in_=0.15,  out=0.60,   cached_in=0.075, batch_in=0.075, batch_out=0.30),
+    "gpt-4.1-mini": dict(provider="openai", in_=0.40,  out=1.60,   cached_in=0.10,  batch_in=0.20,  batch_out=0.80),
+    "text-embedding-3-large": dict(provider="openai", in_=0.13, out=0.0, cached_in=0.0, batch_in=0.065, batch_out=0.0),
+    "text-embedding-3-small": dict(provider="openai", in_=0.02, out=0.0, cached_in=0.0, batch_in=0.010, batch_out=0.0),
     # ---- Anthropic Claude (verified via claude-api skill, 2026-06-13). batch = 50% off;
     #      cached_in = cache-READ (~0.1x in). Cache WRITE is ~1.25x in @5min / 2x @1h (not stored here).
     #      NOTE: claude-opus-4-8 is $5/$25 — NOT the old $15/$75 (that was Opus 3/4/4.1). Opus 4.8 < gpt-5.5 on output.
-    "claude-opus-4-8":   dict(in_=5.00, out=25.00, cached_in=0.50, batch_in=2.50, batch_out=12.50),
-    "claude-sonnet-4-6": dict(in_=3.00, out=15.00, cached_in=0.30, batch_in=1.50, batch_out=7.50),
-    "claude-haiku-4-5":  dict(in_=1.00, out=5.00,  cached_in=0.10, batch_in=0.50, batch_out=2.50),
+    "claude-opus-4-8":   dict(provider="anthropic", in_=5.00, out=25.00, cached_in=0.50, batch_in=2.50, batch_out=12.50),
+    "claude-sonnet-4-6": dict(provider="anthropic", in_=3.00, out=15.00, cached_in=0.30, batch_in=1.50, batch_out=7.50),
+    "claude-haiku-4-5":  dict(provider="anthropic", in_=1.00, out=5.00,  cached_in=0.10, batch_in=0.50, batch_out=2.50),
     # legacy Claude (stable historical rates) — for reconciling older batches
-    "claude-opus-4-7":   dict(in_=5.00,  out=25.00, cached_in=0.50, batch_in=2.50,  batch_out=12.50),
-    "claude-opus-4-6":   dict(in_=5.00,  out=25.00, cached_in=0.50, batch_in=2.50,  batch_out=12.50),
-    "claude-opus-4-5":   dict(in_=5.00,  out=25.00, cached_in=0.50, batch_in=2.50,  batch_out=12.50),
-    "claude-opus-4-1":   dict(in_=15.00, out=75.00, cached_in=1.50, batch_in=7.50,  batch_out=37.50),
-    "claude-opus-4-0":   dict(in_=15.00, out=75.00, cached_in=1.50, batch_in=7.50,  batch_out=37.50),
-    "claude-sonnet-4-5": dict(in_=3.00,  out=15.00, cached_in=0.30, batch_in=1.50,  batch_out=7.50),
-    "claude-sonnet-4-0": dict(in_=3.00,  out=15.00, cached_in=0.30, batch_in=1.50,  batch_out=7.50),
+    "claude-opus-4-7":   dict(provider="anthropic", in_=5.00,  out=25.00, cached_in=0.50, batch_in=2.50,  batch_out=12.50),
+    "claude-opus-4-6":   dict(provider="anthropic", in_=5.00,  out=25.00, cached_in=0.50, batch_in=2.50,  batch_out=12.50),
+    "claude-opus-4-5":   dict(provider="anthropic", in_=5.00,  out=25.00, cached_in=0.50, batch_in=2.50,  batch_out=12.50),
+    "claude-opus-4-1":   dict(provider="anthropic", in_=15.00, out=75.00, cached_in=1.50, batch_in=7.50,  batch_out=37.50),
+    "claude-opus-4-0":   dict(provider="anthropic", in_=15.00, out=75.00, cached_in=1.50, batch_in=7.50,  batch_out=37.50),
+    "claude-sonnet-4-5": dict(provider="anthropic", in_=3.00,  out=15.00, cached_in=0.30, batch_in=1.50,  batch_out=7.50),
+    "claude-sonnet-4-0": dict(provider="anthropic", in_=3.00,  out=15.00, cached_in=0.30, batch_in=1.50,  batch_out=7.50),
 }
 
 PRICING_SOURCE = "https://developers.openai.com/api/docs/pricing"
 PRICING_VERIFIED = "2026-06-13"
 STALE_AFTER_DAYS = 45
-PROVIDERS = {}  # model -> provider, populated by _load
+PROVIDERS = {}  # model -> provider, populated by _load (absent when two vendors disagree — see below)
+
+# Bare model ids that MORE THAN ONE vendor publishes at DIFFERENT rates. Such an id has no bare answer, so
+# it gets no bare entry and lookups must name a provider. Recording the ambiguity is the point: an empty
+# result would be indistinguishable from "no such model", and a silently-picked one is a wrong invoice.
+AMBIGUOUS_BARE = set()
+
+
+def _rate_key(rates):
+    """The billing identity of a rate card. Two entries are the same money iff these four numbers match.
+
+    Exact comparison of published $/token from a fixed schema — arithmetic, not a judgement about meaning.
+    It lives here because BOTH the loader (deciding whether a bare id is ambiguous) and _vendor_qualified
+    (deciding whether candidate vendors disagree) ask the identical question, and asked it in two places
+    with two inline tuples. One of them could drift from the other and nothing would notice: the loader
+    would collapse a collision the resolver considered ambiguous, and the resolver's guard would never
+    fire."""
+    return (rates.get("in_"), rates.get("out"), rates.get("batch_in"), rates.get("batch_out"))
 
 
 def user_prices_path():
@@ -131,7 +148,20 @@ def _load():
        curated prices.json (our verified models win)  →  user override. No network here (cache only)."""
     global PRICING_SOURCE, PRICING_VERIFIED, STALE_AFTER_DAYS, PROVIDERS
     prices = dict(_FALLBACK)
-    PROVIDERS = {m: ("anthropic" if m.startswith("claude") else "openai") for m in _FALLBACK}
+    # THE DATA CARRIES ITS OWN PROVIDER. This line used to read
+    #     {m: ("anthropic" if m.startswith("claude") else "openai") for m in _FALLBACK}
+    # which was correct for all 23 entries and a trap for the 24th: the first Moonshot or z.ai fallback
+    # added would have been attributed to OpenAI — silently, in the table the entire ledger prices from,
+    # with an `else` branch that can only ever name one vendor. An inference that happens to be right is
+    # still an inference. Refuse a rate with no vendor rather than invent one; the same discipline
+    # set_price() already applies to `source`.
+    PROVIDERS = {}
+    for _m, _rates in _FALLBACK.items():
+        _prov = _rates.get("provider")
+        if not _prov:
+            raise ValueError(f"_FALLBACK[{_m!r}] has no provider — a rate that cannot be attributed to a "
+                             "vendor cannot be billed to one either")
+        PROVIDERS[_m] = _prov
     # LiteLLM breadth (2700+ models) — cached locally; absent until `spendguard sync-prices` runs.
     home = os.environ.get("SPENDGUARD_HOME") or os.path.expanduser("~/.spendguard")
     litellm = os.path.join(home, "litellm_prices.json")
@@ -152,8 +182,25 @@ def _load():
             STALE_AFTER_DAYS = meta.get("stale_after_days", STALE_AFTER_DAYS)
             for prov, pd in (cfg.get("providers") or {}).items():
                 for model, rates in (pd.get("models") or {}).items():
-                    prices[model] = rates
-                    PROVIDERS[model] = prov
+                    # KEEP THE PROVIDER. The config knows exactly which vendor publishes this rate, and
+                    # flattening to a bare key threw that away: two vendors hosting the same model id meant
+                    # the LAST one loaded silently overwrote both the rate and the attribution of the first.
+                    # Dict iteration order decided which vendor's money was used.
+                    #
+                    # _vendor_qualified() below already resolves `vendor/model` and already RAISES when two
+                    # vendors publish DIFFERENT rates for one bare id rather than picking. That guard could
+                    # never fire, because the collision was resolved here — before anything could see it.
+                    prices[f"{prov}/{model}"] = rates
+                    prior = prices.get(model)
+                    if prior is not None and _rate_key(prior) != _rate_key(rates):
+                        # Same id, two vendors, DIFFERENT money. Leave NO bare entry: a caller who did not
+                        # name a provider must reach the ambiguity error, not one of the two answers.
+                        prices.pop(model, None)
+                        AMBIGUOUS_BARE.add(model)
+                        PROVIDERS.pop(model, None)
+                    elif model not in AMBIGUOUS_BARE:
+                        prices[model] = rates
+                        PROVIDERS[model] = prov
         except Exception as e:
             import sys
             sys.stderr.write(f"[pricing] WARN could not load {path} ({e}); using built-in fallback\n")
@@ -274,11 +321,102 @@ def providers():
 
 _OPENROUTER_URL = "https://openrouter.ai/api/v1/models"
 
+_SYS_SAME_MODEL = (
+    "You match model identifiers across two catalogs. Two ids name the SAME model only if they are the "
+    "same weights from the same vendor at the same version — a dated snapshot and its floating alias are "
+    "the same model. A different size, version, vendor, or modality is NOT the same model, however similar "
+    "the names look. If no candidate is the same model, say so; a wrong match is worse than no match.")
 
-def cross_check_openrouter(tol=0.10):
-    """Free, read-only price drift check against OpenRouter's public models JSON. Strict normalized
-    match (avoid false matches); returns (rows, matched, total). Frontier models not on OpenRouter
-    simply don't match — reported as coverage, not error."""
+
+def _same_model_as_ours(ours, their_ids, run=False, advisor=None):
+    """{our_id: their_id} for ids that name the SAME model. AGENTIC, and the judgement is RECORDED.
+
+    EXACT EQUALITY IS APPLIED FIRST and is the only mechanical rule here, because it is the only one that
+    is provably total: two identical ids are the same model, always. Everything after that is a judgement
+    about two vendors' naming conventions, and the previous implementation made it by deleting every
+    non-alphanumeric character and comparing what was left:
+
+        re.sub(r"[^a-z0-9]", "", model.lower())
+
+    That rule is wrong in BOTH directions and neither failure announces itself:
+      FALSE MATCH  `gpt-4o` and `gpt-4-o` both collapse to `gpt4o`, so two different price cards get
+                   compared and the difference is reported as DRIFT in our own table.
+      FALSE MISS   `gpt-5.5-2026-01-01` never equals `gpt-5.5`, so real drift is counted as "not on
+                   OpenRouter" — reported as COVERAGE, which reads like nothing is wrong.
+    It also took `id.split("/")[-1]`, discarding OpenRouter's vendor prefix: the same bare-name collision
+    this module was just fixed for on its own side, applied to somebody else's catalog.
+
+    Judged once and stored as a per-model fact, so it is never re-paid. models.py is THE per-model store;
+    this does not open a second one. An empty stored value means "judged: no counterpart exists" — which is
+    a real answer and must not be confused with "not yet asked"."""
+    from . import adapters, calls, config, models as _models, ui
+    theirs = set(their_ids)
+    out, unresolved = {}, []
+    for m in ours:
+        if m in theirs:
+            out[m] = m                                   # identical ids: provable, free, no judgement
+            continue
+        rec = _models.facts(m).get("openrouter_id")
+        if rec is not None:
+            if rec[0]:
+                out[m] = rec[0]
+            continue                                     # "" = judged, no counterpart. Not "unasked".
+        unresolved.append(m)
+    stats = {"exact": len(out), "agentic": 0, "unresolved": len(unresolved)}
+    if not unresolved:
+        return out, stats
+
+    model = advisor or config.advisor_model()
+    prompt = ("Our catalog ids:\n" + "\n".join(f"  {m}" for m in unresolved)
+              + "\n\nCandidate ids from the other catalog:\n" + "\n".join(f"  {t}" for t in sorted(theirs))
+              + '\n\nFor each of OUR ids, give the candidate that names the same model, or null.\n'
+                'Reply JSON only: {"matches": [{"ours": "<id>", "theirs": "<id or null>"}]}')
+    if not run:
+        ui.estimate_only(action=f"resolve {len(unresolved)} model ids against the other catalog",
+                         cost=realtime_cost(model, max(1, len(_SYS_SAME_MODEL + prompt) // 4),
+                                            30 * len(unresolved)))
+        return out, stats
+    with calls.context(intent="spendguard:resolve-model-identity"):
+        r = adapters.call(model, prompt, max_tokens=30 * len(unresolved) + 400, system=_SYS_SAME_MODEL)
+    if r.get("error"):
+        return out, stats                                # unresolved stays unresolved — never guessed
+    try:
+        # regex PARSES the JSON envelope out of the reply. It decides nothing: the model already did.
+        blob = re.search(r"\{.*\}", r.get("text") or "", re.S)
+        matches = (json.loads(blob.group(0)).get("matches") if blob else []) or []
+    except Exception:
+        matches = []
+    for it in matches:
+        ours_id, theirs_id = (it or {}).get("ours"), (it or {}).get("theirs")
+        if ours_id not in set(unresolved):
+            continue
+        if theirs_id and theirs_id not in theirs:
+            continue                                     # a name it invented is not an answer
+        _models.add_fact(ours_id, "openrouter_id", theirs_id or "", confidence=0.9,
+                         source=f"agentic id-resolution vs openrouter ({model})", verified=False)
+        if theirs_id:
+            out[ours_id] = theirs_id
+            stats["agentic"] += 1
+    stats["unresolved"] = len(unresolved) - stats["agentic"]
+    return out, stats
+
+
+def cross_check_openrouter(run=False, scope=None):
+    """Price cross-check against OpenRouter's public models JSON. (rows, matched, total).
+
+    TWO JUDGEMENTS, BOTH AGENTIC. Which of their ids names the same model as ours (_same_model_as_ours),
+    and whether a rate gap means our number needs re-verifying (_judge_price_gaps). Everything mechanical
+    here is provable: fetching, exact id equality, and comparing two published numbers for inequality.
+
+    Neither judgement was agentic before. Identity was `re.sub(r"[^a-z0-9]", "", id.split("/")[-1])`, and
+    significance was `> 0.10`. Both are wrong in the direction that reads as healthy — a false miss and a
+    sub-threshold gap both render as "nothing to see".
+
+    `scope` bounds which of OUR ids get a paid identity resolution when they do not match exactly; it
+    defaults to the curated table, the prices we publish and are answerable for. Exact matching still runs
+    across the whole table for free, and what stayed unresolved is returned rather than hidden.
+
+    `run=False` makes this entirely zero-spend: both agentic steps report an estimate and decide nothing."""
     import json as _json, urllib.request
     from . import config
     req = urllib.request.Request(_OPENROUTER_URL, headers={"User-Agent": "spendguard/0.1"})
@@ -287,20 +425,90 @@ def cross_check_openrouter(tol=0.10):
     for m in data.get("data", []):
         p = m.get("pricing") or {}
         try:
-            ormap[re.sub(r"[^a-z0-9]", "", m["id"].split("/")[-1].lower())] = \
-                (float(p.get("prompt", 0)) * 1e6, float(p.get("completion", 0)) * 1e6)
+            # THE ID IS KEPT WHOLE. This used to be re.sub(r"[^a-z0-9]", "", id.split("/")[-1].lower()) —
+            # discarding OpenRouter's vendor prefix and then mangling what was left, which is the same
+            # bare-name collision this module was just fixed for on its OWN side, applied to somebody
+            # else's catalog. Identity is decided by _same_model_as_ours, not by what survives a strip.
+            ormap[m["id"]] = (float(p.get("prompt", 0)) * 1e6, float(p.get("completion", 0)) * 1e6)
         except Exception:
             pass
-    rows = []
-    for model, pr in PRICING.items():
-        key = re.sub(r"[^a-z0-9]", "", model.lower())
-        if key not in ormap:
+    exact = {m: m for m in PRICING if m in ormap}     # identical ids: provable, free, across the whole table
+    ours = list(scope) if scope is not None else list(_FALLBACK)
+    todo = [m for m in ours if m not in exact]
+    resolved, id_stats = _same_model_as_ours(todo, ormap.keys(), run=run)
+    pairs = {**exact, **resolved}
+    id_stats["exact"] = len(exact)
+    rows, differs = [], []
+    for model, their in sorted(pairs.items()):
+        pr = PRICING.get(model)
+        if not pr:
             continue
-        oin, oout = ormap[key]
-        din = abs(oin - pr["in_"]) / pr["in_"] if pr["in_"] else 0
-        dout = abs(oout - pr["out"]) / pr["out"] if pr["out"] else 0
-        rows.append((model, pr["in_"], oin, pr["out"], oout, "DRIFT" if (din > tol or dout > tol) else "ok"))
+        oin, oout = ormap[their]
+        if (oin, oout) == (pr["in_"], pr["out"]):
+            # EXACT EQUALITY, not a tolerance. The two catalogs publish the identical number, so there is
+            # no gap for anyone to judge the significance of. Every row that differs by ANY amount goes to
+            # the judge below — nothing is filtered out by a size test before the decision is made.
+            rows.append((model, pr["in_"], oin, pr["out"], oout, "identical"))
+        else:
+            differs.append((model, pr["in_"], oin, pr["out"], oout))
+    # WHETHER A GAP MATTERS IS A JUDGEMENT, AND IT IS MADE BY A MODEL.
+    #
+    # This used to read `"DRIFT" if (din > tol or dout > tol)`. The arithmetic is provable — |a-b|/b has
+    # exactly one answer — but the LABEL is not: 0.10 is a hand-picked significance bar standing in for a
+    # question that depends on context we have and it does not. A 9% gap on a $30/1M output rate is $2.70
+    # per million tokens and is under the bar; a 12% gap on a $0.02 rate is nothing and is over it. Worse,
+    # the other catalog is not always comparing like with like — a reseller's markup, a different modality,
+    # or a stale listing all produce a gap that is not our price being wrong.
+    #
+    # So the mechanical step now decides only what is PROVABLE — do the two numbers differ at all — and
+    # every row that differs is sent to the judge. That is complete by construction: nothing is filtered
+    # out by a threshold before the decision, which is the failure mode a recall filter set at 0.10 had.
+    if differs:
+        rows.extend(_judge_price_gaps(differs, run=run))
     return rows, len(rows), len(PRICING)
+
+
+_SYS_PRICE_GAP = (
+    "You audit a pricing table against a third-party catalog. For each row you are given OUR published "
+    "rate and THEIRS, in USD per 1M tokens. Decide whether the gap means OUR rate is likely WRONG or STALE "
+    "and should be re-verified against the vendor's own page. A gap is NOT evidence our rate is wrong when "
+    "the other catalog is plausibly quoting a reseller markup, a different modality or context tier, or a "
+    "stale listing. Judge each row on the size of the gap RELATIVE TO THE MONEY IT MOVES, not on a fixed "
+    "percentage.")
+
+
+def _judge_price_gaps(differs, run=False, advisor=None):
+    """[(model, our_in, their_in, our_out, their_out, verdict)] — verdict decided by a model.
+
+    Estimate-first and caged, like every other paid step here. On refusal or error the verdict is
+    "undecided", never "ok": a judge that did not answer is not a judge that cleared the row, and recording
+    it as clean is how a real price drift becomes a green dashboard."""
+    from . import adapters, calls, config, ui
+    model = advisor or config.advisor_model()
+    listing = "\n".join(f"  {i}. {m}: ours in ${a}/out ${c} | theirs in ${b}/out ${d}"
+                        for i, (m, a, b, c, d) in enumerate(differs))
+    prompt = (listing + '\n\nReply JSON only: {"rows": [{"i": <index>, "recheck": true|false, '
+                        '"why": "<short>"}]}')
+    if not run:
+        ui.estimate_only(action=f"judge {len(differs)} price gaps against the other catalog",
+                         cost=realtime_cost(model, max(1, len(_SYS_PRICE_GAP + prompt) // 4), 40 * len(differs)))
+        return [(*r, "unjudged (estimate only)") for r in differs]
+    with calls.context(intent="spendguard:judge-price-drift"):
+        r = adapters.call(model, prompt, max_tokens=40 * len(differs) + 400, system=_SYS_PRICE_GAP)
+    verdicts = {}
+    if not r.get("error"):
+        try:
+            # regex PARSES the JSON envelope. The decision inside it was made by the model.
+            blob = re.search(r"\{.*\}", r.get("text") or "", re.S)
+            for it in (json.loads(blob.group(0)).get("rows") if blob else []) or []:
+                verdicts[int(it["i"])] = ("RECHECK" if it.get("recheck") else "ok", (it.get("why") or "")[:60])
+        except Exception:
+            verdicts = {}
+    out = []
+    for i, row in enumerate(differs):
+        v, why = verdicts.get(i, ("undecided", "judge did not answer"))
+        out.append((*row, f"{v} — {why}" if why else v))
+    return out
 
 
 def freshness(today=None):
@@ -335,7 +543,7 @@ def normalize(model: str) -> str:
     return m
 
 
-def _vendor_qualified(m, provider=None):
+def _vendor_qualified(m, provider=None, exact_only=False):
     """Resolve a BARE model id against the LiteLLM breadth layer, which keys most non-first-party models as
     `vendor/model` (`moonshot/kimi-k2.5`, `zai/glm-4.6`) while callers pass the bare id their SDK takes.
     Without this the whole breadth layer is unreachable for those vendors — every GLM/Kimi call raised
@@ -350,10 +558,16 @@ def _vendor_qualified(m, provider=None):
         k = f"{provider}/{m}"
         if k in PRICING:
             return PRICING[k]
+        if exact_only:
+            # The caller NAMED a vendor and that vendor does not publish this id. Scanning other vendors
+            # for it would answer a question nobody asked, so say nothing and let the caller's own
+            # fallbacks run. Used by price() to consult the named provider FIRST without importing this
+            # function's cross-vendor inference along with it.
+            return None
     cands = {k: v for k, v in PRICING.items() if k.endswith("/" + m) and k.count("/") == 1}
     if not cands:
         return None
-    rates = {(v.get("in_"), v.get("out"), v.get("batch_in"), v.get("batch_out")) for v in cands.values()}
+    rates = {_rate_key(v) for v in cands.values()}
     if len(rates) > 1:
         raise KeyError(
             f"Ambiguous price for {m!r}: vendors {sorted(k.split('/')[0] for k in cands)} publish DIFFERENT "
@@ -364,12 +578,24 @@ def _vendor_qualified(m, provider=None):
 
 
 def price(model: str, provider: str = None) -> dict:
-    if model in PRICING:                          # an explicit verified entry (codex/dated/o-series) always wins
-        return PRICING[model]
+    # A NAMED PROVIDER IS ANSWERED BY THAT PROVIDER, before any bare-name lookup.
+    #
+    # Two fast paths used to reach a bare PRICING[model] first and return whatever single rate happened to
+    # be stored under that name. The second one did it AFTER splitting `provider:model` — parsing the
+    # vendor out of the caller's own argument and then discarding it. So `moonshot:some-shared-id` could
+    # be billed at another vendor's rate, and _vendor_qualified's ambiguity guard below (which RAISES
+    # rather than pick between disagreeing vendors) never got the chance to fire.
+    #
+    # In an accounting tool the wrong vendor's rate is not a near-miss. It is the number every downstream
+    # total is built from, and nothing about it looks wrong.
     if ":" in model and not model.startswith("ft:"):
-        provider, model = model.split(":", 1)     # 'provider:model' form carries its own answer
-        if model in PRICING:
-            return PRICING[model]
+        provider, model = model.split(":", 1)     # 'provider:model' form carries its own answer — KEEP it
+    if provider:
+        v = _vendor_qualified(model, provider, exact_only=True)
+        if v:
+            return v                              # exact_only: the named vendor answers, or nobody does
+    if model in PRICING:                          # an explicit verified entry (codex/dated/o-series) wins
+        return PRICING[model]
     v = _vendor_qualified(model, provider)        # RAW first: `kimi-latest` is a real id, not a '-latest' alias
     if v:
         return v
