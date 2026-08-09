@@ -80,6 +80,14 @@ def main():
                          "should now agree; a gap means calls are billing that the caller cannot see.")
     ap.add_argument("--estimate", action="store_true")
     ap.add_argument("--out", default="")
+    ap.add_argument("--append", action="store_true",
+                    help="add to an existing results file instead of replacing it — a second pass over more "
+                         "files must not destroy the findings the first pass already paid for")
+    ap.add_argument("--files-at-once", type=int, default=3,
+                    help="files reviewed concurrently. fan_out already parallelises the four VENDORS within a "
+                         "file, but every file still waited for the slowest of them: 10 files took 49 minutes, "
+                         "so 90 would take 7 hours. Overlapping files hides that tail. Each vendor sees this "
+                         "many concurrent calls, so keep it modest.")
     a = ap.parse_args()
     os.environ["SPENDGUARD_ADVISOR_EXECUTOR"] = "api"      # the API path: a lane reports session accounting
 
@@ -123,57 +131,77 @@ def main():
 
     import datetime
     t0_iso = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
-    fh = open(out_path, "w")          # INCREMENTAL: a killed run must leave the findings it already paid for
+    fh = open(out_path, "a" if a.append else "w")   # INCREMENTAL: a killed run keeps what it already paid for
     per_vendor = collections.defaultdict(lambda: {"files": 0, "ok": 0, "findings": 0, "kinds": {}})
     rows = []
     print(f"\nreviewing — hard budget ${a.budget:,.2f}, results -> {out_path}\n")
-    for i, t in enumerate(ts, 1):
-        if spent > a.budget:
-            print(f"  BUDGET STOP at ${spent:,.3f} after {i - 1}/{len(ts)} files")
-            break
-        # fan_out is concurrent and gives each vendor its OWN measured deadline. No max_tokens: the measured
-        # cap is used. Both of those are load-bearing, not stylistic.
+    import threading
+    import concurrent.futures as _cf
+    lock = threading.Lock()
+    stop = threading.Event()
+    done = {"n": 0}
+
+    def review_one(idx, t):
+        """One file, all four vendors. Runs on a worker so the slowest vendor of file A overlaps file B."""
+        nonlocal spent
+        if stop.is_set():
+            return None
         fan = vc.fan_out(PANEL, prompt_for(t), deadline_s=300, purpose=f"review:{t['name']}",
                          system=SYSTEM, schema=FINDING_SCHEMA)
-        for r in fan["results"]:
-            st = per_vendor[r.vendor]
-            st["files"] += 1
-            st["kinds"][r.kind] = st["kinds"].get(r.kind, 0) + 1
-            spent += r.cost or 0.0
-            if not r.ok:
-                continue
-            ok_shape, salvaged, why = output_contract.check_item(r._text, FINDING_SCHEMA)
-            if not ok_shape:
-                st["kinds"]["contract-fail"] = st["kinds"].get("contract-fail", 0) + 1
-                continue
-            st["ok"] += 1
+        local = []
+        with lock:
+            for r in fan["results"]:
+                st = per_vendor[r.vendor]
+                st["files"] += 1
+                st["kinds"][r.kind] = st["kinds"].get(r.kind, 0) + 1
+                spent += r.cost or 0.0
+                if not r.ok:
+                    continue
+                ok_shape, _salv, _why = output_contract.check_item(r._text, FINDING_SCHEMA)
+                if not ok_shape:
+                    st["kinds"]["contract-fail"] = st["kinds"].get("contract-fail", 0) + 1
+                    continue
+                st["ok"] += 1
+                try:
+                    issues = (json.loads(r._text) if isinstance(r._text, str) else r._text).get("issues") or []
+                except Exception:
+                    issues = []
+                st["findings"] += len(issues)
+                for it in issues:
+                    row = {"file": t["path"], "vendor": r.vendor, "line": it.get("line"),
+                           "severity": str(it.get("severity", ""))[:24],
+                           "issue": str(it.get("issue", ""))[:400]}
+                    local.append(row)
+                    rows.append(row)
+                    fh.write(json.dumps(row) + "\n")
+            fh.flush()
+            done["n"] += 1
+            led = ledger_spent_since(t0_iso)
+            drift = (led - spent) if led >= 0 else 0.0
+            over = spent > a.budget
+            # The accounting check, every file: the previous run reported $1.98 while the ledger said $13.12.
+            bad_acct = led >= 0 and spent > 0.05 and drift > max(ap_tol, spent * 0.25)
+            got = ",".join(f"{r.vendor[:4]}={'ok' if r.ok else r.kind[:4]}" for r in fan["results"])
+            print(f"  [{done['n']:>3}/{len(ts)}] {t['name'][:28]:<30}{fan['n_ok']}/4  {got}  "
+                  f"${spent:,.2f} (ledger ${led:,.2f})"
+                  + ("  <-- LEDGER DISAGREES" if bad_acct else "")
+                  + ("  <-- OVER BUDGET" if over else ""), flush=True)
+            if bad_acct:
+                print(f"\n  STOPPING: counter and ledger differ by ${drift:,.2f} — a hard stop that cannot "
+                      f"see the money is not a hard stop.")
+                stop.set()
+            elif over:
+                print(f"\n  BUDGET STOP at ${spent:,.2f} of ${a.budget:,.2f}.")
+                stop.set()
+        return local
+
+    with _cf.ThreadPoolExecutor(max_workers=max(1, a.files_at_once)) as pool:
+        futs = [pool.submit(review_one, i, t) for i, t in enumerate(ts, 1)]
+        for f in _cf.as_completed(futs):
             try:
-                issues = (json.loads(r._text) if isinstance(r._text, str) else r._text).get("issues") or []
-            except Exception:
-                issues = []
-            st["findings"] += len(issues)
-            for it in issues:
-                row = {"file": t["path"], "vendor": r.vendor, "line": it.get("line"),
-                       "severity": str(it.get("severity", ""))[:24], "issue": str(it.get("issue", ""))[:400]}
-                rows.append(row)
-                fh.write(json.dumps(row) + "\n")
-        fh.flush()
-        # THE ACCOUNTING CHECK, every file. The previous run reported $1.98 while the ledger recorded $13.12,
-        # because abandoned and retried calls billed without ever producing a Result the caller could see. If
-        # the two numbers diverge again, the budget is unenforceable and the honest move is to STOP rather
-        # than keep spending against a figure we know is wrong.
-        led = ledger_spent_since(t0_iso)
-        drift = (led - spent) if led >= 0 else 0.0
-        flag = ""
-        if led >= 0 and spent > 0.05 and drift > max(ap_tol, spent * 0.25):
-            flag = f"  <-- LEDGER SAYS ${led:,.2f}, WE COUNTED ${spent:,.2f}"
-        got = ",".join(f"{r.vendor[:4]}={'ok' if r.ok else r.kind[:4]}" for r in fan["results"])
-        print(f"  [{i:>3}/{len(ts)}] {t['name'][:30]:<32}{fan['n_ok']}/4  {got}  "
-              f"${spent:,.2f} (ledger ${led:,.2f}){flag}", flush=True)
-        if flag:
-            print(f"\n  STOPPING: the caller's spend counter disagrees with the ledger by ${drift:,.2f}. "
-                  f"A hard stop that cannot see the money is not a hard stop.")
-            break
+                f.result()
+            except Exception as e:
+                print(f"  file worker died: {type(e).__name__}: {e}", flush=True)
     fh.close()
 
     print("\n  COVERAGE — how many files each vendor actually reviewed, not how many we asked it to")
