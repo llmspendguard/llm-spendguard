@@ -59,8 +59,12 @@ def rollup_by_org(rows, ptmap, cost_key="cost", proj_key="project"):
     by = {}
     for r in rows:
         o = org_of(r.get(proj_key), ptmap)
-        by[o] = round(by.get(o, 0.0) + (r.get(cost_key) or 0.0), 2)
-    return by
+        by[o] = by.get(o, 0.0) + (r.get(cost_key) or 0.0)
+    # ROUNDED ONCE, AT THE END. Rounding on every accumulation step discards a fraction of a cent per row
+    # and the error compounds with row count — on tens of thousands of realtime charges the org rollup
+    # drifted from the ledger it is supposed to reconcile against, and a reconciliation whose own
+    # arithmetic disagrees is worse than none.
+    return {o: round(v, 2) for o, v in by.items()}
 
 
 def residual(truth_total, *captured_sums):

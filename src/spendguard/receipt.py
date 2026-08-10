@@ -275,7 +275,20 @@ def _truncated_lines():
     try:
         from . import config
         import sqlite3
-        c = sqlite3.connect(config.db_path())
+        # CLOSED ON EVERY PATH. This connection leaked on the success path AND the exception path, and the
+        # receipt runs on every turn — so a long session accumulated open handles against the ledger it is
+        # reading. contextlib.closing works on a raw connection; `with sqlite3.connect(...)` would only
+        # manage the TRANSACTION and still leave the handle open.
+        import contextlib as _cl
+        with _cl.closing(sqlite3.connect(config.db_path())) as c:
+            return _truncation_rows(c)
+    except Exception:
+        return []
+
+
+def _truncation_rows(c):
+    try:
+        from . import config
         since = _windows()[2]
         rows = c.execute(
             "SELECT model, COUNT(*), COALESCE(SUM(cost),0) FROM calls "

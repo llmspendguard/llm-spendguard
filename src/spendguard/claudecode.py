@@ -254,7 +254,11 @@ def day_totals(member_ref, org_label=None):
                 continue
             a = {}                                         # local view: include with cwd fallback (no team)
         org = a.get("org", "")
-        if org_label and org and org.lower() != org_label.lower():
+        # A RECORD WITH NO ORG IS NOT A RECORD FOR THIS ORG. The `and org` made the comparison run only when
+        # org was truthy, so a session classified with an empty org passed the filter into an ORG-ROUTED
+        # push — the cross-org pollution the branch above declines to risk for an UNCLASSIFIED session, let
+        # through for a classified one whose org happens to be blank.
+        if org_label and (org or "").lower() != org_label.lower():
             continue
         team = (a.get("team") or "").lower()
         proj = (a.get("project") or d["project"] or "claude-code").lower()
@@ -439,7 +443,9 @@ def story(by="week", days=7, run=False):
     print("\n=== WORK INSIGHTS (private — your IP, never pooled) ===")
     for ins in (data.get("insights") or []):
         print(f"  [{ins.get('type', '?'):<8}] ({ins.get('project', '?')}) {ins.get('text', '')}")
-    print(f"\n  (caged cost ${r.get('cost', 0):.4f}; intent spendguard:worklog)")
+    # `or 0`, not `.get(..., 0)`: the default only applies when the KEY IS ABSENT. adapters.call returns
+    # cost=None for a model with no price, which reaches :.4f and raises — after the call was paid for.
+    print(f"\n  (caged cost ${(r.get('cost') or 0):.4f}; intent spendguard:worklog)")
     return 0
 
 

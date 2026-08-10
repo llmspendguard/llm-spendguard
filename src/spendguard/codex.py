@@ -184,7 +184,9 @@ def day_totals(member_ref, org_label=None):
                 continue                                 # org-routed push: skip unclassified (no cross-org pollution)
             a = {}
         org = a.get("org", "")
-        if org_label and org and org.lower() != org_label.lower():
+        # Same as claudecode: `and org` let a blank org through an ORG-ROUTED push. An unstated org is not
+        # a match for this one.
+        if org_label and (org or "").lower() != org_label.lower():
             continue
         team = (a.get("team") or "").lower()
         proj = (a.get("project") or d["project"] or "codex").lower()

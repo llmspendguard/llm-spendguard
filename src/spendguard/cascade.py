@@ -113,6 +113,7 @@ def cmd(argv=None):
         from . import ui
         ui.estimate_only(action="route a real call (needs --prompt / --prompt-file)", note="WORKLOAD spend")
         return 0
+        return 0
     prompt = a.prompt or (open(a.prompt_file).read() if a.prompt_file else None)
     if not prompt:
         print("  need --prompt or --prompt-file with --run."); return 1

@@ -57,13 +57,19 @@ json.dump({
     "ab-1": {"created_at": "2026-06-01",
              "by_model": {"claude-opus-4-8": {"in": 1_000_000, "out": 0}}},
     "ab-2": {"created_at": "2026-06-02",
-             "by_model": {"made-up-model": {"in": 100, "out": 100}}},   # unknown model → cost 0.0 (except path)
+             "by_model": {"made-up-model": {"in": 100, "out": 100}}},   # unknown model → cost UNKNOWN (not $0)
 }, open(ra.CACHE_PATH, "w"))
 arows = backfill._anthropic_rows()
 amap = {r[6]: r for r in arows}
 check("_anthropic_rows builds a row per (batch, model)", set(amap) == {"ab-1", "ab-2"})
 check("_anthropic_rows prices opus 1M batch in = $2.50", abs(amap["ab-1"][2] - 2.5) < 1e-9)
-check("_anthropic_rows unknown model → cost 0.0 (never crashes)", amap["ab-2"][2] == 0.0)
+# UNKNOWN, NOT ZERO. This asserted cost == 0.0 with the note "never crashes" — and not crashing was the
+# real requirement, which None satisfies too. 0.0 says the batch was FREE, so an unpriceable model
+# backfilled real historical spend into the ledger at zero: precisely what record_unpriced() exists to
+# prevent and what set_price's docstring warns about. The row is still built (dropping it would
+# under-report history); its cost is simply not known.
+check("_anthropic_rows unknown model → cost UNKNOWN, never 0.0 and never a crash",
+      amap["ab-2"][2] is None)
 check("_anthropic_rows carries created_at", amap["ab-1"][5] == "2026-06-01")
 
 print("-- _anthropic_rows: empty when no cache file --")

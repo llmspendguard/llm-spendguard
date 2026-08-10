@@ -104,9 +104,16 @@ def classify_items(items, taxo, run, batch_size=25):
                     pass
         for it in parsed:
             try:
-                src = b[int(it["i"])]
-            except (KeyError, ValueError, IndexError, TypeError):
+                _i = int(it["i"])
+            except (KeyError, ValueError, TypeError):
                 continue
+            # A NEGATIVE INDEX IS NOT AN INDEX ERROR IN PYTHON, IT IS A DIFFERENT ITEM. The model returning
+            # i=-1 silently resolved to the LAST item in the batch and attributed that classification to
+            # it — a wrong org/project written with full confidence, and no exception to notice. The bounds
+            # have to be checked explicitly because the language will not.
+            if not (0 <= _i < len(b)):
+                continue
+            src = b[_i]
             # THE COERCIONS ARE INSIDE THE GUARD TOO. Only the b[int(it["i"])] lookup used to be, so a
             # model returning org=123 or confidence="high" raised past the loop and DISCARDED EVERY
             # REMAINING ITEM IN THE BATCH — up to 24 correctly-classified rows thrown away by one badly

@@ -339,9 +339,11 @@ def fetch_history(cap=DEFAULT_CAP, sample_n=None, limit_batches=None):
             ac = anthropic.Anthropic(api_key=config.api_key("ANTHROPIC_API_KEY"))
         except Exception:
             pass
+        # `limit_batches is not None` below: 0 asks for NO batches and used to fetch every one of them,
+        # because 0 is falsy. The caller most likely to pass 0 is a budget check that has run out of room.
         added_total, fetched, skipped_full, errors = 0, 0, 0, 0
         for i, (bid, intent, model, prov) in enumerate(runs):
-            if limit_batches and fetched >= limit_batches:
+            if limit_batches is not None and fetched >= limit_batches:
                 break
             if "embedding" in (model or "").lower():    # embeddings are vectors, not judgeable text output
                 continue

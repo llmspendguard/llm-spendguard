@@ -35,7 +35,11 @@ def robust_z(history, value):
 def flag_today(by_day, today):
     """None, or {'usd','z','median','days'} when TODAY's total is anomalous vs this source's own history."""
     value = float(by_day.get(today, 0.0))
-    history = [float(v) for d, v in by_day.items() if d != today]
+    # `d < today`, NOT `d != today`. A future-dated key — a clock skew on another host, a provider export
+    # with a timezone ahead of ours, a hand-entered row — landed in the BASELINE the anomaly is measured
+    # against, so tomorrow's spend was used to decide whether today's is unusual. The baseline is history,
+    # and history is what already happened.
+    history = [float(v) for d, v in by_day.items() if d < today]
     if value < FLOOR_USD or len(history) < MIN_HISTORY_DAYS:
         return None
     z, med = robust_z(history, value)

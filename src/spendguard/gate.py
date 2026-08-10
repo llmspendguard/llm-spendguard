@@ -359,10 +359,14 @@ def _read_filelike(file):
     if isinstance(file, (bytes, bytearray)):
         return bytes(file)
     if isinstance(file, (tuple, list)) and len(file) >= 2:
-        f1 = file[1]
-        return bytes(f1) if isinstance(f1, (bytes, bytearray)) else open(f1, "rb").read()
+        # RECURSE. The OpenAI multipart form is (filename, content[, mime]) and `content` is routinely an
+        # open file object or a BytesIO, not a path — which this handed to open() as though it were one,
+        # raising TypeError out of the gate on a shape the SDK documents. Every form the function already
+        # understands is handled by asking it again.
+        return _read_filelike(file[1])
     if isinstance(file, str):
-        return open(file, "rb").read()
+        with open(file, "rb") as _fh:                  # closed deterministically
+            return _fh.read()
     raise TypeError(f"unhandled file type {type(file)}")
 
 

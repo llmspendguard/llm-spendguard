@@ -30,14 +30,30 @@ def _openai_rows():
 def _anthropic_rows():
     from . import reconcile_anthropic as ra
     ra.cost_by_day()  # ensure the local usage cache is fresh
-    cache = json.load(open(ra.CACHE_PATH)) if os.path.exists(ra.CACHE_PATH) else {}
+    cache = {}
+    if os.path.exists(ra.CACHE_PATH):
+        with open(ra.CACHE_PATH) as _fh:              # closed deterministically
+            cache = json.load(_fh)
     out = []
     for bid, rec in cache.items():
         for mdl, mm in rec.get("by_model", {}).items():
+            # AN UNPRICEABLE MODEL IS UNKNOWN, NOT FREE — and not absent either. cost=0.0 was appended as
+            # though it were a measurement, so a model missing from the price table backfilled real
+            # historical spend into the ledger at ZERO: the exact failure record_unpriced() exists to
+            # prevent everywhere else, and what set_price's own docstring warns about ("a $0 rate records
+            # real spend as free, silently").
+            #
+            # Dropping the row instead would be a different loss — the batch really happened, and a
+            # backfill that quietly omits it under-reports history. So the row is KEPT with cost=None,
+            # which every consumer here already reads as "not priced", and the model is named so it can be.
             try:
                 cost = pricing.batch_cost(mdl, mm.get("in", 0), mm.get("out", 0))
-            except Exception:
-                cost = 0.0
+            except Exception as e:
+                cost = None
+                import sys as _sys
+                _sys.stderr.write(f"[backfill] UNPRICED {mdl} in batch {bid} ({type(e).__name__}: "
+                                  f"{str(e)[:60]}) — the row is kept with cost=UNKNOWN, not $0. Price it: "
+                                  f"`spendguard price {mdl} --in <$/1M> --out <$/1M> --source '<url>'`\n")
             out.append(("anthropic", mdl, cost, mm.get("in", 0), mm.get("out", 0), rec.get("created_at"), bid))
     return out
 
@@ -68,7 +84,7 @@ def backfill(intent_map=None, providers=("openai", "anthropic")):
         learn.add_node("run", f"{provider}:{model}",
                        attrs={"cost": round(cost, 4), "intent": intent, "date": ts, "call": cid, "batch": bid},
                        ts=ts, id=bid)
-        total += cost
+        total += (cost or 0.0)          # an UNKNOWN cost adds nothing to the total and is not called zero
         added += 1
     return added, total
 
