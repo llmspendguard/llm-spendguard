@@ -87,8 +87,13 @@ def main(argv=None):
                     help="ACCOUNT-level view: provider truth is account-wide; on a shared account each org's "
                          "statement residual includes its siblings — this view shows the account axis whole")
     a = ap.parse_args(sys.argv[2:] if argv is None else argv)
-    if not (len(a.month) == 7 and a.month[4] == "-"):
-        print("close: --month must be YYYY-MM"); return 2
+    # PARSE IT, do not eyeball its shape. `len==7 and [4]=="-"` accepts '2024-ab' and '2024-99', which
+    # then reach int() inside month_window and raise a bare ValueError from three frames down — or, for
+    # '2024-99', build a window no row can ever fall in and close the month at $0.00 without complaint.
+    try:
+        datetime.date(int(a.month[:4]), int(a.month[5:7]), 1)
+    except (ValueError, TypeError):
+        print("close: --month must be YYYY-MM (a real year and month, e.g. 2026-08)"); return 2
     s = build(a.month)
     print(f"monthly close — {s['month']}   provider truth Σ ${s['total_usd']:,.2f}")
     for p in s["providers"]:

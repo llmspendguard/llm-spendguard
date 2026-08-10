@@ -274,9 +274,23 @@ def _dispatch(argv=None):
         rest_l = list(rest)
         since = rest_l[rest_l.index("--since") + 1] if "--since" in rest_l else _cfg.month_start_utc()
         if "--ts" in rest_l or "--row" in rest_l:
-            reason = rest_l[rest_l.index("--reason") + 1] if "--reason" in rest_l else "impossible estimate"
-            row = int(rest_l[rest_l.index("--row") + 1]) if "--row" in rest_l else None
-            ts = rest_l[rest_l.index("--ts") + 1] if "--ts" in rest_l else None
+            # BOUNDS-CHECKED. `--row` as the FINAL argument indexed past the end and raised a bare
+            # IndexError out of the CLI — a traceback where a usage message belongs, on the command that
+            # EDITS THE LEDGER. _opt returns None for a flag given without a value, so the missing-target
+            # check below can report it as the user error it is.
+            def _opt(flag):
+                i = rest_l.index(flag) if flag in rest_l else -1
+                return rest_l[i + 1] if 0 <= i < len(rest_l) - 1 else None
+            reason = _opt("--reason") or "impossible estimate"
+            _row = _opt("--row")
+            try:
+                row = int(_row) if _row is not None else None
+            except ValueError:
+                print(f"quarantine: --row must be a rowid (got {_row!r})"); return 2
+            ts = _opt("--ts")
+            if row is None and ts is None:
+                print("quarantine: --row <rowid> or --ts <timestamp> is required "
+                      "(the flag was given without a value)"); return 2
             try:
                 n = budget.quarantine_charge(ts=ts, reason=reason, row=row)
             except ValueError as e:                 # ambiguous timestamp — say so, never tag them all

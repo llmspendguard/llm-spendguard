@@ -78,14 +78,16 @@ def load_intent_map(path):
                 continue
             intent = fn.replace("_batch_id", "").replace(".json", "")
             try:
-                d = json.load(open(os.path.join(path, fn)))
+                with open(os.path.join(path, fn)) as _fh:      # closed deterministically: this walks a dir
+                    d = json.load(_fh)
             except Exception:
                 continue
             ids = d.get("ids") or ([d["id"]] if isinstance(d, dict) and d.get("id") else [])
             for bid in ids:
                 m[bid] = intent
     elif os.path.exists(path):
-        d = json.load(open(path))
+        with open(path) as _fh:
+            d = json.load(_fh)
         m = d if isinstance(d, dict) else {}
     return m
 

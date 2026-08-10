@@ -41,14 +41,38 @@ def cascade(prompt, ladder, verify=None, intent=None, _caller=None):
     caller = _caller or _default_caller
     usable = [m for m in ladder if not (intent and M.ineffective(m, intent))]
     skipped = [m for m in ladder if m not in usable]
+    if not usable:
+        # NOTHING WAS TRIED, SO NOTHING IS REPORTED AS TRIED. The loop below never runs when every rung is
+        # known-ineffective, and the return used to say n_tried=1 (len([])+1) with output='' — a result
+        # shaped exactly like a model answering with an empty string. A caller cannot tell those apart,
+        # and the cheaper reading is the wrong one.
+        return dict(model=None, output=None, cost=0.0, escalations=[], skipped_ineffective=skipped,
+                    n_tried=0, errors=[],
+                    why=("every rung on the ladder is recorded ineffective for this intent"
+                         if ladder else "the ladder is empty"))
     escalations, total, served, served_cost, out = [], 0.0, None, 0.0, ""
+    errors = []
     for i, m in enumerate(usable):
-        cost, out = caller(m, prompt)
+        # A RUNG THAT RAISES IS A RUNG THAT FAILED, and escalating past a failure is the entire point of a
+        # cascade. Unhandled, a timeout on the cheapest model killed the run before the strong model was
+        # ever asked. The error is RECORDED rather than swallowed: a rung that errored is not a rung that
+        # produced a bad answer, and the two must stay distinguishable.
+        try:
+            cost, out = caller(m, prompt)
+        except Exception as e:
+            errors.append({"model": m, "error": f"{type(e).__name__}: {str(e)[:100]}"})
+            escalations.append(m)
+            continue
         total += cost
         served, served_cost = m, cost
         if verify(prompt, out) or i == len(usable) - 1:   # accept on pass, or the last rung as fallback
             break
         escalations.append(m)                              # this rung failed verification → escalate
+    if served is None:
+        # Every rung raised. There is no output, and `output=""` would be a lie shaped like an answer.
+        return dict(model=None, output=None, cost=round(total, 6), escalations=escalations,
+                    skipped_ineffective=skipped, n_tried=len(usable), errors=errors,
+                    why="every rung on the ladder raised")
     # guarded: serving below the top rung avoided the stronger model — rough estimate = same I/O at its rate
     try:
         if usable and served and served != usable[-1] and served_cost > 0:
@@ -60,7 +84,7 @@ def cascade(prompt, ladder, verify=None, intent=None, _caller=None):
     except Exception:
         pass
     return dict(model=served, output=out, cost=round(total, 6), escalations=escalations,
-                skipped_ineffective=skipped, n_tried=len(escalations) + 1)
+                skipped_ineffective=skipped, n_tried=len(escalations) + 1, errors=errors)
 
 
 def cmd(argv=None):

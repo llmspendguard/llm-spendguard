@@ -65,15 +65,26 @@ def bootstrap(repo=None, transcripts=None, run=False, cap=50):
 
     # ── paid, caged reasoning (estimate-first) ──
     _hdr("6/6 reasoning", f"caged by caps.meta (${config.meta_cap():.0f}/day) — {'RUNNING' if run else 'ESTIMATE-ONLY'}")
-    from . import review, advisor, conv
-    print("\n[review — approach-quality]")
-    review.review(run=run)
-    print("\n[mine — insight synthesis]")
-    advisor.mine(run=run)
-    print("\n[mine-conv synth — playbook from chat]")
-    conv.synth(transcripts, run=run)
-    print("\n[reconstruct — output-quality judge (note: isolated judging is weak without ground truth)]")
-    advisor.reconstruct(run=run)
+    # GUARDED LIKE STEPS 1-5, THE IMPORT INCLUDED. Every earlier step prints "skipped (…)" and carries on;
+    # this one did not, so a single failing reasoning step aborted bootstrap after the free corpus was
+    # already built — and the run that did the most work was the one most likely to lose its own summary.
+    # Each sub-step is guarded SEPARATELY: three of four succeeding beats one raising and hiding the rest,
+    # and a step that was skipped must be visible as skipped rather than simply absent.
+    try:
+        from . import review, advisor, conv
+    except Exception as e:
+        review = advisor = conv = None
+        print(f"  reasoning steps unavailable ({type(e).__name__}: {str(e)[:100]})")
+    for _label, _fn in () if review is None else (("review — approach-quality", lambda: review.review(run=run)),
+                        ("mine — insight synthesis", lambda: advisor.mine(run=run)),
+                        ("mine-conv synth — playbook from chat", lambda: conv.synth(transcripts, run=run)),
+                        ("reconstruct — output-quality judge (isolated judging is weak without ground truth)",
+                         lambda: advisor.reconstruct(run=run))):
+        print(f"\n[{_label}]")
+        try:
+            _fn()
+        except Exception as e:
+            print(f"  skipped ({type(e).__name__}: {str(e)[:120]})")
 
     print("\n" + "=" * 60)
     if run:

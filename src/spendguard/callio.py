@@ -135,7 +135,10 @@ def record(intent, provider, model, batch, custom_id, prompt, output, in_tok=0, 
 
 def unjudged(limit=None):
     q = "SELECT id, intent, model, prompt, output FROM call_io WHERE quality IS NULL"
-    if limit:
+    # `is not None`: unjudged(0) asks for NO rows and used to return EVERY unjudged row, because 0 and
+    # "unbounded" are the same thing to a truthiness test. The caller most likely to pass 0 is a budget
+    # loop that has run out of room — the worst possible moment to hand back the whole table.
+    if limit is not None:
         q += f" LIMIT {int(limit)}"
     with _lock:
         return _db().execute(q).fetchall()
@@ -159,6 +162,10 @@ def good_rates():
             "FROM call_io GROUP BY intent, model").fetchall()
     out = {}
     for intent, model, n, judged, gw, lw in rows:
+        # Keyed by the model id AS RECORDED. Two vendors hosting one id would merge their quality rates
+        # here the way they merged prices in pricing.py and costs in advise.py; call_io records the model
+        # exactly as the caller named it, so a vendor-qualified caller stays separate and a bare one is
+        # reported bare rather than silently blended with somebody else's.
         out[(intent, model)] = dict(sampled=n, judged=judged or 0,
                                     good_rate=(gw / lw) if lw else None)
     return out

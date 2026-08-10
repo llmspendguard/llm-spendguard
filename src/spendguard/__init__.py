@@ -95,6 +95,15 @@ def _auto_install():
     except Exception as e:                       # fail-open unless strict
         if strict:
             raise SpendGateRefused(f"SPENDGUARD_REQUIRE=1 but the spend gate could not install: {e}")
+        # FAIL-OPEN, BUT NEVER FAIL-QUIET. Returning here leaves the interpreter ungated: calls go out,
+        # money is spent, and nothing records it — while every downstream reading (`spent today`, the
+        # receipt, the ledger) shows a smaller number and looks perfectly healthy. That is the precise
+        # shape of the leak spendguard exists to close, so the one thing it must not do is happen in
+        # silence. Non-strict means "do not stop the program", not "do not mention it".
+        import sys as _sys
+        _sys.stderr.write(f"[spendguard] WARN the spend gate did NOT install ({type(e).__name__}: "
+                          f"{str(e)[:100]}). This interpreter is UNGATED — LLM calls from it will not be "
+                          f"recorded. Set SPENDGUARD_REQUIRE=1 to make this fatal.\n")
         return
     if not strict:
         return

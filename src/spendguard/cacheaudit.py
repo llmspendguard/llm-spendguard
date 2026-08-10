@@ -13,12 +13,16 @@ spendguard has the two things needed to find it:
 This reports the prefix fraction (high fraction = cache it), the savings per 1000 calls, the big
 script-defined system prompts to cache, and per-provider setup. CLI: `spendguard cache-audit [--repo]`.
 """
-import os, re, glob
+import ast, os, re, glob
 from . import callio, pricing
 from .submit import _count_tokens
 
 # OpenAI auto-caches only prefixes at/above this; Anthropic explicit cache_control has lower minimums.
 _MIN_CACHE_TOKENS = 1024
+# How much of a prompt must be the SHARED prefix before caching it is worth recommending. A stated
+# reporting threshold, named rather than inlined twice — the raw `frac` is printed on every row so a
+# reader can disagree with where it sits.
+_MIN_SHARED_FRAC = 0.4
 
 
 def _common_prefix(strs):
@@ -58,6 +62,38 @@ def _intent_prefixes():
     return sorted(out, key=lambda d: -d["save_per_1k"])
 
 
+_SYS_NAMES = ("system", "_sys", "system_prompt")     # a NAMING CONVENTION, i.e. format — not a judgement
+
+
+def _sys_assignments_ast(txt):
+    """[(name, value)] for every assignment of a STRING LITERAL to a system-prompt-ish name, via the parser.
+
+    Finding where a Python string ends is precisely what a parser does, and the hand-rolled scan did it
+    wrong: `txt.find(quote, start)` stopped at the first matching quote without checking for a preceding
+    backslash, so any prompt containing a \\" was truncated there — and a truncated prefix UNDER-REPORTS
+    the shared-prefix length this whole audit exists to measure, in the conservative-looking direction that
+    reads as "not worth caching".
+
+    Returns [] on a file that does not parse, and the regex scan below still runs for those."""
+    try:
+        tree = ast.parse(txt)
+    except (SyntaxError, ValueError):
+        return []
+    out = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        val = node.value
+        if not (isinstance(val, ast.Constant) and isinstance(val.value, str)):
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        for t in targets:
+            nm = getattr(t, "id", None) or getattr(t, "attr", None)
+            if nm and any(k in nm.lower() for k in _SYS_NAMES):
+                out.append((nm, val.value))
+    return out
+
+
 _SYS_ASSIGN = re.compile(r"""(?:system\s*=|_SYS\b\s*=|SYSTEM\s*=|system_prompt\s*=|SYSTEM_PROMPT\s*=)\s*\(?\s*("{1,3}|'{1,3})""")
 
 
@@ -71,13 +107,16 @@ def _script_system_prompts(repo, min_tokens=400):
             txt = open(path, errors="ignore").read()
         except Exception:
             continue
-        for m in _SYS_ASSIGN.finditer(txt):
-            q = m.group(1)
-            start = m.end()
-            end = txt.find(q, start)
-            if end < 0:
-                continue
-            body = txt[start:end].strip()
+        # AST FIRST; the regex scan is the fallback for files that do not parse.
+        bodies = [v for _n, v in _sys_assignments_ast(txt)]
+        if not bodies:
+            for m in _SYS_ASSIGN.finditer(txt):
+                q, start = m.group(1), m.end()
+                end = txt.find(q, start)
+                if end >= 0:
+                    bodies.append(txt[start:end])
+        for body in bodies:
+            body = body.strip()
             # prose-like guard: real prompts start with a word & read like instructions, not code/defaults
             if not body[:1].isalpha() or " " not in body[:30]:
                 continue
@@ -122,10 +161,13 @@ def audit(repo=None):
     print(f"  {'intent':<22}{'model':<20}{'prefix':>7}{'avg':>7}{'frac':>6}{'$/1k calls':>11}")
     rows = _intent_prefixes()
     for d in rows[:12]:
-        flag = "  ← cache" if (d["frac"] >= 0.4 and d["prefix"] >= 200) else ""
+        # _MIN_CACHE_TOKENS, not a literal 200. The provider will not cache a prefix below its minimum at
+        # all, so flagging one as a "cache opportunity" — and printing a dollar saving next to it —
+        # recommends an optimisation that cannot happen, in the tool whose job is to say what is worth doing.
+        flag = "  ← cache" if (d["frac"] >= _MIN_SHARED_FRAC and d["prefix"] >= _MIN_CACHE_TOKENS) else ""
         print(f"  {d['intent'][:21]:<22}{d['model'][:19]:<20}{d['prefix']:>7}{d['avg']:>7}"
               f"{d['frac']:>6.0%}{('$%.2f' % d['save_per_1k']):>11}{flag}")
-    big = [d for d in rows if d["frac"] >= 0.4 and d["prefix"] >= 200]
+    big = [d for d in rows if d["frac"] >= _MIN_SHARED_FRAC and d["prefix"] >= _MIN_CACHE_TOKENS]
     if not big:
         print("  → these are DATA-heavy prompts (small shared prefix) — caching won't help much here.")
 

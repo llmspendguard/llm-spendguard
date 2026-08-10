@@ -540,8 +540,12 @@ def meta_spent_today():
 
 def meta_exceeded(pending=0.0):
     cap = config.meta_cap()
-    if cap is not None and meta_spent_today() + pending > cap:
-        return ("meta", cap, meta_spent_today() + pending)
+    # ONE READ. Called twice, the value compared against the cap and the value REPORTED to the user were
+    # two different measurements with a concurrent write possible between them — so the message could name
+    # a total that does not breach the cap it says was breached, which reads as a bug in the cap itself.
+    spent = meta_spent_today() + pending
+    if cap is not None and spent > cap:
+        return ("meta", cap, spent)
     return None
 
 

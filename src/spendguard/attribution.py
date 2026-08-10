@@ -107,7 +107,17 @@ def classify_items(items, taxo, run, batch_size=25):
                 src = b[int(it["i"])]
             except (KeyError, ValueError, IndexError, TypeError):
                 continue
-            out[src["id"]] = {"org": (it.get("org") or "").strip(), "team": (it.get("team") or "").strip(),
-                              "project": (it.get("project") or "").strip(),
-                              "confidence": int(it.get("confidence") or 0)}
+            # THE COERCIONS ARE INSIDE THE GUARD TOO. Only the b[int(it["i"])] lookup used to be, so a
+            # model returning org=123 or confidence="high" raised past the loop and DISCARDED EVERY
+            # REMAINING ITEM IN THE BATCH — up to 24 correctly-classified rows thrown away by one badly
+            # typed field, and the batch was already paid for. str() accepts whatever came back; an
+            # unparseable confidence falls to 0, which reads as "no confidence stated" and is true.
+            try:
+                conf = int(float(it.get("confidence")))
+            except (TypeError, ValueError):
+                conf = 0
+            out[src["id"]] = {"org": str(it.get("org") or "").strip(),
+                              "team": str(it.get("team") or "").strip(),
+                              "project": str(it.get("project") or "").strip(),
+                              "confidence": conf}
     return out

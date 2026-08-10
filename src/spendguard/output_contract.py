@@ -75,7 +75,12 @@ def describe(contract):
     if contract is None:
         return ""
     if callable(contract):
-        return "callable:" + getattr(contract, "__qualname__", getattr(contract, "__name__", "fn"))
+        # MODULE-QUALIFIED. Two modules each defining `validate` produced the identical identity, so one
+        # contract's test flag satisfied the other's — the exact staleness this identity exists to expire.
+        # The module is where a qualname stops being ambiguous, and it costs nothing to include.
+        _n = getattr(contract, "__qualname__", None) or getattr(contract, "__name__", "fn")
+        _mod = getattr(contract, "__module__", "") or ""
+        return "callable:" + (f"{_mod}.{_n}" if _mod else _n)
     if isinstance(contract, str):
         return "parse:" + contract.strip().lower()
     if isinstance(contract, (list, tuple, set)):

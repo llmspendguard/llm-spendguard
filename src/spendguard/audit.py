@@ -4,8 +4,15 @@ Catches the class of bug that caused the cost surprise: a gpt-5.5 rate literal
 that isn't the canonical (5.00/30.00 realtime, 2.50/15.00 batch). Run it before
 trusting any script's "$ estimate", and after editing prices.
 
-  python scripts/audit_price_constants.py        # report
-  python scripts/audit_price_constants.py --ci    # exit 1 if any gpt-5.5 mispricing found
+  spendguard audit             # report
+  spendguard audit --ci        # exit 1 if any gpt-5.5 mispricing found
+  python -m spendguard.audit   # same, without the CLI
+
+RUN IT AS A MODULE, NOT AS A FILE. This module is part of the package and imports `.pricing`
+relatively, so `python src/spendguard/audit.py` raises ImportError before reaching a single line of
+its own code. The docstring used to name a `scripts/…` path from a layout that no longer exists —
+so the one instruction here was the one thing guaranteed to fail. `-m` runs the same __main__ block
+with the package context the imports need.
 """
 import os, re, sys, glob
 
@@ -40,7 +47,9 @@ def main(argv=None):
         if os.path.basename(path) in ("pricing.py", "audit.py", "audit_price_constants.py",
                                       "reconcile_openai_spend.py", "reconcile_openai.py"):
             continue
-        for i, line in enumerate(open(path, errors="ignore"), 1):
+        with open(path, errors="ignore") as fh:      # closed deterministically: this walks a whole tree
+            lines = list(enumerate(fh, 1))
+        for i, line in lines:
             for m in KEYED.finditer(line):
                 key = m.group(1).lower()
                 pair = (float(m.group(2)), float(m.group(3)))

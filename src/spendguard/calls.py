@@ -307,7 +307,11 @@ def tested_recently(intent, model=None, days=14, kinds=("realtime",)):
         return False
     try:
         import datetime as _dt
-        since = (_dt.datetime.now() - _dt.timedelta(days=int(days))).isoformat()
+        # UTC, because that is what the rows hold. A naive local now() produced '...T09:14:22' with no
+        # offset and compared it as a STRING against '...T16:14:22+00:00'. West of UTC the cutoff drifts
+        # into the past and stale evidence passes the test-first gate; east of it, real recent tests
+        # vanish. Either way the comparison succeeds and returns a confident wrong answer.
+        since = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=int(days))).isoformat()
         # SQLi-safe (scanner false positive): `%s` is filled with the right COUNT of `?` placeholders, NOT values;
         # the kind values go through `args`. (Parameterized — no user data is concatenated into the SQL string.)
         q = "SELECT COUNT(*) FROM calls WHERE intent=? AND ts>=? AND kind IN (%s)" % ",".join("?" * len(kinds))

@@ -139,7 +139,14 @@ def cache_test(system, users, model=None, run=False):
     print()
     if engaged:
         per_call_saving = avg_read * (base - read) / 1_000_000
-        write_extra = sys_tok * (base * _ANTHROPIC_WRITE_MULT - base) / 1_000_000 if prov == "anthropic" else 0
+        # THE BILLED NUMBER, NOT OUR ESTIMATE OF IT. sys_tok is _count_tokens()'s guess at the block size;
+        # calls_out[0]["write"] is what the provider actually charged cache-creation on, and it is sitting
+        # right there in the response this function just read. Using the estimate in the one place the
+        # truth is available is the exact substitution this whole tool exists to stop — and it feeds the
+        # BREAK-EVEN, so an over-estimated write overhead tells you caching is not worth adopting when it is.
+        _billed_write = (calls_out[0].get("write") or 0) if calls_out else 0
+        write_extra = (_billed_write * (base * _ANTHROPIC_WRITE_MULT - base) / 1_000_000
+                       if prov == "anthropic" else 0)
         breakeven = (write_extra / per_call_saving) if per_call_saving else 0
         print(f"  ✓ caching ENGAGED — {avg_read:,.0f} tokens read from cache on warm calls.")
         print(f"  ✓ warm-call input saving: ~${per_call_saving:.5f}/call ({100*(base-read)/base:.0f}% off the cached block).")
@@ -162,7 +169,11 @@ def main(argv=None):
     ap.add_argument("--n", type=int, default=3, help="calls to run (1 cold + n-1 warm)")
     ap.add_argument("--run", action="store_true", help="actually call (default: estimate). Caged by caps.meta.")
     a = ap.parse_args(argv)
-    system, users = "", None
+    # --n IS HONOURED IN EVERY BRANCH. users stayed None through the --script path, so the three-item
+    # fallback list capped that run at 3 calls however large --n was: `--n 10` measured 1 cold + 2 warm and
+    # reported it as if ten had been made. The list is built from --n here, once, for all branches.
+    system = ""
+    users = [f"Item {i + 1}." for i in range(max(1, int(a.n)))]
     if a.script:
         system = _system_from_script(a.script)
         if not a.model:                              # test the model the script actually uses
