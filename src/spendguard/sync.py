@@ -43,10 +43,22 @@ def _convert(raw):
     impossible and must never be recorded as spend (see gate._implausible_estimate)."""
     models, provs, unit_models, context = {}, {}, {}, {}
     zero_rate = []                      # cached-as-$0 would be a silent capture leak; collected and reported
+    _bad_fields = []                    # unparseable rates: skipped per-field, reported, never fatal
     for name, e in raw.items():
         if not isinstance(e, dict) or name.startswith("sample_"):
             continue
-        u = {k: float(e[k]) for k in _UNIT_COST_FIELDS if e.get(k) is not None}
+        # A MALFORMED RATE SKIPS ITS FIELD, NOT THE WHOLE SYNC. float() on a non-numeric value from an
+        # upstream catalogue raised out of this loop, so ONE bad entry anywhere in a 2,700-model feed
+        # aborted the price sync entirely — and the table then silently stayed at whatever it held before,
+        # which reads exactly like a successful no-op sync.
+        u = {}
+        for k in _UNIT_COST_FIELDS:
+            if e.get(k) is None:
+                continue
+            try:
+                u[k] = float(e[k])
+            except (TypeError, ValueError):
+                _bad_fields.append(f"{name}.{k}={e[k]!r}")
         if u:
             unit_models[name] = u
         lim = {k: int(e[k]) for k in _CONTEXT_FIELDS if isinstance(e.get(k), (int, float))}
@@ -78,6 +90,14 @@ def _convert(raw):
         }
         models[name] = {k: round(v, 6) for k, v in rate.items()}
         provs[name] = e.get("litellm_provider", "?")
+    if _bad_fields:
+        # SURFACED. A rate we could not parse is a model whose unit cost is now MISSING from the table,
+        # and a missing rate prices its calls at nothing. Silently dropping them is the leak this whole
+        # module exists to close.
+        import sys as _sys
+        _sys.stderr.write(f"[sync] WARN {len(_bad_fields)} unparseable rate field(s) SKIPPED — those models "
+                          f"carry no unit cost and will not price: {', '.join(_bad_fields[:5])}"
+                          f"{' …' if len(_bad_fields) > 5 else ''}\n")
     return models, provs, unit_models, context, zero_rate
 
 

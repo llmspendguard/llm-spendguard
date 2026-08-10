@@ -143,6 +143,16 @@ def update_insight(iid, **fields):
     """Update lifecycle/confidence fields (used by the validate pass)."""
     if not fields:
         return
+    # THE COLUMN NAMES GO INTO THE SQL TEXT, SO THEY ARE WHITELISTED. The values are parameterised, but the
+    # KEYS were interpolated straight from **fields — a caller passing an attacker-influenced key writes
+    # arbitrary SQL into an UPDATE on this table. Callers here are internal today, which is exactly the
+    # assumption that stops being true quietly. Read from the live schema so it cannot drift from the table.
+    with _lock:
+        allowed = {r[1] for r in _db().execute("PRAGMA table_info(insights)")}
+    bad = [k for k in fields if k not in allowed or k == "id"]
+    if bad:
+        raise ValueError(f"update_insight: {bad} are not updatable columns of `insights` "
+                         f"(known: {sorted(allowed - {'id'})})")
     keys = ", ".join(f"{k}=?" for k in fields)
     with _lock:
         _db().execute(f"UPDATE insights SET {keys} WHERE id=?", list(fields.values()) + [iid])

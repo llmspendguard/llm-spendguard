@@ -164,6 +164,11 @@ def _drop_literals(text, drop):
     return text
 
 
+# What a caller receives when de-identification could not RUN. Deliberately not empty: an empty string
+# reads as "there was nothing here", and this means "there was something here and it could not be checked".
+DEID_FAILED = "<deid-failed: text withheld>"
+
+
 def redact(text, *, engine=None, entities=None, drop=None):
     """De-identify `text` before it leaves this machine. The single chokepoint for every egress path.
 
@@ -180,8 +185,19 @@ def redact(text, *, engine=None, entities=None, drop=None):
     if eng != "off":
         try:
             out = _floor(out, entities)
-        except Exception:
-            pass
+        except Exception as e:
+            # FAIL CLOSED. This was `except Exception: pass`, which leaves `out` as the ORIGINAL TEXT — so a
+            # crash in the redactor sent the un-redacted payload, PII and all, straight to a cloud LLM. The
+            # docstring above promises "fails open toward privacy"; the code failed open toward EXPOSURE,
+            # which is the one direction a pre-egress boundary must never fail in.
+            #
+            # There is no partial answer available: if the floor did not run, NOTHING in this string has been
+            # checked, so none of it may leave. The caller gets a marker and a loud warning — recoverable.
+            # An unnoticed disclosure is not.
+            _warn_once(f"[deid] TEXT WITHHELD: the de-identification floor raised ({type(e).__name__}: "
+                       f"{str(e)[:100]}), so this text was NOT checked for PII and must not leave the "
+                       f"machine. Fix the floor, or set deid.engine=off to accept sending raw text.")
+            return DEID_FAILED
         if eng == "presidio":
             p = _presidio(out, entities)
             if p is not None:
