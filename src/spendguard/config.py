@@ -208,9 +208,9 @@ def _cfg():
         _m = CONFIG_JSON.stat().st_mtime if CONFIG_JSON.exists() else None
     except OSError:
         _m = None
-    if getattr(_cfg, "_mtime", None) != _m:
+    if getattr(_cfg, "_mtime", "unset") != _m:
         _cfg._cache = None
-        _cfg._mtime = _m
+    _cfg._mtime = _m                       # always recorded, so "no file yet" is a state and not an absence
     if getattr(_cfg, "_cache", None) is None:
         c = {}
         try:

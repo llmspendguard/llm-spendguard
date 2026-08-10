@@ -268,8 +268,20 @@ check("...and are not confused with the metered ones", not (_ba._OPS & _ba._STRE
 print("\n-- a settings cache with no invalidation (config._cfg) --")
 from spendguard import config as _cfg3                                       # noqa: E402
 check("cfg_invalidate() exists for in-process writes", callable(_cfg3.cfg_invalidate))
-_cfg3._cfg()                                                                 # prime the cache
-check("...and the cache is keyed on the file's mtime, so an external write is seen",
-      hasattr(_cfg3._cfg, "_mtime"))
+# BEHAVIOUR, NOT AN ATTRIBUTE. The first version asserted hasattr(_cfg, "_mtime") — an implementation
+# detail that is unset when no config file exists yet, so it failed in an isolated HOME while the caching
+# worked correctly. What matters is that a rewritten file is SEEN.
+import json as _json3, time as _time3                                        # noqa: E402
+_cfg3.CONFIG_JSON.parent.mkdir(parents=True, exist_ok=True)
+_cfg3.CONFIG_JSON.write_text(_json3.dumps({"probe": {"k": "first"}}))
+_cfg3.cfg_invalidate()
+check("a config value reads back", _cfg3._cfg_get("probe", "k") == "first",
+      str(_cfg3._cfg_get("probe", "k")))
+_time3.sleep(0.01)                                                           # distinct mtime
+_cfg3.CONFIG_JSON.write_text(_json3.dumps({"probe": {"k": "second"}}))
+check("...and a REWRITE of the file is seen without an explicit invalidate",
+      _cfg3._cfg_get("probe", "k") == "second",
+      f"got {_cfg3._cfg_get('probe', 'k')!r} — a cache with no invalidation freezes a setting at "
+      f"whatever time it was first needed")
 print(f"\n{'[FAIL]' if failures else 'OK'} test_reviewed_defects_stay_fixed: {failures} failure(s)")
 sys.exit(1 if failures else 0)
