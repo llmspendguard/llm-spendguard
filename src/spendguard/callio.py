@@ -111,11 +111,17 @@ def record(intent, provider, model, batch, custom_id, prompt, output, in_tok=0, 
             # you asked for was silently discarded". So when the row exists, GROW it — never shrink. A longer
             # capture is strictly more of the same call; a shorter one would destroy fidelity we already paid
             # (in retention window, not tokens) to obtain.
+            # EACH COLUMN GROWS ON ITS OWN. One shared WHERE with an OR set BOTH columns whenever EITHER
+            # was longer, so a fetch carrying a longer prompt and a shorter output overwrote the stored
+            # output with the shorter one. That is the exact truncation this grow-only rule exists to
+            # prevent, performed by the rule itself. CASE per column keeps them independent.
+            _p, _o = (prompt or "")[:snip_chars()], (output or "")[:snip_chars()]
             _db().execute(
-                "UPDATE call_io SET prompt=?, output=? WHERE batch=? AND custom_id=? "
-                "AND (LENGTH(?) > LENGTH(COALESCE(prompt,'')) OR LENGTH(?) > LENGTH(COALESCE(output,'')))",
-                ((prompt or "")[:snip_chars()], (output or "")[:snip_chars()], batch, str(custom_id),
-                 (prompt or "")[:snip_chars()], (output or "")[:snip_chars()]))
+                "UPDATE call_io SET "
+                "prompt = CASE WHEN LENGTH(?) > LENGTH(COALESCE(prompt,'')) THEN ? ELSE prompt END, "
+                "output = CASE WHEN LENGTH(?) > LENGTH(COALESCE(output,'')) THEN ? ELSE output END "
+                "WHERE batch=? AND custom_id=?",
+                (_p, _p, _o, _o, batch, str(custom_id)))
             # The request shape backfills onto rows captured before it was stored — it is strictly new
             # information, so fill only where we currently hold nothing.
             if system or req_schema or req_max_tokens:

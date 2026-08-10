@@ -70,7 +70,10 @@ def _evidence_table(intent=None, top=40):
     for it, model, jobs, cost, good, bad in rows:
         labeled = (good or 0) + (bad or 0)
         goodpct = f"{100*good/labeled:.0f}%" if labeled else "—"
-        per_good = f"${cost/good:.4f}" if good else "—"
+        # `good` guards the DIVISION (a zero denominator is impossible arithmetic, not a missing value),
+        # but `cost` was used raw beside it: a None cost with good>0 raised mid-render and took the whole
+        # advisor table down. Two different questions that shared one guard.
+        per_good = f"${(cost or 0)/good:.4f}" if good else "—"
         lines.append(f"{it} | {model} | {jobs} | ${cost or 0:.2f} | {goodpct} | {per_good}")
     return "\n".join(lines), len(rows)
 
@@ -186,12 +189,23 @@ def _persist_insights(text):
         learn.add_insight(None, text.strip()[:500], source="mined", confidence=0.4)
         return 1
     added = 0
+    def _conf(v, default=0.5):
+        """A confidence the model returned as null, "high" or "" is UNSTATED, not a crash. float(None)
+        raises TypeError, and .get's default only applies when the KEY IS ABSENT — an explicit null still
+        reaches float(). One malformed field aborted the whole insight-mining pass, discarding every
+        lesson after it in a batch that was already paid for."""
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return default
+        return min(1.0, max(0.0, f))
+
     for it in data if isinstance(data, list) else []:
         if not isinstance(it, dict) or not it.get("lesson"):
             continue
         iid = learn.add_insight(it.get("intent"), str(it["lesson"])[:500],
                                 evidence=str(it.get("evidence", ""))[:500], source="mined",
-                                confidence=float(it.get("confidence", 0.5)))
+                                confidence=_conf(it.get("confidence")))
         learn.add_node("insight", str(it["lesson"])[:80], attrs={"confidence": it.get("confidence")}, id=iid)
         if it.get("intent"):
             learn.add_edge(iid, it["intent"], "concerns")

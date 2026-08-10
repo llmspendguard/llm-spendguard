@@ -53,6 +53,10 @@ def _defaults(intent, task):
     primary = max(permodel, key=lambda d: d["jobs"], default=None)
     # recommend: cheapest non-denylisted model with acceptable/known quality; else primary
     cands = [d for d in permodel if not d["denied"] and d["per"] is not None]
+    # `primary` is the most-USED model, which may have per=None (no cost recorded, or zero jobs). It is a
+    # fallback for "who to recommend", not a promise that a $/job figure exists — and the caller formats
+    # rec['per'] with :.4f, which raises on None. A recommendation with no cost is still a recommendation;
+    # it just cannot quote a price.
     rec = min(cands, key=lambda d: d["per"]) if cands else primary
     denylist = [d["model"] for d in permodel if d["denied"]]
     ins = learn.insights(intent=intent)[:3]

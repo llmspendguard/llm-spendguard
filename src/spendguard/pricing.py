@@ -105,10 +105,22 @@ def set_price(model, provider, in_usd, out_usd, source, batch_in=None, batch_out
     if in_usd <= 0 or out_usd <= 0:
         raise ValueError("rates must be positive — a $0 rate records real spend as free (see sync's zero-rate skip)")
     path = user_prices_path()
-    try:
-        data = json.load(open(path)) if os.path.exists(path) else {}
-    except Exception:
-        data = {}
+    # AN UNREADABLE FILE IS NOT AN EMPTY ONE. `except: data = {}` followed by a full rewrite meant a single
+    # partial write, permission blip or stray character DESTROYED every verified price the user had
+    # recorded — in the file whose entire discipline is "prices enter this table only with provenance,
+    # never invented". Losing them is worse than refusing to add one, and the refusal is recoverable.
+    data = {}
+    if os.path.exists(path):
+        try:
+            with open(path) as _fh:
+                data = json.load(_fh)
+        except Exception as e:
+            raise ValueError(
+                f"{path} exists but could not be read ({type(e).__name__}: {str(e)[:80]}). REFUSING to "
+                f"write, because doing so would replace every price recorded in it with just this one. "
+                f"Fix or move that file, then re-run.")
+        if not isinstance(data, dict):
+            raise ValueError(f"{path} does not contain a JSON object — refusing to overwrite it.")
     provs = data.setdefault("providers", {}).setdefault(str(provider).strip().lower(), {})
     entry = {"in_": in_usd, "out": out_usd,
              "cached_in": float(cached_in) if cached_in is not None else round(in_usd * 0.1, 6),

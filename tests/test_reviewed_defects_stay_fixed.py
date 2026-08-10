@@ -170,5 +170,61 @@ _kinds = {e.get("kind") for e in _cs.SETTINGS}
 check("no one-off 'number' kind survives", "number" not in _kinds, str(sorted(_kinds))[:120])
 check("snippet_len is an int, not a float", next(
     e for e in _cs.SETTINGS if e["key"] == "snippet_len")["kind"] == "int")
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════════════════
+# WAVE 1, RE-GROUPED. 53 sites -> 110, and 57 of them were invisible to exact-line matching.
+# ══════════════════════════════════════════════════════════════════════════════════════════════════
+print("\n-- the receipt honours its own scope (receipt.tally) --")
+# tally() took `project` and `conv` and used NEITHER, while budget.spent_since supported both all along.
+# So tally(project=repo) — which is how the per-repo receipt is built — returned the GLOBAL total under a
+# per-repo heading. The number the receipt exists to make honest was the one number in it that was not.
+from spendguard import receipt as _r                                         # noqa: E402
+_glob = _r.tally()["api"]["month"]
+_none = _r.tally(project="a-repo-that-has-never-spent-anything")["api"]["month"]
+check("a repo with no spend reports 0, not the global total", _none == 0 or _none < _glob,
+      f"scoped {_none} vs global {_glob}")
+
+print("\n-- an unreadable price file is never overwritten (pricing.set_price) --")
+# `except: data = {}` + a full rewrite DESTROYED every verified price on one bad read, in the file whose
+# whole discipline is "prices enter this table only with provenance".
+import json as _json, os as _os2, tempfile as _tf2                           # noqa: E402
+from spendguard import pricing as _p2                                        # noqa: E402
+_saved = _os2.environ.get("SPENDGUARD_HOME")
+_os2.environ["SPENDGUARD_HOME"] = _tf2.mkdtemp(prefix="spendguard-prices-")
+try:
+    _path = _p2.user_prices_path()
+    _os2.makedirs(_os2.path.dirname(_path), exist_ok=True)
+    with open(_path, "w") as _fh:
+        _fh.write('{"providers": {"acme": {"m1": {"in_": 1.0}}}, BROKEN')
+    try:
+        _p2.set_price("m2", "acme", 2.0, 4.0, source="test")
+        check("an unreadable prices.json is REFUSED, not replaced", False, "it overwrote the file")
+    except ValueError:
+        check("an unreadable prices.json is REFUSED, not replaced", True)
+    with open(_path) as _fh:
+        check("...and the original content survives", "m1" in _fh.read())
+finally:
+    if _saved is None:
+        _os2.environ.pop("SPENDGUARD_HOME", None)
+    else:
+        _os2.environ["SPENDGUARD_HOME"] = _saved
+
+print("\n-- a call class is the WHOLE prompt, not its first 512 chars (bulkgate.sig) --")
+# A shared preamble longer than 512 chars is the norm here — system blocks, review briefs, compacted
+# source. Different calls collided into one class, so caps, latencies and cache entries from one were
+# served to another.
+from spendguard import bulkgate as _bg                                       # noqa: E402
+check("two prompts sharing a 512-char preamble get different signatures",
+      _bg.sig("m", prompt="X" * 512 + "AAAA") != _bg.sig("m", prompt="X" * 512 + "BBBB"))
+
+print("\n-- a callable's identity is its CODE, not its name (output_contract) --")
+# module+qualname was this morning's fix, and every module-level lambda is `<lambda>` in the same module,
+# so they all still shared one identity. Found only by re-validating the FIXED code.
+from spendguard import output_contract as _oc2                               # noqa: E402
+_l1, _l2 = (lambda x: x + 1), (lambda x: x + 2)
+_l1.__module__ = _l2.__module__ = "same.module"
+check("two different lambdas in one module get different identities",
+      _oc2.describe(_l1) != _oc2.describe(_l2), f"{_oc2.describe(_l1)} vs {_oc2.describe(_l2)}")
 print(f"\n{'[FAIL]' if failures else 'OK'} test_reviewed_defects_stay_fixed: {failures} failure(s)")
 sys.exit(1 if failures else 0)

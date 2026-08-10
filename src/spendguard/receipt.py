@@ -416,7 +416,13 @@ def tally(project=None, conv=None) -> dict:
     api = {"today": None, "week": None, "month": None}
     try:
         from . import budget
-        api = {"today": budget.spent_since(today), "week": budget.spent_since(week), "month": budget.spent_since(month)}
+        # THE SCOPE IS PASSED THROUGH. tally() took `project` and `conv` and used NEITHER, while
+        # budget.spent_since has supported both all along — so `tally(project=repo)`, which is how the
+        # per-repo receipt is built, returned the GLOBAL total under a per-repo heading. The number the
+        # receipt exists to make honest was the one number in it that was not.
+        api = {"today": budget.spent_since(today, project=project, conv=conv),
+               "week": budget.spent_since(week, project=project, conv=conv),
+               "month": budget.spent_since(month, project=project, conv=conv)}
     except Exception:
         pass
     remote = _remote_tally()                       # billed GPU/remote compute (None until resources.sync stamps it)

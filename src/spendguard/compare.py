@@ -21,7 +21,15 @@ def main(argv=None):
     ap.add_argument("--show", action="store_true", help="print each model's full output")
     a = ap.parse_args(argv)
 
-    prompt = a.prompt or (open(a.prompt_file).read() if a.prompt_file else None)
+    # A MISSING --prompt-file IS A USAGE ERROR, NOT A TRACEBACK. And the handle is closed.
+    prompt = a.prompt
+    if not prompt and a.prompt_file:
+        try:
+            with open(a.prompt_file) as _fh:
+                prompt = _fh.read()
+        except OSError as e:
+            print(f"compare: cannot read --prompt-file {a.prompt_file!r} ({type(e).__name__}: {e})")
+            return 1
     if not prompt:
         print("need --prompt or --prompt-file")
         return 1
@@ -37,17 +45,30 @@ def main(argv=None):
             continue
         cost = f"${r['cost']:.5f}" if r["cost"] is not None else "n/a"
         per1k = f"${r['cost']/max(r['out_tok'],1)*1000:.4f}" if r["cost"] is not None else "—"
-        print(f"{m:<24}{r['provider']:<11}{r['latency']:>7.2f}{r['in_tok']:>8}{r['out_tok']:>8}{cost:>11}  {per1k:>9}")
+        # A row can be error-free and still be MISSING numbers — an adapter that returned no usage leaves
+        # latency/in_tok/out_tok as None, and :>7.2f on None raises mid-table, after real calls were paid
+        # for. Absent renders as '—' rather than taking the comparison down.
+        _lat = f"{r['latency']:>7.2f}" if isinstance(r.get("latency"), (int, float)) else f"{'—':>7}"
+        _in = f"{r['in_tok']:>8}" if isinstance(r.get("in_tok"), int) else f"{'—':>8}"
+        _out = f"{r['out_tok']:>8}" if isinstance(r.get("out_tok"), int) else f"{'—':>8}"
+        print(f"{m:<24}{r['provider']:<11}{_lat}{_in}{_out}{cost:>11}  {per1k:>9}")
 
     ok = [r for _, r in rows if not r["error"] and r["cost"] is not None]
     if ok:
         cheapest = min(ok, key=lambda r: r["cost"])
-        fastest = min(ok, key=lambda r: r["latency"])
-        print(f"\ncheapest: {cheapest['model']} (${cheapest['cost']:.5f})   fastest: {fastest['model']} ({fastest['latency']:.2f}s)")
+        # `ok` is filtered on cost, not latency, so a row with cost and no latency reached min() and
+        # compared None against a float. Fastest is drawn from the rows that actually HAVE a latency.
+        _timed = [r for r in ok if isinstance(r.get("latency"), (int, float))]
+        fastest = min(_timed, key=lambda r: r["latency"]) if _timed else None
+        print(f"\ncheapest: {cheapest['model']} (${cheapest['cost']:.5f})"
+              + (f"   fastest: {fastest['model']} ({fastest['latency']:.2f}s)" if fastest
+                 else "   fastest: — (no model reported a latency)"))
         print("(quality is yours to judge — use --show to read the outputs)")
 
     if a.show:
         for m, r in rows:
             print(f"\n──────── {m} ────────")
-            print(r["text"] if r["text"] else f"ERROR: {r['error']}")
+            # `is not None`: a model that legitimately returned an EMPTY completion is not an error, and
+            # printing "ERROR: None" for it invents a failure that did not happen.
+            print(r["text"] if r.get("text") is not None else f"ERROR: {r['error']}")
     return 0

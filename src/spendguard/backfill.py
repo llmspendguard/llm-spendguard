@@ -55,8 +55,13 @@ def backfill(intent_map=None, providers=("openai", "anthropic")):
     total = 0.0
     added = 0
     for provider, model, cost, it, ot, ts, bid in rows:
+        # `have` IS UPDATED AS WE GO. It was loaded once from the graph and never added to, while the row
+        # stream emits ONE ROW PER MODEL within a batch — all sharing that batch's id. So a batch with
+        # three models inserted three run nodes under one id and counted its cost three times, and only a
+        # LATER run of backfill would notice, by which point the graph already held the duplicates.
         if bid in have:
             continue
+        have.add(bid)
         intent = intent_map.get(bid)
         cid = calls.insert(provider, model, "batch", cost, in_tok=it, out_tok=ot,
                            ts=ts, intent=intent, who="backfill:ledger")
