@@ -132,8 +132,29 @@ def resolve_cli(name, env_var=None):
     return str(max(hits, key=_mtime)) if hits else None
 
 
-# Provider → key env var, for the ledger's key fingerprint (named mapping, no hardcoded keys). Local-only.
-_PROVIDER_KEY_ENV = {"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY", "gemini": "GEMINI_API_KEY"}
+# Provider → key env var, for the ledger's key fingerprint. Local-only, no hardcoded keys.
+#
+# THE PROVIDER TABLE ALREADY CARRIES THIS. adapters.PROVIDERS holds a key_env for every vendor including the
+# ones missing here — moonshot, zai, deepseek, dashscope — so their charges were stamped with an EMPTY
+# fingerprint while the table that knew the answer sat one import away. Same shape as four other things
+# found today: the fact exists, and the consumer has its own shorter copy.
+#
+# The literals below remain as the FLOOR, so a fingerprint still works if adapters cannot be imported.
+_PROVIDER_KEY_ENV_FALLBACK = {"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY",
+                              "gemini": "GEMINI_API_KEY"}
+
+
+def _provider_key_env(provider):
+    """The env var holding this provider's key, from the provider registry, falling back to the floor above."""
+    p = (provider or "").lower()
+    try:
+        from . import adapters
+        spec = adapters.PROVIDERS.get(p) or {}
+        if spec.get("key_env"):
+            return spec["key_env"]
+    except Exception:
+        pass
+    return _PROVIDER_KEY_ENV_FALLBACK.get(p)
 
 
 def key_fingerprint(provider):
@@ -143,7 +164,7 @@ def key_fingerprint(provider):
     an explicit api_key= differing from env would be mis-fingerprinted — documented limitation). last4 matches
     what provider dashboards display. '' when the provider has no known key env or no key set. LOCAL-ONLY:
     the roll-up push never selects this column."""
-    var = _PROVIDER_KEY_ENV.get((provider or "").lower())
+    var = _provider_key_env(provider)
     key = os.environ.get(var, "") if var else ""
     if not key:
         return ""

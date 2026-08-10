@@ -419,7 +419,9 @@ def _dispatch(argv=None):
         for i, a in enumerate(rest):
             if a == "--since" and i + 1 < len(rest):
                 since = rest[i + 1]
-        since = since or _dt.config.month_start_utc()
+        # `_dt` is the stdlib datetime module imported two lines up; `_dt.config` does not exist, so this
+        # raised AttributeError every time --since was omitted — the DEFAULT path of the command.
+        since = since or _c.month_start_utc()
         prof = _c._key_profile()
         print(f"per-key workload spend since {since}" + (f"  (active key profile: {prof})" if prof else ""))
         rows = sorted(budget.by_key(since=since).items(), key=lambda x: -x[1]["cost"])

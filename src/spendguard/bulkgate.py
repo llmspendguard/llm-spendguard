@@ -99,7 +99,12 @@ def sig(model, template_id=None, template_version=None, schema_name=None, prompt
     if template_id or template_version or schema_name:
         key = "|".join(str(x or "") for x in (model, template_id, template_version, schema_name))
     else:
-        key = (model or "") + "|" + (prompt or "")[:512]
+        # THE WHOLE PROMPT. Truncating to 512 chars made every prompt sharing a preamble collide into one
+        # signature — and in this codebase a shared preamble is the NORM: system blocks, review briefs and
+        # compacted-source headers all run past 512 characters before the part that differs. Two different
+        # calls then shared one class, so measured caps, latencies and cache entries from one were served
+        # to the other. Hashing costs the same whatever the length.
+        key = (model or "") + "|" + (prompt or "")
     return hashlib.sha256(key.encode()).hexdigest()[:16]
 
 

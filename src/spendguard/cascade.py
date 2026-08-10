@@ -77,8 +77,13 @@ def cascade(prompt, ladder, verify=None, intent=None, _caller=None):
     try:
         if usable and served and served != usable[-1] and served_cost > 0:
             from . import pricing, guard
-            ps = pricing.price(served).get("out") or pricing.price(served).get("in_")
-            pt = pricing.price(usable[-1]).get("out") or pricing.price(usable[-1]).get("in_")
+            # `is not None`, and each card fetched ONCE. `.get("out") or .get("in_")` silently swaps in the
+            # INPUT price whenever a model's published output rate is 0.00 — which is exactly what an
+            # embedding model's card says — so the saving was computed from two different axes and reported
+            # as a measured number. Calling price() twice per model also paid the lookup twice.
+            _ps_card, _pt_card = pricing.price(served), pricing.price(usable[-1])
+            ps = _ps_card["out"] if _ps_card.get("out") is not None else _ps_card.get("in_")
+            pt = _pt_card["out"] if _pt_card.get("out") is not None else _pt_card.get("in_")
             if ps and pt and pt > ps:
                 guard.record_saving("cascade", max(0.0, served_cost * (pt / ps) - total))
     except Exception:

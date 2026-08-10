@@ -75,12 +75,30 @@ def describe(contract):
     if contract is None:
         return ""
     if callable(contract):
-        # MODULE-QUALIFIED. Two modules each defining `validate` produced the identical identity, so one
-        # contract's test flag satisfied the other's — the exact staleness this identity exists to expire.
-        # The module is where a qualname stops being ambiguous, and it costs nothing to include.
+        # IDENTITY IS THE CODE, NOT THE NAME. Two rounds of this:
+        #   1. `__qualname__` alone — two modules each defining `validate` shared one identity, so one
+        #      contract's test flag satisfied the other's.
+        #   2. module + qualname — better, and still wrong for the commonest case in this codebase: every
+        #      module-level lambda is `<lambda>`, so two DIFFERENT lambdas in one module remained
+        #      indistinguishable. Found by re-validating the first fix against the fixed source, which is
+        #      the whole point of re-reviewing rather than trusting that a fix landed.
+        #
+        # The compiled body settles it, and settles the other half too: an EDITED contract gets a new
+        # identity and expires its test flag, which is exactly what this value is for — "a changed contract
+        # expires the flag, as a changed prompt already changes the sig". A name cannot do that.
         _n = getattr(contract, "__qualname__", None) or getattr(contract, "__name__", "fn")
         _mod = getattr(contract, "__module__", "") or ""
-        return "callable:" + (f"{_mod}.{_n}" if _mod else _n)
+        _code = getattr(contract, "__code__", None)
+        _body = ""
+        if _code is not None:
+            _body = ":" + hashlib.sha256(
+                getattr(_code, "co_code", b"") + repr(getattr(_code, "co_consts", ())).encode()
+            ).hexdigest()[:12]
+        else:
+            # A callable OBJECT (functools.partial, a class instance): its type is the closest stable
+            # identity available, and it is at least different for different types.
+            _body = ":" + type(contract).__name__
+        return "callable:" + (f"{_mod}.{_n}" if _mod else _n) + _body
     if isinstance(contract, str):
         return "parse:" + contract.strip().lower()
     if isinstance(contract, (list, tuple, set)):

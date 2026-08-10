@@ -132,5 +132,36 @@ kept = budget._db().execute(
     "SELECT provider FROM charges WHERE model='a-model-nobody-registered'").fetchone()[0]
 check("a recorded vendor is never overwritten with 'unknown'", kept == "some-vendor-we-recorded", kept)
 
+
+# ── AND THE KEY FINGERPRINT MUST BELONG TO THE VENDOR ON THE ROW ─────────────────────────────────────
+# Re-attributing the vendor fixed `provider` and left `key_fp`, so 688 rows read "moonshot spend, served
+# by an OpenAI key" — a self-contradicting record, which in a forensic table is its own kind of wrong.
+print("\n  the key fingerprint belongs to the vendor on the row:")
+_prev_home = None
+budget.record(provider="moonshot", model="kimi-k3", kind="realtime", cost=2.0)
+_rid = budget._db().execute("SELECT MAX(rowid) FROM charges").fetchone()[0]
+_openai_fp = "aaaaaaaa:bbbb"
+budget._db().execute("UPDATE charges SET key_fp=? WHERE rowid=?", (_openai_fp, _rid))
+budget._db().commit()
+
+import spendguard.config as _c2                                             # noqa: E402
+_real_fp = _c2.key_fingerprint
+_c2.key_fingerprint = lambda p: (_openai_fp if p == "openai" else "")
+try:
+    _d = budget.reattribute_providers(apply=False)
+    check("a fingerprint belonging to another vendor is DETECTED", _d["stale_key_fp"] >= 1, str(_d["stale_key_fp"]))
+    budget.reattribute_providers(apply=True)
+finally:
+    _c2.key_fingerprint = _real_fp
+_fp_now = budget._db().execute("SELECT key_fp FROM charges WHERE rowid=?", (_rid,)).fetchone()[0]
+check("...and cleared to UNKNOWN, not rewritten with today's key",
+      _fp_now == "", f"got {_fp_now!r} — today's key did not serve a call made before it existed")
+
+# The env var for each vendor's key comes from the provider registry, which already knew moonshot and z.ai
+# while this module's own three-entry map did not — so their charges were stamped with an empty fingerprint.
+check("the key env is resolved from the provider registry, not a short local copy",
+      _c2._provider_key_env("moonshot") == "MOONSHOT_API_KEY"
+      and _c2._provider_key_env("zai") == "ZAI_API_KEY",
+      f"{_c2._provider_key_env('moonshot')} / {_c2._provider_key_env('zai')}")
 print(f"\n{'[FAIL]' if failures else 'OK'} test_every_charge_names_who_and_what: {failures} failure(s)")
 sys.exit(1 if failures else 0)

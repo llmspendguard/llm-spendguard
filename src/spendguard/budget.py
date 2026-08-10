@@ -239,11 +239,29 @@ def reattribute_providers(apply=False, actor="reattribute_providers"):
         # only a POSITIVE identification that disagrees is a fix.
         if true and true != gate.UNKNOWN_PROVIDER and prov and true != prov:
             fixes.append({"rowid": rid, "model": model, "was": prov, "now": true, "cost": float(cost or 0)})
+    # A KEY FINGERPRINT THAT BELONGS TO THE WRONG VENDOR IS WORSE THAN NONE. These rows were stamped with
+    # the fingerprint of the provider they were MIS-labelled as, so after the vendor is corrected the row
+    # reads "moonshot spend, served by an OpenAI key" — a contradiction that looks like a finding. We cannot
+    # recover which key really served a past call, so it becomes EMPTY, which this column already defines as
+    # unknown. Restoring the current key's fingerprint instead would assert that today's key served a call
+    # made before it existed.
+    if fixes:
+        _wrong_fp = {}
+        for f in fixes:
+            try:
+                _wrong_fp.setdefault(f["was"], config.key_fingerprint(f["was"]))
+            except Exception:
+                _wrong_fp.setdefault(f["was"], "")
     unjournalled = []
     if apply and fixes:
         with _lock:
             for f in fixes:
-                _db().execute("UPDATE charges SET provider=? WHERE rowid=?", (f["now"], f["rowid"]))
+                stale = _wrong_fp.get(f["was"]) or ""
+                if stale:
+                    _db().execute("UPDATE charges SET provider=?, key_fp=CASE WHEN key_fp=? THEN '' "
+                                  "ELSE key_fp END WHERE rowid=?", (f["now"], stale, f["rowid"]))
+                else:
+                    _db().execute("UPDATE charges SET provider=? WHERE rowid=?", (f["now"], f["rowid"]))
             _db().commit()
         # JOURNALLED AFTER THE COMMIT, AND THROUGH THE CHAIN. Two separate points:
         #   * the audit log has exactly ONE supported writer (SpendLedger.audit) — a raw INSERT here left
@@ -263,8 +281,47 @@ def reattribute_providers(apply=False, actor="reattribute_providers"):
             import sys as _sys
             _sys.stderr.write(f"[budget] WARN {len(unjournalled)} of {len(fixes)} re-attributions COMMITTED "
                               f"WITHOUT AN AUDIT ROW — e.g. {unjournalled[0]}\n")
+    # SECOND PASS: a fingerprint that belongs to a DIFFERENT vendor than the row's.
+    #
+    # Separate from the vendor fix above because it outlives it: rows corrected in an EARLIER run still
+    # carry the fingerprint they were stamped with while mis-labelled, so a row reads "moonshot spend,
+    # served by an OpenAI key". Checking the whole table each time makes the repair idempotent and catches
+    # rows this run did not touch. Which key really served a past call is not recoverable, so it becomes
+    # EMPTY — the value this column already defines as unknown. Writing today's key instead would assert
+    # that it served a call made before it existed.
+    known = {}
+    try:
+        from . import adapters
+        for v in adapters.PROVIDERS:
+            fp = config.key_fingerprint(v)
+            if fp:
+                known[fp] = v
+    except Exception:
+        known = {}
+    stale = []
+    if known:
+        with _lock:
+            for rid, prov, fp in _db().execute(
+                    "SELECT rowid, provider, key_fp FROM charges WHERE key_fp IS NOT NULL AND key_fp != ''"
+            ).fetchall():
+                owner = known.get(fp)
+                if owner and prov and owner != prov:
+                    stale.append({"rowid": rid, "provider": prov, "key_fp": fp, "belongs_to": owner})
+        if apply and stale:
+            with _lock:
+                for st in stale:
+                    _db().execute("UPDATE charges SET key_fp='' WHERE rowid=?", (st["rowid"],))
+                _db().commit()
+            for st in stale[:200]:                 # journalled like any other correction, capped for volume
+                try:
+                    _ledger().audit(str(st["rowid"]), actor, "reattribute", "key_fp", st["key_fp"], "",
+                                    f"fingerprint belongs to {st['belongs_to']}, not {st['provider']} — "
+                                    f"the key that served this call is not recoverable, so it is UNKNOWN")
+                except Exception:
+                    pass
     return {"n": len(fixes), "usd": round(sum(f["cost"] for f in fixes), 4), "applied": bool(apply),
-            "by_move": _count_moves(fixes), "fixes": fixes[:20], "unjournalled": unjournalled}
+            "by_move": _count_moves(fixes), "fixes": fixes[:20], "unjournalled": unjournalled,
+            "stale_key_fp": len(stale)}
 
 
 def _count_moves(fixes):
