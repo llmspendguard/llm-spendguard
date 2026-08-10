@@ -247,6 +247,14 @@ def _calls_db():
     db.execute("CREATE TABLE IF NOT EXISTS gate_latency "
                "(sig TEXT, model TEXT, seconds REAL, hit_deadline INTEGER, ts REAL)")
     db.execute("CREATE INDEX IF NOT EXISTS idx_gatelat_sig ON gate_latency(sig, model)")
+    # THE PAYLOAD SIZE IS WHAT DRIVES THE LATENCY, so it is recorded with it. Without this column a 5,000
+    # char prompt and a 37,000 char one are one population: measured on kimi-k3 across review calls, p50 was
+    # 38s and p95 was 289s, and that spread IS the size effect. A budget drawn from the mixed distribution
+    # is simultaneously far too generous for the small calls and fatal for the large ones — kimi-k3 needed
+    # 547s for a 37,453-char file and was killed at the mixed-population budget, losing that file's review
+    # entirely while three other vendors reported on it.
+    if "in_chars" not in [r[1] for r in db.execute("PRAGMA table_info(gate_latency)")]:
+        db.execute("ALTER TABLE gate_latency ADD COLUMN in_chars INTEGER DEFAULT 0")
     return db
 
 
@@ -258,7 +266,7 @@ def is_truncated(finish_reason, out_tok=None, max_tokens=None):
     return bool(out_tok and max_tokens and int(out_tok) >= int(max_tokens))
 
 
-def note_latency(sig, model, seconds, hit_deadline=False):
+def note_latency(sig, model, seconds, hit_deadline=False, in_chars=0):
     """Record how LONG one call took, keyed by call-class — the time analogue of note_response's out_tok.
 
     Without this a deadline is a guess, and a guessed deadline fails the same way a guessed max_tokens does:
@@ -268,14 +276,27 @@ def note_latency(sig, model, seconds, hit_deadline=False):
     try:
         with _lock:
             _calls_db().execute(
-                "INSERT INTO gate_latency (sig,model,seconds,hit_deadline,ts) VALUES (?,?,?,?,?)",
-                (sig, model, float(seconds or 0), int(bool(hit_deadline)), time.time()))
+                "INSERT INTO gate_latency (sig,model,seconds,hit_deadline,ts,in_chars) "
+                "VALUES (?,?,?,?,?,?)",
+                (sig, model, float(seconds or 0), int(bool(hit_deadline)), time.time(),
+                 int(in_chars or 0)))
             _db().commit()
     except Exception:
         pass
 
 
-def latency(sig=None, model=None):
+# Size band for "comparable payload", as a RATIO rather than absolute char counts: latency scales with the
+# payload, so what makes two observations comparable is being within the same factor of each other, not
+# within some number of characters. Stated here, applied in one place, and reported in the basis so a
+# reader can see which population a budget came from.
+_SIZE_BAND = 2.5
+
+# How many COMPLETED observations a size band needs before it may override the whole-population answer.
+# Below this a band is noise wearing a narrower label, and a narrower label reads as more precise.
+MIN_LATENCY_OBS = 5
+
+
+def latency(sig=None, model=None, near_chars=None):
     """{n, p50, p90, p99, max, deadline_hits, hit_rate} for a class and/or model, or {} if nothing measured.
 
     CENSORING, same rule as maxtokens(): a call that hit its deadline was cut AT the budget, so it measures
@@ -287,16 +308,29 @@ def latency(sig=None, model=None):
         where.append("sig=?"); args.append(sig)
     if model:
         where.append("model=?"); args.append(model)
-    q = "SELECT seconds,hit_deadline FROM gate_latency" + (" WHERE " + " AND ".join(where) if where else "")
+    band = None
+    if near_chars:
+        # Comparable payloads only. Falls back to the whole population when the band is too thin to say
+        # anything — and REPORTS which it used, because a budget drawn from 3 observations of the right
+        # size and one drawn from 300 of the wrong size are different claims.
+        band = (int(near_chars / _SIZE_BAND), int(near_chars * _SIZE_BAND))
+    q = ("SELECT seconds,hit_deadline,COALESCE(in_chars,0) FROM gate_latency"
+         + (" WHERE " + " AND ".join(where) if where else ""))
     try:
         with _lock:
             rows = _calls_db().execute(q, args).fetchall()
     except Exception:
         return {}
+    scope = "all-sizes"
+    if band:
+        sized = [r for r in rows if r[2] and band[0] <= r[2] <= band[1]]
+        if len([r for r in sized if not r[1] and r[0] > 0]) >= MIN_LATENCY_OBS:
+            rows, scope = sized, f"~{near_chars:,}c"
     done = [r[0] for r in rows if not r[1] and r[0] > 0]
     hits = [r[0] for r in rows if r[1]]
     if not done:
-        return ({"n": 0, "deadline_hits": len(hits), "hit_rate": 1.0 if hits else 0.0,
+        return ({"n": 0, "scope": scope, "deadline_hits": len(hits),
+                 "hit_rate": 1.0 if hits else 0.0,
                  "floor": max(hits) if hits else None} if hits else {})
     # FLOAT percentiles. _pctl is built for TOKEN COUNTS and returns an int, which silently destroys this
     # measurement twice over: sub-second latencies all become 0, and a p99 of 0 is FALSY — so a caller
@@ -307,7 +341,8 @@ def latency(sig=None, model=None):
         v = sorted(vals)
         return round(float(v[min(len(v) - 1, int(len(v) * q))]), 3)
 
-    return {"n": len(done), "p50": _sec(done, 0.50), "p90": _sec(done, 0.90), "p95": _sec(done, 0.95),
+    return {"n": len(done), "scope": scope,
+            "p50": _sec(done, 0.50), "p90": _sec(done, 0.90), "p95": _sec(done, 0.95),
             "p99": _sec(done, 0.99), "max": max(done), "deadline_hits": len(hits),
             "hit_rate": len(hits) / float(len(rows)) if rows else 0.0,
             "floor": max(hits) if hits else None}

@@ -36,7 +36,8 @@ REFUSED = "refused"              # the model declined (content policy, safety st
 TRANSPORT_ERROR = "transport_error"
 DEADLINE_EXCEEDED = "deadline_exceeded"
 SCHEMA_VIOLATION = "schema_violation"
-KINDS = (OK, TRUNCATED, EMPTY, REFUSED, TRANSPORT_ERROR, DEADLINE_EXCEEDED, SCHEMA_VIOLATION)
+UNFUNDED = "unfunded"            # the account cannot pay — deterministic, actionable, and NOT retryable
+KINDS = (OK, TRUNCATED, EMPTY, REFUSED, TRANSPORT_ERROR, DEADLINE_EXCEEDED, SCHEMA_VIOLATION, UNFUNDED)
 FAILURES = tuple(k for k in KINDS if k != OK)
 
 _RUN_ID = None
@@ -121,6 +122,32 @@ _POLICY_MARKERS = ("content_policy_violation", "content_filter", "invalid_prompt
                    "safety", "prohibited_content", "content_policy")
 
 
+# Documented provider identifiers for "this account cannot pay". Same discipline as _POLICY_MARKERS: the
+# provider's own error text on a 402/429, never an interpretation of arbitrary prose.
+_BILLING_MARKERS = ("insufficient balance", "insufficient_quota", "insufficient credit", "no resource package",
+                    "exceeded your current quota", "billing_hard_limit_reached", "payment required",
+                    "credit balance is too low", "please recharge")
+
+
+def _is_unfunded(err):
+    """True only when the provider says the ACCOUNT cannot pay, on a status that means it.
+
+    WHY THIS IS ITS OWN KIND. A 429 is normally rate-limiting — transient, and retrying is exactly right.
+    But a 429 carrying "Insufficient balance ... Please recharge" is permanent until a human acts, and the
+    two were the same bucket. MEASURED: z.ai returned it on all 10 files of a review wave. The panel retried
+    each one, reported `transport_error`, and produced a run that looked like it had four reviewers while
+    it had three — the findings gate then counted agreement out of a denominator that was quietly wrong.
+
+    An unfunded vendor is also the one failure a person can FIX in thirty seconds, and it was being
+    reported in the same words as a network blip nobody can do anything about."""
+    if not err:
+        return False
+    t = str(err).lower()
+    if not any(x in t for x in ("402", "429", "payment", "quota", "balance", "billing")):
+        return False
+    return any(m in t for m in _BILLING_MARKERS)
+
+
 def _is_policy_rejection(err):
     """True only when the provider's own error names a policy decision. Returns False on anything ambiguous:
     mislabelling a transport blip as a refusal would suppress the retry that fixes it."""
@@ -143,6 +170,9 @@ def _classify(r, want_text=True):
         # This reads the provider's own structured error fields (an HTTP status and a documented error
         # identifier), which is FORMAT parsing on a fixed contract. It is deliberately conservative: an
         # unrecognised 400 stays a transport error rather than being talked into a category.
+        if _is_unfunded(r.get("error")):
+            # Checked FIRST: it arrives on a 429, which the transport path would otherwise retry forever.
+            return UNFUNDED, "account_cannot_pay"
         if _is_policy_rejection(r.get("error")):
             return REFUSED, "policy_rejection"
         return TRANSPORT_ERROR, r.get("finish_reason")
@@ -298,7 +328,7 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
     if last is not None and (last.ok or last.kind == DEADLINE_EXCEEDED):
         try:
             from . import bulkgate
-            bulkgate.note_latency(class_sig(model, purpose), model, last.latency,
+            bulkgate.note_latency(class_sig(model, purpose), model, last.latency, in_chars=len(prompt or ""),
                                   hit_deadline=(last.kind == DEADLINE_EXCEEDED))
         except Exception:
             pass
@@ -690,7 +720,7 @@ DEADLINE_FLOOR_S = 30.0       # never propose a budget so tight that a healthy c
 DEADLINE_CEIL_S = 600.0       # and never an unbounded one — the 3h30m run is what this module exists to end
 
 
-def time_budget(vendor, model, sig=None, default_s=None):
+def time_budget(vendor, model, sig=None, default_s=None, in_chars=None):
     """(seconds, basis) — how long this (vendor, model[, class]) is ALLOWED to take, sized from measurement.
 
     THE EXACT TWIN OF output_cap(). A deadline is a termination bound for TIME, and every lesson from the token
@@ -708,7 +738,12 @@ def time_budget(vendor, model, sig=None, default_s=None):
     for scope, kwargs in (("class", {"sig": sig, "model": model}), ("model", {"model": model})):
         if scope == "class" and not sig:
             continue
-        d = bulkgate.latency(**kwargs)
+        # SIZE IS PASSED DOWN. Latency scales with the payload, so a budget drawn from a population of
+        # mixed sizes is wrong at both ends: measured on kimi-k3's review calls, p50 was 38s and p95 289s,
+        # and a budget from that mixture killed a 37,453-char file that genuinely needed 547s — losing its
+        # review entirely while three other vendors reported on it. bulkgate narrows to comparable payloads
+        # when it has enough of them and says which population it used.
+        d = bulkgate.latency(near_chars=in_chars, **kwargs)
         if d and d.get("n", 0) >= 5 and d.get("p99"):
             want = float(d["p99"]) * DEADLINE_SLACK
             if d.get("floor"):
@@ -734,7 +769,7 @@ def fan_out(vendors, prompt, *, deadline_s, purpose="", system=None, schema=None
     # for every question asked. Each vendor gets its own MEASURED budget: one global deadline is generous for
     # the fast vendor and marginal for the slow one at the same time.
     def _one(v, m):
-        budget, _basis = time_budget(v, m, sig=class_sig(m, purpose), default_s=deadline_s)
+        budget, _basis = time_budget(v, m, sig=class_sig(m, purpose), default_s=deadline_s, in_chars=len(prompt or ""))
         return call(v, m, prompt, deadline_s=budget or deadline_s, purpose=purpose, system=system,
                     schema=schema, max_tokens=max_tokens)
 
@@ -768,7 +803,7 @@ def first_ok(vendors, prompt, *, deadline_s, need=1, purpose="", system=None, sc
     got, results = [], []
 
     def _one(v, m):
-        budget, _b = time_budget(v, m, sig=class_sig(m, purpose), default_s=deadline_s)
+        budget, _b = time_budget(v, m, sig=class_sig(m, purpose), default_s=deadline_s, in_chars=len(prompt or ""))
         return call(v, m, prompt, deadline_s=budget or deadline_s, purpose=purpose, system=system,
                     schema=schema, max_tokens=max_tokens)
 
