@@ -226,5 +226,50 @@ _l1, _l2 = (lambda x: x + 1), (lambda x: x + 2)
 _l1.__module__ = _l2.__module__ = "same.module"
 check("two different lambdas in one module get different identities",
       _oc2.describe(_l1) != _oc2.describe(_l2), f"{_oc2.describe(_l1)} vs {_oc2.describe(_l2)}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════════════════
+# THE SPLITS. Sites where opus and gpt-5.5 DISAGREED, resolved by reading the real code — which is
+# what a split needs: a third judgement grounded in the source, not a tie-break between two opinions.
+# ══════════════════════════════════════════════════════════════════════════════════════════════════
+print("\n-- bool is a subclass of int, and the guard covered only half of it (output_contract) --")
+from spendguard.output_contract import _check_schema as _cs2                 # noqa: E402
+for _t in ("integer", "number"):
+    try:
+        _cs2(True, {"type": _t}, "$")
+        check(f"a boolean is REJECTED where {_t} is required", False, "True passed as a number")
+    except ValueError:
+        check(f"a boolean is REJECTED where {_t} is required", True)
+try:
+    _cs2(True, {"type": "boolean"}, "$")
+    check("...and a boolean is still accepted where boolean is required", True)
+except ValueError:
+    check("...and a boolean is still accepted where boolean is required", False)
+
+print("\n-- a UTC timestamp with no offset is UTC, not local (ledger._day_period) --")
+# fromisoformat returns a NAIVE datetime, and .astimezone() on a naive value assumes LOCAL time — so a
+# UTC-canonical stamp was shifted by the host's offset and the charge landed on the wrong DAY, and at a
+# month boundary in the wrong PERIOD.
+from spendguard.ledger import _day_period as _dp                             # noqa: E402
+check("a naive UTC stamp keeps its own day under a UTC period",
+      _dp("2026-08-09T23:30:00", "UTC")[0] == "2026-08-09",
+      str(_dp("2026-08-09T23:30:00", "UTC")))
+check("...and an explicit offset is respected",
+      _dp("2026-08-09T23:30:00+00:00", "UTC")[0] == "2026-08-09")
+
+print("\n-- every Bedrock model call leaves a trace, even the ones we cannot meter --")
+# Streaming ops carry their usage inside the response body, and reading it would consume what the caller
+# is waiting for. "Cannot measure" was implemented as "do nothing", so a streaming call left NO row at
+# all — ungoverned spend that the coverage number counts as covered.
+from spendguard import bedrock_adapter as _ba                                # noqa: E402
+check("streaming ops are recognised rather than ignored", bool(_ba._STREAM_OPS))
+check("...and are not confused with the metered ones", not (_ba._OPS & _ba._STREAM_OPS))
+
+print("\n-- a settings cache with no invalidation (config._cfg) --")
+from spendguard import config as _cfg3                                       # noqa: E402
+check("cfg_invalidate() exists for in-process writes", callable(_cfg3.cfg_invalidate))
+_cfg3._cfg()                                                                 # prime the cache
+check("...and the cache is keyed on the file's mtime, so an external write is seen",
+      hasattr(_cfg3._cfg, "_mtime"))
 print(f"\n{'[FAIL]' if failures else 'OK'} test_reviewed_defects_stay_fixed: {failures} failure(s)")
 sys.exit(1 if failures else 0)

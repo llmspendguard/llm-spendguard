@@ -40,13 +40,17 @@ def _intent_prefixes():
     out = []
     with callio._lock:
         combos = callio._db().execute(
-            "SELECT COALESCE(intent,'(none)'), model, COUNT(*) FROM call_io WHERE prompt!='' "
-            "GROUP BY intent, model HAVING COUNT(*) >= 3").fetchall()
-    for intent, model, n in combos:
+            # GROUPED BY PROVIDER TOO. call_io HAS a provider column and this ignored it, so two vendors
+            # serving the same model id had their prompts pooled into one prefix analysis — and a "shared
+            # prefix" computed across two different systems' prompts is not a cache candidate for either.
+            # Fourth file with this collision, after pricing, advise and callio.
+            "SELECT COALESCE(intent,'(none)'), COALESCE(provider,''), model, COUNT(*) FROM call_io "
+            "WHERE prompt!='' GROUP BY intent, provider, model HAVING COUNT(*) >= 3").fetchall()
+    for intent, provider, model, n in combos:
         with callio._lock:
             prompts = [r[0] for r in callio._db().execute(
-                "SELECT prompt FROM call_io WHERE COALESCE(intent,'(none)')=? AND model=? AND prompt!='' LIMIT 30",
-                (intent, model)).fetchall()]
+                "SELECT prompt FROM call_io WHERE COALESCE(intent,'(none)')=? AND COALESCE(provider,'')=? "
+                "AND model=? AND prompt!='' LIMIT 30", (intent, provider, model)).fetchall()]
         if len(prompts) < 3:
             continue
         pref = _count_tokens(_common_prefix(prompts), model)

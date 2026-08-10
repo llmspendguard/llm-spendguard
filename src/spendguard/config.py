@@ -188,9 +188,29 @@ def today_utc():
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
 
 
+def cfg_invalidate():
+    """Drop the config cache. Call after WRITING config.json in-process.
+
+    _cfg() cached on first read and never re-checked, so a `config set` followed by a read in the SAME
+    process returned the value from before the write — the CLI wrote the file, reported success, and then
+    acted on the old setting. A cache with no invalidation is a fact frozen at whatever time it was first
+    needed."""
+    _cfg._cache = None
+    _cfg._mtime = None
+
+
 def _cfg():
-    """~/.spendguard/config.json (cached). Operational settings; env vars override per-knob."""
+    """~/.spendguard/config.json (cached, and re-read when the file changes on disk)."""
     import json as _json
+    # THE MTIME IS PART OF THE CACHE KEY. Another process (or `config set` in this one) can rewrite the
+    # file at any time, and a stale read of a settings file is how a knob appears not to work.
+    try:
+        _m = CONFIG_JSON.stat().st_mtime if CONFIG_JSON.exists() else None
+    except OSError:
+        _m = None
+    if getattr(_cfg, "_mtime", None) != _m:
+        _cfg._cache = None
+        _cfg._mtime = _m
     if getattr(_cfg, "_cache", None) is None:
         c = {}
         try:

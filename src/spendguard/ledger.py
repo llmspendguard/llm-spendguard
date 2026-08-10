@@ -200,6 +200,13 @@ def _reporting_tz():
 def _day_period(ts_iso, tzname):
     try:
         dt = datetime.datetime.fromisoformat(ts_iso)
+        # A TIMESTAMP WITH NO OFFSET IS UTC HERE, AND PYTHON DOES NOT KNOW THAT. fromisoformat returns a
+        # NAIVE datetime for '2026-08-09T14:00:00', and .astimezone() on a naive value assumes LOCAL time —
+        # so a UTC-canonical stamp was shifted by the host's offset and the charge landed on the wrong DAY,
+        # and at a month boundary in the wrong PERIOD. Every row in this ledger is written UTC-canonical
+        # (see _now_utc), so the missing offset is a formatting detail, not an unknown.
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=datetime.timezone.utc)
         if tzname and tzname != "UTC":
             from zoneinfo import ZoneInfo
             dt = dt.astimezone(ZoneInfo(tzname))

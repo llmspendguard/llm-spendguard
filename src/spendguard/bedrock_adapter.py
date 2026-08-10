@@ -10,6 +10,15 @@ import functools, sys
 
 _OPS = {"Converse", "InvokeModel"}     # non-stream model invocations whose usage we can read without consuming the body
 
+# THE STREAMING OPERATIONS, WHICH SPEND MONEY AND CANNOT BE METERED HERE. Their usage arrives inside the
+# response stream, and reading it to count tokens would CONSUME the body the caller is waiting for — this
+# module is fail-open and never alters the real call, so it does not. But "cannot measure" was implemented
+# as "do nothing", and a Bedrock streaming call therefore left NO trace at all: not a charge, not a warning,
+# not a row. Ungoverned spend that the coverage number counts as fully covered, which is the one thing this
+# whole project exists to make impossible. They are now RECORDED AS UNPRICED — the call happened, the
+# amount is unknown, and `spendguard receipt` can name them.
+_STREAM_OPS = {"ConverseStream", "InvokeModelWithResponseStream"}
+
 
 def _toks(operation_name, response):
     """(in_tok, out_tok) from a Bedrock response. Converse carries `response['usage']`; InvokeModel returns the counts
@@ -29,8 +38,16 @@ def _wrap(orig):
             svc = self.meta.service_model.service_name
         except Exception:
             svc = ""
-        if svc != "bedrock-runtime" or operation_name not in _OPS:
+        if svc != "bedrock-runtime" or operation_name not in (_OPS | _STREAM_OPS):
             return orig(self, operation_name, api_params)          # fast passthrough for all other boto3 traffic
+        if operation_name in _STREAM_OPS:
+            resp = orig(self, operation_name, api_params)          # untouched: the body is the caller's
+            try:
+                from . import budget
+                budget.record_unpriced("bedrock", (api_params or {}).get("modelId") or "?", "realtime")
+            except Exception as e:
+                print(f"[spend_gate] WARN bedrock stream capture failed ({e}); call unaffected", file=sys.stderr)
+            return resp
         resp = orig(self, operation_name, api_params)              # the real AWS call — untouched, errors propagate
         try:
             from . import gate

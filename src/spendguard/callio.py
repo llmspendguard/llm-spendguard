@@ -326,7 +326,9 @@ def fetch_history(cap=DEFAULT_CAP, sample_n=None, limit_batches=None):
     blocked every real call. "Zero token cost" in this docstring was true and still produced a bill."""
     from . import budget
     with budget.reading_history("callio.fetch_history"):
-        sample_n = sample_n or cap
+        # `is None`: sample_n=0 asks for NO samples and used to become `cap`, i.e. the maximum. The caller
+        # most likely to pass 0 is one that has decided not to sample this batch at all.
+        sample_n = cap if sample_n is None else sample_n
         runs = _runs_with_intent()
         oc = None
         try:

@@ -136,6 +136,12 @@ def _as_obj(item):
 _JSON_TYPES = {"object": dict, "array": (list, tuple), "string": str, "number": (int, float),
                "integer": int, "boolean": bool, "null": type(None)}
 
+# bool IS A SUBCLASS OF int IN PYTHON, so isinstance(True, int) is True and a field declared `integer` or
+# `number` accepted True/False without complaint. A model answering `true` where a COUNT was required
+# passed the contract and became 1 downstream — a validator that lets the wrong type through is worse than
+# none, because the caller stops checking. JSON Schema treats them as distinct types and so does this.
+_BOOL_EXCLUDED = ("integer", "number")
+
 
 _EMPTY_VALUES = (0, 0.0, "", [], {}, None, False)
 
@@ -156,8 +162,11 @@ def _check_schema(obj, schema, path="$"):
         want = _JSON_TYPES.get(t)
         if want is None:
             raise ValueError(f"{path}: unknown type {t!r} in contract")
-        if t == "number" and isinstance(obj, bool):
-            raise ValueError(f"{path}: expected number, got boolean")
+        # BOTH numeric types, not just one. This guard existed for "number" and never for "integer", so
+        # the author had already met the bool-is-an-int gotcha and covered half of it — and `integer` is
+        # the half a COUNT is declared as.
+        if t in _BOOL_EXCLUDED and isinstance(obj, bool):
+            raise ValueError(f"{path}: expected {t}, got boolean")
         if not isinstance(obj, want):
             raise ValueError(f"{path}: expected {t}, got {type(obj).__name__}")
     for k in schema.get("required") or ():

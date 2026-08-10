@@ -85,6 +85,18 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S):
     try:
         fd, out_file = tempfile.mkstemp(prefix="spendguard-codex-", suffix=".txt")
         os.close(fd)
+        # `model` IS DELIBERATELY NOT FORWARDED (see the docstring: Codex model selection is plan-managed
+        # and forcing ids couples us to CLI churn). Deliberate, but it must not be SILENT — a caller that
+        # asked for a specific model and got the plan default would otherwise attribute this lane's output
+        # to a model that never ran it.
+        if model:
+            try:
+                from .gate import _warn_once
+                _warn_once(f"[codex lane] model={model!r} was requested but this lane does not select a "
+                           f"model — the ChatGPT plan's default served the prompt. Route via the API "
+                           f"executor if the specific model matters.")
+            except Exception:
+                pass
         cmd = [exe, "exec", full, "--json", "--output-last-message", out_file]
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
