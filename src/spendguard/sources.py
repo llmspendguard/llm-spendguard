@@ -93,7 +93,11 @@ class _LedgerSource:
         rec = {"sessions": len(st.get("sessions") or {}), "days": set(), "total_usd": 0.0,
                "projects": {}, "models": {}}
         for v in (st.get("ledger") or {}).values():
-            if v.get("_work") or (cutoff and (v.get("day") or "") < cutoff):
+            # AN UNDATED RECORD IS NOT AN OLD ONE. `("" < cutoff)` is True for every non-empty cutoff, so
+            # any entry with a missing or empty day was silently dropped from the window — spend excluded
+            # from a total for having no date, which is precisely the row most in need of being counted.
+            _day = v.get("day") or ""
+            if v.get("_work") or (cutoff and _day and _day < cutoff):
                 continue
             usd = float(v.get("cost") or 0)
             if usd <= 0:

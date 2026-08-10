@@ -288,7 +288,12 @@ def _run(a):
         print(f"\n*** ALERT: today total (LLM + compute) ${combined[1]:,.2f} exceeds ${a.alert_threshold:,.0f}. "
               f"Check `spendguard reconcile openai|anthropic --by-day` + `spendguard resources`. ***")
         rc = 2
-    if leaked is not None and leaked > max(1.0, (a.alert_threshold or 1e9) * 0.1):
+    # `is None`, not `or`. A threshold of 0 is a legitimate "alert me on ANY spend", and `or 1e9` turned
+    # it into the OPPOSITE — 1e9*0.1 collapsed to max(1.0, 0.0), so the leak alert fired on every leak over
+    # a dollar for a user who had asked for maximum sensitivity. The two readings of 0 point in exactly
+    # opposite directions, which is the worst case for a silent coercion.
+    _alert = a.alert_threshold if a.alert_threshold is not None else 1e9
+    if leaked is not None and leaked > max(1.0, _alert * 0.1):
         print(f"\n*** ALERT: ~${leaked:.2f} provider-billed batch is NOT in the local ledger (ungoverned). "
               f"Run `spendguard reconcile-ledger`; install the gate on any repo/venv that's missing it. ***")
         rc = max(rc, 2)

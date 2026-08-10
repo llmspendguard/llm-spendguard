@@ -96,7 +96,8 @@ def scan_intent_map(repo, content_scan=True, max_bytes=1_000_000):
                 try:
                     if os.path.getsize(p) > max_bytes:
                         continue
-                    txt = open(p, errors="ignore").read()
+                    with open(p, errors="ignore") as _fh:          # closed deterministically
+                        txt = _fh.read()
                 except Exception:
                     continue
                 top = os.path.relpath(dp, data_root).split(os.sep)[0]

@@ -139,7 +139,8 @@ DEFAULT_REFRESH_DAYS = 1   # pricing.refresh_days default: the LiteLLM dataset i
 def cache_age_days():
     """Age of the LiteLLM price cache in days, or None if absent/unreadable (= needs a fetch)."""
     try:
-        ts = datetime.datetime.fromisoformat(json.load(open(CACHE))["_fetched"])
+        with open(CACHE) as _fh:                      # closed deterministically
+            ts = datetime.datetime.fromisoformat(json.load(_fh)["_fetched"])
         return max(0.0, (datetime.datetime.now(datetime.timezone.utc) - ts).total_seconds() / 86400.0)
     except Exception:
         return None

@@ -153,7 +153,10 @@ def load_summaries():
     import json
     p = _summaries_path()
     try:
-        return json.load(open(p)) if p.exists() else {}
+        if not p.exists():
+            return {}
+        with open(p) as _fh:                          # closed deterministically
+            return json.load(_fh)
     except Exception:
         return {}
 

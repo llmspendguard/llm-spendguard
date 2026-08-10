@@ -283,5 +283,46 @@ check("...and a REWRITE of the file is seen without an explicit invalidate",
       _cfg3._cfg_get("probe", "k") == "second",
       f"got {_cfg3._cfg_get('probe', 'k')!r} — a cache with no invalidation freezes a setting at "
       f"whatever time it was first needed")
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════════════════
+# WAVE 3. 10 files, first clean 4-vendor panel, 22 confirmed.
+# ══════════════════════════════════════════════════════════════════════════════════════════════════
+print("\n-- a $0 alert threshold means MORE sensitive, not less (report) --")
+# `(a.alert_threshold or 1e9) * 0.1` collapsed a deliberate 0 into max(1.0, 0.0) — so the user asking for
+# maximum sensitivity got the leak alert on everything over a dollar. The two readings of 0 point in
+# exactly opposite directions, which is the worst case for a silent coercion.
+import inspect as _i4                                                        # noqa: E402
+from spendguard import report as _rep                                        # noqa: E402
+check("the threshold is read with `is not None`, not `or`",
+      "alert_threshold is not None" in _i4.getsource(_rep),
+      "`or 1e9` turns an explicit 0 into the least sensitive setting there is")
+
+print("\n-- an UNDATED record is not an OLD one (sources) --")
+# `("" < cutoff)` is True for every non-empty cutoff, so any entry with a missing day was dropped from the
+# window — spend excluded from a total for having no date.
+from spendguard import sources as _src                                       # noqa: E402
+check("the cutoff comparison requires a day to compare",
+      "_day and _day < cutoff" in _i4.getsource(_src))
+
+print("\n-- INSERT OR REPLACE cannot replace on a random primary key (semcache) --")
+# Every put() therefore INSERTED, the cache grew without bound, and get()'s "LIMIT 1 with no ORDER BY"
+# could keep serving the OLD output for a re-cached prompt forever.
+from spendguard import semcache as _sc                                       # noqa: E402
+check("put() deletes the natural key before inserting",
+      "DELETE FROM semcache WHERE model=? AND prompt_hash=?" in _i4.getsource(_sc.put))
+
+print("\n-- a confidence that is null or non-numeric is UNSTATED, not a crash (review) --")
+from spendguard import review as _rev                                        # noqa: E402
+for _v, _want in ((None, 0.5), ("high", 0.5), ("", 0.5), (0.9, 0.9), (2.0, 1.0), (-1, 0.0)):
+    check(f"_conf({_v!r}) -> {_want}", _rev._conf(_v) == _want, str(_rev._conf(_v)))
+
+print("\n-- SQL column names are whitelisted, not interpolated (learn) --")
+from spendguard import learn as _lrn                                         # noqa: E402
+try:
+    _lrn.update_insight("x", **{"confidence=1; DROP TABLE insights--": 1})
+    check("a non-column key is REFUSED", False, "it was accepted into the SET clause")
+except ValueError:
+    check("a non-column key is REFUSED", True)
 print(f"\n{'[FAIL]' if failures else 'OK'} test_reviewed_defects_stay_fixed: {failures} failure(s)")
 sys.exit(1 if failures else 0)

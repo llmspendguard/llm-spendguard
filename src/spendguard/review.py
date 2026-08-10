@@ -52,6 +52,20 @@ def _conversation_for(intent):
     return [r[0] for r in rows]
 
 
+def _conf(v, default=0.5):
+    """A confidence returned as null, "high" or "" is UNSTATED, not a crash.
+
+    float(None) raises TypeError and float("high") raises ValueError, and `.get(k, 0.5)` does not help:
+    its default fires only when the KEY IS ABSENT, so an explicit null still reaches float(). One badly
+    typed field aborted the whole insight pass, discarding every lesson after it in a batch already paid
+    for."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return default
+    return min(1.0, max(0.0, f))
+
+
 def _bundles(top=10):
     """Top (intent, model) combos by cost, each with cost + quality + token-ratio + a sample + chat notes."""
     rates = callio.good_rates()
@@ -60,7 +74,10 @@ def _bundles(top=10):
         tr = _token_ratio(None if intent == "(none)" else intent, model)
         if not tr or not (tr["prompt"] or "").strip():   # need the prompt to assess approach (skips empty/anthropic)
             continue
-        gr = rates.get((intent, model)) or {}
+        # THE SAME TRANSLATION AS THE LINE ABOVE. _token_ratio is passed `None if intent == "(none)"`,
+        # and this looked the rate up under the raw DISPLAY label — so every combo whose intent is unset
+        # silently found no quality data and showed as unjudged. Two lines apart, one translated.
+        gr = rates.get((None if intent == "(none)" else intent, model)) or {}
         out.append(dict(intent=intent, model=model, jobs=jobs, cost=cost or 0,
                         good=gr.get("good_rate"), judged=gr.get("judged", 0), sampled=gr.get("sampled", 0),
                         tr=tr, conv=_conversation_for(None if intent == "(none)" else intent)))
@@ -133,7 +150,7 @@ def _persist(text):
                                       "mechanism", "quality_basis")}
         iid = learn.add_insight(it.get("intent"), str(it["lesson"])[:500],
                                 evidence=str(it.get("evidence", ""))[:500], source="review",
-                                confidence=float(it.get("confidence", 0.5)), ctx=ctx, status="candidate")
+                                confidence=_conf(it.get("confidence")), ctx=ctx, status="candidate")
         learn.add_node("insight", str(it["lesson"])[:80],
                        attrs={"source": "review", "task_class": it.get("task_class")}, id=iid)
         if it.get("intent"):
@@ -178,7 +195,11 @@ def auto_fresh(now=None):
         last = float(state.get("last_fresh", 0))
         if now - last < interval:
             return {"skipped": f"not due (every {mode})", "last_fresh": last}
-        review(run=True, top=3)                      # caged (caps.meta), estimate-first inside
+        _r = review(run=True, top=3)                 # caged (caps.meta), estimate-first inside
+        # THE OUTCOME OF A PAID RUN IS READ. This discarded the return value, so a failed review reported
+        # nothing and the caller carried on as if it had worked — after the money was spent.
+        if isinstance(_r, dict) and _r.get("error"):
+            print(f"  review step FAILED: {str(_r['error'])[:120]}")
         state["last_fresh"] = now
         state_p.write_text(json.dumps(state))
         return {"ran": True, "mode": mode}

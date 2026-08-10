@@ -103,7 +103,12 @@ def put(prompt, model, output, store_embedding=False):
     import uuid
     emb = _pack(_embed(prompt) or []) if store_embedding else None
     with _lock:
-        _db().execute("INSERT OR REPLACE INTO semcache VALUES (?,?,?,?,?,?,?)",
+        # OR REPLACE ONLY REPLACES ON A CONFLICT, AND A RANDOM UUID NEVER CONFLICTS. Every put() therefore
+        # INSERTED — the cache grew without bound and get()'s "LIMIT 1 with no ORDER BY" returned an
+        # arbitrary one of the duplicates, so a re-cached prompt could keep serving the OLD output forever.
+        # The natural key is (model, prompt_hash); the row is deleted and re-inserted under it.
+        _db().execute("DELETE FROM semcache WHERE model=? AND prompt_hash=?", (model, _hash(prompt)))
+        _db().execute("INSERT INTO semcache VALUES (?,?,?,?,?,?,?)",
                       (uuid.uuid4().hex[:16], datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
                        model, _hash(prompt), prompt[:2000], output, emb))
         _db().commit()
@@ -177,13 +182,19 @@ def dedup_jsonl(input_path, out_path, model="*", map_path=None):
             fout.write(ln + "\n"); kept_n += 1
     if map_path:
         import json as _j
-        _j.dump({"kept": kept_ids, "groups": list(dup_map.values())}, open(map_path, "w"))
+        with open(map_path, "w") as _fh:               # closed and FLUSHED: a half-written dedup map is worse
+            _j.dump({"kept": kept_ids, "groups": list(dup_map.values())}, _fh)
     ratio = total / kept_n if kept_n else 1.0
     print(f"dedup — {total:,} requests → {kept_n:,} to submit "
           f"({within_dup:,} within-batch dup, {cache_hit:,} already-cached) = {ratio:.2f}x, "
           f"{100*(1-kept_n/total) if total else 0:.0f}% fewer calls")
-    if ratio < 1.05:
-        print("  (≈no duplication here — fresh unique prompts; the win comes on re-runs/retries/overlap.)")
+    # "WERE THERE ANY DUPLICATES" IS PROVABLE; "IS 1.04x SIGNIFICANT" IS NOT. This was gated on
+    # `ratio < 1.05`, so a run with 4% real duplication printed "≈no duplication here" DIRECTLY UNDER a
+    # line reading "1.04x, 4% fewer calls" — the message contradicting the number above it. A hand-picked
+    # cutoff was standing in for a judgement nobody needs to make: the counts are right there, and whether
+    # 4% is worth acting on is the reader's call, not a constant's.
+    if total == kept_n:
+        print("  (no duplication here — every prompt is unique; the win comes on re-runs/retries/overlap.)")
     return dict(total=total, kept=kept_n, within_dup=within_dup, cache_hit=cache_hit, ratio=ratio)
 
 
