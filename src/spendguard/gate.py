@@ -772,13 +772,48 @@ def _cached_in(result):
     return getattr(u, "cache_read_input_tokens", 0) or 0  # Anthropic
 
 
+UNKNOWN_PROVIDER = "unknown"
+
+
+def _provider_of(model):
+    """Which VENDOR is being billed for this model. Resolved from the registries, never inferred.
+
+    This line used to read `"anthropic" if str(model).startswith("claude") else "openai"` — a prefix rule
+    whose `else` branch can only ever name one vendor, on the realtime money path. MEASURED at the time of
+    the fix: 695 ledger rows and $30.26 were recorded against OpenAI for calls that went to Moonshot
+    (kimi-k3, $23.57) and z.ai (glm-5.2, $6.69), because both speak the OpenAI-compatible request shape.
+
+    That is not a cosmetic label. `saas reconcile` compares the local ledger to provider billing PER
+    PROVIDER, so the OpenAI line looked over-attributed by exactly the amount the Moonshot and z.ai lines
+    were missing, and the coverage/leak verdict computed from those numbers was wrong in both directions.
+
+    adapters.provider_for already answered this correctly for every one of those models and RAISES rather
+    than guess — the fourth thing today that existed and was not on the path that needed it. The price
+    table is the second source (it carries a vendor per model id from the synced catalogue). If neither
+    knows, the answer is UNKNOWN_PROVIDER: a row that names no vendor can be found and fixed, while one
+    that names the wrong vendor cannot even be seen."""
+    m = str(model or "")
+    if not m:
+        return UNKNOWN_PROVIDER
+    try:
+        from . import adapters
+        return adapters.provider_for(m)
+    except Exception:
+        pass
+    try:
+        from . import pricing as _p
+        return _p.PROVIDERS.get(m) or _p.PROVIDERS.get(_p.normalize(m)) or UNKNOWN_PROVIDER
+    except Exception:
+        return UNKNOWN_PROVIDER
+
+
 def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, finish=None, cost=None,
                provider=None, basis=None):
     """Record ONE realtime call's usage → cost · cross-process ledger · max_tokens truncation telemetry · call log.
     Shared by _rt_account (non-stream), the streaming proxy (ACTUAL usage as the stream is consumed), and the
     provider-breadth adapters (LiteLLM / Bedrock / Vertex). `cost` lets a caller supply an authoritative price (e.g.
     LiteLLM's own computed cost) instead of re-pricing; `provider` overrides the inferred ledger label."""
-    prov = provider or ("anthropic" if str(model).startswith("claude") else "openai")   # o3/embeddings are OpenAI
+    prov = provider or _provider_of(model)
     if cost is None:
         # normalize to OpenAI token semantics (input INCLUDES cached) before pricing: Anthropic's input_tokens
         # EXCLUDES cache_read, so add it back or _cost double-subtracts and under-bills ~2x.

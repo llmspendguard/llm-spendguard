@@ -31,6 +31,14 @@ def _db():
                     c.execute("ALTER TABLE charges ADD COLUMN key_fp TEXT DEFAULT ''")
                 if "basis" not in cols:                        # WHAT KIND of number this is (see BASES)
                     c.execute("ALTER TABLE charges ADD COLUMN basis TEXT DEFAULT ''")
+                # WHO DID WHAT. A ledger that cannot say what a dollar BOUGHT and WHAT RAN IT is a total,
+                # not an account. Until these existed the money table held provider/model/cost/project and
+                # the purpose lived only in `calls` — a separate table with no join key back to the charge —
+                # so "what was this $23 for?" was unanswerable from the authoritative record.
+                if "intent" not in cols:                       # WHAT the spend was for (calls.context)
+                    c.execute("ALTER TABLE charges ADD COLUMN intent TEXT DEFAULT ''")
+                if "actor" not in cols:                        # WHAT RAN IT (entrypoint:function:line)
+                    c.execute("ALTER TABLE charges ADD COLUMN actor TEXT DEFAULT ''")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_day ON charges(day)")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_charges_conv ON charges(conv_id)")  # chat↔charge joins (attribution)
                 c.execute("CREATE INDEX IF NOT EXISTS idx_charges_keyfp ON charges(key_fp)")  # per-key spend view
@@ -151,10 +159,18 @@ def is_reading_history():
     return bool(getattr(_reading, "on", False))
 
 
-def record(provider, model, kind, cost, project=None, conv_id=None, basis=None):
+def record(provider, model, kind, cost, project=None, conv_id=None, basis=None,
+           intent=None, actor=None):
     """Write one charge. `basis` says WHAT KIND of number it is (estimate · billed · assumed · reconstructed) —
     known for certain by the writer, unknowable by the reader, and the thing that makes a displayed figure
-    honest. Blank on legacy rows, which read as 'unlabelled' rather than being silently called billed."""
+    honest. Blank on legacy rows, which read as 'unlabelled' rather than being silently called billed.
+
+    `intent` and `actor` are the FORENSIC pair, captured from the live context when not passed:
+        intent   WHAT the money bought      'review:config.py', 'spendguard:cache-test'
+        actor    WHAT RAN IT                'repo_review_panel.py:fan_out:238'
+    Both are read here rather than required from callers, because the caller that forgets is exactly the
+    one whose spend later needs explaining. They are captured at the moment of the charge — reconstructing
+    them afterwards from timestamps is guesswork, and this file exists to stop guesswork about money."""
     if not cost:
         return
     if is_reading_history():
@@ -167,14 +183,76 @@ def record(provider, model, kind, cost, project=None, conv_id=None, basis=None):
         fp = config.key_fingerprint(provider)          # which key served this call (env-resolved proxy; ''=unknown)
     except Exception:
         fp = ""
+    if intent is None or actor is None:
+        try:
+            from . import calls as _c
+            intent = intent if intent is not None else (_c.current().get("intent") or "")
+            actor = actor if actor is not None else (_c.caller() or "")
+        except Exception:
+            intent, actor = intent or "", actor or ""
     now = datetime.datetime.now(datetime.timezone.utc)
     with _lock:
-        _db().execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project,conv_id,key_fp,basis) "
-                      "VALUES (?,?,?,?,?,?,?,?,?,?)",
+        _db().execute("INSERT INTO charges "
+                      "(ts,day,provider,model,kind,cost,project,conv_id,key_fp,basis,intent,actor) "
+                      "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                       (now.isoformat(timespec="seconds"), now.strftime("%Y-%m-%d"),
                        provider or "?", model or "?", kind, float(cost), proj or "", conv or "", fp,
-                       basis if basis in BASES else ""))
+                       basis if basis in BASES else "", (intent or "")[:120], (actor or "")[:120]))
         _db().commit()
+
+
+def reattribute_providers(apply=False, actor="reattribute_providers"):
+    """Find (and optionally correct) charges whose `provider` disagrees with the model registry.
+
+    WHY THIS IS A FUNCTION AND NOT A ONE-OFF SCRIPT. The gate inferred a charge's vendor with
+    `"anthropic" if model.startswith("claude") else "openai"`, so every OpenAI-COMPATIBLE vendor was
+    recorded as OpenAI: measured, 695 rows and $30.26 of Moonshot and z.ai spend sat on the OpenAI line.
+    `saas reconcile` compares the ledger to provider billing PER PROVIDER, so one line was over-attributed
+    by exactly what the others were missing, and the leak verdict drawn from them was wrong twice over.
+    The inference is fixed, but a ledger that cannot repair its own history is not an accounting record —
+    and the same class of drift will happen again the next time a vendor is added.
+
+    DRY BY DEFAULT. Returns what it WOULD change; `apply=True` writes. Every correction is journalled to
+    spend_audit with the old and new value, because a silent restatement is indistinguishable from the
+    error it corrects — and in a forensic tool the correction has to be as visible as the mistake."""
+    from . import gate
+    with _lock:
+        rows = _db().execute(
+            "SELECT rowid, provider, model, cost FROM charges WHERE model IS NOT NULL AND model != ''"
+        ).fetchall()
+    fixes = []
+    for rid, prov, model, cost in rows:
+        true = gate._provider_of(model)
+        # UNKNOWN IS NOT A CORRECTION. Overwriting a recorded vendor with "unknown" destroys information;
+        # only a POSITIVE identification that disagrees is a fix.
+        if true and true != gate.UNKNOWN_PROVIDER and prov and true != prov:
+            fixes.append({"rowid": rid, "model": model, "was": prov, "now": true, "cost": float(cost or 0)})
+    if apply and fixes:
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+        with _lock:
+            for f in fixes:
+                _db().execute("UPDATE charges SET provider=? WHERE rowid=?", (f["now"], f["rowid"]))
+                try:
+                    _db().execute(
+                        "INSERT INTO spend_audit (event_id, ts, actor, field, old_value, new_value, reason) "
+                        "VALUES (?,?,?,?,?,?,?)",
+                        (str(f["rowid"]), now, actor, "provider", f["was"], f["now"],
+                         f"model {f['model']} is served by {f['now']}, not {f['was']} "
+                         f"(gate inferred the vendor from the model name prefix)"))
+                except Exception:
+                    pass          # the audit table is created by SpendLedger; its absence must not block
+            _db().commit()
+    return {"n": len(fixes), "usd": round(sum(f["cost"] for f in fixes), 4), "applied": bool(apply),
+            "by_move": _count_moves(fixes), "fixes": fixes[:20]}
+
+
+def _count_moves(fixes):
+    out = {}
+    for f in fixes:
+        k = f"{f['was']}->{f['now']}"
+        out[k] = {"rows": out.get(k, {}).get("rows", 0) + 1,
+                  "usd": round(out.get(k, {}).get("usd", 0.0) + f["cost"], 4)}
+    return out
 
 
 def projects_for_conv(conv):

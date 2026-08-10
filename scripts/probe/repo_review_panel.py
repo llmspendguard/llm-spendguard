@@ -251,6 +251,17 @@ def main():
                     local.append(row)
                     rows.append(row)
                     fh.write(json.dumps(row) + "\n")
+            # PER-FILE COVERAGE, WRITTEN WITH THE FINDINGS. A vendor that could not review a file is not a
+            # vendor that found nothing in it, and until now only the console knew the difference: the
+            # findings file recorded issues but never who was ASKED, so downstream "2+ vendors agree"
+            # counted agreement out of an unknown denominator. On the largest files that denominator really
+            # does shrink — Moonshot refuses source payloads over roughly 17,000 chars ("considered high
+            # risk"), so a 53,000-char module is reviewed by three vendors while the gate assumes four.
+            fh.write(json.dumps({
+                "kind": "coverage", "file": t["path"], "chars": t.get("chars"),
+                "reviewers": sorted(r.vendor for r in fan["results"] if r.ok),
+                "unavailable": {r.vendor: r.kind for r in fan["results"] if not r.ok},
+            }) + "\n")
             fh.flush()
             done["n"] += 1
             led = ledger_spent_since(t0_iso)

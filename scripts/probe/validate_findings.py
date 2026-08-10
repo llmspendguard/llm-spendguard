@@ -43,6 +43,12 @@ VERDICT_SCHEMA = {
 
 def candidates(path, min_vendors=2, only_files=None):
     rows = [json.loads(x) for x in open(path) if x.strip()]
+    # AGREEMENT NEEDS A DENOMINATOR. "2 vendors agreed" means something different when 4 were asked than
+    # when 3 could answer — and on the largest files fewer can: Moonshot refuses source payloads over
+    # roughly 17,000 chars, so a big module gets three reviewers while this gate assumes four. Coverage
+    # rows carry who was actually able to review each file; a file with none simply has no denominator
+    # recorded (older runs), which is reported as unknown rather than assumed to be the full panel.
+    coverage = {r["file"]: r for r in rows if r.get("kind") == "coverage"}
     sites = collections.defaultdict(list)
     for r in rows:
         if not isinstance(r.get("line"), int):
@@ -55,7 +61,10 @@ def candidates(path, min_vendors=2, only_files=None):
         vendors = sorted({i["vendor"] for i in items})
         if len(vendors) < min_vendors:
             continue
+        cov = coverage.get(f) or {}
         out.append({"file": f, "line": line, "vendors": vendors,
+                    "reviewers": cov.get("reviewers"),            # None = no coverage recorded for this run
+                    "unavailable": cov.get("unavailable") or {},
                     "claims": [i["issue"] for i in items][:4],
                     "severity": max((i.get("severity") or "") for i in items)})
     return sorted(out, key=lambda c: -len(c["vendors"]))
@@ -143,7 +152,10 @@ def main():
         bucket.append(rec)
         fh.write(json.dumps(rec) + "\n"); fh.flush()
         shown = "/".join("yes" if s else ("no" if s is False else "?") for s in says)
-        print(f"  {pathlib.Path(c['file']).name+':'+str(c['line']):<34}{len(c['vendors']):>8}  {shown:<16}{mark}",
+        # "2/4" and "2/3" are different strengths of evidence and must not print identically.
+        denom = len(c["reviewers"]) if c.get("reviewers") else None
+        agree = f"{len(c['vendors'])}/{denom}" if denom else f"{len(c['vendors'])}/?"
+        print(f"  {pathlib.Path(c['file']).name+':'+str(c['line']):<34}{agree:>8}  {shown:<16}{mark}",
               flush=True)
     fh.close()
 
