@@ -234,6 +234,14 @@ class SpendLedger:
         try:
             yield self
             self._conn.commit()
+        except Exception:
+            # ROLL BACK WHAT THE FAILED LOAD WROTE. Per-row commits are deferred here, so an exception left
+            # the partial rows sitting in an OPEN transaction — uncommitted, but flushed by the next commit
+            # from anywhere in the process. A bulk load that raised half way through therefore landed
+            # silently, later, with nothing tying the rows to the load that failed. `finally` reset the
+            # flag and let that happen.
+            self._conn.rollback()
+            raise
         finally:
             self._defer = False
 

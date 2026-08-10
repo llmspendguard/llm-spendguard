@@ -18,7 +18,7 @@ whether code is broken is exactly the case a human should see.
 Line numbers are trustworthy here because source_compact preserves them — that was not true earlier today,
 and every finding from that run pointed at the wrong code while looking perfectly plausible.
 """
-import argparse, collections, json, os, pathlib, sys
+import argparse, collections, json, os, pathlib, re, sys
 
 import spendguard                                   # noqa: F401
 spendguard.require()
@@ -41,7 +41,81 @@ VERDICT_SCHEMA = {
                    "severity": {"type": "string"}}}
 
 
-def candidates(path, min_vendors=2, only_files=None):
+# How far apart two findings may sit and still be worth ASKING about. Not a decision — a recall filter on
+# a provable quantity (line distance), which only narrows what gets sent to the judge. The judge decides.
+NEAR_LINES = 40
+
+_SYS_SAME_DEFECT = (
+    "You group code-review findings. Two findings are THE SAME DEFECT only if they describe the same "
+    "underlying fault in the same code — not merely the same file, the same function, or the same general "
+    "topic. Two different bugs a few lines apart are NOT the same defect. When unsure, say they differ: "
+    "merging two distinct findings invents an agreement that nobody actually reached.")
+
+
+def merge_near_misses(sites, run=False, model=None):
+    """Group findings that describe ONE defect but were reported at slightly different lines.
+
+    WHY THIS EXISTS. Grouping was exact equality on (file, line), and vendors' line numbers are only
+    approximate: on the `text_tokens or ...` defect two vendors cited line 305 for code at 329, and on
+    saas.py two vendors both cited 155 for a claim about code that is not in that file at all. Exact
+    matching is therefore wrong in both directions and both are invisible:
+      MISSED    the same defect reported at 305 and 329 does not group, so each looks like a lone lead and
+                is never validated — the likeliest reason wave 2 turned 184 findings into 5 sites
+      INVENTED  two DIFFERENT defects that both land on 155 group into an agreement nobody reached, which
+                is precisely what saas.py:155 was
+
+    WHETHER TWO FINDINGS ARE THE SAME DEFECT IS A JUDGEMENT, so a model makes it. Line distance is used
+    only to decide what is worth ASKING about — a recall filter on a provable quantity, not the answer.
+    Nothing is merged without a model saying so, and `run=False` merges nothing at all."""
+    from spendguard import adapters, calls, config, ui
+    by_file = collections.defaultdict(list)
+    for k, items in sites.items():
+        by_file[k[0]].append((k[1], items))
+    pairs = []
+    for f, entries in by_file.items():
+        entries.sort()
+        for i, (ln_a, items_a) in enumerate(entries):
+            for ln_b, items_b in entries[i + 1:]:
+                if ln_b - ln_a > NEAR_LINES:
+                    break
+                if {x["vendor"] for x in items_a} & {x["vendor"] for x in items_b}:
+                    continue          # the same vendor twice is not cross-vendor agreement
+                pairs.append((f, ln_a, ln_b, items_a[0]["issue"], items_b[0]["issue"]))
+    if not pairs:
+        return sites, {"pairs": 0, "merged": 0}
+    m = model or config.advisor_model()
+    listing = "\n".join(
+        f"{i}. {pathlib.Path(f).name}\n   A (line {a}): {ia[:220]}\n   B (line {b}): {ib[:220]}"
+        for i, (f, a, b, ia, ib) in enumerate(pairs))
+    prompt = (listing + '\n\nFor each numbered pair, do A and B describe the SAME defect?\n'
+                        'Reply JSON only: {"pairs": [{"i": <index>, "same": true|false}]}')
+    if not run:
+        ui.estimate_only(action=f"judge {len(pairs)} near-miss finding pair(s) for sameness",
+                         cost=None)
+        return sites, {"pairs": len(pairs), "merged": 0, "judged": False}
+    with calls.context(intent="review:group-near-miss-findings"):
+        r = adapters.call(m, prompt, max_tokens=20 * len(pairs) + 400, system=_SYS_SAME_DEFECT)
+    same = set()
+    if not r.get("error"):
+        try:
+            blob = re.search(r"\{.*\}", r.get("text") or "", re.S)
+            for it in (json.loads(blob.group(0)).get("pairs") if blob else []) or []:
+                if it.get("same"):
+                    same.add(int(it["i"]))
+        except Exception:
+            same = set()
+    merged = 0
+    for i, (f, a, b, _ia, _ib) in enumerate(pairs):
+        if i not in same:
+            continue
+        ka, kb = (f, a), (f, b)
+        if ka in sites and kb in sites:
+            sites[ka].extend(sites.pop(kb))          # keep the EARLIER line as the anchor
+            merged += 1
+    return sites, {"pairs": len(pairs), "merged": merged, "judged": True}
+
+
+def candidates(path, min_vendors=2, only_files=None, group=False, group_model=None):
     rows = [json.loads(x) for x in open(path) if x.strip()]
     # AGREEMENT NEEDS A DENOMINATOR. "2 vendors agreed" means something different when 4 were asked than
     # when 3 could answer — and on the largest files fewer can: Moonshot refuses source payloads over
@@ -56,6 +130,10 @@ def candidates(path, min_vendors=2, only_files=None):
         if only_files and pathlib.Path(r["file"]).name not in only_files:
             continue
         sites[(r["file"], r["line"])].append(r)
+    if group:
+        sites, gstats = merge_near_misses(sites, run=True, model=group_model)
+        print(f"  near-miss grouping: {gstats['pairs']} pair(s) within {NEAR_LINES} lines judged, "
+              f"{gstats['merged']} merged as the same defect")
     out = []
     for (f, line), items in sites.items():
         vendors = sorted({i["vendor"] for i in items})
@@ -83,12 +161,16 @@ def main():
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--budget", type=float, default=8.0)
     ap.add_argument("--estimate", action="store_true")
+    ap.add_argument("--group", action="store_true",
+                    help="agentically merge findings that describe ONE defect but were reported at "
+                         "slightly different lines. Exact-line matching found 5 sites in wave 2; grouping "
+                         "found 35 — a 7x undercount, because vendors' line numbers are approximate.")
     ap.add_argument("--out", default="")
     a = ap.parse_args()
     os.environ["SPENDGUARD_ADVISOR_EXECUTOR"] = "api"
 
     src = a.findings or os.path.join(str(config.HOME), "repo_review.jsonl")
-    cands = candidates(src, a.min_vendors)
+    cands = candidates(src, a.min_vendors, group=a.group)
     if a.limit:
         cands = cands[:a.limit]
     if not cands:

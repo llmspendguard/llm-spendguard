@@ -144,6 +144,15 @@ def true_down(since=None, billed_rows=None):
                 billed_rows[prov_name] = fetch()
             except Exception:
                 billed_rows[prov_name] = None
+    # ONLY CLEAR WHAT WILL BE REBUILT. This ran unconditionally, so a provider whose billed fetch FAILED
+    # (billed_rows[p] is None — see the except above) had its existing corrections deleted and replaced
+    # with nothing: a fetch failure silently restated that provider's history as "no corrections needed".
+    # A provider we could not read is a provider whose corrections we must LEAVE ALONE.
+    _failed = [p for p, rows in billed_rows.items() if rows is None]
+    if _failed:
+        import sys as _sys
+        _sys.stderr.write(f"[ledger_sync] WARN billed fetch failed for {', '.join(_failed)} — no true-down "
+                          f"is written for them, so their rows stand at the gate ESTIMATE for this window.\n")
     budget.clear_true_down(since)                       # rebuild the window's corrections from current billed truth
     # JOIN on the NORMALIZED model: gate estimate rows record the id the caller submitted (often the dated snapshot,
     # e.g. claude-haiku-4-5-20251001) while the billed caches key the base name — an exact-string join misses those,

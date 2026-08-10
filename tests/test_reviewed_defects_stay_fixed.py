@@ -114,5 +114,38 @@ for _bad in ("2024-ab", "2024-99", "2024-00"):
 
 
 
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════════════════
+# WAVE 2, after agentic near-miss grouping. Exact-line matching found 5 candidate sites and 1 real
+# defect; grouping findings that describe ONE defect at slightly different lines found 33 and 10.
+# ══════════════════════════════════════════════════════════════════════════════════════════════════
+print("\n-- a variant with NO measurement is killed, not promoted (experiment) --")
+# _measure swallowed every failure, and the caller read `killed = scores and mean(scores) < THRESH`.
+# scores=[] is falsy, so a variant whose pilot calls ALL failed read as NOT killed — and was expanded to
+# the full sample and paid for. The one arm proven unable to answer got the most money.
+import inspect as _i                                                         # noqa: E402
+from spendguard import experiment as _x                                      # noqa: E402
+_src = _i.getsource(_x.run) if hasattr(_x, "run") else _i.getsource(_x)
+check("an empty score list is handled BEFORE the threshold comparison",
+      "if not scores:" in _src and "no successful pilot call" in _src,
+      "`scores and mean < THRESH` treats 'no measurement' as 'passed'")
+check("...and failures are counted rather than swallowed", "fails.append" in _i.getsource(_x))
+
+print("\n-- a failed bulk load is rolled back, not left for the next commit (ledger.bulk) --")
+from spendguard.ledger import SpendLedger as _SL                             # noqa: E402
+check("bulk() rolls back on exception", "rollback()" in _i.getsource(_SL.bulk),
+      "deferred commits meant a raised bulk load sat in an OPEN transaction and landed later, silently")
+
+print("\n-- and one the code was RIGHT about (clear_true_down) --")
+# Both validators confirmed that clearing a failed-fetch provider's corrections was a bug. It is not:
+# test_true_down.py predates the finding and encodes the intent — a provider we could not read is NEVER
+# trued down, so its rows fall back to the gate ESTIMATE, which is labelled as an estimate. Keeping the
+# old correction would leave a stale number wearing the stronger 'billed truth' label.
+from spendguard import budget as _b                                          # noqa: E402
+check("clear_true_down still clears unconditionally, and says why",
+      "providers" not in _i.signature(_b.clear_true_down).parameters
+      and "more honest" in (_b.clear_true_down.__doc__ or ""),
+      "2-of-2 validator agreement is evidence, not proof — the second false positive today")
 print(f"\n{'[FAIL]' if failures else 'OK'} test_reviewed_defects_stay_fixed: {failures} failure(s)")
 sys.exit(1 if failures else 0)

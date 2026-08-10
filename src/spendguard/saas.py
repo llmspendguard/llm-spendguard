@@ -162,8 +162,19 @@ def _persist_contributor(email):
     try:
         config.HOME.mkdir(parents=True, exist_ok=True)
         p.write_text(_j.dumps(cfg, indent=2))
-    except Exception:
-        pass
+        return True
+    except Exception as e:
+        # A FAILED WRITE IS REPORTED, NOT SWALLOWED. link() calls this AFTER a teammate has signed in and
+        # approved in the browser, then tells the user they are linked — while the verified email was never
+        # persisted. The next command says "not linked" again with nothing to explain it, and the identity
+        # this whole attribution model rests on is quietly missing. Returning the outcome lets link() say
+        # what actually happened; the exception is still not raised, because losing the approval to a
+        # traceback would be worse than losing the file.
+        import sys as _sys
+        _sys.stderr.write(f"[saas] WARN could NOT persist the verified contributor to {p} "
+                          f"({type(e).__name__}: {str(e)[:80]}) — this install will still read as unlinked. "
+                          f"Set saas.contributor by hand, or fix the permissions on that path.\n")
+        return False
 
 
 def link(open_browser=True, timeout=900):
@@ -197,9 +208,18 @@ def link(open_browser=True, timeout=900):
         st = r.get("status")
         if st == "approved":
             em = r.get("email")
-            _persist_contributor(em)
-            print(f"\n  ✓ linked as {em}\n    saved to {config.saas_path()} — this is now your contributor across all repos.")
-            return {"linked": em}
+            # "SAVED TO ..." IS ONLY TRUE IF IT SAVED. The teammate has just signed in and approved; telling
+            # them it is stored when the write failed sends them away believing the link is done, and every
+            # later command reads as unlinked with nothing to explain it.
+            if _persist_contributor(em):
+                print(f"\n  ✓ linked as {em}\n    saved to {config.saas_path()} — this is now your "
+                      f"contributor across all repos.")
+                return {"linked": em}
+            print(f"\n  ⚠ approved as {em}, but it could NOT be saved to {config.saas_path()}.\n"
+                  f"    The approval was real; the record of it was not. Set saas.contributor there by hand, "
+                  f"or fix that path's permissions and re-run `spendguard saas link`.")
+            return {"linked": em, "persisted": False,
+                    "error": f"approved but not persisted to {config.saas_path()}"}
         if st in ("expired", "denied"):
             return {"error": f"link {st} — re-run `spendguard saas link`"}
     return {"error": "timed out waiting for approval"}

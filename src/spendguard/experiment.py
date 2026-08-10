@@ -158,7 +158,7 @@ def experiment(intent, models=None, instructions=None, n=20, run=False, reconsid
     results = []
 
     def _measure(v, subset):
-        costs, scores, tiers, struct = [], [], [], []
+        costs, scores, tiers, struct, fails = [], [], [], [], []
         for prompt, ref, _m in subset:
             try:
                 mo = max(1500, int(_count_tokens(ref, v["model"]) * 2) + 800)
@@ -168,16 +168,32 @@ def experiment(intent, models=None, instructions=None, n=20, run=False, reconsid
                 costs.append(cost); scores.append(sc); tiers.append(tier)
                 if st is not None:
                     struct.append(st)
-            except Exception:
-                pass
-        return costs, scores, tiers, struct
+            except Exception as e:
+                # COUNTED, NOT SWALLOWED. Every failure used to vanish here, and the caller reads
+                # `killed = scores and mean(scores) < KILL_THRESH` — so a variant whose calls ALL failed
+                # produced scores=[], which is falsy, which reads as NOT killed. The one variant proven
+                # unable to answer was the one promoted from the pilot to the full sample, and paid for.
+                fails.append(f"{type(e).__name__}: {str(e)[:80]}")
+        return costs, scores, tiers, struct, fails
 
     with calls.context(intent=f"{META}:experiment"):
         for v in variants:
-            costs, scores, tiers, struct = _measure(v, samples[:pilot])
-            killed = scores and (sum(scores) / len(scores)) < KILL_THRESH
+            costs, scores, tiers, struct, fails = _measure(v, samples[:pilot])
+            # NO SCORES IS NOT A PASSING SCORE. `scores and mean < THRESH` evaluated to [] when every pilot
+            # call failed, which is falsy, which meant "not killed" — so the variant that could not answer
+            # at all was expanded to the full sample. A variant with no measurement is killed and SAID to
+            # be killed for that reason, which is a different verdict from losing on quality.
+            if not scores:
+                print(f"  {v['label'][:21]:<22}{'—':>10}{'—':>13}{'no result':>16}  "
+                      f"KILLED: {len(fails)}/{pilot} pilot call(s) failed"
+                      + (f" ({fails[0]})" if fails else ""))
+                results.append({"label": v["label"], "killed": True, "reason": "no successful pilot call",
+                                "failures": len(fails), "sample_failures": fails[:3]})
+                continue
+            killed = (sum(scores) / len(scores)) < KILL_THRESH
             if not killed:                                  # expand survivors to the full sample
-                c2, s2, t2, st2 = _measure(v, samples[pilot:])
+                c2, s2, t2, st2, f2 = _measure(v, samples[pilot:])
+                fails += f2
                 costs += c2; scores += s2; tiers += t2; struct += st2
             if not scores:
                 print(f"  {v['label'][:21]:<22}{'ERR':>10}")

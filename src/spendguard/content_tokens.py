@@ -326,7 +326,12 @@ def count_detail(content, provider=None, model=None, text_tokens=None):
     """(tokens, detail) where detail = {images, images_measured, images_fallback, pdf_pages, text_tokens}.
     The counts are what makes a wrong estimate diagnosable instead of mysterious — `spendguard doctor` and
     the pre-spend line print them."""
-    tt = text_tokens or (lambda s: max(1, len(s) // 4))
+    # `is not None`: this asks "did the caller SUPPLY a counter", and `or` answers "is the counter truthy",
+    # which is a different question about a different thing. A callable is usually truthy so the gap is
+    # narrow — a counter object defining __len__ or __bool__, or a test double — but the correct form costs
+    # nothing and the wrong one substitutes a 4-chars-per-token guess for the caller's real tokenizer while
+    # reporting the result as a measurement.
+    tt = text_tokens if text_tokens is not None else (lambda s: max(1, len(s) // 4))
     parts = []
     _walk(content, parts)
     d = {"images": 0, "images_measured": 0, "images_fallback": 0, "pdf_pages": 0, "text_tokens": 0}

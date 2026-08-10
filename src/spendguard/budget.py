@@ -609,7 +609,16 @@ def record_true_down(day, provider, model, delta, project):
 
 def clear_true_down(since=None):
     """Remove prior true-down rows in the window so the correction is rebuilt idempotently each reconcile
-    (billed actuals only grow as in-flight batches land, so each rebuild converges on the final billed $)."""
+    (billed actuals only grow as in-flight batches land, so each rebuild converges on the final billed $).
+
+    CLEARS EVERY PROVIDER ON PURPOSE, including one whose billed fetch just failed. A review finding said
+    this was a bug — clearing corrections for a provider we could not read — and test_true_down.py, which
+    predates it, says otherwise and explains why: a failed fetch means that provider is NEVER trued down,
+    so its rows fall back to the gate ESTIMATE, which is labelled `basis=estimate` and reads as one.
+    Keeping the previous correction would leave a figure LABELLED as billed truth while being derived from
+    billed data this run could not confirm — a stale number wearing a stronger label. The estimate is the
+    more honest of the two, so the clear stays unconditional and ledger_sync warns about the gap instead.
+    Second finding today that both validators confirmed and the code was right about."""
     with _lock:
         if since:
             _db().execute("DELETE FROM charges WHERE conv_id=? AND day >= ?", (_TRUE_DOWN_CONV, since))
