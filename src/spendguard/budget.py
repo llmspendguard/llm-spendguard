@@ -80,6 +80,18 @@ def _create_countable_view(c):
         f"AND (basis IS NULL OR basis != '{BASIS_RECONSTRUCTED}')")  # a restatement of history, already counted
 
 
+_LEDGER = None
+
+
+def _ledger():
+    """The SpendLedger over this same database — the one writer for the hash-chained audit log."""
+    global _LEDGER
+    if _LEDGER is None:
+        from .ledger import SpendLedger
+        _LEDGER = SpendLedger()
+    return _LEDGER
+
+
 def _project():
     """Project tag for a charge (the repo/work this spend belongs to) — cached per process. Order:
     $SPENDGUARD_PROJECT → saas config `project` (repo-local .spendguard.json) → git repo root basename → cwd."""
@@ -227,23 +239,32 @@ def reattribute_providers(apply=False, actor="reattribute_providers"):
         # only a POSITIVE identification that disagrees is a fix.
         if true and true != gate.UNKNOWN_PROVIDER and prov and true != prov:
             fixes.append({"rowid": rid, "model": model, "was": prov, "now": true, "cost": float(cost or 0)})
+    unjournalled = []
     if apply and fixes:
-        now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
         with _lock:
             for f in fixes:
                 _db().execute("UPDATE charges SET provider=? WHERE rowid=?", (f["now"], f["rowid"]))
-                try:
-                    _db().execute(
-                        "INSERT INTO spend_audit (event_id, ts, actor, field, old_value, new_value, reason) "
-                        "VALUES (?,?,?,?,?,?,?)",
-                        (str(f["rowid"]), now, actor, "provider", f["was"], f["now"],
-                         f"model {f['model']} is served by {f['now']}, not {f['was']} "
-                         f"(gate inferred the vendor from the model name prefix)"))
-                except Exception:
-                    pass          # the audit table is created by SpendLedger; its absence must not block
             _db().commit()
+        # JOURNALLED AFTER THE COMMIT, AND THROUGH THE CHAIN. Two separate points:
+        #   * the audit log has exactly ONE supported writer (SpendLedger.audit) — a raw INSERT here left
+        #     697 rows with no row_hash and, until _audit was made tolerant, broke every audit write after
+        #     them;
+        #   * SpendLedger holds its OWN connection to the same file, so writing through it while this
+        #     module's transaction is still open deadlocks on the write lock. The correction commits first.
+        for f in fixes:
+            try:
+                _ledger().audit(str(f["rowid"]), actor, "reattribute", "provider", f["was"], f["now"],
+                                f"model {f['model']} is served by {f['now']}, not {f['was']} "
+                                f"(gate inferred the vendor from the model name prefix)")
+            except Exception as e:
+                unjournalled.append({"rowid": f["rowid"], "error": f"{type(e).__name__}: {str(e)[:60]}"})
+        if unjournalled:
+            # A CORRECTION WITH NO RECORD OF ITSELF IS THE THING THIS FUNCTION EXISTS TO PREVENT.
+            import sys as _sys
+            _sys.stderr.write(f"[budget] WARN {len(unjournalled)} of {len(fixes)} re-attributions COMMITTED "
+                              f"WITHOUT AN AUDIT ROW — e.g. {unjournalled[0]}\n")
     return {"n": len(fixes), "usd": round(sum(f["cost"] for f in fixes), 4), "applied": bool(apply),
-            "by_move": _count_moves(fixes), "fixes": fixes[:20]}
+            "by_move": _count_moves(fixes), "fixes": fixes[:20], "unjournalled": unjournalled}
 
 
 def _count_moves(fixes):
@@ -406,16 +427,16 @@ def quarantine_charge(ts=None, reason="", row=None):
         # told. A missing audit row is indistinguishable from a mutation that never happened, which is the
         # exact failure this table exists to prevent: an accounting tool whose tamper record can go missing
         # in silence has no tamper record.
-        audit_err = None
-        try:
-            _db().execute("INSERT INTO spend_audit (event_id, ts, actor, field, old_value, new_value, reason) "
-                          "VALUES (?,?,?,?,?,?,?)",
-                          (str(row if row is not None else ts),
-                           datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
-                           "quarantine_charge", "conv_id", "", QUARANTINE_CONV, reason))
-        except Exception as e:
-            audit_err = e                      # audit shape varies by migration; never BLOCK the repair
         _db().commit()
+    # THROUGH THE CHAIN, AFTER THE COMMIT. The raw INSERT here left 99 unchained rows in the
+    # tamper-evidence log — the same defect as reattribute's, and the one it was copied from — and
+    # SpendLedger's own connection cannot write while this module's transaction is open.
+    audit_err = None
+    try:
+        _ledger().audit(str(row if row is not None else ts), "quarantine_charge", "quarantine",
+                        "conv_id", "", QUARANTINE_CONV, reason)
+    except Exception as e:
+        audit_err = e                          # audit shape varies by migration; never BLOCK the repair
     if audit_err is not None:
         # LOUD, not fatal. Blocking the repair because an older schema lacks the table would be a different
         # bug; letting the repair happen unrecorded and unmentioned is the one being fixed.

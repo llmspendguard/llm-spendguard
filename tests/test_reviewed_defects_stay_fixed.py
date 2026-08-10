@@ -112,5 +112,7 @@ for _bad in ("2024-ab", "2024-99", "2024-00"):
         _rc = close.main(["--month", _bad])
     check(f"--month {_bad} is refused with a usage message", _rc == 2 and "YYYY-MM" in _out.getvalue())
 
+
+
 print(f"\n{'[FAIL]' if failures else 'OK'} test_reviewed_defects_stay_fixed: {failures} failure(s)")
 sys.exit(1 if failures else 0)

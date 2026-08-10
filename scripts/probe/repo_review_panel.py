@@ -130,6 +130,11 @@ def main():
     ap.add_argument("--pattern", default="*.py")
     ap.add_argument("--limit", type=int, default=0, help="0 = every matching file")
     ap.add_argument("--only", default="", help="comma-separated filenames — review just these")
+    ap.add_argument("--fill", default="",
+                    help="findings file from a PARTIAL run: re-ask only the (file, vendor) pairs that had "
+                         "no reviewer, using its coverage rows. A vendor that could not answer is not a "
+                         "vendor that found nothing, so the gap is re-runnable rather than re-paying for "
+                         "the whole panel — measured on wave 2, 13 calls instead of 40.")
     ap.add_argument("--min-chars", type=int, default=1500, help="skip trivial files")
     ap.add_argument("--budget", type=float, default=25.0, help="HARD stop in $")
     ap.add_argument("--tolerance", type=float, default=0.50,
@@ -157,19 +162,56 @@ def main():
     if a.only:
         want = {x.strip() for x in a.only.split(",")}
         ts = [t for t in ts if t["name"] in want]
+    # WHICH VENDORS EACH FILE STILL NEEDS. Defaults to the whole panel; --fill narrows it per file to the
+    # ones that could not answer last time, which is exactly what the coverage rows were written to enable.
+    panel_for = {t["name"]: list(PANEL) for t in ts}
+    prior_cov = {}
+    if a.fill:
+        cov = prior_cov
+        for line in open(a.fill):
+            if not line.strip():
+                continue
+            r = json.loads(line)
+            if r.get("kind") == "coverage":
+                cov[pathlib.Path(r["file"]).name] = r
+        kept = []
+        for t in ts:
+            c = cov.get(t["name"])
+            if c is None:
+                kept.append(t)                     # never reviewed at all — the full panel
+                continue
+            missing = set((c.get("unavailable") or {}).keys())
+            need = [(v, m) for (v, m) in PANEL if v in missing]
+            if need:
+                panel_for[t["name"]] = need
+                kept.append(t)
+        skipped = len(ts) - len(kept)
+        ts = kept
+        n_calls = sum(len(panel_for[t["name"]]) for t in ts)
+        print(f"FILL MODE — {n_calls} gap call(s) across {len(ts)} file(s); "
+              f"{skipped} file(s) already had the full panel and are NOT re-paid for.")
+        for t in ts:
+            print(f"    {t['name']:<24} needs {','.join(v for v, _ in panel_for[t['name']])}")
     if not ts:
-        print(f"no files matching {a.pattern} under {a.root}")
+        print(f"no files matching {a.pattern} under {a.root}"
+              + (" (or no gaps to fill)" if a.fill else ""))
         return 1
     chars = sum(t["chars"] for t in ts)
     print(f"{len(ts)} files, {chars:,} chars (~{chars // 4:,} input tokens) from {a.root}")
 
     if a.estimate:
         from spendguard import expected_output
-        print(f"\nZERO-SPEND ESTIMATE — {len(ts)} files x {len(PANEL)} vendors = {len(ts) * len(PANEL)} calls")
+        # THE ESTIMATE COUNTS WHAT WILL ACTUALLY RUN. In fill mode most (file, vendor) pairs are skipped,
+        # and quoting the full panel would overstate the cost by 3x here — an estimate that does not match
+        # the run is the wrong-number problem this project exists to fix, committed in the estimator.
+        n_calls = sum(len(panel_for[t["name"]]) for t in ts)
+        print(f"\nZERO-SPEND ESTIMATE — {n_calls} call(s) across {len(ts)} file(s)"
+              + (" (gap fill)" if a.fill else f" x {len(PANEL)} vendors"))
         tot = 0.0
         for v, m in PANEL:
             pred, basis = expected_output.expect(m)
-            sub = sum(pricing.realtime_cost(m, t["chars"] // 4, pred or 800) or 0 for t in ts)
+            sub = sum(pricing.realtime_cost(m, t["chars"] // 4, pred or 800) or 0
+                      for t in ts if (v, m) in panel_for[t["name"]])
             tot += sub
             print(f"  {v:<10} {m:<20} ${sub:>8,.2f}   (output {pred:,} tok/file, basis {basis})")
         print(f"  {'TOTAL':<32} ${tot:>8,.2f}   (hard budget ${a.budget:,.2f})")
@@ -223,7 +265,7 @@ def main():
         nonlocal spent
         if stop.is_set():
             return None
-        fan = vc.fan_out(PANEL, prompt_for(t), deadline_s=300, purpose=f"review:{t['name']}",
+        fan = vc.fan_out(panel_for[t["name"]], prompt_for(t), deadline_s=300, purpose=f"review:{t['name']}",
                          system=brief(), schema=FINDING_SCHEMA)
         local = []
         with lock:
@@ -257,10 +299,19 @@ def main():
             # counted agreement out of an unknown denominator. On the largest files that denominator really
             # does shrink — Moonshot refuses source payloads over roughly 17,000 chars ("considered high
             # risk"), so a 53,000-char module is reviewed by three vendors while the gate assumes four.
+            # MERGED WITH WHAT WAS ALREADY KNOWN. In fill mode this run asks only the vendors that were
+            # missing, so a coverage row written from THIS fan-out alone would say "reviewers: [zai]" and
+            # silently drop the two that succeeded last time — turning a 4-vendor file back into a
+            # 1-vendor one in the record. The same absence-read-as-an-answer bug this row exists to expose,
+            # committed by the thing exposing it.
+            prior = prior_cov.get(t["name"]) or {}
+            reviewed = set(prior.get("reviewers") or []) | {r.vendor for r in fan["results"] if r.ok}
+            unavail = {k: v for k, v in (prior.get("unavailable") or {}).items() if k not in reviewed}
+            unavail.update({r.vendor: r.kind for r in fan["results"] if not r.ok})
             fh.write(json.dumps({
                 "kind": "coverage", "file": t["path"], "chars": t.get("chars"),
-                "reviewers": sorted(r.vendor for r in fan["results"] if r.ok),
-                "unavailable": {r.vendor: r.kind for r in fan["results"] if not r.ok},
+                "reviewers": sorted(reviewed),
+                "unavailable": {k: v for k, v in unavail.items() if k not in reviewed},
             }) + "\n")
             fh.flush()
             done["n"] += 1
@@ -270,7 +321,11 @@ def main():
             # The accounting check, every file: the previous run reported $1.98 while the ledger said $13.12.
             bad_acct = led >= 0 and spent > 0.05 and drift > max(ap_tol, spent * 0.25)
             got = ",".join(f"{r.vendor[:4]}={'ok' if r.ok else r.kind[:4]}" for r in fan["results"])
-            print(f"  [{done['n']:>3}/{len(ts)}] {t['name'][:28]:<30}{fan['n_ok']}/4  {got}  "
+            # THE DENOMINATOR IS WHAT WAS ASKED, NOT THE PANEL SIZE. In fill mode one vendor is asked and
+            # "1/4" reads as three failures — a wrong denominator making a clean run look broken, which is
+            # the same defect the coverage rows were added to fix, printed one line above them.
+            print(f"  [{done['n']:>3}/{len(ts)}] {t['name'][:28]:<30}"
+                  f"{fan['n_ok']}/{len(panel_for[t['name']])}  {got}  "
                   f"${spent:,.2f} (ledger ${led:,.2f})"
                   + ("  <-- LEDGER DISAGREES" if bad_acct else "")
                   + ("  <-- OVER BUDGET" if over else ""), flush=True)

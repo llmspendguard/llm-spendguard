@@ -272,7 +272,11 @@ class SpendLedger:
                "field": field, "old_value": None if old is None else str(old),
                "new_value": None if new is None else str(new), "reason": reason or ""}
         prev = self._conn.execute("SELECT row_hash FROM spend_audit ORDER BY id DESC LIMIT 1").fetchone()
-        prev_hash = prev[0] if prev else ""
+        # A PRIOR ROW WITH NO HASH IS A ROW SOMETHING WROTE AROUND THIS METHOD. Chaining onto None raised
+        # TypeError and took the whole write down — so one out-of-band INSERT anywhere in the history
+        # disabled auditing for every write after it. The chain restarts from "" instead; the break stays
+        # visible to verify_audit_chain, which is where it belongs. Refusing to log is not integrity.
+        prev_hash = (prev[0] if prev and prev[0] else "") or ""
         body = json.dumps({k: rec[k] for k in _AUDIT_FIELDS}, sort_keys=True, default=str)
         rec["prev_hash"] = prev_hash
         rec["row_hash"] = hashlib.sha256((body + prev_hash).encode()).hexdigest()
@@ -395,7 +399,8 @@ class SpendLedger:
         return len(rows)
 
     # ── corrections after lock: reverse / adjust (new rows; never touch the locked one) ──
-    def _clone_for_correction(self, eid, kind_field, actor, reason, negate=False, overrides=None):
+    def _clone_for_correction(self, eid, kind_field, actor, reason, negate=False, overrides=None,
+                              delta=False):
         row = self._conn.execute("SELECT * FROM spend_events WHERE id=?", (eid,)).fetchone()
         if not row:
             raise ValueError(f"no spend event {eid!r}")
@@ -412,6 +417,23 @@ class SpendLedger:
         if negate:
             for c in MICRO_COLS:
                 ev[c] = -int(row[c] or 0)
+        elif delta:
+            # A CORRECTION POSTS THE DIFFERENCE, BECAUSE THE ORIGINAL ROW STAYS.
+            #
+            # This branch used to clone the original's amounts and let `overrides` replace some of them, so
+            # the ledger ended up holding BOTH rows in full. MEASURED: an event of realtime=1,000,000 /
+            # batch=250,000, adjusted to realtime=400,000, summed to realtime 1,400,000 and batch 500,000 —
+            # the correction INFLATED the figure it was called to reduce, and doubled a column nobody
+            # touched. reverse() had this right all along (it negates every column, so original + reversal
+            # is exactly zero); adjust() was the same idea with the arithmetic left out.
+            #
+            # Every micro column gets a delta: the ones named in `changes` move to (new - old), and the ones
+            # not named move by ZERO. A column omitted from a correction means "unchanged", and the only
+            # posting that leaves a running total unchanged is 0 — not a second copy of it.
+            for c in MICRO_COLS:
+                want = (overrides or {}).get(c)
+                ev[c] = (int(want) - int(row[c] or 0)) if want is not None else 0
+            overrides = {k: v for k, v in (overrides or {}).items() if k not in MICRO_COLS}
         ev[kind_field] = eid
         ev["source"] = (row["source"] or "") + (":" + kind_field.split("_")[0])   # distinct id from the original
         ev.update(overrides or {})
@@ -420,13 +442,49 @@ class SpendLedger:
         self._conn.commit()
         return new_id
 
+    def audit(self, event_id, actor, pass_, field, old, new, reason):
+        """Append one row to the hash-chained audit log — the ONLY supported way in from outside.
+
+        It exists because two modules had already gone around it: budget.quarantine_charge and
+        budget.reattribute_providers both INSERTed straight into spend_audit, leaving 796 rows with no
+        hash and, until the fix above, breaking every audit write that came after them. A private method
+        with no public equivalent is an invitation to write the INSERT by hand."""
+        self._audit(event_id, actor, pass_, field, old, new, reason)
+        self._conn.commit()
+
     def reverse(self, eid, actor="?", reason=""):
-        """Post a reversing entry (negates the original) into the open period. The original stays untouched."""
+        """Post a reversing entry (negates the original) into the open period. The original stays untouched.
+
+        REFUSES AN EVENT THAT HAS ALREADY BEEN ADJUSTED. A reversal negates the ORIGINAL amounts, so on an
+        event carrying corrections it cancels the original and leaves the deltas behind: measured, an event
+        of 1,000,000 adjusted down to 400,000 and then reversed summed to MINUS 600,000 — a negative figure
+        for money that never existed, in the table the statement is built from.
+
+        There is no single obviously-right answer (reverse the net? reverse and orphan the corrections?), so
+        this refuses and says which entries are in the way rather than picking one and being quietly wrong
+        about somebody's books. Reverse the adjustments first, or reverse the net explicitly."""
+        adjs = [r[0] for r in self._conn.execute(
+            "SELECT id FROM spend_events WHERE adjusts_id=?", (eid,)).fetchall()]
+        if adjs:
+            raise ValueError(
+                f"event {eid!r} has {len(adjs)} adjustment(s) posted against it ({', '.join(map(str, adjs[:5]))}"
+                f"{'...' if len(adjs) > 5 else ''}). Reversing it would negate the ORIGINAL amounts and leave "
+                f"those corrections standing, producing a total for money that was never spent. Reverse the "
+                f"adjustments first, or post an explicit reversal of the net.")
         return self._clone_for_correction(eid, "reverses_id", actor, reason, negate=True)
 
     def adjust(self, eid, changes, actor="?", reason=""):
-        """Post a corrected entry (the original + `changes`) into the open period, linked via adjusts_id."""
-        return self._clone_for_correction(eid, "adjusts_id", actor, reason, negate=False, overrides=changes)
+        """Post a DELTA so the original and this entry SUM to the corrected figure. Linked via adjusts_id.
+
+        `changes` states the values the event SHOULD have had; the entry posted here is the difference, so
+        that `SUM(column)` across the pair equals what you asked for. The original is never touched — that
+        is the whole point of a locked period — which is exactly why the correction must be a difference
+        and not a second full copy.
+
+        Non-amount fields in `changes` (project, org, tags) are attributes rather than quantities and are
+        carried across as given; only the micro columns are differenced."""
+        return self._clone_for_correction(eid, "adjusts_id", actor, reason, negate=False,
+                                          overrides=changes, delta=True)
 
     # ── R: read ──
     def get(self, eid):
@@ -513,12 +571,31 @@ class SpendLedger:
         return to_usd(int(r[0] or 0))
 
     # ── integrity: the AUDIT LOG is hash-chained (not the live row) ──
-    def verify_audit_chain(self):
-        """Recompute the spend_audit hash chain; return (ok, first_bad_id|None). Proves the change log wasn't altered."""
-        prev = ""
+    def verify_audit_chain(self, detail=False):
+        """Recompute the spend_audit hash chain. (ok, first_bad_id|None), or the full report when detail=True.
+
+        TWO DIFFERENT FAILURES, AND THEY MUST NOT READ THE SAME.
+          unchained  a row with NO row_hash — something INSERTed straight into the table instead of going
+                     through _audit. That is a bug in our own writer. Measured: 796 such rows, 697 written
+                     by budget.reattribute_providers and 99 by quarantine_charge, both of which raw-INSERTed
+                     an audit row while adding a forensic trail.
+          tampered   a row whose hash is PRESENT and WRONG — the body was changed after it was written.
+                     That is the event this table exists to catch.
+
+        Reporting a bypassed writer as tampering cries wolf; reporting tampering as a bypassed writer is far
+        worse. The hashes of unchained rows are NOT recomputed to make the chain look whole again: a
+        tamper-evidence record that repairs itself is not evidence of anything."""
+        prev, unchained, tampered = "", [], []
         for r in self._conn.execute("SELECT * FROM spend_audit ORDER BY id"):
+            if not r["row_hash"]:
+                unchained.append(r["id"])
+                prev = ""                     # the next row legitimately restarts from empty
+                continue
             body = json.dumps({k: r[k] for k in _AUDIT_FIELDS}, sort_keys=True, default=str)
             if hashlib.sha256((body + prev).encode()).hexdigest() != r["row_hash"]:
-                return False, r["id"]
+                tampered.append(r["id"])
             prev = r["row_hash"]
-        return True, None
+        if detail:
+            return {"ok": not tampered, "tampered": tampered, "unchained": unchained,
+                    "n_tampered": len(tampered), "n_unchained": len(unchained)}
+        return (not tampered), (tampered[0] if tampered else None)
