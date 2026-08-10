@@ -119,7 +119,17 @@ def resolve_cli(name, env_var=None):
         for p in _glob.glob(str(Path(d).expanduser() / name)):
             if os.access(p, os.X_OK):
                 hits.append(Path(p))
-    return str(max(hits, key=lambda c: c.stat().st_mtime)) if hits else None
+    # THE FILE CAN VANISH BETWEEN THE GLOB AND THE stat(). These directories include version-manager
+    # trees (nvm and friends) that rewrite themselves as a version is installed or removed, so a hit that
+    # existed a microsecond ago may be gone — and an unguarded stat() raised FileNotFoundError out of a
+    # function whose whole job is "find the CLI, or return None". A disappeared candidate sorts LAST
+    # rather than killing the search: it is one fewer option, not an error.
+    def _mtime(c):
+        try:
+            return c.stat().st_mtime
+        except OSError:
+            return -1.0
+    return str(max(hits, key=_mtime)) if hits else None
 
 
 # Provider → key env var, for the ledger's key fingerprint (named mapping, no hardcoded keys). Local-only.

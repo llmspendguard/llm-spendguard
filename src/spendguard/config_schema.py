@@ -122,7 +122,7 @@ SETTINGS = [
               "environment variable always wins. Pair with provider-side scoping (OpenAI project keys / Anthropic "
               "workspace keys) to get per-repo billing truth from the provider itself."),
     dict(section="calibrate", key="pair_horizon_hours", store="(env only)", env="SPENDGUARD_PAIR_HORIZON_H",
-         default="24", kind="number", secret=False,
+         default="24", kind="int", secret=False,        # "number" was a one-off; every other numeric is int/float
          desc="Learned-estimator pairing window: a logged job prediction (`calibrate.record_estimate`) collects "
               "its captured actuals for this many hours (chain==job_id matches pair regardless). After it closes "
               "with no actuals the prediction is marked expired — visible UNKNOWN, never $0."),
@@ -169,7 +169,8 @@ SETTINGS = [
          kind="bool", secret=False,
          desc="Also store prompt/output SNIPPETS — enables implicit 'used' detection + optimize. Privacy-sensitive."),
     dict(section="calls", key="snippet_len", store="config.json:calls.snippet_len", env=None, default=200,
-         kind="float", secret=False, desc="Max characters of prompt/output snippet to store."),
+         kind="int", secret=False,                     # a CHARACTER COUNT; float invited a fractional cap
+         desc="Max characters of prompt/output snippet to store."),
 
     # ── de-identification (client-side redaction of the text that leaves on the opt-in sync paths) ──
     dict(section="deid", key="engine", store="config.json:deid.engine", env="SPENDGUARD_DEID_ENGINE",

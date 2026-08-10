@@ -147,5 +147,28 @@ check("clear_true_down still clears unconditionally, and says why",
       "providers" not in _i.signature(_b.clear_true_down).parameters
       and "more honest" in (_b.clear_true_down.__doc__ or ""),
       "2-of-2 validator agreement is evidence, not proof — the second false positive today")
+
+
+print("\n-- wave 2, the rest (7 confirmed after grouping) --")
+from spendguard import config as _cfg, config_schema as _cs, setup as _st                # noqa: E402
+
+# OWNERSHIP OF AN INTERPRETER HOOK IS A MARKER WE WROTE, not the word "spendguard" appearing anywhere.
+# `"spendguard" in contents` is satisfied by a user's own sitecustomize that merely mentions us in a
+# comment — and --uninstall then DELETED it. That is not recoverable from here.
+check("the gate hook carries a distinctive ownership marker", _st._SENTINEL in _st._HOOK)
+check("...and a file that only MENTIONS spendguard is not treated as ours",
+      _st._SENTINEL not in "# my own hook; mentions spendguard in a comment\nimport os")
+
+# A glob hit can vanish before the stat() — these directories include version-manager trees that rewrite
+# themselves. An unguarded stat() raised out of a function whose job is "find it, or return None".
+check("a CLI candidate that disappears mid-search does not raise",
+      _cfg.resolve_cli("a-binary-that-does-not-exist-anywhere") is None)
+
+# Two declared kinds were not in this file's own vocabulary — "number" where everything else uses
+# int/float, and "float" on a character count.
+_kinds = {e.get("kind") for e in _cs.SETTINGS}
+check("no one-off 'number' kind survives", "number" not in _kinds, str(sorted(_kinds))[:120])
+check("snippet_len is an int, not a float", next(
+    e for e in _cs.SETTINGS if e["key"] == "snippet_len")["kind"] == "int")
 print(f"\n{'[FAIL]' if failures else 'OK'} test_reviewed_defects_stay_fixed: {failures} failure(s)")
 sys.exit(1 if failures else 0)

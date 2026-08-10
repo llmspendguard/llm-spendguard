@@ -757,11 +757,21 @@ def record_recovered(box):
     b["source"] = "recovered"
     b.setdefault("last_seen", b.get("end_date"))
     hist[str(b["id"])] = b
+    # THE DIRECTORY IS CREATED, AND A FAILED WRITE IS REPORTED. On a fresh install ~/.spendguard may not
+    # exist yet, so this raised FileNotFoundError into an `except: pass` — the recovered box was reported
+    # as tracked while nothing was written, and the next call rediscovered it as new. "recovered" was a
+    # claim about a file that did not exist.
+    persisted, why = True, None
     try:
+        config.HOME.mkdir(parents=True, exist_ok=True)
         _history_path().write_text(json.dumps(hist))
-    except Exception:
-        pass
-    return {"recovered": str(b["id"]), "total_tracked": len(hist)}
+    except Exception as e:
+        persisted, why = False, f"{type(e).__name__}: {str(e)[:80]}"
+        import sys as _sys
+        _sys.stderr.write(f"[resources] WARN could not persist recovered box {b['id']} to "
+                          f"{_history_path()} ({why}) — it will be rediscovered as new next run.\n")
+    return {"recovered": str(b["id"]), "total_tracked": len(hist),
+            "persisted": persisted, **({"error": why} if why else {})}
 
 
 class GPUSource:

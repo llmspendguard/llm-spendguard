@@ -6,7 +6,15 @@ import os, json
 from . import config, config_schema
 
 
+# THE MARK THAT SAYS WE WROTE THIS FILE. Ownership used to be tested with `"spendguard" in contents`,
+# which any file merely MENTIONING spendguard satisfies — including a user's own sitecustomize with a
+# comment about it. --uninstall then deleted a hook we never created, and the install path treated it as
+# ours to overwrite. A distinctive marker we emit ourselves is the only honest test of authorship, and
+# deleting someone else's interpreter hook is not something they can recover from here.
+_SENTINEL = "spendguard-gate-hook/v1"
+
 _HOOK = '''# Auto-installs the spendguard cost gate for every process in this venv (the `spendguard` package).
+# spendguard-gate-hook/v1 — this marker is how `install-hook --uninstall` knows the file is ours.
 # Kill switches checked HERE first, before the import, so disabling works even if the package is broken:
 #   GATE_DISABLE=1 (per-run)  OR  `spendguard off` (persistent flag).  Nuclear option: delete this file.
 import os, sys
@@ -205,13 +213,29 @@ def install_hook(venv=None, uninstall=False, install_pkg=True, user=False, pytho
             print(f"  ✗ no site-packages under {venv}"); return 1
         hook = os.path.join(sp, "sitecustomize.py")
 
+    # OWNERSHIP IS A SENTINEL WE WROTE, NOT THE WORD "spendguard" APPEARING SOMEWHERE. A user's own
+    # sitecustomize that merely mentions spendguard in a comment satisfied the substring test — so
+    # --uninstall DELETED a file we never created, and the install path treated it as ours to overwrite.
+    # Deleting someone else's interpreter hook is not recoverable from here. The handles are also closed
+    # deterministically rather than left to the GC.
+    def _reads(path):
+        try:
+            with open(path, errors="ignore") as fh:
+                return fh.read()
+        except Exception:
+            return ""
+
     if uninstall:
-        if os.path.exists(hook) and "spendguard" in open(hook).read():
+        if os.path.exists(hook) and _SENTINEL in _reads(hook):
             os.remove(hook); print(f"  ✓ removed gate hook: {hook}")
+        elif os.path.exists(hook):
+            print(f"  ✗ {hook} exists but carries no spendguard marker — NOT removing someone else's hook. "
+                  f"Delete it by hand if you are sure it is ours.")
+            return 1
         else:
             print(f"  (no spendguard hook at {hook})")
         return 0
-    if os.path.exists(hook) and "spendguard" not in open(hook).read():
+    if os.path.exists(hook) and _SENTINEL not in _reads(hook):
         print(f"  ✗ {hook} exists and isn't ours — not overwriting. Merge the spendguard.install() snippet manually.")
         return 1
 

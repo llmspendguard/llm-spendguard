@@ -120,8 +120,22 @@ def build_index(tdir=None, rebuild=False):
         ev = _events_in(p, run_ids)
         out[p] = {**sig, "events": ev}
         scanned += 1
+    # WRITE THEN REPLACE. open(_CACHE, "w") truncates before json.dump runs, so a serialisation error or an
+    # interrupt left a zero-length cache — and the next run reads it as "nothing scanned yet" and re-walks
+    # every transcript. The temp file is on the same directory so the replace is atomic, and the handle is
+    # closed explicitly instead of left to the GC.
     os.makedirs(os.path.dirname(_CACHE), exist_ok=True)
-    json.dump({"files": out, "tdir": tdir}, open(_CACHE, "w"))
+    _tmp = _CACHE + f".tmp.{os.getpid()}"
+    try:
+        with open(_tmp, "w") as _fh:
+            json.dump({"files": out, "tdir": tdir}, _fh)
+        os.replace(_tmp, _CACHE)
+    except Exception:
+        try:
+            os.unlink(_tmp)
+        except OSError:
+            pass
+        raise
     return out, scanned
 
 

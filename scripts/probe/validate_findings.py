@@ -45,6 +45,10 @@ VERDICT_SCHEMA = {
 # a provable quantity (line distance), which only narrows what gets sent to the judge. The judge decides.
 NEAR_LINES = 40
 
+# Pairs per judging call. Sized so the reply cannot approach an output ceiling: a truncated JSON body
+# parses to nothing, and "nothing merged" reads identically to "nothing was the same".
+BATCH_PAIRS = 120
+
 _SYS_SAME_DEFECT = (
     "You group code-review findings. Two findings are THE SAME DEFECT only if they describe the same "
     "underlying fault in the same code — not merely the same file, the same function, or the same general "
@@ -84,26 +88,38 @@ def merge_near_misses(sites, run=False, model=None):
     if not pairs:
         return sites, {"pairs": 0, "merged": 0}
     m = model or config.advisor_model()
-    listing = "\n".join(
-        f"{i}. {pathlib.Path(f).name}\n   A (line {a}): {ia[:220]}\n   B (line {b}): {ib[:220]}"
-        for i, (f, a, b, ia, ib) in enumerate(pairs))
-    prompt = (listing + '\n\nFor each numbered pair, do A and B describe the SAME defect?\n'
-                        'Reply JSON only: {"pairs": [{"i": <index>, "same": true|false}]}')
     if not run:
-        ui.estimate_only(action=f"judge {len(pairs)} near-miss finding pair(s) for sameness",
-                         cost=None)
+        ui.estimate_only(action=f"judge {len(pairs)} near-miss finding pair(s) for sameness", cost=None)
         return sites, {"pairs": len(pairs), "merged": 0, "judged": False}
-    with calls.context(intent="review:group-near-miss-findings"):
-        r = adapters.call(m, prompt, max_tokens=20 * len(pairs) + 400, system=_SYS_SAME_DEFECT)
-    same = set()
-    if not r.get("error"):
+    # BATCHED. Wave 1 produced 1,145 pairs — one call would be a ~132K-token prompt asking for ~23K tokens
+    # of output, which is over every ceiling here and would come back TRUNCATED. A truncated JSON body
+    # parses to nothing, and "nothing merged" is indistinguishable from "nothing was the same".
+    same, judged, failed = set(), 0, 0
+    for start in range(0, len(pairs), BATCH_PAIRS):
+        chunk = pairs[start:start + BATCH_PAIRS]
+        listing = "\n".join(
+            f"{start + j}. {pathlib.Path(f).name}\n   A (line {a}): {ia[:220]}\n   B (line {b}): {ib[:220]}"
+            for j, (f, a, b, ia, ib) in enumerate(chunk))
+        prompt = (listing + '\n\nFor each numbered pair, do A and B describe the SAME defect?\n'
+                            'Reply JSON only: {"pairs": [{"i": <index>, "same": true|false}]}')
+        with calls.context(intent="review:group-near-miss-findings"):
+            r = adapters.call(m, prompt, max_tokens=20 * len(chunk) + 400, system=_SYS_SAME_DEFECT)
+        if r.get("error"):
+            failed += len(chunk)
+            continue
         try:
             blob = re.search(r"\{.*\}", r.get("text") or "", re.S)
             for it in (json.loads(blob.group(0)).get("pairs") if blob else []) or []:
                 if it.get("same"):
                     same.add(int(it["i"]))
+            judged += len(chunk)
         except Exception:
-            same = set()
+            failed += len(chunk)
+    if failed:
+        # A BATCH THAT DID NOT ANSWER IS NOT A BATCH THAT SAID "ALL DIFFERENT". Its pairs stay ungrouped,
+        # which is the same outcome as the old exact-line matching — but it must be VISIBLE, or the run
+        # reports a smaller undercount than it actually has.
+        print(f"  near-miss grouping: {failed} pair(s) went UNJUDGED (the call failed) and stay ungrouped")
     merged = 0
     for i, (f, a, b, _ia, _ib) in enumerate(pairs):
         if i not in same:
