@@ -139,7 +139,8 @@ def _realized_hit_rate():
     import json
     tot = cached = 0
     if os.path.exists(RT_LOG):
-        for ln in open(RT_LOG, errors="ignore"):
+        with open(RT_LOG, errors="ignore") as _fh:      # closed deterministically
+         for ln in _fh:
             try:
                 e = json.loads(ln)
             except Exception:

@@ -64,35 +64,13 @@ def _system_and_users_from_intent(intent, n):
     return pref, users
 
 
-def cache_test(system, users, model=None, run=False):
-    from . import adapters
-    model = model or config.advisor_judge_model()
-    prov = adapters.provider_for(model)
-    sys_tok = _count_tokens(system, model)
-    if not system or sys_tok < 200:
-        print("cache-test — need a system block ≥200 tokens to be worth caching (give --script or --from-intent).")
-        return dict(ok=False)
-    # `is None`, not truthiness: an explicitly empty list is the caller saying "no user turns", and
-    # `or` overrode that with three invented ones — a test that silently measured something else.
-    users = ["Item A.", "Item B.", "Item C."] if users is None else users
-    n = len(users)
-    p = pricing.price(model)
-    base, read = p["in_"], p.get("cached_in", p["in_"])
+def _run_calls(calls_out, system, users, model, prov):
+    """Make the test calls, APPENDING each result as it lands.
 
-    print(f"cache-test — {model} ({prov}) · system block {sys_tok:,} tokens · {n} calls "
-          f"(1 cold + {n-1} warm), caged {META}:cache-test")
-    in_tok = sum(_count_tokens(system + u, model) for u in users)
-    est = pricing.realtime_cost(model, in_tok, 16 * n)
-    print(f"  ESTIMATE (zero paid calls): ~{in_tok:,} in tok -> ~${est:.4f}  (meta ${config.meta_cap():.0f}/day)")
-    if prov == "openai" and sys_tok < 1024:
-        print("  ⚠️ OpenAI auto-caches only prefixes ≥1024 tokens — this block is too short to cache there.")
-    if prov == "anthropic" and "haiku" in str(model) and sys_tok < 2200:
-        print("  ⚠️ Anthropic Haiku needs ≥2048 tokens to cache (Opus/Sonnet ≥1024); this block may be too short.")
-    if not run:
-        from . import ui; ui.estimate_only(action="run the live caching test", cost=est)
-        return dict(ok=True, est=est)
-
-    calls_out = []
+    Extracted so a failure part-way through leaves the caller holding what already completed. The loop was
+    inline and unguarded, so one exception discarded every call before it — calls that were made, billed,
+    and whose usage figures were the entire point of running this."""
+    from . import adapters                                             # noqa: F401  (import parity)
     with calls.context(intent=f"{META}:cache-test"):
         if prov == "anthropic":
             import anthropic
@@ -116,6 +94,56 @@ def cache_test(system, users, model=None, run=False):
                 calls_out.append(dict(in_=r.usage.prompt_tokens,
                                       write=0, read=(getattr(d, "cached_tokens", 0) or 0) if d else 0))
 
+
+def cache_test(system, users, model=None, run=False):
+    from . import adapters
+    model = model or config.advisor_judge_model()
+    prov = adapters.provider_for(model)
+    sys_tok = _count_tokens(system, model)
+    if not system or sys_tok < 200:
+        print("cache-test — need a system block ≥200 tokens to be worth caching (give --script or --from-intent).")
+        return dict(ok=False)
+    # `is None`, not truthiness: an explicitly empty list is the caller saying "no user turns", and
+    # `or` overrode that with three invented ones — a test that silently measured something else.
+    users = ["Item A.", "Item B.", "Item C."] if users is None else users
+    n = len(users)
+    # AN UNPRICED MODEL CANNOT BE COSTED, AND SAYING SO BEATS A KeyError. price() raises or returns a card
+    # without in_ for a model not in the table, and this indexed it directly — after the user had asked for
+    # a cache test on exactly the model they most likely need to price.
+    try:
+        p = pricing.price(model) or {}
+    except Exception as e:
+        print(f"cache-test — no price for {model!r} ({type(e).__name__}), so the saving cannot be computed. "
+              f"Add it: `spendguard price {model} --in <$/1M> --out <$/1M> --source '<url>'`")
+        return dict(ok=False, why="unpriced model")
+    if p.get("in_") is None:
+        print(f"cache-test — the price card for {model!r} has no input rate; the saving cannot be computed.")
+        return dict(ok=False, why="no input rate")
+    base = p["in_"]
+    read = p.get("cached_in") if p.get("cached_in") is not None else base
+
+    print(f"cache-test — {model} ({prov}) · system block {sys_tok:,} tokens · {n} calls "
+          f"(1 cold + {n-1} warm), caged {META}:cache-test")
+    in_tok = sum(_count_tokens(system + u, model) for u in users)
+    est = pricing.realtime_cost(model, in_tok, 16 * n)
+    print(f"  ESTIMATE (zero paid calls): ~{in_tok:,} in tok -> ~${est:.4f}  (meta ${config.meta_cap():.0f}/day)")
+    if prov == "openai" and sys_tok < 1024:
+        print("  ⚠️ OpenAI auto-caches only prefixes ≥1024 tokens — this block is too short to cache there.")
+    if prov == "anthropic" and "haiku" in str(model) and sys_tok < 2200:
+        print("  ⚠️ Anthropic Haiku needs ≥2048 tokens to cache (Opus/Sonnet ≥1024); this block may be too short.")
+    if not run:
+        from . import ui; ui.estimate_only(action="run the live caching test", cost=est)
+        return dict(ok=True, est=est)
+
+    # PARTIAL RESULTS ARE STILL RESULTS. An exception mid-loop propagated and threw away every call
+    # already made and BILLED — the one situation where reporting what you have matters most.
+    calls_out = []
+    try:
+        _run_calls(calls_out, system, users, model, prov)
+    except Exception as e:
+        print(f"\n  ⚠ the run stopped after {len(calls_out)} of {len(users)} call(s) "
+              f"({type(e).__name__}: {str(e)[:80]}). Those calls were BILLED; what follows is measured "
+              f"from them alone and is not a complete test.")
     print("\n  call    input   cache_write   cache_read")
     for i, co in enumerate(calls_out):
         tag = "cold" if i == 0 else "warm"
@@ -149,7 +177,11 @@ def cache_test(system, users, model=None, run=False):
                        if prov == "anthropic" else 0)
         breakeven = (write_extra / per_call_saving) if per_call_saving else 0
         print(f"  ✓ caching ENGAGED — {avg_read:,.0f} tokens read from cache on warm calls.")
-        print(f"  ✓ warm-call input saving: ~${per_call_saving:.5f}/call ({100*(base-read)/base:.0f}% off the cached block).")
+        # A $0.00 BASE RATE IS A REAL CARD (embeddings publish one), and dividing by it raised
+        # ZeroDivisionError after the test calls had already been paid for. No base means no percentage to
+        # state, not a crash.
+        _pct = f"{100 * (base - read) / base:.0f}% off the cached block" if base else "base rate is $0.00"
+        print(f"  ✓ warm-call input saving: ~${per_call_saving:.5f}/call ({_pct}).")
         if write_extra:
             print(f"  • one-time write overhead ~${write_extra:.5f}; break-even after ~{breakeven:.1f} reuse(s).")
         for vol in (100_000, 1_000_000):

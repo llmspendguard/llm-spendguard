@@ -36,7 +36,15 @@ def main(argv=None):
     models = [m.strip() for m in a.models.split(",") if m.strip()]
     print(f"comparing {len(models)} models on one prompt (real calls, metered by the gate)…\n")
 
-    rows = [(m, adapters.call(m, prompt, a.max_tokens, a.system)) for m in models]
+    # A RESULT THAT IS NOT A DICT IS NOT A RESULT. r["error"] is indexed twice below, so an adapter that
+    # returned None (or a shape without that key) raised TypeError/KeyError mid-table — after every model
+    # in the list had already been called and paid for. Normalising here keeps the comparison printable.
+    def _norm(m, r):
+        if isinstance(r, dict) and "error" in r:
+            return r
+        return {"provider": "", "error": f"adapter returned {type(r).__name__} with no result shape",
+                "cost": None, "latency": None, "in_tok": None, "out_tok": None, "text": None, "model": m}
+    rows = [(m, _norm(m, adapters.call(m, prompt, a.max_tokens, a.system))) for m in models]
 
     print(f"{'model':<24}{'provider':<11}{'lat(s)':>7}{'in':>8}{'out':>8}{'$cost':>11}  {'$/1k out':>9}")
     for m, r in rows:

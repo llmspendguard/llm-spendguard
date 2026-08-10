@@ -241,7 +241,8 @@ def _read_inputs(path):
     """Prompts from a chunk file: a batch .jsonl (OpenAI body.messages / Anthropic params.messages),
     {"prompt":...} per line, or a plain text file (one prompt per line). Returns [(custom_id, prompt)]."""
     items = []
-    for ln in open(path, errors="ignore"):
+    with open(path, errors="ignore") as _fh:            # closed deterministically
+     for ln in _fh:
         ln = ln.strip()
         if not ln:
             continue

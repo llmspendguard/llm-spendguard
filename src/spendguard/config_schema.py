@@ -131,7 +131,10 @@ SETTINGS = [
     dict(section="budget", key="backend", store="config.json:budget.backend", env=None, default="memory",
          kind="enum:memory,sqlite", secret=False,
          desc="memory = per-process real-time cap; sqlite = cross-process daily/monthly caps (a shared ledger)."),
-    dict(section="budget", key="db_path", store="config.json:budget.db_path", env=None, default="<home>/spend.db",
+    # NOT "<home>/spend.db": nothing in this registry or its loader expands "<home>", so the default
+    # shipped as a LITERAL path — a consumer taking it at face value would create a directory called
+    # "<home>" wherever it happened to be running.
+    dict(section="budget", key="db_path", store="config.json:budget.db_path", env=None, default="~/.spendguard/spend.db",
          kind="path", secret=False,
          desc="Location of the SQLite spend ledger (used when backend=sqlite)."),
 

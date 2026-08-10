@@ -66,7 +66,10 @@ def _row_cost(model, u):
     # Claude Code re-reads the whole context every turn, so cr dominates — lumping it into `in` would report a
     # misleadingly huge "input" (20B+) when it's mostly cheap cache reads. Returns (cost, in, out, cached_read).
     try:
-        return pricing.realtime_cost(model, inp + cc + cr, out, cr), inp + cc, out, cr
+        # realtime_cost returns None for a model with no price — not an exception, so a surrounding
+        # try/except never sees it and the None reaches the caller's arithmetic. Unknown contributes
+        # nothing to a total rather than taking the scan down; the unpriced model is surfaced elsewhere.
+        return (pricing.realtime_cost(model, inp + cc + cr, out, cr) or 0.0), inp + cc, out, cr
     except Exception:
         return 0.0, inp + cc, out, cr
 

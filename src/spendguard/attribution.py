@@ -123,6 +123,8 @@ def classify_items(items, taxo, run, batch_size=25):
                 conf = int(float(it.get("confidence")))
             except (TypeError, ValueError):
                 conf = 0
+            if not (isinstance(src, dict) and src.get("id")):
+                continue          # an item with no id cannot be attributed to anything
             out[src["id"]] = {"org": str(it.get("org") or "").strip(),
                               "team": str(it.get("team") or "").strip(),
                               "project": str(it.get("project") or "").strip(),

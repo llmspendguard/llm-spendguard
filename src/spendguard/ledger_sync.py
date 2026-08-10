@@ -104,7 +104,10 @@ def audit_completeness():
         import json
         import os
         from . import reconcile_anthropic as ra
-        cache = json.load(open(ra.CACHE_PATH)) if os.path.exists(ra.CACHE_PATH) else {}
+        cache = {}
+        if os.path.exists(ra.CACHE_PATH):
+            with open(ra.CACHE_PATH) as _fh:          # closed deterministically
+                cache = json.load(_fh)
         audit["anthropic"] = dict(batches=len(cache), counted_usd=round(sum(r.get("cost", 0) for r in cache.values()), 2))
     except Exception as e:
         audit["anthropic"] = {"error": str(e)[:140]}
@@ -346,7 +349,8 @@ def record_realtime_reconstruction(since=None):
     if not os.path.exists(cache):
         return dict(recorded=0.0, rows=0, note="no reconstruction cache (run the periodic find/clean first)")
     try:
-        data = json.load(open(cache))
+        with open(cache) as _fh:                      # closed deterministically
+            data = json.load(_fh)
     except Exception:
         return dict(recorded=0.0, rows=0, note="cache unreadable")
     day = since or data.get("since") or config.month_start_utc()

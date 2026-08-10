@@ -103,7 +103,11 @@ def load_intent_map(path):
                     d = json.load(_fh)
             except Exception:
                 continue
-            ids = d.get("ids") or ([d["id"]] if isinstance(d, dict) and d.get("id") else [])
+            # VALID JSON IS NOT NECESSARILY AN OBJECT. A file containing a list, a string or a number
+            # parses fine and then takes .get(), so one stray file aborted the whole intent-map load.
+            if not isinstance(d, dict):
+                continue
+            ids = d.get("ids") or ([d["id"]] if d.get("id") else [])
             for bid in ids:
                 m[bid] = intent
     elif os.path.exists(path):

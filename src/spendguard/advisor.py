@@ -68,8 +68,12 @@ def _evidence_table(intent=None, top=40):
     rows = sorted(rows, key=lambda r: -(r[3] or 0))[:top]
     lines = ["intent | model | jobs | $total | good% | $/good"]
     for it, model, jobs, cost, good, bad in rows:
-        labeled = (good or 0) + (bad or 0)
-        goodpct = f"{100*good/labeled:.0f}%" if labeled else "—"
+        # NORMALISE ONCE, THEN USE THE NORMALISED VALUES. `labeled` coerced None to 0 and the line below
+        # then divided the RAW `good`, so a row with good=None and bad>0 produced a non-zero denominator
+        # and a TypeError on the numerator — the one combination the coercion was added for.
+        good_n, bad_n = (good or 0), (bad or 0)
+        labeled = good_n + bad_n
+        goodpct = f"{100*good_n/labeled:.0f}%" if labeled else "—"
         # `good` guards the DIVISION (a zero denominator is impossible arithmetic, not a missing value),
         # but `cost` was used raw beside it: a None cost with good>0 raised mid-render and took the whole
         # advisor table down. Two different questions that shared one guard.
