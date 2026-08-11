@@ -73,8 +73,7 @@ def _db():
 
 
 def _uid():
-    import uuid
-    return uuid.uuid4().hex[:16]
+    return config.uid()          # one implementation; callio.py carried a byte-identical copy
 
 
 def _now():

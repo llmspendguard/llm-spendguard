@@ -28,10 +28,10 @@ def _state_path():
 
 
 def _load_state():
-    try:
-        return json.loads(_state_path().read_text())
-    except Exception:
-        return {"sessions": {}, "cls": {}}
+    """This adapter's persisted state, or its own empty shape. FOUR copies of this existed, each a bare
+    `except: return {...}` — which is also how a TRUNCATED state file (from the non-atomic writes that used
+    to sit opposite them) presented as "nothing saved yet" rather than as damage."""
+    return config.load_state("codex", {"sessions": {}, "cls": {}})
 
 
 def _save_state(st):
@@ -51,9 +51,7 @@ def load_cls():
 def _project_of(cwd):
     """Bucket by the REPO (git-root basename), not the session's cwd — so subdirs collapse to the repo and match
     how actual-$ is tagged, instead of fragmenting est-value across many cwd names."""
-    if not cwd:
-        return "codex"
-    return config.git_root_project(cwd) or os.path.basename(str(cwd).rstrip("/")).lower() or "codex"
+    return config.project_of_cwd(cwd, "codex")         # claudecode._project_of was the same but for its default
 
 
 def _digest(path):

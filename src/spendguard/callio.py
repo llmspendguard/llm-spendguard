@@ -72,8 +72,7 @@ def _db():
 
 
 def _uid():
-    import uuid
-    return uuid.uuid4().hex[:16]
+    return config.uid()          # one implementation; learn.py carried a byte-identical copy
 
 
 def count(intent, model):

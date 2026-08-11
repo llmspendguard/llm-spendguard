@@ -28,10 +28,10 @@ def _state_path():
 
 
 def _load_state():
-    try:
-        return json.loads(_state_path().read_text())
-    except Exception:
-        return {"sessions": {}, "ledger": {}}
+    """This adapter's persisted state, or its own empty shape. FOUR copies of this existed, each a bare
+    `except: return {...}` — which is also how a TRUNCATED state file (from the non-atomic writes that used
+    to sit opposite them) presented as "nothing saved yet" rather than as damage."""
+    return config.load_state("claudecode", {"sessions": {}, "ledger": {}})
 
 
 def _save_state(st):
@@ -52,9 +52,7 @@ def load_cls():
 def _project_of(cwd):
     """Bucket by the REPO (git-root basename), not the session's cwd — so subdirs (lmm/scripts/fanout) collapse to
     the repo (lmm) and match how actual-$ is tagged, instead of fragmenting est-value across dozens of cwd names."""
-    if not cwd:
-        return "claude-code"
-    return config.git_root_project(cwd) or os.path.basename(str(cwd).rstrip("/")).lower() or "claude-code"
+    return config.project_of_cwd(cwd, "claude-code")   # codex._project_of was the same but for its default
 
 
 def _row_cost(model, u):
@@ -317,8 +315,11 @@ def sync(dry=False):
 
 
 def _iso_period(day, by):
+    """Kept as a one-line alias so this module's callers read locally, but the PERIOD RULE lives in exactly
+    one place. chat and claudecode each had this identical wrapper, and before that each had its own real
+    implementation — one of which was missing 'ytd'."""
     from . import attribution
-    return attribution.iso_period(day, by)   # shared (day/week/month/quarter/ytd) — was a local copy missing 'ytd'
+    return attribution.iso_period(day, by)
 
 
 def _digest(path, seen=None, ask_verdicts=None):

@@ -39,6 +39,8 @@ def _bin():
 
 
 def available() -> bool:
+    """Is this lane's CLI on the host? codex_exec.available is the identical check for its own binary — the
+    duplication is the two-line body, and it stays two lines because each resolves a DIFFERENT binary."""
     return _bin() is not None
 
 

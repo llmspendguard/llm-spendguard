@@ -408,17 +408,33 @@ def snapshot_once(reason):
     was built, made opt-in, and then not opted into — so the protection existed everywhere in principle and
     nowhere in practice. Deduped per reason so a reconcile that clears rows for forty days takes one
     snapshot, not forty."""
+    import os as _os
+    import sys as _sys
     if reason in _SNAPPED:
         return None
     _SNAPPED.add(reason)
     try:
         p = snapshot(reason=reason)
-        if p:
-            import sys as _sys
-            _sys.stderr.write(f"  ledger snapshot before {reason}: {p}\n")
+    except Exception as e:
+        p, err = None, f"{type(e).__name__}: {str(e)[:80]}"
+    else:
+        err = "" if p else "snapshot() returned no path"
+    if p:
+        _sys.stderr.write(f"  ledger snapshot before {reason}: {p}\n")
         return p
-    except Exception:
-        return None                      # a failed snapshot must not block a reconcile; it is announced above
+    # FAIL CLOSED. The first cut of this printed a note and let the DELETE proceed, which makes the whole
+    # thing decorative: the caller believes a recovery path exists precisely when it does not, and that is
+    # the same "protection that exists in principle and nowhere in practice" this function was written to
+    # end. A destructive write with no backup is not a change, it is a gamble — so it does not happen unless
+    # somebody says so out loud.
+    if _os.environ.get("SPENDGUARD_ALLOW_UNSNAPSHOTTED") == "1":
+        _sys.stderr.write(f"  ⚠ proceeding with {reason} WITHOUT a ledger snapshot ({err}) — "
+                          f"SPENDGUARD_ALLOW_UNSNAPSHOTTED=1 was set.\n")
+        return None
+    raise RuntimeError(
+        f"refusing {reason}: the ledger could not be snapshotted first ({err}). This deletes money rows and "
+        f"there would be no way back. Fix the snapshot target (disk space / permissions on "
+        f"{config.HOME}), or set SPENDGUARD_ALLOW_UNSNAPSHOTTED=1 to proceed without one.")
 
 
 def ingest_remote(label, project, rows):

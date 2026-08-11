@@ -760,3 +760,35 @@ def save_state(name, obj, loud=True):
             _sys.stderr.write(f"  ⚠ could not save {name} state ({type(e).__name__}: {str(e)[:70]}). The next "
                               f"run will re-read from the last saved watermark, which may double-count.\n")
         return False
+
+
+def uid(n=16):
+    """A short random identifier. callio and learn each carried a byte-identical private copy of this."""
+    import uuid
+    return uuid.uuid4().hex[:n]
+
+
+_WARNED_ONCE = set()
+
+
+def warn_once(msg, prefix=""):
+    """Print a warning the FIRST time this exact message appears, then never again.
+
+    deid and gate each had their own copy plus their own `_WARNED` set. Two sets means a message crossing
+    between them warns twice, and — worse — the reason this pattern exists at all is that an 800-request
+    batch warning 800 times is a warning nobody reads. One registry, one line per distinct problem."""
+    import sys as _sys
+    line = (prefix + msg) if prefix else msg
+    if line not in _WARNED_ONCE:
+        _WARNED_ONCE.add(line)
+        _sys.stderr.write(line + "\n")
+
+
+def project_of_cwd(cwd, default):
+    """Bucket a session cwd to its REPO (git-root basename) so subdirs collapse to the repo and match how
+    actual-$ is tagged, instead of fragmenting est-value across dozens of cwd names. `default` is the
+    adapter's own fallback label — the ONLY thing that differed between claudecode's and codex's copies."""
+    import os as _os
+    if not cwd:
+        return default
+    return git_root_project(cwd) or _os.path.basename(str(cwd).rstrip("/")).lower() or default

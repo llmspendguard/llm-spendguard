@@ -120,9 +120,8 @@ _warned_once = set()
 
 def _warn_once(msg):
     """One line per distinct problem. An 800-request batch that warns 800 times is a warning nobody reads."""
-    if msg not in _warned_once:
-        _warned_once.add(msg)
-        print(msg, file=sys.stderr)
+    from . import config
+    config.warn_once(msg)                                # one registry; deid.py had its own copy + own set
 
 
 def _expected_out(model, kw=None, body=None, sig=None):

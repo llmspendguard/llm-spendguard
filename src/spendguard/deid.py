@@ -118,9 +118,8 @@ _WARNED = set()
 
 
 def _warn_once(msg):
-    if msg not in _WARNED:
-        _WARNED.add(msg)
-        print("[spendguard.deid] " + msg, file=sys.stderr)
+    from . import config
+    config.warn_once(msg, prefix="[spendguard.deid] ")   # one registry; gate.py had its own copy + own set
 
 
 _PRESIDIO = None  # None=untried, False=unavailable, (analyzer, anonymizer)=ready

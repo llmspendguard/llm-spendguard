@@ -23,10 +23,11 @@ def _state_path():
 
 
 def _load_state():
-    try:
-        return json.loads(_state_path().read_text())
-    except Exception:
-        return {}
+    """This adapter's persisted state, or its own empty shape. FOUR copies of this existed, each a bare
+    `except: return {...}` — which is also how a TRUNCATED state file (from the non-atomic writes that used
+    to sit opposite them) presented as "nothing saved yet" rather than as damage."""
+    from . import config
+    return config.load_state("realized", {})
 
 
 def measure(intent=None, min_each=MIN_EACH):

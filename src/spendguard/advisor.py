@@ -106,7 +106,7 @@ def reconstruct(run=False, per=15, limit=None):
     cost = pricing.realtime_cost(judge, in_tok, out_tok)
     print("  ESTIMATE (zero paid calls):")
     _est_line("realtime", judge, len(samples), in_tok, out_tok, cost)
-    print(f"  meta budget: ${config.meta_cap():.2f}/day · spent today ${_meta_spent():.4f}")
+    print(f"  meta budget: ${config.meta_cap():.2f}/day · spent today {_meta_spent_str()}")
     if not run:
         from . import ui; ui.estimate_only(action="judge output quality", cost=cost)
         return dict(requests=len(samples), in_tok=in_tok, out_tok=out_tok, cost=cost, model=judge)
@@ -146,7 +146,7 @@ def mine(run=False, intent=None):
     cost = pricing.realtime_cost(model, in_tok, _MINE_OUT)
     print("  ESTIMATE (zero paid calls):")
     _est_line("realtime", model, 1, in_tok, _MINE_OUT, cost)
-    print(f"  meta budget: ${config.meta_cap():.2f}/day · spent today ${_meta_spent():.4f}")
+    print(f"  meta budget: ${config.meta_cap():.2f}/day · spent today {_meta_spent_str()}")
     if not run:
         from . import ui; ui.estimate_only(action="synthesize the insights", cost=cost)
         return dict(requests=1, in_tok=in_tok, out_tok=_MINE_OUT, cost=cost, model=model)
@@ -234,7 +234,7 @@ def optimize(intent=None, plan=None, run=False):
     cost = pricing.realtime_cost(model, in_tok, _OPT_OUT)
     print("  ESTIMATE (zero paid calls):")
     _est_line("realtime", model, 1, in_tok, _OPT_OUT, cost)
-    print(f"  meta budget: ${config.meta_cap():.2f}/day · spent today ${_meta_spent():.4f}")
+    print(f"  meta budget: ${config.meta_cap():.2f}/day · spent today {_meta_spent_str()}")
     if not run:
         from . import ui; ui.estimate_only(action="produce the recommendation", cost=cost)
         return dict(requests=1, in_tok=in_tok, out_tok=_OPT_OUT, cost=cost, model=model)
@@ -251,12 +251,29 @@ def optimize(intent=None, plan=None, run=False):
 
 
 # ─────────────────────────────── misc ───────────────────────────────
+def _meta_spent_str():
+    """The spent-today figure for display: a dollar amount, or an explicit UNKNOWN — never a $0 that only
+    means the read failed."""
+    v = _meta_spent()
+    return "UNKNOWN (ledger unreadable)" if v is None else f"${v:.4f}"
+
+
 def _meta_spent():
+    """Meta spend so far today, or None if it cannot be READ.
+
+    This returned 0.0 on any failure. Its three callers all DISPLAY the number next to the day's cap —
+    enforcement lives elsewhere — so the consequence is not that the cap opens, it is that the operator is
+    told "spent today $0.0000" by a machine that could not read the ledger, and then decides whether to
+    approve a run on the strength of it. A figure nobody could read is UNKNOWN, and saying so costs one
+    line."""
     from . import budget
     try:
         return budget.meta_spent_today()
-    except Exception:
-        return 0.0
+    except Exception as e:
+        from . import config
+        config.warn_once(f"[spendguard] meta spend for today could not be read ({type(e).__name__}) — "
+                         f"treating the cap as UNKNOWN, not as $0 spent.")
+        return None
 
 
 def main(argv=None):

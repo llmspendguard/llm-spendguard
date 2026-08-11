@@ -317,10 +317,10 @@ def _state_path():
 
 
 def _load_state():
-    try:
-        return json.loads(_state_path().read_text())
-    except Exception:
-        return {"orgs": {}, "convs": {}}
+    """This adapter's persisted state, or its own empty shape. FOUR copies of this existed, each a bare
+    `except: return {...}` — which is also how a TRUNCATED state file (from the non-atomic writes that used
+    to sit opposite them) presented as "nothing saved yet" rather than as damage."""
+    return config.load_state("chat", {"orgs": {}, "convs": {}})
 
 
 def _save_state(st):
@@ -578,8 +578,11 @@ def sync(dry=False):
 
 # ── work-done (rows + caged story) ───────────────────────────────────────────────────────────────────────────────
 def _iso_period(day, by):
+    """Kept as a one-line alias so this module's callers read locally, but the PERIOD RULE lives in exactly
+    one place. chat and claudecode each had this identical wrapper, and before that each had its own real
+    implementation — one of which was missing 'ytd'."""
     from . import attribution
-    return attribution.iso_period(day, by)   # shared (day/week/month/quarter/ytd) — was a local copy missing 'ytd'
+    return attribution.iso_period(day, by)
 
 
 def work(by="week", days=None):
