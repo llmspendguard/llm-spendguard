@@ -1,0 +1,411 @@
+{
+ "_comment": "Every bare function name shared by more than one definition in src/spendguard, with the verdict a model reached by reading the BODIES (scripts/probe/review_axes.py name). PROTOCOL = intentional polymorphism, correct as-is. DUPLICATION = one job, many copies; merge. COLLISION = different jobs wearing one name; rename. This file is a BASELINE, not an approval: tests/test_names_stay_unique.py fails on any name NOT listed here, so new collisions must be judged before they land. Shrinking this file is the goal.",
+ "generated_by": "scripts/probe/review_axes.py name --run",
+ "names": {
+  "_apply": {
+   "n": 2,
+   "verdict": "COLLISION",
+   "why": "Two unrelated jobs: gate._apply monkey-patches a method onto a class with a spend-gate wrapper; validate._apply computes lifecycle field updates from a verdict. Zero behavioral ove"
+  },
+  "_bin": {
+   "n": 2,
+   "verdict": "PROTOCOL",
+   "why": "Each _bin resolves a different CLI binary (codex vs claude) for its own module's executor. They share the same structural pattern by design\u2014module-local helper resolving that modul"
+  },
+  "_capture": {
+   "n": 2,
+   "verdict": "COLLISION",
+   "why": "Both funnel into gate._record_rt so they share a conceptual goal, but their signatures and jobs differ fundamentally: http_capture._capture takes (host, path, status, body_bytes) t"
+  },
+  "_cfg": {
+   "n": 3,
+   "verdict": "COLLISION",
+   "why": "Three different jobs: bulkgate._cfg(name,default,cast) reads a single typed setting with env-override; config._cfg() returns the whole cached config dict with mtime invalidation; e"
+  },
+  "_conf": {
+   "n": 2,
+   "verdict": "DUPLICATION",
+   "why": "Identical logic, identical clamping, near-identical docstrings describing the same confidence-parsing bug. Same job implemented twice."
+  },
+  "_cost": {
+   "n": 2,
+   "verdict": "COLLISION",
+   "why": "Both compute cost via pricing.price, but they have different signatures and different semantics: pricing._cost takes explicit token counts with a batch flag and generic cache handl"
+  },
+  "_db": {
+   "n": 8,
+   "verdict": "COLLISION",
+   "why": "Each `_db()` is a module-private lazy connection/schema initializer for a DIFFERENT table (charges, gate_ledger, call_io, calls, savings, insights). They share the singleton patter"
+  },
+  "_digest": {
+   "n": 2,
+   "verdict": "PROTOCOL",
+   "why": "Both parse a single vendor session file into a digest dict/row, sharing the same conceptual contract but for different vendors (Claude Code vs Codex) with vendor-specific formats. "
+  },
+  "_enabled": {
+   "n": 2,
+   "verdict": "COLLISION",
+   "why": "Both are module-private feature-flag checks but for entirely different features (chat vs http_capture), reading different env vars and different config keys with different default "
+  },
+  "_est_line": {
+   "n": 2,
+   "verdict": "COLLISION",
+   "why": "advisor._est_line prints a formatted table row given individual arguments (mode, model, counts, cost) as a side effect; gate._est_line takes an estimate dict and RETURNS a human-fa"
+  },
+  "_fire": {
+   "n": 2,
+   "verdict": "DUPLICATION",
+   "why": "Both bodies are byte-identical, performing the same lazy one-shot fire logic against the shared _sg tuple. The sync/async proxy split doesn't change this method at all."
+  },
+  "_get": {
+   "n": 3,
+   "verdict": "COLLISION",
+   "why": "These hit different services with different auth and different return shapes. lambda_adapter._get and resources._get are structurally similar (GET+JSON with Bearer) but target diff"
+  },
+  "_iso_period": {
+   "n": 2,
+   "verdict": "DUPLICATION",
+   "why": "Both are identical thin wrappers delegating to attribution.iso_period(day, by); they do the exact same job in two modules. The comments confirm they were both refactored from a loc"
+  },
+  "_key": {
+   "n": 2,
+   "verdict": "COLLISION",
+   "why": "Both fetch an API key but for completely different services (Anthropic vs Vast.ai), with different env vars, different fallback locations, and different error behaviors. Same name,"
+  },
+  "_load_state": {
+   "n": 4,
+   "verdict": "DUPLICATION",
+   "why": "All four load JSON from a module-local _state_path() with identical try/except structure, differing only in the default schema returned on failure. This is one copy-pasted job with"
+  },
+  "_norm": {
+   "n": 2,
+   "verdict": "COLLISION",
+   "why": "One normalizes an adapter response dict into an error shape; the other normalizes whitespace in a string. Completely different jobs sharing the abbreviation for 'normalize'."
+  },
+  "_one": {
+   "n": 2,
+   "verdict": "DUPLICATION",
+   "why": "Both are nested helpers computing a time budget and dispatching call() with identical arguments; the only difference is the throwaway variable name (_basis vs _b). Same job, copied"
+  },
+  "_paged": {
+   "n": 2,
+   "verdict": "DUPLICATION",
+   "why": "Both implement the same cursor-based paginated fetch loop over a JSON API, accumulating d['data'] until has_more/next_page stops. The report version hardcodes page_param='page' and"
+  },
+  "_pctl": {
+   "n": 2,
+   "verdict": "DUPLICATION",
+   "why": "Both compute a percentile of numeric values with identical signature and semantics (return 0 on empty, return a value at percentile p). bulkgate uses proper linear interpolation on"
+  },
+  "_persist": {
+   "n": 2,
+   "verdict": "COLLISION",
+   "why": "review._persist parses insights and stores them into a learning graph; vendor_call._persist appends a JSON call record to a log file. Entirely different jobs sharing a generic name"
+  },
+  "_project_of": {
+   "n": 2,
+   "verdict": "DUPLICATION",
+   "why": "Identical logic bucketing cwd to a git-root project; only difference is the default fallback string ('claude-code' vs 'codex'). This is the same job copied twice with a parameteriz"
+  },
+  "_register_builtins": {
+   "n": 2,
+   "verdict": "COLLISION",
+   "why": "Both are module-private idempotent registration hooks but they register entirely different things into different registries: gpu_port registers GPU source adapters via register_sou"
+  },
+  "_resolve": {
+   "n": 2,
+   "verdict": "COLLISION",
+   "why": "One resolves a conversation transcript by conv_id with segment caching; the other resolves a setting's (value, source) from env/file/default. Entirely different jobs, unrelated inp"
+  },
+  "_run": {
+   "n": 2,
+   "verdict": "COLLISION",
+   "why": "report._run is a top-level report generator taking an args object; vendor_call._attempt._run is a nested closure that runs a vendor adapter call and stores the result in a mutable "
+  },
+  "_save_state": {
+   "n": 3,
+   "verdict": "DUPLICATION",
+   "why": "All three bodies are byte-identical: same mkdir, same _state_path().write_text(json.dumps(st, indent=0)), same silent except. They do the same job in three modules with no differen"
+  },
+  "_session_digests": {
+   "n": 2,
+   "verdict": "PROTOCOL",
+   "why": "Both produce per-session digests filtered by days/cost, but they read from fundamentally different backends (claudecode scans .jsonl files directly; codex reads from a cached state"
+  },
+  "_state_path": {
+   "n": 4,
+   "verdict": "DUPLICATION",
+   "why": "Each returns config.HOME / '<module>_state.json' \u2014 identical logic parameterized only by a filename literal that follows the module name. This is one job (compute a module's state "
+  },
+  "_toklen": {
+   "n": 3,
+   "verdict": "COLLISION",
+   "why": "All three estimate token counts but with materially different contracts: attribution and claudecode return min 1 for empty input, chat returns 0; claudecode uses a real tokenizer ("
+  },
+  "_toks": {
+   "n": 2,
+   "verdict": "PROTOCOL",
+   "why": "Both extract (in_tok, out_tok) from a provider-specific response, adapting each vendor's SDK shape to a common tuple contract. Same job, different provider APIs (Bedrock vs Vertex)"
+  },
+  "_uid": {
+   "n": 2,
+   "verdict": "DUPLICATION",
+   "why": "Identical implementations generating a truncated uuid hex; same job copied across two modules."
+  },
+  "_warn_once": {
+   "n": 2,
+   "verdict": "DUPLICATION",
+   "why": "Both implement the identical 'warn only once per distinct message' pattern using a module-level set as a dedup cache and printing to stderr. The only differences are the set variab"
+  },
+  "_windows": {
+   "n": 2,
+   "verdict": "COLLISION",
+   "why": "receipt._windows() computes date-range strings (today/rolling-7d/month-start) for reporting; schedule._windows(interval, remove) installs/removes a Windows Task Scheduler job. Enti"
+  },
+  "_wrap": {
+   "n": 3,
+   "verdict": "PROTOCOL",
+   "why": "These are three distinct decorator factories, each for a different provider/integration point (bedrock boto3 event, generic gate wrapping, vertex call capture). They share a name b"
+  },
+  "attribute_gap": {
+   "n": 5,
+   "verdict": "PROTOCOL",
+   "why": "reconcile.Source defines the interface contract (attribute_gap returns rows attributing a residual gap); the various Sources implement it differently \u2014 LLMSource does real attribut"
+  },
+  "audit": {
+   "n": 3,
+   "verdict": "COLLISION",
+   "why": "Three unrelated jobs: cacheaudit.audit prints a prompt-caching spend report, coverage.audit scans venvs for ungated LLM SDKs, and SpendLedger.audit appends a hash-chained audit-log"
+  },
+  "available": {
+   "n": 2,
+   "verdict": "DUPLICATION",
+   "why": "Both functions are byte-identical: they check whether a binary is available via `_bin()`. Same job, two copies."
+  },
+  "build": {
+   "n": 3,
+   "verdict": "COLLISION",
+   "why": "Three functions named `build` doing entirely different jobs: close.build produces a month-end cost/forecast report from provider truth, signal.build aggregates per-(project,intent,"
+  },
+  "call": {
+   "n": 2,
+   "verdict": "DUPLICATION",
+   "why": "Both are the single-model call entry point: take (model, prompt) plus optional system/max_tokens/schema/reasoning, run one prompt against one model, and return a never-raising resu"
+  },
+  "captured": {
+   "n": 5,
+   "verdict": "PROTOCOL",
+   "why": "All five are `captured(self, since=None)` methods on distinct Source-style classes returning a list of cost/project row dicts (reconcile.Source.captured returns [] as the base/defa"
+  },
+  "check": {
+   "n": 2,
+   "verdict": "COLLISION",
+   "why": "Two unrelated jobs: one validates sample items against a data contract returning a Result; the other pulls provider/ledger trust verdicts. Different signatures, different domains, "
+  },
+  "classify": {
+   "n": 3,
+   "verdict": "PROTOCOL",
+   "why": "All three are the `classify` subcommand for their respective source module (chat/claudecode/codex), invoked as `<module> classify` \u2014 a deliberate per-adapter CLI command surface wi"
+  },
+  "cmd": {
+   "n": 11,
+   "verdict": "PROTOCOL",
+   "why": "Each cmd(argv) is a per-subcommand CLI entrypoint following a uniform dispatch contract (parse argv, do work, return exit code). They are dispatched by a central CLI router that ca"
+  },
+  "configured": {
+   "n": 4,
+   "verdict": "PROTOCOL",
+   "why": "GPUProvider.configured is an abstract method (`...`) defining a contract; the three adapters (Lambda, Modal, RunPod) each implement it per-provider. Modal genuinely differs (checks"
+  },
+  "conn": {
+   "n": 6,
+   "verdict": "COLLISION",
+   "why": "Five of these are a `conn` property accessor returning `self._conn` (a polymorphic Source contract), but `saas.conn()` is a module-level function that resolves and returns a SaaS c"
+  },
+  "cost_by_day": {
+   "n": 2,
+   "verdict": "COLLISION",
+   "why": "Different jobs, different signatures, different return shapes. gpu_port.cost_by_day takes normalized GPU instance rows and returns {day: $}; reconcile_anthropic.cost_by_day takes o"
+  },
+  "count": {
+   "n": 2,
+   "verdict": "COLLISION",
+   "why": "callio.count returns a row count from a DB query filtered by intent/model; content_tokens.count counts input tokens for a message's content. Entirely different jobs sharing a gener"
+  },
+  "day_totals": {
+   "n": 3,
+   "verdict": "PROTOCOL",
+   "why": "Three source-adapter modules (chat/claude-ai, claudecode, codex) each implement the same server contract: (member_ref, org_label) -> ledger rows tagged with their own channel. They"
+  },
+  "discover": {
+   "n": 3,
+   "verdict": "COLLISION",
+   "why": "Three unrelated jobs: chat.discover proposes an LLM taxonomy from conversations; resources.discover mines transcripts to reconstruct vast.ai instance records; sources.discover asse"
+  },
+  "emit": {
+   "n": 2,
+   "verdict": "COLLISION",
+   "why": "One is a local closure that appends aggregated cell statistics to a list; the other is a module-level event fan-out for observability. Entirely different jobs sharing a bare name."
+  },
+  "estimate": {
+   "n": 3,
+   "verdict": "COLLISION",
+   "why": "Three unrelated jobs: _Job.estimate is a fluent builder recording an estimate on a batch job; calibrate.estimate predicts cost from history (quantiles/sqlite); pricing.estimate is "
+  },
+  "get": {
+   "n": 2,
+   "verdict": "COLLISION",
+   "why": "Different jobs: one fetches a spend-event row by id from a ledger, the other retrieves cached LLM output by exact/semantic prompt match. Signatures and semantics differ entirely; s"
+  },
+  "install": {
+   "n": 6,
+   "verdict": "PROTOCOL",
+   "why": "bedrock_adapter, litellm_adapter, vertex_adapter, and http_capture all implement the same duck-typed adapter contract: install(force=False)->bool, idempotently patch an SDK surface"
+  },
+  "instances": {
+   "n": 5,
+   "verdict": "PROTOCOL",
+   "why": "gpu_port.GPUProvider.instances is the abstract contract (returns list, ellipsis body); LambdaProvider, ModalProvider, RunPodProvider each implement it per-provider, all returning n"
+  },
+  "load": {
+   "n": 2,
+   "verdict": "COLLISION",
+   "why": "Two entirely different jobs share the name `load`. `_Boom.load()` is a test/conformance stub mimicking an entry-point's `.load()` method (returns a callable that raises), while `pr"
+  },
+  "load_cls": {
+   "n": 2,
+   "verdict": "PROTOCOL",
+   "why": "Both are public accessors over their own module's private _load_state(), reading the same 'cls' key. Each reads its OWN adapter's state file (claudecode vs codex), so they cannot b"
+  },
+  "main": {
+   "n": 39,
+   "verdict": "PROTOCOL",
+   "why": "Each `main(argv=None)` is a distinct CLI subcommand entry point (advise, advisor, audit, backfill, bootstrap, brief) that parses its own args and dispatches to its own module's log"
+  },
+  "project_of": {
+   "n": 2,
+   "verdict": "PROTOCOL",
+   "why": "resources.project_of is a thin convenience wrapper that delegates to gpu_port.project_of, supplying a default label_map. Same semantics by design, one canonical implementation."
+  },
+  "push": {
+   "n": 2,
+   "verdict": "COLLISION",
+   "why": "Both push to the SaaS backend but to different endpoints with different payloads and semantics: signal.push sends scrubbed signal rows to /v1/signal filtered by project, truth.push"
+  },
+  "ratios": {
+   "n": 2,
+   "verdict": "COLLISION",
+   "why": "Both are local helpers named `ratios` but compute entirely different quantities: `_opi_obs.ratios` returns output/input token ratios, while `_residual_obs.ratios` returns cost/base"
+  },
+  "record": {
+   "n": 4,
+   "verdict": "COLLISION",
+   "why": "Four different jobs sharing 'record': budget.record writes a spend charge with forensic intent/actor, callio.record inserts a call I/O sample (idempotent on batch+custom_id) into c"
+  },
+  "record_estimate": {
+   "n": 2,
+   "verdict": "COLLISION",
+   "why": "bulkgate.record_estimate upserts a worst-case zero-spend estimate into gate_ledger keyed by call-class sig; calibrate.record_estimate logs a caller's per-job cost prediction into c"
+  },
+  "register": {
+   "n": 2,
+   "verdict": "COLLISION",
+   "why": "Two different registries: gate.register adds SDK gating hooks to a list _EXTRA with a 5-tuple signature, while sources.register maps a name to a factory in a _SOURCES dict. Differe"
+  },
+  "render": {
+   "n": 2,
+   "verdict": "PROTOCOL",
+   "why": "Both are per-subcommand text renderers that turn a discovered data structure into human-readable output lines. scan.render(data, days) formats scan results; sources.render(d) forma"
+  },
+  "rollup": {
+   "n": 2,
+   "verdict": "COLLISION",
+   "why": "Two unrelated aggregation functions: SpendLedger.rollup groups spend_events by billing columns in SQLite; workdone.rollup aggregates commit/intent records by time period. Different"
+  },
+  "run": {
+   "n": 2,
+   "verdict": "COLLISION",
+   "why": "Completely different jobs: one is a gate-check-and-submit method on a batch _Job (enforces spend guardrails then calls submit_fn), the other is a reconciliation loop over a source "
+  },
+  "run_prompt": {
+   "n": 2,
+   "verdict": "PROTOCOL",
+   "why": "Two lane executors (Codex/ChatGPT-plan vs Claude subscription) implementing the same {text,in_tok,out_tok,latency,error} contract behind one uniform signature, so a dispatcher can "
+  },
+  "scrub": {
+   "n": 2,
+   "verdict": "COLLISION",
+   "why": "calibrate.cell_stats.scrub redacts/truncates a label string for de-identification; share.scrub abstracts an insight dict into a shareable generalizable rule. Different inputs, outp"
+  },
+  "show": {
+   "n": 4,
+   "verdict": "PROTOCOL",
+   "why": "Each show() is the per-source report renderer for its own module (calibrate, chat, claude-code, codex). Three of them share a near-identical stamp_est_value pattern but operate on "
+  },
+  "snapshot": {
+   "n": 2,
+   "verdict": "COLLISION",
+   "why": "budget.snapshot copies a sqlite ledger file to disk as a backup before mutation; resources.snapshot persists live vast.ai instance reconstruction state to a history JSON. Different"
+  },
+  "source": {
+   "n": 3,
+   "verdict": "PROTOCOL",
+   "why": "Each adapter module (lambda, modal, runpod) provides a `source()` factory conforming to the gpu_port registry's Source contract. Identical bodies here are a consequence of each mod"
+  },
+  "status": {
+   "n": 3,
+   "verdict": "COLLISION",
+   "why": "Three unrelated jobs: bulkgate.status returns gate ledger freshness for a sig, lanes.status reports executor/CLI/auth per lane, saas.status prints SaaS client config and returns ex"
+  },
+  "story": {
+   "n": 2,
+   "verdict": "DUPLICATION",
+   "why": "Both implement the same 'caged synth over period \u2192 narrative STORY + private WORK INSIGHTS, estimate-first' job with identical signature, identical OUT=1500, same _STORY_SYS system"
+  },
+  "summary": {
+   "n": 2,
+   "verdict": "COLLISION",
+   "why": "calls.summary is a module-level function returning DB aggregate rows about cost/quality per intent-model; Result.summary is an instance method returning a human-readable parse-stat"
+  },
+  "summary_lines": {
+   "n": 2,
+   "verdict": "COLLISION",
+   "why": "Both produce display line lists but for entirely different subjects: calibrate.summary_lines emits calibration-confidence lines from gate_calls stats, while lanes.summary_lines emi"
+  },
+  "sync": {
+   "n": 8,
+   "verdict": "COLLISION",
+   "why": "Two distinct contracts wear the name `sync`. The channel adapters (chat, claudecode, codex, resources) share signature `sync(dry=False)` and one honest job \u2014 push this connection's"
+  },
+  "test": {
+   "n": 2,
+   "verdict": "COLLISION",
+   "why": "One is a method configuring/executing a gated batch job (returns a test_job with contract and items), the other is a standalone diagnostic that checks cookie decryption and API con"
+  },
+  "truth_total": {
+   "n": 5,
+   "verdict": "PROTOCOL",
+   "why": "All five implement the same Source contract: truth_total(self, since=None) returns a float provider-truth or None (UNKNOWN) for a reconcile engine. Each subclass supplies a differe"
+  },
+  "update": {
+   "n": 4,
+   "verdict": "PROTOCOL",
+   "why": "chat/claudecode/codex.update are three source-adapter implementations of a shared incremental-watermark contract: read new/changed data since last watermark, digest into local stat"
+  },
+  "verify": {
+   "n": 2,
+   "verdict": "COLLISION",
+   "why": "pricing.verify() self-checks hardcoded price tables and returns True or raises; remote.verify(ssh, ...) SSHes into a box to check enforcement and returns a (ok, detail) tuple that "
+  },
+  "w": {
+   "n": 2,
+   "verdict": "COLLISION",
+   "why": "Both are local closures named `w` that wrap a method via monkeypatching, but they wrap entirely different targets (boto3 make_api_call vs requests.Session.send) with different sign"
+  },
+  "work": {
+   "n": 2,
+   "verdict": "PROTOCOL",
+   "why": "Both are per-source `work` subcommands (chat vs claudecode) sharing an identical CLI contract: same signature (by, days), same 'WORK DONE' report format, same bucketing/iso_period/"
+  }
+ }
+}

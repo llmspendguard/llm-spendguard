@@ -17,6 +17,54 @@ Before writing code for a subsystem, do these IN ORDER and state the answers exp
 If you can't answer 1–4, you are not ready to write code. This rule exists because doctrine you don't consult at the
 moment of acting is just wall-paper.
 
+## #0b MATCH THE UNIT OF REVIEW TO THE UNIT OF THE DEFECT
+A review can only find defects that FIT INSIDE the unit it looks at. Three waves of a four-vendor review,
+~500 findings, and it missed 13 functions copy-pasted between two files, four writers of config.json, and a
+producer/consumer pair writing and reading different tables — because `repo_review_panel.py` puts ONE FILE in
+each reviewer's context. None of those was a diligence failure. The evidence was absent, and **no amount of
+care recovers evidence that is not in the context window.** When something was missed, ask "was it even in the
+room?" before asking "why wasn't it noticed?"
+
+So a claim like "I reviewed the repo" is meaningless without the axis. There are five, and each is blind to
+what the others find:
+
+| axis | unit in context | finds | blind to |
+|---|---|---|---|
+| 1 FILE | one file | swallowed exception, wrong branch, unguarded index | anything whose other half is elsewhere |
+| 2 CONCEPT | every implementation of one capability, in full | DRIFT — copies of one job that now disagree | a concept correctly duplicated |
+| 3 SEAM | every writer + every reader of one resource | CONTRACT GAPS — each side correct, the gap wrong | anything that is nowhere |
+| 4 INVARIANT | the whole repo vs one claim it makes | **ABSENCE** — a discipline present in NO file | nothing structural |
+| 5 NAME | all definitions sharing a bare name | COLLISION (same name, different jobs) vs DUPLICATION vs PROTOCOL | — |
+
+`scripts/probe/{capability_audit,review_capability_slice,review_axes}.py`, all on `repo_defs.py`.
+
+**Axis 4 is the one that is skipped and matters most: it is the ONLY axis that can find something MISSING.**
+"There is no backup before any mutation in this repo" is true, catastrophic, and appears in zero files, so
+axes 1–3 can look forever and never see it. Before claiming a class of defect is closed, run axis 4 on it.
+
+**Names are not evidence of concept.** A name and a docstring are the author's CLAIM about a function.
+`bulkgate.record_estimate` and `calibrate.record_estimate` share a name and do different jobs; `share.scrub`
+and `share._scrub_text` share nothing and do the same job. Cluster from BODIES. Names are for IDENTITY only —
+and identity is SCOPED: `module.Class.method`, never `module.method`. A flat key collided 11 times here and
+made a reviewer read one body while reporting on another.
+
+**Function names should be unique across a repo.** Currently 81 bare names cover 265 definitions (23%).
+Same-name/different-job is the dangerous case: a grep, an import, or a re-export silently picks a side.
+Same-name/same-interface (a protocol implemented by five providers) is correct and must not be "fixed" —
+which is why sorting a collision is a judgement for a model, never a rule about names.
+
+**A regex that decides what the evidence IS makes the regex the decider.** The seam axis first grounded
+itself with `INSERT INTO (\w+)` / `FROM (\w+)`. A table name built with an f-string, or a write performed by
+a helper, then reads as *nothing* — and a missed writer does not look like a miss, it looks like a clean
+one-sided seam. If a regex feeds an agentic judgement, the judgement inherits its errors silently. Ground
+agentically or do not claim the ground truth.
+
+**"Cannot tell" is not "clean."** The invariant axis was handed an inventory of names and asked a question
+about function bodies; the model correctly said it could not answer, and the tool printed ABSENT. The
+checker violated the invariant it was checking. Every axis must report UNREVIEWED / INSUFFICIENT separately
+from a clean result, and a coverage denominator with it.
+
+
 ## #1 lens: AGENTIC AT HEART
 llm-spendguard is **agentic at heart**, and that is the lens for evaluating EVERY development decision here.
 Before writing or changing anything, ask: *is this the agentic choice?*
