@@ -103,14 +103,21 @@ def verify(rows, root, model, votes=2):
                 resp = adapters.call(model,
                     f"```python\n{body[:2400]}\n```\n\nCLAIM about the swallow at line(s) {r['lines']}: "
                     f"a caller wrongly believes — {claim}\n\nRefute it.\nReply JSON only: {REFUTE_SCHEMA}",
-                    max_tokens=300, system=REFUTE_SYS)
+                    max_tokens=900, system=REFUTE_SYS)
+            # 300 TOKENS TRUNCATED THE REFUTERS' REPLIES into unparseable JSON, and this loop then reported
+            # "no refuter answered" — 19 findings came back UNVERIFIED for a reason that had nothing to do
+            # with the findings. A truncated answer is not an absent one; it is a budget bug wearing the
+            # costume of a silent verifier, and it is the same `truncated != clean` mistake this codebase
+            # keeps finding elsewhere.
             if resp.get("error"):
                 continue
+            txt = resp.get("text") or ""
             try:
-                blob = re.search(r"\{.*\}", resp.get("text") or "", re.S)
+                blob = re.search(r"\{.*\}", txt, re.S)
                 vs.append(json.loads(blob.group(0)) if blob else None)
             except Exception:
-                pass
+                print(f"      (a refuter reply did not parse — {len(txt)} chars, "
+                      f"{'looks TRUNCATED' if txt and not txt.rstrip().endswith('}') else 'malformed'})")
         vs = [v for v in vs if v]
         if not vs:
             print(f"  {i}/{len(dangerous)} {r['where']}: UNVERIFIED (no refuter answered) — kept, not confirmed")

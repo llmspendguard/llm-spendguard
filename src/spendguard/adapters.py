@@ -235,6 +235,11 @@ def call(model, prompt, max_tokens=512, system=None, reasoning=None, schema=None
             text = (json.dumps(tu[0].input) if tu
                     else "".join(b.text for b in m.content if getattr(b, "type", None) == "text"))
             in_tok, out_tok = m.usage.input_tokens, m.usage.output_tokens
+            # THE FIELD WAS DECLARED AND NEVER SET. `base` has carried "finish_reason": None since this
+            # function was written, and the comment above says callers use it to tell a complete answer from
+            # a truncated one — but no provider branch ever assigned it, so it was None on every reply and
+            # every caller checking it learned nothing. Anthropic calls it stop_reason.
+            _finish = getattr(m, "stop_reason", None)
         else:
             from openai import OpenAI
             c = (OpenAI(api_key=key, base_url=spec["base_url"], timeout=timeout_s) if timeout_s
@@ -325,11 +330,72 @@ def call(model, prompt, max_tokens=512, system=None, reasoning=None, schema=None
                     raise
             text = r.choices[0].message.content
             in_tok, out_tok = r.usage.prompt_tokens, r.usage.completion_tokens
+            _finish = getattr(r.choices[0], "finish_reason", None)     # "length" when it hit the cap
         dt = time.time() - t0
         try:
             cost = pricing.realtime_cost(raw, in_tok, out_tok)
         except Exception:
             cost = None  # model not in price table → shown as n/a
-        return {**base, "text": text, "in_tok": in_tok, "out_tok": out_tok, "latency": dt, "cost": cost, "error": None}
+        return {**base, "text": text, "in_tok": in_tok, "out_tok": out_tok, "latency": dt, "cost": cost,
+                "finish_reason": _finish, "error": None}
     except Exception as e:
         return {**base, "latency": time.time() - t0, "error": str(e)[:140]}
+
+
+# ── a COMPLETE answer, or an explicit UNKNOWN — never a truncated body ───────────────────────────────────
+MAX_TOKEN_CEILING = 32000        # absolute stop for the doubling retry; a real answer never needs more here
+
+
+def call_complete(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
+    """`call()`, but a TRUNCATED reply is never returned as if it were an answer.
+
+    WHY THIS EXISTS, AND WHY IT IS NOT ANOTHER HELPER TO REMEMBER. Every piece needed to stop truncation bugs
+    was already here — adapters.call has returned `finish_reason` all along, bulkgate.is_truncated calls it
+    "a fact, not a guess", and bulkgate.maxtokens learns the p99 output length per call-class. None of it was
+    WIRED, so every caller hand-picked a number (300, 450, 900, 1400 …) and then read the reply as if the
+    number had been right. The failure never announces itself: the body is cut mid-JSON, the parse fails, and
+    the calling code concludes "no answer", "no findings", or "benign". Measured on 2026-08-11: a 300-token
+    budget truncated 19 of 60 adversarial refutations, and the harness reported them as "no refuter answered"
+    — a verifier that had verified nothing, reporting silence as a result.
+
+    THE THREE THINGS, IN ONE PLACE:
+      1. SIZE IT FROM DATA, NOT FROM A GUESS. With `sig`, the cap comes from that call-class's observed p99
+         (bulkgate.maxtokens). No sig and no explicit max_tokens is a hard error — an unmeasured literal is
+         exactly the thing this replaces.
+      2. DETECT IT. bulkgate.is_truncated() on every reply, from the provider's own declared field.
+      3. NEVER RETURN IT. A truncated reply is retried with DOUBLE the budget, up to MAX_TOKEN_CEILING; if it
+         still truncates, the result carries truncated=True and text=None, so a caller cannot mistake a cut
+         body for a short answer. Each reply is recorded via note_response, so the learned cap for this
+         call-class improves and the next run needs no retry.
+    """
+    from . import bulkgate
+    if max_tokens is None:
+        if not sig:
+            raise ValueError(
+                "call_complete needs either an explicit max_tokens or a `sig` naming the call-class, so the "
+                "budget can come from that class's measured p99 instead of a hand-picked literal. A literal "
+                "is how truncated replies become silent wrong answers.")
+        m = bulkgate.maxtokens(sig) or {}
+        max_tokens = int(m.get("recommend") or 0) or 2048     # no history yet → a generous first budget
+    attempt, budget = 0, int(max_tokens)
+    while True:
+        r = call(model, prompt, max_tokens=budget, **kw)
+        if r.get("error"):
+            return {**r, "truncated": None}                   # an errored call was not truncated, it failed
+        trunc = bulkgate.is_truncated(r.get("finish_reason"), r.get("out_tok"), budget)
+        if sig:
+            try:
+                bulkgate.note_response(sig, model, r.get("out_tok") or 0, max_tokens=budget,
+                                       finish_reason=r.get("finish_reason"))
+            except Exception:
+                pass                                          # telemetry must not break the call
+        if not trunc:
+            return {**r, "truncated": False, "max_tokens_used": budget}
+        attempt += 1
+        if attempt > retries or budget >= MAX_TOKEN_CEILING:
+            import sys as _sys
+            _sys.stderr.write(f"[spendguard] reply STILL truncated at {budget} tokens after {attempt} "
+                              f"attempt(s) — returning text=None so it cannot be read as a short answer.\n")
+            return {**r, "text": None, "truncated": True, "max_tokens_used": budget,
+                    "error": f"truncated at {budget} tokens"}
+        budget = min(budget * 2, MAX_TOKEN_CEILING)
