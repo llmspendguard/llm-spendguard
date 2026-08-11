@@ -126,7 +126,9 @@ class _FakeResp:
     def decode(self): return _RESULTS
 
 ra2.list_batches = lambda k: _BATCHES
-ra2._get = lambda url, k: _FakeResp()      # only the results_url path uses _get here; no network
+# The results path now goes through _get_text (JSONL is not JSON, and the shared transport parses JSON).
+# Stub returns the decoded body directly — one less fake object standing in for a socket.
+ra2._get_text = lambda url, k: _FakeResp().read().decode()
 
 cache = {}
 new = ra2.refresh_cache("sk-ant-OFFLINE", cache)

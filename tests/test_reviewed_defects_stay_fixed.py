@@ -412,5 +412,28 @@ check("claudecode.work distinguishes an unreadable dir from no work",
       "nothing could be READ, which is not" in (SRC / "claudecode.py").read_text())
 
 
+# An unpriced model took the WHOLE OpenAI report down with a KeyError, while the Anthropic path beside it
+# had degraded gracefully since day one. Unpriced is never silently $0 — it contributes 0 and is NAMED.
+from spendguard import pricing as _pr, reconcile_anthropic as _ra                      # noqa: E402
+_pr.UNPRICED_SEEN.clear()
+check("an unpriced model costs 0 without raising", _pr.cost_or_unpriced("no-such-model-zzz", 1000, 10) == 0.0)
+check("...and the model is NAMED, not silently absorbed", "no-such-model-zzz" in _pr.UNPRICED_SEEN)
+check("there is ONE unpriced registry, not one per module", _ra.UNKNOWN_MODELS is _pr.UNPRICED_SEEN)
+_pr.UNPRICED_SEEN.clear()
+
+# reconcile_anthropic._get passed NO timeout and handed back an unread, unclosed response — a provider stall
+# became a hung reconcile with no error and no output.
+check("no module opens its own socket to a provider any more",
+      "urlopen" not in (SRC / "reconcile_anthropic.py").read_text())
+check("the shared transport always passes a timeout",
+      "timeout=timeout" in (SRC / "config.py").read_text())
+
+# cachetest had a second, weaker system-prompt extractor whose regex truncated at an escaped quote — and the
+# truncated length feeds the "is this worth caching" threshold.
+check("cachetest uses the AST extractor, not a second regex scan",
+      "_sys_assignments_ast" in (SRC / "cachetest.py").read_text()
+      and "_SYS_ASSIGN" not in (SRC / "cachetest.py").read_text())
+
+
 print(f"\n{'[FAIL]' if failures else 'OK'} test_reviewed_defects_stay_fixed: {failures} failure(s)")
 sys.exit(1 if failures else 0)

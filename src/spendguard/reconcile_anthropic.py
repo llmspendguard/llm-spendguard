@@ -36,16 +36,25 @@ def _h(k):
     return {"x-api-key": k, "anthropic-version": "2023-06-01"}
 
 
+def _get_text(url, k):
+    """Raw body text from the Anthropic API (batch RESULTS are JSONL, not JSON). A module-level seam so the
+    offline test can stub the transport; the socket itself is opened in exactly one place."""
+    from . import config
+    return config.api_get_text(url, _h(k))
+
+
 def _get(url, k):
-    from .config import ssl_context
-    return urllib.request.urlopen(urllib.request.Request(url, headers=_h(k)), context=ssl_context())
+    """Parsed JSON from the Anthropic API. Delegates to config.api_get — this had no timeout and handed the
+    caller an unread, unclosed response object."""
+    from . import config
+    return config.api_get(url, _h(k))
 
 
 def list_batches(k):
     rows, after = [], None
     while True:
         u = "https://api.anthropic.com/v1/messages/batches?limit=100" + (f"&after_id={after}" if after else "")
-        d = json.load(_get(u, k))
+        d = _get(u, k)
         rows.extend(d["data"])
         if d.get("has_more"):
             after = d["data"][-1]["id"]
@@ -53,7 +62,9 @@ def list_batches(k):
             return rows
 
 
-UNKNOWN_MODELS = {}  # model -> result count, for models missing from pricing.py (never guessed)
+from . import pricing as _pricing        # noqa: E402
+# The same dict object pricing.UNPRICED_SEEN holds — this module's private copy WAS the duplicate.
+UNKNOWN_MODELS = _pricing.UNPRICED_SEEN  # model -> result count, for models missing from pricing.py (never guessed)
 
 
 def _cost(model, u):
@@ -82,7 +93,9 @@ def refresh_cache(k, cache):
         if b.get("processing_status") != "ended" or not b.get("results_url"):
             continue
         try:
-            lines = _get(b["results_url"], k).read().decode().splitlines()
+            # RESULTS ARE JSONL, NOT JSON — parsed-JSON _get would raise on the second line. Same transport
+            # (timeout + SSL context + closed socket), different content type.
+            lines = _get_text(b["results_url"], k).splitlines()
         except Exception as e:
             print(f"  skip {bid}: {e}", flush=True)
             continue

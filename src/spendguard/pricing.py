@@ -647,6 +647,30 @@ def _cost(model, in_tok, out_tok, cached_in_tok, batch, provider=None):
     return (fresh_in * pin + cached_in_tok * pcache + out_tok * pout) / 1_000_000
 
 
+# THE ONE IN-PROCESS REGISTRY OF MODELS WE COULD NOT PRICE. reconcile_anthropic kept a private
+# UNKNOWN_MODELS dict and report.openai_by_day kept nothing at all, so an unpriced model CRASHED the whole
+# OpenAI report with a KeyError while the Anthropic path beside it degraded gracefully. Same job, two
+# modules, one of them missing. Unpriced is never silently $0 — the tokens are real and the dollars are
+# UNKNOWN, so the model is named here and surfaced by the report. (budget.record_unpriced is the persistent
+# twin: this one is for the current process's reporting, that one marks the ledger row.)
+UNPRICED_SEEN: dict = {}
+
+
+def note_unpriced(model: str) -> None:
+    UNPRICED_SEEN[model] = UNPRICED_SEEN.get(model, 0) + 1
+
+
+def cost_or_unpriced(model: str, in_tok: int, out_tok: int = 0, cached_in_tok: int = 0,
+                     batch: bool = True, provider: str = None) -> float:
+    """Cost, or 0.0 with the model RECORDED as unpriced. Never raises on a model we have no card for."""
+    try:
+        fn = batch_cost if batch else realtime_cost
+        return fn(model, in_tok, out_tok, cached_in_tok, provider=provider) or 0.0
+    except (KeyError, TypeError, ValueError):
+        note_unpriced(model)
+        return 0.0
+
+
 def batch_cost(model: str, in_tok: int, out_tok: int = 0, cached_in_tok: int = 0, provider: str = None) -> float:
     """Actual/forecast cost ($) of `in_tok`+`out_tok` via the Batch API (50% off). `provider` pins the vendor
     when the model id is bare and several vendors host it (see _vendor_qualified)."""

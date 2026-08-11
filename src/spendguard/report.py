@@ -28,7 +28,11 @@ def openai_by_day():
         it, ot = u.get("input_tokens", 0), u.get("output_tokens", 0)
         if not it and not ot:
             continue
-        c = pricing.batch_cost(b["model"], it, ot, (u.get("input_tokens_details") or {}).get("cached_tokens", 0))
+        # AN UNPRICED MODEL TOOK THE ENTIRE REPORT DOWN. batch_cost raises KeyError for a model with no card,
+        # and the Anthropic path two functions away had degraded gracefully since day one — the OpenAI copy
+        # simply never grew the guard. Unpriced contributes 0 and is NAMED, never silently absorbed.
+        c = pricing.cost_or_unpriced(b["model"], it, ot,
+                                     (u.get("input_tokens_details") or {}).get("cached_tokens", 0))
         by_day[oai_day(b)] += c
     return by_day, pending
 

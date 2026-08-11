@@ -21,18 +21,18 @@ _ANTHROPIC_WRITE_MULT = 1.25   # ephemeral (5-min) cache write premium over base
 
 
 def _system_from_script(path):
-    from .cacheaudit import _SYS_ASSIGN
+    """The largest system-prompt constant in a script — via cacheaudit's AST extractor.
+
+    This was a second, weaker implementation of the same extraction: a raw regex whose `txt.find(quote, ...)`
+    stops at the FIRST matching quote without checking for a preceding backslash, so a prompt containing an
+    escaped quote was silently truncated at that point. That is not a cosmetic difference here — the
+    truncated length feeds the ≥200-token worth-caching check and the ≥1024/2048-token provider thresholds,
+    so a real caching candidate could be reported as too short to bother with. Its prose guard was weaker
+    too (`body[:1].isalpha()` alone), which let code-shaped constants through as 'the system prompt'."""
+    from . import cacheaudit
     txt = open(path, errors="ignore").read()
-    best = ""
-    for m in _SYS_ASSIGN.finditer(txt):
-        q = m.group(1)
-        end = txt.find(q, m.end())
-        if end < 0:
-            continue
-        body = txt[m.end():end].strip()
-        if body[:1].isalpha() and len(body) > len(best):
-            best = body
-    return best
+    cands = [v for _name, v in cacheaudit._sys_assignments_ast(txt)]   # [(name, value)] pairs
+    return max(cands, key=len) if cands else ""
 
 
 def _model_from_script(path):

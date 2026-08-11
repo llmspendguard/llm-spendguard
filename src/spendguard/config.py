@@ -640,3 +640,26 @@ def api_key(name):
 # saas_config()/_project_saas above, which must be defined first. The module body completes before any
 # importer's code runs, so keys are still in the environment before any provider client is constructed.
 load_key_files()
+
+
+def api_get(url, headers, timeout=90):
+    """Authenticated GET → parsed JSON. The ONE place an HTTP read to a provider happens.
+
+    There were three: resources._get (timeout, context manager, SSL context — correct), report._paged
+    (timeout + context manager, NO SSL context) and reconcile_anthropic._get, which passed NO TIMEOUT and
+    returned the raw response object for the caller to json.load. That last one is how a provider stall
+    becomes a hung reconcile with no error and no output: urlopen without a timeout waits forever, and the
+    socket was never closed either, so a paged walk leaked one connection per page.
+    """
+    import json as _json
+    return _json.loads(api_get_text(url, headers, timeout))
+
+
+def api_get_text(url, headers, timeout=90):
+    """Authenticated GET → decoded body text. Same single transport as api_get; separate because a batch
+    RESULTS url serves JSONL, not JSON, and parsing it as JSON would fail on the second line. Two content
+    types, one place that opens a socket."""
+    import urllib.request
+    req = urllib.request.Request(url, headers=headers or {})
+    with urllib.request.urlopen(req, timeout=timeout, context=ssl_context()) as r:
+        return r.read().decode()
