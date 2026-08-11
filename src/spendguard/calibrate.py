@@ -351,8 +351,8 @@ def estimate(label, n=1, model=None, transport="batch", est_in_tokens=None, est_
 
 
 # ────────────────────────── prediction log + pairing to actuals ──────────────────────────
-def record_estimate(job_id, label, model, predicted_usd, est_in=None, est_out_max=None,
-                    n=1, transport="batch", user=None, project=None):
+def record_prediction(job_id, label, model, predicted_usd, est_in=None, est_out_max=None,
+                      n=1, transport="batch", user=None, project=None):
     """Log a caller's PREDICTION for a job (per-request est_in/est_out_max, n requests). The gate
     captures the ACTUALS as the job runs; pair() joins them by job_id — wrap the run in
     calls.context(chain=job_id) for an exact join. Idempotent on job_id. Never raises."""
@@ -713,3 +713,10 @@ def main(argv=None):
         out = backtest(as_json=a.json, min_cell=a.min_cell)
         return 0 if out["overall"].get("ship") or not out["cells"] else 1
     return 2
+
+
+# `record_estimate` COLLIDED WITH bulkgate.record_estimate — a different function, writing a different table,
+# for a different purpose, and `spendguard.record_estimate` re-exports the OTHER one at top level. A consumer
+# following docs/REFERENCE.md and a consumer reading the package export got two different behaviours from one
+# name. The canonical name is now record_prediction; this alias keeps existing callers working.
+record_estimate = record_prediction

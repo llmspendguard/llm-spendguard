@@ -14,7 +14,7 @@ Cost ≈ pricing.realtime_cost(model, input+cache_create+cache_read, output, cac
 """
 import os, json, glob, pathlib, datetime
 
-from . import config, pricing
+from . import config, conv, pricing
 
 _TOOL_FILE_KEYS = ("file_path", "path", "notebook_path")
 
@@ -205,6 +205,14 @@ def _session_digests(days=None):
     cutoff = (datetime.date.today() - datetime.timedelta(days=int(days))).isoformat() if days else None
     out = []
     seen = set()                                           # count each message.id ONCE across resume/branch replays
+    # AN UNREADABLE DIRECTORY IS NOT AN EMPTY ONE. glob returns [] for a path that is missing, renamed by a
+    # Claude Code upgrade, or unreadable — indistinguishable from "you did no work this period". Both callers
+    # then printed a header with no rows, so a broken source looked exactly like an honest zero and the user
+    # had nothing to act on. chat.work names the difference; this did not.
+    if not os.path.isdir(_projects_dir()):
+        print(f"no Claude Code session directory at {_projects_dir()} — nothing could be READ, which is not "
+              f"the same as no work. Set SPENDGUARD_CLAUDE_PROJECTS if your sessions live elsewhere.")
+        return 0
     for path in sorted(glob.glob(os.path.join(_projects_dir(), "**", "*.jsonl"), recursive=True)):
         d = _digest(path, seen)
         if d["cost"] <= 0 and not d["tools"]:
@@ -312,7 +320,7 @@ def _iso_period(day, by):
     return attribution.iso_period(day, by)   # shared (day/week/month/quarter/ytd) — was a local copy missing 'ytd'
 
 
-def _digest(path, seen=None):
+def _digest(path, seen=None, ask_verdicts=None):
     """Full per-session digest = a WORK ROW: project, primary day, models, value$, turns, tools, files, and the
     first user prompt (what was ASKED — the 'what the spend was for'). Re-reads the whole session (on-demand).
     Pass a shared `seen` set across sessions to count each assistant message.id ONCE — resume/branch/compaction
@@ -331,7 +339,10 @@ def _digest(path, seen=None):
             c = msg.get("content")
             t = c if isinstance(c, str) else (" ".join(b.get("text", "") for b in c if isinstance(b, dict) and b.get("type") == "text") if isinstance(c, list) else "")
             t = (t or "").strip().replace("\n", " ")
-            if t and not t.startswith("<") and "tool_result" not in t[:40] and "[Request interrupted" not in t:
+            # THE SAME THREE SUBSTRINGS LIVED HERE AND IN conv._is_user_ask, deciding the same thing — "is
+            # this a real human ask?" — mechanically, in two places. This is the session's prompt: the answer
+            # becomes "what the spend was for" in every work-done row and story. Now one decider, in conv.
+            if conv._is_user_ask(r, t, ask_verdicts):
                 prompt = t[:200]
         mid = msg.get("id")
         if mid is not None and seen is not None:           # count each API response ONCE across replayed files
@@ -365,6 +376,14 @@ def work(by="week", days=None):
     cutoff = (datetime.date.today() - datetime.timedelta(days=int(days))).isoformat() if days else None
     digs = []
     seen = set()                                           # count each message.id ONCE across resume/branch replays
+    # AN UNREADABLE DIRECTORY IS NOT AN EMPTY ONE. glob returns [] for a path that is missing, renamed by a
+    # Claude Code upgrade, or unreadable — indistinguishable from "you did no work this period". Both callers
+    # then printed a header with no rows, so a broken source looked exactly like an honest zero and the user
+    # had nothing to act on. chat.work names the difference; this did not.
+    if not os.path.isdir(_projects_dir()):
+        print(f"no Claude Code session directory at {_projects_dir()} — nothing could be READ, which is not "
+              f"the same as no work. Set SPENDGUARD_CLAUDE_PROJECTS if your sessions live elsewhere.")
+        return 0
     for path in sorted(glob.glob(os.path.join(_projects_dir(), "**", "*.jsonl"), recursive=True)):
         d = _digest(path, seen)
         if d["cost"] <= 0 and not d["tools"]:
@@ -417,6 +436,14 @@ def story(by="week", days=7, run=False):
     cutoff = (datetime.date.today() - datetime.timedelta(days=int(days))).isoformat() if days else None
     digs = []
     seen = set()                                           # count each message.id ONCE across resume/branch replays
+    # AN UNREADABLE DIRECTORY IS NOT AN EMPTY ONE. glob returns [] for a path that is missing, renamed by a
+    # Claude Code upgrade, or unreadable — indistinguishable from "you did no work this period". Both callers
+    # then printed a header with no rows, so a broken source looked exactly like an honest zero and the user
+    # had nothing to act on. chat.work names the difference; this did not.
+    if not os.path.isdir(_projects_dir()):
+        print(f"no Claude Code session directory at {_projects_dir()} — nothing could be READ, which is not "
+              f"the same as no work. Set SPENDGUARD_CLAUDE_PROJECTS if your sessions live elsewhere.")
+        return 0
     for path in sorted(glob.glob(os.path.join(_projects_dir(), "**", "*.jsonl"), recursive=True)):
         d = _digest(path, seen)
         if (d["cost"] > 0 or d["tools"]) and (not cutoff or not d["day"] or d["day"] >= cutoff):

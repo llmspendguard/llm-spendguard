@@ -76,10 +76,19 @@ class ModalProvider:
         """Σ of the same billed report over the window — Modal's report IS the provider bill. None (UNKNOWN,
         never $0) when it can't be read."""
         from . import gpu_port
-        rows = self.instances(since_ts=gpu_port._since_ts(since))
-        if not rows:
+        # instances() RETURNS [] FOR BOTH "the read failed" AND "the window is genuinely empty", so reading
+        # None off an empty list conflated a real $0 month with an unreadable bill — the MIRROR of the usual
+        # error, and just as wrong: a working account with no Modal usage reported UNKNOWN forever and its
+        # $0 never reconciled. Read once here so the two cases can actually be told apart.
+        since_ts = gpu_port._since_ts(since)
+        try:
+            items = _report(since_ts)
+        except Exception:
+            return None                     # the bill could not be READ — UNKNOWN, never $0
+        if items is None:
             return None
-        return round(sum(r["usd"] for r in rows), 2)
+        rows = self.instances(since_ts=since_ts)
+        return round(sum(r["usd"] for r in rows), 2)      # a successful read of an empty window IS $0.00
 
 
 PROVIDER = ModalProvider()

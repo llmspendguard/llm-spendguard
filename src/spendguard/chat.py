@@ -515,7 +515,11 @@ def day_totals(member_ref, org_label=None):
     for back-compat ingest. If org_label is given, only matching (or unclassified) conversations are included."""
     rows = {}
     for r in _day_rows(_load_state()):
-        if org_label and r["org"] and r["org"].lower() != org_label.lower():
+        # THE `and r["org"]` GUARD LEAKED ACROSS ORGS. It made the comparison run only for rows that already
+        # HAVE an org, so a conversation the classifier left unclassified skipped the filter entirely and was
+        # pushed under whatever org this connection happens to be — the exact opposite of routing. An absent
+        # org is UNKNOWN, and unknown does not match a named org. claudecode.day_totals had it right.
+        if org_label and (r.get("org") or "").lower() != org_label.lower():
             continue
         team = (r.get("team") or "").lower()
         key = f"{team}|{r['project'].lower()}|{r['model']}|{r['day']}"
@@ -556,7 +560,13 @@ def sync(dry=False):
     if not rows:
         return {"skipped": "no chat value for this connection's org", "refresh": info}
     try:
-        res = saas._request("POST", "/v1/ledger", {"visibility": c.get("visibility"), "day_totals": rows})
+        # day_totals() is the COMPLETE per-conversation est-value set, so declare a replace and let the server
+        # prune this contributor's orphaned claude-ai rows. WITHOUT it the server STACKED: every re-classification
+        # or dedup re-bucketing left the old rows in place and added the new ones, so the same conversation's
+        # value was counted twice and the org's est-value drifted upward on every sync. claudecode.sync always
+        # sent this; chat.sync never did.
+        res = saas._request("POST", "/v1/ledger", {"visibility": c.get("visibility"), "day_totals": rows,
+                                                   "replace": [{"channel": "claude-ai", "billed": False}]})
         res["refresh"] = info
         return res
     except RuntimeError as e:
@@ -662,7 +672,10 @@ def story(by="week", days=7, run=False):
     print("\n=== WORK INSIGHTS (private — your IP, never pooled) ===")
     for ins in (data.get("insights") or []):
         print(f"  [{ins.get('type', '?'):<8}] ({ins.get('project', '?')}) {ins.get('text', '')}")
-    print(f"\n  (caged cost ${r.get('cost', 0):.4f}; intent spendguard:worklog)")
+    # `r.get('cost', 0)` DEFAULTS ONLY ON A MISSING KEY. A model with no price card puts a PRESENT None here,
+    # which reaches `:.4f` and raises TypeError — after the LLM call was already made and BILLED. The user pays
+    # and gets a traceback instead of their story. `or 0` covers present-but-None, as claudecode.story does.
+    print(f"\n  (caged cost ${(r.get('cost') or 0):.4f}; intent spendguard:worklog)")
     return 0
 
 
@@ -795,7 +808,7 @@ def discover(run=False, days=None, sample=None, apply=True):
                            reason="chat-taxonomy")
         print("\n  ✓ written to config.json chat.taxonomy — review/edit, then `chat classify --reclassify --run`.")
     stx = _load_state(); stx["last_discover"] = datetime.datetime.now().isoformat(timespec="seconds"); _save_state(stx)
-    print(f"  (caged cost ${r.get('cost', 0):.4f}; intent spendguard:categorize)")
+    print(f"  (caged cost ${(r.get('cost') or 0):.4f}; intent spendguard:categorize)")
     return 0
 
 

@@ -123,6 +123,17 @@ def record_estimate(sig, model, est_usd, est_count):
             "est_usd=excluded.est_usd, est_count=excluded.est_count, updated_at=excluded.updated_at",
             (sig, model, now, float(est_usd), int(est_count), now))
         _db().commit()
+    # FORWARD IT TO THE LEARNED ESTIMATOR. This wrote gate_ledger and stopped. calibrate.pair() reads
+    # cost_predictions and NOTHING bridged the two, so every estimate spendguard's own gate recorded was
+    # invisible to spendguard's own calibrator — which then trained only on predictions an external consumer
+    # remembered to log by hand through a DIFFERENTLY NAMED function. Neither module was wrong on its own;
+    # the defect was the gap. Never raises: a calibration write must not be able to block an authorization.
+    try:
+        from . import calibrate
+        calibrate.record_prediction(sig, f"gate:{sig[:12]}", model, float(est_usd), n=int(est_count),
+                                    transport="batch")
+    except Exception:
+        pass
     return now
 
 
@@ -343,8 +354,12 @@ def latency(sig=None, model=None, near_chars=None):
     # saying so. Observed as "p50: 0, p90: 7, p99: 10" on a class whose calls really took fractions of a
     # second. Seconds are not tokens; they need the fractional part.
     def _sec(vals, q):
-        v = sorted(vals)
-        return round(float(v[min(len(v) - 1, int(len(v) * q))]), 3)
+        """Seconds at quantile q. Same single algorithm as _pctl — this was a nearest-rank variant whose
+        index `int(len(v)*q)` overshoots by up to one position (q=1.0 indexes len, out of range) and which
+        raised IndexError on an empty sample rather than saying it did not know."""
+        from .calibrate import _quantile
+        s = _quantile(vals, q)
+        return None if s is None else round(float(s), 3)
 
     return {"n": len(done), "scope": scope,
             "p50": _sec(done, 0.50), "p90": _sec(done, 0.90), "p95": _sec(done, 0.95),
@@ -402,12 +417,15 @@ def _warn_truncated(sig, model, out_tok, max_tokens):
 
 
 def _pctl(vals, p):
-    if not vals:
-        return 0
-    v = sorted(vals)
-    k = (len(v) - 1) * p
-    f = int(k)
-    return int(v[f] if f + 1 >= len(v) else v[f] + (v[f + 1] - v[f]) * (k - f))
+    """Interpolated percentile of token counts, as an int. None for an empty sample.
+
+    THE ALGORITHM LIVES IN calibrate._quantile — there were three copies of "compute a percentile" in this
+    repo and all three disagreed. This one returned 0 on empty input, which is the house invariant inverted:
+    an empty sample means we do not KNOW the p99 output length, and 0 is a specific, confident, wrong answer
+    that a max_tokens decision would then be sized from."""
+    from .calibrate import _quantile
+    q = _quantile(vals, p)
+    return None if q is None else int(q)
 
 
 def maxtokens(sig, current_max=None):

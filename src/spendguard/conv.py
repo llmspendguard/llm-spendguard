@@ -16,7 +16,7 @@ Two stages:
 
 CLI: `spendguard mine-conv {index,synth} [--transcripts PATH] [--limit N] [--run]`.
 """
-import os, re, json, glob, hashlib, functools
+import os, re, json, glob, hashlib, functools, datetime
 from . import config, calls, learn
 
 _DEFAULT_TDIR = os.path.expanduser("~/.claude/projects")
@@ -204,18 +204,108 @@ def _seg_id(sid, ts, prompt):
     return hashlib.sha1("|".join([sid or "", ts or "", (prompt or "")[:120]]).encode()).hexdigest()[:16]
 
 
-def _is_user_ask(obj, txt):
-    """A genuine user ask (starts a new subconversation) — not a tool_result echo, system line, or interrupt."""
-    t = obj.get("type") or (obj.get("message") or {}).get("role")
-    if t != "user":
+def _user_candidate(obj, txt):
+    """The user-authored text on this record, or "" — PARSING ONLY.
+
+    Was `_is_user_ask`, and the name was the tell: it claimed to answer "is this a genuine ask?" while
+    actually testing `s.startswith("<")`, `"tool_result" in s[:40]` and `"[Request interrupted" in s`. That is
+    a judgement about MEANING decided by three substrings, and it fails in the direction that hides itself —
+    a real ask that happens to say "the tool_result came back empty" in its opening words was DROPPED, taking
+    the segment with it, and a dropped segment does not look like a drop. It looks like a session that never
+    asked anything. The same three rules were also copy-pasted into claudecode._digest.
+
+    What remains here is format-determined and safe: the record's role is `user`, and the text is non-empty.
+    Whether that text is a real ask or transcript machinery is decided by classify_user_asks()."""
+    role = obj.get("type") or (obj.get("message") or {}).get("role")
+    if role != "user":
         return ""
-    s = (txt or "").strip()
-    if not s or s.startswith("<") or "tool_result" in s[:40] or "[Request interrupted" in s:
+    return (txt or "").strip()
+
+
+_ASK_SYS = (
+    "Each item is text attached to a `user` record in an agent transcript. Decide whether it is something a "
+    "HUMAN typed as a request, or transcript machinery replayed into the user role — a tool result echoed "
+    "back, a system-injected reminder or context block, an interrupt notice, a hook message, a pasted file. "
+    "Judge by what the text IS, not by how it starts: a human message may open with a quote, a tag, an error "
+    "paste, or the word tool_result. When genuinely unsure answer true — dropping a real ask silently deletes "
+    "a whole segment of work and the loss is invisible, while keeping a stray one is visible and harmless.")
+
+
+def _ask_db():
+    db = learn._db()
+    db.execute("CREATE TABLE IF NOT EXISTS user_ask_class "
+               "(hash TEXT PRIMARY KEY, is_ask INT, model TEXT, ts TEXT)")
+    return db
+
+
+def classify_user_asks(items, run=True):
+    """{id: bool} — is each candidate a genuine human ask? The ONE decider; conv and claudecode both use it.
+
+    Same shape as classify_evidence: batched, cached by content hash so re-runs and the second consumer read
+    free, caged under spendguard:user-ask, cheap model. FAILS OPEN — an unjudged or failed item comes back
+    True, because the damaging error here is deleting a real ask, not keeping a spurious one."""
+    from . import adapters, calls, pricing
+    items = [c for c in items if (c.get("text") or "").strip()]
+    res = {c["id"]: True for c in items}                  # fail-open default, applied before anything can fail
+    if not items or not run:
+        return res
+    hashes = {c["id"]: _chash(c["text"]) for c in items}
+    todo = []
+    with learn._lock:
+        db = _ask_db()
+        for c in items:
+            r = db.execute("SELECT is_ask FROM user_ask_class WHERE hash=?", (hashes[c["id"]],)).fetchone()
+            if r is not None:
+                res[c["id"]] = bool(r[0])
+            else:
+                todo.append(c)
+    if not todo:
+        return res
+    model = config.recall_model()                     # cheapest capable (nano); caged by caps.meta
+    batches = [todo[i:i + 25] for i in range(0, len(todo), 25)]
+    for b in batches:
+        body = "\n".join(f'{i}. {(c["text"] or "")[:400]}' for i, c in enumerate(b))
+        prompt = (body + '\n\nFor each numbered item reply one line: `<i> <true|false>` — true if a human '
+                  'typed it as a request.')
+        try:
+            with calls.context(intent="spendguard:user-ask"):
+                r = adapters.call(model, prompt, max_tokens=8 * len(b) + 120, system=_ASK_SYS)
+            if r.get("error"):
+                continue                                  # stays True — fail open, never a silent drop
+            verdicts = {}
+            for ln in (r.get("text") or "").splitlines():
+                parts = ln.strip().split()
+                if len(parts) >= 2 and parts[0].rstrip(".").isdigit():
+                    verdicts[int(parts[0].rstrip("."))] = parts[1].lower().startswith("t")
+            with learn._lock:
+                db = _ask_db()
+                for i, c in enumerate(b):
+                    if i in verdicts:
+                        res[c["id"]] = verdicts[i]
+                        db.execute("INSERT OR REPLACE INTO user_ask_class VALUES (?,?,?,?)",
+                                   (hashes[c["id"]], int(verdicts[i]), model,
+                                    datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")))
+                db.commit()
+        except Exception:
+            continue                                      # stays True
+    return res
+
+
+def _is_user_ask(obj, txt, verdicts=None):
+    """Candidate text if this record carries a genuine human ask, else "".
+
+    `verdicts` is {text_hash: bool} from classify_user_asks. Absent, every candidate is kept — segment_records
+    stays PURE and offline-testable, and an un-judged run over-segments (visible, recoverable) rather than
+    dropping asks (invisible, not recoverable)."""
+    s = _user_candidate(obj, txt)
+    if not s:
+        return ""
+    if verdicts is not None and verdicts.get(_chash(s)) is False:
         return ""
     return s
 
 
-def segment_records(records, sid="", cwd_default=""):
+def segment_records(records, sid="", cwd_default="", ask_verdicts=None):
     """PURE (no file IO, offline-testable): split ONE transcript's records into subconversation segments. A segment
     opens at each user ask and runs until the next; it carries the ask (prompt), the cwd PRIOR, the batch ids that
     appear in its span, and the time. Returns a list of segment dicts."""
@@ -232,7 +322,7 @@ def segment_records(records, sid="", cwd_default=""):
             cwd = obj.get("cwd")
         txt = _text_of(obj)
         ts = obj.get("timestamp") or ""
-        ask = _is_user_ask(obj, txt)
+        ask = _is_user_ask(obj, txt, ask_verdicts)
         if ask:
             _flush()
             cur = {"sid": sid, "cwd": cwd, "project_prior": _basename(cwd), "prompt": ask[:200],

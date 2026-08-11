@@ -150,11 +150,26 @@ def unjudged(limit=None):
         return _db().execute(q).fetchall()
 
 
-def set_quality(io_id, ok, src="judge", conf=0.95):
-    with _lock:
-        _db().execute("UPDATE call_io SET quality=?, quality_src=?, quality_conf=? WHERE id=?",
-                      ("good" if ok else "bad", src, conf, io_id))
-        _db().commit()
+def set_quality(io_id, ok, src="judge", conf=None):
+    """Label a sampled call's quality after the fact — the call_io twin of calls.feedback, and now with the
+    same three guarantees it had and this did not:
+
+      · a missing io_id RETURNS instead of issuing `WHERE id=NULL`, which matches nothing yet still commits
+      · a locking/transient DB error does not propagate out of a labelling call and kill the judging pass
+      · confidence comes from the SHARED calls._CONF map, so a 'mined' label (0.5) is no longer recorded at
+        the hardcoded 0.95 that only ever suited 'judge' — the advisor weights by this number
+    """
+    if not io_id:
+        return
+    from .calls import _CONF                      # one confidence scale for both stores, defined once
+    c = conf if conf is not None else _CONF.get(src, 0.7)
+    try:
+        with _lock:
+            _db().execute("UPDATE call_io SET quality=?, quality_src=?, quality_conf=? WHERE id=?",
+                          ("good" if ok else "bad", src, c, io_id))
+            _db().commit()
+    except Exception:
+        pass
 
 
 def good_rates():

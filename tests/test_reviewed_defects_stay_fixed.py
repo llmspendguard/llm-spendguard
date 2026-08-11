@@ -13,6 +13,7 @@ author is the last person able to see it.
 import contextlib
 import io
 import os
+import pathlib
 import sys
 import tempfile
 
@@ -351,5 +352,65 @@ try:
     check("a non-column key is REFUSED", False, "it was accepted into the SET clause")
 except ValueError:
     check("a non-column key is REFUSED", True)
+
+
+# ── cross-file DRIFT found by the capability axis (2026-08-10) ────────────────────────────────────────────
+# These read SOURCE rather than behaviour in a few places: the defect is often an absent guard, and the
+# shortest honest proof that a guard is present is that its line is there. Each such check is paired with a
+# behavioural one where the behaviour is reachable offline.
+SRC = pathlib.Path(__file__).resolve().parent.parent / "src" / "spendguard"
+# Each of these was a copy of a job that another module already did correctly. The copy is what regressed,
+# so the guard pins the copy's behaviour to the canonical one's.
+
+# chat.day_totals leaked across orgs: `and r["org"]` made the filter run only for rows that HAD an org, so an
+# unclassified conversation skipped it entirely and pushed under whatever org was connected.
+_chat_src = (SRC / "chat.py").read_text()
+check("chat.day_totals does not skip the org filter for unclassified rows",
+      'if org_label and (r.get("org") or "").lower() != org_label.lower():' in _chat_src
+      and 'and r["org"] and' not in _chat_src)
+
+# chat.sync POSTed without a replace directive, so the server STACKED rows on every re-classification.
+check("chat.sync declares a replace so server rows are pruned, not accumulated",
+      '"replace": [{"channel": "claude-ai", "billed": False}]' in _chat_src)
+
+# `r.get('cost', 0)` defaults only on a MISSING key; an unpriced model puts a present None there, which
+# reaches :.4f and raises — after the call was billed.
+check("chat.story survives a present-but-None cost", "r.get('cost', 0):.4f" not in _chat_src)
+
+# One quantile algorithm. _pctl returned 0 on an empty sample — a confident wrong answer that max_tokens
+# would then be sized from — and _sec used a different, off-by-one nearest-rank index.
+from spendguard import bulkgate, calibrate                                             # noqa: E402
+check("_pctl says UNKNOWN on an empty sample, never 0", bulkgate._pctl([], 0.9) is None)
+check("_pctl and calibrate._quantile agree", bulkgate._pctl([1, 2, 3, 4], 0.5) == int(calibrate._quantile([1, 2, 3, 4], 0.5)))
+
+# codex_exec._bin consulted PATH BEFORE the env pin, silently ignoring an explicit $SPENDGUARD_CODEX_BIN.
+check("codex_exec._bin has no shutil.which fast path ahead of the pin",
+      'if shutil.which("codex")' not in (SRC / "codex_exec.py").read_text())
+
+# modal_adapter.account_total returned None for an empty window, conflating a real $0 with an unreadable bill.
+check("modal account_total distinguishes an unreadable bill from a $0 window",
+      "a successful read of an empty window IS $0.00" in (SRC / "modal_adapter.py").read_text())
+
+# THE SEAM: the gate wrote gate_ledger, the calibrator read cost_predictions, nothing bridged them — so
+# spendguard's own estimates never reached spendguard's own learned estimator.
+check("bulkgate.record_estimate forwards the prediction to the calibrator",
+      "calibrate.record_prediction(" in (SRC / "bulkgate.py").read_text())
+check("the record_estimate name collision is resolved", hasattr(calibrate, "record_prediction"))
+
+# "Is this a genuine human ask?" was decided by three substrings, in TWO places. A real ask that opened with
+# "the tool_result came back empty" was silently DROPPED, taking its whole segment with it.
+from spendguard import conv                                                            # noqa: E402
+for _t in ("the tool_result came back empty, can you check?", "<thinking> is what I want explained",
+              "[Request interrupted] — please resume"):
+       check(f"a real ask beginning {_t[:24]!r} is not dropped", bool(conv._is_user_ask({"type": "user"}, _t)))
+check("the ask decider is agentic and lives in ONE place", callable(getattr(conv, "classify_user_asks", None)))
+check("claudecode does not keep its own copy of the ask rules",
+      '"tool_result" not in t[:40]' not in (SRC / "claudecode.py").read_text())
+
+# claudecode.work could not tell an unreadable session directory from a period with no work.
+check("claudecode.work distinguishes an unreadable dir from no work",
+      "nothing could be READ, which is not" in (SRC / "claudecode.py").read_text())
+
+
 print(f"\n{'[FAIL]' if failures else 'OK'} test_reviewed_defects_stay_fixed: {failures} failure(s)")
 sys.exit(1 if failures else 0)
