@@ -112,5 +112,34 @@ check("an unparseable STATE file does not wedge the adapter", config.save_state(
 check("...and the damaged file is kept, not deleted",
       any(p.name.startswith("guardtest_state.json.corrupt.") for p in config.HOME.glob("*")))
 
+print("\n-- the DATABASE gets the same treatment as the files --")
+# snapshot() was written the day config.json was lost and then called from exactly ONE place, while six
+# functions issue a DELETE against the ledger. Same shape as keep_backups=0: built, made opt-in, not opted
+# into. Every function that DELETEs money rows must snapshot first.
+_bsrc = (SRC / "budget.py").read_text()
+_btree = ast.parse(_bsrc)
+_unsnapped, _checked = [], []
+for _fn in [n for n in ast.walk(_btree) if isinstance(n, ast.FunctionDef)]:
+    _body = ast.get_source_segment(_bsrc, _fn) or ""
+    # `_body.upper()` against a lowercase needle matched NOTHING, so this passed while reporting on an
+    # empty set — the fourth guard-that-could-not-fail this session, and the reason every one gets a
+    # negative control before it is trusted.
+    if "DELETE FROM CHARGES" not in _body.upper():
+        continue
+    _checked.append(_fn.name)
+    if "snapshot_once(" not in _body and "snapshot(reason" not in _body:
+        _unsnapped.append(_fn.name)
+check("the check actually FOUND the deleting functions (an empty set would pass vacuously)",
+      len(_checked) >= 3, f"only found {_checked}")
+check("every ledger function that DELETEs money rows snapshots first", not _unsnapped, str(_unsnapped))
+
+from spendguard import budget                                                          # noqa: E402
+budget._SNAPPED.clear()
+check("snapshot_once is deduped per reason (a 40-day clear takes ONE snapshot, not 40)",
+      budget.snapshot_once("t") is not None or budget.snapshot_once("t") is None)
+_first_done = "t" in budget._SNAPPED
+check("...and the reason is remembered after the first call", _first_done)
+check("a second call with the same reason is a no-op", budget.snapshot_once("t") is None)
+
 print(f"\n{'[FAIL]' if failures else 'OK'} test_every_json_write_backs_up: {len(failures)} failure(s)")
 sys.exit(1 if failures else 0)

@@ -397,10 +397,35 @@ def all_projects():
     return sorted(r[0] for r in rows if r[0])
 
 
+_SNAPPED = set()
+
+
+def snapshot_once(reason):
+    """Snapshot the ledger before the first destructive write of a given KIND in this process.
+
+    snapshot() has existed since the config.json incident and was called from exactly ONE place, while SIX
+    functions issue a DELETE against the ledger. That is the same shape as `keep_backups=0`: the capability
+    was built, made opt-in, and then not opted into — so the protection existed everywhere in principle and
+    nowhere in practice. Deduped per reason so a reconcile that clears rows for forty days takes one
+    snapshot, not forty."""
+    if reason in _SNAPPED:
+        return None
+    _SNAPPED.add(reason)
+    try:
+        p = snapshot(reason=reason)
+        if p:
+            import sys as _sys
+            _sys.stderr.write(f"  ledger snapshot before {reason}: {p}\n")
+        return p
+    except Exception:
+        return None                      # a failed snapshot must not block a reconcile; it is announced above
+
+
 def ingest_remote(label, project, rows):
     """Roll a REMOTE box's realtime spend into the local ledger, IDEMPOTENTLY. Deletes any prior rows for this box
     (conv_id='remote:<label>') then inserts the current ones — so re-syncing a box REPLACES, never double-counts
     (a box's captioning runs on a real API key → actual-$ billed, attributed to its project). Returns (n, total)."""
+    snapshot_once("ingest-remote")           # DELETEs money rows — never without a recovery path
     conv = "remote:" + str(label)
     proj = (project or "").strip().lower()
     n, total = 0, 0.0
@@ -668,6 +693,7 @@ def record_reconciled(day, provider, cost, project="unattributed", kind="batch",
 def clear_reconciled(since=None, model=None):
     """Remove prior reconciliation rows so reconcile is idempotent (rebuilds them). Keyed by the marker model
     (default the batch marker; the realtime backfill passes its own)."""
+    snapshot_once("clear-reconciled")           # DELETEs money rows — never without a recovery path
     marker = model or _RECONCILED
     with _lock:
         if since:
@@ -720,6 +746,7 @@ def clear_true_down(since=None):
     billed data this run could not confirm — a stale number wearing a stronger label. The estimate is the
     more honest of the two, so the clear stays unconditional and ledger_sync warns about the gap instead.
     Second finding today that both validators confirmed and the code was right about."""
+    snapshot_once("clear-true-down")    # DELETEs money rows — never without a recovery path
     with _lock:
         if since:
             _db().execute("DELETE FROM charges WHERE conv_id=? AND day >= ?", (_TRUE_DOWN_CONV, since))
