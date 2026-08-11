@@ -374,7 +374,7 @@ def _write_store(s, value):
         else:
             cfg[sec][key] = value
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(cfg, indent=2) + "\n")
+        config.update_json(p, lambda _d: cfg)
         config._cfg._cache = None                       # drop the process cache so a read-back shows the new value
         return p, None
     if store in ("env", "(env only)"):
@@ -609,9 +609,9 @@ def cmd_init(argv=None):
         return cur
     config.save_config(_merge, reason="setup")
     if email:
-        ep.write_text(json.dumps(email, indent=2))
+        config.update_json(ep, lambda _d: email)
     if saas:
-        sp.write_text(json.dumps(saas, indent=2))
+        config.update_json(sp, lambda _d: saas)
     print(f"\nwrote {config.CONFIG_JSON}" + (f" and {ep}" if email else "") + (f" and {sp}" if saas else ""))
     # Contributor identity is a MUST (it's the billable/rollup user). Materialize + show the resolved id now so it's
     # never blank/unattributed; an email here also becomes the alert target.

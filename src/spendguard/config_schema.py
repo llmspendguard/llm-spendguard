@@ -121,6 +121,14 @@ SETTINGS = [
               "global keys.env holds every workspace/project-scoped key and each repo picks its own. A REAL "
               "environment variable always wins. Pair with provider-side scoping (OpenAI project keys / Anthropic "
               "workspace keys) to get per-repo billing truth from the provider itself."),
+    dict(section="safety", key="keep_backups", store="config.json", env="SPENDGUARD_KEEP_BACKUPS",
+         default="3", kind="int", secret=False,
+         desc="How many TIMESTAMPED copies of a rewritten JSON file to retain, on top of the Emacs-style "
+              "`<file>~` that always holds the immediately-previous version. Every whole-file JSON write in "
+              "this package goes through config.update_json, which backs up before replacing — the default "
+              "used to be 0 and almost every caller left it there, which is how ~/.spendguard/config.json "
+              "went from 9KB of settings to a 26-byte probe value with no copy of it anywhere. Set 0 to keep "
+              "only `<file>~`; raise it if you edit settings often and want deeper history."),
     dict(section="calibrate", key="pair_horizon_hours", store="(env only)", env="SPENDGUARD_PAIR_HORIZON_H",
          default="24", kind="int", secret=False,        # "number" was a one-off; every other numeric is int/float
          desc="Learned-estimator pairing window: a logged job prediction (`calibrate.record_estimate`) collects "

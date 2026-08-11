@@ -103,7 +103,8 @@ def guarded_submit(jsonl_path, model, cap_dollars, batch=True, avg_out_tokens=No
     os.makedirs(AUDIT_DIR, exist_ok=True)
     rec = dict(est); rec["jsonl"] = jsonl_path; rec["cap"] = cap_dollars; rec["expected"] = expected_cost
     audit_path = os.path.join(AUDIT_DIR, f"{os.path.basename(jsonl_path)}.gate.json")
-    json.dump(rec, open(audit_path, "w"), indent=2)
+    from . import config
+    config.update_json(audit_path, lambda _d: rec)      # a gate AUDIT record; losing it loses the trail
 
     if not submit:
         print(f"[submit_gate] PASS (estimate only, submit=False). audit: {audit_path}")

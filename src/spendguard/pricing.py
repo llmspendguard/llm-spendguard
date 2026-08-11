@@ -129,9 +129,9 @@ def set_price(model, provider, in_usd, out_usd, source, batch_in=None, batch_out
              "_source": str(source).strip(),
              "_added": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")}
     provs.setdefault("models", {})[str(model).strip()] = entry
+    from . import config
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as fh:
-        json.dump(data, fh, indent=2, sort_keys=True)
+    config.update_json(path, lambda _d: data)      # atomic + `~` backup: this file IS the $/token truth
     return path, entry
 
 

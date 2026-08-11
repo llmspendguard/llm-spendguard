@@ -433,6 +433,10 @@ class JobLock:
                                    f"{held.get('started')}). Two runs would clobber each other's output.")
             except (OSError, ValueError, KeyError):
                 pass                                            # stale lock from a dead process — reclaim it
+        # raw-write-ok: a LOCKFILE, not data — ephemeral, unlinked on exit, and rebuilt trivially. Routing
+        # it through update_json would be wrong in both directions: os.replace would clobber a lock another
+        # process just took, and `~` backups of a pid file are noise. (Its check-then-write is racy under a
+        # true concurrent start; that is a separate fix, not one to make silently while tidying writers.)
         self.path.write_text(json.dumps({"pid": os.getpid(), "started": time.time(), "run": run_id()}))
         return self
 
@@ -612,7 +616,7 @@ def _write_efforts(vendor, model, out):
         data = {}
     data.setdefault(f"{vendor}/{model}", {})["efforts"] = out
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, sort_keys=True))
+    config.update_json(path, lambda _d: data)
 
 
 # WHERE EFFORT LIVES, and why there is no record_effort()/effort_policy() here any more.
@@ -656,7 +660,7 @@ def record_input_limit(vendor, model, max_chars, method, source="", applies_to="
         "measured": time.strftime("%Y-%m-%d")}
     data[key] = rec
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, sort_keys=True))
+    config.update_json(path, lambda _d: data)
     return rec["input_limits"][applies_to]
 
 

@@ -106,7 +106,7 @@ def snapshot():
         rec += 1
     try:
         config.HOME.mkdir(parents=True, exist_ok=True)
-        _history_path().write_text(json.dumps(hist))
+        config.update_json(_history_path(), lambda _d: hist)
     except Exception:
         pass
     return {"recorded": rec, "total_tracked": len(hist)}
@@ -764,7 +764,7 @@ def record_recovered(box):
     persisted, why = True, None
     try:
         config.HOME.mkdir(parents=True, exist_ok=True)
-        _history_path().write_text(json.dumps(hist))
+        config.update_json(_history_path(), lambda _d: hist)
     except Exception as e:
         persisted, why = False, f"{type(e).__name__}: {str(e)[:80]}"
         import sys as _sys

@@ -125,6 +125,8 @@ def build_index(tdir=None, rebuild=False):
     # every transcript. The temp file is on the same directory so the replace is atomic, and the handle is
     # closed explicitly instead of left to the GC.
     os.makedirs(os.path.dirname(_CACHE), exist_ok=True)
+    # raw-write-ok: already atomic (temp file + os.replace, see above) and this is a content-keyed excerpt
+    # cache — rebuilt on demand, so nothing exists only here and a `~` copy would just be churn.
     _tmp = _CACHE + f".tmp.{os.getpid()}"
     try:
         with open(_tmp, "w") as _fh:

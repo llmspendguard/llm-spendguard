@@ -399,7 +399,7 @@ def stamp_remote(rows) -> None:
         except Exception:
             data = {}
         data["remote"] = acc
-        p.write_text(json.dumps(data, indent=0))
+        config.update_json(p, lambda _d: data)
     except Exception:
         pass
 
@@ -1003,7 +1003,7 @@ def _install_claude_code(remove=False):
                                     "timeout": 5}]})
         action = "installed"
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(cfg, indent=2) + "\n")
+    config.update_json(p, lambda _d: cfg)
     print(f"{action} spendguard receipts for Claude Code → {p}")
     print("  restart Claude Code to apply" + ("" if remove else "  (status-line footer + per-turn notice)")
           + (f"  ·  backup: {p.with_suffix('.json.bak').name}" if p.with_suffix('.json.bak').exists() else ""))

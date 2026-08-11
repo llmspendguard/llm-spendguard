@@ -655,7 +655,7 @@ def _state():
 def _set_state(**kw):
     s = _state(); s.update(kw)
     try:
-        config.saas_state_path().write_text(json.dumps(s, indent=2))
+        config.update_json(config.saas_state_path(), lambda _d: s)
     except Exception:
         pass
 

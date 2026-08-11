@@ -554,7 +554,7 @@ def leak_line(since=None):
     try:
         import json
         import time
-        _leak_cache_path().write_text(json.dumps({"line": line, "ts": time.time()}))
+        config.update_json(_leak_cache_path(), lambda _d: {"line": line, "ts": time.time()})
     except Exception:
         pass
     return line

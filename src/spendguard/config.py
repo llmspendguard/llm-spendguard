@@ -189,7 +189,7 @@ def today_utc():
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
 
 
-def update_json(path, mutate, reason="", keep_backups=0, required=False):
+def update_json(path, mutate, reason="", keep_backups=None, required=False, quarantine_unparseable=False):
     """The ONE way this package rewrites a whole JSON file. Every such write goes through here.
 
     A SWEEP ON 2026-08-10 FOUND 29 WHOLE-FILE JSON WRITES ACROSS 20 MODULES, exactly ONE of them atomic and
@@ -209,7 +209,13 @@ def update_json(path, mutate, reason="", keep_backups=0, required=False):
         otherwise the caller is told and the file is left alone
       * the write is ATOMIC (temp file in the same directory + os.replace), so a crash or a full disk
         leaves the previous file whole rather than truncated
-      * `keep_backups` retains that many timestamped copies of what was replaced
+      * EMACS-STYLE BACKUP ON EVERY WRITE, not on request. `path~` always holds the immediately-previous
+        version, and `keep_backups` timestamped copies hold deeper history (default from config
+        `safety.keep_backups`, 3). This used to default to ZERO — the capability existed and almost every
+        caller left it off, which is why "every destructive mutation backs up first" came back ABSENT from
+        a whole-repo invariant check even after this function was written. A safety default that has to be
+        remembered is one that will be forgotten; that is the same failure that lost config.json in the
+        first place, one level up. Pass keep_backups=0 to keep only `path~`.
 
     `mutate(data)` edits in place or returns a new object. Returns the written object, or None if the
     write was declined."""
@@ -225,17 +231,47 @@ def update_json(path, mutate, reason="", keep_backups=0, required=False):
         except Exception as e:
             msg = (f"{path} exists but does not parse ({type(e).__name__}: {str(e)[:60]}) — REFUSING to "
                    f"rewrite it, because doing so would replace its whole contents with this one change.")
-            if required:
-                raise ValueError(msg)
-            import sys as _sys
-            _sys.stderr.write(f"[spendguard] WARN {msg}\n")
-            return None
+            if quarantine_unparseable:
+                # SETTINGS AND CACHES NEED OPPOSITE ANSWERS HERE, and only the caller knows which it holds.
+                # Refusing forever is right for config.json — those settings exist nowhere else, so a
+                # corrupt file must be repaired by a human, not overwritten. It is wrong for an adapter's
+                # state file, which is REBUILDABLE from the transcripts: refusing there wedges the adapter
+                # permanently, every later save failing on damage that will never repair itself. So the
+                # damaged file is MOVED ASIDE (kept, for forensics) and a fresh one written. Nothing is
+                # destroyed either way; the difference is whether recovery is automatic.
+                import sys as _sys
+                stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+                bad = path.with_suffix(path.suffix + f".corrupt.{stamp}")
+                try:
+                    _os.replace(path, bad)
+                    _sys.stderr.write(f"[spendguard] WARN {path} did not parse — moved to {bad.name} and "
+                                      f"rebuilding. Nothing was deleted.\n")
+                except Exception:
+                    _sys.stderr.write(f"[spendguard] WARN {msg}\n")
+                    return None
+                cur = {}
+            else:
+                if required:
+                    raise ValueError(msg)
+                import sys as _sys
+                _sys.stderr.write(f"[spendguard] WARN {msg}\n")
+                return None
 
     out = mutate(cur)
     if out is None:
         out = cur
 
     path.parent.mkdir(parents=True, exist_ok=True)
+    # `path~` — the previous version, ALWAYS, before anything replaces it. Cheap, bounded (one copy), and
+    # it is the file you actually want at 2am: not a timestamped archive to hunt through, just "what it was
+    # a moment ago", exactly where Emacs puts it.
+    if path.exists():
+        try:
+            _pathlib.Path(str(path) + "~").write_bytes(path.read_bytes())
+        except Exception:
+            pass                                  # a failed backup must not block a legitimate write
+    if keep_backups is None:
+        keep_backups = keep_backups_default()
     if keep_backups and path.exists():
         stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         tag = "".join(c if c.isalnum() or c in "-_" else "-" for c in (reason or "save"))[:32]
@@ -663,3 +699,64 @@ def api_get_text(url, headers, timeout=90):
     req = urllib.request.Request(url, headers=headers or {})
     with urllib.request.urlopen(req, timeout=timeout, context=ssl_context()) as r:
         return r.read().decode()
+
+import json as _json_mod
+
+
+# ── per-adapter state files ──────────────────────────────────────────────────────────────────────────────
+def keep_backups_default():
+    """Timestamped copies retained per rewritten JSON file (config `safety.keep_backups`, env
+    SPENDGUARD_KEEP_BACKUPS). The `<file>~` previous-version backup is unconditional and not counted here."""
+    import os as _os
+    v = _os.environ.get("SPENDGUARD_KEEP_BACKUPS")
+    if v is None:
+        v = _cfg_get("safety", "keep_backups", 3)
+    try:
+        return max(0, int(v))
+    except (TypeError, ValueError):
+        return 3
+
+
+def state_path(name):
+    """Path of an adapter's state file under HOME. One naming rule, so `chat`, `claudecode`, `codex`,
+    `realized` and the rest cannot drift apart on where they keep it."""
+    return HOME / f"{name}_state.json"
+
+
+def load_state(name, default=None):
+    """An adapter's persisted state, or `default` if it is missing OR unreadable. Distinguishing those two
+    is the caller's business — save_state refuses to overwrite a file it could not read."""
+    try:
+        return _json_mod.loads(state_path(name).read_text())
+    except Exception:
+        return dict(default) if isinstance(default, dict) else (default if default is not None else {})
+
+
+def save_state(name, obj, loud=True):
+    """Persist an adapter's state ATOMICALLY. Returns True on success.
+
+    THERE WERE FIVE COPIES OF THIS, three of them byte-identical:
+
+        try:
+            config.HOME.mkdir(parents=True, exist_ok=True)
+            _state_path().write_text(json.dumps(st, indent=0))
+        except Exception:
+            pass
+
+    Both halves are wrong. `write_text` is not atomic, so a crash or a full disk mid-write leaves a
+    TRUNCATED state file — and these files are read back with a bare `except: return {}`, so the truncation
+    presents as "no state" rather than as damage. And `except: pass` means a save that never happened looks
+    exactly like one that did. For claudecode that state holds `counted_ids`, the set that stops resume and
+    branch replays from counting the same message.id repeatedly; losing it silently re-inflates est-value by
+    roughly 2.4x, and nothing anywhere says so.
+    """
+    try:
+        HOME.mkdir(parents=True, exist_ok=True)
+        return update_json(state_path(name), lambda d: obj, reason=f"{name} state",
+                           quarantine_unparseable=True) is not None
+    except Exception as e:
+        if loud:
+            import sys as _sys
+            _sys.stderr.write(f"  ⚠ could not save {name} state ({type(e).__name__}: {str(e)[:70]}). The next "
+                              f"run will re-read from the last saved watermark, which may double-count.\n")
+        return False

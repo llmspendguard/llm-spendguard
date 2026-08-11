@@ -181,6 +181,7 @@ def dedup_jsonl(input_path, out_path, model="*", map_path=None):
             seen.add(h); dup_map[h] = [cid]; kept_ids.append(cid)
             fout.write(ln + "\n"); kept_n += 1
     if map_path:
+        # raw-write-ok: a fresh per-run OUTPUT path the caller named, not a file this tool reads back.
         import json as _j
         with open(map_path, "w") as _fh:               # closed and FLUSHED: a half-written dedup map is worse
             _j.dump({"kept": kept_ids, "groups": list(dup_map.values())}, _fh)

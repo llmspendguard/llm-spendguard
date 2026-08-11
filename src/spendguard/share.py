@@ -88,7 +88,10 @@ def cmd_export(argv):
     print("\n  (identity scrubbed: $ amounts, intent names, evidence snippets removed; "
           "model names, ratios, task context kept — that's the generalizable rule.)")
     if a.out:
-        json.dump({"insights": recs, "schema": "spendguard.shared.v1"}, open(a.out, "w"), indent=2)
+        # raw-write-ok: an export bundle written to a path the USER named on the command line; the tool
+        # never reads it back, and silently versioning someone's chosen output file would be surprising.
+        with open(a.out, "w") as _fh:                  # ...but still CLOSED deterministically
+            json.dump({"insights": recs, "schema": "spendguard.shared.v1"}, _fh, indent=2)
         print(f"\n  wrote {len(recs)} rules → {a.out}")
     else:
         print("\n  (preview only — pass --out PATH to write the file.)")

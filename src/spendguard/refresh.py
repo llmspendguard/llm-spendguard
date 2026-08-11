@@ -60,7 +60,8 @@ def _write(looked):
         models.setdefault(model, {}).update(found)
     base.setdefault("_meta", {})["verified"] = datetime.date.today().isoformat()
     target = src if os.access(os.path.dirname(src), os.W_OK) else str(config.HOME / "prices.json")
-    json.dump(base, open(target, "w"), indent=2)
+    # prices.json — the $/token table every estimate and every receipt is computed from.
+    config.update_json(target, lambda _d: base)
     return target
 
 

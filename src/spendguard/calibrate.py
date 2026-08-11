@@ -572,9 +572,10 @@ def fetch_shared():
     r = saas.fetch_calibration()
     cells = r.get("cells") or []
     if cells:
-        (config.HOME / ORG_CACHE).write_text(json.dumps(
-            {"fetched_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
-             "cells": cells}, indent=1))
+        config.update_json(
+            config.HOME / ORG_CACHE,
+            lambda _d: {"fetched_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+                        "cells": cells})
     return {"cells": len(cells), "members": r.get("members"), **({"skipped": r["skipped"]} if "skipped" in r else {})}
 
 

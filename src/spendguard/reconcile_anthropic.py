@@ -119,7 +119,10 @@ def refresh_cache(k, cache):
             print(f"  ...cached {new} new batches", flush=True)
     if new:
         os.makedirs(os.path.dirname(CACHE_PATH), exist_ok=True)
-        json.dump(cache, open(CACHE_PATH, "w"))
+        # The results this summarizes are DOWNLOADED — losing the cache means re-fetching every batch
+        # body to rebuild it. Atomic, with a `~` copy of the last good one.
+        from . import config
+        config.update_json(CACHE_PATH, lambda _d: cache)
     return new
 
 

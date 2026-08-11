@@ -183,7 +183,8 @@ def summarize(since=None, run=False, model=None):
             txt = (r.get("text") or "").strip()
             if txt and not r.get("error"):
                 out[p] = txt[:800]
-    json.dump(out, open(_summaries_path(), "w"), indent=2)
+    # These summaries were PAID FOR — an LLM generated them. A truncated write means paying again.
+    config.update_json(_summaries_path(), lambda _d: out)
     return {"projects": len(prompts), "summarized": len(out), "model": model, "est_usd": est}
 
 

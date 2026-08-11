@@ -19,7 +19,7 @@ MIN_EACH = 5   # need ≥5 calls on BOTH sides of the adoption point to claim a 
 
 def _state_path():
     from . import config
-    return config.HOME / "realized_state.json"
+    return config.state_path("realized")     # one naming rule for every adapter
 
 
 def _load_state():
@@ -97,8 +97,13 @@ def sync_to_guarded(rows=None):
         state[r["intent"]] = {"counted_calls": r["after_calls"], "adopted_ts": r["adopted_ts"]}
         synced += amount
         intents += 1
+    # update_json is already fail-soft (it warns and returns None rather than raising on an unwritable or
+    # unparseable target), so the blanket try/except that used to wrap the raw write is no longer hiding
+    # anything — but it is kept, because a failure to persist here must not take down a sync that has
+    # already credited the savings above.
     try:
-        _state_path().write_text(json.dumps(state, indent=1))
+        from . import config
+        config.update_json(_state_path(), lambda _d: state)
     except Exception:
         pass
     return {"synced_usd": round(synced, 4), "intents": intents}

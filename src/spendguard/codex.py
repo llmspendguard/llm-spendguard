@@ -24,7 +24,7 @@ def _sessions_dir():
 
 
 def _state_path():
-    return config.HOME / "codex_state.json"
+    return config.state_path("codex")     # one naming rule for every adapter
 
 
 def _load_state():
@@ -35,11 +35,12 @@ def _load_state():
 
 
 def _save_state(st):
-    try:
-        config.HOME.mkdir(parents=True, exist_ok=True)
-        _state_path().write_text(json.dumps(st, indent=0))
-    except Exception:
-        pass
+    """Persist this adapter's state. THREE byte-identical copies of this existed (chat, claudecode, codex),
+    each non-atomic and each swallowing its own failure — so a crash mid-write left a TRUNCATED state file
+    that the loader's bare `except: return {}` then reported as "no state", and a save that never happened
+    looked exactly like one that did. config.save_state writes atomically, keeps an Emacs-style `~` backup,
+    quarantines a corrupt file instead of wedging on it, and says so when it cannot write."""
+    return config.save_state("codex", st)
 
 
 def load_cls():

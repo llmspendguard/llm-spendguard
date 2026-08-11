@@ -201,7 +201,7 @@ def auto_fresh(now=None):
         if isinstance(_r, dict) and _r.get("error"):
             print(f"  review step FAILED: {str(_r['error'])[:120]}")
         state["last_fresh"] = now
-        state_p.write_text(json.dumps(state))
+        config.update_json(state_p, lambda _d: state)
         return {"ran": True, "mode": mode}
     except Exception as e:
         return {"error": str(e)[:120]}
