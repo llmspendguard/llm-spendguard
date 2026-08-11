@@ -4,6 +4,7 @@ Decoupled from any host repo so the package is portable. Data (gate log, kill-sw
 flag, reconcile cache) lives under SPENDGUARD_HOME (default ~/.spendguard). API keys
 resolve from the environment first, then SPENDGUARD_ENV or ./.env.
 """
+import pathlib as _pathlib
 import datetime
 import os
 from pathlib import Path
@@ -186,6 +187,128 @@ def month_start_utc():
 def today_utc():
     """Today in UTC, as 'YYYY-MM-DD' — the same reason as month_start_utc()."""
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+
+
+def update_json(path, mutate, reason="", keep_backups=0, required=False):
+    """The ONE way this package rewrites a whole JSON file. Every such write goes through here.
+
+    A SWEEP ON 2026-08-10 FOUND 29 WHOLE-FILE JSON WRITES ACROSS 20 MODULES, exactly ONE of them atomic and
+    five of them carrying the destructive read:
+
+        try:    data = json.load(open(p))
+        except: data = {}                 # <- an unreadable file becomes an EMPTY one
+        ...
+        p.write_text(json.dumps(data))    # <- and is then replaced by it
+
+    That is not a style problem. It is how ~/.spendguard/config.json went from 9KB of settings to a 26-byte
+    probe value with nothing raised and nothing logged, and the same shape sits in the caps registry, the
+    receipt cache and the lane state. Each site was individually plausible; the pattern was the defect.
+
+    WHAT THIS GUARANTEES
+      * an existing file that will not PARSE is never silently replaced — `required=True` raises,
+        otherwise the caller is told and the file is left alone
+      * the write is ATOMIC (temp file in the same directory + os.replace), so a crash or a full disk
+        leaves the previous file whole rather than truncated
+      * `keep_backups` retains that many timestamped copies of what was replaced
+
+    `mutate(data)` edits in place or returns a new object. Returns the written object, or None if the
+    write was declined."""
+    import json as _json
+    import os as _os
+    import datetime as _dt
+    path = _pathlib.Path(path)
+
+    cur = {}
+    if path.exists():
+        try:
+            cur = _json.loads(path.read_text() or "{}")
+        except Exception as e:
+            msg = (f"{path} exists but does not parse ({type(e).__name__}: {str(e)[:60]}) — REFUSING to "
+                   f"rewrite it, because doing so would replace its whole contents with this one change.")
+            if required:
+                raise ValueError(msg)
+            import sys as _sys
+            _sys.stderr.write(f"[spendguard] WARN {msg}\n")
+            return None
+
+    out = mutate(cur)
+    if out is None:
+        out = cur
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if keep_backups and path.exists():
+        stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        tag = "".join(c if c.isalnum() or c in "-_" else "-" for c in (reason or "save"))[:32]
+        try:
+            (path.parent / f"{path.stem}.{stamp}.{tag}{path.suffix}").write_text(path.read_text())
+            for old in sorted(path.parent.glob(f"{path.stem}.2*{path.suffix}"))[:-keep_backups]:
+                old.unlink(missing_ok=True)
+        except Exception:
+            pass                                  # a failed backup must not block a legitimate write
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(_json.dumps(out, indent=2))
+    _os.replace(tmp, path)                        # atomic: readers never see a half-written file
+    return out
+
+
+def save_config(mutate, reason=""):
+    """The ONLY safe way to change config.json. Read-modify-write, but with the three things the three
+    hand-rolled copies of this were missing.
+
+    WHAT WENT WRONG WITHOUT IT (2026-08-10). setup.py, chat.py x2 and pricing.set_price each opened the
+    file with `except Exception: cfg = {}` and then rewrote it whole — so ONE unreadable byte replaced
+    every setting with whatever key that caller happened to be setting. Separately, a test wrote the path
+    directly and reduced ~9KB of settings to 26 bytes. There was no backup, and the loss was silent: the
+    tool kept running on schema defaults, `calls.enabled` quietly became False, and the next review wave's
+    independent ledger cross-check read $0.00 as a consequence.
+
+    THE THREE GUARANTEES
+      1. AN UNREADABLE FILE IS NEVER OVERWRITTEN. If it exists and will not parse, this raises. Refusing to
+         save one setting is recoverable; replacing every setting is not.
+      2. THE WRITE IS ATOMIC. Written to a temp file in the same directory and os.replace()d, so a crash or
+         a full disk leaves the previous file intact rather than a truncated one.
+      3. THE PREVIOUS VERSION IS KEPT. A rolling set of timestamped backups, because "I set that last week"
+         has to be answerable.
+
+    `mutate` receives the parsed dict and modifies it in place (or returns a new one)."""
+    import json as _json
+    import os as _os
+    import datetime as _dt
+
+    cur = {}
+    if CONFIG_JSON.exists():
+        try:
+            cur = _json.loads(CONFIG_JSON.read_text())
+        except Exception as e:
+            raise ValueError(
+                f"{CONFIG_JSON} exists but does not parse ({type(e).__name__}: {str(e)[:80]}). REFUSING to "
+                f"write, because saving would replace every setting in it with just this change. Fix or "
+                f"move that file first — a copy of the last good version is in {CONFIG_JSON.parent}.")
+        if not isinstance(cur, dict):
+            raise ValueError(f"{CONFIG_JSON} does not contain a JSON object — refusing to overwrite it.")
+
+    out = mutate(cur)
+    if out is None:
+        out = cur
+    if not isinstance(out, dict):
+        raise ValueError("save_config: the mutate function must leave a dict")
+
+    HOME.mkdir(parents=True, exist_ok=True)
+    if CONFIG_JSON.exists():                       # keep the version we are about to replace
+        stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        tag = "".join(c if c.isalnum() or c in "-_" else "-" for c in (reason or "save"))[:32]
+        try:
+            (CONFIG_JSON.parent / f"config.{stamp}.{tag}.json").write_text(CONFIG_JSON.read_text())
+            olds = sorted(CONFIG_JSON.parent.glob("config.2*.json"))[:-10]
+            for f in olds:
+                f.unlink(missing_ok=True)
+        except Exception:
+            pass                                   # a failed backup must not block a legitimate save
+    tmp = CONFIG_JSON.with_suffix(".json.tmp")
+    tmp.write_text(_json.dumps(out, indent=2))
+    _os.replace(tmp, CONFIG_JSON)                  # atomic: never a half-written config
+    cfg_invalidate()
+    return out
 
 
 def cfg_invalidate():

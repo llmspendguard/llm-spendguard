@@ -13,6 +13,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from . import config           # _record_probe writes the probe cache through config.update_json (atomic + backed up)
+
 # Auth artifacts per lane (named constants; tests point these at temp paths).
 CLAUDE_CREDS = Path.home() / ".claude" / ".credentials.json"      # claude CLI's own login file
 CODEX_AUTH = Path.home() / ".codex" / "auth.json"                 # codex CLI login (verified live)
@@ -45,16 +47,12 @@ def _record_probe(lane, ok):
     import datetime
     import json
     p = _probe_cache_path()
-    try:
-        d = json.loads(p.read_text()) if p.exists() else {}
-    except Exception:
-        d = {}
-    d[lane] = {"ok": bool(ok), "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")}
-    try:
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(d))
-    except Exception:
-        pass
+    # THROUGH THE ONE WRITER. `except: d = {}` then a full rewrite meant an unreadable probe file
+    # silently discarded every OTHER lane's recorded state, and the non-atomic write could truncate it.
+    config.update_json(p, lambda d: d.update({lane: {
+        "ok": bool(ok),
+        "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")}}),
+        reason="lane-probe")
 
 
 def _claude_auth():

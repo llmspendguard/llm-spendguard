@@ -600,9 +600,14 @@ def cmd_init(argv=None):
             email[s["store"][len("email.json:"):]] = val
         elif s["store"].startswith("saas.json:"):
             saas[s["store"][len("saas.json:"):]] = val
-    config.HOME.mkdir(parents=True, exist_ok=True)
-    config.CONFIG_JSON.write_text(json.dumps(cfgjson, indent=2))
-    config._cfg._cache = None  # invalidate cache
+    # THROUGH THE ONE SAFE WRITER. `cfgjson` is built from the settings this command is changing, so
+    # writing it whole DROPPED every key the command did not touch. Merged into the existing file instead,
+    # atomically, with the prior version kept.
+    def _merge(cur):
+        for sec, kv in cfgjson.items():
+            cur.setdefault(sec, {}).update(kv if isinstance(kv, dict) else {})
+        return cur
+    config.save_config(_merge, reason="setup")
     if email:
         ep.write_text(json.dumps(email, indent=2))
     if saas:

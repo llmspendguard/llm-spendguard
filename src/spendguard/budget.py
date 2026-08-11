@@ -213,6 +213,44 @@ def record(provider, model, kind, cost, project=None, conv_id=None, basis=None,
         _db().commit()
 
 
+def snapshot(reason="", keep=20):
+    """Copy the ledger database aside BEFORE anything mutates it. Returns the path, or None.
+
+    WHY THIS EXISTS. On 2026-08-10 a guard test overwrote ~/.spendguard/config.json — 9KB of settings
+    replaced by a 26-byte probe — and there was no backup to restore from: the machine's off-site job
+    mirrors ~/.claude only, and this directory holds the ledger itself (43,488 rows, $24,515 recorded at
+    the time). Every re-attribution and quarantine that day ran against data with no recovery path.
+
+    A mutation without a recovery path is not a change, it is a gamble. sqlite's own backup API is used so
+    a snapshot taken while another process is mid-write is still consistent — a torn copy would be a backup
+    that only fails when you need it."""
+    import datetime as _dt
+    import sqlite3 as _sq
+    try:
+        src = config.db_path()
+        d = config.HOME / "snapshots"
+        d.mkdir(parents=True, exist_ok=True)
+        stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        tag = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in (reason or "pre-mutation"))[:40]
+        dst = d / f"spend-{stamp}-{tag}.db"
+        with _sq.connect(src) as _s, _sq.connect(str(dst)) as _t:
+            _s.backup(_t)                        # consistent even under a concurrent writer
+        # Keep the most recent `keep`; a snapshot directory that grows without bound gets deleted by hand
+        # one day, which is the same as having none.
+        old = sorted(d.glob("spend-*.db"))[:-keep] if keep else []
+        for f in old:
+            try:
+                f.unlink()
+            except OSError:
+                pass
+        return str(dst)
+    except Exception as e:
+        import sys as _sys
+        _sys.stderr.write(f"[budget] WARN could not snapshot the ledger before mutating it "
+                          f"({type(e).__name__}: {str(e)[:80]}) — the change is NOT protected.\n")
+        return None
+
+
 def reattribute_providers(apply=False, actor="reattribute_providers"):
     """Find (and optionally correct) charges whose `provider` disagrees with the model registry.
 
@@ -253,6 +291,12 @@ def reattribute_providers(apply=False, actor="reattribute_providers"):
             except Exception:
                 _wrong_fp.setdefault(f["was"], "")
     unjournalled = []
+    if apply and (fixes or True):
+        # SNAPSHOT BEFORE WRITING. This function rewrote 697 rows the first time it ran, against a database
+        # with no backup anywhere.
+        _snap = snapshot(reason=f"reattribute-{actor}")
+        if _snap:
+            print(f"  ledger snapshot: {_snap}")
     if apply and fixes:
         with _lock:
             for f in fixes:

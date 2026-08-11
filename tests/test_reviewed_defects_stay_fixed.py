@@ -12,7 +12,18 @@ author is the last person able to see it.
 """
 import contextlib
 import io
+import os
 import sys
+import tempfile
+
+# ISOLATE BEFORE IMPORTING ANYTHING. This file writes through spendguard's own paths, and on 2026-08-10 a
+# check added here overwrote the user's real ~/.spendguard/config.json — 9KB of settings replaced by a
+# 26-byte probe value, silently, with the suite still green. The package resolves its paths AT IMPORT, so
+# the redirect has to happen before the first `from spendguard import ...` below, not after.
+if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
+    os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
+    os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-reviewed-")
+    os.execv(sys.executable, [sys.executable] + sys.argv)
 
 from spendguard import expected_output as eo, reconcile
 
@@ -271,18 +282,34 @@ check("cfg_invalidate() exists for in-process writes", callable(_cfg3.cfg_invali
 # BEHAVIOUR, NOT AN ATTRIBUTE. The first version asserted hasattr(_cfg, "_mtime") — an implementation
 # detail that is unset when no config file exists yet, so it failed in an isolated HOME while the caching
 # worked correctly. What matters is that a rewritten file is SEEN.
-import json as _json3, time as _time3                                        # noqa: E402
-_cfg3.CONFIG_JSON.parent.mkdir(parents=True, exist_ok=True)
-_cfg3.CONFIG_JSON.write_text(_json3.dumps({"probe": {"k": "first"}}))
-_cfg3.cfg_invalidate()
-check("a config value reads back", _cfg3._cfg_get("probe", "k") == "first",
-      str(_cfg3._cfg_get("probe", "k")))
-_time3.sleep(0.01)                                                           # distinct mtime
-_cfg3.CONFIG_JSON.write_text(_json3.dumps({"probe": {"k": "second"}}))
-check("...and a REWRITE of the file is seen without an explicit invalidate",
-      _cfg3._cfg_get("probe", "k") == "second",
-      f"got {_cfg3._cfg_get('probe', 'k')!r} — a cache with no invalidation freezes a setting at "
-      f"whatever time it was first needed")
+# A TEST NEVER WRITES TO A REAL USER PATH. The first version of this check wrote to _cfg.CONFIG_JSON
+# directly — and this file runs in the SHARED home, so it OVERWROTE ~/.spendguard/config.json with its own
+# probe value and destroyed every setting in it. Measured: the file went from ~9KB to 26 bytes, calls
+# logging silently switched off, and the next review wave's independent ledger cross-check read $0.00 as a
+# result. A guard that damages the thing it guards is worse than no guard.
+#
+# CONFIG_JSON is redirected to a temp file for the duration, so the property is still exercised end to end
+# and nothing outside the temp directory is touched.
+import json as _json3, tempfile as _tf3, time as _time3, pathlib as _pl3     # noqa: E402
+_real_cfg_path = _cfg3.CONFIG_JSON
+_tmp_cfg = _pl3.Path(_tf3.mkdtemp(prefix="spendguard-cfgtest-")) / "config.json"
+_cfg3.CONFIG_JSON = _tmp_cfg
+try:
+    _tmp_cfg.write_text(_json3.dumps({"probe": {"k": "first"}}))
+    _cfg3.cfg_invalidate()
+    check("a config value reads back", _cfg3._cfg_get("probe", "k") == "first",
+          str(_cfg3._cfg_get("probe", "k")))
+    _time3.sleep(0.01)                                                       # distinct mtime
+    _tmp_cfg.write_text(_json3.dumps({"probe": {"k": "second"}}))
+    check("...and a REWRITE of the file is seen without an explicit invalidate",
+          _cfg3._cfg_get("probe", "k") == "second",
+          f"got {_cfg3._cfg_get('probe', 'k')!r} — a cache with no invalidation freezes a setting at "
+          f"whatever time it was first needed")
+finally:
+    _cfg3.CONFIG_JSON = _real_cfg_path
+    _cfg3.cfg_invalidate()
+check("...and the REAL config path was never written to",
+      _cfg3.CONFIG_JSON == _real_cfg_path and _tmp_cfg.exists())
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════════════════

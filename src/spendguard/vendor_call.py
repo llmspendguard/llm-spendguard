@@ -519,15 +519,17 @@ def record_cap(vendor, model, max_output_tokens, method, source=""):
         raise ValueError("a cap must be positive: zero or absent is the failure this registry exists to end")
     path = _caps_path()
     try:
-        data = json.loads(path.read_text()) if path.exists() else {}
+        json.loads(path.read_text()) if path.exists() else {}
     except Exception:
-        data = {}
-    data[f"{vendor}/{model}"] = {"max_output_tokens": int(max_output_tokens), "method": method,
-                                 "source": source, "measured_at": time.strftime("%Y-%m-%dT%H:%M:%SZ",
-                                                                                time.gmtime())}
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, sort_keys=True))
-    return data[f"{vendor}/{model}"]
+        pass
+    # THROUGH THE ONE WRITER. This registry holds every MEASURED bound in the system — caps, input limits,
+    # discovered effort tiers — each one paid for with real calls. `except: data = {}` then a full rewrite
+    # meant a single unreadable byte threw all of them away and they would be silently re-measured.
+    entry = {"max_output_tokens": int(max_output_tokens), "method": method, "source": source,
+             "measured_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    config.update_json(path, lambda d: d.update({f"{vendor}/{model}": entry}),
+                       reason="record-cap", keep_backups=3)
+    return entry
 
 
 # The candidate tiers to PROBE. Not a per-model decision and not a claim about what any model supports —

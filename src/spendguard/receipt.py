@@ -143,13 +143,10 @@ def stamp_est_value(rows, source: str = "claude-code") -> None:
                     ca[k] += usd
         p = _cache_path()
         p.parent.mkdir(parents=True, exist_ok=True)
-        data = {}
-        try:
-            data = json.loads(p.read_text())
-        except Exception:
-            data = {}
-        data.setdefault("est_value_by_source", {})[source] = acc
-        p.write_text(json.dumps(data, indent=0))
+        # THROUGH THE ONE WRITER: an unreadable cache used to discard every other source's est-value.
+        from . import config as _c
+        _c.update_json(p, lambda d: d.setdefault("est_value_by_source", {}).update({source: acc}),
+                       reason="est-value")
     except Exception:
         pass
 

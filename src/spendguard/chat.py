@@ -788,14 +788,11 @@ def discover(run=False, days=None, sample=None, apply=True):
         print(f"    + teams: {new_teams or 'none'}")
         print("    (review; if you apply, run `chat classify --reclassify --run` to reallocate)")
     if apply and (taxo.get("orgs") or taxo.get("projects")):
-        try:
-            cfg = json.loads(config.CONFIG_JSON.read_text()) if config.CONFIG_JSON.exists() else {}
-        except Exception:
-            cfg = {}
-        cfg.setdefault("chat", {})["taxonomy"] = taxo
-        config.HOME.mkdir(parents=True, exist_ok=True)
-        config.CONFIG_JSON.write_text(json.dumps(cfg, indent=2))
-        config._cfg._cache = None
+        # THROUGH THE ONE SAFE WRITER. This was its own read-modify-write with `except: cfg = {}`, so an
+        # unreadable config meant this taxonomy REPLACED every other setting. Three copies of that pattern
+        # existed; save_config refuses on a bad read, writes atomically, and keeps the prior version.
+        config.save_config(lambda cfg: cfg.setdefault("chat", {}).update({"taxonomy": taxo}),
+                           reason="chat-taxonomy")
         print("\n  ✓ written to config.json chat.taxonomy — review/edit, then `chat classify --reclassify --run`.")
     stx = _load_state(); stx["last_discover"] = datetime.datetime.now().isoformat(timespec="seconds"); _save_state(stx)
     print(f"  (caged cost ${r.get('cost', 0):.4f}; intent spendguard:categorize)")
@@ -997,14 +994,8 @@ def test():
 
 
 def _set_enabled(on):
-    try:
-        cfg = json.loads(config.CONFIG_JSON.read_text()) if config.CONFIG_JSON.exists() else {}
-    except Exception:
-        cfg = {}
-    cfg.setdefault("chat", {})["enabled"] = bool(on)
-    config.HOME.mkdir(parents=True, exist_ok=True)
-    config.CONFIG_JSON.write_text(json.dumps(cfg, indent=2))
-    config._cfg._cache = None
+    config.save_config(lambda cfg: cfg.setdefault("chat", {}).update({"enabled": bool(on)}),
+                       reason="chat-enabled")
     print(f"chat adapter {'ENABLED' if on else 'disabled'} (config.json chat.enabled={bool(on)}).")
     if on:
         print("  on-device · opt-in · your session only · pushes only when you run `spendguard chat sync`.")
