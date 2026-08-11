@@ -44,7 +44,13 @@ def _in_price_per_tok(model):
         p = pricing.price(model)
         per_m = p.get("in_") if isinstance(p, dict) else None   # pricing.price -> {'in_','out','cached_in',...} $/1M
         return (float(per_m) / 1e6) if per_m else None
-    except Exception:
+    except Exception as e:
+        # "UNPRICED" AND "THE PRICE LOOKUP BROKE" ARE DIFFERENT FACTS and this collapsed them. Both return
+        # None here because the caller can only do one thing about it, but the second one is a bug someone
+        # needs to hear about rather than a model legitimately missing from the table.
+        from . import config
+        config.warn_once(f"[spendguard] price lookup FAILED for {model!r} ({type(e).__name__}) — this is a "
+                         f"lookup error, not an unpriced model.")
         return None
 
 

@@ -230,11 +230,14 @@ def experiment(intent, models=None, instructions=None, n=20, run=False, reconsid
 
 
 def _meta():
-    from . import budget
+    """Meta spend today, or None if the ledger could not be READ. Returning 0.0 told the operator nothing had
+    been spent when the truth was that nobody could tell — the same inversion as advisor._meta_spent."""
+    from . import budget, config
     try:
         return budget.meta_spent_today()
-    except Exception:
-        return 0.0
+    except Exception as e:
+        config.warn_once(f"[spendguard] meta spend today could not be read ({type(e).__name__}) — UNKNOWN.")
+        return None
 
 
 def _read_inputs(path):

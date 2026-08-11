@@ -31,7 +31,10 @@ EST = {"provider": "anthropic", "model": "claude-sonnet-4-6", "requests": 200,
 
 print("-- the displayed number leads with the LEARNED expectation, ceiling named as a ceiling --")
 import spendguard.calibrate as cal
-cal.estimate = lambda label, n=1, model=None, transport="batch", est_in_tokens=None, est_out_max=None, as_of=None: {
+# Stub the CANONICAL name. `estimate` is a back-compat alias for outside consumers; stubbing the alias
+# would silently stop intercepting the moment internal callers moved to the real name — which is exactly
+# what happened when calibrate.estimate was renamed to predict_cost.
+cal.predict_cost = lambda label, n=1, model=None, transport="batch", est_in_tokens=None, est_out_max=None, as_of=None: {
     "p50_usd": 0.60, "p90_usd": 1.10, "level": "model", "n_obs": 1666}
 e = dict(EST)
 c = gate._calibrate_est(e)
@@ -47,7 +50,10 @@ check("provenance is shown (how many observations, at what level)", "1,666 obs" 
 
 print("-- per-request inputs are what get passed to the learner (not whole-batch totals) --")
 seen = {}
-cal.estimate = lambda label, n=1, model=None, transport="batch", est_in_tokens=None, est_out_max=None, as_of=None: (
+# Stub the CANONICAL name. `estimate` is a back-compat alias for outside consumers; stubbing the alias
+# would silently stop intercepting the moment internal callers moved to the real name — which is exactly
+# what happened when calibrate.estimate was renamed to predict_cost.
+cal.predict_cost = lambda label, n=1, model=None, transport="batch", est_in_tokens=None, est_out_max=None, as_of=None: (
     seen.update(n=n, model=model, transport=transport, in_=est_in_tokens, out=est_out_max)
     or {"p50_usd": 0.6, "p90_usd": 1.1, "level": "model", "n_obs": 10})
 gate._calibrate_est(dict(EST))
@@ -59,7 +65,7 @@ check("transport is batch (batch rates, not realtime)", seen["transport"] == "ba
 print("-- degrade: no calibration → honest ceiling language, never a fabricated 'likely' --")
 def _boom(*a, **k):
     raise RuntimeError("no history")
-cal.estimate = _boom
+cal.predict_cost = _boom      # canonical name, same reason as above
 e2 = dict(EST)
 check("a failing learner returns None (never raises into the gate)", gate._calibrate_est(e2) is None)
 e2["_cal"] = None

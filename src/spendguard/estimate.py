@@ -123,7 +123,7 @@ def main():
         try:
             from . import calibrate
             per_req_in = prefix + bp * in_per
-            lr = calibrate.estimate(a.label, n=br["n_req"], model=bm, transport=mode,
+            lr = calibrate.predict_cost(a.label, n=br["n_req"], model=bm, transport=mode,
                                     est_in_tokens=per_req_in, est_out_max=bp * out_per)
             print(f"  learned ({a.label}): ${lr['p50_usd']:,.2f} p50 … ${lr['p90_usd']:,.2f} p90 "
                   f"[basis={lr['basis']}, level={lr['level']}, n_obs={lr['n_obs']}] — history-corrected")

@@ -280,7 +280,7 @@ def _calibrate_est(est):
             label = (_calls.current().get("intent") or "").strip()
         except Exception:
             label = ""
-        r = calibrate.estimate(label or "batch", n=n, model=est["model"], transport="batch",
+        r = calibrate.predict_cost(label or "batch", n=n, model=est["model"], transport="batch",
                                est_in_tokens=max(1, int(est["in_tok"] / n)),
                                est_out_max=max(1, int(est["out_tok"] / n)))
         p50, p90 = r.get("p50_usd"), r.get("p90_usd")
@@ -591,8 +591,21 @@ def _rt_flush():
                 f.write(json.dumps({"day": day, "provider": prov, "model": mdl, "calls": calls,
                                     "cost": round(cost, 6), "in_tok": in_tok, "out_tok": out_tok,
                                     "cached_in_tok": cached}) + "\n")
-    except Exception:
-        pass
+    except Exception as e:
+        # THE AGGREGATE WAS ALREADY EMPTIED ABOVE, so swallowing here DELETED real spend. These rows are
+        # calls that were made and BILLED; the log is the only record the gate has of them, and a full disk
+        # or a permissions change silently dropped every one — in the tool whose entire purpose is not
+        # losing track of spend. Put them back so the next flush retries, and say it happened.
+        with _rt_lock:
+            for k, v in items:
+                cur = _rt_agg.get(k)
+                if cur is None:
+                    _rt_agg[k] = list(v)
+                else:
+                    for i in range(min(len(cur), len(v))):
+                        cur[i] += v[i]
+        _warn_once(f"[spendguard] realtime spend log could not be written ({type(e).__name__}: "
+                   f"{str(e)[:60]}) — {len(items)} aggregated row(s) HELD for the next flush, not dropped.")
 
 
 _atexit.register(_rt_flush)
@@ -909,8 +922,13 @@ def _tool_fee_count(result):
                 n += 1
         stu = getattr(getattr(result, "usage", None), "server_tool_use", None)
         n += int(getattr(stu, "web_search_requests", 0) or 0)
-    except Exception:
-        pass
+    except Exception as e:
+        # RETURNING THE PARTIAL COUNT UNDERSTATES A BILL. These are per-call fees the token usage never
+        # includes, so a count that stops early is not "roughly right" — it is money the gate silently did
+        # not charge, surfacing later only as an unexplained reconcile residual. None means UNKNOWN.
+        _warn_once(f"[spendguard] per-call tool fees could not be counted on a response "
+                   f"({type(e).__name__}) — the fee count is UNKNOWN for it, not zero.")
+        return None
     return n
 
 
@@ -918,7 +936,13 @@ def _record_tool_fees(model, kw, result):
     """Record per-call tool fees as their own ledger entry (a SECOND row — fees are not tokens and
     hiding them inside a token row would be unauditable). Unpriced → $0 + loud warn, never silent."""
     n = _tool_fee_count(result)
-    if not n:
+    if n is None:
+        # UNKNOWN IS NOT ZERO, one level up too. `if not n` treated a failed count and a genuine no-fee
+        # response identically, which put the collapse straight back after _tool_fee_count stopped making
+        # it. The warning already fired there; recording nothing here is the only available action, but the
+        # two cases must not read the same in the code either.
+        return
+    if n == 0:
         return
     try:
         fee = n * pricing.unit_price("web_search_call", model)

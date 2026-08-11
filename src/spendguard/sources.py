@@ -38,7 +38,7 @@ _SOURCES = {}          # name → zero-arg factory returning a source object/mod
 _BUILTINS_DONE = False
 
 
-def register(name, factory):
+def register_transcript_source(name, factory):
     """Add a transcript source. `factory` is zero-arg and returns the source (see the port contract above)."""
     _SOURCES[name] = factory
 
@@ -242,3 +242,8 @@ def main(argv=None):
         return 0
     print(render(discover(days=days)))
     return 0
+
+
+# `register` is the package export for gate.register (register an SDK SURFACE to gate), and plain
+# `register_source` is already gpu_port's registrar for GPU spend sources. The name says WHICH registry.
+register = register_transcript_source

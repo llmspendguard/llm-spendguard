@@ -435,5 +435,55 @@ check("cachetest uses the AST extractor, not a second regex scan",
       and "_SYS_ASSIGN" not in (SRC / "cachetest.py").read_text())
 
 
+# ── silent failures that SURVIVED adversarial refutation (2026-08-11) ─────────────────────────────────────
+# 179 swallowing functions triaged agentically; 60 called dangerous; 26 kept after refuters tried to knock
+# them down; 7 of those confirmed by reading. These are the ones where the swallow LOSES MONEY OR TRUTH.
+
+# gate._rt_flush emptied the aggregate BEFORE writing, so a failed write deleted real spend records for
+# good — in the tool whose whole purpose is not losing track of spend.
+_gsrc = (SRC / "gate.py").read_text()
+check("a failed realtime-log write HOLDS the rows for the next flush instead of dropping them",
+      "HELD for the next flush, not dropped" in _gsrc)
+from spendguard import gate                                                            # noqa: E402
+gate._rt_agg.clear()
+gate._rt_agg[("2026-01-01", "openai", "m")] = [1, 0.5, 10, 5, 0]
+_orig_log = gate.RT_LOG
+gate.RT_LOG = "/nonexistent-dir-for-this-test/rt.jsonl"
+try:
+    gate._rt_flush()
+    check("...proven: the row is still in the aggregate after an unwritable log", len(gate._rt_agg) == 1)
+    check("...with its values intact", gate._rt_agg.get(("2026-01-01", "openai", "m"), [0])[1] == 0.5)
+finally:
+    gate.RT_LOG = _orig_log
+    gate._rt_agg.clear()
+
+# _tool_fee_count returned the PARTIAL count on a parse failure — money the gate silently did not charge,
+# surfacing later only as an unexplained reconcile residual.
+class _BadResp:
+    @property
+    def output(self):
+        raise RuntimeError("unparseable")
+check("an uncountable tool-fee response is UNKNOWN, not a partial number", gate._tool_fee_count(_BadResp()) is None)
+
+
+class _CleanResp:
+    output = []
+    usage = None
+check("...and a genuinely fee-free response is still 0, not None", gate._tool_fee_count(_CleanResp()) == 0)
+check("the caller keeps UNKNOWN and zero apart too", "if n is None:" in _gsrc and "if n == 0:" in _gsrc)
+
+# Two copies of "meta spend today" returned 0.0 when the ledger could not be read, and both figures are
+# shown to an operator deciding whether to approve a run.
+for _m, _f in (("advisor", "_meta_spent"), ("experiment", "_meta")):
+    check(f"{_m}.{_f} says UNKNOWN rather than $0 when the ledger is unreadable",
+          "return 0.0" not in (SRC / f"{_m}.py").read_text().split(f"def {_f}(")[1].split("def ")[0])
+
+# calibrate.estimate collided with pricing.estimate, and pricing's is what `spendguard.estimate` binds — so
+# the plain name reached the NAIVE figure while the learned predictor had to be asked for by module path.
+from spendguard import calibrate as _cal                                               # noqa: E402
+check("the learned predictor has a name that says so", callable(getattr(_cal, "predict_cost", None)))
+check("...with the old name kept as an alias for existing consumers", _cal.estimate is _cal.predict_cost)
+
+
 print(f"\n{'[FAIL]' if failures else 'OK'} test_reviewed_defects_stay_fixed: {failures} failure(s)")
 sys.exit(1 if failures else 0)

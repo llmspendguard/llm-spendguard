@@ -279,7 +279,7 @@ def _with_org(chain, quantity, label, model, transport="", at=1, naive=(1.0, 1.0
 
 
 # ─────────────────────────────────── the estimator ───────────────────────────────────
-def estimate(label, n=1, model=None, transport="batch", est_in_tokens=None, est_out_max=None,
+def predict_cost(label, n=1, model=None, transport="batch", est_in_tokens=None, est_out_max=None,
              as_of=None):
     """Predict a planned job's $ from OUR history. est_in_tokens / est_out_max are PER REQUEST
     (what the caller knows: rendered-prompt tokens and the max_tokens it will set); n = requests.
@@ -721,3 +721,10 @@ def main(argv=None):
 # following docs/REFERENCE.md and a consumer reading the package export got two different behaviours from one
 # name. The canonical name is now record_prediction; this alias keeps existing callers working.
 record_estimate = record_prediction
+
+
+# `estimate` COLLIDED WITH pricing.estimate, and pricing's is what `spendguard.estimate` binds at package
+# level — so the plain, obvious name reached the NAIVE pre-flight figure while the LEARNED predictor this
+# module exists to provide (MAPE 18% -> 10%) had to be asked for by module path. The canonical name now says
+# which one it is; the alias keeps existing callers working.
+estimate = predict_cost
