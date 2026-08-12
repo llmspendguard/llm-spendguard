@@ -87,7 +87,7 @@ def main():
         prompt = (body(r) + "\n\nThese are all implementations of the SAME capability. Have they DRIFTED, and "
                   f"which one is now WRONG?\nReply JSON only: {SCHEMA_HINT}")
         with calls.context(intent="spendguard:capability-slice-review"):
-            resp = adapters.call(model, prompt, max_tokens=1400, system=SYSTEM)
+            resp = adapters.call_complete(model, prompt, sig="probe:capability-slice", system=SYSTEM)
         if resp.get("error"):
             print(f"  {i}/{len(slices)} {r['capability'][:50]}: FAILED — UNREVIEWED, not clean")
             out_rows.append({**r, "verdict": None, "why": str(resp["error"])[:120]})

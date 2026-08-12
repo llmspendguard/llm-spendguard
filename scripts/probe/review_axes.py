@@ -85,9 +85,13 @@ def resource_map(root, model, run):
         return m, ds, est
     for i, d in enumerate(ds, 1):
         with calls.context(intent="spendguard:seam-resource-map"):
-            r = adapters.call(model, f"```python\n{d.src[:1600]}\n```\n\nWhat shared resources does "
-                              f"`{d.qual}` touch?\nReply JSON only: {RESOURCE_SCHEMA}",
-                              max_tokens=300, system=RESOURCE_SYSTEM)
+            # call_complete, not call: sized from this call-class's measured p99, retried on truncation, and
+            # text=None rather than a cut body if it still will not fit. `max_tokens=300` here truncated
+            # replies into unparseable JSON, and the loop below then counted them as "touches nothing" —
+            # a resource map with silent holes, which is worse than no map because it reads as complete.
+            r = adapters.call_complete(model, f"```python\n{d.src[:1600]}\n```\n\nWhat shared resources does "
+                                       f"`{d.qual}` touch?\nReply JSON only: {RESOURCE_SCHEMA}",
+                                       sig="probe:resource-map", system=RESOURCE_SYSTEM)
         if r.get("error"):
             continue                                    # UNMAPPED — counted by the caller, never read as "none"
         try:
@@ -143,7 +147,7 @@ def run_seams(root, model, run, out_path):
         prompt = (body(table, sides) + "\n\nFind CONTRACT GAPS between these writers and readers. A site "
                   f"correct on its own can still be half of a defect.\nReply JSON only: {SEAM_SCHEMA}")
         with calls.context(intent="spendguard:seam-review"):
-            r = adapters.call(model, prompt, max_tokens=1200, system=SEAM_SYSTEM)
+            r = adapters.call_complete(model, prompt, sig="probe:seam-review", system=SEAM_SYSTEM)
         if r.get("error"):
             print(f"  {i}/{len(seams)} {table}: FAILED — UNREVIEWED, not clean")
             rows.append({"table": table, "verdict": None}); continue
@@ -152,19 +156,26 @@ def run_seams(root, model, run, out_path):
             v = json.loads(blob.group(0)) if blob else None
         except Exception:
             v = None
-        gaps = [g for g in ((v or {}).get("gaps") or []) if g.get("confidence") != "low"]
+        # NO CONFIDENCE THRESHOLD. This filtered on `g.get("confidence") != "low"` — a hand-picked cutoff
+        # deciding which findings are worth a human's attention, which is a judgement about risk and context,
+        # and made on a label the same model volunteered about its own output. It also does not work: the
+        # first run produced 377 "gaps" through that filter, a number nobody can act on. What DID work today,
+        # on the silent-failure triage, was refutation — every candidate handed to independent skeptics
+        # instructed to knock it down, defaulting to refuted when unsure. 60 became 26 that way, and the 34
+        # it removed were real over-calls. Every gap is kept here and settled by that pass, not by a constant.
+        gaps = list((v or {}).get("gaps") or [])
         if gaps:
             ngap += 1
-            print(f"\n  ⚠ SEAM GAP  `{table}` ({kind})")
-            for g in gaps:
-                print(f"      {g.get('kind')}: {g.get('writer')} → {g.get('reader')}")
-                print(f"        breaks: {str(g.get('what_breaks'))[:110]}")
-        rows.append({"table": table, "kind": kind, "verdict": v})
+            print(f"\n  ⚠ {len(gaps)} candidate gap(s) on `{table}` ({kind}) — unverified until refuted")
+        rows.append({"table": table, "kind": kind, "verdict": v, "verified": False})
     with open(out_path, "w") as fh:
         for r_ in rows:
             fh.write(json.dumps(r_) + "\n")
     unrev = sum(1 for r_ in rows if r_.get("verdict") is None)
-    print(f"\n  {ngap} seams with contract gaps · {unrev} UNREVIEWED (not clean) -> {out_path}")
+    ncand = sum(len((r_.get("verdict") or {}).get("gaps") or []) for r_ in rows)
+    print(f"\n  {ncand} CANDIDATE gaps across {ngap} seams · {unrev} UNREVIEWED (not clean) -> {out_path}")
+    print("  These are candidates, NOT findings. Refute them before believing any of them:")
+    print(f"    review_axes.py seam --refute --from-file {out_path}")
     return 0
 
 
@@ -224,7 +235,7 @@ def run_invariants(root, model, run, out_path):
                   f"  {inv}\n\nIs it upheld, violated at specific sites, or ABSENT (enforced nowhere)?\n"
                   f"Reply JSON only: {INV_SCHEMA}")
         with calls.context(intent="spendguard:invariant-review"):
-            r = adapters.call(model, prompt, max_tokens=1600, system=INV_SYSTEM)
+            r = adapters.call_complete(model, prompt, sig="probe:invariant", system=INV_SYSTEM)
         if r.get("error"):
             print(f"  {i}/{len(invariants)}: FAILED — UNREVIEWED, not clean"); rows.append({"inv": inv}); continue
         try:
@@ -294,7 +305,10 @@ def run_names(root, model, run, out_path):
         prompt = (body(name, members) + "\n\nPROTOCOL, DUPLICATION, or COLLISION?\n"
                   f"Reply JSON only: {NAME_SCHEMA}")
         with calls.context(intent="spendguard:name-review"):
-            r = adapters.call(model, prompt, max_tokens=900, system=NAME_SYSTEM)
+            # 900 was enough for most groups and not for the big ones: a re-run came back with 40 of 79
+            # groups UNREVIEWED where the first pass had 0, purely from truncation. An unreviewed name group
+            # is not a judged one, and the registry would have recorded it as if the question had been asked.
+            r = adapters.call_complete(model, prompt, sig="probe:name-review", system=NAME_SYSTEM)
         v = None
         if not r.get("error"):
             try:

@@ -103,7 +103,7 @@ def merge_near_misses(sites, run=False, model=None):
         prompt = (listing + '\n\nFor each numbered pair, do A and B describe the SAME defect?\n'
                             'Reply JSON only: {"pairs": [{"i": <index>, "same": true|false}]}')
         with calls.context(intent="review:group-near-miss-findings"):
-            r = adapters.call(m, prompt, max_tokens=20 * len(chunk) + 400, system=_SYS_SAME_DEFECT)
+            r = adapters.call_complete(m, prompt, sig="probe:same-defect", system=_SYS_SAME_DEFECT)
         if r.get("error"):
             failed += len(chunk)
             continue

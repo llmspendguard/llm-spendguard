@@ -94,7 +94,10 @@ def main():
                   'Reply JSON only: {"capabilities": [{"capability": "...", "functions": ["mod.fn", ...], '
                   '"why_same": "..."}]}')
         with calls.context(intent="spendguard:capability-audit"):
-            r = adapters.call(model, prompt, max_tokens=25 * len(b) + 600, system=SYSTEM)
+            # `25 * len(b) + 600` was a guess at how much a batch's reply would need, and a batch whose
+            # groups ran long simply lost the tail — capabilities that WERE duplicated dropped off the end
+            # of a truncated JSON array and read as "no duplicates in this batch".
+            r = adapters.call_complete(model, prompt, sig="probe:capability-audit", system=SYSTEM)
         if r.get("error"):
             print(f"  batch {i}/{len(batches)}: FAILED ({str(r['error'])[:70]}) — its functions are UNJUDGED, "
                   f"not 'no duplicates'")

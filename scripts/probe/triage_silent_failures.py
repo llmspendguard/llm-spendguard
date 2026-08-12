@@ -100,10 +100,10 @@ def verify(rows, root, model, votes=2):
         vs = []
         for k in range(votes):
             with calls.context(intent="spendguard:silent-failure-verify"):
-                resp = adapters.call(model,
+                resp = adapters.call_complete(model,
                     f"```python\n{body[:2400]}\n```\n\nCLAIM about the swallow at line(s) {r['lines']}: "
                     f"a caller wrongly believes — {claim}\n\nRefute it.\nReply JSON only: {REFUTE_SCHEMA}",
-                    max_tokens=900, system=REFUTE_SYS)
+                    sig="probe:refute", system=REFUTE_SYS)
             # 300 TOKENS TRUNCATED THE REFUTERS' REPLIES into unparseable JSON, and this loop then reported
             # "no refuter answered" — 19 findings came back UNVERIFIED for a reason that had nothing to do
             # with the findings. A truncated answer is not an absent one; it is a budget bug wearing the
@@ -124,7 +124,39 @@ def verify(rows, root, model, votes=2):
             r["survived"] = None
             kept.append(r)
             continue
-        survives = sum(1 for v in vs if not v.get("refuted")) > len(vs) / 2
+        # NO MAJORITY VOTE. `sum(not refuted) > len(vs)/2` decided "did this claim survive?" with a
+        # hand-picked cutoff, and it is the wrong instrument twice over: it treats a confident refutation and
+        # a hedged one as one vote each, and on a 1-1 split it resolves the disagreement by arithmetic rather
+        # than by reading what the refuters actually said. Unanimity is NOT a threshold — it is the absence of
+        # disagreement, and it stands on its own. A SPLIT is a judgement, so it goes to an adjudicator that
+        # reads the claim and every refutation and decides which side is right.
+        refuted = [bool(v.get("refuted")) for v in vs]
+        if all(refuted):
+            survives = False
+        elif not any(refuted):
+            survives = True
+        else:
+            args = "\n".join(f"- refuter {j + 1} says {'REFUTED' if v.get('refuted') else 'STANDS'}: "
+                             f"{str(v.get('why'))[:400]}" for j, v in enumerate(vs))
+            with calls.context(intent="spendguard:silent-failure-adjudicate"):
+                adj = adapters.call_complete(model,
+                    f"```python\n{body[:2400]}\n```\n\nCLAIM: a caller wrongly believes — {claim}\n\n"
+                    f"The refuters DISAGREED:\n{args}\n\nRead the code and decide which side is right.\n"
+                    f'Reply JSON only: {{"claim_stands": true|false, "why": "..."}}',
+                    sig="probe:adjudicate",
+                    system="You settle a disagreement between reviewers by reading the code yourself. The "
+                           "refuters split; their arguments are given. Decide whether the claim about the "
+                           "swallowed exception is right. Say which specific refutation you found convincing "
+                           "or wrong, and why — do not average them.")
+            survives = True                      # unresolved disagreement is not a clean bill
+            try:
+                b2 = re.search(r"\{.*\}", adj.get("text") or "", re.S)
+                if b2:
+                    survives = bool(json.loads(b2.group(0)).get("claim_stands"))
+            except Exception:
+                pass
+            print(f"      (refuters split {sum(refuted)}/{len(vs)} — adjudicated: "
+                  f"{'claim STANDS' if survives else 'refuted'})")
         r["survived"] = survives
         if survives:
             kept.append(r)
@@ -175,7 +207,7 @@ def main():
                   f"{sorted(set(s['lines']))}. After it swallows, what does a caller wrongly believe?\n"
                   f"Reply JSON only: {SCHEMA}")
         with calls.context(intent="spendguard:silent-failure-triage"):
-            r = adapters.call(model, prompt, max_tokens=450, system=SYSTEM)
+            r = adapters.call_complete(model, prompt, sig="probe:silent-triage", system=SYSTEM)
         v = None
         if not r.get("error"):
             try:
