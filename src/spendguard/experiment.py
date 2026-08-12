@@ -78,6 +78,11 @@ def _call(model, prompt, max_out=400, effort=None):
         except Exception as e:                          # self-heal a wrong reasoning_effort literal, then retry once
             if models.heal_reasoning(model, kw, e):
                 m = oc.chat.completions.create(**kw)
+                # The retry SUCCEEDED (an exception here propagates), so the substituted literal is now
+                # evidence rather than a guess. heal_reasoning deliberately records it unverified; this is
+                # the only place that can promote it, and without this call the store would never hold a
+                # confirmed reasoning fact at all.
+                models.confirm_reasoning(model, kw)
             else:
                 raise
         text = m.choices[0].message.content or ""

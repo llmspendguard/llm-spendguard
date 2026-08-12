@@ -49,8 +49,23 @@ print("-- estimate.project (packing + caching) --")
 p1 = estimate.project("gpt-5.5", 100, prefix=0, in_per=10, out_per=5, pack=1, mode="batch", assume_cache=False)
 p30 = estimate.project("gpt-5.5", 100, prefix=0, in_per=10, out_per=5, pack=30, mode="batch", assume_cache=False)
 check("packing 30/req cuts request count", p30["n_req"] < p1["n_req"])  # 4 vs 100
-# big repeated prefix: caching is cheaper than not, when above the model's min + reused
-big = estimate.project("gpt-5.5", 100, prefix=4000, in_per=10, out_per=5, pack=1, mode="batch", assume_cache=True)
-nocache = estimate.project("gpt-5.5", 100, prefix=4000, in_per=10, out_per=5, pack=1, mode="batch", assume_cache=False)
-check("caching a big reused prefix is cheaper", big["cost"] < nocache["cost"])
+# Big repeated prefix, REALTIME: cached_in is a canonical rate, so the discount is real and must show up.
+big = estimate.project("gpt-5.5", 100, prefix=4000, in_per=10, out_per=5, pack=1, mode="realtime", assume_cache=True)
+nocache = estimate.project("gpt-5.5", 100, prefix=4000, in_per=10, out_per=5, pack=1, mode="realtime", assume_cache=False)
+check("caching a big reused prefix is cheaper (realtime, canonical cached_in)", big["cost"] < nocache["cost"])
+check("and it says which rate it used", big["cache_basis"] == "canonical cached_in")
+
+# BATCH: pricing.py states no batch cache rate for any model today. The projection must NOT invent one —
+# it used to assume cached_in*0.5, which under-projected a real job by 39%. Until a verified
+# `batch_cached_in` is added per model, batch must fall back to the full batch input rate AND say so.
+# When those rates ARE added, this flips to the realtime assertion above; the point is that the number
+# comes from the table either way.
+bbig = estimate.project("gpt-5.5", 100, prefix=4000, in_per=10, out_per=5, pack=1, mode="batch", assume_cache=True)
+bno = estimate.project("gpt-5.5", 100, prefix=4000, in_per=10, out_per=5, pack=1, mode="batch", assume_cache=False)
+from spendguard.pricing import price as _price
+if _price("gpt-5.5").get("batch_cached_in") is None:
+    check("batch cache invents no discount when the table has no rate", bbig["cost"] == bno["cost"])
+    check("and it reports the fallback rather than hiding it", "NO batch cache rate" in bbig["cache_basis"])
+else:
+    check("batch cache uses the canonical rate", bbig["cost"] < bno["cost"])
 print("done.")

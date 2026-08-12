@@ -496,7 +496,7 @@ def _chat_caps():
     print(f'\n  (this uses YOUR {model} key for one small call, caged under caps.meta ${config.meta_cap():.2f}/day, est ~$0.001 — never the server)')
     try:
         with calls.context(intent="spendguard:init"):
-            r = adapters.call(model, ans, max_tokens=120, system=sys)
+            r = adapters.call(model, ans, sig="spendguard:init", system=sys)
     except Exception as e:
         print(f"  (conversational setup unavailable: {e} — falling back to prompts)")
         return None

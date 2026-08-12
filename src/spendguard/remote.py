@@ -19,6 +19,47 @@ import shlex
 import subprocess
 
 _DEFAULT_HOME = "/root/.spendguard"
+
+# The doctor line this module reads to decide whether a box may spend. IMPORTED FROM THE EMITTER, not retyped:
+# `gate` prints this line and this module parses it, so they must be the same strings by construction. Reading
+# back a format we ourselves wrote is parsing; an unrecognised line is answered UNKNOWN below, never "no".
+from .gate import ENFORCING_MARKER as _MARKER, ENFORCING_YES as _YES, ENFORCING_NO as _NO
+
+
+def _ssh_run(run, ssh: str, remote_cmd: str, timeout: int):
+    """Run one command on the box. The ssh prefix is SPLIT INTO ARGV and the remote command is passed as a single
+    argument, with shell=False — so nothing in either can be interpreted by the LOCAL shell.
+
+    This used to be an f-string into shell=True. The ssh prefix is not hand-typed, it comes from a provider API
+    (vast.ai instance records), which means a hostile or merely malformed field was a local command execution on
+    the operator's machine — `root@1.2.3.4; rm -rf ~` is a valid-looking string. Splitting to argv removes the
+    local shell from the path entirely; the REMOTE shell still interprets remote_cmd, which is what ssh is for
+    and what the `||` fallback and redirects here need."""
+    argv = shlex.split(ssh) + [remote_cmd]
+    return run(argv, shell=False, capture_output=True, text=True, timeout=timeout)
+
+
+def _enforcing(out: str):
+    """(verdict, line) from doctor output — verdict is True / False / None, where None means THE ANSWER WAS NOT
+    FOUND. Three states, never two: 'no answer' is not 'no'.
+
+    Scoped to the LINE carrying the marker. It previously read the 24 characters following the marker across
+    stdout and stderr CONCATENATED, so any 'YES' within 24 chars — on the next line, or in a warning that got
+    glued on from the other stream — satisfied a check whose entire job is to refuse. A fail-open in the one
+    function whose docstring promises fail-closed."""
+    for ln in (out or "").splitlines():
+        if _MARKER not in ln:
+            continue
+        tail = ln.split(_MARKER, 1)[1]
+        # first standalone YES/NO token on that line settles it; anything else on the line is decoration
+        for tok in tail.replace(":", " ").replace("—", " ").replace("-", " ").split():
+            up = tok.strip().upper()
+            if up == _YES:
+                return True, ln.strip()
+            if up == _NO:
+                return False, ln.strip()
+        return None, ln.strip()          # marker present, neither answer on it → unknown, not "no"
+    return None, ""
 _PKG = "llm-spendguard"
 _GIT = "git+https://github.com/llmspendguard/llm-spendguard"
 
@@ -35,7 +76,9 @@ def onstart_snippet(home: str = _DEFAULT_HOME, from_git: bool = False) -> str:
         # prefer the console script (present in every published build); fall back to `python3 -m` (editable/unreleased)
         'SG="$(command -v spendguard || echo python3 -m spendguard)"',
         '$SG install-hook --user --python "$(command -v python3)" >/dev/null 2>&1 || true',
-        '$SG doctor 2>&1 | grep -q "ENFORCING HERE.*YES" '
+        # grep is LINE-scoped, so this cannot span lines the way the old python-side 24-char window could;
+        # the pattern is built from the same shared constants the emitter uses, so it cannot drift either.
+        f'$SG doctor 2>&1 | grep -q {shlex.quote(_MARKER + ".*" + _YES)} '
         '&& echo "[spendguard] box gated" || echo "[spendguard] WARN: gate NOT enforcing"',
     ])
 
@@ -48,12 +91,24 @@ def verify(ssh: str, timeout: int = 30, _run=None) -> tuple:
     run = _run or subprocess.run
     try:
         # console script (published) with `python3 -m` fallback (editable) — run the whole thing ON the box
-        r = run(f"{ssh} 'spendguard doctor 2>/dev/null || python3 -m spendguard doctor'",
-                shell=True, capture_output=True, text=True, timeout=timeout)
-        out = (getattr(r, "stdout", "") or "") + (getattr(r, "stderr", "") or "")
-        tail = out.split("ENFORCING HERE", 1)[1][:24] if "ENFORCING HERE" in out else ""
-        ok = bool(tail) and "YES" in tail
-        return ok, ("ENFORCING" if ok else "NOT enforcing — refusing to spend (fail-closed)")
+        r = _ssh_run(run, ssh, "spendguard doctor 2>/dev/null || python3 -m spendguard doctor", timeout)
+        # Streams are read SEPARATELY. Concatenating them let a fragment of stderr complete a marker that
+        # started in stdout; each stream is now searched on its own, and stdout — where doctor actually
+        # prints — is authoritative when both carry an answer.
+        saw_marker = ""
+        for stream in (getattr(r, "stdout", "") or "", getattr(r, "stderr", "") or ""):
+            verdict, line = _enforcing(stream)
+            if verdict is not None:
+                return verdict, (f"ENFORCING ({line})" if verdict
+                                 else f"NOT enforcing — refusing to spend (fail-closed): {line}")
+            saw_marker = saw_marker or line
+        # Say which of the two unknowns it was. An operator chasing "no marker" looks at the install; one
+        # chasing "marker with no answer" looks at a version mismatch. A diagnostic that names the wrong
+        # one costs the same hour this whole module exists to save.
+        why = (f"'{_MARKER}' present but carried neither {_YES} nor {_NO} ({saw_marker!r}) — likely an older "
+               f"spendguard on the box" if saw_marker else f"no '{_MARKER}' line in doctor output")
+        return False, (f"{why} (rc={getattr(r, 'returncode', '?')}) — cannot confirm the box is gated, "
+                       f"so refusing to spend (fail-closed)")
     except Exception as e:
         return False, f"verify failed ({e}) — fail-closed"
 
@@ -83,11 +138,20 @@ def sync(ssh: str, project: str, label: str = None, home: str = _DEFAULT_HOME, t
     run = _run or subprocess.run
     label = label or ssh.split()[-1] if ssh else "remote"
     try:
-        r = run(f"{ssh} cat {shlex.quote(home)}/realtime_log.jsonl 2>/dev/null",
-                shell=True, capture_output=True, text=True, timeout=timeout)
+        r = _ssh_run(run, ssh, f"cat {shlex.quote(home)}/realtime_log.jsonl 2>/dev/null", timeout)
+        # A FAILED PULL IS NOT AN EMPTY LEDGER. rc was never checked, so an auth failure, an unreachable host,
+        # or a missing file all returned {"rows": 0, "usd": 0.0} — indistinguishable from a box that genuinely
+        # spent nothing. That is the reading under which you tear a box down and lose its spend for good,
+        # believing there was none. Report the failure; the caller must not record this as "synced".
+        rc = getattr(r, "returncode", 0)
+        if rc:
+            return {"error": f"pull failed (rc={rc}: {(getattr(r, 'stderr', '') or '').strip()[:160]}) — "
+                             f"spend on this box is UNKNOWN, not zero; do not tear it down on this result",
+                    "rows": 0, "usd": 0.0, "project": project, "label": label}
         rows = _parse_rt_log(getattr(r, "stdout", "") or "")
     except Exception as e:
-        return {"error": f"pull failed ({e})", "rows": 0, "usd": 0.0, "project": project}
+        return {"error": f"pull failed ({e}) — spend on this box is UNKNOWN, not zero",
+                "rows": 0, "usd": 0.0, "project": project, "label": label}
     from . import budget
     n, usd = budget.ingest_remote(label, project, rows)
     return {"rows": n, "usd": round(usd, 4), "project": project, "label": label}

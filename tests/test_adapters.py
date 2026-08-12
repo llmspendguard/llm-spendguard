@@ -72,7 +72,7 @@ from spendguard import config                                       # noqa: E402
 _orig_api_key = config.api_key
 config.api_key = lambda name: ""
 try:
-    r = adapters.call("gpt-5.5", "hello")
+    r = adapters.call("gpt-5.5", "hello", sig="test:adapters")
 finally:
     config.api_key = _orig_api_key
 check("no-key call returns dict (no raise)", isinstance(r, dict))
@@ -122,7 +122,7 @@ import openai as _openai_mod                                         # noqa: E40
 _orig_openai = _openai_mod.OpenAI
 _openai_mod.OpenAI = _FakeOpenAI
 try:
-    r = adapters.call("gpt-5.5", "hello", system="you are terse")
+    r = adapters.call("gpt-5.5", "hello", system="you are terse", sig="test:adapters")
 finally:
     _openai_mod.OpenAI = _orig_openai
 check("openai call returns the stubbed text", r["text"] == "stubbed openai reply")
@@ -152,7 +152,7 @@ class _FakeOpenAI2:
 
 _openai_mod.OpenAI = _FakeOpenAI2
 try:
-    r = adapters.call("freemodel-x", "hi")
+    r = adapters.call("freemodel-x", "hi", sig="test:adapters")
 finally:
     _openai_mod.OpenAI = _orig_openai
 check("unpriced model -> cost is None (shown n/a), still returns text", r["cost"] is None and r["text"] == "stubbed openai reply")
@@ -213,7 +213,7 @@ import anthropic as _anthropic_mod                                   # noqa: E40
 _orig_anthropic = _anthropic_mod.Anthropic
 _anthropic_mod.Anthropic = _FakeAnthropic
 try:
-    r = adapters.call("claude-opus-4-8", "hi", system="be brief")
+    r = adapters.call("claude-opus-4-8", "hi", system="be brief", sig="test:adapters")
 finally:
     _anthropic_mod.Anthropic = _orig_anthropic
 check("anthropic call returns the joined text blocks", r["text"] == "stubbed claude reply")
@@ -223,7 +223,7 @@ check("anthropic call has no error", r["error"] is None)
 # anthropic again WITHOUT system -> exercises the `if system:` false branch (no system kw added)
 _anthropic_mod.Anthropic = _FakeAnthropic
 try:
-    r = adapters.call("claude-opus-4-8", "hi")
+    r = adapters.call("claude-opus-4-8", "hi", sig="test:adapters")
 finally:
     _anthropic_mod.Anthropic = _orig_anthropic
 check("anthropic call w/o system still returns text", r["text"] == "stubbed claude reply" and r["error"] is None)
@@ -248,7 +248,7 @@ class _FakeOpenAIBoom:
 
 _openai_mod.OpenAI = _FakeOpenAIBoom
 try:
-    r = adapters.call("gpt-5.5", "hello")
+    r = adapters.call("gpt-5.5", "hello", sig="test:adapters")
 finally:
     _openai_mod.OpenAI = _orig_openai
 check("SDK exception -> returns dict (no raise)", isinstance(r, dict))

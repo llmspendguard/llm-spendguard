@@ -40,3 +40,7 @@ coverage.xml
 # machine-local SaaS connection (org/team/key) — never commit
 .spendguard.json
 scripts/reconstruct/realtime_find_batch_state.*
+
+# Timestamped backups written by config.update_json before it rewrites a tracked JSON file.
+# They are a safety net for the working copy, not history — git already keeps the old version.
+*.save.json

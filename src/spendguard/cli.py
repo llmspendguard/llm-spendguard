@@ -53,6 +53,7 @@ _GROUPS = [
         ("sync-prices", "refresh the price breadth layer now"),
         ("pricing", "print the canonical price table"),
         ("audit", "fail CI if any code hardcodes a disagreeing price"),
+        ("token-caps", "list every hardcoded output-token cap; --judge rules on the unjudged ones"),
     ]),
 ]
 
@@ -145,6 +146,9 @@ def _dispatch(argv=None):
         from . import audit as a
         sys.argv = ["audit"] + rest
         return a.main()
+    if cmd == "token-caps":
+        from . import token_caps
+        return token_caps.cmd(rest)
     if cmd == "pricing":
         from . import pricing as p
         return p.main()

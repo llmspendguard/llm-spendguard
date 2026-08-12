@@ -469,7 +469,7 @@ def discover_agentic(run=False, record=False, max_sessions=None, now=None):
     merged = {}
     for sid, ex in sessions:
         with calls.context(intent="spendguard:gpu_discover"):
-            r = adapters.call(model, _GPU_DISCOVER_PROMPT % (hints, ex), max_tokens=1500, system=_GPU_DISCOVER_SYS)
+            r = adapters.call(model, _GPU_DISCOVER_PROMPT % (hints, ex), sig="spendguard:gpu_discover", system=_GPU_DISCOVER_SYS)
         if r.get("error"):
             continue
         m = re.search(r"\{.*\}", r.get("text", ""), re.S)
@@ -561,7 +561,7 @@ def reconstruct_remote_llm(run=False, max_sessions=None, model_org_hints=None, f
     for sid, ex in sessions:
         _u = (("models-by-org prior (corroborate the org, do NOT override): %s\n" % model_org_hints) if model_org_hints else "") + ex
         with calls.context(intent="spendguard:remote_llm_reconstruct"):
-            r = adapters.call(model, _u, max_tokens=900, system=_REMOTE_LLM_SYS)
+            r = adapters.call(model, _u, sig="spendguard:remote_llm_reconstruct", system=_REMOTE_LLM_SYS)
         if r.get("error"):
             continue
         m = re.search(r"\{.*\}", r.get("text", ""), re.S)
@@ -671,7 +671,7 @@ def reconstruct_realtime_llm(run=False, sids=None, max_sessions=None, max_chars=
     frags = []                                             # STAGE 1 — FIND (read every chunk)
     for sid, ex in chunks:
         with calls.context(intent="spendguard:realtime_find"):
-            r = adapters.call(fm, ex, max_tokens=500, system=_RT_FIND_SYS)
+            r = adapters.call(fm, ex, sig="spendguard:realtime_find", system=_RT_FIND_SYS)
         m = re.search(r"\{.*\}", r.get("text", "") or "", re.S)
         try:
             found = (json.loads(m.group(0)).get("runs") if m else []) or []
@@ -686,7 +686,7 @@ def reconstruct_realtime_llm(run=False, sids=None, max_sessions=None, max_chars=
         return {"mode": "run", "chunks": len(chunks), "dropped_batch_context": dropped_batch,
                 "fragments": 0, "runs": [], "by_org": {}, "total": 0.0}
     with calls.context(intent="spendguard:realtime_consolidate"):    # STAGE 2 — CONSOLIDATE (run-identity + estimate)
-        r = adapters.call(cm, json.dumps(frags)[:120000], max_tokens=2500, system=_RT_CONSOLIDATE_SYS)
+        r = adapters.call(cm, json.dumps(frags)[:120000], sig="spendguard:realtime_consolidate", system=_RT_CONSOLIDATE_SYS)
     m = re.search(r"\{.*\}", r.get("text", "") or "", re.S)
     try:
         runs = (json.loads(m.group(0)).get("runs") if m else []) or []

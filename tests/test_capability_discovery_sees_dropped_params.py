@@ -32,14 +32,54 @@ def check(label, ok, extra=""):
 
 
 def test_a_dropped_parameter_is_reported_on_the_result():
-    # THE REQUEST BUILDER MOVED. `adapters.call` is now the guarded entry point (input-size check +
-    # truncation retry) and `_call_once` builds and sends the request. These checks are about the
-    # request, so they read the builder. Reading `call` here would inspect the guard wrapper and
-    # pass vacuously — a source-reading test silently detaches from its subject when code moves.
-    src = inspect.getsource(adapters._call_once)
+    """DRIVE IT, DON'T GREP IT.
+
+    This read adapters._call_once's SOURCE and looked for the substring `pop("reasoning_effort"`. That is a
+    test of how the fix is spelled, not of what it does: the retry was later rewritten to pop through a
+    variable, and this failed while the behaviour was intact and better. It would equally have PASSED on
+    code that popped the parameter and then forgot to record it — the string is there either way.
+
+    So: stand up an endpoint that refuses the parameter, make the call, and read the result."""
+    import types
+
+    seen = []
+
+    class _Refuses:
+        """Rejects reasoning_effort once, the way a real endpoint does — with a typed `param`."""
+
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**kw):
+                    seen.append(dict(kw))
+                    if "reasoning_effort" in kw:
+                        e = Exception("400 unsupported value")
+                        e.body = {"error": {"param": "reasoning_effort", "message": "unsupported"}}
+                        raise e
+                    return types.SimpleNamespace(
+                        choices=[types.SimpleNamespace(
+                            message=types.SimpleNamespace(content="ok"), finish_reason="stop")],
+                        usage=types.SimpleNamespace(prompt_tokens=5, completion_tokens=2))
+
+        def __init__(self, **kw):
+            pass
+
+    import openai as _openai_mod
+    _orig = _openai_mod.OpenAI
+    _openai_mod.OpenAI = _Refuses
+    try:
+        r = adapters.call("gpt-5.5", "hello", max_tokens=64, reasoning="high", sig="test:dropped-param")
+    finally:
+        _openai_mod.OpenAI = _orig
+
+    check("an endpoint that refuses the parameter still gets its answer",
+          r.get("error") is None and r.get("text") == "ok", f"error={r.get('error')}")
     check("dropping reasoning_effort is recorded on the result, not silent",
-          'dropped' in src and 'pop("reasoning_effort"' in src,
-          "a silently-dropped parameter makes every capability probe answer yes")
+          "reasoning_effort" in (r.get("dropped") or []),
+          f"dropped={r.get('dropped')!r} — a silently-dropped parameter makes every capability probe answer yes")
+    check("the retry actually went out WITHOUT the refused parameter",
+          len(seen) >= 2 and "reasoning_effort" not in seen[-1],
+          f"requests={len(seen)} last={ {k: v for k, v in (seen[-1] if seen else {}).items() if k != 'messages'} }")
 
 
 def test_discovery_counts_a_drop_as_a_rejection():

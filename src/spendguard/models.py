@@ -10,6 +10,7 @@ Family rules below are the seed (verified facts); `add_fact()` stores model-spec
 experiment that proved reasoning='minimal' is cheapest at equal accuracy, or that a tier under-performs on
 an intent) which then surface in `profile()` and CLI. Per-model best-practices are highly shareable.
 """
+import json
 import re
 
 # ordered family rules — first match wins; later stored facts override fields
@@ -57,17 +58,34 @@ def add_fact(model, key, value, confidence=0.9, source="manual", verified=True):
     'reasoning','minimal', source='experiment') or ('gpt-5-nano','quality:phase23','3% match vs gpt-5.5')."""
     L = _db()
     with L._lock:
+        # TYPE SURVIVES THE ROUND TRIP. str(value) turned every fact into text, and profile() lets facts
+        # override family defaults — so storing a numeric fact like cache_min_tokens=4096 replaced an int
+        # default with "4096", and the next `prefix >= p["cache_min_tokens"]` compared int to str: a
+        # TypeError on Python 3, or a silently wrong answer anywhere the value is used in a truthy test
+        # (bool("False") is True, which is the same bug for a boolean fact). JSON keeps the type; the
+        # reader below falls back to the raw text so rows already written as bare strings still load.
         L._db().execute("INSERT OR REPLACE INTO model_facts VALUES (?,?,?,?,?,?,?)",
-                        (model, key, str(value), float(confidence), source, 1 if verified else 0, learn_now()))
+                        (model, key, json.dumps(value), float(confidence), source,
+                         1 if verified else 0, learn_now()))
         L._db().commit()
 
 
 def facts(model):
     L = _db()
     with L._lock:
-        return {k: (v, c, src, bool(ver)) for k, v, c, src, ver in
+        return {k: (_decode_fact(v), c, src, bool(ver)) for k, v, c, src, ver in
                 L._db().execute("SELECT key,value,confidence,source,verified FROM model_facts WHERE model=?",
                                 (model,)).fetchall()}
+
+
+def _decode_fact(raw):
+    """Stored fact -> its original Python value. Rows written before add_fact stored JSON are bare strings
+    (e.g. `minimal`, not `"minimal"`), which json.loads rejects — those load as the string they always were,
+    so an existing store keeps working rather than raising on first read."""
+    try:
+        return json.loads(raw)
+    except (TypeError, ValueError):
+        return raw
 
 
 def profile(model):
@@ -127,16 +145,92 @@ def ineffective(model, intent):
     return None
 
 
+def _rejected_param(err):
+    """The request parameter a provider's error names as invalid — read from the SDK's TYPED fields, or "".
+
+    `param` is a documented field with a fixed shape in the OpenAI-compatible error envelope
+    (`{"error": {"message", "type", "param", "code"}}`), so reading it is parsing a known schema. The
+    human-readable `message` beside it is prose each provider words as it likes — "does not support",
+    "is not acceptable", "invalid value for" — and matching on that phrasing meant every rewording
+    silently disabled healing. Nothing here looks at the message.
+
+    Returns "" for anything without those fields (a bare string, a network error), and "" means do not
+    heal — an error we cannot attribute to a parameter is not one to fix by guessing."""
+    def _from_body():
+        body = getattr(err, "body", None)
+        if isinstance(body, dict):
+            e = body.get("error")
+            if isinstance(e, dict):
+                return e.get("param")
+        return None
+
+    def _from_response():
+        resp = getattr(err, "response", None)
+        if resp is None:
+            return None
+        e = (resp.json() or {}).get("error")
+        return e.get("param") if isinstance(e, dict) else None
+
+    for get in (lambda: getattr(err, "param", None), _from_body, _from_response):
+        try:
+            v = get()
+        except Exception:
+            continue
+        if v:
+            return str(v)
+    return ""
+
+
 def heal_reasoning(model, kw, err):
-    """If a call 400s because reasoning_effort is the wrong literal for this model, flip none<->minimal,
-    STORE the corrected fact (self-learning), and return True so the caller retries. Else False."""
-    e = str(err)
-    if "reasoning_effort" not in kw or "reasoning_effort" not in e or "does not support" not in e:
+    """If a call failed while sending a reasoning_effort this model does not take, substitute the literal its
+    family DOES take and return True so the caller retries. Else False.
+
+    Three things were wrong here, and all three came from guessing rather than consulting the table this
+    module already maintains:
+
+    1. IT READ THE PROVIDER'S PROSE. `"does not support" not in e` decided whether an error was about this
+       parameter. That is a judgement about the meaning of a free-text message that providers word however
+       they like — "is not acceptable", "invalid value for", "unsupported parameter" — and each rewording
+       silently turns healing off. Nothing is parsed now: the question "is there a better value to send?"
+       is answered from the capability table, which is a fact we own.
+    2. IT FLIPPED A COIN BETWEEN TWO LITERALS. `"none" if sent == "minimal" else "minimal"` is only correct
+       when the sent value is one of those two. Send "low", "high", or None — all real values — and it
+       "healed" to "minimal", which for the gpt-5.5 family is precisely the value that gets rejected. It
+       could therefore retry with the same failure, or swap a working value for a broken one.
+    3. IT RECORDED THE GUESS AS VERIFIED. add_fact(..., verified=True) was written BEFORE the retry, so a
+       value that had never once succeeded entered the fact store as verified truth — and facts beat family
+       defaults in profile(), so one bad heal poisons every later call for that model. The fact is now
+       written unverified, and only confirm_reasoning() below — called after a retry actually succeeds —
+       marks it verified.
+
+    Retries are bounded structurally: after healing, kw holds the table's value, so the next call finds
+    want == sent and returns False. No attempt counter to get out of step."""
+    if "reasoning_effort" not in kw:
         return False
-    alt = "none" if kw["reasoning_effort"] == "minimal" else "minimal"
-    kw["reasoning_effort"] = alt
-    add_fact(model, "reasoning", alt, source="auto-heal(400)", verified=True)
+    if _rejected_param(err) != "reasoning_effort":
+        # Healing on ANY failure is worse than the substring it replaced: a transient rate-limit would flip
+        # the literal, the retry would succeed for unrelated reasons, and confirm_reasoning() would write the
+        # wrong value into the fact store as VERIFIED — poisoning every later call for this model. The
+        # provider says which parameter it rejected in a typed field; that is what gets read.
+        return False
+    sent = kw.get("reasoning_effort")
+    want = profile(model).get("reasoning")
+    if not want or want == sent:
+        return False      # nothing better to try — this failure is not this function's to fix
+    kw["reasoning_effort"] = want
+    add_fact(model, "reasoning", want, source=f"auto-heal(retry after {sent!r} failed)", verified=False)
     return True
+
+
+def confirm_reasoning(model, kw):
+    """Mark the healed reasoning literal VERIFIED — call after a healed retry actually succeeded.
+
+    Exists because heal_reasoning must not claim verification for a value that has not yet worked. Without
+    this the store would only ever hold unverified heals, which is the other half of the same bug: a fact
+    that is true and never promoted is as useless as one that is false and trusted."""
+    v = kw.get("reasoning_effort")
+    if v:
+        add_fact(model, "reasoning", v, source="auto-heal(confirmed by successful retry)", verified=True)
 
 
 def learn_now():

@@ -123,7 +123,14 @@ def compact(src, *, keep_module_doc=True, strip_comments=True):
         out = _strip_comments(out)
     # Blank lines STAY, for the same reason: dropping them renumbers the file. They cost one byte each,
     # against a saving measured in hundreds of thousands.
-    out = out if out.endswith("\n") else out + "\n"
+    # MATCH THE INPUT. This unconditionally appended a newline, so compacting a file that ends without one
+    # produced output differing from the input by a byte the compactor never intended to touch. This module's
+    # own contract is that line N out is line N in — that promise is about not moving code, and quietly
+    # adding a trailing byte is the same class of edit, just at the end where nobody looks.
+    if src.endswith("\n"):
+        out = out if out.endswith("\n") else out + "\n"
+    else:
+        out = out[:-1] if out.endswith("\n") else out
     try:
         ast.parse(out)                      # VERIFY. A compressor that emits broken source is worse than none.
     except SyntaxError:

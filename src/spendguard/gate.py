@@ -803,6 +803,14 @@ def _cached_in(result):
 
 UNKNOWN_PROVIDER = "unknown"
 
+# THE ENFORCEMENT ANSWER, AS A FORMAT — emitted here by `doctor`, read back by `remote.verify` over SSH to
+# decide whether a box may spend. Named once and shared so the printer and the parser cannot drift: they were
+# four separate string literals (here, two in remote.py, and a `grep` inside the onstart snippet), which is
+# how a reader could go looking for "YES" in a 24-char window and find one that doctor never wrote.
+ENFORCING_MARKER = "ENFORCING HERE"
+ENFORCING_YES = "YES"
+ENFORCING_NO = "NO"
+
 
 def _provider_of(model):
     """Which VENDOR is being billed for this model. Resolved from the registries, never inferred.
@@ -1658,7 +1666,8 @@ def _cli(cmd="status", live=False):
         print(f"  python    : {sys.executable}")
         install()
         enforcing = _any_patched()
-        print(f"  ENFORCING HERE: {'🟢 YES — calls from this interpreter are gated' if enforcing else '🔴 NO — calls from THIS interpreter are NOT gated (bypass!)'}")
+        print(f"  {ENFORCING_MARKER}: "
+              f"{'🟢 ' + ENFORCING_YES + ' — calls from this interpreter are gated' if enforcing else '🔴 ' + ENFORCING_NO + ' — calls from THIS interpreter are NOT gated (bypass!)'}")
         if not enforcing:
             print("    fix: run under a gated venv, `spendguard install-hook --venv <v>` / `--user`, "
                   "or `import spendguard; spendguard.require()` at the top of the script.")

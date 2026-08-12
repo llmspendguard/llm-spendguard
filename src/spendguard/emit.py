@@ -73,7 +73,11 @@ def _drain():
                 req = urllib.request.Request(url, data=json.dumps(event).encode(),
                                              headers={"Content-Type": "application/json",
                                                       "User-Agent": "spendguard/0.1"}, method="POST")
-                urllib.request.urlopen(req, context=config.ssl_context(), timeout=5).read()
+                # `with` — the response socket was left to the GC. This runs on a long-lived background
+                # thread draining a queue, so the leak accumulates for the life of the process rather
+                # than being cleaned up at the end of a short call.
+                with urllib.request.urlopen(req, context=config.ssl_context(), timeout=5) as resp:
+                    resp.read()
             except Exception:
                 pass
         if cfg.get("otel"):
@@ -114,12 +118,19 @@ def _otel(event):
             tok_ctr.add(int(v), {**attrs, "gen_ai.token.type": kind_attr})
     # a span too, for trace-based backends (Langfuse/Phoenix ingest spans)
     span = trace.get_tracer("spendguard").start_span("gen_ai." + str(event.get("kind", "call")), attributes=attrs)
-    for k in ("in_tok", "out_tok", "cached_in_tok"):
-        if event.get(k) is not None:
-            span.set_attribute("gen_ai.usage." + k.replace("_tok", "_tokens"), int(event[k] or 0))
-    if event.get("cost") is not None:
-        span.set_attribute("spendguard.cost_usd", float(event["cost"] or 0))
-    span.end()
+    # try/finally: every set_attribute below coerces with int()/float() on a field that arrives from a
+    # provider payload, so a non-numeric value raises BETWEEN start_span and end() and the span is never
+    # ended. An unended span is not a missing span — it sits in the tracer as an open trace, and the
+    # backend shows a call that started and never finished. The caller swallows the exception, so the
+    # only visible symptom is a trace view that slowly fills with hanging spans.
+    try:
+        for k in ("in_tok", "out_tok", "cached_in_tok"):
+            if event.get(k) is not None:
+                span.set_attribute("gen_ai.usage." + k.replace("_tok", "_tokens"), int(event[k] or 0))
+        if event.get("cost") is not None:
+            span.set_attribute("spendguard.cost_usd", float(event["cost"] or 0))
+    finally:
+        span.end()
 
 
 EVENT_V = 1   # event-envelope version — lets a consumer branch on shape as the event evolves

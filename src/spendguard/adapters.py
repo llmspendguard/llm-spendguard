@@ -169,7 +169,16 @@ def _openai_strict(schema):
     return s
 
 
-def call(model, prompt, max_tokens=512, system=None, reasoning=None, schema=None, timeout_s=None,
+# DEFAULT: no cap. `max_tokens=512` sat here and quietly capped every caller who did not name a number —
+# including callers that deliberately pass none precisely so the measured budget applies. _call_guarded
+# resolves None from the call-class's OWN measured history (autotune `recommend`, else 2048), which is the
+# mechanism this package built for exactly this and which a default of 512 skipped entirely.
+#
+# A cap was never cost control: you are billed for the tokens GENERATED, so a low cap saves nothing and
+# instead truncates the answer — and a truncated JSON body reads downstream as "no findings" rather than
+# "no answer". That is the whole recurring failure. The number now comes from measurement or from the
+# caller, never from a literal nobody chose.
+def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,
          sig=None, retries=2, _no_guard=False):
     """Run one prompt against one model. Returns a result dict (never raises).
 
@@ -201,8 +210,18 @@ def call(model, prompt, max_tokens=512, system=None, reasoning=None, schema=None
                       schema=schema, timeout_s=timeout_s)
 
 
-def _call_once(model, prompt, max_tokens=512, system=None, reasoning=None, schema=None, timeout_s=None):
-    """One raw request. Everything public goes through `call`, which adds the input and output guards."""
+def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None):
+    """One raw request. Everything public goes through `call`, which adds the input and output guards.
+
+    NO DEFAULT CAP. This carried `max_tokens=512` — the last place a number nobody chose could still reach a
+    provider. _call_guarded always resolves a real budget before calling here, so a None arriving at this
+    function means someone reached the raw path directly and never picked a budget; that is refused rather
+    than silently given the smallest cap in the codebase."""
+    if max_tokens is None:
+        raise ValueError(
+            "_call_once needs an explicit max_tokens. It is the raw path — the measured budget lives in "
+            "call()/_call_guarded, so use those unless you have deliberately chosen a number. A default "
+            "here is how a cap nobody picked ends up truncating a real answer.")
     prov = provider_for(model)
     raw = model.split(":", 1)[1] if ":" in model else model
     spec = PROVIDERS[prov]
@@ -337,27 +356,65 @@ def _call_once(model, prompt, max_tokens=512, system=None, reasoning=None, schem
             try:                                              # gpt-5+ require max_completion_tokens; older models take max_tokens
                 r = c.chat.completions.create(max_completion_tokens=max_tokens, **okw)
             except Exception as e:
-                if "response_format" in str(e) or "json_schema" in str(e):
-                    # The endpoint refuses this enforcement mode. Fall back to no enforcement and let the
-                    # LOCAL validator catch a bad shape — a schema silently dropped is how "required" fields
-                    # come back as zeros with nothing objecting.
-                    import sys as _s
-                    print(f"[spendguard] {prov}/{raw} rejected response_format ({str(e)[:70]}) — sending "
-                          f"unenforced; output_contract still validates.", file=_s.stderr)
-                    okw.pop("response_format", None)
-                    r = c.chat.completions.create(max_completion_tokens=max_tokens, **okw)
-                elif "reasoning_effort" in str(e):            # model doesn't accept it → drop + retry
-                    okw.pop("reasoning_effort", None)
-                    # SAY SO. A silently-dropped parameter makes the call succeed and makes any probe of
-                    # "does this endpoint support X" answer yes — the fallback that keeps the system robust
-                    # is exactly what blinds discovery. Recorded on the result so a caller can tell
-                    # "it worked" from "it worked WITHOUT what you asked for".
-                    base.setdefault("dropped", []).append("reasoning_effort")
-                    r = c.chat.completions.create(max_completion_tokens=max_tokens, **okw)
-                elif "max_completion_tokens" in str(e) or "max_tokens" in str(e):
-                    r = c.chat.completions.create(max_tokens=max_tokens, **okw)
+                # WHICH PARAMETER, FROM THE TYPED FIELD — not from the message text. These branches matched
+                # `"response_format" in str(e)` and `"reasoning_effort" in str(e)`, so an error that merely
+                # MENTIONED a parameter (a validation error listing the whole request, a message quoting the
+                # body back) took the retry path and silently dropped a parameter the caller asked for —
+                # and the schema being dropped is precisely how "required" fields come back as zeros.
+                from . import models as _mp
+                _bad = _mp._rejected_param(e)
+                # THE LADDER. Each rung removes ONE optional thing and retries. Which rung to take comes
+                # from the provider's typed `param` when it supplies one; when it supplies none there is
+                # nothing to read, so every applicable rung is tried in a fixed order.
+                #
+                # What this replaces: four branches that each asked whether a phrase appeared in the
+                # error MESSAGE. That is a judgement about free text, and it was wrong in both directions
+                # — an error merely quoting the request body back took a retry path and silently dropped a
+                # parameter the caller asked for (a dropped schema is how "required" fields return as
+                # zeros), while a rejection worded differently fell through to `raise`. Trying the rungs is
+                # not a guess about meaning: it is bounded, it is recorded, and the outcome of the retry —
+                # not the wording of a sentence — decides what was actually wrong.
+                _RUNGS = ("response_format", "reasoning_effort", "_token_dialect")
+                if _bad in ("response_format", "json_schema"):
+                    _ladder = ("response_format",)
+                elif _bad == "reasoning_effort":
+                    _ladder = ("reasoning_effort",)
+                elif _bad in ("max_tokens", "max_completion_tokens"):
+                    _ladder = ("_token_dialect",)
                 else:
-                    raise
+                    _ladder = _RUNGS                     # unattributable: try each applicable rung
+                r = None
+                _last = e
+                for _rung in _ladder:
+                    if _rung == "_token_dialect":
+                        # Older endpoints take max_tokens, gpt-5+ take max_completion_tokens. A dialect
+                        # difference, not a capability one — nothing is dropped, the other spelling is used.
+                        try:
+                            r = c.chat.completions.create(max_tokens=max_tokens, **okw)
+                            break
+                        except Exception as e2:
+                            _last = e2
+                            continue
+                    if _rung not in okw:
+                        continue                          # not sent, so it cannot be what was refused
+                    _saved = okw.pop(_rung)
+                    try:
+                        r = c.chat.completions.create(max_completion_tokens=max_tokens, **okw)
+                        # SAY SO. A silently-dropped parameter makes the call succeed and makes any probe
+                        # of "does this endpoint support X" answer yes — the fallback that keeps the system
+                        # robust is exactly what blinds discovery. Recorded on the result so a caller can
+                        # tell "it worked" from "it worked WITHOUT what you asked for".
+                        base.setdefault("dropped", []).append(_rung)
+                        if _rung == "response_format":
+                            import sys as _s
+                            print(f"[spendguard] {prov}/{raw} rejected response_format ({str(e)[:70]}) — "
+                                  f"sending unenforced; output_contract still validates.", file=_s.stderr)
+                        break
+                    except Exception as e2:
+                        okw[_rung] = _saved               # that rung was not the problem — put it back
+                        _last = e2
+                if r is None:
+                    raise _last
             text = r.choices[0].message.content
             in_tok, out_tok = r.usage.prompt_tokens, r.usage.completion_tokens
             _finish = getattr(r.choices[0], "finish_reason", None)     # "length" when it hit the cap
@@ -416,7 +473,7 @@ def _input_fits(model, prompt, system):
         return True, f"input check unavailable ({type(e).__name__})"
 
 
-def _call_guarded(model, prompt, max_tokens=512, sig=None, retries=2, **kw):
+def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
     """The input and output token guards, run on EVERY call. Not a helper anyone has to remember.
 
     An earlier version of this was a sibling function (`call_complete`) that callers opted into, and the
@@ -443,7 +500,13 @@ def _call_guarded(model, prompt, max_tokens=512, sig=None, retries=2, **kw):
         # class's own observed p99 is a measurement of it. Whichever is larger is used, so passing a literal
         # can only ever raise the floor, never cap the learned value back down.
         m = bulkgate.maxtokens(sig) or {}
-        max_tokens = max(int(max_tokens or 0), int(m.get("recommend") or 0)) or 2048
+        # COLD START IS HIGH, NOT LOW. This ended `or 2048` — so the FIRST call of any new class, the one
+        # with no measured history, got a small cap chosen by nobody. That is the same defect in its
+        # last hiding place: brand-new call-classes are exactly where an unexpectedly long answer arrives,
+        # and 2048 quietly cut it. A high ceiling costs nothing — billing is per token GENERATED, so an
+        # unused budget is free — while a low one destroys the answer. Once the class has been observed a
+        # few times, `recommend` (its measured p99) takes over and the ceiling stops mattering.
+        max_tokens = max(int(max_tokens or 0), int(m.get("recommend") or 0)) or MAX_TOKEN_CEILING
     attempt, budget = 0, int(max_tokens)
     while True:
         r = call(model, prompt, max_tokens=budget, _no_guard=True, **kw)

@@ -126,7 +126,7 @@ def _llm_refine(task, intent):
         sysmsg = ("Given a short task description, propose the 6 briefing fields (intent, quality_bar, "
                   "scale, budget, output_format, test_or_prod) as terse defaults. <120 words.")
         with calls.context(intent=f"{META}:brief"):
-            r = adapters.call(config.advisor_model(), f"Task: {task}\nIntent: {intent}", max_tokens=300, system=sysmsg)
+            r = adapters.call(config.advisor_model(), f"Task: {task}\nIntent: {intent}", sig=f"{META}:brief", system=sysmsg)
         if not r["error"]:
             print("\n  LLM-inferred defaults (caged):\n  " + (r["text"] or "").replace("\n", "\n  "))
     except Exception:

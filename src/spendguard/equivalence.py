@@ -96,7 +96,7 @@ _RUBRIC = ("Are these two answers EQUIVALENT for the task (same meaning/result, 
 def _llm_rubric(ref, out, model):
     """LLM judge of semantic equivalence (CAGED). Returns 0..1."""
     from . import adapters
-    r = adapters.call(model, _RUBRIC.format(a=ref[:3000], b=out[:3000]), max_tokens=8)
+    r = adapters.call(model, _RUBRIC.format(a=ref[:3000], b=out[:3000]), sig="spendguard:equivalence")
     m = re.search(r"[01](?:\.\d+)?", r.get("text") or "")
     return float(m.group()) if m else 0.0
 

@@ -36,6 +36,18 @@ def _per_job():
     return {m: (c / j) for m, (j, c) in agg.items() if j}
 
 
+def _observed_models():
+    """Every model the corpus has SEEN, including ones with zero jobs.
+
+    Split out from _per_job() because callers used `set(_per_job())` to mean "models present in the corpus",
+    and _per_job() drops any model with jobs==0 (it cannot divide by it). So a model that is demonstrably
+    present — it is right there in calls.summary() — read as ABSENT, and every insight citing it was retired
+    as 'superseded: cited model absent from corpus'. Retiring a true insight is the expensive direction:
+    nothing surfaces it again. Two different questions ("what does it cost per job" and "have we seen it")
+    now have two different functions."""
+    return {m for _i, m, _j, _c, _g, _b in calls.summary() if m}
+
+
 def _models_in(text, known):
     """Models cited as whole tokens — NOT substrings (so 'gpt-5' doesn't match inside 'gpt-5.5')."""
     t = (text or "").lower()
@@ -84,7 +96,13 @@ def _stale(ins):
             t = t.replace(tzinfo=datetime.timezone.utc)
         return (datetime.datetime.now(datetime.timezone.utc) - t).days >= STALE_DAYS
     except Exception:
-        return False
+        # THE DOCSTRING ABOVE SAYS "No timestamp → treat as stale", and `if not ts: return True` honours it.
+        # This branch did the opposite for a timestamp that EXISTS but will not parse, so a corrupt date made
+        # an insight permanently fresh: the caller is `if support < 2 and _stale(ins)`, so a weakly-supported
+        # claim with a bad date never decayed and kept being served as current. Unparseable is not fresh —
+        # it is an age we cannot establish, and the documented policy for "we don't know how old this is"
+        # is already stale.
+        return True
 
 
 def _apply(ins, verdict):
@@ -122,7 +140,7 @@ def _apply(ins, verdict):
 def validate(verbose=True):
     known = _known_models()
     perjob = _per_job()
-    present = set(perjob)
+    present = _observed_models()      # NOT set(perjob) — see _observed_models: zero-job ≠ absent
     rows = learn.insights_full(include_refuted=True)
     counts = {"support": 0, "contradict": 0, "superseded": 0, "unknown": 0}
     promoted, refuted = 0, 0

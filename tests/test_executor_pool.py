@@ -38,10 +38,10 @@ os.environ["SPENDGUARD_ADVISOR_EXECUTOR"] = "pool"
 os.environ["SPENDGUARD_POOL_COOLDOWN_S"] = "3600"
 
 print("-- pool: each provider's prompts ride its OWN plan lane --")
-r = adapters.call("claude-haiku-4-5-20251001", "classify…")
+r = adapters.call("claude-haiku-4-5-20251001", "classify…", sig="test:executor-pool")
 ck("anthropic model → claude-code lane, $0 billed",
    r.get("executor") == "claude-code" and r["text"] == "CLAUDE LANE" and r["cost"] == 0.0)
-r = adapters.call("openai:gpt-5.5", "classify…")
+r = adapters.call("openai:gpt-5.5", "classify…", sig="test:executor-pool")
 ck("openai model → codex lane, $0 billed",
    r.get("executor") == "codex" and r["text"] == "CODEX LANE" and r["cost"] == 0.0)
 ck("no cross-lane leakage", calls_made == {"claude": 1, "codex": 1})
@@ -51,33 +51,33 @@ def codex_down(prompt, system=None, model=None, timeout=None):
     calls_made["codex"] += 1
     return {"error": "plan window exhausted"}
 codex_exec.run_prompt = codex_down
-r = adapters.call("openai:gpt-5.5", "classify…")
+r = adapters.call("openai:gpt-5.5", "classify…", sig="test:executor-pool")
 ck("failed lane falls back to the API path (its error, not the lane's)",
    r.get("executor") is None and r.get("error") and "plan window" not in (r.get("error") or ""))
 n = calls_made["codex"]
-r2 = adapters.call("openai:gpt-5.5", "classify…")
+r2 = adapters.call("openai:gpt-5.5", "classify…", sig="test:executor-pool")
 ck("cooling lane is SKIPPED (no second lane attempt)", calls_made["codex"] == n and r2.get("executor") is None)
 ck("the OTHER lane is unaffected by the cooldown",
-   adapters.call("claude-haiku-4-5-20251001", "x").get("executor") == "claude-code")
+   adapters.call("claude-haiku-4-5-20251001", "x", sig="test:executor-pool").get("executor") == "claude-code")
 adapters._lane_cooldown.clear()
 codex_exec.run_prompt = codex_ok
 ck("after cooldown clears the lane serves again",
-   adapters.call("openai:gpt-5.5", "x").get("executor") == "codex")
+   adapters.call("openai:gpt-5.5", "x", sig="test:executor-pool").get("executor") == "codex")
 
 print("-- single-lane settings never touch the other provider --")
 os.environ["SPENDGUARD_ADVISOR_EXECUTOR"] = "claude-code"
 n = calls_made["codex"]
-r = adapters.call("openai:gpt-5.5", "x")
+r = adapters.call("openai:gpt-5.5", "x", sig="test:executor-pool")
 ck("executor=claude-code + openai model → API (codex lane never called)",
    calls_made["codex"] == n and r.get("executor") is None)
 os.environ["SPENDGUARD_ADVISOR_EXECUTOR"] = "codex"
 n = calls_made["claude"]
-r = adapters.call("claude-haiku-4-5-20251001", "x")
+r = adapters.call("claude-haiku-4-5-20251001", "x", sig="test:executor-pool")
 ck("executor=codex + anthropic model → API (claude lane never called)",
    calls_made["claude"] == n and r.get("executor") is None)
 os.environ["SPENDGUARD_ADVISOR_EXECUTOR"] = "api"
 n = dict(calls_made)
-adapters.call("claude-haiku-4-5-20251001", "x"); adapters.call("openai:gpt-5.5", "x")
+adapters.call("claude-haiku-4-5-20251001", "x", sig="test:executor-pool"); adapters.call("openai:gpt-5.5", "x", sig="test:executor-pool")
 ck("executor=api touches no lane at all", calls_made == n)
 
 print("-- subscription rows recorded per lane (billed axis honest at $0) --")

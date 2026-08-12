@@ -1,0 +1,38 @@
+{
+  "spendguard/cachetest.py::_run_calls::max_completion_tokens=16": {
+    "verdict": "harmless_probe",
+    "why": "The code ignores the reply's content and only reads r.usage.prompt_tokens_details, making this a cache-behaviour probe where the generated text is discarded.",
+    "model": "claude-opus-4-8",
+    "value": 16,
+    "file": "spendguard/cachetest.py",
+    "symbol": "_run_calls",
+    "kwarg": "max_completion_tokens"
+  },
+  "spendguard/cachetest.py::_run_calls::max_tokens=16": {
+    "verdict": "harmless_probe",
+    "why": "The code only reads m.usage (token/cache accounting) from each response and never consumes m.content or the reply text, which is characteristic of a cache-behaviour probe.",
+    "model": "claude-opus-4-8",
+    "value": 16,
+    "file": "spendguard/cachetest.py",
+    "symbol": "_run_calls",
+    "kwarg": "max_tokens"
+  },
+  "spendguard/refresh.py::_llm_lookup::max_tokens=3000": {
+    "verdict": "content_call",
+    "why": "The call uses a web_search tool and returns a message whose content is evidently consumed as the lookup result for the refresh operation, so a truncated reply would be silently parsed as wrong or empty data.",
+    "model": "claude-opus-4-8",
+    "value": 3000,
+    "file": "spendguard/refresh.py",
+    "symbol": "_llm_lookup",
+    "kwarg": "max_tokens"
+  },
+  "spendguard/vendor_call.py::discover_efforts::max_tokens=16": {
+    "verdict": "harmless_probe",
+    "why": "The call sends a fixed \"Reply: OK\" prompt and the code only reads r.get(\"error\") to test which reasoning-effort values connect, discarding the actual reply content.",
+    "model": "claude-opus-4-8",
+    "value": 16,
+    "file": "spendguard/vendor_call.py",
+    "symbol": "discover_efforts",
+    "kwarg": "max_tokens"
+  }
+}

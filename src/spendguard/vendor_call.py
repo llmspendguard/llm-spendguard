@@ -591,10 +591,16 @@ def discover_efforts(vendor, model, refresh=False):
                 rejected.append(eff)
             elif not err:
                 ok.append(eff)
-            elif "effort" in err.lower():
-                rejected.append(eff)
             else:
-                unknown.append(eff)                    # transport/other: evidence of nothing
+                # NO PROSE MATCH. This had `elif "effort" in err.lower(): rejected.append(eff)`, deciding
+                # from the wording of an error message that the vendor had rejected this tier. Two ways that
+                # is wrong, both silent: a rejection worded without the word "effort" ("invalid parameter:
+                # reasoning") got filed as unknown, and any unrelated error that happened to mention effort
+                # got filed as a REJECTION — which is a claim about vendor capability, recorded as fact.
+                # The structured signal already exists: adapters records `dropped` when it identifies the
+                # rejected parameter from the provider's typed `param` field, and that is the branch above.
+                # Everything else is genuinely unknown, and unknown is the honest answer.
+                unknown.append(eff)                    # transport/other/unattributable: evidence of nothing
     finally:
         if _prev is None:
             _os.environ.pop("SPENDGUARD_ADVISOR_EXECUTOR", None)
