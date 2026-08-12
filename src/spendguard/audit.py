@@ -19,6 +19,12 @@ import os, re, sys, glob, json
 from .pricing import PRICING
 
 SCRIPTS = os.getenv("SPENDGUARD_AUDIT_DIR") or os.getcwd()  # dir of code to scan for stray price literals
+# Directory names excluded from the scan, overridable so the policy is not baked into the tool. Test trees
+# hold banned literals deliberately; build and vendor trees are not this repo's code. Every exclusion is
+# COUNTED AND NAMED in the report — see the skip loop below for why silence is the real hazard.
+EXCLUDE_DIRS = set(filter(None, (os.getenv("SPENDGUARD_AUDIT_EXCLUDE")
+                                 or "tests,test,.venv,.venv.nosync,node_modules,build,dist,site-packages"
+                                 ).split(",")))
 # Match the price pair attached SPECIFICALLY to a gpt-5.5 / gpt-5.5-pro dict key,
 # e.g.  "gpt-5.5": (1.25, 10.0)  — not other models that share the line.
 KEYED = re.compile(r"""["'](gpt-?5\.5(?:-pro)?)["']\s*:\s*\(\s*([0-9.]+)\s*,\s*([0-9.]+)\s*\)""", re.I)
@@ -106,12 +112,32 @@ def main(argv=None):
     ci = "--ci" in argv
     is_deep = "--deep" in argv
     hits = []
-    scanned = []          # named so the report can state its DENOMINATOR: "no hits in 0 files" is not a pass
-    for path in sorted(glob.glob(os.path.join(SCRIPTS, "*.py"))):
+    scanned, skipped = [], []   # DENOMINATOR and EXCLUSIONS: "no hits in 0 files" is not a pass,
+                                # and a tree skipped in silence is a clean bill for unread code
+    # RECURSIVE. This globbed `<dir>/*.py` — top level only — so running it from a repo root scanned the
+    # handful of files that happen to sit there and reported clean on a tree whose actual code is all one
+    # directory down. A price audit that silently skips src/ is not a weaker audit; it is a certificate for
+    # the files it never opened. The denominator printed at the end makes the scope visible either way.
+    for path in sorted(glob.glob(os.path.join(SCRIPTS, "**", "*.py"), recursive=True)):
         # skip files that legitimately CONTAIN the wrong literals to describe/test them (the audit itself,
         # the canonical table, the reconcilers) — else the audit flags its own examples.
         if os.path.basename(path) in ("pricing.py", "audit.py", "audit_price_constants.py",
                                       "reconcile_openai_spend.py", "reconcile_openai.py"):
+            skipped.append(path)
+            continue
+        # TEST FIXTURES CONTAIN BANNED LITERALS ON PURPOSE. Making the scan recursive immediately surfaced
+        # 14 "findings", every one inside tests/test_audit.py — the file that feeds this detector the exact
+        # wrong prices it exists to catch. A guard that documents a pattern will always contain the pattern.
+        #
+        # THIS IS SCOPE, NOT A VERDICT, and the two need different instruments. Which directories to scan is
+        # a configuration choice with a near-universal convention behind it; asking a model "is this file a
+        # test?" for every file in every repo would be slow and would still be a guess. What actually
+        # matters is that the exclusion CANNOT BE SILENT — a scan that quietly skips a tree reports clean on
+        # code it never opened, which is the failure this whole module keeps producing. So: the directories
+        # are configurable (no hardcoded policy), and every skipped file is counted and named in the report.
+        parts = os.path.normpath(path).split(os.sep)
+        if EXCLUDE_DIRS & set(parts):
+            skipped.append(path)
             continue
         with open(path, errors="ignore") as fh:      # closed deterministically: this walks a whole tree
             lines = list(enumerate(fh, 1))
@@ -133,7 +159,11 @@ def main(argv=None):
         # arithmetic, or any model not in BANNED/ALLOWED. Every one of those is a hardcoded wrong price
         # that this audit passes, and the word "OK" is what turns a narrow check into a false assurance —
         # the exact shape that let 15/120 sit in a script while an audit reported nothing wrong.
-        print(f"no BANNED literal or mismatched keyed pair found in {len(scanned)} file(s).")
+        print(f"no BANNED literal or mismatched keyed pair found in {len(scanned)} file(s) "
+              f"(recursive from {SCRIPTS}).")
+        if skipped:
+            print(f"  SKIPPED {len(skipped)} file(s) in excluded dirs ({', '.join(sorted(EXCLUDE_DIRS))}) "
+                  f"— override with SPENDGUARD_AUDIT_EXCLUDE. Not scanned is not clean.")
         print("  CHECKED: literal price pairs written as a tuple next to a known model key.")
         print("  NOT CHECKED: dict-form rates ({'in': 15, 'out': 75}), rates split across constants,")
         print("               computed rates, and any model absent from the canonical table.")

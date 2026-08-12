@@ -116,6 +116,16 @@ def contract_hash(contract):
 def _as_obj(item):
     """(value, salvaged) — the item as a Python value. Strings are parsed as JSON: strictly first, then by
     stripping a code fence or taking the outermost brace span. Anything that needed stripping is flagged."""
+    if isinstance(item, (bytes, bytearray)):
+        # BYTES ARE A STRING THAT HASN'T BEEN DECODED, NOT AN OBJECT. `isinstance(item, str)` is False for
+        # them, so a bytes payload was returned verbatim and every downstream contract check then compared
+        # b'{"ok": true}' against a dict shape and reported the output as malformed. Providers and file
+        # readers hand back bytes routinely, so this turned a perfectly valid response into a contract
+        # failure — and a contract failure is what blocks a bulk run.
+        try:
+            item = item.decode("utf-8")
+        except UnicodeDecodeError:
+            return item, False        # genuinely not text: hand it back untouched rather than mangle it
     if not isinstance(item, str):
         return item, False
     s = item.strip()

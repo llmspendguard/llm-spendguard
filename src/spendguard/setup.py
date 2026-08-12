@@ -253,9 +253,26 @@ def install_hook(venv=None, uninstall=False, install_pkg=True, user=False, pytho
                 print("  ✗ pip install failed:\n" + (r.stderr or r.stdout)[-600:]); return 1
         open(hook, "w").write(_HOOK)
 
-    v = subprocess.run([target, "-c", "from openai.resources import files as of;"
-                        "print('ENFORCING' if getattr(of.Files.create,'_spend_gated',False) else 'loaded (no OpenAI SDK?)')"],
-                       capture_output=True, text=True)
+    # PROBE EACH PROVIDER INDEPENDENTLY. This imported openai unconditionally, so an environment with only
+    # the Anthropic SDK — a completely normal setup — got a raw ImportError traceback from `install-hook`
+    # and no answer about whether the gate was enforcing. Worse than ugly: it reports nothing about the SDK
+    # that IS installed, so a correctly gated Anthropic-only machine looks broken.
+    _probe = (
+        "import importlib\n"
+        "res = []\n"
+        "for name, mod, attr in (('openai', 'openai.resources', 'Files'),\n"
+        "                        ('anthropic', 'anthropic.resources.messages.batches', 'Batches')):\n"
+        "    try:\n"
+        "        m = importlib.import_module(mod)\n"
+        "    except ImportError:\n"
+        "        res.append(f'{name}: SDK not installed')\n"          # absent is not ungated
+        "        continue\n"
+        "    obj = getattr(m, attr, None) or getattr(m, 'files', None)\n"
+        "    fn = getattr(getattr(obj, 'create', None), '_spend_gated', None)\n"
+        "    res.append(f'{name}: ' + ('ENFORCING' if fn else 'NOT gated'))\n"
+        "print(' · '.join(res))\n"
+    )
+    v = subprocess.run([target, "-c", _probe], capture_output=True, text=True)
     print(f"  ✓ hook → {hook}")
     print(f"  verify ({target}): {v.stdout.strip() or v.stderr.strip()[-160:]}")
     # ensure setup is actually USABLE, not just installed: keys must resolve in this interpreter (the repo-move

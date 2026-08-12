@@ -21,7 +21,12 @@ how much output to expect. So the estimator stops asking the caller and uses wha
   3. the model's published `max_output_tokens` — and ONLY when it is genuinely an output limit: 961 of 2,572
      upstream entries copy the context window into that field where no ceiling is published, so `pricing`
      rejects a value equal to `max_input_tokens` rather than assume a 1M-token response;
-  4. nothing — and then we say UNKNOWN, loudly, and never 0.
+  4. nothing — and then we say UNKNOWN, loudly. THE NUMBER RETURNED IS 0, and the basis is `unknown`.
+     This line used to read "and never 0", which was false: a caller doing arithmetic needs a number and
+     any invented one would be worse, so 0 is deliberate. But a reader who trusted "never 0" would not
+     defend against it, and a docstring that promises a guarantee the code does not keep is worse than no
+     docstring — it converts a known hazard into an unknown one. CHECK THE BASIS. A 0 with basis
+     `unknown` is an absence of measurement, not a measurement of zero.
 
 Order matters: learned beats the published ceiling because a 128k-output model would otherwise inflate every
 estimate and trip caps on work costing pennies — the false-refusal failure, arriving from the other side.

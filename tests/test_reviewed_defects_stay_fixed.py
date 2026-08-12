@@ -485,5 +485,50 @@ check("the learned predictor has a name that says so", callable(getattr(_cal, "p
 check("...with the old name kept as an alias for existing consumers", _cal.estimate is _cal.predict_cost)
 
 
+# ── the 9 disputed findings adjudicated as STILL REAL (2026-08-12) ───────────────────────────────────────
+# 45 wave rows sat as "SPLIT — needs a human" and were never resolved either way. Adjudicated against the
+# code as it is now: 19 already fixed, 16 not a defect, 9 still real. These are those.
+
+# output_contract._as_obj checked `isinstance(item, str)`, so a BYTES payload was handed back unparsed and
+# every downstream contract check compared b'{"ok": true}' against a dict shape and called the output
+# malformed. Providers and file readers return bytes routinely, and a contract failure blocks a bulk run.
+from spendguard import output_contract as _oc                                          # noqa: E402
+check("a bytes JSON payload parses", _oc._as_obj(b'{"ok": true}')[0] == {"ok": True})
+check("...and matches what the str form gives", _oc._as_obj(b'{"a":1}')[0] == _oc._as_obj('{"a":1}')[0])
+check("genuinely-binary input is handed back untouched, not mangled",
+      isinstance(_oc._as_obj(b"\xff\xfe\x00")[0], (bytes, bytearray)))
+
+# The audit globbed `<dir>/*.py` — TOP LEVEL ONLY — so from a repo root it scanned the few files that happen
+# to sit there and reported clean on a tree whose code is all one directory down. Made recursive, it
+# immediately found 14 literals it had never been able to see.
+_audit_src = (SRC / "audit.py").read_text()
+check("the price audit recurses instead of scanning one directory", '"**", "*.py"' in _audit_src)
+check("...and names what it EXCLUDED, so a skipped tree is not a silent clean bill",
+      "SKIPPED" in _audit_src and "Not scanned is not clean" in _audit_src)
+check("...with the exclusions configurable rather than baked in", "SPENDGUARD_AUDIT_EXCLUDE" in _audit_src)
+
+# setup.py's post-install verification imported openai unconditionally, so an Anthropic-only environment —
+# entirely normal — got a raw ImportError traceback and no answer about whether the gate was enforcing.
+_setup_src = (SRC / "setup.py").read_text()
+# THIS CHECK WAS TOO BROAD AT FIRST and failed on correct code. It searched the whole file for the openai
+# import string, which also matches a DIFFERENT probe that already wraps each provider in its own
+# try/except and falls through to anthropic. A guard that fires on the fixed version of the code teaches
+# people to delete guards. The assertion is now about the verification snippet specifically, and about the
+# behaviour that was actually wrong: an absent SDK must report as absent rather than as ungated.
+check("...it probes each provider independently", "'anthropic'" in _setup_src and "'openai'" in _setup_src)
+check("...and an absent SDK reports as absent, not as ungated", "SDK not installed" in _setup_src)
+check("the verification snippet no longer assumes openai is importable",
+      "_probe" in _setup_src and "importlib.import_module(mod)" in _setup_src)
+
+# expected_output promised "never 0" in two docstrings while deliberately returning 0 with basis='unknown'.
+# The 0 is the right number to hand back — a caller doing arithmetic needs one — but a reader trusting the
+# guarantee would not defend against it, which converts a known hazard into an unknown one.
+from spendguard import expected_output as _eo                                           # noqa: E402
+check("expect() still returns a number for the unmeasurable case", _eo.expect("no-such-model-xyz")[0] == 0)
+check("...flagged as `unknown`, which is what callers must check", _eo.expect("no-such-model-xyz")[1] == "unknown")
+check("the module docstring no longer promises 'never 0'", "and never 0." not in _eo.__doc__)
+check("...and says to check the basis instead", "CHECK THE BASIS" in _eo.__doc__)
+
+
 print(f"\n{'[FAIL]' if failures else 'OK'} test_reviewed_defects_stay_fixed: {failures} failure(s)")
 sys.exit(1 if failures else 0)

@@ -134,8 +134,12 @@ def _warn_once(msg):
 
 
 def _expected_out(model, kw=None, body=None, sig=None):
-    """Expected OUTPUT tokens for one request — measured, never assumed to be the caller's cap (and NEVER 0
-    when the caller sets none). See expected_output.py for the precedence and why it exists."""
+    """(tokens, basis) — expected OUTPUT for one request, measured, never assumed to be the caller's cap.
+
+    RETURNS 0 WITH basis='unknown' when nothing is measurable, and warns. The parenthetical here used to
+    say "NEVER 0", which was not true of the code below it. Callers that take `[0]` and drop the basis get
+    the warning but not the flag, so a 0 does reach their arithmetic — it is announced, not prevented. See
+    expected_output.py for the precedence and why 0 is the least-bad number to hand back."""
     from . import expected_output
     cap = None
     src = kw if kw is not None else (body or {})
