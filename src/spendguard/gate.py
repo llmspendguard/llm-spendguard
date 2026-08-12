@@ -111,7 +111,16 @@ def _content_tokens(content, provider=None, model=None):
     try:
         from . import content_tokens
         return content_tokens.count(content, provider=provider, model=model, text_tokens=_ct)
-    except Exception:
+    except Exception as e:
+        # THE FALLBACK IS THE BUG THIS FUNCTION EXISTS TO PREVENT. `_ct(str(content))` json-ifies the blocks
+        # and counts the base64 payload as text — measured against billing, that over-states a real vision
+        # batch about 25x, which is how the cap came to refuse every image job. Falling back to it is still
+        # better than crashing a caller mid-run, but it is NOT a quieter version of the right answer: it is
+        # the wrong answer, in the expensive direction, and silence here is what made the original bug take
+        # so long to find. Say it once, per model.
+        _warn_once(f"[spendguard] image/PDF token counting FAILED for {model or 'this model'} "
+                   f"({type(e).__name__}: {str(e)[:60]}) — falling back to counting the raw content as TEXT, "
+                   f"which over-states vision payloads by roughly 25x and can make the cap refuse valid work.")
         return _ct(str(content))
 
 
@@ -1656,6 +1665,20 @@ def _cli(cmd="status", live=False):
                   f"  (>{bulkgate.preview_max()} reqs needs fresh estimate+test; SPENDGUARD_ENFORCE=off|warn|block)")
         except Exception:
             pass
+        # AN UNPRICED ADVISOR MODEL IS A BROKEN CAP, and config.validate_advisor() has said so since it was
+        # written — to nobody, because nothing called it. If either advisor model is missing from pricing.py
+        # the meta ESTIMATE cannot be computed, so the meta cap has nothing to compare against and the
+        # estimate-first discipline silently degrades to "run it and find out". doctor is where a user goes
+        # to ask whether this machine is configured correctly, so it is where the answer belongs.
+        try:
+            from . import config as _c
+            _probs = _c.validate_advisor()
+            print(f"  advisor   : {'🟢 both models priced' if not _probs else '🔴 UNPRICED — the meta cap cannot be computed'}")
+            for _p in _probs:
+                print(f"      {_p}")
+                print(f"      fix: spendguard price <model> --in <$/1M> --out <$/1M> --source '<url>'")
+        except Exception as _e:
+            print(f"  advisor   : ? could not be checked ({type(_e).__name__}) — not the same as 'fine'")
         print(f"  flag file : {FLAG}  ({'present → off' if os.path.exists(FLAG) else 'absent'})")
         print(f"  env       : GATE_DISABLE={os.getenv('GATE_DISABLE','')!r}  GATE_ALLOW={os.getenv('GATE_ALLOW','')!r}  GATE_CAP={os.getenv('GATE_CAP') or '(default 75)'}")
         try:

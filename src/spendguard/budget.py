@@ -900,8 +900,13 @@ def exceeded(pending=0.0, kind="llm"):
     if kind in ("llm", "compute"):
         checks.append((f"{kind}-daily", config.class_cap(kind, "daily"), sd))
         checks.append((f"{kind}-monthly", config.class_cap(kind, "monthly"), sm))
-    checks.append(("total-daily", config.class_cap("total", "daily"), sd))
-    checks.append(("total-monthly", config.class_cap("total", "monthly"), sm))
+    # Through the NAMED accessors, so `config.daily_cap`/`config.monthly_cap` are the one place each ceiling
+    # is defined rather than two spellings of the same lookup. The unwired-capability scan flagged
+    # monthly_cap as an unenforced control — it was wrong about the impact (the ceiling IS checked, right
+    # here, via class_cap) but right that the accessor had no caller, which is how a reader grepping for
+    # `monthly_cap` concludes nothing enforces it and writes a second one.
+    checks.append(("total-daily", config.daily_cap(), sd))
+    checks.append(("total-monthly", config.monthly_cap(), sm))
     for scope, capv, sp in checks:
         if capv is not None and sp + pending > capv:
             return (scope, capv, sp + pending)

@@ -876,6 +876,19 @@ def cmd(argv=None):
         from . import ledger_sync
         print("reconcile:", ledger_sync.reconcile_into_ledger())
         return 0
+    if sub == "reattribute":                          # correct charges whose provider disagrees with the registry
+        # budget.reattribute_providers had NO CALLER ANYWHERE. It is the corrective for the gate's old
+        # `"anthropic" if model.startswith("claude") else "openai"` inference, which put 695 rows and $30.26
+        # of Moonshot and z.ai spend on the OpenAI line — and `saas reconcile` compares the ledger to
+        # provider billing PER PROVIDER, so that mis-attribution makes one provider look over-billed and
+        # another under-billed forever. The fix existed, was tested, was documented, and could not be run.
+        # Dry by default, like every other mutation here: `--apply` to write.
+        from . import budget
+        r = budget.reattribute_providers(apply="--apply" in argv)
+        print(f"reattribute: {r}")
+        if not ("--apply" in argv):
+            print("  (dry run — nothing written. Re-run with --apply to correct the rows.)")
+        return 0
     if sub == "audit":                                # triple-check completeness: every batch accounted (free)
         from . import ledger_sync
         import json as _j

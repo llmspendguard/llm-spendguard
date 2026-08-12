@@ -251,8 +251,17 @@ def _load_units():
             for kind, entries in (_read(path).get("unit_prices") or {}).items():
                 if kind in units:
                     units[kind].update({k: float(v) for k, v in entries.items()})
-        except Exception:
-            pass
+        except Exception as e:
+            # THE CURATED FILE IS THE AUTHORITATIVE ONE. Swallowing here meant a malformed or unreadable
+            # prices.json left the built-in defaults in place and returned them as if they were the curated
+            # values — so a per-unit price the user had deliberately corrected silently reverted, and every
+            # figure computed from it looked exactly as trustworthy as before. The defaults are still used
+            # (refusing to price anything at all would be worse), but nobody is told they are looking at a
+            # number the override was supposed to have replaced unless it is said out loud.
+            import sys as _sys
+            _sys.stderr.write(f"[spendguard] unit prices in {path} could NOT be applied "
+                              f"({type(e).__name__}: {str(e)[:60]}) — falling back to built-in defaults, "
+                              f"which may not match what you curated. Fix the file, then re-check.\n")
     return units
 
 

@@ -98,16 +98,27 @@ def sync_to_guarded(rows=None):
         state[r["intent"]] = {"counted_calls": r["after_calls"], "adopted_ts": r["adopted_ts"]}
         synced += amount
         intents += 1
-    # update_json is already fail-soft (it warns and returns None rather than raising on an unwritable or
-    # unparseable target), so the blanket try/except that used to wrap the raw write is no longer hiding
-    # anything — but it is kept, because a failure to persist here must not take down a sync that has
-    # already credited the savings above.
+    # THE COMMENT THAT USED TO SIT HERE HAD IT BACKWARDS. It said a failed persist "must not take down a sync
+    # that has already credited the savings above" — but the crediting having already happened is precisely
+    # why the failure matters. record_saving() ran for each row; this write is what advances the watermark
+    # that stops those same calls being credited AGAIN on the next run. Lose it and the sync is no longer
+    # idempotent: every subsequent run re-credits the same work, and the savings figure climbs on its own
+    # with nothing anywhere saying why. The write still does not raise — a sync that credited real savings
+    # should return what it did — but the caller is TOLD, and the result says so.
+    from . import config
+    persisted = True
     try:
-        from . import config
-        config.update_json(_state_path(), lambda _d: state)
-    except Exception:
-        pass
-    return {"synced_usd": round(synced, 4), "intents": intents}
+        if config.update_json(_state_path(), lambda _d: state) is None:
+            persisted = False
+    except Exception as e:
+        persisted = False
+        config.warn_once(f"[spendguard] realized-sync watermark write raised ({type(e).__name__})")
+    if not persisted and intents:
+        config.warn_once(
+            f"[spendguard] realized sync credited ${synced:.4f} across {intents} intent(s) but could NOT "
+            f"persist its watermark to {_state_path()} — the NEXT run will credit those same calls again. "
+            f"Fix the write (disk space / permissions) before re-running, or the savings figure will inflate.")
+    return {"synced_usd": round(synced, 4), "intents": intents, "persisted": persisted}
 
 
 def main(argv=None):

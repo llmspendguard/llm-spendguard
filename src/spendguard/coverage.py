@@ -69,9 +69,13 @@ def audit(roots=None):
     return out
 
 
-def gaps(roots=None):
-    """The ungated LLM venvs that are NOT spendguard's own — the real coverage gaps to gate."""
-    return [r for r in audit(roots) if r["llm"] and not r["gated"] and not r["own"]]
+def gaps(rows=None, roots=None):
+    """The ungated LLM venvs that are NOT spendguard's own — the real coverage gaps to gate.
+
+    `rows` lets a caller that has already run audit() reuse it instead of re-scanning every venv on the
+    machine; the definition of "a gap" stays here either way."""
+    return [r for r in (audit(roots) if rows is None else rows)
+            if r["llm"] and not r["gated"] and not r["own"]]
 
 
 def cmd(argv=None):
@@ -80,16 +84,21 @@ def cmd(argv=None):
     if not rows:
         print("  (no venvs with an LLM SDK found under the scanned roots; set SPENDGUARD_COVERAGE_ROOTS to widen)")
         return 0
-    g = []
+    # WHAT COUNTS AS A GAP IS DEFINED IN gaps(), ONCE. This loop used to rebuild the same condition inline
+    # (`not gated and not own`) while gaps() sat directly above it with no caller — so the definition of "a
+    # coverage gap" lived in two places, free to drift, and the named one was the copy nobody exercised.
+    g = gaps(rows)
+    gap_venvs = {r["venv"] for r in g}
     for r in sorted(rows, key=lambda x: x["venv"]):
         v = r["venv"].replace(os.path.expanduser("~"), "~")
-        if r["gated"]:
+        if r["venv"] in gap_venvs:
+            tag = "🔴 UNGATED — its realtime spend slips live capture"
+        elif r["gated"]:
             tag = "🟢 gated"
         elif r["own"]:
             tag = "🟡 self-gates (spendguard's own venv — scripts call spendguard.require())"
         else:
-            tag = "🔴 UNGATED — its realtime spend slips live capture"
-            g.append(r)
+            tag = "⚪ no LLM SDK"
         print("  %-50s LLM=%-16s %s" % (v, ",".join(r["llm"]), tag))
     if g:
         print("\nclose the gaps (gate each → forward realtime captured at the source, not reconstructed):")

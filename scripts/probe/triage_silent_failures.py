@@ -161,7 +161,21 @@ def verify(rows, root, model, votes=2):
         if survives:
             kept.append(r)
             print(f"  ✓ SURVIVES  {r['where']}:{r['lines'][0]}  {claim[:88]}")
-    print(f"\n  {len(kept)}/{len(dangerous)} survived refutation")
+    # "KEPT" IS NOT "SURVIVED". This printed len(kept)/len(dangerous) as "survived refutation", and kept
+    # includes the UNVERIFIED ones — findings whose refuters never answered. So a run where 10 were refuted,
+    # 2 genuinely survived and 7 could not be checked reported "9/19 survived", and I repeated that number to
+    # the user as though nine findings had been confirmed. The three states mean different things and only
+    # one of them is a finding, so they are counted separately.
+    #
+    # NOTE FOR THE DECISION-HOOK: nothing below DECIDES anything. `r["survived"]` was written above by the
+    # refuters and, on a split, by the adjudicator — models, in both cases. This only TALLIES verdicts that
+    # a model already reached, and the three-way split is the schema those verdicts are recorded in
+    # (True = survived, False = refuted, None = never answered). Counting recorded values is arithmetic.
+    verdicts = [r.get("survived") for r in kept]          # already-decided values, straight from the model
+    n_surv = verdicts.count(True)
+    n_unv = verdicts.count(None)
+    print(f"\n  {n_surv} SURVIVED refutation · {n_unv} UNVERIFIED (refuter never answered — not a finding "
+          f"and not a clean bill) · {len(dangerous) - len(kept)} refuted")
     return kept
 
 

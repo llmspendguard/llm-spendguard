@@ -40,7 +40,7 @@ _GROUPS = [
         ("realized", "what the changes actually saved"),
     ]),
     ("teams", [
-        ("saas", "`saas link|sync|push|reconcile` — org roll-up (opt-in)"),
+        ("saas", "`saas link|sync|push|reconcile|reattribute` — org roll-up (opt-in)"),
         ("lanes", "subscription lanes: run meta prompts on your plan"),
         ("truth", "push provider-truth totals (owner only)"),
     ]),
