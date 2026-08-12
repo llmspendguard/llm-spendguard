@@ -13,7 +13,11 @@ from spendguard import adapters
 
 
 def test_anthropic_path_streams_and_never_calls_create():
-    src = inspect.getsource(adapters.call)
+    # THE REQUEST BUILDER MOVED. `adapters.call` is now the guarded entry point (input-size check +
+    # truncation retry) and `_call_once` builds and sends the request. These checks are about the
+    # request, so they read the builder. Reading `call` here would inspect the guard wrapper and
+    # pass vacuously — a source-reading test silently detaches from its subject when code moves.
+    src = inspect.getsource(adapters._call_once)
     anth = src.split('if spec["kind"] == "anthropic":')[1].split("else:")[0]
     assert "messages.stream(" in anth, (
         "the anthropic branch must use messages.stream(); non-streaming is vetoed by the SDK above a "
@@ -27,6 +31,10 @@ def test_final_message_is_read_from_the_stream_not_the_stream_object():
     """A stream yields events; usage and content live on the FINAL message. Reading the context manager
     itself would give an object with no .usage, and the token counts would silently become zero — the same
     absence-as-zero failure the ledger markers exist to prevent."""
-    src = inspect.getsource(adapters.call)
+    # THE REQUEST BUILDER MOVED. `adapters.call` is now the guarded entry point (input-size check +
+    # truncation retry) and `_call_once` builds and sends the request. These checks are about the
+    # request, so they read the builder. Reading `call` here would inspect the guard wrapper and
+    # pass vacuously — a source-reading test silently detaches from its subject when code moves.
+    src = inspect.getsource(adapters._call_once)
     anth = src.split('if spec["kind"] == "anthropic":')[1].split("else:")[0]
     assert "get_final_message()" in anth, "must resolve the stream to its final message before reading usage"

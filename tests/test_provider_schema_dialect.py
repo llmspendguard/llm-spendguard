@@ -59,7 +59,11 @@ def test_the_schema_prompt_is_never_sent_as_an_api_parameter():
     """It is ours. Passing it through to the SDK would be an unknown kwarg and a 400."""
     import inspect
     from spendguard import adapters
-    src = inspect.getsource(adapters.call)
+    # THE REQUEST BUILDER MOVED. `adapters.call` is now the guarded entry point (input-size check +
+    # truncation retry) and `_call_once` builds and sends the request. These checks are about the
+    # request, so they read the builder. Reading `call` here would inspect the guard wrapper and
+    # pass vacuously — a source-reading test silently detaches from its subject when code moves.
+    src = inspect.getsource(adapters._call_once)
     assert '_schema_prompt' in src and 'pop(' in src, \
         "adapters.call must POP _schema_prompt and fold it into the system message"
 

@@ -169,10 +169,40 @@ def _openai_strict(schema):
     return s
 
 
-def call(model, prompt, max_tokens=512, system=None, reasoning=None, schema=None, timeout_s=None):
-    """Run one prompt against one model. Returns a result dict (never raises). `reasoning` (minimal|low|medium|high)
-    sets reasoning effort for gpt-5/o-series reasoning models; defaults to 'minimal' for them (default-medium reasoning
-    eats the token budget → empty output, and costs more — wrong for simple classify/extract calls)."""
+def call(model, prompt, max_tokens=512, system=None, reasoning=None, schema=None, timeout_s=None,
+         sig=None, retries=2, _no_guard=False):
+    """Run one prompt against one model. Returns a result dict (never raises).
+
+    THE TOKEN CONTROLS LIVE HERE, IN THE ONE FUNCTION EVERY CALL ALREADY GOES THROUGH. They were built
+    twice over and wired nowhere: bulkgate.is_truncated ("a fact, not a guess") had no caller outside its
+    module, bulkgate.maxtokens learned the p99 output length per call-class and no judging script used it,
+    and vendor_call.input_limit had exactly one caller — a probe script. So every caller hand-picked a
+    number and then read the reply as if the number had been right.
+
+    The first attempt at fixing this put the logic in a SIBLING function (call_complete) and left this one
+    free to return a cut body. That is opt-in safety, which is the same failure one level up: an hour after
+    it shipped, 1 of 9 judging scripts used it, and a name-review re-run came back with 40 of 79 groups
+    "UNREVIEWED" that were really just truncated. A control the caller must remember to use is a control
+    that will not be there when it matters, so both now happen unconditionally, here.
+
+      INPUT   the prompt is measured against the recorded input limit for (vendor, model) BEFORE sending.
+              Over it → an explicit error, not a request the vendor silently clips.
+      OUTPUT  a reply the provider marks as cut off is RETRIED at double the budget; if it still will not
+              fit, text=None and truncated=True, so a truncated body can never be read as a short answer.
+
+    `sig` names the call-class so the budget comes from its measured p99 instead of the 512 default, and so
+    each reply feeds that measurement. `reasoning` (minimal|low|medium|high) sets reasoning effort for
+    gpt-5/o-series models; defaults to 'minimal' for them (default-medium reasoning eats the token budget →
+    empty output, and costs more — wrong for simple classify/extract calls)."""
+    if not _no_guard:
+        return _call_guarded(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
+                             schema=schema, timeout_s=timeout_s, sig=sig, retries=retries)
+    return _call_once(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
+                      schema=schema, timeout_s=timeout_s)
+
+
+def _call_once(model, prompt, max_tokens=512, system=None, reasoning=None, schema=None, timeout_s=None):
+    """One raw request. Everything public goes through `call`, which adds the input and output guards."""
     prov = provider_for(model)
     raw = model.split(":", 1)[1] if ":" in model else model
     spec = PROVIDERS[prov]
@@ -346,40 +376,77 @@ def call(model, prompt, max_tokens=512, system=None, reasoning=None, schema=None
 MAX_TOKEN_CEILING = 32000        # absolute stop for the doubling retry; a real answer never needs more here
 
 
-def call_complete(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
-    """`call()`, but a TRUNCATED reply is never returned as if it were an answer.
+def _input_fits(model, prompt, system):
+    """(ok, detail) — does this payload fit the recorded input limit for (vendor, model)?
 
-    WHY THIS EXISTS, AND WHY IT IS NOT ANOTHER HELPER TO REMEMBER. Every piece needed to stop truncation bugs
-    was already here — adapters.call has returned `finish_reason` all along, bulkgate.is_truncated calls it
-    "a fact, not a guess", and bulkgate.maxtokens learns the p99 output length per call-class. None of it was
-    WIRED, so every caller hand-picked a number (300, 450, 900, 1400 …) and then read the reply as if the
-    number had been right. The failure never announces itself: the body is cut mid-JSON, the parse fails, and
-    the calling code concludes "no answer", "no findings", or "benign". Measured on 2026-08-11: a 300-token
-    budget truncated 19 of 60 adversarial refutations, and the harness reported them as "no refuter answered"
-    — a verifier that had verified nothing, reporting silence as a result.
+    UNMEASURED IS NOT UNLIMITED, and it is also not a reason to block: vendor_call.input_limit returns None
+    when nobody has measured that model, and refusing every unmeasured model would make the guard useless on
+    day one. So an unknown limit passes with the fact recorded, and a KNOWN limit is enforced. Counting the
+    tokens of a fixed string is arithmetic, and comparing two numbers is arithmetic; nothing here is a
+    judgement."""
+    try:
+        from . import vendor_call
+        vendor = provider_for(model)
+        raw = model.split(":", 1)[1] if ":" in model else model
+        rec = vendor_call.input_limit(vendor, raw)
+        # input_limit returns the whole RECORD ({max_chars, method, source, measured}), not a scalar. The
+        # first cut of this did `int(lim)` on the dict, raised TypeError, and the except below reported
+        # "input check unavailable" and PASSED — so the guard written to stop unchecked payloads silently
+        # checked nothing, and a 506-token payload went out and billed. A swallow inside a guard is worse
+        # than a swallow anywhere else: it disables the very thing whose presence the reader is trusting.
+        lim = rec.get("max_chars") if isinstance(rec, dict) else rec
+        if not lim:
+            return True, "input limit UNMEASURED for this model"
+        # CHARS, NOT TOKENS. record_input_limit's parameter is `max_chars`, because what it measures is a
+        # ceiling the provider enforces on payload SIZE (measured on Moonshot by bisection). The first cut of
+        # this compared a TOKEN count against that char limit and would have refused every payload about four
+        # times too early — a guard that blocks correct work is not a safer guard, it is a broken one.
+        n = len((system or "") + "\n" + (prompt or ""))
+        if n > int(lim):
+            return False, f"{n:,} chars exceeds the measured limit of {int(lim):,} for this model"
+        return True, f"{n:,}/{int(lim):,} chars"
+    except Exception as e:
+        # The guard failing is not the payload failing, so the call proceeds — the vendor will reject an
+        # oversized request itself, which is a worse error message but not a wrong answer. But it is said
+        # OUT LOUD, because a silent "check unavailable" is indistinguishable from "checked and fine", and
+        # that is exactly how this function passed a payload it was supposed to measure.
+        from . import config as _cfg
+        _cfg.warn_once(f"[spendguard] the input-size check FAILED for {model} ({type(e).__name__}: "
+                       f"{str(e)[:60]}) — the payload was NOT checked. This is a bug in the check.")
+        return True, f"input check unavailable ({type(e).__name__})"
 
-    THE THREE THINGS, IN ONE PLACE:
-      1. SIZE IT FROM DATA, NOT FROM A GUESS. With `sig`, the cap comes from that call-class's observed p99
-         (bulkgate.maxtokens). No sig and no explicit max_tokens is a hard error — an unmeasured literal is
-         exactly the thing this replaces.
-      2. DETECT IT. bulkgate.is_truncated() on every reply, from the provider's own declared field.
-      3. NEVER RETURN IT. A truncated reply is retried with DOUBLE the budget, up to MAX_TOKEN_CEILING; if it
-         still truncates, the result carries truncated=True and text=None, so a caller cannot mistake a cut
-         body for a short answer. Each reply is recorded via note_response, so the learned cap for this
-         call-class improves and the next run needs no retry.
+
+def _call_guarded(model, prompt, max_tokens=512, sig=None, retries=2, **kw):
+    """The input and output token guards, run on EVERY call. Not a helper anyone has to remember.
+
+    An earlier version of this was a sibling function (`call_complete`) that callers opted into, and the
+    result was measurable within the hour: 1 of 9 judging scripts used it, and a name-review re-run reported
+    40 of 79 groups "UNREVIEWED" that were in fact just truncated. Safety a caller must remember to ask for
+    is safety that will be missing exactly when the call matters. Both guards now live on the one path
+    everything already takes.
     """
     from . import bulkgate
+    ok, detail = _input_fits(model, prompt, kw.get("system"))
+    if not ok:
+        return {"provider": provider_for(model), "model": model, "text": None, "in_tok": 0, "out_tok": 0,
+                "latency": 0.0, "cost": None, "finish_reason": None, "truncated": None,
+                "error": f"payload too large: {detail} — split it rather than letting the vendor clip it"}
     if max_tokens is None:
         if not sig:
             raise ValueError(
-                "call_complete needs either an explicit max_tokens or a `sig` naming the call-class, so the "
-                "budget can come from that class's measured p99 instead of a hand-picked literal. A literal "
-                "is how truncated replies become silent wrong answers.")
+                "call needs either an explicit max_tokens or a `sig` naming the call-class, so the budget "
+                "can come from that class's measured p99 instead of a hand-picked literal. A literal is how "
+                "truncated replies become silent wrong answers.")
+        max_tokens = 0
+    if sig:
+        # A MEASURED BUDGET BEATS THE ARGUMENT. The caller's number is a guess about this call-class; the
+        # class's own observed p99 is a measurement of it. Whichever is larger is used, so passing a literal
+        # can only ever raise the floor, never cap the learned value back down.
         m = bulkgate.maxtokens(sig) or {}
-        max_tokens = int(m.get("recommend") or 0) or 2048     # no history yet → a generous first budget
+        max_tokens = max(int(max_tokens or 0), int(m.get("recommend") or 0)) or 2048
     attempt, budget = 0, int(max_tokens)
     while True:
-        r = call(model, prompt, max_tokens=budget, **kw)
+        r = call(model, prompt, max_tokens=budget, _no_guard=True, **kw)
         if r.get("error"):
             return {**r, "truncated": None}                   # an errored call was not truncated, it failed
         trunc = bulkgate.is_truncated(r.get("finish_reason"), r.get("out_tok"), budget)
@@ -399,3 +466,8 @@ def call_complete(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
             return {**r, "text": None, "truncated": True, "max_tokens_used": budget,
                     "error": f"truncated at {budget} tokens"}
         budget = min(budget * 2, MAX_TOKEN_CEILING)
+
+
+# `call` now does everything this did. Kept as an alias so the callers wired to it this morning keep working
+# and so nothing reads as if there were two ways to make a call — there is one.
+call_complete = call

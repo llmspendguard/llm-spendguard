@@ -32,7 +32,11 @@ def check(label, ok, extra=""):
 
 
 def test_a_dropped_parameter_is_reported_on_the_result():
-    src = inspect.getsource(adapters.call)
+    # THE REQUEST BUILDER MOVED. `adapters.call` is now the guarded entry point (input-size check +
+    # truncation retry) and `_call_once` builds and sends the request. These checks are about the
+    # request, so they read the builder. Reading `call` here would inspect the guard wrapper and
+    # pass vacuously — a source-reading test silently detaches from its subject when code moves.
+    src = inspect.getsource(adapters._call_once)
     check("dropping reasoning_effort is recorded on the result, not silent",
           'dropped' in src and 'pop("reasoning_effort"' in src,
           "a silently-dropped parameter makes every capability probe answer yes")

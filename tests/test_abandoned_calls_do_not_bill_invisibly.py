@@ -30,7 +30,11 @@ def check(label, ok, extra=""):
 
 def test_the_sdk_gets_a_real_timeout_so_abandonment_cancels():
     check("adapters.call accepts timeout_s", "timeout_s" in inspect.signature(adapters.call).parameters)
-    src = inspect.getsource(adapters.call)
+    # THE REQUEST BUILDER MOVED. `adapters.call` is now the guarded entry point (input-size check +
+    # truncation retry) and `_call_once` builds and sends the request. These checks are about the
+    # request, so they read the builder. Reading `call` here would inspect the guard wrapper and
+    # pass vacuously — a source-reading test silently detaches from its subject when code moves.
+    src = inspect.getsource(adapters._call_once)
     check("both SDK clients are constructed WITH it — a client without a timeout runs to completion",
           src.count("timeout=timeout_s") >= 2, str(src.count("timeout=timeout_s")))
     check("_attempt hands the SDK the same budget the caller is enforcing",
