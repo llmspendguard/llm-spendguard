@@ -48,6 +48,7 @@ SOURCES = [
     ("silent_failures_verified.jsonl", "  └ after refutation",      "survived"),
     ("silent_reverified.jsonl",        "  └ after re-refutation",   "survived"),
     ("unwired.jsonl",                  "unwired capabilities",      "unwired"),
+    ("wave_resolution.jsonl",          "  └ wave rows resolved",    "resolution"),
 ]
 
 
@@ -98,6 +99,16 @@ def verdict_of(row, kind):
         return ({True: "survived", False: "refuted"}.get(s, "UNVERIFIED"), row.get("where", "?"))
     if kind == "unwired":
         return ((row.get("verdict") or {}).get("verdict") or "UNJUDGED", row.get("qual", "?"))
+    if kind == "resolution":
+        # The pass that closed out the rows this ledger had to report as UNKNOWN. Two question types, so
+        # two verdict vocabularies, kept apart rather than merged into one score: a guard question answers
+        # "is it protected", a split question answers "is it real". Folding them would hide which was asked.
+        v = row.get("verdict")
+        if not v:
+            return "UNJUDGED", row.get("where", "?")
+        if row.get("kind") == "guard":
+            return ("guarded" if v.get("guarded") else "NEEDS_GUARD"), row.get("where", "?")
+        return (v.get("verdict") or "UNJUDGED"), row.get("where", "?")
     return "UNJUDGED", "?"
 
 
@@ -107,6 +118,7 @@ def verdict_of(row, kind):
 ACTIONABLE = {
     "CONFIRMED", "SPLIT — needs a human", "drifted_wrong_copy", "absent", "violated",
     "COLLISION", "DUPLICATION", "dangerous", "misleading", "survived", "UNWIRED",
+    "NEEDS_GUARD", "real_now",          # from the resolution pass: unprotected, and still-real
 }
 
 
@@ -199,8 +211,16 @@ def main():
     print(f"  ACTIONABLE findings          {n_act}")
     print(f"    ├ a guard names it         {n_guard}")
     print(f"    ├ NO guard found           {n_act - n_guard - unk}   ← open; a fix without a guard comes back")
-    print(f"    └ guard status UNKNOWN     {unk}   ← labelled file:line; matching needs a judgement, not a "
-          f"token compare")
+    # THE RESOLUTION PASS ANSWERED THESE, so reporting them as unknown would be reporting a state the
+    # ledger's own input has since left. `resolved` is what that pass settled; whatever it did not reach
+    # stays unknown, because a partial answer is not a complete one.
+    resolved = grand["NEEDS_GUARD"] + grand["guarded"] + grand["already_fixed"] + \
+        grand["not_a_defect"] + grand["real_now"]
+    still_unknown = max(0, unk - resolved)
+    print(f"    ├ resolved by the wave pass {resolved}   ({grand['NEEDS_GUARD']} need a guard · "
+          f"{grand['real_now']} STILL REAL · {grand['already_fixed']} already fixed · "
+          f"{grand['not_a_defect']} not a defect · {grand['guarded']} already guarded)")
+    print(f"    └ guard status still UNKNOWN {still_unknown}")
     unv = grand["UNVERIFIED"] + grand["UNJUDGED"] + grand["UNJUDGED(raw)"] + grand["UNPARSEABLE"]
     print(f"  UNVERIFIED / UNJUDGED        {unv}   ← the check did not complete. Neither a finding nor a "
           f"clean bill.")
