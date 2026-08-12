@@ -92,11 +92,16 @@ def add_insight(intent, lesson, evidence=None, source="manual", confidence=0.5, 
     and (when scrubbed) shareable. New insights start as 'candidate' until validated against the corpus."""
     iid = _uid()
     ctx = dict(ctx or {})
+    # `scope` IS ALREADY THE LAST ENTRY OF _CTX (line 85), so listing it here too emitted it TWICE in the
+    # column list and twice in the values — a duplicate column in the INSERT. sqlite accepts that silently
+    # for as long as the two values agree, which they do today because both come from the same variable; it
+    # breaks the moment one of them stops. Named once, from the tuple that defines the context columns.
     cols = ["id", "ts", "intent", "lesson", "evidence", "source", "confidence",
-            "status", "support", "contradiction", "last_validated", "version", "scope"] + list(_CTX)
+            "status", "support", "contradiction", "last_validated", "version"] + list(_CTX)
     ctx.setdefault("scope", scope)
     vals = [iid, _now(), intent, lesson, evidence, source, float(confidence),
-            status, 0.0, 0.0, _now(), 1, ctx.get("scope", scope)] + [ctx.get(k) for k in _CTX]
+            status, 0.0, 0.0, _now(), 1] + [ctx.get(k) for k in _CTX]
+    assert len(cols) == len(vals), f"insight column/value mismatch: {len(cols)} vs {len(vals)}"
     with _lock:
         _db().execute(f"INSERT INTO insights ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})", vals)
         _db().commit()

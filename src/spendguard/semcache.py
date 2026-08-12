@@ -30,7 +30,13 @@ def _db():
                 c.execute("""CREATE TABLE IF NOT EXISTS semcache(
                     id TEXT PRIMARY KEY, ts TEXT, model TEXT, prompt_hash TEXT, prompt TEXT,
                     output TEXT, emb BLOB)""")
-                c.execute("CREATE INDEX IF NOT EXISTS idx_sc_hash ON semcache(model, prompt_hash)")
+                # UNIQUE, NOT JUST INDEXED. put() deletes-then-inserts on (model, prompt_hash), which fixes
+                # the duplicate rows a random-uuid PRIMARY KEY used to allow — but only for writes that go
+                # through put(). The SCHEMA is what makes it impossible: without a UNIQUE constraint, any
+                # other writer can still create a second row for the same key, and get()'s `LIMIT 1` with no
+                # ORDER BY would then serve an arbitrary one of them, so a re-cached prompt could keep
+                # returning the OLD output indefinitely. A discipline in one function is not an invariant.
+                c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_sc_hash ON semcache(model, prompt_hash)")
                 c.commit()
                 _conn = c
     return _conn

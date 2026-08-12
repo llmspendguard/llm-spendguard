@@ -430,13 +430,18 @@ def _gpu_session_excerpts(max_sessions=None, max_chars=12000):
         sid = os.path.basename(path).replace(".jsonl", "")
         buf, n, has = [], 0, False
         try:
-            for ln in open(path, errors="ignore"):
-                if gate.search(ln):
-                    has = True
-                if n < max_chars and sig.search(ln):
-                    seg = re.sub(r"\x1b\[[0-9;]*m", "", ln)[:800]
-                    buf.append(seg)
-                    n += len(seg)
+            # A CONTEXT MANAGER, NOT A BARE open() IN THE LOOP HEADER. This scans every transcript on the
+            # machine, and an un-closed handle per file leaks a descriptor per scan — on a long-lived
+            # process that ends as "Too many open files" somewhere unrelated, hours later, with nothing
+            # pointing back here. CPython's refcounting hides it until it doesn't.
+            with open(path, errors="ignore") as _fh:
+                for ln in _fh:
+                    if gate.search(ln):
+                        has = True
+                    if n < max_chars and sig.search(ln):
+                        seg = re.sub(r"\x1b\[[0-9;]*m", "", ln)[:800]
+                        buf.append(seg)
+                        n += len(seg)
         except Exception:
             continue
         if has and buf:
