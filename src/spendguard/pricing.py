@@ -222,6 +222,53 @@ def _load():
 PRICING = _load()
 
 
+# ── MAXIMUM OUTPUT TOKENS, per model ──────────────────────────────────────────────────────────────────
+# Why this exists: the send-time budget floors at adapters.TOKEN_FLOOR (32k) because a cap has never
+# controlled cost and a low one destroys the answer. But a floor above a model's own limit is a 400, so the
+# floor has to be clamped by what the model actually accepts.
+#
+# EVERY VALUE HERE WAS READ FROM THE PROVIDER'S OWN DOCUMENTATION, not inferred and not remembered:
+#   Anthropic — platform.claude.com/docs/en/about-claude/models/overview, "Max output" row, read 2026-08-12.
+#     (That page also notes the Batch API supports up to 300k output on Opus 5/4.8/4.7/4.6 and Sonnet 5/4.6
+#      behind the `output-300k-2026-03-24` beta header; these are the synchronous Messages API values.)
+#
+# A model ABSENT from this table is not assumed to be anything. `max_output()` returns None, the caller uses
+# the floor, and if the provider refuses it the adapter halves until accepted and records the real limit as
+# a learned fact. Unknown is unknown — the same rule as unpriced ≠ $0.
+MAX_OUT = {
+    "claude-fable-5":     128_000,
+    "claude-opus-5":      128_000,
+    "claude-sonnet-5":    128_000,
+    "claude-haiku-4-5":    64_000,
+    "claude-opus-4-8":    128_000,
+    "claude-opus-4-7":    128_000,
+    "claude-opus-4-6":    128_000,
+    "claude-sonnet-4-6":  128_000,
+    "claude-sonnet-4-5":   64_000,
+    "claude-opus-4-5":     64_000,
+}
+
+
+def max_output(model):
+    """Largest output this model will accept, or None if we do not know.
+
+    Resolution order, most authoritative first:
+      1. a LEARNED fact — either recorded by the adapter after a provider refused a larger budget, or
+         pulled from the provider's models endpoint, which is the live source of truth;
+      2. this table, read from provider documentation;
+      3. None — say so rather than invent one. The caller then sends the floor and lets the provider
+         correct it, which is self-healing and needs no guess from us.
+    """
+    try:
+        from . import models as _m
+        fact = _m.facts(normalize(model)).get("max_output_tokens")
+        if fact and int(fact[0]) > 0:
+            return int(fact[0])
+    except Exception:
+        pass                      # no fact store / not yet learned — fall through to the table
+    return MAX_OUT.get(normalize(model))
+
+
 def _load_units():
     """UNIT_PRICES {kind: {model[:variant]: usd}} for non-token billing — kinds: `image` (per image,
     variant 'WxH:quality'), `audio_second` (transcription $/second), `tts_char` ($/character),

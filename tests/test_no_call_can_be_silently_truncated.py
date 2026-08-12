@@ -153,26 +153,93 @@ finally:
 
 
 # ────────────────────────────────────────────────────────────────────────────
-print("-- BEHAVIOUR: a sig draws the MEASURED budget, not a literal --")
+print("-- BEHAVIOUR: the FLOOR governs; a prediction may only raise it --")
 from spendguard import bulkgate  # noqa: E402
 
+# THE RULE, stated once: an unspecified budget starts at TOKEN_FLOOR and a measurement can only add to it.
+# The old rule was max(caller, predicted) with the floor used only when BOTH were zero, so a measured
+# recommend of 400 produced a 400-token budget — the calls with the most history got the least room. It is
+# also wrong in a way measurement cannot see: on reasoning models the hidden reasoning is billed against
+# max_tokens, and a p99 of VISIBLE output never observed it.
 _real_max = bulkgate.maxtokens
 try:
     bulkgate.maxtokens = lambda sig: {"recommend": 7777}
     fake3 = FakeProvider(truncate_n=0)
     adapters._call_once = fake3
     adapters.call("claude-haiku-4-5", "x", sig="probe:measured")
-    check("a sig with a measured recommendation is used", fake3.budgets and fake3.budgets[0] == 7777,
-          f"budgets tried: {fake3.budgets} — 512 here means the old default is back")
+    check("a prediction BELOW the floor does not lower the budget",
+          fake3.budgets and fake3.budgets[0] == adapters.TOKEN_FLOOR,
+          f"budgets tried: {fake3.budgets} — expected the {adapters.TOKEN_FLOOR} floor, not the 7777 prediction")
 
-    # a caller's literal may RAISE the floor but must never cap the measured value back down
+    bulkgate.maxtokens = lambda sig: {"recommend": adapters.TOKEN_FLOOR * 2}
     fake4 = FakeProvider(truncate_n=0)
     adapters._call_once = fake4
-    adapters.call("claude-haiku-4-5", "x", max_tokens=10, sig="probe:measured")
-    check("a caller's smaller literal cannot lower the measured budget",
-          fake4.budgets and fake4.budgets[0] == 7777, f"budgets tried: {fake4.budgets}")
+    adapters.call("claude-haiku-4-5", "x", sig="probe:measured")
+    check("a prediction ABOVE the floor raises the budget",
+          fake4.budgets and fake4.budgets[0] == adapters.TOKEN_FLOOR * 2, f"budgets tried: {fake4.budgets}")
+
+    # THE CLAMP, stated as its own case. A floor above a model's own maximum is a 400, so the budget is
+    # min(model_max, max(floor, predicted)). Proven against a model whose documented limit is BELOW what the
+    # floor+prediction would otherwise ask for — otherwise the clamp can pass without ever being exercised,
+    # which is what the assertion above does when the two numbers happen to coincide.
+    from spendguard import pricing  # noqa: E402
+    _clamped_model = next((m for m in pricing.MAX_OUT if pricing.MAX_OUT[m] < adapters.TOKEN_FLOOR * 4), None)
+    if _clamped_model:
+        _limit = pricing.MAX_OUT[_clamped_model]
+        bulkgate.maxtokens = lambda sig: {"recommend": adapters.TOKEN_FLOOR * 4}   # asks for far more
+        fake_c = FakeProvider(truncate_n=0)
+        adapters._call_once = fake_c
+        adapters.call(_clamped_model, "x", sig="probe:clamped")
+        check(f"the budget is clamped to {_clamped_model}'s documented max ({_limit:,})",
+              fake_c.budgets and fake_c.budgets[0] == _limit,
+              f"budgets tried: {fake_c.budgets} — sending more than a model accepts is a 400, not a big answer")
+
+    # An EXPLICIT number is the caller's deliberate choice — a 16-token connectivity probe is legitimate,
+    # and token_caps holds a recorded verdict for every such literal in the tree. The floor must not
+    # silently inflate it; only a measurement may raise it.
+    bulkgate.maxtokens = lambda sig: {"recommend": 0}
+    fake5 = FakeProvider(truncate_n=0)
+    adapters._call_once = fake5
+    adapters.call("claude-haiku-4-5", "x", max_tokens=16, sig="probe:deliberate")
+    check("an EXPLICIT caller budget is honoured, not inflated to the floor",
+          fake5.budgets and fake5.budgets[0] == 16, f"budgets tried: {fake5.budgets}")
 finally:
     bulkgate.maxtokens = _real_max
+    adapters._call_once = _real_once
+
+
+# ────────────────────────────────────────────────────────────────────────────
+print("-- BEHAVIOUR: an empty visible answer is not an answer (reasoning models) --")
+
+
+class BurnsBudgetOnReasoning:
+    """Spends the whole budget on hidden reasoning and returns a clean, EMPTY response.
+
+    This is the shape reported in the field: gpt-5.5 is a reasoning model, the reasoning tokens are billed
+    against max_tokens, and a 4000-token budget went entirely on thinking. The response is well-formed,
+    carries no error, and its text is "" — which parses as nothing and reads as "no findings"."""
+
+    def __init__(self):
+        self.budgets = []
+
+    def __call__(self, model, prompt, max_tokens=None, **kw):
+        self.budgets.append(max_tokens)
+        return {"provider": "fake", "model": model, "text": "", "in_tok": 10,
+                "out_tok": max_tokens or 0, "latency": 0.01, "cost": 0.0,
+                # note: NOT "length" — the model stopped cleanly having written only reasoning
+                "finish_reason": "stop", "truncated": False, "error": None}
+
+
+try:
+    burn = BurnsBudgetOnReasoning()
+    adapters._call_once = burn
+    rb = adapters.call("gpt-5.5", "x", max_tokens=4000, sig=None, retries=2)
+    check("an empty answer that consumed tokens is treated as truncated, not returned as ''",
+          rb.get("text") is None,
+          f"text={rb.get('text')!r} — an empty string here is the silent 'no findings' this suite exists for")
+    check("and it is retried with MORE budget, which is what a reasoning model needs",
+          len(burn.budgets) >= 2 and burn.budgets[1] > burn.budgets[0], f"budgets tried: {burn.budgets}")
+finally:
     adapters._call_once = _real_once
 
 print(("\nPASS — 0 failure(s)" if not _fails else f"\nFAIL — {len(_fails)} failure(s): " + "; ".join(_fails)))

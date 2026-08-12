@@ -374,18 +374,46 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 # zeros), while a rejection worded differently fell through to `raise`. Trying the rungs is
                 # not a guess about meaning: it is bounded, it is recorded, and the outcome of the retry —
                 # not the wording of a sentence — decides what was actually wrong.
-                _RUNGS = ("response_format", "reasoning_effort", "_token_dialect")
+                _RUNGS = ("response_format", "reasoning_effort", "_token_dialect", "_token_budget")
                 if _bad in ("response_format", "json_schema"):
                     _ladder = ("response_format",)
                 elif _bad == "reasoning_effort":
                     _ladder = ("reasoning_effort",)
                 elif _bad in ("max_tokens", "max_completion_tokens"):
-                    _ladder = ("_token_dialect",)
+                    # Either the wrong spelling for this endpoint, or a budget above what it allows. Try the
+                    # spelling first (free), then walk the budget down.
+                    _ladder = ("_token_dialect", "_token_budget")
                 else:
                     _ladder = _RUNGS                     # unattributable: try each applicable rung
                 r = None
                 _last = e
                 for _rung in _ladder:
+                    if _rung == "_token_budget":
+                        # THE FLOOR IS HIGH, AND SOME MODELS CANNOT TAKE IT. Sending 32K to a model whose
+                        # maximum output is 8192 is a 400. Rather than hardcode a per-model ceiling — a
+                        # provider fact I would be guessing at, and one that changes — halve until the
+                        # provider accepts, then record what it accepted as a learned fact so the next call
+                        # starts there. The provider is the source of truth about its own limits.
+                        _try = max_tokens
+                        for _ in range(6):                 # 32K -> 500 is five halvings; bounded either way
+                            _try //= 2
+                            if _try < 1:
+                                break
+                            try:
+                                r = c.chat.completions.create(max_completion_tokens=_try, **okw)
+                                try:
+                                    from . import models as _mm
+                                    _mm.add_fact(raw, "max_output_tokens", _try,
+                                                 source="auto-heal(provider refused a larger budget)",
+                                                 verified=True)
+                                except Exception:
+                                    pass                   # learning is a bonus; the call already succeeded
+                                break
+                            except Exception as e3:
+                                _last = e3
+                        if r is not None:
+                            break
+                        continue
                     if _rung == "_token_dialect":
                         # Older endpoints take max_tokens, gpt-5+ take max_completion_tokens. A dialect
                         # difference, not a capability one — nothing is dropped, the other spelling is used.
@@ -430,7 +458,21 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
 
 
 # ── a COMPLETE answer, or an explicit UNKNOWN — never a truncated body ───────────────────────────────────
-MAX_TOKEN_CEILING = 32000        # absolute stop for the doubling retry; a real answer never needs more here
+# THE FLOOR, AND WHY IT IS NOT A PREDICTION.
+#
+# A cap has never controlled cost — you are billed for the tokens GENERATED, so an unused budget is free and
+# a low budget saves exactly nothing. All a cap can do is destroy the answer. Every attempt to be clever
+# about this number has cost money rather than saved it, because a truncated reply is a call you paid for
+# and cannot use, and then you pay again for the retry.
+#
+# Predicting it from measured output is worse than it looks. On reasoning models (gpt-5/o-series) the hidden
+# reasoning tokens are billed against max_tokens, and a measured p99 of VISIBLE output never saw them — so
+# the prediction is systematically low on exactly the models that need the most room. A 4000-token budget
+# spent entirely on reasoning returns a well-formed response whose text is "".
+#
+# So: start at the floor and let a measurement raise it, never lower it. The prediction can only add.
+TOKEN_FLOOR = 32_000             # never send less than this unless the CALLER deliberately named a number
+MAX_TOKEN_CEILING = 128_000      # absolute stop for the doubling retry — above the floor so retries have room
 
 
 def _input_fits(model, prompt, system):
@@ -488,31 +530,51 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
         return {"provider": provider_for(model), "model": model, "text": None, "in_tok": 0, "out_tok": 0,
                 "latency": 0.0, "cost": None, "finish_reason": None, "truncated": None,
                 "error": f"payload too large: {detail} — split it rather than letting the vendor clip it"}
-    if max_tokens is None:
-        if not sig:
-            raise ValueError(
-                "call needs either an explicit max_tokens or a `sig` naming the call-class, so the budget "
-                "can come from that class's measured p99 instead of a hand-picked literal. A literal is how "
-                "truncated replies become silent wrong answers.")
-        max_tokens = 0
-    if sig:
-        # A MEASURED BUDGET BEATS THE ARGUMENT. The caller's number is a guess about this call-class; the
-        # class's own observed p99 is a measurement of it. Whichever is larger is used, so passing a literal
-        # can only ever raise the floor, never cap the learned value back down.
-        m = bulkgate.maxtokens(sig) or {}
-        # COLD START IS HIGH, NOT LOW. This ended `or 2048` — so the FIRST call of any new class, the one
-        # with no measured history, got a small cap chosen by nobody. That is the same defect in its
-        # last hiding place: brand-new call-classes are exactly where an unexpectedly long answer arrives,
-        # and 2048 quietly cut it. A high ceiling costs nothing — billing is per token GENERATED, so an
-        # unused budget is free — while a low one destroys the answer. Once the class has been observed a
-        # few times, `recommend` (its measured p99) takes over and the ceiling stops mattering.
-        max_tokens = max(int(max_tokens or 0), int(m.get("recommend") or 0)) or MAX_TOKEN_CEILING
+    _explicit = max_tokens is not None
+    if not _explicit and not sig:
+        raise ValueError(
+            "call needs either an explicit max_tokens or a `sig` naming the call-class, so the budget is "
+            "either something you chose deliberately or something measured — never a literal nobody picked.")
+    _predicted = int((bulkgate.maxtokens(sig) or {}).get("recommend") or 0) if sig else 0
+    if _explicit:
+        # The caller named a number, so they meant it — a 16-token connectivity probe is a legitimate,
+        # deliberate choice, and token_caps has a recorded verdict for every such literal in this tree.
+        # A measurement may still RAISE it; nothing may lower it.
+        max_tokens = max(int(max_tokens), _predicted)
+    else:
+        # NOBODY CHOSE A NUMBER, SO START HIGH. Floor first, prediction only on top. This previously read
+        # `max(caller, recommend) or CEILING`, which used the ceiling only when BOTH were zero — so a
+        # measured recommend of 400 produced a 400-token budget, and the floor never applied to the calls
+        # that most needed it. Costing nothing to over-provision and everything to under-provision, the
+        # asymmetry only points one way.
+        max_tokens = max(TOKEN_FLOOR, _predicted)
+    # CLAMP TO WHAT THE MODEL ACTUALLY ACCEPTS. A floor above a model's own maximum is a 400, so the floor
+    # is bounded by the documented/learned limit — min(model_max, max(floor, predicted)). When the limit is
+    # UNKNOWN the floor still goes out: the adapter's downward retry halves until the provider accepts and
+    # records what it accepted, so an unknown model self-corrects instead of being capped by a guess.
+    _cap = pricing.max_output(model)
+    if _cap:
+        max_tokens = min(int(max_tokens), int(_cap))
     attempt, budget = 0, int(max_tokens)
     while True:
         r = call(model, prompt, max_tokens=budget, _no_guard=True, **kw)
         if r.get("error"):
             return {**r, "truncated": None}                   # an errored call was not truncated, it failed
         trunc = bulkgate.is_truncated(r.get("finish_reason"), r.get("out_tok"), budget)
+        # REASONING MODELS SPEND THE BUDGET WHERE YOU CANNOT SEE IT. On gpt-5/o-series the hidden reasoning
+        # tokens are billed against max_tokens, so a cap that looks generous — 4000 — can be consumed
+        # entirely by reasoning, and what comes back is a well-formed response whose visible text is "".
+        # Usually the API says finish_reason="length" and the check above catches it. It does not always:
+        # the model can stop cleanly having emitted only reasoning, and then nothing above fires, because
+        # nothing was truncated in the ordinary sense — the answer was simply never written.
+        #
+        # An empty visible answer from a call that GENERATED TOKENS is not an answer. Left alone it is the
+        # worst version of this whole defect: "" parses as nothing, reads as "no findings", and carries no
+        # error at all. Treated as a truncation so it takes the same doubling retry, which is also the right
+        # remedy — more budget is exactly what a reasoning model needs to get past thinking and start writing.
+        if not trunc and (r.get("out_tok") or 0) > 0 and not (r.get("text") or "").strip():
+            trunc = True
+            r = {**r, "empty_answer": True}
         if sig:
             try:
                 bulkgate.note_response(sig, model, r.get("out_tok") or 0, max_tokens=budget,
