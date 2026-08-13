@@ -154,11 +154,11 @@ def _dispatch(argv=None):
         return token_caps.cmd(rest)
     if cmd == "migrate":
         # THE clear, runnable migration: rebuild spend_events from charges under the exact-Decimal schema,
-        # prove Σ is preserved to the last digit. Non-destructive (old micros table renamed, not dropped).
+        # prove Σ is preserved to the last digit. Non-destructive (whole-file snapshot + old table renamed aside).
         from . import migrate_charges
         import json as _json
         stats = migrate_charges.run_cutover()
-        keys = ("charges_rows", "migrated", "skipped_zero", "renamed_v4_backup",
+        keys = ("charges_rows", "migrated", "skipped_zero", "db_snapshot", "backup_table",
                 "src_exact", "dst_exact", "residual", "reconciles")
         print(_json.dumps({k: stats.get(k) for k in keys}, indent=2))
         if not stats.get("reconciles"):

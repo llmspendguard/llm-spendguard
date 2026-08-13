@@ -27,7 +27,7 @@ from . import config
 
 getcontext().prec = 34   # ample for exact money arithmetic (28 is the default; money never needs more than this)
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 class LockedError(Exception):
@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS spend_events (
   dedup_key     TEXT,
   source        TEXT,
   content_hash  TEXT,
-  schema_version INTEGER DEFAULT 5,
+  schema_version INTEGER DEFAULT 6,
   -- time
   ts_utc        TEXT,
   occurred_at   TEXT,                      -- transaction date (UTC)
@@ -115,6 +115,9 @@ CREATE TABLE IF NOT EXISTS spend_events (
   prompt_snip   TEXT,
   output_snip   TEXT,
   evidence_uri  TEXT,
+  -- forensic pair (carried from charges): WHAT the money bought · WHAT RAN IT
+  intent        TEXT,                      -- 'review:config.py', 'spendguard:cache-test'
+  actor         TEXT,                      -- 'repo_review_panel.py:fan_out:238' (entrypoint:function:line)
   -- attribution audit (snapshot of the determination)
   attr_what     TEXT,
   attr_why      TEXT,
@@ -183,6 +186,17 @@ CREATE TABLE IF NOT EXISTS ledger_locks (
 
 USD_COLS = ("batch_usd", "realtime_usd", "est_chat_usd", "remote_compute_usd", "subscription_usd")
 BILLED_USD_COLS = ("batch_usd", "realtime_usd", "remote_compute_usd", "subscription_usd")
+# THE FIVE CATEGORIES STAY APART — a hard rule (never sum est-value into real $). Each cap and report reads
+# the columns for ITS category, never the whole row:
+#   LLM     batch + realtime      — real, calculated LLM spend; the LLM cap governs THIS
+#   remote  remote_compute        — real GPU/box compute; its OWN cap (resources.compute_exceeded)
+#   sub     subscription          — the flat plan fee (real, but not per-call)
+#   est     est_chat              — est-VALUE of subscription-covered usage; NOT billed, NEVER in a real total
+LLM_USD_COLS = ("batch_usd", "realtime_usd")
+# Forward-only additive columns: one added after the v5 schema shipped is ALTER-ADDed to an existing table
+# (CREATE TABLE IF NOT EXISTS never adds a column to a table that already exists). Append new columns here.
+# intent/actor are the FORENSIC pair carried from charges: WHAT the money bought · WHAT RAN IT.
+_ADDITIVE_COLUMNS = (("intent", "TEXT"), ("actor", "TEXT"))
 _KIND_TO_USD = {"batch": "batch_usd", "realtime": "realtime_usd",
                 "est_chat": "est_chat_usd", "est-chat": "est_chat_usd", "estchat": "est_chat_usd",
                 "remote": "remote_compute_usd", "remote_compute": "remote_compute_usd", "gpu": "remote_compute_usd",
@@ -315,6 +329,13 @@ class SpendLedger:
     def _ensure_schema(self):
         for ddl in (_DDL_EVENTS, _DDL_AUDIT, _DDL_LOCKS):
             self._conn.execute(ddl)
+        # Forward-only additive migration: CREATE TABLE IF NOT EXISTS leaves an existing table's columns as
+        # they were, so a column added after v5 must be ALTER-ADDed here or record() silently drops it (it
+        # only writes columns present in self._cols). Idempotent — skips a column that already exists.
+        have = {r[1] for r in self._conn.execute("PRAGMA table_info(spend_events)")}
+        for col, decl in _ADDITIVE_COLUMNS:
+            if col not in have:
+                self._conn.execute(f"ALTER TABLE spend_events ADD COLUMN {col} {decl}")
         for ix in _INDEXES:
             self._conn.execute(f"CREATE INDEX IF NOT EXISTS idx_se_{ix} ON spend_events({ix})")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_event ON spend_audit(event_id)")
@@ -374,7 +395,12 @@ class SpendLedger:
         # A sub-micro real cost like $0.00000026 is now NON-zero (Decimal, not truncated micros) — the guard
         # fires only on a genuinely MISSING cost, which is the bug it was written to catch.
         nz = [c for c in USD_COLS if to_dec(ev.get(c)) != 0]
-        if not nz:
+        # UNPRICED is the ONE legitimate zero-money row: the call HAPPENED (tokens real) but its price is
+        # unknown, not zero. "$0" and "we can't price it" are different claims and only one is honest here, so
+        # an explicit cost_basis='unpriced' row is allowed through with no money column — it stays out of every
+        # $ total by summing to 0, and is findable by cost_basis for the "what we couldn't price" view. A row
+        # with neither a cost NOR the unpriced flag is a genuinely missing cost, which is still a hard error.
+        if not nz and ev.get("cost_basis") != "unpriced":
             raise ValueError("spend event has no cost in any money column")
         if not ev.get("dedup_key") and not ev.get("source"):
             raise ValueError("spend event needs a dedup_key or a source")
@@ -638,33 +664,69 @@ class SpendLedger:
                   "AND COALESCE(status,'') NOT IN ('void','reversed') "
                   "AND COALESCE(cost_basis,'') != 'reconstructed'")
 
-    def spent_dec(self, since=None, until=None, where=None, **filters):
-        """EXACT Decimal total of COUNTABLE workload spend (the cap's number and the honest 'what we spent').
-        Excludes meta, reconciliation markers, impossible-quarantined, and reconstructed rows — the same four
-        the legacy countable_charges view excluded, defined once here. Returns a decimal string."""
+    # est-value and subscription are excluded from "spend" the same way void is, but they are NOT subject to
+    # the reconciled/reconstructed exclusions (those are LLM-metering concepts) — so each category names its
+    # own filter rather than reusing _COUNTABLE, which is what keeps the five apart in the READ path too.
+    _LIVE_FILTER = "COALESCE(is_meta,0)=0 AND COALESCE(status,'') NOT IN ('void','reversed')"
+
+    def _cat_dec(self, cols, filt, since=None, until=None, where=None, **filters):
+        """EXACT Decimal Σ over ONE category's column(s) under `filt` — the single machine behind every
+        category accessor, so the split ('never sum est-value into real $') is structural, not a convention
+        each caller has to remember. Returns a decimal string."""
         w, args = self._where(since, until, {**(where or {}), **filters})
-        w += " AND " + self._COUNTABLE
-        sums = ", ".join(f"dec_sum({c})" for c in USD_COLS)
+        if filt:
+            w += " AND " + filt
+        sums = ", ".join(f"dec_sum({c})" for c in cols)
         r = self._conn.execute(f"SELECT {sums} FROM spend_events WHERE 1=1" + w, args).fetchone()
         return str(sum((to_dec(x) for x in r), Decimal(0)))
 
-    def sum_dec(self, since=None, until=None, where=None, include_meta=True, **filters):
-        """EXACT Decimal grand total across all cost columns, as a string. This is the RECONCILIATION
+    def spent_dec(self, since=None, until=None, where=None, **filters):
+        """EXACT Decimal total of COUNTABLE **LLM** spend — batch + realtime ONLY (the LLM cap's number and the
+        honest 'what we spent on LLM'). NOT est-value, NOT GPU, NOT the subscription fee: those are separate
+        categories with their own accessors (est_value_dec / remote_dec / subscription_dec) and must never be
+        summed in here. Excludes meta, reconciliation markers, impossible-quarantined (void), and reconstructed
+        rows — the same four the legacy countable_charges view excluded. Returns a decimal string."""
+        return self._cat_dec(LLM_USD_COLS, self._COUNTABLE, since=since, until=until, where=where, **filters)
+
+    def remote_dec(self, since=None, until=None, where=None, **filters):
+        """EXACT Decimal total of real GPU/remote-compute spend — the number the COMPUTE cap governs, kept
+        apart from the LLM cap on purpose (a box download can burn GPU-$ without any LLM call)."""
+        return self._cat_dec(("remote_compute_usd",), self._COUNTABLE, since=since, until=until, where=where, **filters)
+
+    def est_value_dec(self, since=None, until=None, where=None, **filters):
+        """EXACT Decimal total of est-VALUE (est_chat_usd) — what subscription-covered usage WOULD have cost at
+        API rates. Real money did NOT change hands for this, so it is reported on its own axis and is NEVER
+        added into a real $ total or a cap."""
+        return self._cat_dec(("est_chat_usd",), self._LIVE_FILTER, since=since, until=until, where=where, **filters)
+
+    def subscription_dec(self, since=None, until=None, where=None, **filters):
+        """EXACT Decimal total of the subscription FLAT FEE (subscription_usd) — real money, but a plan fee, not
+        per-call spend, so it is its own line and not folded into the LLM cap."""
+        return self._cat_dec(("subscription_usd",), self._LIVE_FILTER, since=since, until=until, where=where, **filters)
+
+    def sum_dec(self, since=None, until=None, where=None, include_meta=True, include_void=False, **filters):
+        """EXACT Decimal grand total across ALL FIVE cost columns, as a string. This is the RECONCILIATION
         primitive — compare it against a source Σ or provider truth. `sum_usd` is the float convenience for
         DISPLAY; the float() there is precisely the precision loss reconciliation must never suffer, which
-        is why the two are different methods and this one is the source of truth."""
+        is why the two are different methods and this one is the source of truth.
+
+        `include_void=True` is the MIGRATION-CONSERVATION mode: it drops the void exclusion so the sum covers
+        every dollar that landed in the table, including quarantined-impossible rows (mapped to status=void).
+        The cutover proves 'every charge dollar arrived' with this; reporting keeps void out (the default)."""
         w, args = self._where(since, until, {**(where or {}), **filters})
         if not include_meta:
             w += " AND COALESCE(is_meta,0)=0"
-        w += " AND COALESCE(status,'') NOT IN ('void')"
+        if not include_void:
+            w += " AND COALESCE(status,'') NOT IN ('void')"
         sums = ", ".join(f"dec_sum({c})" for c in USD_COLS)       # exact per-column decimal sums
         r = self._conn.execute(f"SELECT {sums} FROM spend_events WHERE 1=1" + w, args).fetchone()
         return str(sum((to_dec(x) for x in r), Decimal(0)))       # add the category totals exactly
 
-    def sum_usd(self, since=None, until=None, where=None, include_meta=True, **filters):
+    def sum_usd(self, since=None, until=None, where=None, include_meta=True, include_void=False, **filters):
         """Total USD for the filter, as a FLOAT — the display convenience. Exactness lives in `sum_dec`;
         this is the one lossy edge where money becomes a human-readable number. One implementation, wrapped."""
-        return float(self.sum_dec(since=since, until=until, where=where, include_meta=include_meta, **filters))
+        return float(self.sum_dec(since=since, until=until, where=where, include_meta=include_meta,
+                                  include_void=include_void, **filters))
 
     # ── integrity: the AUDIT LOG is hash-chained (not the live row) ──
     def verify_audit_chain(self, detail=False):
