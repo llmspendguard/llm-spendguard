@@ -146,3 +146,42 @@ Regenerate with: `python -c "import ast,pathlib; [print(p.stem, ast.get_docstrin
 Full list captured in the audit run 2026-08-13; the largest 40 by LOC are the logic-bearing ones and are
 prioritised in the concept passes above. Every module maps to at least one concept row in §COVERAGE; a
 module not yet reached by a concept pass is `UNAUDITED` by definition.
+
+---
+
+## §MIGRATION PLAN — one money ledger, Decimal money  [decided 2026-08-13]
+
+### Decision (owner)
+- Money is a **Decimal** (exact number), never integer micros, never binary float.
+- The ONE money-of-record is **`spend_events`**. `charges` is REMOVED once equivalence is proven.
+
+### Implementation reality (SQLite has no native DECIMAL)
+- Store each money value as **TEXT holding the decimal string**; arithmetic with Python `Decimal`.
+  Sum via a registered SQLite aggregate or by pulling rows and summing in `Decimal`.
+- `REAL`/float rejected (inexact: 0.1+0.2!=0.3 over millions of rows). Integer `*_micros` rejected
+  (truncated 741 sub-micro rows to $0 — the crash that started this).
+
+### Known losses / gaps (stated, not hidden)
+- `charges` has NO per-call token columns; `spend_events` does. Historical token detail (in/out/cache/
+  reasoning) CANNOT be backfilled. FORWARD, the live path must write `spend_events` WITH tokens (req #1).
+- The 24,644 existing `spend_events` rows are integer-micros, a stale subset of `charges`. DROP and rebuild
+  from `charges` (the complete float source) under the Decimal schema.
+
+### Ordered steps — each: backup · implement · test · commit. No step removes `charges` until step 6.
+1. Ledger money -> Decimal (ledger.py: TEXT-decimal money cols; retire micros(); record() stores Decimal;
+   sums use Decimal; a genuine sub-micro forensic event with provider+occurred_at is valid, only a truly
+   missing cost is rejected). TEST: round-trip $0.00000026 exact.
+2. Rebuild migration charges(float) -> spend_events(Decimal), ALL 45,944 rows; drop stale micros rows first.
+3. Prove Sigma charges == Sigma spend_events, exact to the cent ($0.00 residual).
+4. Repoint WRITES (budget.record/record_unpriced/record_reconciled/record_true_down/ingest_remote) ->
+   SpendLedger.record. ONE write path.
+5. Repoint READS (budget.spent_since/by_day/summary/countable) -> SpendLedger queries. TEST: cap, receipt,
+   report produce identical numbers (golden snapshot).
+6. Remove charges: table, all writes, countable_charges view, one-shot migrate_charges. Gone from code.
+7. Reconcile vs provider truth: admin oracle (realtime) + batch reconcile, BOTH OpenAI and Anthropic.
+8. Forward: live path writes spend_events WITH tokens + prompt-cache detail.
+
+### Findings
+- F6 (med): historical per-call token detail unrecoverable (charges never stored it); forward path must fix.
+- F7 (high): migrate_charges (task #67 "completed") CRASHES on real data (741 sub-micro rows -> 0 micros ->
+  record() raises). Never ran to completion. FIX = steps 1-2.
