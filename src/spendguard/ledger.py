@@ -21,6 +21,7 @@ import sqlite3
 import hashlib
 import datetime
 import contextlib
+import itertools
 from decimal import Decimal, InvalidOperation, getcontext
 from . import config
 
@@ -265,6 +266,17 @@ class _DecSum:
 
     def finalize(self):
         return str(self.acc)
+
+
+_LIVE_SEQ = itertools.count()
+
+
+def live_dedup_key(ts_iso):
+    """A per-call UNIQUE dedup key for a live charge. `charges` had no dedup — every call was its own row —
+    but `spend_events` dedups on id, so two identical calls (same provider/model/cost/second) would MERGE
+    into one and money would be lost. Uniqueness = microsecond timestamp + process id + a monotonic counter,
+    which no two calls in any process can collide on."""
+    return f"live:{ts_iso}:{os.getpid()}:{next(_LIVE_SEQ)}"
 
 
 class SpendLedger:
@@ -617,6 +629,24 @@ class SpendLedger:
 
     def by_repo(self, repo, since=None, until=None):
         return self.rollup(since=since, until=until, where={"repo": repo})
+
+    # THE COUNTABLE FILTER, in ONE place. `charges` had this as the `countable_charges` view (exclude meta,
+    # reconciliation markers, quarantined-impossible, and reconstructed-already-counted rows). On spend_events
+    # the same four exclusions are flags, and this is the single definition the cap and every "what did we
+    # spend" reader shares — so the cap's meaning can never drift from a report's.
+    _COUNTABLE = ("COALESCE(is_meta,0)=0 AND COALESCE(reconciled,0)=0 "
+                  "AND COALESCE(status,'') NOT IN ('void','reversed') "
+                  "AND COALESCE(cost_basis,'') != 'reconstructed'")
+
+    def spent_dec(self, since=None, until=None, where=None, **filters):
+        """EXACT Decimal total of COUNTABLE workload spend (the cap's number and the honest 'what we spent').
+        Excludes meta, reconciliation markers, impossible-quarantined, and reconstructed rows — the same four
+        the legacy countable_charges view excluded, defined once here. Returns a decimal string."""
+        w, args = self._where(since, until, {**(where or {}), **filters})
+        w += " AND " + self._COUNTABLE
+        sums = ", ".join(f"dec_sum({c})" for c in USD_COLS)
+        r = self._conn.execute(f"SELECT {sums} FROM spend_events WHERE 1=1" + w, args).fetchone()
+        return str(sum((to_dec(x) for x in r), Decimal(0)))
 
     def sum_dec(self, since=None, until=None, where=None, include_meta=True, **filters):
         """EXACT Decimal grand total across all cost columns, as a string. This is the RECONCILIATION
