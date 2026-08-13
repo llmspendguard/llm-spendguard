@@ -1,0 +1,55 @@
+{
+  "scripts/probe/effort_ab.py::main::realtime_cost(1500, 200)": {
+    "verdict": "quoted_price",
+    "why": "The result is multiplied by judge call count and printed as a dollar spend estimate compared against a hard budget, using invented literal token counts (1500, 200).",
+    "model": "claude-opus-4-8",
+    "file": "scripts/probe/effort_ab.py",
+    "symbol": "main",
+    "literals": [
+      1500,
+      200
+    ]
+  },
+  "scripts/probe/effort_ab.py::main::realtime_cost(3000,)": {
+    "verdict": "quoted_price",
+    "why": "The result is accumulated into `tot` and printed as a dollar-formatted spend estimate labeled 'ZERO-SPEND ESTIMATE' with arm-call costs, using invented literal token counts (3000).",
+    "model": "claude-opus-4-8",
+    "file": "scripts/probe/effort_ab.py",
+    "symbol": "main",
+    "literals": [
+      3000
+    ]
+  },
+  "scripts/probe/estimator_calibration_run.py::main.run_cell::realtime_cost(1000, 1000)": {
+    "verdict": "not_a_quote",
+    "why": "The result is wrapped in bool() to test whether the model has a published price in the table, not to quote a cost.",
+    "model": "claude-opus-4-8",
+    "file": "scripts/probe/estimator_calibration_run.py",
+    "symbol": "main.run_cell",
+    "literals": [
+      1000,
+      1000
+    ]
+  },
+  "scripts/probe/latency_levers_ab.py::main::realtime_cost(1800,)": {
+    "verdict": "not_a_quote",
+    "why": "The result is accumulated/probed with a falsiness check (if not c) to detect unpriced models and sum costs across candidates in a latency-lever probe, not shown to a person as a price to authorize spending.",
+    "model": "claude-opus-4-8",
+    "file": "scripts/probe/latency_levers_ab.py",
+    "symbol": "main",
+    "literals": [
+      1800
+    ]
+  },
+  "scripts/probe/realprompt_replay.py::main.run_cell::realtime_cost(1000, 1000)": {
+    "verdict": "not_a_quote",
+    "why": "The result is wrapped in bool() to test whether the model exists in the price table (`priced`), not used as a dollar amount.",
+    "model": "claude-opus-4-8",
+    "file": "scripts/probe/realprompt_replay.py",
+    "symbol": "main.run_cell",
+    "literals": [
+      1000,
+      1000
+    ]
+  }
+}

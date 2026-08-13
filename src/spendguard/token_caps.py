@@ -122,7 +122,7 @@ def sites(root):
     return found
 
 
-def key(site):
+def cap_key(site):
     """Identity of a cap for the ledger: WHERE it is and WHAT the number is — not which line it sits on.
 
     The value is part of the key on purpose. Changing 16 to 4000, or 4000 to 16, is a new decision and must
@@ -160,7 +160,7 @@ Reply with JSON only: {{"verdict": "{harmless}" or "{content}", "why": "<one sen
 """
 
 
-def judge(site, model=None):
+def adjudicate_cap(site, model=None):
     """Ask a model whether this one cap is harmless. Returns the recorded verdict dict.
 
     Agentic because it is a judgement: the number alone cannot tell a discarded probe from a truncated
@@ -171,7 +171,7 @@ def judge(site, model=None):
     r = adapters.call(model, prompt, sig="spendguard:token-cap-judge",
                       schema={"type": "object", "required": ["verdict", "why"]})
     if r.get("error") or not r.get("text"):
-        raise RuntimeError(f"judge failed for {key(site)}: {r.get('error') or 'no text (truncated?)'}")
+        raise RuntimeError(f"judge failed for {cap_key(site)}: {r.get('error') or 'no text (truncated?)'}")
     obj, _salvaged = output_contract._as_obj(r["text"])
     v = obj.get("verdict")
     if v not in VERDICTS:
@@ -180,33 +180,14 @@ def judge(site, model=None):
             "value": site["value"], "file": site["file"], "symbol": site["symbol"], "kwarg": site["kwarg"]}
 
 
-def ledger_path(repo_root):
-    return pathlib.Path(repo_root) / "tests" / LEDGER_NAME
-
-
-def load_ledger(repo_root):
-    p = ledger_path(repo_root)
-    if not p.exists():
-        return {}
-    return json.loads(p.read_text() or "{}")
-
-
-def compare_to_ledger(repo_root, scan_dir=None):
-    """Compare the caps that EXIST against the caps that have been JUDGED.
-
-    Returns {unjudged, content_caps, harmless, stale}. The test turns a non-empty `unjudged` or
-    `content_caps` into a failure. `stale` is verdicts whose site is gone — informational, not a failure,
-    since deleting a capped call is the outcome we want."""
+def unjudged_and_content(repo_root, scan_dir=None):
+    """Caps that exist vs verdicts on record. Both `unjudged` and `failed` fail the test."""
+    from . import verdict_ledger
     repo_root = pathlib.Path(repo_root)
     scan = pathlib.Path(scan_dir) if scan_dir else repo_root / "src"
-    present = {key(s): s for s in sites(scan)}
-    led = load_ledger(repo_root)
-    unjudged = [s for k, s in present.items() if k not in led]
-    content = [{**present[k], **led[k]} for k in present if k in led and led[k].get("verdict") == VERDICT_CONTENT]
-    harmless = [k for k in present if k in led and led[k].get("verdict") == VERDICT_HARMLESS]
-    stale = [k for k in led if k not in present]
-    return {"unjudged": unjudged, "content_caps": content, "harmless": harmless,
-            "stale": stale, "total": len(present)}
+    present = {cap_key(s): s for s in sites(scan)}
+    return verdict_ledger.compare_to_verdicts(present, verdict_ledger.load_verdicts(repo_root, LEDGER_NAME),
+                                  failing=(VERDICT_CONTENT,))
 
 
 def cmd(argv=None):
@@ -217,32 +198,31 @@ def cmd(argv=None):
     scan = None
     if "--scan" in argv:
         scan = argv[argv.index("--scan") + 1]
-    res = compare_to_ledger(repo_root, scan)
+    res = unjudged_and_content(repo_root, scan)
     print(f"{res['total']} hardcoded token cap(s) under {scan or 'src/'} · "
-          f"{len(res['harmless'])} judged harmless · {len(res['content_caps'])} judged CONTENT · "
+          f"{len(res['harmless'])} judged harmless · {len(res['failed'])} judged CONTENT · "
           f"{len(res['unjudged'])} UNJUDGED")
-    for c in res["content_caps"]:
+    for c in res["failed"]:
         print(f"  CONTENT CAP  {c['file']}:{c['symbol']} {c['kwarg']}={c['value']} — {c.get('why', '')}")
     for s in res["unjudged"]:
         print(f"  unjudged     {s['file']}:{s['symbol']} {s['kwarg']}={s['value']} ({s['kind']})")
     if "--judge" not in argv:
         if res["unjudged"]:
             print("\nrun with --judge to have a model rule on the unjudged ones (they FAIL the test until then)")
-        return 1 if (res["unjudged"] or res["content_caps"]) else 0
+        return 1 if (res["unjudged"] or res["failed"]) else 0
 
-    led = load_ledger(repo_root)
+    from . import verdict_ledger
+    led = verdict_ledger.load_verdicts(repo_root, LEDGER_NAME)
     for s in res["unjudged"]:
-        v = judge(s)
-        led[key(s)] = v
-        print(f"  judged {key(s)} -> {v['verdict']}: {v['why']}")
-    p = ledger_path(repo_root)
-    p.parent.mkdir(parents=True, exist_ok=True)
+        v = adjudicate_cap(s)
+        led[cap_key(s)] = v
+        print(f"  judged {cap_key(s)} -> {v['verdict']}: {v['why']}")
+
     # Through config.update_json, not write_text: this repo's rule is that every whole-file JSON write goes
     # through the atomic, backing-up writer, and its own guard test caught this module breaking it. The
     # ledger is a certificate — replacing it with a truncated or half-written file would silently un-certify
     # caps that were judged. Sorted so it diffs readably in review.
-    from . import config
-    config.update_json(str(p), lambda _d: dict(sorted(led.items())))
-    print(f"\nwrote {len(led)} verdict(s) -> {p}")
-    after = compare_to_ledger(repo_root, scan)
-    return 1 if (after["unjudged"] or after["content_caps"]) else 0
+    verdict_ledger.save_verdicts(repo_root, LEDGER_NAME, led)
+    print(f"\nwrote {len(led)} verdict(s) -> {verdict_ledger.verdict_path(repo_root, LEDGER_NAME)}")
+    after = unjudged_and_content(repo_root, scan)
+    return 1 if (after["unjudged"] or after["failed"]) else 0

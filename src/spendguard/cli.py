@@ -55,6 +55,7 @@ _GROUPS = [
         ("audit", "fail CI if any code hardcodes a disagreeing price"),
         ("token-caps", "list every hardcoded output-token cap; --judge rules on the unjudged ones"),
         ("estimate-divergence", "judge every recorded quote against the actual bill; fails on ungrounded ones"),
+        ("estimate-literals", "every cost call fed literal token counts; --judge rules quote vs probe"),
     ]),
 ]
 
@@ -150,6 +151,9 @@ def _dispatch(argv=None):
     if cmd == "token-caps":
         from . import token_caps
         return token_caps.cmd(rest)
+    if cmd == "estimate-literals":
+        from . import estimate_literals
+        return estimate_literals.cmd(rest)
     if cmd == "estimate-divergence":
         from . import estimate_divergence
         return estimate_divergence.cmd(rest)

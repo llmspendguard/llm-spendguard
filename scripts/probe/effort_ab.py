@@ -108,13 +108,25 @@ def main():
         print(f"  {v}/{m:<12} tiers: {','.join(tiers)}")
 
     if a.estimate:
+        # OUTPUT COMES FROM expected_output, NOT A LITERAL — and this is a QUOTE, ruled so by
+        # `spendguard estimate-literals`: the number below is printed as dollars and compared against a
+        # hard budget, so it authorizes the run. It read `3000` for the arm output and `1500, 200` for the
+        # judge, all invented. On a reasoning model that omission is the whole error: hidden thinking is
+        # billed as output, which is how a $34 quote became a ~$380 run. expect() returns the count and the
+        # basis it came from, so the printed figure can say which.
+        from spendguard import expected_output
         tot = 0.0
         for v, m, tiers in plan:
+            arm_out, _basis = expected_output.expect(m, sig=f"probe:effort_ab:{m}")
             for f in fs:
                 for _t in tiers:
-                    tot += pricing.realtime_cost(m, len(f["src"]) // 4, 3000) or 0
+                    tot += pricing.realtime_cost(m, len(f["src"]) // 4, arm_out) or 0
         judge = len(fs) * sum(len(t) - 1 for _v, _m, t in plan)
-        jc = (pricing.realtime_cost(a.judge_model, 1500, 200) or 0) * judge
+        # The judge's INPUT is the rubric plus two arm outputs — measurable from what we already know,
+        # rather than the flat 1500 that stood in for it.
+        judge_in = max(1, len(SYSTEM) // 4) + 2 * arm_out
+        judge_out, _jb = expected_output.expect(a.judge_model, sig="probe:effort_ab:judge")
+        jc = (pricing.realtime_cost(a.judge_model, judge_in, judge_out) or 0) * judge
         print(f"\nZERO-SPEND ESTIMATE — {sum(len(t) for _v,_m,t in plan) * len(fs)} arm calls ${tot:,.2f}"
               f" + {judge} judge calls ${jc:,.2f}  =  ${tot+jc:,.2f}  (hard budget ${a.budget:,.2f})")
         return 0

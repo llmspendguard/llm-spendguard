@@ -68,13 +68,13 @@ check("no function in src/spendguard has a numeric default cap", not _bad_defaul
 
 # ────────────────────────────────────────────────────────────────────────────
 print("-- STRUCTURE: every literal cap in library code has been RULED ON --")
-_audit = token_caps.compare_to_ledger(REPO)
+_audit = token_caps.unjudged_and_content(REPO)
 check(f"all {_audit['total']} cap literal(s) in src/ have a recorded verdict", not _audit["unjudged"],
       "UNJUDGED (a cap with no verdict fails by design — run `spendguard token-caps --judge`): "
       + "; ".join(f"{s['file']}:{s['symbol']} {s['kwarg']}={s['value']}" for s in _audit["unjudged"]))
-check("no cap sits on a call whose OUTPUT IS USED", not _audit["content_caps"],
+check("no cap sits on a call whose OUTPUT IS USED", not _audit["failed"],
       "; ".join(f"{c['file']}:{c['symbol']} {c['kwarg']}={c['value']} — {c.get('why','')}"
-                for c in _audit["content_caps"]))
+                for c in _audit["failed"]))
 
 
 # ────────────────────────────────────────────────────────────────────────────

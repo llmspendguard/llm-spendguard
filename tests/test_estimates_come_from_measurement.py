@@ -82,11 +82,25 @@ def offenders(roots):
 
 
 print("-- a quoted price must come from a measurement, not a literal --")
-bad = offenders(["src", "scripts"])
-check("no cost function is called with invented token counts", not bad,
-      "; ".join(f"{f}:{ln} {fn}(…{lits}…)" for f, ln, fn, lits in bad)
-      + "  — replace with tokens MEASURED from a small real sample (see the spend protocol / "
-        "estimate.py --from-sample). A literal here is how $34 was quoted for a $380 run.")
+# THE VERDICT IS AGENTIC AND RECORDED; THIS READS IT. The first version of this check flagged EVERY cost
+# call carrying an int literal, and it was wrong about three of five: `bool(realtime_cost(m, 1000, 1000))`
+# asks whether a model has a published price — the numbers are arbitrary and the result is never shown as
+# money. Syntax cannot separate that from a real quote, because the difference is what the result is USED
+# for. A guard that cries wolf on three of five gets switched off, taking the two real ones with it.
+#
+# So `spendguard estimate-literals --judge` has a model rule on each site, the verdict is committed, and
+# this test reads it — offline, deterministic, and failing on any site with NO verdict.
+from spendguard import estimate_literals  # noqa: E402
+
+_res = estimate_literals.unruled_and_quotes(REPO)
+check(f"all {_res['total']} literal-fed cost call(s) have a recorded verdict", not _res["unjudged"],
+      "UNJUDGED (run `spendguard estimate-literals --judge`): "
+      + "; ".join(f"{s['file']}:{s['symbol']} {s['fn']}{tuple(s['literals'])}" for s in _res["unjudged"]))
+check("no QUOTED PRICE is built from invented token counts", not _res["failed"],
+      "; ".join(f"{q['file']}:{q['symbol']} {q['fn']}{tuple(q['literals'])} — {q.get('why','')}"
+                for q in _res["failed"])
+      + "  — rebuild from a measured sample (estimate.fit_from_sample / expected_output.expect). "
+        "A literal here is how $34 was quoted for a $380 run.")
 
 # The remedy must also be REACHABLE, not merely documented. A protocol nobody can call is the same as no
 # protocol — which is exactly how this defect survived: the method existed in estimate.py and the code that

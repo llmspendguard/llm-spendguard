@@ -60,7 +60,7 @@ def _pairs():
             f"against the bill is not guarding anything. Fix the pairing before trusting any estimate.")
 
 
-def judge(pair, model=None):
+def adjudicate_grounding(pair, model=None):
     """Was THIS estimate grounded? Agentic — the answer depends on how the number was produced."""
     from . import adapters, calls, config, output_contract
     model = model or config.advisor_model()
@@ -79,7 +79,7 @@ def judge(pair, model=None):
             "what_to_fix": obj.get("what_to_fix", "")}
 
 
-def check(raise_on_fail=True, model=None):
+def enforce(raise_on_fail=True, model=None):
     """Judge every recorded estimate against its actual. Returns the verdicts; RAISES on an ungrounded one.
 
     Call this wherever an estimate authorizes spending, and in CI. `raise_on_fail=False` is for reporting
@@ -87,7 +87,7 @@ def check(raise_on_fail=True, model=None):
     of this whole area has been observing without objecting."""
     out = []
     for p in _pairs():
-        v = judge(p, model=model)
+        v = adjudicate_grounding(p, model=model)
         v["pair"] = p
         out.append(v)
     bad = [v for v in out if v.get("grounded") is False]
@@ -106,7 +106,7 @@ def cmd(argv=None):
     import sys
     argv = list(sys.argv[2:] if argv is None else argv)
     try:
-        res = check(raise_on_fail=False)
+        res = enforce(raise_on_fail=False)
     except EstimateNotGrounded as e:
         print(f"REFUSED: {e}")
         return 1
