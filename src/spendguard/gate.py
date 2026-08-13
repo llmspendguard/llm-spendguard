@@ -1333,6 +1333,192 @@ def realtime_by_day(since=None):
     return by_day, by_model
 
 
+class _GatedMessageStream:
+    """Proxy around anthropic's MessageStream that records the call once the final message exists.
+
+    Everything is delegated except `get_final_message`, which is where the provider's own usage numbers
+    first become available. Attribute delegation keeps `text_stream`, iteration and the rest untouched —
+    a proxy that broke normal streaming would be worse than the leak it closes."""
+
+    def __init__(self, inner, owner, final_attr):
+        self._inner, self._owner, self._final_attr = inner, owner, final_attr
+
+    def __getattr__(self, name):
+        # Only the final-result getter is intercepted; text_stream, iteration, until_done, close and the
+        # rest pass straight through. A proxy that changed normal streaming would be a worse bug than the
+        # leak it closes. The getter differs by SDK — anthropic get_final_message, openai
+        # get_final_completion — so it is a parameter rather than a hardcoded method name.
+        inner = getattr(self._inner, name)
+        if name != self._final_attr:
+            return inner
+
+        def _recording(*a, **kw):
+            res = inner(*a, **kw)
+            self._owner.record(res)
+            return res
+        return _recording
+
+    def __iter__(self):
+        return iter(self._inner)
+
+
+class _GatedStreamManager:
+    """Wraps `Messages.stream(...)`'s context manager so a streamed call reaches the ledger.
+
+    THE LEAK THIS CLOSES. RT_INTERCEPTORS patched `Messages.create` only, and `adapters._call_once` calls
+    `messages.stream(...)` for EVERY Anthropic request ("STREAM, always" — the SDK refuses a non-streaming
+    request whose max_tokens implies a long run). `stream` is a different method on the same class, so it
+    was never patched: the call went out, the provider billed it, and no charge row was ever written.
+
+    Measured 2026-08-12: a call through adapters cost $0.000030 and produced gate_calls +1, charges +0,
+    while the identical request through `messages.create` produced charges +1. On 2026-08-12 the gate saw
+    3,585 calls and recorded 19 Anthropic charges. In a tool whose purpose is proving the ledger matches
+    the bill, its own primary path for its primary provider was invisible — and under-capture reads as
+    thrift, so nothing looked wrong.
+
+    Recording happens on get_final_message() because that is when the provider's usage is known, and it is
+    idempotent: a caller that asks twice is billed once."""
+
+    def __init__(self, inner, model, kw, t0, final_attr, est_fn, act_fn):
+        self._inner, self._model, self._kw, self._t0 = inner, model, kw, t0
+        self._final_attr, self._est_fn, self._act_fn = final_attr, est_fn, act_fn
+        self._recorded = False
+
+    def record(self, msg):
+        if self._recorded or msg is None:
+            return
+        self._recorded = True
+        try:
+            _rt_account(self._model, self._kw, msg, self._est_fn, self._act_fn,
+                        latency=time.time() - self._t0)
+        except Exception as e:                       # capture must never break the caller's call
+            sys.stderr.write(f"[spend_gate] WARN streamed anthropic call not recorded ({e}) — "
+                             f"this call is MISSING from the ledger.\n")
+
+    def __enter__(self):
+        return _GatedMessageStream(self._inner.__enter__(), self, self._final_attr)
+
+    def __exit__(self, *exc):
+        try:
+            # LAST CHANCE. A caller that consumed the stream without calling get_final_message would
+            # otherwise slip through; the SDK has already accumulated the message by exit, so this costs
+            # nothing and closes the path. Silent on failure — never mask the caller's own exception.
+            if not self._recorded:
+                inner = getattr(self._inner, "__stream__", None) or getattr(self._inner, "_stream", None)
+                getter = getattr(inner, self._final_attr, None) if inner is not None else None
+                if callable(getter):
+                    self.record(getter())
+        except Exception:
+            pass
+        return self._inner.__exit__(*exc)
+
+
+class _GatedAsyncMessageStream:
+    """Async twin of _GatedMessageStream. The final-result getter is a coroutine, so it is awaited and the
+    recording happens on its result."""
+
+    def __init__(self, inner, owner, final_attr):
+        self._inner, self._owner, self._final_attr = inner, owner, final_attr
+
+    def __getattr__(self, name):
+        inner = getattr(self._inner, name)
+        if name != self._final_attr:
+            return inner
+
+        async def _recording(*a, **kw):
+            res = await inner(*a, **kw)
+            self._owner.record(res)
+            return res
+        return _recording
+
+    def __aiter__(self):
+        return self._inner.__aiter__()
+
+
+class _GatedAsyncStreamManager:
+    """Async streaming helpers spend exactly like the sync ones, and were exactly as unclaimed.
+
+    Found by the surface-coverage guard immediately after the sync hole was closed — which is the point of
+    a guard that enumerates the SDK rather than trusting a hand-written list: the sync fix would otherwise
+    have looked complete."""
+
+    def __init__(self, inner, model, kw, t0, final_attr, est_fn, act_fn):
+        self._inner, self._model, self._kw, self._t0 = inner, model, kw, t0
+        self._final_attr, self._est_fn, self._act_fn = final_attr, est_fn, act_fn
+        self._recorded = False
+
+    def record(self, msg):
+        if self._recorded or msg is None:
+            return
+        self._recorded = True
+        try:
+            _rt_account(self._model, self._kw, msg, self._est_fn, self._act_fn,
+                        latency=time.time() - self._t0)
+        except Exception as e:
+            sys.stderr.write(f"[spend_gate] WARN streamed async call not recorded ({e}) — MISSING from "
+                             f"the ledger.\n")
+
+    async def __aenter__(self):
+        return _GatedAsyncMessageStream(await self._inner.__aenter__(), self, self._final_attr)
+
+    async def __aexit__(self, *exc):
+        return await self._inner.__aexit__(*exc)
+
+
+def _wrap_async_stream(orig, final_attr, est_fn, act_fn):
+    def stream(self, *a, **kw):
+        t0 = time.time()
+        mgr = orig(self, *a, **kw)                    # NOT awaited: .stream() returns the manager directly
+        try:
+            return _GatedAsyncStreamManager(mgr, kw.get("model") or (a[0] if a else "?"), kw, t0,
+                                            final_attr, est_fn, act_fn)
+        except Exception:
+            return mgr
+    stream._spend_gated = True
+    return stream
+
+
+def _wrap_stream(orig, final_attr, est_fn, act_fn):
+    def stream(self, *a, **kw):
+        t0 = time.time()
+        mgr = orig(self, *a, **kw)
+        try:
+            return _GatedStreamManager(mgr, kw.get("model") or (a[0] if a else "?"), kw, t0,
+                                       final_attr, est_fn, act_fn)
+        except Exception:
+            return mgr                                # fail OPEN: an un-proxied stream beats a broken call
+    stream._spend_gated = True
+    return stream
+
+
+# The SDK streaming HELPERS — separate methods from `create`, and therefore invisible to a table that
+# patches `create`. anthropic's is the one adapters uses for every call; openai's is not used by this
+# package but is exactly the same hole for anyone who calls it.
+STREAM_INTERCEPTORS = [
+    ("anthropic.resources.messages", "Messages", "stream", "get_final_message", _est_anth_msg, _act_anth_msg),
+    ("openai.resources.chat.completions", "Completions", "stream", "get_final_completion",
+     _est_oai_chat, _act_oai_chat),
+    # ASYNC TWINS. Found by the surface-coverage guard the moment the sync hole closed — the sync fix
+    # looked complete and was half the surface.
+    ("anthropic.resources.messages", "AsyncMessages", "stream", "get_final_message",
+     _est_anth_msg, _act_anth_msg, True),
+    ("openai.resources.chat.completions", "AsyncCompletions", "stream", "get_final_completion",
+     _est_oai_chat, _act_oai_chat, True),
+]
+
+
+def _apply_stream(module_path, class_name, method, final_attr, est_fn, act_fn, is_async=False):
+    """Patch an SDK streaming helper. Separate from _apply_rt because these return a context manager
+    rather than a result, so usage is not available at return time."""
+    import importlib
+    cls = getattr(importlib.import_module(module_path), class_name)
+    cur = getattr(cls, method, None)
+    if cur is None or getattr(cur, "_spend_gated", False):
+        return
+    wrap = _wrap_async_stream if is_async else _wrap_stream
+    setattr(cls, method, wrap(cur, final_attr, est_fn, act_fn))
+
+
 RT_INTERCEPTORS = [
     # (module, class, method, est_fn, act_fn, is_async)
     ("openai.resources.chat.completions", "Completions", "create", _est_oai_chat, _act_oai_chat, False),
@@ -1596,6 +1782,14 @@ def install(cap: "float | None" = None) -> None:
             pass
         except Exception as e:
             print(f"[spend_gate] WARN rt-patch {spec[0]}.{spec[1]}.{spec[2]} skipped: {e}", file=sys.stderr)
+    for spec in STREAM_INTERCEPTORS:           # SDK streaming HELPERS (a different method from `create`)
+        try:
+            _apply_stream(*spec)
+        except ModuleNotFoundError:
+            pass
+        except Exception as e:
+            print(f"[spend_gate] WARN stream patch {spec[0]}.{spec[1]}.{spec[2]} skipped: {e} — STREAMED "
+                  f"CALLS ON THAT SURFACE WILL NOT BE RECORDED.", file=sys.stderr)
     for spec in UNIT_INTERCEPTORS:             # non-token billing (images / transcription / TTS / ft jobs)
         try:
             _apply_units(*spec)
