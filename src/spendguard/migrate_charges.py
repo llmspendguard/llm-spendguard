@@ -37,7 +37,7 @@ def to_spend_events(led=None, src_path=None, since=None):
     where, args = "", []
     if since:
         where, args = " WHERE day >= ?", [since]
-    rows = src.execute("SELECT rowid AS rid, ts, day, provider, model, kind, cost, project, conv_id "
+    rows = src.execute("SELECT rowid AS rid, ts, day, provider, model, kind, cost, project, conv_id, key_fp "
                        "FROM charges" + where, args).fetchall()
     _seg = {}                                                  # segments/store read LAZILY, once, only if a charge lacks a project
 
@@ -74,6 +74,7 @@ def to_spend_events(led=None, src_path=None, since=None):
             "occurred_at": r["ts"], "ts_utc": r["ts"],
             "conv_id": r["conv_id"] or "",
             "org": org, "team": team, "project_primary": proj, "projects": [proj] if proj else [],
+            "key_fp": r["key_fp"] or "",                       # which API key served it (per-key spend)
             "is_meta": is_meta, "reconciled": reconciled,
             "recon_marker": r["model"] if reconciled else None,
             "status": "reconciled" if reconciled else "posted",

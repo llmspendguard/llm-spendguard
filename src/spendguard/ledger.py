@@ -91,6 +91,7 @@ CREATE TABLE IF NOT EXISTS spend_events (
   project_primary TEXT,
   member_ref    TEXT,
   -- billing / multi-entity
+  key_fp        TEXT,                      -- which API key served the call (per-key spend; carried from charges)
   account_id    TEXT,
   customer_id   TEXT,
   cost_center   TEXT,

@@ -185,3 +185,39 @@ module not yet reached by a concept pass is `UNAUDITED` by definition.
 - F6 (med): historical per-call token detail unrecoverable (charges never stored it); forward path must fix.
 - F7 (high): migrate_charges (task #67 "completed") CRASHES on real data (741 sub-micro rows -> 0 micros ->
   record() raises). Never ran to completion. FIX = steps 1-2.
+
+---
+
+## §STEP 4+5 — the budget→SpendLedger facade  [grounded, atomic, NOT yet implemented]
+
+### Why atomic
+Repointing WRITES without READS breaks the tool: the cap/receipt would read `charges`, which stops getting
+new rows. So `budget.record`+siblings (write) and `budget.spent_since`/`by_day`/`summary` (read) must move
+to `spend_events` in ONE change, equivalence-tested, never committed half-done.
+
+### The semantic mapping (grounded from schema + code reads)
+| charges concept | spend_events target | note |
+|---|---|---|
+| one INSERT per call (no dedup) | `dedup_key = f"live:{ts_micro}:{pid}:{seq}"` | UNIQUE per call, else calls merge & money is LOST |
+| `kind='meta'` (row kind) | `kind='realtime'` + `is_meta=1` | meta is a FLAG in spend_events |
+| `kind='remote'/'est_chat'` | `remote`/`est_chat` | direct |
+| `key_fp` | `key_fp` column | **added to schema 2026-08-13; migration carries it (11,318 rows verified)** |
+| `basis ∈ {estimate,billed,assumed,reconstructed}` | `cost_basis` + `billed` flag | estimate→billed=0 |
+| `conv_id == QUARANTINE_CONV` (impossible) | `status='void'` | excluded from sums |
+| project string | `project_primary` + `org`/`team` via `conv._prior_org_team(proj)` | deterministic taxonomy, not agentic |
+| `intent`/`actor` forensic pair | `attr_what`/`attr_how` | |
+
+### The countable filter (the cap's definition) — needs ONE home on SpendLedger
+`countable_charges` excludes: meta, marker models, quarantine conv, reconstructed basis. On spend_events
+that is: `is_meta=0 AND reconciled=0 AND status NOT IN ('void') AND COALESCE(cost_basis,'')!='reconstructed'`.
+`sum_dec`'s `where` is equality-only, so add a `countable=True` mode (or a `spent()` method) so the cap's
+definition lives in ONE place, not re-spelled per accessor.
+
+### Order
+1. Add `key_fp` to schema + migration ✅ (done, verified: residual 0E-23, key_fp 11,318=11,318)
+2. `SpendLedger`: unique-dedup for live rows + a `countable` sum mode
+3. `budget.record`+siblings → `SpendLedger.record` (the mapping above)
+4. `budget.spent_since`/`by_day`/`summary` → `SpendLedger` countable queries
+5. EQUIVALENCE TEST: feed N charges through budget.record; assert spent_since/by_day/summary equal the
+   pre-cutover charges totals to the cent, and row-count == call-count (no merge). Only then commit.
+6. (§6) run `spendguard migrate` on live (gate paused), then remove `charges`.
