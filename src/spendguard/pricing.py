@@ -68,6 +68,15 @@ _FALLBACK = {
     "claude-sonnet-4-0": dict(provider="anthropic", in_=3.00,  out=15.00, cached_in=0.30, batch_cached_in=0.15, batch_in=1.50,  batch_out=7.50),
 }
 
+# Prompt-cache WRITE multipliers, relative to base input. Published by Anthropic at
+# platform.claude.com/docs/en/about-claude/pricing (read 2026-08-12): "5-minute cache write 1.25x base
+# input price", "1-hour cache write 2x base input price", "Cache read (hit) 0.1x base input price".
+# Named here rather than inline at each use — reconcile_anthropic had the 1.25 as a bare literal beside the
+# money it multiplied, which is how a published rate becomes a magic number nobody can check.
+CACHE_WRITE_5M_MULTIPLIER = 1.25
+CACHE_WRITE_1H_MULTIPLIER = 2.0
+CACHE_READ_MULTIPLIER = 0.1
+
 PRICING_SOURCE = "https://developers.openai.com/api/docs/pricing"
 PRICING_VERIFIED = "2026-06-13"
 STALE_AFTER_DAYS = 45
@@ -715,9 +724,25 @@ def price(model: str, provider: str = None) -> dict:
 def _cost(model, in_tok, out_tok, cached_in_tok, batch, provider=None):
     p = price(model, provider)
     if batch:
-        pin, pout, pcache = p["batch_in"], p["batch_out"], p.get("cached_in", 0.0) * 0.5
+        pin, pout = p["batch_in"], p["batch_out"]
+        # THE SECOND COPY OF AN INVENTED RATE, and the more consequential one: this function prices ACTUAL
+        # billed usage into the ledger, not a projection. It read `cached_in * 0.5` — the same unsourced
+        # stacking assumption that was fixed in estimate.project() while this one was missed, because the
+        # fix was made where the bug was NOTICED rather than everywhere the expression appeared.
+        #
+        # `batch_cached_in` is now on the rows whose provider documents the stacking (Anthropic). Where a
+        # provider does not, the rate is unknown, and unknown is charged at the full batch input rate: an
+        # unpriced component must never be cheaper than reality, or real spend records as partly free —
+        # the same rule as unpriced != $0. `spendguard reconcile` trues the total down against provider
+        # billing, which is the mechanism for closing the gap with fact rather than with a guess.
+        pcache = p.get("batch_cached_in")
+        if pcache is None:
+            pcache = pin
     else:
-        pin, pout, pcache = p["in_"], p["out"], p.get("cached_in", 0.0)
+        pin, pout = p["in_"], p["out"]
+        pcache = p.get("cached_in")
+        if pcache is None:
+            pcache = pin                 # was `0.0` — a missing cache rate billed cache reads as FREE
     cached_in_tok = min(max(0, cached_in_tok), in_tok)   # cached can't exceed (or precede) the input
     fresh_in = in_tok - cached_in_tok
     return (fresh_in * pin + cached_in_tok * pcache + out_tok * pout) / 1_000_000

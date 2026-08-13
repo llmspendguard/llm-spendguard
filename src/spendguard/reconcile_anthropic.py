@@ -79,8 +79,18 @@ def _cost(model, u):
     cread = u.get("cache_read_input_tokens", 0)
     ccreate = u.get("cache_creation_input_tokens", 0)
     out = u.get("output_tokens", 0)
-    bin_, bout, bcache = p["batch_in"], p["batch_out"], p.get("cached_in", 0.0) * 0.5
-    return (fresh_in * bin_ + cread * bcache + ccreate * bin_ * 1.25 + out * bout) / 1e6
+    # THE THIRD COPY of the same unsourced rate — this one prices real Anthropic batch spend during
+    # reconciliation. All three (estimate.project, pricing._cost, here) computed the batch cache-read as
+    # `cached_in * 0.5` independently, so fixing the one that was noticed left two live. The rate is a
+    # published fact and belongs in the table, once, where all three read it.
+    bin_, bout = p["batch_in"], p["batch_out"]
+    bcache = p.get("batch_cached_in")
+    if bcache is None:
+        bcache = bin_                # unknown is charged at full batch input — never cheaper than reality
+    # Cache WRITE multiplier, likewise from the provider's published table rather than inline: a 5-minute
+    # write is 1.25x base input. Named so the number and its meaning cannot drift apart.
+    ccreate_rate = bin_ * pricing.CACHE_WRITE_5M_MULTIPLIER
+    return (fresh_in * bin_ + cread * bcache + ccreate * ccreate_rate + out * bout) / 1e6
 
 
 def refresh_cache(k, cache):
