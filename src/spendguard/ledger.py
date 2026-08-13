@@ -704,6 +704,82 @@ class SpendLedger:
         per-call spend, so it is its own line and not folded into the LLM cap."""
         return self._cat_dec(("subscription_usd",), self._LIVE_FILTER, since=since, until=until, where=where, **filters)
 
+    # The lifecycle-status EXCLUSION, named once (same enum the DDL defines: draft|posted|reconciled|locked|
+    # reversed|void). Reused by the grouped/meta primitives so the "not a void/reversed entry" rule lives in one
+    # place rather than re-inlined per method — the same reason _COUNTABLE exists.
+    _NOT_VOID = "COALESCE(status,'') NOT IN ('void','reversed')"
+
+    # ── grouped / distinct / min primitives — the query shapes budget's per-provider/project/key/day/basis
+    #    reports need, so `budget` is a thin facade over this class and no consumer writes raw spend_events SQL.
+    #    `filt` is a facade-authored predicate over spend_events COLUMNS (never user input); `where` is exact-eq. ──
+    def sum_by(self, group_cols, cols=None, filt="", since=None, until=None, where=None, include_void=False):
+        """{group → {'usd': decimal-str, 'n': rows}} — EXACT grouped money sum over `cols` (default all five
+        categories), grouped by `group_cols` (a column name or list). void/reversed excluded unless
+        include_void. Group values are returned RAW (None/'' as stored); the caller maps them (e.g. →
+        'unattributed'). The one grouped-sum primitive behind by_day / by_dims / by_key / by_*_day / by_basis."""
+        gcols = [group_cols] if isinstance(group_cols, str) else list(group_cols)
+        allcols = cols or USD_COLS
+        for g in gcols:
+            if g not in self._cols:
+                raise ValueError(f"unknown group column {g!r}")
+        for c in allcols:
+            if c not in USD_COLS:
+                raise ValueError(f"{c!r} is not a money column")
+        w, args = self._where(since, until, where)
+        if not include_void:
+            w += " AND " + self._NOT_VOID
+        if filt:
+            w += " AND " + filt
+        sums = ", ".join(f"dec_sum({c})" for c in allcols)
+        sel = ", ".join(gcols)
+        out = {}
+        for row in self._conn.execute(f"SELECT {sel}, {sums}, COUNT(*) FROM spend_events WHERE 1=1{w} GROUP BY {sel}", args):
+            key = tuple(row[i] for i in range(len(gcols))) if len(gcols) > 1 else row[0]
+            total = sum((to_dec(row[len(gcols) + i]) for i in range(len(allcols))), Decimal(0))
+            out[key] = {"usd": str(total), "n": row[-1]}
+        return out
+
+    def distinct(self, col, where=None, since=None, filt=""):
+        """Sorted DISTINCT non-empty values of `col` (e.g. the projects a conversation touched)."""
+        if col not in self._cols:
+            raise ValueError(f"unknown column {col!r}")
+        w, args = self._where(since, None, where)
+        if filt:
+            w += " AND " + filt
+        rows = self._conn.execute(f"SELECT DISTINCT {col} FROM spend_events WHERE 1=1{w}", args).fetchall()
+        return sorted(r[0] for r in rows if r[0] not in (None, ""))
+
+    def min_day(self, where=None, filt=""):
+        """Earliest accounting `day` present (the pre-ledger cutoff for the leak check)."""
+        w, args = self._where(None, None, where)
+        if filt:
+            w += " AND " + filt
+        r = self._conn.execute(f"SELECT MIN(day) FROM spend_events WHERE 1=1{w}", args).fetchone()
+        return r[0] if r and r[0] else None
+
+    def meta_dec(self, since=None, until=None, where=None):
+        """EXACT total of spendguard's OWN (meta) spend — the is_meta rows, kept on their own cap line."""
+        return self._cat_dec(LLM_USD_COLS, "COALESCE(is_meta,0)=1 AND " + self._NOT_VOID,
+                             since=since, until=until, where=where)
+
+    def delete(self, where=None, filt="", actor="?", reason="", since=None):
+        """HARD-DELETE matching UNLOCKED rows, auditing each — for the MIRROR/TRANSIENT rows that charges also
+        DELETEd and rebuilt idempotently (reconciliation markers, true-down corrections, a remote box's backfill).
+        Refuses if any match is locked (real metered spend is corrected by reversal, never deleted; the `locked`
+        flag / a closed period is the canonical lock signal). Returns the count removed."""
+        w, args = self._where(since, None, where)
+        if filt:
+            w += " AND " + filt
+        rows = self._conn.execute(f"SELECT id, period, locked FROM spend_events WHERE 1=1{w}", args).fetchall()
+        for rid, period, locked in rows:
+            if locked or self._is_period_locked(period):
+                raise LockedError(f"refusing to delete locked event {rid} (period {period}) — use reverse/adjust")
+        for rid, period, locked in rows:
+            self._conn.execute("DELETE FROM spend_events WHERE id=?", (rid,))
+            self._audit(rid, actor, "delete", "(delete)", None, None, reason)
+        self._conn.commit()
+        return len(rows)
+
     def sum_dec(self, since=None, until=None, where=None, include_meta=True, include_void=False, **filters):
         """EXACT Decimal grand total across ALL FIVE cost columns, as a string. This is the RECONCILIATION
         primitive — compare it against a source Σ or provider truth. `sum_usd` is the float convenience for

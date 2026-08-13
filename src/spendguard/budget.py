@@ -92,6 +92,46 @@ def _ledger():
     return _LEDGER
 
 
+def _attribute(ev, project):
+    """Stamp org/team/project on a spend_event from the charge's project tag via the prior repo→org map — a
+    cheap cached dict lookup, NOT an LLM (agentic refinement is the later attribute/reconcile pass, never the
+    hot path). Keeps the same attribution the charges ledger carried, in the typed columns."""
+    proj = (project or "").strip().lower()
+    try:
+        from . import conv as _conv_mod
+        org, team = _conv_mod._prior_org_team(proj) if proj else ("", "")
+    except Exception:
+        org, team = "", ""
+    ev["project_primary"] = proj
+    ev["projects"] = [proj] if proj else []
+    ev["org"], ev["team"] = org, team
+
+
+def _shadow_spend_event(provider, model, kind, cost, *, conv_id="", basis="", intent="", actor="", key_fp="",
+                        project="", occurred_at=None, in_tok=0, out_tok=0, source="gate", dedup_suffix=""):
+    """Write the same charge into `spend_events` — the money-of-record being cut over to — through the ONE
+    shared mapping (charge_to_event). Fail-OPEN during the transition: a problem here must never crash the
+    caller's flow (the `charges` write is still authoritative), but it warns LOUDLY so a silent drop is
+    impossible. This shadow write is removed in the final cutover stage, when the charges writes stop."""
+    try:
+        from .ledger import live_dedup_key
+        ev = charge_to_event(provider, model, kind, cost, conv_id=conv_id, basis=basis,
+                             intent=intent, actor=actor, key_fp=key_fp)
+        _attribute(ev, project)
+        oa = occurred_at or datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+        ev["occurred_at"] = ev["ts_utc"] = oa
+        ev["in_tok"], ev["out_tok"] = int(in_tok or 0), int(out_tok or 0)
+        ev["dedup_key"] = live_dedup_key(oa + dedup_suffix)
+        ev["source"] = ev["recorded_by"] = source
+        with _lock:
+            _ledger().record(ev)
+    except Exception as e:
+        import sys as _sys
+        _sys.stderr.write(f"[budget] WARN shadow spend_events write failed "
+                          f"({type(e).__name__}: {str(e)[:100]}) — charges is still authoritative; "
+                          f"`spendguard migrate` rebuilds spend_events from charges.\n")
+
+
 def _project():
     """Project tag for a charge (the repo/work this spend belongs to) — cached per process. Order:
     $SPENDGUARD_PROJECT → saas config `project` (repo-local .spendguard.json) → git repo root basename → cwd."""
@@ -211,6 +251,11 @@ def record(provider, model, kind, cost, project=None, conv_id=None, basis=None,
                        provider or "?", model or "?", kind, float(cost), proj or "", conv or "", fp,
                        basis if basis in BASES else "", (intent or "")[:120], (actor or "")[:120]))
         _db().commit()
+    # DUAL-WRITE the same charge into spend_events (the money-of-record we are cutting over to). charges above
+    # stays authoritative until the readers are repointed; this keeps spend_events current so they can be.
+    _shadow_spend_event(provider, model, kind, float(cost), conv_id=conv or "", basis=basis or "",
+                        intent=intent or "", actor=actor or "", key_fp=fp, project=proj or "",
+                        occurred_at=now.isoformat(timespec="seconds"), source="gate")
 
 
 def snapshot(reason="", keep=20):
@@ -458,6 +503,19 @@ def ingest_remote(label, project, rows):
                         "remote", cost, proj, conv))
             n += 1; total += cost
         db.commit()
+    # DUAL-WRITE (replace) into spend_events: drop this box's prior rows, then re-book the current ones.
+    try:
+        _ledger().delete(where={"conv_id": conv}, actor="ingest_remote", reason="re-sync remote box (replace)")
+    except Exception:
+        pass
+    for i, r in enumerate(rows or []):
+        cost = float(r.get("cost") or 0)
+        if not cost:
+            continue
+        day = r.get("day") or datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+        _shadow_spend_event(r.get("provider") or "?", r.get("model") or "?", "remote", cost, conv_id=conv,
+                            project=proj, occurred_at=day + "T00:00:00+00:00", source="remote",
+                            dedup_suffix=":%s:%d" % (conv, i))
     return n, total
 
 
@@ -654,13 +712,17 @@ def record_unpriced(provider, model, kind, in_tok=0, out_tok=0, project=None):
     """Record that a call HAPPENED but could not be priced. cost=0 because we refuse to invent a number, but
     the row is MARKED so no total treats it as 'free' and the receipt can name the model to price."""
     now = datetime.datetime.now(datetime.timezone.utc)
+    proj = (project if project is not None else _project()) or ""
     with _lock:
         _db().execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project,conv_id,basis) "
                       "VALUES (?,?,?,?,?,?,?,?,?)",
                       (now.isoformat(timespec="seconds"), now.strftime("%Y-%m-%d"), provider or "?",
-                       model or "?", kind, 0.0, (project if project is not None else _project()) or "",
-                       UNPRICED_CONV, BASIS_UNPRICED))
+                       model or "?", kind, 0.0, proj, UNPRICED_CONV, BASIS_UNPRICED))
         _db().commit()
+    # DUAL-WRITE: a $0 forensic marker (cost_basis='unpriced'), carrying the real tokens the price is unknown for.
+    _shadow_spend_event(provider, model, kind, 0, basis=BASIS_UNPRICED, project=proj,
+                        occurred_at=now.isoformat(timespec="seconds"), in_tok=in_tok, out_tok=out_tok,
+                        source="gate", dedup_suffix=":unpriced")
 
 
 # RAW-CHARGES-OK: listing quarantined rows IS the job — the view removes exactly these
@@ -746,13 +808,17 @@ def record_reconciled(day, provider, cost, project="unattributed", kind="batch",
     to `project` by evidence ('unattributed' only when there's none). Marked by a marker model so it's excluded from
     gate/cap and rebuilt idempotently. Default marker '(provider-batch)' / kind 'batch'; the realtime backfill passes
     its own marker + kind='realtime'."""
+    marker = model or _RECONCILED
     with _lock:
         # basis=BILLED: a reconciliation row IS the provider's own number, not a projection of ours.
         _db().execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project,basis) "
                       "VALUES (?,?,?,?,?,?,?,?)",
-                      (day + "T00:00:00+00:00", day, provider or "?", model or _RECONCILED, kind,
+                      (day + "T00:00:00+00:00", day, provider or "?", marker, kind,
                        float(cost), project or "unattributed", BASIS_BILLED))
         _db().commit()
+    # DUAL-WRITE: the marker model → reconciled=1 + recon_marker, so it's excluded from gate/cap like in charges.
+    _shadow_spend_event(provider, marker, kind, float(cost), basis=BASIS_BILLED, project=project or "unattributed",
+                        occurred_at=day + "T00:00:00+00:00", source="reconcile", dedup_suffix=":recon")
 
 
 def clear_reconciled(since=None, model=None):
@@ -797,6 +863,10 @@ def record_true_down(day, provider, model, delta, project):
                       (day + "T00:00:00+00:00", day, provider or "?", model or "?", "batch",
                        -abs(float(delta)), project or "unattributed", _TRUE_DOWN_CONV))
         _db().commit()
+    # DUAL-WRITE: a NEGATIVE batch row carrying the REAL model + the true-down conv sentinel (nets the estimate down).
+    _shadow_spend_event(provider, model, "batch", -abs(float(delta)), conv_id=_TRUE_DOWN_CONV,
+                        project=project or "unattributed", occurred_at=day + "T00:00:00+00:00",
+                        source="true-down", dedup_suffix=":td")
 
 
 def clear_true_down(since=None):
