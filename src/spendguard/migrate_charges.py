@@ -9,23 +9,14 @@ regex guess. This does NOT touch the `charges` table (additive); it backfills th
 onto it. Kept separate from SpendLedger so the ledger never imports the legacy store.
 """
 import sqlite3
-from . import config, conv, budget, ledger_sync
+from . import config, conv, budget
 from . import ledger as _ledger
 
-# charge.kind → (record kind, is_meta). meta = spendguard's OWN realtime LLM use → realtime micros, flagged is_meta.
-_KIND = {"realtime": ("realtime", 0), "batch": ("batch", 0), "meta": ("realtime", 1),
-         "remote": ("remote", 0), "est_chat": ("est_chat", 0)}
-
-# Reconciliation rows carry a KNOWN sentinel model (not a real model). Sourced from the constants that WRITE them, so
-# this stays in lock-step if a new marker is added — single source of truth, no "(...)" heuristic to misfire.
-_RECON_MARKERS = frozenset({budget._RECONCILED, ledger_sync._RT_MARKER})
-
-
-def _is_marker(model):
-    """A reconciliation row (budget.record_reconciled / realtime backfill) carries a known sentinel model instead of a
-    real model — it's provider-truth, not a metered call. DETERMINISTIC exact match against the known sentinels
-    (NOT a 'starts with (' guess, which could misfire on a future real model name)."""
-    return model in _RECON_MARKERS
+# The charge→event field mapping (kind/role/basis, incl. which models are reconciliation markers) lives in ONE
+# place — budget.charge_to_event — shared with the live gate write so the two can never drift. An earlier copy
+# here used an INCOMPLETE marker set (2 of 4), so two realtime-reconcile marker kinds were mis-flagged as
+# workload; using budget's canonical _MARKER_MODELS via charge_to_event fixes that. This module adds only
+# attribution + identity + provenance on top of the shared mapping.
 
 
 def to_spend_events(led=None, src_path=None, since=None):
@@ -53,7 +44,7 @@ def to_spend_events(led=None, src_path=None, since=None):
     skipped = 0
     src_usd = 0.0
     events = []
-    QUAR, UNPR = budget.QUARANTINE_CONV, budget.UNPRICED_CONV
+    UNPR = budget.UNPRICED_CONV
 
     def _opt(row, key):
         """An optional charge column → its value, or '' when this db predates the column."""
@@ -64,18 +55,17 @@ def to_spend_events(led=None, src_path=None, since=None):
     for r in rows:
         cost = float(r["cost"] or 0)
         conv_id = r["conv_id"] or ""
-        charge_basis = _opt(r, "basis").strip().lower()
-        # UNPRICED — the call HAPPENED but its price is unknown (cost 0, marked). Migrated as a $0 forensic row,
-        # NOT skipped: "we couldn't price it" is a different claim from "it was free". Requires cost 0, so a
-        # (hypothetical) priced row wearing this marker keeps its money instead of being zeroed.
-        is_unpriced = (not cost) and (conv_id == UNPR or charge_basis == budget.BASIS_UNPRICED)
-        if not cost and not is_unpriced:
-            skipped += 1                                       # a genuine $0, unmarked row carries no money and no claim
+        # A genuine $0 that is NOT an unpriced marker carries no money and no claim → skip. Unpriced ($0, marked)
+        # is KEPT: "we couldn't price it" is a different claim from "it was free" (charge_to_event maps it).
+        is_unpriced_zero = (not cost) and (conv_id == UNPR or _opt(r, "basis").strip().lower() == budget.BASIS_UNPRICED)
+        if not cost and not is_unpriced_zero:
+            skipped += 1
             continue
-        ckind = (r["kind"] or "realtime").lower()
-        rec_kind, is_meta = _KIND.get(ckind, ("realtime", 0))
-        reconciled = 1 if _is_marker(r["model"]) else 0
-        is_quarantine = (conv_id == QUAR)                      # impossible estimate → voided from totals, kept for forensics
+        # THE money/role/basis mapping — the SAME function the live gate write uses, so they cannot drift.
+        ev = budget.charge_to_event(r["provider"], r["model"], r["kind"], cost, conv_id=conv_id,
+                                    basis=_opt(r, "basis"), intent=_opt(r, "intent"), actor=_opt(r, "actor"),
+                                    key_fp=r["key_fp"] or "")
+        # attribution (agentic, recorded): charge's project → org/team via the prior map, else the unified resolver
         proj = (r["project"] or "").strip().lower()
         org, team = conv._prior_org_team(proj) if proj else ("", "")
         how, asource = "charge-project", "gate"
@@ -85,37 +75,14 @@ def to_spend_events(led=None, src_path=None, since=None):
             team = team or sc.get("team") or ""
             proj = proj or sc.get("project") or ""
             how, asource = sc.get("how") or "resolve", sc.get("source") or "resolve"
-        # cost_basis carries the WHAT-KIND-OF-NUMBER axis (estimate/billed/assumed/reconstructed/unpriced) — the
-        # charge's own declared basis. The ROLE (meta/reconciled) is NOT a basis; it lives in the is_meta /
-        # reconciled flags + status. Nothing reads the old 'gate/meta/reconciled' basis values (verified), and
-        # blank stays blank ('unlabelled'), never silently promoted to 'billed'.
-        if is_unpriced:
-            cost_basis = budget.BASIS_UNPRICED
-        elif charge_basis in budget.BASES:
-            cost_basis = charge_basis
-        else:
-            cost_basis = ""
-        status = "void" if is_quarantine else ("reconciled" if reconciled else "posted")
-        ev = {
-            "provider": r["provider"], "model": r["model"],
+        ev.update({
             "occurred_at": r["ts"], "ts_utc": r["ts"],
-            "conv_id": conv_id,
             "org": org, "team": team, "project_primary": proj, "projects": [proj] if proj else [],
-            "key_fp": r["key_fp"] or "",                       # which API key served it (per-key spend)
-            "intent": _opt(r, "intent"), "actor": _opt(r, "actor"),   # the forensic pair: what it bought · what ran it
-            "is_meta": is_meta, "reconciled": reconciled,
-            "recon_marker": r["model"] if reconciled else None,
-            "status": status, "cost_basis": cost_basis,
-            "billed": 1,
             "source": "migrate:charges", "recorded_by": "migrate:charges",
             "dedup_key": "charge:%d" % r["rid"],               # stable + unique per source row → idempotent re-run
             "attr_how": how, "attr_source": asource,
-        }
-        if is_unpriced:
-            ev["usd"] = None                                   # price unknown → NO money column; a $0 forensic marker
-        else:
-            ev["kind"] = rec_kind
-            ev["usd"] = cost                                   # real cost (incl. negative true-down corrections)
+        })
+        if ev.get("usd") is not None:                          # unpriced rows carry no money → not summed
             src_usd += cost
         events.append(ev)
     # PASS 2 — bulk insert (one txn; every row still individually audited).

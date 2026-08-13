@@ -493,6 +493,55 @@ BASIS_UNPRICED = "unpriced"          # the call happened and the TOKENS are real
 BASES = (BASIS_ESTIMATE, BASIS_BILLED, BASIS_ASSUMED, BASIS_RECONSTRUCTED, BASIS_UNPRICED)
 
 
+# charge `kind` → (spend_events money-kind, is_meta). meta is a FLAG on a realtime row, not its own money
+# column. THE one mapping — used by the live gate write AND the bulk migration, so the two cannot drift.
+_KIND_TO_EVENT = {"realtime": ("realtime", 0), "batch": ("batch", 0), "meta": ("realtime", 1),
+                  "remote": ("remote", 0), "est_chat": ("est_chat", 0)}
+
+
+def charge_to_event(provider, model, kind, cost, conv_id="", basis="", intent="", actor="", key_fp=""):
+    """THE single charge → spend_event field mapping, faithful and in ONE place so the live gate write and the
+    one-time migration can never disagree about what a charge MEANS. Returns the money/role/basis fields of a
+    spend_event; the caller adds attribution (org/team/project), identity (dedup_key), and provenance (source).
+
+    The role of a charge (meta / reconciliation / impossible-quarantine / unpriced / true-down) is derived here
+    from the same signals the legacy `charges` ledger used — kind, a marker model, a sentinel conv_id, the
+    basis — and mapped onto the typed spend_events representation:
+      • meta            → is_meta=1 (realtime money column)          (excluded from workload totals)
+      • reconciliation  → reconciled=1 + recon_marker=<model>        (mirror of provider/gate truth)
+      • quarantine      → status='void'                              (impossible estimate; kept, not counted)
+      • unpriced        → cost_basis='unpriced', NO money column     ($ unknown ≠ $0; a forensic marker)
+      • true-down       → a negative money value, status posted      (nets the estimate down)
+    cost_basis carries the WHAT-KIND-OF-NUMBER axis (the charge's own `basis`), never the role — blank stays
+    blank ('unlabelled'), never silently promoted to billed."""
+    rec_kind, is_meta = _KIND_TO_EVENT.get((kind or "realtime").lower(), ("realtime", 0))
+    reconciled = 1 if model in _MARKER_MODELS else 0
+    is_quarantine = (conv_id == QUARANTINE_CONV)
+    cbasis = (basis or "").strip().lower()
+    is_unpriced = (not cost) and (conv_id == UNPRICED_CONV or cbasis == BASIS_UNPRICED)
+    if is_unpriced:
+        cost_basis = BASIS_UNPRICED
+    elif cbasis in BASES:
+        cost_basis = cbasis
+    else:
+        cost_basis = ""
+    ev = {
+        "provider": provider or "?", "model": model or "?",
+        "conv_id": conv_id or "", "key_fp": key_fp or "",
+        "intent": (intent or "")[:120], "actor": (actor or "")[:120],
+        "is_meta": is_meta, "reconciled": reconciled,
+        "recon_marker": model if reconciled else None,
+        "status": "void" if is_quarantine else ("reconciled" if reconciled else "posted"),
+        "cost_basis": cost_basis, "billed": 1,
+    }
+    if is_unpriced:
+        ev["usd"] = None                                   # price unknown → no money column; a $0 forensic marker
+    else:
+        ev["kind"] = rec_kind
+        ev["usd"] = cost                                   # real cost (incl. negative true-down corrections)
+    return ev
+
+
 def spent_since(day, project=None, conv=None):
     """Gate-recorded workload $ since `day`, from the ONE definition of countable spend (COUNTABLE_VIEW).
     Optionally SCOPE to a `project` (repo) and/or `conv` (conversation) — the receipt uses this to show what
