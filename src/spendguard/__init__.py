@@ -6,7 +6,14 @@ one canonical, verifiable price table.
 
     import spendguard; spendguard.install(cap=75)   # gate every batch in this process
 """
-from .pricing import (batch_cost, realtime_cost, estimate, price, normalize,
+# `estimate` is EXPORTED AS estimate_cost, deliberately. This package contains a MODULE named
+# spendguard.estimate (the measure-a-sample-then-project path), and re-exporting pricing's function under
+# the same bare name shadowed it — so `from spendguard import estimate` handed you a function, and which
+# of the two you got depended on import ORDER. The consequence was not theoretical: the sanctioned
+# measure-then-project path was unreachable by its obvious import, which is part of why a cost was quoted
+# from invented token counts instead. A module and a function cannot share a name in one namespace; the
+# function is the one that moves, since the module's name says exactly what it is.
+from .pricing import (batch_cost, realtime_cost, estimate as estimate_cost, price, normalize,
                       PRICING, PRICING_VERIFIED, PRICING_SOURCE)
 from .gate import install, require, register, SpendGateRefused
 from .emit import on_event
@@ -39,7 +46,7 @@ def install_vertex() -> bool:
 
 __all__ = ["install", "require", "register", "install_litellm", "install_bedrock", "install_vertex",
            "SpendGateRefused", "on_event", "context", "set_context", "feedback",
-           "batch_cost", "realtime_cost", "estimate", "price", "normalize",
+           "batch_cost", "realtime_cost", "estimate_cost", "price", "normalize",
            "PRICING", "PRICING_VERIFIED", "PRICING_SOURCE",
            "estimate_job", "test_job", "gated_batch", "check_bulk", "check_realtime", "check_compute",
            "record_estimate", "record_tested", "note_response", "maxtokens", "is_truncated", "GateBlocked"]
