@@ -76,7 +76,13 @@ def deep(paths, canonical, run=False):
     """
     from . import adapters, calls, pricing as _p, ui
     model = _cfg_advisor()
-    est = sum(_p.realtime_cost(model, len(open(p, errors="ignore").read()) // 4 + 400, 500) or 0
+    # OUTPUT COMES FROM expected_output, NOT A LITERAL. The input side was already measured (file
+    # length / 4); the output side was `500`, a number nobody counted. That asymmetry is the whole
+    # defect — output is where a reasoning model's hidden thinking lands, and no assumed figure sees
+    # it. expect() returns the count AND names where it came from, so a quote can say so out loud.
+    from . import expected_output as _eo
+    _out, _basis = _eo.expect(model, sig="spendguard:audit-deep")
+    est = sum(_p.realtime_cost(model, len(open(p, errors="ignore").read()) // 4 + 400, _out) or 0
               for p in paths)
     if not run:
         ui.estimate_only(action=f"read {len(paths)} file(s) for hardcoded prices in ANY form", cost=est)

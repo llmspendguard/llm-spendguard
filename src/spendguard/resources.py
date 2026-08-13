@@ -461,7 +461,9 @@ def discover_agentic(run=False, record=False, max_sessions=None, now=None):
     sessions = _gpu_session_excerpts(max_sessions)
     hints = _gpu_project_hints()                           # the USER'S projects/label_map — never hardcoded
     model = config.advisor_model()
-    est = sum(pricing.realtime_cost(model, max(1, len(_GPU_DISCOVER_SYS + (_GPU_DISCOVER_PROMPT % (hints, ex))) // 4), 800)
+    from . import expected_output as _eo
+    _out, _ = _eo.expect(model, sig="spendguard:gpu_discover")   # measured, not a literal 800
+    est = sum(pricing.realtime_cost(model, max(1, len(_GPU_DISCOVER_SYS + (_GPU_DISCOVER_PROMPT % (hints, ex))) // 4), _out)
               for _, ex in sessions)
     if not run:
         ui.estimate_only(action=f"agentic GPU discovery: LLM reads {len(sessions)} GPU-active sessions", cost=est)
@@ -553,7 +555,9 @@ def reconstruct_remote_llm(run=False, max_sessions=None, model_org_hints=None, f
     # excerpts (box USAGE prints only — too naive; misses the conversation bulk).
     sessions = list(conv.session_chunks(max_sessions=max_sessions, sids=sids, max_chars=max_chars)) if full else conv.remote_llm_excerpts(max_sessions=max_sessions)
     model = config.advisor_model()
-    est = sum(pricing.realtime_cost(model, max(1, len(_REMOTE_LLM_SYS + ex) // 4), 700) for _, ex in sessions)
+    from . import expected_output as _eo
+    _out, _ = _eo.expect(model, sig="spendguard:remote_llm_reconstruct")   # measured, not a literal 700
+    est = sum(pricing.realtime_cost(model, max(1, len(_REMOTE_LLM_SYS + ex) // 4), _out) for _, ex in sessions)
     if not run:
         ui.estimate_only(action=f"reconstruct remote realtime LLM spend from {len(sessions)} fleet sessions", cost=est)
         return {"sessions": len(sessions), "est_cost": round(est, 4), "by_org": {}, "rows": [], "total": 0.0}

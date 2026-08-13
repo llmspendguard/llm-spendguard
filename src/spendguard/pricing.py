@@ -77,6 +77,7 @@ CACHE_WRITE_5M_MULTIPLIER = 1.25
 CACHE_WRITE_1H_MULTIPLIER = 2.0
 CACHE_READ_MULTIPLIER = 0.1
 
+ONE_MILLION = 1_000_000          # rates are quoted per this many tokens; a UNIT, never a workload
 PRICING_SOURCE = "https://developers.openai.com/api/docs/pricing"
 PRICING_VERIFIED = "2026-06-13"
 STALE_AFTER_DAYS = 45
@@ -809,7 +810,9 @@ def main():
         print(f"{m:<24}{p['in_']:>8.3f}{p['out']:>9.3f}{p['batch_in']:>10.3f}{p['batch_out']:>11.3f}")
     print("\nself-check: OK  (gpt-5.5 batch = $2.50 in / $15.00 out per 1M)")
     # worked example so the magnitude is obvious
-    print(f"example: 1M in + 1M out gpt-5.5 batch = ${batch_cost('gpt-5.5', 1_000_000, 1_000_000):.2f}"
+    # ONE_MILLION is the UNIT these rates are quoted in, not an estimate of a job — this line
+    # demonstrates the per-MTok rate. Named so it reads as a unit and not as a guessed workload.
+    print(f"example: 1M in + 1M out gpt-5.5 batch = ${batch_cost('gpt-5.5', ONE_MILLION, ONE_MILLION):.2f}"
           f"  (NOT ${(1.25+10.0):.2f} as old scripts assumed)")
     return 0
 
