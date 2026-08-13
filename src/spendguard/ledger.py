@@ -21,9 +21,12 @@ import sqlite3
 import hashlib
 import datetime
 import contextlib
+from decimal import Decimal, InvalidOperation, getcontext
 from . import config
 
-SCHEMA_VERSION = 4
+getcontext().prec = 34   # ample for exact money arithmetic (28 is the default; money never needs more than this)
+
+SCHEMA_VERSION = 5
 
 
 class LockedError(Exception):
@@ -37,7 +40,7 @@ CREATE TABLE IF NOT EXISTS spend_events (
   dedup_key     TEXT,
   source        TEXT,
   content_hash  TEXT,
-  schema_version INTEGER DEFAULT 4,
+  schema_version INTEGER DEFAULT 5,
   -- time
   ts_utc        TEXT,
   occurred_at   TEXT,                      -- transaction date (UTC)
@@ -49,13 +52,15 @@ CREATE TABLE IF NOT EXISTS spend_events (
   eligibility_window TEXT,
   window_start  TEXT,
   window_end    TEXT,
-  -- money: integer micro-units of `currency`
+  -- money: EXACT DECIMAL USD, stored as TEXT (canonical decimal string), summed with the dec_sum aggregate.
+  -- NOT integer micros (truncated sub-micro real costs to $0) and NOT binary float (0.1+0.2!=0.3 over
+  -- millions of sums). One category column per spend class keeps the five categories apart structurally.
   currency      TEXT DEFAULT 'USD',
-  batch_micros          INTEGER DEFAULT 0,
-  realtime_micros       INTEGER DEFAULT 0,
-  est_chat_micros       INTEGER DEFAULT 0,
-  remote_compute_micros INTEGER DEFAULT 0,
-  subscription_micros   INTEGER DEFAULT 0,
+  batch_usd             TEXT,
+  realtime_usd          TEXT,
+  est_chat_usd          TEXT,
+  remote_compute_usd    TEXT,
+  subscription_usd      TEXT,
   cost_type     TEXT,
   billed        INTEGER DEFAULT 1,
   is_meta       INTEGER DEFAULT 0,
@@ -64,7 +69,7 @@ CREATE TABLE IF NOT EXISTS spend_events (
   rate_in       REAL,
   rate_out      REAL,
   fx_rate       REAL,
-  base_micros   INTEGER,
+  base_usd      TEXT,
   -- provider / model
   provider      TEXT,
   model         TEXT,
@@ -174,14 +179,14 @@ CREATE TABLE IF NOT EXISTS ledger_locks (
 )
 """
 
-MICRO_COLS = ("batch_micros", "realtime_micros", "est_chat_micros", "remote_compute_micros", "subscription_micros")
-BILLED_MICRO_COLS = ("batch_micros", "realtime_micros", "remote_compute_micros", "subscription_micros")
-_KIND_TO_MICRO = {"batch": "batch_micros", "realtime": "realtime_micros",
-                  "est_chat": "est_chat_micros", "est-chat": "est_chat_micros", "estchat": "est_chat_micros",
-                  "remote": "remote_compute_micros", "remote_compute": "remote_compute_micros", "gpu": "remote_compute_micros",
-                  "subscription": "subscription_micros", "sub": "subscription_micros"}
-_MICRO_TO_KIND = {"batch_micros": "batch", "realtime_micros": "realtime", "est_chat_micros": "est_chat",
-                  "remote_compute_micros": "remote_compute", "subscription_micros": "subscription"}
+USD_COLS = ("batch_usd", "realtime_usd", "est_chat_usd", "remote_compute_usd", "subscription_usd")
+BILLED_USD_COLS = ("batch_usd", "realtime_usd", "remote_compute_usd", "subscription_usd")
+_KIND_TO_USD = {"batch": "batch_usd", "realtime": "realtime_usd",
+                "est_chat": "est_chat_usd", "est-chat": "est_chat_usd", "estchat": "est_chat_usd",
+                "remote": "remote_compute_usd", "remote_compute": "remote_compute_usd", "gpu": "remote_compute_usd",
+                "subscription": "subscription_usd", "sub": "subscription_usd"}
+_USD_TO_KIND = {"batch_usd": "batch", "realtime_usd": "realtime", "est_chat_usd": "est_chat",
+                "remote_compute_usd": "remote_compute", "subscription_usd": "subscription"}
 _JSON_COLS = ("projects", "from_message_ids", "prior_message_ids", "post_message_ids", "tags")
 _EVIDENCE = ("source", "conv_id", "batch_id", "script", "model", "prompt_hash", "in_tok", "out_tok", "attr_what")
 _AUDIT_FIELDS = ("event_id", "ts", "actor", "pass", "field", "old_value", "new_value", "reason")
@@ -215,12 +220,50 @@ def _day_period(ts_iso, tzname):
         return (ts_iso or "")[:10], (ts_iso or "")[:7]
 
 
-def micros(usd):
-    return int(round(float(usd) * 1_000_000))
+def dec(usd):
+    """A money value → its canonical decimal string for storage, or None for absent. EXACT: Decimal(str(x))
+    never introduces the binary-float error that `float(x)` would, so $0.00000026 round-trips unchanged."""
+    if usd is None or usd == "":
+        return None
+    try:
+        return str(Decimal(str(usd)))
+    except (InvalidOperation, ValueError):
+        return None
 
 
-def to_usd(micros_val):
-    return round((micros_val or 0) / 1_000_000, 6)
+def to_dec(s):
+    """A stored money string → Decimal (0 for absent/blank). The exact primitive every sum must go through."""
+    if s in (None, ""):
+        return Decimal(0)
+    try:
+        return Decimal(str(s))
+    except (InvalidOperation, ValueError):
+        return Decimal(0)
+
+
+def to_usd(s):
+    """A stored money value → float, for DISPLAY and legacy callers that expect a number. Exactness lives in
+    the Decimal path (to_dec / dec_sum); this is the lossy edge where money meets a human-readable number."""
+    return float(to_dec(s))
+
+
+class _DecSum:
+    """A SQLite aggregate that sums decimal-string money columns EXACTLY (Python Decimal), because SQL
+    SUM() on a TEXT column coerces to float and reintroduces the error we moved off micros to avoid.
+    Registered per-connection as `dec_sum`; returns a decimal string."""
+
+    def __init__(self):
+        self.acc = Decimal(0)
+
+    def step(self, value):
+        if value not in (None, ""):
+            try:
+                self.acc += Decimal(str(value))
+            except (InvalidOperation, ValueError):
+                pass
+
+    def finalize(self):
+        return str(self.acc)
 
 
 class SpendLedger:
@@ -230,6 +273,7 @@ class SpendLedger:
         self.db_path = db_path or config.db_path()
         self._conn = sqlite3.connect(self.db_path, timeout=10, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        self._conn.create_aggregate("dec_sum", 1, _DecSum)   # exact decimal SUM for the TEXT money columns
         self._defer = False                              # bulk(): defer per-row commits (still audits every row)
         self._cols = self._ensure_schema()
 
@@ -305,21 +349,24 @@ class SpendLedger:
         kind = (ev.pop("kind", None) or "").lower()
         usd = ev.pop("usd", None)
         if kind and usd is not None:
-            col = _KIND_TO_MICRO.get(kind)
+            col = _KIND_TO_USD.get(kind)
             if not col:
                 raise ValueError(f"unknown spend kind {kind!r}; expected batch | realtime | est_chat | remote | subscription")
-            ev[col] = micros(usd)
-        for mc in MICRO_COLS:
-            ucol = mc.replace("_micros", "_usd")
-            if ucol in ev and ev.get(mc) is None:
-                ev[mc] = micros(ev.pop(ucol))
-        nz = [c for c in MICRO_COLS if int(ev.get(c) or 0)]
+            ev[col] = dec(usd)
+        # A caller may set a category column directly (e.g. batch_usd=…). Normalise any to the canonical
+        # decimal string so storage is uniform and sums are exact.
+        for c in USD_COLS:
+            if c in ev and ev[c] is not None:
+                ev[c] = dec(ev[c])
+        # A sub-micro real cost like $0.00000026 is now NON-zero (Decimal, not truncated micros) — the guard
+        # fires only on a genuinely MISSING cost, which is the bug it was written to catch.
+        nz = [c for c in USD_COLS if to_dec(ev.get(c)) != 0]
         if not nz:
-            raise ValueError("spend event has no cost in any micros column")
+            raise ValueError("spend event has no cost in any money column")
         if not ev.get("dedup_key") and not ev.get("source"):
             raise ValueError("spend event needs a dedup_key or a source")
         ev.setdefault("currency", "USD")
-        ev.setdefault("cost_type", _MICRO_TO_KIND[nz[0]] if len(nz) == 1 else None)
+        ev.setdefault("cost_type", _USD_TO_KIND[nz[0]] if len(nz) == 1 else None)
         now = _now_utc()
         ev.setdefault("ts_utc", now)
         ev.setdefault("recorded_at", now)
@@ -354,7 +401,7 @@ class SpendLedger:
         self._conn.execute(f"INSERT INTO spend_events ({','.join(cols)}) VALUES ({','.join('?' for _ in cols)})",
                            [ev.get(c) for c in cols])
         self._audit(ev["id"], ev.get("recorded_by") or ev.get("source") or "?", "ingest", "(create)", None,
-                    f"{ev.get('cost_type')} {to_usd(sum(int(ev.get(c) or 0) for c in MICRO_COLS))} USD", "ingested")
+                    f"{ev.get('cost_type')} {sum((to_dec(ev.get(c)) for c in USD_COLS), Decimal(0))} USD", "ingested")
         if not self._defer:
             self._conn.commit()
         return ev["id"]
@@ -430,8 +477,8 @@ class SpendLedger:
                   "revision", "ts_utc", "occurred_at", "recorded_at", "day", "period", "dedup_key"):
             ev.pop(k, None)
         if negate:
-            for c in MICRO_COLS:
-                ev[c] = -int(row[c] or 0)
+            for c in USD_COLS:
+                ev[c] = str(-to_dec(row[c]))
         elif delta:
             # A CORRECTION POSTS THE DIFFERENCE, BECAUSE THE ORIGINAL ROW STAYS.
             #
@@ -445,10 +492,10 @@ class SpendLedger:
             # Every micro column gets a delta: the ones named in `changes` move to (new - old), and the ones
             # not named move by ZERO. A column omitted from a correction means "unchanged", and the only
             # posting that leaves a running total unchanged is 0 — not a second copy of it.
-            for c in MICRO_COLS:
+            for c in USD_COLS:
                 want = (overrides or {}).get(c)
-                ev[c] = (int(want) - int(row[c] or 0)) if want is not None else 0
-            overrides = {k: v for k, v in (overrides or {}).items() if k not in MICRO_COLS}
+                ev[c] = str(to_dec(want) - to_dec(row[c])) if want is not None else "0"
+            overrides = {k: v for k, v in (overrides or {}).items() if k not in USD_COLS}
         ev[kind_field] = eid
         ev["source"] = (row["source"] or "") + (":" + kind_field.split("_")[0])   # distinct id from the original
         ev.update(overrides or {})
@@ -551,21 +598,18 @@ class SpendLedger:
         if not include_meta:
             w += " AND COALESCE(is_meta,0)=0"
         w += " AND COALESCE(status,'') NOT IN ('void')"       # void excluded; a reversed pair nets to 0 via its negation
-        sums = ", ".join(f"SUM({c})" for c in MICRO_COLS)
+        sums = ", ".join(f"dec_sum({c})" for c in USD_COLS)      # EXACT decimal sum, not SQL SUM (float coercion)
         sel = (", ".join(cols) + ", " if cols else "") + sums + ", COUNT(*)"
         sql = f"SELECT {sel} FROM spend_events WHERE 1=1" + w + (" GROUP BY " + ", ".join(cols) if cols else "")
 
         def pack(row):
-            vals = {c: int(row[len(cols) + i] or 0) for i, c in enumerate(MICRO_COLS)}
-            billed = sum(vals[c] for c in BILLED_MICRO_COLS)
-            out = {**vals, "billed_micros": billed, "est_value_micros": vals["est_chat_micros"], "n": row[-1]}
-            out["billed_usd"] = to_usd(billed)
-            out["est_value_usd"] = to_usd(vals["est_chat_micros"])
-            for c in MICRO_COLS:
-                out[c.replace("_micros", "_usd")] = to_usd(vals[c])
+            vals = {c: to_dec(row[len(cols) + i]) for i, c in enumerate(USD_COLS)}   # exact Decimal per category
+            billed = sum((vals[c] for c in BILLED_USD_COLS), Decimal(0))
+            out = {c: float(vals[c]) for c in USD_COLS}
+            out.update(billed_usd=float(billed), est_value_usd=float(vals["est_chat_usd"]), n=row[-1])
             return out
         rows = self._conn.execute(sql, args).fetchall()
-        empty = pack([0] * (len(cols) + len(MICRO_COLS)) + [0])
+        empty = {**{c: 0.0 for c in USD_COLS}, "billed_usd": 0.0, "est_value_usd": 0.0, "n": 0}
         if not cols:
             return pack(rows[0]) if rows and rows[0][-1] else empty
         return {(tuple(row[i] for i in range(len(cols))) if len(cols) > 1 else row[0]): pack(row) for row in rows}
@@ -581,9 +625,9 @@ class SpendLedger:
         if not include_meta:
             w += " AND COALESCE(is_meta,0)=0"
         w += " AND COALESCE(status,'') NOT IN ('void')"
-        sums = " + ".join(f"COALESCE(SUM({c}),0)" for c in MICRO_COLS)
+        sums = ", ".join(f"dec_sum({c})" for c in USD_COLS)       # exact per-column decimal sums
         r = self._conn.execute(f"SELECT {sums} FROM spend_events WHERE 1=1" + w, args).fetchone()
-        return to_usd(int(r[0] or 0))
+        return float(sum((to_dec(x) for x in r), Decimal(0)))     # add the category totals exactly, then to float
 
     # ── integrity: the AUDIT LOG is hash-chained (not the live row) ──
     def verify_audit_chain(self, detail=False):
