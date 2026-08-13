@@ -617,17 +617,23 @@ class SpendLedger:
     def by_repo(self, repo, since=None, until=None):
         return self.rollup(since=since, until=until, where={"repo": repo})
 
-    def sum_usd(self, since=None, until=None, where=None, include_meta=True, **filters):
-        """Total USD across ALL cost columns (exact, summed in micros) for the filter — the simple Σ primitive for
-        verification + headline totals. **filters are column equality shortcuts (e.g. source='migrate:charges').
-        include_meta defaults True (a true grand total); voided/reversed rows are excluded."""
+    def sum_dec(self, since=None, until=None, where=None, include_meta=True, **filters):
+        """EXACT Decimal grand total across all cost columns, as a string. This is the RECONCILIATION
+        primitive — compare it against a source Σ or provider truth. `sum_usd` is the float convenience for
+        DISPLAY; the float() there is precisely the precision loss reconciliation must never suffer, which
+        is why the two are different methods and this one is the source of truth."""
         w, args = self._where(since, until, {**(where or {}), **filters})
         if not include_meta:
             w += " AND COALESCE(is_meta,0)=0"
         w += " AND COALESCE(status,'') NOT IN ('void')"
         sums = ", ".join(f"dec_sum({c})" for c in USD_COLS)       # exact per-column decimal sums
         r = self._conn.execute(f"SELECT {sums} FROM spend_events WHERE 1=1" + w, args).fetchone()
-        return float(sum((to_dec(x) for x in r), Decimal(0)))     # add the category totals exactly, then to float
+        return str(sum((to_dec(x) for x in r), Decimal(0)))       # add the category totals exactly
+
+    def sum_usd(self, since=None, until=None, where=None, include_meta=True, **filters):
+        """Total USD for the filter, as a FLOAT — the display convenience. Exactness lives in `sum_dec`;
+        this is the one lossy edge where money becomes a human-readable number. One implementation, wrapped."""
+        return float(self.sum_dec(since=since, until=until, where=where, include_meta=include_meta, **filters))
 
     # ── integrity: the AUDIT LOG is hash-chained (not the live row) ──
     def verify_audit_chain(self, detail=False):

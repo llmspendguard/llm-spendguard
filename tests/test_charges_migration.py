@@ -10,6 +10,7 @@ a reconciliation MARKER row, a meta row) and asserts the migration into spend_ev
 Offline, isolated home, zero spend.
 """
 import os, sys, tempfile
+from decimal import Decimal
 
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
@@ -54,14 +55,14 @@ ck("dst total == src total == 15.25", abs(st["dst_total_usd"] - SRC_TOTAL) < 1e-
 
 rows = led.query(where={"source": "migrate:charges"})
 ck("duplicate-cost pair BOTH survived (rowid dedup, not value dedup)",
-   len([r for r in rows if r["realtime_micros"] == 750000]) == 2)
+   len([r for r in rows if L.to_dec(r["realtime_usd"]) == Decimal("0.75")]) == 2)
 metas = [r for r in rows if r.get("is_meta")]
-ck("meta row flagged is_meta + booked as realtime micros", len(metas) == 1 and metas[0]["realtime_micros"] == 250000)
+ck("meta row flagged is_meta + booked as realtime $", len(metas) == 1 and L.to_dec(metas[0]["realtime_usd"]) == Decimal("0.25"))
 recon = [r for r in rows if r.get("reconciled")]
-ck("marker row → reconciled + status=reconciled + batch micros", len(recon) == 1
-   and recon[0]["status"] == "reconciled" and recon[0]["batch_micros"] == 10000000)
+ck("marker row → reconciled + status=reconciled + batch $", len(recon) == 1
+   and recon[0]["status"] == "reconciled" and L.to_dec(recon[0]["batch_usd"]) == Decimal("10"))
 ck("attribution lmm → org healiom", any(r["org"] == "healiom" and r["project_primary"] == "lmm" for r in rows))
-ck("attribution manga2anime → org ensight", any(r["org"] == "ensight" and r["batch_micros"] == 2000000 for r in rows))
+ck("attribution manga2anime → org ensight", any(r["org"] == "ensight" and L.to_dec(r["batch_usd"]) == Decimal("2") for r in rows))
 
 # idempotency: a SECOND migration (fresh ledger handle, same db) must book NOTHING new
 st2 = migrate_charges.to_spend_events(led=L.SpendLedger())

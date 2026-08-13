@@ -93,3 +93,39 @@ def to_spend_events(led=None, src_path=None, since=None):
     return {"charges_rows": len(rows), "migrated": n, "skipped_zero": skipped,
             "src_total_usd": round(src_usd, 2), "dst_total_usd": round(dst_usd, 2),
             "delta_usd": round(src_usd - dst_usd, 6)}
+
+
+def run_cutover(db_path=None):
+    """THE clear, runnable migration: rebuild `spend_events` from `charges` under the v5 exact-Decimal
+    schema, and PROVE the sum is preserved. One command, start to finish — this is what was missing (the
+    migration existed only as a buried backfill function with no runner and no cutover).
+
+    Non-destructive: an old integer-micros `spend_events` is RENAMED to `spend_events_v4_micros`, never
+    dropped, so the pre-cutover rows are recoverable. The rebuild reads `charges` (the complete float
+    source of record) and records each row as exact Decimal. Returns stats including the EXACT Decimal
+    residual (Σ charges − Σ spend_events), which must be $0.00 for the cutover to be trusted."""
+    from decimal import Decimal
+    from . import ledger as _ledger
+    path = db_path or config.db_path()
+
+    con = sqlite3.connect(path)
+    cols = [r[1] for r in con.execute("PRAGMA table_info(spend_events)")]
+    renamed = False
+    if cols and "batch_micros" in cols and "batch_usd" not in cols:
+        con.execute("DROP TABLE IF EXISTS spend_events_v4_micros")     # a prior aborted cutover's backup
+        con.execute("ALTER TABLE spend_events RENAME TO spend_events_v4_micros")
+        con.commit()
+        renamed = True
+    con.close()
+
+    led = _ledger.SpendLedger(db_path=path)                            # constructs the fresh v5 schema
+    stats = to_spend_events(led=led, src_path=path)
+
+    # PROVE Σ EXACTLY, both sides in Decimal (charges is float text → Decimal per row, summed exactly).
+    con = sqlite3.connect(path)
+    src_dec = sum((Decimal(str(r[0])) for r in con.execute("SELECT cost FROM charges WHERE cost!=0")), Decimal(0))
+    con.close()
+    dst_dec = Decimal(led.sum_dec())          # EXACT (not the float sum_usd) — the reconciliation primitive
+    stats.update(renamed_v4_backup=renamed, src_exact=str(src_dec), dst_exact=str(dst_dec),
+                 residual=str(src_dec - dst_dec), reconciles=(src_dec == dst_dec))
+    return stats

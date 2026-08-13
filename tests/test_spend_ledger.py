@@ -3,8 +3,10 @@
 Financial-systems grade: integer micro-money (exact), UTC time + accounting day/period, append-only hash chain
 (tamper-evident), cost routing, dedup (no double-count), per-repo scoping, billed-vs-est_value split, meta exclusion.
 """
+from decimal import Decimal
+
 import pytest
-from spendguard.ledger import SpendLedger, MICRO_COLS, LockedError
+from spendguard.ledger import SpendLedger, USD_COLS, to_dec, LockedError
 
 
 def _led(tmp_path):
@@ -13,7 +15,7 @@ def _led(tmp_path):
 
 # ── Step 1: schema + record/get ──
 
-def test_cost_routes_to_correct_micros_column_and_json_roundtrips(tmp_path):
+def test_cost_routes_to_correct_usd_column_and_json_roundtrips(tmp_path):
     led = _led(tmp_path)
     eid = led.record({"source": "reconstruction", "kind": "realtime", "usd": 220.0,
                       "provider": "openai", "model": "gpt-5.5", "model_kind": "completion",
@@ -22,21 +24,21 @@ def test_cost_routes_to_correct_micros_column_and_json_roundtrips(tmp_path):
                       "cost_basis": "printed", "from_message_ids": ["m1", "m2"], "tags": ["realtime"],
                       "attr_what": "loinc stem pass", "attr_why": "cwd=lmm", "attr_how": "cwd-match"})
     ev = led.get(eid)
-    assert ev["realtime_micros"] == 220_000_000
-    assert ev["batch_micros"] == 0 and ev["est_chat_micros"] == 0 and ev["remote_compute_micros"] == 0
+    assert to_dec(ev["realtime_usd"]) == Decimal("220")     # stored as an exact decimal string, not micros
+    assert to_dec(ev["batch_usd"]) == 0 and to_dec(ev["est_chat_usd"]) == 0 and to_dec(ev["remote_compute_usd"]) == 0
     assert ev["projects"] == ["lmm", "medical-taxonomy"]
     assert ev["from_message_ids"] == ["m1", "m2"] and ev["tags"] == ["realtime"]
     assert ev["org"] == "Healiom" and ev["attr_how"] == "cwd-match"
 
 
-@pytest.mark.parametrize("kind,col", [("batch", "batch_micros"), ("realtime", "realtime_micros"),
-                                      ("est_chat", "est_chat_micros"), ("remote", "remote_compute_micros"),
-                                      ("subscription", "subscription_micros")])
-def test_every_kind_routes_to_its_own_micros_column(tmp_path, kind, col):
+@pytest.mark.parametrize("kind,col", [("batch", "batch_usd"), ("realtime", "realtime_usd"),
+                                      ("est_chat", "est_chat_usd"), ("remote", "remote_compute_usd"),
+                                      ("subscription", "subscription_usd")])
+def test_every_kind_routes_to_its_own_usd_column(tmp_path, kind, col):
     led = _led(tmp_path)
     ev = led.get(led.record({"source": "s", "kind": kind, "usd": 5.0, "conv_id": kind}))
-    assert ev[col] == 5_000_000
-    assert sum(ev[c] for c in MICRO_COLS) == 5_000_000
+    assert to_dec(ev[col]) == Decimal("5")
+    assert sum((to_dec(ev[c]) for c in USD_COLS), Decimal(0)) == Decimal("5")
 
 
 def test_dedup_same_evidence_records_once(tmp_path):
@@ -59,16 +61,15 @@ def test_invalid_events_rejected(tmp_path):
         led.record({"kind": "realtime", "usd": 1.0})
 
 
-# ── money: integer micros are EXACT (float would drift) ──
+# ── money: exact DECIMAL (float would drift) ──
 
-def test_micros_are_exact_where_float_drifts(tmp_path):
+def test_decimal_money_is_exact_where_float_drifts(tmp_path):
     led = _led(tmp_path)
     for i in range(3):
         led.record({"source": "x", "kind": "realtime", "usd": 0.1, "conv_id": f"c{i}", "attr_what": f"a{i}"})
-    t = led.rollup()
-    assert t["realtime_micros"] == 300_000     # exact
-    assert t["realtime_usd"] == 0.3
-    assert 0.1 + 0.1 + 0.1 != 0.3              # the float trap this avoids
+    assert led.sum_dec() == "0.3"              # EXACT — the reconciliation primitive, no float rounding
+    assert led.rollup()["realtime_usd"] == 0.3
+    assert 0.1 + 0.1 + 0.1 != 0.3             # the float trap this avoids
 
 
 # ── rollup: billed vs est-value split, per-org, per-repo, meta exclusion ──

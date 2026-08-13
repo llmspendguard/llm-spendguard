@@ -56,6 +56,7 @@ _GROUPS = [
         ("token-caps", "list every hardcoded output-token cap; --judge rules on the unjudged ones"),
         ("estimate-divergence", "judge every recorded quote against the actual bill; fails on ungrounded ones"),
         ("estimate-literals", "every cost call fed literal token counts; --judge rules quote vs probe"),
+        ("migrate", "rebuild spend_events from charges (exact Decimal); proves Σ preserved"),
     ]),
 ]
 
@@ -151,6 +152,19 @@ def _dispatch(argv=None):
     if cmd == "token-caps":
         from . import token_caps
         return token_caps.cmd(rest)
+    if cmd == "migrate":
+        # THE clear, runnable migration: rebuild spend_events from charges under the exact-Decimal schema,
+        # prove Σ is preserved to the last digit. Non-destructive (old micros table renamed, not dropped).
+        from . import migrate_charges
+        import json as _json
+        stats = migrate_charges.run_cutover()
+        keys = ("charges_rows", "migrated", "skipped_zero", "renamed_v4_backup",
+                "src_exact", "dst_exact", "residual", "reconciles")
+        print(_json.dumps({k: stats.get(k) for k in keys}, indent=2))
+        if not stats.get("reconciles"):
+            print("REFUSED to trust: Σ charges != Σ spend_events. Investigate before removing charges.")
+            return 1
+        return 0
     if cmd == "estimate-literals":
         from . import estimate_literals
         return estimate_literals.cmd(rest)
