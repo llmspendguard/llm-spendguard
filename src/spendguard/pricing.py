@@ -44,18 +44,28 @@ _FALLBACK = {
     "text-embedding-3-small": dict(provider="openai", in_=0.02, out=0.0, cached_in=0.0, batch_in=0.010, batch_out=0.0),
     # ---- Anthropic Claude (verified via claude-api skill, 2026-06-13). batch = 50% off;
     #      cached_in = cache-READ (~0.1x in). Cache WRITE is ~1.25x in @5min / 2x @1h (not stored here).
+    #
+    #      batch_cached_in = cached_in x 0.5. Read from platform.claude.com/docs/en/about-claude/pricing on
+    #      2026-08-12, which states the cache multipliers "stack with other pricing modifiers, including the
+    #      Batch API discount" and answers it again under How do discounts stack: "Batch API and prompt
+    #      caching discounts can be combined." So a batch cache-read is 0.1x base x 50%.
+    #
+    #      This field exists ONLY where a provider documents the stacking. OpenAI publishes no batch
+    #      cache-read rate that I could verify, so its rows deliberately omit it and estimate.project()
+    #      falls back to the full batch input rate and SAYS SO in `cache_basis`. An absent field is a
+    #      conservative projection with a stated reason; a guessed one is a wrong number that looks right.
     #      NOTE: claude-opus-4-8 is $5/$25 — NOT the old $15/$75 (that was Opus 3/4/4.1). Opus 4.8 < gpt-5.5 on output.
-    "claude-opus-4-8":   dict(provider="anthropic", in_=5.00, out=25.00, cached_in=0.50, batch_in=2.50, batch_out=12.50),
-    "claude-sonnet-4-6": dict(provider="anthropic", in_=3.00, out=15.00, cached_in=0.30, batch_in=1.50, batch_out=7.50),
-    "claude-haiku-4-5":  dict(provider="anthropic", in_=1.00, out=5.00,  cached_in=0.10, batch_in=0.50, batch_out=2.50),
+    "claude-opus-4-8":   dict(provider="anthropic", in_=5.00, out=25.00, cached_in=0.50, batch_cached_in=0.25, batch_in=2.50, batch_out=12.50),
+    "claude-sonnet-4-6": dict(provider="anthropic", in_=3.00, out=15.00, cached_in=0.30, batch_cached_in=0.15, batch_in=1.50, batch_out=7.50),
+    "claude-haiku-4-5":  dict(provider="anthropic", in_=1.00, out=5.00,  cached_in=0.10, batch_cached_in=0.05, batch_in=0.50, batch_out=2.50),
     # legacy Claude (stable historical rates) — for reconciling older batches
-    "claude-opus-4-7":   dict(provider="anthropic", in_=5.00,  out=25.00, cached_in=0.50, batch_in=2.50,  batch_out=12.50),
-    "claude-opus-4-6":   dict(provider="anthropic", in_=5.00,  out=25.00, cached_in=0.50, batch_in=2.50,  batch_out=12.50),
-    "claude-opus-4-5":   dict(provider="anthropic", in_=5.00,  out=25.00, cached_in=0.50, batch_in=2.50,  batch_out=12.50),
-    "claude-opus-4-1":   dict(provider="anthropic", in_=15.00, out=75.00, cached_in=1.50, batch_in=7.50,  batch_out=37.50),
-    "claude-opus-4-0":   dict(provider="anthropic", in_=15.00, out=75.00, cached_in=1.50, batch_in=7.50,  batch_out=37.50),
-    "claude-sonnet-4-5": dict(provider="anthropic", in_=3.00,  out=15.00, cached_in=0.30, batch_in=1.50,  batch_out=7.50),
-    "claude-sonnet-4-0": dict(provider="anthropic", in_=3.00,  out=15.00, cached_in=0.30, batch_in=1.50,  batch_out=7.50),
+    "claude-opus-4-7":   dict(provider="anthropic", in_=5.00,  out=25.00, cached_in=0.50, batch_cached_in=0.25, batch_in=2.50,  batch_out=12.50),
+    "claude-opus-4-6":   dict(provider="anthropic", in_=5.00,  out=25.00, cached_in=0.50, batch_cached_in=0.25, batch_in=2.50,  batch_out=12.50),
+    "claude-opus-4-5":   dict(provider="anthropic", in_=5.00,  out=25.00, cached_in=0.50, batch_cached_in=0.25, batch_in=2.50,  batch_out=12.50),
+    "claude-opus-4-1":   dict(provider="anthropic", in_=15.00, out=75.00, cached_in=1.50, batch_cached_in=0.75, batch_in=7.50,  batch_out=37.50),
+    "claude-opus-4-0":   dict(provider="anthropic", in_=15.00, out=75.00, cached_in=1.50, batch_cached_in=0.75, batch_in=7.50,  batch_out=37.50),
+    "claude-sonnet-4-5": dict(provider="anthropic", in_=3.00,  out=15.00, cached_in=0.30, batch_cached_in=0.15, batch_in=1.50,  batch_out=7.50),
+    "claude-sonnet-4-0": dict(provider="anthropic", in_=3.00,  out=15.00, cached_in=0.30, batch_cached_in=0.15, batch_in=1.50,  batch_out=7.50),
 }
 
 PRICING_SOURCE = "https://developers.openai.com/api/docs/pricing"
@@ -180,7 +190,14 @@ def _load():
     if os.path.exists(litellm):
         try:
             d = json.load(open(litellm))
-            prices.update(d.get("models", {}))
+            # MERGE PER FIELD, not per entry. `prices.update(...)` REPLACED a model's whole rate dict, so
+            # every field the built-in fallback carried and the incoming layer did not was silently dropped
+            # for that model. Adding `batch_cached_in` to the Anthropic fallback rows is how this surfaced:
+            # the field was present in the source and gone at runtime, because a broader layer that knows
+            # nothing about it overwrote the entry wholesale. Any field added here in future would have
+            # vanished the same way, for exactly the models a curated layer covers — the popular ones.
+            for _m, _r in (d.get("models", {}) or {}).items():
+                prices[_m] = {**prices.get(_m, {}), **(_r or {})}
             PROVIDERS.update(d.get("providers", {}))
         except Exception as e:
             import sys
@@ -202,6 +219,9 @@ def _load():
                     # _vendor_qualified() below already resolves `vendor/model` and already RAISES when two
                     # vendors publish DIFFERENT rates for one bare id rather than picking. That guard could
                     # never fire, because the collision was resolved here — before anything could see it.
+                    # Per-field merge, same reason as the litellm layer above: a curated entry
+                    # states the rates it verified and must not erase fields it never mentions.
+                    rates = {**prices.get(model, {}), **(rates or {})}
                     prices[f"{prov}/{model}"] = rates
                     prior = prices.get(model)
                     if prior is not None and _rate_key(prior) != _rate_key(rates):
