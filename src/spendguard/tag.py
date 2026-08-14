@@ -8,28 +8,30 @@
 """
 
 
+_EMPTY_PROJECT = "(project_primary IS NULL OR project_primary='')"   # an untagged row, in spend_events terms
+
+
 def retag_deterministic():
     """FREE pass: fill EMPTY project tags from context (meta → 'llm-spendguard', else the repo/config project). Never
-    overrides an existing tag. Returns the number of rows changed."""
+    overrides an existing tag. Returns the number of rows changed. Reads/writes spend_events (the money-of-record)."""
     from . import budget
-    proj = budget._project()
-    db = budget._db()
+    led = budget._ledger()
     with budget._lock:
-        a = db.execute("UPDATE charges SET project='llm-spendguard' WHERE (project IS NULL OR project='') AND kind='meta'").rowcount
-        b = db.execute("UPDATE charges SET project=? WHERE (project IS NULL OR project='')", (proj,)).rowcount
-        db.commit()
+        a = led.bulk_retag_project("llm-spendguard", filt=f"{_EMPTY_PROJECT} AND COALESCE(is_meta,0)=1",
+                                   actor="tag", reason="deterministic: meta → llm-spendguard")
+        b = led.bulk_retag_project(budget._project(), filt=_EMPTY_PROJECT,
+                                   actor="tag", reason="deterministic: empty → repo project")
     return int(a or 0) + int(b or 0)
 
 
 def move_project(old, new):
-    """Re-assign a project tag across the local ledger — fixes cwd-fallback mistags (e.g. video-captioning that
-    ran from ~/Documents got tagged 'documents' instead of 'vision-pipeline'). Returns rows changed."""
+    """Re-assign a project tag across the ledger — fixes cwd-fallback mistags (e.g. video-captioning that ran
+    from ~/Documents got tagged 'documents' instead of 'vision-pipeline'). Returns rows changed."""
     from . import budget
     old, new = (old or "").strip().lower(), (new or "").strip().lower()
-    db = budget._db()
     with budget._lock:
-        n = db.execute("UPDATE charges SET project=? WHERE lower(COALESCE(project,''))=?", (new, old)).rowcount
-        db.commit()
+        n = budget._ledger().bulk_retag_project(new, filt="lower(COALESCE(project_primary,''))=?", args=(old,),
+                                                actor="tag", reason=f"move: {old} → {new}")
     return int(n or 0)
 
 
@@ -49,10 +51,8 @@ def ambiguous_count():
     """Rows a human/LLM might still need to disambiguate — untagged after the free pass (should be ~0 once
     deterministic runs, but non-repo or mixed-context charges can remain). Zero-spend."""
     from . import budget
-    db = budget._db()
     with budget._lock:
-        r = db.execute("SELECT COUNT(*) FROM charges WHERE project IS NULL OR project=''").fetchone()
-    return int(r[0] or 0)
+        return int(budget._ledger().count(filt=_EMPTY_PROJECT) or 0)
 
 
 def estimate_llm_retag():

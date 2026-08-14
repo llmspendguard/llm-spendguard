@@ -783,6 +783,28 @@ class SpendLedger:
         return self._cat_dec(LLM_USD_COLS, "COALESCE(is_meta,0)=1 AND " + self._NOT_VOID,
                              since=since, until=until, where=where)
 
+    def count(self, where=None, filt="", since=None):
+        """COUNT of rows matching `where`/`filt` (a facade-authored predicate) — e.g. the still-untagged rows
+        the project-tag cascade needs to size its work."""
+        w, args = self._where(since, None, where)
+        if filt:
+            w += " AND " + filt
+        return self._conn.execute(f"SELECT COUNT(*) FROM spend_events WHERE 1=1{w}", args).fetchone()[0]
+
+    def bulk_retag_project(self, new_project, filt="", args=(), where=None, actor="tag", reason=""):
+        """Bulk-set project_primary → `new_project` on rows matching `where`/`filt` — the DETERMINISTIC re-tag
+        pass (agentic attribution goes through attribute()). Records ONE audit summary row for the batch rather
+        than one per row. Returns the number of rows changed."""
+        w, wargs = self._where(None, None, where)
+        if filt:
+            w += " AND " + filt
+        cur = self._conn.execute(f"UPDATE spend_events SET project_primary=? WHERE 1=1{w}", (new_project, *wargs, *args))
+        n = cur.rowcount
+        if n:
+            self._audit("bulk", actor, "attribute", "project_primary", None, new_project, f"{reason} ({n} rows)")
+        self._conn.commit()
+        return n
+
     def delete(self, where=None, filt="", actor="?", reason="", since=None):
         """HARD-DELETE matching UNLOCKED rows, auditing each — for the MIRROR/TRANSIENT rows that charges also
         DELETEd and rebuilt idempotently (reconciliation markers, true-down corrections, a remote box's backfill).

@@ -8,6 +8,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 from spendguard import tag, budget
+from spendguard import ledger as L
 
 fails = []
 def ck(name, cond):
@@ -16,10 +17,13 @@ def ck(name, cond):
         fails.append(name)
 
 def _insert(day, kind, cost, project, model="gpt-5.5"):
-    with budget._lock:
-        budget._db().execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project) VALUES (?,?,?,?,?,?,?)",
-                             (day + "T00:00:00+00:00", day, "openai", model, kind, cost, project))
-        budget._db().commit()
+    # seed the money-of-record (spend_events) via the production charge→event mapping (tag reads/writes it now)
+    ev = budget.charge_to_event("openai", model, kind, float(cost))
+    ev["project_primary"] = project; ev["projects"] = [project] if project else []
+    ev["occurred_at"] = ev["ts_utc"] = day + "T00:00:00+00:00"
+    ev["source"] = ev["recorded_by"] = "test"
+    ev["dedup_key"] = "test:%s:%s:%s:%s" % (day, kind, cost, project)
+    budget._ledger().record(ev)
 
 # ── retag_deterministic: meta → 'llm-spendguard'; empty workload → the repo project; existing tags untouched ──
 _insert("2026-06-01", "meta", 1.0, "")          # → llm-spendguard
@@ -30,9 +34,12 @@ changed = tag.retag_deterministic()
 ck("retag_deterministic changed exactly the 2 empty rows", changed == 2)
 
 def _proj_of(kind, cost):
-    with budget._lock:
-        r = budget._db().execute("SELECT project FROM charges WHERE kind=? AND cost=?", (kind, cost)).fetchone()
-    return r[0]
+    # costs are distinct in this fixture, so the amount identifies the row (in whichever money column it lands)
+    want = L.to_dec(cost)
+    for r in budget._ledger().query():
+        if any(L.to_dec(r.get(c)) == want for c in L.USD_COLS):
+            return r["project_primary"]
+    return None
 ck("meta row → 'llm-spendguard'", _proj_of("meta", 1.0) == "llm-spendguard")
 ck("empty workload row → the repo project", _proj_of("batch", 2.0) == proj and proj not in ("", None))
 ck("already-tagged row is NOT overridden", _proj_of("batch", 3.0) == "already")
@@ -48,9 +55,8 @@ _insert("2026-06-04", "batch", 5.0, "Documents")
 _insert("2026-06-04", "batch", 6.0, "documents")
 moved = tag.move_project("DOCUMENTS", "vision-pipeline")   # case-insensitive match
 ck("move_project re-tags both case variants (case-insensitive)", moved == 2)
-with budget._lock:
-    n_vp = budget._db().execute("SELECT COUNT(*) FROM charges WHERE project='vision-pipeline'").fetchone()[0]
-    n_doc = budget._db().execute("SELECT COUNT(*) FROM charges WHERE lower(project)='documents'").fetchone()[0]
+n_vp = budget._ledger().count(where={"project_primary": "vision-pipeline"})
+n_doc = budget._ledger().count(filt="lower(COALESCE(project_primary,''))='documents'")
 ck("after move: both rows are 'vision-pipeline', none left as documents", n_vp == 2 and n_doc == 0)
 
 # ── estimate_llm_retag: ZERO-SPEND estimate (per the API spend protocol), exact formula ──
