@@ -159,9 +159,31 @@ def _is_policy_rejection(err):
     return any(m in t for m in _POLICY_MARKERS)
 
 
+# Exception CLASS names (a structured signal, never message prose) that mean the vendor did not ANSWER within
+# the budget — a DEADLINE — as opposed to the connection breaking or being refused, which stays a transport
+# fault. The SDKs wrap an httpx timeout as APITimeoutError; a raw httpx timeout surfaces its own class.
+_DEADLINE_EXC_TYPES = ("APITimeoutError", "ReadTimeout", "PoolTimeout", "WriteTimeout", "TimeoutException",
+                       "TimeoutError", "Timeout")
+
+
 def _classify(r, want_text=True):
     """(kind, stop_reason) from an adapters result. Parsing declared fields, not inferring intent."""
+    # AN EXPLICIT TRUNCATION IS A TRUNCATION, NOT A TRANSPORT FAULT — even though adapters attaches an `error`
+    # string to it after raising the cap and re-asking (retries exhausted). Labeling it TRUNCATED rather than
+    # transport_error is what keeps fan_out's coverage report honest about WHY the vendor didn't answer, and —
+    # with Result.text raising on TRUNCATED — is the last guard that stops a cut-off body being read as "no
+    # findings" (measured: a truncated kimi review scored as a clean/empty result, a coverage lie).
+    if r.get("truncated") is True:
+        return TRUNCATED, r.get("finish_reason")
     if r.get("error"):
+        # A DEADLINE IS NOT A TRANSPORT FAULT. The vendor connected and simply did not answer within the budget
+        # (the join abandoned it, or the client read-timeout fired) — distinct from the connection breaking.
+        # Told apart by the exception TYPE adapters preserved (error_type), or the abandon flag from _attempt —
+        # never the message prose. This is what lets fan_out's coverage report distinguish "too slow" from
+        # "unreachable" instead of one opaque transport_error, and (unlike transport) it is NOT retried: the
+        # budget that was going to be spent already has been.
+        if r.get("deadline") or (r.get("error_type") in _DEADLINE_EXC_TYPES):
+            return DEADLINE_EXCEEDED, r.get("finish_reason")
         # A PROVIDER-SIDE POLICY REJECTION IS A REFUSAL, NOT A TRANSPORT FAULT. The distinction is not
         # cosmetic: transport faults are RETRIED, and a deterministic policy rejection retried three times
         # is three times the latency and three times nothing. Measured on Moonshot — a source-code payload
@@ -380,8 +402,10 @@ def _attempt(vendor, model, prompt, system, max_tokens, budget_s, schema=None, r
     t.start()
     t.join(timeout=budget_s)
     if t.is_alive():
+        # deadline=True: this is the ABANDON the module was named for — the call ran the whole budget without
+        # returning. _classify maps it to DEADLINE_EXCEEDED, not transport_error, and call() does not retry it.
         return {"error": f"no response within {budget_s:.0f}s (abandoned)", "text": None,
-                "finish_reason": None}
+                "finish_reason": None, "deadline": True}
     return box.get("r") or {"error": "adapter returned nothing", "text": None}
 
 
@@ -697,28 +721,39 @@ def class_sig(model, purpose):
 
 
 def output_cap(vendor, model, sig=None):
-    """(tokens, basis) — the termination bound for this (vendor, model). Precedence, all MEASURED or PUBLISHED,
-    never guessed: the recorded registry → this class's own observed need → the vendor's published ceiling →
-    (None, 'unknown'), which callers must treat as 'do not send a cap you invented'."""
+    """(tokens, basis) — the termination bound for this (vendor, model).
+
+    THE FLOOR IS 32K UNLESS THE MODEL'S OWN PUBLISHED MAX IS LOWER. A measured registry/observed number only
+    RAISES the cap above that floor, it never lowers it below — billing is on tokens GENERATED, so a floor costs
+    nothing and only prevents truncation. Measured: kimi-k3's registry cap was a stale 26,128 (below the 32K the
+    model finishes long reviews in), and because output_cap returned it as an explicit cap it bypassed the
+    adapters TOKEN_FLOOR and starved the review. The RAISE precedence is recorded registry → this class's
+    observed need; the result is then floored to 32K and clamped to the model's published max so it can never
+    exceed what the endpoint will accept. There is no longer an 'unknown' return: the floor IS the default."""
+    from . import adapters
+    resolved, basis = 0, "floor"
     rec = caps().get(f"{vendor}/{model}")
     if rec and rec.get("max_output_tokens"):
-        return int(rec["max_output_tokens"]), "registry:" + (rec.get("method") or "?")
-    if sig:
+        resolved, basis = int(rec["max_output_tokens"]), "registry:" + (rec.get("method") or "?")
+    elif sig:
         try:
             from . import bulkgate
             b = bulkgate.maxtokens(sig)
             if b and b.get("recommend"):
-                return int(b["recommend"]), "observed"
+                resolved, basis = int(b["recommend"]), "observed"
         except Exception:
             pass
+    published = None
     try:
         from . import pricing
-        lim = pricing.max_output_tokens(model)
-        if lim:
-            return int(lim), "vendor-published"
+        published = pricing.max_output_tokens(model)
     except Exception:
         pass
-    return CAP_UNKNOWN, "unknown"
+    floor = min(adapters.TOKEN_FLOOR, int(published)) if published else adapters.TOKEN_FLOOR
+    cap = max(resolved, floor)
+    if published:
+        cap = min(cap, int(published))
+    return cap, basis
 
 
 # A GUARD MUST NOT FIRE ON EVIDENCE TOO THIN TO BE EVIDENCE. Both bound-validators refuse a caller's number

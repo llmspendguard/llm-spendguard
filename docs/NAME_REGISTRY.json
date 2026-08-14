@@ -68,9 +68,9 @@
       "why": "Both are identical one-line wrappers delegating to attribution.iso_period; the docstring even admits chat and claudecode each carried this same wrapper. The real logic already lives in one place, but "
     },
     "_key": {
-      "n": 2,
+      "n": 3,
       "verdict": "COLLISION",
-      "why": "Both named `_key` but resolve different API keys for different services: one fetches ANTHROPIC_API_KEY (raising a RuntimeError when missing), the other fetches VAST_API_KEY (silently degrading to empt"
+      "why": "Three provider-specific credential resolvers each fetching a DIFFERENT key from different sources: ANTHROPIC_API_KEY/keys.env, VAST_API_KEY/vastai config, and ZAI coding/api key. Same bare name, entirely different jobs and error semantics (one raises, others return empty/fallback)."
     },
     "_load_state": {
       "n": 4,
@@ -188,9 +188,9 @@
       "why": "Three unrelated jobs: cacheaudit.audit reports prompt-caching cost opportunities, coverage.audit enumerates venvs with LLM SDKs for gating coverage, ledger.SpendLedger.audit appends a hash-chained aud"
     },
     "available": {
-      "n": 2,
+      "n": 3,
       "verdict": "PROTOCOL",
-      "why": "Each module exposes an `available()` predicate as part of a lane/exec interface contract; identical two-line body but each resolves its own DIFFERENT binary via its own module-local `_bin()`. This is "
+      "why": "Each available() is a lane's readiness probe — same contract (bool: can this lane run?), different resource. codex/subscription check distinct binaries; zai checks a key. The identical two-line bodies resolve DIFFERENT _bin()s, so they aren't a mergeable duplicate; they're per-lane implementations of one interface."
     },
     "build": {
       "n": 3,
@@ -328,9 +328,9 @@
       "why": "One is a batch-gate method that checks bulk-submission gates then calls submit_fn; the other is a reconciliation loop over a cost source adapter. Entirely different jobs sharing the bare name 'run'."
     },
     "run_prompt": {
-      "n": 2,
+      "n": 3,
       "verdict": "PROTOCOL",
-      "why": "Both implement the same contract — one headless plan-billed executor lane returning identical {text, in_tok, out_tok, latency, error} dicts with the same signature. They are deliberate backend variant"
+      "why": "Three distinct execution lanes (Codex CLI, Claude subscription CLI, z.ai GLM HTTP) implementing the same duck-typed contract: same signature and same {text, in_tok, out_tok, latency, error} return shape. Docstrings explicitly reference 'interface parity' and 'same typed contract'. Each dispatches to a different backend — this is intentional polymorphism selected by lane."
     },
     "scrub": {
       "n": 2,

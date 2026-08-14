@@ -95,10 +95,12 @@ SETTINGS = [
          default="claude-haiku-4-5", kind="string", secret=False,
          desc="Model for BULK quality reconstruction/judging. Batch API; must exist in pricing.py."),
     dict(section="advisor", key="executor", store="config.json:advisor.executor", env="SPENDGUARD_ADVISOR_EXECUTOR",
-         default="api", kind="enum:api,claude-code,codex,pool", secret=False,
+         default="api", kind="enum:api,claude-code,codex,zai-coding,pool", secret=False,
          desc="Where spendguard's OWN meta prompts run: api = metered API under caps.meta (default); "
               "claude-code = one-shot headless `claude -p` on the Anthropic plan (anthropic-model prompts only); "
-              "codex = headless `codex exec` on the ChatGPT plan (openai-model prompts only); pool = BOTH lanes, "
+              "codex = headless `codex exec` on the ChatGPT plan (openai-model prompts only); "
+              "zai-coding = z.ai GLM Coding Plan over its Anthropic-compatible endpoint (zai-model prompts only, "
+              "key ZAI_CODING_API_KEY); pool = ALL lanes, "
               "each serving its own provider — a prompt never runs on a different provider's plan than the model "
               "the advisor chose ($0 billed; value on the est-value axis; the provider key env var is stripped "
               "from the child so a plan call can never silently become metered). Any lane failure cools that "

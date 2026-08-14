@@ -35,8 +35,13 @@ def test_the_sdk_gets_a_real_timeout_so_abandonment_cancels():
     # request, so they read the builder. Reading `call` here would inspect the guard wrapper and
     # pass vacuously — a source-reading test silently detaches from its subject when code moves.
     src = inspect.getsource(adapters._call_once)
-    check("both SDK clients are constructed WITH it — a client without a timeout runs to completion",
-          src.count("timeout=timeout_s") >= 2, str(src.count("timeout=timeout_s")))
+    # The clients now take a SPLIT timeout (short connect / full read budget) via _http_timeout, so a blackholed
+    # vendor fails on connect fast instead of holding the slot for the whole budget — still the caller's budget,
+    # just applied smartly. Both clients must get it.
+    check("both SDK clients get the caller's budget as a client timeout — a client without one runs to completion",
+          src.count("_http_timeout(timeout_s)") >= 2, str(src.count("_http_timeout(timeout_s)")))
+    check("...and max_retries=0, so the SDK's own retry loop cannot triple a down vendor's wall time",
+          src.count("max_retries=0") >= 2, str(src.count("max_retries=0")))
     check("_attempt hands the SDK the same budget the caller is enforcing",
           "timeout_s=budget_s" in inspect.getsource(vc._attempt),
           "otherwise the caller's deadline and the request's lifetime are unrelated")

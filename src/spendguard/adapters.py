@@ -61,7 +61,8 @@ def _executor():
 # cooldown so a burst of meta prompts doesn't hammer a dead lane — during cooldown calls go straight
 # to the caged API. Provider-respecting on purpose: a claude-model prompt never silently runs on the
 # ChatGPT plan (or vice versa) — the recorded model must be the model that answered.
-_LANES = {"anthropic": ("claude-code", "subscription_exec"), "openai": ("codex", "codex_exec")}
+_LANES = {"anthropic": ("claude-code", "subscription_exec"), "openai": ("codex", "codex_exec"),
+          "zai": ("zai-coding", "zai_exec")}   # z.ai GLM Coding Plan — Anthropic-compatible flat-fee endpoint
 _lane_cooldown = {}   # lane name -> unix ts until which it is cooling
 
 
@@ -210,6 +211,33 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                       schema=schema, timeout_s=timeout_s)
 
 
+CONNECT_TIMEOUT_S = 10.0     # a live vendor's TCP+TLS handshake is well under this; a blackholed one must fail
+                             # HERE, fast — not after tying up a panel slot for the whole read budget.
+LANE_MIN_TIMEOUT_S = 150.0   # a subscription LANE (CLI cold-start + ~14K context injection for codex, or a plan
+                             # HTTP round-trip) is far slower than a metered call, and it is $0 — so handing it a
+                             # metered call's tight 30s floor just times it out and churns it to the paid API it
+                             # exists to avoid. Floor lane deadlines here; a hung lane is still bounded by its own
+                             # TIMEOUT_S. MEASURED: codex timed out at exactly 30s on a real panel file and fell back.
+
+
+def _http_timeout(timeout_s):
+    """An httpx.Timeout that fails FAST on a DEAD endpoint but gives a live-but-slow one the full read budget.
+
+    A bare float handed to the SDK sets connect == read == write == budget, so a vendor that BLACKHOLES the
+    connection (measured: z.ai, SYN dropped) held a fan_out slot for the entire budget — up to 600s — just
+    trying to connect, and one such vendor made every file in the panel wait that long. Splitting the two so
+    CONNECT is short and READ is the budget lets a down vendor be declared unavailable in ~10s while a genuinely
+    slow-but-alive one still gets its measured time. Falls back to the plain float if httpx is somehow absent
+    (it is a hard dependency of both SDKs, so this is belt-and-suspenders, not a real branch)."""
+    if not timeout_s:
+        return None
+    try:
+        import httpx
+        return httpx.Timeout(float(timeout_s), connect=min(CONNECT_TIMEOUT_S, float(timeout_s)))
+    except Exception:
+        return float(timeout_s)
+
+
 def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None):
     """One raw request. Everything public goes through `call`, which adds the input and output guards.
 
@@ -238,7 +266,24 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
     _lane = _lane_for(prov)
     if _lane:
         lane_name, lane_mod = _lane
-        s = lane_mod.run_prompt(prompt, system=system, model=raw)   # honor the chosen tier on the plan too
+        # THE SHAPE MUST RIDE THE PROMPT ON A LANE, AND THE DEADLINE MUST BE THE CALLER'S. A CLI completion
+        # takes no response_format / forced-tool parameter, so a caller's `schema` was silently dropped here —
+        # the model returned prose, output_contract rejected it, and the lane looked "unreliable" when it was
+        # simply never told what to emit. Fold the shape into the system prompt (the same channel the
+        # OpenAI-compatible path uses at line ~299) and let output_contract validate the text. And hand the
+        # lane the caller's timeout_s, not its own 300s default, so a lane call is bounded exactly like the API
+        # call it stands in for (a hung CLI must not outlive the budget the panel enforces on every vendor).
+        _lane_sys = system
+        if schema is not None:
+            _shape = json_schema_request("compat", schema).get("_schema_prompt")
+            if _shape:
+                _lane_sys = ((system + "\n\n") if system else "") + _shape
+        # Floor the lane deadline (LANE_MIN_TIMEOUT_S) so a slow CLI/plan call is not timed out by a metered
+        # call's tight budget and churned to the paid API; cap it at the lane's own TIMEOUT_S so a hung lane is
+        # still bounded. The lane is $0, so a generous wait costs latency, not money.
+        _lane_cap = int(getattr(lane_mod, "TIMEOUT_S", 300))
+        _lane_timeout = min(_lane_cap, max(int(timeout_s or 0), int(LANE_MIN_TIMEOUT_S)))
+        s = lane_mod.run_prompt(prompt, system=_lane_sys, model=raw, timeout=_lane_timeout)
         if not s.get("error"):
             try:
                 from . import calls
@@ -264,7 +309,11 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             # measured, a review that saw 18 results was billed for 146 calls, because every abandoned call
             # finished on its own and the caller never learned it existed. Handing the SDK the same budget the
             # caller is enforcing makes abandonment real.
-            c = anthropic.Anthropic(api_key=key, timeout=timeout_s) if timeout_s else anthropic.Anthropic(api_key=key)
+            # timeout: fast-connect / full-read budget (see _http_timeout). max_retries=0: vendor_call owns the
+            # retry loop, and the SDK's default of 2 would silently TRIPLE a down vendor's wall time inside a
+            # single attempt — invisible to the caller's deadline, which is how the 3h30m run stayed hidden.
+            c = (anthropic.Anthropic(api_key=key, timeout=_http_timeout(timeout_s), max_retries=0)
+                 if timeout_s else anthropic.Anthropic(api_key=key))
             kw = {"model": raw, "max_tokens": max_tokens, "messages": [{"role": "user", "content": prompt}]}
             if system:
                 kw["system"] = system
@@ -291,8 +340,10 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             _finish = getattr(m, "stop_reason", None)
         else:
             from openai import OpenAI
-            c = (OpenAI(api_key=key, base_url=spec["base_url"], timeout=timeout_s) if timeout_s
-                 else OpenAI(api_key=key, base_url=spec["base_url"]))
+            # Same fast-connect / no-SDK-retry discipline as the anthropic branch: a blackholed OpenAI-compatible
+            # endpoint (z.ai, moonshot) must fail on CONNECT in ~10s, not hold the slot for the whole read budget.
+            c = (OpenAI(api_key=key, base_url=spec["base_url"], timeout=_http_timeout(timeout_s), max_retries=0)
+                 if timeout_s else OpenAI(api_key=key, base_url=spec["base_url"]))
             msgs = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": prompt}]
             okw = {"model": raw, "messages": msgs}
             if schema is not None:
@@ -454,7 +505,11 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         return {**base, "text": text, "in_tok": in_tok, "out_tok": out_tok, "latency": dt, "cost": cost,
                 "finish_reason": _finish, "error": None}
     except Exception as e:
-        return {**base, "latency": time.time() - t0, "error": str(e)[:140]}
+        # error_type is the exception CLASS name — a structured signal (like an HTTP status or sqlite_errorname),
+        # NOT the message prose. vendor_call uses it to tell a deadline (the vendor didn't answer in the budget:
+        # APITimeoutError / ReadTimeout) from a transport fault (the connection broke / was refused), so the
+        # coverage report can say WHY a vendor didn't answer instead of lumping both under transport_error.
+        return {**base, "latency": time.time() - t0, "error": str(e)[:140], "error_type": type(e).__name__}
 
 
 # ── a COMPLETE answer, or an explicit UNKNOWN — never a truncated body ───────────────────────────────────

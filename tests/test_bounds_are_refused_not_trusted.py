@@ -21,7 +21,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-bounds-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
-from spendguard import bulkgate, pricing, vendor_call as vc     # noqa: E402
+from spendguard import adapters, bulkgate, pricing, vendor_call as vc     # noqa: E402
 
 failures = 0
 
@@ -86,8 +86,8 @@ check("class_sig() is what recording uses, so a lookup cannot miss it",
 cap, basis = vc.output_cap("anthropic", MODEL, sig=probe_sig)
 check("output_cap's OBSERVED rung actually fires (it never did: raw purpose vs hashed sig)",
       basis in ("observed", "registry:probe") and cap, f"{cap} {basis}")
-check("...and the observed cap is the measured recommendation, not a ceiling",
-      cap == int(bulkgate.maxtokens(probe_sig)["recommend"]), str(cap))
+check("...and the observed cap is the measured recommendation FLOORED at 32K, never a ceiling",
+      cap == max(int(bulkgate.maxtokens(probe_sig)["recommend"]), adapters.TOKEN_FLOOR), str(cap))
 
 # ── the DEADLINE is a bound too, and it went unguarded while max_tokens was guarded ──────────────────
 # The asymmetry cost a whole experiment: a probe passed deadline_s=150 against a class whose calls really

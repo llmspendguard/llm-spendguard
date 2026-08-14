@@ -130,20 +130,23 @@ proves("C", "a hanging call is abandoned at the deadline", _c_probe,
        lambda: setattr(vc, "_attempt", _real_attempt))
 check("a call with no deadline is REFUSED outright", _try(lambda: vc.call("v", "m", "p", deadline_s=0)))
 
-# ── E. measured caps, never invented ──────────────────────────────────────────────────────────────────────
-print("-- E: max_tokens is measured or refused, never a constant --")
+# ── E. caps FLOOR at 32K (a documented default); a measurement only RAISES, never a sub-floor constant ───────
+print("-- E: max_tokens floors at 32K unless the model's own max is lower, never a smaller invented number --")
 def _e_probe():
-    r = vc.call("nosuchvendor", "nosuchmodel", "p", deadline_s=5.0)   # no cap anywhere
-    return (not r.ok) and "no measured output cap" in (r.error or "")
+    # An unknown model gets the DOCUMENTED 32K floor — a principled default (clamped to a model's published max
+    # where it has one), NOT a refusal and NOT a guessed sub-floor number. The rule: the floor IS 32K unless the
+    # model says otherwise. kimi's stale registry 26,128 below this floor is exactly what starved a review.
+    return vc.output_cap("nosuchvendor", "nosuchmodel") == (adapters.TOKEN_FLOOR, "floor")
 
 _real_cap = vc.output_cap
-proves("E", "an unknown model refuses rather than inventing a cap", _e_probe,
-       lambda: setattr(vc, "output_cap", lambda v, m, sig=None: (512, "invented")),
+proves("E", "an unknown model gets the 32K floor, never a smaller invented cap", _e_probe,
+       lambda: setattr(vc, "output_cap", lambda v, m, sig=None: (512, "invented")),   # a sub-floor number is the bug
        lambda: setattr(vc, "output_cap", _real_cap))
 vc.record_cap("testv", "testm", 26128, method="probe", source="unit test")
 check("a recorded cap carries its method and date (provenance, not a number someone typed)",
       vc.caps()["testv/testm"]["method"] == "probe" and vc.caps()["testv/testm"]["measured_at"])
-check("output_cap prefers the registry", vc.output_cap("testv", "testm") == (26128, "registry:probe"))
+check("output_cap keeps the registry provenance but floors a below-floor value up to 32K",
+      vc.output_cap("testv", "testm") == (adapters.TOKEN_FLOOR, "registry:probe"))
 check("a zero cap is refused at write time", _try(lambda: vc.record_cap("t", "m", 0, method="probe")))
 
 # ── F. model discovery ────────────────────────────────────────────────────────────────────────────────────
