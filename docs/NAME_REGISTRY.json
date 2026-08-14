@@ -30,7 +30,7 @@
     "_cost": {
       "n": 2,
       "verdict": "DUPLICATION",
-      "why": "Both compute the same thing \u2014 dollar cost of token usage via pricing table, cache-aware, with the identical batch-cache-read rate logic. The comments in both explicitly call out that this is the same "
+      "why": "Both compute the same thing — dollar cost of token usage via pricing table, cache-aware, with the identical batch-cache-read rate logic. The comments in both explicitly call out that this is the same "
     },
     "_db": {
       "n": 8,
@@ -40,7 +40,7 @@
     "_digest": {
       "n": 2,
       "verdict": "PROTOCOL",
-      "why": "Both parse one session file into a digest dict/row for their respective provider format (claudecode's jsonl vs codex's jsonl). Same contract \u2014 'one session \u2192 digest' \u2014 over different formats, dispatch"
+      "why": "Both parse one session file into a digest dict/row for their respective provider format (claudecode's jsonl vs codex's jsonl). Same contract — 'one session → digest' — over different formats, dispatch"
     },
     "_enabled": {
       "n": 2,
@@ -60,7 +60,7 @@
     "_get": {
       "n": 3,
       "verdict": "COLLISION",
-      "why": "Three different `_get` helpers hit three different APIs (Lambda, Anthropic, vast.ai) with different signatures \u2014 (path), (url, k), (path) \u2014 and different auth/key logic. They share a name but do diffe"
+      "why": "Three different `_get` helpers hit three different APIs (Lambda, Anthropic, vast.ai) with different signatures — (path), (url, k), (path) — and different auth/key logic. They share a name but do diffe"
     },
     "_iso_period": {
       "n": 2,
@@ -111,6 +111,11 @@
       "n": 2,
       "verdict": "DUPLICATION",
       "why": "Both are thin wrappers over config.project_of_cwd, differing only in a hardcoded default tag ('claude-code' vs 'codex'). The comments explicitly note each is the same as the other but for its default "
+    },
+    "_recording": {
+      "n": 2,
+      "verdict": "PROTOCOL",
+      "why": "These are sync and async variants of the same wrapper contract, each living on its respective stream class (_GatedMessageStream vs _GatedAsyncMessageStream). They are intentionally parallel implementations for sync/async duck-typed attribute wrapping, not accidental copies nor different jobs."
     },
     "_register_builtins": {
       "n": 2,
@@ -290,7 +295,7 @@
     "project_of": {
       "n": 2,
       "verdict": "PROTOCOL",
-      "why": "resources.project_of is a thin convenience wrapper that delegates to gpu_port.project_of, supplying a default label_map. Not a duplicate implementation\u2014it's a bound/defaulted adapter over the single c"
+      "why": "resources.project_of is a thin convenience wrapper that delegates to gpu_port.project_of, supplying a default label_map. Not a duplicate implementation—it's a bound/defaulted adapter over the single c"
     },
     "push": {
       "n": 2,
@@ -303,19 +308,9 @@
       "why": "Both are nested helpers named ratios but compute different things: _opi_obs.ratios returns output/input token ratios, while _residual_obs.ratios returns actual-cost/expected-cost ratios (residuals aga"
     },
     "record": {
-      "n": 4,
+      "n": 6,
       "verdict": "COLLISION",
-      "why": "Four unrelated stores wearing one verb. budget.record writes a money charge with forensic basis/intent/actor; callio.record inserts a prompt/output sample into call_io (idempotent on batch+custom_id);"
-    },
-    "record_estimate": {
-      "n": 2,
-      "verdict": "COLLISION",
-      "why": "bulkgate.record_estimate upserts a worst-case zero-spend estimate into gate_ledger keyed by call-class sig; calibrate.record_estimate logs a caller's per-job cost prediction into c"
-    },
-    "register": {
-      "n": 2,
-      "verdict": "COLLISION",
-      "why": "Two different registries: gate.register adds SDK gating hooks to a list _EXTRA with a 5-tuple signature, while sources.register maps a name to a factory in a _SOURCES dict. Differe"
+      "why": "These share the verb 'record' but write to different stores with different schemas and semantics: budget.record writes a money charge to the budget ledger, callio.record inserts a call_io sample (prompt/output capture), calls.record logs a call with token/latency/feedback tracking, ledger.SpendLedger.record normalizes a spend event dict into the spend ledger, and the two gate stream managers finalize streamed accounting. The two gate methods DO form a real protocol pair (stream-manager finalization, nearly identical bodies), but the four module-level 'record' functions are distinct jobs with distinct signatures. A grep or careless import of 'record' lands on the wrong ledger."
     },
     "render": {
       "n": 2,
@@ -335,7 +330,7 @@
     "run_prompt": {
       "n": 2,
       "verdict": "PROTOCOL",
-      "why": "Both implement the same contract \u2014 one headless plan-billed executor lane returning identical {text, in_tok, out_tok, latency, error} dicts with the same signature. They are deliberate backend variant"
+      "why": "Both implement the same contract — one headless plan-billed executor lane returning identical {text, in_tok, out_tok, latency, error} dicts with the same signature. They are deliberate backend variant"
     },
     "scrub": {
       "n": 2,
@@ -345,7 +340,7 @@
     "show": {
       "n": 4,
       "verdict": "PROTOCOL",
-      "why": "Each show() is a per-source reporting entry point (calibration, claude.ai chat, claude-code, codex) invoked polymorphically by the CLI dispatch \u2014 same 'render this source's report' contract, different"
+      "why": "Each show() is a per-source reporting entry point (calibration, claude.ai chat, claude-code, codex) invoked polymorphically by the CLI dispatch — same 'render this source's report' contract, different"
     },
     "snapshot": {
       "n": 2,
@@ -365,7 +360,12 @@
     "story": {
       "n": 2,
       "verdict": "DUPLICATION",
-      "why": "Both are 'caged synth over a period \u2192 narrative STORY + private WORK INSIGHTS, estimate-first, capped under caps.meta' with identical signatures. They differ only in data source (chat conversations vs"
+      "why": "Both are 'caged synth over a period → narrative STORY + private WORK INSIGHTS, estimate-first, capped under caps.meta' with identical signatures. They differ only in data source (chat conversations vs"
+    },
+    "stream": {
+      "n": 2,
+      "verdict": "PROTOCOL",
+      "why": "One wraps the async stream manager (_GatedAsyncStreamManager), the other the sync one (_GatedStreamManager). These are parallel sync/async implementations of the same wrapping contract, each installed onto its respective client class. They intentionally share the name because they patch the same method on different (sync vs async) client types."
     },
     "summary": {
       "n": 2,
@@ -380,7 +380,7 @@
     "sync": {
       "n": 8,
       "verdict": "PROTOCOL",
-      "why": "chat/claudecode/codex/resources.sync all share one adapter contract: `sync(dry=False)` pushing a channel's spend rows \u2192 the server, org-routed, honoring visibility/contributor. They are intentional po"
+      "why": "chat/claudecode/codex/resources.sync all share one adapter contract: `sync(dry=False)` pushing a channel's spend rows → the server, org-routed, honoring visibility/contributor. They are intentional po"
     },
     "test": {
       "n": 2,
@@ -411,11 +411,6 @@
       "n": 2,
       "verdict": "PROTOCOL",
       "why": "Both implement the same 'WORK DONE report' contract for different data sources (claude.ai chat vs Claude Code sessions), bucketing rows by period and printing a consistent report. They are parallel so"
-    },
-    "add": {
-      "n": 2,
-      "verdict": "COLLISION",
-      "why": "Two unrelated local helper closures: one aggregates GPU cost/hours by (proj,gpu,day), the other appends token-cap call sites for reporting. Different signatures, different data, different jobs."
     }
   }
 }

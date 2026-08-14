@@ -790,9 +790,10 @@ class SpendLedger:
         return self._cat_dec(LLM_USD_COLS, "COALESCE(is_meta,0)=1 AND " + self._NOT_VOID,
                              since=since, until=until, where=where)
 
-    def count(self, where=None, filt="", since=None):
-        """COUNT of rows matching `where`/`filt` (a facade-authored predicate) — e.g. the still-untagged rows
-        the project-tag cascade needs to size its work."""
+    def count_events(self, where=None, filt="", since=None):
+        """COUNT of spend_events rows matching `where`/`filt` (a facade-authored predicate) — e.g. the
+        still-untagged rows the project-tag cascade needs to size its work. Named for the table it counts so it
+        does not collide with callio.count (call_io rows) or content_tokens.count (tokens)."""
         w, args = self._where(since, None, where)
         if filt:
             w += " AND " + filt

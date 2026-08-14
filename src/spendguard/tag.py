@@ -52,7 +52,7 @@ def ambiguous_count():
     deterministic runs, but non-repo or mixed-context charges can remain). Zero-spend."""
     from . import budget
     with budget._lock:
-        return int(budget._ledger().count(filt=_EMPTY_PROJECT) or 0)
+        return int(budget._ledger().count_events(filt=_EMPTY_PROJECT) or 0)
 
 
 def estimate_llm_retag():

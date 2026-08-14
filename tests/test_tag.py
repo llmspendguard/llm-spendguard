@@ -55,8 +55,8 @@ _insert("2026-06-04", "batch", 5.0, "Documents")
 _insert("2026-06-04", "batch", 6.0, "documents")
 moved = tag.move_project("DOCUMENTS", "vision-pipeline")   # case-insensitive match
 ck("move_project re-tags both case variants (case-insensitive)", moved == 2)
-n_vp = budget._ledger().count(where={"project_primary": "vision-pipeline"})
-n_doc = budget._ledger().count(filt="lower(COALESCE(project_primary,''))='documents'")
+n_vp = budget._ledger().count_events(where={"project_primary": "vision-pipeline"})
+n_doc = budget._ledger().count_events(filt="lower(COALESCE(project_primary,''))='documents'")
 ck("after move: both rows are 'vision-pipeline', none left as documents", n_vp == 2 and n_doc == 0)
 
 # ── estimate_llm_retag: ZERO-SPEND estimate (per the API spend protocol), exact formula ──

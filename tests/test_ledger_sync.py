@@ -215,10 +215,10 @@ check("no provider errors", summ["errors"] == {})
 check("both providers ok", set(summ["providers_ok"]) == {"openai", "anthropic"})
 
 # idempotent: a reconciled row was written to spend_events, and re-running rebuilds (not double-counts)
-recon_rows = budget._ledger().count(where={"recon_marker": "(provider-batch)"})
+recon_rows = budget._ledger().count_events(where={"recon_marker": "(provider-batch)"})
 check("one reconciled row written", recon_rows == 1)
 summ2 = LS.reconcile_into_ledger(since=SINCE)
-recon_rows2 = budget._ledger().count(where={"recon_marker": "(provider-batch)"})
+recon_rows2 = budget._ledger().count_events(where={"recon_marker": "(provider-batch)"})
 check("still one reconciled row after re-run (idempotent)", recon_rows2 == 1)
 check("same gap on re-run", abs(summ2["ungoverned"] - 15.0) < 1e-9)
 
