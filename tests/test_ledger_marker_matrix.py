@@ -28,7 +28,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-matrix-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
-import re, inspect, pathlib, itertools, datetime
+import ast, inspect, pathlib, itertools, datetime
 from spendguard import budget
 
 failures = 0
@@ -117,17 +117,27 @@ CALLS = {"spent_since": ("2000-01-01",), "quarantined_since": ("2000-01-01",),
 KWARGS = {"by_provider_day": {"kind": "batch"}, "gate_by_project_day": {"kind": "batch"}}
 
 
+# A SpendLedger method that returns a DOLLAR sum. budget is a facade over these now, so a $-aggregator is a
+# budget function that CALLS one of them (detected structurally from the AST, not a substring scan).
+_DOLLAR_PRIMITIVES = {"sum_by", "spent_dec", "meta_dec", "remote_dec", "est_value_dec", "subscription_dec"}
+# sum_by also backs COUNT-only readers (unpriced_since reads its 'n', not 'usd' — the dollars are precisely what
+# is unknown there). Adjudicated out of the matrix by name, once, rather than guessed per-run.
+_COUNT_ONLY = {"unpriced_since"}
+
+
 def aggregators():
-    """Every budget.py function that SUMS money from `charges`. DISCOVERED, not listed — a new aggregator must
-    appear here whether or not anyone remembered to mention it. (Finding the functions is format-determined;
-    what they COUNT is settled by arithmetic below, never by reading the SQL.)"""
-    src = pathlib.Path(inspect.getfile(budget)).read_text()
-    # An aggregator reads `charges` DIRECTLY or through the countable view. The scan must know both, or a
-    # function that moved to the view silently drops out of the matrix — and a matrix that stops watching a
-    # function is exactly as useless as never having listed it.
-    return {blk.split("(")[0].strip(): blk for blk in re.split(r"\ndef ", src)
-            if "SUM(cost)" in blk and ("FROM charges" in blk or "COUNTABLE_VIEW" in blk
-                                       or "countable_charges" in blk)}
+    """Every budget.py function that SUMS DOLLARS out of spend_events. DISCOVERED from the AST — a function is a
+    candidate if it CALLS a SpendLedger dollar primitive (_DOLLAR_PRIMITIVES); the count-only readers are removed
+    by the adjudicated _COUNT_ONLY set. A new aggregator therefore appears here whether or not anyone remembered
+    it. (Finding the functions is format-determined; what they COUNT is settled by arithmetic below.)"""
+    tree = ast.parse(pathlib.Path(inspect.getfile(budget)).read_text())
+    found = set()
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and any(
+                isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute) and c.func.attr in _DOLLAR_PRIMITIVES
+                for c in ast.walk(node)):
+            found.add(node.name)
+    return found - _COUNT_ONLY
 
 
 found = aggregators()

@@ -38,11 +38,14 @@ GATE = [  # (day, provider, model, project, cost)
     ("2026-06-15", "anthropic", "claude-opus-4-8", "manga2anime", 20.0),
     ("2026-06-15", "openai", "gpt-5.5", "", 10.0),          # untagged → (untagged) org bucket
 ]
-with budget._lock:
-    for day, prov, model, proj, cost in GATE:
-        budget._db().execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project) VALUES (?,?,?,?,?,?,?)",
-                             (day + "T00:00:00+00:00", day, prov, model, "batch", cost, proj))
-    budget._db().commit()
+for day, prov, model, proj, cost in GATE:
+    # seed the money-of-record (spend_events) on a chosen DAY via the production charge→event mapping
+    ev = budget.charge_to_event(prov, model, "batch", float(cost))
+    ev["project_primary"] = proj; ev["projects"] = [proj] if proj else []
+    ev["occurred_at"] = ev["ts_utc"] = day + "T00:00:00+00:00"
+    ev["source"] = ev["recorded_by"] = "test"
+    ev["dedup_key"] = "test:%s:%s:%s:%s" % (day, prov, model, cost)
+    budget._ledger().record(ev)
 # attributed (reconciled) row — the agentic gap attribution, real reconciled marker so reconciled_by_project sees it
 budget.record_reconciled("2026-06-10", "openai", 25.0, project="lmm")
 

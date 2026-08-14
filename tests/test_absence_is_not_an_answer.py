@@ -98,17 +98,21 @@ if row:
     budget.record(provider="openai", model="gpt-5.5", kind="realtime", cost=4.56,
                   project="absence-guard-2", conv_id="c-absence-2")
     row2 = budget._db().execute("SELECT rowid FROM charges WHERE project='absence-guard-2'").fetchone()
-    budget._db().execute("ALTER TABLE spend_audit RENAME TO spend_audit_hidden")
-    budget._db().commit()
+    # Simulate the audit write FAILING (as an unmigrated schema would) by making the ledger's audit() raise —
+    # directly, not via schema surgery. Renaming spend_audit would deadlock the ledger's own connection in the
+    # dual-write era AND be re-created on the next _ledger() open; patching the method tests the exact behaviour
+    # (repair proceeds, failure is LOUD) without either.
+    _led = budget._ledger()
+    _orig_audit = _led.audit
+    _led.audit = lambda *a, **k: (_ for _ in ()).throw(Exception("simulated: no such table: spend_audit"))
     err = io.StringIO()
     real_stderr, sys.stderr = sys.stderr, err
     try:
         n2 = budget.quarantine_charge(row=row2[0], reason="guard: audit failure must be loud")
     finally:
         sys.stderr = real_stderr
-        budget._db().execute("ALTER TABLE spend_audit_hidden RENAME TO spend_audit")
-        budget._db().commit()
-    check("the repair still happens when the audit table is missing", n2 == 1, f"rowcount={n2}")
+        _led.audit = _orig_audit
+    check("the repair still happens when the audit write fails", n2 == 1, f"rowcount={n2}")
     check("...and it SAYS SO on stderr instead of passing silently",
           "WITHOUT AN AUDIT ROW" in err.getvalue(),
           f"stderr was {err.getvalue()[:120]!r} — `except Exception: pass` is how a ledger changes with "

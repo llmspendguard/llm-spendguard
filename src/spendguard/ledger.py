@@ -627,6 +627,23 @@ class SpendLedger:
             sql += f" LIMIT {int(limit)}"
         return [self._row(r) for r in self._conn.execute(sql, args).fetchall()]
 
+    def category_col(self, kind):
+        """The money column for a spend category (batch→batch_usd, …), from the canonical _KIND_TO_USD map.
+        Raises on an unknown kind — so a category filter can never silently mis-map to a wrong/absent field and
+        return zero rows. This is the schema's OWN definition of a category, not a guessed 'type' string."""
+        col = _KIND_TO_USD.get((kind or "").lower())
+        if not col:
+            raise ValueError(f"unknown spend category {kind!r}; expected one of {sorted(set(_KIND_TO_USD))}")
+        return col
+
+    def in_category(self, kind, since=None, until=None, where=None):
+        """Rows with spend in `kind` — identified by that category's money COLUMN being populated (the schema's
+        own definition, via category_col), so there is no derived type field to mis-map. Newest day first."""
+        col = self.category_col(kind)
+        w, args = self._where(since, until, where)
+        return [self._row(r) for r in self._conn.execute(
+            f"SELECT * FROM spend_events WHERE {col} IS NOT NULL{w} ORDER BY day", args).fetchall()]
+
     # ── rollup: cost breakdown, billed vs est-value split (exact micros + usd; voided/reversed excluded) ──
     def rollup(self, group_by=None, since=None, until=None, where=None, include_meta=False):
         cols = [group_by] if isinstance(group_by, str) else list(group_by or [])
@@ -708,6 +725,10 @@ class SpendLedger:
     # reversed|void). Reused by the grouped/meta primitives so the "not a void/reversed entry" rule lives in one
     # place rather than re-inlined per method — the same reason _COUNTABLE exists.
     _NOT_VOID = "COALESCE(status,'') NOT IN ('void','reversed')"
+    # The unpriced EXCLUSION, named once. Unpriced rows carry $0 (the price is unknown, not zero), so they never
+    # change a money sum, but they DO change a COUNT and would show as their own basis bucket — the reader that
+    # wants workload-only excludes them with this. (cost_basis is a controlled enum, set only by our writers.)
+    _NOT_UNPRICED = "COALESCE(cost_basis,'') != 'unpriced'"
 
     # ── grouped / distinct / min primitives — the query shapes budget's per-provider/project/key/day/basis
     #    reports need, so `budget` is a thin facade over this class and no consumer writes raw spend_events SQL.

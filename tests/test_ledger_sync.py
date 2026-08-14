@@ -28,16 +28,22 @@ def check(label, cond):
 # ── seed local gate-recorded batch spend over three days; provider stub will bill MORE on one day ──
 DAYS = ["2026-06-01", "2026-06-02", "2026-06-03"]
 # gate saw $10 on d1, $20 on d2, $0 on d3 (the leak day)
-budget._db().execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project) VALUES (?,?,?,?,?,?,?)",
-                     (DAYS[0] + "T00:00:00+00:00", DAYS[0], "openai", "gpt-5.5", "batch", 10.0, "nlp-pipeline"))
-budget._db().execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project) VALUES (?,?,?,?,?,?,?)",
-                     (DAYS[1] + "T00:00:00+00:00", DAYS[1], "openai", "gpt-5.5", "batch", 20.0, "nlp-pipeline"))
+def _seed(day, provider, model, kind, cost, project):
+    """Seed the money-of-record (spend_events) on a chosen DAY through the production charge→event mapping, so
+    markers/kinds/dates land exactly as a real charge would (the readers now read spend_events, not charges)."""
+    ev = budget.charge_to_event(provider, model, kind, float(cost))
+    ev["project_primary"] = project.lower(); ev["projects"] = [project.lower()] if project else []
+    ev["occurred_at"] = ev["ts_utc"] = day + "T00:00:00+00:00"
+    ev["source"] = ev["recorded_by"] = "test"
+    ev["dedup_key"] = "test:%s:%s:%s:%s:%s" % (day, provider, model, kind, cost)
+    budget._ledger().record(ev)
+
+
+_seed(DAYS[0], "openai", "gpt-5.5", "batch", 10.0, "nlp-pipeline")
+_seed(DAYS[1], "openai", "gpt-5.5", "batch", 20.0, "nlp-pipeline")
 # a realtime + a meta row so the kind filters are exercised
-budget._db().execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project) VALUES (?,?,?,?,?,?,?)",
-                     (DAYS[1] + "T00:00:00+00:00", DAYS[1], "openai", "gpt-5.5", "realtime", 4.0, "nlp-pipeline"))
-budget._db().execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project) VALUES (?,?,?,?,?,?,?)",
-                     (DAYS[1] + "T00:00:00+00:00", DAYS[1], "anthropic", "claude-opus-4-8", "meta", 1.5, "llm-spendguard"))
-budget._db().commit()
+_seed(DAYS[1], "openai", "gpt-5.5", "realtime", 4.0, "nlp-pipeline")
+_seed(DAYS[1], "anthropic", "claude-opus-4-8", "meta", 1.5, "llm-spendguard")
 
 SINCE = DAYS[0]
 # provider billed: d1 $10 (matches), d2 $20 (matches), d3 $30 (gate saw $0 → LEAK $30)
@@ -311,10 +317,10 @@ RT_D1, RT_D2 = "2026-06-05", "2026-06-06"
 with open(_cfg.RT_LOG, "w") as _f:
     _f.write(json.dumps({"day": RT_D1, "provider": "anthropic", "model": "claude-opus-4-8", "calls": 2, "cost": 3.0}) + "\n")
     _f.write(json.dumps({"day": RT_D2, "provider": "anthropic", "model": "claude-opus-4-8", "calls": 1, "cost": 5.0}) + "\n")
-# the ledger already has $5 gate realtime on RT_D2 (no gap); RT_D1 has none → full $3 stranded gap
-budget._db().execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project) VALUES (?,?,?,?,?,?,?)",
-                     (RT_D2 + "T00:00:00+00:00", RT_D2, "anthropic", "claude-opus-4-8", "realtime", 5.0, "vision-pipeline"))
-budget._db().commit()
+# the ledger already has $5 gate realtime on RT_D2 (no gap); RT_D1 has none → full $3 stranded gap. This MUST
+# seed spend_events (via _seed): reconcile_realtime finds existing gate spend through the repointed readers, so a
+# charges-only insert would be invisible to it and it would wrongly import the full $8 instead of the $3 gap.
+_seed(RT_D2, "anthropic", "claude-opus-4-8", "realtime", 5.0, "vision-pipeline")
 r1 = LS.reconcile_realtime(since=RT_D1)
 check("reconcile_realtime: imports only the RT_D1 stranded gap ($3, 1 row)", abs(r1["imported"] - 3.0) < 1e-6 and r1["rows"] == 1)
 _mk = budget._db().execute("SELECT COALESCE(SUM(cost),0), MAX(project) FROM charges WHERE kind='realtime' AND model=?", (LS._RT_MARKER,)).fetchone()

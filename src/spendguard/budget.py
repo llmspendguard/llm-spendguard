@@ -132,6 +132,28 @@ def _shadow_spend_event(provider, model, kind, cost, *, conv_id="", basis="", in
                           f"`spendguard migrate` rebuilds spend_events from charges.\n")
 
 
+def _void_shadow_for_charge(ts, provider, model, kind, cost):
+    """Void the spend_events shadow row matching a charge just quarantined. During dual-write the charge and its
+    shadow share ts/provider/model and the category amount, so we match on those — the amount disambiguates
+    same-second siblings (the exact collision quarantine_by-rowid exists to handle). Best-effort; the charges
+    quarantine is authoritative during the transition, so a miss here never blocks the repair."""
+    try:
+        from .ledger import to_dec
+        led = _ledger()
+        k = (kind or "realtime").lower()
+        col = "realtime_usd" if k == "meta" else led.category_col(k)
+        want = to_dec(cost)
+        for r in led.query(where={"ts_utc": ts, "provider": provider or "?", "model": model or "?"}):
+            if r.get("status") != "void" and to_dec(r.get(col)) == want:
+                led.update(r["id"], {"status": "void"}, actor="quarantine_charge", reason="quarantine")
+                break
+    except Exception as e:
+        import sys as _sys
+        _sys.stderr.write(f"[budget] WARN could not void the spend_events shadow of a quarantined charge "
+                          f"({type(e).__name__}: {str(e)[:100]}) — charges is quarantined; run "
+                          f"`spendguard migrate` to re-sync spend_events.\n")
+
+
 def _project():
     """Project tag for a charge (the repo/work this spend belongs to) — cached per process. Order:
     $SPENDGUARD_PROJECT → saas config `project` (repo-local .spendguard.json) → git repo root basename → cwd."""
@@ -423,23 +445,16 @@ def _count_moves(fixes):
 
 
 def projects_for_conv(conv):
-    """Distinct repos (projects) THIS conversation touched — its workload charges. Powers the contextual receipt's
+    """Distinct repos (projects) THIS conversation touched — its workload spend. Powers the contextual receipt's
     collapsed view (a conversation can span repos; this very chat touched llm-spendguard + manga2anime + lmm)."""
     if not conv:
         return []
-    with _lock:
-        rows = _db().execute("SELECT DISTINCT project FROM charges WHERE conv_id = ? AND project != '' "
-                             "AND (kind IS NULL OR kind != 'meta')", (str(conv),)).fetchall()
-    return sorted(r[0] for r in rows if r[0])
+    return _ledger().distinct("project_primary", where={"conv_id": str(conv), "is_meta": 0})
 
 
 def all_projects():
-    """All repos with workload charges (the expanded all-repos view)."""
-    with _lock:
-        rows = _db().execute("SELECT DISTINCT project FROM charges WHERE project != '' "
-                             "AND (kind IS NULL OR kind != 'meta') AND (model IS NULL OR model <> ?)",
-                             (_RECONCILED,)).fetchall()
-    return sorted(r[0] for r in rows if r[0])
+    """All repos with workload spend (the expanded all-repos view) — excludes meta + reconciliation-mirror rows."""
+    return _ledger().distinct("project_primary", where={"is_meta": 0, "reconciled": 0})
 
 
 _SNAPPED = set()
@@ -618,27 +633,16 @@ def spent_since(day, project=None, conv=None):
 
 
 def suspect_batches(since):
-    """Batch charges since `since`, joined to their `calls` row for the token counts, so an operator can SEE
-    the arithmetic behind a number they doubt. Deliberately NOT automatic: recovering how many requests a
-    past batch held is not always possible, and a repair that guesses the denominator would be the same class
-    of mistake as the bug it is repairing. `spendguard quarantine --list` prints this; --ts acts on one row."""
-    with _lock:
-        # `calls` is created lazily (only when call logging is on), so its absence is NORMAL, not an error —
-        # without it we still list the charges, just with no token counts to divide.
-        has_calls = _db().execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='calls'").fetchone()
-        # rowid is selected because it is the ONLY exact handle on a row: `ts` has second granularity and up
-        # to six charges can share one second, so a ts-targeted repair could tag five innocent charges.
-        sql = ("SELECT c.rowid, c.ts, c.day, c.provider, c.model, c.cost, COALESCE(c.project,''), "
-               "       COALESCE(c.conv_id,''), k.in_tok, k.out_tok, COALESCE(k.caller,'') "
-               "FROM charges c LEFT JOIN calls k ON k.ts = c.ts AND k.model = c.model AND k.kind = 'batch' "
-               "WHERE c.kind='batch' AND c.day >= ? ORDER BY c.cost DESC") if has_calls else (
-               "SELECT c.rowid, c.ts, c.day, c.provider, c.model, c.cost, COALESCE(c.project,''), "
-               "       COALESCE(c.conv_id,''), NULL, NULL, '' "
-               "FROM charges c WHERE c.kind='batch' AND c.day >= ? ORDER BY c.cost DESC")
-        rows = _db().execute(sql, (since,)).fetchall()
-    return [{"row": rid, "ts": t, "day": d, "provider": p_, "model": m, "cost": float(c or 0), "project": pr,
-             "conv_id": cv, "in_tok": i, "out_tok": o, "caller": cl}
-            for rid, t, d, p_, m, c, pr, cv, i, o, cl in rows]
+    """Batch spend since `since`, with the token counts, so an operator can SEE the arithmetic behind a number
+    they doubt. `row` is the spend_events id — the exact handle for `spendguard quarantine --row`. Batch rows
+    come from in_category('batch') (the batch money column populated — the schema's own definition), and the
+    tokens live on the row (in_tok/out_tok) so there's no `calls` join; `actor` carries the caller."""
+    rows = _ledger().in_category("batch", since=since)
+    out = [{"row": r["id"], "ts": r["ts_utc"], "day": r["day"], "provider": r["provider"] or "?",
+            "model": r["model"] or "?", "cost": float(r["batch_usd"] or 0), "project": r["project_primary"] or "",
+            "conv_id": r["conv_id"] or "", "in_tok": r["in_tok"], "out_tok": r["out_tok"], "caller": r["actor"] or ""}
+           for r in rows]
+    return sorted(out, key=lambda x: -x["cost"])
 
 
 def quarantine_charge(ts=None, reason="", row=None):
@@ -649,8 +653,11 @@ def quarantine_charge(ts=None, reason="", row=None):
     share one second, so a ts that matches more than one row RAISES rather than tagging all of them: silently
     excluding five innocent charges to quarantine one bad one would be a worse version of the bug this repairs.
     Returns the number of rows tagged (0 = nothing matched)."""
+    charge = None                                  # the charge's fields, to void its spend_events shadow too
     with _lock:
         if row is not None:
+            charge = _db().execute("SELECT ts, provider, model, cost, kind FROM charges WHERE rowid=?",
+                                   (int(row),)).fetchone()
             cur = _db().execute("UPDATE charges SET conv_id=? WHERE rowid=? AND conv_id <> ?",
                                 (QUARANTINE_CONV, int(row), QUARANTINE_CONV))
         else:
@@ -661,6 +668,8 @@ def quarantine_charge(ts=None, reason="", row=None):
                     "%d charges share the timestamp %s (%s) — refusing to quarantine all of them. Re-run with "
                     "--row <rowid> for the one you mean; `spendguard quarantine --list` shows the rowids."
                     % (len(hits), ts, ", ".join(f"row {h[0]}: {h[1]} ${h[2]:,.2f}" for h in hits)))
+            charge = _db().execute("SELECT ts, provider, model, cost, kind FROM charges WHERE ts=? LIMIT 1",
+                                   (ts,)).fetchone()
             cur = _db().execute("UPDATE charges SET conv_id=? WHERE ts=? AND conv_id <> ?",
                                 (QUARANTINE_CONV, ts, QUARANTINE_CONV))
         n = cur.rowcount
@@ -674,6 +683,11 @@ def quarantine_charge(ts=None, reason="", row=None):
         # exact failure this table exists to prevent: an accounting tool whose tamper record can go missing
         # in silence has no tamper record.
         _db().commit()
+    # Void the matching spend_events shadow row so quarantine drops out of THAT ledger's totals too (the
+    # readers now read spend_events). Best-effort during the dual-write transition.
+    if n and charge is not None:
+        # charge = (ts, provider, model, cost, kind) — a plain tuple from the charges connection
+        _void_shadow_for_charge(charge[0], charge[1], charge[2], charge[4], charge[3])
     # THROUGH THE CHAIN, AFTER THE COMMIT. The raw INSERT here left 99 unchained rows in the
     # tamper-evidence log — the same defect as reattribute's, and the one it was copied from — and
     # SpendLedger's own connection cannot write while this module's transaction is open.
@@ -695,14 +709,12 @@ def quarantine_charge(ts=None, reason="", row=None):
 
 
 def unpriced_since(day):
-    """[{model, provider, calls, in_tok, out_tok}] of calls recorded with NO price since `day`. The tokens are
-    real; only the dollars are unknown. Surfacing this is the difference between "we spent $0" and "we cannot
-    tell you what we spent" — and the second one is actionable (`spendguard price <model> …`)."""
-    with _lock:
-        rows = _db().execute(
-            "SELECT COALESCE(provider,'?'), COALESCE(model,'?'), COUNT(*) FROM charges "
-            "WHERE day >= ? AND conv_id = ? GROUP BY 1, 2 ORDER BY 3 DESC", (day, UNPRICED_CONV)).fetchall()
-    return [{"provider": p, "model": m, "calls": int(n)} for p, m, n in rows]
+    """[{provider, model, calls}] of calls recorded with NO price since `day` — the cost_basis='unpriced' rows.
+    The tokens are real; only the dollars are unknown. Surfacing this is the difference between "we spent $0"
+    and "we cannot tell you what we spent" — and the second one is actionable (`spendguard price <model> …`)."""
+    res = _ledger().sum_by(["provider", "model"], since=day, where={"cost_basis": "unpriced"})
+    out = [{"provider": p or "?", "model": m or "?", "calls": v["n"]} for (p, m), v in res.items()]
+    return sorted(out, key=lambda x: -x["calls"])
 
 
 def record_unpriced(provider, model, kind, in_tok=0, out_tok=0, project=None):
@@ -722,82 +734,54 @@ def record_unpriced(provider, model, kind, in_tok=0, out_tok=0, project=None):
                         source="gate", dedup_suffix=":unpriced")
 
 
-# RAW-CHARGES-OK: listing quarantined rows IS the job — the view removes exactly these
 def quarantined_since(day):
-    """[{day, provider, model, cost, project}] of QUARANTINED rows since `day` — estimates the gate proved
-    impossible. They are kept (forensics: what the estimator claimed, and when) and excluded from every total,
-    so the honest thing is to SHOW them rather than let them vanish silently."""
-    with _lock:
-        rows = _db().execute(
-            "SELECT day, COALESCE(provider,'?'), COALESCE(model,'?'), COALESCE(SUM(cost),0), COALESCE(project,''), "
-            "COUNT(*) FROM charges WHERE day >= ? AND conv_id = ? GROUP BY day, provider, model, project "
-            "ORDER BY SUM(cost) DESC", (day, QUARANTINE_CONV)).fetchall()
-    return [{"day": d, "provider": p, "model": m, "cost": float(c or 0), "project": pr, "n": n}
-            for d, p, m, c, pr, n in rows]
+    """[{day, provider, model, cost, project, n}] of QUARANTINED rows (status=void) since `day` — estimates the
+    gate proved impossible. They are kept (forensics: what the estimator claimed, and when) and excluded from
+    every total, so the honest thing is to SHOW them rather than let them vanish. include_void: these ARE the
+    voided rows, which every other reader excludes."""
+    res = _ledger().sum_by(["day", "provider", "model", "project_primary"], since=day,
+                           where={"status": "void"}, include_void=True)
+    out = [{"day": d, "provider": p or "?", "model": m or "?", "cost": float(v["usd"]), "project": pr or "", "n": v["n"]}
+           for (d, p, m, pr), v in res.items()]
+    return sorted(out, key=lambda x: -x["cost"])
 
 
-# RAW-CHARGES-OK: the audit breakdown must show every basis, including the excluded ones
 def by_basis(day):
-    """{basis: {'cost': $, 'n': rows}} since `day` — how much of the headline is a projection vs a bill.
+    """{basis: {'cost': $, 'n': rows}} since `day` — how much of the headline is a projection vs a bill, read
+    from cost_basis on spend_events. Excludes meta + reconciliation mirrors + quarantine (void) + unpriced.
     Unlabelled legacy rows come back under '' and are shown as unknown, never folded into 'billed'."""
-    with _lock:
-        rows = _db().execute(
-            "SELECT COALESCE(basis,''), COALESCE(SUM(cost),0), COUNT(*) FROM charges WHERE day >= ? "
-            "AND (kind IS NULL OR kind != 'meta') AND (model IS NULL OR model <> ?) "
-            "AND (conv_id IS NULL OR conv_id NOT IN (?, ?)) GROUP BY 1",
-            (day, _RECONCILED, QUARANTINE_CONV, UNPRICED_CONV)).fetchall()
-    return {b: {"cost": float(c or 0), "n": int(n)} for b, c, n in rows}
+    led = _ledger()
+    res = led.sum_by("cost_basis", since=day, where={"is_meta": 0, "reconciled": 0}, filt=led._NOT_UNPRICED)
+    return {(b or ""): {"cost": float(v["usd"]), "n": v["n"]} for b, v in res.items()}
 
 
 # ── reconciliation: make the LOCAL ledger reflect PROVIDER-billed truth (the gap = ungoverned/pre-ledger spend) ──
 def by_provider_day(kind=None, since=None):
-    """Reads COUNTABLE_VIEW: this query used to keep its own exclusion list and was missing marker models, so a
-    backfill row counted as period spend here too. {(provider, day): $} of GATE-recorded spend (excludes reconciled rows) — the attributed side of reconcile."""
-    cond = ["(model IS NULL OR model <> ?)", "(conv_id IS NULL OR conv_id NOT IN (?, ?))"]
-    args = [_RECONCILED, QUARANTINE_CONV, UNPRICED_CONV]           # like-for-like vs provider truth: quarantine excluded
-    if kind:
-        cond.append("kind=?"); args.append(kind)
-    if since:
-        cond.append("day >= ?"); args.append(since)
-    where = "WHERE " + " AND ".join(cond)
-    with _lock:
-        rows = _db().execute(f"SELECT COALESCE(provider,'?'), day, COALESCE(SUM(cost),0) FROM {COUNTABLE_VIEW} {where} "
-                             f"GROUP BY provider, day", args).fetchall()
-    return {(p, d): float(c or 0) for p, d, c in rows}
+    """{(provider, day): $} of GATE-recorded COUNTABLE spend — the attributed side of reconcile. Read from
+    spend_events via the single _COUNTABLE filter (reconciliation mirrors, meta, quarantine, reconstructed all
+    excluded — like-for-like vs provider truth). `kind` restricts to that category's money column."""
+    led = _ledger()
+    cols = [led.category_col(kind)] if kind else None
+    res = led.sum_by(["provider", "day"], cols=cols, filt=led._COUNTABLE, since=since)
+    return {(p or "?", d): float(v["usd"]) for (p, d), v in res.items() if float(v["usd"]) != 0}
 
 
-# RAW-CHARGES-OK: reports the reconciliation marker rows the view excludes
 def reconciled_by_project(since=None):
-    """{project: $} of RECONCILED rows only (the provider-truth gap that reconcile_into_ledger attributed by
-    conversation evidence). The 'attributed' side of the reconcile loop, complement to gate_by_project_day."""
-    # A quarantined row carries a real model so it cannot match `model = _RECONCILED` — but the exclusion is
-    # stated anyway rather than left as a fact someone has to re-derive. Cheap here, and the guard test
-    # requires every cost aggregator to say it out loud.
-    cond, args = ["model = ?", "(conv_id IS NULL OR conv_id NOT IN (?, ?))"], [_RECONCILED, QUARANTINE_CONV, UNPRICED_CONV]
-    if since:
-        cond.append("day >= ?"); args.append(since)
-    where = "WHERE " + " AND ".join(cond)
-    with _lock:
-        rows = _db().execute(f"SELECT COALESCE(NULLIF(project,''),'unattributed'), COALESCE(SUM(cost),0) "
-                             f"FROM charges {where} GROUP BY 1", args).fetchall()
-    return {p: float(c or 0) for p, c in rows}
+    """{project: $} of RECONCILED batch-marker rows (recon_marker='(provider-batch)' — the provider-truth gap
+    reconcile_into_ledger attributed by evidence). The 'attributed' side of the reconcile loop, complement to
+    gate_by_project_day."""
+    res = _ledger().sum_by("project_primary", since=since, where={"recon_marker": _RECONCILED})
+    return {(p or "unattributed"): float(v["usd"]) for p, v in res.items()}
 
 
 def gate_by_project_day(kind=None, since=None):
-    """Reads COUNTABLE_VIEW: this query used to keep its own exclusion list and was missing marker models, so a
-    backfill row counted as period spend here too. {(project, day): $} of GATE-recorded (attributed) spend — excludes reconciled rows. Used to compute the
-    per-project gap so the provider-truth gap is attributed by evidence, not dumped in one 'unattributed' bucket."""
-    cond = ["(model IS NULL OR model <> ?)", "(conv_id IS NULL OR conv_id NOT IN (?, ?))"]
-    args = [_RECONCILED, QUARANTINE_CONV, UNPRICED_CONV]           # like-for-like vs provider truth: quarantine excluded
-    if kind:
-        cond.append("kind=?"); args.append(kind)
-    if since:
-        cond.append("day >= ?"); args.append(since)
-    where = "WHERE " + " AND ".join(cond)
-    with _lock:
-        rows = _db().execute(f"SELECT COALESCE(NULLIF(project,''),'unattributed'), day, COALESCE(SUM(cost),0) "
-                             f"FROM {COUNTABLE_VIEW} {where} GROUP BY 1, day", args).fetchall()
-    return {(p, d): float(c or 0) for p, d, c in rows}
+    """{(project, day): $} of GATE-recorded (attributed) COUNTABLE spend — read from spend_events via _COUNTABLE
+    (reconciliation mirrors/meta/quarantine/reconstructed excluded). Used to compute the per-project gap so the
+    provider-truth gap is attributed by evidence, not dumped in one 'unattributed' bucket."""
+    led = _ledger()
+    cols = [led.category_col(kind)] if kind else None
+    res = led.sum_by(["project_primary", "day"], cols=cols, filt=led._COUNTABLE, since=since)
+    return {(p or "unattributed", d): float(v["usd"]) for (p, d), v in res.items() if float(v["usd"]) != 0}
 
 
 def record_reconciled(day, provider, cost, project="unattributed", kind="batch", model=None):
@@ -829,6 +813,11 @@ def clear_reconciled(since=None, model=None):
         else:
             _db().execute("DELETE FROM charges WHERE model=?", (marker,))
         _db().commit()
+    # DUAL-DELETE the reconciliation-mirror rows from spend_events (idempotent rebuild). delete() refuses locked.
+    try:
+        _ledger().delete(where={"recon_marker": marker}, since=since, actor="clear_reconciled", reason="rebuild")
+    except Exception:
+        pass
 
 
 # ── estimate→actual true-down (ledger_sync.true_down writes these; the gate's batch rows are PRE-SUBMIT
@@ -838,16 +827,14 @@ def gate_batch_cells(since=None):
     """{(project, provider, model, day): $} of GATE-LIVE batch rows — the estimate base the true-down corrects.
     Excludes every reconcile marker model AND prior true-down rows (idempotence: corrections never feed the next
     correction). Full-dimension sibling of gate_by_project_day."""
-    cond = ["kind='batch'", f"(model IS NULL OR model NOT IN ({','.join('?' * len(_MARKER_MODELS))}))",
-            "(conv_id IS NULL OR conv_id NOT IN (?, ?, ?))"]
-    args = list(_MARKER_MODELS) + [_TRUE_DOWN_CONV, QUARANTINE_CONV, UNPRICED_CONV]
-    if since:
-        cond.append("day >= ?"); args.append(since)
-    with _lock:
-        rows = _db().execute("SELECT COALESCE(NULLIF(project,''),'unattributed'), COALESCE(provider,'?'), "
-                             "COALESCE(model,'?'), day, COALESCE(SUM(cost),0) FROM charges WHERE "
-                             + " AND ".join(cond) + " GROUP BY 1, 2, 3, day", args).fetchall()
-    return {(pr, p, m, d): float(c or 0) for pr, p, m, d, c in rows}
+    led = _ledger()
+    # sum the BATCH money column only; exclude reconciliation markers (reconciled=0) and prior true-down rows
+    # (the true-down conv sentinel) so a correction never feeds the next correction. Quarantine (void) is auto-out.
+    filt = "COALESCE(conv_id,'') != '%s'" % _TRUE_DOWN_CONV
+    res = led.sum_by(["project_primary", "provider", "model", "day"], cols=["batch_usd"],
+                     where={"reconciled": 0}, filt=filt, since=since)
+    return {(pr or "unattributed", p or "?", m or "?", d): float(v["usd"])
+            for (pr, p, m, d), v in res.items() if float(v["usd"]) != 0}
 
 
 def record_true_down(day, provider, model, delta, project):
@@ -885,6 +872,11 @@ def clear_true_down(since=None):
         else:
             _db().execute("DELETE FROM charges WHERE conv_id=?", (_TRUE_DOWN_CONV,))
         _db().commit()
+    # DUAL-DELETE the true-down correction rows from spend_events (idempotent rebuild each reconcile).
+    try:
+        _ledger().delete(where={"conv_id": _TRUE_DOWN_CONV}, since=since, actor="clear_true_down", reason="rebuild")
+    except Exception:
+        pass
 
 
 # ── spendguard's own advisor LLM use (segregated: own cap, own line, excluded from workload) ──
@@ -922,23 +914,25 @@ def by_day(kind=None, exclude_meta=False, since=None, exclude_reconciled=False):
     as 'local gate-recorded' double-counts against that very source (coverage >100%, trust ratio inflated). It
     excludes ALL marker models; true-down correction rows are NOT markers (they correct the gate's own estimates)
     and stay included."""
-    # Quarantined rows are excluded UNCONDITIONALLY, in every caller. They are estimates the gate proved
-    # impossible; counting them as "accounted" is what let an invented $54.51 sit inside a leak check that
-    # then reported no leak. A row that cannot describe a real request is not coverage of anything.
-    cond, args = ["(conv_id IS NULL OR conv_id NOT IN (?, ?))"], [QUARANTINE_CONV, UNPRICED_CONV]
-    if kind:
-        cond.append("kind=?"); args.append(kind)
+    # Quarantined rows (status=void) + unpriced are excluded UNCONDITIONALLY. They are not spend anybody made;
+    # counting them as "accounted" is what let an invented $54.51 sit inside a leak check that then reported no
+    # leak. void is auto-out of sum_by; unpriced via _NOT_UNPRICED.
+    led = _ledger()
+    where = {}
     if exclude_meta:
-        cond.append("(kind IS NULL OR kind != 'meta')")
+        where["is_meta"] = 0
     if exclude_reconciled:
-        cond.append(f"(model IS NULL OR model NOT IN ({','.join('?' * len(_MARKER_MODELS))}))")
-        args.extend(_MARKER_MODELS)
-    if since:
-        cond.append("day >= ?"); args.append(since)
-    where = "WHERE " + " AND ".join(cond)
-    with _lock:
-        rows = _db().execute(f"SELECT day, COALESCE(SUM(cost),0) FROM charges {where} GROUP BY day", args).fetchall()
-    return {d: float(v or 0) for d, v in rows}
+        where["reconciled"] = 0
+    if kind == "meta":
+        where["is_meta"] = 1
+        cols = None
+    elif kind:
+        cols = [led.category_col(kind)]
+        where.setdefault("is_meta", 0)   # a category kind is workload-only: meta banks in realtime_usd but is its OWN kind
+    else:
+        cols = None
+    res = led.sum_by("day", cols=cols, where=where or None, filt=led._NOT_UNPRICED, since=since)
+    return {d: float(v["usd"]) for d, v in res.items() if float(v["usd"]) != 0}
 
 
 # RAW-CHARGES-OK: the SaaS PUSH payload deliberately carries backfill AND meta rows — the org
@@ -947,19 +941,19 @@ def by_day(kind=None, exclude_meta=False, since=None, exclude_reconciled=False):
 def by_dims(since=None):
     """Per-day rows grouped by (day, provider, model, kind) for the SaaS roll-up push — the structured shape
     the server's /v1/ledger expects (vs by_day's flat {day: $}). Returns dicts with cost in $ and a call count."""
-    # This is the SaaS PUSH payload. A quarantined row here would put an invented number on the org
-    # dashboard, where nobody has the local context to question it.
-    cond, args = ["(conv_id IS NULL OR conv_id NOT IN (?, ?))"], [QUARANTINE_CONV, UNPRICED_CONV]
-    if since:
-        cond.append("day >= ?"); args.append(since)
-    where = "WHERE " + " AND ".join(cond)
-    with _lock:
-        rows = _db().execute(
-            f"SELECT day, COALESCE(provider,'?'), COALESCE(model,'?'), COALESCE(kind,'workload'), "
-            f"COALESCE(project,''), COALESCE(SUM(cost),0), COUNT(*) FROM charges {where} "
-            f"GROUP BY day, provider, model, kind, project", args
-        ).fetchall()
-    return [dict(day=d, provider=p, model=m, kind=k, project=pr, cost=float(c or 0), calls=int(n)) for d, p, m, k, pr, c, n in rows]
+    # This is the SaaS PUSH payload. A quarantined row here would put an invented number on the org dashboard,
+    # where nobody has the local context to question it — so void is auto-excluded, and unpriced ($0) too. It
+    # DELIBERATELY keeps reconciliation/backfill + meta rows: the org dashboard needs them. `kind` is
+    # reconstructed from the row's category — is_meta → 'meta', else the category its money column names.
+    led = _ledger()
+    res = led.sum_by(["day", "provider", "model", "cost_type", "is_meta", "project_primary"],
+                     since=since, filt=led._NOT_UNPRICED)
+    out = []
+    for (day, prov, model, ctype, ismeta, proj), v in res.items():
+        kind = "meta" if ismeta else (ctype or "workload")
+        out.append(dict(day=day, provider=prov or "?", model=model or "?", kind=kind,
+                        project=proj or "", cost=float(v["usd"]), calls=v["n"]))
+    return out
 
 
 # RAW-CHARGES-OK: excludes true-down as well, which the view deliberately keeps
@@ -968,29 +962,24 @@ def by_key(since=None):
     workspace/project key did this money flow through?). Excludes meta and every reconcile marker row
     (mirror/backfill rows carry no key). key_fp '' groups as '(none)' — rows recorded before key stamping
     existed, or where no key env was resolvable. LOCAL-ONLY view; fingerprints never leave the machine."""
-    cond = ["(kind IS NULL OR kind != 'meta')",
-            f"(model IS NULL OR model NOT IN ({','.join('?' * len(_MARKER_MODELS))}))",
-            "(conv_id IS NULL OR conv_id NOT IN (?, ?, ?))"]
-    args = list(_MARKER_MODELS) + [_TRUE_DOWN_CONV, QUARANTINE_CONV, UNPRICED_CONV]
-    if since:
-        cond.append("day >= ?"); args.append(since)
-    with _lock:
-        rows = _db().execute("SELECT COALESCE(provider,'?'), COALESCE(NULLIF(key_fp,''),'(none)'), "
-                             "COALESCE(SUM(cost),0), COUNT(*) FROM charges WHERE "
-                             + " AND ".join(cond) + " GROUP BY 1, 2", args).fetchall()
-    return {(p, fp): {"cost": float(c or 0), "calls": int(n)} for p, fp, c, n in rows}
+    led = _ledger()
+    # exclude meta + reconciliation markers (reconciled=0) + true-down (mirror/correction rows carry no key) +
+    # unpriced; quarantine (void) is auto-out. key_fp '' → '(none)'.
+    filt = "%s AND COALESCE(conv_id,'') != '%s'" % (led._NOT_UNPRICED, _TRUE_DOWN_CONV)
+    res = led.sum_by(["provider", "key_fp"], where={"is_meta": 0, "reconciled": 0}, filt=filt, since=since)
+    return {(p or "?", fp or "(none)"): {"cost": float(v["usd"]), "calls": v["n"]} for (p, fp), v in res.items()}
 
 
 def ledger_start(kind=None):
-    """Earliest day in the local ledger — spend before this wasn't recorded locally (pre-ledger). With `kind`,
-    the earliest day for THAT axis: axes start recording at different times (realtime began long before batch),
-    so a per-axis cutoff is what keeps the leak check from mislabeling one axis's pre-history as a leak."""
-    with _lock:
-        if kind:
-            r = _db().execute("SELECT MIN(day) FROM charges WHERE kind=?", (kind,)).fetchone()
-        else:
-            r = _db().execute("SELECT MIN(day) FROM charges").fetchone()
-    return r[0] if r and r[0] else None
+    """Earliest day in the ledger — spend before this wasn't recorded locally (pre-ledger). With `kind`, the
+    earliest day for THAT category (its money column populated): axes start recording at different times
+    (realtime began long before batch), so a per-axis cutoff keeps the leak check from mislabeling one axis's
+    pre-history as a leak."""
+    led = _ledger()
+    if kind:
+        days = [r["day"] for r in led.in_category(kind) if r["day"]]
+        return min(days) if days else None
+    return led.min_day()
 
 
 def _utc():

@@ -46,17 +46,19 @@ def check(label, cond, extra=""):
     print(f"  [{'OK' if cond else 'FAIL'}] {label}{('  — ' + extra) if extra and not cond else ''}")
 
 
+from decimal import Decimal                                                  # noqa: E402
 L = SpendLedger()
-total = lambda c: L._conn.execute(f"SELECT COALESCE(SUM({c}),0) FROM spend_events").fetchone()[0]
+# money is EXACT Decimal now (TEXT columns summed with dec_sum), not integer micros
+total = lambda c: Decimal(L._conn.execute(f"SELECT dec_sum({c}) FROM spend_events").fetchone()[0])
 
 print("  a correction posts the difference:")
 e = L.record({"source": "guard-a", "provider": "openai", "model": "m", "kind": "realtime",
-              "realtime_micros": 1_000_000, "batch_micros": 250_000})
-L.adjust(e, {"realtime_micros": 400_000}, actor="guard", reason="the real figure was 0.40")
-check("the corrected column SUMS to the intended value", total("realtime_micros") == 400_000,
-      f"{total('realtime_micros'):,} — a correction that inflates is worse than none")
+              "realtime_usd": "1.00", "batch_usd": "0.25"})
+L.adjust(e, {"realtime_usd": "0.40"}, actor="guard", reason="the real figure was 0.40")
+check("the corrected column SUMS to the intended value", total("realtime_usd") == Decimal("0.40"),
+      f"{total('realtime_usd')} — a correction that inflates is worse than none")
 check("a column the correction did not mention is unchanged, not doubled",
-      total("batch_micros") == 250_000, f"{total('batch_micros'):,}")
+      total("batch_usd") == Decimal("0.25"), f"{total('batch_usd')}")
 check("the original row is untouched — the point of a locked period",
       L._conn.execute("SELECT COUNT(*) FROM spend_events WHERE id=?", (e,)).fetchone()[0] == 1)
 
@@ -68,11 +70,11 @@ except ValueError as err:
     check("...and the refusal names what is in the way", "adjustment" in str(err), str(err)[:70])
 
 e2 = L.record({"source": "guard-b", "provider": "openai", "model": "m2", "kind": "realtime",
-               "realtime_micros": 500_000})
-before = total("realtime_micros")
+               "realtime_usd": "0.50"})
+before = total("realtime_usd")
 L.reverse(e2, actor="guard", reason="clean")
 check("a clean reversal still zeroes its own event",
-      total("realtime_micros") == before - 500_000, f"{total('realtime_micros'):,}")
+      total("realtime_usd") == before - Decimal("0.50"), f"{total('realtime_usd')}")
 
 print("\n  the tamper log distinguishes bypassed from edited:")
 d = L.verify_audit_chain(detail=True)

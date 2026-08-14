@@ -25,9 +25,14 @@ def ck(name, cond):
 
 
 def _ins(day, provider, model, kind, cost):
-    budget._db().execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project) VALUES (?,?,?,?,?,?,?)",
-                         (day + "T00:00:00+00:00", day, provider, model, kind, float(cost), "demo"))
-    budget._db().commit()
+    # Seed the money-of-record (spend_events) directly, on the test's chosen DAY, through the SAME charge→event
+    # mapping production uses — so reconciliation markers, kinds and dates land exactly as a real charge would.
+    ev = budget.charge_to_event(provider, model, kind, float(cost))
+    ev["project_primary"] = "demo"; ev["projects"] = ["demo"]
+    ev["occurred_at"] = ev["ts_utc"] = day + "T00:00:00+00:00"
+    ev["source"] = ev["recorded_by"] = "test"
+    ev["dedup_key"] = "test:%s:%s:%s:%s:%s" % (day, provider, model, kind, cost)
+    budget._ledger().record(ev)
 
 # realtime since April → the GLOBAL ledger_start is realtime-driven (the trap: it predates batch recording)
 _ins("2026-04-25", "openai", "gpt-5.5", "realtime", 12.0)

@@ -121,7 +121,7 @@ Status: `DONE` fully traced · `PARTIAL` some paths traced · `UNAUDITED` not ye
 - Oracle: `realtime_oracle.py`. Reads `OPENAI_ADMIN_KEY` (:43) and `ANTHROPIC_ADMIN_KEY` (:63) via
   `config.api_key()`. Runs only when `SPENDGUARD_ADMIN_ORACLE` is set (`ledger_sync.py:731`).
 - `config.api_key(name)` (config.py) resolves: `os.environ` → `$SPENDGUARD_ENV` → `./.env` →
-  `~/.spendguard/keys.env` → `~/.spendguard/.env`; first hit wins.
+  `~/.spendguard/keys.env` → `~/.spendguard/.env` (legacy, back-compat only — `init` scaffolds keys.env); first hit wins.
 - Both keys resolve (OpenAI 133 chars, Anthropic 110 chars). Copied into `keys.env` (the cwd-independent
   primary) 2026-08-13. Admin usage endpoints are READ-ONLY (org usage reports) — zero spend.
 

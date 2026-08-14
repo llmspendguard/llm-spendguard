@@ -28,9 +28,18 @@ SONNET, OPUS, G55 = "claude-sonnet-5", "claude-opus-4-8", "gpt-5.5"
 
 
 def seed(day, provider, model, kind, cost, project, conv="conv-x"):
-    budget._db().execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project,conv_id) VALUES (?,?,?,?,?,?,?,?)",
-                         (day + "T00:00:00+00:00", day, provider, model, kind, cost, project, conv))
-    budget._db().commit()
+    # Seed the money-of-record (spend_events) on a chosen DAY via the production charge→event mapping, so marker
+    # models, kinds, dates and the conv sentinel land exactly as a real charge would (readers read spend_events).
+    ev = budget.charge_to_event(provider, model, kind, float(cost), conv_id=conv)
+    ev["project_primary"] = project; ev["projects"] = [project] if project else []
+    ev["occurred_at"] = ev["ts_utc"] = day + "T00:00:00+00:00"
+    ev["source"] = ev["recorded_by"] = "test"
+    ev["dedup_key"] = "test:%s:%s:%s:%s:%s:%s" % (day, provider, model, kind, cost, conv)
+    budget._ledger().record(ev)
+
+
+def reset_ledger():
+    budget._ledger().delete(reason="test reset")     # clear spend_events (the money-of-record the readers read)
 
 
 def batch_total(exclude_reconciled=True):
@@ -38,9 +47,9 @@ def batch_total(exclude_reconciled=True):
 
 
 def model_net(provider, model):
-    r = budget._db().execute("SELECT COALESCE(SUM(cost),0) FROM charges WHERE kind='batch' AND provider=? AND model=?",
-                             (provider, model)).fetchone()
-    return round(float(r[0] or 0), 6)
+    # NET batch $ for (provider, model) = estimates + negative true-down corrections, summed on the batch column.
+    res = budget._ledger().sum_by(["provider", "model"], cols=["batch_usd"], where={"provider": provider, "model": model})
+    return round(float(res.get((provider, model), {}).get("usd", 0) or 0), 6)
 
 
 print("-- marker drift guard: budget._RT_MARKERS must equal ledger_sync's realtime marker constants --")
@@ -70,8 +79,8 @@ check("openai nets to billed $0", abs(model_net("openai", G55)) < 1e-6)
 check("batch total (excl reconciled) = $100", abs(batch_total() - 100.0) < 1e-6)
 
 print("-- correction rows: negative, REAL model, conv_id sentinel, per-project/day proportional --")
-rows = budget._db().execute("SELECT day, provider, model, cost, project FROM charges WHERE conv_id=?",
-                            (budget._TRUE_DOWN_CONV,)).fetchall()
+rows = [(r["day"], r["provider"], r["model"], float(r["batch_usd"] or 0), r["project_primary"])
+        for r in budget._ledger().query(where={"conv_id": budget._TRUE_DOWN_CONV})]
 check("3 correction rows (2 sonnet cells + 1 openai cell)", len(rows) == 3)
 check("all corrections negative + real model names", all(r[3] < 0 and not r[2].startswith("(") for r in rows))
 cell = {(r[4], r[0]): r[3] for r in rows if r[2] == SONNET}
@@ -87,7 +96,7 @@ print("-- idempotent: re-run with same billed truth = no-op --")
 LS.true_down(since=SINCE, billed_rows=dict(BILLED))
 check("batch total unchanged", abs(batch_total() - 100.0) < 1e-6)
 check("still exactly 3 correction rows",
-      budget._db().execute("SELECT COUNT(*) FROM charges WHERE conv_id=?", (budget._TRUE_DOWN_CONV,)).fetchone()[0] == 3)
+      len(budget._ledger().query(where={"conv_id": budget._TRUE_DOWN_CONV})) == 3)
 
 print("-- trust: apples-to-apples axes + verdict flips red → green after true-down --")
 seed(D1, "anthropic", SONNET, "realtime", 10.0, "lmm")                       # gate-live realtime (actual tokens)
@@ -113,18 +122,18 @@ check("anthropic still trued to billed $70", abs(model_net("anthropic", SONNET) 
 
 print("-- versioned vs base model ids: JOIN normalizes (the live haiku bug); row keeps the original id --")
 HAIKU_V, HAIKU_BASE = "claude-haiku-4-5-20251001", "claude-haiku-4-5"
-budget._db().execute("DELETE FROM charges"); budget._db().commit()
+reset_ledger()
 seed(D1, "anthropic", HAIKU_V, "batch", 30.0, "lmm")         # gate recorded the DATED snapshot id
 b4 = {"openai": [], "anthropic": [("anthropic", HAIKU_BASE, 24.0, 800_000, 40_000, D1, "b-h1")]}
 td4 = LS.true_down(since=SINCE, billed_rows=b4)              # billed under the BASE name
 check("normalized join nets versioned est to base-name billed ($24, not $0)",
       abs(model_net("anthropic", HAIKU_V) - 24.0) < 1e-6)
 check("by_model reports under the normalized name", abs(td4["by_model"].get(f"anthropic:{HAIKU_BASE}", 0) - 6.0) < 0.01)
-crow = budget._db().execute("SELECT model FROM charges WHERE conv_id=?", (budget._TRUE_DOWN_CONV,)).fetchone()
-check("correction row carries the ORIGINAL (versioned) id so by_dims nets it", crow and crow[0] == HAIKU_V)
+crows = budget._ledger().query(where={"conv_id": budget._TRUE_DOWN_CONV})
+check("correction row carries the ORIGINAL (versioned) id so by_dims nets it", crows and crows[0]["model"] == HAIKU_V)
 
 print("-- integration: reconcile_into_ledger runs true_down first; accounted == provider; trust stays ok --")
-budget._db().execute("DELETE FROM charges"); budget._db().commit()
+reset_ledger()
 seed(D1, "anthropic", SONNET, "batch", 60.0, "lmm")
 seed(D2, "anthropic", SONNET, "batch", 40.0, "healiom")      # est 100 vs billed 70 → TD 30, gap 0
 import spendguard.report as report, spendguard.reconcile_anthropic as ra
