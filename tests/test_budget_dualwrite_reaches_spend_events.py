@@ -75,5 +75,30 @@ ck("remote re-sync REPLACES (still $7.77, not $15.54)", Decimal(led.remote_dec(s
 ok, _bad = led.verify_audit_chain()
 ck("audit hash-chain intact after all writes", ok)
 
+# ── the fail-OPEN miss line must stay HONEST post-cutover ─────────────────────────────────────────────
+# spend_events is the SOLE ledger now, so a write that cannot land means the charge is genuinely GONE. The
+# pre-cutover warning said "charges is still authoritative" and "`spendguard migrate` rebuilds spend_events
+# from charges" — after the charges drop BOTH are false and would send an operator to a dead recovery path
+# (migrate read charges; charges no longer exists). Induce a write failure and read the line the user sees.
+import io, contextlib
+
+def _boom(self, ev):
+    raise RuntimeError("induced write failure — spend_events unreachable")
+
+_orig_record = L.SpendLedger.record
+L.SpendLedger.record = _boom
+_buf = io.StringIO()
+try:
+    with contextlib.redirect_stderr(_buf):
+        budget.record("openai", "gpt-5.5", "realtime", 0.99, project="lmm")
+finally:
+    L.SpendLedger.record = _orig_record
+_msg = _buf.getvalue()
+ck("a failed write warns LOUDLY, never silent", _msg.strip() != "")
+ck("...names the charge as MISSING from the ledger", "MISSING" in _msg)
+ck("...points at the recovery that still works (provider-truth reconcile)", "spendguard reconcile" in _msg)
+ck("...does NOT claim charges is authoritative (charges is dropped)", "authoritative" not in _msg)
+ck("...does NOT send the reader to `spendguard migrate` (it read charges, now gone)", "migrate" not in _msg)
+
 print(("[OK]" if not fails else "[FAIL]") + " budget-dualwrite: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)

@@ -67,9 +67,12 @@ def _attribute(ev, project):
 def _record_spend_event(provider, model, kind, cost, *, conv_id="", basis="", intent="", actor="", key_fp="",
                         project="", occurred_at=None, in_tok=0, out_tok=0, source="gate", dedup_suffix=""):
     """THE write for a live charge → `spend_events`, the single money-of-record, through the ONE shared mapping
-    (charge_to_event). Every budget writer records through here; there is no second ledger. Fail-OPEN in the
-    capture-first sense: a problem warns LOUDLY on stderr but never crashes the caller's flow — losing the
-    user's work over a bookkeeping hiccup is worse than a missed row, and the miss is visible to reconcile."""
+    (charge_to_event). Every budget writer records through here; there is no second ledger, and — since the
+    cutover — no `charges` fallback behind it, so a dropped write is a dropped charge. The ledger connection
+    carries sqlite's own busy_timeout (see SpendLedger, `timeout=`), so an ordinary transient lock blocks briefly
+    and clears rather than failing. Fail-OPEN only as a last resort: warn LOUDLY and let the caller proceed
+    (losing the user's work over a bookkeeping hiccup is worse than a missed row), and even then the miss is
+    recoverable from provider truth via `spendguard reconcile`."""
     try:
         from .ledger import live_dedup_key
         ev = charge_to_event(provider, model, kind, cost, conv_id=conv_id, basis=basis,
@@ -83,10 +86,15 @@ def _record_spend_event(provider, model, kind, cost, *, conv_id="", basis="", in
         with _lock:
             _ledger().record(ev)
     except Exception as e:
+        # spend_events is the SOLE ledger now, so a failed write means this charge is genuinely absent — NOT
+        # sitting safe in `charges` (dropped) and NOT rebuildable by `spendguard migrate` (which read charges).
+        # Name the path that still recovers it: provider-truth reconcile.
         import sys as _sys
-        _sys.stderr.write(f"[budget] WARN shadow spend_events write failed "
-                          f"({type(e).__name__}: {str(e)[:100]}) — charges is still authoritative; "
-                          f"`spendguard migrate` rebuilds spend_events from charges.\n")
+        _sys.stderr.write(
+            f"[budget] WARN spend_events write failed for {provider}/{model} ${cost} "
+            f"({type(e).__name__}: {str(e)[:100]}) — this charge is MISSING from the ledger (spend_events is the "
+            f"sole money-of-record; there is no charges fallback). `spendguard reconcile` re-books it from "
+            f"provider truth.\n")
 
 
 def _project():
