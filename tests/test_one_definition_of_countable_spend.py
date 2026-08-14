@@ -37,60 +37,37 @@ def check(label, ok, extra=""):
     print(f"  [{'OK' if ok else 'FAIL'}] {label}" + (f"  — {extra}" if not ok and extra else ""))
 
 
-def test_the_view_excludes_every_marker():
-    """Built from the constants, so adding a marker cannot leave the view behind."""
-    c = sqlite3.connect(":memory:")
-    c.execute("CREATE TABLE charges (ts TEXT, day TEXT, provider TEXT, model TEXT, kind TEXT, cost REAL, "
-              "project TEXT, conv_id TEXT, key_fp TEXT, basis TEXT)")
-    budget._create_countable_view(c)
-    rows = [("t", "2026-01-01", "openai", "gpt-5.5", "realtime", 1.0, "", "", "", "billed")]
-    for m in budget._MARKER_MODELS:
-        rows.append(("t", "2026-01-01", "openai", m, "realtime", 500.0, "", "", "", "billed"))
-    rows.append(("t", "2026-01-01", "openai", "gpt-5.5", "realtime", 500.0, "", budget.QUARANTINE_CONV, "",
-                 "estimate"))
-    rows.append(("t", "2026-01-01", "openai", "gpt-5.5", "realtime", 500.0, "", "", "",
-                 budget.BASIS_RECONSTRUCTED))
-    rows.append(("t", "2026-01-01", "openai", "gpt-5.5", "meta", 500.0, "", "", "", "billed"))
-    c.executemany("INSERT INTO charges VALUES (?,?,?,?,?,?,?,?,?,?)", rows)
-    total = c.execute(f"SELECT COALESCE(SUM(cost),0) FROM {budget.COUNTABLE_VIEW}").fetchone()[0]
-    check("only the one real charge counts; every marker, quarantine, backfill and meta row is out",
-          total == 1.0, f"${total}")
+def test_countable_excludes_the_right_rows_on_spend_events():
+    """The countable definition MOVED from the countable_charges VIEW to SpendLedger._COUNTABLE when charges was
+    retired. Same rule, proven on the money-of-record BY CONSTRUCTION: each excluded row-type, added ALONE, must
+    leave the countable total unchanged; a real charge and a pre-spend estimate must move it. (What each
+    AGGREGATOR counts is test_ledger_marker_matrix's job; this is the single filter's own rule.)"""
+    import os
+    import tempfile
+    from decimal import Decimal
+    from spendguard import ledger as L
+    led = L.SpendLedger(db_path=os.path.join(tempfile.mkdtemp(prefix="sg-1def-"), "t.db"))
 
+    def rec(usd, **kw):
+        ev = {"provider": "openai", "model": "gpt-5.5", "kind": "realtime", "usd": usd,
+              "source": "t", "dedup_key": L.live_dedup_key(str(usd) + repr(sorted(kw.items())))}
+        ev.update(kw)
+        led.record(ev)
 
-def test_an_estimate_still_counts():
-    """An estimate MUST bind a pre-spend cap — that is the entire point of estimating. Excluding it would
-    make the guard useless in the only direction where it can still prevent a loss."""
-    c = sqlite3.connect(":memory:")
-    c.execute("CREATE TABLE charges (ts TEXT, day TEXT, provider TEXT, model TEXT, kind TEXT, cost REAL, "
-              "project TEXT, conv_id TEXT, key_fp TEXT, basis TEXT)")
-    budget._create_countable_view(c)
-    c.execute("INSERT INTO charges VALUES ('t','2026-01-01','openai','gpt-5.5','realtime',7.0,'','','','estimate')")
-    total = c.execute(f"SELECT COALESCE(SUM(cost),0) FROM {budget.COUNTABLE_VIEW}").fetchone()[0]
-    check("a pre-spend estimate is still countable", total == 7.0, f"${total}")
-
-
-def test_no_module_sums_raw_charges_without_declaring_it():
-    """The anti-amnesia rule. A raw sum is allowed where it is genuinely wanted, but it must say so —
-    otherwise the next one silently forgets a marker, which is exactly how this went wrong four times."""
-    offenders = []
-    pat = re.compile(r"SUM\(cost\)", re.I)
-    for f in sorted(SRC.glob("*.py")):
-        lines = f.read_text().splitlines()
-        # Scope to the ENCLOSING FUNCTION, not a fixed line window: a declaration belongs to the function it
-        # describes, and a query can sit twenty lines below the def that justifies it.
-        for i, line in enumerate(lines):
-            if not pat.search(line):
-                continue
-            start = next((j for j in range(i, -1, -1) if lines[j].startswith("def ")), 0)
-            end = next((j for j in range(i + 1, len(lines)) if lines[j].startswith("def ")), len(lines))
-            body = "\n".join(lines[max(0, start - 2):end])
-            if "charges" not in body:
-                continue                                  # summing some other table (calls, gate_calls)
-            if budget.COUNTABLE_VIEW in body or "COUNTABLE_VIEW" in body or MARKER in body:
-                continue
-            offenders.append(f"{f.name}:{i + 1}")
-    check(f"every raw charges sum either uses {budget.COUNTABLE_VIEW} or declares {MARKER}",
-          not offenders, f"{len(offenders)} undeclared: {offenders[:6]}")
+    rec("1.00", cost_basis="billed")                              # a real charge → counts
+    rec("2.00", cost_basis="estimate")                            # a pre-spend estimate → still counts (binds the cap)
+    check("a real charge + a pre-spend estimate ARE counted", Decimal(led.spent_dec()) == Decimal("3.00"),
+          led.spent_dec())
+    # each of these, added ALONE, must NOT move the countable total — the exclusion is verified per row, not by a
+    # single magic sum that a silent logic error could still land on.
+    for label, kw in (("meta", {"is_meta": 1}),
+                      ("reconciliation marker", {"reconciled": 1, "recon_marker": "(provider-batch)"}),
+                      ("quarantined-impossible (void)", {"status": "void"}),
+                      ("already-counted restatement (reconstructed)", {"cost_basis": "reconstructed"})):
+        before = Decimal(led.spent_dec())
+        rec("99.00", **kw)
+        check(f"a {label} row is EXCLUDED from the countable total", Decimal(led.spent_dec()) == before,
+              f"{led.spent_dec()} != {before}")
 
 
 def test_spent_since_uses_the_one_definition():

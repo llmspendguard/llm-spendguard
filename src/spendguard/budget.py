@@ -13,36 +13,17 @@ _lock = threading.RLock()   # reentrant: record()/spent_since() hold it AND call
 
 
 def _db():
+    """A WAL SQLite connection to the ledger file, shared across this module and by guard.py's `savings` table.
+    It NO LONGER creates the retired `charges` table: the money-of-record is `spend_events` (owned by
+    SpendLedger), every reader/writer here goes through it, and a fresh install has no `charges` to make.
+    The one-time `migrate_charges` bridge reads a PRE-EXISTING charges via its own connection; it never needs
+    this to create one, and the migration tests build their own charges fixture."""
     global _conn
     if _conn is None:
         with _lock:
             if _conn is None:
                 c = sqlite3.connect(config.db_path(), timeout=10, check_same_thread=False)
                 c.execute("PRAGMA journal_mode=WAL")
-                c.execute("CREATE TABLE IF NOT EXISTS charges "
-                          "(ts TEXT, day TEXT, provider TEXT, model TEXT, kind TEXT, cost REAL, "
-                          "project TEXT DEFAULT '', conv_id TEXT DEFAULT '')")
-                cols = [r[1] for r in c.execute("PRAGMA table_info(charges)").fetchall()]
-                if "project" not in cols:                      # migrate older ledgers
-                    c.execute("ALTER TABLE charges ADD COLUMN project TEXT DEFAULT ''")
-                if "conv_id" not in cols:                      # conversation/chat id per call (links to the chat)
-                    c.execute("ALTER TABLE charges ADD COLUMN conv_id TEXT DEFAULT ''")
-                if "key_fp" not in cols:                       # which provider key served the call (sha8:last4, local-only)
-                    c.execute("ALTER TABLE charges ADD COLUMN key_fp TEXT DEFAULT ''")
-                if "basis" not in cols:                        # WHAT KIND of number this is (see BASES)
-                    c.execute("ALTER TABLE charges ADD COLUMN basis TEXT DEFAULT ''")
-                # WHO DID WHAT. A ledger that cannot say what a dollar BOUGHT and WHAT RAN IT is a total,
-                # not an account. Until these existed the money table held provider/model/cost/project and
-                # the purpose lived only in `calls` — a separate table with no join key back to the charge —
-                # so "what was this $23 for?" was unanswerable from the authoritative record.
-                if "intent" not in cols:                       # WHAT the spend was for (calls.context)
-                    c.execute("ALTER TABLE charges ADD COLUMN intent TEXT DEFAULT ''")
-                if "actor" not in cols:                        # WHAT RAN IT (entrypoint:function:line)
-                    c.execute("ALTER TABLE charges ADD COLUMN actor TEXT DEFAULT ''")
-                c.execute("CREATE INDEX IF NOT EXISTS idx_day ON charges(day)")
-                c.execute("CREATE INDEX IF NOT EXISTS idx_charges_conv ON charges(conv_id)")  # chat↔charge joins (attribution)
-                c.execute("CREATE INDEX IF NOT EXISTS idx_charges_keyfp ON charges(key_fp)")  # per-key spend view
-                _create_countable_view(c)
                 c.commit()
                 _conn = c
     return _conn
@@ -51,33 +32,9 @@ def _db():
 _PROJECT = None
 
 
-COUNTABLE_VIEW = "countable_charges"
-
-
-def _create_countable_view(c):
-    """ONE definition of "money spent in a period", as a SQL view every reader can use.
-
-    THE REASON THIS EXISTS. `charges` holds rows that mean different things — real charges, pre-spend
-    estimates, provider-batch reconciliation, realtime backfills, quarantined impossibilities — and until now
-    EVERY reader rebuilt its own WHERE clause to exclude the ones that are not period spend. Twelve of them in
-    this module alone. Each one had to remember the full marker set, and they did not: in a single day a
-    $359.63 phantom from reading batch history blocked the daily cap, a $10,409.24 backfill dated today
-    blocked the monthly cap, relabelling that row's basis was undone by its writer, and `_MARKER_MODELS` sat
-    defined-and-unreferenced the whole time. Four incidents, one cause: no single answer to "what counts".
-
-    Rebuilt on every connect, so it always reflects the CURRENT marker set rather than whatever was true when
-    some database file was first created.
-
-    Deliberately NOT filtered here: `basis`. An estimate must still bind a pre-spend cap — that is the whole
-    point of estimating — so the view carries it and callers that want billed-only filter further."""
-    c.execute(f"DROP VIEW IF EXISTS {COUNTABLE_VIEW}")
-    marks = ",".join("'" + m.replace("'", "''") + "'" for m in _MARKER_MODELS)
-    c.execute(
-        f"CREATE VIEW {COUNTABLE_VIEW} AS SELECT * FROM charges WHERE "
-        f"(kind IS NULL OR kind != 'meta') "                       # meta is spendguard's own overhead, tracked apart
-        f"AND (model IS NULL OR model NOT IN ({marks})) "          # synthetic marker rows: reconciliation, backfills
-        f"AND (conv_id IS NULL OR conv_id != '{QUARANTINE_CONV}') "  # impossible estimates: never money
-        f"AND (basis IS NULL OR basis != '{BASIS_RECONSTRUCTED}')")  # a restatement of history, already counted
+# The ONE definition of "money spent in a period" now lives on the money-of-record as SpendLedger._COUNTABLE
+# (exclude meta / reconciliation markers / quarantined-impossible / reconstructed; an estimate still binds a
+# cap). It replaced the countable_charges VIEW over the retired `charges` table — same rule, one place.
 
 
 _LEDGER = None
@@ -107,12 +64,12 @@ def _attribute(ev, project):
     ev["org"], ev["team"] = org, team
 
 
-def _shadow_spend_event(provider, model, kind, cost, *, conv_id="", basis="", intent="", actor="", key_fp="",
+def _record_spend_event(provider, model, kind, cost, *, conv_id="", basis="", intent="", actor="", key_fp="",
                         project="", occurred_at=None, in_tok=0, out_tok=0, source="gate", dedup_suffix=""):
-    """Write the same charge into `spend_events` — the money-of-record being cut over to — through the ONE
-    shared mapping (charge_to_event). Fail-OPEN during the transition: a problem here must never crash the
-    caller's flow (the `charges` write is still authoritative), but it warns LOUDLY so a silent drop is
-    impossible. This shadow write is removed in the final cutover stage, when the charges writes stop."""
+    """THE write for a live charge → `spend_events`, the single money-of-record, through the ONE shared mapping
+    (charge_to_event). Every budget writer records through here; there is no second ledger. Fail-OPEN in the
+    capture-first sense: a problem warns LOUDLY on stderr but never crashes the caller's flow — losing the
+    user's work over a bookkeeping hiccup is worse than a missed row, and the miss is visible to reconcile."""
     try:
         from .ledger import live_dedup_key
         ev = charge_to_event(provider, model, kind, cost, conv_id=conv_id, basis=basis,
@@ -130,28 +87,6 @@ def _shadow_spend_event(provider, model, kind, cost, *, conv_id="", basis="", in
         _sys.stderr.write(f"[budget] WARN shadow spend_events write failed "
                           f"({type(e).__name__}: {str(e)[:100]}) — charges is still authoritative; "
                           f"`spendguard migrate` rebuilds spend_events from charges.\n")
-
-
-def _void_shadow_for_charge(ts, provider, model, kind, cost):
-    """Void the spend_events shadow row matching a charge just quarantined. During dual-write the charge and its
-    shadow share ts/provider/model and the category amount, so we match on those — the amount disambiguates
-    same-second siblings (the exact collision quarantine_by-rowid exists to handle). Best-effort; the charges
-    quarantine is authoritative during the transition, so a miss here never blocks the repair."""
-    try:
-        from .ledger import to_dec
-        led = _ledger()
-        k = (kind or "realtime").lower()
-        col = "realtime_usd" if k == "meta" else led.category_col(k)
-        want = to_dec(cost)
-        for r in led.query(where={"ts_utc": ts, "provider": provider or "?", "model": model or "?"}):
-            if r.get("status") != "void" and to_dec(r.get(col)) == want:
-                led.update(r["id"], {"status": "void"}, actor="quarantine_charge", reason="quarantine")
-                break
-    except Exception as e:
-        import sys as _sys
-        _sys.stderr.write(f"[budget] WARN could not void the spend_events shadow of a quarantined charge "
-                          f"({type(e).__name__}: {str(e)[:100]}) — charges is quarantined; run "
-                          f"`spendguard migrate` to re-sync spend_events.\n")
 
 
 def _project():
@@ -264,20 +199,10 @@ def record(provider, model, kind, cost, project=None, conv_id=None, basis=None,
             actor = actor if actor is not None else (_c.caller() or "")
         except Exception:
             intent, actor = intent or "", actor or ""
-    now = datetime.datetime.now(datetime.timezone.utc)
-    with _lock:
-        _db().execute("INSERT INTO charges "
-                      "(ts,day,provider,model,kind,cost,project,conv_id,key_fp,basis,intent,actor) "
-                      "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                      (now.isoformat(timespec="seconds"), now.strftime("%Y-%m-%d"),
-                       provider or "?", model or "?", kind, float(cost), proj or "", conv or "", fp,
-                       basis if basis in BASES else "", (intent or "")[:120], (actor or "")[:120]))
-        _db().commit()
-    # DUAL-WRITE the same charge into spend_events (the money-of-record we are cutting over to). charges above
-    # stays authoritative until the readers are repointed; this keeps spend_events current so they can be.
-    _shadow_spend_event(provider, model, kind, float(cost), conv_id=conv or "", basis=basis or "",
-                        intent=intent or "", actor=actor or "", key_fp=fp, project=proj or "",
-                        occurred_at=now.isoformat(timespec="seconds"), source="gate")
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+    _record_spend_event(provider, model, kind, float(cost), conv_id=conv or "", basis=basis or "",
+                        intent=(intent or "")[:120], actor=(actor or "")[:120], key_fp=fp, project=proj or "",
+                        occurred_at=now, source="gate")
 
 
 def snapshot(reason="", keep=20):
@@ -333,17 +258,18 @@ def reattribute_providers(apply=False, actor="reattribute_providers"):
     spend_audit with the old and new value, because a silent restatement is indistinguishable from the
     error it corrects — and in a forensic tool the correction has to be as visible as the mistake."""
     from . import gate
-    with _lock:
-        rows = _db().execute(
-            "SELECT rowid, provider, model, cost FROM charges WHERE model IS NOT NULL AND model != ''"
-        ).fetchall()
+    from .ledger import to_dec, USD_COLS
+    led = _ledger()
+    rows = [r for r in led.query() if r.get("model")]     # every spend_events row carrying a model
     fixes = []
-    for rid, prov, model, cost in rows:
+    for r in rows:
+        prov, model = r.get("provider"), r.get("model")
         true = gate._provider_of(model)
         # UNKNOWN IS NOT A CORRECTION. Overwriting a recorded vendor with "unknown" destroys information;
         # only a POSITIVE identification that disagrees is a fix.
         if true and true != gate.UNKNOWN_PROVIDER and prov and true != prov:
-            fixes.append({"rowid": rid, "model": model, "was": prov, "now": true, "cost": float(cost or 0)})
+            fixes.append({"id": r["id"], "model": model, "was": prov, "now": true,
+                          "cost": float(sum((to_dec(r.get(c)) for c in USD_COLS), to_dec(0)))})
     # A KEY FINGERPRINT THAT BELONGS TO THE WRONG VENDOR IS WORSE THAN NONE. These rows were stamped with
     # the fingerprint of the provider they were MIS-labelled as, so after the vendor is corrected the row
     # reads "moonshot spend, served by an OpenAI key" — a contradiction that looks like a finding. We cannot
@@ -358,40 +284,27 @@ def reattribute_providers(apply=False, actor="reattribute_providers"):
             except Exception:
                 _wrong_fp.setdefault(f["was"], "")
     unjournalled = []
-    if apply and (fixes or True):
-        # SNAPSHOT BEFORE WRITING. This function rewrote 697 rows the first time it ran, against a database
-        # with no backup anywhere.
-        _snap = snapshot(reason=f"reattribute-{actor}")
-        if _snap:
-            print(f"  ledger snapshot: {_snap}")
+    by_id = {r["id"]: r for r in rows}
     if apply and fixes:
-        with _lock:
-            for f in fixes:
-                stale = _wrong_fp.get(f["was"]) or ""
-                if stale:
-                    _db().execute("UPDATE charges SET provider=?, key_fp=CASE WHEN key_fp=? THEN '' "
-                                  "ELSE key_fp END WHERE rowid=?", (f["now"], stale, f["rowid"]))
-                else:
-                    _db().execute("UPDATE charges SET provider=? WHERE rowid=?", (f["now"], f["rowid"]))
-            _db().commit()
-        # JOURNALLED AFTER THE COMMIT, AND THROUGH THE CHAIN. Two separate points:
-        #   * the audit log has exactly ONE supported writer (SpendLedger.audit) — a raw INSERT here left
-        #     697 rows with no row_hash and, until _audit was made tolerant, broke every audit write after
-        #     them;
-        #   * SpendLedger holds its OWN connection to the same file, so writing through it while this
-        #     module's transaction is still open deadlocks on the write lock. The correction commits first.
+        snapshot(reason=f"reattribute-{actor}")     # whole-file backup before rewriting money rows
         for f in fixes:
+            changes = {"provider": f["now"]}
+            stale = _wrong_fp.get(f["was"]) or ""
+            if stale and by_id.get(f["id"], {}).get("key_fp") == stale:
+                changes["key_fp"] = ""              # a fp stamped for the mis-labelled vendor is worse than none
+            # led.update writes the correction AND its audit row through the hash chain, on the ledger's own
+            # connection — no separate raw INSERT (the source of 697 unchained rows), no cross-connection
+            # deadlock. A locked period is refused; that row is reported unjournalled rather than silently skipped.
             try:
-                _ledger().audit(str(f["rowid"]), actor, "reattribute", "provider", f["was"], f["now"],
-                                f"model {f['model']} is served by {f['now']}, not {f['was']} "
-                                f"(gate inferred the vendor from the model name prefix)")
+                led.update(f["id"], changes, actor=actor, pass_="reattribute",
+                           reason=f"model {f['model']} is served by {f['now']}, not {f['was']} "
+                                  f"(gate inferred the vendor from the model name prefix)")
             except Exception as e:
-                unjournalled.append({"rowid": f["rowid"], "error": f"{type(e).__name__}: {str(e)[:60]}"})
+                unjournalled.append({"id": f["id"], "error": f"{type(e).__name__}: {str(e)[:60]}"})
         if unjournalled:
-            # A CORRECTION WITH NO RECORD OF ITSELF IS THE THING THIS FUNCTION EXISTS TO PREVENT.
             import sys as _sys
-            _sys.stderr.write(f"[budget] WARN {len(unjournalled)} of {len(fixes)} re-attributions COMMITTED "
-                              f"WITHOUT AN AUDIT ROW — e.g. {unjournalled[0]}\n")
+            _sys.stderr.write(f"[budget] WARN {len(unjournalled)} of {len(fixes)} re-attributions NOT applied "
+                              f"(locked period?) — e.g. {unjournalled[0]}\n")
     # SECOND PASS: a fingerprint that belongs to a DIFFERENT vendor than the row's.
     #
     # Separate from the vendor fix above because it outlives it: rows corrected in an EARLIER run still
@@ -411,23 +324,17 @@ def reattribute_providers(apply=False, actor="reattribute_providers"):
         known = {}
     stale = []
     if known:
-        with _lock:
-            for rid, prov, fp in _db().execute(
-                    "SELECT rowid, provider, key_fp FROM charges WHERE key_fp IS NOT NULL AND key_fp != ''"
-            ).fetchall():
-                owner = known.get(fp)
-                if owner and prov and owner != prov:
-                    stale.append({"rowid": rid, "provider": prov, "key_fp": fp, "belongs_to": owner})
+        for r in led.query():
+            fp = r.get("key_fp")
+            owner = known.get(fp) if fp else None
+            if owner and r.get("provider") and owner != r["provider"]:
+                stale.append({"id": r["id"], "provider": r["provider"], "key_fp": fp, "belongs_to": owner})
         if apply and stale:
-            with _lock:
-                for st in stale:
-                    _db().execute("UPDATE charges SET key_fp='' WHERE rowid=?", (st["rowid"],))
-                _db().commit()
-            for st in stale[:200]:                 # journalled like any other correction, capped for volume
+            for st in stale:                        # led.update writes the correction + its chained audit row
                 try:
-                    _ledger().audit(str(st["rowid"]), actor, "reattribute", "key_fp", st["key_fp"], "",
-                                    f"fingerprint belongs to {st['belongs_to']}, not {st['provider']} — "
-                                    f"the key that served this call is not recoverable, so it is UNKNOWN")
+                    led.update(st["id"], {"key_fp": ""}, actor=actor, pass_="reattribute",
+                               reason=f"fingerprint belongs to {st['belongs_to']}, not {st['provider']} — the key "
+                                      f"that served this call is not recoverable, so it is UNKNOWN")
                 except Exception:
                     pass
     return {"n": len(fixes), "usd": round(sum(f["cost"] for f in fixes), 4), "applied": bool(apply),
@@ -505,32 +412,18 @@ def ingest_remote(label, project, rows):
     conv = "remote:" + str(label)
     proj = (project or "").strip().lower()
     n, total = 0, 0.0
-    with _lock:
-        db = _db()
-        db.execute("DELETE FROM charges WHERE conv_id = ?", (conv,))
-        for r in rows or []:
-            cost = float(r.get("cost") or 0)
-            if not cost:
-                continue
-            day = r.get("day") or datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
-            db.execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project,conv_id) VALUES (?,?,?,?,?,?,?,?)",
-                       (day + "T00:00:00+00:00", day, r.get("provider") or "?", r.get("model") or "?",
-                        "remote", cost, proj, conv))
-            n += 1; total += cost
-        db.commit()
-    # DUAL-WRITE (replace) into spend_events: drop this box's prior rows, then re-book the current ones.
-    try:
-        _ledger().delete(where={"conv_id": conv}, actor="ingest_remote", reason="re-sync remote box (replace)")
-    except Exception:
-        pass
+    # REPLACE into spend_events (the money-of-record): drop this box's prior rows, then re-book the current ones,
+    # so re-syncing a box never double-counts. remote_dec / by_key (this box's only readers) read spend_events.
+    _ledger().delete(where={"conv_id": conv}, actor="ingest_remote", reason="re-sync remote box (replace)")
     for i, r in enumerate(rows or []):
         cost = float(r.get("cost") or 0)
         if not cost:
             continue
         day = r.get("day") or datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
-        _shadow_spend_event(r.get("provider") or "?", r.get("model") or "?", "remote", cost, conv_id=conv,
+        _record_spend_event(r.get("provider") or "?", r.get("model") or "?", "remote", cost, conv_id=conv,
                             project=proj, occurred_at=day + "T00:00:00+00:00", source="remote",
                             dedup_suffix=":%s:%d" % (conv, i))
+        n += 1; total += cost
     return n, total
 
 
@@ -646,65 +539,35 @@ def suspect_batches(since):
 
 
 def quarantine_charge(ts=None, reason="", row=None):
-    """Tag ONE charge row as an impossible estimate. The row and its amount are untouched — only its conv_id
-    marker changes, so it drops out of every total while staying fully auditable.
+    """Void ONE spend_events row as an impossible estimate — status='void', so it drops out of every total
+    while staying fully auditable (the amount is untouched; the change is logged through the hash chain by
+    update()).
 
-    Target by `row` (rowid — exact) or by `ts`. `charges.ts` has SECOND granularity and up to six charges can
-    share one second, so a ts that matches more than one row RAISES rather than tagging all of them: silently
-    excluding five innocent charges to quarantine one bad one would be a worse version of the bug this repairs.
-    Returns the number of rows tagged (0 = nothing matched)."""
-    charge = None                                  # the charge's fields, to void its spend_events shadow too
+    Target by `row` (the spend_events id — exact) or by `ts` (ts_utc). Up to six rows can share one second, so
+    a ts matching more than one RAISES rather than voiding all of them: silently voiding five innocent rows to
+    quarantine one bad one would be a worse version of the bug this repairs. Returns the number voided."""
+    from .ledger import to_dec, USD_COLS
+    led = _ledger()
     with _lock:
         if row is not None:
-            charge = _db().execute("SELECT ts, provider, model, cost, kind FROM charges WHERE rowid=?",
-                                   (int(row),)).fetchone()
-            cur = _db().execute("UPDATE charges SET conv_id=? WHERE rowid=? AND conv_id <> ?",
-                                (QUARANTINE_CONV, int(row), QUARANTINE_CONV))
+            hit = led.get(row)
+            ids = [row] if hit and hit.get("status") != "void" else []
         else:
-            hits = _db().execute("SELECT rowid, model, cost FROM charges WHERE ts=? AND conv_id <> ?",
-                                 (ts, QUARANTINE_CONV)).fetchall()
+            hits = [r for r in led.query(where={"ts_utc": ts}) if r.get("status") != "void"]
             if len(hits) > 1:
                 raise ValueError(
-                    "%d charges share the timestamp %s (%s) — refusing to quarantine all of them. Re-run with "
-                    "--row <rowid> for the one you mean; `spendguard quarantine --list` shows the rowids."
-                    % (len(hits), ts, ", ".join(f"row {h[0]}: {h[1]} ${h[2]:,.2f}" for h in hits)))
-            charge = _db().execute("SELECT ts, provider, model, cost, kind FROM charges WHERE ts=? LIMIT 1",
-                                   (ts,)).fetchone()
-            cur = _db().execute("UPDATE charges SET conv_id=? WHERE ts=? AND conv_id <> ?",
-                                (QUARANTINE_CONV, ts, QUARANTINE_CONV))
-        n = cur.rowcount
-        # THE MUTATION AND ITS AUDIT ROW COMMIT TOGETHER, UNDER THE SAME LOCK.
-        #
-        # This block used to sit OUTSIDE `with _lock:` and after its own commit, which is two defects. The
-        # smaller one is the race: a concurrent writer can interleave between the mutation and its record.
-        # The larger one is that the mutation was already durable, so a failed audit write left a changed
-        # ledger with NO trace that anything changed it — and `except Exception: pass` meant nobody was
-        # told. A missing audit row is indistinguishable from a mutation that never happened, which is the
-        # exact failure this table exists to prevent: an accounting tool whose tamper record can go missing
-        # in silence has no tamper record.
-        _db().commit()
-    # Void the matching spend_events shadow row so quarantine drops out of THAT ledger's totals too (the
-    # readers now read spend_events). Best-effort during the dual-write transition.
-    if n and charge is not None:
-        # charge = (ts, provider, model, cost, kind) — a plain tuple from the charges connection
-        _void_shadow_for_charge(charge[0], charge[1], charge[2], charge[4], charge[3])
-    # THROUGH THE CHAIN, AFTER THE COMMIT. The raw INSERT here left 99 unchained rows in the
-    # tamper-evidence log — the same defect as reattribute's, and the one it was copied from — and
-    # SpendLedger's own connection cannot write while this module's transaction is open.
-    audit_err = None
-    try:
-        _ledger().audit(str(row if row is not None else ts), "quarantine_charge", "quarantine",
-                        "conv_id", "", QUARANTINE_CONV, reason)
-    except Exception as e:
-        audit_err = e                          # audit shape varies by migration; never BLOCK the repair
-    if audit_err is not None:
-        # LOUD, not fatal. Blocking the repair because an older schema lacks the table would be a different
-        # bug; letting the repair happen unrecorded and unmentioned is the one being fixed.
-        import sys as _sys
-        _sys.stderr.write(
-            f"[budget] WARN quarantine of {'row ' + str(row) if row is not None else 'ts ' + str(ts)} "
-            f"COMMITTED WITHOUT AN AUDIT ROW ({type(audit_err).__name__}: {str(audit_err)[:80]}). "
-            f"The ledger changed and spend_audit does not know it — run `spendguard migrate` and re-check.\n")
+                    "%d spend_events rows share the timestamp %s (%s) — refusing to void all of them. Re-run "
+                    "with --row <id> for the one you mean; `spendguard quarantine --list` shows the ids."
+                    % (len(hits), ts, ", ".join("id %s: %s $%s" % (
+                        r["id"], r["model"], sum((to_dec(r.get(c)) for c in USD_COLS), to_dec(0))) for r in hits)))
+            ids = [hits[0]["id"]] if hits else []
+        n = 0
+        for eid in ids:
+            # update() sets status AND writes the audit row through the hash chain, under the ledger's own
+            # connection — the mutation and its tamper record are one operation. It refuses a locked period.
+            led.update(eid, {"status": "void"}, actor="quarantine_charge",
+                       reason=reason or "impossible estimate", pass_="quarantine")
+            n += 1
     return n
 
 
@@ -720,18 +583,11 @@ def unpriced_since(day):
 def record_unpriced(provider, model, kind, in_tok=0, out_tok=0, project=None):
     """Record that a call HAPPENED but could not be priced. cost=0 because we refuse to invent a number, but
     the row is MARKED so no total treats it as 'free' and the receipt can name the model to price."""
-    now = datetime.datetime.now(datetime.timezone.utc)
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     proj = (project if project is not None else _project()) or ""
-    with _lock:
-        _db().execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project,conv_id,basis) "
-                      "VALUES (?,?,?,?,?,?,?,?,?)",
-                      (now.isoformat(timespec="seconds"), now.strftime("%Y-%m-%d"), provider or "?",
-                       model or "?", kind, 0.0, proj, UNPRICED_CONV, BASIS_UNPRICED))
-        _db().commit()
-    # DUAL-WRITE: a $0 forensic marker (cost_basis='unpriced'), carrying the real tokens the price is unknown for.
-    _shadow_spend_event(provider, model, kind, 0, basis=BASIS_UNPRICED, project=proj,
-                        occurred_at=now.isoformat(timespec="seconds"), in_tok=in_tok, out_tok=out_tok,
-                        source="gate", dedup_suffix=":unpriced")
+    # a $0 forensic marker (cost_basis='unpriced'), carrying the real tokens the price is unknown for.
+    _record_spend_event(provider, model, kind, 0, basis=BASIS_UNPRICED, project=proj,
+                        occurred_at=now, in_tok=in_tok, out_tok=out_tok, source="gate", dedup_suffix=":unpriced")
 
 
 def quarantined_since(day):
@@ -790,15 +646,9 @@ def record_reconciled(day, provider, cost, project="unattributed", kind="batch",
     gate/cap and rebuilt idempotently. Default marker '(provider-batch)' / kind 'batch'; the realtime backfill passes
     its own marker + kind='realtime'."""
     marker = model or _RECONCILED
-    with _lock:
-        # basis=BILLED: a reconciliation row IS the provider's own number, not a projection of ours.
-        _db().execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project,basis) "
-                      "VALUES (?,?,?,?,?,?,?,?)",
-                      (day + "T00:00:00+00:00", day, provider or "?", marker, kind,
-                       float(cost), project or "unattributed", BASIS_BILLED))
-        _db().commit()
-    # DUAL-WRITE: the marker model → reconciled=1 + recon_marker, so it's excluded from gate/cap like in charges.
-    _shadow_spend_event(provider, marker, kind, float(cost), basis=BASIS_BILLED, project=project or "unattributed",
+    # basis=BILLED: a reconciliation row IS the provider's own number, not a projection of ours. The marker
+    # model → reconciled=1 + recon_marker, so it is excluded from the gate/cap totals.
+    _record_spend_event(provider, marker, kind, float(cost), basis=BASIS_BILLED, project=project or "unattributed",
                         occurred_at=day + "T00:00:00+00:00", source="reconcile", dedup_suffix=":recon")
 
 
@@ -807,17 +657,11 @@ def clear_reconciled(since=None, model=None):
     (default the batch marker; the realtime backfill passes its own)."""
     snapshot_once("clear-reconciled")           # DELETEs money rows — never without a recovery path
     marker = model or _RECONCILED
-    with _lock:
-        if since:
-            _db().execute("DELETE FROM charges WHERE model=? AND day >= ?", (marker, since))
-        else:
-            _db().execute("DELETE FROM charges WHERE model=?", (marker,))
-        _db().commit()
-    # DUAL-DELETE the reconciliation-mirror rows from spend_events (idempotent rebuild). delete() refuses locked.
-    try:
-        _ledger().delete(where={"recon_marker": marker}, since=since, actor="clear_reconciled", reason="rebuild")
-    except Exception:
-        pass
+    # Delete the reconciliation-mirror rows from spend_events (the money-of-record). NOT charges: its writer
+    # record_reconciled writes only spend_events (the INSERT INTO charges was removed 6 lines above in this
+    # same change), reconciled_by_project reads spend_events (repointed 5b, commit 6969746), and `grep
+    # 'FROM charges'` across src is EMPTY. So charges holds no reconciliation rows to leave stale.
+    _ledger().delete(where={"recon_marker": marker}, since=since, actor="clear_reconciled", reason="rebuild")
 
 
 # ── estimate→actual true-down (ledger_sync.true_down writes these; the gate's batch rows are PRE-SUBMIT
@@ -842,13 +686,11 @@ def record_true_down(day, provider, model, delta, project):
     (so by_dims nets it against the estimate rows before the SaaS push) and the true-down conv_id sentinel (so it
     is identifiable/clearable without a marker model). The original estimate rows are NEVER mutated — the ledger
     keeps both the estimate and the correction (forensic: what we thought + what it actually billed)."""
-    with _lock:
-        _db().execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project,conv_id) VALUES (?,?,?,?,?,?,?,?)",
-                      (day + "T00:00:00+00:00", day, provider or "?", model or "?", "batch",
-                       -abs(float(delta)), project or "unattributed", _TRUE_DOWN_CONV))
-        _db().commit()
-    # DUAL-WRITE: a NEGATIVE batch row carrying the REAL model + the true-down conv sentinel (nets the estimate down).
-    _shadow_spend_event(provider, model, "batch", -abs(float(delta)), conv_id=_TRUE_DOWN_CONV,
+    # A NEGATIVE batch row carrying the REAL model + the true-down conv sentinel (nets the estimate down).
+    # gate_batch_cells (the estimate base) and clear_true_down were BOTH repointed to spend_events in 5b (commit
+    # 6969746), and a `grep 'FROM charges'` sweep across src is EMPTY — no reader reads charges, so writing only
+    # spend_events here is complete, not partial.
+    _record_spend_event(provider, model, "batch", -abs(float(delta)), conv_id=_TRUE_DOWN_CONV,
                         project=project or "unattributed", occurred_at=day + "T00:00:00+00:00",
                         source="true-down", dedup_suffix=":td")
 
@@ -866,17 +708,11 @@ def clear_true_down(since=None):
     more honest of the two, so the clear stays unconditional and ledger_sync warns about the gap instead.
     Second finding today that both validators confirmed and the code was right about."""
     snapshot_once("clear-true-down")    # DELETEs money rows — never without a recovery path
-    with _lock:
-        if since:
-            _db().execute("DELETE FROM charges WHERE conv_id=? AND day >= ?", (_TRUE_DOWN_CONV, since))
-        else:
-            _db().execute("DELETE FROM charges WHERE conv_id=?", (_TRUE_DOWN_CONV,))
-        _db().commit()
-    # DUAL-DELETE the true-down correction rows from spend_events (idempotent rebuild each reconcile).
-    try:
-        _ledger().delete(where={"conv_id": _TRUE_DOWN_CONV}, since=since, actor="clear_true_down", reason="rebuild")
-    except Exception:
-        pass
+    # Delete the true-down correction rows from spend_events (the money-of-record). NOT charges: the ONLY writer
+    # of true-down rows, record_true_down, now writes only spend_events (its INSERT INTO charges was removed
+    # above); and the only consumers of these rows — gate_batch_cells (the estimate base) and by_dims (the SaaS
+    # push) — read spend_events (repointed 5b). So charges holds no true-down rows for this to leave stale.
+    _ledger().delete(where={"conv_id": _TRUE_DOWN_CONV}, since=since, actor="clear_true_down", reason="rebuild")
 
 
 # ── spendguard's own advisor LLM use (segregated: own cap, own line, excluded from workload) ──

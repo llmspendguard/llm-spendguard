@@ -88,9 +88,9 @@ ck("first key carries batch+realtime ($15)", abs(bk[("anthropic", want)]["cost"]
 ck("second key attributed separately ($5)", abs(bk[("anthropic", fp2)]["cost"] - 5.0) < 1e-6)
 ck("reconcile/true-down marker rows excluded from the per-key view",
    ("anthropic", "(none)") not in bk)
-row = budget._db().execute("SELECT key_fp FROM charges WHERE model=? AND kind='batch'",
-                           ("claude-opus-4-8",)).fetchone()
-ck("the stamped fp is the key at RECORD time (not a cached stale one)", row and row[0] == fp2)
+_krow = next((r for r in budget._ledger().query(where={"model": "claude-opus-4-8"})
+              if r.get("batch_usd") not in (None, "")), None)
+ck("the stamped fp is the key at RECORD time (not a cached stale one)", _krow and _krow["key_fp"] == fp2)
 
 print("-- schema: the new knobs are documented --")
 from spendguard import config_schema

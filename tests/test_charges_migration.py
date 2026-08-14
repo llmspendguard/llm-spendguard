@@ -33,6 +33,12 @@ conv.segments = lambda *a, **k: []
 conv._seg_get_all = lambda: {}
 
 db = budget._db()
+# charges is the RETIRED source table — budget no longer creates it (the money-of-record is spend_events), so
+# this migration test creates its own fixture to exercise the one-time migrate_charges bridge.
+db.execute("CREATE TABLE IF NOT EXISTS charges (ts TEXT, day TEXT, provider TEXT, model TEXT, kind TEXT, "
+           "cost REAL, project TEXT DEFAULT '', conv_id TEXT DEFAULT '', key_fp TEXT DEFAULT '', "
+           "basis TEXT DEFAULT '', intent TEXT DEFAULT '', actor TEXT DEFAULT '')")
+db.commit()
 def ins(ts, provider, model, kind, cost, project, conv_id="c1"):
     db.execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project,conv_id) VALUES (?,?,?,?,?,?,?,?)",
                (ts, ts[:10], provider, model, kind, cost, project, conv_id))

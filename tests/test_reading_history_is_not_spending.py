@@ -32,9 +32,13 @@ def check(label, ok, extra=""):
 
 
 def _today_total():
-    c = sqlite3.connect(config.db_path())
+    # money-of-record is spend_events now; sum everything booked today (all categories, incl meta/void — this
+    # test only cares WHETHER a row was booked, not the countable filter)
+    from spendguard import ledger as _L
+    import datetime as _dt
+    today = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
     try:
-        return c.execute("SELECT COALESCE(SUM(cost),0) FROM charges WHERE day=date('now')").fetchone()[0]
+        return float(_L.SpendLedger().sum_dec(since=today, include_void=True))
     except Exception:
         return 0.0
 

@@ -29,7 +29,20 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 import ast, inspect, pathlib, itertools, datetime
+from collections import Counter
 from spendguard import budget
+from spendguard import ledger as L
+
+
+def _se_id_by_cost(cost):
+    """The spend_events id of the row whose money equals `cost` (amounts are distinct in this fixture)."""
+    return next(r["id"] for r in budget._ledger().query()
+               if any(L.to_dec(r.get(c)) == L.to_dec(cost) for c in L.USD_COLS))
+
+
+def _se_count_by_cost(cost):
+    return sum(1 for r in budget._ledger().query()
+               if any(L.to_dec(r.get(c)) == L.to_dec(cost) for c in L.USD_COLS))
 
 failures = 0
 def check(label, cond, extra=""):
@@ -52,7 +65,7 @@ def seed():
     budget.record("anthropic", "test-model", "batch", AMOUNTS["quarantined"], project="p1")
     # Target by ROWID. Seeding these in the same second is exactly the collision that made a ts-targeted
     # quarantine tag the plain row too — the failure this test found in the repair tool itself.
-    rid = budget._db().execute("SELECT rowid FROM charges WHERE cost=?", (AMOUNTS["quarantined"],)).fetchone()[0]
+    rid = _se_id_by_cost(AMOUNTS["quarantined"])   # the spend_events id of the row to void
     budget.quarantine_charge(reason="seed: impossible estimate", row=rid)
     budget.record("anthropic", budget._RECONCILED, "batch", AMOUNTS["reconciled"], project="p1")
     budget.record("anthropic", "test-model", "batch", AMOUNTS["true_down"], project="p1",
@@ -164,7 +177,8 @@ for name, (want, why) in sorted(MATRIX.items()):
 print("-- the repair tool cannot tag rows it was not aimed at --")
 # Found by this very test: charges.ts has SECOND granularity, and seeding two rows in one second made a
 # ts-targeted quarantine tag both. Six charges share a second in the real ledger.
-shared_ts = budget._db().execute("SELECT ts FROM charges GROUP BY ts HAVING COUNT(*) > 1 LIMIT 1").fetchone()
+_tsc = Counter(r["ts_utc"] for r in budget._ledger().query())
+shared_ts = next(((t,) for t, k in _tsc.items() if k > 1), None)
 if shared_ts:
     try:
         budget.quarantine_charge(ts=shared_ts[0], reason="should refuse")
@@ -228,9 +242,8 @@ check("…naming estimate and billed separately", "estimate" in line and "billed
 print("-- the invariant behind the whole matrix --")
 q_counted = [n for n, (w, _) in MATRIX.items() if "quarantined" in w and n != "quarantined_since"]
 check("NOTHING except quarantined_since counts a quarantined row", not q_counted, str(q_counted))
-check("a quarantined row is still IN the table (excluded ≠ deleted)",
-      budget._db().execute("SELECT COUNT(*) FROM charges WHERE cost=?",
-                           (AMOUNTS["quarantined"],)).fetchone()[0] == 1)
+check("a quarantined row is still IN the ledger (excluded ≠ deleted)",
+      _se_count_by_cost(AMOUNTS["quarantined"]) == 1)
 
 print(f"\n{'[FAIL]' if failures else 'OK'} test_ledger_marker_matrix: {failures} failure(s)")
 sys.exit(1 if failures else 0)

@@ -80,43 +80,41 @@ SpendLedger()
 
 budget.record(provider="openai", model="gpt-5.5", kind="realtime", cost=1.23,
               project="absence-guard", conv_id="c-absence")
-row = budget._db().execute("SELECT rowid FROM charges WHERE project='absence-guard'").fetchone()
+_se = budget._ledger().query(where={"project_primary": "absence-guard"})
+row = _se[0]["id"] if _se else None                        # the spend_events id (the row quarantine targets)
 check("seeded a charge to quarantine", row is not None)
 
 if row:
-    n = budget.quarantine_charge(row=row[0], reason="guard: audit must accompany the mutation")
+    n = budget.quarantine_charge(row=row, reason="guard: audit must accompany the mutation")
     check("the charge was quarantined", n == 1, f"rowcount={n}")
     audited = budget._db().execute(
         "SELECT COUNT(*) FROM spend_audit WHERE actor='quarantine_charge' AND event_id=?",
-        (str(row[0]),)).fetchone()[0]
+        (str(row),)).fetchone()[0]
     check("the mutation left an audit row, written under the same lock and commit",
           audited == 1, f"audit rows={audited}")
 
-    # AND WHEN THE AUDIT CANNOT BE WRITTEN, IT IS LOUD. Simulated by making the INSERT fail the way an
-    # unmigrated schema would. The repair must still happen — blocking it would be a different bug — but
-    # it must not happen quietly.
+    # AND WHEN THE AUDIT CANNOT BE WRITTEN, THE MUTATION DOES NOT HAPPEN EITHER. quarantine_charge voids via the
+    # ATOMIC update() — the status change and its chained audit row commit together or not at all — so a failed
+    # audit ROLLS BACK the void and RAISES rather than leaving a changed ledger with no record of the change.
+    # Simulated by making the ledger's chained _audit raise (the way an unmigrated schema would), no schema surgery.
     budget.record(provider="openai", model="gpt-5.5", kind="realtime", cost=4.56,
                   project="absence-guard-2", conv_id="c-absence-2")
-    row2 = budget._db().execute("SELECT rowid FROM charges WHERE project='absence-guard-2'").fetchone()
-    # Simulate the audit write FAILING (as an unmigrated schema would) by making the ledger's audit() raise —
-    # directly, not via schema surgery. Renaming spend_audit would deadlock the ledger's own connection in the
-    # dual-write era AND be re-created on the next _ledger() open; patching the method tests the exact behaviour
-    # (repair proceeds, failure is LOUD) without either.
+    _se2 = budget._ledger().query(where={"project_primary": "absence-guard-2"})
+    row2 = _se2[0]["id"] if _se2 else None
     _led = budget._ledger()
-    _orig_audit = _led.audit
-    _led.audit = lambda *a, **k: (_ for _ in ()).throw(Exception("simulated: no such table: spend_audit"))
-    err = io.StringIO()
-    real_stderr, sys.stderr = sys.stderr, err
+    _orig_audit = _led._audit
+    _led._audit = lambda *a, **k: (_ for _ in ()).throw(Exception("simulated: no such table: spend_audit"))
+    raised = False
     try:
-        n2 = budget.quarantine_charge(row=row2[0], reason="guard: audit failure must be loud")
+        budget.quarantine_charge(row=row2, reason="guard: audit failure must not pass silently")
+    except Exception:
+        raised = True
     finally:
-        sys.stderr = real_stderr
-        _led.audit = _orig_audit
-    check("the repair still happens when the audit write fails", n2 == 1, f"rowcount={n2}")
-    check("...and it SAYS SO on stderr instead of passing silently",
-          "WITHOUT AN AUDIT ROW" in err.getvalue(),
-          f"stderr was {err.getvalue()[:120]!r} — `except Exception: pass` is how a ledger changes with "
-          "no trace and no complaint")
+        _led._audit = _orig_audit
+    check("a failed audit write RAISES rather than mutating silently", raised)
+    live = [r for r in budget._ledger().query(where={"project_primary": "absence-guard-2"}) if r["status"] != "void"]
+    check("...and the void is ROLLED BACK — no changed ledger with no record of the change", len(live) == 1,
+          f"{len(live)} live rows")
 
 # ── AND THE MIRROR: A PRESENT ZERO IS NOT AN ABSENT VALUE ────────────────────────────────────────────
 # `x or default` cannot tell 0.0 from None, and in an accounting tool 0.0 is real and common. Each check

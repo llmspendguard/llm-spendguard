@@ -76,46 +76,57 @@ print("\n  ...and the WRITE PATH resolves it, not just the helper:")
 # The cross-process ledger only records under the sqlite backend; with the default in-memory backend the
 # gate writes no row at all and this check would pass vacuously on a None it never examined.
 from spendguard import config as _config                                    # noqa: E402
+from spendguard import ledger as _L                                         # noqa: E402
 _config.budget_backend = lambda: "sqlite"
-_before = budget._db().execute("SELECT COALESCE(MAX(rowid),0) FROM charges").fetchone()[0]
+_led = budget._ledger()
+
+
+def _newest(where=None):
+    """The most-recently-inserted spend_events row (the money-of-record; charges is retired). Ordered by the
+    sqlite rowid — recorded_at has only second granularity, so two rows in one second would tie ambiguously."""
+    w, args = "", []
+    if where:
+        w = " WHERE " + " AND ".join(f"{k}=?" for k in where)
+        args = list(where.values())
+    r = _led._conn.execute(f"SELECT id FROM spend_events{w} ORDER BY rowid DESC LIMIT 1", args).fetchone()
+    return _led.get(r[0]) if r else None
+
+
 gate._record_rt("kimi-k3", {}, in_tok=10, out_tok=10, cost=0.01)
-_row = budget._db().execute(
-    "SELECT provider, model FROM charges WHERE rowid > ? ORDER BY rowid DESC LIMIT 1", (_before,)).fetchone()
+_row = _newest(where={"model": "kimi-k3"})
 check("a charge written by the gate names the REAL vendor",
-      _row is not None and _row[0] == "moonshot",
+      _row is not None and _row["provider"] == "moonshot",
       f"row was {_row!r} — the resolver being right does not mean the writer calls it")
 
 
 print("\n  every charge carries WHAT it bought and WHAT ran it:")
 with calls.context(intent="review:some-file.py"):
     budget.record(provider="moonshot", model="kimi-k3", kind="realtime", cost=1.23)
-row = budget._db().execute(
-    "SELECT provider, model, intent, actor, key_fp, basis FROM charges ORDER BY rowid DESC LIMIT 1"
-).fetchone()
-check("the charge records the intent it was made under", row[2] == "review:some-file.py", str(row))
-check("...and what ran it", bool(row[3]), f"actor was {row[3]!r}")
-check("...and the vendor as given", row[0] == "moonshot", str(row))
+row = _newest()
+check("the charge records the intent it was made under", row["intent"] == "review:some-file.py", str(row))
+check("...and what ran it", bool(row["actor"]), f"actor was {row['actor']!r}")
+check("...and the vendor as given", row["provider"] == "moonshot", str(row))
 
 # A charge made OUTSIDE any declared intent must be honest about that rather than borrowing a stale one.
 budget.record(provider="openai", model="gpt-5.5", kind="realtime", cost=0.5)
-row = budget._db().execute("SELECT intent FROM charges ORDER BY rowid DESC LIMIT 1").fetchone()
 check("a charge with no declared intent records an empty one, not the previous flow's",
-      row[0] == "", f"got {row[0]!r}")
+      _newest()["intent"] == "", f"got {_newest()['intent']!r}")
 
 
 print("\n  history can be repaired, and the repair is journalled:")
-SpendLedger()                                    # spend_audit lives in the ledger schema
-budget._db().execute("UPDATE charges SET provider='openai' WHERE model='kimi-k3'")
-budget._db().commit()
+_led._conn.execute("UPDATE spend_events SET provider='openai' WHERE model='kimi-k3'")   # seed a mislabelled vendor
+_led._conn.commit()
+
+
+def _provider_of(model):
+    return _newest(where={"model": model})["provider"]
 
 dry = budget.reattribute_providers(apply=False)
 check("dry by default: it reports without writing", dry["n"] >= 1 and dry["applied"] is False, str(dry["n"]))
-still = budget._db().execute("SELECT provider FROM charges WHERE model='kimi-k3'").fetchone()[0]
-check("...and really did not write", still == "openai", still)
+check("...and really did not write", _provider_of("kimi-k3") == "openai", _provider_of("kimi-k3"))
 
 res = budget.reattribute_providers(apply=True)
-fixed = budget._db().execute("SELECT provider FROM charges WHERE model='kimi-k3'").fetchone()[0]
-check("applying corrects the vendor", fixed == "moonshot", fixed)
+check("applying corrects the vendor", _provider_of("kimi-k3") == "moonshot", _provider_of("kimi-k3"))
 aud = budget._db().execute(
     "SELECT field, old_value, new_value FROM spend_audit WHERE actor='reattribute_providers'").fetchall()
 check("...and the correction is journalled with its before and after",
@@ -128,21 +139,20 @@ check("...and says WHY, not just what", bool(budget._db().execute(
 budget.record(provider="some-vendor-we-recorded", model="a-model-nobody-registered",
               kind="realtime", cost=0.25)
 budget.reattribute_providers(apply=True)
-kept = budget._db().execute(
-    "SELECT provider FROM charges WHERE model='a-model-nobody-registered'").fetchone()[0]
-check("a recorded vendor is never overwritten with 'unknown'", kept == "some-vendor-we-recorded", kept)
+check("a recorded vendor is never overwritten with 'unknown'",
+      _provider_of("a-model-nobody-registered") == "some-vendor-we-recorded",
+      _provider_of("a-model-nobody-registered"))
 
 
 # ── AND THE KEY FINGERPRINT MUST BELONG TO THE VENDOR ON THE ROW ─────────────────────────────────────
 # Re-attributing the vendor fixed `provider` and left `key_fp`, so 688 rows read "moonshot spend, served
 # by an OpenAI key" — a self-contradicting record, which in a forensic table is its own kind of wrong.
 print("\n  the key fingerprint belongs to the vendor on the row:")
-_prev_home = None
 budget.record(provider="moonshot", model="kimi-k3", kind="realtime", cost=2.0)
-_rid = budget._db().execute("SELECT MAX(rowid) FROM charges").fetchone()[0]
+_eid = _newest(where={"model": "kimi-k3"})["id"]           # the spend_events id of the row we stamp
 _openai_fp = "aaaaaaaa:bbbb"
-budget._db().execute("UPDATE charges SET key_fp=? WHERE rowid=?", (_openai_fp, _rid))
-budget._db().commit()
+_led._conn.execute("UPDATE spend_events SET key_fp=? WHERE id=?", (_openai_fp, _eid))
+_led._conn.commit()
 
 import spendguard.config as _c2                                             # noqa: E402
 _real_fp = _c2.key_fingerprint
@@ -153,7 +163,7 @@ try:
     budget.reattribute_providers(apply=True)
 finally:
     _c2.key_fingerprint = _real_fp
-_fp_now = budget._db().execute("SELECT key_fp FROM charges WHERE rowid=?", (_rid,)).fetchone()[0]
+_fp_now = _led.get(_eid)["key_fp"]
 check("...and cleared to UNKNOWN, not rewritten with today's key",
       _fp_now == "", f"got {_fp_now!r} — today's key did not serve a call made before it existed")
 

@@ -50,29 +50,20 @@ budget.record("openai", "gpt-5.5", "realtime", 2.50, basis=budget.BASIS_ESTIMATE
 check("an ESTIMATE still counts — it is the pre-spend guard and must bind",
       budget.spent_since(today) > after, str(budget.spent_since(today)))
 
-# The three markers that must all stay out, for three different reasons.
-import sqlite3                                              # noqa: E402
-c = sqlite3.connect(config.db_path())
+# The three markers that must all stay out, for three different reasons. Seeded through the real writer, which
+# maps a quarantine conv → status=void and a marker model → reconciled=1 on the money-of-record (spend_events).
 before = budget.spent_since(today)
-c.execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project,conv_id,key_fp,basis) "
-          "VALUES (?,?,?,?,?,?,?,?,?,?)",
-          (today + "T00:00:00+00:00", today, "openai", "gpt-5.5", "realtime", 999.0, "",
-           budget.QUARANTINE_CONV, "", budget.BASIS_ESTIMATE))
-c.commit()
+budget.record("openai", "gpt-5.5", "realtime", 999.0, conv_id=budget.QUARANTINE_CONV, basis=budget.BASIS_ESTIMATE)
 check("a QUARANTINED impossible estimate stays out", budget.spent_since(today) == before,
       str(budget.spent_since(today)))
 
 # ── the exclusion must survive the WRITER rewriting the row ──────────────────────────────────────────
 # Relabelling the offending row's basis fixed the cap for exactly as long as it took ledger_sync to re-run
 # and set it back to 'billed'. The MODEL marker is what the writer keeps stable, so that is what the reader
-# must key on. `_MARKER_MODELS` already existed for this and was referenced nowhere.
+# must key on — a marker model → reconciled=1, excluded whatever basis the writer left.
 before = budget.spent_since(today)
 for marker in budget._MARKER_MODELS:
-    c.execute("INSERT INTO charges (ts,day,provider,model,kind,cost,project,conv_id,key_fp,basis) "
-              "VALUES (?,?,?,?,?,?,?,?,?,?)",
-              (today + "T00:00:00+00:00", today, "openai", marker, "realtime", 9_999.0, "", "", "",
-               budget.BASIS_BILLED))          # basis='billed', exactly as the writer leaves it
-c.commit()
+    budget.record("openai", marker, "realtime", 9_999.0, basis=budget.BASIS_BILLED)
 check("every marker model stays out of the period, whatever basis the writer left",
       budget.spent_since(today) == before, f"{before} -> {budget.spent_since(today)}")
 check(f"...and there are {len(budget._MARKER_MODELS)} of them, all wired in",

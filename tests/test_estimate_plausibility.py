@@ -85,16 +85,17 @@ DAY = budget._db().execute("SELECT date('now')").fetchone()[0]
 budget.record("anthropic", MODEL, "batch", 54.51, project="saga")
 plain = budget.spent_since(DAY)
 check("a normal charge counts", plain >= 54.51, f"{plain}")
-ts = budget._db().execute("SELECT ts FROM charges WHERE cost=54.51").fetchone()[0]
+from spendguard import ledger as _L
+ts = next(r["ts_utc"] for r in budget._ledger().query() if _L.to_dec(r.get("batch_usd")) == _L.to_dec("54.51"))
 n = budget.quarantine_charge(ts, "test: base64-as-tokens")
 check("exactly one row is tagged", n == 1, f"{n}")
 check("re-running is a no-op (idempotent)", budget.quarantine_charge(ts, "again") == 0)
 check("it drops out of the spend total", abs(budget.spent_since(DAY) - (plain - 54.51)) < 0.005,
       f"{budget.spent_since(DAY)} vs {plain - 54.51}")
-row = budget._db().execute("SELECT cost, model, conv_id FROM charges WHERE ts=?", (ts,)).fetchone()
+row = next((r for r in budget._ledger().query(where={"ts_utc": ts})), None)
 check("the ROW still exists with its amount intact (forensics, not deletion)",
-      row is not None and abs(row[0] - 54.51) < 1e-9 and row[1] == MODEL)
-check("…tagged as quarantined", row[2] == budget.QUARANTINE_CONV)
+      row is not None and _L.to_dec(row["batch_usd"]) == _L.to_dec("54.51") and row["model"] == MODEL)
+check("…tagged as quarantined (status void)", row["status"] == "void")
 check("provider-truth comparison excludes it too (like-for-like)",
       all(v == 0 or True for v in budget.by_provider_day(kind="batch").values())
       and 54.51 not in [round(v, 2) for v in budget.by_provider_day(kind="batch").values()])

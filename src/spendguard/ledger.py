@@ -453,21 +453,28 @@ class SpendLedger:
         if self._is_locked(row):
             raise LockedError(f"event {eid} is locked (status={row['status']}, period={row['period']}) — use reverse/adjust")
         applied = 0
-        for field, new in changes.items():
-            if field in _PROTECTED:
-                raise ValueError(f"{field!r} is immutable (identity/period) — reverse/adjust instead")
-            if field not in self._cols:
-                raise ValueError(f"unknown column {field!r}")
-            old = row[field]
-            nv = json.dumps(new) if field in _JSON_COLS and not isinstance(new, (str, type(None))) else new
-            if nv == old:
-                continue
-            self._conn.execute(f"UPDATE spend_events SET {field}=? WHERE id=?", (nv, eid))
-            self._audit(eid, actor, pass_, field, old, nv, reason)
-            applied += 1
-        if applied:
-            self._conn.execute("UPDATE spend_events SET revision=revision+1 WHERE id=?", (eid,))
-        self._conn.commit()
+        # ATOMIC: the field change and its chained audit row commit together, or neither does. If the audit
+        # write fails, ROLL BACK the mutation and re-raise — a changed ledger with no record of the change is
+        # the one thing this table exists to prevent, so it must never be left half-done.
+        try:
+            for field, new in changes.items():
+                if field in _PROTECTED:
+                    raise ValueError(f"{field!r} is immutable (identity/period) — reverse/adjust instead")
+                if field not in self._cols:
+                    raise ValueError(f"unknown column {field!r}")
+                old = row[field]
+                nv = json.dumps(new) if field in _JSON_COLS and not isinstance(new, (str, type(None))) else new
+                if nv == old:
+                    continue
+                self._conn.execute(f"UPDATE spend_events SET {field}=? WHERE id=?", (nv, eid))
+                self._audit(eid, actor, pass_, field, old, nv, reason)
+                applied += 1
+            if applied:
+                self._conn.execute("UPDATE spend_events SET revision=revision+1 WHERE id=?", (eid,))
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
         return applied
 
     # ── the attribution PASS (draft → posted). Deterministic plumbing; the agentic determiner feeds it. ──

@@ -214,13 +214,11 @@ check("gap attributed to nlp-pipeline", abs(summ["gap_by_project"].get("nlp-pipe
 check("no provider errors", summ["errors"] == {})
 check("both providers ok", set(summ["providers_ok"]) == {"openai", "anthropic"})
 
-# idempotent: a reconciled row was written, and re-running rebuilds (not double-counts)
-recon_rows = budget._db().execute(
-    "SELECT COUNT(*) FROM charges WHERE model='(provider-batch)'").fetchone()[0]
+# idempotent: a reconciled row was written to spend_events, and re-running rebuilds (not double-counts)
+recon_rows = budget._ledger().count(where={"recon_marker": "(provider-batch)"})
 check("one reconciled row written", recon_rows == 1)
 summ2 = LS.reconcile_into_ledger(since=SINCE)
-recon_rows2 = budget._db().execute(
-    "SELECT COUNT(*) FROM charges WHERE model='(provider-batch)'").fetchone()[0]
+recon_rows2 = budget._ledger().count(where={"recon_marker": "(provider-batch)"})
 check("still one reconciled row after re-run (idempotent)", recon_rows2 == 1)
 check("same gap on re-run", abs(summ2["ungoverned"] - 15.0) < 1e-9)
 
@@ -323,11 +321,16 @@ with open(_cfg.RT_LOG, "w") as _f:
 _seed(RT_D2, "anthropic", "claude-opus-4-8", "realtime", 5.0, "vision-pipeline")
 r1 = LS.reconcile_realtime(since=RT_D1)
 check("reconcile_realtime: imports only the RT_D1 stranded gap ($3, 1 row)", abs(r1["imported"] - 3.0) < 1e-6 and r1["rows"] == 1)
-_mk = budget._db().execute("SELECT COALESCE(SUM(cost),0), MAX(project) FROM charges WHERE kind='realtime' AND model=?", (LS._RT_MARKER,)).fetchone()
+from spendguard import ledger as _L
+def _rt_marker_rows():
+    return budget._ledger().query(where={"recon_marker": LS._RT_MARKER})
+_mkr = _rt_marker_rows()
+_mk = (float(sum((_L.to_dec(r.get("realtime_usd")) for r in _mkr), _L.to_dec(0))),
+       _mkr[0]["project_primary"] if _mkr else None)
 check("reconcile_realtime: marker row carries $3", abs(_mk[0] - 3.0) < 1e-6)
 check("reconcile_realtime: gap attributed to the connection's project", _mk[1] == "vision-pipeline")
 r2 = LS.reconcile_realtime(since=RT_D1)   # rebuild → must not double-count
-_mk2 = budget._db().execute("SELECT COALESCE(SUM(cost),0) FROM charges WHERE kind='realtime' AND model=?", (LS._RT_MARKER,)).fetchone()[0]
+_mk2 = float(sum((_L.to_dec(r.get("realtime_usd")) for r in _rt_marker_rows()), _L.to_dec(0)))
 check("reconcile_realtime: idempotent on re-run", abs(_mk2 - 3.0) < 1e-6 and abs(r2["imported"] - 3.0) < 1e-6)
 
 print("-- HARD RULE: ADMIN KEYS ARE DEV-ONLY — reconcile_realtime must NEVER write the ledger from admin --")

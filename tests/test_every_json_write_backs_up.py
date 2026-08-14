@@ -121,10 +121,10 @@ _btree = ast.parse(_bsrc)
 _unsnapped, _checked = [], []
 for _fn in [n for n in ast.walk(_btree) if isinstance(n, ast.FunctionDef)]:
     _body = ast.get_source_segment(_bsrc, _fn) or ""
-    # `_body.upper()` against a lowercase needle matched NOTHING, so this passed while reporting on an
-    # empty set — the fourth guard-that-could-not-fail this session, and the reason every one gets a
-    # negative control before it is trusted.
-    if "DELETE FROM CHARGES" not in _body.upper():
+    # money rows are DELETEd via _ledger().delete() now (charges is retired); the guard is unchanged — any
+    # function that deletes them must snapshot the whole db first. (`_body.upper()` against a lowercase needle
+    # matched NOTHING once, passing while reporting on an empty set, which is why line 132 is a negative control.)
+    if "_ledger().delete(" not in _body:
         continue
     _checked.append(_fn.name)
     if "snapshot_once(" not in _body and "snapshot(reason" not in _body:

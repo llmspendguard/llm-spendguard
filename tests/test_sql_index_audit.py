@@ -74,7 +74,6 @@ REQUIRED = {
     "calls": {"chain", "intent", "ts"},
     "gate_calls": {"sig", "model"},
     "graph_edges": {"rel", "src"},
-    "charges": {"day", "conv_id"},
     "cost_predictions": {"paired_ts", "job_id"},
     "savings": {"day"},
     "insights": {"intent"},
@@ -93,7 +92,7 @@ for table, cols in sorted(REQUIRED.items()):
     ck(f"{table}: indexed on {sorted(cols)}", not missing or print(f"      missing: {missing}"))
 
 # ── guard 2: EXPLAIN QUERY PLAN every extractable query in the codebase ──
-WATCHLIST = {"calls", "gate_calls", "spend_events", "charges", "call_io", "semcache", "graph_edges"}
+WATCHLIST = {"calls", "gate_calls", "spend_events", "call_io", "semcache", "graph_edges"}
 # whole-corpus reads are scans BY DESIGN (aggregate everything): register them explicitly.
 ALLOWED_SCAN_SNIPPETS = (
     "FROM calls",                # advise/evidence + calibrate corpus reads aggregate the whole (small-col) corpus
