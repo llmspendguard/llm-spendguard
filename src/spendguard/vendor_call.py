@@ -782,6 +782,19 @@ def time_budget(vendor, model, sig=None, default_s=None, in_chars=None):
     Precedence, measured first: this class on this model -> this model anywhere -> the caller's own number ->
     (None, "unknown"), which the caller must answer for rather than have a guess invented for them."""
     from . import bulkgate
+    # A SUBSCRIPTION LANE IS SLOWER THAN THE METERED PATH the latency was measured on — a CLI cold-start +
+    # context injection runs 60-120s where the metered call is ~10s — so a metered-derived budget ABANDONS a
+    # live lane call. MEASURED on a real panel: opus/gpt on the Claude Code / Codex lanes hit deadline_exceeded
+    # at 40s/60s reviewing a bigger file, while zai's HTTP lane and metered kimi finished. When a lane is ACTIVE
+    # for this vendor, floor the deadline at the lane minimum (mirrors adapters' lane subprocess/HTTP floor); the
+    # lane is $0, so the extra wait costs latency, not money, and a hung lane is still bounded by its TIMEOUT_S.
+    lane_floor = 0.0
+    try:
+        from . import adapters
+        if adapters._lane_for(vendor):
+            lane_floor = float(adapters.LANE_MIN_TIMEOUT_S)
+    except Exception:
+        pass
     for scope, kwargs in (("class", {"sig": sig, "model": model}), ("model", {"model": model})):
         if scope == "class" and not sig:
             continue
@@ -797,9 +810,11 @@ def time_budget(vendor, model, sig=None, default_s=None, in_chars=None):
                 # Calls already died at this budget: the work is demonstrably slower than anything we
                 # completed, so the proposal can never sit below the budget that killed them.
                 want = max(want, float(d["floor"]) * DEADLINE_SLACK)
-            return max(DEADLINE_FLOOR_S, min(DEADLINE_CEIL_S, want)), f"measured:{scope}(n={d['n']})"
+            return max(DEADLINE_FLOOR_S, lane_floor, min(DEADLINE_CEIL_S, want)), f"measured:{scope}(n={d['n']})"
     if default_s:
-        return float(default_s), "caller"
+        return max(float(default_s), lane_floor), "caller"
+    if lane_floor:
+        return lane_floor, "lane-floor"
     return None, "unknown"
 
 

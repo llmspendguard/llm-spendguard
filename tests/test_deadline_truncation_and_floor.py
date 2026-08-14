@@ -109,5 +109,27 @@ try:
 finally:
     adapters.call = _real_call
 
+
+# ── A-lane: a lane vendor's deadline floors at the lane minimum (the metered budget is for a faster path) ────
+# MEASURED on a real panel: opus/gpt on the CLI lanes hit deadline_exceeded at 40s/60s because their budget was
+# derived from the METERED path they no longer run on. When a lane is active, the deadline floors at LANE_MIN.
+print("\n-- lane deadline floor: a lane vendor gets LANE_MIN, a non-lane vendor keeps the tight budget --")
+_prev = os.environ.get("SPENDGUARD_ADVISOR_EXECUTOR")
+os.environ["SPENDGUARD_ADVISOR_EXECUTOR"] = "pool"                       # activates every provider's lane
+try:
+    b, basis = vc.time_budget("anthropic", "claude-opus-4-8")            # lane active, no measurement
+    ck("a lane vendor with no measurement gets the lane floor, not (None, unknown)",
+       b == adapters.LANE_MIN_TIMEOUT_S and basis == "lane-floor", f"{b} {basis}")
+    b2, _ = vc.time_budget("anthropic", "claude-opus-4-8", default_s=30)
+    ck("a tight caller default is floored up to the lane minimum for a lane vendor",
+       b2 >= adapters.LANE_MIN_TIMEOUT_S, str(b2))
+    b3, _ = vc.time_budget("moonshot", "kimi-k3", default_s=30)          # moonshot has NO lane
+    ck("a non-lane vendor is NOT floored — its metered budget stands", b3 == 30.0, str(b3))
+finally:
+    if _prev is None:
+        os.environ.pop("SPENDGUARD_ADVISOR_EXECUTOR", None)
+    else:
+        os.environ["SPENDGUARD_ADVISOR_EXECUTOR"] = _prev
+
 print(f"\n{'[FAIL]' if fails else 'OK'} test_deadline_truncation_and_floor: {fails} failure(s)")
 sys.exit(1 if fails else 0)
