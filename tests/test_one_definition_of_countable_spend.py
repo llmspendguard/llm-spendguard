@@ -93,13 +93,22 @@ def test_no_module_sums_raw_charges_without_declaring_it():
           not offenders, f"{len(offenders)} undeclared: {offenders[:6]}")
 
 
-def test_spent_since_uses_the_view():
+def test_spent_since_uses_the_one_definition():
+    import ast
     import inspect
     src = inspect.getsource(budget.spent_since)
-    # The source interpolates the NAME, not the value — checking for the value here found nothing and
-    # reported a defect that did not exist.
-    check("spent_since reads the view, not a hand-built exclusion list",
-          "COUNTABLE_VIEW" in src and "_MARKER_MODELS" not in src)
+    # spent_since is repointed onto the money-of-record (spend_events): it delegates to spent_dec, which applies
+    # the SINGLE countable filter SpendLedger._COUNTABLE. The one-definition invariant is preserved, relocated
+    # from the countable_charges view to _COUNTABLE — still no hand-built marker/exclusion list in the reader.
+    check("spent_since delegates to spend_events' spent_dec (the one _COUNTABLE), not a hand-built list",
+          "spent_dec" in src and "_MARKER_MODELS" not in src)
+    # And that ONE definition is defined exactly once — counted from the PARSED module (AST assignments to the
+    # name), not a substring scan that reformatting or a comment could fool.
+    from spendguard import ledger as _L
+    tree = ast.parse(inspect.getsource(_L))
+    ndefs = sum(1 for node in ast.walk(tree) if isinstance(node, ast.Assign)
+                for t in node.targets if isinstance(t, ast.Name) and t.id == "_COUNTABLE")
+    check("_COUNTABLE (the single countable filter) is defined exactly once", ndefs == 1, f"{ndefs} defs")
 
 
 if __name__ == "__main__":

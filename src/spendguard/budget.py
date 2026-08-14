@@ -601,23 +601,20 @@ def charge_to_event(provider, model, kind, cost, conv_id="", basis="", intent=""
 
 
 def spent_since(day, project=None, conv=None):
-    """Gate-recorded workload $ since `day`, from the ONE definition of countable spend (COUNTABLE_VIEW).
-    Optionally SCOPE to a `project` (repo) and/or `conv` (conversation) — the receipt uses this to show what
-    is relevant to the current repo/conversation, not a global sum.
+    """Gate-recorded workload $ since `day` — the LLM cap's number, now read from spend_events via the single
+    `_COUNTABLE` filter (batch+realtime, excluding meta / reconciliation / voided-impossible / reconstructed).
+    Optionally SCOPE to a `project` (repo) and/or `conv` (conversation) — the receipt uses this to show what is
+    relevant to the current repo/conversation, not a global sum.
 
-    This used to carry its own hand-built exclusion list, which is how it came to be missing three of the
-    four marker models. The view is now the single answer to "what counts", so a reader cannot forget part
-    of it — there is nothing here left to forget."""
-    cond = ["day >= ?"]
-    args = [day]
+    Repointed onto spend_events (the money-of-record). This is LLM-only by construction: GPU/remote spend has
+    its OWN cap (resources.compute_exceeded) and is no longer lumped into the LLM total as the old
+    countable_charges view did (charges carried no remote rows, so the live number is unchanged)."""
+    where = {}
     if project is not None:
-        cond.append("LOWER(project) = ?"); args.append(str(project).strip().lower())
+        where["project_primary"] = str(project).strip().lower()
     if conv is not None:
-        cond.append("conv_id = ?"); args.append(str(conv))
-    with _lock:
-        r = _db().execute(f"SELECT COALESCE(SUM(cost),0) FROM {COUNTABLE_VIEW} WHERE "
-                          + " AND ".join(cond), args).fetchone()
-    return float(r[0] or 0)
+        where["conv_id"] = str(conv)
+    return float(_ledger().spent_dec(since=day, where=where or None))
 
 
 def suspect_batches(since):
@@ -896,13 +893,10 @@ def record_meta(provider, model, cost):
     record(provider, model, "meta", cost, project="llm-spendguard")
 
 
-# RAW-CHARGES-OK: meta is deliberately the subject here, and the view drops it
 def meta_spent_since(day):
-    with _lock:
-        r = _db().execute("SELECT COALESCE(SUM(cost),0) FROM charges WHERE day >= ? AND kind='meta' "
-                          "AND (conv_id IS NULL OR conv_id NOT IN (?, ?))",
-                          (day, QUARANTINE_CONV, UNPRICED_CONV)).fetchone()
-    return float(r[0] or 0)
+    """spendguard's OWN (meta) spend since `day` — the is_meta rows, on their own cap line. Read from
+    spend_events via meta_dec (excludes voided/reversed; a meta row is never quarantine/unpriced)."""
+    return float(_ledger().meta_dec(since=day))
 
 
 def meta_spent_today():
