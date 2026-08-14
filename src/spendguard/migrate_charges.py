@@ -25,6 +25,10 @@ def to_spend_events(led=None, src_path=None, since=None):
     led = led or _ledger.SpendLedger()
     src = sqlite3.connect(src_path or config.db_path())
     src.row_factory = sqlite3.Row
+    if not src.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='charges'").fetchone():
+        raise ValueError("no `charges` table — the cutover is complete and it was dropped; spend_events is the "
+                         "sole ledger. There is nothing to migrate. (run_cutover() detects this and no-ops; call "
+                         "it, not this, from the CLI.)")
     where, args = "", []
     if since:
         where, args = " WHERE day >= ?", [since]
@@ -118,6 +122,18 @@ def run_cutover(db_path=None):
     from . import ledger as _ledger
     from . import budget as _budget
     path = db_path or config.db_path()
+
+    # ALREADY CUT OVER — refuse, touching NOTHING. Once `charges` has been dropped, spend_events IS the ledger,
+    # and re-running would be catastrophic: the rename step below moves the LIVE spend_events aside (and DROPs the
+    # real pre-cutover backup first), then to_spend_events crashes on the missing `charges`, leaving an EMPTY
+    # ledger. This is the "old path made impossible" — the migration is a no-op after its source is gone.
+    _probe = sqlite3.connect(path)
+    _has_charges = bool(_probe.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='charges'").fetchone())
+    _probe.close()
+    if not _has_charges:
+        return {"charges_rows": 0, "migrated": 0, "skipped_zero": 0, "already_cutover": True,
+                "reconciles": True, "note": "charges retired — spend_events is the sole ledger; nothing to migrate"}
 
     # Whole-file snapshot FIRST — the lossless recovery path (holds every prior row, incl. non-charges ones).
     snap = _budget.snapshot_once("cutover") if not db_path else _budget.snapshot(reason="cutover")

@@ -158,6 +158,10 @@ def _dispatch(argv=None):
         from . import migrate_charges
         import json as _json
         stats = migrate_charges.run_cutover()
+        if stats.get("already_cutover"):
+            print("✓ already cut over — `charges` is retired and spend_events is the sole money-of-record. "
+                  "Nothing to migrate; nothing was touched.")
+            return 0
         keys = ("charges_rows", "migrated", "skipped_zero", "db_snapshot", "backup_table",
                 "src_exact", "dst_exact", "residual", "reconciles")
         print(_json.dumps({k: stats.get(k) for k in keys}, indent=2))

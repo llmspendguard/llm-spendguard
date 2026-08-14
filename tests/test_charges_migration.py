@@ -79,5 +79,31 @@ ck("idempotent — re-run leaves 6 rows + same $ (dedup, no double-count)",
 ok, bad = led.verify_audit_chain()
 ck("spend_audit hash chain intact after bulk migration", ok)
 
+
+# ── AND once the cutover is COMPLETE (charges dropped), the migration REFUSES — it must never touch the live
+# ledger. The old path would snapshot, RENAME the live spend_events aside, create an empty one, then crash on the
+# missing `charges` — emptying the money-of-record. This proves it no-ops instead of running that gauntlet.
+def _raises_valueerror(fn):
+    try:
+        fn()
+        return False
+    except ValueError:
+        return True
+    except Exception:
+        return False
+
+_before = L.SpendLedger().count_events()
+db.execute("DROP TABLE charges")                                      # simulate the completed, dropped cutover
+db.commit()
+_st3 = migrate_charges.run_cutover()
+_names_after = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+ck("run_cutover REFUSES cleanly when charges is gone (already_cutover)", _st3.get("already_cutover") is True)
+ck("...created NO spend_events_precutover (did NOT rename the live ledger aside)",
+   "spend_events_precutover" not in _names_after)
+ck("...spend_events untouched — same row count, still the sole ledger",
+   "spend_events" in _names_after and L.SpendLedger().count_events() == _before)
+ck("...a DIRECT to_spend_events() call raises a CLEAR error, not a raw no-such-table crash",
+   _raises_valueerror(lambda: migrate_charges.to_spend_events(led=L.SpendLedger())))
+
 print(("[OK]" if not fails else "[FAIL]") + " charges-migration: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)
