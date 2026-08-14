@@ -37,16 +37,31 @@ _PROJECT = None
 # cap). It replaced the countable_charges VIEW over the retired `charges` table — same rule, one place.
 
 
-_LEDGER = None
+_LEDGER_TL = threading.local()
 
 
 def _ledger():
-    """The SpendLedger over this same database — the one writer for the hash-chained audit log."""
-    global _LEDGER
-    if _LEDGER is None:
+    """A SpendLedger over this database, with a THREAD-LOCAL sqlite connection.
+
+    WHY THREAD-LOCAL, NOT ONE SHARED CONNECTION. A single cached connection DEADLOCKED under the concurrent
+    fan_out panel and hung a run for 8 minutes. sqlite serializes every operation on a connection behind one
+    mutex, and our `dec_sum` custom aggregate calls back into Python — so a thread mid-SUM held the connection
+    mutex and wanted the GIL, while another thread held the GIL and wanted the mutex. The SIGABRT stack proved
+    it: step_callback/take_gil on one thread, vdbeUnbind/pthread_mutex_lock on another. Per-thread connections
+    never share a mutex, so that read-vs-write deadlock is structurally impossible. Writes stay serialized for
+    the hash-chained audit log by `_lock` in the record path; WAL makes each committed write visible to the
+    other threads' connections at once."""
+    led = getattr(_LEDGER_TL, "led", None)
+    if led is None:
         from .ledger import SpendLedger
-        _LEDGER = SpendLedger()
-    return _LEDGER
+        led = _LEDGER_TL.led = SpendLedger()
+    return led
+
+
+def _reset_ledger():
+    """Drop THIS thread's cached ledger connection so the next read reconnects clean — call after a destructive
+    schema change. Replaces the old `budget._LEDGER = None`, which a thread-local cache cannot honor."""
+    _LEDGER_TL.led = None
 
 
 def _attribute(ev, project):

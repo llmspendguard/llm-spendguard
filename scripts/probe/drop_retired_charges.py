@@ -39,7 +39,7 @@ def main():
     se_after = con.execute("SELECT COUNT(*) FROM spend_events").fetchone()[0]
     backup_present = "spend_events_precutover" in tables2
     con.close()
-    budget._LEDGER = None                       # drop any cached ledger handle so the next read reconnects clean
+    budget._reset_ledger()                      # drop this thread's cached ledger handle so the next read reconnects clean
     budget._conn = None
     cap_after = budget.spent_since(month)
 
