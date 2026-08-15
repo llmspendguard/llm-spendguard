@@ -72,6 +72,7 @@ def _raw_findings():
 # Named figures for the pre-flight estimate (the ledger bills actual) — never literals at the call site.
 _EST_OVERHEAD_CH = 600
 _EST_OUT_TOK = 2500
+_EST_REPO_MAP_TOK = 6000         # approx input tokens of the repo-wide file-map prompt (estimate only)
 _CHARS_PER_TOKEN = 4
 _METERED_MODEL = "kimi-k3"       # the only panel vendor that bills; used ONLY to price the estimate
 
@@ -227,7 +228,7 @@ def repo_pass(files, budget, spent):
     if "__repo__" in _done_set():
         print("  resume: REPO pass already done, skipping")
         return
-    est = pricing.realtime_cost(_METERED_MODEL, 6000, _EST_OUT_TOK) or 0.0
+    est = pricing.realtime_cost(_METERED_MODEL, _EST_REPO_MAP_TOK, _EST_OUT_TOK) or 0.0
     if spent[0] + est > budget:
         print("  [budget] skipping REPO pass — no headroom.")
         return

@@ -83,6 +83,39 @@ def _lane_cool(lane):
     _lane_cooldown[lane] = time.time() + _pool_cooldown_s()
 
 
+# A lane failure is NOT always the lane being down. A CLI that ran the prompt as an AGENT and hit its turn limit,
+# or a prompt that overran the plan model's context, is a PROMPT-vs-lane MISMATCH — the lane is fine for other
+# prompts — so cooling the WHOLE lane for 900s (metering even small prompts after it) is the wrong response.
+# Measured on a 4-LLM code review: one big file's claude-code result came back error_max_turns and cooled the
+# lane. Rather than parse each lane's error TEXT to guess which kind it was (fragile, and every lane words it
+# differently), the SYSTEM uses the fact it already has: it falls back to the API anyway, so the API OUTCOME on
+# the SAME prompt settles it — the API answered where the lane did not ⇒ the lane was UNSUITABLE for this prompt
+# (keep it, and route prompts this size straight to API); the API failed too ⇒ a real problem (cool the lane).
+# One signal, every lane, and no interpretation of an error string.
+_lane_big_prompt_ceiling = {}   # lane -> min prompt chars that provoked an 'unsuitable' failure (route big → API)
+
+
+def _lane_too_big(lane, prompt):
+    """True when a prompt this size already provoked an 'unsuitable' failure on this lane (the lane failed but the
+    API then answered) — route it straight to the API rather than pay the lane's cold start to fail again.
+    In-process learning; resets each run."""
+    ceil = _lane_big_prompt_ceiling.get(lane)
+    return ceil is not None and len(prompt or "") >= ceil
+
+
+def _learn_from_fallback(lane_name, prompt, api_failed):
+    """The auto-route decision, taken from the API-fallback OUTCOME (never the lane's error text). api_failed is
+    False when the API answered where the lane did not ⇒ the lane was UNSUITABLE for this prompt: keep the lane,
+    and learn that prompts this size (or larger) route straight to API. api_failed is True ⇒ a real problem: cool
+    the lane. Generalizes across every lane because the signal is a FACT (did the API answer?), not a string."""
+    if api_failed:
+        _lane_cool(lane_name)
+        return "down"
+    n = len(prompt or "")
+    _lane_big_prompt_ceiling[lane_name] = min(_lane_big_prompt_ceiling.get(lane_name, n), n)
+    return "unsuitable"
+
+
 def _lane_for(prov):
     """(lane_name, exec_module) if the configured executor covers this provider's prompts, else None.
     `pool` enables every provider's lane; a single-lane setting enables only its own provider."""
@@ -238,7 +271,8 @@ def _http_timeout(timeout_s):
         return float(timeout_s)
 
 
-def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None):
+def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,
+               _skip_lane=False):
     """One raw request. Everything public goes through `call`, which adds the input and output guards.
 
     NO DEFAULT CAP. This carried `max_tokens=512` — the last place a number nobody chose could still reach a
@@ -263,7 +297,9 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
     # ride the matching flat-fee plan — $0 on the billed axis (recorded kind='subscription'); plan VALUE
     # is counted by the matching est-value pipeline (claude-code / codex session logs). Needs NO API key.
     # Any lane failure cools that lane and falls back to the caged API path below — degrade, never break.
-    _lane = _lane_for(prov)
+    _lane = None if _skip_lane else _lane_for(prov)
+    if _lane and _lane_too_big(_lane[0], prompt):
+        _lane = None                                 # a prompt this size already failed this lane as unsuitable → straight to API
     if _lane:
         lane_name, lane_mod = _lane
         # THE SHAPE MUST RIDE THE PROMPT ON A LANE, AND THE DEADLINE MUST BE THE CALLER'S. A CLI completion
@@ -293,10 +329,21 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 pass
             return {**base, "text": s["text"], "in_tok": s["in_tok"], "out_tok": s["out_tok"],
                     "latency": s["latency"], "cost": 0.0, "executor": lane_name, "error": None}
-        _lane_cool(lane_name)
+        # LANE FAILED. Don't guess why from the error text — fall back to the API on the SAME prompt (this
+        # recurses with the lane disabled, so the existing API path runs once, unchanged) and let its OUTCOME
+        # settle whether the lane was unsuitable for this prompt (keep it) or genuinely down (cool it).
+        out = _call_once(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
+                         schema=schema, timeout_s=timeout_s, _skip_lane=True)
+        _kind = _learn_from_fallback(lane_name, prompt, bool(out.get("error")))
         import sys as _sys
-        print(f"[spendguard] {lane_name} lane unavailable ({s['error']}) — cooling {int(_pool_cooldown_s())}s, "
-              f"falling back to metered API", file=_sys.stderr)
+        if _kind == "unsuitable":
+            print(f"[spendguard] {lane_name} lane unsuitable for this prompt — kept for smaller ones; prompts "
+                  f">= {_lane_big_prompt_ceiling[lane_name]} chars now route to API ({str(s['error'])[:60]})",
+                  file=_sys.stderr)
+        else:
+            print(f"[spendguard] {lane_name} lane unavailable — cooling {int(_pool_cooldown_s())}s; the API "
+                  f"fallback also failed ({str(s['error'])[:60]})", file=_sys.stderr)
+        return out
     key = config.api_key(spec["key_env"])
     if not key:
         return {**base, "error": f"no key ({spec['key_env']})"}
