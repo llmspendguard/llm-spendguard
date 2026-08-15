@@ -67,7 +67,9 @@ def estimate_jsonl_cost(jsonl_path, model, batch=True, avg_out_tokens=None, prov
     except Exception:
         used_heuristic = True
     tt = lambda s: _count_tokens(s, model)                        # noqa: E731 — one-line adapter for the counter
-    with open(jsonl_path, errors="ignore") as fh:      # was an unclosed open() — one leaked fd per estimate
+    # errors="replace", not "ignore": this is a COST estimate — silently DROPPING invalid bytes undercounts the
+    # tokens (and the $), whereas replace keeps a placeholder per bad byte so the count can't shrink below reality.
+    with open(jsonl_path, errors="replace") as fh:     # (also: was an unclosed open() — one leaked fd per estimate)
       for line in fh:
         line = line.strip()
         if not line:
@@ -136,7 +138,12 @@ def guarded_submit(jsonl_path, model, cap_dollars, batch=True, avg_out_tokens=No
 
     os.makedirs(AUDIT_DIR, exist_ok=True)
     rec = dict(est); rec["jsonl"] = jsonl_path; rec["cap"] = cap_dollars; rec["expected"] = expected_cost
-    audit_path = os.path.join(AUDIT_DIR, f"{os.path.basename(jsonl_path)}.gate.json")
+    # DISAMBIGUATE by full path: keyed on basename alone, two jobs using same-named .jsonl files in DIFFERENT
+    # directories mapped to one audit file and silently overwrote each other's trail. Append a short hash of the
+    # absolute path (parsing, not a decision) so each source file keeps its own gate record.
+    import hashlib as _hashlib
+    _tag = _hashlib.sha256(os.path.abspath(jsonl_path).encode()).hexdigest()[:8]
+    audit_path = os.path.join(AUDIT_DIR, f"{os.path.basename(jsonl_path)}.{_tag}.gate.json")
     from . import config
     config.update_json(audit_path, lambda _d: rec)      # a gate AUDIT record; losing it loses the trail
 

@@ -127,7 +127,8 @@ def _validate(models):
 
 def sync():
     req = urllib.request.Request(LITELLM_URL, headers={"User-Agent": "spendguard-sync/0.1"})
-    raw = json.load(urllib.request.urlopen(req, context=config.ssl_context(), timeout=60))
+    with urllib.request.urlopen(req, context=config.ssl_context(), timeout=60) as _resp:   # closed (was a leaked socket)
+        raw = json.load(_resp)
     models, provs, unit_models, context, zero_rate = _convert(raw)
     ok, msgs = _validate(models)
     if not ok:

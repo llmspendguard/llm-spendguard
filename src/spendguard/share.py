@@ -118,8 +118,16 @@ def cmd_import(argv):
         ctx = {k: r.get(k) for k in ("task_class", "regime", "output_shape", "scale",
                                      "condition", "action", "mechanism", "quality_basis")}
         ctx["scope"] = "shared"
+        # UNTRUSTED import file: `float(r.get("confidence") or 0.4)` crashed on a non-numeric confidence AND the
+        # falsy `or` silently upgraded an EXPLICIT 0 to 0.4. Distinguish missing (→default) from present, tolerate
+        # garbage, and clamp — never crash on, or over-trust, a community file.
+        _raw = r.get("confidence")
+        try:
+            _conf = float(_raw) if _raw is not None else 0.4
+        except (TypeError, ValueError):
+            _conf = 0.4
         learn.add_insight(None, str(r["lesson"])[:500], evidence="(community)", source="community",
-                          confidence=min(a.trust, float(r.get("confidence") or 0.4)), ctx=ctx, status="candidate")
+                          confidence=min(a.trust, max(0.0, min(1.0, _conf))), ctx=ctx, status="candidate")
         n += 1
     print(f"insights import — added {n} community rule(s) as LOW-TRUST candidates (conf≤{a.trust}).")
     print("  They won't sway the advisor until `spendguard validate` corroborates them against YOUR corpus.")

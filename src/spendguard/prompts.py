@@ -65,7 +65,10 @@ def lint(intent=None, since=None, min_calls=MIN_CALLS):
             q += " AND intent = ?"; args.append(intent)
         if since:
             q += " AND ts >= ?"; args.append(since)
-        rows = con.execute(q, args).fetchall()
+        try:
+            rows = con.execute(q, args).fetchall()
+        except sqlite3.OperationalError:
+            rows = []          # `calls` table not created yet (first run / empty corpus) → no findings, not a crash
     finally:
         con.close()
 

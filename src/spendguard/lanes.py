@@ -119,7 +119,16 @@ def probe():
         if not ln["enabled"]:
             res.append(dict(lane=ln["lane"], skipped="not enabled by advisor.executor"))
             continue
-        r = mods[ln["lane"]].run_prompt(_PROBE_PROMPT, model=_PROBE_TIER.get(ln["lane"]))
+        mod = mods.get(ln["lane"])
+        if mod is None:
+            res.append(dict(lane=ln["lane"], ok=False, error="no probe runner for this lane"))
+            continue
+        try:
+            r = mod.run_prompt(_PROBE_PROMPT, model=_PROBE_TIER.get(ln["lane"]))
+        except Exception as e:
+            # a lane's CLI can be missing (FileNotFoundError) or hang (TimeoutExpired); one lane's probe raising
+            # must not abort the WHOLE --probe run and lose the other lanes' already-collected results.
+            r = {"error": f"{type(e).__name__}: {str(e)[:100]}"}
         ok = not r.get("error")
         _record_probe(ln["lane"], ok)     # persisted: the definitive auth evidence status()/doctor read back
         res.append(dict(lane=ln["lane"], ok=ok, error=r.get("error"),

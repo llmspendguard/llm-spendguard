@@ -41,6 +41,13 @@ def _git_commits(repo, since):
                 day, subj = line.split("|", 1)
                 rows.append((day.strip(), subj.strip()))
         return rows
+    except subprocess.TimeoutExpired:
+        # DISTINCT from other errors: a 10s git-log timeout on a huge/hanging repo used to be swallowed as an
+        # empty result with no indication. Surface it so "no commits" isn't silently mistaken for "none happened".
+        import sys as _sys
+        _sys.stderr.write(f"[workdone] git log timed out (>10s) for {repo} — commits omitted this run "
+                          f"(large repo? narrow --since)\n")
+        return []
     except Exception:
         return []
 

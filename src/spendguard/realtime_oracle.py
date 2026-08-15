@@ -107,7 +107,18 @@ def by_project_day(since):
     (1h lag tolerated for logging delay); hours with no conversation of ours are OTHER-org and excluded. Magnitude =
     tokens × pricing.py (cache-discounted). Returns (rows, meta) where meta has ours_total/other/ceiling/by_org."""
     from . import pricing
-    oai, anth = openai_hourly(since), anthropic_hourly(since)
+    # A provider's hourly fetch (urlopen → network / HTTP / JSON) can raise; letting it propagate aborted the
+    # WHOLE oracle run. Guard each independently and surface the failure in meta['errors'] — a partial oracle is
+    # honest (some truth, and a named gap), never a silent $0 that reads as "no realtime spend".
+    _errors = {}
+    try:
+        oai = openai_hourly(since)
+    except Exception as e:
+        oai, _errors["openai"] = {}, f"{type(e).__name__}: {str(e)[:80]}"
+    try:
+        anth = anthropic_hourly(since)
+    except Exception as e:
+        anth, _errors["anthropic"] = {}, f"{type(e).__name__}: {str(e)[:80]}"
     usage = defaultdict(list)
     prov_of = {}
     for h, rows in oai.items():
@@ -135,5 +146,6 @@ def by_project_day(since):
                 other += usd
     rows_out = [{"project": p, "provider": pv, "day": d, "cost": round(v, 6)} for (p, pv, d), v in out.items()]
     meta = {"ours_total": round(sum(by_org.values()), 2), "other_org": round(other, 2),
-            "ceiling": round(ceiling, 2), "by_org": {k: round(v, 2) for k, v in by_org.items()}}
+            "ceiling": round(ceiling, 2), "by_org": {k: round(v, 2) for k, v in by_org.items()},
+            "errors": _errors}          # non-empty → a provider fetch failed; the totals are PARTIAL, not complete
     return rows_out, meta

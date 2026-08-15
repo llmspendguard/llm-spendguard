@@ -101,10 +101,17 @@ def build_index(tdir=None, rebuild=False):
     cache = {}
     if os.path.exists(_CACHE) and not rebuild:
         try:
-            cache = json.load(open(_CACHE)).get("files", {})
+            with open(_CACHE) as _fh:                     # closed deterministically (was a leaked handle)
+                cache = json.load(_fh).get("files", {})
         except Exception:
             cache = {}
     run_ids = _run_ids()
+    # FINGERPRINT the run-id set. Cached per-file events were filtered against the run_ids present WHEN cached, so
+    # a file whose mtime+size are unchanged kept serving events filtered against a STALE run-id set — a transcript
+    # mentioning a batch id that became a graph run LATER stayed runs=[] until the file changed or --rebuild.
+    # Folding the fingerprint into each file's signature invalidates exactly those entries when the set changes.
+    import hashlib as _hashlib
+    _rid_fp = _hashlib.sha256(",".join(sorted(map(str, run_ids))).encode()).hexdigest()[:12]
     out = {}
     scanned = 0
     for p in files:
@@ -112,9 +119,10 @@ def build_index(tdir=None, rebuild=False):
             st = os.stat(p)
         except Exception:
             continue
-        sig = {"mtime": int(st.st_mtime), "size": st.st_size}
+        sig = {"mtime": int(st.st_mtime), "size": st.st_size, "rids": _rid_fp}
         prev = cache.get(p)
-        if prev and prev.get("mtime") == sig["mtime"] and prev.get("size") == sig["size"]:
+        if prev and prev.get("mtime") == sig["mtime"] and prev.get("size") == sig["size"] \
+                and prev.get("rids") == _rid_fp:
             out[p] = prev
             continue
         ev = _events_in(p, run_ids)

@@ -115,14 +115,21 @@ def reconstruct(run=False, per=15, limit=None):
     good = bad = err = 0
     with calls.context(intent=f"{META}:reconstruct"):
         for io_id, _intent, _model, p, o in samples:
-            r = adapters.call(judge, _judge_prompt(p, o), max_tokens=_JUDGE_OUT_CEILING, system=_JUDGE_SYS)
-            if r["error"]:
+            try:
+                r = adapters.call(judge, _judge_prompt(p, o), max_tokens=_JUDGE_OUT_CEILING, system=_JUDGE_SYS)
+                if r["error"]:
+                    err += 1
+                    continue
+                ok = (r["text"] or "").strip().upper().startswith("GOOD")
+                callio.set_quality(io_id, ok, src="judge", conf=0.95)
+                good += int(ok)
+                bad += int(not ok)
+            except Exception as e:
+                # a mid-loop EXCEPTION (adapter raise, DB write) must not abort the WHOLE reconstruct and waste the
+                # judgements ALREADY paid for + persisted this run (set_quality commits per sample). Count + go on.
                 err += 1
-                continue
-            ok = (r["text"] or "").strip().upper().startswith("GOOD")
-            callio.set_quality(io_id, ok, src="judge", conf=0.95)
-            good += int(ok)
-            bad += int(not ok)
+                import sys as _sys
+                _sys.stderr.write(f"[advisor:reconstruct] sample {io_id} skipped ({type(e).__name__}: {str(e)[:60]})\n")
     print(f"  judged {good + bad} ({err} errors): {good} good / {bad} bad.")
     print("  empirical quality per (intent, model):")
     for (intent, model), d in sorted(callio.good_rates().items(), key=lambda kv: -(kv[1]['judged'])):

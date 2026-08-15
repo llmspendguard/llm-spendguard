@@ -38,24 +38,27 @@ def verdict(truth, recorded):
 def provider_truth(since=None):
     """The authoritative LLM $ this period (OpenAI + Anthropic batch billing + gate-logged realtime). Returns a float,
     or None if EITHER provider fetch fails — a partial/zero must never masquerade as the truth."""
-    since = since or config.month_start_utc()
+    # NORMALIZE to a string once: `since` arrives straight from CLI `--since` unparsed, and a source's day keys
+    # may be strings OR date objects — a mixed-type `d >= since` raised TypeError INSIDE the broad except below,
+    # silently flipping the whole provider_truth to UNKNOWN as if the fetch had failed. str-vs-str can't.
+    since = str(since or config.month_start_utc())
     total, ok = 0.0, True
     try:
         from .report import openai_by_day
         oai, _ = openai_by_day()
-        total += sum(v for d, v in oai.items() if d >= since)
+        total += sum(v for d, v in oai.items() if str(d) >= since)
     except Exception:
         ok = False
     try:
         from . import reconcile_anthropic as anth
         an, _ = anth.cost_by_day(since=since)
-        total += sum(v for d, v in an.items() if d >= since)
+        total += sum(v for d, v in an.items() if str(d) >= since)
     except Exception:
         ok = False
     try:
         from . import gate
         rt, _ = gate.realtime_by_day(since=since)
-        total += sum(v for d, v in rt.items() if d >= since)
+        total += sum(v for d, v in rt.items() if str(d) >= since)
     except Exception:
         pass   # realtime is best-effort; the batch billing is the anchor
     return round(total, 2) if ok else None

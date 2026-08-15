@@ -65,11 +65,24 @@ class RunPodProvider:
         now = now or time.time()
         out = []
         for p in pods:
-            up = float(((p.get("runtime") or {}).get("uptimeInSeconds")) or 0)
+            # GraphQL can return a NULL pod element on a partial field error, and costPerHr/uptimeInSeconds can
+            # arrive non-numeric — either would raise out of instances() (this loop is outside the _graphql
+            # guard) and break its 'NEVER raises' contract, zeroing the whole GPU set on ONE bad row. Skip a null
+            # pod; degrade a non-numeric price/uptime to UNKNOWN and KEEP the pod (never drop billable GPU).
+            if not isinstance(p, dict):
+                continue
+            try:
+                up = float(((p.get("runtime") or {}).get("uptimeInSeconds")) or 0)
+            except (TypeError, ValueError):
+                up = 0.0
             dph = p.get("costPerHr")
+            try:
+                dph_usd = float(dph) if dph not in (None, "") else None
+            except (TypeError, ValueError):
+                dph_usd = None
             row = {"id": str(p.get("id") or ""), "label": p.get("name") or "",
                    "gpu": ((p.get("machine") or {}).get("gpuDisplayName")) or "?",
-                   "dph_usd": float(dph) if dph not in (None, "") else None,
+                   "dph_usd": dph_usd,
                    "status": p.get("desiredStatus"), "created_ts": _rfc3339_ts(p.get("createdAt"))}
             if row["dph_usd"] is None:
                 row["unpriced"] = True                     # no provider price → visible UNKNOWN, never $0
