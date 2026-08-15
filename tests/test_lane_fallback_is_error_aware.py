@@ -45,6 +45,16 @@ adapters._learn_from_fallback("laneA", "x" * 3000, api_failed=False)
 ck("the ceiling is the SMALLEST failing size (a smaller failure lowers it)",
    adapters._lane_big_prompt_ceiling.get("laneA") == 3000)
 
+# ── 1b. a proven-good size makes a SMALLER failure content-specific, not a size ceiling (robustness) ──────────
+adapters._lane_ok_max.clear()
+adapters._lane_big_prompt_ceiling.pop("laneD", None)
+adapters._lane_note_ok("laneD", "x" * 5000)                          # the lane ANSWERED a 5000-char prompt
+adapters._learn_from_fallback("laneD", "x" * 3000, api_failed=False)  # a SMALLER prompt then fails unsuitably
+ck("a failure BELOW a proven-good size does NOT set a routing ceiling (one anomaly can't disable a working lane)",
+   "laneD" not in adapters._lane_big_prompt_ceiling)
+adapters._learn_from_fallback("laneD", "x" * 8000, api_failed=False)  # a LARGER prompt fails → that IS a size signal
+ck("a failure ABOVE the proven-good size DOES set the ceiling", adapters._lane_big_prompt_ceiling.get("laneD") == 8000)
+
 # ── 2. API failed too → 'down' → cool the lane ───────────────────────────────────────────────────────────────
 k = adapters._learn_from_fallback("laneB", "p", api_failed=True)
 ck("API fallback also failed → 'down' → the lane is cooled", k == "down" and adapters._lane_cooling("laneB"))

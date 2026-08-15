@@ -92,7 +92,17 @@ def _lane_cool(lane):
 # the SAME prompt settles it — the API answered where the lane did not ⇒ the lane was UNSUITABLE for this prompt
 # (keep it, and route prompts this size straight to API); the API failed too ⇒ a real problem (cool the lane).
 # One signal, every lane, and no interpretation of an error string.
-_lane_big_prompt_ceiling = {}   # lane -> min prompt chars that provoked an 'unsuitable' failure (route big → API)
+_lane_big_prompt_ceiling = {}   # lane -> smallest prompt chars ABOVE a proven-good size that failed 'unsuitable'
+_lane_ok_max = {}               # lane -> largest prompt chars the lane has SUCCESSFULLY answered
+
+
+def _lane_note_ok(lane, prompt):
+    """Record that the lane ANSWERED a prompt of this size. This is the proven-good watermark below which an
+    'unsuitable' failure is read as content-specific, not a size limit — so a small anomaly can never lower the
+    routing ceiling and disable a lane that demonstrably handles that size."""
+    n = len(prompt or "")
+    if n > _lane_ok_max.get(lane, 0):
+        _lane_ok_max[lane] = n
 
 
 def _lane_too_big(lane, prompt):
@@ -106,13 +116,16 @@ def _lane_too_big(lane, prompt):
 def _learn_from_fallback(lane_name, prompt, api_failed):
     """The auto-route decision, taken from the API-fallback OUTCOME (never the lane's error text). api_failed is
     False when the API answered where the lane did not ⇒ the lane was UNSUITABLE for this prompt: keep the lane,
-    and learn that prompts this size (or larger) route straight to API. api_failed is True ⇒ a real problem: cool
+    and — ONLY when this failing size is LARGER than a size the lane has proven it can answer — learn a routing
+    ceiling so bigger prompts skip it. A failure SMALLER than a proven-good size is content-specific, not a size
+    limit, so it must not lower the ceiling and disable a working lane. api_failed is True ⇒ a real problem: cool
     the lane. Generalizes across every lane because the signal is a FACT (did the API answer?), not a string."""
     if api_failed:
         _lane_cool(lane_name)
         return "down"
     n = len(prompt or "")
-    _lane_big_prompt_ceiling[lane_name] = min(_lane_big_prompt_ceiling.get(lane_name, n), n)
+    if n > _lane_ok_max.get(lane_name, 0):          # only a failure above the proven-good range is a size signal
+        _lane_big_prompt_ceiling[lane_name] = min(_lane_big_prompt_ceiling.get(lane_name, n), n)
     return "unsuitable"
 
 
@@ -321,6 +334,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         _lane_timeout = min(_lane_cap, max(int(timeout_s or 0), int(LANE_MIN_TIMEOUT_S)))
         s = lane_mod.run_prompt(prompt, system=_lane_sys, model=raw, timeout=_lane_timeout)
         if not s.get("error"):
+            _lane_note_ok(lane_name, prompt)         # proven-good watermark: this lane answered a prompt this big
             try:
                 from . import calls
                 calls.record(prov, raw, "subscription", 0.0,

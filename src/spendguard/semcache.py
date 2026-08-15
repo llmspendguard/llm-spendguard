@@ -76,12 +76,20 @@ def _cos(a, b):
     return (dot / (na * nb)) if na and nb else 0.0
 
 
+# The any-model cache scope. A row stored under this sentinel is model-agnostic (a deterministic transform, an
+# embedding), so a READ for any concrete model must also match it — the tolerance dedup_jsonl already uses. get()
+# honored only an EXACT model, so a cache populated under _SCOPE_ANY was invisible to cached_call and got re-paid:
+# the writer (populate/*) and the reader (get concrete) disagreed on the scope.
+_SCOPE_ANY = "*"
+
+
 def get(prompt, model, threshold=0.0):
-    """Cached output for an exact (and, if threshold>0, semantic) match — else None."""
+    """Cached output for an exact (and, if threshold>0, semantic) match — else None. Matches the given model OR
+    the any-model sentinel (_SCOPE_ANY), so a wildcard-scoped cache is found by a concrete-model read."""
     h = _hash(prompt)
     with _lock:
-        row = _db().execute("SELECT output FROM semcache WHERE model=? AND prompt_hash=? LIMIT 1",
-                            (model, h)).fetchone()
+        row = _db().execute("SELECT output FROM semcache WHERE model IN (?, ?) AND prompt_hash=? LIMIT 1",
+                            (model, _SCOPE_ANY, h)).fetchone()
     if row:
         _stats["exact"] += 1
         return row[0]
@@ -89,8 +97,8 @@ def get(prompt, model, threshold=0.0):
         qv = _embed(prompt)
         if qv:
             with _lock:
-                rows = _db().execute("SELECT output, emb FROM semcache WHERE model=? AND emb IS NOT NULL",
-                                     (model,)).fetchall()
+                rows = _db().execute("SELECT output, emb FROM semcache WHERE model IN (?, ?) AND emb IS NOT NULL",
+                                     (model, _SCOPE_ANY)).fetchall()
             best, bout = threshold, None
             for out, emb in rows:
                 v = _unpack(emb)
@@ -153,7 +161,7 @@ def _json_dumps(x):
     return json.dumps(x)
 
 
-def dedup_jsonl(input_path, out_path, model="*", map_path=None):
+def dedup_jsonl(input_path, out_path, model=_SCOPE_ANY, map_path=None):
     """Collapse a batch jsonl: drop within-batch duplicate prompts AND prompts already in the persistent
     cache (already processed in a prior run/retry — the real saver). Writes the unique requests to
     out_path. NOTE: on FRESH unique-prompt workloads this is ~0%; its win is re-runs/retries/overlap."""
@@ -180,7 +188,7 @@ def dedup_jsonl(input_path, out_path, model="*", map_path=None):
                 continue
             with _lock:
                 row = _db().execute("SELECT 1 FROM semcache WHERE model IN (?,?) AND prompt_hash=? LIMIT 1",
-                                    (model, "*", h)).fetchone()
+                                    (model, _SCOPE_ANY, h)).fetchone()
             if row:
                 cache_hit += 1
                 continue
@@ -205,7 +213,7 @@ def dedup_jsonl(input_path, out_path, model="*", map_path=None):
     return dict(total=total, kept=kept_n, within_dup=within_dup, cache_hit=cache_hit, ratio=ratio)
 
 
-def populate_jsonl(input_path, results_path, model="*"):
+def populate_jsonl(input_path, results_path, model=_SCOPE_ANY):
     """After a batch completes, store prompt→output so a future dedup skips those items (free re-runs)."""
     import json
     prompts = {}
@@ -243,7 +251,7 @@ def dedup_main(argv=None):
     ap.add_argument("--input", required=True, help="batch .jsonl to dedup")
     ap.add_argument("--out", required=True, help="write the unique requests here")
     ap.add_argument("--map", help="write the id-grouping map here (json)")
-    ap.add_argument("--model", default="*", help="cache scope (default * = any)")
+    ap.add_argument("--model", default=_SCOPE_ANY, help="cache scope (default * = any)")
     a = ap.parse_args(argv)
     dedup_jsonl(a.input, a.out, model=a.model, map_path=a.map)
     return 0
@@ -254,7 +262,7 @@ def populate_main(argv=None):
     ap = argparse.ArgumentParser(prog="spendguard dedup-populate")
     ap.add_argument("--input", required=True, help="the batch .jsonl that was submitted")
     ap.add_argument("--results", required=True, help="the batch results .jsonl")
-    ap.add_argument("--model", default="*")
+    ap.add_argument("--model", default=_SCOPE_ANY)
     a = ap.parse_args(argv)
     populate_jsonl(a.input, a.results, model=a.model)
     return 0
