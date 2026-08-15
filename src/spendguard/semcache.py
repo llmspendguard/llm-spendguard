@@ -36,7 +36,15 @@ def _db():
                 # other writer can still create a second row for the same key, and get()'s `LIMIT 1` with no
                 # ORDER BY would then serve an arbitrary one of them, so a re-cached prompt could keep
                 # returning the OLD output indefinitely. A discipline in one function is not an invariant.
-                c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_sc_hash ON semcache(model, prompt_hash)")
+                try:
+                    c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_sc_hash ON semcache(model, prompt_hash)")
+                except sqlite3.IntegrityError:
+                    # A legacy db (random-uuid PK, pre-unique-index) can already hold DUPLICATE (model,
+                    # prompt_hash) rows; building the unique index then raises and leaves the cache UNUSABLE.
+                    # Collapse duplicates (keep the newest row per key by rowid) and retry — migrate, don't brick.
+                    c.execute("DELETE FROM semcache WHERE rowid NOT IN "
+                              "(SELECT MAX(rowid) FROM semcache GROUP BY model, prompt_hash)")
+                    c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_sc_hash ON semcache(model, prompt_hash)")
                 c.commit()
                 _conn = c
     return _conn
@@ -92,7 +100,11 @@ _SCOPE_ANY = "*"
 
 def get(prompt, model, threshold=0.0):
     """Cached output for an exact (and, if threshold>0, semantic) match — else None. Matches the given model OR
-    the any-model sentinel (_SCOPE_ANY), so a wildcard-scoped cache is found by a concrete-model read."""
+    the any-model sentinel (_SCOPE_ANY = model-agnostic content), so a concrete-model read finds a '*'-scoped
+    entry — but a '*' read matches only '*' rows, NOT a real model's entry: reusing model-M's specific output for
+    another model would be a cross-model wrong-answer, so the sentinel is one-directional (agnostic→any, not
+    any→agnostic). NOTE: the semantic tier only matches entries cached WITH an embedding (a prior threshold>0
+    call); an exact-only entry carries none and is invisible to semantic matching — by design, to keep exact free."""
     h = _hash(prompt)
     with _lock:
         row = _db().execute("SELECT output FROM semcache WHERE model IN (?, ?) AND prompt_hash=? LIMIT 1",
@@ -124,14 +136,18 @@ def put(prompt, model, output, store_embedding=False):
     import uuid
     emb = _pack(_embed(prompt) or []) if store_embedding else None
     with _lock:
-        # OR REPLACE ONLY REPLACES ON A CONFLICT, AND A RANDOM UUID NEVER CONFLICTS. Every put() therefore
-        # INSERTED — the cache grew without bound and get()'s "LIMIT 1 with no ORDER BY" returned an
-        # arbitrary one of the duplicates, so a re-cached prompt could keep serving the OLD output forever.
-        # The natural key is (model, prompt_hash); the row is deleted and re-inserted under it.
-        _db().execute("DELETE FROM semcache WHERE model=? AND prompt_hash=?", (model, _hash(prompt)))
-        _db().execute("INSERT INTO semcache VALUES (?,?,?,?,?,?,?)",
-                      (uuid.uuid4().hex[:16], datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
-                       model, _hash(prompt), prompt[:2000], output, emb))
+        # ATOMIC UPSERT on the (model, prompt_hash) UNIQUE index. The old DELETE-then-INSERT had a window where a
+        # concurrent CROSS-PROCESS writer could INSERT between our DELETE and INSERT and then hit the unique index
+        # with an unhandled IntegrityError. ON CONFLICT DO UPDATE resolves it in ONE statement (no window),
+        # overwrites the stale output, and COALESCE keeps an existing embedding when this put has none — so a
+        # later exact-only put never discards a paid-for embedding.
+        _db().execute(
+            "INSERT INTO semcache(id, ts, model, prompt_hash, prompt, output, emb) VALUES (?,?,?,?,?,?,?) "
+            "ON CONFLICT(model, prompt_hash) DO UPDATE SET "
+            "ts=excluded.ts, prompt=excluded.prompt, output=excluded.output, "
+            "emb=COALESCE(excluded.emb, semcache.emb)",
+            (uuid.uuid4().hex[:16], datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+             model, _hash(prompt), prompt[:2000], output, emb))
         _db().commit()
 
 
@@ -155,12 +171,29 @@ def stats():
 
 
 def _line_prompt(o):
-    body = o.get("body") or o.get("params") or o
+    """The first user message's content, PREFIXED by the system prompt when one is present.
+
+    This is a mechanical canonicalisation for the EXACT dedup tier (a byte-level pre-filter), NOT a semantic
+    equivalence judgement — near-duplicate detection is the embedding/SEMANTIC tier's job. Including the system
+    prompt fixes the concrete collision the old key had: the same user message under a DIFFERENT system prompt
+    is a different request, but the system-blind key hashed them identically and dedup_jsonl dropped one. A bare
+    single-user request (no system) still reduces to its raw content, so a batch request stays consistent with an
+    interactively-cached string prompt (cached_call hashes the bare string)."""
+    body = o.get("body") or o.get("params") or o if isinstance(o, dict) else o
+    if not isinstance(body, dict):
+        return ""
+    first_user = ""
     for m in (body.get("messages") or []):
         if isinstance(m, dict) and m.get("role") == "user":
             c = m.get("content")
-            return c if isinstance(c, str) else _json_dumps(c)
-    return o.get("prompt") or ""
+            first_user = c if isinstance(c, str) else _json_dumps(c)
+            break
+    else:
+        first_user = body.get("prompt") or (o.get("prompt") if isinstance(o, dict) else "") or ""
+    sysp = body.get("system")
+    if sysp:
+        return "system:" + (sysp if isinstance(sysp, str) else _json_dumps(sysp)) + "\n" + first_user
+    return first_user
 
 
 def _json_dumps(x):
@@ -185,6 +218,10 @@ def dedup_jsonl(input_path, out_path, model=_SCOPE_ANY, map_path=None):
             try:
                 o = json.loads(ln)
             except Exception:
+                fout.write(ln + "\n"); kept_n += 1; total += 1; continue
+            if not isinstance(o, dict):
+                # VALID JSON that isn't an object (a bare string/array/number) would make o.get(...) raise
+                # AttributeError and crash the whole run. Pass it through untouched, like an unparseable line.
                 fout.write(ln + "\n"); kept_n += 1; total += 1; continue
             total += 1
             cid = o.get("custom_id") or f"i{total}"
