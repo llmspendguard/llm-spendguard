@@ -37,12 +37,19 @@ def register_provider(name, base_url, key_env, prefixes, kind="openai"):
 
 
 def provider_for(model):
-    """Resolve provider from a model id. Accepts explicit 'provider:model' too."""
+    """Resolve provider from a model id. Accepts explicit 'provider:model' too. When several providers' prefixes
+    match, the LONGEST (most specific) prefix wins — DETERMINISTIC, independent of PROVIDERS insertion order, so a
+    plugin whose prefix overlaps a built-in can't resolve by dict order and silently bill the wrong vendor."""
     if ":" in model:
         return model.split(":", 1)[0]
+    best_name, best_len = None, -1
     for name, p in PROVIDERS.items():
-        if model.startswith(p["prefixes"]):
-            return name
+        prefixes = p["prefixes"]
+        for pref in (prefixes if isinstance(prefixes, (tuple, list)) else (prefixes,)):
+            if model.startswith(pref) and len(pref) > best_len:
+                best_name, best_len = name, len(pref)
+    if best_name is not None:
+        return best_name
     raise ValueError(f"unknown provider for model {model!r} — use 'provider:model' or register_provider()")
 
 

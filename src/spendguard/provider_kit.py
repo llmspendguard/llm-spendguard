@@ -48,9 +48,22 @@ def run_conformance(activate, *, name, sample_model=None, kind="adapter"):
         except Exception as e:
             results.append(("priced", False, f"pricing.price({sample_model!r}) failed: {e} — ship a pricing row"))
 
+    def _reg_count():
+        # Registration surface size, so a second activate() that DUPLICATES (appends a second interceptor / grows
+        # the provider set) is detected — not just one that raises. Adapters register into a dict (a re-register
+        # of the same name is idempotent → size unchanged); gate interceptors append to a list (a dup grows it).
+        if kind == "adapter":
+            return len(adapters.PROVIDERS)
+        return len(gate.INTERCEPTORS) + len(gate.RT_INTERCEPTORS) + len(getattr(gate, "_EXTRA", []))
+
+    _c1 = _reg_count()
     try:
-        activate()                                                  # second call must not raise / duplicate
-        results.append(("idempotent", True, "second activate() clean"))
+        activate()                                                  # second call must not raise OR duplicate
+        _c2 = _reg_count()
+        if _c2 > _c1:
+            results.append(("idempotent", False, f"second activate() DUPLICATED registrations ({_c1}→{_c2})"))
+        else:
+            results.append(("idempotent", True, "second activate() clean (no new registrations)"))
     except Exception as e:
         results.append(("idempotent", False, f"second activate() raised: {e}"))
 

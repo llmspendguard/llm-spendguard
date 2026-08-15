@@ -121,6 +121,13 @@ def _warn_once(msg):
 
 _PRESIDIO = None  # None=untried, False=unavailable, (analyzer, anonymizer)=ready
 
+# The floor's entity names → Presidio's recognizer labels. The `entities` filter is expressed in the floor's
+# names (EMAIL/PHONE/…), but analyzer.analyze() expects Presidio's (EMAIL_ADDRESS/PHONE_NUMBER/…); an unmapped
+# name matched no recognizer and silently dropped that entity from NER. Floor-only categories (API_KEY /
+# PRIVATE_KEY) have no Presidio equivalent and are redacted by the regex floor alone.
+_PRESIDIO_ENTITY = {"EMAIL": "EMAIL_ADDRESS", "PHONE": "PHONE_NUMBER", "SSN": "US_SSN",
+                    "CREDIT_CARD": "CREDIT_CARD", "IP": "IP_ADDRESS"}
+
 
 def _presidio(text, entities=None):
     """The floor has ALREADY been applied to `text`; this layers NER on top. Returns the anonymized string,
@@ -142,7 +149,10 @@ def _presidio(text, entities=None):
         analyzer, anonymizer = _PRESIDIO
         ents = None
         if entities:
-            ents = [e.strip() for e in (entities.split(",") if isinstance(entities, str) else entities) if e and e.strip()]
+            _names = [e.strip() for e in (entities.split(",") if isinstance(entities, str) else entities) if e and e.strip()]
+            # MAP floor names → Presidio labels; a name already in Presidio's vocabulary (PERSON/LOCATION/…) passes
+            # through unchanged. Without this, an `entities` filter of floor names disabled NER for those entities.
+            ents = [_PRESIDIO_ENTITY.get(n, n) for n in _names]
         results = analyzer.analyze(text=text, language="en", entities=ents)
         return anonymizer.anonymize(text=text, analyzer_results=results).text
     except Exception:

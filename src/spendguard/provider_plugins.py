@@ -35,13 +35,18 @@ def load(eps=None):
             return dict(_LOADED)
     for ep in eps:
         name = getattr(ep, "name", repr(ep))
-        if name in _LOADED:
+        # Only a SUCCESS is terminal; a prior failure ("error: …") is RETRIED — an `if name in _LOADED` check
+        # permanently skipped a plugin that was fixed/reinstalled in a long-lived process.
+        if _LOADED.get(name) == "ok":
             continue
         try:
             activate = ep.load()
             activate()
             _LOADED[name] = "ok"
-        except Exception as e:
+        except (Exception, SystemExit) as e:
+            # Fail-open per the 'Never raises' contract: a plugin that calls sys.exit() / raises SystemExit (a
+            # BaseException, which `except Exception` MISSED) would otherwise kill the process + the gate.
+            # KeyboardInterrupt is intentionally NOT caught, so the user's Ctrl-C still interrupts.
             _LOADED[name] = f"error: {e}"
             print(f"[spendguard] WARN provider plugin {name!r} failed to activate (skipped): {e}", file=sys.stderr)
     return dict(_LOADED)

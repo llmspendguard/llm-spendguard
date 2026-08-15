@@ -45,18 +45,12 @@ class ModalProvider:
         except Exception:
             return False
 
-    def instances(self, since_ts=None, now=None):
-        """Normalized rows from the billing report — one row per (app object, UTC day), carrying Modal's own
-        billed $ (`usd`). NEVER raises: [] on any failure (plan without the API, network, auth) so a transient
-        problem can't zero a ledger or error the reconcile."""
-        from . import gpu_port
-        since_ts = since_ts if since_ts is not None else gpu_port.month_start_ts()
-        try:
-            items = _report(since_ts) or []
-        except Exception:
-            return []
+    def _rows_from_items(self, items):
+        """Normalize a billing-report item list into rows carrying Modal's billed $ (`usd`). PURE — no fetch — so
+        account_total can sum the items it ALREADY fetched instead of re-fetching (a re-fetch can fail
+        transiently, be swallowed into [], and report $0 for a window that actually had spend)."""
         out = []
-        for it in items:
+        for it in items or []:
             iv = getattr(it, "interval_start", None)
             if iv is None:
                 continue
@@ -71,6 +65,18 @@ class ModalProvider:
                         "start_ts": ts, "end_ts": ts + 86400,          # resolution="d" → one UTC day per row
                         "environment": str(getattr(it, "environment_name", "") or "")})
         return out
+
+    def instances(self, since_ts=None, now=None):
+        """Normalized rows from the billing report — one row per (app object, UTC day), carrying Modal's own
+        billed $ (`usd`). NEVER raises: [] on any failure (plan without the API, network, auth) so a transient
+        problem can't zero a ledger or error the reconcile."""
+        from . import gpu_port
+        since_ts = since_ts if since_ts is not None else gpu_port.month_start_ts()
+        try:
+            items = _report(since_ts) or []
+        except Exception:
+            return []
+        return self._rows_from_items(items)
 
     def account_total(self, since=None):
         """Σ of the same billed report over the window — Modal's report IS the provider bill. None (UNKNOWN,
@@ -87,7 +93,9 @@ class ModalProvider:
             return None                     # the bill could not be READ — UNKNOWN, never $0
         if items is None:
             return None
-        rows = self.instances(since_ts=since_ts)
+        # sum the items we ALREADY fetched — do NOT re-fetch via instances(): a transient failure on that second
+        # fetch is swallowed into [] and would report $0.00 for a window that actually had spend.
+        rows = self._rows_from_items(items)
         return round(sum(r["usd"] for r in rows), 2)      # a successful read of an empty window IS $0.00
 
 
