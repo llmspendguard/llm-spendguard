@@ -90,18 +90,25 @@ def _decrypt_cookies():
     if not _COOKIES.exists():
         raise RuntimeError(f"no Claude desktop Cookies at {_COOKIES}")
     key = _derive_key(_keychain_password())
-    tmp = pathlib.Path(tempfile.mkdtemp()) / "Cookies"     # copy the sqlite (the app may hold a lock)
+    tmpdir = pathlib.Path(tempfile.mkdtemp())
+    tmp = tmpdir / "Cookies"                               # copy the sqlite (the app may hold a lock)
     tmp.write_bytes(_COOKIES.read_bytes())
+    # A WAL-mode Cookies db keeps recent writes in the -wal SIDECAR (and -shm is its index). Copying ONLY the
+    # main file opens a db missing everything since the last checkpoint — e.g. a sessionKey written moments ago,
+    # which is exactly the cookie we came for. Copy the sidecars too (when present) so the snapshot is complete.
+    for _suffix in ("-wal", "-shm"):
+        _side = _COOKIES.parent / (_COOKIES.name + _suffix)
+        if _side.exists():
+            (tmpdir / (tmp.name + _suffix)).write_bytes(_side.read_bytes())
     try:
         con = sqlite3.connect(str(tmp))
         rows = con.execute("select name, encrypted_value from cookies where host_key like '%claude.ai%' "
                            "and name in ('sessionKey','cf_clearance','lastActiveOrg')").fetchall()
         con.close()
     finally:
-        try:
-            tmp.unlink(); tmp.parent.rmdir()
-        except OSError:
-            pass
+        import shutil
+        shutil.rmtree(tmpdir, ignore_errors=True)          # remove the copy + any -wal/-shm sidecars
+
     out = {}
     for name, enc in rows:
         direct, stripped = _decrypt(enc, key)

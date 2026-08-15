@@ -58,6 +58,13 @@ _BID = re.compile(r"(batch_[0-9a-f]{20,}|msgbatch_[0-9A-Za-z]{18,})")
 _AGG = {"spend_audit", "notes", "archive", "tmp", "temp", "backup", "logs", "old"}
 
 
+def _under_git(p):
+    """True if `p` has a '.git' path COMPONENT. Portable: glob/os.walk yield '\\'-separated paths on Windows, so
+    the old POSIX-only '/.git/' substring never matched there and .git internals got scanned. A COMPONENT check
+    (not a substring) also can't misfire on a sibling like '.github'."""
+    return ".git" in p.replace("\\", "/").split("/")
+
+
 def scan_intent_map(repo, content_scan=True, max_bytes=1_000_000):
     """{batch_id: intent} mined from <repo>. Two passes, most-specific wins:
       1. structured *batch_id*.json artifacts — per-record job_type gives the finest intent.
@@ -67,7 +74,7 @@ def scan_intent_map(repo, content_scan=True, max_bytes=1_000_000):
     seen = set()
     for pat in (os.path.join(repo, "**", "*batch_id*.json"), os.path.join(repo, "**", "*batch_ids*.json")):
         for path in glob.glob(pat, recursive=True):
-            if "/.git/" in path or path in seen:
+            if _under_git(path) or path in seen:
                 continue
             seen.add(path)
             try:
@@ -88,7 +95,7 @@ def scan_intent_map(repo, content_scan=True, max_bytes=1_000_000):
         from collections import defaultdict
         id_dirs = defaultdict(set)
         for dp, _dn, fn in os.walk(data_root):
-            if "/.git/" in dp:
+            if _under_git(dp):
                 continue
             for f in fn:
                 if not f.endswith(".json"):
