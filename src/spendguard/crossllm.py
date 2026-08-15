@@ -198,9 +198,16 @@ class AskResult:
             "n": self.n, "n_ok": self.n_ok, "cost": self.cost, "estimate": self.estimate,
             "results": [
                 ({"vendor": r.vendor, "model": r.model, "kind": r.kind, "text": r.text,
-                  "cost": r.cost, "latency": round(r.latency, 2)} if r.ok else
+                  "cost": r.cost, "latency": round(r.latency, 2), "elapsed_s": r.elapsed_s,
+                  "attempts": r.attempts, "run_id": r.run_id, "in_tok": r.in_tok, "out_tok": r.out_tok} if r.ok else
+                 # FULL failure detail honestreview logs verbatim — http_status separates a 429/529 overload from a
+                 # 400 rejection, provider_error carries the vendor's real reason, attempts/finish_reason/text_head
+                 # say what happened. A failed vendor still NEVER carries `text` (no false success on the wire).
                  {"vendor": r.vendor, "model": r.model, "kind": r.kind, "error": r.error,
-                  "stop_reason": r.stop_reason, "latency": round(r.latency, 2)})
+                  "http_status": r.http_status, "provider_error": r.provider_error,
+                  "stop_reason": r.stop_reason, "finish_reason": r.finish_reason,
+                  "attempts": r.attempts, "text_head": r.text_head, "in_tok": r.in_tok, "out_tok": r.out_tok,
+                  "elapsed_s": r.elapsed_s, "latency": round(r.latency, 2), "run_id": r.run_id})
                 for r in self._fan["results"]],
         }
 

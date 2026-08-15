@@ -22,6 +22,7 @@ extending what exists rather than growing a second client layer to drift from th
 import hashlib
 import json
 import os
+import random
 import concurrent.futures as cf
 import threading
 import time
@@ -37,8 +38,15 @@ TRANSPORT_ERROR = "transport_error"
 DEADLINE_EXCEEDED = "deadline_exceeded"
 SCHEMA_VIOLATION = "schema_violation"
 UNFUNDED = "unfunded"            # the account cannot pay — deterministic, actionable, and NOT retryable
-KINDS = (OK, TRUNCATED, EMPTY, REFUSED, TRANSPORT_ERROR, DEADLINE_EXCEEDED, SCHEMA_VIOLATION, UNFUNDED)
+OVERLOADED = "overloaded"        # 429/529 — the vendor is rate-limited/overloaded: TRANSIENT, retry (honor Retry-After)
+PAYLOAD_REJECTED = "payload_rejected"  # 400/413/414/401/403 — bad/oversized/unauthenticated request: PERMANENT, never retried
+KINDS = (OK, TRUNCATED, EMPTY, REFUSED, TRANSPORT_ERROR, DEADLINE_EXCEEDED, SCHEMA_VIOLATION, UNFUNDED,
+         OVERLOADED, PAYLOAD_REJECTED)
 FAILURES = tuple(k for k in KINDS if k != OK)
+# Transient classes worth retrying: a broken connection (transport) or a vendor asking us to slow down
+# (overloaded). Everything else is deterministic — a truncation, an empty body, a refusal, a bad payload, an
+# unfunded account, a blown deadline — where a retry only spends the deadline and the money to get the same answer.
+RETRYABLE = (TRANSPORT_ERROR, OVERLOADED)
 
 _RUN_ID = None
 _lock = threading.RLock()
@@ -66,21 +74,38 @@ class Result:
     on access. `.ok` is the boolean to branch on, and `.stop_reason` carries the vendor's own word for it."""
 
     __slots__ = ("kind", "_text", "vendor", "model", "stop_reason", "in_tok", "out_tok", "cost",
-                 "latency", "error", "prompt_sha", "run_id", "ts", "purpose", "payload")
+                 "latency", "error", "prompt_sha", "run_id", "ts", "purpose", "payload",
+                 "http_status", "provider_error", "attempts", "text_head")
 
     def __init__(self, kind, vendor, model, text=None, stop_reason=None, in_tok=0, out_tok=0, cost=None,
-                 latency=0.0, error=None, prompt_sha="", purpose="", payload=None):
+                 latency=0.0, error=None, prompt_sha="", purpose="", payload=None,
+                 http_status=None, provider_error=None, attempts=1, text_head=None):
         if kind not in KINDS:
             raise ValueError(f"unknown result kind {kind!r} — one of {KINDS}")
         self.kind, self._text = kind, (text if kind == OK else None)
         self.vendor, self.model, self.stop_reason = vendor, model, stop_reason
         self.in_tok, self.out_tok, self.cost, self.latency = in_tok, out_tok, cost, latency
         self.error, self.prompt_sha, self.purpose, self.payload = error, prompt_sha, purpose, payload
+        # FULL failure detail a caller can log verbatim (honestreview reads these): the HTTP status (separates a
+        # 429/529 overload from a 400 rejection), the provider's own error BODY (the real reason, not str(e)), how
+        # many attempts it took, and a peek at any (possibly partial) body — captured even for a non-ok result.
+        self.http_status, self.provider_error, self.attempts = http_status, provider_error, int(attempts or 1)
+        self.text_head = (text_head if text_head is not None else (text or ""))[:200]
         self.run_id, self.ts = run_id(), time.time()
 
     @property
     def ok(self):
         return self.kind == OK
+
+    @property
+    def elapsed_s(self):
+        """honestreview's name for latency (seconds, wall-clock over every attempt)."""
+        return round(self.latency, 3)
+
+    @property
+    def finish_reason(self):
+        """honestreview's name for stop_reason (the vendor's own word for how the response ended)."""
+        return self.stop_reason
 
     @property
     def text(self):
@@ -91,11 +116,16 @@ class Result:
         return self._text
 
     def as_row(self):
-        """The persisted shape — enough for a consumer to tell THIS run's answer from a previous one."""
+        """The persisted shape — enough for a consumer to tell THIS run's answer from a previous one, AND to log a
+        failure verbatim. Carries both spendguard's names (latency/stop_reason) and honestreview's (elapsed_s/
+        finish_reason) so either consumer reads what it expects."""
         return {"run_id": self.run_id, "ts": self.ts, "vendor": self.vendor, "model": self.model,
                 "purpose": self.purpose, "kind": self.kind, "stop_reason": self.stop_reason,
-                "prompt_sha": self.prompt_sha, "in_tok": self.in_tok, "out_tok": self.out_tok,
-                "cost": self.cost, "latency": round(self.latency, 3), "error": self.error}
+                "finish_reason": self.stop_reason, "prompt_sha": self.prompt_sha,
+                "in_tok": self.in_tok, "out_tok": self.out_tok, "cost": self.cost,
+                "latency": round(self.latency, 3), "elapsed_s": round(self.latency, 3), "error": self.error,
+                "http_status": self.http_status, "provider_error": self.provider_error,
+                "attempts": self.attempts, "text_head": self.text_head}
 
     def __repr__(self):
         return f"<Result {self.kind} {self.vendor}/{self.model} out={self.out_tok} {self.latency:.1f}s>"
@@ -166,6 +196,27 @@ _DEADLINE_EXC_TYPES = ("APITimeoutError", "ReadTimeout", "PoolTimeout", "WriteTi
                        "TimeoutError", "Timeout")
 
 
+def _retry_after_s(v):
+    """A provider's Retry-After header → seconds to wait, or None. FORMAT parsing on a fixed contract: either an
+    integer number of seconds, or an HTTP-date. When present it is the vendor telling us exactly how long to hold
+    off on a 429/529, so it takes precedence over our own backoff."""
+    if v is None:
+        return None
+    s = str(v).strip()
+    try:
+        return max(0.0, float(s))                         # the common form: a number of seconds
+    except ValueError:
+        pass
+    try:
+        import email.utils as _eut
+        dt = _eut.parsedate_to_datetime(s)
+        if dt is not None:
+            return max(0.0, dt.timestamp() - time.time())
+    except Exception:
+        pass
+    return None
+
+
 def _classify(r, want_text=True):
     """(kind, stop_reason) from an adapters result. Parsing declared fields, not inferring intent."""
     # AN EXPLICIT TRUNCATION IS A TRUNCATION, NOT A TRANSPORT FAULT — even though adapters attaches an `error`
@@ -197,6 +248,18 @@ def _classify(r, want_text=True):
             return UNFUNDED, "account_cannot_pay"
         if _is_policy_rejection(r.get("error")):
             return REFUSED, "policy_rejection"
+        # STATUS-CODE taxonomy — a structured signal from the provider, PARSED not interpreted. Unfunded 429s and
+        # policy 4xx are already split off above; the rest splits by code:
+        #   429 / 529     → OVERLOADED       — rate-limited / overloaded: TRANSIENT, retry (honoring Retry-After).
+        #   400/413/414 (bad or oversized request) · 401/403 (auth) → PAYLOAD_REJECTED — PERMANENT: retrying an
+        #     oversized prompt or a bad key changes nothing, so it must NOT ride the transport retry loop and burn
+        #     the deadline (measured: Moonshot rejects a >~16k-char prompt with a 400, every time).
+        # An unknown/absent status stays TRANSPORT_ERROR (a reset / other 5xx) — deliberately conservative.
+        st = r.get("status_code")
+        if st in (429, 529):
+            return OVERLOADED, r.get("finish_reason")
+        if st in (400, 401, 403, 413, 414):
+            return PAYLOAD_REJECTED, r.get("finish_reason")
         return TRANSPORT_ERROR, r.get("finish_reason")
     fr = (r.get("finish_reason") or "").lower()
     txt = r.get("text")
@@ -349,13 +412,25 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
             last = Result(kind, vendor, model, text=r.get("text"), stop_reason=stop,
                           in_tok=r.get("in_tok") or 0, out_tok=r.get("out_tok") or 0,
                           cost=(billed if billed else r.get("cost")),
-                          latency=time.time() - started, error=r.get("error"), prompt_sha=sha, purpose=purpose)
-            # Retry ONLY transport failures. A truncation or an empty body is a deterministic result: repeating
-            # it burns the deadline and the money to arrive at the same answer.
-            if kind != TRANSPORT_ERROR:
+                          latency=time.time() - started, error=r.get("error"), prompt_sha=sha, purpose=purpose,
+                          http_status=r.get("status_code"), provider_error=r.get("provider_error"),
+                          attempts=attempt)
+            # Retry only the TRANSIENT classes (a broken connection, or a 429/529 overload). A truncation, empty
+            # body, refusal, PAYLOAD_REJECTED (a 400 on an oversized prompt), unfunded account, or blown deadline
+            # is deterministic — repeating it just burns the deadline and the money for the same answer.
+            if kind not in RETRYABLE or attempt >= attempts:
                 break
-            if attempt < attempts and (deadline_s - (time.time() - started)) > backoff_s:
-                time.sleep(backoff_s * attempt)
+            # Backoff = base·2^(attempt-1) with FULL JITTER (sleep a uniform fraction, so N callers retrying one
+            # vendor's 429 don't re-collide in lockstep). An overload's Retry-After, when the vendor sends one,
+            # is a FLOOR — it is the vendor saying exactly how long to wait. Never sleep past the total deadline.
+            ra = _retry_after_s(r.get("retry_after"))
+            if ra is not None:
+                wait = ra + random.uniform(0.0, backoff_s)           # honor the vendor's floor + a little de-sync
+            else:
+                wait = random.uniform(0.0, backoff_s * (2 ** (attempt - 1)))
+            wait = min(wait, max(0.0, deadline_s - (time.time() - started)) - 0.05)
+            if wait > 0:
+                time.sleep(wait)
     finally:
         if _dispatched:
             try:

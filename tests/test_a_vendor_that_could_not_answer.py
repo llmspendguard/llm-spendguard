@@ -32,6 +32,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-couldnot-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
+import inspect                                                              # noqa: E402
 from spendguard import bulkgate, vendor_call as vc                          # noqa: E402
 
 failures = 0
@@ -62,12 +63,41 @@ check("a policy rejection is still REFUSED", kind == vc.REFUSED, kind)
 kind, _ = vc._classify({"error": "APIConnectionError: Connection reset by peer"})
 check("a network fault is still transport", kind == vc.TRANSPORT_ERROR, kind)
 
-# UNFUNDED must be outside the retry set, or the classification changes the label and nothing else.
-import inspect                                                              # noqa: E402
-_src = inspect.getsource(vc.call)
-check("only transport failures are retried, so UNFUNDED breaks immediately",
-      "if kind != TRANSPORT_ERROR" in _src and "break" in _src,
-      "an unfunded account retried three times is three times nothing, at three times the latency")
+# The split now cuts finer via the provider's HTTP status: a 429/529 is OVERLOADED (transient, retried, and it
+# honors Retry-After); a 400/413/414/401/403 is PAYLOAD_REJECTED (permanent — retrying an oversized prompt or a
+# bad key changes nothing). Unfunded 429s are still split off first.
+kind, _ = vc._classify({"error": "429 overloaded", "status_code": 429})
+check("a 429 with an HTTP status is OVERLOADED (transient, retryable)", kind == vc.OVERLOADED, kind)
+kind, _ = vc._classify({"error": "payload too large", "status_code": 413})
+check("a 413 oversized-payload is PAYLOAD_REJECTED (permanent)", kind == vc.PAYLOAD_REJECTED, kind)
+check("the RETRYABLE set holds the transient classes and excludes the deterministic ones",
+      vc.UNFUNDED not in vc.RETRYABLE and vc.PAYLOAD_REJECTED not in vc.RETRYABLE
+      and vc.TRANSPORT_ERROR in vc.RETRYABLE and vc.OVERLOADED in vc.RETRYABLE)
+
+# BEHAVIORAL, not a source grep: mock one attempt and count how many times call() actually invokes it. A
+# transient OVERLOADED result is retried up to `attempts`; a permanent UNFUNDED one breaks immediately — and the
+# Result records how many attempts it took (honestreview reads .attempts).
+_seen = {"n": 0}
+
+
+def _mk_attempt(err, status):
+    def _fake(vendor, model, prompt, system, max_tokens, budget_s, schema=None, reasoning=None):
+        _seen["n"] += 1
+        return {"provider": vendor, "model": model, "text": None, "error": err, "status_code": status,
+                "in_tok": 0, "out_tok": 0, "latency": 0.01, "cost": 0.0, "finish_reason": None}
+    return _fake
+
+
+vc._attempt = _mk_attempt("429 overloaded", 429)
+_r = vc.call("openai", "gpt-x", "hi", deadline_s=30, max_tokens=1000, attempts=3, backoff_s=0.001)
+check("an OVERLOADED result is retried up to `attempts`, and .attempts records it",
+      _r.kind == vc.OVERLOADED and _seen["n"] == 3 and _r.attempts == 3, f"kind={_r.kind} n={_seen['n']} att={_r.attempts}")
+
+_seen["n"] = 0
+vc._attempt = _mk_attempt("Error code: 429 - Insufficient balance. Please recharge.", 429)
+_r2 = vc.call("zai", "glm", "hi", deadline_s=30, max_tokens=1000, attempts=3, backoff_s=0.001)
+check("an UNFUNDED result breaks immediately (1 attempt)",
+      _r2.kind == vc.UNFUNDED and _seen["n"] == 1 and _r2.attempts == 1, f"kind={_r2.kind} n={_seen['n']} att={_r2.attempts}")
 
 
 print("\n  a deadline is sized from payloads of a COMPARABLE size:")

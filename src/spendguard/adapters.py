@@ -291,6 +291,39 @@ def _http_timeout(timeout_s):
         return float(timeout_s)
 
 
+def _exc_detail(e):
+    """(http_status, provider_error, retry_after) from a provider SDK exception. STRUCTURED signals only — an HTTP
+    status code, the response BODY, and the Retry-After header — never message prose. All best-effort → None when
+    absent; vendor_call uses http_status to tell a 429/529 OVERLOAD (retry) from a 400/413 PAYLOAD_REJECTED (do
+    not), and honestreview logs provider_error (the real reason lives in the body, not the one-line str(e))."""
+    resp = getattr(e, "response", None)
+    status = getattr(e, "status_code", None)
+    if status is None and resp is not None:
+        status = getattr(resp, "status_code", None)
+    try:
+        status = int(status) if status is not None else None
+    except (TypeError, ValueError):
+        status = None
+    body = getattr(e, "body", None)
+    if body is not None and not isinstance(body, str):
+        try:
+            body = json.dumps(body, default=str)
+        except Exception:
+            body = str(body)
+    if body is None and resp is not None:
+        try:
+            body = resp.text
+        except Exception:
+            body = None
+    retry_after = None
+    if resp is not None:
+        try:
+            retry_after = resp.headers.get("retry-after")
+        except Exception:
+            retry_after = None
+    return status, (body[:500] if isinstance(body, str) else None), retry_after
+
+
 def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,
                _skip_lane=False):
     """One raw request. Everything public goes through `call`, which adds the input and output guards.
@@ -577,7 +610,9 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         # NOT the message prose. vendor_call uses it to tell a deadline (the vendor didn't answer in the budget:
         # APITimeoutError / ReadTimeout) from a transport fault (the connection broke / was refused), so the
         # coverage report can say WHY a vendor didn't answer instead of lumping both under transport_error.
-        return {**base, "latency": time.time() - t0, "error": str(e)[:140], "error_type": type(e).__name__}
+        _status, _perr, _retry = _exc_detail(e)
+        return {**base, "latency": time.time() - t0, "error": str(e)[:140], "error_type": type(e).__name__,
+                "status_code": _status, "provider_error": _perr, "retry_after": _retry}
 
 
 # ── a COMPLETE answer, or an explicit UNKNOWN — never a truncated body ───────────────────────────────────
