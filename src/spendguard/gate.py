@@ -1953,6 +1953,25 @@ def _cli(cmd="status", live=False):
                     print("  " + _ln)
             except Exception:
                 pass
+            try:                                          # MODEL-METADATA BACKBONE: the LiteLLM limits cache that
+                from . import metadata_audit              # output_cap clamps to. Its silent EMPTY state once
+                mr = metadata_audit.backbone_health()     # disabled the clamp — so doctor surfaces it, and
+                if not mr["cache"]["present"]:            # AUTO-HEALS an absent/empty cache by adopting the table now.
+                    try:
+                        from . import sync as _sync
+                        _sync.sync()
+                        import importlib
+                        from . import pricing as _pr
+                        importlib.reload(_pr)
+                        mr = metadata_audit.backbone_health()
+                    except Exception:
+                        pass
+                _c = mr["cache"]
+                _drift = f" · {len(mr['drift'])} cap(s) DRIFTED below published" if mr["drift"] else ""
+                print(f"  metadata  : {'🟢' if mr['ok'] else '🟡'} LiteLLM limits cache {_c['models']} models, "
+                      f"age {_c['age_days']}d{_drift}" + ("" if mr["ok"] else " — run `spendguard metadata`"))
+            except Exception:
+                pass
             try:                                          # import-name shadowing: reported HERE (the diagnostic
                 import spendguard as _sg                  # command), never as an ambient warning on every start
                 _sh = _sg.shadowing_dists()

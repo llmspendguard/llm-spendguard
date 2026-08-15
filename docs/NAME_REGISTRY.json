@@ -228,9 +228,9 @@
       "why": "Three parallel per-source CLI subcommands (chat/claude-code/codex classify) implementing the same command contract for different data backends. claudecode and codex both delegate to the SHARED attribu"
     },
     "cmd": {
-      "n": 15,
+      "n": 16,
       "verdict": "PROTOCOL",
-      "why": "Each `cmd(argv=None)` is one module's CLI subcommand entrypoint, all sharing the uniform argv-in/exit-code-out contract that the dispatcher invokes by name — the exact `cmd(argv)` protocol the doctrine names as the sanctioned exemption, not competing implementations of one job."
+      "why": "Every module exposes `cmd(argv=None)` as its uniform CLI subcommand entrypoint (parse argv → run that subcommand → return an int exit code), dispatched by name by the top-level `spendguard <subcommand>` router. The bodies differ because each implements a different subcommand, but that is the point of the shared contract, not drift or a name clash."
     },
     "configured": {
       "n": 4,
