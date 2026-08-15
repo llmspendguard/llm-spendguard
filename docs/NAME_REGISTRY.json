@@ -328,9 +328,9 @@
       "why": "These share the verb 'record' but write to different stores with different schemas and semantics: budget.record writes a money charge to the budget ledger, callio.record inserts a call_io sample (prompt/output capture), calls.record logs a call with token/latency/feedback tracking, ledger.SpendLedger.record normalizes a spend event dict into the spend ledger, and the two gate stream managers finalize streamed accounting. The two gate methods DO form a real protocol pair (stream-manager finalization, nearly identical bodies), but the four module-level 'record' functions are distinct jobs with distinct signatures. A grep or careless import of 'record' lands on the wrong ledger."
     },
     "release": {
-      "n": 3,
+      "n": 4,
       "verdict": "PROTOCOL",
-      "why": "These are a deliberate delegation chain, all named `release` by design: the module-level `dispatch.release` facade calls `Governor.release`, which in turn calls `_Bucket.release` — each is the same 'return an acquired dispatch slot' contract at its layer, not two implementations of one job that can drift, nor the same name on different jobs."
+      "why": "Module-level `release(vendor, model)` is a facade delegating to `Governor.release`, which orchestrates by calling the uniform `.release()` contract on its held resources (`_XPSlot` unlocks the cross-process flock, `_Bucket` returns its semaphore slot, `_global` releases the global cap); each does a distinct layer's job under one deliberate release-the-slot interface, so they cannot drift into disagreeing answers and none is a wrong-pick hazard."
     },
     "render": {
       "n": 2,

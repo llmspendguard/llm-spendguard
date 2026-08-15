@@ -130,7 +130,9 @@ SETTINGS = [
     dict(section="dispatch", key="global_concurrency", store="config.json:dispatch.global_concurrency",
          env="SPENDGUARD_DISPATCH_GLOBAL_CONCURRENCY", default=24, kind="int", secret=False,
          desc="Machine-wide ceiling on in-flight LLM calls across ALL vendors/lanes — the last backstop against a "
-              "runaway fan-out. SPENDGUARD_DISPATCH_OFF=1 disables the governor entirely (every acquire a no-op)."),
+              "runaway fan-out. SPENDGUARD_DISPATCH_OFF=1 disables the governor entirely (every acquire a no-op). "
+              "Lane concurrency is also co-governed ACROSS processes via flock slot-files (two separate runs share "
+              "one subscription plan's budget); SPENDGUARD_DISPATCH_XP_OFF=1 disables just that cross-process layer."),
     dict(section="ask", key="default_vendors", store="config.json:ask.default_vendors",
          env="SPENDGUARD_ASK_DEFAULT_VENDORS", default=None, kind="string|null", secret=False,
          desc="Default cross-LLM panel for `spendguard.ask` / `spendguard ask` when the caller names none — a "

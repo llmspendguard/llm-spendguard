@@ -76,6 +76,85 @@ class DispatchTimeout(RuntimeError):
     failure, not an empty success."""
 
 
+# ── Cross-process lane admission (flock slot-files) ─────────────────────────────────────────────────────────
+# The in-process semaphores bound ONE interpreter. But two separate runs on the same machine — a `spendguard ask`
+# and a honestreview panel, or two panels — still share ONE subscription plan per lane (one Max, one Codex, one
+# GLM), and nothing above co-governs them, so both could blast the plan at once. flock slot-files close that:
+# `limit` lock files per lane key, one flock held for each call's duration. flock is advisory, tied to the fd,
+# and the OS drops it when the process dies — so a crash never leaves a stale slot to reap. Only LANE keys are
+# cross-gated (the shared subprocess plans are the scarce cross-process resource); metered vendors are left to
+# the provider's own rate limits. Fail-open where fcntl is absent (non-POSIX) — the in-process bound still holds.
+try:
+    import fcntl as _fcntl
+except ImportError:                              # pragma: no cover - non-POSIX (Windows): in-process bound only
+    _fcntl = None
+
+_HELD = threading.local()        # per-thread stack of held cross-process slots (or None): acquire pushes, release pops
+
+
+def _held():
+    s = getattr(_HELD, "stack", None)
+    if s is None:
+        s = _HELD.stack = []
+    return s
+
+
+def _pop_held():
+    s = _held()
+    return s.pop() if s else None
+
+
+def _xp_off():
+    """Cross-process gating disabled — no fcntl (non-POSIX), or SPENDGUARD_DISPATCH_XP_OFF=1."""
+    return _fcntl is None or os.environ.get(_ENV_PREFIX + "XP_OFF") == "1"
+
+
+class _XPSlot:
+    """One held cross-process lane slot — an flock on one of the key's slot files. Released on the call's exit,
+    or by the OS if this process dies (flock is bound to the fd, so there are no stale slots to reap)."""
+    __slots__ = ("fd",)
+
+    def __init__(self, fd):
+        self.fd = fd
+
+    def release(self):
+        try:
+            _fcntl.flock(self.fd, _fcntl.LOCK_UN)
+        finally:
+            try:
+                os.close(self.fd)
+            except OSError:
+                pass
+
+
+def _xp_dir(key):
+    import hashlib
+    from . import config
+    d = config.HOME / "dispatch" / hashlib.sha1(key.encode()).hexdigest()[:12]
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _acquire_xp(key, limit, deadline_s):
+    """Hold one of `limit` cross-process flock slots for `key`, within deadline_s. Returns an _XPSlot, or raises
+    DispatchTimeout if every slot is held by OTHER processes for the whole deadline."""
+    d = _xp_dir(key)
+    t0 = time.monotonic()
+    while True:
+        for i in range(max(1, int(limit))):
+            fd = os.open(str(d / f"slot-{i}.lock"), os.O_CREAT | os.O_RDWR, 0o644)
+            try:
+                _fcntl.flock(fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+                return _XPSlot(fd)
+            except OSError:
+                os.close(fd)                     # slot held by another process — try the next
+        left = float(deadline_s) - (time.monotonic() - t0)
+        if left <= 0:
+            raise DispatchTimeout(f"'{key}' cross-process lane full ({int(limit)} slots held by other "
+                                  f"processes) — deadline {float(deadline_s):.0f}s exhausted")
+        time.sleep(min(0.1, left))
+
+
 class _Bucket:
     """One key's admission state: a bounded-concurrency semaphore + an optional requests/minute token bucket.
     Thread-safe. The bucket refills continuously from monotonic time — no background thread, no cron."""
@@ -167,8 +246,10 @@ class Governor:
         return self._global
 
     def _key_and_limit(self, vendor, model):
-        """(key, concurrency_limit, rpm) for this call. Lane vendors collapse to one key + the lane budget;
-        metered vendors key by vendor with the vendor budget. Config can override either limit."""
+        """(key, concurrency_limit, rpm, is_lane) for this call. Lane vendors collapse to one key + the lane
+        budget; metered vendors key by vendor with the vendor budget. `is_lane` is the AUTHORITATIVE signal
+        from adapters._lane_for (whether this vendor rides an active subscription lane) — returned as data so
+        no caller has to re-derive lane-ness by parsing the key string. Config can override either limit."""
         vendor = (vendor or "").strip().lower()
         lane = None
         try:
@@ -184,10 +265,10 @@ class Governor:
             key = f"vendor:{vendor}"
             limit = _limit("vendor_concurrency", DEFAULT_VENDOR_CONCURRENCY)
         rpm = _limit(f"rpm_{vendor}", DEFAULT_RPM)     # per-vendor RPM, e.g. SPENDGUARD_DISPATCH_RPM_MOONSHOT=60
-        return key, limit, rpm
+        return key, limit, rpm, bool(lane)
 
     def _bucket(self, vendor, model):
-        key, limit, rpm = self._key_and_limit(vendor, model)
+        key, limit, rpm, _is_lane = self._key_and_limit(vendor, model)
         with self._lock:
             b = self._buckets.get(key)
             # Re-key if the configured limit/rpm changed since the bucket was made (config edited at runtime):
@@ -200,23 +281,41 @@ class Governor:
 
     def acquire(self, vendor, model, deadline_s):
         """Admit one call. Returns seconds waited (0 when uncontended). Raises DispatchTimeout on deadline.
-        Acquires the GLOBAL slot first, then the per-key slot — released in reverse by release()."""
+        Order: global slot → per-key in-process slot → (lane vendors only) cross-process slot. release() unwinds
+        all three; the held cross-process slot rides a per-thread stack that release() pops (acquire and release
+        run on the same fan_out worker thread)."""
         if _off() or not deadline_s or float(deadline_s) <= 0:
+            _held().append(None)                     # keep the acquire/release stack balanced even as a no-op
             return 0.0
         t0 = time.monotonic()
         g = self._global_sem()
         if not g.acquire(timeout=max(0.0, float(deadline_s))):
             raise DispatchTimeout(f"machine-wide dispatch ceiling ({_limit('global_concurrency', DEFAULT_GLOBAL_CONCURRENCY)}) "
                                   f"full — deadline {float(deadline_s):.0f}s exhausted")
+        got_bucket, xp = False, None
         try:
-            remaining = float(deadline_s) - (time.monotonic() - t0)
-            waited = self._bucket(vendor, model).acquire(remaining)
-            return waited + (time.monotonic() - t0 - waited)
-        except BaseException:
-            g.release()                              # never leak the global slot if the per-key acquire fails
+            key, limit, _rpm, is_lane = self._key_and_limit(vendor, model)
+            self._bucket(vendor, model).acquire(float(deadline_s) - (time.monotonic() - t0))
+            got_bucket = True
+            if is_lane and not _xp_off():            # co-govern the shared subscription plan across processes
+                xp = _acquire_xp(key, limit, float(deadline_s) - (time.monotonic() - t0))
+        except BaseException:                        # unwind anything already taken, in reverse, then re-raise
+            if xp is not None:
+                xp.release()
+            if got_bucket:
+                self._bucket(vendor, model).release()
+            g.release()
             raise
+        _held().append(xp)
+        return time.monotonic() - t0
 
     def release(self, vendor, model):
+        xp = _pop_held()                             # cross-process slot first (or None), always
+        if xp is not None:
+            try:
+                xp.release()
+            except Exception:
+                pass
         if _off():
             return
         try:
