@@ -87,10 +87,17 @@ def render(data, days=None):
 
     projects, models = {}, {}
     for r in data.values():
-        for k, v in r["projects"].items():
-            projects[k] = projects.get(k, 0.0) + v
-        for k, v in r["models"].items():
-            models[k] = models.get(k, 0.0) + v
+        # A source's per-project / per-model buckets come from the same (possibly third-party) read() as the
+        # total. Guard the aggregation: a non-dict bucket or a non-numeric value must not crash the whole scan.
+        for _bucket, _acc in (("projects", projects), ("models", models)):
+            _src = r.get(_bucket)
+            if not isinstance(_src, dict):
+                continue
+            for k, v in _src.items():
+                try:
+                    _acc[k] = _acc.get(k, 0.0) + float(v or 0)
+                except (TypeError, ValueError):
+                    continue
 
     lines += ["", f"  EST PLAN VALUE{' (last %s days)' % days if days else ''} — what this work would cost at API "
                   f"rates.", "  This is NOT money billed: it is plan-covered usage, and it is never added to your "
