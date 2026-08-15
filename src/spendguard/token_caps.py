@@ -119,6 +119,14 @@ def sites(root):
                     if arg.arg in CAP_KWARGS and isinstance(d, ast.Constant) \
                             and isinstance(d.value, int) and not isinstance(d.value, bool):
                         add(n.lineno, arg.arg, d.value, "signature-default")
+    # OCCURRENCE INDEX so two IDENTICAL caps in one symbol (same file/symbol/kwarg/value) do not collapse to one
+    # cap_key and silently drop the second from the judged set. The FIRST occurrence keeps the bare key (verdicts
+    # recorded before this stay valid); a duplicate gets a stable #N suffix, ordered by scan position.
+    _occ = {}
+    for _s in found:
+        _base = f"{_s['file']}::{_s['symbol']}::{_s['kwarg']}={_s['value']}"
+        _occ[_base] = _occ.get(_base, 0) + 1
+        _s["occ"] = _occ[_base]
     return found
 
 
@@ -126,8 +134,13 @@ def cap_key(site):
     """Identity of a cap for the ledger: WHERE it is and WHAT the number is — not which line it sits on.
 
     The value is part of the key on purpose. Changing 16 to 4000, or 4000 to 16, is a new decision and must
-    be judged again; a verdict that survived an edit to the number would certify a cap nobody looked at."""
-    return f"{site['file']}::{site['symbol']}::{site['kwarg']}={site['value']}"
+    be judged again; a verdict that survived an edit to the number would certify a cap nobody looked at.
+
+    Two IDENTICAL caps in one symbol get an occurrence suffix (#2, #3 …) so the second is not dropped as a
+    duplicate key; the first keeps the bare key, so verdicts recorded before this stay valid."""
+    base = f"{site['file']}::{site['symbol']}::{site['kwarg']}={site['value']}"
+    occ = site.get("occ", 1)
+    return base if occ <= 1 else f"{base}#{occ}"
 
 
 JUDGE_PROMPT = """You are deciding whether ONE hardcoded output-token cap in a Python codebase is dangerous.

@@ -65,6 +65,13 @@ def literal_sites(root):
             lits = [a.value for a in n.args[1:]
                     if isinstance(a, ast.Constant) and isinstance(a.value, int)
                     and not isinstance(a.value, bool) and a.value]
+            # ALSO the keyword args. realtime_cost(m, input_tokens=700, output_tokens=1500) puts the literals in
+            # n.keywords, not n.args, so a positional-only scan silently missed every kwarg-passed token count. A
+            # token count is a non-zero int literal however it is passed; a string kwarg (model=/provider=) is not
+            # an int and is ignored, and a **kwargs splat (k.arg is None) carries no literal.
+            lits += [k.value.value for k in n.keywords
+                     if k.arg is not None and isinstance(k.value, ast.Constant)
+                     and isinstance(k.value.value, int) and not isinstance(k.value.value, bool) and k.value.value]
             if not lits:
                 continue
             found.append({
