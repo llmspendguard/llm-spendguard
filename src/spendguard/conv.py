@@ -150,7 +150,7 @@ def attribute_usage(since="2026-06-01", tdir=None):
     costs = {}
     for _prov, _model, cost, _it, _ot, day, bid in (backfill._openai_rows() + backfill._anthropic_rows()):
         if (day or "") >= since:
-            costs[bid] = costs.get(bid, 0.0) + cost
+            costs[bid] = costs.get(bid, 0.0) + (cost or 0.0)   # unpriced (None) contributes nothing, never a TypeError
     bmap = batch_project_map(tdir)
     by_project = {}
     linked = 0

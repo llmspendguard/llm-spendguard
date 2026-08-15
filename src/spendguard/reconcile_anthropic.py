@@ -114,7 +114,13 @@ def refresh_cache(k, cache):
         for ln in lines:
             if not ln.strip():
                 continue
-            msg = json.loads(ln).get("result", {}).get("message", {})
+            try:
+                obj = json.loads(ln)
+            except ValueError:
+                # ONE malformed JSONL line must not abort the whole cache build (this batch AND every later batch,
+                # AND cost_by_day which calls refresh_cache). Skip the unparseable line; the rest still price.
+                continue
+            msg = obj.get("result", {}).get("message", {}) if isinstance(obj, dict) else {}
             if not msg:
                 continue
             mdl = pricing.normalize(msg.get("model", "claude-opus-4-8"))
@@ -151,7 +157,11 @@ def cost_by_day(since=None):
         for mdl, mm in rec.get("by_model", {}).items():
             try:
                 c = pricing.batch_cost(mdl, mm.get("in", 0), mm.get("out", 0))
-            except KeyError:
+            except (KeyError, TypeError, ValueError):
+                # Match cost_or_unpriced's exception set: a model with no card raises KeyError, but a card with a
+                # malformed rate raises TypeError/ValueError — catching only KeyError let those abort cost_by_day
+                # (and provider_truth with it). Unpriced is counted 0 here but RECORDED in UNKNOWN_MODELS so the
+                # reconcile surfaces the gap instead of hiding it.
                 UNKNOWN_MODELS[mdl] = UNKNOWN_MODELS.get(mdl, 0) + 1
                 c = 0.0
             by_day[d] = by_day.get(d, 0.0) + c

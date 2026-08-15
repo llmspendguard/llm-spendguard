@@ -100,10 +100,9 @@ def _digest(path):
     intok = int(usage.get("input_tokens") or 0)          # OpenAI semantics: input_tokens INCLUDES the cached subset
     cached = int(usage.get("cached_input_tokens") or 0)
     out = int(usage.get("output_tokens") or 0)           # already includes reasoning_output_tokens
-    try:
-        cost = pricing.realtime_cost(model, intok, out, cached)
-    except Exception:
-        cost = 0.0
+    # An unpriceable model is UNKNOWN, not free. cost_or_unpriced records it (note_unpriced) so `spendguard`
+    # surfaces the gap, instead of the bare `except: cost=0.0` that swallowed every error and flagged nothing.
+    cost = pricing.cost_or_unpriced(model, intok, out, cached, batch=False)
     return {"sid": sid, "day": day, "model": model, "cwd": cwd, "project": _project_of(cwd),
             "cost": round(cost, 6), "in_tok": intok, "out_tok": out, "cached_tok": cached,
             "plan": plan, "prompt": prompt}

@@ -93,7 +93,12 @@ def status():
          "run `codex` and sign in with your ChatGPT account (not an API key)"),
     ):
         cli = mod._bin()
-        auth = auth_fn() if cli else "missing"
+        try:
+            auth = auth_fn() if cli else "missing"
+        except Exception as e:
+            # One lane's auth probe (a login-artifact read / keychain lookup) must not abort the status of the
+            # OTHER lanes. Report this lane's auth as an error and keep going — the activation step still shows.
+            auth = f"error:{type(e).__name__}"
         steps = []
         if not cli:
             steps.append(f"install the {lane} CLI (then `spendguard lanes` to re-check)")

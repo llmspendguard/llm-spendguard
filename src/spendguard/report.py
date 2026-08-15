@@ -20,9 +20,14 @@ def openai_by_day():
     by_day = defaultdict(float)
     pending = 0
     for b in fetch_batches(load_key()):
-        if b["status"] in ("in_progress", "finalizing", "validating"):
-            pending += b["request_counts"]["total"]; continue
-        if b["status"] not in ("completed", "cancelled"):
+        status = b.get("status")
+        if status in ("in_progress", "finalizing", "validating"):
+            # request_counts / total are read defensively: one malformed batch dict must not take the whole
+            # billing report down. The cost path already degrades gracefully (cost_or_unpriced); the pending
+            # counter shouldn't be the one hard key-access that aborts it.
+            pending += (b.get("request_counts") or {}).get("total", 0) or 0
+            continue
+        if status not in ("completed", "cancelled"):
             continue
         u = b.get("usage") or {}
         it, ot = u.get("input_tokens", 0), u.get("output_tokens", 0)
@@ -31,7 +36,7 @@ def openai_by_day():
         # AN UNPRICED MODEL TOOK THE ENTIRE REPORT DOWN. batch_cost raises KeyError for a model with no card,
         # and the Anthropic path two functions away had degraded gracefully since day one — the OpenAI copy
         # simply never grew the guard. Unpriced contributes 0 and is NAMED, never silently absorbed.
-        c = pricing.cost_or_unpriced(b["model"], it, ot,
+        c = pricing.cost_or_unpriced(b.get("model"), it, ot,
                                      (u.get("input_tokens_details") or {}).get("cached_tokens", 0))
         by_day[oai_day(b)] += c
     return by_day, pending

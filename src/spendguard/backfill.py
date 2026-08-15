@@ -22,7 +22,19 @@ def _openai_rows():
         it, ot = u.get("input_tokens", 0), u.get("output_tokens", 0)
         if not it and not ot:
             continue
-        cost = pricing.batch_cost(b["model"], it, ot, (u.get("input_tokens_details") or {}).get("cached_tokens", 0))
+        cached = (u.get("input_tokens_details") or {}).get("cached_tokens", 0)
+        # Mirror _anthropic_rows: an UNPRICEABLE model is UNKNOWN, not $0. batch_cost() raises on a model with no
+        # card, and appending cost=0.0 (or letting it crash the whole backfill) would either record real
+        # historical spend as free or drop it. Keep the row (the batch happened) with cost=None — every consumer
+        # here already reads None as "not priced" — and name the model so it can be priced.
+        try:
+            cost = pricing.batch_cost(b["model"], it, ot, cached)
+        except Exception as e:
+            cost = None
+            import sys as _sys
+            _sys.stderr.write(f"[backfill] UNPRICED {b['model']} in batch {b['id']} ({type(e).__name__}: "
+                              f"{str(e)[:60]}) — the row is kept with cost=UNKNOWN, not $0. Price it: "
+                              f"`spendguard price {b['model']} --in <$/1M> --out <$/1M> --source '<url>'`\n")
         out.append(("openai", pricing.normalize(b["model"]), cost, it, ot, day(b), b["id"]))
     return out
 

@@ -62,7 +62,12 @@ def _linux(interval, remove):
     # start empty) and a real failure (permissions, cron daemon down). Treating the second as "no crontab" and
     # then running `crontab -` would WIPE the user's existing jobs. Trust stdout only on exit 0 or the documented
     # "no crontab" message; any other failure aborts rather than clobber the crontab.
-    _r = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
+    try:
+        _r = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
+    except FileNotFoundError:
+        # No `crontab` binary at all (a minimal container / cron not installed). Report it honestly instead of
+        # crashing with a traceback — nothing was scheduled, and the caller can choose another mechanism.
+        return {"error": "no `crontab` binary found — cron is not installed; nothing scheduled", "scheduler": "cron"}
     if _r.returncode != 0 and "no crontab" not in (_r.stderr or "").lower():
         return {"error": f"crontab -l failed ({(_r.stderr or '').strip()[:120]}) — refusing to rewrite the "
                          f"crontab and risk wiping existing jobs", "scheduler": "cron"}
@@ -72,7 +77,12 @@ def _linux(interval, remove):
         sched = "0 0 * * *" if interval == "daily" else "0 * * * *"
         lines.append(f"{sched} {' '.join(_cmd())}  {_MARKER}")
     out = ("\n".join(lines) + "\n") if lines else "\n"
-    subprocess.run(["crontab", "-"], input=out, text=True)
+    # The WRITE can fail too (cron daemon down, permissions). Its return code was ignored, so a failed install
+    # still reported success — a schedule the user believes exists but doesn't. Check it.
+    w = subprocess.run(["crontab", "-"], input=out, text=True, capture_output=True)
+    if w.returncode != 0:
+        return {"error": f"crontab write failed ({(w.stderr or '').strip()[:120]}) — schedule NOT installed",
+                "scheduler": "cron"}
     return {"removed": True, "scheduler": "cron"} if remove else {"installed": "crontab", "scheduler": "cron", "interval": interval}
 
 

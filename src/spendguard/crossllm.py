@@ -42,9 +42,15 @@ class BudgetRefused(RuntimeError):
 
     def __init__(self, estimate, budget, detail):
         self.estimate, self.budget, self.detail = estimate, budget, detail
+        # An unpriced metered vendor (detail value None) is refused for a DIFFERENT reason than an over-budget
+        # estimate: the cost is UNKNOWN, not merely too high, so say so honestly rather than implying "$0 > budget".
+        self.unpriced = [v for v, c in detail.items() if c is None]
+        why = (f"UNKNOWN price for metered vendor(s) {self.unpriced} — the estimate cannot bound the spend"
+               if self.unpriced else
+               f"estimated metered cost ${estimate:.4f} exceeds budget ${budget:.4f}")
         super().__init__(
-            f"estimated metered cost ${estimate:.4f} exceeds budget ${budget:.4f} — refusing before spend. "
-            f"Per-vendor est: {detail}. Raise budget_usd, drop a metered vendor, or route it to a $0 lane.")
+            f"{why} — refusing before spend (budget ${budget:.4f}). Per-vendor est: {detail}. "
+            f"Raise budget_usd, drop the vendor, sync-prices for it, or route it to a $0 lane.")
 
 
 def _parse_vendors(vendors):
@@ -93,23 +99,32 @@ def _is_metered(vendor):
 
 
 def _estimate_metered(vlist, prompt, system, est_output_tokens):
-    """(total_usd, {vendor:usd}) — the zero-spend pre-flight estimate of the metered vendors only. Lanes are
-    $0 and omitted. Deliberately coarse and slightly high (a budget guard, not the ledger): a fixed output
-    figure, a char/4 input proxy. The ledger records the exact cost after the call."""
+    """(total_usd, {vendor:usd|None}, [unpriced_vendor]) — the zero-spend pre-flight estimate of the metered
+    vendors only. Lanes are $0 and omitted; a metered vendor whose price can't be looked up gets detail None and
+    is listed in `unpriced` (so a budget guard can refuse rather than read the gap as $0). Deliberately coarse
+    and slightly high (a budget guard, not the ledger): a fixed output figure, a char/4 input proxy."""
     in_tok = (len(prompt or "") + len(system or "")) // _CHARS_PER_TOKEN
     out_tok = int(est_output_tokens or _BUDGET_EST_OUTPUT_TOKENS)
-    detail, total = {}, 0.0
+    detail, total, unpriced = {}, 0.0, []
     for vendor, model in vlist:
         if not _is_metered(vendor):
             detail[vendor] = 0.0
             continue
         try:
-            c = float(pricing.realtime_cost(model, in_tok, out_tok) or 0.0)
+            raw = pricing.realtime_cost(model, in_tok, out_tok)
         except Exception:
-            c = 0.0
+            raw = None
+        if raw is None:
+            # UNKNOWN price on a metered vendor. Estimating it as $0 (the old `or 0.0`) would let a budget_usd
+            # guard PASS and then spend without bound — an unverifiable cost is not a $0 cost. Mark it unpriced so
+            # ask() refuses when a budget is set.
+            unpriced.append(vendor)
+            detail[vendor] = None
+            continue
+        c = float(raw)
         detail[vendor] = round(c, 6)
         total += c
-    return round(total, 6), detail
+    return round(total, 6), detail, unpriced
 
 
 class AskResult:
@@ -219,8 +234,10 @@ def ask(prompt, *, vendors=None, n=None, schema=None, system=None, purpose="ask"
         k = max(1, int(n))
         if k < len(vlist):
             vlist = vlist[:k]
-    estimate, detail = _estimate_metered(vlist, prompt, system, est_output_tokens)
-    if budget_usd is not None and estimate > float(budget_usd):
+    estimate, detail, unpriced = _estimate_metered(vlist, prompt, system, est_output_tokens)
+    if budget_usd is not None and (estimate > float(budget_usd) or unpriced):
+        # Refuse on EITHER an over-budget estimate OR an unpriceable metered vendor: a vendor whose price we
+        # cannot look up estimates to $0, and a $0 estimate would sail past any budget and then spend unbounded.
         raise BudgetRefused(estimate, float(budget_usd), detail)
     dl = float(deadline_s or _DEFAULT_DEADLINE_S)
     if mode == "first":

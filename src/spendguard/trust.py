@@ -91,18 +91,27 @@ def check(since=None, with_server=True):
         try:
             from . import saas
             x = saas.crosscheck(since=since)
-            if not x.get("error"):
+            if x.get("error"):
+                # A crosscheck that FAILED (network/auth) is NOT the same as "no server": dropping it left the CLI
+                # silent and the overall level untouched, so an UNVERIFIED server side read as fine. Surface it so
+                # the run never claims a sync it did not confirm.
+                out["server_error"] = x["error"]
+            else:
                 out["server"] = {"rows": x.get("server_rows"), "value_drift": x.get("value_drift"),
                                  "server_only_stale": x.get("server_only"), "local_only": x.get("local_only"),
                                  "in_sync": x.get("in_sync")}
-        except Exception:
-            pass
+        except Exception as e:
+            out["server_error"] = f"{type(e).__name__}: {str(e)[:80]}"
     out["level"] = "alarm" if lvl == "alarm" else ("warn" if lvl == "warn" else lvl)
     # SERVER DRIFT MUST ELEVATE THE OVERALL LEVEL. out['level'] used ONLY the ledger verdict, so a server that was
     # out of sync (in_sync False) left the overall status at the ledger's 'ok' — a drift nobody was alerted to. A
-    # drift is at least a warn; it never downgrades an existing alarm.
+    # drift is at least a warn; it never downgrades an existing alarm and never masks an 'unknown' billing fetch
+    # (so the elevation is gated on 'ok', not '!= alarm').
     srv = out.get("server")
-    if srv and srv.get("in_sync") is False and out["level"] != "alarm":
+    if srv and srv.get("in_sync") is False and out["level"] == "ok":
+        out["level"] = "warn"
+    # A server crosscheck we couldn't RUN is unverified too — at least a warn, never a silent ok.
+    if out.get("server_error") and out["level"] == "ok":
         out["level"] = "warn"
     return out
 
@@ -122,8 +131,13 @@ def cmd(argv=None):
         s = r["server"]
         flag = "" if s.get("in_sync") else f"  ⚠ drift={s.get('value_drift')} stale-on-server={s.get('server_only_stale')} local-only={s.get('local_only')}"
         print(f"  server: {s.get('rows')} rows{flag}")
+    elif r.get("server_error"):
+        print(f"  server: ⚠ crosscheck FAILED — {r['server_error']} (server sync UNVERIFIED)")
     if lv["level"] == "alarm":
         print("  *** ALARM: the recorded total is far above provider billing — investigate double-count before trusting/pushing. ***")
-    # Exit on the OVERALL level (r['level']) — which now folds in server drift — not the ledger verdict alone, so
-    # a server-side drift no longer exits 0.
-    return 2 if r["level"] == "alarm" else (1 if r["level"] == "warn" else 0)
+    elif r["level"] == "unknown":
+        print("  *** CANNOT VERIFY: provider billing fetch failed — do NOT trust the total (fix the key/network). ***")
+    # Exit on the OVERALL level (r['level']) — which folds in server drift AND an unverifiable billing fetch — not
+    # the ledger verdict alone. 'unknown' (couldn't fetch billing) exits a non-zero 3, so a daily/CI run never reads
+    # a failed verification as success.
+    return {"alarm": 2, "warn": 1, "unknown": 3}.get(r["level"], 0)

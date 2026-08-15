@@ -123,7 +123,9 @@ def by_project_day(since):
         active = convh.get(hour) or convh.get(hour - 3600) or {}        # 1h lag for logging delay
         dom = max(active, key=active.get) if active else None          # dominant (org, project) that hour
         for (prov, m, i, c, o) in rows:
-            usd = pricing.realtime_cost(m, i, o, cached_in_tok=c)
+            # An unpriceable model must not abort the whole realtime-truth computation. cost_or_unpriced returns 0
+            # and RECORDS the model (note_unpriced) so the gap is surfaced, rather than raising here.
+            usd = pricing.cost_or_unpriced(m, i, o, cached_in_tok=c, batch=False)
             ceiling += usd
             if dom:
                 org, proj = dom
