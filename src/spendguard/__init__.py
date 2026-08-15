@@ -20,6 +20,7 @@ from .emit import on_event
 from .calls import context, set_context, feedback
 from .bulkgate import (estimate_job, test_job, gated_batch, check_bulk, check_realtime, check_compute,
                        record_estimate, record_tested, note_response, maxtokens, is_truncated, GateBlocked)
+from .crossllm import ask, AskResult, BudgetRefused
 from .litellm_adapter import install as _install_litellm
 from .bedrock_adapter import install as _install_bedrock
 from .vertex_adapter import install as _install_vertex
@@ -49,7 +50,8 @@ __all__ = ["install", "require", "register", "install_litellm", "install_bedrock
            "batch_cost", "realtime_cost", "estimate_cost", "price", "normalize",
            "PRICING", "PRICING_VERIFIED", "PRICING_SOURCE",
            "estimate_job", "test_job", "gated_batch", "check_bulk", "check_realtime", "check_compute",
-           "record_estimate", "record_tested", "note_response", "maxtokens", "is_truncated", "GateBlocked"]
+           "record_estimate", "record_tested", "note_response", "maxtokens", "is_truncated", "GateBlocked",
+           "ask", "AskResult", "BudgetRefused"]
 # Version comes from the INSTALLED package metadata (single source: pyproject.toml) — a hardcoded literal
 # here shipped as "0.3.0" for four releases before anyone noticed. Editable/source-tree fallback: "0.0.0.dev0".
 try:

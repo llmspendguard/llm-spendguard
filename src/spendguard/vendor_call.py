@@ -309,6 +309,25 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
         except Exception:
             _ctx = None
     started = time.time()
+    # DISPATCH ADMISSION — bound in-flight calls per vendor/lane (and optional RPM), so a caller fanning out
+    # over many items QUEUES instead of thrashing the subprocess lanes or 429-storming a metered vendor. The
+    # queue wait counts against THIS deadline; timing out in the queue is an honest DEADLINE_EXCEEDED, never a
+    # silent success. It sits at the same chokepoint as attribution, so it covers every caller at once. dispatch.py.
+    _dispatched = False
+    try:
+        from . import dispatch
+        dispatch.acquire(vendor, model, deadline_s)
+        _dispatched = True
+    except dispatch.DispatchTimeout as _dt:
+        if _ctx is not None:
+            try:
+                _ctx.__exit__(None, None, None)
+            except Exception:
+                pass
+        return Result(DEADLINE_EXCEEDED, vendor, model, prompt_sha=_sha(prompt), purpose=purpose,
+                      latency=time.time() - started, error=str(_dt))
+    except Exception:
+        _dispatched = False                          # governor unavailable → proceed ungoverned, never block a call
     sha = _sha(prompt)
     last = None
     # EVERY ATTEMPT BILLS. Returning only the final attempt's cost made retries invisible to the caller's
@@ -316,26 +335,34 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
     # while the ledger recorded $13.12. The Result now carries what the CALL cost, not what its last try cost.
     billed = 0.0
     del cap_basis                       # recorded via the caps registry; not part of the result contract
-    for attempt in range(1, max(1, int(attempts)) + 1):
-        remaining = deadline_s - (time.time() - started)
-        if remaining <= 0:
-            return Result(DEADLINE_EXCEEDED, vendor, model, prompt_sha=sha, purpose=purpose,
-                          latency=time.time() - started,
-                          error=f"total deadline {deadline_s}s exhausted after {attempt - 1} attempt(s)")
-        r = _attempt(vendor, model, prompt, system, max_tokens, remaining, schema=schema,
-                     reasoning=reasoning)
-        billed += float(r.get("cost") or 0.0)
-        kind, stop = _classify(r)
-        last = Result(kind, vendor, model, text=r.get("text"), stop_reason=stop,
-                      in_tok=r.get("in_tok") or 0, out_tok=r.get("out_tok") or 0,
-                      cost=(billed if billed else r.get("cost")),
-                      latency=time.time() - started, error=r.get("error"), prompt_sha=sha, purpose=purpose)
-        # Retry ONLY transport failures. A truncation or an empty body is a deterministic result: repeating it
-        # burns the deadline and the money to arrive at the same answer.
-        if kind != TRANSPORT_ERROR:
-            break
-        if attempt < attempts and (deadline_s - (time.time() - started)) > backoff_s:
-            time.sleep(backoff_s * attempt)
+    try:
+        for attempt in range(1, max(1, int(attempts)) + 1):
+            remaining = deadline_s - (time.time() - started)
+            if remaining <= 0:
+                return Result(DEADLINE_EXCEEDED, vendor, model, prompt_sha=sha, purpose=purpose,
+                              latency=time.time() - started,
+                              error=f"total deadline {deadline_s}s exhausted after {attempt - 1} attempt(s)")
+            r = _attempt(vendor, model, prompt, system, max_tokens, remaining, schema=schema,
+                         reasoning=reasoning)
+            billed += float(r.get("cost") or 0.0)
+            kind, stop = _classify(r)
+            last = Result(kind, vendor, model, text=r.get("text"), stop_reason=stop,
+                          in_tok=r.get("in_tok") or 0, out_tok=r.get("out_tok") or 0,
+                          cost=(billed if billed else r.get("cost")),
+                          latency=time.time() - started, error=r.get("error"), prompt_sha=sha, purpose=purpose)
+            # Retry ONLY transport failures. A truncation or an empty body is a deterministic result: repeating
+            # it burns the deadline and the money to arrive at the same answer.
+            if kind != TRANSPORT_ERROR:
+                break
+            if attempt < attempts and (deadline_s - (time.time() - started)) > backoff_s:
+                time.sleep(backoff_s * attempt)
+    finally:
+        if _dispatched:
+            try:
+                from . import dispatch as _drel
+                _drel.release(vendor, model)
+            except Exception:
+                pass
     # Feed the TIME measurement on every outcome, the way note_response feeds the token one. A budget that is
     # only ever guessed can never improve; recorded, the next caller's deadline comes from what this vendor
     # actually does. Deadline hits are flagged so they are censored from the percentiles they would otherwise

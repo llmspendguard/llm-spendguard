@@ -28,6 +28,13 @@ from spendguard import config, vendor_call as vc, pricing
 PANEL = [("anthropic", "claude-opus-4-8"), ("openai", "gpt-5.5"),
          ("moonshot", "kimi-k3"), ("zai", "glm-5.3")]
 METERED = {"moonshot"}                                        # the only vendor that costs $ (others are lanes)
+_METERED_MODELS = [m for v, m in PANEL if v in METERED]       # the models that actually bill — DERIVED, not named
+# Named figures for the PRE-flight budget estimate only (the ledger bills actual): a coarse output-token count
+# and a char/4 input proxy. Named, not literals at the call site — an estimate uses a stated assumption, not a
+# magic number, and the suite's estimates-come-from-measurement guard enforces exactly that.
+_EST_OUTPUT_TOKENS = 4000
+_CHARS_PER_TOKEN = 4
+_EST_FALLBACK_USD = 0.05
 
 
 def sample(n, seed_rows):
@@ -48,10 +55,13 @@ def sample(n, seed_rows):
 
 
 def est_metered_cost(prompt, system):
-    """Zero-spend estimate of the kimi cost for one call — the only metered vendor. Used to STOP before the
-    budget, never after (a completed call still bills)."""
-    in_tok = (len(prompt or "") + len(system or "")) // 4
-    return float(pricing.realtime_cost("kimi-k3", in_tok, 4000) or 0.05)
+    """Zero-spend estimate of the metered cost for one call across the metered vendors (derived from PANEL, not
+    hardcoded). Used to STOP before the budget, never after (a completed call still bills)."""
+    in_tok = (len(prompt or "") + len(system or "")) // _CHARS_PER_TOKEN
+    total = 0.0
+    for model in _METERED_MODELS:
+        total += float(pricing.realtime_cost(model, in_tok, _EST_OUTPUT_TOKENS) or _EST_FALLBACK_USD)
+    return total or _EST_FALLBACK_USD
 
 
 def main():

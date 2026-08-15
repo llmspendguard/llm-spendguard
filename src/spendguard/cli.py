@@ -21,6 +21,7 @@ _GROUPS = [
         ("run", "`run -- <cmd>` gate ONE command; nothing written to your interpreter"),
         ("sources", "where can this machine spend? providers · agent tools · ungated venvs"),
         ("doctor", "is the gate enforcing HERE? keys, lanes, ledger status"),
+        ("ask", "run ONE prompt across many LLMs — honest per-vendor coverage, $0 lanes"),
     ]),
     ("see the money", [
         ("receipt", "running tally: today / 7d / month, two axes"),
@@ -54,6 +55,7 @@ _GROUPS = [
         ("pricing", "print the canonical price table"),
         ("audit", "fail CI if any code hardcodes a disagreeing price"),
         ("token-caps", "list every hardcoded output-token cap; --judge rules on the unjudged ones"),
+        ("metadata", "model-metadata backbone health: LiteLLM cache + measured-cap drift"),
         ("estimate-divergence", "judge every recorded quote against the actual bill; fails on ungrounded ones"),
         ("estimate-literals", "every cost call fed literal token counts; --judge rules quote vs probe"),
         ("migrate", "rebuild spend_events from charges (exact Decimal); proves Σ preserved"),
@@ -152,6 +154,12 @@ def _dispatch(argv=None):
     if cmd == "token-caps":
         from . import token_caps
         return token_caps.cmd(rest)
+    if cmd == "ask":                                  # cross-LLM query surface — one prompt across models, honestly
+        from . import crossllm
+        return crossllm.cmd(rest)
+    if cmd == "metadata":                             # model-metadata backbone health + measured-cap drift audit
+        from . import metadata_audit
+        return metadata_audit.main(rest)
     if cmd == "migrate":
         # THE clear, runnable migration: rebuild spend_events from charges under the exact-Decimal schema,
         # prove Σ is preserved to the last digit. Non-destructive (whole-file snapshot + old table renamed aside).

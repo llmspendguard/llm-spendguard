@@ -116,6 +116,27 @@ SETTINGS = [
          default=900, kind="float", secret=False,
          desc="After a subscription lane fails (plan window exhausted, CLI missing), skip that lane for this many "
               "seconds (in-process) so bursts of meta prompts go straight to the API instead of hammering a dead lane."),
+    dict(section="dispatch", key="lane_concurrency", store="config.json:dispatch.lane_concurrency",
+         env="SPENDGUARD_DISPATCH_LANE_CONCURRENCY", default=3, kind="int", secret=False,
+         desc="Max concurrent calls sharing ONE subscription lane (all anthropic vendors on claude-code, all "
+              "openai on codex, all zai on the GLM plan). A lane is a heavy subprocess (CLI cold-start + context "
+              "injection); a small pool beats a swarm and avoids the plan's own concurrency throttle. The dispatch "
+              "governor (dispatch.py) queues overflow instead of firing it; a 4-vendor panel touches no limit."),
+    dict(section="dispatch", key="vendor_concurrency", store="config.json:dispatch.vendor_concurrency",
+         env="SPENDGUARD_DISPATCH_VENDOR_CONCURRENCY", default=8, kind="int", secret=False,
+         desc="Max concurrent metered calls to ONE vendor, so a large cross-LLM fan-out queues instead of "
+              "429-storming the provider. Per-vendor requests/minute pacing is also available and OFF by default "
+              "— set env SPENDGUARD_DISPATCH_RPM_<VENDOR> (e.g. _MOONSHOT=60) to enable it for a vendor."),
+    dict(section="dispatch", key="global_concurrency", store="config.json:dispatch.global_concurrency",
+         env="SPENDGUARD_DISPATCH_GLOBAL_CONCURRENCY", default=24, kind="int", secret=False,
+         desc="Machine-wide ceiling on in-flight LLM calls across ALL vendors/lanes — the last backstop against a "
+              "runaway fan-out. SPENDGUARD_DISPATCH_OFF=1 disables the governor entirely (every acquire a no-op)."),
+    dict(section="ask", key="default_vendors", store="config.json:ask.default_vendors",
+         env="SPENDGUARD_ASK_DEFAULT_VENDORS", default=None, kind="string|null", secret=False,
+         desc="Default cross-LLM panel for `spendguard.ask` / `spendguard ask` when the caller names none — a "
+              "comma-separated 'vendor:model' list (e.g. anthropic:claude-opus-4-8,openai:gpt-5.5,moonshot:kimi-k3,"
+              "zai:glm-5.3). No model ids are hardcoded in code; a deployment sets its own panel here once, then "
+              "callers can omit `vendors` and just pick HOW MANY to use with n=. Unset → the caller must pass vendors."),
     dict(section="keys", key="key_profile", store=".spendguard.json:key_profile", env="SPENDGUARD_KEY_PROFILE",
          default=None, kind="string|null", secret=False,
          desc="Per-repo key selection: with key_profile=<name>, provider keys resolve from `<VAR>__<name>` entries "

@@ -177,6 +177,16 @@
       "verdict": "COLLISION",
       "why": "All three are decorator factories that wrap a call and set w._spend_gated, but they have different signatures and different jobs: bedrock's _wrap intercepts boto3 make_api_call to record token usage, "
     },
+    "acquire": {
+      "n": 3,
+      "verdict": "PROTOCOL",
+      "why": "A deliberate three-layer admission facade dispatched by name: module-level `acquire` delegates to `Governor.acquire`, which acquires the global slot then delegates to `_Bucket.acquire` for per-key concurrency+RPM pacing — nested delegation of one contract, not two answers to one question."
+    },
+    "as_dict": {
+      "n": 2,
+      "verdict": "PROTOCOL",
+      "why": "Both are per-class `as_dict()` serialization methods scoped to distinct classes (AskResult vs Result), each returning its own object's fields — the standard 'render me as a plain dict' contract dispatched by instance type, so no grep/import can pick the wrong one and neither is doing the other's job."
+    },
     "attribute_gap": {
       "n": 5,
       "verdict": "PROTOCOL",
@@ -218,9 +228,9 @@
       "why": "Three parallel per-source CLI subcommands (chat/claude-code/codex classify) implementing the same command contract for different data backends. claudecode and codex both delegate to the SHARED attribu"
     },
     "cmd": {
-      "n": 14,
+      "n": 15,
       "verdict": "PROTOCOL",
-      "why": "Each `cmd(argv=None)` is a subcommand entrypoint for the spendguard CLI dispatcher, one per module (cascade, coverage, estimate-divergence, estimate-literals, models, remote). They share a uniform sig"
+      "why": "Each `cmd(argv=None)` is one module's CLI subcommand entrypoint, all sharing the uniform argv-in/exit-code-out contract that the dispatcher invokes by name — the exact `cmd(argv)` protocol the doctrine names as the sanctioned exemption, not competing implementations of one job."
     },
     "configured": {
       "n": 4,
@@ -231,6 +241,11 @@
       "n": 6,
       "verdict": "COLLISION",
       "why": "Five are property-style accessors returning a per-instance `_conn` (a genuine duck-typed Source contract, plus reconcile.Source returning {} as a default stub), but saas.conn() is a module-level funct"
+    },
+    "consensus": {
+      "n": 2,
+      "verdict": "PROTOCOL",
+      "why": "`AskResult.consensus` is a thin facade that delegates directly to `vendor_call.consensus`, which holds the single implementation of the N-of-N refusal check; one job, one implementation dispatched by name, not two divergent copies."
     },
     "cost_by_day": {
       "n": 2,
@@ -288,9 +303,9 @@
       "why": "Both functions have identical bodies returning cls from their module's _load_state(), and the codex docstring explicitly notes 'parity with claudecode.load_cls'. Same job implemented twice, differing "
     },
     "main": {
-      "n": 39,
+      "n": 40,
       "verdict": "PROTOCOL",
-      "why": "Each `main` is the CLI entrypoint for its own subcommand module (advise, advisor, audit, backfill, bootstrap, brief), each parsing its own args and dispatching its own logic. They share the convention"
+      "why": "Every definition is a per-module CLI entrypoint with the uniform `main(argv=None)` contract — parse args, dispatch to that module's command, return an exit code — dispatched by name from the top-level CLI router. This is the canonical subcommand-facade protocol, not two implementations of one job."
     },
     "project_of": {
       "n": 2,
@@ -311,6 +326,11 @@
       "n": 6,
       "verdict": "COLLISION",
       "why": "These share the verb 'record' but write to different stores with different schemas and semantics: budget.record writes a money charge to the budget ledger, callio.record inserts a call_io sample (prompt/output capture), calls.record logs a call with token/latency/feedback tracking, ledger.SpendLedger.record normalizes a spend event dict into the spend ledger, and the two gate stream managers finalize streamed accounting. The two gate methods DO form a real protocol pair (stream-manager finalization, nearly identical bodies), but the four module-level 'record' functions are distinct jobs with distinct signatures. A grep or careless import of 'record' lands on the wrong ledger."
+    },
+    "release": {
+      "n": 3,
+      "verdict": "PROTOCOL",
+      "why": "These are a deliberate delegation chain, all named `release` by design: the module-level `dispatch.release` facade calls `Governor.release`, which in turn calls `_Bucket.release` — each is the same 'return an acquired dispatch slot' contract at its layer, not two implementations of one job that can drift, nor the same name on different jobs."
     },
     "render": {
       "n": 2,
