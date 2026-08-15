@@ -58,7 +58,15 @@ def _macos(interval, remove):
 
 
 def _linux(interval, remove):
-    cur = subprocess.run(["crontab", "-l"], capture_output=True, text=True).stdout
+    # `crontab -l` returns non-zero + empty stdout in TWO very different cases: the user has NO crontab (fine —
+    # start empty) and a real failure (permissions, cron daemon down). Treating the second as "no crontab" and
+    # then running `crontab -` would WIPE the user's existing jobs. Trust stdout only on exit 0 or the documented
+    # "no crontab" message; any other failure aborts rather than clobber the crontab.
+    _r = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
+    if _r.returncode != 0 and "no crontab" not in (_r.stderr or "").lower():
+        return {"error": f"crontab -l failed ({(_r.stderr or '').strip()[:120]}) — refusing to rewrite the "
+                         f"crontab and risk wiping existing jobs", "scheduler": "cron"}
+    cur = _r.stdout
     lines = [ln for ln in cur.splitlines() if _MARKER not in ln]
     if not remove:
         sched = "0 0 * * *" if interval == "daily" else "0 * * * *"

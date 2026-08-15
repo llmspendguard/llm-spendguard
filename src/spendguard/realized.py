@@ -87,7 +87,15 @@ def sync_to_guarded(rows=None):
     for r in rows:
         if r["delta_per_call"] <= 0:
             continue
-        prev = int(state.get(r["intent"], {}).get("counted_calls", 0))
+        st = state.get(r["intent"], {})
+        # after_calls = COUNT(ts >= adopted_ts). The counted_calls watermark is only comparable to it when BOTH
+        # were measured against the SAME adoption point; if adopted_ts moved (re-adoption / recompute) the old
+        # count is over a different window, so subtracting it would OVER-credit (window widened). On a window
+        # change, rebaseline the watermark and credit nothing this run — conservative; it never inflates savings.
+        if "adopted_ts" in st and st["adopted_ts"] != r["adopted_ts"]:
+            state[r["intent"]] = {"counted_calls": int(r["after_calls"]), "adopted_ts": r["adopted_ts"]}
+            continue                                  # window MOVED (not a first sync) → rebaseline, credit nothing
+        prev = int(st.get("counted_calls", 0))
         new_calls = r["after_calls"] - prev
         if new_calls <= 0:
             continue

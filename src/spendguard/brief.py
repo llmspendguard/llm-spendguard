@@ -95,7 +95,11 @@ def brief(task, intent=None, run_llm=False):
     print("\nADVISOR (per-intent history):")
     if rec:
         q = f"good {100*rec['good']:.0f}%" if rec.get("good") is not None else "quality UNVERIFIED"
-        print(f"  recommend: {rec['model']}  (~${rec['per']:.4f}/job, {q})")
+        # `per` can be None (a `primary` fallback when every history row had jobs==0, so there is no per-job
+        # cost); formatting None with %.4f raised. Show the cost only when it is known.
+        _per = rec.get("per")
+        _cost = f"~${_per:.4f}/job" if _per is not None else "cost n/a"
+        print(f"  recommend: {rec['model']}  ({_cost}, {q})")
     if d.get("denylist"):
         print(f"  AVOID: {', '.join(d['denylist'])}  (proven ineffective for this intent)")
     for it, lesson, src, conf, _ev in d.get("insights", []):

@@ -128,7 +128,14 @@ def _all_instances():
         # a genuine early exit (end_date BEFORE the last sighting). A recovered box (end_date == last_seen) is kept.
         ls = h.get("last_seen")
         ed = h.get("end_date")
-        if ls and (not ed or ed > ls):
+        # `ed > ls` raised on MIXED types (an ISO string vs an epoch float) across history sources. Compute the
+        # "end after last sighting?" test crash-safely; if the two aren't orderable, don't treat end_date as
+        # implausibly-late (leave it rather than clamp). Behavior is unchanged when the types match.
+        try:
+            _ed_after_ls = ed is not None and ed > ls
+        except TypeError:
+            _ed_after_ls = False
+        if ls and (not ed or _ed_after_ls):
             h["end_date"] = ls
         merged.append(h)
     merged.extend(live.values())
