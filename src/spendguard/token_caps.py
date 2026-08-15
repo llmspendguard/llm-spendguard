@@ -113,7 +113,11 @@ def sites(root):
                 a = n.args
                 pairs = []
                 if a.defaults:
-                    pairs += list(zip(a.args[-len(a.defaults):], a.defaults))
+                    # defaults cover the LAST N of positional-only + regular positional args COMBINED (PEP 570).
+                    # Pairing against a.args alone missed a cap kwarg declared positional-only, so a hardcoded cap
+                    # in that position slipped the scan — the exact blind spot a completeness guard must not have.
+                    _positional = list(getattr(a, "posonlyargs", []) or []) + list(a.args)
+                    pairs += list(zip(_positional[-len(a.defaults):], a.defaults))
                 pairs += list(zip(a.kwonlyargs, a.kw_defaults))
                 for arg, d in pairs:
                     if arg.arg in CAP_KWARGS and isinstance(d, ast.Constant) \

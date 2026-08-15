@@ -1829,6 +1829,19 @@ def _any_patched():
     return False
 
 
+def gated_sdk_modules():
+    """Importable module names whose PRESENCE means 'an LLM SDK spendguard can gate is installed here' — the set
+    the REQUIRE fail-closed probe checks for the 'installed yet not patched' state. Derived from the static
+    interceptor specs (so it can't drift from what the gate actually patches: today openai/anthropic) PLUS the
+    optional adapters' SDKs, which register dynamically only AFTER their SDK imports — so the probe must name
+    them itself to fire before that. Deliberately EXCLUDES boto3 (bedrock): a general AWS SDK whose mere presence
+    does not imply LLM use, and which only gates after an explicit install_bedrock()."""
+    mods = {spec[0].split(".")[0]
+            for spec in INTERCEPTORS + _EXTRA + RT_INTERCEPTORS + UNIT_INTERCEPTORS + STREAM_INTERCEPTORS}
+    mods.update({"litellm", "google.generativeai", "google.genai", "vertexai"})   # litellm + vertex/genai adapters
+    return sorted(mods)
+
+
 def require(cap: "float | None" = None) -> None:
     """FAIL-CLOSED guard — ensure the gate is actually ENFORCING in this interpreter, else raise. Put at the
     top of any script that must not spend ungated; it refuses to run if spendguard was bypassed or disabled:
