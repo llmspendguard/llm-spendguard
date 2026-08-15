@@ -114,9 +114,6 @@ def _floor(text, entities=None):
     return out
 
 
-_WARNED = set()
-
-
 def _warn_once(msg):
     from . import config
     config.warn_once(msg, prefix="[spendguard.deid] ")   # one registry; gate.py had its own copy + own set

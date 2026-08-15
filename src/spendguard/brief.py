@@ -71,7 +71,7 @@ def _defaults(intent, task):
     if rec and rec.get("good") is not None:
         qbar = f"≥ {100*rec['good']:.0f}% match to the reference (historical for {rec['model']})"
     return dict(permodel=permodel, primary=primary, rec=rec, denylist=denylist, insights=ins,
-                sample=sample, hist_cost=hist_cost, daily_cap=config.daily_cap())
+                sample=sample, hist_cost=hist_cost, qbar=qbar, daily_cap=config.daily_cap())
 
 
 def brief(task, intent=None, run_llm=False):
