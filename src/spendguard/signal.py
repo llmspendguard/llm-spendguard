@@ -85,9 +85,11 @@ def _cancelled_billed():
         it, ot = u.get("input_tokens", 0), u.get("output_tokens", 0)
         if not (it or ot):
             continue                                            # nothing completed → genuinely $0
-        cost = pricing.batch_cost(b["model"], it, ot, (u.get("input_tokens_details") or {}).get("cached_tokens", 0))
+        # cost_or_unpriced, not batch_cost: this loop is OUTSIDE the fetch try/except, so an unpriced model (or a
+        # missing 'model' key) here would propagate and crash build(). Degrade to 0 + record instead.
+        cost = pricing.cost_or_unpriced(b.get("model"), it, ot, (u.get("input_tokens_details") or {}).get("cached_tokens", 0))
         proj = (bmap.get(b["id"], {}).get("project") or "") or "unattributed"
-        out[b["id"]] = {"model": b["model"], "cost": cost, "project": proj}
+        out[b["id"]] = {"model": b.get("model"), "cost": cost, "project": proj}
     return out
 
 

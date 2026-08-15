@@ -109,11 +109,13 @@ def _digest(path):
 
 
 def update(st=None):
-    """Re-digest only the session files whose mtime changed (the incremental watermark). Returns (state, n_changed)."""
+    """Re-digest only the session files whose mtime changed (the incremental watermark), and PRUNE cached digests
+    whose session file no longer exists. Returns (state, n_changed)."""
     st = st or _load_state()
     sess = st.setdefault("sessions", {})
     changed = 0
-    for path in glob.glob(os.path.join(_sessions_dir(), "**", "*.jsonl"), recursive=True):
+    sessions_dir = _sessions_dir()
+    for path in glob.glob(os.path.join(sessions_dir, "**", "*.jsonl"), recursive=True):
         try:
             mtime = os.path.getmtime(path)
         except OSError:
@@ -123,7 +125,15 @@ def update(st=None):
             continue
         sess[path] = {"mtime": mtime, "digest": _digest(path)}
         changed += 1
-    if changed:
+    # PRUNE deleted sessions: a file removed from ~/.codex/sessions used to leave its cached digest in state
+    # FOREVER, so its (est-value) spend kept accruing in day_totals/show/receipt. Drop entries whose file is gone
+    # — but only when the sessions dir itself is present, so a transiently-missing mount can't wipe the state.
+    pruned = 0
+    if os.path.isdir(sessions_dir):
+        for p in [p for p in sess if not os.path.exists(p)]:
+            del sess[p]
+            pruned += 1
+    if changed or pruned:
         _save_state(st)            # persist the watermark so a NEXT process run skips unchanged sessions
     return st, changed
 

@@ -67,30 +67,32 @@ from . import pricing as _pricing        # noqa: E402
 UNKNOWN_MODELS = _pricing.UNPRICED_SEEN  # model -> result count, for models missing from pricing.py (never guessed)
 
 
-def _cost(model, u):
-    """Cost for one result's usage dict, cache-aware, via pricing.py batch rates.
-    Unknown model -> record + return 0 (never guess a price, never crash the report)."""
+def _price_tokens(model, fresh_in, cread, ccreate, out):
+    """Cost for a token BREAKDOWN (fresh input / cache-read / cache-creation / output), cache-aware, via
+    pricing.py batch rates. Unknown/unpriceable model -> record + return 0 (never guess, never crash).
+
+    THE shared per-token math, so _cost (per-result) and cost_by_day (per-model re-price) can never diverge on
+    how cache tokens are priced — the bug that let cost_by_day silently drop all cache-token spend."""
     try:
         p = pricing.price(model)
-    except KeyError:
+        # THE THIRD COPY of the same unsourced rate — this one prices real Anthropic batch spend. All read the
+        # published fact from the table: batch cache-read at its own rate, a 5-minute cache WRITE at 1.25x base.
+        bin_, bout = p["batch_in"], p["batch_out"]
+        bcache = p.get("batch_cached_in")
+        if bcache is None:
+            bcache = bin_                # unknown is charged at full batch input — never cheaper than reality
+        ccreate_rate = bin_ * pricing.CACHE_WRITE_5M_MULTIPLIER
+        return (fresh_in * bin_ + cread * bcache + ccreate * ccreate_rate + out * bout) / 1e6
+    except (KeyError, TypeError, ValueError):
         UNKNOWN_MODELS[model] = UNKNOWN_MODELS.get(model, 0) + 1
         return 0.0
-    fresh_in = u.get("input_tokens", 0)              # Anthropic input_tokens = uncached/fresh
-    cread = u.get("cache_read_input_tokens", 0)
-    ccreate = u.get("cache_creation_input_tokens", 0)
-    out = u.get("output_tokens", 0)
-    # THE THIRD COPY of the same unsourced rate — this one prices real Anthropic batch spend during
-    # reconciliation. All three (estimate.project, pricing._cost, here) computed the batch cache-read as
-    # `cached_in * 0.5` independently, so fixing the one that was noticed left two live. The rate is a
-    # published fact and belongs in the table, once, where all three read it.
-    bin_, bout = p["batch_in"], p["batch_out"]
-    bcache = p.get("batch_cached_in")
-    if bcache is None:
-        bcache = bin_                # unknown is charged at full batch input — never cheaper than reality
-    # Cache WRITE multiplier, likewise from the provider's published table rather than inline: a 5-minute
-    # write is 1.25x base input. Named so the number and its meaning cannot drift apart.
-    ccreate_rate = bin_ * pricing.CACHE_WRITE_5M_MULTIPLIER
-    return (fresh_in * bin_ + cread * bcache + ccreate * ccreate_rate + out * bout) / 1e6
+
+
+def _cost(model, u):
+    """Cost for one result's usage dict, cache-aware. Thin wrapper over _price_tokens (Anthropic input_tokens is
+    the uncached/fresh count; cache-read and cache-creation are separate)."""
+    return _price_tokens(model, u.get("input_tokens", 0), u.get("cache_read_input_tokens", 0),
+                         u.get("cache_creation_input_tokens", 0), u.get("output_tokens", 0))
 
 
 def refresh_cache(k, cache):
@@ -127,8 +129,13 @@ def refresh_cache(k, cache):
             u = msg.get("usage", {})
             c = _cost(mdl, u)
             cost += c
-            m = by_model.setdefault(mdl, {"in": 0, "out": 0, "cost": 0.0})
-            m["in"] += u.get("input_tokens", 0); m["out"] += u.get("output_tokens", 0); m["cost"] += c
+            m = by_model.setdefault(mdl, {"in": 0, "out": 0, "cread": 0, "ccreate": 0, "cost": 0.0})
+            m["in"] += u.get("input_tokens", 0); m["out"] += u.get("output_tokens", 0)
+            # store the cache-token breakdown too, so cost_by_day can RE-PRICE cache-aware — a per-model
+            # in/out-only reprice silently dropped ALL cache-read/creation spend from the recomputed totals.
+            m["cread"] += u.get("cache_read_input_tokens", 0)
+            m["ccreate"] += u.get("cache_creation_input_tokens", 0)
+            m["cost"] += c
         cache[bid] = {"created_at": b["created_at"][:10], "cost": cost, "by_model": by_model}
         new += 1
         if new % 25 == 0:
@@ -145,25 +152,23 @@ def refresh_cache(k, cache):
 def cost_by_day(since=None):
     """Returns (by_day:{date:$}, by_model:{model:$}). Refreshes cache first."""
     k = _key()
-    cache = json.load(open(CACHE_PATH)) if os.path.exists(CACHE_PATH) else {}
+    if os.path.exists(CACHE_PATH):
+        with open(CACHE_PATH) as _fh:                 # closed deterministically (was a leaked handle)
+            cache = json.load(_fh)
+    else:
+        cache = {}
     refresh_cache(k, cache)
     by_day, by_model = {}, {}
     for bid, rec in cache.items():
         d = rec["created_at"]
         if since and d < since:
             continue
-        # RE-PRICE from stored token sums every call, so adding/fixing a price in
-        # pricing.py corrects history without re-downloading results.
+        # RE-PRICE from stored token sums every call (so a price fix in pricing.py corrects history without
+        # re-downloading), now CACHE-AWARE via _price_tokens: new records carry the cache-read/creation breakdown
+        # and are priced at their own rates; legacy records (pre-breakdown) have only in/out, so their cache
+        # tokens read as 0 — no worse than the old in/out-only reprice, and new spend is now priced correctly.
         for mdl, mm in rec.get("by_model", {}).items():
-            try:
-                c = pricing.batch_cost(mdl, mm.get("in", 0), mm.get("out", 0))
-            except (KeyError, TypeError, ValueError):
-                # Match cost_or_unpriced's exception set: a model with no card raises KeyError, but a card with a
-                # malformed rate raises TypeError/ValueError — catching only KeyError let those abort cost_by_day
-                # (and provider_truth with it). Unpriced is counted 0 here but RECORDED in UNKNOWN_MODELS so the
-                # reconcile surfaces the gap instead of hiding it.
-                UNKNOWN_MODELS[mdl] = UNKNOWN_MODELS.get(mdl, 0) + 1
-                c = 0.0
+            c = _price_tokens(mdl, mm.get("in", 0), mm.get("cread", 0), mm.get("ccreate", 0), mm.get("out", 0))
             by_day[d] = by_day.get(d, 0.0) + c
             by_model[mdl] = by_model.get(mdl, 0.0) + c
     return by_day, by_model
