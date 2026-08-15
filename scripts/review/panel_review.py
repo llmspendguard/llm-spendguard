@@ -69,6 +69,27 @@ def _raw_findings():
         pass
     return out
 
+
+VERIFIED = pathlib.Path(config.HOME) / "panel_review_verified.jsonl"   # per-finding verify verdicts (resumable)
+
+
+def _fkey(f):
+    import hashlib
+    s = f"{f.get('axis')}|{f.get('file')}|{f.get('line')}|{f.get('vendor')}|{(f.get('issue') or '')[:120]}"
+    return hashlib.sha1(s.encode()).hexdigest()[:16]
+
+
+def _load_verdicts():
+    d = {}
+    try:
+        for line in VERIFIED.read_text().splitlines():
+            if line.strip():
+                r = json.loads(line)
+                d[r["key"]] = r["real"]
+    except Exception:
+        pass
+    return d
+
 # Named figures for the pre-flight estimate (the ledger bills actual) — never literals at the call site.
 _EST_OVERHEAD_CH = 600
 _EST_OUT_TOK = 2500
@@ -251,8 +272,17 @@ def repo_pass(files, budget, spent):
 
 
 def verify(findings, budget, spent):
-    """Adversarially verify each finding (refute-by-default) with one strong judge on the $0 lane, CONCURRENTLY
-    (the governor bounds the lane). Keep the reals AND the unverifiable (flagged) — drop only the refuted."""
+    """Adversarially verify each finding (refute-by-default) with one strong judge, CONCURRENTLY. RESUMABLE: each
+    verdict (real True/False) is PERSISTED, so a re-run only checks findings without a verdict and a
+    budget-truncated pass finishes where it stopped. Keeps reals + the still-unchecked (flagged None); drops only
+    the refuted (False)."""
+    import threading
+    verdicts = _load_verdicts()
+    todo = [f for f in findings if _fkey(f) not in verdicts]
+    if len(todo) < len(findings):
+        print(f"  resume: {len(findings) - len(todo)} already verified, {len(todo)} to check")
+    _lock = threading.Lock()
+
     def _v(f):
         ctx = ""
         fp = SRC / pathlib.Path(f["file"].split(",")[0]).name
@@ -266,18 +296,26 @@ def verify(findings, budget, spent):
         try:
             r = spendguard.ask(prompt, vendors=["anthropic:claude-opus-4-8"], n=1, schema=VERDICT_SCHEMA,
                                purpose="review:verify", budget_usd=max(0.01, budget - spent[0]))
-            spent[0] += r.cost                       # lane → ~$0; racy increment is harmless at this scale
+            spent[0] += r.cost                       # $0 on the lane; racy increment is harmless at this scale
             if r.answers:
                 real = bool(json.loads(r.answers[0]).get("real"))
         except Exception:
-            real = None                              # could not verify → keep it, flagged UNVERIFIED
-        f["verified"] = real
-        return f
-    confirmed = []
+            real = None                              # could not verify → leave unchecked, retried on the next run
+        if real is not None:
+            with _lock, open(VERIFIED, "a") as fh:   # persist the verdict so resume never re-checks it
+                fh.write(json.dumps({"key": _fkey(f), "real": real}) + "\n")
+        return _fkey(f), real
+
     with cf.ThreadPoolExecutor(max_workers=6) as pool:
-        for f in pool.map(_v, findings):
-            if f.get("verified") is not False:       # keep real (True) and unverifiable (None); drop refuted (False)
-                confirmed.append(f)
+        for k, real in pool.map(_v, todo):
+            verdicts[k] = real
+    confirmed = []
+    for f in findings:
+        v = verdicts.get(_fkey(f))
+        if v is False:                               # refuted → drop
+            continue
+        f["verified"] = v                            # True (real) or None (still unchecked, flagged)
+        confirmed.append(f)
     return confirmed
 
 
@@ -292,7 +330,7 @@ def main(argv=None):
     if a.estimate:
         return estimate()
     if a.fresh:
-        for p in (RAW, DONE, OUT):
+        for p in (RAW, DONE, OUT, VERIFIED):
             try:
                 p.unlink()
             except OSError:
