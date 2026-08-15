@@ -124,7 +124,19 @@ def _dispatch(argv=None):
         sys.argv = ["report"] + rest
         return report.main()
     if cmd == "reconcile":
-        sub = rest[0] if rest else "openai"
+        _PROV = {"openai", "anthropic", "all"}
+        # A bare `spendguard reconcile` defaults to openai. But a FLAG in the first slot (e.g. `--since 2026-08-01`)
+        # is NOT a provider — consuming it as `sub` silently ate the flag AND still ran openai; treat it as an
+        # argument and keep the default. A non-flag word that isn't a known provider is a typo — error out rather
+        # than silently run openai and print the wrong provider's numbers under the name the user typed.
+        if rest and not rest[0].startswith("-"):
+            sub, prov_args = rest[0], rest[1:]
+            if sub not in _PROV:
+                print(f"reconcile: unknown provider {sub!r} — choose one of {', '.join(sorted(_PROV))} "
+                      f"(or omit it for openai)", file=sys.stderr)
+                return 2
+        else:
+            sub, prov_args = "openai", rest
         if sub == "all":                                  # unified view: every spend source through the one loop
             from . import reconcile
             reconcile.report()
@@ -133,7 +145,7 @@ def _dispatch(argv=None):
             from . import reconcile_anthropic as r
         else:
             from . import reconcile_openai as r
-        sys.argv = ["reconcile"] + rest[1:]
+        sys.argv = ["reconcile"] + prov_args
         try:
             return r.main()
         except RuntimeError as e:                          # e.g. a missing provider key — clean one-line exit, no traceback

@@ -42,8 +42,10 @@ def _is_gated(sp):
     for hook in ("sitecustomize.py", "usercustomize.py"):
         hp = os.path.join(sp, hook)
         try:
-            if os.path.exists(hp) and "spendguard" in open(hp, errors="ignore").read():
-                return True
+            if os.path.exists(hp):
+                with open(hp, errors="ignore") as _fh:        # closed deterministically (was a leaked handle)
+                    if "spendguard" in _fh.read():
+                        return True
         except Exception:
             pass
     return False

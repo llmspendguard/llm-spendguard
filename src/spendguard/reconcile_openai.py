@@ -17,7 +17,7 @@ KEY ACCOUNTING RULES baked in:
 import json, argparse, urllib.request, datetime
 from collections import defaultdict
 
-from .pricing import batch_cost, normalize, PRICING_SOURCE, PRICING_VERIFIED
+from .pricing import cost_or_unpriced, normalize, PRICING_SOURCE, PRICING_VERIFIED
 
 
 class KeyMissing(RuntimeError):
@@ -73,20 +73,24 @@ def main():
     pending_req = 0
     total = 0.0
     for b in rows:
-        if b["status"] in ("in_progress", "finalizing", "validating"):
-            pending_req += b["request_counts"]["total"]
-            continue
-        if b["status"] not in BILLED:
+        status = b.get("status")
+        if status in ("in_progress", "finalizing", "validating"):
+            pending_req += (b.get("request_counts") or {}).get("total", 0) or 0   # defensive: a malformed batch
+            continue                                                              # dict must not abort the reconcile
+        if status not in BILLED:
             continue
         u = b.get("usage") or {}
         it, ot = u.get("input_tokens", 0), u.get("output_tokens", 0)
         if not it and not ot:
             continue
-        c = batch_cost(b["model"], it, ot, (u.get("input_tokens_details") or {}).get("cached_tokens", 0))
-        m = normalize(b["model"])
+        # cost_or_unpriced, not batch_cost: an unpriced model must not abort the whole report. The Anthropic
+        # reconcile has degraded gracefully since day one; this OpenAI copy never grew the guard (unpriced → 0,
+        # and the model is RECORDED via note_unpriced so the gap surfaces).
+        c = cost_or_unpriced(b.get("model"), it, ot, (u.get("input_tokens_details") or {}).get("cached_tokens", 0))
+        m = normalize(b.get("model") or "?")
         v = by_model[m]; v["in"] += it; v["out"] += ot; v["cost"] += c; v["n"] += 1
         by_day[day(b)] += c
-        if b["status"] == "cancelled":
+        if status == "cancelled":
             cancelled_waste += c
         total += c
 
