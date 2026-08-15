@@ -51,7 +51,14 @@ def _pack(vec):
 
 
 def _unpack(b):
-    return list(struct.unpack(f"{len(b)//4}f", b)) if b else None
+    if not b:
+        return None
+    try:
+        return list(struct.unpack(f"{len(b)//4}f", b))
+    except (struct.error, TypeError):
+        # A truncated/corrupt emb blob (length not a clean multiple of 4) must not crash the WHOLE semantic
+        # lookup — get() skips a None vector (len mismatch), so one bad row is simply ignored, not fatal.
+        return None
 
 
 def _embed(text):
