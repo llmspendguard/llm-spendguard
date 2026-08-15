@@ -108,7 +108,8 @@ def cmd_import(argv):
     ap.add_argument("path", help="a spendguard.shared.v1 JSON (file you trust)")
     ap.add_argument("--trust", type=float, default=0.4, help="cap imported confidence (low-trust prior)")
     a = ap.parse_args(argv)
-    data = json.load(open(a.path))
+    with open(a.path) as _fh:                                  # closed deterministically (was a leaked handle)
+        data = json.load(_fh)
     recs = data.get("insights", []) if isinstance(data, dict) else data
     n = 0
     for r in recs:

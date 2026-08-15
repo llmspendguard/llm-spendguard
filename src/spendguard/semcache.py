@@ -217,30 +217,32 @@ def populate_jsonl(input_path, results_path, model=_SCOPE_ANY):
     """After a batch completes, store prompt→output so a future dedup skips those items (free re-runs)."""
     import json
     prompts = {}
-    for ln in open(input_path, errors="ignore"):
-        ln = ln.strip()
-        if not ln:
-            continue
-        try:
-            o = json.loads(ln)
-        except Exception:
-            continue
-        prompts[o.get("custom_id")] = _line_prompt(o)
+    with open(input_path, errors="ignore") as _fh:            # closed deterministically (was a leaked handle)
+        for ln in _fh:
+            ln = ln.strip()
+            if not ln:
+                continue
+            try:
+                o = json.loads(ln)
+            except Exception:
+                continue
+            prompts[o.get("custom_id")] = _line_prompt(o)
     n = 0
-    for ln in open(results_path, errors="ignore"):
-        ln = ln.strip()
-        if not ln:
-            continue
-        try:
-            o = json.loads(ln)
-        except Exception:
-            continue
-        cid = o.get("custom_id")
-        body = (o.get("response") or {}).get("body") or {}
-        out = ((body.get("choices") or [{}])[0].get("message") or {}).get("content")
-        if cid in prompts and out:
-            put(prompts[cid], model, out)
-            n += 1
+    with open(results_path, errors="ignore") as _fh:          # closed deterministically (was a leaked handle)
+        for ln in _fh:
+            ln = ln.strip()
+            if not ln:
+                continue
+            try:
+                o = json.loads(ln)
+            except Exception:
+                continue
+            cid = o.get("custom_id")
+            body = (o.get("response") or {}).get("body") or {}
+            out = ((body.get("choices") or [{}])[0].get("message") or {}).get("content")
+            if cid in prompts and out:
+                put(prompts[cid], model, out)
+                n += 1
     print(f"populated {n} prompt→output pairs into the cache — future dedup will skip them (free re-runs).")
     return n
 

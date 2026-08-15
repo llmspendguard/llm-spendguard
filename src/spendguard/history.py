@@ -71,7 +71,8 @@ def scan_intent_map(repo, content_scan=True, max_bytes=1_000_000):
                 continue
             seen.add(path)
             try:
-                obj = json.load(open(path))
+                with open(path) as _fh:                       # closed deterministically (was a per-glob leak)
+                    obj = json.load(_fh)
             except Exception:
                 continue
             base = _intent_for(path, repo)

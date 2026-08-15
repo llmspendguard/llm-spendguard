@@ -23,22 +23,28 @@ def to_spend_events(led=None, src_path=None, since=None):
     """Migrate every `charges` row into `spend_events`. Returns stats incl. both totals for the caller's Σ check.
     `led` — a SpendLedger (defaults to one on the same db); `src_path` — charges db (defaults to config.db_path())."""
     led = led or _ledger.SpendLedger()
+    # `src` is only read in this prologue (schema probe + the one SELECT); the rest of the migration works off
+    # the fetched `rows`. Close it deterministically — including on the raise below — so the migration doesn't
+    # leak the charges-db connection (sqlite3's context manager commits but does NOT close, hence try/finally).
     src = sqlite3.connect(src_path or config.db_path())
-    src.row_factory = sqlite3.Row
-    if not src.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='charges'").fetchone():
-        raise ValueError("no `charges` table — the cutover is complete and it was dropped; spend_events is the "
-                         "sole ledger. There is nothing to migrate. (run_cutover() detects this and no-ops; call "
-                         "it, not this, from the CLI.)")
-    where, args = "", []
-    if since:
-        where, args = " WHERE day >= ?", [since]
-    # basis/intent/actor are optional (older ledgers predate them) — SELECT only what THIS db has and read the
-    # rest as blank, so the migration never assumes a column shape it cannot see (PRAGMA is the ground truth).
-    have = {c[1] for c in src.execute("PRAGMA table_info(charges)")}
-    opt = [c for c in ("basis", "intent", "actor") if c in have]
-    sel = ("rowid AS rid, ts, day, provider, model, kind, cost, project, conv_id, key_fp"
-           + "".join(", " + c for c in opt))
-    rows = src.execute(f"SELECT {sel} FROM charges" + where, args).fetchall()
+    try:
+        src.row_factory = sqlite3.Row
+        if not src.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='charges'").fetchone():
+            raise ValueError("no `charges` table — the cutover is complete and it was dropped; spend_events is the "
+                             "sole ledger. There is nothing to migrate. (run_cutover() detects this and no-ops; call "
+                             "it, not this, from the CLI.)")
+        where, args = "", []
+        if since:
+            where, args = " WHERE day >= ?", [since]
+        # basis/intent/actor are optional (older ledgers predate them) — SELECT only what THIS db has and read the
+        # rest as blank, so the migration never assumes a column shape it cannot see (PRAGMA is the ground truth).
+        have = {c[1] for c in src.execute("PRAGMA table_info(charges)")}
+        opt = [c for c in ("basis", "intent", "actor") if c in have]
+        sel = ("rowid AS rid, ts, day, provider, model, kind, cost, project, conv_id, key_fp"
+               + "".join(", " + c for c in opt))
+        rows = src.execute(f"SELECT {sel} FROM charges" + where, args).fetchall()
+    finally:
+        src.close()
     _seg = {}                                                  # segments/store read LAZILY, once, only if a charge lacks a project
 
     def _resolve(conv_id):
