@@ -16,18 +16,32 @@ import argparse
 from . import config
 
 
+def _warn_fetch(provider, e):
+    """A swallowed provider-fetch failure reads as $0 billed — the classic silent-partial-fetch trust bug. Make
+    it visible so an empty result is distinguishable from a genuine zero (a caller trusting this total must know
+    the pull FAILED, not that the provider billed nothing)."""
+    try:
+        from . import config
+        config.warn_once(f"[spendguard] provider batch fetch ({provider}) FAILED ({type(e).__name__}: "
+                         f"{str(e)[:80]}) — its spend is MISSING from this reconcile, NOT $0")
+    except Exception:
+        pass
+
+
 def _provider_batch_by_day(since):
     from .report import openai_by_day
     from . import reconcile_anthropic as anth
     prov = {}
     try:
         oai, pending = openai_by_day()
-    except Exception:
+    except Exception as e:
         oai, pending = {}, 0
+        _warn_fetch("openai", e)
     try:
         an, _models = anth.cost_by_day(since=since)
-    except Exception:
+    except Exception as e:
         an = {}
+        _warn_fetch("anthropic", e)
     for d, v in list(oai.items()) + list(an.items()):
         if d >= since:
             prov[d] = prov.get(d, 0.0) + v

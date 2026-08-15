@@ -92,12 +92,12 @@ def classify_items(items, taxo, run, batch_size=25):
             r = adapters.call(model, _prompt(taxo, b), max_tokens=45 * len(b) + 250, system=_SYS)
         if r.get("error"):
             continue
-        m = re.search(r"\{.*\}", r.get("text", ""), re.S)
+        m = re.search(r"\{.*\}", (r.get("text") or ""), re.S)
         parsed = []
         try:
             parsed = (json.loads(m.group(0)).get("items") if m else []) or []
         except Exception:
-            for im in re.finditer(r'\{[^{}]*"i"\s*:\s*\d+[^{}]*\}', r.get("text", "")):
+            for im in re.finditer(r'\{[^{}]*"i"\s*:\s*\d+[^{}]*\}', (r.get("text") or "")):
                 try:
                     parsed.append(json.loads(im.group(0)))
                 except Exception:

@@ -172,7 +172,12 @@ def completeness(results):
         if truth is None:
             src[name] = {"status": "unknown", "gap": None}; complete = False; continue
         thresh = max(25.0, 0.10 * truth)
-        if resid is not None and resid > thresh:
+        if truth <= 0 and resid is not None and round(resid, 2) != 0.0:
+            # No provider truth to reconcile against: the $25 relative-noise floor is meaningless when truth is
+            # $0 (0.10*0 = 0, so only the absolute floor survives). A residual that is nonzero TO THE CENT — the
+            # same rounding used for the gap below — is unrecovered / misattributed spend, NOT "reconciled".
+            src[name] = {"status": "under" if resid > 0 else "over", "gap": round(resid, 2)}; complete = False
+        elif resid is not None and resid > thresh:
             src[name] = {"status": "under", "gap": round(resid, 2)}; complete = False
         elif resid is not None and resid < -thresh:
             src[name] = {"status": "over", "gap": round(resid, 2)}; complete = False

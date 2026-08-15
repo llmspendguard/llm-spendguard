@@ -57,6 +57,12 @@ def _model_alias(model):
     return None
 
 
+# Env vars that would take the CLI OFF the plan session onto a metered or relocated endpoint, so a "$0 plan"
+# call could silently BILL or hit another host: an API key OR an auth token authenticates as metered, and a
+# base-url relocates the endpoint. Stripping only ANTHROPIC_API_KEY left the other two live.
+_PLAN_STRIP_ENV = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL")
+
+
 def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S):
     """→ {text, in_tok, out_tok, latency, error} from one headless plan-billed completion. `model` = the
     API model id the caller would have used — mapped to the matching plan tier so subscription execution
@@ -70,7 +76,7 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S):
         cmd += ["--model", alias]
     if system:
         cmd += ["--append-system-prompt", system]
-    env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+    env = {k: v for k, v in os.environ.items() if k not in _PLAN_STRIP_ENV}
     t0 = time.time()
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)

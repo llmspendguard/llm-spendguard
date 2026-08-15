@@ -73,7 +73,10 @@ def expect(model, sig=None, max_tokens=None):
     except Exception:
         pass
     if max_tokens:
-        return int(max_tokens), "caller-cap"
+        try:
+            return int(max_tokens), "caller-cap"
+        except (TypeError, ValueError):
+            pass          # a non-integer caller cap ('8k', '8000.5') is unusable — fall through to the measured/published rung
     try:
         from . import pricing
         lim = pricing.max_output_tokens(model)

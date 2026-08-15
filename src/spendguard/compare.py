@@ -52,7 +52,10 @@ def main(argv=None):
             print(f"{m:<24}{r['provider']:<11}{'—':>7}{'—':>8}{'—':>8}{'ERR':>11}  {r['error']}")
             continue
         cost = f"${r['cost']:.5f}" if r["cost"] is not None else "n/a"
-        per1k = f"${r['cost']/max(r['out_tok'],1)*1000:.4f}" if r["cost"] is not None else "—"
+        # out_tok can be None even on an error-free row (adapter returned no usage); max(None,1) raised. Require a
+        # real int before dividing, else render '—' — a missing number must not take the comparison down mid-table.
+        per1k = (f"${r['cost']/max(r['out_tok'],1)*1000:.4f}"
+                 if r["cost"] is not None and isinstance(r.get("out_tok"), int) else "—")
         # A row can be error-free and still be MISSING numbers — an adapter that returned no usage leaves
         # latency/in_tok/out_tok as None, and :>7.2f on None raises mid-table, after real calls were paid
         # for. Absent renders as '—' rather than taking the comparison down.

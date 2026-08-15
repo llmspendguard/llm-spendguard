@@ -74,7 +74,9 @@ def instances():
         d = _get("instances/")
     except Exception:
         return []
-    return d.get("instances", d) if isinstance(d, dict) else (d or [])
+    # A dict WITHOUT an 'instances' key is an error payload (e.g. {"error": ...}) — return [] (fall back to
+    # recorded history), NEVER the payload itself, which a caller would iterate as if it were the instance list.
+    return d.get("instances", []) if isinstance(d, dict) else (d or [])
 
 
 def _history_path():

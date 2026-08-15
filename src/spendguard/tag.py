@@ -61,5 +61,7 @@ def estimate_llm_retag():
     n = ambiguous_count()
     # tiny classifier on a short conversation/intent snippet; pack ~25/req on a nano model. Rough upper bound.
     model = "gpt-5-nano"
-    est_usd = round(n / 25 * 0.0008, 4)   # ~packed reqs × a conservative per-req cost
+    # 6 places, not 4: a small batch's real cost (n=1 → ~$0.00003) must NOT round to $0.00 and read as free —
+    # the estimate-first protocol relies on this number being honestly nonzero when there IS spend.
+    est_usd = round(n / 25 * 0.0008, 6)   # ~packed reqs × a conservative per-req cost
     return {"rows": n, "est_usd": est_usd, "model": model, "note": "meta cost → billed to project 'llm-spendguard'"}

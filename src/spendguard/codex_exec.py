@@ -92,9 +92,10 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S):
     try:
         fd, out_file = tempfile.mkstemp(prefix="spendguard-codex-", suffix=".txt")
         os.close(fd)
-        cmd = [exe, "exec", full, "--json", "--skip-git-repo-check", "--output-last-message", out_file]
+        cmd = [exe, "exec", "--json", "--skip-git-repo-check", "--output-last-message", out_file]
         if model:
             cmd += ["-m", model.split(":", 1)[-1]]     # forward the requested id; a bad one fails → API fallback
+        cmd += ["--", full]      # `--` end-of-options: a prompt/system beginning with '-' is a positional, not a flag
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
         except subprocess.TimeoutExpired:

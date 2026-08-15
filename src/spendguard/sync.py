@@ -32,6 +32,16 @@ _UNIT_COST_FIELDS = ("input_cost_per_second", "output_cost_per_second",
                      "input_cost_per_image", "output_cost_per_image")
 
 
+def _rate_or(x, fallback):
+    """float(x) scaled per-1M, or `fallback` when x is absent or non-numeric. A single malformed upstream rate
+    (a stray string in cache_read/batch cost) must skip its OWN field, not abort the entire price sync — the same
+    per-field discipline the token-rate parse already applies below."""
+    try:
+        return float(x) * 1e6 if x is not None else fallback
+    except (TypeError, ValueError):
+        return fallback
+
+
 def _convert(raw):
     """LiteLLM per-token entries → spendguard per-1M rate dicts (+ per-UNIT entries passed through for
     _load_units: whisper $/s, tts $/char, dall-e $/image; + CONTEXT limits for the plausibility rail).
@@ -84,9 +94,9 @@ def _convert(raw):
                                              BATCH_FRACTION_DEFAULT)
         rate = {
             "in_": ic * 1e6, "out": oc * 1e6,
-            "cached_in": (float(cc) * 1e6 if cc is not None else ic * 1e6 * 0.1),
-            "batch_in": (float(bi) * 1e6 if bi is not None else ic * 1e6 * bf),   # published rate wins
-            "batch_out": (float(bo) * 1e6 if bo is not None else oc * 1e6 * bf),
+            "cached_in": _rate_or(cc, ic * 1e6 * 0.1),
+            "batch_in": _rate_or(bi, ic * 1e6 * bf),      # published rate wins; a malformed one falls back, never aborts
+            "batch_out": _rate_or(bo, oc * 1e6 * bf),
         }
         models[name] = {k: round(v, 6) for k, v in rate.items()}
         provs[name] = e.get("litellm_provider", "?")

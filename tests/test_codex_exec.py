@@ -49,8 +49,8 @@ r = ce.run_prompt("judge this insight…", system="You are the advisor.")
 ck("cmd is `codex exec … --json --output-last-message <file>`",
    seen["cmd"][0].endswith("codex") and seen["cmd"][1] == "exec"
    and "--json" in seen["cmd"] and "--output-last-message" in seen["cmd"])
-ck("system prompt is PREPENDED into the prompt arg (no separate slot)",
-   seen["cmd"][2].startswith("You are the advisor.") and "judge this insight…" in seen["cmd"][2])
+ck("system prompt is PREPENDED into the prompt arg, passed after `--` (no separate slot; '-'-prefix safe)",
+   seen["cmd"][-2] == "--" and seen["cmd"][-1].startswith("You are the advisor.") and "judge this insight…" in seen["cmd"][-1])
 ck("the provider key env var is STRIPPED from the child (plan login only)",
    KEY_ENV not in seen["env"] and "PATH" in seen["env"])
 ck("final message read from the file", r["text"] == ANSWER and r["error"] is None)

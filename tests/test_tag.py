@@ -61,8 +61,8 @@ ck("after move: both rows are 'vision-pipeline', none left as documents", n_vp =
 
 # ── estimate_llm_retag: ZERO-SPEND estimate (per the API spend protocol), exact formula ──
 est = tag.estimate_llm_retag()
-exp = round(tag.ambiguous_count() / 25 * 0.0008, 4)
-ck("estimate_llm_retag returns {rows, est_usd, model, note}, est = rows/25*0.0008",
+exp = round(tag.ambiguous_count() / 25 * 0.0008, 6)   # 6dp: a small batch's estimate must not round to $0.00
+ck("estimate_llm_retag returns {rows, est_usd, model, note}, est = rows/25*0.0008 (6dp, honestly nonzero)",
    est["rows"] == tag.ambiguous_count() and est["est_usd"] == exp and est["model"] == "gpt-5-nano" and "llm-spendguard" in est["note"])
 
 # ── cmd: dispatch + return codes ──

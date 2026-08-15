@@ -24,6 +24,15 @@ LAMBDA_BASE = "https://cloud.lambdalabs.com/api/v1"
 KEY_ENV = "LAMBDA_API_KEY"
 
 
+def _dph(cents):
+    """price_cents_per_hour → $/hr, or None when absent or non-numeric. A stray non-numeric price from the API
+    must not crash the whole instance parse — float() on it raised ValueError before, aborting the listing."""
+    try:
+        return float(cents) / 100.0 if cents not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _get(path):
     req = urllib.request.Request(f"{LAMBDA_BASE}/{path}",
                                  headers={"Authorization": f"Bearer {os.environ.get(KEY_ENV, '')}"})
@@ -50,7 +59,7 @@ class LambdaProvider:
             cents = it.get("price_cents_per_hour")
             row = {"id": str(i.get("id") or ""), "label": i.get("name") or "",
                    "gpu": it.get("gpu_description") or it.get("name") or "?",
-                   "dph_usd": (float(cents) / 100.0) if cents not in (None, "") else None,
+                   "dph_usd": _dph(cents),
                    "status": i.get("status"), "region": ((i.get("region") or {}).get("name")) or "",
                    "start_ts": None, "end_ts": None,
                    "untimed": True}                        # no launch timestamp in the listing → runtime UNKNOWN

@@ -44,8 +44,15 @@ def record_saving(source, amount, confidence=None, project=None):
             db.execute("INSERT INTO savings (ts,day,project,source,amount,cv) VALUES (?,?,?,?,?,?)",
                        (now.isoformat(timespec="seconds"), now.strftime("%Y-%m-%d"), proj, source, amount, cv))
             db.commit()
-    except Exception:
-        pass
+    except Exception as e:
+        # Never RAISES (guarding must not break the call path) — but never SILENT either: a swallowed DB write
+        # loses a real saving with no trace, the same failure the budget dead-letter closes for spend.
+        try:
+            from . import config
+            config.warn_once(f"[spendguard] record_saving({source}) write failed ({type(e).__name__}) — this "
+                             f"saving was not recorded")
+        except Exception:
+            pass
 
 
 def _lognormal_cumulants(mu, cv):
