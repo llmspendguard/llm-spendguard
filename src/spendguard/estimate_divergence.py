@@ -100,12 +100,20 @@ def enforce(raise_on_fail=True, model=None):
         out.append(v)
     bad = [v for v in out if v.get("grounded") is False]
     unjudged = [v for v in out if v.get("grounded") is None]
-    if bad and raise_on_fail:
-        lines = "\n".join(f"  - {v['why']}  FIX: {v['what_to_fix']}" for v in bad[:5])
+    if raise_on_fail and (bad or unjudged):
+        # RAISE on ungrounded OR UNJUDGED: an authorization gate (the raise_on_fail=True caller) that PASSES when
+        # no verdict could be obtained is the exact 'unverified == clean' collapse this module warns against — a
+        # judge outage would silently authorize spend. (cmd() uses raise_on_fail=False and maps unjudged→exit≠0.)
+        lines = "\n".join(f"  - {v.get('why', '')}  FIX: {v.get('what_to_fix', '')}" for v in (bad + unjudged)[:5])
+        why = []
+        if bad:
+            why.append(f"{len(bad)} NOT GROUNDED")
+        if unjudged:
+            why.append(f"{len(unjudged)} UNJUDGED (no verdict — cannot-tell is not clean)")
         raise EstimateNotGrounded(
-            f"{len(bad)} recorded estimate(s) were judged NOT GROUNDED in measurement:\n{lines}\n"
-            f"An estimate that was not measured is a guess with a dollar sign on it. Rebuild it from a real "
-            f"sample (spendguard.estimate.fit_from_sample) before quoting a price from it.")
+            f"{' + '.join(why)} of {len(out)} recorded estimate(s):\n{lines}\n"
+            f"An estimate that was not measured — or could not be judged — is a guess with a dollar sign on it. "
+            f"Rebuild it from a real sample (spendguard.estimate.fit_from_sample), or fix the judge, before quoting.")
     return {"judged": out, "ungrounded": bad, "unjudged": unjudged}
 
 

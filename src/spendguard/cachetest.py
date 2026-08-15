@@ -131,6 +131,10 @@ def cache_test(system, users, model=None, run=False):
         print("  ⚠️ OpenAI auto-caches only prefixes ≥1024 tokens — this block is too short to cache there.")
     if prov == "anthropic" and "haiku" in str(model) and sys_tok < 2200:
         print("  ⚠️ Anthropic Haiku needs ≥2048 tokens to cache (Opus/Sonnet ≥1024); this block may be too short.")
+    elif prov == "anthropic" and "haiku" not in str(model) and sys_tok < 1024:
+        # the Haiku-only warning left Opus/Sonnet runs with a 200–1023-token block proceeding to paid calls that
+        # can NEVER cache (Opus/Sonnet need ≥1024), despite the Haiku message itself naming that threshold.
+        print("  ⚠️ Anthropic Opus/Sonnet need ≥1024 tokens to cache — this block is too short to cache there.")
     if not run:
         from . import ui; ui.estimate_only(action="run the live caching test", cost=est)
         return dict(ok=True, est=est)

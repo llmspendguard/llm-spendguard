@@ -79,10 +79,10 @@ def to_spend_events(led=None, src_path=None, since=None):
         proj = (r["project"] or "").strip().lower()
         org, team = conv._prior_org_team(proj) if proj else ("", "")
         how, asource = "charge-project", "gate"
-        if not org and conv_id:                                # no project tag → unified resolver (agentic, recorded)
-            sc = _resolve(conv_id)
-            org = sc.get("org") or org
-            team = team or sc.get("team") or ""
+        if (not org or not team) and conv_id:                  # missing org OR team → unified resolver (agentic).
+            sc = _resolve(conv_id)                             # a prior-map org WITH an empty team used to skip
+            org = sc.get("org") or org                        # this entirely, leaving team blank when it was
+            team = team or sc.get("team") or ""               # resolvable. The body fills only the empty fields.
             proj = proj or sc.get("project") or ""
             how, asource = sc.get("how") or "resolve", sc.get("source") or "resolve"
         ev.update({

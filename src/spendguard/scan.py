@@ -102,10 +102,14 @@ def render(data, days=None):
     lines += ["", f"  EST PLAN VALUE{' (last %s days)' % days if days else ''} — what this work would cost at API "
                   f"rates.", "  This is NOT money billed: it is plan-covered usage, and it is never added to your "
                   "actual $.", ""]
-    for p, v in sorted(projects.items(), key=lambda x: -x[1])[:8]:
+    top_projects = sorted(projects.items(), key=lambda x: -x[1])
+    for p, v in top_projects[:8]:
         lines.append(f"    {p[:34]:<34}{_usd(v):>12}")
     if len(projects) > 8:
-        lines.append(f"    {'… %d more' % (len(projects) - 8):<34}{_usd(sum(sorted(projects.values())[:-8])):>12}")
+        # The remainder is the EXACT complement of the displayed top 8 — top_projects[8:] — not a re-sorted
+        # 'smallest' slice that could pick a different (tie-broken) set than what was shown.
+        rest = sum(v for _p, v in top_projects[8:])
+        lines.append(f"    {'… %d more' % (len(projects) - 8):<34}{_usd(rest):>12}")
     lines += [f"    {'':-<34}{'':->12}", f"    {'TOTAL est value':<34}{_usd(grand):>12}",
               f"    {'billed $ (plan-covered)':<34}{_usd(0):>12}"]
     if models:

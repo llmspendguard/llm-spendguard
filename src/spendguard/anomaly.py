@@ -29,7 +29,12 @@ def robust_z(history, value):
     mad = dev[n // 2] if n % 2 else (dev[n // 2 - 1] + dev[n // 2]) / 2
     if mad > 0:
         return (value - med) / (MAD_SCALE * mad), med
-    return (99.0 if value > med else 0.0), med   # flat history: any rise above it is maximally surprising
+    # MAD == 0 does NOT imply a flat history — it also happens when >half the values equal the median while
+    # outliers exist (e.g. [0,0,0,0,0,50]). Flagging any value>median as a maximal anomaly then fired on a $10
+    # day even though a $50 spike ALREADY sat in the baseline. Only a value above the largest already-seen has no
+    # precedent and is genuinely surprising; anything within the observed range is not. (A truly flat history has
+    # max == median, so this stays equivalent there.)
+    return (99.0 if value > hist[-1] else 0.0), med
 
 
 def flag_today(by_day, today):

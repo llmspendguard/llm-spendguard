@@ -25,6 +25,7 @@ _q = None
 _worker = None
 _lock = threading.Lock()
 _cfg_cache = None
+_cfg_mtime = 0.0        # config.json mtime the cache was built from — re-read when it changes (long-lived process)
 
 
 def on_event(fn: "Callable[[dict], Any]") -> "Callable[[dict], Any]":
@@ -34,21 +35,33 @@ def on_event(fn: "Callable[[dict], Any]") -> "Callable[[dict], Any]":
 
 
 def _cfg():
-    global _cfg_cache
-    if _cfg_cache is not None:
-        return _cfg_cache
-    c = {}
+    global _cfg_cache, _cfg_mtime
     p = config.HOME / "config.json"
+    try:
+        mtime = p.stat().st_mtime if p.exists() else 0.0
+    except OSError:
+        mtime = 0.0
+    if _cfg_cache is not None and mtime == _cfg_mtime:
+        return _cfg_cache                       # cache invalidates when config.json changes (was cached for life)
+    c = {}
     try:
         if p.exists():
             c = (json.loads(p.read_text()).get("emit") or {})
     except Exception:
         pass
-    if os.getenv("SPENDGUARD_WEBHOOK"):
-        c["webhook"] = os.getenv("SPENDGUARD_WEBHOOK")
-    if os.getenv("SPENDGUARD_OTEL"):
-        c["otel"] = os.getenv("SPENDGUARD_OTEL") not in ("0", "false", "")
-    _cfg_cache = c
+    # Env WINS and can DISABLE, not just add: a var SET to an off value ('', '0', 'off', 'false', 'none') REMOVES
+    # a config-enabled sink — there was previously no way to turn off a config webhook/otel from the environment.
+    _off = ("", "0", "off", "false", "none")
+    _wh = os.getenv("SPENDGUARD_WEBHOOK")
+    if _wh is not None:
+        if _wh.strip().lower() in _off:
+            c.pop("webhook", None)
+        else:
+            c["webhook"] = _wh
+    _ot = os.getenv("SPENDGUARD_OTEL")
+    if _ot is not None:
+        c["otel"] = _ot.strip().lower() not in _off
+    _cfg_cache, _cfg_mtime = c, mtime
     return c
 
 

@@ -51,11 +51,31 @@ def _is_gated(sp):
     return False
 
 
+def _is_own(sp, venv):
+    """True if this venv IS spendguard's own DEV environment (it self-gates via require() in its scripts, so it is
+    not a coverage gap). Robust to a non-standard checkout path: the reliable signal is an EDITABLE spendguard
+    install (an `__editable__`/`.pth` finder, or a dist-info direct_url marked editable), not just the dir name.
+    A REGULAR pip install of spendguard as a dependency is NOT 'own' and should still be gated."""
+    if "llm-spendguard" in venv or "llm_spendguard" in venv:
+        return True
+    if glob.glob(os.path.join(sp, "__editable__*spendguard*")) or glob.glob(os.path.join(sp, "*spendguard*.pth")):
+        return True
+    import json
+    for dinfo in glob.glob(os.path.join(sp, "llm_spendguard*.dist-info", "direct_url.json")):
+        try:
+            with open(dinfo) as _fh:
+                if (json.load(_fh).get("dir_info") or {}).get("editable"):
+                    return True
+        except Exception:
+            pass
+    return False
+
+
 def audit(roots=None):
     """[{venv, llm:[providers], gated:bool, own:bool}] for every venv (under roots) that has an LLM SDK installed.
     `own` = it's spendguard's own venv, which self-gates via `import spendguard; spendguard.require()` in its scripts
     (gating it via sitecustomize would spam the receipt on every dev `python` — so that's intentional, not a gap)."""
-    pats = roots or _roots()
+    pats = _roots() if roots is None else roots   # explicit roots=[] means scan NOTHING, not fall back to defaults
     seen, out = set(), []
     for pat in pats:
         for venv in glob.glob(os.path.expanduser(pat)):
@@ -67,7 +87,7 @@ def audit(roots=None):
                 if not llm:
                     continue
                 out.append({"venv": venv, "llm": llm, "gated": _is_gated(sp),
-                            "own": "llm-spendguard" in venv})
+                            "own": _is_own(sp, venv)})
     return out
 
 

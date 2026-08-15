@@ -39,13 +39,16 @@ _OPT_OUT = 600
 
 
 # ─────────────────────────────── shared helpers ───────────────────────────────
-def _judge_sample(per, limit=None):
+def _judge_sample(per, limit=None, rows=None):
     """Unjudged call_io samples, bounded to `per` per (intent, model) — enough to estimate good%
-    with a confidence interval, not label everything (keeps the judge spend small)."""
+    with a confidence interval, not label everything (keeps the judge spend small). `rows` lets the caller pass an
+    already-fetched callio.unjudged() so it isn't queried twice."""
     from . import callio
     from collections import defaultdict
+    if rows is None:
+        rows = callio.unjudged()
     seen, out = defaultdict(int), []
-    for io_id, intent, model, p, o in callio.unjudged():
+    for io_id, intent, model, p, o in rows:
         if seen[(intent, model)] >= per:
             continue
         seen[(intent, model)] += 1
@@ -92,8 +95,9 @@ def reconstruct(run=False, per=15, limit=None):
     Estimate-only unless run=True. Realtime judge (synchronous, small, caged by intent spendguard:*)."""
     from . import callio
     judge = config.advisor_judge_model()
-    samples = _judge_sample(per, limit)
-    total_unjudged = len(callio.unjudged())
+    unjudged = list(callio.unjudged())                    # fetch ONCE — reused for the sample AND the count (was
+    samples = _judge_sample(per, limit, rows=unjudged)    # two separate callio.unjudged() DB queries, risking drift)
+    total_unjudged = len(unjudged)
     print(f"reconstruct — quality judge = {judge} (realtime), caged by intent {META}:*")
     print(f"  call_io samples: {total_unjudged:,} unjudged   judging up to {per}/(intent,model) → {len(samples):,}")
     if not samples:

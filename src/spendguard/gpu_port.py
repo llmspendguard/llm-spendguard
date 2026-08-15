@@ -122,9 +122,18 @@ def cost_by_day(instances, since=None, now=None):
     for i in instances:
         start = i.get("start_ts")
         if i.get("usd") is not None:                       # the provider's own billed $ — exact, never re-derived
-            if start and start >= since:
+            if start and since <= start <= now + 60:       # WITHIN the window: since <= start <= now (+60s skew)
                 day = _utc_day(start)
                 out[day] = round(out.get(day, 0.0) + float(i["usd"]), 6)
+            elif start and start > now + 60:
+                # a FUTURE-dated billed row (a ms/seconds timestamp bug) — the rate branch rejects these via
+                # implausible_row, but that SKIPS billed rows (they carry no dph). Apply the same upper bound so a
+                # billed $ never lands on a day that hasn't happened. (start < since is just out-of-window: skip.)
+                key = (i.get("id") or i.get("label") or "?", "future-billed")
+                if key not in _impl_warned:
+                    _impl_warned.add(key)
+                    print(f"[gpu] FUTURE-DATED BILLED ROW {i.get('id') or i.get('label') or '?'} "
+                          f"(start > now) — excluded from cost (stays visible in instances()).", file=sys.stderr)
             continue
         dph = i.get("dph_usd")
         if not dph or not start:                           # unpriced / untimed → UNKNOWN, not $0 (visible on the row)

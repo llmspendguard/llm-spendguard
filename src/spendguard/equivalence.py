@@ -26,13 +26,19 @@ def _norm(s):
 def _norm_json(s):
     if not s:
         return None
+    # Pick the OUTERMOST container: whichever of '{' / '[' appears FIRST is the top-level structure. Trying '{'
+    # before '[' unconditionally mis-parsed a top-level array like '[1, {"a": 2}]' as just its inner object,
+    # making structurally different ref/out pairs compare equal.
+    spans = []
     for a, b in (("{", "}"), ("[", "]")):
         i, j = s.find(a), s.rfind(b)
         if 0 <= i < j:
-            try:
-                return json.loads(s[i:j + 1])
-            except Exception:
-                pass
+            spans.append((i, j))
+    for i, j in sorted(spans):                 # earliest-starting container first
+        try:
+            return json.loads(s[i:j + 1])
+        except Exception:
+            pass
     return None
 
 
@@ -97,8 +103,10 @@ def _llm_rubric(ref, out, model):
     """LLM judge of semantic equivalence (CAGED). Returns 0..1."""
     from . import adapters
     r = adapters.call(model, _RUBRIC.format(a=ref[:3000], b=out[:3000]), sig="spendguard:equivalence")
+    if r.get("error"):
+        return None                              # judge FAILED (adapter error) — not a verdict of 'not equivalent'
     m = re.search(r"[01](?:\.\d+)?", r.get("text") or "")
-    return float(m.group()) if m else 0.0
+    return float(m.group()) if m else None       # no parseable score → UNJUDGED (None); grade() degrades, never 0.0
 
 
 def grade(ref, out, mode="auto", model=None):
@@ -123,7 +131,11 @@ def grade(ref, out, mode="auto", model=None):
     if mode == "embed":                       # explicit semantic tier — applies even to JSON
         return _embed_cosine(ref, out), "embed"
     if mode == "rubric":
-        return _llm_rubric(ref, out, model or "claude-haiku-4-5"), "rubric"
+        rub = _llm_rubric(ref, out, model or "claude-haiku-4-5")
+        # a judge FAILURE (None) must not read as a definitive 0.0 'not equivalent' (which would KILL the variant);
+        # degrade to the text tier rather than fabricate a score. grade() thus NEVER returns None, so downstream
+        # score arithmetic stays float-only.
+        return (rub, "rubric") if rub is not None else (_text_ratio(ref, out), "text(rubric-unavailable)")
     a, b = _norm_json(ref), _norm_json(out)
     if a is not None and b is not None:
         return _scalar(a, b), "scalar"

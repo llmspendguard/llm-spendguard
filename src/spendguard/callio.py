@@ -95,7 +95,7 @@ def record(intent, provider, model, batch, custom_id, prompt, output, in_tok=0, 
     ts = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     try:
         with _lock:
-            _db().execute(
+            cur = _db().execute(
                 "INSERT OR IGNORE INTO call_io (id,ts,intent,provider,model,batch,custom_id,prompt,output,"
                 "in_tok,out_tok,source,system,req_schema,req_max_tokens) "
                 "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -105,6 +105,7 @@ def record(intent, provider, model, batch, custom_id, prompt, output, in_tok=0, 
                  (system or "")[:snip_chars()],
                  (req_schema if isinstance(req_schema, str) else json.dumps(req_schema or ""))[:snip_chars()],
                  int(req_max_tokens or 0)))
+            inserted = cur.rowcount == 1        # 0 → the (batch, custom_id) row already existed (IGNORE) = DUPLICATE
             # INSERT OR IGNORE alone makes a refill a NO-OP: a row captured under a smaller snip cap keeps its
             # truncated prompt forever, and `added: 0` reads as "nothing new to get" rather than "the fidelity
             # you asked for was silently discarded". So when the row exists, GROW it — never shrink. A longer
@@ -133,7 +134,10 @@ def record(intent, provider, model, batch, custom_id, prompt, output, in_tok=0, 
                      (req_schema if isinstance(req_schema, str) else json.dumps(req_schema or ""))[:snip_chars()],
                      int(req_max_tokens or 0), batch, str(custom_id)))
             _db().commit()
-        return cid
+        # Honor the docstring ('Returns id or None if duplicate'): a duplicate still GROWS the row above (a
+        # refill's fidelity is kept), but returning the fresh cid made callers count it as a NEW sample and
+        # inflate `added` / mis-trigger the added>=sample_n early stop. Return None when nothing was inserted.
+        return cid if inserted else None
     except Exception:
         return None
 

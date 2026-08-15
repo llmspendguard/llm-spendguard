@@ -154,12 +154,16 @@ def reconstruct_intents(repo, apply=False):
     with calls._lock:
         for bid, intent in matched.items():
             cid = attrs_by_id.get(bid, {}).get("call")
-            if cid:
-                calls._db().execute("UPDATE calls SET intent=? WHERE id=? AND (intent IS NULL OR intent='')",
-                                    (intent, cid))
-            updated += 1
+            if not cid:
+                continue
+            cur = calls._db().execute("UPDATE calls SET intent=? WHERE id=? AND (intent IS NULL OR intent='')",
+                                      (intent, cid))
+            # count ONLY the call rows we ACTUALLY tagged — not matches with no linked call, nor rows already
+            # tagged (UPDATE affected 0). The old `updated += 1` for every match overstated the 'applied' total.
+            if cur.rowcount and cur.rowcount > 0:
+                updated += 1
         calls._db().commit()
-    print(f"  applied: {updated} runs tagged with reconstructed intents.")
+    print(f"  applied: {updated} call row(s) tagged with reconstructed intents (of {len(matched)} matched).")
     return dict(mapped=len(imap), matched=len(matched), intents=len(by_intent), applied=updated)
 
 

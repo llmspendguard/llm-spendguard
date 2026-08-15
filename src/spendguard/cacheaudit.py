@@ -147,7 +147,9 @@ def _realized_hit_rate():
                 continue
             tot += e.get("in_tok", 0) or 0
             cached += e.get("cached_in_tok", 0) or 0
-    return (cached / tot) if tot else None, tot
+    # CLAMP to [0,1]: a hit rate can't exceed 100%. A corrupt/miscounted log row with cached_in_tok > in_tok
+    # otherwise produced a >100% rate reported as fact.
+    return (max(0.0, min(1.0, cached / tot)) if tot else None), tot
 
 
 def audit(repo=None):

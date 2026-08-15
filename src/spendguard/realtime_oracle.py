@@ -132,16 +132,20 @@ def by_project_day(since):
     for hour, rows in usage.items():
         day = datetime.datetime.fromtimestamp(hour, datetime.timezone.utc).strftime("%Y-%m-%d")
         active = convh.get(hour) or convh.get(hour - 3600) or {}        # 1h lag for logging delay
-        dom = max(active, key=active.get) if active else None          # dominant (org, project) that hour
+        total_active = sum(active.values())                             # Σ segment-activity across (org,project)s
         for (prov, m, i, c, o) in rows:
             # An unpriceable model must not abort the whole realtime-truth computation. cost_or_unpriced returns 0
             # and RECORDS the model (note_unpriced) so the gap is surfaced, rather than raising here.
             usd = pricing.cost_or_unpriced(m, i, o, cached_in_tok=c, batch=False)
             ceiling += usd
-            if dom:
-                org, proj = dom
-                out[(proj, prov, day)] += usd
-                by_org[org] += usd
+            if total_active > 0:
+                # SPLIT this hour's usage across EVERY (org,project) active that hour, proportional to its
+                # activity. Winner-take-all (max) credited a single dominant project and dropped every other
+                # active project's share of a shared, org-wide hour — losing attribution the mission depends on.
+                for (org, proj), cnt in active.items():
+                    share = usd * (cnt / total_active)
+                    out[(proj, prov, day)] += share
+                    by_org[org] += share
             else:
                 other += usd
     rows_out = [{"project": p, "provider": pv, "day": d, "cost": round(v, 6)} for (p, pv, d), v in out.items()]

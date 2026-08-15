@@ -99,7 +99,13 @@ def advise(intent=None, plan=None, as_of=None):
               f"{('$%.4f' % per_good) if per_good is not None else '—':>10}")
     best = rows[0][0]
     metric = "$/good-result" if labeled_any else "$/M output (quality not labeled here yet)"
-    print(f"\n→ considering history, prefer: {best}  (lowest {metric})")
+    # If the winning row's ranking metric is still the 1e18 sentinel (no model had a real $/good — or no out_tok
+    # in the cost-only path), the order is arbitrary insertion order, so don't claim a confident 'lowest'.
+    if key(rows[0]) < 1e18:
+        print(f"\n→ considering history, prefer: {best}  (lowest {metric})")
+    else:
+        print(f"\n→ not enough signal to rank by {metric} yet (no model has a measured value); most-used is "
+              f"{best}. Run `spendguard reconstruct` for quality labels, then re-check.")
     plan_key = _resolve_plan(plan, agg) if plan else None
     if plan_key and plan_key != best:
         pr = next(r for r in rows if r[0] == plan_key)
