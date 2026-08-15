@@ -333,12 +333,16 @@ from spendguard import sources as _src                                       # n
 check("the cutoff comparison requires a day to compare",
       "_day and _day < cutoff" in _i4.getsource(_src))
 
-print("\n-- INSERT OR REPLACE cannot replace on a random primary key (semcache) --")
-# Every put() therefore INSERTED, the cache grew without bound, and get()'s "LIMIT 1 with no ORDER BY"
-# could keep serving the OLD output for a re-cached prompt forever.
+print("\n-- put() enforces the (model, prompt_hash) natural key — a random PK let every put() INSERT (semcache) --")
+# With a random-uuid PK + a bare INSERT, every put() INSERTED, the cache grew without bound, and get()'s
+# "LIMIT 1 with no ORDER BY" could keep serving the OLD output for a re-cached prompt forever. Enforced now by an
+# ATOMIC upsert on the natural key (ON CONFLICT DO UPDATE, race-safe); the earlier DELETE-then-INSERT form also
+# qualifies. The invariant, not the mechanism, is what must stay fixed.
 from spendguard import semcache as _sc                                       # noqa: E402
-check("put() deletes the natural key before inserting",
-      "DELETE FROM semcache WHERE model=? AND prompt_hash=?" in _i4.getsource(_sc.put))
+_put_src = _i4.getsource(_sc.put)
+check("put() enforces the (model, prompt_hash) natural key (upsert or delete-then-insert), never a bare INSERT",
+      "ON CONFLICT(model, prompt_hash)" in _put_src
+      or "DELETE FROM semcache WHERE model=? AND prompt_hash=?" in _put_src)
 
 print("\n-- a confidence that is null or non-numeric is UNSTATED, not a crash (review) --")
 from spendguard import review as _rev                                        # noqa: E402
