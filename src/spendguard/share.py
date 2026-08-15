@@ -59,8 +59,12 @@ def scrubbed_abstracts(min_conf=0.6, active_only=True):
 def _shareable(min_conf, require_active):
     out = []
     for ins in learn.insights_full():
-        if (ins.get("scope") == "private") and ins.get("scope") is not None and False:
-            continue  # (scope is advisory; the scrubber is the real gate)
+        if ins.get("scope") == "private":
+            # HONOR the private scope as a HARD gate. This was `... and False` with a note that "scope is
+            # advisory; the scrubber is the real gate" — but a user who marks an insight PRIVATE expects it never
+            # to leave, and least-surprise on a privacy contract must win. The scrubber stays as defense in depth
+            # for everything that IS shared; a private-scoped insight is skipped outright, before the scrubber.
+            continue
         if (ins.get("confidence") or 0) < min_conf:
             continue
         if require_active and (ins.get("status") != "active"):

@@ -29,6 +29,7 @@ import json
 import time
 import urllib.request
 import urllib.error
+import urllib.parse
 
 from . import config
 
@@ -60,6 +61,19 @@ def ready():
     return True, "configured"
 
 
+def _require_safe_url(base):
+    """Refuse to send the Bearer org key anywhere but https or a REAL loopback host. The bug this closes:
+    base.startswith("http://localhost") also matches "http://localhost.evil.com" (and "http://127.0.0.1.attacker
+    .com" for the 127.0.0.1 prefix), so a planted repo-local `.spendguard.json` `url` could exfiltrate the org
+    key in cleartext or SSRF an internal host. Parse the HOST and match it exactly; https is always allowed, http
+    only for localhost / 127.0.0.1 / ::1."""
+    u = urllib.parse.urlparse(base)
+    loopback = (u.hostname or "").lower() in ("localhost", "127.0.0.1", "::1")
+    if not (u.scheme == "https" or (u.scheme == "http" and loopback)):
+        raise RuntimeError(f"refusing to send the saas key to a non-https url ({base[:40]}…) — set saas.url to "
+                           f"https:// (http is allowed only for a loopback host: localhost / 127.0.0.1 / ::1)")
+
+
 def _request(method, path, payload=None, timeout=15):
     """Speak the contract. Raises RuntimeError with a clear message if not ready or the server is unreachable.
     Returns parsed JSON on success."""
@@ -71,8 +85,7 @@ def _request(method, path, payload=None, timeout=15):
     # The Bearer key (the org identity) rides every request, so the destination must be trusted. `saas_config`
     # overlays a repo-local `.spendguard.json` walking up the tree — a planted `url` could exfiltrate the key or
     # SSRF an internal host. Require https:// (localhost exempt for dev) — never send the key in cleartext / to an IP.
-    if not (base.startswith("https://") or base.startswith("http://localhost") or base.startswith("http://127.0.0.1")):
-        raise RuntimeError(f"refusing to send the saas key to a non-https url ({base[:40]}…) — set saas.url to https://")
+    _require_safe_url(base)
     url = base + path
     data = json.dumps(payload).encode() if payload is not None else None
     req = urllib.request.Request(url, data=data, method=method)
