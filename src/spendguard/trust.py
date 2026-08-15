@@ -98,6 +98,12 @@ def check(since=None, with_server=True):
         except Exception:
             pass
     out["level"] = "alarm" if lvl == "alarm" else ("warn" if lvl == "warn" else lvl)
+    # SERVER DRIFT MUST ELEVATE THE OVERALL LEVEL. out['level'] used ONLY the ledger verdict, so a server that was
+    # out of sync (in_sync False) left the overall status at the ledger's 'ok' — a drift nobody was alerted to. A
+    # drift is at least a warn; it never downgrades an existing alarm.
+    srv = out.get("server")
+    if srv and srv.get("in_sync") is False and out["level"] != "alarm":
+        out["level"] = "warn"
     return out
 
 
@@ -118,4 +124,6 @@ def cmd(argv=None):
         print(f"  server: {s.get('rows')} rows{flag}")
     if lv["level"] == "alarm":
         print("  *** ALARM: the recorded total is far above provider billing — investigate double-count before trusting/pushing. ***")
-    return 2 if lv["level"] == "alarm" else 0
+    # Exit on the OVERALL level (r['level']) — which now folds in server drift — not the ledger verdict alone, so
+    # a server-side drift no longer exits 0.
+    return 2 if r["level"] == "alarm" else (1 if r["level"] == "warn" else 0)

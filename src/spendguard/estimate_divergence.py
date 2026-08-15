@@ -115,4 +115,7 @@ def cmd(argv=None):
           f"{len(res['unjudged'])} UNJUDGED (no verdict — not the same as clean)")
     for v in res["ungrounded"]:
         print(f"  NOT GROUNDED: {v['why']}\n     fix: {v['what_to_fix']}")
-    return 1 if res["ungrounded"] else 0
+    # 'unjudged' means we could NOT get a verdict (adapter error, empty text, non-boolean) — which is NOT the
+    # same as clean. Exit non-zero on ungrounded OR unjudged, so a run where the judge failed on everything never
+    # reads as a green pass (cannot-tell != clean, per the review-axes doctrine).
+    return 1 if (res["ungrounded"] or res["unjudged"]) else 0

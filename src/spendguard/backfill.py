@@ -82,7 +82,8 @@ def backfill(intent_map=None, providers=("openai", "anthropic")):
         cid = calls.insert(provider, model, "batch", cost, in_tok=it, out_tok=ot,
                            ts=ts, intent=intent, who="backfill:ledger")
         learn.add_node("run", f"{provider}:{model}",
-                       attrs={"cost": round(cost, 4), "intent": intent, "date": ts, "call": cid, "batch": bid},
+                       attrs={"cost": (round(cost, 4) if cost is not None else None),   # unpriced stays None, never round(None)
+                              "intent": intent, "date": ts, "call": cid, "batch": bid},
                        ts=ts, id=bid)
         total += (cost or 0.0)          # an UNKNOWN cost adds nothing to the total and is not called zero
         added += 1

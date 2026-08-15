@@ -64,6 +64,27 @@ def _reset_ledger():
     _LEDGER_TL.led = None
 
 
+def _reset_after_fork():
+    """A child of os.fork() must NOT reuse the parent's sqlite connections. sqlite forbids sharing a connection
+    across processes — the fd and its POSIX locks belong to the parent — so a child that inherits `_conn` (the
+    shared module connection) or the parent's thread-local ledger gets `database is locked`, silent corruption, or
+    a double-commit of the parent's pending write. Drop both so the child reconnects fresh on next use. Registered
+    at fork below; a no-op on platforms without os.register_at_fork."""
+    global _conn
+    _conn = None
+    try:
+        _reset_ledger()
+    except Exception:
+        pass
+
+
+try:
+    import os as _os
+    _os.register_at_fork(after_in_child=_reset_after_fork)
+except (AttributeError, ValueError, ImportError):   # register_at_fork is POSIX-only — elsewhere this is a no-op
+    pass
+
+
 def _attribute(ev, project):
     """Stamp org/team/project on a spend_event from the charge's project tag via the prior repo→org map — a
     cheap cached dict lookup, NOT an LLM (agentic refinement is the later attribute/reconcile pass, never the
@@ -103,13 +124,25 @@ def _record_spend_event(provider, model, kind, cost, *, conv_id="", basis="", in
     except Exception as e:
         # spend_events is the SOLE ledger now, so a failed write means this charge is genuinely absent — NOT
         # sitting safe in `charges` (dropped) and NOT rebuildable by `spendguard migrate` (which read charges).
-        # Name the path that still recovers it: provider-truth reconcile.
+        # DURABLY CAPTURE IT so the loss never depends on this stderr being seen: a headless/daemon consumer
+        # discards stderr, and provider-truth reconcile recovers BATCH spend but cannot re-book a realtime charge
+        # without an admin key. The dead-letter file is the honest record of exactly what the ledger dropped.
+        try:
+            import json as _json
+            with open(config.HOME / "spend_events_deadletter.jsonl", "a") as _dl:
+                _dl.write(_json.dumps({
+                    "provider": provider, "model": model, "kind": kind, "cost": str(cost),
+                    "in_tok": int(in_tok or 0), "out_tok": int(out_tok or 0), "occurred_at": occurred_at,
+                    "intent": intent, "project": project, "source": source,
+                    "error": f"{type(e).__name__}: {str(e)[:120]}"}) + "\n")
+        except Exception:
+            pass
         import sys as _sys
         _sys.stderr.write(
             f"[budget] WARN spend_events write failed for {provider}/{model} ${cost} "
-            f"({type(e).__name__}: {str(e)[:100]}) — this charge is MISSING from the ledger (spend_events is the "
-            f"sole money-of-record; there is no charges fallback). `spendguard reconcile` re-books it from "
-            f"provider truth.\n")
+            f"({type(e).__name__}: {str(e)[:100]}) — captured to spend_events_deadletter.jsonl (this charge is "
+            f"MISSING from the ledger; spend_events is the sole money-of-record). `spendguard reconcile` re-books "
+            f"batch spend from provider truth.\n")
 
 
 def _project():
