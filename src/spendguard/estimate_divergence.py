@@ -74,7 +74,15 @@ def adjudicate_grounding(pair, model=None):
         # UNJUDGED IS NOT CLEARED. A verdict we could not obtain must not read as approval — that is the
         # same collapse (unverified == clean) this codebase keeps finding elsewhere.
         return {"grounded": None, "why": f"no verdict ({r.get('error') or 'no text'})", "what_to_fix": ""}
-    obj, _ = output_contract._as_obj(r["text"])
+    try:
+        obj, _ = output_contract._as_obj(r["text"])
+    except Exception:
+        obj = None
+    if not isinstance(obj, dict):
+        # A verdict we could not PARSE (non-JSON, or JSON that isn't an object — _as_obj RAISES on the former)
+        # is UNJUDGED, not approval. Falling through here rather than crashing keeps the same collapse
+        # (cannot-parse == clean) closed that the no-text branch above already guards.
+        return {"grounded": None, "why": f"unparseable verdict: {(r.get('text') or '')[:80]!r}", "what_to_fix": ""}
     return {"grounded": obj.get("grounded"), "why": obj.get("why", ""),
             "what_to_fix": obj.get("what_to_fix", "")}
 

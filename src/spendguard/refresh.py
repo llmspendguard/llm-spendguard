@@ -65,14 +65,28 @@ def diff(looked):
         if not cur:
             out.append((model, "(new model)", None, found)); continue
         for f in ("in_", "out", "batch_in", "batch_out"):
-            if f in found and abs(float(found[f]) - float(cur.get(f, -1))) > 1e-9:
+            if f not in found:
+                continue
+            try:
+                differs = abs(float(found[f]) - float(cur.get(f, -1))) > 1e-9
+            except (TypeError, ValueError):
+                # The LLM returned a non-numeric price for this field (a string/null). It can't be compared —
+                # surface it as unparseable rather than let float() abort the WHOLE diff and lose every other
+                # model's real changes.
+                out.append((model, f + " (unparseable)", cur.get(f), found[f]))
+                continue
+            if differs:
                 out.append((model, f, cur.get(f), found[f]))
     return out
 
 
 def _write(looked):
     src = os.path.join(os.path.dirname(__file__), "prices.json")
-    base = json.load(open(src)) if os.path.exists(src) else {"_meta": {}, "providers": {}}
+    if os.path.exists(src):
+        with open(src) as _fh:                                # closed deterministically (was a leaked handle)
+            base = json.load(_fh)
+    else:
+        base = {"_meta": {}, "providers": {}}
     for model, found in looked.items():
         prov = pricing.PROVIDERS.get(pricing.normalize(model), "openai")
         models = base.setdefault("providers", {}).setdefault(prov, {"models": {}}).setdefault("models", {})

@@ -28,10 +28,19 @@ def collect(days=None):
     for _key, src in sources.transcript_sources():
         name = getattr(src, "NAME", _key)
         try:
-            rec = src.read(days=days)
+            rec = src.read(days=days) or {}
             rec.setdefault("error", None)
         except Exception as e:
-            rec = {"sessions": 0, "projects": {}, "models": {}, "days": [], "total_usd": 0.0, "error": str(e)[:100]}
+            rec = {"error": str(e)[:100]}
+        # A source (especially a third-party plugin) can RETURN a malformed record without raising — the
+        # try/except above only catches a raise. Normalize to the shape render() reads, and coerce the total to a
+        # number, so a bad plugin return can't KeyError/TypeError the whole scan (the docstring's "never raises").
+        for _k, _default in (("sessions", 0), ("projects", {}), ("models", {}), ("days", []), ("total_usd", 0.0)):
+            rec.setdefault(_k, _default)
+        try:
+            rec["total_usd"] = float(rec["total_usd"] or 0)
+        except (TypeError, ValueError):
+            rec["total_usd"] = 0.0
         out[name] = rec
     return out
 
