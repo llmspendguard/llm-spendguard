@@ -566,7 +566,6 @@ def leak_line(since=None):
         return None
     line = _render_leak_line(c)
     try:
-        import json
         import time
         config.update_json(_leak_cache_path(), lambda _d: {"line": line, "ts": time.time()})
     except Exception:

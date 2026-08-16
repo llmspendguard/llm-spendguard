@@ -21,7 +21,6 @@ Doctrine note: prompt-mode ONLY, same as the claude-code lane — no tools, no a
 """
 import json
 import os
-import shutil
 import subprocess
 import tempfile
 import time

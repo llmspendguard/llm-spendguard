@@ -73,7 +73,6 @@ for label, mod, model in LANES:
 # that output_contract rejected. This drives a REAL structured call through adapters.call with the executor
 # forced onto each lane, and checks the returned text parses as the requested shape — the panel's actual path.
 print("\n===== schema round-trip through the lane (adapters.call, the panel's real path) =====")
-import json as _json
 import os as _os
 from spendguard import adapters, output_contract
 
@@ -100,9 +99,9 @@ for executor, model in LANE_ENV:
           f"{'schema-valid' if ok_shape else 'NO'} text={text[:60]!r}"
           + (f"  err={err[:80]}" if err else ""))
     if executor_used == executor and r.get("cost") == 0.0 and ok_shape:
-        print(f"    ✓ schema rode the lane, ran on the plan ($0), and validated — panel reviews will work here")
+        print("    ✓ schema rode the lane, ran on the plan ($0), and validated — panel reviews will work here")
     elif err:
-        print(f"    ⚠ lane errored (likely fell back / auth) — see err above")
+        print("    ⚠ lane errored (likely fell back / auth) — see err above")
     else:
         print(f"    ⚠ ran on {executor_used} cost={r.get('cost')} shape_ok={ok_shape} — inspect")
 

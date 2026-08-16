@@ -285,7 +285,6 @@ def _truncated_lines():
 
 def _truncation_rows(c):
     try:
-        from . import config
         since = _windows()[2]
         rows = c.execute(
             "SELECT model, COUNT(*), COALESCE(SUM(cost),0) FROM calls "

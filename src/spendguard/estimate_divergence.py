@@ -23,7 +23,6 @@ The code's only jobs are to find every pair, hand each one over, and REFUSE when
 estimate was not grounded. Finding and refusing are mechanical. Deciding is not.
 """
 import json
-import re
 
 
 class EstimateNotGrounded(Exception):

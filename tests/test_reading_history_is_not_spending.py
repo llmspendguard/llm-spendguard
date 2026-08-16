@@ -16,10 +16,9 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-readhist-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
-import sqlite3                                          # noqa: E402
 import inspect                                          # noqa: E402
 
-from spendguard import budget, callio, config           # noqa: E402
+from spendguard import budget, callio           # noqa: E402
 
 failures = 0
 

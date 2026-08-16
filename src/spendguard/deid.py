@@ -29,7 +29,6 @@ explicitly. `redact()` never raises.
 """
 import os
 import re
-import sys
 
 # ── the deterministic floor ──────────────────────────────────────────────────────────────────────────
 # (NAME, compiled pattern, replacement, optional validator(match_text)->bool). Order matters: the most

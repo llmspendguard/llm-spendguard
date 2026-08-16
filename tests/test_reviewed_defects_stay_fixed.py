@@ -200,7 +200,7 @@ check("a repo with no spend reports 0, not the global total", _none == 0 or _non
 print("\n-- an unreadable price file is never overwritten (pricing.set_price) --")
 # `except: data = {}` + a full rewrite DESTROYED every verified price on one bad read, in the file whose
 # whole discipline is "prices enter this table only with provenance".
-import json as _json, os as _os2, tempfile as _tf2                           # noqa: E402
+import os as _os2, tempfile as _tf2                           # noqa: E402
 from spendguard import pricing as _p2                                        # noqa: E402
 _saved = _os2.environ.get("SPENDGUARD_HOME")
 _os2.environ["SPENDGUARD_HOME"] = _tf2.mkdtemp(prefix="spendguard-prices-")

@@ -172,7 +172,6 @@ def summarize(since=None, run=False, model=None):
     """Generate (or estimate) the scrubbed per-project work summary. Estimate-first: default returns a zero-spend
     {projects, est_usd, model}; with run=True it makes the CAGED calls (gate → caps.meta), caches {project: summary}
     to ~/.spendguard/work_summaries.json, and returns {summarized, model}. push_workdone attaches the cache."""
-    import json
     from . import config, pricing
     model = model or config.advisor_model()
     byproj = _aggregate_by_project(since)

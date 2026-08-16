@@ -45,7 +45,6 @@ def _last_probe_ok(lane):
 
 def _record_probe(lane, ok):
     import datetime
-    import json
     p = _probe_cache_path()
     # THROUGH THE ONE WRITER. `except: d = {}` then a full rewrite meant an unreadable probe file
     # silently discarded every OTHER lane's recorded state, and the non-atomic write could truncate it.

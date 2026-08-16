@@ -13,7 +13,7 @@ Opus judge running via ThreadPool) are NOT captured — that needs an Admin API 
 
   python scripts/reconcile_anthropic_spend.py [--since YYYY-MM-DD] [--by-day]
 """
-import os, json, argparse, urllib.request, socket
+import os, json, argparse, socket
 
 from . import pricing
 from .config import ANTHROPIC_CACHE as CACHE_PATH, api_key as _api_key, KEYS_ENV as _KEYS_ENV

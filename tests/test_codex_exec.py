@@ -13,6 +13,8 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 
 import json
 import types
+import shutil     # patch shutil.which directly — the shared module config.resolve_cli() uses (codex_exec no
+#                  longer imports shutil; it delegates the PATH lookup to config.resolve_cli)
 from spendguard import codex_exec as ce
 
 fails = []
@@ -40,7 +42,7 @@ def fake_run(cmd, capture_output=None, text=None, timeout=None, env=None):
     return types.SimpleNamespace(returncode=0, stdout="\n".join(json.dumps(e) for e in events), stderr="")
 
 
-ce.shutil.which = lambda name: "/usr/local/bin/codex"
+shutil.which = lambda name: "/usr/local/bin/codex"
 ce.subprocess.run = fake_run
 os.environ[KEY_ENV] = "sk-test-not-real"
 
@@ -71,7 +73,7 @@ ce.subprocess.run = fake_run
 ck("no usage events at all → 0 tokens, never a guess",
    (lambda: (ce.__dict__.__setitem__("_probe", None),))
    and ce._usage_from_events("not json\n{\"type\":\"noise\"}") == (0, 0))
-ce.shutil.which = lambda name: None
+shutil.which = lambda name: None
 os.environ["SPENDGUARD_CODEX_BIN"] = "/nonexistent/codex"     # missing pin = fail LOUD (see claude twin test)
 ck("CLI absent → error (pool skips the lane)", ce.run_prompt("x")["error"] == "codex CLI not found")
 del os.environ["SPENDGUARD_CODEX_BIN"]

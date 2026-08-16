@@ -11,7 +11,7 @@ model (`review_axes.py name --run`, verdicts frozen in docs/NAME_REGISTRY.json).
 UNJUDGED collision appears: finding that two definitions share a name is pure identity, fixed by the AST, so
 code is the right tool for exactly that part and no further.
 """
-import collections, json, pathlib, sys
+import collections, json, pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -42,7 +42,7 @@ def _defs(root):
             tree = ast.parse(f.read_text(errors="ignore"))
         except SyntaxError:
             continue                      # unparseable: reported by the assert below via a short inventory
-        def walk(node, scope):
+        def walk(node, scope, out=out, f=f):     # bind per-file loop vars: walk() is called within THIS iteration
             for ch in ast.iter_child_nodes(node):
                 if isinstance(ch, ast.ClassDef):
                     walk(ch, scope + [ch.name])
@@ -77,8 +77,8 @@ grown = sorted((n, REGISTRY[n]["n"], len(groups[n])) for n in set(groups) & set(
 assert not grown, (
     f"{len(grown)} name group(s) gained a definition that no verdict covers: "
     + ", ".join(f"`{n}` was {was} now {now}" for n, was, now in grown) + "\n"
-    f"  The registered verdict was reached by reading the ORIGINAL bodies; the new one has not been read.\n"
-    f"  Re-run:  .venv/bin/python honestreview name src/spendguard --run")
+    "  The registered verdict was reached by reading the ORIGINAL bodies; the new one has not been read.\n"
+    "  Re-run:  .venv/bin/python honestreview name src/spendguard --run")
 
 # The registry must shrink, never quietly grow: a name that stopped colliding cannot come back unnoticed.
 stale = sorted(set(REGISTRY) - set(groups))

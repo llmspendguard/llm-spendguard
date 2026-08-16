@@ -20,7 +20,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 
 import datetime                                             # noqa: E402
 
-from spendguard import budget, config                       # noqa: E402
+from spendguard import budget                       # noqa: E402
 
 failures = 0
 

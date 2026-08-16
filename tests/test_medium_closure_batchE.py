@@ -48,8 +48,8 @@ ck("first record returns an id", bool(a))
 ck("a duplicate (batch, custom_id) record returns None (not a fresh id)", b is None, f"got {b!r}")
 
 # ── [35] equivalence._norm_json: top-level array is the array ────────────────────────────────────────────────────
-ck("a top-level JSON array parses as the array, not its inner object",
-   equivalence._norm_json('[1, {"a": 2}]') == [1, {"a": 2}], f"got {equivalence._norm_json('[1, {\"a\": 2}]')!r}")
+_arr = equivalence._norm_json('[1, {"a": 2}]')
+ck("a top-level JSON array parses as the array, not its inner object", _arr == [1, {"a": 2}], f"got {_arr!r}")
 
 # ── [36] equivalence.grade: a rubric-judge failure degrades to text, never a fabricated 0.0 ─────────────────────
 import spendguard.adapters as _ad         # noqa: E402

@@ -11,7 +11,6 @@ before/after measurement, not an estimate), so the org dashboard's "≥ certain"
 Sync is INCREMENTAL and idempotent: state in ~/.spendguard/realized_state.json tracks the calls already
 counted per intent, so re-running never double-records. Zero LLM spend — pure corpus arithmetic.
 """
-import json
 import sqlite3
 
 MIN_EACH = 5   # need ≥5 calls on BOTH sides of the adoption point to claim a measurement

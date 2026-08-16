@@ -25,10 +25,9 @@ on a call, this one guards the PROVENANCE of a quoted price) — and it reuses t
 rather than growing a second copy of them.
 """
 import ast
-import json
 import pathlib
 
-from .token_caps import SKIP_DIRS, _enclosing, _iter_py
+from .token_caps import _enclosing, _iter_py
 
 # The functions that turn token counts into money. A literal reaching one of these is a number nobody
 # measured; whether that MATTERS is the question the model answers.
@@ -149,7 +148,7 @@ def cmd(argv=None):
           f"· {len(res['failed'])} ruled QUOTED PRICE · {len(res['unjudged'])} UNJUDGED")
     for q in res["failed"]:
         print(f"  QUOTED PRICE  {q['file']}:{q['symbol']} {q['fn']}{tuple(q['literals'])} — {q.get('why','')}")
-        print(f"                a quote must come from a measured sample (estimate.fit_from_sample)")
+        print("                a quote must come from a measured sample (estimate.fit_from_sample)")
     for s in res["unjudged"]:
         print(f"  unjudged      {s['file']}:{s['symbol']} {s['fn']}{tuple(s['literals'])}")
     if "--judge" not in argv:

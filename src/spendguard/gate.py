@@ -1896,7 +1896,7 @@ def _cli(cmd="status", live=False):
             print(f"  advisor   : {'🟢 both models priced' if not _probs else '🔴 UNPRICED — the meta cap cannot be computed'}")
             for _p in _probs:
                 print(f"      {_p}")
-                print(f"      fix: spendguard price <model> --in <$/1M> --out <$/1M> --source '<url>'")
+                print("      fix: spendguard price <model> --in <$/1M> --out <$/1M> --source '<url>'")
         except Exception as _e:
             print(f"  advisor   : ? could not be checked ({type(_e).__name__}) — not the same as 'fine'")
         print(f"  flag file : {FLAG}  ({'present → off' if os.path.exists(FLAG) else 'absent'})")

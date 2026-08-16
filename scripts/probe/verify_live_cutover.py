@@ -8,7 +8,7 @@ Never writes. Zero spend.
 
     python scripts/probe/verify_live_cutover.py
 """
-import os, sqlite3, glob
+import sqlite3, glob
 from decimal import Decimal
 from spendguard import config, budget
 from spendguard import ledger as L

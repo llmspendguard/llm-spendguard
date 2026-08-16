@@ -51,7 +51,7 @@ def main():
     print(f"  {'─'*60}")
     cov = (recon_total / target_total * 100) if target_total else 0
     print(f"  {'TOTAL':<24}{('$%.2f' % recon_total):>14}{('$%.2f' % target_total):>12}{('$%.2f' % (target_total - recon_total)):>12}   {cov:.1f}% of target")
-    print(f"\n  → develop the reconstruction (conv evidence selector + prompt) until coverage ≈100%. Admin is the TARGET, never the ledger.")
+    print("\n  → develop the reconstruction (conv evidence selector + prompt) until coverage ≈100%. Admin is the TARGET, never the ledger.")
 
 
 if __name__ == "__main__":

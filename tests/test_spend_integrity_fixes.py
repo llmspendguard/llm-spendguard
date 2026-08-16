@@ -15,7 +15,6 @@ Offline, isolated home.
 import os
 import sys
 import tempfile
-import types
 
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"

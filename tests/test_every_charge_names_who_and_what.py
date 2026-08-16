@@ -40,7 +40,6 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 from spendguard import budget, calls, gate                                  # noqa: E402
-from spendguard.ledger import SpendLedger                                   # noqa: E402
 
 failures = 0
 
@@ -76,7 +75,6 @@ print("\n  ...and the WRITE PATH resolves it, not just the helper:")
 # The cross-process ledger only records under the sqlite backend; with the default in-memory backend the
 # gate writes no row at all and this check would pass vacuously on a None it never examined.
 from spendguard import config as _config                                    # noqa: E402
-from spendguard import ledger as _L                                         # noqa: E402
 _config.budget_backend = lambda: "sqlite"
 _led = budget._ledger()
 

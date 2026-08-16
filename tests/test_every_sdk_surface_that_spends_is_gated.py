@@ -26,7 +26,6 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
-import spendguard  # noqa: E402  (import installs the gate)
 from spendguard import gate  # noqa: E402
 
 _fails = []

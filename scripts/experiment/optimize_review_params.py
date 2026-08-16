@@ -29,7 +29,7 @@ import time
 import spendguard
 spendguard.require()
 os.environ.setdefault("SPENDGUARD_ADVISOR_EXECUTOR", "pool")   # opus judge rides the $0 Claude lane
-from spendguard import adapters, vendor_call as vc, config
+from spendguard import adapters, vendor_call as vc
 
 SCHEMA = {"type": "object", "properties": {"findings": {"type": "array", "items": {"type": "object",
           "properties": {"line": {"type": "integer"}, "issue": {"type": "string"}},

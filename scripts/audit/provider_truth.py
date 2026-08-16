@@ -30,10 +30,10 @@ def main():
     print(f"PROVIDER GROUND TRUTH since {since}")
     print(f"  OpenAI batch (batch API):        ${oai_b:,.2f}")
     print(f"  Anthropic batch (batch API):     ${anth_b:,.2f}")
-    print(f"  Realtime OpenAI+Anthropic (ADMIN): " + (f"${rt:,.2f}" if rt is not None else "— NO ADMIN KEY (set OPENAI_ADMIN_KEY / ANTHROPIC_ADMIN_KEY)"))
+    print("  Realtime OpenAI+Anthropic (ADMIN): " + (f"${rt:,.2f}" if rt is not None else "— NO ADMIN KEY (set OPENAI_ADMIN_KEY / ANTHROPIC_ADMIN_KEY)"))
     print(f"  GPU vast.ai:                     ${gpu_m:,.2f}" + (f"   (note: {note})" if note else ""))
     billed = oai_b + anth_b + (rt or 0) + gpu_m
-    print(f"  ─────────────────────────────")
+    print("  ─────────────────────────────")
     print(f"  TOTAL BILLED $ (authoritative):  ${billed:,.2f}")
     print(f"    LLM = ${oai_b + anth_b + (rt or 0):,.2f}  ·  GPU = ${gpu_m:,.2f}  ·  pending batches: {pending}")
 

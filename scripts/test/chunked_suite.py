@@ -65,6 +65,21 @@ def main(argv=None):
     if not files:
         print("no test files found", file=sys.stderr)
         return 2
+
+    # LINT GATE FIRST — mirror CI (`ruff check src tests`), so "green locally" means "green in the release build".
+    # A suite that passes but fails lint still fails the release; this catches it in seconds instead of at the tag.
+    try:
+        lint = subprocess.run([sys.executable, "-m", "ruff", "check", "src", "tests"], cwd=REPO,
+                              capture_output=True, text=True)
+        if lint.returncode == 0:
+            print("[lint] ok: ruff check src tests", flush=True)
+        else:
+            print("[lint] FAIL: ruff check src tests — fix ruff before the suite (mirrors the release build).", flush=True)
+            print("\n".join((lint.stdout or "").splitlines()[-20:]), flush=True)
+            return 1                                     # lint is the first gate; stop here (it runs in seconds)
+    except FileNotFoundError:
+        print("[lint] SKIPPED: ruff not installed (pip install ruff) — CI still enforces it", flush=True)
+
     n = max(1, a.chunks)
     chunks = [files[i::n] for i in range(n)]     # round-robin → each chunk a representative mix, similar wall-time
     only = None

@@ -467,7 +467,6 @@ def _dispatch(argv=None):
         from . import lanes
         return lanes.main(rest)
     if cmd == "keys":                                 # per-KEY spend (which workspace/project key) — local-only
-        import datetime as _dt
         from . import budget, config as _c
         since = None
         for i, a in enumerate(rest):

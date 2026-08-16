@@ -35,8 +35,6 @@ passing quietly. That is the whole point: to reintroduce this defect you would h
 model to certify it harmless AND commit the certificate. It cannot happen by forgetting.
 """
 import ast
-import json
-import os
 import pathlib
 
 # The keyword every provider dialect uses to bound generated output. Named here so a new dialect is one
@@ -92,7 +90,9 @@ def sites(root):
         encl = _enclosing(tree)
         rel = str(p.relative_to(root))
 
-        def add(lineno, kwarg, value, kind):
+        def add(lineno, kwarg, value, kind, found=found, rel=rel, encl=encl, lines=lines):
+            # per-file context bound as defaults: `add` is called within THIS iteration (below), so it's a
+            # false-positive late-binding closure — binding removes the footgun and the B023 both.
             found.append({
                 "file": rel,
                 "symbol": encl.get(lineno, "<module>"),

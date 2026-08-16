@@ -4,7 +4,7 @@ PARSING, not judgement: it reads def/Call nodes out of the syntax tree. Cross-fi
 imported name (module.fn and bare fn resolved against each file's imports), which is exact for this repo's
 `from . import x` / `from .x import y` style. Emits an adjacency map and answers who-calls / calls-what.
 """
-import ast, pathlib, sys, json, collections
+import ast, pathlib, sys, collections
 
 SRC = pathlib.Path("src/spendguard")
 

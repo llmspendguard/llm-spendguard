@@ -107,14 +107,14 @@ def main(argv=None):
     for msg in c["reasons"]:
         print(f"    ! {msg}")
     if r["drift"]:
-        print(f"  measured caps BELOW published (drift — stale probe starves the model):")
+        print("  measured caps BELOW published (drift — stale probe starves the model):")
         for d in r["drift"]:
             print(f"    ! {d['key']}: measured {d['measured']:,} < published {d['published']:,}  "
                   f"[{d['method']}, {d['measured_at']}] — re-probe or delete the stale cap")
     else:
         print("  measured caps vs published: no drift (none sit below their published max)")
     if r["unknown"]:
-        print(f"  measured-only (no published max yet — too new for LiteLLM; 32K floor protects, not a fault):")
+        print("  measured-only (no published max yet — too new for LiteLLM; 32K floor protects, not a fault):")
         for u in r["unknown"]:
             print(f"    · {u['key']}: measured {u['measured']:,} [{u['method']}]")
     return 0 if r["ok"] else 1

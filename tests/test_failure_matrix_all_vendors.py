@@ -16,7 +16,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-matrix-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
-from spendguard import vendor_call as vc, adapters, output_contract   # noqa: E402
+from spendguard import vendor_call as vc, adapters   # noqa: E402
 
 VENDORS = [("anthropic", "claude-opus-4-8"), ("openai", "gpt-5.5"), ("moonshot", "kimi-k3"),
            ("zai", "glm-5.3"), ("gemini", "gemini-2.5-flash")]

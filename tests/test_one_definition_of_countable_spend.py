@@ -18,8 +18,6 @@ A raw `SUM(cost) FROM charges` is not banned — quarantine listings and audits 
 but it must SAY it is deliberate. An undeclared one is how the marker set gets forgotten again.
 """
 import pathlib
-import re
-import sqlite3
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))

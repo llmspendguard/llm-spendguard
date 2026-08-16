@@ -254,7 +254,7 @@ def classify_user_asks(items, run=True):
     Same shape as classify_evidence: batched, cached by content hash so re-runs and the second consumer read
     free, caged under spendguard:user-ask, cheap model. FAILS OPEN — an unjudged or failed item comes back
     True, because the damaging error here is deleting a real ask, not keeping a spurious one."""
-    from . import adapters, calls, pricing
+    from . import adapters, calls
     items = [c for c in items if (c.get("text") or "").strip()]
     res = {c["id"]: True for c in items}                  # fail-open default, applied before anything can fail
     if not items or not run:
