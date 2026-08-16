@@ -2,6 +2,59 @@
 
 All notable changes to **llm-spendguard**. Format loosely follows Keep a Changelog; dates are UTC.
 
+## [0.10.0] — 2026-08-15
+
+A large release: an exact-Decimal single-ledger cutover, a stable cross-LLM surface, and a 4-LLM self-review
+of the whole client that fixed 16 verified-HIGH and ~50 verified-MEDIUM defects — each confirmed against the
+code and regression-tested.
+
+### Added
+- **`spendguard.ask` — the ONE stable cross-LLM surface.** Ask N models the same prompt and get an HONEST
+  `AskResult` (only OK results carry text; a failure can never be read as an answer), with estimate-first budget
+  admission (`budget_usd` → `BudgetRefused` before spend) and a caller-chosen panel size (`n=`). CLI:
+  `spendguard ask "…" --vendors a:m,b:m --n 2 --json`.
+- **`spendguard serve`** — the ask surface over localhost HTTP (`POST /ask`, `GET /health`, `GET /metadata`) for
+  any tool/language. Safe by default: localhost-only; a network-exposed bind refuses to start without a token.
+- **Dispatch governor** — bounded per-vendor/lane concurrency + optional RPM + cross-process lane co-governance
+  (flock slots), wired into the one `vendor_call` chokepoint so fan-outs queue instead of thrashing or 429-storming.
+- **Full failure detail on every non-ok `Result`** (for external consumers like honestreview): `http_status`,
+  `provider_error` (the provider's own body), `attempts`, `text_head`, serialized under stable names
+  (`elapsed_s`, `finish_reason`, …). Two new failure kinds — **`overloaded`** (429/529, transient) and
+  **`payload_rejected`** (400/413/4xx, permanent) — split off from `transport_error`, and transient classes
+  now **auto-retry with jittered backoff** honoring `Retry-After`, never past the total deadline.
+- **Error-aware subscription lanes** for the panel vendors — the API *outcome* decides lane-unsuitable
+  (learn a size ceiling, keep the lane) vs lane-down (cool it), instead of one opaque cooldown.
+- **Chunked test runner** (`scripts/test/chunked_suite.py`) — the suite runs in chunks with real per-file exit
+  codes, so a green result can never be masked behind a pipe.
+
+### Changed
+- **Money is now EXACT DECIMAL in a single ledger (`spend_events`, schema v6).** The old `charges` table and
+  micro-integer money were retired via a faithful, sum-proven migration; `budget` is a thin facade over
+  `spend_events`, and every reader/writer was repointed. (Fixes the rounding-drift class F6/F7.)
+- **Anthropic batch cost is cache-aware, end to end.** The reconcile re-price computed cost from input/output
+  tokens ALONE, silently dropping `cache_read_input_tokens` + `cache_creation_input_tokens` and undercounting
+  cache-heavy spend; the breakdown is now stored and re-priced. The invented batch cache-read rate (three
+  independent copies) was replaced with the provider-published rate, in the pricing table, once.
+- **Estimates in library code take their output size from measurement** (`expected_output`), never a literal
+  `max_tokens` — an unused cap is free and a low one only destroys the answer, so it was never an expected cost.
+
+### Fixed
+- **4-LLM self-review → 16 verified-HIGH defects**, e.g.: private `scope="private"` insights were still pushed
+  (`and False` dead guard); a SaaS host check matched a *prefix* not the host (`localhost.evil.com`); the
+  spend-event writer was fail-OPEN (now dead-letters) and shared a `_conn` across a fork; `schedule` wiped the
+  crontab on an ambiguous `crontab -l` failure; a sqlite↔GIL **deadlock** in the money ledger under concurrent
+  fan-out; `spendguard migrate` after the cutover would EMPTY the ledger (now refuses).
+- **~50 verified-MEDIUM defects** across ~40 files (worked line-by-line off the finding texts): swallowed
+  exceptions on spend/trust paths; leaked file/db handles; honest CLI dispatch + exit codes (a failed
+  provider-billing fetch is `unknown`, exits non-zero, never a silent `ok`); one bad JSONL line no longer aborts
+  a whole batch; semcache atomic upsert + legacy-dup migration + system-aware dedup key; deterministic
+  provider routing by longest prefix; deid maps floor entity names to Presidio's; realtime attribution split an
+  hour PROPORTIONALLY across active projects instead of winner-take-all; `estimate-divergence` refuses when a
+  verdict is UNJUDGED, not just when it's wrong.
+- Deleted Codex sessions are pruned from state (stale est-value no longer accrues forever); `brief`'s computed
+  quality-bar is actually returned; the fail-closed `REQUIRE` probe covers litellm / google-genai / vertex, not
+  just openai/anthropic.
+
 ## [0.9.0] — 2026-08-04
 
 ### Fixed — the estimator no longer reads `max_tokens` as "expected output"

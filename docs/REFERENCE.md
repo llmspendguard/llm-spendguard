@@ -322,6 +322,50 @@ with calls.context(intent="stage:describe", chain=job_id):                      
     (deterministic); `synth` is the caged reasoner turning the top decision snippets into `source='conversation'`
     insights (estimate-first). Reconstructs your actual playbook (packing, never-cancel, price-basis errors, …).
 
+## Cross-LLM queries (`spendguard.ask`) + the honest Result contract
+Ask N models the same prompt through one gated, governed, honest surface — external callers use this instead of
+reaching into vendor internals:
+
+```python
+import spendguard
+r = spendguard.ask("Review this file for bugs.\n\n" + src,
+                   vendors=["anthropic:claude-opus-4-8", "openai:gpt-5.5", "moonshot:kimi-k3", "zai:glm-5.3"],
+                   n=4, schema=FINDINGS_SCHEMA, budget_usd=0.50)
+if not r.complete:
+    print("partial coverage:", r.by_vendor)   # honest — some vendors may have failed
+for text in r.answers:                         # ONLY ok results; a failure is never in here
+    ...
+```
+- `n=` picks how many of the vendors to use (the first N). `mode="all"` waits for everyone; `mode="first"`
+  returns as soon as `require` answer. `budget_usd` refuses (`BudgetRefused`) BEFORE spend if the metered
+  estimate exceeds it — or if a metered vendor can't be priced at all (an unknown price is not a $0 price).
+- **`spendguard serve`** exposes the same surface over localhost HTTP (`POST /ask`, `GET /health`,
+  `GET /metadata`) — `AskResult.as_dict()` on the wire, safe by default (localhost-only; a network bind needs a
+  Bearer token).
+
+**The Result is TYPED and honest.** Exactly one kind (`ok`) carries text; `Result.text` RAISES on any other, so a
+truncated or empty body can never be read as a successful answer. Failure kinds:
+
+| kind | meaning | retried? |
+|---|---|---|
+| `ok` | a complete answer | — |
+| `truncated` / `empty` | cut off / HTTP 200 with zero chars | no (deterministic) |
+| `refused` | provider policy/safety rejection | no |
+| `transport_error` | connection reset / broke | **yes** |
+| `overloaded` | 429 / 529 — rate-limited/overloaded | **yes** (honors `Retry-After`) |
+| `payload_rejected` | 400 / 413 / 401 / 403 — bad, oversized, or unauthenticated request | no (permanent) |
+| `deadline_exceeded` | didn't answer within the total deadline | no (budget already spent) |
+| `unfunded` | the account cannot pay (402/429 + billing message) | no (a human must act) |
+| `schema_violation` | ok body that failed the declared JSON Schema | no |
+
+Transient classes (`transport_error`, `overloaded`) auto-retry with **full-jitter exponential backoff** bounded by
+the *total* deadline; the Result records how many `attempts` it took.
+
+**Every non-ok Result carries full failure detail** a caller can log verbatim (a failed vendor NEVER carries
+`text`): `kind`, `error` (exception class+message), `http_status`, `provider_error` (the provider's own body,
+truncated), `elapsed_s`, `attempts`, `finish_reason`, `in_tok`/`out_tok`, `text_head` (a peek at any partial
+body), `run_id`. `AskResult.as_dict()` serializes these under exactly those names.
+
 ## Observability (feed your existing stack)
 spendguard emits an event per gated call — it's the *enforcement* layer, not another dashboard; route the
 events to whatever you already run. Three sinks, all optional, none ever block or break the gate:
