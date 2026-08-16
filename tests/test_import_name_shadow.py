@@ -97,26 +97,29 @@ spendguard.which_package = real
 # rename that changed nothing. "Does doctor surface a shadowing install?" is answered by running doctor.
 from spendguard import gate
 spendguard.which_package = lambda: ["llm-spendguard", "spendguard"]
+_expect = spendguard.shadowing_dists()            # ['spendguard'] under this monkeypatch (asserted at line 91)
 _out, _real_stdout = io.StringIO(), sys.stdout
 try:
     sys.stdout = _out
     try:
-        gate._cli(["doctor"])
-    except SystemExit:
-        pass
-finally:
-    sys.stdout = _real_stdout
+        gate._cli("doctor")                       # a COMMAND STRING — exactly how the entrypoint calls it (`_cli(
+    except SystemExit:                            # sys.argv[1])`). This USED TO pass ["doctor"], a LIST, so the
+        pass                                      # `cmd == "doctor"` gate was False and the ENTIRE doctor block —
+finally:                                          # the shadow row with it — never ran. The test wasn't exercising
+    sys.stdout = _real_stdout                     # the feature at all.
     spendguard.which_package = real
 # Asserts only that the shadowing dist NAME reaches the report — a fact about our own rendering, which is
 # format. Deliberately NOT keyword-matching the wording for "shadow"/"conflict": whether the sentence reads
 # well is a judgement, and a test cannot make one without an API call, which would put spend and a network
 # dependency into the suite. What matters mechanically is that doctor's output is not silent about it, and
 # that the structured source of the fact is right — shadowing_dists() is asserted directly, above.
+#
+# The token is the RENDERED dist list (['spendguard']), which only the shadow row emits — NOT a bare
+# "spendguard" substring. That looser check matched the interpreter PATH doctor prints (…/llm-spendguard/
+# .venv…/python), so it passed locally (masking the ["doctor"]-vs-"doctor" bug above) and failed only in CI,
+# whose hostedtoolcache path carries no "spendguard". It was asserting the path, never the feature.
 _dv = _out.getvalue()
-check("`spendguard doctor` output is not silent about a shadowing install",
-      "spendguard" in _dv)
-if "spendguard" not in _dv:                       # DIAGNOSTIC (CI-only failure not reproducible locally): show
-    print(f"    [diag] doctor stdout={len(_dv)} chars; head={_dv[:500]!r}")   # what doctor actually produced
+check("`spendguard doctor` names the shadowing dist in its report (not silent)", repr(_expect) in _dv)
 
 print(f"\n{'[FAIL]' if failures else 'OK'} test_import_name_shadow: {failures} failure(s)")
 sys.exit(1 if failures else 0)
