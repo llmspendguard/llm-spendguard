@@ -8,9 +8,9 @@
       "why": "gate._apply monkeypatches a method with a spend-gate wrapper; validate._apply computes lifecycle field updates from a verdict. Completely unrelated jobs sharing a bare name."
     },
     "_bin": {
-      "n": 2,
-      "verdict": "COLLISION",
-      "why": "Both resolve a CLI binary but for DIFFERENT tools (codex vs claude) with different env pins and different fast-path behavior; they are module-private helpers scoped to distinct executors, not a shared"
+      "n": 3,
+      "verdict": "PROTOCOL",
+      "why": "Each lane module (subscription_exec, codex_exec, antigravity_exec) exposes _bin() to resolve ITS OWN distinct host CLI ('claude', 'codex', 'agy') — subscription_exec keeps a shutil.which fast-path while codex/antigravity deliberately drop it to honor the pin, but all share the same contract: return the resolvable binary path or None. lanes.status() dispatches it polymorphically via mod._bin() over the module list, and probe() relies on that uniform check. Different resources behind one uniform, name-dispatched contract — not two copies of one job. [Re-adjudicated PROTOCOL (was COLLISION at n=2) when the antigravity lane added a 3rd member; the dispatch pattern that makes it a protocol was already implicit in the 'available' verdict.]"
     },
     "_capture": {
       "n": 2,
@@ -198,9 +198,9 @@
       "why": "Three unrelated jobs: cacheaudit.audit reports prompt-caching cost opportunities, coverage.audit enumerates venvs with LLM SDKs for gating coverage, ledger.SpendLedger.audit appends a hash-chained aud"
     },
     "available": {
-      "n": 3,
+      "n": 4,
       "verdict": "PROTOCOL",
-      "why": "Each available() is a lane's readiness probe — same contract (bool: can this lane run?), different resource. codex/subscription check distinct binaries; zai checks a key. The identical two-line bodies resolve DIFFERENT _bin()s, so they aren't a mergeable duplicate; they're per-lane implementations of one interface."
+      "why": "Uniform bool probe answering 'can this lane run?' across four interchangeable lanes, each resolving a DIFFERENT resource: _bin() is not None for the CLI lanes (claude/codex/agy) and bool(_key()) for the HTTP-based zai lane. The bodies are near-identical only because the contract is trivial; the intent is one polymorphic gate per lane. Its docstrings explicitly note the two-line overlap 'stays two lines because each resolves a DIFFERENT binary'. Same contract, distinct implementations — preserve."
     },
     "build": {
       "n": 3,
@@ -348,9 +348,9 @@
       "why": "One is a batch-gate method that checks bulk-submission gates then calls submit_fn; the other is a reconciliation loop over a cost source adapter. Entirely different jobs sharing the bare name 'run'."
     },
     "run_prompt": {
-      "n": 3,
+      "n": 4,
       "verdict": "PROTOCOL",
-      "why": "Three distinct execution lanes (Codex CLI, Claude subscription CLI, z.ai GLM HTTP) implementing the same duck-typed contract: same signature and same {text, in_tok, out_tok, latency, error} return shape. Docstrings explicitly reference 'interface parity' and 'same typed contract'. Each dispatches to a different backend — this is intentional polymorphism selected by lane."
+      "why": "The canonical lane contract: identical signature (prompt, system=None, model=None, timeout=TIMEOUT_S) and identical return shape {text,in_tok,out_tok,latency,error} across all four lanes, but wildly different bodies — claude via `claude -p` subprocess, codex via `codex exec` with temp-file output, agy via `agy -p` JSON, zai via raw urllib POST. lanes.probe() dispatches mod.run_prompt(...) polymorphically over the module map. This is the textbook one-uniform-contract-across-interchangeable-implementations case."
     },
     "scrub": {
       "n": 2,

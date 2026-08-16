@@ -234,8 +234,13 @@ def _openai_strict(schema):
 # "no answer". That is the whole recurring failure. The number now comes from measurement or from the
 # caller, never from a literal nobody chose.
 def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,
-         sig=None, retries=2, _no_guard=False):
+         sig=None, retries=2, files=None, _no_guard=False):
     """Run one prompt against one model. Returns a result dict (never raises).
+
+    `files=[path, …]` is the INPUT twin of the output guard below: each path is assembled into the prompt as a
+    WHOLE, stamped, self-verified block by llm_files.attach_many (raises rather than send a partial file). The
+    caller hands PATHS, so it has no way to pre-truncate a file into the prompt — the same discipline the output
+    side applies to never reading a truncated reply as a short answer.
 
     THE TOKEN CONTROLS LIVE HERE, IN THE ONE FUNCTION EVERY CALL ALREADY GOES THROUGH. They were built
     twice over and wired nowhere: bulkgate.is_truncated ("a fact, not a guess") had no caller outside its
@@ -258,6 +263,14 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     each reply feeds that measurement. `reasoning` (minimal|low|medium|high) sets reasoning effort for
     gpt-5/o-series models; defaults to 'minimal' for them (default-medium reasoning eats the token budget →
     empty output, and costs more — wrong for simple classify/extract calls)."""
+    # INPUT-COMPLETENESS: fold whole, stamped, self-verified files into the prompt BEFORE the guards, so the
+    # full payload is what _input_fits measures and a size overflow is refused here rather than clipped by the
+    # vendor. Consumed here (not forwarded), so the _call_guarded → call(_no_guard=True) recursion below never
+    # re-assembles. attach_many fails closed (PartialFileError) — a partial file never reaches a provider.
+    if files:
+        from . import llm_files
+        _block, _ = llm_files.attach_many(files)
+        prompt = _block + "\n" + prompt
     if not _no_guard:
         return _call_guarded(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
                              schema=schema, timeout_s=timeout_s, sig=sig, retries=retries)
@@ -617,6 +630,9 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
 
 
 # ── a COMPLETE answer, or an explicit UNKNOWN — never a truncated body ───────────────────────────────────
+# INPUT TWIN: this section guards the OUTPUT (a reply is never read as short when it was truncated). The mirror
+# guard on the INPUT lives in llm_files.attach_whole — a prompt never silently carries a truncated FILE — and is
+# reachable through call(files=[…]) above. The two are meant to be read together: same discipline, both ends.
 # THE FLOOR, AND WHY IT IS NOT A PREDICTION.
 #
 # A cap has never controlled cost — you are billed for the tokens GENERATED, so an unused budget is free and

@@ -10,7 +10,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 from pathlib import Path
-from spendguard import lanes, subscription_exec, codex_exec
+from spendguard import lanes, subscription_exec, codex_exec, antigravity_exec
 
 fails = []
 def ck(name, cond):
@@ -22,6 +22,7 @@ def ck(name, cond):
 tmp = Path(tempfile.mkdtemp(prefix="lanes-artifacts-"))
 lanes.CLAUDE_CREDS = tmp / "claude-creds.json"     # point artifact constants at controlled paths
 lanes.CODEX_AUTH = tmp / "codex-auth.json"
+lanes.GEMINI_CREDS = tmp / "gemini-creds.json"     # the gemini/antigravity lane's OAuth artifact
 
 print("-- executor=api: nothing enabled, summary stays silent --")
 os.environ["SPENDGUARD_ADVISOR_EXECUTOR"] = "api"
@@ -32,8 +33,9 @@ print("-- pool + missing CLIs: every enabled lane says exactly how to activate -
 os.environ["SPENDGUARD_ADVISOR_EXECUTOR"] = "pool"
 subscription_exec._bin = lambda: None
 codex_exec._bin = lambda: None
+antigravity_exec._bin = lambda: None
 s = lanes.status()
-ck("both lanes enabled under pool", all(ln["enabled"] for ln in s["lanes"]))
+ck("every lane enabled under pool", all(ln["enabled"] for ln in s["lanes"]))
 ck("missing CLI → install step named", all("install the" in (ln["activate"] or "") for ln in s["lanes"]))
 lines = lanes.summary_lines()
 ck("summary shows inactive lanes + the API-fallback consequence",
@@ -42,18 +44,22 @@ ck("summary shows inactive lanes + the API-fallback consequence",
 print("-- CLI present, auth artifacts drive the verdict --")
 subscription_exec._bin = lambda: "/fake/claude"
 codex_exec._bin = lambda: "/fake/codex"
+antigravity_exec._bin = lambda: "/fake/agy"
 lanes._CLAUDE_KEYCHAIN_SERVICE = "spendguard-test-no-such-service"   # keychain lookup must MISS
 s = {ln["lane"]: ln for ln in lanes.status()["lanes"]}
 ck("claude: no artifact → missing + /login step",
    s["claude-code"]["auth"] == "missing" and "/login" in s["claude-code"]["activate"])
 ck("codex: no auth.json → missing + sign-in step",
    s["codex"]["auth"] == "missing" and "ChatGPT" in s["codex"]["activate"])
+ck("gemini: no creds → missing + Google sign-in step",
+   s["gemini"]["auth"] == "missing" and "Google" in s["gemini"]["activate"])
 lanes.CODEX_AUTH.write_text("{}")
 lanes.CLAUDE_CREDS.write_text("{}")
+lanes.GEMINI_CREDS.write_text("{}")
 s = {ln["lane"]: ln for ln in lanes.status()["lanes"]}
-ck("auth files present → both ok, no activation steps",
-   s["claude-code"]["auth"] == "ok" and s["codex"]["auth"] == "ok"
-   and s["claude-code"]["activate"] is None and s["codex"]["activate"] is None)
+ck("auth files present → all ok, no activation steps",
+   s["claude-code"]["auth"] == "ok" and s["codex"]["auth"] == "ok" and s["gemini"]["auth"] == "ok"
+   and s["claude-code"]["activate"] is None and s["codex"]["activate"] is None and s["gemini"]["activate"] is None)
 ck("summary shows ready lanes", all("🟢 ready" in l for l in lanes.summary_lines()[1:-1]))
 
 print("-- keychain-only is NEVER 'ok' (desktop-app item ≠ CLI login) --")
@@ -74,6 +80,7 @@ def _claude_probe(p, system=None, model=None, timeout=None):
     return {"text": "OK", "in_tok": 5, "out_tok": 2, "latency": 1.2, "error": None}
 subscription_exec.run_prompt = _claude_probe
 codex_exec.run_prompt = lambda p, system=None, model=None, timeout=None: {"error": "plan window exhausted"}
+antigravity_exec.run_prompt = lambda p, system=None, model=None, timeout=None: {"error": "no agy in test"}
 res = {r["lane"]: r for r in lanes.probe()}
 ck("live lane reports ok", res["claude-code"]["ok"] and res["claude-code"]["text"] == "OK")
 ck("probe pins an explicit cheap tier (immune to a stale CLI default model)",

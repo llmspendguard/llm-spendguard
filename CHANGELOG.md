@@ -2,6 +2,31 @@
 
 All notable changes to **llm-spendguard**. Format loosely follows Keep a Changelog; dates are UTC.
 
+## [Unreleased]
+
+### Added
+- **Gemini subscription lane** — spendguard's own Gemini-model meta prompts can ride the Google **Antigravity**
+  plan (the `agy` CLI) at $0 billed, mirroring the existing `claude-code` and `codex` lanes: `GEMINI_API_KEY` +
+  `GOOGLE_API_KEY` are stripped from the child so a plan call can never silently become a metered charge, usage
+  is read by field name, and any failure (CLI missing, quota, parse mismatch) degrades to the metered API — the
+  lane can break, the advisor cannot. Set `advisor.executor` to `gemini`/`pool`; `spendguard doctor` and
+  `spendguard lanes --probe` show activation. (Antigravity replaces the individual Gemini CLI login retired
+  2026-06-18.)
+- **`spendguard.llm_files` — an input-completeness guarantee, the twin of the max_tokens/output guard.**
+  `attach_whole(path)` / `attach_many(paths)` read a WHOLE file (by PATH, so a caller cannot pre-truncate),
+  stamp a header the model also sees (`sha256`, line + byte count, `COMPLETE`), and reconstruct the source
+  byte-for-byte before returning — raising `PartialFileError` (fail closed) or `FileNotFoundError` rather than
+  ever emitting a starved prompt. Reachable through the one sanctioned path, `adapters.call(model, prompt,
+  files=[…])`, which assembles the prompt through it. Symmetric to the output guarantee (a reply is never read
+  as a short answer when it was truncated); the two are cross-referenced in code so they stay discoverable
+  together.
+
+### Fixed
+- The Gemini lane's usage extractor is named `_usage_from_result` (it had collided with `litellm_adapter._usage`),
+  the lane-status test now exercises every subscription lane (not just claude-code/codex), and the shared
+  lane-protocol method names (`_bin`/`available`/`run_prompt`) were re-adjudicated **agentically** as PROTOCOL in
+  the name registry now that a fourth lane implements them (`_bin` moved COLLISION → PROTOCOL).
+
 ## [0.10.0] — 2026-08-15
 
 A large release: an exact-Decimal single-ledger cutover, a stable cross-LLM surface, and a 4-LLM self-review

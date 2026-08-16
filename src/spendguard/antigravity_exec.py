@@ -66,8 +66,10 @@ def _result_obj(stdout):
     return None
 
 
-def _usage(obj):
-    """(input_tokens, output_tokens) from agy's `usage` object, by field name; absent → (0, 0), never invented."""
+def _usage_from_result(obj):
+    """(input_tokens, output_tokens) from agy's `usage` object, by field name; absent → (0, 0), never invented.
+    Named for its SOURCE (agy's single result object), parallel to codex_exec._usage_from_events and distinct
+    from litellm_adapter._usage(response_obj) — same job family, different inputs, so different names."""
     u = obj.get("usage")
     if not isinstance(u, dict):
         return 0, 0
@@ -106,5 +108,5 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S):
     text = (obj.get("response") or "").strip()
     if not text:
         return {"error": "agy produced no response text"}
-    in_tok, out_tok = _usage(obj)
+    in_tok, out_tok = _usage_from_result(obj)
     return {"text": text, "in_tok": in_tok, "out_tok": out_tok, "latency": time.time() - t0, "error": None}
