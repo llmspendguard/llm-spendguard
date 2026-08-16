@@ -198,7 +198,7 @@ Run one prompt across providers and table **cost + latency + output** — spendg
 *cost-per-result* (for deep evals, use promptfoo). Real calls, metered by the gate:
 ```
 spendguard compare --prompt "Summarize X in 3 bullets" \
-  --models gpt-5.5,claude-opus-4-8,gemini-2.5-flash,deepseek-chat,qwen-max --show
+  --models gpt-5.5,claude-opus-4-8,gemini-flash-latest,deepseek-chat,qwen-max --show
 ```
 Built-in providers: **openai, anthropic, gemini, deepseek, qwen, z.ai (GLM)** (all but Anthropic via their
 OpenAI-compatible endpoints, so the gate already meters them). **Keys live in ONE place: `~/.spendguard/keys.env`**
@@ -226,6 +226,19 @@ through `pricing.py`, fail-open, no double-counting:
 
 Each adapter auto-wires at startup **only if its SDK is already imported**; the explicit `install_*()` call is the
 reliable path (it force-imports and wires) since these are heavy/optional deps the startup gate won't force-load.
+
+## Whole-file prompts (`spendguard.llm_files`) — the input-completeness guard
+The mirror of the output guard (a truncated reply is never read as a short answer): a prompt must never silently
+carry a **truncated file**. `llm_files.attach_whole(path)` / `attach_many(paths)` read the WHOLE file **by path**
+(so a caller cannot pre-truncate), stamp a header the model also sees — `--- FILE: <name> (<lines> lines, <bytes>
+bytes, sha256:<12>, COMPLETE) ---` — and reconstruct the source byte-for-byte before returning, raising
+`PartialFileError` (fail closed) or `FileNotFoundError` rather than ship a starved prompt. Route files through the
+one sanctioned call path and the caller has no way to truncate at all:
+```python
+import spendguard
+# files=[…] assembles each WHOLE, stamped, self-verified file into the prompt via attach_many:
+r = spendguard.adapters.call("claude-opus-4-8", "Find the bug in these:", files=["a.py", "b.py"])
+```
 
 ## Call context & cost-per-good-result (opt-in)
 Beyond *cost*, spendguard can record per-call **context** to build a cost+**quality** corpus. Off by default

@@ -167,7 +167,8 @@ def summary_lines():
 def main(argv=None):
     argv = list(argv or [])
     for line in (summary_lines() or ["subscription lanes: none enabled (advisor.executor = api) — set "
-                                     "advisor.executor to claude-code / codex / pool to use your plans"]):
+                                     "advisor.executor to claude-code / codex / zai-coding / gemini / pool "
+                                     "to use your plans"]):
         print(line)
     if "--probe" in argv:
         print("probe (one tiny plan-billed prompt per enabled lane, $0):")
