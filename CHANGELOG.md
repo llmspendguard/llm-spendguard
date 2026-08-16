@@ -22,6 +22,11 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
   together.
 
 ### Fixed
+- **The z.ai GLM Coding Plan lane now appears in `spendguard doctor` / `lanes` / `--probe`.** It was routable
+  (executor `zai-coding` / `pool`) but invisible in the activation surface, because `lanes.status()` assumed a
+  host CLI and the z.ai lane is key-based (an HTTP endpoint + key, no binary). A lane now declares CLI-vs-key by
+  whether it exposes `_bin`; the z.ai lane reports readiness from its plan key (`ZAI_CODING_API_KEY`, or the
+  account's `ZAI_API_KEY`) and renders as `🟢 ready (zai key)`. Guarded in `tests/test_lanes.py`.
 - The Gemini lane's usage extractor is named `_usage_from_result` (it had collided with `litellm_adapter._usage`),
   the lane-status test now exercises every subscription lane (not just claude-code/codex), and the shared
   lane-protocol method names (`_bin`/`available`/`run_prompt`) were re-adjudicated **agentically** as PROTOCOL in

@@ -10,7 +10,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 from pathlib import Path
-from spendguard import lanes, subscription_exec, codex_exec, antigravity_exec
+from spendguard import lanes, subscription_exec, codex_exec, antigravity_exec, zai_exec
 
 fails = []
 def ck(name, cond):
@@ -34,9 +34,12 @@ os.environ["SPENDGUARD_ADVISOR_EXECUTOR"] = "pool"
 subscription_exec._bin = lambda: None
 codex_exec._bin = lambda: None
 antigravity_exec._bin = lambda: None
+zai_exec._key = lambda: None                        # key-based lane: no key → unconfigured
 s = lanes.status()
+byln = {ln["lane"]: ln for ln in s["lanes"]}
 ck("every lane enabled under pool", all(ln["enabled"] for ln in s["lanes"]))
-ck("missing CLI → install step named", all("install the" in (ln["activate"] or "") for ln in s["lanes"]))
+ck("zai lane is SURFACED alongside the CLI lanes (not skipped for lacking a binary)", "zai-coding" in byln)
+ck("every unconfigured lane names an activation step", all(ln["activate"] for ln in s["lanes"]))
 lines = lanes.summary_lines()
 ck("summary shows inactive lanes + the API-fallback consequence",
    any("🔴 inactive" in l for l in lines) and any("fall back to the metered API" in l for l in lines))
@@ -45,6 +48,7 @@ print("-- CLI present, auth artifacts drive the verdict --")
 subscription_exec._bin = lambda: "/fake/claude"
 codex_exec._bin = lambda: "/fake/codex"
 antigravity_exec._bin = lambda: "/fake/agy"
+zai_exec._key = lambda: None                                        # key-based lane still unconfigured here
 lanes._CLAUDE_KEYCHAIN_SERVICE = "spendguard-test-no-such-service"   # keychain lookup must MISS
 s = {ln["lane"]: ln for ln in lanes.status()["lanes"]}
 ck("claude: no artifact → missing + /login step",
@@ -53,14 +57,19 @@ ck("codex: no auth.json → missing + sign-in step",
    s["codex"]["auth"] == "missing" and "ChatGPT" in s["codex"]["activate"])
 ck("gemini: no creds → missing + Google sign-in step",
    s["gemini"]["auth"] == "missing" and "Google" in s["gemini"]["activate"])
+ck("zai: key-based → no key makes it missing, independent of any _bin/creds",
+   s["zai-coding"]["auth"] == "missing" and s["zai-coding"]["cli"] is None and bool(s["zai-coding"]["activate"]))
 lanes.CODEX_AUTH.write_text("{}")
 lanes.CLAUDE_CREDS.write_text("{}")
 lanes.GEMINI_CREDS.write_text("{}")
+zai_exec._key = lambda: "zai-test-key"                              # the plan key now resolves — the ONLY change for zai
 s = {ln["lane"]: ln for ln in lanes.status()["lanes"]}
-ck("auth files present → all ok, no activation steps",
-   s["claude-code"]["auth"] == "ok" and s["codex"]["auth"] == "ok" and s["gemini"]["auth"] == "ok"
-   and s["claude-code"]["activate"] is None and s["codex"]["activate"] is None and s["gemini"]["activate"] is None)
+ck("auth artifacts present → all lanes ok, no activation steps",
+   all(s[l]["auth"] == "ok" for l in ("claude-code", "codex", "gemini", "zai-coding"))
+   and all(s[l]["activate"] is None for l in ("claude-code", "codex", "gemini", "zai-coding")))
 ck("summary shows ready lanes", all("🟢 ready" in l for l in lanes.summary_lines()[1:-1]))
+ck("key lane renders ready WITHOUT a binary path (key-based, not a CLI)",
+   any("zai-coding" in l and "🟢 ready" in l and "/" not in l for l in lanes.summary_lines()))
 
 print("-- keychain-only is NEVER 'ok' (desktop-app item ≠ CLI login) --")
 lanes.CLAUDE_CREDS.unlink()
@@ -81,11 +90,13 @@ def _claude_probe(p, system=None, model=None, timeout=None):
 subscription_exec.run_prompt = _claude_probe
 codex_exec.run_prompt = lambda p, system=None, model=None, timeout=None: {"error": "plan window exhausted"}
 antigravity_exec.run_prompt = lambda p, system=None, model=None, timeout=None: {"error": "no agy in test"}
+zai_exec.run_prompt = lambda p, system=None, model=None, timeout=None: {"text": "OK", "in_tok": 3, "out_tok": 1, "latency": 0.4, "error": None}
 res = {r["lane"]: r for r in lanes.probe()}
 ck("live lane reports ok", res["claude-code"]["ok"] and res["claude-code"]["text"] == "OK")
 ck("probe pins an explicit cheap tier (immune to a stale CLI default model)",
    probe_seen["claude_model"] == "haiku")
 ck("dead lane reports its error", not res["codex"]["ok"] and "window" in res["codex"]["error"])
+ck("key lane (zai) probes through run_prompt like the CLI lanes", res["zai-coding"]["ok"])
 s2 = {ln["lane"]: ln for ln in lanes.status()["lanes"]}
 ck("a successful probe persists as definitive auth evidence (macOS keychain can't prove login)",
    s2["claude-code"]["auth"] == "ok")

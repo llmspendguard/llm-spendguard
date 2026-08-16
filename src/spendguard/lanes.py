@@ -25,7 +25,7 @@ _PROBE_PROMPT = "Reply with exactly: OK"
 # Probe with an EXPLICIT cheap tier: a probe with no --model runs on the CLI's default-model setting, which
 # can be stale (live 2026-07-16: a 404 on an old sonnet snapshot) — real lane calls always pass the advisor's
 # tier, so the probe must too or it reports a failure the lane would never hit.
-_PROBE_TIER = {"claude-code": "haiku", "codex": None, "gemini": None}   # gemini: None → agy's default flash
+_PROBE_TIER = {"claude-code": "haiku", "codex": None, "gemini": None, "zai-coding": None}   # None → each lane's own default model
 
 
 def _probe_cache_path():
@@ -80,10 +80,18 @@ def _gemini_auth():
     return "ok" if GEMINI_CREDS.exists() else "missing"
 
 
+def _zai_auth():
+    """The z.ai GLM Coding Plan lane is KEY-based, not CLI-based: 'ok' iff a plan-capable key resolves. This is
+    optimistic like the CLI lanes' artifact check (a key with no active plan gets an auth error at call time and
+    the lane falls back to the metered API); `spendguard lanes --probe` is the definitive check."""
+    from . import zai_exec
+    return "ok" if zai_exec._key() else "missing"
+
+
 def status():
     """One dict per lane: is it enabled by advisor.executor, is its CLI on this host, does a login artifact
     exist, and the exact activation step if not. Free — no network, no model calls."""
-    from . import subscription_exec, codex_exec, antigravity_exec
+    from . import subscription_exec, codex_exec, antigravity_exec, zai_exec
     from .adapters import _executor
     ex = _executor()
     out = []
@@ -99,16 +107,25 @@ def status():
          "install the Antigravity CLI (`curl -fsSL https://antigravity.google/cli/install.sh | bash`), then run "
          "`agy` and sign in with your Google account — decline any API-key option (a key meters every call to the "
          "Gemini API instead of your Antigravity plan)"),
+        ("zai-coding", "zai", zai_exec, _zai_auth,
+         "add a z.ai GLM Coding Plan key to keys.env — `ZAI_CODING_API_KEY` (or your account's `ZAI_API_KEY` on "
+         "an active plan); this lane is a key + endpoint, not a CLI login"),
     ):
-        cli = mod._bin()
+        # A lane is CLI-based (exposes _bin → a host binary to find + a login artifact) or KEY-based (z.ai coding
+        # plan: an HTTP endpoint + key, no binary). The module DECLARES which by whether it defines _bin; readiness
+        # for both is auth_fn (login artifact / probe for CLI lanes, key presence for key lanes).
+        has_bin = hasattr(mod, "_bin")
+        cli = mod._bin() if has_bin else None
         try:
-            auth = auth_fn() if cli else "missing"
+            # CLI lane: auth is only meaningful once the binary exists (no CLI ⇒ nothing to be logged into).
+            # Key lane: auth IS the key check, so always run it.
+            auth = auth_fn() if (cli or not has_bin) else "missing"
         except Exception as e:
             # One lane's auth probe (a login-artifact read / keychain lookup) must not abort the status of the
             # OTHER lanes. Report this lane's auth as an error and keep going — the activation step still shows.
             auth = f"error:{type(e).__name__}"
         steps = []
-        if not cli:
+        if has_bin and not cli:
             steps.append(f"install the {lane} CLI (then `spendguard lanes` to re-check)")
         if auth != "ok":
             steps.append(login)
@@ -120,8 +137,8 @@ def status():
 def probe():
     """Definitive activation check: ONE tiny prompt per enabled lane, straight through its CLI ($0 billed —
     plan-covered; the only spend is a few plan tokens). Returns per-lane live results."""
-    from . import subscription_exec, codex_exec, antigravity_exec
-    mods = {"claude-code": subscription_exec, "codex": codex_exec, "gemini": antigravity_exec}
+    from . import subscription_exec, codex_exec, antigravity_exec, zai_exec
+    mods = {"claude-code": subscription_exec, "codex": codex_exec, "gemini": antigravity_exec, "zai-coding": zai_exec}
     res = []
     for ln in status()["lanes"]:
         if not ln["enabled"]:
@@ -153,8 +170,8 @@ def summary_lines():
     for ln in s["lanes"]:
         if not ln["enabled"]:
             continue
-        if ln["cli"] and ln["auth"] == "ok":
-            state = f"🟢 ready ({ln['cli']})"
+        if ln["auth"] == "ok":
+            state = f"🟢 ready ({ln['cli'] or ln['provider'] + ' key'})"   # CLI lanes show the binary path; key lanes show the key
         elif ln["cli"] and ln["auth"] == "unknown":
             state = f"🟡 CLI found; login unverified — {ln['activate']} if unsure, or `spendguard lanes --probe`"
         else:
