@@ -17,9 +17,19 @@ Ground truth after the fix, all probed and none hardcoded:
     glm-5.2     none,minimal,low,medium,high        (auto REJECTED)
 """
 import inspect
+import os
 import sys
 
-from spendguard import adapters, vendor_call as vc
+# FAKE keys so the probe reaches the MOCKED OpenAI client. config.api_key checks os.environ FIRST, then ./.env —
+# so a dev checkout (with a gitignored ./.env) supplies a real key and this passes, while CI (no ./.env, harness
+# strips os.environ) hits the no-key guard BEFORE the mock (requests=0, "no key"). The HTTP is mocked here, so a
+# fake key is never used for a real call — it only clears the guard. (Harness contract: a test that needs a key
+# sets its own fake one.)
+for _k in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "MOONSHOT_API_KEY", "ZAI_API_KEY", "DASHSCOPE_API_KEY",
+           "DEEPSEEK_API_KEY", "GEMINI_API_KEY"):
+    os.environ[_k] = "sk-test-fake-not-real"
+
+from spendguard import adapters, vendor_call as vc     # noqa: E402 — after the fake-key setup above
 
 failures = 0
 

@@ -112,8 +112,11 @@ finally:
 # well is a judgement, and a test cannot make one without an API call, which would put spend and a network
 # dependency into the suite. What matters mechanically is that doctor's output is not silent about it, and
 # that the structured source of the fact is right — shadowing_dists() is asserted directly, above.
+_dv = _out.getvalue()
 check("`spendguard doctor` output is not silent about a shadowing install",
-      "spendguard" in _out.getvalue())
+      "spendguard" in _dv)
+if "spendguard" not in _dv:                       # DIAGNOSTIC (CI-only failure not reproducible locally): show
+    print(f"    [diag] doctor stdout={len(_dv)} chars; head={_dv[:500]!r}")   # what doctor actually produced
 
 print(f"\n{'[FAIL]' if failures else 'OK'} test_import_name_shadow: {failures} failure(s)")
 sys.exit(1 if failures else 0)
