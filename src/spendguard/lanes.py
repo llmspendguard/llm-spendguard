@@ -18,13 +18,14 @@ from . import config           # _record_probe writes the probe cache through co
 # Auth artifacts per lane (named constants; tests point these at temp paths).
 CLAUDE_CREDS = Path.home() / ".claude" / ".credentials.json"      # claude CLI's own login file
 CODEX_AUTH = Path.home() / ".codex" / "auth.json"                 # codex CLI login (verified live)
+GEMINI_CREDS = Path.home() / ".gemini" / "oauth_creds.json"       # Antigravity CLI (`agy`) OAuth login (verified live)
 _CLAUDE_KEYCHAIN_SERVICE = "Claude Code-credentials"              # may be the desktop app's → 'unknown' only
 
 _PROBE_PROMPT = "Reply with exactly: OK"
 # Probe with an EXPLICIT cheap tier: a probe with no --model runs on the CLI's default-model setting, which
 # can be stale (live 2026-07-16: a 404 on an old sonnet snapshot) — real lane calls always pass the advisor's
 # tier, so the probe must too or it reports a failure the lane would never hit.
-_PROBE_TIER = {"claude-code": "haiku", "codex": None}
+_PROBE_TIER = {"claude-code": "haiku", "codex": None, "gemini": None}   # gemini: None → agy's default flash
 
 
 def _probe_cache_path():
@@ -75,10 +76,14 @@ def _codex_auth():
     return "ok" if CODEX_AUTH.exists() else "missing"
 
 
+def _gemini_auth():
+    return "ok" if GEMINI_CREDS.exists() else "missing"
+
+
 def status():
     """One dict per lane: is it enabled by advisor.executor, is its CLI on this host, does a login artifact
     exist, and the exact activation step if not. Free — no network, no model calls."""
-    from . import subscription_exec, codex_exec
+    from . import subscription_exec, codex_exec, antigravity_exec
     from .adapters import _executor
     ex = _executor()
     out = []
@@ -90,6 +95,10 @@ def status():
          "detected ANTHROPIC_API_KEY, choose No: Yes meters every call to the API instead of your plan"),
         ("codex", "openai", codex_exec, _codex_auth,
          "run `codex` and sign in with your ChatGPT account (not an API key)"),
+        ("gemini", "google", antigravity_exec, _gemini_auth,
+         "install the Antigravity CLI (`curl -fsSL https://antigravity.google/cli/install.sh | bash`), then run "
+         "`agy` and sign in with your Google account — decline any API-key option (a key meters every call to the "
+         "Gemini API instead of your Antigravity plan)"),
     ):
         cli = mod._bin()
         try:
@@ -111,8 +120,8 @@ def status():
 def probe():
     """Definitive activation check: ONE tiny prompt per enabled lane, straight through its CLI ($0 billed —
     plan-covered; the only spend is a few plan tokens). Returns per-lane live results."""
-    from . import subscription_exec, codex_exec
-    mods = {"claude-code": subscription_exec, "codex": codex_exec}
+    from . import subscription_exec, codex_exec, antigravity_exec
+    mods = {"claude-code": subscription_exec, "codex": codex_exec, "gemini": antigravity_exec}
     res = []
     for ln in status()["lanes"]:
         if not ln["enabled"]:

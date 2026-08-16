@@ -4,7 +4,7 @@ spendguard's angle is COST-PER-RESULT (deep evals are promptfoo's job). Makes RE
 metered by the gate. Opt-in.
 
   spendguard compare --prompt "Explain X in 3 bullets" \\
-      --models gpt-5.5,claude-opus-4-8,gemini-2.5-flash,deepseek-chat,qwen-max
+      --models gpt-5.5,claude-opus-4-8,gemini-flash-latest,deepseek-chat,qwen-max
   spendguard compare --prompt-file p.txt --models ... --max-tokens 800 --show
 """
 import argparse

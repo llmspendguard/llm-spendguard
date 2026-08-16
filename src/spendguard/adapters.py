@@ -69,7 +69,8 @@ def _executor():
 # to the caged API. Provider-respecting on purpose: a claude-model prompt never silently runs on the
 # ChatGPT plan (or vice versa) — the recorded model must be the model that answered.
 _LANES = {"anthropic": ("claude-code", "subscription_exec"), "openai": ("codex", "codex_exec"),
-          "zai": ("zai-coding", "zai_exec")}   # z.ai GLM Coding Plan — Anthropic-compatible flat-fee endpoint
+          "zai": ("zai-coding", "zai_exec"),                    # z.ai GLM Coding Plan — Anthropic-compatible flat-fee endpoint
+          "gemini": ("gemini", "antigravity_exec")}             # Google Antigravity CLI (`agy`) — Gemini plan lane
 _lane_cooldown = {}   # lane name -> unix ts until which it is cooling
 
 
