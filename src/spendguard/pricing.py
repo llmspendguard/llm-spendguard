@@ -722,7 +722,7 @@ def price(model: str, provider: str = None) -> dict:
     )
 
 
-def _cost(model, in_tok, out_tok, cached_in_tok, batch, provider=None):
+def _cost(model, in_tok, out_tok, cached_in_tok, batch, provider=None, cache_creation_tok=0):
     p = price(model, provider)
     if batch:
         pin, pout = p["batch_in"], p["batch_out"]
@@ -746,7 +746,11 @@ def _cost(model, in_tok, out_tok, cached_in_tok, batch, provider=None):
             pcache = pin                 # was `0.0` — a missing cache rate billed cache reads as FREE
     cached_in_tok = min(max(0, cached_in_tok), in_tok)   # cached can't exceed (or precede) the input
     fresh_in = in_tok - cached_in_tok
-    return (fresh_in * pin + cached_in_tok * pcache + out_tok * pout) / 1_000_000
+    # cache CREATION (write) is a SEPARATE token class billed ~1.25x the base input rate (5-min cache) — omitting
+    # it undercounts cache-heavy spend. Defaults to 0, so every existing caller is unchanged; only callers that
+    # actually measure it (the realtime oracle reading Anthropic admin usage) pass it.
+    ccreate_cost = max(0, cache_creation_tok) * pin * CACHE_WRITE_5M_MULTIPLIER
+    return (fresh_in * pin + cached_in_tok * pcache + out_tok * pout + ccreate_cost) / 1_000_000
 
 
 # THE ONE IN-PROCESS REGISTRY OF MODELS WE COULD NOT PRICE. reconcile_anthropic kept a private
@@ -763,26 +767,33 @@ def note_unpriced(model: str) -> None:
 
 
 def cost_or_unpriced(model: str, in_tok: int, out_tok: int = 0, cached_in_tok: int = 0,
-                     batch: bool = True, provider: str = None) -> float:
-    """Cost, or 0.0 with the model RECORDED as unpriced. Never raises on a model we have no card for."""
+                     batch: bool = True, provider: str = None, cache_creation_tok: int = 0) -> float:
+    """Cost, or 0.0 with the model RECORDED as unpriced. Never raises on a model we have no card for.
+    `cache_creation_tok` (cache-write tokens) defaults to 0 — pass it where measured so it isn't undercounted."""
     try:
         fn = batch_cost if batch else realtime_cost
-        return fn(model, in_tok, out_tok, cached_in_tok, provider=provider) or 0.0
+        return fn(model, in_tok, out_tok, cached_in_tok, provider=provider,
+                  cache_creation_tok=cache_creation_tok) or 0.0
     except (KeyError, TypeError, ValueError):
         note_unpriced(model)
         return 0.0
 
 
-def batch_cost(model: str, in_tok: int, out_tok: int = 0, cached_in_tok: int = 0, provider: str = None) -> float:
+def batch_cost(model: str, in_tok: int, out_tok: int = 0, cached_in_tok: int = 0, provider: str = None,
+               cache_creation_tok: int = 0) -> float:
     """Actual/forecast cost ($) of `in_tok`+`out_tok` via the Batch API (50% off). `provider` pins the vendor
-    when the model id is bare and several vendors host it (see _vendor_qualified)."""
-    return _cost(model, in_tok, out_tok, cached_in_tok, batch=True, provider=provider)
+    when the model id is bare and several vendors host it (see _vendor_qualified). `cache_creation_tok` optional."""
+    return _cost(model, in_tok, out_tok, cached_in_tok, batch=True, provider=provider,
+                 cache_creation_tok=cache_creation_tok)
 
 
-def realtime_cost(model: str, in_tok: int, out_tok: int = 0, cached_in_tok: int = 0, provider: str = None) -> float:
+def realtime_cost(model: str, in_tok: int, out_tok: int = 0, cached_in_tok: int = 0, provider: str = None,
+                  cache_creation_tok: int = 0) -> float:
     """Actual/forecast cost ($) of `in_tok`+`out_tok` for a real-time call. `provider` pins the vendor when the
-    model id is bare and several vendors host it (see _vendor_qualified)."""
-    return _cost(model, in_tok, out_tok, cached_in_tok, batch=False, provider=provider)
+    model id is bare and several vendors host it (see _vendor_qualified). `cache_creation_tok` (cache-write tokens,
+    billed ~1.25x input) is a separate class — pass it when you have it, else it's 0 and unchanged."""
+    return _cost(model, in_tok, out_tok, cached_in_tok, batch=False, provider=provider,
+                 cache_creation_tok=cache_creation_tok)
 
 
 def estimate(model: str, n: int, avg_in: int, avg_out: int, batch: bool = True) -> float:

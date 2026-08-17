@@ -423,18 +423,31 @@ def reconcile_realtime(since=None):
     budget.clear_reconciled(since=since, model=_RT_MARKER)        # rebuild ONLY our own log-floor markers (idempotent)
     log_pd = {}                                                  # (provider, day) -> $ in the gate's realtime log
     try:
-        for ln in open(RT_LOG):
+        _fh = open(RT_LOG)
+    except OSError:
+        return dict(since=since, imported=0.0, rows=0)
+    skipped = 0
+    with _fh:                                                    # `with` → the handle is closed deterministically (was leaked)
+        for ln in _fh:
+            # ONE bad line must SKIP, never abort. The outer try/except used to wrap the WHOLE loop, so a single
+            # line that json-parsed but then failed downstream (a non-numeric cost, a non-dict row) discarded
+            # EVERY line already parsed. Guard the full per-line body instead → a bad line is lost, the rest survive.
             try:
                 r = json.loads(ln)
+                d = r.get("day", "")
+                if not d or d < since:
+                    continue
+                k = (r.get("provider") or "?", d)
+                log_pd[k] = log_pd.get(k, 0.0) + float(r.get("cost") or 0)
             except Exception:
+                skipped += 1                                     # a malformed line is DROPPED realtime spend — count it, never lose it silently
                 continue
-            d = r.get("day", "")
-            if not d or d < since:
-                continue
-            k = (r.get("provider") or "?", d)
-            log_pd[k] = log_pd.get(k, 0.0) + float(r.get("cost") or 0)
-    except Exception:
-        return dict(since=since, imported=0.0, rows=0)
+    if skipped:
+        # Surface the loss (same rule the realtime_oracle skips follow): a silently-dropped line undercounts the
+        # realtime floor with nothing signalling it. A trace makes the (lower-bound) gap visible.
+        from .config import warn_once
+        warn_once(f"[ledger_sync] {skipped} unparseable RT_LOG line(s) SKIPPED in reconcile_realtime — the realtime "
+                  f"floor is a lower bound by their unknown cost.")
     gate_pd = budget.by_provider_day(kind="realtime", since=since)   # REAL gate realtime (markers just cleared)
     try:
         from . import saas
@@ -491,19 +504,28 @@ def realtime_check(recorded, since=None):
     from .config import RT_LOG                 # the gate's own call log — written locally, no key, no network
     log_total = 0.0
     seen = False
+    skipped = 0
     try:
         if os.path.exists(RT_LOG):
             seen = True
-            for ln in open(RT_LOG):
-                try:
-                    r = json.loads(ln)
-                    if since and (r.get("day") or "") < since:     # same window as `recorded`, or it lies
+            with open(RT_LOG) as _fh:                # `with` → deterministic close (the handle was leaked)
+                for ln in _fh:
+                    try:
+                        r = json.loads(ln)
+                        if since and (r.get("day") or "") < since:     # same window as `recorded`, or it lies
+                            continue
+                        log_total += float(r.get("cost") or 0)
+                    except Exception:
+                        skipped += 1                 # a malformed line is dropped log-floor — count it, never drop it silently
                         continue
-                    log_total += float(r.get("cost") or 0)
-                except Exception:
-                    continue
     except Exception:
         seen = False
+    if skipped:
+        # Same rule as reconcile_realtime: a silently-dropped line makes log_total a LOWER BOUND, so the
+        # recorded-vs-log comparison could under-read the gap and falsely look reconciled. Surface it.
+        from .config import warn_once
+        warn_once(f"[ledger_sync] {skipped} unparseable RT_LOG line(s) SKIPPED in realtime_check — log_total is a "
+                  f"lower bound; the recorded-vs-log comparison may under-read the gap.")
     if not seen:
         return {"recorded": recorded, "log": None, "over": 0.0, "under": 0.0}
     return {"recorded": recorded, "log": log_total,

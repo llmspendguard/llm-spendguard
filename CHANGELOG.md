@@ -22,6 +22,14 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
   together.
 
 ### Fixed
+- **Realtime-oracle hardening** (from a 4-vendor honestreview of the realtime-reconstruction feature, findings
+  verified against the code): Anthropic **cache-creation tokens are now priced** — `pricing.cost_or_unpriced` /
+  `realtime_cost` / `batch_cost` gained an optional `cache_creation_tok` (billed at `CACHE_WRITE_5M_MULTIPLIER` ×
+  input; default 0, so every existing caller is unchanged), and the realtime oracle passes it — they were dropped
+  before, undercounting the recorded realtime $. The paged admin-usage fetch now **fails loud at its page cap**
+  instead of silently truncating (a truncated slice reads as "less spend"). A malformed usage bucket (no
+  `starting_at`) or a segment with no session id is **skipped with a trace**, never KeyError-aborting the whole
+  oracle. Guarded by `tests/test_realtime_oracle_hardening.py`.
 - **The z.ai GLM Coding Plan lane now appears in `spendguard doctor` / `lanes` / `--probe`.** It was routable
   (executor `zai-coding` / `pool`) but invisible in the activation surface, because `lanes.status()` assumed a
   host CLI and the z.ai lane is key-based (an HTTP endpoint + key, no binary). A lane now declares CLI-vs-key by

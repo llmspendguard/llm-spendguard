@@ -17,9 +17,9 @@ import datetime
 from collections import defaultdict
 
 
-def _paged(url, headers, page_param):
+def _paged(url, headers, page_param, max_pages=80):
     out, page = [], None
-    for _ in range(80):
+    for _ in range(max_pages):
         u = url + ((("&%s=" % page_param) + urllib.parse.quote(page)) if page else "")
         with urllib.request.urlopen(urllib.request.Request(u, headers=headers), timeout=90) as r:
             d = json.loads(r.read())
@@ -29,6 +29,12 @@ def _paged(url, headers, page_param):
             page = nxt
         else:
             break
+    else:
+        # Reached the page cap with the provider STILL paginating. Silently returning a truncated slice would
+        # undercount realtime truth and read as "less spend" — the exact failure this module exists to prevent.
+        # Fail LOUD; by_project_day catches it and records it in meta['errors'] (a named gap, never a silent $0).
+        raise RuntimeError(f"realtime usage exceeded {max_pages} pages and is still paginating — results would be "
+                           f"TRUNCATED; raise max_pages or narrow the window (since={url.split('=')[0]}…)")
     return out
 
 
@@ -53,7 +59,8 @@ def openai_hourly(since):
             if r.get("batch"):
                 continue                                   # batch is already in the ledger; realtime only here
             by[hour].append((_norm_model(r.get("model") or "?"), int(r.get("input_tokens") or 0),
-                             int(r.get("input_cached_tokens") or 0), int(r.get("output_tokens") or 0)))
+                             int(r.get("input_cached_tokens") or 0), int(r.get("output_tokens") or 0),
+                             0))                          # cache-creation slot = 0 (OpenAI bills no separate cache-write)
     return by
 
 
@@ -67,14 +74,26 @@ def anthropic_hourly(since):
         [("starting_at", since + "T00:00:00Z"), ("bucket_width", "1h"), ("limit", "168"),
          ("group_by[]", "model"), ("group_by[]", "service_tier")])
     by = defaultdict(list)
+    skipped = 0
     for b in _paged(url, {"x-api-key": k, "anthropic-version": "2023-06-01"}, "page"):
-        hour = int(datetime.datetime.fromisoformat(b["starting_at"].replace("Z", "+00:00")).timestamp())
+        sa = b.get("starting_at")
+        if not sa:
+            skipped += 1                                 # skip a malformed bucket rather than abort the whole provider parse…
+            continue
+        hour = int(datetime.datetime.fromisoformat(sa.replace("Z", "+00:00")).timestamp())
         for r in b.get("results", []):
             if "batch" in (r.get("service_tier") or "").lower():
                 continue
             by[hour].append((_norm_model(r.get("model") or "?"),
                              int(r.get("uncached_input_tokens") or r.get("input_tokens") or 0),
-                             int(r.get("cache_read_input_tokens") or 0), int(r.get("output_tokens") or 0)))
+                             int(r.get("cache_read_input_tokens") or 0), int(r.get("output_tokens") or 0),
+                             int(r.get("cache_creation_input_tokens") or 0)))   # cache-WRITE (billed ~1.25x); was omitted → undercount
+    if skipped:
+        # …but NEVER silently: a dropped bucket is dropped realtime spend. Leave a trace (the module's rule — a
+        # missing unit of work is surfaced, never a silent $0), so the excluded usage is visible, not invisible.
+        from .config import warn_once
+        warn_once(f"[realtime_oracle] {skipped} anthropic usage bucket(s) missing 'starting_at' were SKIPPED — "
+                  f"their realtime usage is EXCLUDED from the total (the provider returned malformed buckets).")
     return by
 
 
@@ -84,6 +103,7 @@ def _conversation_hours(since):
     from . import conv
     by = defaultdict(lambda: defaultdict(int))
     start = _start_ts(since)
+    skipped = 0
     for s in conv.segments():
         ts = s.get("ts") or ""
         try:
@@ -93,11 +113,19 @@ def _conversation_hours(since):
         if u < start:
             continue
         hour = u - (u % 3600)
-        c = conv.session_classification(s["sid"]) or {}
+        sid = s.get("sid")
+        if not sid:
+            skipped += 1                                 # a segment with no session id can't be classified — skip, don't KeyError-abort the oracle
+            continue
+        c = conv.session_classification(sid) or {}
         org = (c.get("org") or "").strip()
         proj = (c.get("project") or s.get("project_prior") or "").strip().lower()
         if org and proj:
             by[hour][(org, proj)] += 1
+    if skipped:
+        from .config import warn_once
+        warn_once(f"[realtime_oracle] {skipped} conversation segment(s) without a session id were skipped from the "
+                  f"timing-match (their hours are not attributed) — surfaced, not hidden.")
     return by
 
 
@@ -133,10 +161,11 @@ def by_project_day(since):
         day = datetime.datetime.fromtimestamp(hour, datetime.timezone.utc).strftime("%Y-%m-%d")
         active = convh.get(hour) or convh.get(hour - 3600) or {}        # 1h lag for logging delay
         total_active = sum(active.values())                             # Σ segment-activity across (org,project)s
-        for (prov, m, i, c, o) in rows:
+        for (prov, m, i, c, o, cc) in rows:
             # An unpriceable model must not abort the whole realtime-truth computation. cost_or_unpriced returns 0
-            # and RECORDS the model (note_unpriced) so the gap is surfaced, rather than raising here.
-            usd = pricing.cost_or_unpriced(m, i, o, cached_in_tok=c, batch=False)
+            # and RECORDS the model (note_unpriced) so the gap is surfaced, rather than raising here. `cc` = the
+            # Anthropic cache-CREATION tokens now folded in (billed ~1.25x; previously dropped → undercount).
+            usd = pricing.cost_or_unpriced(m, i, o, cached_in_tok=c, batch=False, cache_creation_tok=cc)
             ceiling += usd
             if total_active > 0:
                 # SPLIT this hour's usage across EVERY (org,project) active that hour, proportional to its

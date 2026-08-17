@@ -405,9 +405,16 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         _kind = _learn_from_fallback(lane_name, prompt, bool(out.get("error")))
         import sys as _sys
         if _kind == "unsuitable":
-            print(f"[spendguard] {lane_name} lane unsuitable for this prompt — kept for smaller ones; prompts "
-                  f">= {_lane_big_prompt_ceiling[lane_name]} chars now route to API ({str(s['error'])[:60]})",
-                  file=_sys.stderr)
+            # The ceiling is only LEARNED when the failure was ABOVE the lane's proven-good size; a
+            # content-specific failure WITHIN that size returns "unsuitable" but leaves the ceiling unset. Read it
+            # with .get — a bare index here KeyError'd and took down the very API fallback it was narrating.
+            _ceil = _lane_big_prompt_ceiling.get(lane_name)
+            if _ceil is not None:
+                print(f"[spendguard] {lane_name} lane unsuitable for this prompt — kept for smaller ones; prompts "
+                      f">= {_ceil} chars now route to API ({str(s['error'])[:60]})", file=_sys.stderr)
+            else:
+                print(f"[spendguard] {lane_name} lane unsuitable for this prompt (content-specific, within its "
+                      f"proven-good size) — kept; the API answered it ({str(s['error'])[:60]})", file=_sys.stderr)
         else:
             print(f"[spendguard] {lane_name} lane unavailable — cooling {int(_pool_cooldown_s())}s; the API "
                   f"fallback also failed ({str(s['error'])[:60]})", file=_sys.stderr)
