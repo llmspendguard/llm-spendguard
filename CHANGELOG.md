@@ -20,6 +20,17 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
   files=[…])`, which assembles the prompt through it. Symmetric to the output guarantee (a reply is never read
   as a short answer when it was truncated); the two are cross-referenced in code so they stay discoverable
   together.
+- **Input bounded by the model's real context window on BOTH call paths.** The SDK-adapter guard
+  (`adapters._input_fits`) now bounds the prompt by `pricing.max_input_tokens` — the model's published input
+  window — instead of only the mostly-empty measured char ceiling, matching what `vendor_call.call` already
+  enforced. Both paths count the window with the same accurate, image-aware tokenizer the gate uses (was a
+  `chars//4` proxy in `vendor_call`), so a large prose document that actually fits is no longer false-refused,
+  and an over-window prompt is refused with the real numbers before it bills. INPUT and OUTPUT are now stated as
+  INDEPENDENT axes throughout the token-handling code (input↔`max_input_tokens`, output↔`max_output_tokens`;
+  neither constrains the other), with a behavioural guard test (same payload refused under a small window and
+  accepted under a large one; output budget identical for a tiny vs a huge fitting input) — to end the recurring
+  confusion of reading an OUTPUT figure (the 32k floor, a 4k estimate constant) as an INPUT cap. Stale
+  `max_tokens=512` / `else 2048` comments that no longer matched the code were corrected.
 
 ### Fixed
 - **Realtime-oracle hardening** (from a 4-vendor honestreview of the realtime-reconstruction feature, findings

@@ -91,14 +91,55 @@ check("...measured in CHARS, the unit record_input_limit stores", "chars" in why
 ok2, why2 = adapters._input_fits("fake:fake-model", "hi", None)
 check("a payload within the limit passes", ok2 is True, why2)
 ok3, why3 = adapters._input_fits("fake:no-limit-recorded", "x" * 5000, None)
-check("an UNMEASURED model passes (unmeasured is not unlimited, but it is not a reason to block)", ok3 is True)
-check("...and says so rather than implying it was checked", "UNMEASURED" in why3)
+check("a model with NEITHER a window NOR a measured ceiling passes (unmeasured is not unlimited, but not a block)",
+      ok3 is True, why3)
+check("...and returns a non-empty reason rather than passing silently", bool((why3 or "").strip()))
 
 # THE BUG THIS TEST WAS WRITTEN AFTER: input_limit returns the whole RECORD, `int(record)` raised TypeError,
 # and the except reported "check unavailable" and PASSED — the guard silently checked nothing.
 fits = inspect.getsource(adapters._input_fits)
 check("the record's max_chars is read, not the record itself", 'rec.get("max_chars")' in fits)
 check("a failing input check WARNS instead of passing silently", "warn_once" in fits)
+
+print("\n-- INPUT is bounded by the model's WINDOW (pricing.max_input_tokens), the real per-model max --")
+from spendguard import pricing                                                         # noqa: E402
+# source-structure contract (same kind of check as the two above): the guard wires the model's window accessor.
+check("the input guard consults the model's WINDOW, not only a measured char ceiling", "max_input_tokens" in fits)
+_orig_win = pricing.max_input_tokens
+try:
+    pricing.max_input_tokens = lambda m: 1000              # pretend THIS model's input window is 1000 tokens
+    okA, _a = adapters._input_fits("fake:windowed", "hi", None)
+    check("a small input fits the window", okA is True, _a)
+    okB, _b = adapters._input_fits("fake:windowed", "word " * 4000, None)   # ~4000 tokens, far over 1000
+    check("an input OVER the model's window is REFUSED", okB is False, _b)
+    # THE SAME payload passes once the window is large enough — proving the WINDOW is what bound it, not the text.
+    pricing.max_input_tokens = lambda m: 1_000_000
+    okC, _c = adapters._input_fits("fake:windowed", "word " * 4000, None)
+    check("...and the IDENTICAL payload PASSES under a large window (the window is the bound, nothing else)", okC is True, _c)
+finally:
+    pricing.max_input_tokens = _orig_win
+
+print("\n-- INPUT and OUTPUT are INDEPENDENT: input size does NOT change the output budget --")
+_seen_budget = []
+
+
+def _capture_budget(model, prompt, max_tokens=512, **kw):
+    _seen_budget.append(max_tokens)
+    return {"provider": "fake", "model": model, "text": "ok", "in_tok": 10, "out_tok": 2,
+            "latency": 0.0, "cost": 0.0, "finish_reason": "stop", "error": None}
+
+
+_o_once2, _o_win2 = adapters._call_once, pricing.max_input_tokens
+try:
+    adapters._call_once = _capture_budget
+    pricing.max_input_tokens = lambda m: 10_000_000       # window huge -> BOTH inputs fit, so both calls are sent
+    adapters.call("fake:indep", "hi", max_tokens=1000)                      # tiny input
+    adapters.call("fake:indep", "word " * 5000, max_tokens=1000)           # ~5000-token input, still well within the window
+    check("both fitting inputs were sent (neither was refused)", len(_seen_budget) == 2, str(_seen_budget))
+    check("the OUTPUT budget is IDENTICAL regardless of INPUT size — the axes do not couple",
+          len(_seen_budget) == 2 and _seen_budget[0] == _seen_budget[1], str(_seen_budget))
+finally:
+    adapters._call_once, pricing.max_input_tokens = _o_once2, _o_win2
 
 print(f"\n{'[FAIL]' if failures else 'OK'} test_token_controls_on_every_call: {len(failures)} failure(s)")
 sys.exit(1 if failures else 0)

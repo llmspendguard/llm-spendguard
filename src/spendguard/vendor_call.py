@@ -306,14 +306,23 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
         raise
     except Exception:
         pass
-    # INPUT BOUND, checked before a byte is sent. The provider will reject an over-window request anyway;
-    # the point is to fail here, naming the two numbers, instead of paying for a round trip and reading a
-    # provider error that does not say which field was too big. Same rail as the estimate-side impossibility
-    # check — a per-request input above the published context window is a physical bound, not a threshold.
+    # INPUT BOUND, checked before a byte is sent, and INDEPENDENT of the output budget: this bounds the INPUT by
+    # the model's INPUT window (max_input_tokens) and never touches max_tokens (set separately, below, from the
+    # OUTPUT axis — a big input does not shrink the reply, nor a big reply the allowed input). The provider will
+    # reject an over-window request anyway; the point is to fail here, naming the two numbers, instead of paying
+    # for a round trip and reading a provider error that does not say which field was too big. Same rail as the
+    # estimate-side impossibility check, and the SAME accurate, image-aware token count the gate uses (so a
+    # base64 image is not miscounted as its raw text length, and a prose doc that fits is not false-refused by a
+    # chars/4 over-count) — a per-request input above the published context window is a physical bound.
     try:
         from . import pricing
         window = pricing.max_input_tokens(model)
-        approx_in = (len(prompt or "") + len(system or "")) // 4
+        text = (system or "") + "\n" + (prompt or "")
+        try:
+            from .gate import _content_tokens
+            approx_in = _content_tokens(text, provider=vendor, model=model)
+        except Exception:
+            approx_in = len(text) // 4      # rail fallback if the tokenizer is unavailable — never leaves the window unchecked
         if window and approx_in > int(window):
             raise BadBound(
                 f"{vendor}/{model}: this request's input is ~{approx_in:,} tokens but the model's context "
@@ -326,9 +335,11 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
 
     cap_basis = "caller"
     if max_tokens is not None:
-        # A CALLER-SUPPLIED CAP IS VALIDATED, NEVER TRUSTED. This was the hole: `max_tokens is None` took the
-        # measured path, and anything else was passed straight through. A literal below what this class
-        # demonstrably produces buys nothing (billing is on tokens GENERATED) and destroys the answer.
+        # A CALLER-SUPPLIED OUTPUT CAP IS VALIDATED, NEVER TRUSTED. max_tokens is the OUTPUT axis — independent of
+        # the input-window bound above: it sizes the REPLY and is never affected by how large the input was. This
+        # was the hole: `max_tokens is None` took the measured path, and anything else was passed straight
+        # through. A literal below what this class demonstrably produces buys nothing (billing is on tokens
+        # GENERATED) and destroys the answer.
         try:
             from . import bulkgate
             b = bulkgate.maxtokens(class_sig(model, purpose))

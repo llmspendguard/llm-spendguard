@@ -253,9 +253,10 @@ PRICING = _load()
 
 
 # ── MAXIMUM OUTPUT TOKENS, per model ──────────────────────────────────────────────────────────────────
-# Why this exists: the send-time budget floors at adapters.TOKEN_FLOOR (32k) because a cap has never
-# controlled cost and a low one destroys the answer. But a floor above a model's own limit is a 400, so the
-# floor has to be clamped by what the model actually accepts.
+# Why this exists: the send-time OUTPUT budget floors at adapters.TOKEN_FLOOR (32k OUTPUT tokens — never an
+# input bound) because a cap has never controlled cost and a low one destroys the answer. But a floor above a
+# model's own OUTPUT limit is a 400, so the floor has to be clamped by what the model actually accepts. This is
+# the OUTPUT axis only; the INPUT axis is max_input_tokens, and the two never constrain each other.
 #
 # EVERY VALUE HERE WAS READ FROM THE PROVIDER'S OWN DOCUMENTATION, not inferred and not remembered:
 #   Anthropic — platform.claude.com/docs/en/about-claude/models/overview, "Max output" row, read 2026-08-12.
@@ -360,9 +361,11 @@ CONTEXT_LIMITS = _load_context()
 
 
 def max_output_tokens(model: str):
-    """The model's published output ceiling, or None. Used as the LAST-RESORT expected-output figure when a
-    caller sets no max_tokens and the class has no measured history — and, for providers that REQUIRE the
-    field (Anthropic), as the honest 'deliberately huge' value instead of an invented constant."""
+    """The model's published OUTPUT ceiling (tokens), or None. This is the OUTPUT axis, INDEPENDENT of
+    max_input_tokens: it bounds the REPLY size and is never reduced by how large the input was. Used as the
+    LAST-RESORT expected-output figure when a caller sets no max_tokens and the class has no measured history —
+    and, for providers that REQUIRE the field (Anthropic), as the honest 'deliberately huge' value instead of an
+    invented constant."""
     if not model:
         return None
     for key in (model, normalize(model)):
@@ -381,9 +384,11 @@ def max_output_tokens(model: str):
 
 
 def max_input_tokens(model: str):
-    """The model's published input-context limit, or None if we don't know it. A request larger than this is
-    REJECTED by the provider, so an estimate implying one is impossible — that is what makes this a rail and
-    not a tuned threshold (see gate._implausible_estimate)."""
+    """The model's published INPUT-context limit (tokens), or None if we don't know it. This is the INPUT axis,
+    INDEPENDENT of max_output_tokens: it bounds how much prompt may be SENT and says nothing about the reply
+    size. A request larger than this is REJECTED by the provider, so an estimate implying one is impossible —
+    that is what makes this a rail and not a tuned threshold (consumers: gate._implausible_estimate on the
+    estimate side, adapters._input_fits and vendor_call.call on the two call paths)."""
     if not model:
         return None
     for key in (model, normalize(model)):

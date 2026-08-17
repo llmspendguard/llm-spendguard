@@ -224,10 +224,11 @@ def _openai_strict(schema):
     return s
 
 
-# DEFAULT: no cap. `max_tokens=512` sat here and quietly capped every caller who did not name a number —
-# including callers that deliberately pass none precisely so the measured budget applies. _call_guarded
-# resolves None from the call-class's OWN measured history (autotune `recommend`, else 2048), which is the
-# mechanism this package built for exactly this and which a default of 512 skipped entirely.
+# DEFAULT: no cap. `max_tokens=512` sat here (now REMOVED) and quietly capped every caller who did not name a
+# number — including callers that deliberately pass none precisely so the measured budget applies. _call_guarded
+# resolves None on the OUTPUT axis: the 32k floor (TOKEN_FLOOR), RAISED — never lowered — by the call-class's own
+# measured history (autotune `recommend`). That is the mechanism this package built for exactly this, and which a
+# default of 512 skipped entirely. (None of this concerns the INPUT: input is bounded separately by the window.)
 #
 # A cap was never cost control: you are billed for the tokens GENERATED, so a low cap saves nothing and
 # instead truncates the answer — and a truncated JSON body reads downstream as "no findings" rather than
@@ -254,13 +255,16 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     "UNREVIEWED" that were really just truncated. A control the caller must remember to use is a control
     that will not be there when it matters, so both now happen unconditionally, here.
 
-      INPUT   the prompt is measured against the recorded input limit for (vendor, model) BEFORE sending.
-              Over it → an explicit error, not a request the vendor silently clips.
-      OUTPUT  a reply the provider marks as cut off is RETRIED at double the budget; if it still will not
-              fit, text=None and truncated=True, so a truncated body can never be read as a short answer.
+    INPUT AND OUTPUT ARE INDEPENDENT — bounded by DIFFERENT model numbers, neither constraining the other:
+      INPUT   the prompt is measured against the model's INPUT window (pricing.max_input_tokens) BEFORE sending.
+              Over it → an explicit error, not a request the vendor silently clips. This never touches max_tokens.
+      OUTPUT  the reply budget floors at TOKEN_FLOOR and is clamped by the model's OUTPUT ceiling
+              (pricing.max_output) — set from the OUTPUT axis alone, never lowered by how large the input was.
+              A reply the provider marks as cut off is RETRIED at double the budget; if it still will not fit,
+              text=None and truncated=True, so a truncated body can never be read as a short answer.
 
-    `sig` names the call-class so the budget comes from its measured p99 instead of the 512 default, and so
-    each reply feeds that measurement. `reasoning` (minimal|low|medium|high) sets reasoning effort for
+    `sig` names the call-class so the OUTPUT budget comes from its measured p99 (never a literal nobody picked),
+    and so each reply feeds that measurement. `reasoning` (minimal|low|medium|high) sets reasoning effort for
     gpt-5/o-series models; defaults to 'minimal' for them (default-medium reasoning eats the token budget →
     empty output, and costs more — wrong for simple classify/extract calls)."""
     # INPUT-COMPLETENESS: fold whole, stamped, self-verified files into the prompt BEFORE the guards, so the
@@ -640,7 +644,12 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
 # INPUT TWIN: this section guards the OUTPUT (a reply is never read as short when it was truncated). The mirror
 # guard on the INPUT lives in llm_files.attach_whole — a prompt never silently carries a truncated FILE — and is
 # reachable through call(files=[…]) above. The two are meant to be read together: same discipline, both ends.
-# THE FLOOR, AND WHY IT IS NOT A PREDICTION.
+# THE OUTPUT FLOOR, AND WHY IT IS NOT A PREDICTION.
+#
+# AXIS NOTE (read this before quoting 32k anywhere): TOKEN_FLOOR is an OUTPUT number — the reply budget. It is
+# INDEPENDENT of the input. A large prompt never lowers it, and it never limits how much INPUT may be sent;
+# input is bounded separately by the model's input window (pricing.max_input_tokens). There is no input default
+# of any size — an unmeasured input is not capped at 32k or anything else. Do not describe this as an input cap.
 #
 # A cap has never controlled cost — you are billed for the tokens GENERATED, so an unused budget is free and
 # a low budget saves exactly nothing. All a cap can do is destroy the answer. Every attempt to be clever
@@ -653,44 +662,68 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
 # spent entirely on reasoning returns a well-formed response whose text is "".
 #
 # So: start at the floor and let a measurement raise it, never lower it. The prediction can only add.
-TOKEN_FLOOR = 32_000             # never send less than this unless the CALLER deliberately named a number
-MAX_TOKEN_CEILING = 128_000      # absolute stop for the doubling retry — above the floor so retries have room
+TOKEN_FLOOR = 32_000             # OUTPUT reply budget — never send less unless the CALLER named a number; NOT an input cap
+MAX_TOKEN_CEILING = 128_000      # OUTPUT: absolute stop for the doubling retry — above the floor so retries have room
 
 
 def _input_fits(model, prompt, system):
-    """(ok, detail) — does this payload fit the recorded input limit for (vendor, model)?
+    """(ok, detail) — does the INPUT fit the model's INPUT window?
 
-    UNMEASURED IS NOT UNLIMITED, and it is also not a reason to block: vendor_call.input_limit returns None
-    when nobody has measured that model, and refusing every unmeasured model would make the guard useless on
-    day one. So an unknown limit passes with the fact recorded, and a KNOWN limit is enforced. Counting the
-    tokens of a fixed string is arithmetic, and comparing two numbers is arithmetic; nothing here is a
-    judgement."""
+    INPUT AND OUTPUT ARE INDEPENDENT AXES — the point people and agents keep getting wrong, so it is said here
+    plainly. This function looks at the INPUT ONLY, and bounds it by the model's INPUT limit (max_input_tokens).
+    It does not read, set, or shrink the output budget (max_tokens); and the output budget never limits how much
+    input you may send. The two are bounded by DIFFERENT model numbers — input by `max_input_tokens`, output by
+    `max_output_tokens` — and a large input does NOT reduce the reply size, nor a large reply the allowed input.
+    The ONLY coupling is physical: an input OVER the input window means the call cannot be MADE at all (the
+    provider rejects the whole request), which is the sole reason an over-window input is refused here — not any
+    output consideration.
+
+    Two INDEPENDENT input bounds, whichever is stricter:
+      1. THE MODEL'S INPUT WINDOW (`pricing.max_input_tokens`, tokens) — the real per-model max. A request over it
+         is REJECTED by the provider (not clipped), so this is a rail, not a tuned number; counted with the same
+         tokenizer the gate uses. Wired here so an over-window prompt is caught BEFORE it bills, with the real
+         number, instead of relying on a provider 400.
+      2. A MEASURED PROVIDER PAYLOAD CEILING (`vendor_call.input_limit`, CHARS) — kept as a STRICTER override where
+         a provider enforces a size limit tighter than the token window (measured on Moonshot by bisection).
+
+    UNMEASURED IS NOT UNLIMITED, but a guard that refuses every UNKNOWN model is useless — so unknown on BOTH
+    passes (never silently, the detail says so). A swallow inside this guard is worse than anywhere else (it
+    disables the very check whose presence the reader trusts), so the failure path says so OUT LOUD."""
     try:
-        from . import vendor_call
+        from . import vendor_call, pricing
         vendor = provider_for(model)
         raw = model.split(":", 1)[1] if ":" in model else model
+        text = (system or "") + "\n" + (prompt or "")
+
+        # 1) THE MODEL'S INPUT WINDOW (tokens) — independent of the output budget. Tokenize ONLY when the char
+        # count could reach the window: a token is >= 1 char, so len(text) <= window ⇒ tokens <= window ⇒ it fits,
+        # and small calls never pay for tokenization.
+        win = pricing.max_input_tokens(raw)
+        if win and len(text) > int(win):
+            try:
+                from .gate import _content_tokens      # the exact tokenizer the gate already counts input with — one source
+                tok = _content_tokens(text, provider=vendor, model=raw)
+            except Exception:
+                tok = len(text) // 4                   # rail fallback if the tokenizer is unavailable — the window still gets checked
+            if tok > int(win):
+                return False, (f"~{tok:,} input tokens exceed the model's {int(win):,}-token context window — "
+                               f"split the input; a request over the window is rejected by the provider, not clipped")
+
+        # 2) A MEASURED PROVIDER PAYLOAD CEILING (chars) — stricter override. record_input_limit's parameter is
+        # `max_chars` (payload SIZE), so compare CHARS to it, never tokens (an earlier cut compared tokens to this
+        # char limit and refused every payload ~4x too early — a guard that blocks correct work is a broken one).
         rec = vendor_call.input_limit(vendor, raw)
-        # input_limit returns the whole RECORD ({max_chars, method, source, measured}), not a scalar. The
-        # first cut of this did `int(lim)` on the dict, raised TypeError, and the except below reported
-        # "input check unavailable" and PASSED — so the guard written to stop unchecked payloads silently
-        # checked nothing, and a 506-token payload went out and billed. A swallow inside a guard is worse
-        # than a swallow anywhere else: it disables the very thing whose presence the reader is trusting.
         lim = rec.get("max_chars") if isinstance(rec, dict) else rec
-        if not lim:
-            return True, "input limit UNMEASURED for this model"
-        # CHARS, NOT TOKENS. record_input_limit's parameter is `max_chars`, because what it measures is a
-        # ceiling the provider enforces on payload SIZE (measured on Moonshot by bisection). The first cut of
-        # this compared a TOKEN count against that char limit and would have refused every payload about four
-        # times too early — a guard that blocks correct work is not a safer guard, it is a broken one.
-        n = len((system or "") + "\n" + (prompt or ""))
-        if n > int(lim):
-            return False, f"{n:,} chars exceeds the measured limit of {int(lim):,} for this model"
-        return True, f"{n:,}/{int(lim):,} chars"
+        if lim and len(text) > int(lim):
+            return False, f"{len(text):,} chars exceed the measured payload ceiling of {int(lim):,} chars for this model"
+
+        if not win and not lim:
+            return True, "input window UNKNOWN for this model (unmeasured — not blocked, never silently unlimited)"
+        return True, "input fits" + (f" · window {int(win):,} tok" if win else "") + (f" · ceiling {int(lim):,} ch" if lim else "")
     except Exception as e:
-        # The guard failing is not the payload failing, so the call proceeds — the vendor will reject an
-        # oversized request itself, which is a worse error message but not a wrong answer. But it is said
-        # OUT LOUD, because a silent "check unavailable" is indistinguishable from "checked and fine", and
-        # that is exactly how this function passed a payload it was supposed to measure.
+        # The guard failing is not the payload failing, so the call proceeds — the provider will reject an oversized
+        # request itself (worse error, not a wrong answer). Said OUT LOUD: a silent "check unavailable" is
+        # indistinguishable from "checked and fine", which is how this function once passed a payload unchecked.
         from . import config as _cfg
         _cfg.warn_once(f"[spendguard] the input-size check FAILED for {model} ({type(e).__name__}: "
                        f"{str(e)[:60]}) — the payload was NOT checked. This is a bug in the check.")
@@ -699,6 +732,12 @@ def _input_fits(model, prompt, system):
 
 def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
     """The input and output token guards, run on EVERY call. Not a helper anyone has to remember.
+
+    TWO INDEPENDENT guards on TWO independent axes, and this is the place to internalise that: `_input_fits`
+    bounds the INPUT by the model's input window (max_input_tokens); the max_tokens block below sets the OUTPUT
+    budget from the OUTPUT ceiling (max_output) plus measurement. Neither reads the other — a big input never
+    shrinks the output budget, and the output budget never limits the input. The input guard may REFUSE the call
+    (an over-window input cannot be sent at all); it never trims the prompt, and it never touches the reply size.
 
     An earlier version of this was a sibling function (`call_complete`) that callers opted into, and the
     result was measurable within the hour: 1 of 9 judging scripts used it, and a name-review re-run reported

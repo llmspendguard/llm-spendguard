@@ -32,8 +32,10 @@ from . import vendor_call, pricing
 
 # Named defaults (a value with a name, overridable per call) — never a literal at a call site.
 _DEFAULT_DEADLINE_S = 200.0        # per-vendor default when the caller names none; time_budget refines it per model
-_BUDGET_EST_OUTPUT_TOKENS = 4000   # output-token figure for the PRE-flight cost estimate only (the ledger bills actual)
-_CHARS_PER_TOKEN = 4               # rough input-token proxy for the estimate; the real count is metered downstream
+_BUDGET_EST_OUTPUT_TOKENS = 4000   # OUTPUT tokens, PRE-FLIGHT COST ESTIMATE ONLY — NOT a send-time max_tokens cap, and
+                                   # NOT any input bound. The real call floors OUTPUT at adapters.TOKEN_FLOOR (32k) and the
+                                   # ledger bills ACTUAL tokens; this figure only prices the fan-out before it runs.
+_CHARS_PER_TOKEN = 4               # rough INPUT-token proxy for that same estimate; the real input count is metered downstream
 
 
 class BudgetRefused(RuntimeError):
