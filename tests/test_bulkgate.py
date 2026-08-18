@@ -14,6 +14,8 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 
 os.environ["SPENDGUARD_ENFORCE"] = "block"   # strict mode (raises) — set ALWAYS (the runner pre-sets ISOLATED, which
                                              # skips the block above, so this must be unconditional)
+os.environ["SPENDGUARD_REQUIRE_EVAL"] = "0"  # this file tests the ESTIMATE+TEST layer in isolation; the EVAL
+                                             # checkpoint (estimate→test→eval→run) has its own test_lifecycle_eval_gate.py
 
 from spendguard import bulkgate, config
 

@@ -59,9 +59,18 @@ SETTINGS = [
               "Capture-only (never blocks); SDK calls are suppressed (no double count)."),
     dict(section="gate", key="enforce", store="config.json:gate.enforce", env="SPENDGUARD_ENFORCE", default="warn",
          kind="enum:off,warn,block", secret=False,
-         desc="Test-first enforcement for batches over the size threshold (the estimate → test → run sequence): "
-              "off = no requirement; warn = log a 'would-block' when a batch runs without a fresh estimate+test "
-              "(default); block = hard-require a fresh estimate → test before the batch runs."),
+         desc="Lifecycle enforcement for batches over the size threshold (the estimate → test → eval → run sequence): "
+              "off = no requirement; warn = log a 'would-block' when a batch runs without a fresh estimate+test+eval "
+              "(default); block = hard-require the fresh estimate → test → eval before the batch runs."),
+    dict(section="gate", key="require_eval", store="config.json:gate.require_eval", env="SPENDGUARD_REQUIRE_EVAL",
+         default=True, kind="bool", secret=False,
+         desc="Does a gated scale run also require a fresh PASSING eval (a STATED bar + an AGENTIC verdict on the test "
+              "sample), on top of estimate+test? Default on — the eval is the lifecycle's quality checkpoint. Set "
+              "false to fall back to the estimate+test-only gate while a repo adopts evals."),
+    dict(section="gate", key="eval_model", store="config.json:gate.eval_model", env="SPENDGUARD_EVAL_MODEL",
+         default=None, kind="str|null", secret=False,
+         desc="Model for the eval JUDGE (bulkgate.eval_job) — a cheap-but-capable class is right (Haiku / a mini "
+              "model). Unset → falls back to config.advisor_judge_model. Config, never hardcoded."),
 
     # ── subscription (flat plan fees — a REAL cost line, and the denominator the est-value axis sits against) ──
     dict(section="subscription", key="plan_usd", store="config.json:subscription.plan_usd", env="SPENDGUARD_PLAN_USD",

@@ -25,6 +25,8 @@ import os, sys, tempfile
 # anything inside the self-isolation block below would silently not apply and the gate would run in `warn` mode
 # — the tests would then pass for the wrong reason. (Same trap documented in tests/test_receipt.py.)
 os.environ["SPENDGUARD_ENFORCE"] = "block"              # exercise the real gate, not the roll-out grace period
+os.environ["SPENDGUARD_REQUIRE_EVAL"] = "0"             # this file tests the contract/data-signature freshness layer;
+                                                        # the EVAL checkpoint has its own test_lifecycle_eval_gate.py
 
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"

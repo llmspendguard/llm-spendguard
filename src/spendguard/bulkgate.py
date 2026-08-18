@@ -2,13 +2,17 @@
 zero-spend ESTIMATE and a verified small-sample TEST. The protocol used to exist only as discipline and got skipped
 (a real consumer's opus escalation spent ~$5.61 unestimated + untested, then crashed). This makes the gate BLOCK instead.
 
-How: two flags — `estimated` and `tested` — attach to a CALL-CLASS SIGNATURE (model + template + schema), persist in
-sqlite (survive a fresh `python`), and `check_bulk` REFUSES a bulk submit whose sig lacks FRESH flags. The only path to
-a full paid run becomes estimate → small test → verify → run. `model` is part of the sig, so testing Haiku never
-authorizes Opus/nano; changing the prompt/schema changes the sig → must re-test (no "tested v1, ran v2").
+How: three flags — `estimated`, `tested`, and `eval-passed` — attach to a CALL-CLASS SIGNATURE (model + template +
+schema), persist in sqlite (survive a fresh `python`), and `check_bulk` REFUSES a scale submit whose sig lacks FRESH
+flags. The only path to a full paid run becomes estimate → test (parse the shape) → EVAL (an LLM judges the sample
+against a STATED bar) → run. `model` is part of the sig, so testing Haiku never authorizes Opus/nano; changing the
+prompt/schema changes the sig → must re-test (no "tested v1, ran v2").
 
-Surface: record_estimate · record_tested · check_bulk (raises GateBlocked) · status · sig · gated_batch (the ordered
-unblock wrapper). Rollout via SPENDGUARD_ENFORCE = off | warn | block (default `warn` — log "would-block" — then `block`).
+Surface: record_estimate · record_tested · record_eval · eval_job (the AGENTIC quality checkpoint) · check_bulk
+(raises GateBlocked) · status · sig · gated_batch (the ordered unblock wrapper). The eval VERDICT is a judgement (an
+LLM decides it); the gate's CHECK ("does a fresh passing eval exist?") is the only mechanical part. Rollout via
+SPENDGUARD_ENFORCE = off | warn | block (default `warn` — log "would-block" — then `block`); the eval requirement is
+`gate.require_eval` (default on).
 """
 import os
 import time
@@ -20,7 +24,9 @@ import contextlib
 from . import config
 
 PREVIEW_MAX_DEFAULT = 25          # a run of <= this many requests is a PREVIEW/TEST — allowed WITHOUT flags (it IS the test)
-BULK_MIN_USD_DEFAULT = 0.50       # below this estimated cost, no enforcement (trivial spend)
+BULK_MIN_USD_DEFAULT = 0.25       # $-primary trigger DEFAULT (tunable: gate.bulk_min_usd): below this estimated cost,
+                                  # no enforcement (trivial / a single small call). At/above it AND multi-unit (count >
+                                  # preview_max, so there IS a sample to test+eval) the lifecycle gate engages.
 FRESHNESS_HOURS_DEFAULT = 24      # flags expire — a stale test can't authorize a much-later run on changed data
 
 _lock = threading.RLock()
@@ -46,9 +52,15 @@ def _db():
                     " updated_at REAL)")
                 # Additive, forward-only. `verified` alone said a test HAPPENED; these say what it PROVED —
                 # which contract the output was checked against, on which data, and what the sample did.
+                # The eval_* columns add the LIFECYCLE checkpoint ABOVE the shape-test: a STATED bar + an AGENTIC
+                # verdict on the sample. eval_bar is REQUIRED non-empty (an eval can't be an empty rubber-stamp);
+                # eval_verdict is the pass/fail; eval_score/eval_note carry the judge's graded reasoning; eval_model
+                # records WHICH model judged (honesty). Test = "did it parse the shape"; eval = "is it GOOD".
                 for col, decl in (("contract", "TEXT"), ("contract_hash", "TEXT"), ("data_sig", "TEXT"),
                                   ("test_parsed", "INTEGER"), ("test_salvaged", "INTEGER"),
-                                  ("test_failed", "INTEGER"), ("test_failure", "TEXT")):
+                                  ("test_failed", "INTEGER"), ("test_failure", "TEXT"),
+                                  ("eval_at", "REAL"), ("eval_bar", "TEXT"), ("eval_verdict", "INTEGER"),
+                                  ("eval_score", "REAL"), ("eval_note", "TEXT"), ("eval_model", "TEXT")):
                     try:
                         c.execute(f"ALTER TABLE gate_ledger ADD COLUMN {col} {decl}")
                     except sqlite3.OperationalError:
@@ -82,6 +94,17 @@ def bulk_min_usd():
 
 def freshness_hours():
     return _cfg("freshness_hours", FRESHNESS_HOURS_DEFAULT, float)
+
+
+def require_eval():
+    """Does a gated scale run additionally require a FRESH PASSING eval (a stated bar + an agentic verdict on the
+    sample), on top of estimate+test? Default TRUE — the eval is the lifecycle's quality checkpoint. Set
+    `gate.require_eval=false` (or SPENDGUARD_REQUIRE_EVAL=0) to fall back to the estimate+test-only gate. Config, not
+    a hardcode: a repo that has not yet adopted evals can keep the older gate while it does."""
+    v = os.getenv("SPENDGUARD_REQUIRE_EVAL")
+    if v is not None:
+        return v.strip().lower() not in ("0", "false", "no", "off")
+    return config._cfg_get("gate", "require_eval", True) is not False
 
 
 def mode():
@@ -162,6 +185,29 @@ def record_tested(sig, test_n, verified=True, contract=None, result=None, data_s
     return now
 
 
+def record_eval(sig, bar, verdict, score=None, note=None, model=None):
+    """Record the EVAL checkpoint for this call-class: a verdict on the test sample against a STATED bar. A bar is
+    REQUIRED — an eval with no criterion is an empty rubber-stamp, so an empty bar is REFUSED rather than recorded as
+    a meaningless pass. `verdict` is the pass/fail an LLM judge returned (see eval_job — the verdict is a JUDGEMENT,
+    made agentically, never by keyword here); score/note carry its graded reasoning; `model` records WHO judged
+    (honesty). Same sig as estimate+test — one intent, one row."""
+    bar = (bar or "").strip()
+    if not bar:
+        raise ValueError("eval needs a STATED bar (what a passing output looks like) — an eval without a bar is an "
+                         "empty rubber-stamp and cannot authorize a run. Pass bar='...'.")
+    now = time.time()
+    with _lock:
+        _db().execute(
+            "INSERT INTO gate_ledger (sig,eval_at,eval_bar,eval_verdict,eval_score,eval_note,eval_model,updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(sig) DO UPDATE SET eval_at=excluded.eval_at, "
+            "eval_bar=excluded.eval_bar, eval_verdict=excluded.eval_verdict, eval_score=excluded.eval_score, "
+            "eval_note=excluded.eval_note, eval_model=excluded.eval_model, updated_at=excluded.updated_at",
+            (sig, now, bar, int(bool(verdict)), (float(score) if score is not None else None),
+             (str(note)[:500] if note else ""), (model or ""), now))
+        _db().commit()
+    return now
+
+
 def status(sig, contract=None, data_sig=None):
     """{estimated, tested, verified, fresh, contract, …} for this sig — freshness-aware.
 
@@ -171,27 +217,40 @@ def status(sig, contract=None, data_sig=None):
     from . import output_contract
     with _lock:
         r = _db().execute("SELECT model,estimated_at,est_usd,est_count,tested_at,test_n,verified,"
-                          "contract,contract_hash,data_sig,test_parsed,test_salvaged,test_failed,test_failure "
+                          "contract,contract_hash,data_sig,test_parsed,test_salvaged,test_failed,test_failure,"
+                          "eval_at,eval_bar,eval_verdict,eval_score,eval_note "
                           "FROM gate_ledger WHERE sig=?", (sig,)).fetchone()
     if not r:
-        return {"sig": sig, "estimated": False, "tested": False, "verified": False, "fresh": False,
+        return {"sig": sig, "estimated": False, "tested": False, "verified": False, "eval_ok": False,
+                "eval_required": require_eval(), "fresh": False,
                 "contract": "", "contract_match": False, "data_match": False,
                 "reason": "never estimated or tested"}
     est_ok, test_ok = _fresh(r[1]), _fresh(r[4])
     want_c = output_contract.contract_hash(contract) if contract is not None else None
     c_match = True if want_c is None else (want_c == (r[8] or ""))
     d_match = True if not data_sig else (str(data_sig) == (r[9] or ""))
-    fresh = est_ok and test_ok and bool(r[6]) and c_match and d_match
+    # EVAL: a fresh, PASSING verdict against a STATED bar. Folded into `fresh` only when require_eval() is on, so a
+    # repo still on the estimate+test gate is unaffected; eval_ok is reported either way so the caller can see it.
+    eval_fresh, eval_bar, eval_verdict = _fresh(r[14]), (r[15] or ""), bool(r[16])
+    eval_ok = eval_fresh and eval_verdict and bool(eval_bar)
+    need_eval = require_eval()
+    fresh = est_ok and test_ok and bool(r[6]) and c_match and d_match and (eval_ok or not need_eval)
     reason = ("" if fresh else
               "estimate stale/missing" if not est_ok else
               "test stale/missing" if not test_ok else
               "the sample output did NOT match the declared contract" if not r[6] else
               "the output contract CHANGED since the test" if not c_match else
-              "the test ran on DIFFERENT data")
+              "the test ran on DIFFERENT data" if not d_match else
+              "no eval yet — a STATED bar + an agentic verdict on the sample is required" if need_eval and not eval_fresh else
+              "the eval FAILED its stated bar (a failing eval keeps scale blocked until a passing one exists)"
+              if need_eval and not eval_verdict else
+              "the eval has no STATED bar" if need_eval and not eval_bar else "")
     return {"sig": sig, "model": r[0], "estimated": est_ok, "est_usd": r[2], "est_count": r[3],
             "tested": test_ok, "test_n": r[5], "verified": bool(r[6]), "fresh": fresh,
             "contract": r[7] or "", "contract_match": c_match, "data_match": d_match, "data_sig": r[9] or "",
             "parsed": r[10] or 0, "salvaged": r[11] or 0, "failed": r[12] or 0, "failure": r[13] or "",
+            "eval_ok": eval_ok, "eval_required": need_eval, "eval_bar": eval_bar, "eval_verdict": eval_verdict,
+            "eval_score": r[17], "eval_note": r[18] or "", "eval_fresh": eval_fresh,
             "reason": reason}
 
 
@@ -206,8 +265,9 @@ def _log_block(sig, model, count, est_usd, decision):
             f.write(json.dumps(rec) + "\n")
     except Exception:
         pass
-    print("[bulkgate] %s %s (%s): %d reqs ~$%.2f without fresh estimate+test"
-          % (decision.upper(), sig, model, count, float(est_usd or 0)), file=sys.stderr)
+    print("[bulkgate] %s %s (%s): %d reqs ~$%.2f without a fresh %s"
+          % (decision.upper(), sig, model, count, float(est_usd or 0),
+             "estimate+test+eval" if require_eval() else "estimate+test"), file=sys.stderr)
 
 
 def check_bulk(sig, model, count, est_usd, force=False, contract=None, data_sig=None):
@@ -241,12 +301,13 @@ def check_bulk(sig, model, count, est_usd, force=False, contract=None, data_sig=
         detail = (" The last sample only parsed after stripping a fence/preamble (%d items) — fix the prompt or "
                   "widen the contract." % st["salvaged"])
     raise GateBlocked(
-        "BLOCKED %s (%s): bulk run of %d (~$%.2f) needs estimate+test FIRST — %s "
-        "(estimated=%s tested=%s contract-verified=%s). Run estimate_job(sig, model, worst_case_usd, count), then "
-        "a <=%d-item test_job(sig, run_fn, contract=[...], items=[...]), then re-run.%s Override (logged): "
-        "GATE_FORCE=1."
+        "BLOCKED %s (%s): scale run of %d (~$%.2f) needs estimate+test+eval FIRST — %s "
+        "(estimated=%s tested=%s contract-verified=%s eval=%s). Run estimate_job(sig, model, worst_case_usd, count), "
+        "a <=%d-item test_job(sig, run_fn, contract=[...], items=[...]), then eval_job(sig, bar='what a passing "
+        "output looks like', sample=test_outputs), then re-run.%s Override (logged): GATE_FORCE=1."
         % (sig, model, count, float(est_usd or 0), st.get("reason") or "not authorized",
-           st["estimated"], st["tested"], st["verified"], pm, detail))
+           st["estimated"], st["tested"], st["verified"],
+           ("pass" if st.get("eval_ok") else "MISSING/FAIL") if st.get("eval_required") else "n/a", pm, detail))
 
 
 # ── max_tokens: truncation DETECTION (the API states it — a fact, not a guess) + data-driven bounds (measure the
@@ -568,6 +629,67 @@ def test_job(sig, run_fn, n=None, verify_fn=None, contract=None, items=None):
     return out
 
 
+# ── EVAL: the lifecycle checkpoint ABOVE the shape-test. test_job asks "did the sample PARSE the declared shape";
+#    eval_job asks "is the sample GOOD ENOUGH against a STATED bar". The verdict is a JUDGEMENT, so an LLM decides it
+#    (agentic — never a keyword/threshold rubber-stamp, per CLAUDE.md); the gate's later check ("does a passing eval
+#    exist?") is the only mechanical part. Mirrors advisor.reconstruct (config.advisor_judge_model, caged as meta). ──
+_EVAL_SYS = ("You are a strict, honest evaluator. You are given a STATED BAR (the quality criterion a task's output "
+             "must meet) and a SAMPLE of that task's actual outputs from a small test run. Decide whether the SAMPLE "
+             "AS A WHOLE meets the bar. Be specific and unforgiving: a sample that only partly meets the bar, or that "
+             "matches the shape but not the intent, FAILS. Do not invent leniency the bar does not state.")
+_EVAL_SCHEMA = {"type": "object", "additionalProperties": False,
+                "properties": {"pass": {"type": "boolean"},
+                               "score": {"type": "number"},            # 0..1 — how well the sample meets the bar
+                               "rationale": {"type": "string"}},
+                "required": ["pass", "score", "rationale"], "nonempty": ["rationale"]}
+_EVAL_SAMPLE_CHARS = 12000       # how much of the sample the judge sees; over this, a WHOLE prefix + an HONEST note
+_EVAL_OUT_CEILING = 1500         # OUTPUT budget for the verdict — a structured {pass,score,rationale} needs room, and
+                                 # a reasoning judge model must not have it eaten by hidden thinking (mirrors advisor._MINE_OUT)
+
+
+def _eval_verdict_from_result(r):
+    """Parse the judge's structured verdict. FAIL-SAFE: an unparseable or empty judge reply is NOT a pass — an eval
+    that did not clearly clear the bar cannot authorize scale, so ambiguity blocks rather than waves work through."""
+    from . import output_contract
+    txt = (r or {}).get("text") or ""
+    obj, _ = output_contract._as_obj(txt) if txt else (None, False)
+    if not isinstance(obj, dict):
+        return {"pass": False, "score": 0.0, "rationale": "judge returned no parseable verdict — treated as FAIL"}
+    return {"pass": bool(obj.get("pass")), "score": float(obj.get("score") or 0.0),
+            "rationale": str(obj.get("rationale") or "")[:500]}
+
+
+def eval_job(sig, bar, sample, model=None):
+    """Step 2.5 of estimate → test → EVAL → run: an AGENTIC judge scores the TEST SAMPLE against a STATED bar and
+    records pass/fail, so a later scale run is authorized only when a fresh PASSING eval exists.
+
+        eval_job(sig, bar="every row cites a real source id and a non-empty finding; no invented codes",
+                 sample=test_outputs)
+
+    `bar` is REQUIRED (an eval with no criterion is an empty rubber-stamp — refused). `sample` is the test outputs
+    (a list, or already-joined text). The judge is a CHEAP configured model (gate.eval_model, else
+    config.advisor_judge_model), run under the meta intent so its own tiny spend is attributed and it never recurses
+    into this gate. The verdict is the LLM's — never decided here by keyword. Returns {pass, score, rationale}."""
+    bar = (bar or "").strip()
+    if not bar:
+        raise ValueError("eval_job needs a STATED bar (what a passing output looks like) — pass bar='...'.")
+    from . import adapters, calls, config
+    from .advisor import META                                    # ONE source of the meta-intent prefix
+    judge = model or _cfg("eval_model", None, str) or config.advisor_judge_model()
+    body = sample if isinstance(sample, str) else "\n---\n".join(str(x) for x in sample)
+    shown = body[:_EVAL_SAMPLE_CHARS]
+    more = "" if len(body) <= _EVAL_SAMPLE_CHARS else (       # HONEST bound — the judge is told it saw a prefix
+        "\n\n[showing the first %d of %d chars of the sample]" % (_EVAL_SAMPLE_CHARS, len(body)))
+    prompt = ("STATED BAR (a passing sample must meet this):\n" + bar +
+              "\n\nSAMPLE OUTPUTS from the small test run:\n" + shown + more +
+              "\n\nDoes the SAMPLE meet the BAR? Return {pass, score 0..1, rationale}.")
+    with calls.context(intent=f"{META}:eval"):
+        r = adapters.call(judge, prompt, system=_EVAL_SYS, schema=_EVAL_SCHEMA, max_tokens=_EVAL_OUT_CEILING)
+    v = _eval_verdict_from_result(r)
+    record_eval(sig, bar, v["pass"], score=v.get("score"), note=v.get("rationale"), model=judge)
+    return v
+
+
 _rt_window = {}    # sig -> [recent call timestamps] — in-process burst tracking for the realtime gate
 _rt_warned = {}    # sig -> last warn ts — warn-mode log dedup (a big un-adopted loop must not spam one line per call)
 
@@ -601,15 +723,17 @@ def check_realtime(sig, model, est_usd=0.0, force=False):
 
 @contextlib.contextmanager
 def gated_batch(sig, model):
-    """Ordered unblock wrapper so a consumer CAN'T run before estimate+test:
+    """Ordered unblock wrapper so a consumer CAN'T run before estimate+test+eval:
         with bulkgate.gated_batch(sig, model) as job:
-            job.estimate(worst_case_usd, count)     # record_estimate
-            job.test(n, run_fn, verify_fn=None)     # runs a <=preview_max sample (allowed), verifies, record_tested
-            job.run(count, est_usd, submit_fn)      # check_bulk (raises if estimate/test missing) → submit_fn()
+            job.estimate(worst_case_usd, count)              # record_estimate
+            sample = job.test(n, run_fn, contract=[...], items=[...])   # <=preview_max sample (allowed), verify shape
+            job.eval(bar="what a passing output looks like")            # AGENTIC verdict on that sample (defaults to it)
+            job.run(count, est_usd, submit_fn)               # check_bulk (raises if estimate/test/eval missing) → submit_fn()
     a consumer's batch pool becomes a CONSUMER of this, not a reimplementation."""
     class _Job:
         _contract = None
         _items = None
+        _sample = None
 
         def estimate(self, est_usd, count):
             record_estimate(sig, model, est_usd, count)
@@ -618,7 +742,12 @@ def gated_batch(sig, model):
         def test(self, n, run_fn, verify_fn=None, contract=None, items=None):
             self._contract = contract                             # remembered so .run() asserts the SAME shape
             self._items = items
-            return test_job(sig, run_fn, n=n, verify_fn=verify_fn, contract=contract, items=items)
+            self._sample = test_job(sig, run_fn, n=n, verify_fn=verify_fn, contract=contract, items=items)
+            return self._sample                                   # remembered so .eval() can judge it without re-running
+
+        def eval(self, bar, sample=None, model=None):
+            """AGENTIC eval of the test sample against a STATED bar. Defaults to the sample .test() just produced."""
+            return eval_job(sig, bar, sample if sample is not None else self._sample, model=model)
 
         def run(self, count, est_usd, submit_fn, force=False):
             from . import output_contract

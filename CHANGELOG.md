@@ -5,6 +5,21 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 ## [Unreleased]
 
 ### Added
+- **Lifecycle EVAL gate — the quality checkpoint above the shape-test (`bulkgate`).** The test-first gate now
+  enforces the full **estimate → test → EVAL → run** lifecycle: a scale run (est ≥ `gate.bulk_min_usd`, default
+  lowered 0.50 → **$0.25**, AND multi-unit so there is a sample) is authorized only when the call-class sig has a
+  fresh estimate, a shape-verified test, AND a fresh **passing eval** — a STATED bar plus an **agentic verdict** on
+  the test sample (an LLM judge = `config.advisor_judge_model` / `gate.eval_model`, caged as the `spendguard:eval`
+  meta intent). The eval VERDICT is a judgement (the LLM decides it, never a keyword); the gate's CHECK ("does a
+  fresh passing eval exist?") is the only mechanical part. A bar is REQUIRED (an empty bar is refused — no
+  rubber-stamp); an unparseable judge reply is FAIL-SAFE (treated as FAIL); a failing eval keeps scale blocked until
+  a passing one exists (iteration is free). New surface: `record_eval` · `eval_job` · `gated_batch().eval(bar=…)`;
+  new columns on `gate_ledger` (additive). Config: `gate.require_eval` (default on; set false to keep the
+  estimate+test-only gate while a repo adopts evals) and `gate.eval_model`. Rollout unchanged —
+  `SPENDGUARD_ENFORCE=warn` (default) logs would-block, `block` enforces. Guarded by
+  `tests/test_lifecycle_eval_gate.py` (offline gating) and proven end-to-end by `scripts/lifecycle/demo_eval_gate.py`
+  (a real Haiku judge PASSES a good sample and FAILS a bad one against the SAME bar — an agentic verdict, not a
+  rubber-stamp).
 - **Gemini subscription lane** — spendguard's own Gemini-model meta prompts can ride the Google **Antigravity**
   plan (the `agy` CLI) at $0 billed, mirroring the existing `claude-code` and `codex` lanes: `GEMINI_API_KEY` +
   `GOOGLE_API_KEY` are stripped from the child so a plan call can never silently become a metered charge, usage
