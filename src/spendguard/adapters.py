@@ -7,6 +7,7 @@ already meters + budgets them.
 """
 import time
 import json
+import threading
 from . import config, pricing
 
 # name -> {base_url, key_env, prefixes, kind}
@@ -72,6 +73,8 @@ _LANES = {"anthropic": ("claude-code", "subscription_exec"), "openai": ("codex",
           "zai": ("zai-coding", "zai_exec"),                    # z.ai GLM Coding Plan — Anthropic-compatible flat-fee endpoint
           "gemini": ("gemini", "antigravity_exec")}             # Google Antigravity CLI (`agy`) — Gemini plan lane
 _lane_cooldown = {}   # lane name -> unix ts until which it is cooling
+_sub_guard = threading.local()   # one-hop lane-substitution guard: while a substitute call is in flight (proactive OR
+                                 # reactive), no nested substitution — a substitute failing does not chain to a third.
 
 
 def _pool_cooldown_s():
@@ -401,9 +404,32 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 pass
             return {**base, "text": s["text"], "in_tok": s["in_tok"], "out_tok": s["out_tok"],
                     "latency": s["latency"], "cost": 0.0, "executor": lane_name, "error": None}
-        # LANE FAILED. Don't guess why from the error text — fall back to the API on the SAME prompt (this
-        # recurses with the lane disabled, so the existing API path runs once, unchanged) and let its OUTCOME
-        # settle whether the lane was unsuitable for this prompt (keep it) or genuinely down (cool it).
+        # LANE FAILED. REACTIVE FAILOVER (Part 2) FIRST: before paying the metered API, try a CONFIRMED substitute
+        # PLAN for this intent — one hop, guarded against recursion. Routed through call() so the substitute resolves
+        # its OWN budget and rides its OWN lane; if it answers, the primary lane is cooled (it failed) and the
+        # substitution is recorded. Default OFF: no confirmed substitute → route_decision returns None → unchanged.
+        if not getattr(_sub_guard, "on", False):
+            try:
+                from . import lane_balance, calls as _calls
+                _rsub, _rwhy = lane_balance.route_decision((_calls.current() or {}).get("intent"), model, reactive=True)
+            except Exception:
+                _rsub, _rwhy = None, ""
+            if _rsub and _rsub != model:
+                import sys as _sysr
+                print(f"[spendguard] lane-balance REACTIVE: {lane_name} lane failed → {_rsub} ({_rwhy})",
+                      file=_sysr.stderr)
+                _sub_guard.on = True
+                try:
+                    _rr = call(_rsub, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
+                               schema=schema, timeout_s=timeout_s)
+                finally:
+                    _sub_guard.on = False
+                if not _rr.get("error"):
+                    _lane_cool(lane_name)          # the primary lane failed → back off; the substitute carried the call
+                    return {**_rr, "substituted_from": model, "substitution": _rwhy}
+        # No substitute (or it also failed) → fall back to the API on the SAME prompt (this recurses with the lane
+        # disabled, so the existing API path runs once, unchanged) and let its OUTCOME settle whether the lane was
+        # unsuitable for this prompt (keep it) or genuinely down (cool it).
         out = _call_once(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
                          schema=schema, timeout_s=timeout_s, _skip_lane=True)
         _kind = _learn_from_fallback(lane_name, prompt, bool(out.get("error")))
@@ -752,7 +778,7 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
     # guarded path (recursion), so the substitute gets its OWN output budget and input check, not the primary's. The
     # substitute is RECORDED as the model that answered (honesty), with substituted_from carrying the provenance.
     # Default OFF: no confirmed substitute for the intent → route_decision returns None → nothing changes.
-    if not _no_sub:
+    if not _no_sub and not getattr(_sub_guard, "on", False):
         try:
             from . import lane_balance, calls
             _sub, _why = lane_balance.route_decision((calls.current() or {}).get("intent"), model)
@@ -770,7 +796,11 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
                 _subkw["system"] = _adapt
             print(f"[spendguard] lane-balance: {_why} — running {_sub} in place of {model} "
                   f"(recorded as {_sub}{'; prompt adapted' if _adapt is not None else ''})", file=_sys.stderr)
-            r = _call_guarded(_sub, prompt, max_tokens=max_tokens, sig=sig, retries=retries, _no_sub=True, **_subkw)
+            _sub_guard.on = True                   # one hop: the substitute must not itself substitute (proactive OR reactive)
+            try:
+                r = _call_guarded(_sub, prompt, max_tokens=max_tokens, sig=sig, retries=retries, _no_sub=True, **_subkw)
+            finally:
+                _sub_guard.on = False
             return {**r, "substituted_from": model, "substitution": _why, "prompt_adapted": _adapt is not None}
     ok, detail = _input_fits(model, prompt, kw.get("system"))
     if not ok:

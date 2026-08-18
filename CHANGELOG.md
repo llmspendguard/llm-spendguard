@@ -5,6 +5,16 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 ## [Unreleased]
 
 ### Added
+- **Load-balancing completed — EFFECTIVE-UTILISATION routing + REACTIVE failover (`lane_balance` + `adapters`).**
+  `route_decision` now aims at effective utilisation rather than only saturation: it proactively routes an intent to
+  the LEAST-utilised acceptable plan whenever that plan sits more than `advisor.lane_balance_margin` below the
+  primary's utilisation — so the idle paid plans actually get FILLED, not just used as a safety valve. And REACTIVE
+  failover is wired: when a lane FAILS (plan exhausted), `_call_once` routes to a confirmed substitute PLAN *before*
+  the metered API, cools the failed lane, and records the substitution — a one-hop `_sub_guard` (thread-local) stops
+  a substitute from itself substituting. New config: `advisor.lane_balance_margin` (routing sensitivity),
+  `advisor.lane_models` (candidate model per plan), `advisor.lane_idle_ratio`/`lane_hot_ratio` (display). Needs
+  `advisor.executor = pool` (all lanes active) so a substitute lands on the idle plan, not the metered API. Guarded
+  by `tests/test_lane_substitution.py` (now incl. the reactive-dispatch path).
 - **Cross-plan substitution — an idle plan absorbs a hot plan's work (`lane_balance` + `adapters`, Part 2 stages
   2–3).** When a call's INTENT has a CONFIRMED substitute and its primary plan is HOT while an acceptable substitute's
   plan is IDLE, `_call_guarded` now runs the substitute model instead — resolved through the SAME guarded path so it

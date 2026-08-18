@@ -141,12 +141,11 @@ def route_decision(intent, model, reactive=False):
     proposer fills the registry separately). Default OFF: an intent with no CONFIRMED substitute yields (None, …), so
     every existing call is unchanged.
 
-      PROACTIVE (reactive=False): substitute only when the primary model's plan is HOT and a confirmed substitute's
-        plan is IDLE and available — shed a saturated plan onto an idle paid one.
-      REACTIVE (reactive=True): the primary lane just FAILED — take the first confirmed substitute whose lane is
-        available (idle or not), before the metered API.
-
-    NEVER routes onto a cooling/failed lane, and (proactive) never onto another already-hot plan."""
+    EFFECTIVE UTILISATION, not merely failover: the goal is to keep ALL the paid plans usefully used, so PROACTIVELY
+    route an intent's work to the LEAST-utilised acceptable substitute whenever that plan sits more than
+    `advisor.lane_balance_margin` BELOW the primary's utilisation (fill idle capacity; the margin stops thrashing
+    once plans are balanced). REACTIVE (reactive=True): the primary lane just FAILED — take the least-utilised
+    available substitute regardless of the margin, before the metered API. NEVER routes onto a cooling lane."""
     if not intent:
         return None, "no intent set — nothing to key substitutes on"
     subs = substitutes_for(intent)
@@ -155,22 +154,26 @@ def route_decision(intent, model, reactive=False):
     prov = adapters.provider_for(model)
     util = {l["lane"]: l for l in lane_utilization()["lanes"]}
     primary_lane = adapters._LANES.get(prov, (None,))[0]
-    primary_hot = bool(primary_lane and (util.get(primary_lane) or {}).get("state") == "hot")
-    if not reactive and not primary_hot:
-        return None, f"primary plan {primary_lane or prov} not hot — no need to shed"
+    _pu = (util.get(primary_lane) or {}).get("utilization")
+    pu = float(_pu) if _pu is not None else 0.0
+    # rank the acceptable, available substitutes by plan utilisation — LEAST-used first (fill the emptiest plan)
+    ranked = []
     for spec in subs:
-        sprov = spec.split(":", 1)[0]
-        slane = adapters._LANES.get(sprov, (None,))[0]
-        if not slane or slane == primary_lane:
+        slane = adapters._LANES.get(spec.split(":", 1)[0], (None,))[0]
+        if not slane or slane == primary_lane or adapters._lane_cooling(slane):   # skip unknown/self/cooling lanes
             continue
-        if adapters._lane_cooling(slane):                  # a cooling/failed lane is not a place to send work
-            continue
-        if not reactive and (util.get(slane) or {}).get("state") == "hot":
-            continue                                       # don't shed a hot plan onto another hot plan
-        why = (f"primary plan {primary_lane} is HOT → {spec} on idle {slane}" if not reactive
-               else f"primary lane {primary_lane} FAILED → {spec} on {slane}")
-        return spec, why
-    return None, "no available idle substitute lane right now"
+        _su = (util.get(slane) or {}).get("utilization")
+        ranked.append((float(_su) if _su is not None else 0.0, spec, slane))
+    if not ranked:
+        return None, "no available substitute lane right now (all cooling, or same plan as primary)"
+    ranked.sort(key=lambda t: t[0])
+    su, spec, slane = ranked[0]
+    if reactive:
+        return spec, f"primary lane {primary_lane} FAILED → {spec} on {slane} ({su:.1f}x used)"
+    margin = _util_ratio_cfg("lane_balance_margin", 0.5)
+    if pu - su >= margin:
+        return spec, f"balance: {primary_lane} {pu:.1f}x vs idle {slane} {su:.1f}x → {spec} (fill idle plan)"
+    return None, f"plans already balanced ({primary_lane} {pu:.1f}x vs best {slane} {su:.1f}x, margin {margin})"
 
 
 def format_utilization():

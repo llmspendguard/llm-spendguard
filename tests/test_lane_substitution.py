@@ -37,34 +37,33 @@ lane_balance.confirm_substitute(INTENT, "openai:gpt-5.5")
 fails += ck("confirm promotes ONE substitute to usable", lane_balance.substitutes_for(INTENT) == ["openai:gpt-5.5"])
 fails += ck("...and removes it from pending", "openai:gpt-5.5" not in lane_balance.pending_for(INTENT))
 
-print("\n-- route_decision: proactive shed only when primary HOT + substitute IDLE; default OFF otherwise --")
+print("\n-- route_decision: EFFECTIVE UTILISATION — fill the least-used idle plan when the primary is more used --")
 _util = lane_balance.lane_utilization
 try:
-    # claude-code HOT, codex IDLE (openai lane)
+    # claude-code 9.98x (heavily used), the others idle → route to FILL an idle plan (not just on saturation)
     lane_balance.lane_utilization = lambda: {"lanes": [
-        {"lane": "claude-code", "state": "hot"}, {"lane": "codex", "state": "idle"},
-        {"lane": "gemini", "state": "idle"}, {"lane": "zai-coding", "state": "idle"}]}
+        {"lane": "claude-code", "utilization": 9.98}, {"lane": "codex", "utilization": 0.0},
+        {"lane": "gemini", "utilization": 0.0}, {"lane": "zai-coding", "utilization": 0.0}]}
     sub, why = lane_balance.route_decision(INTENT, "anthropic:claude-opus-4-8")
-    fails += ck("primary HOT + confirmed idle substitute → route to it", sub == "openai:gpt-5.5")
-    # primary NOT hot → no shed
-    lane_balance.lane_utilization = lambda: {"lanes": [{"lane": "claude-code", "state": "warm"},
-                                                       {"lane": "codex", "state": "idle"}]}
+    fails += ck("primary heavily used + idle substitute → route to FILL the idle plan", sub == "openai:gpt-5.5")
+    # already balanced (primary within the margin of the substitute) → do NOT thrash
+    lane_balance.lane_utilization = lambda: {"lanes": [{"lane": "claude-code", "utilization": 0.3},
+                                                       {"lane": "codex", "utilization": 0.1}]}
     sub2, _ = lane_balance.route_decision(INTENT, "anthropic:claude-opus-4-8")
-    fails += ck("primary NOT hot → no substitution (proactive)", sub2 is None)
-    # reactive: primary failed → substitute regardless of primary heat
+    fails += ck("plans already BALANCED (within margin) → no substitution", sub2 is None)
+    # reactive: primary FAILED → substitute regardless of the margin
     sub3, _ = lane_balance.route_decision(INTENT, "anthropic:claude-opus-4-8", reactive=True)
-    fails += ck("reactive (primary FAILED) → substitute even if primary not hot", sub3 == "openai:gpt-5.5")
+    fails += ck("reactive (primary FAILED) → substitute even when balanced", sub3 == "openai:gpt-5.5")
     # never route onto a COOLING lane
     _cool = adapters._lane_cooling
     try:
         adapters._lane_cooling = lambda lane: lane == "codex"
-        lane_balance.lane_utilization = lambda: {"lanes": [{"lane": "claude-code", "state": "hot"},
-                                                           {"lane": "codex", "state": "idle"}]}
+        lane_balance.lane_utilization = lambda: {"lanes": [{"lane": "claude-code", "utilization": 9.98},
+                                                           {"lane": "codex", "utilization": 0.0}]}
         sub4, _ = lane_balance.route_decision(INTENT, "anthropic:claude-opus-4-8")
         fails += ck("a COOLING substitute lane is skipped", sub4 is None)
     finally:
         adapters._lane_cooling = _cool
-    # an intent with NO confirmed substitute → OFF
     fails += ck("intent with no confirmed substitute → None (default OFF)",
                 lane_balance.route_decision("some-other-intent", "anthropic:claude-opus-4-8")[0] is None)
 finally:
@@ -110,6 +109,42 @@ try:
 finally:
     adapters._call_once, adapters._input_fits = _o_once, _o_fits
     lane_balance.route_decision, lane_balance.adapted_system_for = _o_route, _o_adapt
+
+print("\n-- REACTIVE dispatch: a FAILED lane routes to a substitute PLAN before the metered API --")
+
+
+class _FailLane:
+    TIMEOUT_S = 300
+
+    @staticmethod
+    def run_prompt(prompt, system=None, model=None, timeout=None):
+        return {"error": "quota/limit exhausted"}          # the plan is out → the lane fails
+
+
+seen_r = {}
+
+
+def _fake_call(model, prompt, max_tokens=None, **kw):
+    seen_r["model"] = model
+    return {"provider": "x", "model": model, "text": "ok-sub", "in_tok": 1, "out_tok": 1, "latency": 0.0,
+            "cost": 0.0, "finish_reason": "stop", "error": None}
+
+
+_o_lane_for, _o_call, _o_route2, _o_cool = adapters._lane_for, adapters.call, lane_balance.route_decision, adapters._lane_cool
+try:
+    adapters._lane_for = lambda prov: ("claude-code", _FailLane) if prov == "anthropic" else None
+    adapters.call = _fake_call
+    adapters._lane_cool = lambda lane: None                # don't mutate cooldown state in the test
+    lane_balance.route_decision = lambda intent, model, reactive=False: (
+        ("openai:gpt-5.5", "primary lane failed") if (reactive and model == "anthropic:claude-x") else (None, ""))
+    with calls.context(intent=INTENT):
+        rr = adapters._call_once("anthropic:claude-x", "hi", max_tokens=100, system="SYS")
+    fails += ck("a FAILED lane routes to the substitute PLAN (before the API)", seen_r.get("model") == "openai:gpt-5.5")
+    fails += ck("...records substituted_from = the primary", rr.get("substituted_from") == "anthropic:claude-x")
+    fails += ck("...and returns the substitute's answer", rr.get("text") == "ok-sub")
+finally:
+    adapters._lane_for, adapters.call = _o_lane_for, _o_call
+    lane_balance.route_decision, adapters._lane_cool = _o_route2, _o_cool
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_lane_substitution: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

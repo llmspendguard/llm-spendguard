@@ -103,6 +103,22 @@ SETTINGS = [
     dict(section="advisor", key="judge_model", store="config.json:advisor.judge_model", env="SPENDGUARD_ADVISOR_JUDGE_MODEL",
          default="claude-haiku-4-5", kind="string", secret=False,
          desc="Model for BULK quality reconstruction/judging. Batch API; must exist in pricing.py."),
+    dict(section="advisor", key="lane_models", store="config.json:advisor.lane_models", default=None,
+         kind="json|null", secret=False,
+         desc="{lane: model} — the representative model each subscription plan offers, e.g. "
+              "{\"codex\":\"gpt-5.5\",\"gemini\":\"gemini-3.7-flash-high\",\"zai-coding\":\"glm-4.6\"}. The "
+              "load-balancer's substitute CANDIDATES (lane_balance.candidate_models); unset → nothing to propose."),
+    dict(section="advisor", key="lane_balance_margin", store="config.json:advisor.lane_balance_margin",
+         env="SPENDGUARD_LANE_BALANCE_MARGIN", default=0.5, kind="float", secret=False,
+         desc="Load-balance sensitivity: proactively route an intent to an idle substitute plan when that plan sits "
+              "more than this many x-of-fee BELOW the primary's utilisation. Higher = shed only big imbalances; "
+              "lower = spread more aggressively. The margin that stops thrashing once plans are even."),
+    dict(section="advisor", key="lane_idle_ratio", store="config.json:advisor.lane_idle_ratio", default=0.5,
+         kind="float", secret=False,
+         desc="Below this x-of-fee est-value a plan reads as IDLE in `spendguard lanes --balance` (display only)."),
+    dict(section="advisor", key="lane_hot_ratio", store="config.json:advisor.lane_hot_ratio", default=1.5,
+         kind="float", secret=False,
+         desc="Above this x-of-fee est-value a plan reads as HOT in `spendguard lanes --balance` (display only)."),
     dict(section="advisor", key="executor", store="config.json:advisor.executor", env="SPENDGUARD_ADVISOR_EXECUTOR",
          default="api", kind="enum:api,claude-code,codex,zai-coding,pool", secret=False,
          desc="Where spendguard's OWN meta prompts run: api = metered API under caps.meta (default); "
