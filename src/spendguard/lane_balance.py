@@ -86,6 +86,93 @@ def idle_lanes():
     return [l["lane"] for l in sorted(idle, key=lambda l: (l["utilization"] if l["utilization"] is not None else 0.0))]
 
 
+# ── the CONFIRMED-substitute registry (Part 2 authorization = "model proposes, you confirm once") ──────────────────
+# A JSON store keyed by INTENT → {confirmed:[provider:model], pending:[…], primary_model, proposed_by}. Only CONFIRMED
+# substitutes are ever used to route; PENDING are model-proposals awaiting Ash's one-time confirm. Kept out of the
+# spend DB (small, human-facing config) and written through the one JSON writer so a concurrent write can't shear it.
+import json as _json
+
+
+def _registry_path():
+    return config.HOME / "lane_substitutes.json"
+
+
+def _registry():
+    try:
+        return _json.loads(_registry_path().read_text())
+    except Exception:
+        return {}                                          # absent/corrupt → empty → substitution simply OFF (safe)
+
+
+def substitutes_for(intent):
+    """CONFIRMED acceptable substitute 'provider:model' specs for this intent, in preference order (or [])."""
+    return list((_registry().get(intent) or {}).get("confirmed") or [])
+
+
+def pending_for(intent):
+    """Model-PROPOSED substitutes awaiting confirmation (not yet usable by the router)."""
+    return list((_registry().get(intent) or {}).get("pending") or [])
+
+
+def record_proposal(intent, primary_model, proposals, proposed_by=""):
+    """Record model-proposed substitutes as PENDING — NOT usable until confirmed. De-dupes; never promotes to
+    confirmed on its own (that is the human 'confirm once' step)."""
+    def _add_pending(d):
+        e = d.setdefault(intent, {})
+        e["primary_model"] = primary_model
+        e["pending"] = list(dict.fromkeys([*(e.get("pending") or []), *proposals]))
+        e["proposed_by"] = proposed_by or e.get("proposed_by", "")
+    config.update_json(_registry_path(), _add_pending, reason="lane-substitute-proposal")
+    return pending_for(intent)
+
+
+def confirm_substitute(intent, substitute):
+    """The 'confirm once' step: promote one proposed substitute to CONFIRMED so the router may use it. Idempotent."""
+    def _promote_confirmed(d):
+        e = d.setdefault(intent, {})
+        e["confirmed"] = list(dict.fromkeys([*(e.get("confirmed") or []), substitute]))
+        e["pending"] = [p for p in (e.get("pending") or []) if p != substitute]
+    config.update_json(_registry_path(), _promote_confirmed, reason="lane-substitute-confirm")
+    return substitutes_for(intent)
+
+
+def route_decision(intent, model, reactive=False):
+    """(substitute_spec or None, why) — the routing brain, PURE (registry + utilisation only, no LLM; the agentic
+    proposer fills the registry separately). Default OFF: an intent with no CONFIRMED substitute yields (None, …), so
+    every existing call is unchanged.
+
+      PROACTIVE (reactive=False): substitute only when the primary model's plan is HOT and a confirmed substitute's
+        plan is IDLE and available — shed a saturated plan onto an idle paid one.
+      REACTIVE (reactive=True): the primary lane just FAILED — take the first confirmed substitute whose lane is
+        available (idle or not), before the metered API.
+
+    NEVER routes onto a cooling/failed lane, and (proactive) never onto another already-hot plan."""
+    if not intent:
+        return None, "no intent set — nothing to key substitutes on"
+    subs = substitutes_for(intent)
+    if not subs:
+        return None, "no confirmed substitute for this intent (propose+confirm first)"
+    prov = adapters.provider_for(model)
+    util = {l["lane"]: l for l in lane_utilization()["lanes"]}
+    primary_lane = adapters._LANES.get(prov, (None,))[0]
+    primary_hot = bool(primary_lane and (util.get(primary_lane) or {}).get("state") == "hot")
+    if not reactive and not primary_hot:
+        return None, f"primary plan {primary_lane or prov} not hot — no need to shed"
+    for spec in subs:
+        sprov = spec.split(":", 1)[0]
+        slane = adapters._LANES.get(sprov, (None,))[0]
+        if not slane or slane == primary_lane:
+            continue
+        if adapters._lane_cooling(slane):                  # a cooling/failed lane is not a place to send work
+            continue
+        if not reactive and (util.get(slane) or {}).get("state") == "hot":
+            continue                                       # don't shed a hot plan onto another hot plan
+        why = (f"primary plan {primary_lane} is HOT → {spec} on idle {slane}" if not reactive
+               else f"primary lane {primary_lane} FAILED → {spec} on {slane}")
+        return spec, why
+    return None, "no available idle substitute lane right now"
+
+
 def format_utilization():
     """One line per lane for `spendguard lanes --balance` and the router's rationale. Pure est-VALUE (plan usage) —
     split from billed $ per the cost-display rule, and explicitly NOT the provider's quota."""
@@ -102,3 +189,104 @@ def format_utilization():
         lines.append(f"  {l['lane']:12s} ({l['provider']:9s})  est-value ${l['est_value_month']:>9.2f} / "
                      f"${l['plan_fee']:>6.0f} = {util:>7}  {label[l['state']]}{stale}")
     return "\n".join(lines)
+
+
+# ── the AGENTIC "model proposes" step (authorization = model proposes, you confirm once). A cheap judge decides which
+#    idle-lane CANDIDATE models are acceptable substitutes for an INTENT; the result is recorded PENDING, never used
+#    until Ash confirms. Acceptability is a MEANING judgement → an LLM decides it, never a keyword (CLAUDE.md). ──
+_PROPOSE_SYS = ("You route LLM work across paid subscription plans to use idle capacity without hurting quality. "
+                "Given an INTENT (what the task does), the PRIMARY model in use, and CANDIDATE substitute models on "
+                "other (idle) plans, decide which candidates are ACCEPTABLE substitutes — a model whose output would "
+                "be GOOD ENOUGH for THIS intent. Be conservative: exclude a candidate if the intent plausibly needs "
+                "capability it may lack (deep reasoning, long context, a specific modality). Return only the "
+                "acceptable candidate ids, exactly as given.")
+_PROPOSE_SCHEMA = {"type": "object", "additionalProperties": False,
+                   "properties": {"acceptable": {"type": "array", "items": {"type": "string"}},
+                                  "rationale": {"type": "string"}},
+                   "required": ["acceptable", "rationale"], "nonempty": ["rationale"]}
+_PROPOSE_OUT = 800               # OUTPUT budget for the proposal (a short id list + rationale) — NAMED, not a bare literal
+
+
+def candidate_models():
+    """Substitute candidates = a representative model per IDLE lane, from config `advisor.lane_models` {lane: model}
+    (e.g. {"codex":"gpt-5.5","gemini":"gemini-3.7-flash-high","zai-coding":"glm-4.6"}). No hardcoded model list — the
+    user declares which model each plan offers; unset → no candidates (the proposer says so)."""
+    lm = config._cfg_get("advisor", "lane_models", None) or {}
+    idle = set(idle_lanes())
+    if not isinstance(lm, dict):
+        return []
+    return [f"{prov}:{lm[lane]}" for prov, (lane, _m) in adapters._LANES.items()
+            if lane in idle and lm.get(lane)]
+
+
+def propose_substitutes(intent, primary_model, candidates=None):
+    """AGENTIC 'model proposes' step: a cheap judge (advisor.judge_model) decides which idle-lane candidate models are
+    acceptable substitutes for `intent`, RECORDED AS PENDING for Ash to confirm (never auto-used). Caged as the
+    meta intent so its own tiny spend is attributed. Returns {acceptable, rationale, pending}."""
+    cands = candidate_models() if candidates is None else list(candidates)
+    if not cands:
+        return {"acceptable": [], "rationale": "no idle-lane candidate models configured (set advisor.lane_models)",
+                "pending": pending_for(intent)}
+    from . import calls
+    judge = config._cfg_get("advisor", "judge_model", None) or config.advisor_judge_model()
+    prompt = (f"INTENT: {intent}\nPRIMARY model (currently used): {primary_model}\n"
+              f"CANDIDATE substitute models on idle plans: {cands}\n\n"
+              f"Which of the candidates are acceptable substitutes for this intent? Return {{acceptable, rationale}}.")
+    with calls.context(intent="spendguard:substitute"):
+        r = adapters.call(judge, prompt, system=_PROPOSE_SYS, schema=_PROPOSE_SCHEMA, max_tokens=_PROPOSE_OUT)
+    from . import output_contract
+    obj, _ = output_contract._as_obj((r or {}).get("text") or "") if (r or {}).get("text") else (None, False)
+    acceptable = [c for c in cands if isinstance(obj, dict) and c in (obj.get("acceptable") or [])]  # only real candidate ids
+    rationale = (obj.get("rationale") if isinstance(obj, dict) else "") or ""
+    if acceptable:
+        record_proposal(intent, primary_model, acceptable, proposed_by=judge)
+    return {"acceptable": acceptable, "rationale": rationale[:500], "pending": pending_for(intent)}
+
+
+# ── Stage 3: PROMPT ADAPTATION for a substitute model. The mechanical schema dialect is already handled downstream
+#    (adapters.json_schema_request). This is the SEMANTIC layer: agentically rewrite the SYSTEM instruction for the
+#    target model WITHOUT changing the task, recorded per (intent, target) so dispatch reuses it mechanically. It
+#    composes with the eval gate — an adapted prompt on a new model is a new sig, so it still must pass its own
+#    test+eval before it can scale, which is the honest guarantee that adaptation didn't quietly change the task. ──
+_ADAPT_SYS = ("You adapt an existing SYSTEM prompt so it works well on a DIFFERENT model, WITHOUT changing the task. "
+              "Keep every instruction, constraint, and output requirement identical in MEANING; only adjust phrasing "
+              "or format conventions a different model family follows. Do NOT add, drop, or soften any requirement. "
+              "If no change is warranted, return the original and changed=false.")
+_ADAPT_SCHEMA = {"type": "object", "additionalProperties": False,
+                 "properties": {"adapted_system": {"type": "string"}, "changed": {"type": "boolean"},
+                                "note": {"type": "string"}},
+                 "required": ["adapted_system", "changed", "note"], "nonempty": ["adapted_system"]}
+_ADAPT_OUT = 2000                # OUTPUT budget — an adapted system can be as long as the original; NAMED, not a literal
+
+
+def adapted_system_for(intent, target_model):
+    """The RECORDED adapted system for (intent, target_model), or None. Mechanical — dispatch reads this, never an LLM."""
+    a = ((_registry().get(intent) or {}).get("adapt") or {}).get(target_model)
+    return a.get("system") if isinstance(a, dict) else None
+
+
+def adapt_system(intent, target_model, system, model=None):
+    """AGENTIC (Stage 3): rewrite `system` for `target_model` without changing the task, and RECORD it per
+    (intent, target) so dispatch reuses it mechanically. Explicit step (run at confirm time or on demand), never in
+    the hot path. Returns {adapted_system, changed, note}. A no-op that records the original when there is no system."""
+    system = system or ""
+    judge = model or config._cfg_get("advisor", "judge_model", None) or config.advisor_judge_model()
+    if not system.strip():
+        result = {"adapted_system": "", "changed": False, "note": "no system prompt to adapt"}
+    else:
+        from . import calls, output_contract
+        prompt = (f"TARGET model: {target_model}\nINTENT: {intent}\n\nSYSTEM PROMPT TO ADAPT:\n{system[:8000]}\n\n"
+                  f"Adapt it for the target model WITHOUT changing the task. Return {{adapted_system, changed, note}}.")
+        with calls.context(intent="spendguard:adapt"):
+            r = adapters.call(judge, prompt, system=_ADAPT_SYS, schema=_ADAPT_SCHEMA, max_tokens=_ADAPT_OUT)
+        obj, _ = output_contract._as_obj((r or {}).get("text") or "") if (r or {}).get("text") else (None, False)
+        result = (obj if isinstance(obj, dict) and obj.get("adapted_system")
+                  else {"adapted_system": system, "changed": False, "note": "adaptation unparseable — kept original"})
+
+    def _store_adaptation(d):
+        e = d.setdefault(intent, {})
+        e.setdefault("adapt", {})[target_model] = {"system": result["adapted_system"],
+                                                    "changed": bool(result.get("changed")),
+                                                    "note": str(result.get("note") or "")[:300], "by": judge}
+    config.update_json(_registry_path(), _store_adaptation, reason="lane-substitute-adapt")
+    return result

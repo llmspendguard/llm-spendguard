@@ -5,6 +5,21 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 ## [Unreleased]
 
 ### Added
+- **Cross-plan substitution — an idle plan absorbs a hot plan's work (`lane_balance` + `adapters`, Part 2 stages
+  2–3).** When a call's INTENT has a CONFIRMED substitute and its primary plan is HOT while an acceptable substitute's
+  plan is IDLE, `_call_guarded` now runs the substitute model instead — resolved through the SAME guarded path so it
+  gets its own output budget + input check, and RECORDED as the model that answered (with `substituted_from`
+  provenance; never silent). Authorization is **model-proposes-you-confirm-once**: `propose_substitutes()` — an
+  agentic cheap-model judge decides which idle-lane candidate models are acceptable for the intent → PENDING — then
+  `confirm_substitute()` makes one usable. `route_decision()` is PURE (registry + utilisation, no LLM in the hot
+  path), never routes onto a cooling lane, and is **default OFF** (no confirmed substitute → every call unchanged;
+  proven by the full suite passing with the hot-path change in place). Stage 3: `adapt_system()` agentically rewrites
+  the instruction for the target model WITHOUT changing the task, recorded per (intent, target) and applied
+  mechanically by dispatch (`prompt_adapted` flagged) — and since a substitute on a new model is a new sig, the eval
+  gate still validates it before scale (adaptation can't quietly change the task). CLI: `spendguard lanes --balance |
+  --propose <intent> <model> | --confirm <intent> <substitute>`. Candidates come from config `advisor.lane_models`
+  (no hardcoded model list). Guarded by `tests/test_lane_substitution.py`. Remaining increment: reactive
+  lane-exhaustion failover (route on a lane error, not only proactively).
 - **Proactive lane-utilisation brain (`lane_balance`) — stage 1 of load-balancing across subscription plans.**
   `lane_utilization()` reports per-plan **est-value ÷ plan fee this month** so the coming router — and the user via
   `format_utilization()` / (planned) `spendguard lanes --balance` — can see which flat-fee plans are **HOT** (shed

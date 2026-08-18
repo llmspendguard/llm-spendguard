@@ -745,7 +745,33 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
     is safety that will be missing exactly when the call matters. Both guards now live on the one path
     everything already takes.
     """
+    _no_sub = kw.pop("_no_sub", False)
     from . import bulkgate
+    # PROACTIVE LANE LOAD-BALANCING (Part 2): if this call's INTENT has a CONFIRMED substitute and the primary plan is
+    # HOT while an acceptable substitute's plan is IDLE, run the substitute model instead — resolved through THIS same
+    # guarded path (recursion), so the substitute gets its OWN output budget and input check, not the primary's. The
+    # substitute is RECORDED as the model that answered (honesty), with substituted_from carrying the provenance.
+    # Default OFF: no confirmed substitute for the intent → route_decision returns None → nothing changes.
+    if not _no_sub:
+        try:
+            from . import lane_balance, calls
+            _sub, _why = lane_balance.route_decision((calls.current() or {}).get("intent"), model)
+        except Exception:
+            _sub, _why = None, ""
+        if _sub and _sub != model:
+            import sys as _sys
+            _subkw = dict(kw)
+            _adapt = None
+            try:                                   # Stage 3: apply the RECORDED prompt adaptation for the target (mechanical)
+                _adapt = lane_balance.adapted_system_for((calls.current() or {}).get("intent"), _sub)
+            except Exception:
+                _adapt = None
+            if _adapt is not None:
+                _subkw["system"] = _adapt
+            print(f"[spendguard] lane-balance: {_why} — running {_sub} in place of {model} "
+                  f"(recorded as {_sub}{'; prompt adapted' if _adapt is not None else ''})", file=_sys.stderr)
+            r = _call_guarded(_sub, prompt, max_tokens=max_tokens, sig=sig, retries=retries, _no_sub=True, **_subkw)
+            return {**r, "substituted_from": model, "substitution": _why, "prompt_adapted": _adapt is not None}
     ok, detail = _input_fits(model, prompt, kw.get("system"))
     if not ok:
         return {"provider": provider_for(model), "model": model, "text": None, "in_tok": 0, "out_tok": 0,

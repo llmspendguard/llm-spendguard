@@ -196,4 +196,26 @@ def main(argv=None):
                 print(f"  {r['lane']:<12} 🟢 LIVE — answered in {r['latency']}s at $0 billed")
             else:
                 print(f"  {r['lane']:<12} 🔴 {r['error']}")
+    if "--balance" in argv:                               # per-plan utilisation: which plans are hot vs idle
+        from . import lane_balance
+        print(lane_balance.format_utilization())
+    if "--propose" in argv:                               # model PROPOSES acceptable substitutes for an intent (PENDING)
+        rest = [a for a in argv[argv.index("--propose") + 1:] if not a.startswith("--")]
+        if len(rest) < 2:
+            print("usage: spendguard lanes --propose <intent> <primary_model>   (needs advisor.lane_models set)")
+        else:
+            from . import lane_balance
+            res = lane_balance.propose_substitutes(rest[0], rest[1])
+            print(f"proposed for {rest[0]!r} (PENDING — confirm to use): {res['acceptable'] or 'none'}")
+            if res.get("rationale"):
+                print("  judge:", res["rationale"][:200])
+            if res["acceptable"]:
+                print(f"  confirm with:  spendguard lanes --confirm {rest[0]} <substitute>")
+    if "--confirm" in argv:                               # the CONFIRM-ONCE step — makes a proposed substitute usable
+        rest = [a for a in argv[argv.index("--confirm") + 1:] if not a.startswith("--")]
+        if len(rest) < 2:
+            print("usage: spendguard lanes --confirm <intent> <substitute>")
+        else:
+            from . import lane_balance
+            print(f"confirmed for {rest[0]!r}: {lane_balance.confirm_substitute(rest[0], rest[1])}")
     return 0
