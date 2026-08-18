@@ -5,6 +5,17 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 ## [Unreleased]
 
 ### Added
+- **Proactive lane-utilisation brain (`lane_balance`) — stage 1 of load-balancing across subscription plans.**
+  `lane_utilization()` reports per-plan **est-value ÷ plan fee this month** so the coming router — and the user via
+  `format_utilization()` / (planned) `spendguard lanes --balance` — can see which flat-fee plans are **HOT** (shed
+  from) vs **IDLE** (absorb overflow): on the live ledger, claude-code **9.98×** vs codex/gemini/zai **0.00×**.
+  Reuses the receipt's own per-source cache + re-windowing, so the numbers MATCH the receipt and inherit its
+  stale-cache guard. HONEST by construction: this is est-VALUE utilisation, **not** the provider's true remaining
+  quota (Anthropic Max weekly/5h limits aren't API-exposed) — a capacity-pacing signal, with the reactive lane
+  error as the hard exhaustion backstop. Thresholds are config (`advisor.lane_hot_ratio` / `lane_idle_ratio`);
+  per-lane fee is exact via `subscription.lane_plans` else an even split of the plan total (flagged, never shown as
+  exact). Sensing only — the routing decision, the `_call_once` dispatch wiring, and the model-proposes-you-confirm-
+  once substitute registry are the next stages. Guarded by `tests/test_lane_balance.py`.
 - **Lifecycle EVAL gate — the quality checkpoint above the shape-test (`bulkgate`).** The test-first gate now
   enforces the full **estimate → test → EVAL → run** lifecycle: a scale run (est ≥ `gate.bulk_min_usd`, default
   lowered 0.50 → **$0.25**, AND multi-unit so there is a sample) is authorized only when the call-class sig has a
