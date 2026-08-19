@@ -136,6 +136,42 @@ def confirm_substitute(intent, substitute):
     return substitutes_for(intent)
 
 
+_DELEGATE_OUT = 1500             # OUTPUT budget for a delegated task — NAMED, not a bare literal (token_caps guard)
+
+
+def delegate(task, system=None, lanes=None, reasoning="low", max_tokens=_DELEGATE_OUT):
+    """Offload one task to the cheapest VIABLE idle subscription lane and return the answer — so heavy work runs $0
+    on an idle plan while the orchestrator (e.g. this Claude Code session) spends nothing but coordination.
+
+    Picks from the viable delegation lanes (config `advisor.delegate_lanes`, default the ones MEASURED fast + $0:
+    gemini, zai — codex is EXCLUDED, its CLI is an agent, >75s on a real prompt → metered fallback), LEAST-UTILISED
+    first, running each lane's model from `advisor.lane_models` at LOW reasoning (gemini-HIGH returns EMPTY — hidden
+    reasoning eats the budget, so lane_models should point gemini at a `-low` variant). EMPTY or errored output is a
+    FAILURE → fall through to the next lane; billed fallback is NOT silent (a lane that answered via the metered API
+    is flagged `billed=True`). Returns {text, lane, model, cost, billed, executor, tried} or {text:None, error, tried}.
+    The model that answered is the one recorded — attribution stays honest."""
+    from . import adapters, calls
+    viable = list(lanes or config._cfg_get("advisor", "delegate_lanes", None) or ["gemini", "zai-coding"])
+    lm = config._cfg_get("advisor", "lane_models", None) or {}
+    util = {l["lane"]: (l["utilization"] if l.get("utilization") is not None else 0.0)
+            for l in lane_utilization()["lanes"]}
+    prov_of = {ln: prov for prov, (ln, _m) in adapters._LANES.items()}
+    order = sorted([l for l in viable if isinstance(lm, dict) and lm.get(l) and prov_of.get(l)],
+                   key=lambda l: util.get(l, 0.0))
+    tried = []
+    for lane in order:
+        model = f"{prov_of[lane]}:{lm[lane]}"
+        tried.append(model)
+        with calls.context(intent="spendguard:delegate"):
+            r = adapters.call(model, task, system=system, reasoning=reasoning, max_tokens=max_tokens)
+        txt = (r.get("text") or "").strip()
+        if txt and not r.get("error"):
+            return {"text": txt, "lane": lane, "model": model, "cost": r.get("cost"),
+                    "billed": bool(r.get("cost")), "executor": r.get("executor"), "tried": tried}
+    return {"text": None, "lane": None, "model": None, "tried": tried,
+            "error": f"no viable delegation lane answered (tried {tried or 'none — set advisor.lane_models {lane: model}'})"}
+
+
 def route_decision(intent, model, reactive=False):
     """(substitute_spec or None, why) — the routing brain, PURE (registry + utilisation only, no LLM; the agentic
     proposer fills the registry separately). Default OFF: an intent with no CONFIRMED substitute yields (None, …), so

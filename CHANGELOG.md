@@ -5,6 +5,14 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 ## [Unreleased]
 
 ### Added
+- **`lane_balance.delegate(task)` + `spendguard lanes --delegate "<task>"` — offload work to an idle plan at $0.**
+  From an orchestrator that itself can't move plans (e.g. a Claude Code session — it *is* Claude), delegate one task
+  to the cheapest VIABLE idle subscription lane and get the answer back: the heavy tokens run **$0 on the idle plan**,
+  the orchestrator spends only coordination. Picks from `advisor.delegate_lanes` (default `gemini`, `zai` — **codex
+  EXCLUDED**, its CLI is agent-slow), **least-utilised first**, at **low** reasoning (gemini-high returns empty);
+  EMPTY or errored output **falls through** to the next lane, and a metered-API answer is flagged `billed=True`
+  (never a silent charge). Proven live — a task ran **$0 on `gemini-3.7-flash-low` from inside a Claude session**.
+  Guarded by `tests/test_delegate.py`.
 - **Selectable reasoning on the Codex lane — `codex_exec` `reasoning=` → `-c model_reasoning_effort`.** The Codex
   plan model's reasoning scale is `none|low|medium|high|xhigh|max` and has **no `minimal`** (MEASURED 2026-08-19:
   sending `minimal` is a hard 400) — a concrete instance of the cross-provider naming gap. `codex_exec.run_prompt`

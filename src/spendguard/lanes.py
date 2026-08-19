@@ -218,4 +218,17 @@ def main(argv=None):
         else:
             from . import lane_balance
             print(f"confirmed for {rest[0]!r}: {lane_balance.confirm_substitute(rest[0], rest[1])}")
+    if "--delegate" in argv:                              # offload ONE task to the cheapest viable idle lane ($0)
+        rest = argv[argv.index("--delegate") + 1:]
+        task = " ".join(a for a in rest if not a.startswith("--")).strip()
+        if not task:
+            print('usage: spendguard lanes --delegate "<task>"   (needs advisor.lane_models set)')
+        else:
+            from . import lane_balance
+            r = lane_balance.delegate(task)
+            if r.get("text"):
+                flag = f"BILLED ${r.get('cost')}" if r.get("billed") else "$0 on-plan"
+                print(f"[delegated → {r['lane']} · {r['model']} · {flag}]\n{r['text']}")
+            else:
+                print(f"delegate failed: {r.get('error')}")
     return 0
