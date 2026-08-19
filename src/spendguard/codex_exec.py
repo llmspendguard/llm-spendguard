@@ -72,6 +72,26 @@ def _usage_from_events(stdout):
     return in_tok, out_tok
 
 
+def _plugin_disable_flags():
+    """`codex exec` COLD-STARTS every call, and the dominant cost is loading the user's enabled plugins / MCP servers
+    (MEASURED 2026-08-19: a real one-shot went from >75s to **5s** with them off). A headless completion needs none
+    of them, so disable each ENABLED plugin for THIS invocation — read live from ~/.codex/config.toml so it adapts to
+    whatever the user has (no hardcoded plugin names). NB: a single `-c 'plugins={}'` does NOT work — the per-plugin
+    `[plugins."x@y"]` tables win — so each must be turned off by name. Best-effort → [] on any parse problem."""
+    cfg = os.path.expanduser("~/.codex/config.toml")
+    try:
+        import tomllib
+        with open(cfg, "rb") as f:
+            d = tomllib.load(f)
+    except Exception:
+        return []
+    flags = []
+    for name, rec in (d.get("plugins") or {}).items():
+        if isinstance(rec, dict) and rec.get("enabled"):
+            flags += ["-c", f'plugins."{name}".enabled=false']
+    return flags
+
+
 def _codex_effort(level):
     """Map a STANDARD ordinal reasoning level → the Codex plan model's OWN scale. The Codex model accepts
     none|low|medium|high|xhigh|max and has NO 'minimal' (that is the OpenAI *API* scale — MEASURED 2026-08-19:
@@ -103,7 +123,10 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     try:
         fd, out_file = tempfile.mkstemp(prefix="spendguard-codex-", suffix=".txt")
         os.close(fd)
-        cmd = [exe, "exec", "--json", "--skip-git-repo-check", "--output-last-message", out_file]
+        cmd = [exe, "exec", "--json", "--skip-git-repo-check", "-s", "read-only", "--output-last-message", out_file]
+        cmd += _plugin_disable_flags()                     # the TWO per-call cold-start costs a headless completion needs
+        #                                                    NEITHER: the writable-workspace sandbox (-s read-only above)
+        #                                                    AND loading enabled plugins/MCP servers. Both off: >75s → ~5s.
         _eff = _codex_effort(reasoning)
         if _eff:
             cmd += ["-c", f"model_reasoning_effort={_eff}"]   # Codex's OWN scale (none|low|…); 'minimal'→'none' upstream

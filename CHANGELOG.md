@@ -4,6 +4,17 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+### Fixed
+- **Codex lane cold-start — `codex exec` now skips the two per-call setup costs (>75s → single-digit seconds).**
+  MEASURED 2026-08-19: a real one-shot `codex exec` took >75s because each call re-set-up (a) the writable-workspace
+  sandbox and (b) all enabled plugins/MCP servers. A headless completion needs neither, so `codex_exec.run_prompt`
+  now passes `-s read-only` and disables every enabled plugin for the invocation (`_plugin_disable_flags` reads the
+  live `~/.codex/config.toml`, no hardcoded names; `-c 'plugins={}'` does NOT work — the per-plugin tables win).
+  Clean runs drop to ~3–7s (gpt-5.5 and the default codex model both answer). NB: residual per-call variance remains
+  (periodic marketplace/session refresh), so for *reliably* fast + $0 codex delegation the real fix is a **warm codex
+  daemon** (`codex mcp-server` / `app-server daemon`, set up once → ~sub-1–2s) — a separate build; until then codex
+  stays out of the default `delegate` lane set, and gemini(low)/zai remain the reliable fast lanes.
+
 ### Added
 - **`lane_balance.delegate(task)` + `spendguard lanes --delegate "<task>"` — offload work to an idle plan at $0.**
   From an orchestrator that itself can't move plans (e.g. a Claude Code session — it *is* Claude), delegate one task
