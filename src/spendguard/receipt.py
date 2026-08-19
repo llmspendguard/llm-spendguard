@@ -965,7 +965,9 @@ def emit_flow(intent, chain, start, contract=None) -> None:
         flow = {"intent": intent, "n": n,
                 "in_tok": (agg or {}).get("in_tok"),
                 "out_tok": (agg or {}).get("out_tok"),
-                "actual": actual if actual else (agg or {}).get("cost"),
+                # a MEASURED $0 (a subscription/plan-served flow — $0 billed) is the truth, not "unmeasured": only
+                # fall back to the estimated cost when actual could not be measured at all (None), never when it is 0.
+                "actual": actual if actual is not None else (agg or {}).get("cost"),
                 "est": (agg or {}).get("est"),
                 "caller": (agg or {}).get("caller")}
         proj = None                                  # scope the tally to THIS flow's repo (the relevant scope)

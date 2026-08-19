@@ -5,6 +5,20 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 ## [Unreleased]
 
 ### Fixed
+- **Warm Codex daemon hardened (honestreview 5-vendor pass on the diff).** Multi-vendor review found three real
+  robustness gaps in the `codex mcp-server` client: (a) the spawn handshake's `_mcp_send` sat outside any try/except,
+  so a server dying between `Popen` and the initialize write raised `BrokenPipeError` out of `ensure_running()` and
+  **crashed the caller** — the whole handshake is now guarded (→ None, a startup failure the lane degrades on);
+  (b) `_read_until` used blocking `readline()` after `select()`, which could **hang past its deadline** on a partial
+  line the server wrote then stalled on — while holding the shared lock, wedging the lane — now non-blocking `os.read`
+  on a binary pipe with our own line-splitting, so the deadline is always honored (and a line buffered below `select`
+  can't be missed); (c) `_spawn` matched the initialize reply against the GLOBAL `_rpc_id` instead of the captured id.
+  Also `codex_exec.run_prompt` now wraps the `run_warm` call so a daemon EXCEPTION can never bypass the exec/API
+  fallback. Guards: `tests/test_codex_daemon.py` (real-pipe deadline + spawn-never-raises + exception-safety).
+- **Per-flow receipt could report a $0 subscription flow as billed spend.** `emit_flow` used `actual if actual else
+  cost`, so a MEASURED $0 (a plan-served flow) fell back to the ESTIMATED cost — showing plan-covered work as real
+  money. Now `actual if actual is not None else cost`: a measured $0 is the truth; the estimate is used only when
+  actual could not be measured at all.
 - **Codex lane recorded a rejection (400) as a $0 SUCCESS — the error body was handed downstream as content.**
   A `codex mcp-server` tools/call result carries `isError: true` when the tool fails (e.g. the plan rejecting a model:
   "gpt-5-mini is not supported when using Codex with a ChatGPT account"), but `codex_daemon._extract`/`run_warm`

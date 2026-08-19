@@ -132,7 +132,10 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
         from . import codex_daemon
         _full = (f"{system.strip()}\n\n{prompt}" if system else prompt)
         _t0 = time.time()
-        _r = codex_daemon.run_warm(_full, model=model, reasoning=reasoning)
+        try:
+            _r = codex_daemon.run_warm(_full, model=model, reasoning=reasoning)
+        except Exception as _e:                        # an exception must NEVER bypass the exec/API fallback below
+            _r = {"error": f"codex daemon raised: {str(_e)[:150]}"}
         if _r.get("text") and not _r.get("error"):
             _txt = _r["text"]
             return {"text": _txt, "in_tok": len(_full) // 4, "out_tok": len(_txt) // 4,   # est: the tool returns no usage

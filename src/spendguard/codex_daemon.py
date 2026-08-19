@@ -16,6 +16,7 @@ This is the CLIENT half; the codex lane / delegate wire to it. NB: warmth is per
 daemon would use `codex app-server daemon` (needs the standalone-codex install); that's the documented upgrade.
 """
 import atexit
+import fcntl
 import json
 import os
 import select
@@ -28,6 +29,7 @@ from . import config
 _lock = threading.RLock()
 _proc = None                       # the persistent `codex mcp-server` subprocess (or None)
 _rpc_id = 0
+_read_buf = b""                    # bytes received but not yet split into complete lines (one persistent stdout)
 STARTUP_TIMEOUT_S = 60             # the ONE-TIME server handshake budget
 CALL_TIMEOUT_S = 180              # a single warm tools/call (a real task can reason for a while)
 
@@ -38,39 +40,64 @@ def _next_id():
     return _rpc_id
 
 
+def _set_nonblocking(f):
+    """Put a pipe fd in non-blocking mode so os.read never blocks past our OWN deadline. A blocking readline() could
+    hang forever on a partial line the server wrote before stalling — and it holds the shared lock while it hangs."""
+    fl = fcntl.fcntl(f.fileno(), fcntl.F_GETFL)
+    fcntl.fcntl(f.fileno(), fcntl.F_SETFL, fl | os.O_NONBLOCK)
+
+
 def _mcp_send(p, obj):
-    p.stdin.write(json.dumps(obj) + "\n")
+    p.stdin.write((json.dumps(obj) + "\n").encode("utf-8"))    # binary pipe (bufsize=0) — write bytes
     p.stdin.flush()
 
 
 def _read_until(p, want_id, timeout):
-    """Read line-delimited JSON-RPC until the response whose id==want_id; skip progress notifications/other ids.
-    None on timeout or a dead pipe (the caller then restarts)."""
+    """Read line-delimited JSON-RPC until the response whose id==want_id; skip notifications/other ids. NEVER blocks
+    past `timeout`: stdout is a NON-BLOCKING pipe, and we accumulate bytes and split lines OURSELVES. The old
+    select()+readline() blocked until a newline even after the deadline (a partial line the server wrote then stalled
+    on would wedge the calling thread while it held the lock), and could miss a line already sitting in a
+    TextIOWrapper buffer that select() never reports readable. None on timeout or a dead pipe (the caller restarts)."""
+    global _read_buf
     end = time.time() + timeout
-    while time.time() < end:
+    while True:
+        while b"\n" in _read_buf:                      # drain every COMPLETE line already buffered, first
+            raw, _read_buf = _read_buf.split(b"\n", 1)
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                msg = json.loads(raw.decode("utf-8", "replace"))
+            except ValueError:
+                continue
+            if msg.get("id") == want_id:
+                return msg
+        remaining = end - time.time()
+        if remaining <= 0:
+            return None
         if p.poll() is not None:
             return None
-        r, _, _ = select.select([p.stdout], [], [], min(1.0, max(0.0, end - time.time())))
+        r, _, _ = select.select([p.stdout], [], [], min(0.5, remaining))
         if not r:
             continue
-        line = p.stdout.readline()
-        if not line:
-            return None
-        line = line.strip()
-        if not line:
-            continue
         try:
-            msg = json.loads(line)
-        except ValueError:
+            chunk = os.read(p.stdout.fileno(), 65536)
+        except (BlockingIOError, InterruptedError):
             continue
-        if msg.get("id") == want_id:
-            return msg
-    return None
+        except (OSError, ValueError):
+            return None
+        if chunk == b"":                               # EOF — the server closed the pipe
+            return None
+        _read_buf += chunk
 
 
 def _spawn():
-    """Start `codex mcp-server`, do the MCP handshake, return the live process — or None if it can't come up.
-    Plugins are disabled at spawn (they are the dominant startup cost and a headless completion needs none)."""
+    """Start `codex mcp-server`, do the MCP handshake, return the live process — or None if it can't come up. The
+    ENTIRE handshake is guarded: if the server dies between Popen and the initialize write, the BrokenPipeError/OSError
+    returns None (a startup failure the caller degrades on) rather than propagating out of ensure_running() and
+    crashing the caller. Plugins are disabled at spawn (their loading is the dominant startup cost; a headless
+    completion needs none)."""
+    global _read_buf
     from . import codex_exec
     exe = codex_exec._bin()
     if not exe:
@@ -79,20 +106,26 @@ def _spawn():
     cmd = [exe, "mcp-server"] + codex_exec._plugin_disable_flags()
     try:
         p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                             text=True, bufsize=1, env=env)
+                             bufsize=0, env=env)               # binary + unbuffered → os.read on a non-blocking fd
     except Exception:
         return None
-    _mcp_send(p, {"jsonrpc": "2.0", "id": _next_id(), "method": "initialize",
-              "params": {"protocolVersion": "2024-11-05", "capabilities": {},
-                         "clientInfo": {"name": "spendguard", "version": "1"}}})
-    if _read_until(p, _rpc_id, STARTUP_TIMEOUT_S) is None:
+    try:
+        _read_buf = b""                                       # fresh line buffer for THIS server's stream
+        _set_nonblocking(p.stdout)
+        rid = _next_id()                                      # CAPTURE the id — never read the global _rpc_id back
+        _mcp_send(p, {"jsonrpc": "2.0", "id": rid, "method": "initialize",
+                      "params": {"protocolVersion": "2024-11-05", "capabilities": {},
+                                 "clientInfo": {"name": "spendguard", "version": "1"}}})
+        if _read_until(p, rid, STARTUP_TIMEOUT_S) is None:
+            raise RuntimeError("no initialize response")
+        _mcp_send(p, {"jsonrpc": "2.0", "method": "notifications/initialized"})
+        return p
+    except Exception:
         try:
             p.terminate()
         except Exception:
             pass
         return None
-    _mcp_send(p, {"jsonrpc": "2.0", "method": "notifications/initialized"})
-    return p
 
 
 def ensure_running():

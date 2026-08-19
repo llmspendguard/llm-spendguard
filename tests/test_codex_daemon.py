@@ -6,6 +6,7 @@ non-responding server RESTARTS once then errors rather than wedging; `_extract` 
 import os
 import sys
 import tempfile
+import time
 
 os.environ.setdefault("SPENDGUARD_HOME", tempfile.mkdtemp(prefix="sg-cdxd-"))
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
@@ -79,6 +80,65 @@ try:
 finally:
     cd.ensure_running, cd._mcp_send, cd._read_until, cd.shutdown = _o_ensure, _o_send, _o_read, _o_shut
     cd._proc = None
+
+
+# ── the REAL IO layer (no stubs): the honestreview-found robustness bugs ───────────────────────────────
+print("\n-- _read_until on a REAL non-blocking pipe: parses complete lines, skips other ids --")
+r_fd, w_fd = os.pipe()
+_fl = cd.fcntl.fcntl(r_fd, cd.fcntl.F_GETFL)
+cd.fcntl.fcntl(r_fd, cd.fcntl.F_SETFL, _fl | os.O_NONBLOCK)
+
+
+class _RealP:                                          # minimal `p`: a non-blocking read fd + an alive poll()
+    class _Out:
+        def fileno(self_inner):
+            return r_fd
+    stdout = _Out()
+
+    def poll(self):
+        return None
+
+
+_p = _RealP()
+cd._read_buf = b""
+os.write(w_fd, b'{"id":1,"result":"skip"}\n{"id":2,"result":"want"}\n')
+_m = cd._read_until(_p, 2, timeout=2)
+fails += ck("returns the matching id, skipping earlier ones", _m is not None and _m.get("id") == 2)
+
+print("\n-- _read_until does NOT hang on a partial line — respects the deadline (the 52/56 finding) --")
+cd._read_buf = b""
+os.write(w_fd, b'{"id":3,"result":"partial')            # NO newline: a stalled partial write must not wedge us
+_t0 = time.time()
+_m2 = cd._read_until(_p, 3, timeout=1)
+_dt = time.time() - _t0
+fails += ck("returns None ~by the deadline, never blocks forever", _m2 is None and _dt < 3)
+os.close(r_fd)
+os.close(w_fd)
+
+print("\n-- _spawn returns None (never raises) when the server binary can't start (the 81/85 finding) --")
+from spendguard import codex_exec as _cx                                               # noqa: E402
+_o_bin, _o_flags = _cx._bin, _cx._plugin_disable_flags
+try:
+    _cx._bin = lambda: "/nonexistent/codex-does-not-exist"
+    _cx._plugin_disable_flags = lambda: []
+    fails += ck("_spawn → None on an unstartable binary", cd._spawn() is None)
+finally:
+    _cx._bin, _cx._plugin_disable_flags = _o_bin, _o_flags
+
+print("\n-- codex_exec.run_prompt swallows a run_warm EXCEPTION → error, never propagates (the 135 finding) --")
+_o_daemon, _o_runwarm, _o_bin2 = _cx._daemon_enabled, cd.run_warm, _cx._bin
+try:
+    _cx._daemon_enabled = lambda: True
+
+    def _boom(*a, **k):
+        raise RuntimeError("boom")
+    cd.run_warm = _boom
+    _cx._bin = lambda: None                            # exec fallback finds no codex → returns {error}, no crash
+    _out = _cx.run_prompt("hi", model="openai:gpt-5.5")
+    fails += ck("run_prompt returns an error dict (exception did not bypass the fallback)",
+                isinstance(_out, dict) and bool(_out.get("error")))
+finally:
+    _cx._daemon_enabled, cd.run_warm, _cx._bin = _o_daemon, _o_runwarm, _o_bin2
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_codex_daemon: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)
