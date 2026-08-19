@@ -75,6 +75,8 @@ _LANES = {"anthropic": ("claude-code", "subscription_exec"), "openai": ("codex",
 _lane_cooldown = {}   # lane name -> unix ts until which it is cooling
 _sub_guard = threading.local()   # one-hop lane-substitution guard: while a substitute call is in flight (proactive OR
                                  # reactive), no nested substitution — a substitute failing does not chain to a third.
+_lane_echoed = set()             # lanes already announced this run — echo "a plan is serving these prompts" ONCE per
+                                 # lane so the user KNOWS their work rode a subscription (not once per call = spam).
 
 
 def _pool_cooldown_s():
@@ -396,6 +398,11 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         s = lane_mod.run_prompt(prompt, system=_lane_sys, model=raw, timeout=_lane_timeout)
         if not s.get("error"):
             _lane_note_ok(lane_name, prompt)         # proven-good watermark: this lane answered a prompt this big
+            if lane_name not in _lane_echoed:        # tell the user ONCE per lane per run that a plan is serving their work
+                _lane_echoed.add(lane_name)
+                import sys as _syse
+                print(f"[spendguard] 🛣  {lane_name} plan is serving {raw} prompts this run ($0 billed, not the metered API)",
+                      file=_syse.stderr)
             try:
                 from . import calls
                 calls.record(prov, raw, "subscription", 0.0,
