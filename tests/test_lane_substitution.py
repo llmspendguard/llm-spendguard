@@ -117,7 +117,7 @@ class _FailLane:
     TIMEOUT_S = 300
 
     @staticmethod
-    def run_prompt(prompt, system=None, model=None, timeout=None):
+    def run_prompt(prompt, system=None, model=None, timeout=None, **_kw):
         return {"error": "quota/limit exhausted"}          # the plan is out → the lane fails
 
 

@@ -5,6 +5,15 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 ## [Unreleased]
 
 ### Added
+- **Selectable reasoning on the Codex lane — `codex_exec` `reasoning=` → `-c model_reasoning_effort`.** The Codex
+  plan model's reasoning scale is `none|low|medium|high|xhigh|max` and has **no `minimal`** (MEASURED 2026-08-19:
+  sending `minimal` is a hard 400) — a concrete instance of the cross-provider naming gap. `codex_exec.run_prompt`
+  now takes `reasoning=` and threads `-c model_reasoning_effort=<v>` with the standard ordinal mapped to that scale
+  (`minimal→none`; the rest pass through, codex validates). `reasoning` is now a protocol-uniform arg on all four
+  lane `run_prompt`s (Gemini's effort rides its model suffix; Claude/z.ai accept-and-ignore for now), threaded from
+  the one `adapters._call_once` lane call site. Guarded by `tests/test_codex_reasoning.py`. (NB: measured — even at
+  codex 0.148.0 with `low`, `codex exec` on a real prompt stays >75s; the CLI *agent* overhead, not reasoning, so
+  gemini(low)/zai remain the fast $0 delegation lanes.)
 - **Standard cross-provider reasoning knob (OpenAI half) — `models.normalize_reasoning`.** One ordinal
   `reasoning=minimal|low|medium|high` now maps to each OpenAI model's VERIFIED effort value, hiding the gpt
   family's inconsistent naming (gpt-5.5 wants `none`, gpt-5-mini/nano + o-series want `minimal` — only the FLOOR

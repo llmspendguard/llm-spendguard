@@ -395,7 +395,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         # still bounded. The lane is $0, so a generous wait costs latency, not money.
         _lane_cap = int(getattr(lane_mod, "TIMEOUT_S", 300))
         _lane_timeout = min(_lane_cap, max(int(timeout_s or 0), int(LANE_MIN_TIMEOUT_S)))
-        s = lane_mod.run_prompt(prompt, system=_lane_sys, model=raw, timeout=_lane_timeout)
+        s = lane_mod.run_prompt(prompt, system=_lane_sys, model=raw, timeout=_lane_timeout, reasoning=reasoning)
         if not s.get("error"):
             _lane_note_ok(lane_name, prompt)         # proven-good watermark: this lane answered a prompt this big
             if lane_name not in _lane_echoed:        # tell the user ONCE per lane per run that a plan is serving their work

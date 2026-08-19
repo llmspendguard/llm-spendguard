@@ -22,12 +22,12 @@ def ck(name, cond):
 calls_made = {"claude": 0, "codex": 0}
 
 
-def claude_ok(prompt, system=None, model=None, timeout=None):
+def claude_ok(prompt, system=None, model=None, timeout=None, **_kw):
     calls_made["claude"] += 1
     return {"text": "CLAUDE LANE", "in_tok": 10, "out_tok": 5, "latency": 0.1, "error": None}
 
 
-def codex_ok(prompt, system=None, model=None, timeout=None):
+def codex_ok(prompt, system=None, model=None, timeout=None, **_kw):
     calls_made["codex"] += 1
     return {"text": "CODEX LANE", "in_tok": 11, "out_tok": 6, "latency": 0.1, "error": None}
 
@@ -47,7 +47,7 @@ ck("openai model → codex lane, $0 billed",
 ck("no cross-lane leakage", calls_made == {"claude": 1, "codex": 1})
 
 print("-- lane failure → cooldown → straight to API until it expires --")
-def codex_down(prompt, system=None, model=None, timeout=None):
+def codex_down(prompt, system=None, model=None, timeout=None, **_kw):
     calls_made["codex"] += 1
     return {"error": "plan window exhausted"}
 codex_exec.run_prompt = codex_down

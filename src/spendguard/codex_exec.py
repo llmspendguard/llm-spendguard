@@ -72,7 +72,19 @@ def _usage_from_events(stdout):
     return in_tok, out_tok
 
 
-def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S):
+def _codex_effort(level):
+    """Map a STANDARD ordinal reasoning level → the Codex plan model's OWN scale. The Codex model accepts
+    none|low|medium|high|xhigh|max and has NO 'minimal' (that is the OpenAI *API* scale — MEASURED 2026-08-19:
+    sending 'minimal' is a hard 400 "not supported with the ... model. Supported values are: none, low, medium,
+    high, xhigh, max"). So 'minimal' → 'none' (its floor); the rest pass through and codex validates them (a bad
+    value fails fast → the lane degrades to API). Empty → None (leave codex's own default)."""
+    lv = (level or "").strip().lower()
+    if not lv:
+        return None
+    return "none" if lv == "minimal" else lv
+
+
+def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=None):
     """→ {text, in_tok, out_tok, latency, error} from one headless plan-billed Codex run. `system` is
     prepended to the prompt (codex exec has no separate system slot for one-shot prompt mode). `model` IS
     forwarded to `codex -m` when given (e.g. gpt-5.5), so the recorded model is the one that actually ran —
@@ -92,6 +104,9 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S):
         fd, out_file = tempfile.mkstemp(prefix="spendguard-codex-", suffix=".txt")
         os.close(fd)
         cmd = [exe, "exec", "--json", "--skip-git-repo-check", "--output-last-message", out_file]
+        _eff = _codex_effort(reasoning)
+        if _eff:
+            cmd += ["-c", f"model_reasoning_effort={_eff}"]   # Codex's OWN scale (none|low|…); 'minimal'→'none' upstream
         if model:
             cmd += ["-m", model.split(":", 1)[-1]]     # forward the requested id; a bad one fails → API fallback
         cmd += ["--", full]      # `--` end-of-options: a prompt/system beginning with '-' is a positional, not a flag

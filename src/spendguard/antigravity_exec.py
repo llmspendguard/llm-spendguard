@@ -79,7 +79,7 @@ def _usage_from_result(obj):
     return _int("input_tokens"), _int("output_tokens")
 
 
-def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S):
+def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=None):   # reasoning: protocol-uniform; Gemini's effort rides the MODEL SUFFIX (…-low/-high), set upstream, so ignored here
     """→ {text, in_tok, out_tok, latency, error} from one headless plan-billed Antigravity run. `system` is
     prepended to the prompt (print mode has no separate system slot). `model` IS forwarded to `agy --model` when
     given (an agy id like gemini-3.7-flash-high); an id agy does not serve exits non-zero → API fallback."""

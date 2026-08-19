@@ -61,7 +61,7 @@ ck("API fallback also failed → 'down' → the lane is cooled", k == "down" and
 
 # ── 3. end-to-end DOWN path through the real recursion: lane errors + no API key → API fails → lane cooled ────
 fake = types.SimpleNamespace(TIMEOUT_S=60,
-                             run_prompt=lambda prompt, system=None, model=None, timeout=None: {"error": "boom", "text": None})
+                             run_prompt=lambda prompt, system=None, model=None, timeout=None, **_kw: {"error": "boom", "text": None})
 _real_lane_for, _real_key = adapters._lane_for, adapters.config.api_key
 adapters._lane_for = lambda prov: ("laneC", fake) if prov == "anthropic" else None
 adapters.config.api_key = lambda name: None            # the API fallback fails fast with no key

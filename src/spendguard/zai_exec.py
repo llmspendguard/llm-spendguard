@@ -57,7 +57,7 @@ def available() -> bool:
     return bool(_key())
 
 
-def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S):
+def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=None):   # reasoning: protocol-uniform; accepted, not yet applied on this lane
     """→ {text, in_tok, out_tok, latency, error} from ONE plan-billed GLM completion over the Anthropic-
     compatible coding endpoint, via RAW HTTP so the spend gate never meters it. `model` = the glm id the caller
     asked for (glm-5.3 etc.), passed through. Same typed contract as the CLI lanes."""

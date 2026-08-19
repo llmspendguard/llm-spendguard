@@ -63,7 +63,7 @@ def _model_alias(model):
 _PLAN_STRIP_ENV = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL")
 
 
-def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S):
+def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=None):   # reasoning: protocol-uniform; the Claude CLI has no one-shot effort flag → ignored for now
     """→ {text, in_tok, out_tok, latency, error} from one headless plan-billed completion. `model` = the
     API model id the caller would have used — mapped to the matching plan tier so subscription execution
     never upgrades a haiku-class meta prompt to the default (top) tier."""
