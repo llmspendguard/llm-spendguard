@@ -137,6 +137,13 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
             _txt = _r["text"]
             return {"text": _txt, "in_tok": len(_full) // 4, "out_tok": len(_txt) // 4,   # est: the tool returns no usage
                     "latency": round(time.time() - _t0, 2), "error": None}
+        if _r.get("tool_error"):
+            # HARD request rejection (model not served on the plan, etc.). A cold `codex exec` would fail the same
+            # way, so return the error NOW and let the adapter fall back to the metered API + back off this
+            # (lane, model). NEVER surface the rejection text as `text` — that is the very bug that recorded a codex
+            # 400 as content. (A merely TRANSIENT daemon problem — would-not-start / dead pipe — has no tool_error,
+            # so it still falls through to one cold `codex exec` below.)
+            return {"error": (_r.get("error") or "codex rejected the request")[:200]}
     exe = _bin()
     if not exe:
         return {"error": "codex CLI not found"}

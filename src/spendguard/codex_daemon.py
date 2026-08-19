@@ -174,5 +174,15 @@ def run_warm(prompt, model=None, thread=None, reasoning=None):
             continue
         if msg.get("error"):
             return {"text": None, "thread": thread, "error": str(msg["error"])[:200]}
-        text, new_thread = _extract(msg.get("result") or {})
+        result = msg.get("result") or {}
+        text, new_thread = _extract(result)
+        # MCP TOOL ERROR. A tools/call result carries `isError: true` when the tool itself failed — e.g. codex
+        # rejecting the model ("gpt-5-mini is not supported when using Codex with a ChatGPT account"). That error
+        # text is NOT an answer; returning it as `text` is EXACTLY how a codex 400 got recorded as a $0
+        # 'subscription success' and handed downstream as content (→ the caller's "missing/empty chunks"). Surface
+        # it as an error so the caller falls back to the metered API. `tool_error` marks it a HARD request
+        # rejection (a cold `codex exec` would hit the same wall) so run_prompt does not also pay a cold retry.
+        if isinstance(result, dict) and result.get("isError"):
+            return {"text": None, "thread": thread, "error": (text or "codex tool reported an error")[:200],
+                    "tool_error": True}
         return {"text": text or None, "thread": new_thread or thread, "error": None if text else "empty codex reply"}

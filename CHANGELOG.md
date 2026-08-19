@@ -5,6 +5,21 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 ## [Unreleased]
 
 ### Fixed
+- **Codex lane recorded a rejection (400) as a $0 SUCCESS — the error body was handed downstream as content.**
+  A `codex mcp-server` tools/call result carries `isError: true` when the tool fails (e.g. the plan rejecting a model:
+  "gpt-5-mini is not supported when using Codex with a ChatGPT account"), but `codex_daemon._extract`/`run_warm`
+  ignored the flag and returned the error text as `text` — so spendguard recorded a $0 `subscription` "success" and
+  the caller got the error prose instead of an answer (surfacing downstream as "missing/empty chunks"). Now
+  `run_warm` checks `isError` → `{error, tool_error}`; `codex_exec.run_prompt` propagates a `tool_error` as an error
+  (the adapter falls back to the metered API) instead of cold-retrying a `codex exec` that hits the same 400.
+- **A subscription lane re-intercepted a model it can't serve on EVERY call.** `_learn_from_fallback` learned only a
+  SIZE ceiling, so a model rejection (within a proven-good prompt size, where the API then answers) was classed
+  "unsuitable" and the lane kept grabbing that model forever. Added a per-`(lane, model)` backoff (`_lane_model_cool`):
+  a model-specific rejection cools THAT model on THAT lane (self-healing, expires), while the lane stays available for
+  the models it does serve (gpt-5.5 keeps riding codex). Decision is the API-fallback OUTCOME, never the error text.
+  Guards: `tests/test_codex_daemon.py` (isError round-trip), `tests/test_lane_model_backoff.py`.
+  NB: `SPENDGUARD_ADVISOR_EXECUTOR=api` (force the metered API, no lanes) already works — verified — but is per-process
+  env; the cross-process persistent switch is `spendguard config set advisor.executor api`.
 - **Codex lane cold-start — `codex exec` now skips the two per-call setup costs (>75s → single-digit seconds).**
   MEASURED 2026-08-19: a real one-shot `codex exec` took >75s because each call re-set-up (a) the writable-workspace
   sandbox and (b) all enabled plugins/MCP servers. A headless completion needs neither, so `codex_exec.run_prompt`

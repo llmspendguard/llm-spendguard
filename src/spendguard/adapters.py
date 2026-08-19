@@ -96,6 +96,22 @@ def _lane_cool(lane):
     _lane_cooldown[lane] = time.time() + _pool_cooldown_s()
 
 
+_lane_model_cooldown = {}   # (lane, model) -> unix ts: a specific model this lane REJECTED while the API served it.
+
+
+def _lane_model_cooling(lane, model):
+    return time.time() < _lane_model_cooldown.get((lane, model), 0)
+
+
+def _lane_model_cool(lane, model):
+    """Back off ONE (lane, model) after the lane failed for it WITHIN a proven-good size and the API then answered
+    — a MODEL/content mismatch (e.g. codex 400s gpt-5-mini on a ChatGPT plan: "not supported with a ChatGPT
+    account"), not the lane being down. Per-model so gpt-5.5 keeps riding codex the whole time; self-healing (it
+    expires) so a model the plan later serves is retried. Without this the lane re-intercepts the rejected model on
+    EVERY call — the '_learn_from_fallback' size axis alone can't see a model rejection."""
+    _lane_model_cooldown[(lane, model)] = time.time() + _pool_cooldown_s()
+
+
 # A lane failure is NOT always the lane being down. A CLI that ran the prompt as an AGENT and hit its turn limit,
 # or a prompt that overran the plan model's context, is a PROMPT-vs-lane MISMATCH — the lane is fine for other
 # prompts — so cooling the WHOLE lane for 900s (metering even small prompts after it) is the wrong response.
@@ -126,7 +142,7 @@ def _lane_too_big(lane, prompt):
     return ceil is not None and len(prompt or "") >= ceil
 
 
-def _learn_from_fallback(lane_name, prompt, api_failed):
+def _learn_from_fallback(lane_name, prompt, api_failed, model=None):
     """The auto-route decision, taken from the API-fallback OUTCOME (never the lane's error text). api_failed is
     False when the API answered where the lane did not ⇒ the lane was UNSUITABLE for this prompt: keep the lane,
     and — ONLY when this failing size is LARGER than a size the lane has proven it can answer — learn a routing
@@ -139,6 +155,9 @@ def _learn_from_fallback(lane_name, prompt, api_failed):
     n = len(prompt or "")
     if n > _lane_ok_max.get(lane_name, 0):          # only a failure above the proven-good range is a size signal
         _lane_big_prompt_ceiling[lane_name] = min(_lane_big_prompt_ceiling.get(lane_name, n), n)
+    elif model:                                     # WITHIN a size the lane can handle, yet it failed and the API
+        _lane_model_cool(lane_name, model)          # answered → a MODEL/content mismatch (not a size limit): back
+        #                                             off THIS model on THIS lane so it stops re-intercepting it.
     return "unsuitable"
 
 
@@ -374,8 +393,9 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
     # is counted by the matching est-value pipeline (claude-code / codex session logs). Needs NO API key.
     # Any lane failure cools that lane and falls back to the caged API path below — degrade, never break.
     _lane = None if _skip_lane else _lane_for(prov)
-    if _lane and _lane_too_big(_lane[0], prompt):
-        _lane = None                                 # a prompt this size already failed this lane as unsuitable → straight to API
+    if _lane and (_lane_too_big(_lane[0], prompt) or _lane_model_cooling(_lane[0], raw)):
+        _lane = None                                 # prompt too big for this lane, OR this MODEL was rejected here
+        #                                              recently (the API served it) → straight to API, don't re-intercept
     if _lane:
         lane_name, lane_mod = _lane
         # THE SHAPE MUST RIDE THE PROMPT ON A LANE, AND THE DEADLINE MUST BE THE CALLER'S. A CLI completion
@@ -440,7 +460,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         # unsuitable for this prompt (keep it) or genuinely down (cool it).
         out = _call_once(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
                          schema=schema, timeout_s=timeout_s, _skip_lane=True)
-        _kind = _learn_from_fallback(lane_name, prompt, bool(out.get("error")))
+        _kind = _learn_from_fallback(lane_name, prompt, bool(out.get("error")), model=raw)
         import sys as _sys
         if _kind == "unsuitable":
             # The ceiling is only LEARNED when the failure was ABOVE the lane's proven-good size; a

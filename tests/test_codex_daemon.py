@@ -57,6 +57,15 @@ try:
     a2 = sent[-1]["params"]
     fails += ck("calls `codex-reply` with the thread id", a2["name"] == "codex-reply" and a2["arguments"].get("threadId") == "tid1")
 
+    print("\n-- MCP tool ERROR (isError=true) → surfaced as ERROR, never as text (the codex-400-as-content bug) --")
+    _rej = "gpt-5-mini is not supported when using Codex with a ChatGPT account"
+    cd._read_until = lambda p, rid, to: {"id": rid, "result": {"isError": True,
+                                                               "content": [{"type": "text", "text": _rej}]}}
+    re_ = cd.run_warm("do X", model="openai:gpt-5-mini")
+    fails += ck("isError → text is None (the tool result is NOT recorded as content)", re_["text"] is None)
+    fails += ck("isError → the rejection text is carried through on `error` verbatim", re_["error"] == _rej)
+    fails += ck("isError → tool_error flag set (a cold exec would hit the same wall)", re_.get("tool_error") is True)
+
     print("\n-- self-heal: a non-responding server restarts ONCE then errors (never wedges) --")
     calls = {"n": 0}
 
