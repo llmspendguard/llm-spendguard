@@ -92,6 +92,18 @@ def _plugin_disable_flags():
     return flags
 
 
+def _daemon_enabled():
+    """Use the WARM `codex mcp-server` (codex_daemon) instead of cold-starting `codex exec` per call? Env
+    SPENDGUARD_CODEX_DAEMON wins, else config advisor.codex_daemon. Default OFF: the daemon is proven + available,
+    but arming a per-process persistent subprocess on the hot lane is a deliberate opt-in (the exec path stays the
+    safe default, and offline tests that stub `codex exec` are untouched)."""
+    from . import config
+    v = os.getenv("SPENDGUARD_CODEX_DAEMON")
+    if v is not None:
+        return v.strip().lower() not in ("0", "false", "no", "off")
+    return bool(config._cfg_get("advisor", "codex_daemon", False))
+
+
 def _codex_effort(level):
     """Map a STANDARD ordinal reasoning level → the Codex plan model's OWN scale. The Codex model accepts
     none|low|medium|high|xhigh|max and has NO 'minimal' (that is the OpenAI *API* scale — MEASURED 2026-08-19:
@@ -113,6 +125,18 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     lane degrades, it never silently answers on a different model than the caller asked for.
     `--skip-git-repo-check` because a headless one-shot is not an interactive session that needs the
     working-tree guard, and honestreview may run it from any directory (measured: /tmp tripped the guard)."""
+    # WARM DAEMON PATH (opt-in): reuse a persistent codex mcp-server instead of cold-starting `codex exec` each call
+    # (>75s → ~5s, reliable). Falls THROUGH to the exec path on any daemon failure — degrade, never break. Stateless
+    # here (the lane carries no thread); persistent context is a higher-level feature (codex_daemon.run(thread=…)).
+    if _daemon_enabled():
+        from . import codex_daemon
+        _full = (f"{system.strip()}\n\n{prompt}" if system else prompt)
+        _t0 = time.time()
+        _r = codex_daemon.run_warm(_full, model=model, reasoning=reasoning)
+        if _r.get("text") and not _r.get("error"):
+            _txt = _r["text"]
+            return {"text": _txt, "in_tok": len(_full) // 4, "out_tok": len(_txt) // 4,   # est: the tool returns no usage
+                    "latency": round(time.time() - _t0, 2), "error": None}
     exe = _bin()
     if not exe:
         return {"error": "codex CLI not found"}

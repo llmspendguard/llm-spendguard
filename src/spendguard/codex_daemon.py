@@ -1,0 +1,178 @@
+"""WARM Codex lane over a persistent `codex mcp-server`.
+
+WHY. A one-shot `codex exec` COLD-STARTS every call (writable-workspace sandbox + loading all enabled plugins/MCP
+servers) — MEASURED >75s, and intermittently hangs. `codex mcp-server` pays that setup ONCE at spawn; each request
+is then a warm `tools/call` (MEASURED ~5s, reliable). This module holds ONE such server per process and reuses it.
+
+LIFECYCLE (the user's ask — "starts when spendguard is there, restarted as needed"): `ensure_running()` lazily
+spawns the server on first use and RESTARTS it if it died; `atexit` tears it down. Thread-safe (the pool executor is
+multi-threaded), so the shared pipe is serialised under one lock.
+
+CONTEXT (the user's ask — "maintains context on its side"): the `codex` tool returns a `threadId`; passing that back
+via the `codex-reply` tool CONTINUES the same Codex conversation, so a series of delegations can build on each other.
+`run(prompt)` alone is STATELESS (fresh thread each call); `run(prompt, thread=<id>)` is STATEFUL.
+
+This is the CLIENT half; the codex lane / delegate wire to it. NB: warmth is per-PROCESS — a detached cross-process
+daemon would use `codex app-server daemon` (needs the standalone-codex install); that's the documented upgrade.
+"""
+import atexit
+import json
+import os
+import select
+import subprocess
+import threading
+import time
+
+from . import config
+
+_lock = threading.RLock()
+_proc = None                       # the persistent `codex mcp-server` subprocess (or None)
+_rpc_id = 0
+STARTUP_TIMEOUT_S = 60             # the ONE-TIME server handshake budget
+CALL_TIMEOUT_S = 180              # a single warm tools/call (a real task can reason for a while)
+
+
+def _next_id():
+    global _rpc_id
+    _rpc_id += 1
+    return _rpc_id
+
+
+def _mcp_send(p, obj):
+    p.stdin.write(json.dumps(obj) + "\n")
+    p.stdin.flush()
+
+
+def _read_until(p, want_id, timeout):
+    """Read line-delimited JSON-RPC until the response whose id==want_id; skip progress notifications/other ids.
+    None on timeout or a dead pipe (the caller then restarts)."""
+    end = time.time() + timeout
+    while time.time() < end:
+        if p.poll() is not None:
+            return None
+        r, _, _ = select.select([p.stdout], [], [], min(1.0, max(0.0, end - time.time())))
+        if not r:
+            continue
+        line = p.stdout.readline()
+        if not line:
+            return None
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            msg = json.loads(line)
+        except ValueError:
+            continue
+        if msg.get("id") == want_id:
+            return msg
+    return None
+
+
+def _spawn():
+    """Start `codex mcp-server`, do the MCP handshake, return the live process — or None if it can't come up.
+    Plugins are disabled at spawn (they are the dominant startup cost and a headless completion needs none)."""
+    from . import codex_exec
+    exe = codex_exec._bin()
+    if not exe:
+        return None
+    env = {k: v for k, v in os.environ.items() if k != "OPENAI_API_KEY"}   # ride the ChatGPT PLAN, never the metered key
+    cmd = [exe, "mcp-server"] + codex_exec._plugin_disable_flags()
+    try:
+        p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                             text=True, bufsize=1, env=env)
+    except Exception:
+        return None
+    _mcp_send(p, {"jsonrpc": "2.0", "id": _next_id(), "method": "initialize",
+              "params": {"protocolVersion": "2024-11-05", "capabilities": {},
+                         "clientInfo": {"name": "spendguard", "version": "1"}}})
+    if _read_until(p, _rpc_id, STARTUP_TIMEOUT_S) is None:
+        try:
+            p.terminate()
+        except Exception:
+            pass
+        return None
+    _mcp_send(p, {"jsonrpc": "2.0", "method": "notifications/initialized"})
+    return p
+
+
+def ensure_running():
+    """The live server, (re)started if absent or dead. Lazy auto-start + self-heal."""
+    global _proc
+    with _lock:
+        if _proc is None or _proc.poll() is not None:
+            _proc = _spawn()
+    return _proc
+
+
+def running():
+    return _proc is not None and _proc.poll() is None
+
+
+def shutdown():
+    global _proc
+    with _lock:
+        if _proc is not None:
+            try:
+                _proc.terminate()
+            except Exception:
+                pass
+            _proc = None
+
+
+atexit.register(shutdown)
+
+
+def _extract(result):
+    """(text, threadId) from a tools/call result — text from structuredContent.content or the text blocks; threadId
+    from structuredContent so a caller can CONTINUE the conversation."""
+    sc = result.get("structuredContent") if isinstance(result, dict) else None
+    text = ""
+    if isinstance(sc, dict) and sc.get("content"):
+        text = sc["content"] if isinstance(sc["content"], str) else ""
+    if not text:
+        content = result.get("content") if isinstance(result, dict) else None
+        if isinstance(content, list):
+            text = " ".join(c.get("text", "") for c in content if isinstance(c, dict)).strip()
+    thread = sc.get("threadId") if isinstance(sc, dict) else None
+    return text, thread
+
+
+def run_warm(prompt, model=None, thread=None, reasoning=None):
+    """One delegation on the WARM Codex server. `thread=None` → a fresh `codex` session (returns a new threadId);
+    `thread=<id>` → `codex-reply` CONTINUES that conversation (context kept on codex's side). Returns
+    {text, thread, error}. Restarts the server once on a dead pipe and retries — the lane degrades, never wedges."""
+    prompt = (prompt or "")
+    for attempt in (1, 2):
+        p = ensure_running()
+        if p is None:
+            return {"text": None, "thread": None, "error": "codex mcp-server would not start"}
+        if thread:
+            args = {"conversationId": thread, "threadId": thread, "prompt": prompt}
+            name = "codex-reply"
+        else:
+            args = {"prompt": prompt, "approval-policy": "never", "sandbox": "read-only"}
+            if model:
+                args["model"] = model.split(":", 1)[-1]
+            from . import codex_exec
+            eff = codex_exec._codex_effort(reasoning)
+            if eff:
+                args["config"] = {"model_reasoning_effort": eff}
+            name = "codex"
+        rid = None
+        with _lock:
+            try:
+                rid = _next_id()
+                _mcp_send(p, {"jsonrpc": "2.0", "id": rid, "method": "tools/call",
+                          "params": {"name": name, "arguments": args}})
+                msg = _read_until(p, rid, CALL_TIMEOUT_S)
+            except (BrokenPipeError, OSError):
+                msg = None
+        if msg is None:                                   # dead/timed-out server → restart once, then retry
+            shutdown()
+            if attempt == 2:
+                return {"text": None, "thread": thread, "error": "codex mcp-server call failed after restart"}
+            continue
+        if msg.get("error"):
+            return {"text": None, "thread": thread, "error": str(msg["error"])[:200]}
+        text, new_thread = _extract(msg.get("result") or {})
+        return {"text": text or None, "thread": new_thread or thread, "error": None if text else "empty codex reply"}

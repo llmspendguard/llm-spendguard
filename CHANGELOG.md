@@ -16,6 +16,17 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
   stays out of the default `delegate` lane set, and gemini(low)/zai remain the reliable fast lanes.
 
 ### Added
+- **Warm Codex lane via a persistent `codex mcp-server` (`codex_daemon`) — the GPT/Codex plan is now a fast $0
+  delegation lane.** Instead of cold-starting `codex exec` per call (>75s), spendguard reuses ONE `codex mcp-server`
+  per process (set up once; each request is a warm `tools/call`). PROVEN live: `delegate(lanes=['codex'])` →
+  gpt-5.5, **$0 on-plan, 5s** (was >75s / intermittent hang). **Self-healing** — `ensure_running()` lazy-starts and
+  restarts a dead server, `atexit` tears it down (the "starts when spendguard is there, restarted as needed" ask).
+  **Context-capable** — the `codex` tool returns a `threadId`; `codex_daemon.run_warm(thread=…)` uses `codex-reply`
+  to CONTINUE the conversation (proven: recalled a prior word), so a series of delegations can build on each other.
+  Wired into the codex lane behind `advisor.codex_daemon` / `SPENDGUARD_CODEX_DAEMON` (default OFF in code — the
+  per-call exec stays the safe default; armed in the user's config). Guarded by `tests/test_codex_daemon.py`.
+  (Cross-*invocation* warmth would use `codex app-server daemon`, which needs the standalone-codex install —
+  documented upgrade.)
 - **`lane_balance.delegate(task)` + `spendguard lanes --delegate "<task>"` — offload work to an idle plan at $0.**
   From an orchestrator that itself can't move plans (e.g. a Claude Code session — it *is* Claude), delegate one task
   to the cheapest VIABLE idle subscription lane and get the answer back: the heavy tokens run **$0 on the idle plan**,
