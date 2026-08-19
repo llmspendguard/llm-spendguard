@@ -5,6 +5,14 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 ## [Unreleased]
 
 ### Added
+- **Standard cross-provider reasoning knob (OpenAI half) — `models.normalize_reasoning`.** One ordinal
+  `reasoning=minimal|low|medium|high` now maps to each OpenAI model's VERIFIED effort value, hiding the gpt
+  family's inconsistent naming (gpt-5.5 wants `none`, gpt-5-mini/nano + o-series want `minimal` — only the FLOOR
+  varies; low/medium/high are the API's universal values). Non-reasoning models drop the param (no 400). Wired
+  into the OpenAI send path. Anthropic (thinking BUDGET, conflicts with a forced-tool schema) and Gemini (model-id
+  SUFFIX) use different mechanisms and return None here until MEASURED — never guessed (the models.py doctrine).
+  Guarded by `tests/test_reasoning_normalize.py`. Learned-best-default, cost-per-level, and the Anthropic/Gemini
+  halves are the next increments (a measured pass, which also exercises those lanes).
 - **Load-balancing completed — EFFECTIVE-UTILISATION routing + REACTIVE failover (`lane_balance` + `adapters`).**
   `route_decision` now aims at effective utilisation rather than only saturation: it proactively routes an intent to
   the LEAST-utilised acceptable plan whenever that plan sits more than `advisor.lane_balance_margin` below the

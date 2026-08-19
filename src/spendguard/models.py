@@ -99,6 +99,28 @@ def profile(model):
     return p
 
 
+def normalize_reasoning(model, level):
+    """Map a STANDARD ordinal reasoning level → the reasoning_effort value THIS model actually accepts, so ONE knob
+    (minimal|low|medium|high) works across OpenAI's inconsistent naming. Only the FLOOR varies per model — gpt-5.5
+    wants 'none', gpt-5 mini/nano + o-series want 'minimal' (both VERIFIED against 400s in the family rules above);
+    low/medium/high are the OpenAI API's own universal values. Returns: the model's verified FLOOR for level
+    'minimal'; 'low'/'medium'/'high' unchanged; None for a NON-reasoning model (drop the param); the caller's value
+    unchanged for an unrecognised level (their explicit choice — the send-side ladder still guards a 400).
+
+    This is the OPENAI-FAMILY half, where the naming inconsistency the user hit actually lives. Anthropic (extended
+    thinking = a token BUDGET, and it conflicts with a forced-tool schema) and Gemini (reasoning = a model-id SUFFIX,
+    on the lane path) use different mechanisms and are normalised once MEASURED — never guessed (the models.py rule)."""
+    lv = (level or "").strip().lower()
+    if lv not in ("minimal", "low", "medium", "high"):
+        return level                              # unrecognised → pass through; the caller meant it
+    floor = profile(model).get("reasoning")
+    if floor is None:
+        return None                               # a verified NON-reasoning model (gpt-4, claude-haiku) → no effort param
+    if lv == "minimal" and floor and floor != "?":
+        return floor                              # this model's VERIFIED lowest effort ('none' | 'minimal')
+    return lv                                     # low|medium|high are universal; 'minimal' on an unknown floor passes through
+
+
 def apply_call_params(model, kw, *, dialect=None):
     """Mutate a chat-call kwargs dict to use the model correctly — the AUTO-APPLY that prevents the
     'forgot reasoning=none → empty output' class of bug. Returns kw.

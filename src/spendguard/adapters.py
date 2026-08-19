@@ -557,7 +557,13 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             # while the model name alone does not: kimi-k3 and glm-5.2 match no family rule, so inferring the
             # shape from the name would answer '?' and drop their measured facts on the floor.
             if reasoning:
-                okw["reasoning_effort"] = reasoning        # explicit caller argument: applied, then respected
+                try:                                       # STANDARD ordinal (minimal|low|medium|high) → this model's
+                    from . import models as _mfn           # VERIFIED reasoning_effort value (only the floor varies per model)
+                    _eff = _mfn.normalize_reasoning(raw, reasoning)
+                except Exception:
+                    _eff = reasoning
+                if _eff is not None:
+                    okw["reasoning_effort"] = _eff         # explicit caller argument: applied, then respected
             try:
                 from . import models as _mf
                 _mf.apply_call_params(raw, okw, dialect="openai")
