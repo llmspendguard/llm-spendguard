@@ -165,9 +165,13 @@ def _est_cells():
     return out
 
 
-def _est_tally(org=None, team=None, project=None):
-    """Est-value windows {today, week, month, asof} summed across sources, optionally scoped to an org / team /
-    project (the org→team→project attribution). No filter = global. None if never stamped."""
+def _est_tally(org=None, team=None, project=None, repo=None):
+    """Est-value windows {today, week, month, asof} summed across sources, optionally scoped. `org`/`team`/`project`
+    filter the org→team→project attribution (AND). `repo` scopes to a REPO the way the per-repo breakdown does — a
+    cell counts if its TEAM or its PROJECT equals the repo (a repo surfaces as either axis in the classification).
+    That is the scope a per-repo receipt needs: without it, `tally(project=repo)` scoped the API-$ but returned the
+    GLOBAL plan value, so every repo line showed the whole plan total (and `_sum_repos` added it once PER repo — an
+    N× over-count). No filter = global. None if never stamped."""
     try:
         data = json.loads(_cache_path().read_text())
         srcs = data.get("est_value_by_source")
@@ -180,7 +184,7 @@ def _est_tally(org=None, team=None, project=None):
             asof = (min((s.get("asof", "") for _k, s in stale_srcs), default="") if stale
                     else max((s.get("asof", "") for s in srcs.values()), default=""))
             names = [k for k, _s in stale_srcs]
-            if org is None and team is None and project is None:
+            if org is None and team is None and project is None and repo is None:
                 return {"today": sum(w["today"] for _k, _s, (w, _f) in rew),
                         "week": sum(w["week"] for _k, _s, (w, _f) in rew),
                         "month": sum(w["month"] for _k, _s, (w, _f) in rew),
@@ -188,14 +192,19 @@ def _est_tally(org=None, team=None, project=None):
             ol = None if org is None else org.strip().lower()
             tl = None if team is None else team.strip().lower()
             pl = None if project is None else project.strip().lower()
+            rl = None if repo is None else repo.strip().lower()
             agg = {"today": 0.0, "week": 0.0, "month": 0.0}
             for c in _est_cells():
-                if ol is not None and c.get("org") != ol:
-                    continue
-                if tl is not None and c.get("team") != tl:
-                    continue
-                if pl is not None and c.get("project") != pl:
-                    continue
+                if rl is not None:                     # REPO scope: the cell counts if its team OR its project is the
+                    if c.get("team") != rl and c.get("project") != rl:   # repo — the SAME mapping _est_breakdown
+                        continue                        # uses, so a repo's line and its project breakdown agree
+                else:
+                    if ol is not None and c.get("org") != ol:
+                        continue
+                    if tl is not None and c.get("team") != tl:
+                        continue
+                    if pl is not None and c.get("project") != pl:
+                        continue
                 for k in agg:
                     agg[k] += c.get(k, 0)
             agg["asof"] = asof
@@ -203,7 +212,7 @@ def _est_tally(org=None, team=None, project=None):
             agg["stale_sources"] = names
             return agg
         d = data.get("est_value")                     # back-compat: older single-blob stamp (global only)
-        if org is None and team is None and project is None and isinstance(d, dict) and "today" in d:
+        if org is None and team is None and project is None and repo is None and isinstance(d, dict) and "today" in d:
             return d
     except Exception:
         pass
@@ -484,8 +493,10 @@ def tally(project=None, conv=None) -> dict:
         pass
     remote = _remote_tally()                       # billed GPU/remote compute (None until resources.sync stamps it)
     sub, sub_assumed = _plan_usd()                 # flat monthly subscription fee — a REAL cost (out the door)
+    # est-value scoped to the SAME repo as the API-$ when this is a per-repo tally — else a repo line shows its own
+    # billed spend beside the GLOBAL plan value (and _sum_repos over-counts it once per repo). Global tally = global.
     out = {"api": api, "actual": api, "remote": remote, "subscription": sub, "subscription_assumed": sub_assumed,
-           "est_value": _est_tally()}
+           "est_value": (_est_tally(repo=project) if project else _est_tally())}
     out["real_month"] = (api.get("month") or 0) + (sub or 0) + ((remote or {}).get("month") or 0)
     ev = out["est_value"]
     if ev and (ev.get("month") or 0) > 0 and sub:

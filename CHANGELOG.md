@@ -5,6 +5,13 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 ## [Unreleased]
 
 ### Fixed
+- **Per-repo receipts showed the GLOBAL plan value under every repo (honestreview HIGH).** `tally(project=repo)`
+  scoped the billed API-$ to the repo but `est_value` was always computed globally, so each per-repo line showed its
+  own spend beside the WHOLE plan total — and `_sum_repos` (the "+ N more repos" summary) added that global est once
+  PER repo, an N× over-count. `_est_tally` now takes a `repo` scope (a cell counts if its TEAM or its PROJECT equals
+  the repo — the same mapping the per-repo project breakdown already uses), and `tally(project=…)` passes it. The
+  global tally stays global; a repo with no classified plan value now honestly shows $0 instead of the global total.
+  Guard: `tests/test_receipt_repo_est_scope.py`.
 - **Warm Codex daemon hardened (honestreview 5-vendor pass on the diff).** Multi-vendor review found three real
   robustness gaps in the `codex mcp-server` client: (a) the spawn handshake's `_mcp_send` sat outside any try/except,
   so a server dying between `Popen` and the initialize write raised `BrokenPipeError` out of `ensure_running()` and
