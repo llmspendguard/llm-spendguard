@@ -181,12 +181,20 @@ def _db():
                     provider TEXT, model TEXT, kind TEXT,
                     in_tok INTEGER, out_tok INTEGER, cost REAL, latency REAL,
                     prompt_hash TEXT, prompt_snip TEXT, output_snip TEXT, finish TEXT,
-                    quality TEXT, quality_src TEXT, quality_conf REAL)""")
+                    quality TEXT, quality_src TEXT, quality_conf REAL,
+                    executor TEXT, project TEXT)""")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_calls_chain ON calls(chain)")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_calls_intent ON calls(intent)")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_calls_ts ON calls(ts)")  # as_of/since range reads (calibrate, advise)
-                if "quality_conf" not in [r[1] for r in c.execute("PRAGMA table_info(calls)").fetchall()]:
-                    c.execute("ALTER TABLE calls ADD COLUMN quality_conf REAL")  # migrate older dbs
+                # Migrate older dbs: add every column the schema gained after they were created. Column names are
+                # fixed literals from this tuple (never caller input) — SQLite cannot parameterize a DDL identifier,
+                # so the f-string is the only way and carries no injection surface. `executor` = which subscription
+                # lane served the call; `project` = the repo it belongs to (so lane plan-value attributes like spend).
+                _have = {r[1] for r in c.execute("PRAGMA table_info(calls)").fetchall()}
+                for _col, _decl in (("quality_conf", "REAL"), ("executor", "TEXT"), ("project", "TEXT")):
+                    if _col not in _have:
+                        c.execute(f"ALTER TABLE calls ADD COLUMN {_col} {_decl}")
+                c.execute("CREATE INDEX IF NOT EXISTS idx_calls_executor ON calls(executor)")  # per-lane rollups
                 c.commit()
                 _conn = c
     return _conn
@@ -198,14 +206,28 @@ def _uuid():
 
 
 def record(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
-           prompt=None, output=None, finish=None, intent=None, chain=None, who=None):
-    """Record one call. Returns call_id (or None if logging is off). Never raises."""
+           prompt=None, output=None, finish=None, intent=None, chain=None, who=None,
+           executor=None, project=None):
+    """Record one call. Returns call_id (or None if logging is off). Never raises.
+
+    `executor` names the SUBSCRIPTION LANE that served the call (claude-code / codex / gemini / zai-coding) when it
+    rode a flat-fee plan instead of the metered API. Storing it makes "which lane worked" a recorded fact the receipt
+    can show and the lane est-value stamper can price — rather than a guess inferred from the provider. `project` is
+    the repo the call belongs to (derived from the live gate context when not passed), so a lane's plan VALUE
+    attributes to a project exactly like billed spend does."""
     if not enabled():
         return None
     try:
         ctx = current()
         intent = intent or ctx.get("intent")
         chain = chain or ctx.get("chain")
+        if project is None:                              # attribute to the repo the same way the money ledger does
+            try:
+                from . import budget
+                project = budget._project()
+            except Exception:
+                project = None
+        proj = ((project or "").strip().lower() or None)  # match budget's lowercased project_primary for clean joins
         cid = _uuid()
         sp = _snip()
         ph = hashlib.sha256((prompt or "").encode("utf-8", "ignore")).hexdigest()[:16] if prompt else None
@@ -215,10 +237,11 @@ def record(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
         with _lock:
             _db().execute(
                 "INSERT INTO calls (id,ts,chain,intent,caller,provider,model,kind,in_tok,out_tok,"
-                "cost,latency,prompt_hash,prompt_snip,output_snip,finish) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "cost,latency,prompt_hash,prompt_snip,output_snip,finish,executor,project) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (cid, ts, chain, intent, who or caller(), provider, model, kind,
-                 int(in_tok or 0), int(out_tok or 0), float(cost or 0), latency, ph, psnip, osnip, finish))
+                 int(in_tok or 0), int(out_tok or 0), float(cost or 0), latency, ph, psnip, osnip, finish,
+                 executor, proj))
             _db().commit()
         # deferred implicit feedback: did THIS call reuse an earlier output in the same chain?
         if chain and prompt:

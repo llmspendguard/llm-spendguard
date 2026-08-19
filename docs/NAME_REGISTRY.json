@@ -303,9 +303,9 @@
       "why": "Both functions have identical bodies returning cls from their module's _load_state(), and the codex docstring explicitly notes 'parity with claudecode.load_cls'. Same job implemented twice, differing "
     },
     "main": {
-      "n": 40,
+      "n": 41,
       "verdict": "PROTOCOL",
-      "why": "Every definition is a per-module CLI entrypoint with the uniform `main(argv=None)` contract — parse args, dispatch to that module's command, return an exit code — dispatched by name from the top-level CLI router. This is the canonical subcommand-facade protocol, not two implementations of one job."
+      "why": "Every definition is a per-module CLI entrypoint with the uniform `main(argv=None)` contract — parse args, dispatch to that module's command, return an exit code — dispatched by name from the top-level CLI router. This is the canonical subcommand-facade protocol, not two implementations of one job. [n 40→41: lane_value.main added — `spendguard lanevalue` re-prices the miner-less subscription lanes from the ledger and prints each lane's plan value, returning an exit code; the same CLI-entrypoint contract as codex.main/chat.main, read and confirmed as protocol, not a new job.]"
     },
     "project_of": {
       "n": 2,

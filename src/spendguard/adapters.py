@@ -406,7 +406,8 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             try:
                 from . import calls
                 calls.record(prov, raw, "subscription", 0.0,
-                             in_tok=s["in_tok"], out_tok=s["out_tok"], latency=s["latency"])
+                             in_tok=s["in_tok"], out_tok=s["out_tok"], latency=s["latency"],
+                             executor=lane_name)     # WHICH plan served it — a stored fact, not a provider-guess
             except Exception:
                 pass
             return {**base, "text": s["text"], "in_tok": s["in_tok"], "out_tok": s["out_tok"],

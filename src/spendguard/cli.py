@@ -379,6 +379,9 @@ def _dispatch(argv=None):
     if cmd == "chat":                                  # OPT-IN claude.ai chat adapter (session API, on-device, macOS)
         from . import chat
         return chat.main(rest)
+    if cmd in ("lanevalue", "lane-value"):             # price subscription lanes with NO session miner (gemini/zai)
+        from . import lane_value                        # → est-value, from the calls ledger (mirrors `codex`)
+        return lane_value.main(rest)
     if cmd in ("fetch-io", "fetchio"):                # recover real prompt+output samples from providers (free)
         from . import callio
         return callio.main(rest)

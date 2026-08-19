@@ -16,6 +16,24 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
   stays out of the default `delegate` lane set, and gemini(low)/zai remain the reliable fast lanes.
 
 ### Added
+- **Lane visibility & value — subscription lanes are now RECORDED by name, PRICED, and SHOWN inline.** The inline
+  receipt (the Claude Code Stop-hook line the desktop app surfaces each turn) previously showed only totals — you
+  could not see WHICH plan served your work, and two of the four lanes' plan value was invisible. Now:
+  - **Recorded:** every lane-served call stores its `executor` (claude-code / codex / gemini / zai-coding) and
+    `project` on the ledger row — the `calls` table gains two migrated columns (backward-compatible ALTER). A stored
+    fact, not a provider-guess. (`calls.record(..., executor=, project=)`, passed from the adapter lane path.)
+  - **Priced:** lanes with NO session-log miner (gemini, zai-coding) are now valued from the ledger — new module
+    `lane_value` prices their `kind='subscription'` calls at API-equivalent rates (`pricing.realtime_cost`) and
+    stamps per-lane est-value, so their plan value stops reading as $0 (which also un-blinds the load-balancer's
+    utilization brain). WHICH lanes are ledger-valued is DERIVED — every lane minus those a session miner already
+    covers (`receipt._SOURCE_REFRESH`) — never a hardcoded list. New command `spendguard lanevalue`; auto-refreshed
+    (staleness-gated, ~$0) on the receipt render path.
+  - **Shown:** `render_line` (the one-line widget) and the footer name the lanes serving your work
+    (`… :: est value $X/mo · lanes: codex 12× · gemini 3× ($0)`); the full `spendguard receipt` splits **plan value
+    by lane** and lists which lanes served the work. The two axes are still never summed — lane usage is $0 billed,
+    plan-served, and the est-value split sits on the est-value axis only.
+  Guarded by `tests/test_lane_visibility.py` (persists executor+project; prices ONLY miner-less lanes, never
+  double-counting the session-mined ones; renders the lane inline in the widget, footer, and full table).
 - **Warm Codex lane via a persistent `codex mcp-server` (`codex_daemon`) — the GPT/Codex plan is now a fast $0
   delegation lane.** Instead of cold-starting `codex exec` per call (>75s), spendguard reuses ONE `codex mcp-server`
   per process (set up once; each request is a warm `tools/call`). PROVEN live: `delegate(lanes=['codex'])` →

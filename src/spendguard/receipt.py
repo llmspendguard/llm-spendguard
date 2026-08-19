@@ -210,6 +210,41 @@ def _est_tally(org=None, team=None, project=None):
     return None
 
 
+def _est_by_source():
+    """Per-SOURCE (per-lane) est-value windows {source: {today, week, month}}, re-bucketed to today's windows — the
+    breakdown BEHIND the summed `_est_tally`. Lets the receipt show WHICH plan/lane delivered the value, instead of a
+    single collapsed number. None of the sources are summed here; the caller decides."""
+    out = {}
+    try:
+        for k, s in (json.loads(_cache_path().read_text()).get("est_value_by_source") or {}).items():
+            w, _fresh = _rewindow(s)
+            out[k] = w
+    except Exception:
+        pass
+    return out
+
+
+def _lane_activity(since=None):
+    """Which SUBSCRIPTION LANE actually served spendguard's own work, from the calls ledger since `since` (default
+    month start): {executor: {calls, in_tok, out_tok}}. This is the thing the user asked to see inline — a plan
+    served these prompts ($0 billed), and now the receipt can name it instead of it being invisible. Cheap indexed
+    read; {} on any error or on an older db written before the executor column existed (guarded, never raises)."""
+    since = since or _windows()[2]
+    try:
+        import sqlite3
+        import contextlib as _cl
+        with _cl.closing(sqlite3.connect(config.db_path())) as c:
+            cols = {r[1] for r in c.execute("PRAGMA table_info(calls)").fetchall()}
+            if "executor" not in cols:               # pre-migration db: no lane column to group on
+                return {}
+            rows = c.execute(
+                "SELECT executor, COUNT(*), COALESCE(SUM(in_tok),0), COALESCE(SUM(out_tok),0) FROM calls "
+                "WHERE kind='subscription' AND ts >= ? GROUP BY executor ORDER BY 2 DESC", (since,)).fetchall()
+        return {r[0]: {"calls": r[1], "in_tok": r[2], "out_tok": r[3]} for r in rows if r[0]}
+    except Exception:
+        return {}
+
+
 # Which command re-stamps each source's est-value cache. The remedy printed on a stale receipt must be the
 # command that ACTUALLY refreshes that source — a plausible-but-wrong fix is worse than none, because the reader
 # runs it, sees no change, and stops believing the warning. Unknown source → no invented command.
@@ -351,7 +386,20 @@ def _asof_label(ev):
         age_s = f", {age}d old" if age > 0 else ""
     except Exception:
         age_s = ""
-    cmds = [_SOURCE_REFRESH[s] for s in (ev.get("stale_sources") or []) if s in _SOURCE_REFRESH]
+    # A session-mined source names its own refresh command; a LEDGER-valued lane (gemini/zai — no miner) refreshes via
+    # `spendguard lanevalue`. A source that is NEITHER (a typo, a retired source) gets NO invented command — a
+    # plausible-but-wrong remedy the reader runs and sees unchanged is worse than none. dict.fromkeys de-dups in order.
+    try:
+        from . import lane_value
+        _valued = lane_value.ledger_valued_lanes()
+    except Exception:
+        _valued = set()
+
+    def _refresh_cmd(s):
+        if s in _SOURCE_REFRESH:
+            return _SOURCE_REFRESH[s]
+        return "spendguard lanevalue" if s in _valued else None
+    cmds = list(dict.fromkeys(c for c in (_refresh_cmd(s) for s in (ev.get("stale_sources") or [])) if c))
     fix = f"; refresh: {' + '.join('`%s`' % c for c in cmds)}" if cmds else ""
     return f" (⚠ STALE — windows frozen {a}{age_s}{fix})"
 
@@ -444,6 +492,13 @@ def tally(project=None, conv=None) -> dict:
         out["plan_usd"] = sub
         out["plan_assumed"] = sub_assumed
         out["plan_mult"] = (ev.get("month") or 0) / sub      # est-value as a multiple of the subscription FEE (ROI)
+    if project is None:                            # GLOBAL "which plan served spendguard's own work" — not per-repo,
+        try:                                        # so it rides only the unscoped tally (the stop-hook line / summary)
+            la = _lane_activity()
+            if la:
+                out["lanes"] = la
+        except Exception:
+            pass
     return out
 
 
@@ -516,6 +571,14 @@ def _gate_blocks_line():
         return None
 
 
+def _lane_seg(t: dict) -> str:
+    """Compact 'which plan served the work' segment: 'codex 12× · gemini 3×' — the subscription lanes that actually
+    ran spendguard's own prompts this month ($0 billed). '' when none (or only pre-migration unknown-lane rows)."""
+    la = t.get("lanes") or {}
+    act = sorted(((ln, d) for ln, d in la.items() if ln and ln != "?"), key=lambda kv: -kv[1].get("calls", 0))
+    return " · ".join(f"{ln} {d['calls']}×" for ln, d in act[:4])
+
+
 def _tally_lines(t: dict) -> list:
     """The running-tally line(s). HARD RULE: REAL $ (money out the door) is shown as NAMED components — API
     (per-token) + Subscription (flat plan fee) + Remote (GPU/compute) — then est-value (plan usage, NOT billed) on
@@ -538,6 +601,9 @@ def _tally_lines(t: dict) -> list:
         mult = f"  →  {t['plan_mult']:.0f}× the subscription" if t.get("plan_mult") else ""
         lines.append(f":: est sub value (plan usage, NOT billed){asof}: month {_money(ev.get('month'))}"
                      f" · today {_money(ev.get('today'))} · 7d {_money(ev.get('week'))}{mult}")
+    seg = _lane_seg(t)
+    if seg:                                        # WHICH plan served spendguard's own work — the inline lane visibility
+        lines.append(f":: lanes serving your work (mo): {seg}  ($0 billed — a plan served these, not the metered API)")
     gb = _gate_blocks_line()
     if gb:
         lines.append(gb)
@@ -589,6 +655,9 @@ def render_line(t: Optional[dict] = None) -> str:
     ev = t.get("est_value")
     if ev:
         s += f"  ::  est value {_k(ev.get('month'))}/mo"
+    seg = _lane_seg(t)
+    if seg:                                        # the every-turn Stop-hook line: name the plan(s) that served work
+        s += f"  · lanes: {seg} ($0)"
     return s
 
 
@@ -747,6 +816,15 @@ def _two_axis_table(t: dict) -> list:
     if assumed:
         out.append(f"* subscription is an ASSUMED default ({_money(sub)}), not a measured charge — set yours with "
                    f"`spendguard config set subscription.plan_usd <amount>`")
+    # WHICH plan delivered the est-value (the per-lane split behind the single Plan-usage number), then WHICH lanes
+    # actually served spendguard's own work this month. The user asked to see the lane, not just the summed value.
+    lanes_ev = sorted(((s, (w.get("month") or 0)) for s, w in _est_by_source().items()), key=lambda x: -x[1])
+    lanes_ev = [(s, m) for s, m in lanes_ev if m > 0]
+    if len(lanes_ev) > 1:
+        out.append("Plan value by lane (mo): " + " · ".join(f"{s} {_money(m)}" for s, m in lanes_ev))
+    seg = _lane_seg(t)
+    if seg:
+        out.append(f"lanes serving spendguard's work (mo): {seg}  ($0 billed — plan-served, not the metered API)")
     out += _basis_line()
     out += _unpriced_lines()
     out += _truncated_lines()
@@ -855,6 +933,11 @@ def emit_flow(intent, chain, start, contract=None) -> None:
     their declared shape is reported UNCONDITIONALLY — a spend receipt that stays quiet while every response is
     unparseable is the same DONE-not-CORRECT failure the batch gate was fixed for."""
     try:
+        try:                                      # a flow may have just delegated to a ledger-valued lane; freshen it
+            from . import lane_value
+            lane_value.refresh_lane_value_if_stale()
+        except Exception:
+            pass
         lvl = level()
         if contract and contract.get("failed"):        # a broken contract is news at ANY verbosity
             _emit_contract_line(intent, contract)
@@ -900,6 +983,11 @@ def cli(args) -> int:
     """`spendguard receipt [--footer|--flow|--json]` → prints the running tally to STDOUT (default --footer). This is
     what the Claude Code Stop hook runs to surface the tally in-chat; also handy to check the tally any time."""
     args = list(args or [])
+    try:                                          # keep ledger-valued lanes (gemini/zai) fresh before we render — a
+        from . import lane_value                   # staleness-gated no-op on the common every-turn path
+        lane_value.refresh_lane_value_if_stale()
+    except Exception:
+        pass
 
     def _arg(flag):
         return args[args.index(flag) + 1] if flag in args and args.index(flag) + 1 < len(args) else None
