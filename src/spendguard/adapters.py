@@ -415,8 +415,14 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         # still bounded. The lane is $0, so a generous wait costs latency, not money.
         _lane_cap = int(getattr(lane_mod, "TIMEOUT_S", 300))
         _lane_timeout = min(_lane_cap, max(int(timeout_s or 0), int(LANE_MIN_TIMEOUT_S)))
-        s = lane_mod.run_prompt(prompt, system=_lane_sys, model=raw, timeout=_lane_timeout, reasoning=reasoning)
-        if not s.get("error"):
+        try:
+            s = lane_mod.run_prompt(prompt, system=_lane_sys, model=raw, timeout=_lane_timeout, reasoning=reasoning)
+        except Exception as _le:                       # a lane MUST return an {error} dict, never raise — but a lane
+            s = {"error": f"{lane_name} lane raised: {str(_le)[:120]}"}   # bug that throws must degrade, not crash call()
+        if not isinstance(s, dict):                    # a non-dict is also a broken contract → treat it as an error
+            s = {"error": f"{lane_name} lane returned {type(s).__name__}, not a result dict"}
+        if not s.get("error") and s.get("text"):       # SUCCESS needs BOTH: no error AND real text (an empty reply
+            #                                            with no error is malformed → falls through to the fallback)
             _lane_note_ok(lane_name, prompt)         # proven-good watermark: this lane answered a prompt this big
             if lane_name not in _lane_echoed:        # tell the user ONCE per lane per run that a plan is serving their work
                 _lane_echoed.add(lane_name)
@@ -426,12 +432,14 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             try:
                 from . import calls
                 calls.record(prov, raw, "subscription", 0.0,
-                             in_tok=s["in_tok"], out_tok=s["out_tok"], latency=s["latency"],
+                             in_tok=s.get("in_tok", 0), out_tok=s.get("out_tok", 0), latency=s.get("latency"),
                              executor=lane_name)     # WHICH plan served it — a stored fact, not a provider-guess
             except Exception:
                 pass
-            return {**base, "text": s["text"], "in_tok": s["in_tok"], "out_tok": s["out_tok"],
-                    "latency": s["latency"], "cost": 0.0, "executor": lane_name, "error": None}
+            return {**base, "text": s["text"], "in_tok": s.get("in_tok", 0), "out_tok": s.get("out_tok", 0),
+                    "latency": s.get("latency", 0.0), "cost": 0.0, "executor": lane_name, "error": None}
+        if not s.get("error"):                         # reached here without an error only when text was empty/missing
+            s = {**s, "error": f"{lane_name} lane returned no usable text"}   # name it so the fallback prints + learn work
         # LANE FAILED. REACTIVE FAILOVER (Part 2) FIRST: before paying the metered API, try a CONFIRMED substitute
         # PLAN for this intent — one hop, guarded against recursion. Routed through call() so the substitute resolves
         # its OWN budget and rides its OWN lane; if it answers, the primary lane is cooled (it failed) and the
@@ -863,7 +871,10 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
     # is bounded by the documented/learned limit — min(model_max, max(floor, predicted)). When the limit is
     # UNKNOWN the floor still goes out: the adapter's downward retry halves until the provider accepts and
     # records what it accepted, so an unknown model self-corrects instead of being capped by a guess.
-    _cap = pricing.max_output(model)
+    _cap = pricing.max_output(model.split(":", 1)[-1])   # STRIP the provider prefix: pricing.normalize() strips date/
+    #                                                      -latest/-codex but NOT "provider:model", so a qualified id
+    #                                                      like "openai:gpt-5.5" missed its output cap and sent the
+    #                                                      floor/predicted over the model's real ceiling.
     if _cap:
         max_tokens = min(int(max_tokens), int(_cap))
     attempt, budget = 0, int(max_tokens)

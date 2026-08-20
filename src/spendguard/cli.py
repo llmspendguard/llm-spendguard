@@ -107,8 +107,10 @@ def _dispatch(argv=None):
     try:
         from . import gate
         gate.install()
-    except Exception:
-        pass
+    except Exception as _ge:                          # fail-open (the CLI must still run), but NOT silent: a failed
+        import sys as _gs                             # self-install means this process's own meta LLM calls may be
+        print(f"[spendguard] warning: gate.install() failed ({str(_ge)[:80]}); this process may be UNGATED — "   # ungated
+              f"verify with `spendguard doctor`", file=_gs.stderr)
     if cmd in ("status", "doctor"):                   # first-run nudge when nothing's configured yet
         try:
             from . import config
@@ -139,7 +141,11 @@ def _dispatch(argv=None):
             sub, prov_args = "openai", rest
         if sub == "all":                                  # unified view: every spend source through the one loop
             from . import reconcile
-            reconcile.report()
+            _since = None                                 # honor --since here too: it was parsed into prov_args but
+            if "--since" in prov_args:                    # never passed on, so `reconcile all --since DATE` silently
+                _i = prov_args.index("--since")           # reported the DEFAULT window instead of the requested one
+                _since = prov_args[_i + 1] if _i + 1 < len(prov_args) else None
+            reconcile.report(since=_since)
             return 0
         if sub == "anthropic":
             from . import reconcile_anthropic as r
@@ -326,7 +332,8 @@ def _dispatch(argv=None):
         # a repair that guessed it would repeat the bug it is repairing.
         from . import budget, pricing, config as _cfg
         rest_l = list(rest)
-        since = rest_l[rest_l.index("--since") + 1] if "--since" in rest_l else _cfg.month_start_utc()
+        _si = rest_l.index("--since") if "--since" in rest_l else -1   # `--since` as the LAST arg (no value) indexed
+        since = rest_l[_si + 1] if 0 <= _si < len(rest_l) - 1 else _cfg.month_start_utc()   # past the end → IndexError
         if "--ts" in rest_l or "--row" in rest_l:
             # BOUNDS-CHECKED. `--row` as the FINAL argument indexed past the end and raised a bare
             # IndexError out of the CLI — a traceback where a usage message belongs, on the command that

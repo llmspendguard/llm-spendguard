@@ -567,13 +567,14 @@ def _gate_blocks_line():
             return None
         mstart = _t.mktime(_t.strptime(_t.strftime("%Y-%m-01"), "%Y-%m-%d"))
         c = {"blocked": 0, "would-block": 0, "override": 0}
-        for ln in open(path):
-            try:
-                o = json.loads(ln)
-            except Exception:
-                continue
-            if (o.get("ts") or 0) >= mstart and o.get("decision") in c:
-                c[o["decision"]] += 1
+        with open(path) as _f:                        # `with`, not a bare open(): the receipt runs every turn, so a
+            for ln in _f:                             # leaked handle here accumulates against the file each session
+                try:
+                    o = json.loads(ln)
+                except Exception:
+                    continue
+                if (o.get("ts") or 0) >= mstart and o.get("decision") in c:
+                    c[o["decision"]] += 1
         if not any(c.values()):
             return None
         return ("test-first gate (mo): %d blocked · %d would-block · %d overridden"
@@ -697,7 +698,14 @@ def _all_repos():
     try:
         data = json.loads(_cache_path().read_text())
         for srec in (data.get("est_value_by_source") or {}).values():
-            repos |= set((srec.get("repos") or {}).keys())
+            # stamp_est_value writes "cells" (keyed org|team|project), NEVER a "repos" key — so the old
+            # srec.get("repos") was always empty and every repo tracked ONLY via plan value silently vanished from
+            # the --all rollups. A repo is a cell's TEAM or PROJECT (same axis convention as _est_tally(repo=)).
+            for cell in (srec.get("cells") or {}).values():
+                for _axis in ("team", "project"):
+                    _v = (cell.get(_axis) or "").strip().lower()
+                    if _v:
+                        repos.add(_v)
     except Exception:
         pass
     return sorted(r for r in repos if r)
@@ -1081,8 +1089,13 @@ def _install_claude_code(remove=False):
         if (cfg.get("statusLine") or {}).get("command", "").endswith("receipt --statusline"):
             cfg.pop("statusLine", None)
         hooks = cfg.get("hooks") or {}
-        stop = [g for g in (hooks.get("Stop") or [])
-                if not any(h.get("command", "").endswith("receipt --stop-hook") for h in (g.get("hooks") or []))]
+        # Remove ONLY our hook from each Stop group, keeping the group's OTHER hooks. The old filter dropped any
+        # whole GROUP that contained our command — deleting unrelated hooks a user had placed in the same group.
+        stop = []
+        for g in (hooks.get("Stop") or []):
+            kept = [h for h in (g.get("hooks") or []) if not h.get("command", "").endswith("receipt --stop-hook")]
+            if kept:                                    # a group left with other hooks survives (with ours removed);
+                stop.append({**g, "hooks": kept})       # a group that held ONLY our hook is dropped
         if "Stop" in hooks:
             if stop:
                 hooks["Stop"] = stop

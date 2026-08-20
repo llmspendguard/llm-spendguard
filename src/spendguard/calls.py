@@ -27,8 +27,14 @@ def _truthy(v):
 
 
 def enabled():
-    if os.getenv("SPENDGUARD_CALLS"):
-        return os.getenv("SPENDGUARD_CALLS") not in ("0", "false", "")
+    # PRIVACY-CRITICAL: this can store prompts/outputs, so it FAILS CLOSED. Recording is ON only for an EXPLICIT
+    # affirmative env value; ANY other value — "False", "off", "disable", a typo, blank — leaves it OFF. The old
+    # check was a false-word BLOCKLIST (`not in ("0","false","")`), so `SPENDGUARD_CALLS=False` was not matched and
+    # silently ENABLED recording, the opposite of intent. An affirmative allowlist is the only safe direction for a
+    # privacy switch: the unknown case must be "don't record", never "record". (Mirrors _truthy, case-insensitively.)
+    v = os.getenv("SPENDGUARD_CALLS")
+    if v is not None and v.strip() != "":
+        return v.strip().lower() in ("1", "true", "yes", "on")
     return _truthy(config._cfg_get("calls", "enabled", False))
 
 
@@ -295,7 +301,11 @@ def _link_used(chain, current_prompt):
                 "SELECT id, output_snip FROM calls WHERE chain=? AND quality IS NULL "
                 "AND output_snip IS NOT NULL ORDER BY ts DESC LIMIT 10", (chain,)).fetchall()
             for cid, out in rows:
-                if out and len(out) >= 12 and out[:80] in current_prompt:
+                # Match the FULL stored snippet (not just an 80-char prefix) and require it to be substantive (>= 40
+                # chars): an 80-char PREFIX match fired on any two calls that shared a boilerplate/system preamble,
+                # mislabelling unrelated outputs 'used'. Requiring the whole snippet to reappear, and skipping short
+                # boilerplate, keeps the signal specific. (Still a low-confidence 0.6 'used' label, never authoritative.)
+                if out and len(out) >= 40 and out in current_prompt:
                     _db().execute("UPDATE calls SET quality='good', quality_src='used', quality_conf=0.6 WHERE id=?", (cid,))
             _db().commit()
     except Exception:
@@ -328,6 +338,8 @@ def tested_recently(intent, model=None, days=14, kinds=("realtime",)):
     prior *batch* row carries no request-count, so it can't prove a SMALL test was run."""
     if not enabled() or not intent:
         return False
+    if not kinds:                                     # empty kinds → `IN ()` is invalid SQLite → the execute would
+        return False                                  # raise and get swallowed, silently returning False; say so plainly
     try:
         import datetime as _dt
         # UTC, because that is what the rows hold. A naive local now() produced '...T09:14:22' with no

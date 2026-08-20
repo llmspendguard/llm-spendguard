@@ -672,6 +672,34 @@ def api_key(name):
     return ""
 
 
+def lane_plan_env(keep=()):
+    """Child env for a subscription-LANE subprocess: os.environ with EVERY provider's METERED api-key env var
+    REMOVED, except names in `keep` (a lane that authenticates with a plan-specific token, not a plan login).
+
+    This is the hard, STRUCTURAL guarantee behind "$0 billed on a lane, no double-usage": a lane subprocess that
+    carries no metered key cannot make a metered API call at all — and, above all, a NON-Claude lane can never
+    inherit ANTHROPIC_API_KEY and silently spend Claude tokens for work that was meant to ride another plan. (keys.env
+    is loaded into os.environ at import, so WITHOUT this scrub a codex/gemini subprocess would inherit every key.)
+
+    Key names come from the provider REGISTRY (so a newly registered provider is covered with no edit here) plus the
+    auth-token / base-url variants that re-authenticate or relocate the same billing. No prices, no behaviour — just
+    the set of env vars that authorize metered spend."""
+    keep = set(keep or ())
+    # Both metered API keys AND flat-fee PLAN tokens: a lane carries only the credential(s) it owns (via keep), so a
+    # codex/gemini lane holds no zai coding token either. ZAI_CODING_API_KEY is a plan token, not metered, but a lane
+    # that does not own it has no business carrying it.
+    metered = {"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
+               "OPENAI_API_KEY", "OPENAI_BASE_URL", "GEMINI_API_KEY", "GOOGLE_API_KEY",
+               "ZAI_API_KEY", "ZAI_CODING_API_KEY"}
+    try:
+        from . import adapters                          # the registry is the source of truth for per-provider key envs
+        metered |= {spec.get("key_env") for spec in adapters.PROVIDERS.values() if spec.get("key_env")}
+    except Exception:
+        pass
+    metered = {m for m in metered if m} - keep
+    return {k: v for k, v in os.environ.items() if k not in metered}
+
+
 # Load the key files at IMPORT — but at the END of the module (not mid-file): profile resolution reads
 # saas_config()/_project_saas above, which must be defined first. The module body completes before any
 # importer's code runs, so keys are still in the environment before any provider client is constructed.

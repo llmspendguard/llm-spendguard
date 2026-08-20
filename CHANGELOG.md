@@ -5,6 +5,30 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 ## [Unreleased]
 
 ### Fixed
+- **No double-usage: a subscription LANE subprocess can no longer carry ANY provider's metered key — a non-Claude
+  lane can never spend Claude tokens.** `keys.env` is loaded into `os.environ` at import, so a codex/gemini/claude-code
+  subprocess inherited EVERY provider key while each lane stripped only its OWN (codex dropped `OPENAI_API_KEY` but
+  still carried `ANTHROPIC_API_KEY`, etc.). New `config.lane_plan_env(keep=())` builds a child env with every metered
+  key AND flat-fee plan token removed (names from the provider registry + the auth-token/base-url variants), except
+  what a lane explicitly owns; all four subprocess lanes (subscription_exec, codex_exec, codex_daemon,
+  antigravity_exec) now use it. Structural guarantee that a lane rides its plan login and cannot make a metered call
+  of any provider. Guard: `tests/test_lane_no_double_usage.py` (incl. capturing the env the codex subprocess receives).
+- **honestreview high+medium sweep across the changed files.** Fixed, each verified: `calls.enabled()` now FAILS
+  CLOSED (`SPENDGUARD_CALLS=False`/`off`/typo no longer silently ENABLES prompt/output recording — privacy);
+  `_link_used` matches the full stored snippet with a length floor (was an 80-char prefix that false-labelled outputs
+  'used' on shared boilerplate); `tested_recently` guards empty `kinds` (was invalid `IN ()` SQL); `lane_value`
+  marks its cache fresh only on a SUCCESSFUL stamp (a failed stamp no longer goes stale for `max_age_s`); the lane
+  dispatch wraps `run_prompt` so a lane that raises/returns a non-dict degrades to the API instead of crashing
+  `call()`, and requires real text for success; `adapters` strips the `provider:` prefix before `pricing.max_output`
+  (a qualified id missed its output cap); `codex_exec._usage_from_events` descends into ARRAYS (array-nested usage no
+  longer reads 0) and the module contract is honest that the warm-daemon path ESTIMATES tokens; `codex_daemon.shutdown`
+  now `wait()`s + kills (no zombie children on restart); `cli` passes `--since` to `reconcile all` (was dropped),
+  guards `quarantine --since` with no value (was an uncaught IndexError), and warns instead of silently swallowing a
+  failed `gate.install()`; `receipt` closes the gate-blocks file handle, and `_all_repos` reads the est-value `cells`'
+  team/project (it read a `repos` key that is never written, so plan-value-only repos vanished from `--all`); and
+  removing the Claude Code receipt hook now strips only OUR hook, not the whole Stop group (no deleting a user's
+  unrelated hooks). Guards updated/added in `test_codex_daemon.py`, `test_receipt_repo_est_scope.py`,
+  `test_cli_reconcile_dispatch.py`.
 - **Per-repo receipts showed the GLOBAL plan value under every repo (honestreview HIGH).** `tally(project=repo)`
   scoped the billed API-$ to the repo but `est_value` was always computed globally, so each per-repo line showed its
   own spend beside the WHOLE plan total — and `_sum_repos` (the "+ N more repos" summary) added that global est once

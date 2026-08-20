@@ -17,6 +17,12 @@ fallback mean an interface mismatch degrades to the API path rather than errorin
 matches FIELD NAMES anywhere in the event stream (mechanical extraction, tolerant of event-schema
 drift across CLI versions) — absent usage records 0 tokens, never a guess.
 
+TWO PATHS, TWO USAGE CONTRACTS (so the "never a guess" line is not read too broadly): the EXEC path
+(`codex exec --json`) carries real usage in the event stream → measured, or 0 when absent, never guessed. The
+WARM-DAEMON path (`codex mcp-server`) returns the answer TEXT but NO token usage, so it ESTIMATES tokens from
+character length (len//4) for the est-value axis ONLY — an explicit proxy, marked at the call site, never a
+measured count. $0 billed either way (a flat-fee plan served it).
+
 Doctrine note: prompt-mode ONLY, same as the claude-code lane — no tools, no agent loop for meta work.
 """
 import json
@@ -52,10 +58,14 @@ def _usage_from_events(stdout):
 
     def _scan(d):
         nonlocal in_tok, out_tok
+        if isinstance(d, list):                       # usage can sit inside ARRAYS too (a choices/items/events list) —
+            for it in d:                               # the contract is "field names ANYWHERE in the stream", so descend
+                _scan(it)                              # into lists as well as dicts, else array-nested usage reads 0.
+            return
         if not isinstance(d, dict):
             return
         for k, v in d.items():
-            if isinstance(v, dict):
+            if isinstance(v, (dict, list)):
                 _scan(v)
             elif k == "input_tokens" and isinstance(v, (int, float)):
                 in_tok = max(in_tok, int(v))
@@ -151,7 +161,9 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     if not exe:
         return {"error": "codex CLI not found"}
     full = (f"{system.strip()}\n\n{prompt}" if system else prompt)
-    env = {k: v for k, v in os.environ.items() if k != "OPENAI_API_KEY"}
+    from . import config
+    env = config.lane_plan_env()      # strip EVERY provider's metered key — the ChatGPT plan login serves it; a codex
+    #                                   lane must never carry ANTHROPIC_API_KEY (Claude tokens) or any other metered key
     t0 = time.time()
     out_file = None
     try:

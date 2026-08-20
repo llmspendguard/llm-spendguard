@@ -81,9 +81,10 @@ def stamp_from_ledger(window_days: int = _WINDOW_DAYS) -> dict:
         for ex, rows in by_lane.items():
             receipt.stamp_est_value(rows, source=ex)      # billed=False → the est-value axis, per-source (per-lane)
             out[ex] = sum(r["spend_micros"] for r in rows) / 1_000_000
+        return out                                        # SUCCESS (out may be {} = no valued lanes / no rows)
     except Exception:
-        pass
-    return out
+        return None                                       # ERROR — a distinct signal so refresh_lane_value_if_stale
+        #                                                   does NOT reset the freshness timer on a failed stamp
 
 
 def _mark_stamped() -> None:
@@ -114,15 +115,17 @@ def refresh_lane_value_if_stale(max_age_s: int = _REFRESH_MAX_AGE_S) -> None:
             return
     except Exception:
         return
-    stamp_from_ledger()
-    _mark_stamped()
+    if stamp_from_ledger() is not None:               # mark fresh ONLY when the stamp SUCCEEDED (even if it found no
+        _mark_stamped()                                # rows); an ERROR (None) must retry next tick, not sleep max_age_s
 
 
 def main(argv=None) -> int:
     """`spendguard lanevalue` — force a re-price of the ledger-valued lanes and print each lane's plan value. This is
     the refresh command the stale-receipt caption points at for these lanes (mirrors `spendguard codex`)."""
     stamped = stamp_from_ledger()
-    _mark_stamped()
+    if stamped is not None:                            # only reset freshness on success; None = error (don't mask it)
+        _mark_stamped()
+    stamped = stamped or {}
     valued = sorted(ledger_valued_lanes())
     print("Ledger-valued subscription lanes (no session-log miner) — plan VALUE priced from the calls ledger:")
     if not valued:

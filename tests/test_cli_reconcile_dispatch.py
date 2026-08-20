@@ -35,7 +35,7 @@ def ck(label, cond, extra=""):
 seen = {}
 roa.main = lambda: (seen.__setitem__("openai", list(sys.argv)), 0)[1]
 raa.main = lambda: (seen.__setitem__("anthropic", list(sys.argv)), 0)[1]
-rec.report = lambda: seen.__setitem__("all", True)
+rec.report = lambda ptmap=None, since=None: seen.__setitem__("all", {"since": since})   # capture the window passed
 
 # an unknown provider word → error exit 2, and NOTHING dispatched
 seen.clear()
@@ -62,7 +62,13 @@ ck("`reconcile` (no provider) defaults to openai", seen.get("openai") == ["recon
 # `all` routes to the unified report
 seen.clear()
 cli._dispatch(["reconcile", "all"])
-ck("`reconcile all` routes to the unified report", seen.get("all") is True, f"got {seen}")
+ck("`reconcile all` routes to the unified report", seen.get("all") == {"since": None}, f"got {seen}")
+
+# `all --since DATE` now PASSES the window through — it used to be parsed into prov_args and silently dropped
+seen.clear()
+cli._dispatch(["reconcile", "all", "--since", "2026-08-01"])
+ck("`reconcile all --since DATE` passes the window to the unified report (was silently ignored)",
+   (seen.get("all") or {}).get("since") == "2026-08-01", f"got {seen}")
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_cli_reconcile_dispatch: {fails} failure(s)")
 sys.exit(1 if fails else 0)

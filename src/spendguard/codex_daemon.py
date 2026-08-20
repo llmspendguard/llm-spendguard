@@ -102,7 +102,8 @@ def _spawn():
     exe = codex_exec._bin()
     if not exe:
         return None
-    env = {k: v for k, v in os.environ.items() if k != "OPENAI_API_KEY"}   # ride the ChatGPT PLAN, never the metered key
+    env = config.lane_plan_env()      # NO metered key of ANY provider in the child — rides the ChatGPT plan login only,
+    #                                   and cannot inherit ANTHROPIC_API_KEY to spend Claude tokens (no double-usage)
     cmd = [exe, "mcp-server"] + codex_exec._plugin_disable_flags()
     try:
         p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -144,12 +145,21 @@ def running():
 def shutdown():
     global _proc
     with _lock:
-        if _proc is not None:
-            try:
-                _proc.terminate()
-            except Exception:
-                pass
-            _proc = None
+        p, _proc = _proc, None                        # detach under the lock; REAP outside it (wait() can block, and
+    if p is None:                                      # holding _lock through a 5s wait would freeze every other lane)
+        return
+    try:
+        p.terminate()
+    except Exception:
+        pass
+    try:
+        p.wait(timeout=5)                             # terminate() alone leaves an unreaped zombie on every restart;
+    except Exception:                                 # a server ignoring SIGTERM stays alive — escalate to kill, then
+        try:                                          # reap. Without this, repeated crashes accumulate zombie children.
+            p.kill()
+            p.wait(timeout=5)
+        except Exception:
+            pass
 
 
 atexit.register(shutdown)

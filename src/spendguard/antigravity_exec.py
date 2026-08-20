@@ -87,7 +87,9 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     if not exe:
         return {"error": "agy (Antigravity CLI) not found"}
     full = (f"{system.strip()}\n\n{prompt}" if system else prompt)
-    env = {k: v for k, v in os.environ.items() if k not in ("GEMINI_API_KEY", "GOOGLE_API_KEY")}
+    from . import config
+    env = config.lane_plan_env()      # strip EVERY provider's metered key — the Antigravity OAuth serves this; the
+    #                                   gemini lane must never carry ANTHROPIC_API_KEY (Claude tokens) or any other
     cmd = [exe, "-p", full, "--output-format", "json", "--disable-slash-commands"]
     if model:
         cmd += ["--model", model.split(":", 1)[-1]]   # forward the requested id; a bad one fails → API fallback
