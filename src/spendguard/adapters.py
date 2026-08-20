@@ -639,26 +639,11 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                         # provider fact I would be guessing at, and one that changes — halve until the
                         # provider accepts, then record what it accepted as a learned fact so the next call
                         # starts there. The provider is the source of truth about its own limits.
-                        _try = max_tokens
-                        for _ in range(6):                 # 32K -> 500 is five halvings; bounded either way
-                            _try //= 2
-                            if _try < 1:
-                                break
-                            try:
-                                r = c.chat.completions.create(max_completion_tokens=_try, **okw)
-                                try:
-                                    from . import models as _mm
-                                    _mm.add_fact(raw, "max_output_tokens", _try,
-                                                 source="auto-heal(provider refused a larger budget)",
-                                                 verified=True)
-                                except Exception:
-                                    pass                   # learning is a bonus; the call already succeeded
-                                break
-                            except Exception as e3:
-                                _last = e3
+                        r = _heal_token_budget(
+                            lambda b: c.chat.completions.create(max_completion_tokens=b, **okw), max_tokens, raw)
                         if r is not None:
-                            break
-                        continue
+                            break                          # accepted at a plausible budget → learned + done
+                        continue                           # nothing above the floor worked → try the next rung
                     if _rung == "_token_dialect":
                         # Older endpoints take max_tokens, gpt-5+ take max_completion_tokens. A dialect
                         # difference, not a capability one — nothing is dropped, the other spelling is used.
@@ -732,6 +717,41 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
 # So: start at the floor and let a measurement raise it, never lower it. The prediction can only add.
 TOKEN_FLOOR = 32_000             # OUTPUT reply budget — never send less unless the CALLER named a number; NOT an input cap
 MAX_TOKEN_CEILING = 128_000      # OUTPUT: absolute stop for the doubling retry — above the floor so retries have room
+# The auto-heal LEARNS a model's output ceiling by halving until the provider accepts a budget. Below this floor a
+# "success" is NOT evidence of a real output limit — no chat model caps output in the hundreds — it is a NON-budget
+# 400 (a malformed request, a transient error) that merely happened to pass at a tiny budget. Recording that value
+# POISONS the model's max_output for every future call (MEASURED: gpt-5-mini learned max_output=7, clamping the whole
+# class to a ~7-token budget → 51% truncation). So the halving never learns a ceiling below this floor.
+_MIN_LEARNED_MAX_OUTPUT = 1_024
+
+
+def _heal_token_budget(create_fn, start_budget, model):
+    """Provider refused `start_budget` as too large an OUTPUT budget: halve until it accepts, then LEARN the accepted
+    value as the model's max_output so the next call starts there. Returns the successful response, or None if none
+    succeeded ABOVE `_MIN_LEARNED_MAX_OUTPUT`.
+
+    The floor is the whole point: a 400 from a NON-budget cause (a malformed request, a transient error) also lands
+    here and gets halved, and recording the tiny value where it happened to pass POISONS the model's max_output for
+    every future call (MEASURED: gpt-5-mini learned max_output=7, clamping the class to a ~7-token budget). Below the
+    floor the problem is not the budget — stop, and never record. Extracted from the inline ladder so this invariant
+    is unit-testable (tests/test_token_budget_heal_floor.py)."""
+    _try = int(start_budget)
+    for _ in range(6):                                 # 32K -> 1K is five halvings; bounded either way
+        _try //= 2
+        if _try < _MIN_LEARNED_MAX_OUTPUT:
+            return None                                # not a real output ceiling → don't shrink further, don't learn
+        try:
+            r = create_fn(_try)
+        except Exception:
+            continue                                   # still refused at this budget → keep halving
+        try:
+            from . import models as _mm
+            _mm.add_fact(model, "max_output_tokens", _try,
+                         source="auto-heal(provider refused a larger budget)", verified=True)
+        except Exception:
+            pass                                       # learning is a bonus; the call already succeeded
+        return r
+    return None
 
 
 def _input_fits(model, prompt, system):

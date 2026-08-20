@@ -70,6 +70,17 @@ def add_fact(model, key, value, confidence=0.9, source="manual", verified=True):
         L._db().commit()
 
 
+def clear_fact(model, key):
+    """Delete a per-model learning — for a fact recorded WRONG (e.g. an auto-heal that learned an implausible
+    max_output from a NON-budget 400) that must stop overriding the family/table value. Returns rows removed; after
+    this the model falls back to the family default and can re-learn correctly."""
+    L = _db()
+    with L._lock:
+        cur = L._db().execute("DELETE FROM model_facts WHERE model=? AND key=?", (model, key))
+        L._db().commit()
+        return cur.rowcount
+
+
 def facts(model):
     L = _db()
     with L._lock:

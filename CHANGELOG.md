@@ -5,6 +5,16 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 ## [Unreleased]
 
 ### Fixed
+- **Vision/reasoning calls truncated at ~7–28 tokens — the auto-heal had POISONED a model's learned max_output.**
+  The output-budget auto-heal halves `max_completion_tokens` on a 400 and records the accepted value as the model's
+  max_output. A 400 from a NON-budget cause (a malformed vision request, a transient error) ALSO drove the halving,
+  and with no lower bound it recorded an absurd ceiling — MEASURED: gpt-5-mini learned max_output=**7**, so every
+  call was clamped to ~7 output tokens, gpt-5-mini's hidden reasoning consumed the budget, and bulkgate showed
+  **51% of the class truncating**. (A direct SDK call worked because it bypassed the clamp.) Fixed: the halving now
+  stops at `_MIN_LEARNED_MAX_OUTPUT` (1024) and never learns a ceiling below it — no chat model caps output in the
+  hundreds, so a sub-floor "success" is a non-budget 400, not a real limit; the poisoned gpt-5-mini fact is cleared
+  (→ falls back to the 32K floor and self-heals correctly). New `models.clear_fact`; the halving is extracted to the
+  unit-testable `adapters._heal_token_budget`. Guard: `tests/test_token_budget_heal_floor.py`.
 - **No double-usage: a subscription LANE subprocess can no longer carry ANY provider's metered key — a non-Claude
   lane can never spend Claude tokens.** `keys.env` is loaded into `os.environ` at import, so a codex/gemini/claude-code
   subprocess inherited EVERY provider key while each lane stripped only its OWN (codex dropped `OPENAI_API_KEY` but
