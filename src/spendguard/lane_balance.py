@@ -139,7 +139,7 @@ def confirm_substitute(intent, substitute):
 _DELEGATE_OUT = 1500             # OUTPUT budget for a delegated task — NAMED, not a bare literal (token_caps guard)
 
 
-def delegate(task, system=None, lanes=None, reasoning="low", max_tokens=_DELEGATE_OUT):
+def delegate(task, system=None, lanes=None, reasoning="low", max_tokens=_DELEGATE_OUT, intent=None):
     """Offload one task to the cheapest VIABLE idle subscription lane and return the answer — so heavy work runs $0
     on an idle plan while the orchestrator (e.g. this Claude Code session) spends nothing but coordination.
 
@@ -151,6 +151,22 @@ def delegate(task, system=None, lanes=None, reasoning="low", max_tokens=_DELEGAT
     is flagged `billed=True`). Returns {text, lane, model, cost, billed, executor, tried} or {text:None, error, tried}.
     The model that answered is the one recorded — attribution stays honest."""
     from . import adapters, calls
+    intent = intent or "spendguard:delegate"
+    # LEARNED routing: with the bandit enabled (advisor.lane_bandit) it picks the lane by what it has LEARNED wins
+    # for THIS intent — equal-start → bake-off-judge → exploit — instead of the static cheapest-idle heuristic below,
+    # and echoes which lane served. Falls through to the heuristic if it had no live arm / none answered.
+    if str(config._cfg_get("advisor", "lane_bandit", False)).strip().lower() in ("1", "true", "yes", "on"):
+        try:
+            from . import lane_bandit
+            r = lane_bandit.bandit_call(intent, task, system=system, reasoning=reasoning)
+            if r and r.get("text"):
+                import sys as _sb
+                print(f"[spendguard] 🎰 bandit → {r['lane']} · {r.get('use_name')} ({r.get('why')}) — $0 on-plan",
+                      file=_sb.stderr)
+                return {"text": r["text"], "lane": r["lane"], "model": r.get("use_name"), "cost": 0.0,
+                        "billed": False, "executor": r["lane"], "tried": [r["lane"]], "bandit": True}
+        except Exception:
+            pass
     viable = list(lanes or config._cfg_get("advisor", "delegate_lanes", None) or ["gemini", "zai-coding"])
     lm = config._cfg_get("advisor", "lane_models", None) or {}
     util = {l["lane"]: (l["utilization"] if l.get("utilization") is not None else 0.0)
@@ -186,6 +202,27 @@ def route_decision(intent, model, reactive=False):
         return None, "no intent set — nothing to key substitutes on"
     subs = substitutes_for(intent)
     if not subs:
+        # BANDIT (advisor.lane_bandit, default OFF): with no CONFIRMED substitute, let the LEARNED router pick a
+        # cross-provider arm to shed to — equal-start across the delegate lanes, then the learned winner. This is how
+        # hot claude-code work moves onto the idle lanes on the MAIN path. META intents stay caged (never routed);
+        # never the primary's own lane; never a cooling arm (choose_arm already skips those). Quality is LEARNED from
+        # bake-offs (`delegate` / `spendguard lanes --bakeoff`); this side just EXPLOITS what's known + explores untried.
+        try:
+            from .advisor import META as _META
+        except Exception:
+            _META = "spendguard"
+        if (str(config._cfg_get("advisor", "lane_bandit", False)).strip().lower() in ("1", "true", "yes", "on")
+                and not str(intent).startswith(_META)):
+            try:
+                from . import lane_bandit, lane_catalog
+                _prim_lane = adapters._LANES.get(adapters.provider_for(model), (None,))[0]
+                _arms = [a for a in lane_catalog.arms(config._cfg_get("advisor", "delegate_lanes", None))
+                         if a[0] != _prim_lane]
+                _arm = lane_bandit.choose_arm(intent, _arms)
+                if _arm:
+                    return f"{lane_catalog.lane_provider(_arm[0])}:{_arm[1]}", f"bandit → {_arm[0]} ({_arm[1]})"
+            except Exception:
+                pass
         return None, "no confirmed substitute for this intent (propose+confirm first)"
     prov = adapters.provider_for(model)
     util = {l["lane"]: l for l in lane_utilization()["lanes"]}

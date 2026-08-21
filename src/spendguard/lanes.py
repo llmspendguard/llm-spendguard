@@ -200,6 +200,35 @@ def main(argv=None):
         from . import lane_catalog
         print()
         lane_catalog.main()
+    if "--learn" in argv:                                 # what the cross-lane BANDIT has learned per intent
+        from . import lane_bandit
+        print()
+        lane_bandit.main()
+    if "--bakeoff" in argv:                               # run ONE bake-off (2 lanes $0 + a cheap judge) to seed learning
+        rest = [a for a in argv[argv.index("--bakeoff") + 1:] if not a.startswith("--")]
+        if len(rest) < 2:
+            print('usage: spendguard lanes --bakeoff <intent> "<task>"   (needs ≥2 lanes in advisor.lane_models + a judge)')
+        else:
+            from . import lane_bandit
+            _intent, _task = rest[0], " ".join(rest[1:])
+            r = lane_bandit.run_bakeoff(_intent, _task)
+            if r and r.get("text"):
+                print(f"[bake-off {_intent}] winner: {r['lane']} · {r.get('use_name')} — recorded ({r.get('why')}).")
+                print("  answer: " + (r["text"][:300].replace("\n", " ")))
+            else:
+                print("bake-off produced no winner (need ≥2 live lanes with configured models, and a judge model).")
+    if "--estimate" in argv:                              # ZERO-SPEND: what would the bandit's judge cost?
+        from . import lane_bandit
+        e = lane_bandit.estimate_judge_cost()
+        per = e["per_bakeoff_usd"]
+        print("\nBandit judge-cost estimate (ZERO SPEND — the 2 lane answers per bake-off are $0, plan-served):")
+        print(f"  judge model      : {e['judge_model']}")
+        print(f"  per bake-off     : {('$%.4f' % per) if per is not None else 'UNPRICED judge model'}"
+              f"   (≤{e['in_tok_bound']:,} in + {e['out_tok_cap']} out)")
+        if per is not None:
+            for n, m in e["monthly"].items():
+                print(f"  {n:>5} bake-offs/mo : ${m:,.2f}")
+        print("  a bake-off runs only while an intent is COLD or at rate ε — exploration is nearly free here.")
     if "--balance" in argv:                               # per-plan utilisation: which plans are hot vs idle
         from . import lane_balance
         print(lane_balance.format_utilization())

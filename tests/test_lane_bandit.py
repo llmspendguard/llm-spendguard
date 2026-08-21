@@ -70,5 +70,29 @@ print("\n-- BAKE-OFF pacing --")
 fails += ck("a cold intent always bake-offs (learn fast)", lb.should_bakeoff("coldIntent", ARMS) is True)
 fails += ck("fewer than 2 live arms → never bake-offs", lb.should_bakeoff("intentY", ARMS[:1]) is False)
 
+print("\n-- JUDGE: an EMPTY side loses WITHOUT spending a judge call (pure) --")
+fails += ck("A empty → B (codex) wins, no LLM", lb.bakeoff_judge("t", "", "real", ("gemini", "g"), ("codex", "c"))[0] == ("codex", "c"))
+fails += ck("B empty → A (gemini) wins, no LLM", lb.bakeoff_judge("t", "real", "", ("gemini", "g"), ("codex", "c"))[0] == ("gemini", "g"))
+fails += ck("both empty → no winner", lb.bakeoff_judge("t", "", "", ("gemini", "g"), ("codex", "c"))[0] is None)
+
+print("\n-- run_bakeoff / bandit_call: records the winner, returns a usable answer (judge + lane run stubbed) --")
+from spendguard import lane_catalog                                                    # noqa: E402
+_o_arms, _o_judge, _o_runarm = lane_catalog.arms, lb.bakeoff_judge, lb._run_arm
+try:
+    lane_catalog.arms = lambda flt=None: [("gemini", "g-low"), ("codex", "gpt-5.5")]
+    lb.bakeoff_judge = lambda task, oa, ob, aa, ab: (aa, "A wins")     # the FIRST arm always wins
+    lb._run_arm = lambda arm, *a, **k: f"out-{arm[0]}"                 # each lane returns a tagged answer
+    out = lb.run_bakeoff("intentZ", "do X")
+    fails += ck("run_bakeoff returns the WINNER's output + lane", out and out["text"] == "out-gemini" and out["lane"] == "gemini")
+    stz = lb.arm_stats("intentZ")
+    fails += ck("winner gemini recorded a win (winrate high)", stz[("gemini", "g-low")]["winrate"] > 0.9)
+    fails += ck("loser codex recorded a loss (tried, winrate low)",
+                stz[("codex", "gpt-5.5")]["trials"] > 0.9 and stz[("codex", "gpt-5.5")]["winrate"] < 0.1)
+    out2 = lb.bandit_call("intentW", "do Y")     # cold intent → bake-off path → winner's answer
+    fails += ck("bandit_call on a cold intent returns the answer + which lane served it",
+                out2 and out2["text"] == "out-gemini" and out2["lane"] == "gemini")
+finally:
+    lane_catalog.arms, lb.bakeoff_judge, lb._run_arm = _o_arms, _o_judge, _o_runarm
+
 print(f"\n{'[FAIL]' if fails else 'OK'} test_lane_bandit: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

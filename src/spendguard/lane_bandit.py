@@ -158,6 +158,146 @@ def should_bakeoff(intent, arms):
     return _rng.random() < _bcfg("bandit_bakeoff_rate", 0.10)
 
 
+# ── the agentic REWARD (bake-off judge) and the runners that spend ────────────────────────────────────────────
+_JUDGE_OUT_CAP = 200            # A/B/TIE + one short reason — a tiny output; the judge is the ONLY per-bake-off cost
+
+
+def _bandit_judge_model():
+    """The cheap model that judges a bake-off — advisor.bandit_judge_model, else the shared advisor judge (haiku)."""
+    return config._cfg_get("advisor", "bandit_judge_model", None) or config.advisor_judge_model()
+
+
+def bakeoff_judge(task, out_a, out_b, arm_a, arm_b):
+    """AGENTIC 2-way judge: which lane's output better accomplishes the task? Returns (winner_arm or None, reason).
+    The DECISION is the LLM's (meaning) — only the fixed A/B/TIE token is parsed. Caged under the meta intent
+    (attributed, never recurses into the bandit); an EMPTY output loses by default, so no judge call is spent when a
+    side is blank (or when the two are identical)."""
+    a, b = (out_a or "").strip(), (out_b or "").strip()
+    if a and not b:
+        return arm_a, "B empty (no judge spend)"
+    if b and not a:
+        return arm_b, "A empty (no judge spend)"
+    if not a and not b:
+        return None, "both empty"
+    if a == b:
+        return None, "identical outputs (no judge spend)"
+    prompt = ("Two assistants answered the SAME task. Judge which answer is better — more correct, complete, and "
+              "on-format for the task. Reply with EXACTLY one token on the first line: A, B, or TIE. Then one short "
+              f"reason.\n\nTASK:\n{task[:3000]}\n\n=== ANSWER A ===\n{a[:4000]}\n\n=== ANSWER B ===\n{b[:4000]}\n")
+    try:
+        from . import adapters, calls
+        from .advisor import META                                   # ONE source of the meta-intent prefix
+        with calls.context(intent=f"{META}:bandit-judge"):          # caged: attributed, never bandit-routed
+            r = adapters.call(_bandit_judge_model(), prompt, max_tokens=_JUDGE_OUT_CAP)
+        txt = (r.get("text") or "").strip()
+    except Exception as e:
+        return None, f"judge error: {str(e)[:80]}"
+    tok = (txt.split() or [""])[0].upper().strip(".:,)")            # PARSE a known-shape token — not a meaning call
+    if tok.startswith("A"):
+        return arm_a, txt[:150]
+    if tok.startswith("B"):
+        return arm_b, txt[:150]
+    return None, (txt[:150] or "tie/unparsed")
+
+
+def _run_arm(arm, task, system, reasoning, timeout_s):
+    """Run ONE arm on its lane DIRECTLY (no API fallback — a lane that fails or returns blank just LOSES the bake-off,
+    so the judge scores the LANE's own output, never a metered stand-in). Records the successful lane call for
+    est-value. Returns the text ('' on any failure)."""
+    lane, use_name = arm
+    try:
+        from . import adapters, lane_catalog, calls
+        import importlib
+        prov = lane_catalog.lane_provider(lane)
+        entry = adapters._LANES.get(prov)
+        if not entry:
+            return ""
+        mod = importlib.import_module("." + entry[1], "spendguard")
+        base, level = lane_catalog.parse_use_name(use_name, lane)
+        # gemini carries effort in the model SUFFIX (pass the whole use-name); the others take it as `reasoning`
+        model = use_name if lane_catalog.quirk(lane)["style"] == "suffix" else base
+        cap = int(getattr(mod, "TIMEOUT_S", 300))
+        r = mod.run_prompt(task, system=system, model=model, timeout=min(cap, int(timeout_s or cap)),
+                           reasoning=(level or reasoning))
+        if not isinstance(r, dict) or r.get("error") or not (r.get("text") or "").strip():
+            return ""
+        try:
+            calls.record(prov, model, "subscription", 0.0, in_tok=r.get("in_tok", 0), out_tok=r.get("out_tok", 0),
+                         latency=r.get("latency"), executor=lane)
+        except Exception:
+            pass
+        return r.get("text") or ""
+    except Exception:
+        return ""
+
+
+def run_bakeoff(intent, task, system=None, reasoning=None, timeout_s=None):
+    """Run the two LEAST-tried live arms on the SAME task, judge which is better, record the outcome for BOTH, and
+    RETURN the winner's text (the caller still gets a usable answer). None if fewer than 2 live arms. This is where
+    the bandit LEARNS — two $0 lane calls + one cheap judge call."""
+    from . import lane_catalog
+    dl = config._cfg_get("advisor", "delegate_lanes", None)
+    arms = lane_catalog.arms(dl) if dl else lane_catalog.arms()
+    live = [a for a in arms if not _arm_cooling(*a)]
+    if len(live) < 2:
+        return None
+    st = arm_stats(intent)
+    live.sort(key=lambda a: (st.get(a, {}).get("trials", 0.0), st.get(a, {}).get("last_ts") or ""))
+    arm_a, arm_b = live[0], live[1]
+    out_a = _run_arm(arm_a, task, system, reasoning, timeout_s)
+    out_b = _run_arm(arm_b, task, system, reasoning, timeout_s)
+    winner, _reason = bakeoff_judge(task, out_a, out_b, arm_a, arm_b)
+    if winner == arm_a:
+        record_trial(intent, arm_a[0], arm_a[1], 1.0)
+        record_trial(intent, arm_b[0], arm_b[1], 0.0)
+        return {"text": out_a, "lane": arm_a[0], "use_name": arm_a[1], "why": "bake-off winner"}
+    if winner == arm_b:
+        record_trial(intent, arm_b[0], arm_b[1], 1.0)
+        record_trial(intent, arm_a[0], arm_a[1], 0.0)
+        return {"text": out_b, "lane": arm_b[0], "use_name": arm_b[1], "why": "bake-off winner"}
+    record_trial(intent, arm_a[0], arm_a[1], 0.5)     # tie / no winner — both get partial credit, no arm punished
+    record_trial(intent, arm_b[0], arm_b[1], 0.5)
+    _w = arm_a if out_a else arm_b
+    return {"text": out_a or out_b, "lane": _w[0], "use_name": _w[1], "why": "bake-off tie"}
+
+
+def bandit_call(intent, task, system=None, reasoning=None, timeout_s=None):
+    """The bandit's ENTRY for a delegatable task: EXPLORE via a bake-off (while cold, or at rate ε) else EXPLOIT the
+    learned-winner arm on its lane. Returns {text, lane, use_name, why} of the answering lane, or None if no arm
+    could serve it (caller falls back to its normal path). Records outcomes so it keeps learning."""
+    from . import lane_catalog
+    dl = config._cfg_get("advisor", "delegate_lanes", None)
+    arms = lane_catalog.arms(dl) if dl else lane_catalog.arms()
+    if should_bakeoff(intent, arms):
+        res = run_bakeoff(intent, task, system, reasoning, timeout_s)
+        if res and res.get("text"):
+            return res
+    arm = choose_arm(intent, arms)
+    if not arm:
+        return None
+    out = _run_arm(arm, task, system, reasoning, timeout_s)
+    if out:
+        record_trial(intent, arm[0], arm[1], 1.0)     # produced a usable answer on exploit → a reliability "keep"
+        return {"text": out, "lane": arm[0], "use_name": arm[1], "why": "exploit (learned)"}
+    record_trial(intent, arm[0], arm[1], 0.0)         # it failed → drop its win-rate so a flaky arm falls out
+    return None
+
+
+def estimate_judge_cost(bakeoffs=(10, 100, 1000)):
+    """ZERO-SPEND estimate of the bandit's ONLY real cost — the bake-off JUDGE. Per bake-off is ONE cheap judge call
+    (the two lane answers are $0, plan-served). Prices the judge prompt (boilerplate + task + two answers, at the
+    BOUNDED sizes the judge truncates to) + the tiny output cap, at the judge model's rate, then projects a monthly $
+    for a few bake-off counts. No LLM is called — this is arithmetic over pricing.py."""
+    from . import pricing
+    judge = _bandit_judge_model()
+    # the judge prompt caps: task ≤3000 + two answers ≤4000 each + ~300 boilerplate chars (see bakeoff_judge)
+    in_chars = 300 + 3000 + 2 * 4000
+    in_tok = in_chars // 4                                # ~4 chars/token; a conservative UPPER bound (answers are usually smaller)
+    per = pricing.realtime_cost(judge, in_tok, _JUDGE_OUT_CAP)
+    return {"judge_model": judge, "in_tok_bound": in_tok, "out_tok_cap": _JUDGE_OUT_CAP,
+            "per_bakeoff_usd": per, "monthly": {n: (per * n if per is not None else None) for n in bakeoffs}}
+
+
 def learned_table(intent=None):
     """What the bandit has learned, for `spendguard lanes --learn`: {intent: [(lane, use_name, winrate, trials), …]}
     sorted best-first. All intents when intent is None."""
