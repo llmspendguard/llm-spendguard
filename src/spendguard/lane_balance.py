@@ -204,15 +204,18 @@ def route_decision(intent, model, reactive=False):
     if not subs:
         # BANDIT (advisor.lane_bandit, default OFF): with no CONFIRMED substitute, let the LEARNED router pick a
         # cross-provider arm to shed to — equal-start across the delegate lanes, then the learned winner. This is how
-        # hot claude-code work moves onto the idle lanes on the MAIN path. META intents stay caged (never routed);
-        # never the primary's own lane; never a cooling arm (choose_arm already skips those). Quality is LEARNED from
-        # bake-offs (`delegate` / `spendguard lanes --bakeoff`); this side just EXPLOITS what's known + explores untried.
+        # hot claude-code work moves onto the idle lanes on the MAIN path. GATED to an explicit ALLOWLIST
+        # (advisor.bandit_intents) so it only ever redirects intents the user has marked SAFE to run on another
+        # model — never work that needs a specific model (e.g. a gpt-5-mini batch). META intents stay caged; never
+        # the primary's own lane; never a cooling arm. Quality is LEARNED from bake-offs (`delegate` / `--bakeoff`);
+        # this side just EXPLOITS what's known + explores untried. Empty allowlist ⇒ main-path routing stays inert.
         try:
             from .advisor import META as _META
         except Exception:
             _META = "spendguard"
+        _allow = config._cfg_get("advisor", "bandit_intents", None) or []
         if (str(config._cfg_get("advisor", "lane_bandit", False)).strip().lower() in ("1", "true", "yes", "on")
-                and not str(intent).startswith(_META)):
+                and not str(intent).startswith(_META) and intent in _allow):
             try:
                 from . import lane_bandit, lane_catalog
                 _prim_lane = adapters._LANES.get(adapters.provider_for(model), (None,))[0]

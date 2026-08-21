@@ -94,5 +94,21 @@ try:
 finally:
     lane_catalog.arms, lb.bakeoff_judge, lb._run_arm = _o_arms, _o_judge, _o_runarm
 
+print("\n-- route_decision main-path shedding respects the ALLOWLIST (never hijacks specific-model work) --")
+from spendguard import lane_balance, config, lane_catalog                              # noqa: E402
+_ocfg, _oarms2, _ochoose = config._cfg_get, lane_catalog.arms, lb.choose_arm
+try:
+    _stub = {("advisor", "lane_bandit"): "true", ("advisor", "delegate_lanes"): ["gemini", "codex"],
+             ("advisor", "bandit_intents"): ["ok-intent"]}
+    config._cfg_get = lambda s, k, d=None: _stub.get((s, k), _ocfg(s, k, d))
+    lane_catalog.arms = lambda flt=None: [("gemini", "g-low"), ("codex", "gpt-5.5")]
+    lb.choose_arm = lambda intent, arms: ("gemini", "g-low")
+    sub_ok, _ = lane_balance.route_decision("ok-intent", "anthropic:claude-opus-4-8")
+    fails += ck("an ALLOWLISTED intent sheds via the bandit", sub_ok == "gemini:g-low")
+    sub_no, _ = lane_balance.route_decision("not-listed-intent", "anthropic:claude-opus-4-8")
+    fails += ck("a NON-allowlisted intent does NOT bandit-route (main path unchanged)", sub_no is None)
+finally:
+    config._cfg_get, lane_catalog.arms, lb.choose_arm = _ocfg, _oarms2, _ochoose
+
 print(f"\n{'[FAIL]' if fails else 'OK'} test_lane_bandit: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)
