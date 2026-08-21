@@ -643,6 +643,12 @@ def normalize(model: str) -> str:
     m = re.sub(r"-\d{4}-\d{2}-\d{2}$|-\d{8}$", "", m)
     m = re.sub(r"-latest$", "", m)
     m = re.sub(r"-codex$", "", m)
+    # Reasoning-EFFORT suffix (…-minimal/-low/-medium/-high/-xhigh/-max/-none): effort changes how MANY tokens a
+    # call spends, never the $/token RATE, so it prices at the base model. spendguard appends this suffix itself —
+    # e.g. the Gemini lane's `gemini-3.7-flash-low` bills at `gemini-3.7-flash` rates. An explicit PRICING entry for
+    # the suffixed id still wins (price() consults it before normalize), so a model whose real name ends this way
+    # is unaffected as long as it is priced directly.
+    m = re.sub(r"-(minimal|low|medium|high|xhigh|max|none)$", "", m)
     return m
 
 

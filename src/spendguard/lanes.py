@@ -196,6 +196,10 @@ def main(argv=None):
                 print(f"  {r['lane']:<12} 🟢 LIVE — answered in {r['latency']}s at $0 billed")
             else:
                 print(f"  {r['lane']:<12} 🔴 {r['error']}")
+    if "--catalog" in argv:                               # the lane model catalog: use-names · provider · reasoning · $
+        from . import lane_catalog
+        print()
+        lane_catalog.main()
     if "--balance" in argv:                               # per-plan utilisation: which plans are hot vs idle
         from . import lane_balance
         print(lane_balance.format_utilization())

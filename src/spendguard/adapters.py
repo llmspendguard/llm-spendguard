@@ -421,8 +421,20 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             s = {"error": f"{lane_name} lane raised: {str(_le)[:120]}"}   # bug that throws must degrade, not crash call()
         if not isinstance(s, dict):                    # a non-dict is also a broken contract → treat it as an error
             s = {"error": f"{lane_name} lane returned {type(s).__name__}, not a result dict"}
-        if not s.get("error") and s.get("text"):       # SUCCESS needs BOTH: no error AND real text (an empty reply
-            #                                            with no error is malformed → falls through to the fallback)
+        # A "$0 plan reply" is only a real answer if it has CONTENT and — when a shape was requested — SATISFIES it.
+        # WHITESPACE-only counts as empty; a non-empty reply that fails the requested schema is a lane MISS, not a
+        # success. Either way, name it an error so the call FALLS BACK to the metered API instead of handing the
+        # caller a blank/off-shape chunk. (This is the gap behind "the chunks that worked were the ones on the API":
+        # an empty/whitespace/off-shape lane reply was recorded as a $0 success and returned, never failing over.)
+        _txt = (s.get("text") or "").strip()
+        _shape_ok = True
+        if _txt and schema is not None:
+            try:
+                from . import output_contract
+                _shape_ok = bool(output_contract.check_item(_txt, schema)[0])   # same validator the caller uses
+            except Exception:
+                _shape_ok = True                       # a validator that ITSELF errors is not the lane's fault → keep
+        if not s.get("error") and _txt and _shape_ok:  # SUCCESS: no error, real content, AND (if asked) the shape
             _lane_note_ok(lane_name, prompt)         # proven-good watermark: this lane answered a prompt this big
             if lane_name not in _lane_echoed:        # tell the user ONCE per lane per run that a plan is serving their work
                 _lane_echoed.add(lane_name)
@@ -438,8 +450,9 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 pass
             return {**base, "text": s["text"], "in_tok": s.get("in_tok", 0), "out_tok": s.get("out_tok", 0),
                     "latency": s.get("latency", 0.0), "cost": 0.0, "executor": lane_name, "error": None}
-        if not s.get("error"):                         # reached here without an error only when text was empty/missing
-            s = {**s, "error": f"{lane_name} lane returned no usable text"}   # name it so the fallback prints + learn work
+        if not s.get("error"):                         # no error but not a usable answer → say WHY (empty vs off-shape)
+            s = {**s, "error": (f"{lane_name} lane returned no usable text (empty/whitespace)" if not _txt
+                                else f"{lane_name} lane output did not satisfy the requested shape → API")}
         # LANE FAILED. REACTIVE FAILOVER (Part 2) FIRST: before paying the metered API, try a CONFIRMED substitute
         # PLAN for this intent — one hop, guarded against recursion. Routed through call() so the substitute resolves
         # its OWN budget and rides its OWN lane; if it answers, the primary lane is cooled (it failed) and the

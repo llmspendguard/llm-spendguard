@@ -64,15 +64,18 @@ def stamp_from_ledger(window_days: int = _WINDOW_DAYS) -> dict:
     {executor: month_value_usd_stamped} for a caller/report. Best-effort; never raises."""
     out = {}
     try:
-        from . import pricing, receipt
+        from . import receipt
         valued = ledger_valued_lanes()
         if not valued:
             return out
         since = (receipt._utc_today() - _dt.timedelta(days=window_days)).strftime("%Y-%m-%d")
         by_lane = {}
+        from . import lane_catalog
         for ex, ts, prov, model, in_tok, out_tok, project in _subscription_rows(since, valued):
             try:
-                val = pricing.realtime_cost(model, int(in_tok or 0), int(out_tok or 0), provider=prov) or 0.0
+                # price through the CATALOG (base + the lane's provider, reasoning-suffix aware) — not a raw
+                # realtime_cost that leans on the global suffix-strip and can hit the gemini/vertex ambiguity.
+                val = lane_catalog.use_name_cost(model, int(in_tok or 0), int(out_tok or 0), lane=ex) or 0.0
             except Exception:
                 val = 0.0                                 # an unpriced model contributes 0, never a guess (chunk-safe)
             by_lane.setdefault(ex, []).append(
