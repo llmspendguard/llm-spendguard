@@ -130,6 +130,21 @@ SETTINGS = [
               "the advisor chose ($0 billed; value on the est-value axis; the provider key env var is stripped "
               "from the child so a plan call can never silently become metered). Any lane failure cools that "
               "lane (advisor.pool_cooldown_s) and falls back to the API path."),
+    dict(section="advisor", key="lane_bandit", store="config.json:advisor.lane_bandit", env="SPENDGUARD_LANE_BANDIT",
+         default=False, kind="enum:true,false", secret=False,
+         desc="Enable the LEARNED cross-lane router (a decaying bandit): `delegate` picks the lane it has learned "
+              "wins for an intent (equal-start → bake-off-judge → exploit), and the MAIN path sheds allow-listed "
+              "intents (advisor.bandit_intents) to the learned lane. Relearns as models change. Default off. See "
+              "`spendguard lanes --learn` / `--bakeoff` / `--estimate`."),
+    dict(section="advisor", key="bandit_intents", store="config.json:advisor.bandit_intents", default=None,
+         kind="json|null", secret=False,
+         desc="Allowlist of intents the MAIN-path bandit may redirect to another lane — ONLY name intents SAFE to "
+              "run on a different model (never work that needs a specific model, e.g. a gpt-5-mini batch). "
+              "Empty/unset ⇒ main-path routing stays inert (delegate still learns). e.g. [\"classify\",\"summarize\"]."),
+    dict(section="advisor", key="bandit_judge_model", store="config.json:advisor.bandit_judge_model", default=None,
+         kind="string", secret=False,
+         desc="Cheap model that judges bake-offs (which lane's output is better). Unset → advisor.judge_model "
+              "(haiku). ~$0.004 per bake-off; bake-offs run only while an intent is cold or at rate ε."),
     dict(section="callio", key="snip_chars", store="config.json:callio.snip_chars", env="SPENDGUARD_CALLIO_SNIP",
          default=800, kind="int", secret=False,
          desc="Chars kept per recovered prompt / output in the call_io corpus. 800 is sized for the caged JUDGE "
