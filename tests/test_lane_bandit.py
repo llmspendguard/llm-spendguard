@@ -91,6 +91,16 @@ try:
     out2 = lb.bandit_call("intentW", "do Y")     # cold intent → bake-off path → winner's answer
     fails += ck("bandit_call on a cold intent returns the answer + which lane served it",
                 out2 and out2["text"] == "out-gemini" and out2["lane"] == "gemini")
+
+    print("\n-- a JUDGE FAILURE (None, None) is NOT a tie — it records NOTHING (never corrupt the learned table) --")
+    lb.bakeoff_judge = lambda task, oa, ob, aa, ab: (None, None)       # judge unavailable (errored/empty/truncated)
+    r_jf = lb.run_bakeoff("intentJF", "do Z")
+    fails += ck("judge-unavailable still returns a usable answer", bool(r_jf and r_jf.get("text")))
+    fails += ck("judge-unavailable records NO trial (no false tie)", not lb.arm_stats("intentJF"))
+    lb.bakeoff_judge = lambda task, oa, ob, aa, ab: (None, "tie")      # a DECIDED tie
+    lb.run_bakeoff("intentTIE", "do W")
+    stt = lb.arm_stats("intentTIE")
+    fails += ck("a DECIDED tie records both arms at 0.5", bool(stt) and all(abs(s["winrate"] - 0.5) < 0.01 for s in stt.values()))
 finally:
     lane_catalog.arms, lb.bakeoff_judge, lb._run_arm = _o_arms, _o_judge, _o_runarm
 

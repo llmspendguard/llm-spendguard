@@ -181,23 +181,26 @@ def bakeoff_judge(task, out_a, out_b, arm_a, arm_b):
         return None, "both empty"
     if a == b:
         return None, "identical outputs (no judge spend)"
-    prompt = ("Two assistants answered the SAME task. Judge which answer is better — more correct, complete, and "
-              "on-format for the task. Reply with EXACTLY one token on the first line: A, B, or TIE. Then one short "
-              f"reason.\n\nTASK:\n{task[:3000]}\n\n=== ANSWER A ===\n{a[:4000]}\n\n=== ANSWER B ===\n{b[:4000]}\n")
+    prompt = ("Two assistants answered the SAME task. Which answer is better — more correct, complete, and on-format "
+              "for the task? Reply with ONLY ONE WORD, nothing else: A, or B, or TIE. (A verbose reply gets truncated "
+              "and the call is wasted — the single word is all that is read.)\n\n"
+              f"TASK:\n{task[:3000]}\n\n=== ANSWER A ===\n{a[:4000]}\n\n=== ANSWER B ===\n{b[:4000]}\n")
     try:
         from . import adapters, calls
         from .advisor import META                                   # ONE source of the meta-intent prefix
         with calls.context(intent=f"{META}:bandit-judge"):          # caged: attributed, never bandit-routed
             r = adapters.call(_bandit_judge_model(), prompt, max_tokens=_JUDGE_OUT_CAP)
         txt = (r.get("text") or "").strip()
-    except Exception as e:
-        return None, f"judge error: {str(e)[:80]}"
+    except Exception:
+        return None, None                              # judge CALL failed → NO verdict (reason None): the caller must
+    if not txt:                                        # NOT record a false tie about the arms. Empty/truncated = same.
+        return None, None
     tok = (txt.split() or [""])[0].upper().strip(".:,)")            # PARSE a known-shape token — not a meaning call
     if tok.startswith("A"):
-        return arm_a, txt[:150]
+        return arm_a, "A"
     if tok.startswith("B"):
-        return arm_b, txt[:150]
-    return None, (txt[:150] or "tie/unparsed")
+        return arm_b, "B"
+    return None, "tie"                                 # an explicit, DECIDED tie (reason set → recorded 0.5/0.5)
 
 
 def _run_arm(arm, task, system, reasoning, timeout_s):
@@ -246,7 +249,7 @@ def run_bakeoff(intent, task, system=None, reasoning=None, timeout_s=None):
     arm_a, arm_b = live[0], live[1]
     out_a = _run_arm(arm_a, task, system, reasoning, timeout_s)
     out_b = _run_arm(arm_b, task, system, reasoning, timeout_s)
-    winner, _reason = bakeoff_judge(task, out_a, out_b, arm_a, arm_b)
+    winner, reason = bakeoff_judge(task, out_a, out_b, arm_a, arm_b)
     if winner == arm_a:
         record_trial(intent, arm_a[0], arm_a[1], 1.0)
         record_trial(intent, arm_b[0], arm_b[1], 0.0)
@@ -255,10 +258,15 @@ def run_bakeoff(intent, task, system=None, reasoning=None, timeout_s=None):
         record_trial(intent, arm_b[0], arm_b[1], 1.0)
         record_trial(intent, arm_a[0], arm_a[1], 0.0)
         return {"text": out_b, "lane": arm_b[0], "use_name": arm_b[1], "why": "bake-off winner"}
-    record_trial(intent, arm_a[0], arm_a[1], 0.5)     # tie / no winner — both get partial credit, no arm punished
-    record_trial(intent, arm_b[0], arm_b[1], 0.5)
+    # winner is None. A DECIDED tie (reason set) records 0.5/0.5; a JUDGE FAILURE (reason None — the judge call
+    # errored or its reply was empty/truncated) records NOTHING: a broken judge is not evidence about the arms, and
+    # logging it as a tie corrupts the learned table. Still return a usable answer either way.
     _w = arm_a if out_a else arm_b
-    return {"text": out_a or out_b, "lane": _w[0], "use_name": _w[1], "why": "bake-off tie"}
+    if reason is not None:
+        record_trial(intent, arm_a[0], arm_a[1], 0.5)
+        record_trial(intent, arm_b[0], arm_b[1], 0.5)
+    return {"text": out_a or out_b, "lane": _w[0], "use_name": _w[1],
+            "why": "bake-off tie" if reason is not None else "judge unavailable (not recorded)"}
 
 
 def bandit_call(intent, task, system=None, reasoning=None, timeout_s=None):
