@@ -264,4 +264,43 @@ def main(argv=None):
                 print(f"[delegated → {r['lane']} · {r['model']} · {flag}]\n{r['text']}")
             else:
                 print(f"delegate failed: {r.get('error')}")
+    if "--bulk" in argv:                                  # fan a LIST of similar tasks across ALL idle lanes at once
+        import json as _json
+        rest = argv[argv.index("--bulk") + 1:]
+
+        def _optval(flag):                                # value following an optional flag, or None
+            return rest[rest.index(flag) + 1] if (flag in rest and rest.index(flag) + 1 < len(rest)) else None
+        file_p, ck_p, out_p = _optval("--file"), _optval("--checkpoint"), _optval("--out")
+        opt_vals = {v for v in (file_p, ck_p, out_p) if v}
+        pos = [a for a in rest if not a.startswith("--") and a not in opt_vals]
+        intent = pos[0] if pos else None
+        if not intent:
+            print('usage: spendguard lanes --bulk <intent> [--file tasks.txt] [--checkpoint ck.jsonl] [--out results.jsonl]')
+            print('       tasks: one per line from --file, or piped on stdin. --checkpoint makes a crash RESUMABLE.')
+        else:
+            src = Path(file_p).read_text() if file_p else sys.stdin.read()
+            tasks = [ln.strip() for ln in src.splitlines() if ln.strip()]
+            if not tasks:
+                print("no tasks (empty --file / stdin).")
+            else:
+                from . import lane_balance
+                if not ck_p:
+                    print("  note: no --checkpoint — a crash won't resume; pass --checkpoint <path> for a durable run.")
+                res = lane_balance.bulk_delegate(tasks, intent, checkpoint=ck_p)
+                spread, billed, errs = {}, 0, 0
+                for r in res:
+                    spread[r.get("lane")] = spread.get(r.get("lane"), 0) + 1
+                    billed += 1 if r.get("billed") else 0
+                    errs += 1 if r.get("error") else 0
+                served = ", ".join(f"{k}:{v}" for k, v in sorted(spread.items(), key=lambda kv: -kv[1]))
+                print(f"[bulk {intent}] {len(tasks)} tasks · spread {served} · {billed} billed(API-fallback) · {errs} errored")
+                if out_p:
+                    with open(out_p, "w") as f:
+                        for i, r in enumerate(res):
+                            f.write(_json.dumps({"i": i, "task": tasks[i], **r}) + "\n")
+                    print(f"  wrote {len(res)} results → {out_p}")
+                else:
+                    for r in res[:3]:
+                        print(f"  {r.get('lane')} · {r.get('use_name')}: "
+                              + ((r.get("text") or r.get("error") or "")[:120].replace("\n", " ")))
     return 0

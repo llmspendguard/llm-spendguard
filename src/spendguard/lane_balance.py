@@ -188,6 +188,119 @@ def delegate(task, system=None, lanes=None, reasoning="low", max_tokens=_DELEGAT
             "error": f"no viable delegation lane answered (tried {tried or 'none — set advisor.lane_models {lane: model}'})"}
 
 
+def _bulk_arms(intent, lanes=None):
+    """One arm per VIABLE lane for a BULK job — each lane's BEST-winrate use-name for this intent (so bulk rides each
+    lane's best reasoning variant). A lane is dropped ONLY if its best arm was TRIED and WON NOTHING (winrate 0 — a
+    proven total loser for this intent); that is a natural boundary, not a tuned threshold. Untried lanes are kept
+    optimistically (explore), cooling lanes skipped. Spreading bulk across every remaining good lane is what makes it
+    fast — they run in PARALLEL — so this returns the whole good set, not a single winner."""
+    from . import lane_bandit, lane_catalog
+    st = lane_bandit.arm_stats(intent)
+    best = {}
+    for arm in lane_catalog.arms(lanes or config._cfg_get("advisor", "delegate_lanes", None)):
+        if lane_bandit._arm_cooling(*arm):
+            continue
+        s = st.get(arm) or {}
+        wr = s.get("winrate")
+        wr = 1.0 if wr is None else wr                # untried → optimistic, so a new lane still earns bulk work
+        if s.get("trials") and wr <= 0.0:            # TRIED and won NOTHING for this intent → a proven loser, drop it
+            continue
+        cur = best.get(arm[0])
+        if cur is None or wr > cur[0]:
+            best[arm[0]] = (wr, arm)
+    return [a for _wr, a in best.values()]
+
+
+def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, deadline_s=120.0,
+                  checkpoint=None, chunk_size=100):
+    """Fan a LIST of similar tasks across ALL viable idle lanes CONCURRENTLY — the right shape for a BULK job (e.g.
+    symgrep's ~6k one-sentence symbol descriptions) that the per-call bandit would trickle one at a time. Each task
+    runs on a lane (round-robin across the lanes the bandit rates GOOD for this intent), each admission BOUNDED by
+    the dispatch GOVERNOR (per-lane in-flight cap, so it FILLS the plans without tripping their throttle). So it is
+    FAST (parallel across lanes), $0 (plan-served; a lane failure falls back to that provider's API, flagged
+    `billed`), and spread across EVERY good lane, not one.
+
+    DURABLE (the CHUNK-never-single-shot rule): tasks run in chunks of `chunk_size`; when `checkpoint` (a jsonl path)
+    is given, EACH completed result is appended before the next chunk, so a crash RESUMES (re-run with the same
+    checkpoint skips finished tasks) instead of losing the whole run. One task that errors returns an error result
+    and never wedges the chunk. Returns [{text, lane, use_name, billed, error}] in task order."""
+    import os as _os
+    import json as _json
+    import threading as _th
+    import concurrent.futures as _cf
+    from . import adapters, calls, dispatch, lane_catalog
+
+    tasks = list(tasks)
+    if not tasks:
+        return []
+    arms = _bulk_arms(intent)
+    if not arms:
+        return [{"text": None, "lane": None, "use_name": None, "billed": False,
+                 "error": "no viable lane (set advisor.lane_models; check `spendguard lanes`)"} for _ in tasks]
+
+    results = [None] * len(tasks)
+    if checkpoint and _os.path.exists(checkpoint):   # RESUME: reload finished tasks so a re-run never re-pays them
+        try:
+            with open(checkpoint) as f:
+                for ln in f:
+                    try:
+                        rec = _json.loads(ln)
+                        if 0 <= int(rec["i"]) < len(tasks):
+                            results[int(rec["i"])] = rec["r"]
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+    todo = [i for i in range(len(tasks)) if results[i] is None]
+    if not todo:
+        return results                                # fully resumed from the checkpoint — nothing left to run
+
+    _cklock = _th.Lock()
+
+    def _checkpoint(i, res):
+        if not checkpoint:
+            return
+        try:
+            with _cklock, open(checkpoint, "a") as f:        # append one durable line per finished task
+                f.write(_json.dumps({"i": i, "r": res}) + "\n")
+        except Exception:
+            pass                                             # a checkpoint-write failure must not lose the in-hand result
+
+    n = int(max_workers or dispatch._limit("global_concurrency", 24))
+
+    def _run_task_on_lane(i, task):
+        lane, use_name = arms[i % len(arms)]          # round-robin — spread across the good lanes for parallelism
+        prov = lane_catalog.lane_provider(lane)
+        model = f"{prov}:{use_name}"
+        try:
+            dispatch.acquire(prov, use_name, deadline_s)     # governor: bounds per-lane in-flight (fills, never swarms)
+        except Exception as e:
+            return i, {"text": None, "lane": lane, "use_name": use_name, "billed": False,
+                       "error": f"dispatch: {str(e)[:60]}"}
+        try:
+            calls.set_context(intent=intent)          # tag this worker thread's calls with the intent (attribution);
+            r = adapters.call(model, task, system=system, reasoning=reasoning,   # set_context, NOT the context
+                              _no_sub=True, timeout_s=deadline_s)                 # manager, so no per-task receipt
+        except Exception as e:
+            return i, {"text": None, "lane": lane, "use_name": use_name, "billed": False, "error": str(e)[:80]}
+        finally:
+            dispatch.release(prov, use_name)
+        r = r if isinstance(r, dict) else {}
+        served = r.get("executor") or ("api-fallback" if r.get("cost") else lane)
+        return i, {"text": (r.get("text") or None), "lane": served, "use_name": use_name,
+                   "billed": bool(r.get("cost")), "error": r.get("error")}
+
+    # CHUNKED: bound how many futures are in flight at once, and make each chunk's results durable before the next.
+    for c0 in range(0, len(todo), max(1, int(chunk_size))):
+        chunk = todo[c0:c0 + max(1, int(chunk_size))]
+        with _cf.ThreadPoolExecutor(max_workers=max(1, n)) as ex:
+            for fut in _cf.as_completed([ex.submit(_run_task_on_lane, i, tasks[i]) for i in chunk]):
+                i, res = fut.result()
+                results[i] = res
+                _checkpoint(i, res)
+    return results
+
+
 def route_decision(intent, model, reactive=False):
     """(substitute_spec or None, why) — the routing brain, PURE (registry + utilisation only, no LLM; the agentic
     proposer fills the registry separately). Default OFF: an intent with no CONFIRMED substitute yields (None, …), so
