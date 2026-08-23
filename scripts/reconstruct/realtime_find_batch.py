@@ -18,8 +18,10 @@ import spendguard; spendguard.require()
 from spendguard import conv, resources, config, calls, pricing
 
 STATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "realtime_find_batch_state.json")
-QUERY_WINDOW_DAYS = 120                                # ROLLING window (never a stale literal): reconstruct the last N
-#                                                       days of realtime — covers the reconcile's current + prior months
+QUERY_WINDOW_DAYS = 60                                 # ROLLING window (never a stale literal): reconstruct the last N
+#                                                       days of realtime — ~2 months (the proven ~$15 tell-filtered scope);
+#                                                       covers the reconcile's current + prior month. Periodic refresh
+#                                                       keeps it fresh, so a short window stays complete.
 SINCE = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=QUERY_WINDOW_DAYS)).date().isoformat()
 FIND_MODEL = "claude-sonnet-4-6"                       # haiku failed recall; sonnet = 3/3 in eval
 CONSOLIDATE_MODEL = "claude-opus-4-8"
