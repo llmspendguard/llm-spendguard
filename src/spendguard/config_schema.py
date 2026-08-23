@@ -140,7 +140,18 @@ SETTINGS = [
          kind="json|null", secret=False,
          desc="Allowlist of intents the MAIN-path bandit may redirect to another lane — ONLY name intents SAFE to "
               "run on a different model (never work that needs a specific model, e.g. a gpt-5-mini batch). "
-              "Empty/unset ⇒ main-path routing stays inert (delegate still learns). e.g. [\"classify\",\"summarize\"]."),
+              "Empty/unset ⇒ main-path routing stays inert (delegate still learns). e.g. [\"classify\",\"summarize\"]. "
+              "Used only when advisor.bandit_mode=allowlist."),
+    dict(section="advisor", key="bandit_mode", store="config.json:advisor.bandit_mode", default="allowlist",
+         kind="enum:allowlist,optout", secret=False,
+         desc="Main-path shedding posture. allowlist (default, conservative): the bandit redirects ONLY intents in "
+              "advisor.bandit_intents. optout: it redirects EVERY intent except META and advisor.bandit_denylist — the "
+              "'use the idle plans by default' setting that drives non-Claude lane usage up. Either way the arms "
+              "exclude the primary lane and quality stays bake-off-learned; deny an intent that needs the primary model."),
+    dict(section="advisor", key="bandit_denylist", store="config.json:advisor.bandit_denylist", default=None,
+         kind="json|null", secret=False,
+         desc="In optout mode, intents the bandit must NEVER redirect off the primary (claude) lane — work that "
+              "genuinely needs that model. Ignored in allowlist mode. e.g. [\"vision:extract\",\"legal:review\"]."),
     dict(section="advisor", key="bandit_judge_model", store="config.json:advisor.bandit_judge_model", default=None,
          kind="string", secret=False,
          desc="Cheap model that judges bake-offs (which lane's output is better). Unset → advisor.judge_model "

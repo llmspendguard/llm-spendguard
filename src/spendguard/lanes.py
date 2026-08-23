@@ -275,11 +275,31 @@ def main(argv=None):
         pos = [a for a in rest if not a.startswith("--") and a not in opt_vals]
         intent = pos[0] if pos else None
         if not intent:
-            print('usage: spendguard lanes --bulk <intent> [--file tasks.txt] [--checkpoint ck.jsonl] [--out results.jsonl]')
-            print('       tasks: one per line from --file, or piped on stdin. --checkpoint makes a crash RESUMABLE.')
+            print('usage: spendguard lanes --bulk <intent> [--file tasks.txt] [--jsonl] [--checkpoint ck.jsonl] [--out results.jsonl]')
+            print('       tasks: one per line from --file/stdin (or --jsonl = one JSON-encoded task per line, for '
+                  'MULTI-LINE bodies). --checkpoint makes a crash RESUMABLE; --out writes {i,task,text,lane,...} jsonl.')
         else:
             src = Path(file_p).read_text() if file_p else sys.stdin.read()
-            tasks = [ln.strip() for ln in src.splitlines() if ln.strip()]
+            _jsonl = any(a == "--jsonl" for a in rest)    # exact flag match (rest is argv list): one JSON-encoded task
+            if _jsonl:                                     # per line → MULTI-LINE bodies survive (plain-line splitting
+                tasks, _bad = [], 0                        # mangles a function body — symgrep's describe corpus)
+                for ln in src.splitlines():
+                    ln = ln.strip()
+                    if not ln:
+                        continue
+                    try:
+                        t = _json.loads(ln)
+                    except Exception:
+                        _bad += 1                          # malformed JSONL line = a DROPPED task → count it, never silent
+                        continue
+                    if isinstance(t, str) and t:
+                        tasks.append(t)
+                    else:
+                        _bad += 1                          # non-string / empty JSON value is also a dropped task
+                if _bad:
+                    print(f"  note: {_bad} malformed/non-string JSONL line(s) skipped (each is one undescribed task).")
+            else:
+                tasks = [ln.strip() for ln in src.splitlines() if ln.strip()]
             if not tasks:
                 print("no tasks (empty --file / stdin).")
             else:

@@ -117,6 +117,16 @@ try:
     fails += ck("an ALLOWLISTED intent sheds via the bandit", sub_ok == "gemini:g-low")
     sub_no, _ = lane_balance.route_decision("not-listed-intent", "anthropic:claude-opus-4-8")
     fails += ck("a NON-allowlisted intent does NOT bandit-route (main path unchanged)", sub_no is None)
+
+    # OPT-OUT mode: shed EVERY intent except META + the denylist (drive non-Claude usage up by default)
+    _stub[("advisor", "bandit_mode")] = "optout"
+    _stub[("advisor", "bandit_denylist")] = ["needs-claude"]
+    sub_any, _ = lane_balance.route_decision("some-random-intent", "anthropic:claude-opus-4-8")
+    fails += ck("optout: a non-denied, non-allowlisted intent SHEDS (opt-out default)", sub_any == "gemini:g-low")
+    sub_deny, _ = lane_balance.route_decision("needs-claude", "anthropic:claude-opus-4-8")
+    fails += ck("optout: a DENYLISTED intent stays on the primary (never shed)", sub_deny is None)
+    sub_meta, _ = lane_balance.route_decision("spendguard:meta-thing", "anthropic:claude-opus-4-8")
+    fails += ck("optout: a META intent stays caged (never shed)", sub_meta is None)
 finally:
     config._cfg_get, lane_catalog.arms, lb.choose_arm = _ocfg, _oarms2, _ochoose
 

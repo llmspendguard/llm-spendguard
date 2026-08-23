@@ -341,9 +341,18 @@ def route_decision(intent, model, reactive=False):
             from .advisor import META as _META
         except Exception:
             _META = "spendguard"
-        _allow = config._cfg_get("advisor", "bandit_intents", None) or []
-        if (str(config._cfg_get("advisor", "lane_bandit", False)).strip().lower() in ("1", "true", "yes", "on")
-                and not str(intent).startswith(_META) and intent in _allow):
+        _bandit_on = str(config._cfg_get("advisor", "lane_bandit", False)).strip().lower() in ("1", "true", "yes", "on")
+        # ELIGIBILITY — two modes. `allowlist` (default, conservative): shed ONLY intents the user marked safe in
+        # advisor.bandit_intents. `optout` (advisor.bandit_mode=optout): shed EVERY intent EXCEPT META and an explicit
+        # advisor.bandit_denylist — the "use the idle plans by default" posture. Either way the arms EXCLUDE the primary
+        # (claude) lane and choose_arm picks the LEARNED-best substitute (or explores an untried one), so quality stays
+        # governed by the bake-off learning; DENY an intent that genuinely needs the primary model.
+        _mode = str(config._cfg_get("advisor", "bandit_mode", "allowlist")).strip().lower()
+        if _mode == "optout":
+            _eligible = intent not in (config._cfg_get("advisor", "bandit_denylist", None) or [])
+        else:
+            _eligible = intent in (config._cfg_get("advisor", "bandit_intents", None) or [])
+        if _bandit_on and not str(intent).startswith(_META) and _eligible:
             try:
                 from . import lane_bandit, lane_catalog
                 _prim_lane = adapters._LANES.get(adapters.provider_for(model), (None,))[0]
