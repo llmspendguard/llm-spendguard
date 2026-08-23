@@ -333,6 +333,9 @@ def main(argv=None):
         d0 = lane_queue.queue_depth()
         print(f"queue: {d0.get('pending', 0)} pending · {d0.get('leased', 0)} leased · "
               f"{d0.get('done', 0)} done · {d0.get('failed', 0)} failed")
+        pg = lane_queue.purge()                            # bound the queue every cycle: archive+remove old terminal rows
+        if pg.get("archived"):
+            print(f"  purged {pg['archived']} old terminal row(s) → {pg.get('archive')}")
         if not d0.get("pending") and not d0.get("leased") and not forever:
             print("nothing to drain.")
         else:
@@ -349,4 +352,12 @@ def main(argv=None):
         d = lane_queue.queue_depth()
         print(f"lane queue: {d.get('pending', 0)} pending · {d.get('leased', 0)} leased · "
               f"{d.get('done', 0)} done · {d.get('failed', 0)} failed")
+    if "--purge" in argv:                                 # archive+remove OLD terminal rows so the queue stays bounded
+        from . import lane_queue
+        pg = lane_queue.purge()
+        if pg.get("error"):
+            print(f"purge failed: {pg['error']}")
+        else:
+            print(f"purged {pg.get('archived', 0)} old terminal row(s)"
+                  + (f" → {pg['archive']}" if pg.get("archive") else " (none old enough yet)"))
     return 0

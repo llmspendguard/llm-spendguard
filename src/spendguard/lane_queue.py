@@ -38,6 +38,8 @@ LEASE_S_DEFAULT = 300.0         # a leased task must settle within this window o
 MAX_ATTEMPTS_DEFAULT = 3        # retry a task up to this many times before marking it `failed`
 IDLE_ROUNDS_DEFAULT = 2         # foreground drain stops after this many consecutive EMPTY leases (queue drained)
 IDLE_SLEEP_DEFAULT = 2.0        # seconds to wait between empty leases / overload re-checks (foreground + daemon)
+RETAIN_DAYS_DEFAULT = 7.0       # terminal rows (done/failed) older than this are archived to a log + removed from the
+#                                 live queue, so it never accumulates forever (recent ones stay for --queue review)
 _RESULT_CAP = 4000            # bytes of result JSON retained per row (audit/debug, not the whole payload)
 
 # Priority convention (higher drains first): a delegated task someone is WAITING on jumps ahead of a big backfill,
@@ -191,6 +193,38 @@ def queue_depth():
         return out
     except Exception:
         return {}
+
+
+def purge(retain_days=None, archive_path=None):
+    """Bound the queue so it never accumulates forever: TERMINAL rows (done/failed) older than `retain_days` are
+    APPENDED to an archive jsonl (a reviewable log) and then DELETED from the live table. Recent terminal rows stay
+    in the queue for `--queue` review; pending/leased rows are NEVER touched. Returns {archived, deleted, archive}
+    (or {error}). Never raises. The archive-append happens before the delete commits, so at worst a crash re-logs a
+    row on the next run (harmless dup in an append-only audit) — it can never DELETE without having archived."""
+    retain_days = float(retain_days if retain_days is not None else _qcfg("queue_retain_days", RETAIN_DAYS_DEFAULT))
+    cutoff = _iso(_utcnow() - datetime.timedelta(days=retain_days))
+    archive_path = archive_path or str(config.HOME / "lane_queue_archive.jsonl")
+    cols = ("id", "intent", "task", "state", "attempts", "lane", "billed", "result", "created_ts", "updated_ts")
+    try:
+        with contextlib.closing(_queue_db()) as c:
+            c.execute("BEGIN IMMEDIATE")                       # lock before select→delete so a concurrent drainer can't race
+            try:
+                rows = c.execute(f"SELECT {','.join(cols)} FROM lane_queue "
+                                 "WHERE state IN ('done','failed') AND updated_ts < ?", (cutoff,)).fetchall()
+                if not rows:
+                    c.execute("COMMIT")
+                    return {"archived": 0, "deleted": 0}
+                with open(archive_path, "a") as f:            # append-only audit log — archive BEFORE delete
+                    for r in rows:
+                        f.write(json.dumps(dict(zip(cols, r))) + "\n")
+                c.executemany("DELETE FROM lane_queue WHERE id=?", [(r[0],) for r in rows])
+                c.execute("COMMIT")
+                return {"archived": len(rows), "deleted": len(rows), "archive": archive_path}
+            except Exception:
+                c.execute("ROLLBACK")
+                raise
+    except Exception as e:
+        return {"archived": 0, "deleted": 0, "error": str(e)[:120]}
 
 
 def _overloaded(ceiling):

@@ -170,6 +170,11 @@ SETTINGS = [
          desc="LOCAL-machine guard: pause leasing while the 1-min load average exceeds this (subprocess lanes on a "
               "thrashing box only make it worse). 0 ⇒ off. The lane-saturation case is handled separately by the "
               "dispatch governor; this is the CPU-saturation case."),
+    dict(section="advisor", key="queue_retain_days", store="config.json:advisor.queue_retain_days", default=7.0,
+         kind="float", secret=False,
+         desc="Terminal queue rows (done/failed) older than this are archived to lane_queue_archive.jsonl (a "
+              "reviewable log) and removed from the live queue, so it never accumulates forever. Recent terminal "
+              "rows stay for `spendguard lanes --queue`. `--drain` purges each cycle; `--purge` runs it on demand."),
     dict(section="callio", key="snip_chars", store="config.json:callio.snip_chars", env="SPENDGUARD_CALLIO_SNIP",
          default=800, kind="int", secret=False,
          desc="Chars kept per recovered prompt / output in the call_io corpus. 800 is sized for the caged JUDGE "

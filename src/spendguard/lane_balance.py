@@ -190,8 +190,10 @@ def delegate(task, system=None, lanes=None, reasoning="low", max_tokens=_DELEGAT
     for lane in order:
         model = f"{prov_of[lane]}:{lm[lane]}"
         tried.append(model)
-        with calls.context(intent="spendguard:delegate"):
-            r = adapters.call(model, task, system=system, reasoning=reasoning, max_tokens=max_tokens)
+        with calls.context(intent=intent):
+            r = adapters.call(model, task, system=system, reasoning=reasoning, max_tokens=max_tokens, sig=intent)
+            # sig=intent → autotune raises this class's OUTPUT budget from its measured p99 (over the 1500 floor),
+            # so a long delegated answer stops truncating at 1500/3000/6000 as the class is learned.
         txt = (r.get("text") or "").strip()
         if txt and not r.get("error"):
             return {"text": txt, "lane": lane, "model": model, "cost": r.get("cost"),

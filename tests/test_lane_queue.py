@@ -5,6 +5,7 @@ fails-when-exhausted; an EXPIRED lease is RECLAIMED so a crashed worker never lo
 through bulk_delegate and empties the queue; and the local-load ceiling pauses leasing. Offline: bulk_delegate +
 loadavg stubbed, isolated db, no LLM, no subprocess.
 """
+import contextlib
 import os
 import sys
 import tempfile
@@ -129,6 +130,26 @@ print("\n-- receipt shows the queue backlog (Phase 3 visibility) --")
 from spendguard import receipt                                                         # noqa: E402
 seg = receipt._queue_seg()
 fails += ck("_queue_seg reports the backlog while work waits", "pending" in seg or "leased" in seg)
+
+print("\n-- purge: OLD terminal rows archived to a log + removed; recent + active rows kept (Phase 4 housekeeping) --")
+rid_old = q.enqueue("purgeI", "old-done")
+q.settle(rid_old, {"text": "done-old", "lane": "gemini"})          # a terminal (done) row
+rid_recent = q.enqueue("purgeI", "recent-done")
+q.settle(rid_recent, {"text": "done-recent", "lane": "codex"})     # a RECENT terminal row (stays)
+pend_before = q.queue_depth().get("pending", 0)
+with contextlib.closing(q._queue_db()) as _c:                      # backdate the old row past the retain window
+    _c.execute("UPDATE lane_queue SET updated_ts='2000-01-01T00:00:00+00:00' WHERE id=?", (rid_old,))
+    _c.commit()
+res = q.purge(retain_days=1)
+fails += ck("purge archived + deleted exactly the OLD terminal row", res.get("archived") == 1 and res.get("deleted") == 1)
+with contextlib.closing(q._queue_db()) as _c:
+    gone = _c.execute("SELECT COUNT(*) FROM lane_queue WHERE id=?", (rid_old,)).fetchone()[0]
+    kept = _c.execute("SELECT COUNT(*) FROM lane_queue WHERE id=?", (rid_recent,)).fetchone()[0]
+fails += ck("old terminal row removed from the live queue", gone == 0)
+fails += ck("recent terminal row kept (within retain window)", kept == 1)
+fails += ck("pending/active rows untouched by purge", q.queue_depth().get("pending", 0) == pend_before)
+_arc = os.path.join(os.environ["SPENDGUARD_HOME"], "lane_queue_archive.jsonl")
+fails += ck("archived row is in the reviewable log", os.path.exists(_arc) and "old-done" in open(_arc).read())
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_lane_queue: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)
