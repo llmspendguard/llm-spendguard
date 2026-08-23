@@ -148,6 +148,7 @@ def collect():
         merged.setdefault(key, rn)
     runs = list(merged.values())
     _segs, _store = conv.segments(), conv._seg_get_all()   # cache ONCE for the resolve loop (was re-read per run = the hang)
+    _sdmap = conv.session_day_map(_segs)                   # per-session date fallback when resolve matches no segment
     # PRICE (printed-$ = ground truth, else estimate) + attribute via session_classification
     rows, by_org = [], {}
     for rn in runs:
@@ -173,7 +174,7 @@ def collect():
         by_org[org] = round(by_org.get(org, 0.0) + usd, 2)
         rows.append({"name": rn.get("name"), "model": ms, "usd": usd, "basis": basis, "org": org,
                      "team": sc.get("team"), "project": sc.get("project"), "how": sc.get("how"),
-                     "day": sc.get("day"),                # per-run DATE → the fold spreads spend into its real month
+                     "day": sc.get("day") or _sdmap.get(sid0),   # seg-day, else the SESSION's date → real month
                      "sessions": rn.get("sessions"), "calls": rn.get("calls"),
                      "reasoning": (rn.get("reasoning") or "")[:120]})
     total = round(sum(r["usd"] for r in rows), 2)
@@ -229,6 +230,7 @@ def clean():
     # drop SELF-CONTAMINATED runs — those evidenced ONLY in spendguard's own cost-analysis sessions, which echo other
     # projects' printed $ (booking them = a forensic tool counting its own output as spend) or are already-gated.
     _segs, _store = conv.segments(), conv._seg_get_all()
+    _sdmap = conv.session_day_map(_segs)                   # per-session date fallback when resolve matches no segment
     buckets = {"REALTIME": 0.0, "EMBEDDING": 0.0, "BATCH": 0.0, "META": 0.0, "?": 0.0}
     by_org, kept, inflated, selfcontam = {}, [], [], []
     for idx, r in enumerate(runs):
@@ -245,7 +247,7 @@ def clean():
             sc = conv.resolve({"conv_id": sid0, "script": r.get("name")}, segs=_segs, store=_store) if sid0 else {}
             org = sc.get("org") or "(untagged)"
             r["org"], r["team"], r["project"], r["how"] = org, sc.get("team"), sc.get("project"), sc.get("how")
-            r["day"] = sc.get("day")                       # per-run date, carried into the reconcile cache
+            r["day"] = sc.get("day") or _sdmap.get(sid0)   # seg-day, else the SESSION's date → run lands in its month
             by_org[org] = round(by_org.get(org, 0.0) + r["usd"], 2)
             kept.append(r)
     total = round(sum(r["usd"] for r in kept), 2)

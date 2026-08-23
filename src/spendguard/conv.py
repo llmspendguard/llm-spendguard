@@ -600,6 +600,18 @@ def _is_spendguard_session(sid, segs=None, store=None):
     return (resolve({"conv_id": sid}, segs=segs, store=store).get("project") or "") == "llm-spendguard"
 
 
+def session_day_map(segs):
+    """{conv_id (sid) -> earliest transcript day} from segments — the reliable per-SESSION date to fall back on when
+    resolve matched no single segment, so a reconstructed run still lands in its REAL month instead of a lump
+    window-start fallback. Pure (no IO); pass cached segments()."""
+    out = {}
+    for s in segs or []:
+        sid, d = s.get("sid"), s.get("day")
+        if sid and d and (sid not in out or d < out[sid]):
+            out[sid] = d
+    return out
+
+
 def resolve(evidence, tdir=None, classify_on_miss=False, segs=None, store=None):
     """UNIFIED agentic attribution for ANY spend event (batch · realtime · remote/GPU) — the ONE engine all three cost
     paths share. Map the event to the SEGMENT that ran it (mechanical: batch_id / seg_id / cwd within the session), then
