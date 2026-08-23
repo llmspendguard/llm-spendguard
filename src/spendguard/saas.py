@@ -748,6 +748,11 @@ def sync(if_due=False, since=None):
         out["chat"] = _chat.loop(run=True, quiet=True) if _chat._enabled() else {"skipped": "chat not enabled"}
     except Exception as e:
         out["chat"] = {"skipped": f"chat loop: {str(e)[:80]}"}
+    try:                                                  # ledger-valued lanes (gemini/zai) plan VALUE → the est-value
+        from . import lane_value as _lane_value           # dashboards (the client half of the server's EST_VALUE_CHANNELS)
+        out["lane_value"] = _lane_value.sync()
+    except Exception as e:
+        out["lane_value"] = {"skipped": f"lane_value sync: {str(e)[:80]}"}
     try:                                                  # AUTO-FRESH living insights vs the CURRENT corpus every
         from . import validate as _validate               # sync (cheap, deterministic, NO LLM) — re-checks each
         out["validated"] = _validate.validate(verbose=False)   # learning: corroborate / contradict / decay-if-stale,
@@ -757,7 +762,8 @@ def sync(if_due=False, since=None):
     # _row_uid. A nonzero count means the two algorithms have drifted → rows RE-KEY (insert-as-new instead of update)
     # = silent double-count. It otherwise lives only in this transient push response; surface it loudly here so the
     # daily sync / status shows it. The durable guard is the cross-repo parity test (tests/test_uid_parity.py).
-    _um = sum(int((out.get(k) or {}).get("uid_mismatches") or 0) for k in ("rollup", "resources", "workdone", "chat")
+    _um = sum(int((out.get(k) or {}).get("uid_mismatches") or 0)
+              for k in ("rollup", "resources", "workdone", "chat", "lane_value")
               if isinstance(out.get(k), dict))
     if _um:
         out["uid_mismatches"] = _um

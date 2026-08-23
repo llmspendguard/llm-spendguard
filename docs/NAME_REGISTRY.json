@@ -258,9 +258,9 @@
       "why": "callio.count counts database rows matching intent/model; content_tokens.count counts input tokens in a message content. Entirely different jobs sharing a bare, generic name."
     },
     "day_totals": {
-      "n": 3,
+      "n": 4,
       "verdict": "PROTOCOL",
-      "why": "Three source-specific implementations of the same server contract: each aggregates its own channel's data (claude-ai, claude-code, codex) into per-(team,project,model,day) ledger rows with identical s"
+      "why": "Four source-specific implementations of one server contract: each aggregates its own channel's est-value into per-(project,day,model) /v1/ledger rows (billed=False) — chat=claude-ai, claudecode=claude-code, codex=codex, lane_value=gemini/zai (ledger-valued lanes, no session miner). Same shape, dispatched by each source's own sync."
     },
     "discover": {
       "n": 3,
@@ -398,9 +398,9 @@
       "why": "Both produce lists of display lines but for entirely different subsystems: one reports calibration-confidence stats from gate_calls, the other reports subscription lane readiness. Different data sourc"
     },
     "sync": {
-      "n": 8,
+      "n": 9,
       "verdict": "PROTOCOL",
-      "why": "chat/claudecode/codex/resources.sync all share one adapter contract: `sync(dry=False)` pushing a channel's spend rows → the server, org-routed, honoring visibility/contributor. They are intentional po"
+      "why": "One adapter contract `sync(dry=False)` pushing a channel's spend/value rows → the server, org-routed, honoring visibility/contributor: chat/claudecode/codex/resources/lane_value.sync (per source) plus saas/remote.sync. Intentional polymorphism, one per source."
     },
     "test": {
       "n": 2,
