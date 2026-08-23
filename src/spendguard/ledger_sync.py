@@ -355,11 +355,12 @@ def record_realtime_reconstruction(since=None):
     cache (~/.spendguard/realtime_reconstruction.json: embeddings/batch/spendguard-meta excluded, printed-$ ground truth,
     soft estimates halved). THIS read-and-record is cheap and idempotent — marker rows (kind=realtime, _RT_RECON_MARKER)
     that are reversible + excluded from gate/cap, so re-running rebuilds them. Admin NEVER writes here (dev cross-check
-    only). NOTE: org-level + recorded at the window start (per-project-within-org + per-month split are refinements —
-    needs the reconstruction to carry per-run project + session date)."""
+    only). Each row records at its OWN day (the reconstruction now carries per-run `day` from conv.resolve), so a
+    multi-month window folds into the right months instead of one lump day; caches without `day` fall back to the
+    window start. Per-project-within-org (vs the org→representative-project map) remains a refinement."""
     from . import budget
     import os, json
-    cache = os.path.expanduser("~/.spendguard/realtime_reconstruction.json")
+    cache = str(config.HOME / "realtime_reconstruction.json")   # config.HOME (respects SPENDGUARD_HOME), not a ~ literal
     if not os.path.exists(cache):
         return dict(recorded=0.0, rows=0, note="no reconstruction cache (run the periodic find/clean first)")
     try:
@@ -367,22 +368,24 @@ def record_realtime_reconstruction(since=None):
             data = json.load(_fh)
     except Exception:
         return dict(recorded=0.0, rows=0, note="cache unreadable")
-    day = since or data.get("since") or config.month_start_utc()
+    fallback_day = since or data.get("since") or config.month_start_utc()
     budget.clear_reconciled(model=_RT_RECON_MARKER)              # idempotent rebuild
     org_project = {"healiom": "lmm", "ensight": "llm-spendguard", "personal": "personal-admin"}   # org → representative project
     agg = {}
     for r in data.get("rows", []):
         proj = org_project.get((r.get("org") or "").lower(), "unattributed")
-        k = (proj, r.get("provider") or "?")
+        rday = str(r.get("day") or fallback_day)[:10]           # PER-RUN date → each row lands in ITS month, so the
+        k = (proj, r.get("provider") or "?", rday)              # current-month reconcile sees current-month realtime
         agg[k] = agg.get(k, 0.0) + float(r.get("usd") or 0)
-    rec, n = 0.0, 0
-    for (proj, prov), usd in agg.items():
+    rec, n, skipped = 0.0, 0, 0
+    for (proj, prov, rday), usd in agg.items():
         if usd <= 0:
+            skipped += 1                                        # reconstruction rows are spend (usd>0); count any non-positive, never drop silently
             continue
-        budget.record_reconciled(day=day, provider=prov, cost=round(usd, 2), project=proj,
+        budget.record_reconciled(day=rday, provider=prov, cost=round(usd, 2), project=proj,
                                  kind="realtime", model=_RT_RECON_MARKER)
         rec += usd; n += 1
-    return dict(recorded=round(rec, 2), rows=n, day=day)
+    return dict(recorded=round(rec, 2), rows=n, skipped=skipped, since=fallback_day)
 
 
 def reconcile_realtime(since=None):

@@ -615,18 +615,18 @@ def resolve(evidence, tdir=None, classify_on_miss=False, segs=None, store=None):
         if cls and (cls.get("project") or cls.get("org")):
             return {"org": _canon(cls.get("org")), "team": _canon(cls.get("team")), "project": _canon(cls.get("project")),
                     "confidence": int(cls.get("confidence") or 0), "source": cls.get("source") or "llm",
-                    "how": "batch-map" if evidence.get("batch_id") else "segment-cwd",
+                    "how": "batch-map" if evidence.get("batch_id") else "segment-cwd", "day": seg.get("day"),
                     "seg_id": seg["seg_id"], "prior": seg.get("project_prior"), "evidenced": True}
         if classify_on_miss and seg.get("prompt"):
             cls = _classify_one_segment(seg)                  # AGENTIC, recorded
             if cls and (cls.get("project") or cls.get("org")):
                 return {"org": _canon(cls.get("org")), "team": _canon(cls.get("team")), "project": _canon(cls.get("project")),
-                        "confidence": int(cls.get("confidence") or 0), "source": "llm", "how": "llm",
+                        "confidence": int(cls.get("confidence") or 0), "source": "llm", "how": "llm", "day": seg.get("day"),
                         "seg_id": seg["seg_id"], "prior": seg.get("project_prior"), "evidenced": True}
         prior = seg.get("project_prior")
         o, t = _prior_org_team(prior)                     # map the repo PRIOR → org+team via taxonomy (was: org left blank)
         return {"org": o, "team": t, "project": _canon(prior), "confidence": 0,
-                "source": "prior", "how": "cwd-prior", "seg_id": seg["seg_id"],
+                "source": "prior", "how": "cwd-prior", "seg_id": seg["seg_id"], "day": seg.get("day"),
                 "prior": prior, "evidenced": True}
     sc = session_classification(evidence.get("conv_id") or evidence.get("sid") or "")
     if sc:

@@ -157,6 +157,47 @@ def sync(ssh: str, project: str, label: str = None, home: str = _DEFAULT_HOME, t
     return {"rows": n, "usd": round(usd, 4), "project": project, "label": label}
 
 
+def _ssh_for(inst):
+    """SSH prefix for a live vast.ai instance from its API record + a configured key
+    ($SPENDGUARD_VAST_SSH_KEY, else ~/.ssh/id_ed25519). None when the box exposes no SSH endpoint yet (still
+    provisioning) — a SKIP, not an error. accept-new host-key so a fresh box doesn't wedge on an interactive prompt."""
+    import os
+    host = inst.get("ssh_host") or inst.get("public_ipaddr")
+    port = inst.get("ssh_port")
+    if not host or not port:
+        return None
+    key = os.environ.get("SPENDGUARD_VAST_SSH_KEY") or os.path.expanduser("~/.ssh/id_ed25519")
+    return f"ssh -o StrictHostKeyChecking=accept-new -i {shlex.quote(key)} -p {int(port)} root@{host}"
+
+
+def sync_all(dry=False, home: str = _DEFAULT_HOME, _instances=None, _sync=None, _attrib=None):
+    """SWEEP every LIVE vast.ai box: pull its realtime_log into the LOCAL ledger under its attributed project — the
+    AT-SOURCE path that makes an ephemeral box's realtime spend a complete local record WITHOUT reconstruction
+    (onstart gates+logs on the box; this pulls it in; sync is idempotent per box). This is the durable answer to
+    'always report back to local' — schedule it + `resources snapshot`, and sync before every teardown. A box with
+    no SSH endpoint yet is SKIPPED (not an error); a failed pull is SURFACED (remote.sync never reads it as zero).
+    Returns per-box results. Injection points (_instances/_sync/_attrib) keep it offline-testable."""
+    from . import resources, conv
+    insts = _instances if _instances is not None else resources.instances()
+    attrib = _attrib if _attrib is not None else (conv.instance_attributions(insts) or {})
+    do_sync = _sync or sync
+    out = []
+    for inst in insts:
+        iid = str(inst.get("id") or "")
+        label = "remote:" + str(inst.get("label") or iid or "?")
+        a = attrib.get(iid) or attrib.get(inst.get("label")) or {}
+        project = a.get("project") or "unattributed"
+        ssh = _ssh_for(inst)
+        if not ssh:
+            out.append({"label": label, "project": project, "skipped": "no ssh endpoint (provisioning?)"})
+            continue
+        if dry:
+            out.append({"label": label, "project": project, "ssh": ssh, "would_sync": True})
+            continue
+        out.append(do_sync(ssh, project, label=label, home=home))
+    return out
+
+
 # ── CLI ──
 def cmd(argv=None):
     argv = list(argv or [])
@@ -184,5 +225,19 @@ def cmd(argv=None):
         print(f"[spendguard remote] sync {res.get('label')}: {res.get('rows', 0)} rows · "
               f"${res.get('usd', 0):.2f} → project {project}" + (f"  ({res['error']})" if res.get("error") else ""))
         return 0
-    print("usage: spendguard remote {onstart [--from-git] | verify --ssh '<prefix>' | sync --ssh '<prefix>' --project X}")
+    if sub == "sync-all":                                 # SWEEP every live box → local (the at-source path)
+        res = sync_all(dry="--dry" in argv, home=_opt("--home", _DEFAULT_HOME))
+        synced = sum(1 for r in res if r.get("rows"))
+        usd = round(sum(r.get("usd") or 0 for r in res), 2)
+        errs = [r for r in res if r.get("error")]
+        skipped = [r for r in res if r.get("skipped")]
+        print(f"[spendguard remote] sync-all: {len(res)} live box(es) · {synced} synced · ${usd} · "
+              f"{len(skipped)} skipped · {len(errs)} FAILED (spend UNKNOWN — do NOT tear those down)")
+        for r in res:
+            tag = ("would-sync" if r.get("would_sync") else r.get("skipped") or r.get("error")
+                   or f"{r.get('rows', 0)} rows ${r.get('usd', 0):.2f}")
+            print(f"    {str(r.get('label')):<28} → {str(r.get('project')):<18} {tag}")
+        return 1 if errs else 0                           # fail-closed: a failed pull is a non-zero exit
+    print("usage: spendguard remote {onstart [--from-git] | verify --ssh '<prefix>' | sync --ssh '<prefix>' "
+          "--project X | sync-all [--dry]}")
     return 2

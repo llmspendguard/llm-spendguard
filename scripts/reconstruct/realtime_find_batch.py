@@ -13,12 +13,14 @@ a known batch is subtracted — no double-count. Admin API is NOT used (dev cros
 
 Run UNDER the gated venv (`.venv/bin/python`). Estimate-first done + approved (~$15 Batch API, tell-filtered scope).
 """
-import sys, os, json, re
+import sys, os, json, re, datetime
 import spendguard; spendguard.require()
 from spendguard import conv, resources, config, calls, pricing
 
 STATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "realtime_find_batch_state.json")
-SINCE = "2026-04-25"                                   # last 2 months (from 2026-06-25)
+QUERY_WINDOW_DAYS = 120                                # ROLLING window (never a stale literal): reconstruct the last N
+#                                                       days of realtime — covers the reconcile's current + prior months
+SINCE = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=QUERY_WINDOW_DAYS)).date().isoformat()
 FIND_MODEL = "claude-sonnet-4-6"                       # haiku failed recall; sonnet = 3/3 in eval
 CONSOLIDATE_MODEL = "claude-opus-4-8"
 
@@ -169,6 +171,7 @@ def collect():
         by_org[org] = round(by_org.get(org, 0.0) + usd, 2)
         rows.append({"name": rn.get("name"), "model": ms, "usd": usd, "basis": basis, "org": org,
                      "team": sc.get("team"), "project": sc.get("project"), "how": sc.get("how"),
+                     "day": sc.get("day"),                # per-run DATE → the fold spreads spend into its real month
                      "sessions": rn.get("sessions"), "calls": rn.get("calls"),
                      "reasoning": (rn.get("reasoning") or "")[:120]})
     total = round(sum(r["usd"] for r in rows), 2)
@@ -240,6 +243,7 @@ def clean():
             sc = conv.resolve({"conv_id": sid0, "script": r.get("name")}, segs=_segs, store=_store) if sid0 else {}
             org = sc.get("org") or "(untagged)"
             r["org"], r["team"], r["project"], r["how"] = org, sc.get("team"), sc.get("project"), sc.get("how")
+            r["day"] = sc.get("day")                       # per-run date, carried into the reconcile cache
             by_org[org] = round(by_org.get(org, 0.0) + r["usd"], 2)
             kept.append(r)
     total = round(sum(r["usd"] for r in kept), 2)
@@ -257,8 +261,8 @@ def clean():
              "note": "2-month window; org-level; per-project + per-month split is a refinement",
              "rows": [{"org": r.get("org") or "(untagged)",
                        "provider": "openai" if "gpt" in (r.get("model") or "").lower() else "anthropic",
-                       "usd": _tight(r)} for r in kept]}
-    cache_path = os.path.expanduser("~/.spendguard/realtime_reconstruction.json")
+                       "day": r.get("day"), "usd": _tight(r)} for r in kept]}
+    cache_path = str(config.HOME / "realtime_reconstruction.json")   # config.HOME (respects SPENDGUARD_HOME), not a ~ literal
     json.dump(cache, open(cache_path, "w"), indent=2)
     print("  wrote reconcile cache:", cache_path, "(tightened total $%.2f)" % cache["total"])
     print("=== CLEANED REALTIME (embeddings/batch/meta/self-contam removed, inflated estimates dropped) ===")
