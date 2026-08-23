@@ -40,6 +40,11 @@ IDLE_ROUNDS_DEFAULT = 2         # foreground drain stops after this many consecu
 IDLE_SLEEP_DEFAULT = 2.0        # seconds to wait between empty leases / overload re-checks (foreground + daemon)
 _RESULT_CAP = 4000            # bytes of result JSON retained per row (audit/debug, not the whole payload)
 
+# Priority convention (higher drains first): a delegated task someone is WAITING on jumps ahead of a big backfill,
+# so a 6k-item bulk enqueue never starves interactive work sharing the same queue.
+PRIORITY_BULK = 0               # backfill — the default for a large enqueue_many / `--enqueue`
+PRIORITY_INTERACTIVE = 10       # a `delegate(enqueue=True)` task the caller wants back soon
+
 
 def _qcfg(name, default):
     """A numeric advisor.* knob, defaulted — every queue parameter is CONFIG, never a hardcoded magic number."""

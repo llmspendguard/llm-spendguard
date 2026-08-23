@@ -591,6 +591,18 @@ def _lane_seg(t: dict) -> str:
     return " · ".join(f"{ln} {d['calls']}×" for ln, d in act[:4])
 
 
+def _queue_seg() -> str:
+    """Durable lane-queue backlog for the receipt: 'N pending · M leased' when work is waiting to drain onto idle
+    lanes, else '' (nothing queued). Guarded — a queue read never breaks the receipt."""
+    try:
+        from . import lane_queue
+        d = lane_queue.queue_depth() or {}
+        bits = [f"{d[k]} {k}" for k in ("pending", "leased", "failed") if d.get(k)]
+        return " · ".join(bits)
+    except Exception:
+        return ""
+
+
 def _tally_lines(t: dict) -> list:
     """The running-tally line(s). HARD RULE: REAL $ (money out the door) is shown as NAMED components — API
     (per-token) + Subscription (flat plan fee) + Remote (GPU/compute) — then est-value (plan usage, NOT billed) on
@@ -844,6 +856,9 @@ def _two_axis_table(t: dict) -> list:
     seg = _lane_seg(t)
     if seg:
         out.append(f"lanes serving spendguard's work (mo): {seg}  ($0 billed — plan-served, not the metered API)")
+    qseg = _queue_seg()
+    if qseg:
+        out.append(f"lane queue: {qseg}  (drain onto idle lanes: spendguard lanes --drain)")
     out += _basis_line()
     out += _unpriced_lines()
     out += _truncated_lines()

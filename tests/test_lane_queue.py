@@ -115,5 +115,20 @@ finally:
     os.getloadavg = _orig_load
     lane_balance.bulk_delegate = _orig_bulk
 
+print("\n-- delegate(enqueue=True): parks at INTERACTIVE priority, does NOT run (Phase 3 wiring) --")
+before = q.queue_depth().get("pending", 0)
+r = lane_balance.delegate("park me for later", intent="deleg-enq", enqueue=True)
+fails += ck("returns a queued id and no text (it did not run)", r.get("queued") and r.get("text") is None)
+fails += ck("enqueued at INTERACTIVE priority (drains ahead of bulk)", r.get("priority") == q.PRIORITY_INTERACTIVE)
+fails += ck("queue pending grew by one", q.queue_depth().get("pending", 0) == before + 1)
+fails += ck("an interactive delegate-enqueue is leased before a bulk (priority 0) one",
+            (q.enqueue("deleg-enq", "bulk-y", priority=q.PRIORITY_BULK) or True)
+            and q.lease(1)[0]["task"] == "park me for later")
+
+print("\n-- receipt shows the queue backlog (Phase 3 visibility) --")
+from spendguard import receipt                                                         # noqa: E402
+seg = receipt._queue_seg()
+fails += ck("_queue_seg reports the backlog while work waits", "pending" in seg or "leased" in seg)
+
 print(f"\n{'[FAIL]' if fails else 'OK'} test_lane_queue: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

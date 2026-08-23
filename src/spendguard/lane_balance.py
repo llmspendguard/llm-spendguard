@@ -139,9 +139,15 @@ def confirm_substitute(intent, substitute):
 _DELEGATE_OUT = 1500             # OUTPUT budget for a delegated task — NAMED, not a bare literal (token_caps guard)
 
 
-def delegate(task, system=None, lanes=None, reasoning="low", max_tokens=_DELEGATE_OUT, intent=None):
+def delegate(task, system=None, lanes=None, reasoning="low", max_tokens=_DELEGATE_OUT, intent=None,
+             enqueue=False, priority=None):
     """Offload one task to the cheapest VIABLE idle subscription lane and return the answer — so heavy work runs $0
     on an idle plan while the orchestrator (e.g. this Claude Code session) spends nothing but coordination.
+
+    enqueue=True instead DURABLY QUEUES the task (at `priority`, default INTERACTIVE so it drains ahead of bulk
+    backfill) for the drainer to run later on an idle lane, and returns {queued: id, ...} without running it — the
+    right call under high utilization or for fire-and-forget work (the drainer, `spendguard lanes --drain`, empties
+    it onto idle plans at $0).
 
     Picks from the viable delegation lanes (config `advisor.delegate_lanes`, default the ones MEASURED fast + $0:
     gemini, zai — codex is EXCLUDED, its CLI is an agent, >75s on a real prompt → metered fallback), LEAST-UTILISED
@@ -152,6 +158,12 @@ def delegate(task, system=None, lanes=None, reasoning="low", max_tokens=_DELEGAT
     The model that answered is the one recorded — attribution stays honest."""
     from . import adapters, calls
     intent = intent or "spendguard:delegate"
+    if enqueue:                                   # durable fire-and-forget: park it for the drainer, don't run now
+        from . import lane_queue
+        pri = lane_queue.PRIORITY_INTERACTIVE if priority is None else int(priority)
+        qid = lane_queue.enqueue(intent, task, system=system, reasoning=reasoning, priority=pri)
+        return {"queued": qid, "intent": intent, "priority": pri, "text": None, "lane": None,
+                "error": None if qid else "enqueue failed"}
     # LEARNED routing: with the bandit enabled (advisor.lane_bandit) it picks the lane by what it has LEARNED wins
     # for THIS intent — equal-start → bake-off-judge → exploit — instead of the static cheapest-idle heuristic below,
     # and echoes which lane served. Falls through to the heuristic if it had no live arm / none answered.
@@ -278,9 +290,10 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
             return i, {"text": None, "lane": lane, "use_name": use_name, "billed": False,
                        "error": f"dispatch: {str(e)[:60]}"}
         try:
-            calls.set_context(intent=intent)          # tag this worker thread's calls with the intent (attribution);
-            r = adapters.call(model, task, system=system, reasoning=reasoning,   # set_context, NOT the context
-                              _no_sub=True, timeout_s=deadline_s)                 # manager, so no per-task receipt
+            calls.set_context(intent=intent)          # tag this worker thread's calls with the intent (attribution)
+            r = adapters.call(model, task, system=system, reasoning=reasoning,   # sig=intent → the OUTPUT budget is
+                              sig=intent, timeout_s=deadline_s)                  # this call-class's measured p99, and
+            # (receipt suppressed via set_context above, not the context manager)  each reply feeds that measurement
         except Exception as e:
             return i, {"text": None, "lane": lane, "use_name": use_name, "billed": False, "error": str(e)[:80]}
         finally:

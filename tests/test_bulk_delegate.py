@@ -45,10 +45,26 @@ lane_catalog.arms = lambda flt=None: [("gemini", "g-high"), ("codex", "gpt-5.5")
 lane_bandit.arm_stats = lambda intent: {("gemini", "g-high"): {"winrate": 1.0, "trials": 2},
                                         ("codex", "gpt-5.5"): {"winrate": 1.0, "trials": 2}}
 
-seen = []
-adapters.call = lambda model, task, **kw: (seen.append((model, task)),
-                                           (_ for _ in ()).throw(RuntimeError("boom")) if task == "BOOM"
-                                           else {"text": f"ans::{model}::{task}", "cost": 0})[1]
+class _CallRecorder:
+    """A stand-in for adapters.call that records calls in INSTANCE state (self.calls, mutated via the self param —
+    no free module list to orphan). It mirrors adapters.call's REAL signature and CONTRACT so two bugs the earlier
+    **kw stub hid — passing an unknown kwarg (`_no_sub`), or naming NO output budget — fail this test offline
+    instead of only on the real lane path."""
+
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, model, prompt, max_tokens=None, system=None, reasoning=None, schema=None,
+                 timeout_s=None, sig=None, retries=2, files=None, _no_guard=False):
+        assert max_tokens is not None or sig, "adapters.call needs max_tokens or sig (an output budget)"
+        self.calls.append((model, prompt))
+        if prompt == "BOOM":
+            raise RuntimeError("boom")
+        return {"text": f"ans::{model}::{prompt}", "cost": 0}
+
+
+_rec = _CallRecorder()
+adapters.call = _rec
 dispatch.acquire = lambda *a, **k: 0.0
 dispatch.release = lambda *a, **k: None
 
@@ -66,9 +82,9 @@ fails += ck("the bad task carries an error; the others still succeed",
 print("\n-- checkpoint: a re-run RESUMES (skips finished tasks, no re-pay) --")
 ckpath = os.path.join(os.environ["SPENDGUARD_HOME"], "ck.jsonl")
 lane_balance.bulk_delegate(["x", "y", "z"], "myintent", checkpoint=ckpath)
-n_before = len(seen)
+n_before = len(_rec.calls)
 res3 = lane_balance.bulk_delegate(["x", "y", "z"], "myintent", checkpoint=ckpath)   # same tasks + checkpoint → resume
-fails += ck("re-run made ZERO new calls (fully resumed from checkpoint)", len(seen) == n_before)
+fails += ck("re-run made ZERO new calls (fully resumed from checkpoint)", len(_rec.calls) == n_before)
 fails += ck("resumed results are intact", all(r.get("text") for r in res3))
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_bulk_delegate: {len(fails)} failure(s)")
