@@ -145,6 +145,31 @@ SETTINGS = [
          kind="string", secret=False,
          desc="Cheap model that judges bake-offs (which lane's output is better). Unset → advisor.judge_model "
               "(haiku). ~$0.004 per bake-off; bake-offs run only while an intent is cold or at rate ε."),
+    dict(section="advisor", key="queue_lease_s", store="config.json:advisor.queue_lease_s", default=300.0,
+         kind="float", secret=False,
+         desc="Durable lane QUEUE (lane_queue): how long a drainer's lease on a task holds before it is reclaimed "
+              "as a crashed worker (returned to pending, or failed if attempts are exhausted). `spendguard lanes "
+              "--enqueue` adds work at any utilization; `--drain` runs it onto idle lanes at $0."),
+    dict(section="advisor", key="queue_batch", store="config.json:advisor.queue_batch", default=0,
+         kind="int", secret=False,
+         desc="Tasks a drain round leases at once. 0 ⇒ the dispatch global-concurrency default (never a second "
+              "hardcoded number). The batch fans across lanes via bulk_delegate (governor-bounded)."),
+    dict(section="advisor", key="queue_max_attempts", store="config.json:advisor.queue_max_attempts", default=3,
+         kind="int", secret=False,
+         desc="How many times a queued task is retried (on lane failure or a crashed lease) before it is marked "
+              "failed — so a permanently-bad task never loops forever."),
+    dict(section="advisor", key="queue_idle_rounds", store="config.json:advisor.queue_idle_rounds", default=2,
+         kind="int", secret=False,
+         desc="A foreground `--drain` stops after this many consecutive EMPTY leases (the backlog is drained). "
+              "`--drain --forever` (a daemon) ignores this and waits for new work instead."),
+    dict(section="advisor", key="queue_idle_sleep", store="config.json:advisor.queue_idle_sleep", default=2.0,
+         kind="float", secret=False,
+         desc="Seconds a drainer waits between empty leases and between load-ceiling re-checks."),
+    dict(section="advisor", key="queue_load_ceiling", store="config.json:advisor.queue_load_ceiling", default=0.0,
+         kind="float", secret=False,
+         desc="LOCAL-machine guard: pause leasing while the 1-min load average exceeds this (subprocess lanes on a "
+              "thrashing box only make it worse). 0 ⇒ off. The lane-saturation case is handled separately by the "
+              "dispatch governor; this is the CPU-saturation case."),
     dict(section="callio", key="snip_chars", store="config.json:callio.snip_chars", env="SPENDGUARD_CALLIO_SNIP",
          default=800, kind="int", secret=False,
          desc="Chars kept per recovered prompt / output in the call_io corpus. 800 is sized for the caged JUDGE "

@@ -303,4 +303,50 @@ def main(argv=None):
                     for r in res[:3]:
                         print(f"  {r.get('lane')} · {r.get('use_name')}: "
                               + ((r.get("text") or r.get("error") or "")[:120].replace("\n", " ")))
+    if "--enqueue" in argv:                               # DURABLY append tasks (never blocks) — drain them later
+        from . import lane_queue
+        rest = argv[argv.index("--enqueue") + 1:]
+
+        def _qval(flag):
+            return rest[rest.index(flag) + 1] if (flag in rest and rest.index(flag) + 1 < len(rest)) else None
+        file_p, prio_p = _qval("--file"), _qval("--priority")
+        opt_vals = {v for v in (file_p, prio_p) if v}
+        pos = [a for a in rest if not a.startswith("--") and a not in opt_vals]
+        intent = pos[0] if pos else None
+        if not intent:
+            print('usage: spendguard lanes --enqueue <intent> [--file tasks.txt] [--priority N]   (tasks: --file or stdin)')
+        else:
+            src = Path(file_p).read_text() if file_p else sys.stdin.read()
+            tasks = [ln.strip() for ln in src.splitlines() if ln.strip()]
+            ids = lane_queue.enqueue_many(intent, tasks, priority=int(prio_p or 0))
+            d = lane_queue.queue_depth()
+            print(f"enqueued {len(ids)} task(s) for {intent!r} (priority {int(prio_p or 0)}) — "
+                  f"queue now {d.get('pending', 0)} pending. Drain with:  spendguard lanes --drain")
+    if "--drain" in argv:                                 # process the durable queue onto idle lanes ($0 plan-served)
+        from . import lane_queue
+        rest = argv[argv.index("--drain") + 1:]
+
+        def _dval(flag):
+            return rest[rest.index(flag) + 1] if (flag in rest and rest.index(flag) + 1 < len(rest)) else None
+        batch_p, ceil_p = _dval("--batch"), _dval("--ceiling")
+        forever = "--forever" in rest
+        d0 = lane_queue.queue_depth()
+        print(f"queue: {d0.get('pending', 0)} pending · {d0.get('leased', 0)} leased · "
+              f"{d0.get('done', 0)} done · {d0.get('failed', 0)} failed")
+        if not d0.get("pending") and not d0.get("leased") and not forever:
+            print("nothing to drain.")
+        else:
+            s = lane_queue.drain(batch=int(batch_p) if batch_p else None,
+                                 load_ceiling=float(ceil_p) if ceil_p else None, forever=forever)
+            spread = ", ".join(f"{k}:{v}" for k, v in sorted(s["by_lane"].items(), key=lambda kv: -kv[1]))
+            print(f"drained: {s['ran']} ran · {s['done']} done · {s['failed']} failed · "
+                  f"{s['billed']} billed(API-fallback) · lanes {spread or '—'}")
+            d1 = lane_queue.queue_depth()
+            print(f"queue now: {d1.get('pending', 0)} pending · {d1.get('leased', 0)} leased · "
+                  f"{d1.get('done', 0)} done · {d1.get('failed', 0)} failed")
+    if "--queue" in argv:                                 # just the queue depth (is anything backlogged?)
+        from . import lane_queue
+        d = lane_queue.queue_depth()
+        print(f"lane queue: {d.get('pending', 0)} pending · {d.get('leased', 0)} leased · "
+              f"{d.get('done', 0)} done · {d.get('failed', 0)} failed")
     return 0
