@@ -65,6 +65,13 @@ class _CallRecorder:
             if no_metered_fallback:
                 return {"text": None, "error": "refused: would bill metered API", "cost": None}
             return {"text": "billed-answer", "cost": 0.01}   # fallback allowed → a metered ($cost) answer
+        if prompt == "SUBST":                            # the intended lane MISSED and a DIFFERENT lane's plan served it:
+            return {"text": "sub-answer", "cost": 0, "executor": "codex",   # result carries the SUBSTITUTE's provider/
+                    "provider": "openai", "model": "gpt-5.5",               # model/executor (call() routes through it),
+                    "substituted_from": model}                             # + provenance of the arm originally picked
+        if prompt == "FLAKY":                            # errors on its FIRST attempt, succeeds when RETRIED on resume
+            seen = sum(1 for c in self.calls if c["prompt"] == "FLAKY")     # includes THIS call (appended above)
+            return {"text": None, "error": "flaky first fail", "cost": None} if seen == 1 else {"text": "flaky-ok", "cost": 0}
         return {"text": f"ans::{model}::{prompt}", "cost": 0}
 
 
@@ -126,6 +133,40 @@ _rec.calls.clear()
 res_st = lane_balance.bulk_delegate(["fresh0", "fresh1"], "myintent", checkpoint=stale)
 fails += ck("stale POSITIONAL checkpoint IGNORED — task 0 re-run, never given WRONG-STALE",
             "WRONG-STALE" not in (res_st[0].get("text") or "") and len(_rec.calls) >= 2)
+
+print("\n-- (A) a row's lane / use_name / model NEVER cross — all describe the SAME (actual) dispatch record --")
+def _consistent(r):
+    lp = lane_catalog.lane_provider(r.get("lane"))          # api-fallback lanes aren't a subscription lane → no provider
+    return lp is None or (r.get("model") or "").split(":", 1)[0] == lp
+resA = lane_balance.bulk_delegate(["t0", "t1", "t2", "t3"], "myintent")
+fails += ck("(A) every lane-served row: model's provider == the lane's provider (no gemini↔openai cross)",
+            all(_consistent(r) for r in resA))
+fails += ck("(A) use_name is the model in the row (same record, not the intended arm)",
+            all((r.get("model") or "").split(":", 1)[-1] == r.get("use_name") for r in resA))
+resS = lane_balance.bulk_delegate(["SUBST"], "myintent")    # the reported bug: substitution kept the INTENDED model
+rS = resS[0]                                                # against the ACTUAL lane → lane:"gemini" model:"openai:…"
+fails += ck("(A) a SUBSTITUTED row is the substitute's lane AND model, consistent (codex / openai:gpt-5.5)",
+            rS.get("lane") == "codex" and rS.get("model") == "openai:gpt-5.5" and _consistent(rS))
+fails += ck("(A) substitution provenance kept (substituted_from + the intended arm)",
+            rS.get("substituted_from") and rS.get("intended"))
+
+print("\n-- (B) resume RETRIES an errored checkpoint row (never counts it done) + reports resumed/dispatched --")
+_rec.calls.clear()
+ckf = os.path.join(os.environ["SPENDGUARD_HOME"], "ck_flaky.jsonl")
+rF1 = lane_balance.bulk_delegate(["FLAKY"], "myintent", checkpoint=ckf)               # errors → an ERROR checkpoint line
+fails += ck("first run: the flaky task errored (error row written to the checkpoint)",
+            rF1[0].get("error") and not rF1[0].get("text"))
+stF = {}
+rF2 = lane_balance.bulk_delegate(["FLAKY"], "myintent", checkpoint=ckf, stats=stF)    # resume MUST retry the error row
+fails += ck("(B) the errored task is RETRIED on resume and now succeeds (not silently 'done')",
+            rF2[0].get("text") == "flaky-ok" and not rF2[0].get("error"))
+fails += ck("(B) stats: the error row was re-dispatched, not resumed (resumed 0 · dispatched 1)",
+            stF.get("resumed") == 0 and stF.get("dispatched") == 1)
+cks = os.path.join(os.environ["SPENDGUARD_HOME"], "ck_succ.jsonl")
+lane_balance.bulk_delegate(["p", "q"], "myintent", checkpoint=cks)                    # both succeed
+stS = {}
+lane_balance.bulk_delegate(["p", "q"], "myintent", checkpoint=cks, stats=stS)         # fully resumed
+fails += ck("(B) a fully-successful resume: resumed 2 · dispatched 0", stS.get("resumed") == 2 and stS.get("dispatched") == 0)
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_bulk_delegate: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

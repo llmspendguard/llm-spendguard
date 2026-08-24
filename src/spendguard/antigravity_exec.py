@@ -23,6 +23,7 @@ model to an `agy` id; a plain probe (model=None) runs on agy's default and needs
 """
 import json
 import os
+import re
 import subprocess
 import time
 
@@ -79,6 +80,34 @@ def _usage_from_result(obj):
     return _int("input_tokens"), _int("output_tokens")
 
 
+def _reset_window_s(text):
+    """Seconds until reset, PARSED from a rate/quota envelope's 'resets in Nh/Nm/Ns' (or 'retry after N…') token
+    — a fixed-shape DURATION token, like a timestamp or a batch id. This is parsing, NOT a judgement about what
+    an error means: there is deliberately no keyword classification of arbitrary error prose ('is this a quota
+    error?' is a model's job, not a substring list). A provider states this window ONLY when it is rate/quota
+    limiting, so the PRESENCE of a well-formed token is itself the structured signal the caller acts on, and its
+    value is how long to back off. None when no such token is present — the caller then treats it as an ordinary
+    lane failure, never guessing quota from wording."""
+    t = str(text or "")
+    for unit, mult in (("h", 3600), ("m", 60), ("s", 1)):
+        m = (re.search(rf"resets?\s+in\s+(\d+)\s*{unit}\b", t, re.I)
+             or re.search(rf"retry\s+after\s+(\d+)\s*{unit}\b", t, re.I))
+        if m:
+            return int(m.group(1)) * mult
+    return None
+
+
+def _error_result(text):
+    """An error result. When the message carries a parseable reset-window TOKEN (a rate/quota envelope), attach a
+    STRUCTURED `retry_after_s` so the caller can demote the lane until it resets — without ever reading this
+    string. No token → a plain error, treated as an ordinary lane miss."""
+    out = {"error": (text or "").strip()[:200]}
+    ra = _reset_window_s(text)
+    if ra:
+        out["retry_after_s"] = ra
+    return out
+
+
 def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=None):   # reasoning: protocol-uniform; Gemini's effort rides the MODEL SUFFIX (…-low/-high), set upstream, so ignored here
     """→ {text, in_tok, out_tok, latency, error} from one headless plan-billed Antigravity run. `system` is
     prepended to the prompt (print mode has no separate system slot). `model` IS forwarded to `agy --model` when
@@ -101,12 +130,12 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     except Exception as e:
         return {"error": str(e)[:200]}
     if r.returncode != 0:
-        return {"error": (r.stderr or r.stdout or "agy exited non-zero").strip()[:200]}
+        return _error_result(r.stderr or r.stdout or "agy exited non-zero")   # quota→a reset window rides retry_after_s
     obj = _result_obj(r.stdout)
     if obj is None:
         return {"error": "agy produced no parseable json result"}
     if obj.get("status") != "SUCCESS":
-        return {"error": (obj.get("error") or f"agy status={obj.get('status')!r}").strip()[:200]}
+        return _error_result(obj.get("error") or f"agy status={obj.get('status')!r}")
     text = (obj.get("response") or "").strip()
     if not text:
         return {"error": "agy produced no response text"}

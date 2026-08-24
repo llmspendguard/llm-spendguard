@@ -88,12 +88,72 @@ def _pool_cooldown_s():
         return 900.0
 
 
+_cooldown_lock = threading.Lock()
+
+
+def _cooldown_path():
+    from . import config
+    return config.HOME / "lane_cooldown.json"
+
+
+_cooldown_io_warned = set()   # so a persistence failure is announced ONCE, not per call (and never silently)
+
+
+def _warn_cooldown_io(kind, exc):
+    """A cooldown-persistence failure is NOT harmless: it silently drops the guarantee that a quota-dead lane
+    stays demoted across processes, so the next bulk run re-hammers it. Say so — once per failure kind — rather
+    than swallow it. Dispatch still degrades to per-process cooling; the operator just learns the persistence is
+    not working (e.g. SPENDGUARD_HOME unwritable, or a corrupt file to fix)."""
+    if kind in _cooldown_io_warned:
+        return
+    _cooldown_io_warned.add(kind)
+    import sys as _sy
+    _sy.stderr.write(f"[spendguard] lane cooldowns NOT persisted ({kind}: {type(exc).__name__}: {str(exc)[:80]}) — "
+                     f"a quota-cooled lane may be retried by a fresh bulk process. Fix {_cooldown_path()}.\n")
+
+
+def _load_cooldowns():
+    """Cross-PROCESS cooldowns. A bulk run is a FRESH process, so an in-memory cooldown never survives to the next
+    `spendguard lanes --bulk` — a quota exhaustion ('resets in 162h') must outlive the process that hit it, or the
+    next run hammers the dead lane again. Cooldowns persist to a small json under SPENDGUARD_HOME and are reloaded
+    at import; expired entries are dropped on load. A read/parse failure is SURFACED (not swallowed) and degrades
+    to per-process cooling — an unreadable file silently dropping every cooldown is exactly what lets the dead
+    lane through."""
+    global _lane_cooldown
+    p = _cooldown_path()
+    try:
+        if not p.exists():
+            return
+        import json as _j
+        now = time.time()
+        _lane_cooldown = {k: float(v) for k, v in _j.loads(p.read_text()).items() if float(v) > now}
+    except Exception as e:
+        _warn_cooldown_io("load", e)      # a CORRUPT file must not read as 'no cooldowns' without a word
+
+
+def _save_cooldowns():
+    try:
+        from . import config
+        live = {k: v for k, v in _lane_cooldown.items() if v > time.time()}
+        config.update_json(str(_cooldown_path()), lambda _d: live)     # atomic write (+~backup), like prices.json
+    except Exception as e:
+        _warn_cooldown_io("save", e)      # a write failure means this cool won't survive to the next bulk process
+
+
 def _lane_cooling(lane):
     return time.time() < _lane_cooldown.get(lane, 0)
 
 
-def _lane_cool(lane):
-    _lane_cooldown[lane] = time.time() + _pool_cooldown_s()
+def _lane_cool(lane, seconds=None):
+    """Cool a lane for `seconds` (default the pool cooldown). A quota exhaustion passes its parsed reset window so
+    the lane stays down UNTIL it resets, instead of being retried every 900s only to re-fail. Persisted so a fresh
+    bulk process honors it."""
+    with _cooldown_lock:
+        _lane_cooldown[lane] = time.time() + (float(seconds) if seconds else _pool_cooldown_s())
+        _save_cooldowns()
+
+
+_load_cooldowns()   # honor a still-active cooldown from a previous process (e.g. a quota reset window)
 
 
 _lane_model_cooldown = {}   # (lane, model) -> unix ts: a specific model this lane REJECTED while the API served it.
@@ -454,6 +514,14 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         if not s.get("error"):                         # no error but not a usable answer → say WHY (empty vs off-shape)
             s = {**s, "error": (f"{lane_name} lane returned no usable text (empty/whitespace)" if not _txt
                                 else f"{lane_name} lane output did not satisfy the requested shape → API")}
+        _ra = s.get("retry_after_s") if isinstance(s, dict) else None
+        if _ra:
+            # A STRUCTURED quota/exhaustion signal the lane EXECUTOR parsed from its own CLI's envelope (a known
+            # shape it owns — see antigravity_exec._quota_backoff_s). This is the one failure the API-outcome
+            # doctrine below cannot see: a quota-dead lane's metered API twin answers fine, so the fallback would
+            # keep the lane "unsuitable-but-alive" and re-hand it work. Demote it UNTIL its reset window. The
+            # routing layer acts on the seconds, never the error text — the text-blindness stays intact here.
+            _lane_cool(lane_name, seconds=_ra)
         if no_metered_fallback:                        # caller opted out of ALL metered spend (--refuse-billed): a lane
             return {**base, "text": None, "cost": None, "executor": lane_name,   # MISS is an error row, NOT a paid
                     "error": f"refused: would bill metered API ({s.get('error')})"}   # retry — $0 by construction

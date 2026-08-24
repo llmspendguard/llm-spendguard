@@ -311,14 +311,18 @@ def main(argv=None):
                 refuse = any(a == "--refuse-billed" for a in rest)
                 if not ck_p:
                     print("  note: no --checkpoint — a crash won't resume; pass --checkpoint <path> for a durable run.")
-                res = lane_balance.bulk_delegate(tasks, intent, system=system, checkpoint=ck_p, refuse_billed=refuse)
+                _stats = {}
+                res = lane_balance.bulk_delegate(tasks, intent, system=system, checkpoint=ck_p,
+                                                 refuse_billed=refuse, stats=_stats)
                 spread, billed, errs = {}, 0, 0
                 for r in res:
                     spread[r.get("lane")] = spread.get(r.get("lane"), 0) + 1
                     billed += 1 if r.get("billed") else 0
                     errs += 1 if r.get("error") else 0
                 served = ", ".join(f"{k}:{v}" for k, v in sorted(spread.items(), key=lambda kv: -kv[1]))
-                print(f"[bulk {intent}] {len(tasks)} tasks · spread {served} · {billed} billed(API-fallback) · {errs} errored")
+                print(f"[bulk {intent}] {len(tasks)} tasks · resumed {_stats.get('resumed', 0)} · "
+                      f"dispatched {_stats.get('dispatched', len(tasks))} · spread {served} · "
+                      f"{billed} billed(API-fallback) · {errs} errored")
                 if out_p:
                     with open(out_p, "w") as f:
                         for i, r in enumerate(res):

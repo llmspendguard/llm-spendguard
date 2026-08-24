@@ -225,8 +225,17 @@ def _bulk_arms(intent, lanes=None):
     return [a for _wr, a in best.values()]
 
 
+def _row_succeeded(row):
+    """The success CONTRACT for a bulk/checkpoint row: it carries TEXT and no ERROR. Structural, not a quality
+    judgement — the lane path already coerces an empty/whitespace answer to an explicit ERROR upstream
+    (adapters: 'lane returned no usable text'), so within this pipeline text is present iff the task actually
+    produced an answer; there is no 'valid empty result' row to misjudge. Mirrors lane_queue.settle's ok-test
+    so the checkpoint-resume and the durable queue agree on what 'done' means (one contract, defined once)."""
+    return bool(row) and bool(row.get("text")) and not row.get("error")
+
+
 def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, deadline_s=120.0,
-                  checkpoint=None, chunk_size=100, refuse_billed=False):
+                  checkpoint=None, chunk_size=100, refuse_billed=False, stats=None):
     """Fan a LIST of similar tasks across ALL viable idle lanes CONCURRENTLY — the right shape for a BULK job (e.g.
     symgrep's ~6k one-sentence symbol descriptions) that the per-call bandit would trickle one at a time. Each task
     runs on a lane (round-robin across the lanes the bandit rates GOOD for this intent), each admission BOUNDED by
@@ -288,9 +297,17 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
             _sy.stderr.write(f"[spendguard] bulk: ignoring {_stale} POSITIONAL checkpoint line(s) from an older format "
                              f"— resuming by content key only (a positional resume could mismap results onto wrong tasks).\n")
         for i, k in enumerate(_keys):
-            if k in done:
-                results[i] = done[k]
+            d = done.get(k)
+            # only a SUCCESS resumes; an ERROR row in the checkpoint must be RETRIED, not counted as finished. A
+            # failed task silently read as done is the worst outcome for this corpus (an undescribed symbol written
+            # into an index as if described) — so a task with an error checkpoint line is left in `todo`.
+            if _row_succeeded(d):
+                results[i] = d
     todo = [i for i in range(len(tasks)) if results[i] is None]
+    if isinstance(stats, dict):                       # so the caller can print "resumed N · dispatched M", not a spread
+        stats["tasks"] = len(tasks)
+        stats["resumed"] = len(tasks) - len(todo)     # successes carried over from the checkpoint
+        stats["dispatched"] = len(todo)               # run THIS invocation (includes retried error rows)
     if not todo:
         return results                                # fully resumed from the checkpoint — nothing left to run
 
@@ -309,6 +326,15 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
 
     def _run_task_on_lane(i, task):
         lane, use_name = arms[i % len(arms)]          # round-robin — spread across the good lanes for parallelism
+        # A lane can start COOLING mid-run (an earlier task hit its quota → persisted reset window). `arms` was
+        # fixed at the start, so round-robin would keep landing work here; rotate to the next arm that is not
+        # cooling so a demoted lane stops receiving work within this run too. If every arm is cooling, keep the pick.
+        if adapters._lane_cooling(lane) and len(arms) > 1:
+            for j in range(1, len(arms)):
+                alt_lane, alt_use = arms[(i + j) % len(arms)]
+                if not adapters._lane_cooling(alt_lane):
+                    lane, use_name = alt_lane, alt_use
+                    break
         prov = lane_catalog.lane_provider(lane)
         model = f"{prov}:{use_name}"
         try:
@@ -327,9 +353,20 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
         finally:
             dispatch.release(prov, use_name)
         r = r if isinstance(r, dict) else {}
-        served = r.get("executor") or ("api-fallback" if r.get("cost") else lane)
-        return i, {"text": (r.get("text") or None), "lane": served, "use_name": use_name, "model": model,
-                   "billed": bool(r.get("cost")), "error": r.get("error")}
+        # lane / use_name / model must all describe the SAME (actual) dispatch record. The result r carries the
+        # provider + model + executor that ACTUALLY served — substitution and API fallback route through call(),
+        # so r's base is the SUBSTITUTE's. Taking `lane` from r.executor while keeping `model` from the INTENDED
+        # arm is what crossed the rows (lane:"gemini" with model:"openai:gpt-5.5"). Derive all three from r; keep
+        # the intended arm only as PROVENANCE when a substitution/fallback moved the work.
+        served_model = r.get("model") or use_name            # base sets model=raw (bare id); provider prefixes below
+        served_prov = r.get("provider") or prov
+        served_lane = r.get("executor") or ("api-fallback" if r.get("cost") else lane)
+        row = {"text": (r.get("text") or None), "lane": served_lane, "use_name": served_model,
+               "model": f"{served_prov}:{served_model}", "billed": bool(r.get("cost")), "error": r.get("error")}
+        if r.get("substituted_from") and f"{served_prov}:{served_model}" != f"{prov}:{use_name}":
+            row["intended"] = f"{prov}:{use_name}"           # what the round-robin picked, before the substitution
+            row["substituted_from"] = r["substituted_from"]
+        return i, row
 
     # CHUNKED: bound how many futures are in flight at once, and make each chunk's results durable before the next.
     for c0 in range(0, len(todo), max(1, int(chunk_size))):
