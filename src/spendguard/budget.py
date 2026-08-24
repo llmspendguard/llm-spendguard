@@ -627,6 +627,41 @@ def quarantine_charge(ts=None, reason="", row=None):
     return n
 
 
+def unquarantine_charge(row=None, ts=None, reason=""):
+    """Reverse quarantine_charge for ONE spend_events row: status 'void'→'posted' so it counts again, and clear
+    the '(impossible-estimate)' conv_id label it was tagged with. The change is logged through the hash chain by
+    update() (so the void→recovered history is auditable), and a locked period is refused.
+
+    Use ONLY for a row that was wrongly voided. The sound test is `basis == billed` with a real cost: a cost that
+    came from the provider's OWN usage means the provider ACCEPTED the request, so it cannot have been an
+    impossible estimate — the batched-embedding bug quarantined exactly these (input > window computed as sum/1,
+    when the window bounds each item). A cost_basis='estimate' void is a pre-submission projection the provider
+    never accepted; those stay quarantined. Target by `row` (exact id) or `ts` (a ts matching >1 RAISES, as in
+    quarantine_charge). Returns the number recovered."""
+    led = _ledger()
+    with _lock:
+        if row is not None:
+            hit = led.get(row)
+            ids = [row] if hit and hit.get("status") == "void" else []
+        else:
+            hits = [r for r in led.query(where={"ts_utc": ts}) if r.get("status") == "void"]
+            if len(hits) > 1:
+                raise ValueError(
+                    "%d spend_events rows share the timestamp %s — refusing to recover all of them. Re-run with "
+                    "--row <id>; `spendguard quarantine --list` shows the ids." % (len(hits), ts))
+            ids = [hits[0]["id"]] if hits else []
+        n = 0
+        for eid in ids:
+            cur = led.get(eid) or {}
+            changes = {"status": "posted"}
+            if cur.get("conv_id") == QUARANTINE_CONV:      # drop the now-false label; keep it if it was something else
+                changes["conv_id"] = ""
+            led.update(eid, changes, actor="unquarantine_charge",
+                       reason=reason or "recovered: provider-billed, wrongly quarantined", pass_="unquarantine")
+            n += 1
+    return n
+
+
 def unpriced_since(day):
     """[{provider, model, calls}] of calls recorded with NO price since `day` — the cost_basis='unpriced' rows.
     The tokens are real; only the dollars are unknown. Surfacing this is the difference between "we spent $0"

@@ -243,5 +243,28 @@ check("the per-item bound is inclusive (== window is fine)",
 check("one token past the per-item bound fires",
       gate._implausible_estimate(EMB, EMB_WINDOW * 5, 1, per_item_max=EMB_WINDOW + 1)[0] is True)
 
+print("-- a wrongly-quarantined BILLED row can be RECOVERED (unquarantine_charge), and counts again --")
+# The batched-embedding bug voided real, provider-BILLED embedding calls. Recovery reverses the void so the
+# ledger stops under-counting real spend — the mirror of quarantine_charge, through the same audited update().
+# a distinctive cost so the row is fetchable by id — recovery targets by row id (rows can share a second, which
+# is exactly why unquarantine_charge/the recovery script key on the exact id, never a timestamp).
+budget.record("openai", EMB, "realtime", 0.0517, project="rec", basis=budget.BASIS_BILLED)
+_recid = next(r["id"] for r in budget._ledger().query()
+              if _L.to_dec(r.get("realtime_usd")) == _L.to_dec("0.0517"))
+_before = budget.spent_since(DAY)
+budget.quarantine_charge(row=_recid, reason="test: batched-embedding false positive")
+check("the billed row, once quarantined, drops out of the total",
+      abs(budget.spent_since(DAY) - (_before - 0.0517)) < 5e-3, f"{budget.spent_since(DAY)} vs {_before - 0.0517}")
+_qn = len(budget.quarantined_since(DAY))
+check("exactly one row is recovered", budget.unquarantine_charge(row=_recid, reason="test recover") == 1)
+check("recovering re-adds it to the spend total", abs(budget.spent_since(DAY) - _before) < 5e-3,
+      f"{budget.spent_since(DAY)} vs {_before}")
+check("…and it drops OFF the quarantine list", len(budget.quarantined_since(DAY)) == _qn - 1)
+_recrow = budget._ledger().get(_recid)
+check("the recovered row is POSTED with the (impossible-estimate) label cleared",
+      _recrow and _recrow["status"] == "posted" and _recrow["conv_id"] != budget.QUARANTINE_CONV)
+check("re-running recover is a no-op (idempotent — nothing left to recover)",
+      budget.unquarantine_charge(row=_recid) == 0)
+
 print(f"\n{'[FAIL]' if failures else 'OK'} test_estimate_plausibility: {failures} failure(s)")
 sys.exit(1 if failures else 0)
