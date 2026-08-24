@@ -189,6 +189,59 @@ _dsrc = inspect.getsource(_ls.sync)
 check("days carrying backfill are named not-comparable", "backfill spread across days" in _dsrc)
 check("…and only stand-alone days get an over/under verdict",
       '"under-covered"' in _dsrc and '"over-covered"' in _dsrc and "spread = " in _dsrc)
+print("-- EMBEDDINGS: a batch bills the SUM but the window bounds each ITEM (the batched-embedding bug) --")
+# WHAT WENT WRONG: client.embeddings.create(model=…, input=[…1000 strings…]) bills the SUM of the list, but
+# every embeddings model's context window (8,191) applies PER ITEM. The rail computed per_req = sum/1_request,
+# saw sum > 8,191, declared IMPOSSIBLE, and QUARANTINED a legitimate batch — so a bake-off that embedded 1000
+# short strings recorded $0 and lost its vectors. The fix threads per_item_max (the largest single input) so
+# the bound is checked against the ITEM, never the batch total. text-embedding-3-large is a REAL model already
+# priced in pricing._FALLBACK — the price is read from there, never a literal; only its window is seeded here.
+# (The ledger end-to-end — a real batch is recorded, not voided — lives in test_batched_embedding_not_quarantined.py,
+#  which runs under the sqlite backend; the quarantine tag only persists there, not under this file's memory backend.)
+EMB = "text-embedding-3-large"
+EMB_WINDOW = 8_191            # OpenAI's published context window for the text-embedding-3 family (a named bound)
+pricing.CONTEXT_LIMITS[EMB] = {"max_input_tokens": EMB_WINDOW}     # MODEL's 1M limit is left intact for earlier checks
+check("the embeddings model's window resolves", pricing.max_input_tokens(EMB) == EMB_WINDOW)
+check("…and it is priced from the built-in table, not invented", pricing.realtime_cost(EMB, 10_000, 0) > 0)
+
+# Fixtures built from the REAL token counter, so no token count is ever hardcoded; the SUM must exceed the
+# window while every item stays under it — that is the exact shape the old rail wrongly rejected.
+SENTENCE = "The quick brown fox jumps over the lazy dog and then trots quietly back home. "
+_unit_ct = gate._ct(SENTENCE)
+N = (EMB_WINDOW // max(_unit_ct, 1) + 1) * 3          # enough items that the batch SUM comfortably clears the window
+kw = {"model": EMB, "input": [SENTENCE] * N}
+SUM = gate._est_oai_embeddings(kw)[1]                 # the billable total (what the provider actually charges)
+MAXITEM = gate._embed_per_item_max(kw)               # the largest single input — the quantity the window bounds
+BIG = "word " * (EMB_WINDOW + 500)                    # ONE string whose token count exceeds the window
+big_ct = gate._embed_per_item_max({"model": EMB, "input": [BIG]})
+check("precondition: the batch SUM exceeds the window (so the old sum-based check WOULD fire)", SUM > EMB_WINDOW, f"{SUM}")
+check("precondition: every item fits the window (so the batch is legitimate)", MAXITEM <= EMB_WINDOW, f"{MAXITEM}")
+check("precondition: the single big string exceeds the window", big_ct > EMB_WINDOW, f"{big_ct}")
+
+print("-- _embed_per_item_max sizes the LARGEST single input, per input shape --")
+check("a str is its own token count", gate._embed_per_item_max({"input": SENTENCE}) == gate._ct(SENTENCE))
+check("a list[str] is the LARGEST item, never the sum",
+      gate._embed_per_item_max({"input": ["a", SENTENCE, "bb"]}) == gate._ct(SENTENCE))
+check("a bare list[int] is ONE pre-tokenized doc → len (NOT maxed to 1)",
+      gate._embed_per_item_max({"input": [1, 2, 3, 4, 5]}) == 5)
+check("a list[list[int]] is the largest doc's length",
+      gate._embed_per_item_max({"input": [[1, 2], [1, 2, 3, 4], [9]]}) == 4)
+check("no input → None (no opinion)", gate._embed_per_item_max({}) is None)
+check("empty list → 0", gate._embed_per_item_max({"input": []}) == 0)
+
+print("-- the rail, on the SAME batch, with and without the per-item bound (the fix is load-bearing) --")
+check("WITHOUT per_item_max the sum-based rail wrongly quarantines the legit batch (this IS the bug)",
+      gate._implausible_estimate(EMB, SUM, 1)[0] is True)
+check("WITH per_item_max the same batch is judged plausible (the fix)",
+      gate._implausible_estimate(EMB, SUM, 1, per_item_max=MAXITEM)[0] is False)
+bad_e, facts_e = gate._implausible_estimate(EMB, big_ct, 1, per_item_max=big_ct)
+check("a single item past the window is still impossible (rail intact)", bad_e is True)
+check("…and its message says the SUM is fine, so the operator fixes the ITEM not the batch size",
+      "batch SUM" in facts_e.get("message", ""), facts_e.get("message"))
+check("the per-item bound is inclusive (== window is fine)",
+      gate._implausible_estimate(EMB, EMB_WINDOW * 5, 1, per_item_max=EMB_WINDOW)[0] is False)
+check("one token past the per-item bound fires",
+      gate._implausible_estimate(EMB, EMB_WINDOW * 5, 1, per_item_max=EMB_WINDOW + 1)[0] is True)
 
 print(f"\n{'[FAIL]' if failures else 'OK'} test_estimate_plausibility: {failures} failure(s)")
 sys.exit(1 if failures else 0)

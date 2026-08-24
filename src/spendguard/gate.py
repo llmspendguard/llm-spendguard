@@ -153,7 +153,7 @@ def _expected_out(model, kw=None, body=None, sig=None):
     return n, basis
 
 
-def _implausible_estimate(model, in_tok, requests):
+def _implausible_estimate(model, in_tok, requests, per_item_max=None):
     """(True, facts) when this estimate is PHYSICALLY IMPOSSIBLE, not merely large; (False, {}) otherwise.
 
     A request whose input exceeds the model's published context window is rejected by the provider, so an
@@ -166,13 +166,29 @@ def _implausible_estimate(model, in_tok, requests):
     spend that never happened, and the leak check stayed silent because it only ever looked for money that was
     MISSING, never for money that was INVENTED.
 
+    EMBEDDINGS are the exception to per-request = in_tok/requests. A batched embeddings call (a LIST input) is ONE
+    request whose tokens are the SUM of all items, but the context window applies PER ITEM — each input must fit
+    8,191, the batch total need not. So for embeddings the caller passes `per_item_max` (the largest single input's
+    tokens) and the bound is checked against THAT, not the sum. Without this, a legitimate 1000-string batch summing
+    to 14,584 tokens read as "14,584 over 1 request > 8,191" and was wrongly quarantined.
+
     `facts` carries the numbers (model, limit, in_tok, requests, per_req) so callers — and tests — can act on
     values rather than parse a sentence."""
     try:
         lim = pricing.max_input_tokens(model)
     except Exception:
         lim = None
-    if not lim or not requests or in_tok <= 0:
+    if not lim:
+        return False, {}
+    if per_item_max is not None:                     # EMBEDDINGS: the window bounds each ITEM, never the batch sum
+        if per_item_max <= lim:
+            return False, {}
+        return True, {"model": model, "limit": int(lim), "in_tok": int(in_tok), "requests": int(requests or 1),
+                      "per_req": float(per_item_max),
+                      "message": (f"a single embeddings input is {per_item_max:,.0f} tokens, but {model}'s context "
+                                  f"window is {lim:,} — the provider rejects that ITEM. The batch SUM "
+                                  f"({in_tok:,.0f}) is fine; only this one item is too big.")}
+    if not requests or in_tok <= 0:
         return False, {}
     per_req = in_tok / float(requests)
     if per_req <= lim:
@@ -185,10 +201,11 @@ def _implausible_estimate(model, in_tok, requests):
                               f"counted as text (images/PDFs count by pixels/pages: see content_tokens.py).")}
 
 
-def _warn_implausible(model, in_tok, requests):
+def _warn_implausible(model, in_tok, requests, per_item_max=None):
     """Shout, and say what to do. Returns the facts dict (falsy when the estimate is plausible) so callers can
-    mark the record — a number we know is impossible must never enter the ledger looking like any other."""
-    bad, facts = _implausible_estimate(model, in_tok, requests)
+    mark the record — a number we know is impossible must never enter the ledger looking like any other.
+    `per_item_max` (embeddings): check the largest single input against the window, not the batch sum."""
+    bad, facts = _implausible_estimate(model, in_tok, requests, per_item_max=per_item_max)
     if not bad:
         return {}
     _warn_once(f"[spend_gate] IMPOSSIBLE ESTIMATE — {facts['message']}\n"
@@ -199,7 +216,8 @@ def _warn_implausible(model, in_tok, requests):
 
 def _estimate_openai_jsonl(data: bytes):
     in_tok = out = n = 0
-    model = None
+    max_req = 0            # largest SINGLE provider request/item — the impossibility bound (the window is per-request,
+    model = None           # NOT per-batch); for embeddings it is the biggest single input, never the line's summed list.
     for line in data.decode("utf-8", "ignore").splitlines():
         line = line.strip()
         if not line:
@@ -207,49 +225,62 @@ def _estimate_openai_jsonl(data: bytes):
         n += 1
         body = json.loads(line).get("body", {})
         model = model or body.get("model")
+        line_in = 0        # this chat request's total (all its messages) — the whole request must fit the window
         for m in body.get("messages", []):
-            in_tok += _content_tokens(m.get("content", ""), provider="openai", model=model)
+            t = _content_tokens(m.get("content", ""), provider="openai", model=model)
+            in_tok += t; line_in += t
+        max_req = max(max_req, line_in)
         if not body.get("messages") and body.get("input") is not None:
-            # embeddings (and Responses-style) batch bodies carry `input`, not `messages` — these used
-            # to estimate as $0, so the cap could never see an embeddings batch coming.
+            # embeddings (and Responses-style) batch bodies carry `input`, not `messages` — these used to
+            # estimate as $0, so the cap could never see an embeddings batch coming. The SAME counting as the
+            # realtime path (reused, so the two can never drift): the list is BILLED by its sum, but the context
+            # window bounds each ITEM, so the impossibility bound is the largest single input in this line.
             inp = body["input"]
-            for item in (inp if isinstance(inp, list) else [inp]):
-                if isinstance(item, str):
-                    in_tok += _ct(item)
-                elif isinstance(item, list):
-                    in_tok += len(item)              # pre-tokenized int array
-                elif isinstance(item, int):
-                    in_tok += 1
+            in_tok += _est_oai_embeddings({"model": model, "input": inp})[1]
+            pim = _embed_per_item_max({"input": inp})
+            if pim is not None:
+                max_req = max(max_req, pim)
         _o, out_basis = _expected_out(body.get("model") or model, body=body)
         out += _o
     cost = pricing.batch_cost(model, in_tok, out) if model else 0.0
     return dict(provider="openai", model=model, requests=n, in_tok=in_tok, out_tok=out, cost=cost,
                 out_basis=out_basis,
-                implausible=_warn_implausible(model, in_tok, n))
+                implausible=_warn_implausible(model, in_tok, n, per_item_max=(max_req or None)))
 
 
 def _estimate_anthropic_requests(requests):
     in_tok = out = n = 0
-    model = None
+    max_req = 0            # largest SINGLE request (system+messages) — the window bounds each request, not the batch
+    skipped = 0            # sum; max_req ≥ the old batch AVERAGE, so this only ever catches MORE, never fewer (a single
+    model = None           # oversized request the average would have hidden), and never false-fires where the avg didn't.
+    out_basis = "estimate"
     for r in requests:
         n += 1
         params = r.get("params") if isinstance(r, dict) else getattr(r, "params", None)
         if params is None:
+            # a request with no params contributes zero tokens; COUNT it so the estimate is not silently short
+            # (n still counts it, but in_tok would understate the batch with no trace) — surfaced, not dropped.
+            skipped += 1
             continue
         g = (params.get if isinstance(params, dict) else (lambda k, d=None, _p=params: getattr(_p, k, d)))
         model = model or g("model")
+        req_in = 0         # this request's total input (system + all messages) — must fit the window on its own
         sysp = g("system")
         if sysp:
-            in_tok += _content_tokens(sysp, provider="anthropic", model=model)
+            t = _content_tokens(sysp, provider="anthropic", model=model); in_tok += t; req_in += t
         for m in (g("messages") or []):
             c = m.get("content") if isinstance(m, dict) else getattr(m, "content", "")
-            in_tok += _content_tokens(c, provider="anthropic", model=model)
+            t = _content_tokens(c, provider="anthropic", model=model); in_tok += t; req_in += t
+        max_req = max(max_req, req_in)
         _o, out_basis = _expected_out(g("model") or model, body={"max_tokens": g("max_tokens")})
         out += _o
+    if skipped:
+        _warn_once(f"[spendguard] anthropic batch estimate: {skipped} of {n} request(s) had no params and were "
+                   f"counted as zero tokens — the estimate may understate this batch.")
     cost = pricing.batch_cost(model, in_tok, out) if model else 0.0
     return dict(provider="anthropic", model=model, requests=n, in_tok=in_tok, out_tok=out, cost=cost,
-                out_basis=out_basis,
-                implausible=_warn_implausible(model, in_tok, n))
+                out_basis=out_basis, skipped_no_params=skipped,
+                implausible=_warn_implausible(model, in_tok, n, per_item_max=(max_req or None)))
 
 
 def _log(rec):
@@ -624,13 +655,14 @@ def _rt_flush():
 _atexit.register(_rt_flush)
 
 
-def _rt_record(provider, model, cost, in_tok=0, out_tok=0, cached=0, basis=None):
+def _rt_record(provider, model, cost, in_tok=0, out_tok=0, cached=0, basis=None, per_item_max=None):
     # LANE PARITY. The impossibility rail was wired into the two BATCH estimators only, which is exactly the
     # asymmetry that lets a bug live: realtime records from actual usage when the SDK returns it, but falls
     # back to the ESTIMATE when it doesn't (see _record_realtime) — the same path that produced the invented
     # $54.51. One request, so the bound is simply in_tok vs the model's context window. It also catches a
-    # misread `usage` field, which no amount of estimator-fixing would.
-    _bad = _warn_implausible(model, int(in_tok or 0), 1) if in_tok else {}
+    # misread `usage` field, which no amount of estimator-fixing would. EMBEDDINGS pass per_item_max so the
+    # bound is checked per ITEM (a batched list bills the sum but each input must fit the window, not the sum).
+    _bad = _warn_implausible(model, int(in_tok or 0), 1, per_item_max=per_item_max) if in_tok else {}
     global _rt_spent, _rt_since_flush
     with _rt_lock:
         _rt_spent += cost
@@ -764,6 +796,36 @@ def _est_oai_embeddings(kw):
     return kw.get("model"), n, 0
 
 
+def _embed_per_item_max(kw):
+    """Largest SINGLE embeddings input, in tokens — the quantity the context window actually bounds. A list
+    input to embeddings.create is a BATCH of independent documents billed by their SUM, but each document must
+    fit the window on its own; this returns the biggest one so the impossibility rail checks the right thing
+    (a 1000-string batch summing past 8191 is legitimate; only a single item past 8191 is not). Mirrors
+    _est_oai_embeddings' per-item counting, with the one distinction the summer doesn't need: a bare list[int]
+    is ONE pre-tokenized document of len() tokens, not N one-token items — so it is sized whole, not maxed to 1.
+    Returns None when there is no input to size."""
+    inp = kw.get("input")
+    if inp is None:
+        return None
+    if isinstance(inp, str):
+        return _ct(inp)
+    if isinstance(inp, list):
+        if not inp:
+            return 0
+        if all(isinstance(x, int) for x in inp):     # ONE pre-tokenized document: the whole list is a single item
+            return len(inp)
+        sizes = []
+        for item in inp:                              # a BATCH: each element is its own document
+            if isinstance(item, str):
+                sizes.append(_ct(item))
+            elif isinstance(item, list):              # a pre-tokenized document — its length is its token count
+                sizes.append(len(item))
+            elif isinstance(item, int):               # defensive: a stray scalar amongst non-ints counts as one
+                sizes.append(1)
+        return max(sizes) if sizes else 0
+    return None
+
+
 def _act_oai_embeddings(result):
     u = getattr(result, "usage", None)               # embeddings usage = prompt_tokens/total_tokens only
     return None if not u else ((getattr(u, "prompt_tokens", 0) or 0), 0)
@@ -845,7 +907,7 @@ def _provider_of(model):
 
 
 def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, finish=None, cost=None,
-               provider=None, basis=None):
+               provider=None, basis=None, per_item_max=None):
     """Record ONE realtime call's usage → cost · cross-process ledger · max_tokens truncation telemetry · call log.
     Shared by _rt_account (non-stream), the streaming proxy (ACTUAL usage as the stream is consumed), and the
     provider-breadth adapters (LiteLLM / Bedrock / Vertex). `cost` lets a caller supply an authoritative price (e.g.
@@ -880,7 +942,7 @@ def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, 
                           prompt=_prompt_text(kw), output=output, finish=finish)
         return
     _calls.check_output(output)      # realtime output CONTRACT (no-op unless the flow declared one)
-    _rt_record(prov, model, cost, in_tok=in_tok, out_tok=out_tok, cached=cached, basis=basis)
+    _rt_record(prov, model, cost, in_tok=in_tok, out_tok=out_tok, cached=cached, basis=basis, per_item_max=per_item_max)
     try:                                              # max_tokens TRUNCATION detection (a fact) + per-sig telemetry
         from . import bulkgate
         _intent = (_calls.current().get("intent") or "").strip()
@@ -925,8 +987,11 @@ def _rt_account(model, kw, result, est_fn, act_fn, latency=None):
             in_tok, out_tok = act
         else:
             _, in_tok, out_tok = est_fn(kw)
+        # EMBEDDINGS bill the SUM of a LIST input but the context window bounds each ITEM — pass the largest single
+        # input so the impossibility rail checks per-item, not the sum (a 1000-string batch is legitimate).
+        pim = _embed_per_item_max(kw) if est_fn is _est_oai_embeddings else None
         _record_rt(model, kw, in_tok, out_tok, _cached_in(result), latency, _output_text(result), _finish(result),
-                   basis=basis)
+                   basis=basis, per_item_max=pim)
         _record_tool_fees(model, kw, result)
     except Exception as e:
         print(f"[spend_gate] WARN real-time accounting failed ({e})", file=sys.stderr)

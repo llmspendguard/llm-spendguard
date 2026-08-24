@@ -93,5 +93,78 @@ est2 = spend_gate._estimate_openai_jsonl((lines[0] + "\n" + chat_line).encode())
 ck("mixed file: message bodies still counted alongside input bodies",
    est2["requests"] == 2 and est2["out_tok"] == 50 and est2["in_tok"] > 200)
 
+# ── batched embeddings: the SUM may exceed the window, but each ITEM must not (the quarantine bug) ──
+# WHAT WENT WRONG: client.embeddings.create(model=…, input=[…1000 strings…]) bills the SUM of the list, but the
+# context window (8,191) bounds each ITEM. The impossibility rail computed per_req = sum/1_request, saw sum > window,
+# declared IMPOSSIBLE and QUARANTINED a legitimate batch — recording $0 and losing the vectors. The decision is
+# OBSERVED here at its single source (_budget_record's `quarantine` arg), which is computed identically under any
+# storage backend, so this proves the real post-call accounting path (_rt_account → _embed_per_item_max →
+# _record_rt → _rt_record → _implausible_estimate) reaches the right verdict — not just the leaf function.
+EMB_WINDOW = 8_191                                   # OpenAI text-embedding-3 family context window (a named bound)
+pricing.CONTEXT_LIMITS[EMB] = {"max_input_tokens": EMB_WINDOW}
+ck("the embeddings window resolves, so the rail is LIVE (not silently disabled by an absent limit)",
+   pricing.max_input_tokens(EMB) == EMB_WINDOW)
+
+_orig_br = spend_gate._budget_record
+_cap = []
+def _capture_br(cost, model, provider, kind, quarantine=False, basis=None):
+    _cap.append({"kind": kind, "cost": cost, "quarantine": quarantine})
+    return _orig_br(cost, model, provider, kind, quarantine=quarantine, basis=basis)
+spend_gate._budget_record = _capture_br
+
+def _resp(inp):                                      # a real embeddings response: usage.prompt_tokens = the batch SUM
+    return types.SimpleNamespace(model=EMB, usage=types.SimpleNamespace(
+        prompt_tokens=spend_gate._est_oai_embeddings(dict(model=EMB, input=inp))[1]))
+def _decide(inp):                                    # drive the real post-call accounting; return its realtime rows
+    _cap.clear()
+    spend_gate._rt_account(EMB, dict(model=EMB, input=inp), _resp(inp),
+                           spend_gate._est_oai_embeddings, spend_gate._act_oai_embeddings)
+    return [c for c in _cap if c["kind"] == "realtime"]
+
+SENTENCE = "The quick brown fox jumps over the lazy dog and then trots quietly home. "
+BATCH = [SENTENCE] * ((EMB_WINDOW // max(spend_gate._ct(SENTENCE), 1) + 1) * 3)   # SUM ≫ window, each item ≪ window
+SUM_A = spend_gate._est_oai_embeddings(dict(model=EMB, input=BATCH))[1]
+ck("precondition: the batch SUM exceeds the window while each item is far under it",
+   SUM_A > EMB_WINDOW and spend_gate._embed_per_item_max(dict(input=BATCH)) <= EMB_WINDOW)
+ck("precondition: the rail would fire on the SUM alone (proving per-item logic is what saves the batch)",
+   spend_gate._implausible_estimate(EMB, SUM_A, 1)[0] is True)
+
+rtA = _decide(BATCH)
+ck("a batched embeddings call is accounted as ONE realtime row", len(rtA) == 1)
+ck("…and is NOT quarantined (the fixed bug — a 1000-string batch is legitimate)",
+   bool(rtA) and rtA[0]["quarantine"] is False)
+ck("…and its cost is the real batch SUM at the table price (billing preserved end-to-end)",
+   bool(rtA) and abs(rtA[0]["cost"] - pricing.realtime_cost(EMB, SUM_A, 0)) < 1e-9)
+
+rtB = _decide(["word " * (EMB_WINDOW + 500)])        # ONE string whose token count exceeds the window
+ck("a single OVER-window item IS still quarantined (the rail did not weaken)",
+   bool(rtB) and rtB[0]["quarantine"] is True)
+rtC = _decide(list(range(EMB_WINDOW + 50)))          # ONE pre-tokenized document longer than the window (list[int])
+ck("an over-window pre-tokenized doc (list[int]) IS quarantined too (the len-not-1 special case, live)",
+   bool(rtC) and rtC[0]["quarantine"] is True)
+
+spend_gate._budget_record = _orig_br                 # restore the real writer
+
+# ── the SAME per-item rule holds on the BATCH surface (a batch JSONL of embeddings bodies), not just realtime ──
+# The impossibility rail on the batch estimator used per_request = in_tok/requests (an AVERAGE) — for a batch of
+# embeddings lines each carrying a big list, that average exceeds the window even though every ITEM fits, so the
+# whole batch was quarantined. The estimator now bounds by the largest single request/item, never the batch sum.
+LINE_ITEMS = (EMB_WINDOW // max(spend_gate._ct(SENTENCE), 1)) + 20     # each line's SUM alone exceeds the window
+big_batch = "\n".join(json.dumps({"custom_id": f"e{i}", "body": {"model": EMB, "input": [SENTENCE] * LINE_ITEMS}})
+                      for i in range(4)).encode()
+est_ok = spend_gate._estimate_openai_jsonl(big_batch)
+ck("precondition: the batch's per-request AVERAGE exceeds the window (the old rail WOULD have quarantined it)",
+   est_ok["in_tok"] / est_ok["requests"] > EMB_WINDOW)
+ck("a legit embeddings batch (big lists, small items) is NOT flagged implausible (batch surface fixed)",
+   not est_ok["implausible"] and est_ok["in_tok"] > EMB_WINDOW)
+est_bad = spend_gate._estimate_openai_jsonl(
+    json.dumps({"custom_id": "z", "body": {"model": EMB, "input": ["word " * (EMB_WINDOW + 500)]}}).encode())
+ck("a batch line whose single item exceeds the window IS flagged implausible (rail intact on the batch surface)",
+   bool(est_bad["implausible"]))
+est_pretok = spend_gate._estimate_openai_jsonl(
+    json.dumps({"custom_id": "p", "body": {"model": EMB, "input": [list(range(EMB_WINDOW + 50))]}}).encode())
+ck("a pre-tokenized batch doc (list[list[int]]) over the window IS flagged implausible too",
+   bool(est_pretok["implausible"]))
+
 print(("[OK]" if not fails else "[FAIL]") + " gate embeddings: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)
