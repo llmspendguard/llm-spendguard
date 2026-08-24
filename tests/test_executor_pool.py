@@ -52,11 +52,12 @@ def codex_down(prompt, system=None, model=None, timeout=None, **_kw):
     return {"error": "plan window exhausted"}
 codex_exec.run_prompt = codex_down
 r = adapters.call("openai:gpt-5.5", "classify…", sig="test:executor-pool")
-ck("failed lane falls back to the API path (its error, not the lane's)",
-   r.get("executor") is None and r.get("error") and "plan window" not in (r.get("error") or ""))
+ck("failed lane falls back to the API path (its error, not the lane's; tagged executor='api')",
+   r.get("executor") == "api" and r.get("error") and "plan window" not in (r.get("error") or ""))
 n = calls_made["codex"]
 r2 = adapters.call("openai:gpt-5.5", "classify…", sig="test:executor-pool")
-ck("cooling lane is SKIPPED (no second lane attempt)", calls_made["codex"] == n and r2.get("executor") is None)
+ck("cooling lane is SKIPPED (no second lane attempt) → served by the API path",
+   calls_made["codex"] == n and r2.get("executor") == "api")
 ck("the OTHER lane is unaffected by the cooldown",
    adapters.call("claude-haiku-4-5-20251001", "x", sig="test:executor-pool").get("executor") == "claude-code")
 adapters._lane_cooldown.clear()
@@ -68,13 +69,13 @@ print("-- single-lane settings never touch the other provider --")
 os.environ["SPENDGUARD_ADVISOR_EXECUTOR"] = "claude-code"
 n = calls_made["codex"]
 r = adapters.call("openai:gpt-5.5", "x", sig="test:executor-pool")
-ck("executor=claude-code + openai model → API (codex lane never called)",
-   calls_made["codex"] == n and r.get("executor") is None)
+ck("executor=claude-code + openai model → API (codex lane never called), tagged executor='api'",
+   calls_made["codex"] == n and r.get("executor") == "api")
 os.environ["SPENDGUARD_ADVISOR_EXECUTOR"] = "codex"
 n = calls_made["claude"]
 r = adapters.call("claude-haiku-4-5-20251001", "x", sig="test:executor-pool")
-ck("executor=codex + anthropic model → API (claude lane never called)",
-   calls_made["claude"] == n and r.get("executor") is None)
+ck("executor=codex + anthropic model → API (claude lane never called), tagged executor='api'",
+   calls_made["claude"] == n and r.get("executor") == "api")
 os.environ["SPENDGUARD_ADVISOR_EXECUTOR"] = "api"
 n = dict(calls_made)
 adapters.call("claude-haiku-4-5-20251001", "x", sig="test:executor-pool"); adapters.call("openai:gpt-5.5", "x", sig="test:executor-pool")

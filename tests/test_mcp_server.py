@@ -46,6 +46,8 @@ ck("initialize returns a result with serverInfo.name = spendguard",
    r.get("result", {}).get("serverInfo", {}).get("name") == "spendguard")
 ck("initialize echoes the client's protocolVersion", r["result"]["protocolVersion"] == "2025-06-18")
 ck("initialize advertises the tools capability", "tools" in r["result"]["capabilities"])
+ck("initialize carries an `instructions` string in the response frame (present, per MCP)",
+   isinstance(r["result"].get("instructions"), str) and len(r["result"]["instructions"]) > 0)
 
 print("-- notifications/initialized is a NOTIFICATION (no reply) --")
 ck("notifications/initialized → None (no response frame)",

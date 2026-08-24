@@ -350,7 +350,28 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     `sig` names the call-class so the OUTPUT budget comes from its measured p99 (never a literal nobody picked),
     and so each reply feeds that measurement. `reasoning` (minimal|low|medium|high) sets reasoning effort for
     gpt-5/o-series models; defaults to 'minimal' for them (default-medium reasoning eats the token budget →
-    empty output, and costs more — wrong for simple classify/extract calls)."""
+    empty output, and costs more — wrong for simple classify/extract calls).
+
+    PARAMS a consumer commonly passes (all optional): `timeout_s` bounds the request — a client-side cancel that
+    actually STOPS the call (and its billing), not merely the wait; it applies to BOTH the lane and the API path.
+    `schema` (a JSON Schema) forces STRUCTURED output — a forced tool-call on anthropic, response_format
+    json_schema/json_object elsewhere. `no_metered_fallback=True` makes a lane MISS return an error instead of
+    paying the API ($0 by construction).
+
+    RETURNS a dict — NEVER raises — with the SAME keys on success and failure, so a caller never has to guess:
+      text          the answer (str), or None on any failure / a reply truncated past its retry
+      cost          $ for THIS call: 0.0 = served by a $0 subscription LANE, a positive number = metered API,
+                    None = refused/errored (nothing spent)
+      executor      WHICH path served or attempted it — a lane name ('claude-code' | 'codex' | 'gemini' |
+                    'zai-coding') or 'api' (the metered provider). This is how a caller tells LANE-vs-API from
+                    the result alone, on success AND on error.
+      in_tok/out_tok/latency/finish_reason  usage + why the reply ended (finish_reason 'length' = truncated)
+      substituted_from  present when a lane miss was served by a DIFFERENT lane/model (provenance)
+      on FAILURE (error is non-None): error (one-line message), error_type (the exception CLASS — e.g.
+                    APITimeoutError [deadline] vs APIConnectionError [transport] vs NotFoundError [bad model]),
+                    status_code (HTTP status if any), provider_error (the real response BODY, not the one-line
+                    str), cause (the underlying error behind a generic wrapper — 'Connection error.' ←
+                    'ConnectTimeout'), retry_after (seconds, if the provider sent one)."""
     # INPUT-COMPLETENESS: fold whole, stamped, self-verified files into the prompt BEFORE the guards, so the
     # full payload is what _input_fits measures and a size overflow is refused here rather than clipped by the
     # vendor. Consumed here (not forwarded), so the _call_guarded → call(_no_guard=True) recursion below never
@@ -425,6 +446,23 @@ def _exc_detail(e):
         except Exception:
             retry_after = None
     return status, (body[:500] if isinstance(body, str) else None), retry_after
+
+
+def _exc_cause(e):
+    """The underlying CAUSE chain behind a wrapped SDK exception (`__cause__` / `__context__`), as
+    'Type: msg ← Type: msg'. The SDKs wrap a transport failure in a generic APIConnectionError whose str() is
+    just 'Connection error.' — the REAL reason (an httpx ConnectTimeout, a DNS failure, a read timeout, a proxy
+    refusal) lives in `__cause__`, which _exc_detail cannot see because a transport error carries no `response`
+    to read a status/body from. Surfacing it is the difference between a caller told 'Connection error.' and one
+    told 'ConnectTimeout: timed out' — the whole point of being transparent to spendguard's consumers. Returns
+    None when there is no distinct cause."""
+    parts, seen, cur = [], set(), (getattr(e, "__cause__", None) or getattr(e, "__context__", None))
+    while cur is not None and id(cur) not in seen and len(parts) < 4:
+        seen.add(id(cur))
+        msg = str(cur).strip()
+        parts.append(type(cur).__name__ + (f": {msg[:120]}" if msg else ""))
+        cur = getattr(cur, "__cause__", None) or getattr(cur, "__context__", None)
+    return " ← ".join(parts) or None
 
 
 def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,
@@ -767,15 +805,19 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         except Exception:
             cost = None  # model not in price table → shown as n/a
         return {**base, "text": text, "in_tok": in_tok, "out_tok": out_tok, "latency": dt, "cost": cost,
-                "finish_reason": _finish, "error": None}
+                "finish_reason": _finish, "executor": "api", "error": None}   # metered API path — say so, like a lane says its name
     except Exception as e:
         # error_type is the exception CLASS name — a structured signal (like an HTTP status or sqlite_errorname),
         # NOT the message prose. vendor_call uses it to tell a deadline (the vendor didn't answer in the budget:
         # APITimeoutError / ReadTimeout) from a transport fault (the connection broke / was refused), so the
         # coverage report can say WHY a vendor didn't answer instead of lumping both under transport_error.
         _status, _perr, _retry = _exc_detail(e)
+        # TRANSPARENT TO THE CONSUMER: this is the metered API path (a lane miss/error is returned earlier with
+        # executor=<lane>), so say `executor="api"` — a caller can now tell lane-vs-API from the result alone.
+        # `cause` surfaces the real reason behind a generic wrapper (e.g. 'Connection error.' ← 'ConnectTimeout').
         return {**base, "latency": time.time() - t0, "error": str(e)[:140], "error_type": type(e).__name__,
-                "status_code": _status, "provider_error": _perr, "retry_after": _retry}
+                "status_code": _status, "provider_error": _perr, "retry_after": _retry,
+                "executor": "api", "cause": _exc_cause(e)}
 
 
 # ── a COMPLETE answer, or an explicit UNKNOWN — never a truncated body ───────────────────────────────────

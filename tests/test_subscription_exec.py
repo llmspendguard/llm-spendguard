@@ -87,14 +87,14 @@ ck("corpus row recorded as kind='subscription' at $0 (billed axis honest)",
 # fall-through happened: the executor's error is never what the caller sees.
 se.subprocess.run = lambda *a, **k: types.SimpleNamespace(returncode=1, stdout="", stderr="plan window exhausted")
 out2 = adapters.call("claude-opus-4-8", "prompt", sig="test:subscription-exec")
-ck("executor failure FALLS BACK to the API path (the API path's own error surfaces, never the executor's)",
-   out2.get("error") and "plan window" not in out2["error"] and out2.get("executor") is None)
+ck("executor failure FALLS BACK to the API path (the API path's own error surfaces, tagged executor='api')",
+   out2.get("error") and "plan window" not in out2["error"] and out2.get("executor") == "api")
 
 os.environ["SPENDGUARD_ADVISOR_EXECUTOR"] = "api"
 n0 = len(recorded)
 out3 = adapters.call("claude-opus-4-8", "prompt", sig="test:subscription-exec")
-ck("executor=api never touches the plan path (no subscription row, no executor tag)",
-   out3.get("executor") is None and len(recorded) == n0)
+ck("executor=api never touches the PLAN path (no subscription row; the API path is tagged executor='api')",
+   out3.get("executor") == "api" and len(recorded) == n0)
 
 print(("[OK]" if not fails else "[FAIL]") + " subscription executor: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)

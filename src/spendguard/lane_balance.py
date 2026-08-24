@@ -361,6 +361,8 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
         served_model = r.get("model") or use_name            # base sets model=raw (bare id); provider prefixes below
         served_prov = r.get("provider") or prov
         served_lane = r.get("executor") or ("api-fallback" if r.get("cost") else lane)
+        if served_lane == "api":                             # the metered API served it — in a bulk fan-out that IS a
+            served_lane = "api-fallback"                     # fallback from the intended lane; keep the descriptive label
         row = {"text": (r.get("text") or None), "lane": served_lane, "use_name": served_model,
                "model": f"{served_prov}:{served_model}", "billed": bool(r.get("cost")), "error": r.get("error")}
         if r.get("substituted_from") and f"{served_prov}:{served_model}" != f"{prov}:{use_name}":

@@ -169,7 +169,20 @@ def handle(req):
         client_ver = (req.get("params") or {}).get("protocolVersion")
         return _ok(rid, {"protocolVersion": client_ver or PROTOCOL_VERSION,
                          "capabilities": {"tools": {}},
-                         "serverInfo": {"name": "spendguard", "version": getattr(spendguard, "__version__", "0")}})
+                         "serverInfo": {"name": "spendguard", "version": getattr(spendguard, "__version__", "0")},
+                         # `instructions` is the MCP-standard way a server tells the client how to use it — so the
+                         # surface is self-documenting, not something a caller has to reverse-engineer.
+                         "instructions": (
+                             "spendguard's model-advisor, answered from THIS machine's own measured LLM usage.\n"
+                             "• spendguard_advise(intent) — rank models you've USED for a job-type by $/good "
+                             "(cost at the quality it held). $0.\n"
+                             "• spendguard_models() — the priced catalogue. $0.\n"
+                             "• spendguard_recommend(intent, k, quality_bar?, budget_usd?) — agentic top-K on the "
+                             "cost×quality frontier; infers how much precision the job needs. SPENDS a small, "
+                             "meta-capped LLM call — it estimates first and refuses over budget_usd.\n"
+                             "An 'intent' is a job-type label (e.g. 'loinc-typing', 'code-review') — the same tag "
+                             "your calls are recorded under. Every result carries its own `note`/`caveats` "
+                             "explaining coverage and what to run next.")})
     if method in ("notifications/initialized", "initialized"):
         return None                                    # a notification — acknowledged by silence
     if method == "ping":
