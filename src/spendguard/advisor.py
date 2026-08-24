@@ -37,6 +37,23 @@ _OPT_SYS = ("You are a cost optimization advisor. Given historical evidence and 
             "(model, batch vs realtime, packing, max_tokens). Note confounds. Keep it under 200 words.")
 _OPT_OUT = 600
 
+_REC_SYS = ("You are a model-SELECTION advisor. Given per-(vendor:model) cost×quality evidence for a job-type "
+            "(intent), do two things and return STRICT JSON only (no prose, no code fences): "
+            "(1) infer the QUALITY BAR this job needs — how much precision/accuracy matters relative to cost — "
+            'as {"level": one of "precision-critical"|"balanced"|"cost-first", "why": short reason} from the '
+            "intent name and the evidence, UNLESS the caller states a bar (then honor it); "
+            "(2) rank the best models on the COST-vs-QUALITY frontier: the CHEAPEST option that still MEETS the "
+            "bar first, then the next-best trade-offs. Do not recommend a pricier model unless it buys quality "
+            'the job actually needs. Return {"quality_bar": {...}, "top": [{"id": "vendor:model", "why": reason '
+            "<=160 chars, \"meets_bar\": bool}]}. Rank ONLY models present in the evidence; at most K entries.")
+_REC_OUT = 700
+_REC_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["quality_bar", "top"], "properties": {
+    "quality_bar": {"type": "object", "additionalProperties": False, "required": ["level", "why"],
+                    "properties": {"level": {"type": "string"}, "why": {"type": "string"}}},
+    "top": {"type": "array", "items": {
+        "type": "object", "additionalProperties": False, "required": ["id", "why", "meets_bar"],
+        "properties": {"id": {"type": "string"}, "why": {"type": "string"}, "meets_bar": {"type": "boolean"}}}}}}
+
 
 # ─────────────────────────────── shared helpers ───────────────────────────────
 def _judge_sample(per, limit=None, rows=None):
@@ -259,6 +276,57 @@ def optimize(intent=None, plan=None, run=False):
     print("\n" + "─" * 60 + f"\n{r['text']}\n" + "─" * 60)
     print(f"(via {model}, ${r['cost']:.4f}; history proposes, `spendguard compare` disposes.)")
     return dict(cost=r["cost"], model=model, text=r["text"])
+
+
+def recommend_models(intent=None, k=5, quality_bar=None, run=False):
+    """Agentic TOP-K model recommendation for an intent, on the cost×quality frontier with an intent-set quality
+    BAR. The structured (schema-forced) cousin of optimize: the reasoner infers how much precision the job needs
+    (unless `quality_bar` is given), then ranks the CHEAPEST models that MEET that bar first. It ranks only
+    models that have evidence for the intent — a bakeoff is what fills in untried ones. Estimate-FIRST: run=False
+    returns the zero-spend estimate + candidate set; run=True makes ONE meta-caged realtime call (intent
+    spendguard:recommend). Returns a structured dict (quality_bar + top[] enriched with the measured $/good)."""
+    from . import advise
+    model = config.advisor_model()
+    ev = advise.ranked(intent=intent)
+    if not ev["models"]:
+        return dict(intent=intent, requests=0, cost=0.0, model=model, top=[],
+                    note="no evidence yet for this intent — record calls or run a bakeoff first. 0 spend.")
+    lines = ["id | jobs | $total | $/M-out | good% | $/good"]      # the same numbers advise shows, compacted
+    for m in ev["models"]:
+        gp = f"{100*m['good_rate']:.0f}%" if m["good_rate"] is not None else "—"
+        pg = f"${m['per_good']:.4f}" if m["per_good"] is not None else "—"
+        pm = f"${m['per_m_out']:.2f}" if m["per_m_out"] is not None else "—"
+        lines.append(f"{m['id']} | {m['jobs']} | ${m['cost']:.2f} | {pm} | {gp} | {pg}")
+    bar_txt = f"The caller REQUIRES this quality bar: {quality_bar}\n" if quality_bar else ""
+    prompt = (f"Intent (job-type): {intent or 'all'}\nReturn AT MOST {int(k)} models.\n{bar_txt}\n"
+              f"Cost×quality evidence — rank ONLY these candidates:\n" + "\n".join(lines))
+    in_tok = _count_tokens(_REC_SYS + prompt, model)
+    cost = pricing.realtime_cost(model, in_tok, _REC_OUT)
+    if not run:
+        return dict(intent=intent, requests=1, in_tok=in_tok, out_tok=_REC_OUT, cost=cost, model=model,
+                    estimate_only=True, candidates=[m["id"] for m in ev["models"]],
+                    note=f"estimate only (~${cost:.4f}); call with run=True to produce the ranking (meta-caged).")
+    from . import adapters
+    with calls.context(intent=f"{META}:recommend"):
+        r = adapters.call(model, prompt, max_tokens=_REC_OUT, system=_REC_SYS, schema=_REC_SCHEMA)
+    if r.get("error"):
+        return dict(intent=intent, error=r["error"], model=model, cost=r.get("cost"))
+    import json as _json
+    try:
+        parsed = r.get("json") if isinstance(r.get("json"), dict) else _json.loads(r["text"])
+    except Exception:
+        return dict(intent=intent, model=model, cost=r.get("cost"), quality_bar=None, top=[],
+                    note="the reasoner's output did not parse as the expected shape.", raw=r.get("text"))
+    by_id = {m["id"]: m for m in ev["models"]}
+    top = []
+    for t in (parsed.get("top") or [])[:int(k)]:
+        m = by_id.get(t.get("id"), {})                            # enrich the pick with its MEASURED numbers
+        top.append({"id": t.get("id"), "why": t.get("why"), "meets_bar": t.get("meets_bar"),
+                    "per_good": m.get("per_good"), "good_rate": m.get("good_rate"),
+                    "per_m_out": m.get("per_m_out"), "cost": m.get("cost"), "jobs": m.get("jobs")})
+    return dict(intent=intent, model=model, cost=r.get("cost"), quality_bar=parsed.get("quality_bar"),
+                top=top, ranked_from=len(ev["models"]),
+                note="ranked from MEASURED evidence; models you haven't run are added by a bakeoff.")
 
 
 # ─────────────────────────────── misc ───────────────────────────────

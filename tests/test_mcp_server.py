@@ -100,5 +100,37 @@ ck("response ids match the request ids (1, 2)", [json.loads(x)["id"] for x in li
 ck("the second response carries the advise pick",
    json.loads(lines[1])["result"]["structuredContent"]["pick"] == "openai:gpt-5.5")
 
+print("-- (P2) advisor.recommend: estimate-first (zero spend) → cost + candidate set --")
+os.environ["SPENDGUARD_ADVISOR_MODEL"] = "gpt-5-mini"      # a priced model so the estimate is deterministic
+from spendguard import advisor, adapters as _ad
+import spendguard as _sg
+est = advisor.recommend_models(intent="loinc-typing", k=3, run=False)
+ck("estimate returns a positive cost, the candidate set, and no spend",
+   est.get("estimate_only") and est.get("cost", 0) > 0 and "openai:gpt-5.5" in est.get("candidates", []))
+
+print("-- (P2) advisor.recommend: run path (stubbed reasoner) → structured, enriched with MEASURED $/good --")
+_orig_call = _ad.call
+_ad.call = lambda model, prompt, **kw: {
+    "json": {"quality_bar": {"level": "balanced", "why": "typing tolerates minor error"},
+             "top": [{"id": "openai:gpt-5.5", "why": "cheapest per good result", "meets_bar": True}]},
+    "text": "{}", "cost": 0.001, "error": None}
+try:
+    rec = advisor.recommend_models(intent="loinc-typing", k=3, run=True)
+finally:
+    _ad.call = _orig_call
+ck("run returns the inferred quality_bar", (rec.get("quality_bar") or {}).get("level") == "balanced")
+ck("top-K is enriched with the model's MEASURED per_good (agentic pick + real numbers)",
+   rec.get("top") and rec["top"][0]["id"] == "openai:gpt-5.5" and rec["top"][0].get("per_good") is not None)
+
+print("-- (P2) MCP spendguard_recommend SPENDS → estimates first + refuses over budget_usd (gate isolated) --")
+_orig_req = _sg.require
+_sg.require = lambda *a, **k: None                          # isolate the tool from gate-enforcement in this offline test
+try:
+    rr = rpc("tools/call", {"name": "spendguard_recommend",
+                            "arguments": {"intent": "loinc-typing", "budget_usd": 1e-9}})["result"]["structuredContent"]
+    ck("a tiny budget_usd REFUSES the spend (estimate over budget) before any LLM call", rr.get("refused") is True)
+finally:
+    _sg.require = _orig_req
+
 print(f"\n{'[FAIL]' if fails else 'OK'} test_mcp_server: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

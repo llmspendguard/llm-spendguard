@@ -88,6 +88,24 @@ def _tool_models(args):
             "note": "curated + your verified prices. Untried models beyond this are enumerated + measured by a bakeoff."}
 
 
+def _tool_recommend(args):
+    """Agentic top-K on the cost×quality frontier for an intent, with an intent-set quality bar. This tool
+    SPENDS a small, meta-capped LLM synthesis, so it fails closed if the interpreter is not gated, estimates
+    first, and refuses when the estimate exceeds `budget_usd`."""
+    import spendguard
+    spendguard.require()                    # this tool spends → fail closed if the gate is not enforcing here
+    from . import advisor
+    intent, k, qbar = args.get("intent"), int(args.get("k") or 5), args.get("quality_bar")
+    est = advisor.recommend_models(intent=intent, k=k, quality_bar=qbar, run=False)
+    if est.get("requests", 0) == 0:
+        return est                          # no evidence for this intent — nothing to rank, $0
+    budget = args.get("budget_usd")
+    if budget is not None and est.get("cost", 0.0) > float(budget):
+        return {**est, "refused": True,
+                "note": f"estimate ~${est['cost']:.4f} exceeds budget_usd ${float(budget):.4f} — not run. Raise budget_usd."}
+    return advisor.recommend_models(intent=intent, k=k, quality_bar=qbar, run=True)
+
+
 # name → (description, JSON-Schema for arguments, handler)
 _TOOLS = {
     "spendguard_advise": (
@@ -105,6 +123,18 @@ _TOOLS = {
         "per-1M input/output rates and provider. $0.",
         {"type": "object", "properties": {}, "additionalProperties": False},
         _tool_models),
+    "spendguard_recommend": (
+        "Recommend the best K models for a job-type ('intent') on the cost×quality frontier: the reasoner infers "
+        "how much precision the job needs (or honors your quality_bar) and ranks the CHEAPEST models that MEET "
+        "that bar, each with the measured $/good. Ranks from your OWN evidence (a bakeoff adds untried models). "
+        "SPENDS a small, meta-capped LLM call — estimates first and refuses over budget_usd.",
+        {"type": "object", "properties": {
+            "intent": {"type": "string", "description": "the job-type to recommend models for"},
+            "k": {"type": "integer", "description": "how many models to return (default 5)"},
+            "quality_bar": {"type": "string", "description": "optional: force the bar — 'precision-critical' | 'balanced' | 'cost-first'"},
+            "budget_usd": {"type": "number", "description": "optional: refuse if the estimated LLM cost exceeds this"}},
+         "additionalProperties": False},
+        _tool_recommend),
 }
 
 
