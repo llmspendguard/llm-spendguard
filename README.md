@@ -111,13 +111,19 @@ it reconstructs *what* you should do cheaper, and won't let "cheaper" cost you q
 - **learning advisor** — a per-call cost+quality corpus → confidence-scored, lifecycle-tracked **insights**;
   `brief` pre-fills a plan, `optimize` recommends the cheapest config that held quality, `experiment` proves
   it (cost↓ **and** same-output), `promote` runs it and keeps the output. Cost-per-**good**-result, not per-token.
+- **model-advisor (over MCP)** — *which model for this job?* answered from **your own** measured usage:
+  `advise` ranks the models you've used for a job-type by **$/good**, `recommend` picks the top-K on the
+  cost×quality frontier at the precision the job needs (agentic quality-bar), and `bakeoff` measures **untried**
+  models on a task sample so they enter the ranking. Exposed as a local MCP server — **`spendguard mcp`** (stdio,
+  no SDK dep) — so any MCP client (Claude Code / Desktop, an IDE agent) can call it as tools. See
+  [Model-advisor](docs/MODEL_ADVISOR.md).
 - **cost levers** — prompt-caching audit/test, semantic cache + batch dedup, cost-aware cascade routing.
 - **observability** — emits OpenTelemetry GenAI-convention metrics+spans → Langfuse / Helicone / Phoenix / any OTLP backend.
 
 The advisor's own LLM use is itself **caged** (a separate `caps.meta` budget, tagged `spendguard:*`, excluded
 from the corpus it analyzes) so the governor can't overspend governing.
 
-**Docs:** [Architecture + diagrams](docs/ARCHITECTURE.md) · [Use with Claude/Cursor](docs/USING-WITH-CLAUDE.md) · [Methodology](docs/README.md) · [Roadmap (teams/orgs/SaaS)](docs/ROADMAP.md) · [Module map](src/spendguard/README.md) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md) · [Setup](SETUP.md)
+**Docs:** [Architecture + diagrams](docs/ARCHITECTURE.md) · [Model-advisor (MCP)](docs/MODEL_ADVISOR.md) · [Use with Claude/Cursor](docs/USING-WITH-CLAUDE.md) · [Methodology](docs/README.md) · [Roadmap (teams/orgs/SaaS)](docs/ROADMAP.md) · [Module map](src/spendguard/README.md) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md) · [Setup](SETUP.md)
 
 **Use with an AI assistant:** `spendguard install-rule --global` writes a rule into `CLAUDE.md` so **every** Claude/Cursor conversation routes the LLM code it builds through spendguard — then `spendguard install-skills` adds the slash-commands: `/spend` (status), `/spendguard-reconcile` (trust the number), `/spendguard-learn` (advisor), `/spendguard-prompts` (the prompt lab), `/spendguard-close` (monthly close). See [Use with Claude](docs/USING-WITH-CLAUDE.md).
 **Teams & orgs:** each user keeps their own ledger + sets their own caps (partner, not supervisor); opt-in roll-up for shared visibility + pooled learnings via the SaaS (separate repo). The client (this package) is **production-ready and fully standalone**. The team/org dashboard is **live** at [llmspendguard.com](https://llmspendguard.com) — see [ROADMAP.md](docs/ROADMAP.md).
