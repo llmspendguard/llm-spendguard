@@ -70,45 +70,60 @@ def evidence(as_of=None, intent=None):
     return agg
 
 
-def advise(intent=None, plan=None, as_of=None):
+def ranked(intent=None, as_of=None):
+    """The structured cost×quality ranking per (vendor:model) for an intent — the ONE computation behind both
+    the `advise` CLI printer and the MCP `advise`/`recommend` tools, so the ranking can never drift between the
+    surfaces (the #0b duplication trap). Best-first by $/good-result where any quality is labeled, else by $/M
+    output (cost only). Each row: id ('vendor:model'), model (bare), provider, jobs, cost, out_tok, per_m_out,
+    good_rate (None if unlabeled), per_good (None if no good result). Returns
+    {scope, as_of, labeled, metric, pick, models:[...]}."""
     agg = evidence(as_of, intent)
-    scope = f"intent '{intent}'" if intent else "all intents"
-    if not agg:
-        print(f"no historical data for {scope}" + (f" as of {as_of}" if as_of else "") +
-              " — run `spendguard backfill` first.")
-        return 0
-    rows = []
-    for model, a in agg.items():
+    models = []
+    for key, a in agg.items():
         permout = (a["cost"] / a["outtok"] * 1e6) if a["outtok"] else None
         good_rate = (a["good"] / a["labeled"]) if a["labeled"] else None
         per_good = (a["cost"] / a["good"]) if a["good"] else None
-        rows.append([model, a, permout, good_rate, per_good])
-    labeled_any = any(r[3] is not None for r in rows)
-    key = (lambda r: r[4] if r[4] is not None else 1e18) if labeled_any else (lambda r: r[2] if r[2] is not None else 1e18)
-    rows.sort(key=key)
+        models.append(dict(id=key, model=a["model"], provider=a["provider"], jobs=a["jobs"],
+                           cost=round(a["cost"] or 0.0, 6), out_tok=a["outtok"],
+                           per_m_out=permout, good_rate=good_rate, per_good=per_good))
+    labeled_any = any(m["good_rate"] is not None for m in models)
+    _rankkey = ((lambda m: m["per_good"] if m["per_good"] is not None else 1e18) if labeled_any
+                else (lambda m: m["per_m_out"] if m["per_m_out"] is not None else 1e18))
+    models.sort(key=_rankkey)
+    pick = models[0]["id"] if models and _rankkey(models[0]) < 1e18 else None
+    return dict(scope=(f"intent '{intent}'" if intent else "all intents"), as_of=as_of, labeled=labeled_any,
+                metric=("$/good-result" if labeled_any else "$/M output (quality not labeled yet)"),
+                pick=pick, models=models)
+
+
+def advise(intent=None, plan=None, as_of=None):
+    r = ranked(intent, as_of)
+    scope = r["scope"]
+    if not r["models"]:
+        print(f"no historical data for {scope}" + (f" as of {as_of}" if as_of else "") +
+              " — run `spendguard backfill` first.")
+        return 0
+    rows, labeled_any, metric = r["models"], r["labeled"], r["metric"]
 
     print(f"spendguard advise — {scope}" + (f"  (as of {as_of})" if as_of else "") + "\n")
     print(f"{'model':<22}{'jobs':>6}{'$ total':>11}{'$/M out':>10}{'good%':>7}{'$/good':>10}")
-    for model, a, permout, good_rate, per_good in rows:
+    for m in rows:
         # `is not None`, NOT truthiness. A computed 0.0 is a real measurement — a call served entirely from
         # cache costs $0 per million output tokens — and rendering it as '—' tells the reader the number
         # could not be computed when in fact it was, and it was the best result in the table.
-        print(f"{model[:21]:<22}{a['jobs']:>6}{('$%.2f' % a['cost']):>11}"
-              f"{('$%.2f' % permout) if permout is not None else '—':>10}"
-              f"{('%.0f%%' % (100*good_rate)) if good_rate is not None else '—':>7}"
-              f"{('$%.4f' % per_good) if per_good is not None else '—':>10}")
-    best = rows[0][0]
-    metric = "$/good-result" if labeled_any else "$/M output (quality not labeled here yet)"
-    # If the winning row's ranking metric is still the 1e18 sentinel (no model had a real $/good — or no out_tok
-    # in the cost-only path), the order is arbitrary insertion order, so don't claim a confident 'lowest'.
-    if key(rows[0]) < 1e18:
+        print(f"{m['id'][:21]:<22}{m['jobs']:>6}{('$%.2f' % m['cost']):>11}"
+              f"{('$%.2f' % m['per_m_out']) if m['per_m_out'] is not None else '—':>10}"
+              f"{('%.0f%%' % (100*m['good_rate'])) if m['good_rate'] is not None else '—':>7}"
+              f"{('$%.4f' % m['per_good']) if m['per_good'] is not None else '—':>10}")
+    best = r["pick"] or rows[0]["id"]
+    if r["pick"]:
         print(f"\n→ considering history, prefer: {best}  (lowest {metric})")
     else:
         print(f"\n→ not enough signal to rank by {metric} yet (no model has a measured value); most-used is "
               f"{best}. Run `spendguard reconstruct` for quality labels, then re-check.")
-    plan_key = _resolve_plan(plan, agg) if plan else None
+    plan_key = _resolve_plan(plan, {m["id"]: m for m in rows}) if plan else None
     if plan_key and plan_key != best:
-        pr = next(r for r in rows if r[0] == plan_key)
+        pr = next(m for m in rows if m["id"] == plan_key)
         br = rows[0]
         plan = plan_key
         # TWO FIXES HERE, and only one of the guards is a truthiness bug.
@@ -124,13 +139,13 @@ def advise(intent=None, plan=None, as_of=None):
         # so (pr-br)/br. Dividing by pr answered a different question and understated every premium: a plan
         # costing 3x the best reported 67% rather than 200%, and the ceiling was 100% no matter how bad it
         # got — the number could never say "this is 10x".
-        if labeled_any and pr[4] is not None and br[4]:
-            print(f"  your plan {plan}: {(pr[4]-br[4])/br[4]*100:.0f}% costlier per good result than {best}.")
-        elif pr[2] is not None and br[2]:
-            print(f"  your plan {plan}: {(pr[2]-br[2])/br[2]*100:.0f}% costlier per output token than {best}.")
+        if labeled_any and pr["per_good"] is not None and br["per_good"]:
+            print(f"  your plan {plan}: {(pr['per_good']-br['per_good'])/br['per_good']*100:.0f}% costlier per good result than {best}.")
+        elif pr["per_m_out"] is not None and br["per_m_out"]:
+            print(f"  your plan {plan}: {(pr['per_m_out']-br['per_m_out'])/br['per_m_out']*100:.0f}% costlier per output token than {best}.")
     if not labeled_any:
         print("  ⚠️ no quality labels here yet — this ranks COST only. Add judge/feedback or Layer-2 mining for quality.")
-    print(f"  ⚠️ {sum(r[1]['jobs'] for r in rows)} jobs; confounds possible — confirm head-to-head with "
+    print(f"  ⚠️ {sum(m['jobs'] for m in rows)} jobs; confounds possible — confirm head-to-head with "
           f"`spendguard compare` on a fixed sample. (history proposes, compare disposes.)")
     try:                        # learned-calibration confidence (fill ratios etc.) — see `spendguard calibrate`
         from . import calibrate as _cal

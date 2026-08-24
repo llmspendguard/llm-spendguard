@@ -23,6 +23,7 @@ _GROUPS = [
         ("doctor", "is the gate enforcing HERE? keys, lanes, ledger status"),
         ("ask", "run ONE prompt across many LLMs — honest per-vendor coverage, $0 lanes"),
         ("serve", "the ask surface over localhost HTTP — POST /ask from any tool/language"),
+        ("mcp", "model-advisor over MCP (stdio) — point any MCP client at `spendguard mcp`"),
     ]),
     ("see the money", [
         ("receipt", "running tally: today / 7d / month, two axes"),
@@ -179,6 +180,9 @@ def _dispatch(argv=None):
     if cmd == "serve":                                # the same cross-LLM ask surface over localhost HTTP
         from . import serve as _serve
         return _serve.cmd(rest)
+    if cmd == "mcp":                                  # the model-advisor over MCP (stdio) — for any MCP client
+        from . import mcp_server
+        return mcp_server.cmd(rest)
     if cmd == "metadata":                             # model-metadata backbone health + measured-cap drift audit
         from . import metadata_audit
         return metadata_audit.main(rest)
