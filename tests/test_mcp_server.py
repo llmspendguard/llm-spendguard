@@ -134,5 +134,51 @@ try:
 finally:
     _sg.require = _orig_req
 
+print("-- (P3) bakeoff: estimate-first (zero spend) + clear errors when under-specified --")
+from spendguard import bakeoff as _bk
+be = _bk.bakeoff("code-review", candidates=["openai:gpt-5.5", "anthropic:claude-opus-4-8"],
+                 prompts=["Review function A", "Review function B"], run=False)
+ck("estimate returns a positive $ + per-candidate detail, no spend",
+   be.get("estimate_only") and be.get("estimate_usd", 0) > 0
+   and set(be.get("per_candidate", {})) == {"openai:gpt-5.5", "anthropic:claude-opus-4-8"})
+ck("no candidates → a clear error (not a silent empty bakeoff)", bool(_bk.bakeoff("x", candidates=[]).get("error")))
+ck("no sample tasks → a clear error naming what to pass",
+   bool(_bk.bakeoff("intent-with-no-recorded-prompts", candidates=["openai:gpt-5.5"]).get("error")))
+
+print("-- (P3) bakeoff RUN (stubbed models + judge): records + re-ranks; a failing candidate is SURFACED --")
+_orig_bkcall = _ad.call
+
+
+def _bake_stub(model, prompt, **kw):
+    if model.startswith("flaky:"):
+        return {"error": "rate_limited", "cost": None}                # this candidate fails every prompt
+    if kw.get("schema"):                                              # the JUDGE call → a structured boolean verdict
+        return {"json": {"good": True}, "text": '{"good": true}', "cost": 0.0001, "in_tok": 5, "out_tok": 3, "error": None}
+    return {"text": "a candidate answer", "cost": 0.001, "in_tok": 10, "out_tok": 5, "error": None}   # candidate output
+
+
+_ad.call = _bake_stub
+try:
+    rb = _bk.bakeoff("bakeoff-intent", candidates=["openai:gpt-5.5", "flaky:model-x"],
+                     prompts=["task 1", "task 2"], run=True, budget_usd=1.0)
+finally:
+    _ad.call = _orig_bkcall
+ck("a good candidate ran BOTH prompts and was judged good",
+   rb["per_candidate"]["openai:gpt-5.5"]["runs"] == 2 and rb["per_candidate"]["openai:gpt-5.5"]["good"] == 2)
+ck("a candidate that fails every prompt has its drops COUNTED + surfaced (not a silent zero-run)",
+   rb["per_candidate"]["flaky:model-x"]["failed"] == 2 and bool(rb["per_candidate"]["flaky:model-x"]["last_error"]))
+ck("the bakeoff'd candidate now appears in the re-ranking (recorded to the corpus advise reads)",
+   any(m["id"] == "openai:gpt-5.5" for m in rb.get("ranking", [])))
+
+print("-- (P3) MCP spendguard_bakeoff: NO budget_usd → estimate only, never auto-spends --")
+_sg.require = lambda *a, **k: None
+try:
+    rt = rpc("tools/call", {"name": "spendguard_bakeoff",
+                            "arguments": {"intent": "code-review", "candidates": ["openai:gpt-5.5"],
+                                          "prompts": ["review this"]}})["result"]["structuredContent"]
+    ck("without budget_usd the tool returns an ESTIMATE and does not run", rt.get("estimate_only") is True)
+finally:
+    _sg.require = _orig_req
+
 print(f"\n{'[FAIL]' if fails else 'OK'} test_mcp_server: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

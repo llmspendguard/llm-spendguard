@@ -303,9 +303,9 @@
       "why": "Both functions have identical bodies returning cls from their module's _load_state(), and the codex docstring explicitly notes 'parity with claudecode.load_cls'. Same job implemented twice, differing "
     },
     "main": {
-      "n": 43,
+      "n": 44,
       "verdict": "PROTOCOL",
-      "why": "Every definition is a per-module CLI entrypoint with the uniform `main(argv=None)` contract — parse args, dispatch to that module's command, return an exit code — dispatched by name from the top-level CLI router. This is the canonical subcommand-facade protocol, not two implementations of one job. [n 40→41: lane_value.main added. n 41→43: lane_catalog.main (`spendguard lanes --catalog` prints the lane model catalog) and lane_bandit.main (`spendguard lanes --learn` prints the learned per-intent lane winners) added — each is the same read-args→dispatch→exit-code CLI-entrypoint contract as codex.main/chat.main, read and confirmed as protocol, not new jobs.]"
+      "why": "Every definition is a per-module CLI entrypoint with the uniform `main(argv=None)` contract — parse args, dispatch to that module's command, return an exit code — dispatched by name from the top-level CLI router. This is the canonical subcommand-facade protocol, not two implementations of one job. [n 40→41: lane_value.main added. n 41→43: lane_catalog.main (`spendguard lanes --catalog` prints the lane model catalog) and lane_bandit.main (`spendguard lanes --learn` prints the learned per-intent lane winners) added — each is the same read-args→dispatch→exit-code CLI-entrypoint contract as codex.main/chat.main, read and confirmed as protocol, not new jobs. n 43→44: bakeoff.main (`spendguard bakeoff <intent> --candidates …`) added — same read-args→dispatch→exit-code contract.]"
     },
     "project_of": {
       "n": 2,

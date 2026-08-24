@@ -106,6 +106,26 @@ def _tool_recommend(args):
     return advisor.recommend_models(intent=intent, k=k, quality_bar=qbar, run=True)
 
 
+def _tool_bakeoff(args):
+    """Measure cost×quality for a candidate slate on a sample of an intent's tasks, so untried models earn a
+    $/good. A bakeoff makes REAL, metered workload calls — so it fails closed if not gated, and (crucially) it
+    only RUNS when the caller passes an explicit `budget_usd`; without one it returns the ESTIMATE only, never
+    spending on its own."""
+    import spendguard
+    spendguard.require()                    # real spend → fail closed if the gate is not enforcing here
+    from . import bakeoff as _bk
+    kw = dict(intent=args.get("intent"), candidates=args.get("candidates"),
+              prompts=args.get("prompts"), sample_n=int(args.get("sample_n") or 5))
+    budget = args.get("budget_usd")
+    if budget is None:                       # no budget → NEVER auto-spends; a bakeoff bills real workload $
+        est = _bk.bakeoff(run=False, **kw)
+        if not est.get("error"):
+            est["note"] = ("estimate only — pass budget_usd to actually RUN the bakeoff (it makes real, metered "
+                           "calls, preferring $0 lanes where available).")
+        return est
+    return _bk.bakeoff(run=True, budget_usd=float(budget), **kw)
+
+
 # name → (description, JSON-Schema for arguments, handler)
 _TOOLS = {
     "spendguard_advise": (
@@ -135,6 +155,21 @@ _TOOLS = {
             "budget_usd": {"type": "number", "description": "optional: refuse if the estimated LLM cost exceeds this"}},
          "additionalProperties": False},
         _tool_recommend),
+    "spendguard_bakeoff": (
+        "Measure cost×quality for a SLATE of candidate models on a sample of a job-type's ('intent') real tasks "
+        "— judges each output and RECORDS the result, so untried models earn a $/good and appear in "
+        "spendguard_advise / spendguard_recommend afterwards. Makes REAL metered calls (preferring $0 lanes): "
+        "with NO budget_usd it returns the ESTIMATE only; pass budget_usd to actually run (it refuses over it).",
+        {"type": "object", "properties": {
+            "intent": {"type": "string", "description": "the job-type to bake off for"},
+            "candidates": {"type": "array", "items": {"type": "string"},
+                           "description": "the slate to test, as 'vendor:model' ids (spendguard_recommend suggests one)"},
+            "prompts": {"type": "array", "items": {"type": "string"},
+                        "description": "optional: representative tasks to replay; omit to auto-sample the intent's recorded prompts"},
+            "sample_n": {"type": "integer", "description": "how many recorded prompts to replay when auto-sampling (default 5)"},
+            "budget_usd": {"type": "number", "description": "run only if the estimate fits this; OMIT to get just the estimate"}},
+         "additionalProperties": False},
+        _tool_bakeoff),
 }
 
 
@@ -180,6 +215,10 @@ def handle(req):
                              "• spendguard_recommend(intent, k, quality_bar?, budget_usd?) — agentic top-K on the "
                              "cost×quality frontier; infers how much precision the job needs. SPENDS a small, "
                              "meta-capped LLM call — it estimates first and refuses over budget_usd.\n"
+                             "• spendguard_bakeoff(intent, candidates, budget_usd?) — measure cost×quality for a "
+                             "SLATE of untried models on a sample of the intent's tasks; records the result so "
+                             "advise/recommend include them after. Makes REAL metered calls — returns an estimate "
+                             "unless you pass budget_usd.\n"
                              "An 'intent' is a job-type label (e.g. 'loinc-typing', 'code-review') — the same tag "
                              "your calls are recorded under. Every result carries its own `note`/`caveats` "
                              "explaining coverage and what to run next.")})

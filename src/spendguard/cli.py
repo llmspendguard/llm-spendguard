@@ -183,6 +183,9 @@ def _dispatch(argv=None):
     if cmd == "mcp":                                  # the model-advisor over MCP (stdio) — for any MCP client
         from . import mcp_server
         return mcp_server.cmd(rest)
+    if cmd == "bakeoff":                              # measure cost×quality for a slate on a sample (fills untried models)
+        from . import bakeoff
+        return bakeoff.main(rest)
     if cmd == "metadata":                             # model-metadata backbone health + measured-cap drift audit
         from . import metadata_audit
         return metadata_audit.main(rest)
