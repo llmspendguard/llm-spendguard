@@ -47,19 +47,24 @@ lane_bandit.arm_stats = lambda intent: {("gemini", "g-high"): {"winrate": 1.0, "
 
 class _CallRecorder:
     """A stand-in for adapters.call that records calls in INSTANCE state (self.calls, mutated via the self param —
-    no free module list to orphan). It mirrors adapters.call's REAL signature and CONTRACT so two bugs the earlier
-    **kw stub hid — passing an unknown kwarg (`_no_sub`), or naming NO output budget — fail this test offline
-    instead of only on the real lane path."""
+    no free module list to orphan). It mirrors adapters.call's REAL signature and CONTRACT so bugs the earlier **kw
+    stub hid — an unknown kwarg (`_no_sub`), no output budget — fail this test offline. It also HONORS
+    no_metered_fallback: for the 'WOULDBILL' sentinel it returns a $cost answer normally, or a refusal error row when
+    no_metered_fallback is set — so --refuse-billed is provable without a real lane."""
 
     def __init__(self):
         self.calls = []
 
     def __call__(self, model, prompt, max_tokens=None, system=None, reasoning=None, schema=None,
-                 timeout_s=None, sig=None, retries=2, files=None, _no_guard=False):
+                 timeout_s=None, sig=None, retries=2, files=None, _no_guard=False, no_metered_fallback=False):
         assert max_tokens is not None or sig, "adapters.call needs max_tokens or sig (an output budget)"
-        self.calls.append((model, prompt))
+        self.calls.append({"model": model, "prompt": prompt, "system": system, "no_metered_fallback": no_metered_fallback})
         if prompt == "BOOM":
             raise RuntimeError("boom")
+        if prompt == "WOULDBILL":                        # a task the lane misses → would fall back to metered
+            if no_metered_fallback:
+                return {"text": None, "error": "refused: would bill metered API", "cost": None}
+            return {"text": "billed-answer", "cost": 0.01}   # fallback allowed → a metered ($cost) answer
         return {"text": f"ans::{model}::{prompt}", "cost": 0}
 
 
@@ -86,6 +91,41 @@ n_before = len(_rec.calls)
 res3 = lane_balance.bulk_delegate(["x", "y", "z"], "myintent", checkpoint=ckpath)   # same tasks + checkpoint → resume
 fails += ck("re-run made ZERO new calls (fully resumed from checkpoint)", len(_rec.calls) == n_before)
 fails += ck("resumed results are intact", all(r.get("text") for r in res3))
+
+print("\n-- rows carry the MODEL that answered (provenance for trust-labeled artifacts) --")
+resm = lane_balance.bulk_delegate(["m0", "m1"], "myintent")
+fails += ck("every row has a 'model' field", all(r.get("model") for r in resm))
+
+print("\n-- --system reaches adapters.call on every task (sent once, not duplicated into each) --")
+_rec.calls.clear()
+lane_balance.bulk_delegate(["s0", "s1"], "myintent", system="SHARED-INSTRUCTION")
+fails += ck("system passed through to every underlying call", _rec.calls and all(c["system"] == "SHARED-INSTRUCTION" for c in _rec.calls))
+
+print("\n-- refuse_billed: no_metered_fallback reaches the call; a would-bill task ERRORS, never bills --")
+_rec.calls.clear()
+resr = lane_balance.bulk_delegate(["WOULDBILL"], "myintent", refuse_billed=True)
+fails += ck("refuse_billed → no_metered_fallback=True on the call", all(c["no_metered_fallback"] for c in _rec.calls))
+fails += ck("would-bill task returns an error row, billed=False (no spend)", resr[0].get("error") and not resr[0].get("billed"))
+resb = lane_balance.bulk_delegate(["WOULDBILL"], "myintent")     # default: fallback allowed
+fails += ck("default (no refuse) lets it fall back to metered (billed=True)", resb[0].get("billed") is True)
+
+print("\n-- checkpoint keyed by CONTENT: a REORDERED list maps by meaning; a stale POSITIONAL checkpoint is ignored --")
+ckc = os.path.join(os.environ["SPENDGUARD_HOME"], "ck_content.jsonl")
+lane_balance.bulk_delegate(["A", "B", "C"], "myintent", checkpoint=ckc)
+_rec.calls.clear()
+res_re = lane_balance.bulk_delegate(["C", "A", "B"], "myintent", checkpoint=ckc)   # SAME tasks, DIFFERENT order
+fails += ck("reordered re-run made ZERO new calls (content-keyed, not positional)", len(_rec.calls) == 0)
+fails += ck("each reordered task got ITS OWN content's result (C→C, A→A, B→B)",
+            "::C" in (res_re[0].get("text") or "") and "::A" in (res_re[1].get("text") or "")
+            and "::B" in (res_re[2].get("text") or ""))
+import json as _json                                                              # noqa: E402
+stale = os.path.join(os.environ["SPENDGUARD_HOME"], "ck_positional.jsonl")
+with open(stale, "w") as f:                                                       # an OLD positional-format checkpoint
+    f.write(_json.dumps({"i": 0, "r": {"text": "WRONG-STALE", "lane": "x"}}) + "\n")
+_rec.calls.clear()
+res_st = lane_balance.bulk_delegate(["fresh0", "fresh1"], "myintent", checkpoint=stale)
+fails += ck("stale POSITIONAL checkpoint IGNORED — task 0 re-run, never given WRONG-STALE",
+            "WRONG-STALE" not in (res_st[0].get("text") or "") and len(_rec.calls) >= 2)
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_bulk_delegate: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

@@ -226,18 +226,21 @@ def _bulk_arms(intent, lanes=None):
 
 
 def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, deadline_s=120.0,
-                  checkpoint=None, chunk_size=100):
+                  checkpoint=None, chunk_size=100, refuse_billed=False):
     """Fan a LIST of similar tasks across ALL viable idle lanes CONCURRENTLY — the right shape for a BULK job (e.g.
     symgrep's ~6k one-sentence symbol descriptions) that the per-call bandit would trickle one at a time. Each task
     runs on a lane (round-robin across the lanes the bandit rates GOOD for this intent), each admission BOUNDED by
     the dispatch GOVERNOR (per-lane in-flight cap, so it FILLS the plans without tripping their throttle). So it is
     FAST (parallel across lanes), $0 (plan-served; a lane failure falls back to that provider's API, flagged
-    `billed`), and spread across EVERY good lane, not one.
+    `billed` — unless `refuse_billed`, which makes a lane miss an error row and NEVER bills, $0 by construction), and
+    spread across EVERY good lane, not one.
 
     DURABLE (the CHUNK-never-single-shot rule): tasks run in chunks of `chunk_size`; when `checkpoint` (a jsonl path)
-    is given, EACH completed result is appended before the next chunk, so a crash RESUMES (re-run with the same
-    checkpoint skips finished tasks) instead of losing the whole run. One task that errors returns an error result
-    and never wedges the chunk. Returns [{text, lane, use_name, billed, error}] in task order."""
+    is given, EACH completed result is appended before the next chunk, so a crash RESUMES instead of losing the run.
+    Resume is keyed by CONTENT (sha256 of system+task+intent), never position — a re-run whose task list changed
+    (different order/composition) maps each saved result back by MEANING, so it can never land on the wrong task; an
+    older POSITIONAL checkpoint is detected and ignored with a notice, never misread. One task that errors returns an
+    error row and never wedges the chunk. Returns [{text, lane, use_name, model, billed, error}] in task order."""
     import os as _os
     import json as _json
     import threading as _th
@@ -252,19 +255,41 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
         return [{"text": None, "lane": None, "use_name": None, "billed": False,
                  "error": "no viable lane (set advisor.lane_models; check `spendguard lanes`)"} for _ in tasks]
 
+    import hashlib as _hl
+
+    def _content_key(task):
+        # CONTENT identity, never position: sha256(system + task + intent). A re-run whose task LIST changed — symgrep
+        # re-describes only CHANGED functions, so order + composition shift between runs — resumes by MEANING, so a
+        # saved result can never be mapped onto a different task (a wrong description written into an index is the
+        # worst failure class). Two identical tasks share a key (identical result) — correct, not a collision.
+        h = _hl.sha256()
+        h.update((str(system) + "\x00" + str(task) + "\x00" + str(intent)).encode("utf-8", "replace"))
+        return h.hexdigest()[:24]
+
+    _keys = [_content_key(t) for t in tasks]
     results = [None] * len(tasks)
-    if checkpoint and _os.path.exists(checkpoint):   # RESUME: reload finished tasks so a re-run never re-pays them
+    if checkpoint and _os.path.exists(checkpoint):   # RESUME by CONTENT KEY (never by position)
+        done, _stale = {}, 0
         try:
             with open(checkpoint) as f:
                 for ln in f:
                     try:
                         rec = _json.loads(ln)
-                        if 0 <= int(rec["i"]) < len(tasks):
-                            results[int(rec["i"])] = rec["r"]
                     except Exception:
                         continue
+                    if "k" in rec:
+                        done[rec["k"]] = rec["r"]
+                    elif "i" in rec:
+                        _stale += 1                          # a pre-content-key (positional) line — must NOT be misread
         except Exception:
             pass
+        if _stale:
+            import sys as _sy
+            _sy.stderr.write(f"[spendguard] bulk: ignoring {_stale} POSITIONAL checkpoint line(s) from an older format "
+                             f"— resuming by content key only (a positional resume could mismap results onto wrong tasks).\n")
+        for i, k in enumerate(_keys):
+            if k in done:
+                results[i] = done[k]
     todo = [i for i in range(len(tasks)) if results[i] is None]
     if not todo:
         return results                                # fully resumed from the checkpoint — nothing left to run
@@ -275,8 +300,8 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
         if not checkpoint:
             return
         try:
-            with _cklock, open(checkpoint, "a") as f:        # append one durable line per finished task
-                f.write(_json.dumps({"i": i, "r": res}) + "\n")
+            with _cklock, open(checkpoint, "a") as f:        # one durable line per finished task, keyed by CONTENT
+                f.write(_json.dumps({"k": _keys[i], "r": res}) + "\n")
         except Exception:
             pass                                             # a checkpoint-write failure must not lose the in-hand result
 
@@ -289,20 +314,21 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
         try:
             dispatch.acquire(prov, use_name, deadline_s)     # governor: bounds per-lane in-flight (fills, never swarms)
         except Exception as e:
-            return i, {"text": None, "lane": lane, "use_name": use_name, "billed": False,
+            return i, {"text": None, "lane": lane, "use_name": use_name, "model": model, "billed": False,
                        "error": f"dispatch: {str(e)[:60]}"}
         try:
             calls.set_context(intent=intent)          # tag this worker thread's calls with the intent (attribution)
-            r = adapters.call(model, task, system=system, reasoning=reasoning,   # sig=intent → the OUTPUT budget is
-                              sig=intent, timeout_s=deadline_s)                  # this call-class's measured p99, and
+            r = adapters.call(model, task, system=system, reasoning=reasoning,   # sig=intent → the OUTPUT budget is this
+                              sig=intent, timeout_s=deadline_s,                  # call-class's measured p99; refuse_billed
+                              no_metered_fallback=refuse_billed)                 # → a lane miss errors, never a paid retry
             # (receipt suppressed via set_context above, not the context manager)  each reply feeds that measurement
         except Exception as e:
-            return i, {"text": None, "lane": lane, "use_name": use_name, "billed": False, "error": str(e)[:80]}
+            return i, {"text": None, "lane": lane, "use_name": use_name, "model": model, "billed": False, "error": str(e)[:80]}
         finally:
             dispatch.release(prov, use_name)
         r = r if isinstance(r, dict) else {}
         served = r.get("executor") or ("api-fallback" if r.get("cost") else lane)
-        return i, {"text": (r.get("text") or None), "lane": served, "use_name": use_name,
+        return i, {"text": (r.get("text") or None), "lane": served, "use_name": use_name, "model": model,
                    "billed": bool(r.get("cost")), "error": r.get("error")}
 
     # CHUNKED: bound how many futures are in flight at once, and make each chunk's results durable before the next.

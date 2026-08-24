@@ -86,7 +86,8 @@ fails += ck("large file: all lines stamped (no silent cap), first and last prese
 # adapters.call(files=[…]) must fold the WHOLE stamped block into the prompt, ahead of the question. Stub the
 # raw sender so nothing leaves the process; capture what it would have been asked to send.
 captured = {}
-def _fake_once(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None, _skip_lane=False):
+def _fake_once(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,
+               _skip_lane=False, no_metered_fallback=False):
     captured["prompt"] = prompt
     return {"text": "ok", "error": None}
 adapters._call_once = _fake_once

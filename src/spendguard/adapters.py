@@ -259,7 +259,7 @@ def _openai_strict(schema):
 # "no answer". That is the whole recurring failure. The number now comes from measurement or from the
 # caller, never from a literal nobody chose.
 def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,
-         sig=None, retries=2, files=None, _no_guard=False):
+         sig=None, retries=2, files=None, _no_guard=False, no_metered_fallback=False):
     """Run one prompt against one model. Returns a result dict (never raises).
 
     `files=[path, …]` is the INPUT twin of the output guard below: each path is assembled into the prompt as a
@@ -301,9 +301,10 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
         prompt = _block + "\n" + prompt
     if not _no_guard:
         return _call_guarded(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
-                             schema=schema, timeout_s=timeout_s, sig=sig, retries=retries)
+                             schema=schema, timeout_s=timeout_s, sig=sig, retries=retries,
+                             no_metered_fallback=no_metered_fallback)
     return _call_once(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
-                      schema=schema, timeout_s=timeout_s)
+                      schema=schema, timeout_s=timeout_s, no_metered_fallback=no_metered_fallback)
 
 
 CONNECT_TIMEOUT_S = 10.0     # a live vendor's TCP+TLS handshake is well under this; a blackholed one must fail
@@ -367,7 +368,7 @@ def _exc_detail(e):
 
 
 def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,
-               _skip_lane=False):
+               _skip_lane=False, no_metered_fallback=False):
     """One raw request. Everything public goes through `call`, which adds the input and output guards.
 
     NO DEFAULT CAP. This carried `max_tokens=512` — the last place a number nobody chose could still reach a
@@ -453,6 +454,9 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         if not s.get("error"):                         # no error but not a usable answer → say WHY (empty vs off-shape)
             s = {**s, "error": (f"{lane_name} lane returned no usable text (empty/whitespace)" if not _txt
                                 else f"{lane_name} lane output did not satisfy the requested shape → API")}
+        if no_metered_fallback:                        # caller opted out of ALL metered spend (--refuse-billed): a lane
+            return {**base, "text": None, "cost": None, "executor": lane_name,   # MISS is an error row, NOT a paid
+                    "error": f"refused: would bill metered API ({s.get('error')})"}   # retry — $0 by construction
         # LANE FAILED. REACTIVE FAILOVER (Part 2) FIRST: before paying the metered API, try a CONFIRMED substitute
         # PLAN for this intent — one hop, guarded against recursion. Routed through call() so the substitute resolves
         # its OWN budget and rides its OWN lane; if it answers, the primary lane is cooled (it failed) and the

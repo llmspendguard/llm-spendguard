@@ -271,13 +271,16 @@ def main(argv=None):
         def _optval(flag):                                # value following an optional flag, or None
             return rest[rest.index(flag) + 1] if (flag in rest and rest.index(flag) + 1 < len(rest)) else None
         file_p, ck_p, out_p = _optval("--file"), _optval("--checkpoint"), _optval("--out")
-        opt_vals = {v for v in (file_p, ck_p, out_p) if v}
+        sys_p, sysfile_p = _optval("--system"), _optval("--system-file")
+        opt_vals = {v for v in (file_p, ck_p, out_p, sys_p, sysfile_p) if v}
         pos = [a for a in rest if not a.startswith("--") and a not in opt_vals]
         intent = pos[0] if pos else None
         if not intent:
-            print('usage: spendguard lanes --bulk <intent> [--file tasks.txt] [--jsonl] [--checkpoint ck.jsonl] [--out results.jsonl]')
+            print('usage: spendguard lanes --bulk <intent> [--file tasks.txt] [--jsonl] [--system TEXT | --system-file P] '
+                  '[--refuse-billed] [--checkpoint ck.jsonl] [--out results.jsonl]')
             print('       tasks: one per line from --file/stdin (or --jsonl = one JSON-encoded task per line, for '
-                  'MULTI-LINE bodies). --checkpoint makes a crash RESUMABLE; --out writes {i,task,text,lane,...} jsonl.')
+                  'MULTI-LINE bodies). --system = the shared instruction, sent ONCE not per task; --refuse-billed '
+                  'never bills (a lane miss errors); --checkpoint resumes by CONTENT; --out writes {i,task,text,lane,model,...}.')
         else:
             src = Path(file_p).read_text() if file_p else sys.stdin.read()
             _jsonl = any(a == "--jsonl" for a in rest)    # exact flag match (rest is argv list): one JSON-encoded task
@@ -304,9 +307,11 @@ def main(argv=None):
                 print("no tasks (empty --file / stdin).")
             else:
                 from . import lane_balance
+                system = Path(sysfile_p).read_text() if sysfile_p else sys_p   # --system-file wins; instruction sent ONCE
+                refuse = any(a == "--refuse-billed" for a in rest)
                 if not ck_p:
                     print("  note: no --checkpoint — a crash won't resume; pass --checkpoint <path> for a durable run.")
-                res = lane_balance.bulk_delegate(tasks, intent, checkpoint=ck_p)
+                res = lane_balance.bulk_delegate(tasks, intent, system=system, checkpoint=ck_p, refuse_billed=refuse)
                 spread, billed, errs = {}, 0, 0
                 for r in res:
                     spread[r.get("lane")] = spread.get(r.get("lane"), 0) + 1
