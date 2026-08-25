@@ -87,7 +87,7 @@ fails += ck("large file: all lines stamped (no silent cap), first and last prese
 # raw sender so nothing leaves the process; capture what it would have been asked to send.
 captured = {}
 def _fake_once(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,
-               _skip_lane=False, no_metered_fallback=False):
+               _skip_lane=False, no_metered_fallback=False, images=None):
     captured["prompt"] = prompt
     return {"text": "ok", "error": None}
 adapters._call_once = _fake_once

@@ -319,7 +319,7 @@ def _openai_strict(schema):
 # "no answer". That is the whole recurring failure. The number now comes from measurement or from the
 # caller, never from a literal nobody chose.
 def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,
-         sig=None, retries=2, files=None, _no_guard=False, no_metered_fallback=False):
+         sig=None, retries=2, files=None, _no_guard=False, no_metered_fallback=False, images=None):
     """Run one prompt against one model. Returns a result dict (never raises).
 
     `files=[path, …]` is the INPUT twin of the output guard below: each path is assembled into the prompt as a
@@ -356,7 +356,9 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     actually STOPS the call (and its billing), not merely the wait; it applies to BOTH the lane and the API path.
     `schema` (a JSON Schema) forces STRUCTURED output — a forced tool-call on anthropic, response_format
     json_schema/json_object elsewhere. `no_metered_fallback=True` makes a lane MISS return an error instead of
-    paying the API ($0 by construction).
+    paying the API ($0 by construction). `images=[path | data: URL, …]` sends a VISION request — each image is
+    loaded once, priced by the PIXEL rule (content_tokens, not the text tokenizer), and the call rides the
+    metered API (the subscription lanes are text-only CLIs, so a vision call skips them: executor='api').
 
     RETURNS a dict — NEVER raises — with the SAME keys on success and failure, so a caller never has to guess:
       text          the answer (str), or None on any failure / a reply truncated past its retry
@@ -380,12 +382,17 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
         from . import llm_files
         _block, _ = llm_files.attach_many(files)
         prompt = _block + "\n" + prompt
+    if images:
+        # load each image ONCE (path/data-URL → {data_uri, media_type, b64, w, h}); the loaded dicts thread through
+        # so the input estimate and the request build never re-read the file. A vision call rides the metered API,
+        # not a subscription lane (the lane CLIs are text-only) — _call_once forces that.
+        images = [_load_image(i) for i in images]
     if not _no_guard:
         return _call_guarded(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
                              schema=schema, timeout_s=timeout_s, sig=sig, retries=retries,
-                             no_metered_fallback=no_metered_fallback)
+                             no_metered_fallback=no_metered_fallback, images=images)
     return _call_once(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
-                      schema=schema, timeout_s=timeout_s, no_metered_fallback=no_metered_fallback)
+                      schema=schema, timeout_s=timeout_s, no_metered_fallback=no_metered_fallback, images=images)
 
 
 CONNECT_TIMEOUT_S = 10.0     # a live vendor's TCP+TLS handshake is well under this; a blackholed one must fail
@@ -465,8 +472,72 @@ def _exc_cause(e):
     return " ← ".join(parts) or None
 
 
+def _media_type_of(path, raw):
+    """image/<fmt> from the file's MAGIC BYTES (fixed signatures), falling back to the extension — a known-format
+    parse, not a judgement about content."""
+    if raw[:8].startswith(b"\x89PNG"):
+        return "image/png"
+    if raw[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if raw[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        return "image/webp"
+    ext = str(path).rsplit(".", 1)[-1].lower()
+    return {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+            "gif": "image/gif", "webp": "image/webp"}.get(ext, "image/png")
+
+
+def _load_image(img):
+    """One image → {data_uri, media_type, b64, w, h} from a file PATH or a data: URL (or pass a dict straight
+    through, so an image is loaded ONCE and reused by both the input estimate and the request build). Dimensions
+    come from the header (content_tokens) — None when unreadable, which the token estimate handles with a flat
+    fallback rather than mis-counting the base64 as text (the base64-as-tokens error)."""
+    from . import content_tokens as _ct
+    if isinstance(img, dict) and img.get("data_uri"):
+        return img
+    if isinstance(img, str) and img.startswith("data:"):
+        split = _ct._split_data_url(img)
+        if not split:
+            raise ValueError("images=: unparseable data: URL (need data:<media>;base64,<payload>)")
+        media, b64 = split
+        dims = _ct.dims_from_b64(b64)
+        return {"data_uri": img, "media_type": media or "image/png", "b64": b64,
+                "w": dims[0] if dims else None, "h": dims[1] if dims else None}
+    import base64 as _b64
+    with open(img, "rb") as fh:                          # a missing file raises FileNotFoundError — never a silent skip
+        raw = fh.read()
+    b64 = _b64.b64encode(raw).decode()
+    dims = _ct.dims_from_bytes(raw)
+    media = _media_type_of(img, raw)
+    return {"data_uri": f"data:{media};base64,{b64}", "media_type": media, "b64": b64,
+            "w": dims[0] if dims else None, "h": dims[1] if dims else None}
+
+
+def _image_input_tokens(images, provider, model):
+    """INPUT tokens the images add, via content_tokens' provider-aware per-image rule (Anthropic (w×h)/750, OpenAI
+    tiles) — NOT the text tokenizer. A flat fallback when dimensions are unreadable."""
+    from . import content_tokens as _ct
+    total = 0
+    for info in images:
+        if info.get("w") and info.get("h"):
+            total += _ct.image_tokens(info["w"], info["h"], provider=provider, model=model)
+        else:
+            total += _ct.fallback_image_tokens()
+    return total
+
+
+def _image_parts(images, kind):
+    """Provider content parts for the loaded images: OpenAI `image_url` parts, Anthropic `image` base64 blocks —
+    the two wire formats content_tokens._media_of already reads back, kept in one place so build and count agree."""
+    if kind == "anthropic":
+        return [{"type": "image", "source": {"type": "base64", "media_type": i["media_type"], "data": i["b64"]}}
+                for i in images]
+    return [{"type": "image_url", "image_url": {"url": i["data_uri"]}} for i in images]   # openai / compatible
+
+
 def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,
-               _skip_lane=False, no_metered_fallback=False):
+               _skip_lane=False, no_metered_fallback=False, images=None):
     """One raw request. Everything public goes through `call`, which adds the input and output guards.
 
     NO DEFAULT CAP. This carried `max_tokens=512` — the last place a number nobody chose could still reach a
@@ -491,7 +562,9 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
     # ride the matching flat-fee plan — $0 on the billed axis (recorded kind='subscription'); plan VALUE
     # is counted by the matching est-value pipeline (claude-code / codex session logs). Needs NO API key.
     # Any lane failure cools that lane and falls back to the caged API path below — degrade, never break.
-    _lane = None if _skip_lane else _lane_for(prov)
+    # VISION rides the metered API, never a subscription lane — the lane executors are text-only print-mode CLIs
+    # (agy/codex/claude-code) with no image channel, so an images= call skips the lane by construction.
+    _lane = None if (_skip_lane or images) else _lane_for(prov)
     if _lane and (_lane_too_big(_lane[0], prompt) or _lane_model_cooling(_lane[0], raw)):
         _lane = None                                 # prompt too big for this lane, OR this MODEL was rejected here
         #                                              recently (the API served it) → straight to API, don't re-intercept
@@ -625,7 +698,8 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             # single attempt — invisible to the caller's deadline, which is how the 3h30m run stayed hidden.
             c = (anthropic.Anthropic(api_key=key, timeout=_http_timeout(timeout_s), max_retries=0)
                  if timeout_s else anthropic.Anthropic(api_key=key))
-            kw = {"model": raw, "max_tokens": max_tokens, "messages": [{"role": "user", "content": prompt}]}
+            _uc = ([{"type": "text", "text": prompt}] + _image_parts(images, "anthropic")) if images else prompt
+            kw = {"model": raw, "max_tokens": max_tokens, "messages": [{"role": "user", "content": _uc}]}
             if system:
                 kw["system"] = system
             if schema is not None:
@@ -655,7 +729,8 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             # endpoint (z.ai, moonshot) must fail on CONNECT in ~10s, not hold the slot for the whole read budget.
             c = (OpenAI(api_key=key, base_url=spec["base_url"], timeout=_http_timeout(timeout_s), max_retries=0)
                  if timeout_s else OpenAI(api_key=key, base_url=spec["base_url"]))
-            msgs = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": prompt}]
+            _uc = ([{"type": "text", "text": prompt}] + _image_parts(images, "openai")) if images else prompt
+            msgs = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": _uc}]
             okw = {"model": raw, "messages": msgs}
             if schema is not None:
                 sk = json_schema_request("openai" if prov == "openai" else "compat", schema)
@@ -881,7 +956,7 @@ def _heal_token_budget(create_fn, start_budget, model):
     return None
 
 
-def _input_fits(model, prompt, system):
+def _input_fits(model, prompt, system, images=None):
     """(ok, detail) — does the INPUT fit the model's INPUT window?
 
     INPUT AND OUTPUT ARE INDEPENDENT AXES — the point people and agents keep getting wrong, so it is said here
@@ -909,17 +984,20 @@ def _input_fits(model, prompt, system):
         vendor = provider_for(model)
         raw = model.split(":", 1)[1] if ":" in model else model
         text = (system or "") + "\n" + (prompt or "")
+        # IMAGES add INPUT tokens the char short-circuit below cannot see (a photo is ~1.5k tokens with a tiny
+        # text prompt), and they are counted by the PIXEL rule, not the text tokenizer — so add them explicitly.
+        img_tok = _image_input_tokens(images, vendor, raw) if images else 0
 
         # 1) THE MODEL'S INPUT WINDOW (tokens) — independent of the output budget. Tokenize ONLY when the char
         # count could reach the window: a token is >= 1 char, so len(text) <= window ⇒ tokens <= window ⇒ it fits,
-        # and small calls never pay for tokenization.
+        # and small calls never pay for tokenization. Images force the tokenize (their tokens are not in `text`).
         win = pricing.max_input_tokens(raw)
-        if win and len(text) > int(win):
+        if win and (len(text) > int(win) or img_tok):
             try:
                 from .gate import _content_tokens      # the exact tokenizer the gate already counts input with — one source
-                tok = _content_tokens(text, provider=vendor, model=raw)
+                tok = _content_tokens(text, provider=vendor, model=raw) + img_tok
             except Exception:
-                tok = len(text) // 4                   # rail fallback if the tokenizer is unavailable — the window still gets checked
+                tok = len(text) // 4 + img_tok         # rail fallback if the tokenizer is unavailable — the window still gets checked
             if tok > int(win):
                 return False, (f"~{tok:,} input tokens exceed the model's {int(win):,}-token context window — "
                                f"split the input; a request over the window is rejected by the provider, not clipped")
@@ -991,7 +1069,7 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
             finally:
                 _sub_guard.on = False
             return {**r, "substituted_from": model, "substitution": _why, "prompt_adapted": _adapt is not None}
-    ok, detail = _input_fits(model, prompt, kw.get("system"))
+    ok, detail = _input_fits(model, prompt, kw.get("system"), images=kw.get("images"))
     if not ok:
         return {"provider": provider_for(model), "model": model, "text": None, "in_tok": 0, "out_tok": 0,
                 "latency": 0.0, "cost": None, "finish_reason": None, "truncated": None,
