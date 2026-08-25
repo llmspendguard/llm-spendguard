@@ -45,6 +45,12 @@ ck("Anthropic part is a base64 image block with the media type",
 ck("image tokens use the PIXEL rule (provider-aware, > 0), not the base64-as-text count",
    adapters._image_input_tokens([info], "openai", "gpt-5.5") > 0
    and adapters._image_input_tokens([info], "anthropic", "claude-haiku-4-5") > 0)
+# EXACT rule, so a base64 blob can never be text-tokenized into a huge over-estimate: a 900×900 image is
+# (900·900)/750 = 1080 anthropic tokens — NOT the ~800k a base64-as-text count would invent.
+import math                                                                            # noqa: E402
+_pixel_rule_image = {"data_uri": PNG, "media_type": "image/png", "b64": info["b64"], "w": 900, "h": 900}
+ck("anthropic image tokens == ceil((w×h)/750) — the documented rule, not the base64 length",
+   adapters._image_input_tokens([_pixel_rule_image], "anthropic", "claude-haiku-4-5") == math.ceil((900 * 900) / 750))
 # a genuinely missing file must RAISE, not silently drop the image
 try:
     adapters._load_image(os.path.join(os.environ["SPENDGUARD_HOME"], "nope.png"))
