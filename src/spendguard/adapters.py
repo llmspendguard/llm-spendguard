@@ -726,6 +726,40 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
     key = config.api_key(spec["key_env"])
     if not key:
         return {**base, "error": f"no key ({spec['key_env']})"}
+    # LIVE-CATALOG VALIDATION (grounding): a metered id remembered from a past session may be dead now — Gemini
+    # rotates ids, and a dead id today surfaces as a mystery provider 404. Check `raw` (already respelled to the
+    # bare metered id for gemini above) against the provider's cached live /models list BEFORE dispatch. Only a
+    # CONFIRMED-stale id (a fresh list that positively lacks it) is refused, with the nearest live ids; can't-verify
+    # (cold/uncovered cache) warns once and proceeds — a transient catalog gap must never block a real call. The
+    # check never itself makes a network call (cache-only) and never breaks a call (any error → proceed).
+    try:
+        from . import catalog as _catalog
+    except Exception:
+        _catalog = None                                # packaging edge — nothing to validate against; skip silently
+    if _catalog is not None:
+        try:
+            _cok, _csugg, _cstatus = _catalog.check_model(raw, prov)
+            if not _cok:                               # status == "stale": the provider's fresh list lacks this id
+                _hint = (" — nearest live ids: " + ", ".join(_csugg)) if _csugg else ""
+                return {**base, "executor": "api", "error_type": "StaleModelId",
+                        "error": f"{prov} does not serve {raw!r} anymore (not in its live /models catalog){_hint}. "
+                                 f"Run `spendguard sync-catalog` to refresh, or use a live id."}
+            if _cstatus == "unknown" and _catalog.note_unknown_once(prov):
+                import sys as _syscat
+                print(f"[spendguard] model-catalog not synced for {prov} — cannot verify {raw!r} is live; proceeding. "
+                      f"Run `spendguard sync-catalog` to catch stale ids at dispatch.", file=_syscat.stderr)
+        except Exception as _ce:
+            # The VALIDATOR ITSELF failed (a bug, or a corrupted cache) — fail OPEN so a broken check never blocks a
+            # real call, but make it VISIBLE once per provider so it can't silently disable the stale-id protection
+            # forever (the swallowed-exception blind spot). NOT a stale verdict: a check we couldn't run is unknown.
+            try:
+                if _catalog.note_unknown_once(prov):
+                    import sys as _scv
+                    print(f"[spendguard] model-catalog check errored for {prov} ({str(_ce)[:80]}) — proceeding "
+                          f"UNVALIDATED; a stale id would not be caught. Fix the catalog cache / `sync-catalog`.",
+                          file=_scv.stderr)
+            except Exception:
+                pass                                   # even the warning path must not break the dispatch
     t0 = time.time()
     try:
         if spec["kind"] == "anthropic":

@@ -703,6 +703,13 @@ def sync(if_due=False, since=None):
         prices = _price_sync.refresh_if_stale()           # themselves — rides this sync, no dedicated price scheduler
     except Exception:
         pass
+    catalog_refresh = {}
+    try:                                                  # and the live model-catalog (self-limits to once per
+        from . import catalog as _catalog                 # catalog.refresh_hours) so dispatch can catch a rotated/dead
+        catalog_refresh = _catalog.refresh_catalog_if_stale()   # id at the call site — rides this sync, no scheduler
+    except Exception as _ce:
+        catalog_refresh = {"error": str(_ce)[:120]}       # SURFACED, never silent — a refresh that didn't happen
+    #                                                       must be visible in the sync result (see out["catalog"])
     if if_due:
         d, why = due()
         if not d:
@@ -736,7 +743,7 @@ def sync(if_due=False, since=None):
     out = {"rollup": push_rollup(since=since), "insights": push_insights(),
            "workdone": push_workdone(since=since), "status": push_status(),
            "resources": res, "commands": run_commands(since=since), "trust": tg.get("ledger_verdict"),
-           "prices": prices,
+           "prices": prices, "catalog": catalog_refresh,
            "policy": pull_policy()}     # pull the org/team's effective caps so the gate applies them (advisory/enforced)
     try:                                                  # provider-truth totals (keys stay local) → the server's
         from . import truth as _truth                     # monthly close statement reconciles ledger vs these

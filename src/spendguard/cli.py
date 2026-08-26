@@ -54,6 +54,7 @@ _GROUPS = [
         ("install-skills", "add the /spend, /spendguard-* slash commands"),
         ("schedule", "OS-native daily sync (launchd / cron / schtasks)"),
         ("sync-prices", "refresh the price breadth layer now"),
+        ("sync-catalog", "refresh the live model-catalog (validates model ids at dispatch)"),
         ("pricing", "print the canonical price table"),
         ("audit", "fail CI if any code hardcodes a disagreeing price"),
         ("token-caps", "list every hardcoded output-token cap; --judge rules on the unjudged ones"),
@@ -511,6 +512,9 @@ def _dispatch(argv=None):
     if cmd in ("sync-prices", "sync"):
         from . import sync
         return sync.main(rest)
+    if cmd == "sync-catalog":
+        from . import catalog
+        return catalog.main(rest)
     if cmd in ("refresh-prices", "refresh"):
         from . import refresh
         return refresh.main(rest)

@@ -92,6 +92,14 @@ SETTINGS = [
               "a failed fetch keeps the existing cache + curated prices.json. 0 = never auto-refresh (manual "
               "`spendguard sync-prices` only)."),
 
+    # ── model-catalog freshness (live /models validation; grounds a dispatch against what the provider serves) ──
+    dict(section="catalog", key="refresh_hours", store="config.json:catalog.refresh_hours",
+         env="SPENDGUARD_CATALOG_REFRESH_HOURS", default=12, kind="float", secret=False,
+         desc="Auto-refresh the live model-catalog cache when older than this many hours, at the top of every "
+              "`saas sync`. Feeds the pre-dispatch check that catches a stale/rotated model id with the nearest "
+              "live ids instead of a mystery provider 404. Fail-open: a failed fetch keeps the existing cache. "
+              "0 = never auto-refresh (manual `spendguard sync-catalog` only)."),
+
     # ── bulk resilience (the chunk-never-single-shot rule, enforced at the bulk entrypoint) ──
     dict(section="bulk", key="resilience_min_units", store="config.json:bulk.resilience_min_units",
          env="SPENDGUARD_BULK_RESILIENCE_MIN_UNITS", default=1000, kind="int", secret=False,
