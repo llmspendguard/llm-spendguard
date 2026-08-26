@@ -22,7 +22,8 @@ def ck(name, cond):
 tmp = Path(tempfile.mkdtemp(prefix="lanes-artifacts-"))
 lanes.CLAUDE_CREDS = tmp / "claude-creds.json"     # point artifact constants at controlled paths
 lanes.CODEX_AUTH = tmp / "codex-auth.json"
-lanes.GEMINI_CREDS = tmp / "gemini-creds.json"     # the gemini/antigravity lane's OAuth artifact
+lanes.GEMINI_OAUTH_TOKEN = tmp / "antigravity-oauth-token"   # current agy layout — BOTH artifacts must be controlled,
+lanes.GEMINI_CREDS = tmp / "gemini-creds.json"               # else the host's real agy token leaks into 'no creds'
 
 print("-- executor=api: nothing enabled, summary stays silent --")
 os.environ["SPENDGUARD_ADVISOR_EXECUTOR"] = "api"

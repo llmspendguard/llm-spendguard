@@ -1173,14 +1173,22 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
         # that most needed it. Costing nothing to over-provision and everything to under-provision, the
         # asymmetry only points one way.
         max_tokens = max(TOKEN_FLOOR, _predicted)
-    # CLAMP TO WHAT THE MODEL ACTUALLY ACCEPTS. A floor above a model's own maximum is a 400, so the floor
-    # is bounded by the documented/learned limit — min(model_max, max(floor, predicted)). When the limit is
-    # UNKNOWN the floor still goes out: the adapter's downward retry halves until the provider accepts and
-    # records what it accepted, so an unknown model self-corrects instead of being capped by a guess.
-    _cap = pricing.max_output(model.split(":", 1)[-1])   # STRIP the provider prefix: pricing.normalize() strips date/
-    #                                                      -latest/-codex but NOT "provider:model", so a qualified id
-    #                                                      like "openai:gpt-5.5" missed its output cap and sent the
-    #                                                      floor/predicted over the model's real ceiling.
+    # CLAMP TO THE MODEL'S PUBLISHED OUTPUT CEILING — output = min(max(provided|predicted, floor), model_max).
+    # model_max must come from an AUTHORITATIVE catalog, NOT the learned per-model max_output FACT: that fact is
+    # auto-heal's guess and has POISONED the clamp BOTH ways — gpt-5-nano learned max_output=2000 and under-truncated
+    # every answer, while a model with NO fact (gpt-5.4-nano) had NO clamp at all, so a poisoned bulkgate
+    # recommend (146,576, above the max EVER observed) went out over a 128,000-token model and 400'd every call.
+    # The ceiling is in the catalog: pricing.max_output_tokens is the synced model-limits cache (gpt-5.4-nano →
+    # 128000); catalog.model_ceiling covers a model the synced cache lacks but the vendor's live /models exposes.
+    # The learned fact is the LAST resort, only when no catalog knows the model. STRIP the provider prefix:
+    # normalize() strips date/-latest/-codex but NOT "provider:model", so "openai:gpt-5.5" missed its cap before.
+    _raw_id = model.split(":", 1)[-1]
+    try:
+        from . import catalog as _cat
+        _cat_ceil = _cat.model_ceiling(provider_for(model), _raw_id)
+    except Exception:
+        _cat_ceil = None
+    _cap = pricing.max_output_tokens(_raw_id) or _cat_ceil or pricing.max_output(_raw_id)
     if _cap:
         max_tokens = min(int(max_tokens), int(_cap))
     attempt, budget = 0, int(max_tokens)

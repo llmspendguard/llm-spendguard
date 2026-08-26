@@ -34,7 +34,7 @@ def pull_live_catalog(providers=None, timeout_s=20):
     error is surfaced, never silent."""
     from . import adapters, vendor_call
     provs = list(providers) if providers else sorted(adapters.PROVIDERS)
-    models, errors = {}, {}
+    models, errors, ceilings = {}, {}, {}
     for prov in provs:
         spec = adapters.PROVIDERS.get(prov)
         if not spec:
@@ -50,13 +50,20 @@ def pull_live_catalog(providers=None, timeout_s=20):
         if res.get("error"):
             errors[prov] = str(res["error"])[:120]
             continue
-        ids = sorted({m.get("id") for m in (res.get("models") or []) if m.get("id")})   # list_models returns dispatch form
+        mods = res.get("models") or []
+        ids = sorted({m.get("id") for m in mods if m.get("id")})   # list_models returns dispatch form
         if ids:
             models[prov] = ids
+            # carry the vendor's own published OUTPUT ceiling where /models exposes one (deepseek/moonshot do;
+            # OpenAI/Anthropic /models don't — pricing.max_output_tokens covers those). So the ceiling that clamps
+            # a budget is IN the catalog, not a per-model auto-heal guess that poisons.
+            c = {m["id"]: int(m["max_output_tokens"]) for m in mods if m.get("id") and m.get("max_output_tokens")}
+            if c:
+                ceilings[prov] = c
         else:
             errors[prov] = "provider returned an empty model list"
     out = {"_fetched": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
-           "models": models, "errors": errors}
+           "models": models, "errors": errors, "ceilings": ceilings}
     config.update_json(CATALOG_CACHE, lambda _d: out)     # the one atomic writer (+~backup), like sync.CACHE
     _CACHE_MEM["mtime"] = None                             # force the memo to reload the freshly-written file
     return len(models), sum(len(v) for v in models.values()), errors
@@ -88,6 +95,24 @@ def live_model_ids(provider):
         return None
     ids = (data.get("models") or {}).get(provider)
     return list(ids) if ids else None
+
+
+def model_ceiling(vendor, model):
+    """The vendor's published max OUTPUT tokens for a model, from the cached live /models listing — where the
+    vendor exposes it (deepseek/moonshot include it; OpenAI/Anthropic /models do not, and pricing.max_output_tokens
+    covers those). None when not known → the caller falls back to the synced limits cache, then heals. Ids are the
+    dispatch form, so a requested id matches directly."""
+    data = _load_catalog()
+    if not data:
+        return None
+    c = (data.get("ceilings") or {}).get(vendor)
+    if not isinstance(c, dict):
+        return None
+    v = c.get(model) or c.get(model.split(":", 1)[-1])
+    try:
+        return int(v) if v else None
+    except (TypeError, ValueError):
+        return None
 
 
 def catalog_age_hours():
