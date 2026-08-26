@@ -27,6 +27,24 @@ def _util_ratio_cfg(name, default):
         return default
 
 
+def _recent_calls_by_lane(hours=24):
+    """Per-lane CALL COUNT in the last `hours` — the load signal the $-value utilisation MISSES. A cheap model
+    (glm / gemini-flash) does thousands of calls for a few dollars of est-value, so est-value ÷ fee reads it IDLE
+    while its plan's real quota (calls / tokens) is being spent. Call volume is the honest 'how hard is this plan
+    being worked' proxy when the provider's true quota isn't API-exposed — it is what stops the router piling
+    every overflow onto the cheapest-$ lane. Best-effort → {} on any error (the caller then falls back to the
+    $-value order, never breaks)."""
+    try:
+        import sqlite3
+        con = sqlite3.connect(config.db_path())
+        rows = con.execute("SELECT executor, COUNT(*) FROM calls WHERE executor IS NOT NULL AND executor != '' "
+                           "AND ts >= datetime('now', ?) GROUP BY executor", (f"-{int(hours)} hours",)).fetchall()
+        con.close()
+        return {ex: int(n) for ex, n in rows}
+    except Exception:
+        return {}
+
+
 def _lane_fee(lane, n_lanes, total_fee):
     """(fee, exact) per-lane MONTHLY fee. An explicit `subscription.lane_plans` {lane: usd} map wins (exact); else the
     total plan fee split evenly across the lanes (approximate — flagged, never presented as exact). No dollar literal
@@ -59,6 +77,7 @@ def lane_utilization():
     # LANE -> provider from the ONE source of truth (adapters._LANES); the est-value SOURCE string is the lane name.
     lane_prov = {lane: prov for prov, (lane, _mod) in adapters._LANES.items()}
     lanes = sorted(lane_prov)
+    recent = _recent_calls_by_lane(24)                    # volume signal the $-gauge misses (cheap lanes read idle)
     out = []
     for lane in lanes:
         rec = data.get(lane) or {}
@@ -70,6 +89,7 @@ def lane_utilization():
                  "idle" if util is not None and util < idle_r else "warm")
         out.append({"lane": lane, "provider": lane_prov[lane], "est_value_month": round(ev, 2),
                     "plan_fee": round(fee, 2), "utilization": (round(util, 3) if util is not None else None),
+                    "calls_recent": int(recent.get(lane, 0)),   # 24h call VOLUME — the load-balance ordering key
                     "fee_exact": fee_exact, "state": state, "fresh": fresh})
     return {"lanes": out, "total_fee": round(float(total_fee), 2), "fee_is_default": fee_default,
             "asof": receipt._windows()[0]}
@@ -81,9 +101,13 @@ def hot_lanes():
 
 
 def idle_lanes():
-    """Lanes with spare capacity (route overflow TO these), least-utilised first — the order the router prefers."""
+    """Lanes with spare capacity (route overflow TO these), LEAST-LOADED first — the order the router prefers.
+    Ordered by recent CALL VOLUME, not $-value: a cheap lane doing thousands of calls reads idle on the $ gauge
+    but its plan quota is being spent, so preferring lowest-$ piled every overflow onto it (glm). Volume spreads
+    the work evenly across the free plans; $-utilisation is only the tiebreaker."""
     idle = [l for l in lane_utilization()["lanes"] if l["state"] == "idle"]
-    return [l["lane"] for l in sorted(idle, key=lambda l: (l["utilization"] if l["utilization"] is not None else 0.0))]
+    return [l["lane"] for l in sorted(idle, key=lambda l: (l.get("calls_recent", 0),
+                                                           l["utilization"] if l["utilization"] is not None else 0.0))]
 
 
 # ── the CONFIRMED-substitute registry (Part 2 authorization = "model proposes, you confirm once") ──────────────────
@@ -434,18 +458,21 @@ def route_decision(intent, model, reactive=False):
     primary_lane = adapters._LANES.get(prov, (None,))[0]
     _pu = (util.get(primary_lane) or {}).get("utilization")
     pu = float(_pu) if _pu is not None else 0.0
-    # rank the acceptable, available substitutes by plan utilisation — LEAST-used first (fill the emptiest plan)
+    # rank the acceptable, available substitutes by recent CALL VOLUME — LEAST-LOADED first (spread evenly across
+    # the free plans; ranking by $-utilisation alone piled every overflow onto the cheapest-$ lane while its plan
+    # quota was being spent). $-utilisation is the tiebreaker.
     ranked = []
     for spec in subs:
         slane = adapters._LANES.get(spec.split(":", 1)[0], (None,))[0]
         if not slane or slane == primary_lane or adapters._lane_cooling(slane):   # skip unknown/self/cooling lanes
             continue
-        _su = (util.get(slane) or {}).get("utilization")
-        ranked.append((float(_su) if _su is not None else 0.0, spec, slane))
+        _s = util.get(slane) or {}
+        _su = _s.get("utilization")
+        ranked.append((_s.get("calls_recent", 0), float(_su) if _su is not None else 0.0, spec, slane))
     if not ranked:
         return None, "no available substitute lane right now (all cooling, or same plan as primary)"
-    ranked.sort(key=lambda t: t[0])
-    su, spec, slane = ranked[0]
+    ranked.sort(key=lambda t: (t[0], t[1]))
+    _cr, su, spec, slane = ranked[0]
     if reactive:
         return spec, f"primary lane {primary_lane} FAILED → {spec} on {slane} ({su:.1f}x used)"
     margin = _util_ratio_cfg("lane_balance_margin", 0.5)
