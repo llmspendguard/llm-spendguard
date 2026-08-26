@@ -536,6 +536,40 @@ def _image_parts(images, kind):
     return [{"type": "image_url", "image_url": {"url": i["data_uri"]}} for i in images]   # openai / compatible
 
 
+# TWO SPELLINGS OF ONE MODEL. agy (the Gemini subscription lane) names reasoning EFFORT as a trailing model-id
+# suffix — gemini-3.7-flash-{low,medium,high}, gemini-3.1-pro-{low,high} (see `agy models`). The METERED Gemini
+# API names the BARE model (gemini-3.7-flash) and takes effort as a reasoning PARAMETER. So the same logical model
+# is spelled one way for the lane and another for the API, and a call that crosses namespaces must be RESPELLED —
+# otherwise the tier is silently dropped on the lane, or an agy suffix id is handed to the metered API and 404s
+# ("models/gemini-3.7-flash-medium is not found"). These two converters do the respelling; both PARSE agy's fixed
+# suffix vocabulary (format, not meaning), so no judgement is involved.
+_GEMINI_REASONING_TIERS = ("low", "medium", "high")
+
+
+def _split_gemini_reasoning(model_id):
+    """(bare_id, tier) when a gemini id carries an agy reasoning suffix; (model_id, None) otherwise. For the
+    METERED path, which wants the bare id plus a reasoning parameter."""
+    for tier in _GEMINI_REASONING_TIERS:
+        suf = "-" + tier
+        if model_id.endswith(suf) and len(model_id) > len(suf):
+            return model_id[: -len(suf)], tier
+    return model_id, None
+
+
+def _compose_gemini_reasoning(model_id, reasoning):
+    """The agy-style id that carries `reasoning` as a suffix, for the AGY LANE (which reads effort off the id, not
+    a parameter, and ignores the reasoning kwarg). No reasoning, or a value with no agy spelling (e.g. 'minimal'),
+    returns the id unchanged — the lane then runs its default tier, never an invented one. Any existing tier on
+    the id is REPLACED, so an explicit reasoning argument wins over a stale suffix."""
+    if not reasoning:
+        return model_id
+    tier = str(reasoning).strip().lower()
+    if tier not in _GEMINI_REASONING_TIERS:
+        return model_id
+    _base, _existing = _split_gemini_reasoning(model_id)
+    return _base + "-" + tier
+
+
 def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,
                _skip_lane=False, no_metered_fallback=False, images=None):
     """One raw request. Everything public goes through `call`, which adds the input and output guards.
@@ -568,6 +602,10 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
     if _lane and (_lane_too_big(_lane[0], prompt) or _lane_model_cooling(_lane[0], raw)):
         _lane = None                                 # prompt too big for this lane, OR this MODEL was rejected here
         #                                              recently (the API served it) → straight to API, don't re-intercept
+    if _lane is None and prov == "gemini":           # METERED namespace: effort is a PARAMETER, not an id suffix.
+        _bare, _tier = _split_gemini_reasoning(raw)  # an agy id (…-medium) 404s on the metered API — split it so the
+        if _tier:                                    # bare id rides the request and the tier rides `reasoning` below
+            raw, base["model"], reasoning = _bare, _bare, (reasoning or _tier)
     if _lane:
         lane_name, lane_mod = _lane
         # THE SHAPE MUST RIDE THE PROMPT ON A LANE, AND THE DEADLINE MUST BE THE CALLER'S. A CLI completion
@@ -588,7 +626,11 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         _lane_cap = int(getattr(lane_mod, "TIMEOUT_S", 300))
         _lane_timeout = min(_lane_cap, max(int(timeout_s or 0), int(LANE_MIN_TIMEOUT_S)))
         try:
-            s = lane_mod.run_prompt(prompt, system=_lane_sys, model=raw, timeout=_lane_timeout, reasoning=reasoning)
+            # AGY namespace: effort rides the MODEL-ID SUFFIX, and agy ignores the reasoning kwarg. So a bare id
+            # + reasoning=medium must be respelled gemini-…-flash-medium here, or the tier is silently dropped and
+            # the lane runs its default. Non-gemini lanes take the id unchanged.
+            _lane_model = _compose_gemini_reasoning(raw, reasoning) if prov == "gemini" else raw
+            s = lane_mod.run_prompt(prompt, system=_lane_sys, model=_lane_model, timeout=_lane_timeout, reasoning=reasoning)
         except Exception as _le:                       # a lane MUST return an {error} dict, never raise — but a lane
             s = {"error": f"{lane_name} lane raised: {str(_le)[:120]}"}   # bug that throws must degrade, not crash call()
         if not isinstance(s, dict):                    # a non-dict is also a broken contract → treat it as an error

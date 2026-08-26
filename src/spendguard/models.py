@@ -27,6 +27,16 @@ _RULES = [
              "OpenAI auto-caches ≥1024-tok static-first prefix (read 0.5x).")),
     (r"^gpt-", dict(provider="openai", reasoning=None, tokens_param="max_tokens", cache="auto", cache_min=1024,
         note="OpenAI auto-caches ≥1024-tok identical static-first prefix (read 0.5x).")),
+    # VERIFIED 2026-08-25 against the live metered endpoint (generativelanguage v1beta/openai): reasoning is a
+    # PARAMETER here, not a mandatory floor — reasoning=None so a DIRECT call sends nothing and gets Gemini's own
+    # default thinking; reasoning_effort_ok marks that low/medium/high ARE accepted (pass through). 'minimal' is a
+    # hard 400 ("Thinking level MINIMAL"), so its measured floor is 'none' (accepted). On the agy LANE the SAME
+    # effort rides the model-id SUFFIX (…-flash-medium) instead — see adapters._compose/_split_gemini_reasoning.
+    (r"^gemini-", dict(provider="gemini", reasoning=None, reasoning_effort_ok=True, reasoning_floor="none",
+        tokens_param="max_completion_tokens", cache="?", cache_min=1024,
+        note="Gemini metered (OpenAI-compat): effort = reasoning_effort param (low/medium/high verified accepted; "
+             "'minimal' REJECTED 400 → maps to 'none'); DIRECT call sends none → default thinking. agy lane spells "
+             "the same tier as a model-id suffix (…-medium).")),
     (r"^claude-(haiku|3-5-haiku|3-haiku)", dict(provider="anthropic", reasoning=None, tokens_param="max_tokens",
         cache="explicit", cache_min=2048,
         note="Anthropic Haiku cache minimum = 2048 tokens; explicit cache_control (read 0.1x / write 1.25x), static-first.")),
@@ -124,12 +134,19 @@ def normalize_reasoning(model, level):
     lv = (level or "").strip().lower()
     if lv not in ("minimal", "low", "medium", "high"):
         return level                              # unrecognised → pass through; the caller meant it
-    floor = profile(model).get("reasoning")
-    if floor is None:
-        return None                               # a verified NON-reasoning model (gpt-4, claude-haiku) → no effort param
-    if lv == "minimal" and floor and floor != "?":
-        return floor                              # this model's VERIFIED lowest effort ('none' | 'minimal')
-    return lv                                     # low|medium|high are universal; 'minimal' on an unknown floor passes through
+    prof = profile(model)
+    floor = prof.get("reasoning")
+    if floor is not None:                          # a MANDATORY-floor model (gpt-5.5='none', gpt-5-nano/o-series='minimal')
+        if lv == "minimal" and floor != "?":
+            return floor                          # this model's VERIFIED lowest effort ('none' | 'minimal')
+        return lv                                 # low|medium|high are the API's own universal values
+    # No mandatory floor. A model that nonetheless ACCEPTS reasoning_effort (measured — e.g. Gemini metered) passes
+    # the tier through; a DIRECT call never reaches here (reasoning falsy), so this only ever honors an EXPLICIT tier
+    # and never forces one. 'minimal' maps to the model's measured floor when it has one (Gemini: 'minimal' 400s →
+    # 'none'). A model with neither a floor nor reasoning_effort_ok is a verified NON-reasoning model → drop the param.
+    if prof.get("reasoning_effort_ok"):
+        return prof.get("reasoning_floor") if lv == "minimal" else lv
+    return None                                   # verified NON-reasoning model (gpt-4, claude-haiku) → no effort param
 
 
 def apply_call_params(model, kw, *, dialect=None):
