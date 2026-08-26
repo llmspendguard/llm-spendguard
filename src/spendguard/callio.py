@@ -388,6 +388,84 @@ def fetch_history(cap=DEFAULT_CAP, sample_n=None, limit_batches=None):
         return dict(added=added_total, batches_fetched=fetched, skipped_quota=skipped_full, errors=errors)
 
 
+def batch_status(batch_ids, client=None):
+    """Poll one or more OpenAI batches THROUGH spendguard (the OpenAI client stays inside) — the status step
+    between guarded_submit and guarded_collect, so a consumer never touches the OpenAI SDK. Returns
+    {batch_id: {status, output_ready, completed, failed, total}}. $0 (a status read, no generation)."""
+    client = client or _oai_client()
+    if isinstance(batch_ids, str):
+        batch_ids = [batch_ids]
+    out = {}
+    for bid in batch_ids:
+        b = client.batches.retrieve(bid)
+        rc = getattr(b, "request_counts", None)
+        out[bid] = {"status": getattr(b, "status", None),
+                    "output_ready": bool(getattr(b, "output_file_id", None)),
+                    "completed": getattr(rc, "completed", None) if rc else None,
+                    "failed": getattr(rc, "failed", None) if rc else None,
+                    "total": getattr(rc, "total", None) if rc else None}
+    return out
+
+
+def guarded_collect(batch_ids, intent, model, client=None, record_io=False):
+    """Consumer-facing: pull the FULL result set of one or more finished OpenAI batches back THROUGH spendguard
+    (the OpenAI client stays inside) as an UNBOUNDED generator of (custom_id, text, usage) — the collect twin of
+    submit.guarded_submit, and the piece fetch_openai / fetch_history do NOT provide (both sample/cap for the
+    quality corpus, never hand the caller the whole set). Reuses the exact streaming download + custom_id pairing
+    fetch_openai uses, but yields EVERY row to the caller.
+
+    $0: it only STREAMS the finished output file(s) — the generation already billed at submit time; a file
+    download carries no token cost. STREAMING, so a 60k-row batch stays constant-memory. Attributed to `intent`:
+    intent scopes the pull and, when record_io=True, each row is also captured in the call_io corpus under
+    (intent, model) via the idempotent record() (re-collecting never double-counts — UNIQUE on batch+custom_id).
+    A batch whose output is not ready (poll batch_status first) is SKIPPED with a stderr note, never a silent
+    empty. A per-request FAILURE yields (custom_id, None, {"error": <message>}) so the caller sees which items
+    failed instead of losing them; likewise an unparseable / non-object / custom_id-less output row is surfaced as
+    an anomaly (None, None, {"error": …, "raw": …}) — on a pull-EVERYTHING API a lost row is never a silent drop."""
+    import sys
+    client = client or _oai_client()
+    if isinstance(batch_ids, str):
+        batch_ids = [batch_ids]
+    for bid in batch_ids:
+        b = client.batches.retrieve(bid)
+        ofid = getattr(b, "output_file_id", None)
+        if not ofid:
+            print(f"[callio] batch {bid} has no output yet (status={getattr(b, 'status', '?')}) — poll "
+                  f"batch_status until output_ready before collecting; skipping.", file=sys.stderr)
+            continue
+        with client.files.with_streaming_response.content(ofid) as resp:
+            for ln in resp.iter_lines():
+                if not ln or not str(ln).strip():
+                    continue
+                try:
+                    o = json.loads(ln)
+                except Exception:
+                    # A malformed output line is a LOST result on a "pull everything" API — surface it as an anomaly
+                    # row (custom_id None) so the caller can count/log it, never a silent drop.
+                    yield (None, None, {"error": "unparseable batch output line", "raw": str(ln)[:120]})
+                    continue
+                if not isinstance(o, dict):
+                    yield (None, None, {"error": "batch output line is not a JSON object", "raw": str(ln)[:120]})
+                    continue
+                cid = o.get("custom_id")
+                if not cid:
+                    yield (None, None, {"error": "batch output row missing custom_id", "raw": str(ln)[:120]})
+                    continue
+                rsp = o.get("response") if isinstance(o.get("response"), dict) else {}
+                body = rsp.get("body") if isinstance(rsp.get("body"), dict) else {}
+                err = o.get("error") or rsp.get("error") or body.get("error")
+                if err:
+                    yield (cid, None, {"error": err.get("message") if isinstance(err, dict) else str(err)})
+                    continue
+                usage = body.get("usage") or {}
+                msg = ((body.get("choices") or [{}])[0].get("message") or {}).get("content")
+                text = msg if isinstance(msg, str) else (json.dumps(msg) if msg is not None else None)
+                if record_io and text is not None:
+                    record(intent, "openai", model, bid, cid, "", text,
+                           in_tok=usage.get("prompt_tokens", 0), out_tok=usage.get("completion_tokens", 0))
+                yield (cid, text, usage)
+
+
 def main(argv=None):
     import argparse
     ap = argparse.ArgumentParser(prog="spendguard fetch-io")
