@@ -14,6 +14,13 @@ rather than being a parallel computation that could disagree.
 """
 from . import config, adapters
 
+
+class BulkResilienceRefused(Exception):
+    """A large bulk run was submitted as a single shot with NO crash-resilience (no checkpoint, or not actually
+    chunked). Raised BEFORE any lane is touched — a fail-closed guard, distinct from a per-task error row, so a
+    caller can catch it and add the missing checkpoint/chunking rather than lose the run to a transient stall."""
+
+
 # Thresholds are CONFIG, never hardcoded: a plan whose est-value is below IDLE_RATIO of its fee has spare capacity;
 # above HOT_RATIO of its fee it is saturated. Defaults are starting points, tunable per `advisor.lane_*_ratio`.
 IDLE_RATIO_DEFAULT = 0.5
@@ -23,6 +30,18 @@ HOT_RATIO_DEFAULT = 1.5
 def _util_ratio_cfg(name, default):
     try:
         return float(config._cfg_get("advisor", name, None) or default)
+    except (TypeError, ValueError):
+        return default
+
+
+def _resilience_min_units(default=1000):
+    """The unit count above which bulk_delegate refuses an un-resilient single shot (config bulk.resilience_min_units;
+    env SPENDGUARD_BULK_RESILIENCE_MIN_UNITS). 0/None disables the gate. A named threshold, never a bare literal."""
+    try:
+        v = config._cfg_get("bulk", "resilience_min_units", None)
+        import os as _os
+        v = _os.environ.get("SPENDGUARD_BULK_RESILIENCE_MIN_UNITS", v)
+        return int(v) if v is not None else default
     except (TypeError, ValueError):
         return default
 
@@ -259,7 +278,7 @@ def _row_succeeded(row):
 
 
 def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, deadline_s=120.0,
-                  checkpoint=None, chunk_size=100, refuse_billed=False, stats=None):
+                  checkpoint=None, chunk_size=100, refuse_billed=False, stats=None, force=False):
     """Fan a LIST of similar tasks across ALL viable idle lanes CONCURRENTLY — the right shape for a BULK job (e.g.
     symgrep's ~6k one-sentence symbol descriptions) that the per-call bandit would trickle one at a time. Each task
     runs on a lane (round-robin across the lanes the bandit rates GOOD for this intent), each admission BOUNDED by
@@ -283,6 +302,26 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
     tasks = list(tasks)
     if not tasks:
         return []
+    # RESILIENCE GATE (the durable half of chunk-never-single-shot). A large run submitted as ONE shot with no
+    # checkpoint (a crash or a transient no-progress pass loses everything) or not actually chunked (chunk_size >=
+    # the unit count, so one bad unit / a momentary full-lane pass can wedge the whole batch) is REFUSED before any
+    # lane is touched — the mistake that killed a 54k-unit single-shot on pass 1 is made un-submittable, not merely
+    # discouraged. force=True (or bulk.resilience_min_units=0) overrides. The queue drainer is unaffected: it feeds
+    # small leased batches, well under the threshold.
+    _min = _resilience_min_units()
+    if not force and _min and len(tasks) > _min:
+        _gaps = []
+        if not checkpoint:
+            _gaps.append("no checkpoint — a crash or transient stall loses the whole run (pass checkpoint=<jsonl>)")
+        if chunk_size >= len(tasks):
+            _gaps.append(f"not chunked — chunk_size={chunk_size} >= {len(tasks)} units, so one bad unit or a "
+                         f"momentary full-lane pass can wedge everything (lower chunk_size)")
+        if _gaps:
+            raise BulkResilienceRefused(
+                f"REFUSED: {len(tasks)} units (> bulk.resilience_min_units={_min}) as a single shot without "
+                f"resilience — " + "; ".join(_gaps) + ". This is the chunk-never-single-shot rule: a large job "
+                "must checkpoint and chunk so a transient no-progress pass cannot kill it. Fix the above, or pass "
+                "force=True to override and own the risk.")
     arms = _bulk_arms(intent)
     if not arms:
         return [{"text": None, "lane": None, "use_name": None, "billed": False,

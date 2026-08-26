@@ -277,7 +277,7 @@ def main(argv=None):
         intent = pos[0] if pos else None
         if not intent:
             print('usage: spendguard lanes --bulk <intent> [--file tasks.txt] [--jsonl] [--system TEXT | --system-file P] '
-                  '[--refuse-billed] [--checkpoint ck.jsonl] [--out results.jsonl]')
+                  '[--refuse-billed] [--checkpoint ck.jsonl] [--out results.jsonl] [--force]')
             print('       tasks: one per line from --file/stdin (or --jsonl = one JSON-encoded task per line, for '
                   'MULTI-LINE bodies). --system = the shared instruction, sent ONCE not per task; --refuse-billed '
                   'never bills (a lane miss errors); --checkpoint resumes by CONTENT; --out writes {i,task,text,lane,model,...}.')
@@ -309,11 +309,17 @@ def main(argv=None):
                 from . import lane_balance
                 system = Path(sysfile_p).read_text() if sysfile_p else sys_p   # --system-file wins; instruction sent ONCE
                 refuse = any(a == "--refuse-billed" for a in rest)
+                _force = any(a == "--force" for a in rest)
                 if not ck_p:
                     print("  note: no --checkpoint — a crash won't resume; pass --checkpoint <path> for a durable run.")
                 _stats = {}
-                res = lane_balance.bulk_delegate(tasks, intent, system=system, checkpoint=ck_p,
-                                                 refuse_billed=refuse, stats=_stats)
+                try:
+                    res = lane_balance.bulk_delegate(tasks, intent, system=system, checkpoint=ck_p,
+                                                     refuse_billed=refuse, stats=_stats, force=_force)
+                except lane_balance.BulkResilienceRefused as _e:
+                    print(f"\n  ⛔ {_e}\n  → add --checkpoint <path> and/or split into a durable run, or re-run with "
+                          f"--force to override.", file=sys.stderr)
+                    return
                 spread, billed, errs = {}, 0, 0
                 for r in res:
                     spread[r.get("lane")] = spread.get(r.get("lane"), 0) + 1

@@ -92,6 +92,16 @@ SETTINGS = [
               "a failed fetch keeps the existing cache + curated prices.json. 0 = never auto-refresh (manual "
               "`spendguard sync-prices` only)."),
 
+    # ── bulk resilience (the chunk-never-single-shot rule, enforced at the bulk entrypoint) ──
+    dict(section="bulk", key="resilience_min_units", store="config.json:bulk.resilience_min_units",
+         env="SPENDGUARD_BULK_RESILIENCE_MIN_UNITS", default=1000, kind="int", secret=False,
+         desc="Above this many units, bulk_delegate REFUSES a single-shot run that lacks crash-resilience — no "
+              "checkpoint (a crash/transient stall would lose the whole run) or chunk_size >= the unit count (not "
+              "actually chunked, so one bad unit or a momentary full-lane pass can wedge everything). This is the "
+              "durable half of the chunk-never-single-shot rule: it makes the 54k-unit-single-shot mistake "
+              "un-submittable, not just discouraged. Pass force=True to override and own the risk. 0 = disable "
+              "the gate (never refuse on size)."),
+
     # ── learning advisor (Layer 2 — its own LLM use, caged by caps.meta + intent spendguard:*) ──
     dict(section="advisor", key="model", store="config.json:advisor.model", env="SPENDGUARD_ADVISOR_MODEL",
          default="claude-opus-4-8", kind="string", secret=False,
