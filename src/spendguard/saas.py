@@ -710,6 +710,12 @@ def sync(if_due=False, since=None):
     except Exception as _ce:
         catalog_refresh = {"error": str(_ce)[:120]}       # SURFACED, never silent — a refresh that didn't happen
     #                                                       must be visible in the sync result (see out["catalog"])
+    balances_refresh = {}
+    try:                                                  # and per-vendor metered balances (self-limits to once per
+        from . import balances as _balances               # balances.refresh_hours) so routing can prefer idle
+        balances_refresh = _balances.refresh_balances_if_stale()   # sunk-pool credit — rides this sync, no scheduler
+    except Exception as _be:
+        balances_refresh = {"error": str(_be)[:120]}      # SURFACED in out["balances"], never silent
     if if_due:
         d, why = due()
         if not d:
@@ -743,7 +749,7 @@ def sync(if_due=False, since=None):
     out = {"rollup": push_rollup(since=since), "insights": push_insights(),
            "workdone": push_workdone(since=since), "status": push_status(),
            "resources": res, "commands": run_commands(since=since), "trust": tg.get("ledger_verdict"),
-           "prices": prices, "catalog": catalog_refresh,
+           "prices": prices, "catalog": catalog_refresh, "balances": balances_refresh,
            "policy": pull_policy()}     # pull the org/team's effective caps so the gate applies them (advisory/enforced)
     try:                                                  # provider-truth totals (keys stay local) → the server's
         from . import truth as _truth                     # monthly close statement reconciles ledger vs these

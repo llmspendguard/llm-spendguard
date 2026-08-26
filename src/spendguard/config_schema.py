@@ -100,6 +100,13 @@ SETTINGS = [
               "live ids instead of a mystery provider 404. Fail-open: a failed fetch keeps the existing cache. "
               "0 = never auto-refresh (manual `spendguard sync-catalog` only)."),
 
+    # ── metered prepay balances (per-vendor "how much is available", for load-balancing metered spend) ──
+    dict(section="balances", key="refresh_hours", store="config.json:balances.refresh_hours",
+         env="SPENDGUARD_BALANCES_REFRESH_HOURS", default=6, kind="float", secret=False,
+         desc="Auto-refresh the per-vendor metered balance cache when older than this many hours, at the top of "
+              "every `saas sync`. Balances move with usage, so a shorter TTL than the model catalog. Fail-open: a "
+              "failed fetch keeps the existing cache. 0 = never auto-refresh (manual `spendguard balances` only)."),
+
     # ── bulk resilience (the chunk-never-single-shot rule, enforced at the bulk entrypoint) ──
     dict(section="bulk", key="resilience_min_units", store="config.json:bulk.resilience_min_units",
          env="SPENDGUARD_BULK_RESILIENCE_MIN_UNITS", default=1000, kind="int", secret=False,
