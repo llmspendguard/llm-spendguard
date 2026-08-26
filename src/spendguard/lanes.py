@@ -18,7 +18,8 @@ from . import config           # _record_probe writes the probe cache through co
 # Auth artifacts per lane (named constants; tests point these at temp paths).
 CLAUDE_CREDS = Path.home() / ".claude" / ".credentials.json"      # claude CLI's own login file
 CODEX_AUTH = Path.home() / ".codex" / "auth.json"                 # codex CLI login (verified live)
-GEMINI_CREDS = Path.home() / ".gemini" / "oauth_creds.json"       # Antigravity CLI (`agy`) OAuth login (verified live)
+GEMINI_OAUTH_TOKEN = Path.home() / ".gemini" / "antigravity-cli" / "antigravity-oauth-token"   # current agy layout
+GEMINI_CREDS = Path.home() / ".gemini" / "oauth_creds.json"       # legacy agy layout (older CLI versions)
 _CLAUDE_KEYCHAIN_SERVICE = "Claude Code-credentials"              # may be the desktop app's → 'unknown' only
 
 _PROBE_PROMPT = "Reply with exactly: OK"
@@ -77,7 +78,16 @@ def _codex_auth():
 
 
 def _gemini_auth():
-    return "ok" if GEMINI_CREDS.exists() else "missing"
+    """'ok' when agy is logged in. A successful probe is definitive (matches _claude_auth); otherwise the OAuth
+    token file proves login. Its path DRIFTS across agy versions (now antigravity-cli/antigravity-oauth-token,
+    older layouts oauth_creds.json), so accept ANY known artifact — pinning one that a new agy renamed is exactly
+    why this reported a logged-in, working lane as '🔴 inactive — install the CLI'. Quota exhaustion is a separate
+    runtime state (agy prints a reset window; `--probe` shows it), NOT a login failure — and gemini work still
+    flows via the metered API either way, so a capped lane is never 'unavailable'."""
+    ok, _ = _last_probe_ok("gemini")
+    if ok:
+        return "ok"
+    return "ok" if (GEMINI_OAUTH_TOKEN.exists() or GEMINI_CREDS.exists()) else "missing"
 
 
 def _zai_auth():
