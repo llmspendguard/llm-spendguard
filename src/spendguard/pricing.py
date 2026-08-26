@@ -431,8 +431,13 @@ _SYS_SAME_MODEL = (
     "the names look. If no candidate is the same model, say so; a wrong match is worse than no match.")
 
 
-def _same_model_as_ours(ours, their_ids, run=False, advisor=None):
+def _same_model_as_ours(ours, their_ids, run=False, advisor=None, fact_key="openrouter_id"):
     """{our_id: their_id} for ids that name the SAME model. AGENTIC, and the judgement is RECORDED.
+
+    `fact_key` is the per-model fact under which the resolution is stored/read, so this ONE agentic resolver serves
+    more than one catalog without collision: 'openrouter_id' for the price cross-check, 'served_id' for the live
+    served-catalog pre-flight (adapters dispatch). A different fact_key is a different question about the same
+    model, correctly kept in its own slot — never one namespace answering for another.
 
     EXACT EQUALITY IS APPLIED FIRST and is the only mechanical rule here, because it is the only one that
     is provably total: two identical ids are the same model, always. Everything after that is a judgement
@@ -459,7 +464,7 @@ def _same_model_as_ours(ours, their_ids, run=False, advisor=None):
         if m in theirs:
             out[m] = m                                   # identical ids: provable, free, no judgement
             continue
-        rec = _models.facts(m).get("openrouter_id")
+        rec = _models.facts(m).get(fact_key)
         if rec is not None:
             if rec[0]:
                 out[m] = rec[0]
@@ -495,8 +500,8 @@ def _same_model_as_ours(ours, their_ids, run=False, advisor=None):
             continue
         if theirs_id and theirs_id not in theirs:
             continue                                     # a name it invented is not an answer
-        _models.add_fact(ours_id, "openrouter_id", theirs_id or "", confidence=0.9,
-                         source=f"agentic id-resolution vs openrouter ({model})", verified=False)
+        _models.add_fact(ours_id, fact_key, theirs_id or "", confidence=0.9,
+                         source=f"agentic id-resolution ({fact_key}, {model})", verified=False)
         if theirs_id:
             out[ours_id] = theirs_id
             stats["agentic"] += 1

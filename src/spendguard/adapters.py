@@ -726,36 +726,41 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
     key = config.api_key(spec["key_env"])
     if not key:
         return {**base, "error": f"no key ({spec['key_env']})"}
-    # LIVE-CATALOG VALIDATION (grounding): a metered id remembered from a past session may be dead now — Gemini
-    # rotates ids, and a dead id today surfaces as a mystery provider 404. Check `raw` (already respelled to the
-    # bare metered id for gemini above) against the provider's cached live /models list BEFORE dispatch. Only a
-    # CONFIRMED-stale id (a fresh list that positively lacks it) is refused, with the nearest live ids; can't-verify
-    # (cold/uncovered cache) warns once and proceeds — a transient catalog gap must never block a real call. The
-    # check never itself makes a network call (cache-only) and never breaks a call (any error → proceed).
+    # LIVE-CATALOG PRE-FLIGHT (grounding): a metered id remembered from a past session may be dead now — Gemini
+    # rotates ids, and a dead id today surfaces as a mystery provider 404. This mirrors the input-window pre-flight
+    # in vendor_call.call (fail here, naming the two facts, instead of paying for a provider rejection). It reuses
+    # the served-list primitive vendor_call.served_check (cache-first, $0, no per-call latency; a would-be
+    # rejection is CONFIRMED LIVE via serves() so a stale cache can't false-reject) at THIS single choke point, so
+    # every vendor/lane path inherits it (vendor_call.call routes through here too). Only a CONFIRMED-stale id is
+    # refused — with the currently-served SAME model named agentically (closest_served → pricing._same_model_as_ours,
+    # a meaning call, never string distance). 'unchecked' (no synced list, or discovery unavailable) proceeds: a
+    # can't-check is never a rejection. `raw` is already respelled to the bare metered id for gemini above.
     try:
-        from . import catalog as _catalog
+        from . import vendor_call as _vc, catalog as _catalog
     except Exception:
-        _catalog = None                                # packaging edge — nothing to validate against; skip silently
-    if _catalog is not None:
+        _vc = None                                     # packaging edge — nothing to validate against; skip silently
+    if _vc is not None:
         try:
-            _cok, _csugg, _cstatus = _catalog.check_model(raw, prov)
-            if not _cok:                               # status == "stale": the provider's fresh list lacks this id
-                _hint = (" — nearest live ids: " + ", ".join(_csugg)) if _csugg else ""
+            _status = _vc.served_check(prov, raw)
+            if _status == "stale":
+                _same, _live = _vc.closest_served(prov, raw)
+                _hint = (f" — did you mean {_same!r} (the currently-served same model)?" if _same
+                         else (f" — {len(_live)} models are currently served; `spendguard sync-catalog` lists them"
+                               if _live else ""))
                 return {**base, "executor": "api", "error_type": "StaleModelId",
-                        "error": f"{prov} does not serve {raw!r} anymore (not in its live /models catalog){_hint}. "
-                                 f"Run `spendguard sync-catalog` to refresh, or use a live id."}
-            if _cstatus == "unknown" and _catalog.note_unknown_once(prov):
+                        "error": f"{prov} does not serve {raw!r} (not in its live /models catalog){_hint}."}
+            if _status == "unchecked" and _catalog.note_unknown_once(prov):
                 import sys as _syscat
-                print(f"[spendguard] model-catalog not synced for {prov} — cannot verify {raw!r} is live; proceeding. "
+                print(f"[spendguard] served-list not synced for {prov} — cannot verify {raw!r} is live; proceeding. "
                       f"Run `spendguard sync-catalog` to catch stale ids at dispatch.", file=_syscat.stderr)
         except Exception as _ce:
-            # The VALIDATOR ITSELF failed (a bug, or a corrupted cache) — fail OPEN so a broken check never blocks a
+            # The PRE-FLIGHT ITSELF failed (a bug, or a corrupted cache) — fail OPEN so a broken check never blocks a
             # real call, but make it VISIBLE once per provider so it can't silently disable the stale-id protection
-            # forever (the swallowed-exception blind spot). NOT a stale verdict: a check we couldn't run is unknown.
+            # forever (the swallowed-exception blind spot). NOT a stale verdict: a check we couldn't run is unchecked.
             try:
                 if _catalog.note_unknown_once(prov):
                     import sys as _scv
-                    print(f"[spendguard] model-catalog check errored for {prov} ({str(_ce)[:80]}) — proceeding "
+                    print(f"[spendguard] served-list check errored for {prov} ({str(_ce)[:80]}) — proceeding "
                           f"UNVALIDATED; a stale id would not be caught. Fix the catalog cache / `sync-catalog`.",
                           file=_scv.stderr)
             except Exception:

@@ -1,22 +1,18 @@
-"""Live model-catalog cache + pre-dispatch validation — grounding a model id against what the provider ACTUALLY
-serves right now, so a stale id (remembered from a past session; Gemini rotates ids weekly) is caught AT dispatch
-with live alternatives instead of surfacing as a mystery provider 404.
+"""Live model-catalog CACHE — the served-list store that lets the dispatch pre-flight ground a model id against
+what a provider ACTUALLY serves right now ($0, no per-call latency), so a stale id (remembered from a past
+session; Gemini rotates ids weekly) is caught AT dispatch instead of surfacing as a mystery provider 404.
+
+This module is CACHE ONLY. The served-list PRIMITIVE and the pre-flight decision live in vendor_call
+(serves / served_check / closest_served) — that is where a caller reads them; this file just keeps the list
+fresh so served_check answers a served id from cache without a network call.
 
 Mirrors sync.py (the price-breadth cache): a per-provider list of live model ids is fetched with a short TTL,
 cached in SPENDGUARD_HOME/model_catalog.json, refreshed on the `saas sync` cadence and by `spendguard sync-catalog`.
-The FETCH itself is not reinvented — it reuses vendor_call.list_models(), which already GETs each provider's
-/models list ($0, no generation) and already returns a can't-check signal the validator must honour.
-
-Validation contract (check_model) — three fail-closed-on-CONFIRMED-stale, fail-open-on-CAN'T-VERIFY outcomes:
-  • "ok"      — the id IS in the provider's fresh live list → dispatch.
-  • "stale"   — the provider's list is fresh AND the id is CONFIRMED absent → REFUSE, with the nearest live ids.
-  • "unknown" — a cache exists but this provider isn't covered / its last fetch errored → WARN once, PROCEED.
-  • "dormant" — no cache at all (fresh install, never synced) → PROCEED silently (the feature activates on first
-                sync-catalog; it never nags a machine that hasn't opted in).
-A transient fetch failure must NEVER block a real call (matches vendor_call.serves()==None): only a fresh list
-that positively lacks the id is a refusal. The DECISION is exact set membership (`id in live_ids`), never a
-threshold — the suggestion list is purely advisory (the 3 nearest live ids by string similarity), so no
-hand-picked cutoff decides anything.
+The FETCH is not reinvented — it reuses vendor_call.list_models(), which GETs each provider's /models list ($0)
+and returns ids in the DISPATCH form (its own `_dispatch_form` strips Gemini's `models/` listing prefix), so the
+cached ids compare directly against a requested id. live_model_ids(vendor) returns the cached list, or None when
+this vendor was never cached — None is 'not maintained here', which served_check treats as 'unchecked' (proceed),
+never as 'no'.
 """
 import os
 import json
@@ -29,15 +25,6 @@ DEFAULT_REFRESH_HOURS = 12          # ids rotate over days/weeks, not hours; 12h
 
 _CACHE_MEM = {"mtime": None, "data": None}     # in-process memo, invalidated by file mtime (dispatch never re-reads disk needlessly)
 _WARNED = set()                                 # warn at most once per provider per process on the "unknown" path
-
-
-def _dispatch_id(list_id):
-    """The id in the form a CALLER dispatches, normalised from the /models listing form. Gemini's list endpoint
-    returns ids as `models/gemini-3.7-flash` while a request uses the bare `gemini-3.7-flash`; without stripping
-    that fixed prefix, every live Gemini id would compare as ABSENT and the validator would falsely refuse the
-    whole provider. A fixed-prefix strip (format normalisation), not a decision about meaning."""
-    s = str(list_id or "")
-    return s[len("models/"):] if s.startswith("models/") else s
 
 
 def pull_live_catalog(providers=None, timeout_s=20):
@@ -63,7 +50,7 @@ def pull_live_catalog(providers=None, timeout_s=20):
         if res.get("error"):
             errors[prov] = str(res["error"])[:120]
             continue
-        ids = sorted({_dispatch_id(m.get("id")) for m in (res.get("models") or []) if m.get("id")})
+        ids = sorted({m.get("id") for m in (res.get("models") or []) if m.get("id")})   # list_models returns dispatch form
         if ids:
             models[prov] = ids
         else:
@@ -111,28 +98,6 @@ def catalog_age_hours():
         return max(0.0, (datetime.datetime.now(datetime.timezone.utc) - ts).total_seconds() / 3600.0)
     except Exception:
         return None
-
-
-def _nearest_live_ids(model, ids, n=3):
-    """The n live ids most string-similar to `model`, ranked — a 'did you mean' hint, NOT a filter: it never
-    decides anything (staleness is exact membership), so there is no relevance cutoff to hand-pick. Ties break on
-    the id text for determinism."""
-    import difflib
-    return sorted(ids, key=lambda i: (-difflib.SequenceMatcher(None, model, i).ratio(), i))[:n]
-
-
-def check_model(model, provider):
-    """(ok, suggestions, status) for a metered dispatch. status ∈ {ok, stale, unknown, dormant} — see module
-    docstring. Only 'stale' (a FRESH list that positively lacks the id) is a refusal; everything else proceeds.
-    suggestions are the nearest LIVE ids (advisory only)."""
-    if _load_catalog() is None:
-        return True, [], "dormant"                 # never synced → the feature is dormant, proceed silently
-    ids = live_model_ids(provider)
-    if ids is None:
-        return True, [], "unknown"                 # cache exists but this provider isn't covered → warn+proceed
-    if model in ids:
-        return True, [], "ok"
-    return False, _nearest_live_ids(model, ids), "stale"
 
 
 def note_unknown_once(provider):

@@ -591,8 +591,19 @@ _DEFAULT_ROOT = {"openai": "https://api.openai.com/v1", "anthropic": "https://ap
 _ANTHROPIC_VERSION = "2023-06-01"        # the version header their REST API requires
 
 
+def _dispatch_form(mid):
+    """A listed id in the DISPATCH form a caller actually requests. Gemini's /models lists ids as
+    `models/gemini-3.7-flash`, while a request uses the bare `gemini-3.7-flash`; without stripping that fixed
+    listing prefix, `serves()` compares a bare id against a prefixed list and reports every served Gemini model as
+    ABSENT (measured: serves('gemini','gemini-3.7-flash') was False for a live model). A fixed-prefix strip —
+    format normalisation, not a decision about meaning, and not a hardcoded model list."""
+    s = str(mid or "")
+    return s[len("models/"):] if s.startswith("models/") else s
+
+
 def list_models(vendor, timeout_s=20):
-    """What this vendor SERVES right now — {"vendor", "models": [{id, max_output_tokens?}], "error"}.
+    """What this vendor SERVES right now — {"vendor", "models": [{id, max_output_tokens?}], "error"}. Ids are the
+    DISPATCH form (the string a request uses), so a caller can compare a requested id against this list directly.
 
     INPUT invariant:  a vendor key present in adapters.PROVIDERS with a resolvable key.
     OUTPUT invariant: `models` lists ids the vendor itself returned. NEVER a guess — the whole point is that a
@@ -624,6 +635,8 @@ def list_models(vendor, timeout_s=20):
         mid = m.get("id") or m.get("name")
         if not mid:
             continue
+        mid = _dispatch_form(mid)      # the DISPATCH form (strip Gemini's `models/` listing prefix) — a non-empty
+        #                                id stays non-empty, so the guard above still owns the id-less case
         # Some OpenAI-compatible vendors expose limits on the listing; take them ONLY when present.
         lim = m.get("max_output_tokens") or m.get("max_tokens") or None
         out.append({"id": mid, "max_output_tokens": int(lim) if isinstance(lim, (int, float)) and lim else None})
@@ -632,12 +645,50 @@ def list_models(vendor, timeout_s=20):
 
 def serves(vendor, model):
     """True/False/None — does this vendor serve this id RIGHT NOW? None when discovery itself failed, which is
-    'we could not check', not 'no' (absence is unknown, never a verdict)."""
+    'we could not check', not 'no' (absence is unknown, never a verdict). LIVE (a /models GET); the pre-flight
+    below reads a cache first and only calls this to CONFIRM a would-be rejection."""
     d = list_models(vendor)
     if d["error"]:
         return None
     ids = {m["id"] for m in d["models"]}
     return model in ids or model.split(":", 1)[-1] in ids
+
+
+def served_check(vendor, model):
+    """'served' | 'stale' | 'unchecked' for a DISPATCH pre-flight — the wired, cache-first form of serves().
+
+    CACHE-FIRST, so the common path is $0 with NO per-call latency: the served-list cache (catalog, kept fresh by
+    the sync cadence) answers a served id outright. A miss is never a rejection on its own — a stale cache must not
+    cause a false 'stale', so a miss is CONFIRMED LIVE via serves() before it is ever called stale. And when there
+    is no cached list at all for this vendor, the pre-flight stays DORMANT ('unchecked', pass through) rather than
+    doing a live /models GET on the hot path — the sync cadence is what populates it. 'unchecked' is also what a
+    live discovery failure yields: a can't-check is never turned into a 'no' (the same rule _input_fits states)."""
+    from . import catalog
+    ids = catalog.live_model_ids(vendor)               # cached served ids (dispatch form), or None if not cached
+    if ids is None:
+        return "unchecked"                             # no maintained list → dormant, no per-call live fetch
+    if model in ids or model.split(":", 1)[-1] in ids:
+        return "served"                                # $0 fast path — the fresh cache says served
+    live = serves(vendor, model)                       # cache HAS the vendor but not this id → CONFIRM LIVE
+    return "served" if live is True else ("unchecked" if live is None else "stale")
+
+
+def closest_served(vendor, stale_model):
+    """(same_model_id | None, live_ids) — the currently-served id that names the SAME model as a stale one, decided
+    AGENTICALLY by pricing._same_model_as_ours (alias/version identity is a MEANING call — never a string-distance
+    match), plus the live served list for context. Best-effort; any failure returns (None, live_ids or []). The
+    agentic call is tiny and fires ONLY on the refusal path (a stale id), never on the $0 served fast-path — so the
+    pre-flight itself stays $0 (a catalog read) and only a confirmed-stale dispatch pays for one identity judgement."""
+    d = list_models(vendor)
+    live = [m["id"] for m in d["models"]] if not d.get("error") else []
+    if not live:
+        return None, []
+    try:
+        from . import pricing
+        resolved, _ = pricing._same_model_as_ours([stale_model], live, run=True, fact_key="served_id")
+        return resolved.get(stale_model), live
+    except Exception:
+        return None, live
 
 
 # ── E: the MEASURED output-cap registry ───────────────────────────────────────────────────────────────────
