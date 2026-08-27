@@ -130,11 +130,12 @@ def _fake_call(model, prompt, max_tokens=None, **kw):
             "cost": 0.0, "finish_reason": "stop", "error": None}
 
 
-_o_lane_for, _o_call, _o_route2, _o_cool = adapters._lane_for, adapters.call, lane_balance.route_decision, adapters._lane_cool
+_o_lane_for, _o_call, _o_route2 = adapters._lane_for, adapters.call, lane_balance.route_decision
 try:
     adapters._lane_for = lambda prov: ("claude-code", _FailLane) if prov == "anthropic" else None
     adapters.call = _fake_call
-    adapters._lane_cool = lambda lane: None                # don't mutate cooldown state in the test
+    # _lane_cool not stubbed: cooldowns write to the per-test-isolated resource_state store, so the primary
+    # lane's real 'failover' cool is a harmless side effect (this test asserts on the substitution, not cooldowns).
     lane_balance.route_decision = lambda intent, model, reactive=False: (
         ("openai:gpt-5.5", "primary lane failed") if (reactive and model == "anthropic:claude-x") else (None, ""))
     with calls.context(intent=INTENT):
@@ -144,7 +145,7 @@ try:
     fails += ck("...and returns the substitute's answer", rr.get("text") == "ok-sub")
 finally:
     adapters._lane_for, adapters.call = _o_lane_for, _o_call
-    lane_balance.route_decision, adapters._lane_cool = _o_route2, _o_cool
+    lane_balance.route_decision = _o_route2
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_lane_substitution: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

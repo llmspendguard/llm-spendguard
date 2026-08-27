@@ -18,7 +18,11 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from spendguard import adapters, antigravity_exec, lane_balance, lane_bandit, lane_catalog   # noqa: E402
+from spendguard import adapters, antigravity_exec, lane_balance, lane_bandit, lane_catalog, resource_state   # noqa: E402
+
+
+def _gemini_cool_left():
+    return resource_state.cool_until(resource_state.lane_key("gemini")) - __import__("time").time()
 
 
 def ck(name, cond):
@@ -41,18 +45,18 @@ fails += ck("_error_result attaches retry_after_s when a window is present", er.
 fails += ck("_error_result with no window is a plain error (no retry_after_s key)",
             "retry_after_s" not in antigravity_exec._error_result("boom"))
 
-print("\n-- _lane_cool honors an explicit duration and PERSISTS across processes --")
-adapters._lane_cooldown.clear()
+print("\n-- _lane_cool honors an explicit duration and PERSISTS across processes (unified resource_state store) --")
+resource_state._reset()
 adapters._lane_cool("gemini", seconds=162 * 3600)
 fails += ck("the lane is cooling", adapters._lane_cooling("gemini"))
-fails += ck("cooled for ~the requested window", abs(adapters._lane_cooldown["gemini"] - (time.time() + 162 * 3600)) < 5)
-adapters._lane_cooldown.clear()                              # simulate a FRESH process: memory empty
+fails += ck("cooled for ~the requested window", abs(_gemini_cool_left() - 162 * 3600) < 5)
+resource_state._reset()                                     # simulate a FRESH process: memory empty
 fails += ck("memory cleared → not cooling in-memory", not adapters._lane_cooling("gemini"))
-adapters._load_cooldowns()                                  # a new process reloads from disk at import
+resource_state._load_state()                               # a new process reloads from disk at import
 fails += ck("a fresh process RELOADS the persisted cooldown (honors 'until reset')", adapters._lane_cooling("gemini"))
 
 print("\n-- a quota result cools the lane on the --refuse-billed path (which never cooled a lane before) --")
-adapters._lane_cooldown.clear(); adapters._save_cooldowns()
+resource_state._reset(); resource_state._save()
 
 
 class _QuotaLane:
@@ -74,8 +78,7 @@ fails += ck("(C) the quota lane is now COOLING after the refuse-billed miss (it 
 _cap = adapters._max_quota_cool_s()
 fails += ck("(C) cooled for the BOUNDED re-test window min(reset, cap), NOT the full 162h — an oscillating quota "
             "lane (agy) is re-tested periodically, never bypassed for days",
-            0 < adapters._lane_cooldown.get("gemini", 0) - time.time() <= _cap + 5
-            and adapters._lane_cooldown.get("gemini", 0) - time.time() < 100 * 3600)
+            0 < _gemini_cool_left() <= _cap + 5 and _gemini_cool_left() < 100 * 3600)
 
 print("\n-- _bulk_arms EXCLUDES a cooling lane, so bulk stops handing it work --")
 lane_catalog.arms = lambda flt=None: [("gemini", "g-high"), ("codex", "gpt-5.5")]

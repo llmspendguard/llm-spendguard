@@ -20,7 +20,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-lanefb-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
-from spendguard import adapters   # noqa: E402
+from spendguard import adapters, resource_state   # noqa: E402
 
 fails = 0
 
@@ -39,7 +39,7 @@ def ck(label, cond, extra=""):
 # has PROVEN a size and then failed ABOVE it (section 1b).
 adapters._lane_big_prompt_ceiling.clear()
 adapters._lane_ok_max.clear()
-adapters._lane_model_cooldown.clear()
+resource_state._reset()
 k = adapters._learn_from_fallback("laneA", "x" * 5000, api_failed=False, model="m")
 ck("a first miss with NO proven-good → 'model-cooled' (retryable), NOT a permanent size ceiling",
    k == "model-cooled" and "laneA" not in adapters._lane_big_prompt_ceiling)
@@ -70,7 +70,7 @@ _real_lane_for, _real_key = adapters._lane_for, adapters.config.api_key
 adapters._lane_for = lambda prov: ("laneC", fake) if prov == "anthropic" else None
 adapters.config.api_key = lambda name: None            # the API fallback fails fast with no key
 adapters._lane_big_prompt_ceiling.pop("laneC", None)
-adapters._lane_cooldown.pop("laneC", None)
+resource_state.clear_cooldown(resource_state.lane_key("laneC"))
 try:
     r = adapters._call_once("anthropic:claude-opus-4-8", "review this", max_tokens=1000, timeout_s=5)
 finally:

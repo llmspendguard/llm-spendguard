@@ -10,7 +10,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-pool-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
-from spendguard import adapters, subscription_exec, codex_exec
+from spendguard import adapters, subscription_exec, codex_exec, resource_state
 
 fails = []
 def ck(name, cond):
@@ -60,7 +60,7 @@ ck("cooling lane is SKIPPED (no second lane attempt) → served by the API path"
    calls_made["codex"] == n and r2.get("executor") == "api")
 ck("the OTHER lane is unaffected by the cooldown",
    adapters.call("claude-haiku-4-5-20251001", "x", sig="test:executor-pool").get("executor") == "claude-code")
-adapters._lane_cooldown.clear()
+resource_state._reset()
 codex_exec.run_prompt = codex_ok
 ck("after cooldown clears the lane serves again",
    adapters.call("openai:gpt-5.5", "x", sig="test:executor-pool").get("executor") == "codex")

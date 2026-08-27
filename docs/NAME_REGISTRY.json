@@ -73,9 +73,9 @@
       "why": "Three provider-specific credential resolvers each fetching a DIFFERENT key from different sources: ANTHROPIC_API_KEY/keys.env, VAST_API_KEY/vastai config, and ZAI coding/api key. Same bare name, entirely different jobs and error semantics (one raises, others return empty/fallback)."
     },
     "_load_state": {
-      "n": 4,
+      "n": 5,
       "verdict": "PROTOCOL",
-      "why": "Each adapter's _load_state loads its OWN namespaced state with its OWN empty shape via the shared config.load_state helper. The docstring notes the FOUR duplicated bare-except copies were already refa"
+      "why": "Each adapter's _load_state loads its OWN namespaced state with its OWN empty shape via the shared config.load_state helper. The docstring notes the FOUR duplicated bare-except copies were already refa[ctored]. n 4→5: resource_state._load_state (the unified per-resource cooldown/state store) added — same role, same shared config.load_state helper, its own namespace ('resource_state') and shape (per-key axes, with an expiry prune), read and confirmed as protocol."
     },
     "_norm": {
       "n": 2,

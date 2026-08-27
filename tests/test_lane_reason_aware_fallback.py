@@ -22,7 +22,7 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from spendguard import adapters, antigravity_exec                                      # noqa: E402
+from spendguard import adapters, antigravity_exec, resource_state                      # noqa: E402
 
 fails = []
 
@@ -37,8 +37,7 @@ def check(name, cond):
 def _reset():
     adapters._lane_big_prompt_ceiling.clear()
     adapters._lane_ok_max.clear()
-    adapters._lane_cooldown.clear()
-    adapters._lane_model_cooldown.clear()
+    resource_state._reset()                     # cooldowns (whole-lane + per-model) now live in the unified store
 
 
 print("-- (a) the reset-window parses by TOKEN (preposition + compound duration), across phrasings --")

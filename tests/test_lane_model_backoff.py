@@ -13,7 +13,7 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from spendguard import adapters                                                        # noqa: E402
+from spendguard import adapters, resource_state                                        # noqa: E402
 
 
 def ck(name, cond):
@@ -23,8 +23,8 @@ def ck(name, cond):
 
 
 fails = []
-for d in (adapters._lane_model_cooldown, adapters._lane_cooldown, adapters._lane_ok_max,
-          adapters._lane_big_prompt_ceiling):
+resource_state._reset()                          # cooldowns (whole-lane + per-model) now live in the unified store
+for d in (adapters._lane_ok_max, adapters._lane_big_prompt_ceiling):
     d.clear()
 
 print("-- a MODEL rejection (WITHIN a proven-good size; the API then answered) backs off THAT (lane, model) only --")

@@ -72,7 +72,7 @@ def _executor():
 _LANES = {"anthropic": ("claude-code", "subscription_exec"), "openai": ("codex", "codex_exec"),
           "zai": ("zai-coding", "zai_exec"),                    # z.ai GLM Coding Plan — Anthropic-compatible flat-fee endpoint
           "gemini": ("gemini", "antigravity_exec")}             # Google Antigravity CLI (`agy`) — Gemini plan lane
-_lane_cooldown = {}   # lane name -> unix ts until which it is cooling
+from . import resource_state   # AXIS-1 of the resource_state migration: cooldowns now live in the unified store
 _sub_guard = threading.local()   # one-hop lane-substitution guard: while a substitute call is in flight (proactive OR
                                  # reactive), no nested substitution — a substitute failing does not chain to a third.
 _lane_echoed = set()             # lanes already announced this run — echo "a plan is serving these prompts" ONCE per
@@ -101,79 +101,20 @@ def _max_quota_cool_s():
         return 1800.0
 
 
-_cooldown_lock = threading.Lock()
-
-
-def _cooldown_path():
-    from . import config
-    return config.HOME / "lane_cooldown.json"
-
-
-_cooldown_io_warned = set()   # so a persistence failure is announced ONCE, not per call (and never silently)
-
-
-def _warn_cooldown_io(kind, exc):
-    """A cooldown-persistence failure is NOT harmless: it silently drops the guarantee that a quota-dead lane
-    stays demoted across processes, so the next bulk run re-hammers it. Say so — once per failure kind — rather
-    than swallow it. Dispatch still degrades to per-process cooling; the operator just learns the persistence is
-    not working (e.g. SPENDGUARD_HOME unwritable, or a corrupt file to fix)."""
-    if kind in _cooldown_io_warned:
-        return
-    _cooldown_io_warned.add(kind)
-    import sys as _sy
-    _sy.stderr.write(f"[spendguard] lane cooldowns NOT persisted ({kind}: {type(exc).__name__}: {str(exc)[:80]}) — "
-                     f"a quota-cooled lane may be retried by a fresh bulk process. Fix {_cooldown_path()}.\n")
-
-
-def _load_cooldowns():
-    """Cross-PROCESS cooldowns. A bulk run is a FRESH process, so an in-memory cooldown never survives to the next
-    `spendguard lanes --bulk` — a quota exhaustion ('resets in 162h') must outlive the process that hit it, or the
-    next run hammers the dead lane again. Cooldowns persist to a small json under SPENDGUARD_HOME and are reloaded
-    at import; expired entries are dropped on load. A read/parse failure is SURFACED (not swallowed) and degrades
-    to per-process cooling — an unreadable file silently dropping every cooldown is exactly what lets the dead
-    lane through."""
-    global _lane_cooldown
-    p = _cooldown_path()
-    try:
-        if not p.exists():
-            return
-        import json as _j
-        now = time.time()
-        _lane_cooldown = {k: float(v) for k, v in _j.loads(p.read_text()).items() if float(v) > now}
-    except Exception as e:
-        _warn_cooldown_io("load", e)      # a CORRUPT file must not read as 'no cooldowns' without a word
-
-
-def _save_cooldowns():
-    try:
-        from . import config
-        live = {k: v for k, v in _lane_cooldown.items() if v > time.time()}
-        config.update_json(str(_cooldown_path()), lambda _d: live)     # atomic write (+~backup), like prices.json
-    except Exception as e:
-        _warn_cooldown_io("save", e)      # a write failure means this cool won't survive to the next bulk process
-
-
 def _lane_cooling(lane):
-    return time.time() < _lane_cooldown.get(lane, 0)
+    return resource_state.cooling(resource_state.lane_key(lane))
 
 
-def _lane_cool(lane, seconds=None):
-    """Cool a lane for `seconds` (default the pool cooldown). A quota exhaustion passes its parsed reset window so
-    the lane stays down UNTIL it resets, instead of being retried every 900s only to re-fail. Persisted so a fresh
-    bulk process honors it."""
-    with _cooldown_lock:
-        _lane_cooldown[lane] = time.time() + (float(seconds) if seconds else _pool_cooldown_s())
-        _save_cooldowns()
-
-
-_load_cooldowns()   # honor a still-active cooldown from a previous process (e.g. a quota reset window)
-
-
-_lane_model_cooldown = {}   # (lane, model) -> unix ts: a specific model this lane REJECTED while the API served it.
+def _lane_cool(lane, seconds=None, reason=""):
+    """Cool a whole lane for `seconds` (default the pool cooldown), tagged with `reason` (quota / down / failover).
+    A quota exhaustion passes its (capped) reset window so the lane stays down until it resets, instead of being
+    retried every 900s only to re-fail. Delegates to the unified resource_state store — which persists it so a
+    FRESH bulk process honours a still-active cool (a quota exhaustion must outlive the process that hit it)."""
+    resource_state.cool(resource_state.lane_key(lane), float(seconds) if seconds else _pool_cooldown_s(), reason)
 
 
 def _lane_model_cooling(lane, model):
-    return time.time() < _lane_model_cooldown.get((lane, model), 0)
+    return resource_state.cooling(resource_state.lane_model_key(lane, model))
 
 
 def _lane_model_cool(lane, model):
@@ -181,8 +122,9 @@ def _lane_model_cool(lane, model):
     — a MODEL/content mismatch (e.g. codex 400s gpt-5-mini on a ChatGPT plan: "not supported with a ChatGPT
     account"), not the lane being down. Per-model so gpt-5.5 keeps riding codex the whole time; self-healing (it
     expires) so a model the plan later serves is retried. Without this the lane re-intercepts the rejected model on
-    EVERY call — the '_learn_from_fallback' size axis alone can't see a model rejection."""
-    _lane_model_cooldown[(lane, model)] = time.time() + _pool_cooldown_s()
+    EVERY call — the '_learn_from_fallback' size axis alone can't see a model rejection. Its own cooldown axis in
+    the resource_state store (a distinct key from the whole-lane cool), tagged 'model-miss'."""
+    resource_state.cool(resource_state.lane_model_key(lane, model), _pool_cooldown_s(), "model-miss")
 
 
 # A lane failure is NOT always the lane being down. A CLI that ran the prompt as an AGENT and hit its turn limit,
@@ -230,7 +172,7 @@ def _learn_from_fallback(lane_name, prompt, api_failed, model=None, transient=Fa
       very first miss — the poison that starved a whole working lane. The signals are FACTS (did the API answer? a
       structured quota token?), never a keyword read of the prose."""
     if api_failed:
-        _lane_cool(lane_name)
+        _lane_cool(lane_name, reason="down")
         return "down"
     if transient:
         return "transient"
@@ -698,7 +640,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             # otherwise read the miss as a SIZE limit and pin a ceiling. Demote it until its reset window — but
             # CAPPED (_max_quota_cool_s), because an oscillating quota (agy) must be re-tested, not bypassed for
             # days. `transient` then tells _learn_from_fallback this was quota, so it learns NO size ceiling.
-            _lane_cool(lane_name, seconds=min(float(_ra), _max_quota_cool_s()))
+            _lane_cool(lane_name, seconds=min(float(_ra), _max_quota_cool_s()), reason="quota")
         if no_metered_fallback:                        # caller opted out of ALL metered spend (--refuse-billed): a lane
             return {**base, "text": None, "cost": None, "executor": lane_name,   # MISS is an error row, NOT a paid
                     "error": f"refused: would bill metered API ({s.get('error')})"}   # retry — $0 by construction
@@ -723,7 +665,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 finally:
                     _sub_guard.on = False
                 if not _rr.get("error"):
-                    _lane_cool(lane_name)          # the primary lane failed → back off; the substitute carried the call
+                    _lane_cool(lane_name, reason="failover")   # primary failed → back off; the substitute carried it
                     return {**_rr, "substituted_from": model, "substitution": _rwhy}
         # No substitute (or it also failed) → fall back to the API on the SAME prompt (this recurses with the lane
         # disabled, so the existing API path runs once, unchanged) and let its OUTCOME settle whether the lane was
