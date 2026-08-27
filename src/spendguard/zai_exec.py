@@ -57,6 +57,17 @@ def available() -> bool:
     return bool(_key())
 
 
+def _output_budget(mdl):
+    """max_tokens for a glm call: the model's AUTHORITATIVE published ceiling (pricing.max_output_tokens — the
+    synced limits cache, poison-free) first; else the learned max_output FACT, but FLOORED to _FALLBACK_MAX_TOKENS
+    so a poisoned-low fact (the auto-heal 2000/7 class) can't truncate this lane. A lane computes its own budget
+    (run_prompt takes no max_tokens), so it must apply the SAME authority order _call_guarded uses for the metered
+    path — reading pricing.max_output (the fact) FIRST, as before, is exactly how the poison bit this lane."""
+    from . import pricing
+    pub = int(pricing.max_output_tokens(mdl) or 0)
+    return pub or max(int(pricing.max_output(mdl) or 0), _FALLBACK_MAX_TOKENS)
+
+
 def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=None):   # reasoning: protocol-uniform; accepted, not yet applied on this lane
     """→ {text, in_tok, out_tok, latency, error} from ONE plan-billed GLM completion over the Anthropic-
     compatible coding endpoint, via RAW HTTP so the spend gate never meters it. `model` = the glm id the caller
@@ -66,8 +77,7 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
         return {"error": f"no z.ai key ({KEY_ENV} or ZAI_API_KEY) — add it to keys.env"}
     mdl = (model or "").split(":", 1)[-1] or "glm-5.3"    # newest flagship on the plan; caller may override
     try:
-        from . import pricing
-        mt = int(pricing.max_output(mdl) or 0) or _FALLBACK_MAX_TOKENS
+        mt = _output_budget(mdl)
     except Exception:
         mt = _FALLBACK_MAX_TOKENS
     body = {"model": mdl, "max_tokens": mt, "messages": [{"role": "user", "content": prompt}]}
