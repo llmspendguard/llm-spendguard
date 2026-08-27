@@ -56,6 +56,7 @@ _GROUPS = [
         ("sync-prices", "refresh the price breadth layer now"),
         ("sync-catalog", "refresh the live model-catalog (validates model ids at dispatch)"),
         ("balances", "per-vendor metered prepay balance (sunk-pool vs on-demand), for routing"),
+        ("reliability", "sweep every lane ($0) + metered provider (--run) for reachability"),
         ("pricing", "print the canonical price table"),
         ("audit", "fail CI if any code hardcodes a disagreeing price"),
         ("token-caps", "list every hardcoded output-token cap; --judge rules on the unjudged ones"),
@@ -519,6 +520,9 @@ def _dispatch(argv=None):
     if cmd == "balances":
         from . import balances
         return balances.main(rest)
+    if cmd == "reliability":
+        from . import reliability
+        return reliability.main(rest)
     if cmd in ("refresh-prices", "refresh"):
         from . import refresh
         return refresh.main(rest)
