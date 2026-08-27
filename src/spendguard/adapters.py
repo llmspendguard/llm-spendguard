@@ -136,24 +136,19 @@ def _lane_model_cool(lane, model):
 # the SAME prompt settles it — the API answered where the lane did not ⇒ the lane was UNSUITABLE for this prompt
 # (keep it, and route prompts this size straight to API); the API failed too ⇒ a real problem (cool the lane).
 # One signal, every lane, and no interpretation of an error string.
-_lane_big_prompt_ceiling = {}   # lane -> smallest prompt chars ABOVE a proven-good size that failed 'unsuitable'
-_lane_ok_max = {}               # lane -> largest prompt chars the lane has SUCCESSFULLY answered
-
-
 def _lane_note_ok(lane, prompt):
-    """Record that the lane ANSWERED a prompt of this size. This is the proven-good watermark below which an
-    'unsuitable' failure is read as content-specific, not a size limit — so a small anomaly can never lower the
-    routing ceiling and disable a lane that demonstrably handles that size."""
-    n = len(prompt or "")
-    if n > _lane_ok_max.get(lane, 0):
-        _lane_ok_max[lane] = n
+    """Record that the lane ANSWERED a prompt of this size — the proven-good watermark below which an 'unsuitable'
+    failure is content-specific, not a size limit, so a small anomaly can never disable a lane that demonstrably
+    handles that size. Lives in the resource_state store's size_ceiling axis (persistent, survives processes)."""
+    resource_state.note_proven_good(resource_state.lane_key(lane), len(prompt or ""))
 
 
 def _lane_too_big(lane, prompt):
-    """True when a prompt this size already provoked an 'unsuitable' failure on this lane (the lane failed but the
-    API then answered) — route it straight to the API rather than pay the lane's cold start to fail again.
-    In-process learning; resets each run."""
-    ceil = _lane_big_prompt_ceiling.get(lane)
+    """True when a prompt this size already provoked a GENUINE size failure on this lane (above its proven-good
+    size) — route it straight to the API rather than pay the lane's cold start to fail again. The learned ceiling
+    lives in the resource_state store, persisted with a RE-TEST window, so a one-off failure never bypasses the
+    lane forever and a real limit is not re-learned from scratch each process (the old in-memory ceiling was)."""
+    ceil = resource_state.size_ceiling(resource_state.lane_key(lane))
     return ceil is not None and len(prompt or "") >= ceil
 
 
@@ -166,7 +161,7 @@ def _learn_from_fallback(lane_name, prompt, api_failed, model=None, transient=Fa
                          about suitability and never pin a size ceiling. Returns "transient". (THE FIX: a quota
                          miss used to be indistinguishable from "prompt too big" and permanently bypassed the lane.)
       otherwise the API answered where the lane did not ⇒ unsuitable for THIS prompt. A SIZE ceiling is learned
-      ONLY when the failing size is LARGER than a size the lane has PROVEN it can answer (_lane_ok_max > 0) — a
+      ONLY when the failing size is LARGER than a size the lane has PROVEN it can answer (proven_good > 0) — a
       genuine size signal. Without a proven-good baseline the miss is ambiguous (schema/content/a not-yet-parsed
       transient), so back off THIS model on THIS lane (retryable) rather than pin a PERMANENT size ceiling from the
       very first miss — the poison that starved a whole working lane. The signals are FACTS (did the API answer? a
@@ -177,9 +172,9 @@ def _learn_from_fallback(lane_name, prompt, api_failed, model=None, transient=Fa
     if transient:
         return "transient"
     n = len(prompt or "")
-    _ok = _lane_ok_max.get(lane_name, 0)
+    _ok = resource_state.proven_good(resource_state.lane_key(lane_name))
     if _ok > 0 and n > _ok:                         # failure ABOVE a proven-good size ⇒ a genuine size limit
-        _lane_big_prompt_ceiling[lane_name] = min(_lane_big_prompt_ceiling.get(lane_name, n), n)
+        resource_state.set_size_ceiling(resource_state.lane_key(lane_name), n)   # min-ratchet + re-test window
         return "unsuitable"
     if model:                                       # no proven-good baseline (or within it) ⇒ model/content miss,
         _lane_model_cool(lane_name, model)          # retryable — back off THIS model on THIS lane, NOT a permanent
@@ -679,7 +674,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             print(f"[spendguard] {lane_name} lane hit a quota/rate limit — cooled {_cool}s then re-tested (NOT a "
                   f"size limit); the API served this call ({str(s['error'])[:60]})", file=_sys.stderr)
         elif _kind == "unsuitable":                    # a genuine size limit ABOVE the lane's proven-good size
-            _ceil = _lane_big_prompt_ceiling.get(lane_name)
+            _ceil = resource_state.size_ceiling(resource_state.lane_key(lane_name))
             print(f"[spendguard] {lane_name} lane unsuitable above its proven-good size — prompts >= {_ceil} chars "
                   f"now route to API ({str(s['error'])[:60]})", file=_sys.stderr)
         elif _kind == "model-cooled":                  # ambiguous miss (schema/content) — back off THIS model briefly

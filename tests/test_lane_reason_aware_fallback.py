@@ -34,10 +34,12 @@ def check(name, cond):
         fails.append(name)
 
 
+def _ceil(lane):
+    return resource_state.size_ceiling(resource_state.lane_key(lane))
+
+
 def _reset():
-    adapters._lane_big_prompt_ceiling.clear()
-    adapters._lane_ok_max.clear()
-    resource_state._reset()                     # cooldowns (whole-lane + per-model) now live in the unified store
+    resource_state._reset()                     # size_ceiling + cooldowns (whole-lane + per-model) all live here now
 
 
 print("-- (a) the reset-window parses by TOKEN (preposition + compound duration), across phrasings --")
@@ -53,20 +55,20 @@ print("\n-- (b) a TRANSIENT (quota) miss learns NO size ceiling --")
 _reset()
 kind = adapters._learn_from_fallback("gemini", "a 40-character prompt that would trip 33", False, model="gemini-3.7-flash-medium", transient=True)
 check("transient miss → 'transient', not 'unsuitable'", kind == "transient")
-check("...and NO size ceiling was pinned (the whole-lane bypass can't happen)", "gemini" not in adapters._lane_big_prompt_ceiling)
+check("...and NO size ceiling was pinned (the whole-lane bypass can't happen)", _ceil("gemini") is None)
 
 print("\n-- (c) an ambiguous FIRST miss (no proven-good) learns NO size ceiling --")
 _reset()
 kind = adapters._learn_from_fallback("gemini", "some prompt with no proven-good baseline yet", False, model="gemini-3.7-flash-medium")
 check("first miss with proven-good=0 → 'model-cooled', not a size ceiling", kind == "model-cooled")
-check("...NO size ceiling from an ambiguous first miss", "gemini" not in adapters._lane_big_prompt_ceiling)
+check("...NO size ceiling from an ambiguous first miss", _ceil("gemini") is None)
 check("...the MODEL is backed off (retryable), not the whole lane", adapters._lane_model_cooling("gemini", "gemini-3.7-flash-medium"))
 
 print("\n-- (d) a size ceiling IS learned above a PROVEN-good size --")
 _reset()
 adapters._lane_note_ok("gemini", "x" * 100)                      # proven it handles 100 chars
 kind = adapters._learn_from_fallback("gemini", "y" * 5000, False, model="gemini-3.7-flash-medium")   # fails at 5000
-check("failure ABOVE proven-good (100) → 'unsuitable' + a real ceiling", kind == "unsuitable" and adapters._lane_big_prompt_ceiling.get("gemini") == 5000)
+check("failure ABOVE proven-good (100) → 'unsuitable' + a real ceiling", kind == "unsuitable" and _ceil("gemini") == 5000)
 check("a genuinely big prompt is then routed to API", adapters._lane_too_big("gemini", "z" * 6000))
 check("a prompt WITHIN proven-good is still served by the lane", not adapters._lane_too_big("gemini", "z" * 50))
 

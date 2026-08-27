@@ -23,12 +23,16 @@ def ck(name, cond):
 
 
 fails = []
-resource_state._reset()                          # cooldowns (whole-lane + per-model) now live in the unified store
-for d in (adapters._lane_ok_max, adapters._lane_big_prompt_ceiling):
-    d.clear()
+
+
+def _ceil(lane):
+    return resource_state.size_ceiling(resource_state.lane_key(lane))
+
+
+resource_state._reset()                          # size_ceiling + proven-good + cooldowns all live in the unified store
 
 print("-- a MODEL rejection (WITHIN a proven-good size; the API then answered) backs off THAT (lane, model) only --")
-adapters._lane_ok_max["codex"] = 100_000              # codex has answered prompts this big before
+resource_state.note_proven_good(resource_state.lane_key("codex"), 100_000)   # codex has answered prompts this big
 kind = adapters._learn_from_fallback("codex", "a small prompt", api_failed=False, model="gpt-5-mini")
 fails += ck("classified 'model-cooled' (a within-size miss backs off the model, lane kept, not cooled)", kind == "model-cooled")
 fails += ck("the rejected model is now cooling on codex", adapters._lane_model_cooling("codex", "gpt-5-mini"))
@@ -39,7 +43,7 @@ print("\n-- a genuine SIZE limit (ABOVE a proven-good size) learns a ceiling, do
 adapters._lane_note_ok("gemini", "x" * 1_000)         # gemini has PROVEN it answers 1000-char prompts
 kind2 = adapters._learn_from_fallback("gemini", "x" * 200_000, api_failed=False, model="gemini-3-flash")
 fails += ck("size-limited fail (above proven-good) = 'unsuitable'", kind2 == "unsuitable")
-fails += ck("it learned a routing size ceiling", adapters._lane_big_prompt_ceiling.get("gemini") is not None)
+fails += ck("it learned a routing size ceiling", _ceil("gemini") is not None)
 fails += ck("it did NOT per-model-cool (the model is fine, the prompt was too big)",
             not adapters._lane_model_cooling("gemini", "gemini-3-flash"))
 

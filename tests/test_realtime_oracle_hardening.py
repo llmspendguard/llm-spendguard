@@ -102,14 +102,15 @@ except Exception:
     _ch_ok = False
 fails += ck("_conversation_hours skips the sid-less segment without KeyError-aborting", _ch_ok and _ch is not None)
 
-print("-- bonus: lane 'unsuitable' WITHIN proven-good size leaves the ceiling unset (the bare-index KeyError) --")
-from spendguard import adapters
-adapters._lane_ok_max["ttlane"] = 10_000                 # the lane has answered a 10k-char prompt before
-adapters._lane_big_prompt_ceiling.pop("ttlane", None)
+print("-- bonus: lane 'unsuitable' WITHIN proven-good size leaves the ceiling unset (store returns None, never KeyErrors) --")
+from spendguard import adapters, resource_state
+_ttkey = resource_state.lane_key("ttlane")
+resource_state.note_proven_good(_ttkey, 10_000)          # the lane has answered a 10k-char prompt before
+resource_state.clear_size_ceiling(_ttkey)
 _kind = adapters._learn_from_fallback("ttlane", "x" * 100, api_failed=False)   # a SMALL prompt fails: content-specific
 fails += ck("a within/no-proven failure is 'model-cooled' and learns NO size ceiling", _kind == "model-cooled")
-fails += ck("so the ceiling read must be .get (bare index would KeyError, as it did in the lane-fallback log)",
-            adapters._lane_big_prompt_ceiling.get("ttlane") is None)
+fails += ck("the store's size_ceiling read returns None cleanly (never the bare-index KeyError of the old dict)",
+            resource_state.size_ceiling(_ttkey) is None)
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_realtime_oracle_hardening: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)
