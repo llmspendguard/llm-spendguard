@@ -71,8 +71,11 @@ r = adapters._call_once("gemini:g-low", "hi", max_tokens=100, no_metered_fallbac
 fails += ck("refuse path still returns a refusal error row", "refused" in (r.get("error") or "").lower())
 fails += ck("(C) the quota lane is now COOLING after the refuse-billed miss (it was not, before)",
             adapters._lane_cooling("gemini"))
-fails += ck("(C) cooled for ~the reset window (>100h), not the flat 900s pool cooldown",
-            adapters._lane_cooldown.get("gemini", 0) - time.time() > 100 * 3600)
+_cap = adapters._max_quota_cool_s()
+fails += ck("(C) cooled for the BOUNDED re-test window min(reset, cap), NOT the full 162h — an oscillating quota "
+            "lane (agy) is re-tested periodically, never bypassed for days",
+            0 < adapters._lane_cooldown.get("gemini", 0) - time.time() <= _cap + 5
+            and adapters._lane_cooldown.get("gemini", 0) - time.time() < 100 * 3600)
 
 print("\n-- _bulk_arms EXCLUDES a cooling lane, so bulk stops handing it work --")
 lane_catalog.arms = lambda flt=None: [("gemini", "g-high"), ("codex", "gpt-5.5")]

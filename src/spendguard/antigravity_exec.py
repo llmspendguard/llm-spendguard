@@ -89,12 +89,25 @@ def _reset_window_s(text):
     value is how long to back off. None when no such token is present — the caller then treats it as an ordinary
     lane failure, never guessing quota from wording."""
     t = str(text or "")
-    for unit, mult in (("h", 3600), ("m", 60), ("s", 1)):
-        m = (re.search(rf"resets?\s+in\s+(\d+)\s*{unit}\b", t, re.I)
-             or re.search(rf"retry\s+after\s+(\d+)\s*{unit}\b", t, re.I))
-        if m:
-            return int(m.group(1)) * mult
-    return None
+    # The reset/backoff WINDOW is a fixed-shape token: a temporal preposition ("in"/"after") followed by a
+    # compound H/M/S duration — "in 95h39m1s", "after 30m", "in 2 hours". Keying on the TOKEN, not on a growing
+    # list of quota verbs (resets / renews / retry / available / try again / …), is what keeps this a PARSE, not a
+    # keyword classification of what an error MEANS (the docstring's rule). It also fixes the two real bugs: the
+    # old `\d+\s*h\b` never matched the COMPOUND "95h39m1s" (the `h` is followed by a digit), and it only knew two
+    # phrasings. A well-formed duration after in/after in an error envelope IS the structured signal; we sum every
+    # part and take the largest window. None when no such token is present. A duration from a non-reset error
+    # (e.g. a timeout "after 60s") merely cools+retries the lane briefly — transient, never a size limit — which
+    # is the correct handling anyway.
+    _UNIT = {"h": 3600, "m": 60, "s": 1}
+    best = None
+    _run = r"(?:\d+\s*(?:h(?:ou)?rs?|hrs?|h|m(?:in(?:ute)?s?)?|s(?:ec(?:ond)?s?)?)\s*)+"
+    for seg in re.findall(rf"(?:\bin|\bafter)\s+({_run})", t, re.I):
+        total = 0
+        for num, unit in re.findall(r"(\d+)\s*([hms])", seg, re.I):
+            total += int(num) * _UNIT[unit.lower()]
+        if total and (best is None or total > best):
+            best = total
+    return best
 
 
 def _error_result(text):

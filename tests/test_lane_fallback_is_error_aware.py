@@ -32,18 +32,22 @@ def ck(label, cond, extra=""):
     print(f"  [{'OK' if cond else 'FAIL'}] {label}{('  — ' + extra) if extra and not cond else ''}")
 
 
-# ── 1. the decision, taken from the API OUTCOME (pure) ───────────────────────────────────────────────────────
+# ── 1. the decision is REASON-AWARE: a SIZE ceiling needs a PROVEN-GOOD baseline, never an ambiguous first miss ─
+# The API OUTCOME still decides lane-vs-API, but a first miss with NO proven-good size is AMBIGUOUS
+# (schema/content/a not-yet-parsed transient), so it backs off the MODEL (retryable) rather than pin a permanent
+# whole-lane size ceiling — the poison that starved a working lane. A size ceiling is learned only once the lane
+# has PROVEN a size and then failed ABOVE it (section 1b).
 adapters._lane_big_prompt_ceiling.clear()
-k = adapters._learn_from_fallback("laneA", "x" * 5000, api_failed=False)
-ck("API answered where the lane didn't → 'unsuitable' (lane KEPT, not cooled)",
-   k == "unsuitable" and not adapters._lane_cooling("laneA"))
-ck("...and the failing size is recorded as the routing ceiling", adapters._lane_big_prompt_ceiling.get("laneA") == 5000)
-ck("a prompt >= the ceiling now routes straight to API",
-   adapters._lane_too_big("laneA", "y" * 5000) and adapters._lane_too_big("laneA", "y" * 9000))
-ck("...but a small prompt still uses the lane", not adapters._lane_too_big("laneA", "y" * 100))
-adapters._learn_from_fallback("laneA", "x" * 3000, api_failed=False)
-ck("the ceiling is the SMALLEST failing size (a smaller failure lowers it)",
-   adapters._lane_big_prompt_ceiling.get("laneA") == 3000)
+adapters._lane_ok_max.clear()
+adapters._lane_model_cooldown.clear()
+k = adapters._learn_from_fallback("laneA", "x" * 5000, api_failed=False, model="m")
+ck("a first miss with NO proven-good → 'model-cooled' (retryable), NOT a permanent size ceiling",
+   k == "model-cooled" and "laneA" not in adapters._lane_big_prompt_ceiling)
+ck("...the whole lane is KEPT (not cooled); only THAT model backs off",
+   not adapters._lane_cooling("laneA") and adapters._lane_model_cooling("laneA", "m"))
+ck("a TRANSIENT (quota/rate) miss learns nothing about suitability — no size ceiling",
+   adapters._learn_from_fallback("laneA", "x" * 5000, api_failed=False, transient=True) == "transient"
+   and "laneA" not in adapters._lane_big_prompt_ceiling)
 
 # ── 1b. a proven-good size makes a SMALLER failure content-specific, not a size ceiling (robustness) ──────────
 adapters._lane_ok_max.clear()

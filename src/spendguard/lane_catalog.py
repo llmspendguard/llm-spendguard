@@ -24,7 +24,7 @@ from . import adapters, config
 # `style="suffix"` is the only one that changes the USE-NAME; the others pass effort out-of-band, so the use-name is
 # just the base. `default=None` means "leave the lane's own default".
 REASONING_QUIRK = {
-    "gemini":      {"style": "suffix",   "levels": ("low", "medium", "high"),                 "default": "low"},
+    "gemini":      {"style": "suffix",   "levels": ("low", "medium", "high"),                 "default": "medium"},
     "codex":       {"style": "param",    "levels": ("none", "low", "medium", "high", "xhigh", "max"), "default": None},
     "claude-code": {"style": "thinking", "levels": (),                                        "default": None},
     "zai-coding":  {"style": "none",     "levels": (),                                        "default": None},

@@ -107,7 +107,7 @@ from spendguard import adapters
 adapters._lane_ok_max["ttlane"] = 10_000                 # the lane has answered a 10k-char prompt before
 adapters._lane_big_prompt_ceiling.pop("ttlane", None)
 _kind = adapters._learn_from_fallback("ttlane", "x" * 100, api_failed=False)   # a SMALL prompt fails: content-specific
-fails += ck("a within-proven-range failure is 'unsuitable' but learns NO ceiling", _kind == "unsuitable")
+fails += ck("a within/no-proven failure is 'model-cooled' and learns NO size ceiling", _kind == "model-cooled")
 fails += ck("so the ceiling read must be .get (bare index would KeyError, as it did in the lane-fallback log)",
             adapters._lane_big_prompt_ceiling.get("ttlane") is None)
 

@@ -88,6 +88,19 @@ def _pool_cooldown_s():
         return 900.0
 
 
+def _max_quota_cool_s():
+    """Cap on how long a QUOTA/reset-window failure cools a lane. A provider may STATE a huge window ("resets in
+    95h"), but a plan whose quota OSCILLATES (agy's Starter quota serves some calls even while reporting a 95h
+    reset) must be RE-TESTED periodically, not bypassed for days — the first call after this cap IS the re-test,
+    and a success clears the cool. Config advisor.max_quota_cool_s (default 1800s = 30m); env override."""
+    import os as _os
+    try:
+        return float(_os.environ.get("SPENDGUARD_MAX_QUOTA_COOL_S")
+                     or config._cfg_get("advisor", "max_quota_cool_s", 1800))
+    except Exception:
+        return 1800.0
+
+
 _cooldown_lock = threading.Lock()
 
 
@@ -202,23 +215,33 @@ def _lane_too_big(lane, prompt):
     return ceil is not None and len(prompt or "") >= ceil
 
 
-def _learn_from_fallback(lane_name, prompt, api_failed, model=None):
-    """The auto-route decision, taken from the API-fallback OUTCOME (never the lane's error text). api_failed is
-    False when the API answered where the lane did not ⇒ the lane was UNSUITABLE for this prompt: keep the lane,
-    and — ONLY when this failing size is LARGER than a size the lane has proven it can answer — learn a routing
-    ceiling so bigger prompts skip it. A failure SMALLER than a proven-good size is content-specific, not a size
-    limit, so it must not lower the ceiling and disable a working lane. api_failed is True ⇒ a real problem: cool
-    the lane. Generalizes across every lane because the signal is a FACT (did the API answer?), not a string."""
+def _learn_from_fallback(lane_name, prompt, api_failed, model=None, transient=False):
+    """The auto-route decision from the API-fallback OUTCOME (never the lane's error string). The REASON for the
+    miss decides what is learned — throwing the reason away is exactly what let a quota miss disable a lane:
+      api_failed=True  → the API ALSO failed ⇒ a real problem: cool the lane. Returns "down".
+      transient=True   → the lane failed with a STRUCTURED quota/rate signal (a parsed reset window) ⇒ NOT a size
+                         or content limit. The lane was already cooled UNTIL its reset window, so learn NOTHING
+                         about suitability and never pin a size ceiling. Returns "transient". (THE FIX: a quota
+                         miss used to be indistinguishable from "prompt too big" and permanently bypassed the lane.)
+      otherwise the API answered where the lane did not ⇒ unsuitable for THIS prompt. A SIZE ceiling is learned
+      ONLY when the failing size is LARGER than a size the lane has PROVEN it can answer (_lane_ok_max > 0) — a
+      genuine size signal. Without a proven-good baseline the miss is ambiguous (schema/content/a not-yet-parsed
+      transient), so back off THIS model on THIS lane (retryable) rather than pin a PERMANENT size ceiling from the
+      very first miss — the poison that starved a whole working lane. The signals are FACTS (did the API answer? a
+      structured quota token?), never a keyword read of the prose."""
     if api_failed:
         _lane_cool(lane_name)
         return "down"
+    if transient:
+        return "transient"
     n = len(prompt or "")
-    if n > _lane_ok_max.get(lane_name, 0):          # only a failure above the proven-good range is a size signal
+    _ok = _lane_ok_max.get(lane_name, 0)
+    if _ok > 0 and n > _ok:                         # failure ABOVE a proven-good size ⇒ a genuine size limit
         _lane_big_prompt_ceiling[lane_name] = min(_lane_big_prompt_ceiling.get(lane_name, n), n)
-    elif model:                                     # WITHIN a size the lane can handle, yet it failed and the API
-        _lane_model_cool(lane_name, model)          # answered → a MODEL/content mismatch (not a size limit): back
-        #                                             off THIS model on THIS lane so it stops re-intercepting it.
-    return "unsuitable"
+        return "unsuitable"
+    if model:                                       # no proven-good baseline (or within it) ⇒ model/content miss,
+        _lane_model_cool(lane_name, model)          # retryable — back off THIS model on THIS lane, NOT a permanent
+    return "model-cooled"                           # size ceiling from an ambiguous first miss
 
 
 def _lane_for(prov):
@@ -670,11 +693,12 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         _ra = s.get("retry_after_s") if isinstance(s, dict) else None
         if _ra:
             # A STRUCTURED quota/exhaustion signal the lane EXECUTOR parsed from its own CLI's envelope (a known
-            # shape it owns — see antigravity_exec._quota_backoff_s). This is the one failure the API-outcome
-            # doctrine below cannot see: a quota-dead lane's metered API twin answers fine, so the fallback would
-            # keep the lane "unsuitable-but-alive" and re-hand it work. Demote it UNTIL its reset window. The
-            # routing layer acts on the seconds, never the error text — the text-blindness stays intact here.
-            _lane_cool(lane_name, seconds=_ra)
+            # shape it owns — see antigravity_exec._reset_window_s). This is the one failure the API-outcome
+            # doctrine below cannot see: a quota-limited lane's metered API twin answers fine, so the fallback would
+            # otherwise read the miss as a SIZE limit and pin a ceiling. Demote it until its reset window — but
+            # CAPPED (_max_quota_cool_s), because an oscillating quota (agy) must be re-tested, not bypassed for
+            # days. `transient` then tells _learn_from_fallback this was quota, so it learns NO size ceiling.
+            _lane_cool(lane_name, seconds=min(float(_ra), _max_quota_cool_s()))
         if no_metered_fallback:                        # caller opted out of ALL metered spend (--refuse-billed): a lane
             return {**base, "text": None, "cost": None, "executor": lane_name,   # MISS is an error row, NOT a paid
                     "error": f"refused: would bill metered API ({s.get('error')})"}   # retry — $0 by construction
@@ -706,20 +730,20 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         # unsuitable for this prompt (keep it) or genuinely down (cool it).
         out = _call_once(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
                          schema=schema, timeout_s=timeout_s, _skip_lane=True)
-        _kind = _learn_from_fallback(lane_name, prompt, bool(out.get("error")), model=raw)
+        _kind = _learn_from_fallback(lane_name, prompt, bool(out.get("error")), model=raw, transient=bool(_ra))
         import sys as _sys
-        if _kind == "unsuitable":
-            # The ceiling is only LEARNED when the failure was ABOVE the lane's proven-good size; a
-            # content-specific failure WITHIN that size returns "unsuitable" but leaves the ceiling unset. Read it
-            # with .get — a bare index here KeyError'd and took down the very API fallback it was narrating.
+        if _kind == "transient":                       # quota/rate — cooled until reset (capped), re-tested; NOT size
+            _cool = int(min(float(_ra), _max_quota_cool_s()))
+            print(f"[spendguard] {lane_name} lane hit a quota/rate limit — cooled {_cool}s then re-tested (NOT a "
+                  f"size limit); the API served this call ({str(s['error'])[:60]})", file=_sys.stderr)
+        elif _kind == "unsuitable":                    # a genuine size limit ABOVE the lane's proven-good size
             _ceil = _lane_big_prompt_ceiling.get(lane_name)
-            if _ceil is not None:
-                print(f"[spendguard] {lane_name} lane unsuitable for this prompt — kept for smaller ones; prompts "
-                      f">= {_ceil} chars now route to API ({str(s['error'])[:60]})", file=_sys.stderr)
-            else:
-                print(f"[spendguard] {lane_name} lane unsuitable for this prompt (content-specific, within its "
-                      f"proven-good size) — kept; the API answered it ({str(s['error'])[:60]})", file=_sys.stderr)
-        else:
+            print(f"[spendguard] {lane_name} lane unsuitable above its proven-good size — prompts >= {_ceil} chars "
+                  f"now route to API ({str(s['error'])[:60]})", file=_sys.stderr)
+        elif _kind == "model-cooled":                  # ambiguous miss (schema/content) — back off THIS model briefly
+            print(f"[spendguard] {lane_name} lane missed this prompt ({raw}, within its handled size) — backing "
+                  f"off that model briefly; the API answered it ({str(s['error'])[:60]})", file=_sys.stderr)
+        else:                                          # "down" — API also failed
             print(f"[spendguard] {lane_name} lane unavailable — cooling {int(_pool_cooldown_s())}s; the API "
                   f"fallback also failed ({str(s['error'])[:60]})", file=_sys.stderr)
         return out
