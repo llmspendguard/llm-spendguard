@@ -53,6 +53,19 @@ try:
     fails += ck("everything it learns is >= the floor",
                 all(v >= FLOOR for _m, k, v in learned if k == "max_output_tokens"))
 
+    print("\n-- PLAUSIBILITY GUARD: when the PUBLISHED ceiling is known, a heal artifact must NOT overwrite it --")
+    learned.clear()
+    from spendguard import pricing
+    _orig_pub = pricing.max_output_tokens
+    pricing.max_output_tokens = lambda m: 128_000 if m == "published-model" else _orig_pub(m)
+    try:
+        r_pub = adapters._heal_token_budget(_accepts_at_8000, 32_000, "published-model")   # a transient 400 clears at 8000
+        fails += ck("the call still recovers (returns the accepted response)", r_pub == {"ok": 8000})
+        fails += ck("★ learns NOTHING — a published ceiling is authoritative, never overwritten by a mid-range heal artifact",
+                    not any(k == "max_output_tokens" for _m, k, _v in learned))
+    finally:
+        pricing.max_output_tokens = _orig_pub
+
     print("\n-- a request that only ever passes BELOW the floor (a non-budget 400): learns NOTHING --")
     learned.clear()
 

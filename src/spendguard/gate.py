@@ -1265,13 +1265,25 @@ def _autotune(kw, model):
     if cut > 0 or (p95 and cap < p95):
         if complete + cut < AUTOTUNE_MIN_OBS:
             return
+        # The SAME authority chain the metered path uses: published limits cache → the vendor's live /models
+        # ceiling. Published-only left a catalog-known model (no synced entry) UNCLAMPED, so a poisoned recommend
+        # could raise the cap over the real ceiling on this SDK-patch path → the same 400 _call_guarded avoids.
+        from . import adapters as _ad
+        _MAX_ABS = int(_ad.MAX_TOKEN_CEILING)
         ceiling = None
         try:
-            from . import pricing
-            ceiling = pricing.max_output_tokens(model)
-        except Exception:
-            pass
-        target = min(rec, int(ceiling)) if ceiling else rec
+            from . import pricing, catalog
+            _rid = model.split(":", 1)[-1]
+            ceiling = pricing.max_output_tokens(_rid) or catalog.model_ceiling(_ad.provider_for(model), _rid)
+        except Exception as _ce:
+            from . import config as _cfg
+            _cfg.warn_once(f"autotune: could not resolve an output ceiling for {model!r} ({str(_ce)[:60]}) — "
+                           f"capping the raise at the absolute {_MAX_ABS:,} backstop, not the recommend.")
+            ceiling = None
+        # Never raise past a real ceiling; and even when the per-model ceiling is UNKNOWN, never past the absolute
+        # MAX_TOKEN_CEILING — so a poisoned recommend can never go out over-cap on this path (fail-safe, not a
+        # silent no-op clamp).
+        target = min(rec, int(ceiling)) if ceiling else min(rec, _MAX_ABS)
         if target <= cap:
             return
         key = (sig, "raise")

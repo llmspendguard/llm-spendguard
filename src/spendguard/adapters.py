@@ -1052,9 +1052,16 @@ def _heal_token_budget(create_fn, start_budget, model):
         except Exception:
             continue                                   # still refused at this budget → keep halving
         try:
-            from . import models as _mm
-            _mm.add_fact(model, "max_output_tokens", _try,
-                         source="auto-heal(provider refused a larger budget)", verified=True)
+            from . import models as _mm, pricing as _pr
+            # PLAUSIBILITY GUARD: LEARN a ceiling ONLY for a model whose real limit is UNKNOWN to the catalog. When
+            # the published limits cache already knows it, THAT is authoritative — a heal landing below it is a
+            # transient artifact (a non-budget 400 that happened to clear at budget/2), which is exactly the
+            # 2000/7 poison. _call_guarded already clamps to the published ceiling BEFORE the send, so a
+            # published-known model should never reach a budget-400 here; if it does, never overwrite the real
+            # number with the halved guess. (The floor above stops the too-LOW extreme; this stops the poison.)
+            if not _pr.max_output_tokens(model):
+                _mm.add_fact(model, "max_output_tokens", _try,
+                             source="auto-heal(refused a larger budget; no published ceiling)", verified=True)
         except Exception:
             pass                                       # learning is a bonus; the call already succeeded
         return r
@@ -1212,9 +1219,13 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
         _cat_ceil = _cat.model_ceiling(provider_for(model), _raw_id)
     except Exception:
         _cat_ceil = None
-    _cap = pricing.max_output_tokens(_raw_id) or _cat_ceil or pricing.max_output(_raw_id)
-    if _cap:
-        max_tokens = min(int(max_tokens), int(_cap))
+    # Authority order: published limits cache → live-/models catalog → the (poison-prone) learned fact → and, when
+    # NONE of them knows the model, the absolute MAX_TOKEN_CEILING backstop. The backstop is what gives the
+    # Anthropic path (which has no downward heal) the same protection as OpenAI-compat: a poisoned recommend can
+    # never send an absurd budget on ANY provider. For an unknown-ceiling model on OpenAI-compat, the downward heal
+    # below still recovers a genuinely-lower real ceiling (and learns it — guarded to not overwrite a published one).
+    _cap = pricing.max_output_tokens(_raw_id) or _cat_ceil or pricing.max_output(_raw_id) or MAX_TOKEN_CEILING
+    max_tokens = min(int(max_tokens), int(_cap))
     attempt, budget = 0, int(max_tokens)
     while True:
         r = call(model, prompt, max_tokens=budget, _no_guard=True, **kw)

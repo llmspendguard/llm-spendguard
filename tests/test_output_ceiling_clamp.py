@@ -72,9 +72,11 @@ print("\n-- (c) the live-/models ceiling is used when the synced cache lacks the
 # a known-provider id (gpt- → openai) so provider_for resolves and the per-provider catalog ceiling is consulted
 ck("published None → catalog.model_ceiling 64000 clamps", _budget("gpt-5-experimental", 7000, None, 64000, None) == 64000)
 
-print("\n-- (d) a truly-unknown ceiling is NOT clamped (the downward heal handles it) --")
-ck("no published, no catalog, no fact → budget is left high (heal, not a guessed cap)",
-   _budget("gpt-6-unreleased", 7000, None, None, None) == 146576)
+print("\n-- (d) a truly-unknown ceiling is capped at the absolute MAX_TOKEN_CEILING backstop (never the poison) --")
+# The backstop gives the Anthropic path (no downward heal) the same protection as OpenAI-compat: a poisoned
+# recommend can never send an absurd budget on ANY provider; the OpenAI heal still recovers a genuinely-lower one.
+ck("no published/catalog/fact → capped at MAX_TOKEN_CEILING, not the poisoned 146576",
+   _budget("gpt-6-unreleased", 7000, None, None, None) == adapters.MAX_TOKEN_CEILING)
 
 print("\n-- the fact is only a LAST resort (no catalog ceiling at all) --")
 ck("published None + catalog None → the fact is used", _budget("gpt-4-legacy", 7000, None, None, 32000) == 32000)
