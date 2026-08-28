@@ -716,6 +716,12 @@ def sync(if_due=False, since=None):
         balances_refresh = _balances.refresh_balances_if_stale()   # sunk-pool credit — rides this sync, no scheduler
     except Exception as _be:
         balances_refresh = {"error": str(_be)[:120]}      # SURFACED in out["balances"], never silent
+    headroom_refresh = {}
+    try:                                                  # and the per-lane QUOTA HEADROOM snapshot (self-limits to
+        from . import lanes as _lanes                     # once per lanes.headroom_refresh_hours) — what idle_lanes
+        headroom_refresh = _lanes.refresh_headroom_if_stale()   # reads to rank overflow by real headroom, no scheduler
+    except Exception as _he:
+        headroom_refresh = {"error": str(_he)[:120]}      # SURFACED in out["headroom"], never silent
     if if_due:
         d, why = due()
         if not d:
@@ -749,7 +755,7 @@ def sync(if_due=False, since=None):
     out = {"rollup": push_rollup(since=since), "insights": push_insights(),
            "workdone": push_workdone(since=since), "status": push_status(),
            "resources": res, "commands": run_commands(since=since), "trust": tg.get("ledger_verdict"),
-           "prices": prices, "catalog": catalog_refresh, "balances": balances_refresh,
+           "prices": prices, "catalog": catalog_refresh, "balances": balances_refresh, "headroom": headroom_refresh,
            "policy": pull_policy()}     # pull the org/team's effective caps so the gate applies them (advisory/enforced)
     try:                                                  # provider-truth totals (keys stay local) → the server's
         from . import truth as _truth                     # monthly close statement reconciles ledger vs these

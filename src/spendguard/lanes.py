@@ -9,8 +9,10 @@ Auth detection is artifact-based and HONEST about its limits (learned live 2026-
 item can belong to the DESKTOP app while the CLI is logged out, so keychain-only reads as 'unknown', never
 'ok' — only each CLI's own credentials file (or a live probe) proves the lane.
 """
+import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from . import config           # _record_probe writes the probe cache through config.update_json (atomic + backed up)
@@ -179,14 +181,47 @@ def probe():
     return res
 
 
-def lane_headroom():
+_HEADROOM_SNAPSHOT = "lane_headroom"      # persisted cross-process so the routing hot path reads it without a CLI call
+_HEADROOM_REFRESH_HOURS_DEFAULT = 0.5     # headroom moves with usage → refresh more often than the 6h balances cache
+
+
+def refresh_headroom_if_stale():
+    """Re-fetch + PERSIST the lane headroom snapshot when it is older than lanes.headroom_refresh_hours (default
+    0.5h; 0 disables), on the `saas sync` cadence — the same no-dedicated-scheduler pattern as prices/balances. The
+    snapshot is what idle_lanes reads in the routing hot path (no CLI there), so this is how it stays fresh. Fail-open:
+    an error leaves the existing snapshot in effect and is reported, never raised."""
+    try:
+        hours = float(os.environ.get("SPENDGUARD_HEADROOM_REFRESH_HOURS")
+                      or config._cfg_get("lanes", "headroom_refresh_hours", _HEADROOM_REFRESH_HOURS_DEFAULT))
+    except Exception:
+        hours = float(_HEADROOM_REFRESH_HOURS_DEFAULT)
+    if hours <= 0:
+        return {"skipped": "headroom_refresh_hours=0"}
+    snap = config.load_state(_HEADROOM_SNAPSHOT, {}) or {}
+    age_h = (time.time() - float(snap.get("asof") or 0)) / 3600.0
+    if snap.get("rows") and age_h < hours:
+        return {"fresh": True, "age_hours": round(age_h, 2)}
+    try:
+        rows = lane_headroom(do_fetch=True)
+        return {"refreshed": True, "lanes": len(rows)}
+    except Exception as e:
+        return {"error": str(e)[:120], "note": "existing headroom snapshot still in effect"}
+
+
+def lane_headroom(do_fetch=True):
     """Per-lane subscription QUOTA headroom, from each executor's usage() — provider TRUTH where the plan exposes it
     (gemini/claude-code status commands; codex/zai captured from real calls), None where it does not. One dict per
     ENABLED lane: {lane, provider, remaining_pct, reset_ts, buckets, known}. known=False ⇒ the provider exposes no
-    quota surface — 'UNKNOWN', which callers must treat as DISTINCT from 0% remaining (never as exhausted). Reading
-    a lane's usage() may cost one cached $0 status call (gemini/claude-code); codex/zai are read from captured
-    metadata (no call). This is NOT called from the fast auth-only summary/doctor path — only on demand."""
+    quota surface — 'UNKNOWN', which callers must treat as DISTINCT from 0% remaining (never as exhausted).
+
+    do_fetch=True (default, the interactive/refresh path): read each lane's usage() — one cached $0 status call for
+    gemini/claude-code, captured metadata for codex/zai — and PERSIST the snapshot so a later routing process reads
+    it free. do_fetch=False (the routing HOT path): return ONLY the persisted snapshot (never a CLI call); [] when no
+    snapshot exists yet, so routing safely falls back to its call-volume proxy rather than paying a fetch per decision."""
     from . import lane_quota
+    if not do_fetch:
+        snap = config.load_state(_HEADROOM_SNAPSHOT, {}) or {}
+        return list(snap.get("rows") or [])
     mods = _lane_mods()
     out = []
     for ln in status()["lanes"]:
@@ -202,6 +237,10 @@ def lane_headroom():
         hr = lane_quota.bucket_headroom(buckets) or {}
         out.append({"lane": ln["lane"], "provider": ln["provider"], "remaining_pct": hr.get("remaining_pct"),
                     "reset_ts": hr.get("reset_ts"), "buckets": buckets, "known": buckets is not None})
+    try:
+        config.save_state(_HEADROOM_SNAPSHOT, {"asof": time.time(), "rows": out}, loud=False)
+    except Exception:
+        pass                                                # persistence is a bonus; never fail the live read over it
     return out
 
 

@@ -120,13 +120,21 @@ def hot_lanes():
 
 
 def idle_lanes():
-    """Lanes with spare capacity (route overflow TO these), LEAST-LOADED first — the order the router prefers.
-    Ordered by recent CALL VOLUME, not $-value: a cheap lane doing thousands of calls reads idle on the $ gauge
-    but its plan quota is being spent, so preferring lowest-$ piled every overflow onto it (glm). Volume spreads
-    the work evenly across the free plans; $-utilisation is only the tiebreaker."""
+    """Lanes with spare capacity (route overflow TO these), BEST-first — the order the router prefers. Ordered by
+    real quota UTILITY where the provider exposes headroom (route_utility.rank_lanes over the persisted
+    lanes.lane_headroom snapshot — more remaining × sooner-reset urgency, so a plan whose window resets soon with
+    room is drained first, use-it-or-lose-it), and by recent CALL VOLUME for lanes whose quota is UNKNOWN (a cheap
+    lane doing thousands of calls reads idle on the $ gauge but is spending its plan; volume spreads those). Cooling
+    lanes are excluded. NO CLI call in this hot path — the snapshot is read from disk (refreshed out-of-band); with
+    no snapshot yet, every lane is 'unknown' and this degrades EXACTLY to the old volume-only order."""
+    from . import lanes as _lanes, route_utility
     idle = [l for l in lane_utilization()["lanes"] if l["state"] == "idle"]
-    return [l["lane"] for l in sorted(idle, key=lambda l: (l.get("calls_recent", 0),
-                                                           l["utilization"] if l["utilization"] is not None else 0.0))]
+    # unknown-headroom lanes keep the volume proxy: pre-sort by it so rank_lanes preserves that order for the Nones
+    idle = sorted(idle, key=lambda l: (l.get("calls_recent", 0), l["utilization"] if l["utilization"] is not None else 0.0))
+    snap = {r["lane"]: r for r in _lanes.lane_headroom(do_fetch=False)}       # persisted; no CLI in the routing hot path
+    rows = [snap.get(l["lane"], {"lane": l["lane"], "provider": l["provider"], "known": False,
+                                 "remaining_pct": None, "reset_ts": None}) for l in idle]
+    return [d["lane"] for d in route_utility.rank_lanes(rows) if d["available"]]   # cooling lanes are surfaced but not routed to
 
 
 # ── the CONFIRMED-substitute registry (Part 2 authorization = "model proposes, you confirm once") ──────────────────
