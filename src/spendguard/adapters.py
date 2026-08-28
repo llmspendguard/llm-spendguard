@@ -1146,22 +1146,17 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
     # auto-heal's guess and has POISONED the clamp BOTH ways — gpt-5-nano learned max_output=2000 and under-truncated
     # every answer, while a model with NO fact (gpt-5.4-nano) had NO clamp at all, so a poisoned bulkgate
     # recommend (146,576, above the max EVER observed) went out over a 128,000-token model and 400'd every call.
-    # The ceiling is in the catalog: pricing.max_output_tokens is the synced model-limits cache (gpt-5.4-nano →
-    # 128000); catalog.model_ceiling covers a model the synced cache lacks but the vendor's live /models exposes.
-    # The learned fact is the LAST resort, only when no catalog knows the model. STRIP the provider prefix:
-    # normalize() strips date/-latest/-codex but NOT "provider:model", so "openai:gpt-5.5" missed its cap before.
-    _raw_id = model.split(":", 1)[-1]
+    # Authority order via the SINGLE shared resolver (pricing.output_ceiling): published limits cache → live-/models
+    # catalog → the (poison-prone) learned fact → the absolute MAX_TOKEN_CEILING backstop when NOTHING knows the
+    # model. The backstop gives the Anthropic path (which has no downward heal) the same protection as OpenAI-compat:
+    # a poisoned recommend can never send an absurd budget on ANY provider. For an unknown-ceiling model on
+    # OpenAI-compat, the downward heal below still recovers a genuinely-lower real ceiling (and learns it — guarded
+    # to not overwrite a published one). The resolver strips the "provider:" prefix so the cap is never missed.
     try:
-        from . import catalog as _cat
-        _cat_ceil = _cat.model_ceiling(provider_for(model), _raw_id)
-    except Exception:
-        _cat_ceil = None
-    # Authority order: published limits cache → live-/models catalog → the (poison-prone) learned fact → and, when
-    # NONE of them knows the model, the absolute MAX_TOKEN_CEILING backstop. The backstop is what gives the
-    # Anthropic path (which has no downward heal) the same protection as OpenAI-compat: a poisoned recommend can
-    # never send an absurd budget on ANY provider. For an unknown-ceiling model on OpenAI-compat, the downward heal
-    # below still recovers a genuinely-lower real ceiling (and learns it — guarded to not overwrite a published one).
-    _cap = pricing.max_output_tokens(_raw_id) or _cat_ceil or pricing.max_output(_raw_id) or MAX_TOKEN_CEILING
+        _vendor = provider_for(model)           # only the (best-effort) catalog tier needs it; a provider-less,
+    except Exception:                           # unregistered model must still get clamped to the backstop, not
+        _vendor = None                          # raise here — the old chain caught this inside its try, so preserve it
+    _cap = pricing.output_ceiling(_vendor, model, MAX_TOKEN_CEILING)
     max_tokens = min(int(max_tokens), int(_cap))
     attempt, budget = 0, int(max_tokens)
     while True:

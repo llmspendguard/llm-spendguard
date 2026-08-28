@@ -383,6 +383,41 @@ def max_output_tokens(model: str):
     return None
 
 
+def output_ceiling(vendor, model, backstop, learned_floor=0):
+    """The SINGLE authority for a model's OUTPUT ceiling (tokens) — the ONE resolution order every call path shares,
+    so the three that hand-rolled it (adapters._call_guarded, gate._autotune, zai_exec._output_budget) can no longer
+    DRIFT. That drift was a real hole: gate omitted tier 3, so a model known only via a healed fact was clamped to
+    the backstop and a recommend could be raised ABOVE the real ceiling → the 400 the whole system avoids.
+
+    Order, most authoritative first:
+      1. the PUBLISHED limits cache (max_output_tokens) — synced from provider docs, poison-free;
+      2. the vendor's LIVE /models ceiling (catalog.model_ceiling) — covers a model the synced cache lacks;
+      3. the LEARNED fact / docs table (max_output) — auto-heal's guess; NOT authoritative (poison-prone), so it is
+         FLOORED to `learned_floor` for a caller that cannot retry-heal (a lane): a poisoned-low fact then cannot
+         truncate below the floor. learned_floor=0 (default) uses the fact as-is — the retrying metered path, whose
+         downward heal recovers a genuinely-lower ceiling anyway;
+      4. `backstop` — the caller's absolute cap when NOTHING knows the model. Passed in (never a constant here) so
+         this module needs no import of the caller that owns MAX_TOKEN_CEILING.
+
+    The provider prefix is stripped HERE ('openai:gpt-5.5' → 'gpt-5.5') so no caller can forget it and miss the cap
+    — the bug that sent an over-cap budget before it was known that normalize() does not strip 'provider:'."""
+    rid = (model or "").split(":", 1)[-1]
+    pub = max_output_tokens(rid)                       # 1. published cache — authoritative
+    if pub:
+        return int(pub)
+    try:
+        from . import catalog as _cat
+        cat = _cat.model_ceiling(vendor, rid)          # 2. live /models — authoritative (cache-first, $0)
+    except Exception:
+        cat = None
+    if cat:
+        return int(cat)
+    learned = max_output(rid)                          # 3. learned fact / docs table — NOT authoritative
+    if learned:
+        return max(int(learned), int(learned_floor))
+    return int(backstop)                               # 4. caller's absolute backstop (nothing knows this model)
+
+
 def max_input_tokens(model: str):
     """The model's published INPUT-context limit (tokens), or None if we don't know it. This is the INPUT axis,
     INDEPENDENT of max_output_tokens: it bounds how much prompt may be SENT and says nothing about the reply

@@ -1265,25 +1265,23 @@ def _autotune(kw, model):
     if cut > 0 or (p95 and cap < p95):
         if complete + cut < AUTOTUNE_MIN_OBS:
             return
-        # The SAME authority chain the metered path uses: published limits cache → the vendor's live /models
-        # ceiling. Published-only left a catalog-known model (no synced entry) UNCLAMPED, so a poisoned recommend
-        # could raise the cap over the real ceiling on this SDK-patch path → the same 400 _call_guarded avoids.
-        from . import adapters as _ad
+        # The SAME authority chain the metered path uses — the SHARED resolver, so this SDK-patch path can no longer
+        # DRIFT from _call_guarded. It previously did published→catalog only, OMITTING the learned-fact tier, so a
+        # model known only via a healed fact was clamped to the absolute backstop and a poisoned recommend could be
+        # raised OVER its real ceiling → the same 400 _call_guarded avoids. output_ceiling folds in the learned tier
+        # AND the backstop, so `ceiling` is always the real per-model cap (or MAX_TOKEN_CEILING when nothing knows it).
+        from . import adapters as _ad, pricing
         _MAX_ABS = int(_ad.MAX_TOKEN_CEILING)
-        ceiling = None
         try:
-            from . import pricing, catalog
-            _rid = model.split(":", 1)[-1]
-            ceiling = pricing.max_output_tokens(_rid) or catalog.model_ceiling(_ad.provider_for(model), _rid)
+            ceiling = int(pricing.output_ceiling(_ad.provider_for(model), model, _MAX_ABS))
         except Exception as _ce:
             from . import config as _cfg
             _cfg.warn_once(f"autotune: could not resolve an output ceiling for {model!r} ({str(_ce)[:60]}) — "
                            f"capping the raise at the absolute {_MAX_ABS:,} backstop, not the recommend.")
-            ceiling = None
-        # Never raise past a real ceiling; and even when the per-model ceiling is UNKNOWN, never past the absolute
-        # MAX_TOKEN_CEILING — so a poisoned recommend can never go out over-cap on this path (fail-safe, not a
-        # silent no-op clamp).
-        target = min(rec, int(ceiling)) if ceiling else min(rec, _MAX_ABS)
+            ceiling = _MAX_ABS
+        # Never raise past the per-model ceiling (or, when unknown, the absolute MAX_TOKEN_CEILING backstop the
+        # resolver already returned) — so a poisoned recommend can never go out over-cap (fail-safe, not a no-op).
+        target = min(rec, ceiling)
         if target <= cap:
             return
         key = (sig, "raise")

@@ -58,14 +58,13 @@ def available() -> bool:
 
 
 def _output_budget(mdl):
-    """max_tokens for a glm call: the model's AUTHORITATIVE published ceiling (pricing.max_output_tokens — the
-    synced limits cache, poison-free) first; else the learned max_output FACT, but FLOORED to _FALLBACK_MAX_TOKENS
-    so a poisoned-low fact (the auto-heal 2000/7 class) can't truncate this lane. A lane computes its own budget
-    (run_prompt takes no max_tokens), so it must apply the SAME authority order _call_guarded uses for the metered
-    path — reading pricing.max_output (the fact) FIRST, as before, is exactly how the poison bit this lane."""
+    """max_tokens for a glm call, via the SAME shared resolver the metered path uses (pricing.output_ceiling), so
+    this lane cannot DRIFT from _call_guarded's authority order: published limits cache → live /models → the learned
+    max_output fact → backstop. A lane cannot retry-heal (run_prompt takes no max_tokens and there is no downward
+    halving), so it passes learned_floor=_FALLBACK_MAX_TOKENS: a poisoned-low fact (the auto-heal 2000/7 class) is
+    floored and cannot truncate this lane, and an unknown model falls to the same backstop."""
     from . import pricing
-    pub = int(pricing.max_output_tokens(mdl) or 0)
-    return pub or max(int(pricing.max_output(mdl) or 0), _FALLBACK_MAX_TOKENS)
+    return int(pricing.output_ceiling("zai", mdl, _FALLBACK_MAX_TOKENS, learned_floor=_FALLBACK_MAX_TOKENS))
 
 
 def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=None):   # reasoning: protocol-uniform; accepted, not yet applied on this lane
