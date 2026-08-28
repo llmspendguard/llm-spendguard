@@ -28,6 +28,9 @@ import subprocess
 import time
 
 TIMEOUT_S = 300               # meta prompts are small; a hung CLI must not stall the daily report
+_USAGE_TTL_S = 300            # /usage (the quota oracle) is re-read at most this often — weekly windows don't move fast
+_LANE_FAMILY = "gemini"       # the model family this lane serves; the /usage bucket to consult when a probe has no model
+_usage_cache = {"at": 0.0, "val": None}   # {at: last-read unix ts, val: parsed buckets or None} — see usage()
 
 
 def _bin():
@@ -110,12 +113,92 @@ def _reset_window_s(text):
     return best
 
 
+# ── agy /usage as a QUOTA-RESET ORACLE ───────────────────────────────────────────────────────────────────────
+# agy reports Gemini quota exhaustion through the print/JSON path as a bare, window-LESS ERROR (status='ERROR',
+# empty response), so _reset_window_s finds nothing and the lane would be blind-retried every few minutes. But
+# `agy /usage` DOES expose the exact per-bucket weekly reset. Reading it turns that window-less ERROR into the SAME
+# structured retry_after_s a parseable "resets in …" carries, so the EXISTING transient path cools the lane until
+# its (capped, re-tested) reset instead of guessing — no adapter change needed. $0 (subscription OAuth), cached so
+# a burst of failures costs one CLI round-trip, and it FAILS SAFE (any absence/parse gap → None → ordinary handling).
+def _parse_usage(text):
+    """PARSE (fixed-shape) the /usage table into quota buckets: [{bucket, remaining_pct, reset_ts}]. Each line
+    carries a bucket label, an integer PERCENT, and an ISO-8601 reset timestamp; the percent and the timestamp are
+    known-shape tokens pulled by regex, the label is the text before them. Extraction, NOT a meaning decision — no
+    wording is judged; the % and the ISO stamp ARE the structured signal (mirrors _reset_window_s's parse rule)."""
+    import datetime
+    out = []
+    for line in (text or "").splitlines():
+        m_pct = re.search(r"(\d+)\s*%", line)
+        m_ts = re.search(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?", line)
+        if not (m_pct and m_ts):
+            continue
+        try:
+            reset = datetime.datetime.fromisoformat(m_ts.group(0).replace("Z", "+00:00")).timestamp()
+        except Exception:
+            continue
+        out.append({"bucket": line[:m_pct.start()].strip(), "remaining_pct": int(m_pct.group(1)),
+                    "reset_ts": float(reset)})
+    return out or None
+
+
+def usage():
+    """agy's quota report parsed into buckets [{bucket, remaining_pct, reset_ts}], or None (agy absent / call or
+    parse failed → the caller falls back to ordinary lane handling). Cached _USAGE_TTL_S so a burst of lane failures
+    costs ONE $0 CLI round-trip. Runs on the subscription OAuth (metered keys stripped), exactly like run_prompt.
+
+    Freshness has TWO bounds, because acting on a STALE-EXHAUSTED snapshot is the harmful direction (it would cool a
+    lane whose quota has since refilled): the _USAGE_TTL_S window AND — crucially — the soonest RESET the cached
+    snapshot itself reported. Once we are past that reset, the quota has refilled by definition, so the cache is
+    invalidated and refetched; a weekly-reset restoration can never be masked. (A restoration WITHOUT a reset — a
+    plan upgrade — is still bounded by the TTL, an acceptable few-minutes lag for a rare event.)"""
+    now = time.time()
+    cached = _usage_cache["val"]
+    fresh = now - _usage_cache["at"] < _USAGE_TTL_S
+    if fresh and cached:                                  # invalidate a cached snapshot once past the reset it promised
+        soonest = min((float(r.get("reset_ts") or 0) for r in cached), default=0.0)
+        if soonest and now >= soonest:
+            fresh = False
+    if fresh:
+        return cached
+    exe = _bin()
+    rows = None
+    if exe:
+        from . import config
+        try:
+            r = subprocess.run([exe, "-p", "/usage", "--output-format", "text", "--print-timeout", "30s"],
+                               capture_output=True, text=True, timeout=45, env=config.lane_plan_env())
+            if r.returncode == 0:
+                rows = _parse_usage(r.stdout)
+        except Exception:
+            rows = None
+    _usage_cache["at"], _usage_cache["val"] = now, rows
+    return rows
+
+
+def _quota_reset_s():
+    """Seconds until this account's quota next RESETS, when a quota bucket is EXHAUSTED — else None. Decision-FREE
+    by design: it does NOT classify which bucket serves which model (that would be a semantic judgement made
+    mechanically); it reads the STRUCTURED quota NUMBERS agy reports and returns the SOONEST reset among buckets at
+    0% remaining. The lane consults this ONLY on a real FAILURE, so 'a bucket is exhausted' is strong evidence the
+    failure is quota; the 30-min re-test cap (_max_quota_cool_s) means an over-cool from an unrelated exhausted
+    bucket costs at most one early re-test, never a wrong answer; and it fails SAFE (no exhausted bucket → None →
+    ordinary lane handling). Ground truth from /usage, never error wording."""
+    rows = usage()
+    if not rows:
+        return None
+    now = time.time()
+    resets = [float(r.get("reset_ts") or 0) - now for r in rows if int(r.get("remaining_pct", 100)) <= 0]
+    resets = [s for s in resets if s > 0]
+    return int(min(resets)) if resets else None
+
+
 def _error_result(text):
     """An error result. When the message carries a parseable reset-window TOKEN (a rate/quota envelope), attach a
-    STRUCTURED `retry_after_s` so the caller can demote the lane until it resets — without ever reading this
-    string. No token → a plain error, treated as an ordinary lane miss."""
+    STRUCTURED `retry_after_s` so the caller can demote the lane until it resets — without ever reading this string.
+    No inline token → consult /usage (ground truth): if any account quota bucket is exhausted, cool until its reset,
+    so agy's window-LESS quota ERROR still demotes the lane. Neither present → a plain error, an ordinary lane miss."""
     out = {"error": (text or "").strip()[:200]}
-    ra = _reset_window_s(text)
+    ra = _reset_window_s(text) or _quota_reset_s()
     if ra:
         out["retry_after_s"] = ra
     return out
