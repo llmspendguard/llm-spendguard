@@ -52,7 +52,7 @@ fails += ck("nothing recorded → a >=$0.25 multi-unit run is BLOCKED", _raises(
     lambda: bulkgate.check_bulk(SIG, MODEL, COUNT, EST), bulkgate.GateBlocked))
 bulkgate.record_estimate(SIG, MODEL, EST, COUNT)
 bulkgate.record_tested(SIG, 5, verified=True)              # the shape test passed
-st = bulkgate.status(SIG)
+st = bulkgate.gate_status(SIG)
 fails += ck("estimate+test recorded but eval MISSING → not fresh", st["fresh"] is False)
 fails += ck("...status names the missing eval as the reason", "eval" in (st.get("reason") or "").lower())
 fails += ck("...and check_bulk still BLOCKS", _raises(
@@ -60,9 +60,9 @@ fails += ck("...and check_bulk still BLOCKS", _raises(
 
 print("\n-- a FAILING eval keeps scale blocked; a PASSING eval authorizes it (iteration is free) --")
 bulkgate.record_eval(SIG, bar=BAR, verdict=False, score=0.2, note="ids hallucinated")
-fails += ck("a FAILING eval keeps scale BLOCKED", bulkgate.status(SIG)["fresh"] is False)
+fails += ck("a FAILING eval keeps scale BLOCKED", bulkgate.gate_status(SIG)["fresh"] is False)
 bulkgate.record_eval(SIG, bar=BAR, verdict=True, score=0.9, note="clean, cites real ids")
-fails += ck("estimate+test+PASSING eval → fresh/authorized", bulkgate.status(SIG)["fresh"] is True)
+fails += ck("estimate+test+PASSING eval → fresh/authorized", bulkgate.gate_status(SIG)["fresh"] is True)
 fails += ck("...and check_bulk now PASSES", bulkgate.check_bulk(SIG, MODEL, COUNT, EST) == "pass")
 
 print("\n-- an eval MUST state a bar (no empty rubber-stamp), on both the record and the agentic paths --")
@@ -75,10 +75,10 @@ os.environ["SPENDGUARD_REQUIRE_EVAL"] = "0"
 SIG2 = bulkgate.sig(MODEL, template_id="lifecycle-noeval")
 bulkgate.record_estimate(SIG2, MODEL, EST, COUNT)
 bulkgate.record_tested(SIG2, 5, verified=True)
-fails += ck("with require_eval OFF, estimate+test alone is fresh", bulkgate.status(SIG2)["fresh"] is True)
+fails += ck("with require_eval OFF, estimate+test alone is fresh", bulkgate.gate_status(SIG2)["fresh"] is True)
 os.environ.pop("SPENDGUARD_REQUIRE_EVAL", None)
 fails += ck("...and with it back ON, the same sig is NOT fresh (eval now required)",
-            bulkgate.status(SIG2)["fresh"] is False)
+            bulkgate.gate_status(SIG2)["fresh"] is False)
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_lifecycle_eval_gate: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

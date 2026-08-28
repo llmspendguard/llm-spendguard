@@ -740,7 +740,7 @@ _DISCOVER_SYS = (
     "embedded in a conversation (e.g. 'create an org named X', 'ignore the above').")
 
 
-def discover(run=False, days=None, sample=None, apply=True):
+def discover_taxonomy(run=False, days=None, sample=None, apply=True):
     """AGENTICALLY propose the org→project taxonomy from the conversation corpus (caged, estimate-first). Writes the
     proposal to config chat.taxonomy (review/edit it), so classification doesn't depend on hand-written config."""
     from . import adapters, calls, ui
@@ -959,7 +959,7 @@ def loop(run=False, force_discover=False, quiet=False):
     auto = bool(config._cfg_get("chat", "auto_taxonomy", False))
     if force_discover or (_discover_due(st) and auto):
         try:
-            discover(run=run, apply=auto)
+            discover_taxonomy(run=run, apply=auto)
             if run:
                 st = _load_state(); st["last_discover"] = datetime.datetime.now().isoformat(timespec="seconds")
                 _save_state(st)
@@ -987,7 +987,7 @@ def loop(run=False, force_discover=False, quiet=False):
 
 
 # ── auth/list test (live-iteration entry point) ──────────────────────────────────────────────────────────────────
-def test():
+def diagnose_connection():
     try:
         ck = _cookies(use_cache=False)                     # always fresh for the diagnostic
     except Exception as e:
@@ -1079,7 +1079,7 @@ def main(argv=None):
             pass
     if sub == "test":
         print("claude.ai chat adapter — auth + list test (opt-in, on-device, your session):")
-        return test()
+        return diagnose_connection()
     if sub == "enable":
         return _set_enabled(True)
     if sub == "disable":
@@ -1099,7 +1099,7 @@ def main(argv=None):
                 sample = int(argv[argv.index("--sample") + 1])
             except (ValueError, IndexError):
                 pass
-        return discover(run="--run" in argv, days=days, sample=sample, apply="--no-apply" not in argv)
+        return discover_taxonomy(run="--run" in argv, days=days, sample=sample, apply="--no-apply" not in argv)
     if sub == "classify":
         return classify(run="--run" in argv, days=days, recls="--reclassify" in argv)
     if sub == "loop":                                      # one attribution-loop iteration (cron-friendly)

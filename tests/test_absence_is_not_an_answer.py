@@ -176,7 +176,7 @@ _truth.rows = lambda since=None: [
 err = io.StringIO()
 real_stderr, sys.stderr = sys.stderr, err
 try:
-    got = close.build(month)
+    got = close.build_close(month)
 finally:
     sys.stderr, _truth.rows = real_stderr, _real_truth_rows
 check("a real $0.00 day is counted, and the unusable row is not",

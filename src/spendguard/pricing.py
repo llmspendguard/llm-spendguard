@@ -852,12 +852,12 @@ def estimate(model: str, n: int, avg_in: int, avg_out: int, batch: bool = True) 
     return _cost(model, n * avg_in, n * avg_out, 0, batch=batch)
 
 
-def verify():
+def verify_pricing():
     """Self-check the few rates that have actually burned us. Uses explicit raises, NOT assert — this guards the money
     core, and `python -O` strips asserts, which would silently skip the price sanity-check exactly when it matters."""
     def _need(cond, msg):
         if not cond:
-            raise ValueError("pricing.verify: " + msg)
+            raise ValueError("pricing.verify_pricing: " + msg)
     _need(price("gpt-5.5")["batch_in"] == 2.50 and price("gpt-5.5")["batch_out"] == 15.00, "gpt-5.5 batch wrong")
     _need(price("gpt-5.5")["in_"] == 5.00 and price("gpt-5.5")["out"] == 30.00, "gpt-5.5 realtime wrong")
     _need(normalize("gpt-5.5-2026-04-23") == "gpt-5.5", "gpt-5.5 normalize wrong")
@@ -865,7 +865,7 @@ def verify():
 
 
 def main():
-    verify()
+    verify_pricing()
     print(f"Canonical OpenAI pricing  (source: {PRICING_SOURCE}, verified {PRICING_VERIFIED})")
     print(f"{'model':<24}{'rt_in':>8}{'rt_out':>9}{'batch_in':>10}{'batch_out':>11}")
     for m, p in PRICING.items():

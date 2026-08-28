@@ -72,7 +72,7 @@ sources.register("absent", lambda: AbsentSource())
 names = [n for n, _s in sources.transcript_sources()]
 check("a registered, detected source is discovered", "aider" in names)
 check("a source that does NOT detect is excluded (and read() never called)", "absent" not in names)
-d = sources.discover()
+d = sources.discover_sources()
 check("it lands in discover() with its numbers", any(t.get("name") == "Aider" and t.get("total_usd") == 12.5
                                                      for t in d["tools"]))
 col = scan.collect()
@@ -90,7 +90,7 @@ check("the broken source is skipped", "broken" not in names2)
 check("the good ones still work", "aider" in names2)
 check("one warning names it and says it was skipped",
       "broken" in buf.getvalue() and "skipped" in buf.getvalue())
-check("discover() still returns a full picture", isinstance(sources.discover().get("providers"), list))
+check("discover() still returns a full picture", isinstance(sources.discover_sources().get("providers"), list))
 
 print("-- discovery is local, free, and never reads the user's code --")
 src = inspect.getsource(sources)
@@ -106,7 +106,7 @@ check("the boundary is documented, not just observed", "never read the user's SO
 print("-- keys: presence only, never the value --")
 os.environ["OPENAI_API_KEY"] = "sk-super-secret-do-not-leak"
 provs = sources.providers_paid()
-blob = repr(provs) + sources.render(sources.discover())
+blob = repr(provs) + sources.render(sources.discover_sources())
 check("the key VALUE never appears in the data or the render", "sk-super-secret-do-not-leak" not in blob)
 oai = [p for p in provs if p["provider"] == "openai"]
 check("it reports that a key resolves", oai and oai[0]["resolved"] is True)
@@ -117,7 +117,7 @@ check("openai/anthropic are LLM", all(p["kind"] == "llm" for p in provs if p["pr
 os.environ.pop("OPENAI_API_KEY", None)
 
 print("-- the render keeps the two axes apart and stays honest --")
-r = sources.render(sources.discover())
+r = sources.render(sources.discover_sources())
 check("real billed $ and plan-covered value are separate sections",
       "real billed $" in r and "value, not billed $" in r)
 check("ungated interpreters are surfaced with the fix", "INTERPRETERS that can spend" in r)

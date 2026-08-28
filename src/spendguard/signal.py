@@ -7,7 +7,7 @@ Build: `spendguard signal` (preview) / `spendguard signal push` (→ /v1/signal,
 import datetime
 
 
-def build(since=None):
+def build_signals(since=None):
     """Per (project, intent, model) signal rows from the recovered call corpus + batch costs + quality."""
     from . import config,  callio, backfill, conv
     since = since or config.month_start_utc()
@@ -68,7 +68,7 @@ def build(since=None):
 def _cancelled_billed():
     """Cancelled-but-billed batches → {bid: {model, cost, project}}. The provider still bills the requests that
     COMPLETED before a cancel (the protocol's cautionary case), so this spend is real. AGENTIC project attribution.
-    Shared by build() — which EXCLUDES these bids from the live aggregate so they're not double-counted — and
+    Shared by build_signals() — which EXCLUDES these bids from the live aggregate so they're not double-counted — and
     cancellation_rows(), which surfaces them as waste. OpenAI GET (free); returns {} if unreachable."""
     from . import conv, pricing
     try:
@@ -86,7 +86,7 @@ def _cancelled_billed():
         if not (it or ot):
             continue                                            # nothing completed → genuinely $0
         # cost_or_unpriced, not batch_cost: this loop is OUTSIDE the fetch try/except, so an unpriced model (or a
-        # missing 'model' key) here would propagate and crash build(). Degrade to 0 + record instead.
+        # missing 'model' key) here would propagate and crash build_signals(). Degrade to 0 + record instead.
         cost = pricing.cost_or_unpriced(b.get("model"), it, ot, (u.get("input_tokens_details") or {}).get("cached_tokens", 0))
         proj = (bmap.get(b["id"], {}).get("project") or "") or "unattributed"
         out[b["id"]] = {"model": b.get("model"), "cost": cost, "project": proj}
@@ -96,7 +96,7 @@ def _cancelled_billed():
 def cancellation_rows(cancelled=None):
     """Cancelled-but-billed batches = LOSS — partial work billed then discarded (your protocol: 'never cancel as
     cost control; completed requests still bill'). Surfaced as a signal row per project: full billed cost = waste,
-    with the recommendation. `cancelled` may be the precomputed {bid:…} from build() (avoids a re-fetch AND keeps the
+    with the recommendation. `cancelled` may be the precomputed {bid:…} from build_signals() (avoids a re-fetch AND keeps the
     exclude-from-aggregate and the surfaced-waste in lockstep); None → fetch fresh. Free (provider GETs)."""
     import datetime
     if cancelled is None:
@@ -114,14 +114,14 @@ def cancellation_rows(cancelled=None):
             for proj, a in by_proj.items()]
 
 
-def push(dry=False):
+def push_signal(dry=False):
     """Push THIS repo's project signal (scrubbed) → /v1/signal via the repo key. Same project filter as the
     ledger roll-up: the connection's own project(s), plus 'unattributed'/'llm-spendguard' (own meta) iff it owns_account
     — so the account-owner also carries the shared no-evidence cancellation loss, and other repos don't double-count."""
     from . import saas
     c = saas.conn()
     flt = saas._project_filter(c)
-    rows = [r for r in build() if flt is None or (r.get("project") or "") in flt]
+    rows = [r for r in build_signals() if flt is None or (r.get("project") or "") in flt]
     payload = {"signal": rows}
     if dry:
         return payload
@@ -136,9 +136,9 @@ def push(dry=False):
 def cmd(argv=None):
     argv = argv or []
     if argv and argv[0] == "push":
-        print("signal push:", push(dry="--dry" in argv))
+        print("signal push:", push_signal(dry="--dry" in argv))
         return 0
-    rows = sorted(build(), key=lambda r: -r["cost_micros"])
+    rows = sorted(build_signals(), key=lambda r: -r["cost_micros"])
     print("efficiency signal (per project · intent · model):")
     print(f"  {'project':12}{'intent':22}{'model':18}{'cost':>10}{'good':>7}{'waste':>9}  recommendation")
     for r in rows[:15]:

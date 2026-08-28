@@ -73,7 +73,7 @@ check("client config holds NO team_id/org_id (server resolves hierarchy from the
 print("-- status() and saas.cmd() don't crash --")
 buf = io.StringIO()
 with redirect_stdout(buf):
-    saas.status()
+    saas.print_saas_status()
     saas.cmd(["status"])
 check("status output mentions the client seam", "client seam" in buf.getvalue())
 

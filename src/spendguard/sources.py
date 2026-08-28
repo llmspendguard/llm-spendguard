@@ -154,7 +154,7 @@ def providers_paid():
     return out
 
 
-def discover(days=None):
+def discover_sources(days=None):
     """The whole picture, in one call. Free, local, no LLM."""
     tools = []
     for name, src in transcript_sources():
@@ -236,11 +236,11 @@ def main(argv=None):
                 return 2
     if "--json" in argv:
         import json
-        d = discover(days=days)
+        d = discover_sources(days=days)
         d["providers"] = [{k: v for k, v in p.items()} for p in d["providers"]]   # keys are never included
         print(json.dumps(d, indent=2, default=str))
         return 0
-    print(render(discover(days=days)))
+    print(render(discover_sources(days=days)))
     return 0
 
 

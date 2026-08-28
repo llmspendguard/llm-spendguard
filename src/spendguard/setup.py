@@ -668,7 +668,7 @@ def cmd_init(argv=None):
     # at call time a dead lane degrades silently to the metered API, so setup is where it must be said.
     try:
         from . import lanes as _lanes
-        _ll = _lanes.summary_lines()
+        _ll = _lanes.lane_summary_lines()
         if _ll:
             print()
             for _l in _ll:

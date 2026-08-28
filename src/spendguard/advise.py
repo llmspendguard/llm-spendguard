@@ -149,7 +149,7 @@ def advise(intent=None, plan=None, as_of=None):
           f"`spendguard compare` on a fixed sample. (history proposes, compare disposes.)")
     try:                        # learned-calibration confidence (fill ratios etc.) — see `spendguard calibrate`
         from . import calibrate as _cal
-        for ln in _cal.summary_lines():
+        for ln in _cal.calibration_summary_lines():
             print("  " + ln)
     except Exception:
         pass

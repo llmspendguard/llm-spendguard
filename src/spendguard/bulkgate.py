@@ -208,7 +208,7 @@ def record_eval(sig, bar, verdict, score=None, note=None, model=None):
     return now
 
 
-def status(sig, contract=None, data_sig=None):
+def gate_status(sig, contract=None, data_sig=None):
     """{estimated, tested, verified, fresh, contract, …} for this sig — freshness-aware.
 
     Pass the CURRENT `contract` / `data_sig` and freshness additionally requires that they MATCH what was
@@ -279,7 +279,7 @@ def check_bulk(sig, model, count, est_usd, force=False, contract=None, data_sig=
     pm, bm = preview_max(), bulk_min_usd()
     if count <= pm and float(est_usd or 0) <= bm:
         return "preview"                                          # the test step itself — always allowed
-    if status(sig, contract=contract, data_sig=data_sig)["fresh"]:
+    if gate_status(sig, contract=contract, data_sig=data_sig)["fresh"]:
         return "pass"                             # fresh estimate + contract-verified test on THIS data → authorized
     forced = bool(force) or os.getenv("GATE_FORCE") == "1"
     m = mode()
@@ -292,7 +292,7 @@ def check_bulk(sig, model, count, est_usd, force=False, contract=None, data_sig=
         _log_block(sig, model, count, est_usd, "would-block")
         return "allow:warn"
     _log_block(sig, model, count, est_usd, "blocked")
-    st = status(sig, contract=contract, data_sig=data_sig)
+    st = gate_status(sig, contract=contract, data_sig=data_sig)
     detail = ""
     if st.get("failed"):
         detail = (" The last sample FAILED the contract: %d/%d items — %s."
@@ -562,7 +562,7 @@ def check_compute(sig, est_usd, hours=None, force=False):
     with the cap in resources.compute_exceeded. Consumers call this before launching; raises GateBlocked in block mode."""
     if float(est_usd or 0) <= bulk_min_usd():
         return "trivial"
-    if status(sig)["fresh"]:
+    if gate_status(sig)["fresh"]:
         return "pass"
     forced = bool(force) or os.getenv("GATE_FORCE") == "1"
     m = mode()

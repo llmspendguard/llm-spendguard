@@ -114,7 +114,7 @@ bulkgate.record_estimate(SIG, "test-model", 10.0, 500)
 buf = io.StringIO()
 with contextlib.redirect_stderr(buf):
     bulkgate.test_job(SIG, lambda n: [GOOD] * n, n=3)
-st = bulkgate.status(SIG)
+st = bulkgate.gate_status(SIG)
 check("a test with nothing checking it is recorded UNVERIFIED", st["verified"] is False)
 check("…so it does NOT authorize a bulk run", st["fresh"] is False)
 check("and it says so on stderr", "UNVERIFIED" in buf.getvalue())
@@ -122,7 +122,7 @@ check("the reason is legible", "did NOT match" in st["reason"] or "contract" in 
 
 print("-- a contract-checked test DOES authorize, and records the evidence --")
 bulkgate.test_job(SIG, lambda n: [GOOD] * n, n=3, contract=KEYS, items=["p1", "p2", "p3"])
-st = bulkgate.status(SIG, contract=KEYS, data_sig=oc.data_signature(["p1", "p2", "p3"]))
+st = bulkgate.gate_status(SIG, contract=KEYS, data_sig=oc.data_signature(["p1", "p2", "p3"]))
 check("verified", st["verified"] is True)
 check("fresh → authorized", st["fresh"] is True)
 check("the ledger records what was checked", st["contract"] == "keys:findings,patient_id")
@@ -131,7 +131,7 @@ check("check_bulk passes", bulkgate.check_bulk(SIG, "test-model", 500, 10.0,
                                                contract=KEYS, data_sig=oc.data_signature(["p1", "p2", "p3"])) == "pass")
 
 print("-- a CHANGED contract expires it (tested v1, ran v2) --")
-st2 = bulkgate.status(SIG, contract=KEYS + ["diagnosis"])
+st2 = bulkgate.gate_status(SIG, contract=KEYS + ["diagnosis"])
 check("a widened contract is no longer fresh", st2["fresh"] is False)
 check("and the reason names the contract change", "contract CHANGED" in st2["reason"], st2["reason"])
 try:
@@ -143,7 +143,7 @@ check("check_bulk BLOCKS on the changed contract", blocked)
 check("the block message says which check failed", blocked and "contract CHANGED" in msg)
 
 print("-- a test on DIFFERENT data expires it (three toy rows ≠ the corpus) --")
-st3 = bulkgate.status(SIG, contract=KEYS, data_sig=oc.data_signature(["real1", "real2"]))
+st3 = bulkgate.gate_status(SIG, contract=KEYS, data_sig=oc.data_signature(["real1", "real2"]))
 check("different data → not fresh", st3["fresh"] is False)
 check("and the reason names the data", "DIFFERENT data" in st3["reason"], st3["reason"])
 
@@ -153,7 +153,7 @@ bulkgate.record_estimate(SIG2, "test-model", 10.0, 500)
 buf = io.StringIO()
 with contextlib.redirect_stderr(buf):
     bulkgate.test_job(SIG2, lambda n: [GOOD] * (n - 1) + [MISSING], n=3, contract=KEYS, items=["a", "b", "c"])
-st = bulkgate.status(SIG2, contract=KEYS)
+st = bulkgate.gate_status(SIG2, contract=KEYS)
 check("verified=False when the sample failed", st["verified"] is False)
 check("the failure detail is kept for the operator", st["failed"] == 1 and "findings" in st["failure"])
 check("and it was reported at test time, not silently", "did NOT satisfy" in buf.getvalue())
@@ -170,7 +170,7 @@ SIG3 = "test-sig-3"
 bulkgate.record_estimate(SIG3, "test-model", 10.0, 500)
 with contextlib.redirect_stderr(io.StringIO()):
     bulkgate.test_job(SIG3, lambda n: [FENCED] * n, n=3, contract=KEYS, items=["a"])
-st = bulkgate.status(SIG3, contract=KEYS)
+st = bulkgate.gate_status(SIG3, contract=KEYS)
 check("fenced-only output is not verified", st["verified"] is False)
 check("the salvage count is recorded", st["salvaged"] == 3)
 

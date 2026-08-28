@@ -19,7 +19,7 @@ def month_window(month):
     return start, end
 
 
-def build(month):
+def build_close(month):
     """{month, providers: [{provider, usd, days}], total_usd, current_month, forecast?} from local
     provider truth. For the OPEN month with ≥5 observed days, forecast = MTD + remaining calendar days ×
     the observed daily median (p50) / 90th-percentile (p90) — a RUN-RATE projection, labeled as such
@@ -94,7 +94,7 @@ def main(argv=None):
         datetime.date(int(a.month[:4]), int(a.month[5:7]), 1)
     except (ValueError, TypeError):
         print("close: --month must be YYYY-MM (a real year and month, e.g. 2026-08)"); return 2
-    s = build(a.month)
+    s = build_close(a.month)
     print(f"monthly close — {s['month']}   provider truth Σ ${s['total_usd']:,.2f}")
     for p in s["providers"]:
         print(f"  {p['provider']:<12} ${p['usd']:>10,.2f}   ({p['days']} billed days)")

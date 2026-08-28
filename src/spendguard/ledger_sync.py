@@ -668,7 +668,7 @@ def sync(since=None):
     # sync pushes to the org; shown here so a reconcile reports BOTH "what it cost" and "what got done".
     try:
         from . import workdone
-        wd = sorted(workdone.rollup(since=since, by="month"), key=lambda x: -x.get("n_commits", 0))
+        wd = sorted(workdone.rollup_workdone(since=since, by="month"), key=lambda x: -x.get("n_commits", 0))
         if wd:
             print("\n  work done (context for the spend):")
             for r in wd[:6]:

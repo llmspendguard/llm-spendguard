@@ -102,7 +102,7 @@ def _zai_auth():
     return "ok" if zai_exec._key() else "missing"
 
 
-def status():
+def lanes_status():
     """One dict per lane: is it enabled by advisor.executor, is its CLI on this host, does a login artifact
     exist, and the exact activation step if not. Free — no network, no model calls."""
     from . import subscription_exec, codex_exec, antigravity_exec, zai_exec
@@ -160,7 +160,7 @@ def probe():
     plan-covered; the only spend is a few plan tokens). Returns per-lane live results."""
     mods = _lane_mods()
     res = []
-    for ln in status()["lanes"]:
+    for ln in lanes_status()["lanes"]:
         if not ln["enabled"]:
             res.append(dict(lane=ln["lane"], skipped="not enabled by advisor.executor"))
             continue
@@ -175,7 +175,7 @@ def probe():
             # must not abort the WHOLE --probe run and lose the other lanes' already-collected results.
             r = {"error": f"{type(e).__name__}: {str(e)[:100]}"}
         ok = not r.get("error")
-        _record_probe(ln["lane"], ok)     # persisted: the definitive auth evidence status()/doctor read back
+        _record_probe(ln["lane"], ok)     # persisted: the definitive auth evidence lanes_status()/doctor read back
         res.append(dict(lane=ln["lane"], ok=ok, error=r.get("error"),
                         text=(r.get("text") or "")[:40], latency=round(r.get("latency") or 0, 1)))
     return res
@@ -224,7 +224,7 @@ def lane_headroom(do_fetch=True):
         return list(snap.get("rows") or [])
     mods = _lane_mods()
     out = []
-    for ln in status()["lanes"]:
+    for ln in lanes_status()["lanes"]:
         if not ln["enabled"]:
             continue
         mod = mods.get(ln["lane"])
@@ -244,9 +244,9 @@ def lane_headroom(do_fetch=True):
     return out
 
 
-def summary_lines():
+def lane_summary_lines():
     """Doctor/init block: one line per lane. Empty list when the executor is plain `api` (nothing to say)."""
-    s = status()
+    s = lanes_status()
     if not any(ln["enabled"] for ln in s["lanes"]):
         return []
     lines = [f"subscription lanes (advisor.executor = {s['executor']}):"]
@@ -266,7 +266,7 @@ def summary_lines():
 
 def main(argv=None):
     argv = list(argv or [])
-    for line in (summary_lines() or ["subscription lanes: none enabled (advisor.executor = api) — set "
+    for line in (lane_summary_lines() or ["subscription lanes: none enabled (advisor.executor = api) — set "
                                      "advisor.executor to claude-code / codex / zai-coding / gemini / pool "
                                      "to use your plans"]):
         print(line)

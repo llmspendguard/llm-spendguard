@@ -84,7 +84,7 @@ def onstart_snippet(home: str = _DEFAULT_HOME, from_git: bool = False) -> str:
 
 
 # ── verify: fail-closed enforcement check (the orchestrator aborts if a box isn't gated) ──
-def verify(ssh: str, timeout: int = 30, _run=None) -> tuple:
+def verify_remote_enforcement(ssh: str, timeout: int = 30, _run=None) -> tuple:
     """Run `<ssh> python3 -m spendguard doctor` and return (ok, detail). FAIL-CLOSED: any error, timeout, or
     uncertainty → ok=False, so callers refuse to launch LLM work on an ungated box. `ssh` is the full prefix,
     e.g. 'ssh -i ~/.ssh/vastai_ed25519 -p 12345 root@1.2.3.4'."""
@@ -213,7 +213,7 @@ def cmd(argv=None):
         ssh = _opt("--ssh")
         if not ssh:
             print("usage: spendguard remote verify --ssh '<ssh prefix>'"); return 2
-        ok, detail = verify(ssh)
+        ok, detail = verify_remote_enforcement(ssh)
         print(f"[spendguard remote] {ssh.split()[-1] if ssh else ''}: {detail}")
         return 0 if ok else 1                     # non-zero → fail-closed: the orchestrator aborts the launch
     if sub == "sync":

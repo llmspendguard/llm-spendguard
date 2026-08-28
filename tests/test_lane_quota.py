@@ -77,7 +77,10 @@ ck("a bucket missing remaining_pct is treated as full (never invents scarcity)",
    lane_quota.bucket_headroom([{"bucket": "x"}])["remaining_pct"] == 100)
 
 print("\n-- (c) claude-code parser: 'N% used · resets <date>' → remaining = 100-N, human date parsed --")
-_SAMPLE = ("Current session: 12% used · resets Aug 28 at 12:10am (America/Los_Angeles)\n"
+import datetime as _dt
+_fut = (_dt.datetime.now() + _dt.timedelta(days=40)).strftime("%b %d")   # a clearly-FUTURE date (year-round robust;
+#                                                                          claude always shows the NEXT reset, never a past one)
+_SAMPLE = (f"Current session: 12% used · resets {_fut} at 12:10am (America/Los_Angeles)\n"
            "Current week (all models): 7% used · resets Sep 3 at 9am (America/Los_Angeles)\n"
            "Current week (Fable): 0% used\n"
            "⚠ some unrelated warning line with no percent\n")
@@ -91,9 +94,9 @@ ck("a bucket with no 'resets' → remaining 100%, reset_ts None", fable is not N
 ck("a percent-less blob → None (no false bucket)", sx._parse_usage_claude("no percentages here") is None)
 
 print("\n-- (d) lanes.lane_headroom: aggregates enabled lanes, marks known vs UNKNOWN, one lane's error can't break it --")
-_o_status, _o_mods = lanes.status, lanes._lane_mods
+_o_status, _o_mods = lanes.lanes_status, lanes._lane_mods
 try:
-    lanes.status = lambda: {"lanes": [
+    lanes.lanes_status = lambda: {"lanes": [
         {"lane": "claude-code", "provider": "anthropic", "enabled": True},
         {"lane": "gemini", "provider": "google", "enabled": True},
         {"lane": "codex", "provider": "openai", "enabled": True},
@@ -128,7 +131,7 @@ try:
     ck("a no-surface lane → known=False, remaining None (UNKNOWN)", hm["codex"]["known"] is False and hm["codex"]["remaining_pct"] is None)
     ck("a lane whose usage() RAISED → UNKNOWN, not a crash", hm["zai-coding"]["known"] is False)
 finally:
-    lanes.status, lanes._lane_mods = _o_status, _o_mods
+    lanes.lanes_status, lanes._lane_mods = _o_status, _o_mods
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_lane_quota: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

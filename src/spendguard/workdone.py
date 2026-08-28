@@ -68,7 +68,7 @@ def _batch_intents(since):
     return out
 
 
-def build(since=None):
+def build_workdone(since=None):
     """Per (day, project) work-done record: git commit subjects + batch intents + counts. Deterministic, free."""
     since = since or config.month_start_utc()
     by = defaultdict(lambda: {"commits": [], "intents": defaultdict(int)})
@@ -95,10 +95,10 @@ def _period(day, by):
     return day
 
 
-def rollup(since=None, by="day"):
+def rollup_workdone(since=None, by="day"):
     """Roll the per-day records up to day | week | month, per project."""
     agg = defaultdict(lambda: {"commits": [], "intents": defaultdict(int), "days": set()})
-    for r in build(since):
+    for r in build_workdone(since):
         k = (_period(r["day"], by), r["project"])
         a = agg[k]
         a["commits"].extend(r["commits"])
@@ -141,7 +141,7 @@ def _summary_prompt(project, commits, intents):
 def _aggregate_by_project(since=None):
     """{project: {commits, intents}} for the period — the input to the summarizer (this month, all periods folded)."""
     by = {}
-    for r in rollup(since=since, by="month"):
+    for r in rollup_workdone(since=since, by="month"):
         p = r.get("project") or "(untagged)"
         e = by.setdefault(p, {"commits": [], "intents": {}})
         e["commits"].extend(r.get("commits") or [])
@@ -210,7 +210,7 @@ def cmd(argv=None):
         # push monthly periods regardless of the display --by, to match the dashboard's current-month view
         print("workdone push:", saas.push_workdone(since=a.since))
         return 0
-    rows = rollup(since=a.since, by=a.by)
+    rows = rollup_workdone(since=a.since, by=a.by)
     print(f"WORK DONE — by {a.by}, per project (context for spend):")
     for r in rows:
         top = sorted(r["intents"].items(), key=lambda x: -x[1])[:3]

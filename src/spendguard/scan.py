@@ -70,7 +70,7 @@ def render(data, days=None):
                   "  the `spendguard.providers` entry point). Here's what this machine can spend through anyway:", ""]
         try:
             from . import sources
-            d = sources.discover()
+            d = sources.discover_sources()
             paid = [p["provider"] for p in d["providers"] if p["resolved"]]
             lines.append(f"    providers with a key : {', '.join(paid) if paid else '(none — add one to keys.env)'}")
             lines.append(f"    venvs that can spend : {len(d['venvs'])} ({len(d['ungated'])} NOT gated)")

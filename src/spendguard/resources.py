@@ -341,7 +341,7 @@ def _consolidate(observations, now=None):
     return {"complete": complete, "identity_only": identity}
 
 
-def discover(record=False, now=None):
+def discover_instances(record=False, now=None):
     """Mine ALL Claude Code transcripts for vast.ai instance records and reconstruct boxes the snapshot recorder
     never captured (destroyed before recording began) — from REAL API data in the conversations, not estimates.
     record=True → record_recovered any instance not already live/in-history, so the account reconcile auto-fills
@@ -885,7 +885,7 @@ def cmd(argv=None):
             byp = _c.Counter((i.get("project") or "(unattributed)") for i in r.get("instances", []))
             print(f"agentic discover: {len(r.get('instances', []))} instances over {r['sessions']} sessions; by project {dict(byp)}; recorded {len(r.get('recorded', []))}")
         else:                                              # free deterministic identity scan
-            r = discover(record="--record" in argv)
+            r = discover_instances(record="--record" in argv)
             print(f"discover: by project {r['by_project']}; {len(r['uncaptured'])} uncaptured; recorded {len(r['recorded'])}")
         return 0
     # show: per-project attributed + the account reconcile gap

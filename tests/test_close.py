@@ -24,7 +24,7 @@ truth.rows = lambda since=None: [
     {"day": "2026-06-20", "provider": "vastai", "usd": 2.5},
     {"day": "2026-07-01", "provider": "openai", "usd": 99.0},   # next month — must be excluded
 ]
-s = close.build("2026-06")
+s = close.build_close("2026-06")
 ck("providers aggregated within the month only",
    s["providers"][0] == {"provider": "openai", "usd": 15.0, "days": 2} and len(s["providers"]) == 2)
 ck("total is the month sum", abs(s["total_usd"] - 17.5) < 1e-9)

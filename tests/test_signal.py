@@ -51,7 +51,7 @@ from spendguard import reconcile_openai
 reconcile_openai.load_key = lambda: ""
 reconcile_openai.fetch_batches = lambda _k=None: []
 
-rows = {(r["intent"], r["model"]): r for r in signal.build(since="2026-01-01")}
+rows = {(r["intent"], r["model"]): r for r in signal.build_signals(since="2026-01-01")}
 
 ex = rows.get(("extract", "gpt-5.5"))
 ck("build: extract group present, 2 calls", ex and ex["calls"] == 2)

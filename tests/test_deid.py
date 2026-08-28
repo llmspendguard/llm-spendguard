@@ -93,13 +93,13 @@ ck("share._scrub_text still strips $ + intent", "$500" not in share._scrub_text(
 # ── WIRING guard 2: the work-done egress builder de-ids commits + summary ──
 from spendguard import saas, workdone
 saas_conn, saas_cok, saas_flt = saas.conn, saas.contributor_ok, saas._project_filter
-wd_roll, wd_sum = workdone.rollup, workdone.load_summaries
+wd_roll, wd_sum = workdone.rollup_workdone, workdone.load_summaries
 try:
     saas.conn = lambda: {"visibility": "team"}
     saas.contributor_ok = lambda: (True, "")
     saas._project_filter = lambda c: None
     workdone.load_summaries = lambda: {"proj": "Followed up with jane@corp.com on the rollout"}
-    workdone.rollup = lambda since=None, by="month": [{
+    workdone.rollup_workdone = lambda since=None, by="month": [{
         "period": "2026-06", "project": "proj", "active_days": 1, "n_commits": 1, "n_batch_calls": 0,
         "commits": ["Fix login for customer john@acme.com"], "intents": {},
     }]
@@ -109,7 +109,7 @@ try:
     ck("work-done summary de-id'd", "<EMAIL>" in w.get("summary", "") and "jane@corp.com" not in w.get("summary", ""))
 finally:
     saas.conn, saas.contributor_ok, saas._project_filter = saas_conn, saas_cok, saas_flt
-    workdone.rollup, workdone.load_summaries = wd_roll, wd_sum
+    workdone.rollup_workdone, workdone.load_summaries = wd_roll, wd_sum
 
 print(("[OK]" if not fails else "[FAIL]") + " deid: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)

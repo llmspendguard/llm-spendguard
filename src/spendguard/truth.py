@@ -32,7 +32,7 @@ def rows(since=None):
     return out
 
 
-def push(since=None, dry=False):
+def push_truth(since=None, dry=False):
     """Push truth rows → POST /v1/truth. Honors visibility (private = nothing leaves); tolerates a server
     that doesn't implement the endpoint yet (the same forward-compat pattern as push_insights)."""
     from . import saas
@@ -79,7 +79,7 @@ def main(argv=None):
     if len(rs) > 14:
         print(f"  … ({len(rs) - 14} earlier rows)")
     if a.push:
-        res = push(a.since)
+        res = push_truth(a.since)
         print(f"  push → {res}")
     else:
         print("  (preview only — pass --push to sync to the org server)")

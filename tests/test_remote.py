@@ -35,13 +35,13 @@ ck("onstart: secret-free (no api key on the box)", "api_key" not in snip.lower()
 ck("onstart --from-git: uses git source", "git+https://github.com/llmspendguard" in remote.onstart_snippet(from_git=True))
 
 # ── verify: FAIL-CLOSED ──────────────────────────────────────────────────────
-ok, _ = remote.verify("ssh box", _run=lambda *a, **k: _R(stdout="spend gate: ENABLED\n  ENFORCING HERE: 🟢 YES — gated\n"))
+ok, _ = remote.verify_remote_enforcement("ssh box", _run=lambda *a, **k: _R(stdout="spend gate: ENABLED\n  ENFORCING HERE: 🟢 YES — gated\n"))
 ck("verify: ENFORCING → ok", ok is True)
-ok, _ = remote.verify("ssh box", _run=lambda *a, **k: _R(stdout="  ENFORCING HERE: 🔴 NO — not gated\n"))
+ok, _ = remote.verify_remote_enforcement("ssh box", _run=lambda *a, **k: _R(stdout="  ENFORCING HERE: 🔴 NO — not gated\n"))
 ck("verify: NOT enforcing → not ok", ok is False)
-ok, d = remote.verify("ssh box", _run=lambda *a, **k: _R(stdout="bash: spendguard: command not found\n"))
+ok, d = remote.verify_remote_enforcement("ssh box", _run=lambda *a, **k: _R(stdout="bash: spendguard: command not found\n"))
 ck("verify: no gate at all → not ok", ok is False)
-ok, d = remote.verify("ssh box", _run=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("ssh timeout")))
+ok, d = remote.verify_remote_enforcement("ssh box", _run=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("ssh timeout")))
 ck("verify: SSH error → FAIL-CLOSED (not ok)", ok is False and "fail-closed" in d)
 
 # ── budget.ingest_remote: idempotent + project-scoped ────────────────────────

@@ -57,7 +57,7 @@ check("cached>input clamps (not more than no-cache)", over <= no_cache + 1e-12)
 check("cached>input == fully-cached", abs(over - P.realtime_cost("gpt-5.5", 1000, 0, 1000)) < 1e-12)
 check("partial cache is cheaper than none", P.realtime_cost("gpt-5.5", 1000, 0, 500) < no_cache)
 
-check("pricing.verify() self-check passes", P.verify() is True)
+check("pricing.verify_pricing() self-check passes", P.verify_pricing() is True)
 
 print("-- normalize(None) must error, never silently price a None model --")
 try:

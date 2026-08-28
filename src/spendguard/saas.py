@@ -469,7 +469,7 @@ def push_workdone(since=None, by="month", dry=False):
     flt = _project_filter(c)
     summaries = {str(k).lower(): v for k, v in workdone.load_summaries().items()}   # scrubbed "what was accomplished"
     work = []
-    for r in workdone.rollup(since=since, by=by):
+    for r in workdone.rollup_workdone(since=since, by=by):
         proj = (r.get("project") or "").lower()
         if flt is not None and proj not in flt:
             continue                      # not this connection's project — don't cross-attribute
@@ -759,7 +759,7 @@ def sync(if_due=False, since=None):
            "policy": pull_policy()}     # pull the org/team's effective caps so the gate applies them (advisory/enforced)
     try:                                                  # provider-truth totals (keys stay local) → the server's
         from . import truth as _truth                     # monthly close statement reconciles ledger vs these
-        out["truth"] = _truth.push(since=since)
+        out["truth"] = _truth.push_truth(since=since)
     except Exception as e:
         out["truth"] = {"skipped": f"truth push: {str(e)[:80]}"}
     try:                                                  # claude.ai chat attribution loop (only if opted in)
@@ -867,7 +867,7 @@ def crosscheck(since=None):
     return out
 
 
-def status():
+def print_saas_status():
     c = conn()
     ok, reason = ready()
     _, why = due()
@@ -890,7 +890,7 @@ def cmd(argv=None):
     argv = argv or []
     sub = argv[0] if argv else "status"
     if sub in ("status", ""):
-        return status()
+        return print_saas_status()
     if sub in ("ping", "test"):
         ok, reason = ready()
         if not ok:

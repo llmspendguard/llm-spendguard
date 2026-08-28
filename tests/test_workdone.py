@@ -99,7 +99,7 @@ conv.batch_project_map = lambda tdir=None: {
 
 SINCE = "2026-06-15"
 
-rows = workdone.build(since=SINCE)
+rows = workdone.build_workdone(since=SINCE)
 by_key = {(r["day"], r["project"]): r for r in rows}
 
 check("build: nlp-pipeline 2026-06-15 has 1 commit", by_key[("2026-06-15", "nlp-pipeline")]["n_commits"] == 1)
@@ -120,7 +120,7 @@ check("build: commit subjects captured", any(c.startswith("nlp: build entity ind
 
 # ─────────────────────────── rollup by week / month ───────────────────────────
 print("-- rollup: by week aggregates the whole ISO week --")
-wk = workdone.rollup(since=SINCE, by="week")
+wk = workdone.rollup_workdone(since=SINCE, by="week")
 # all our days (06-15..06-17) are in the same ISO week → Monday 2026-06-15
 nlp_week = next((r for r in wk if r["project"] == "nlp-pipeline" and r["period"] == "2026-06-15"), None)
 check("week rollup: nlp-pipeline period exists", nlp_week is not None)
@@ -130,13 +130,13 @@ check("week rollup: nlp-pipeline batch calls summed (2 entity-extract)",
       nlp_week["n_batch_calls"] == 2)
 
 print("-- rollup: by month --")
-mo = workdone.rollup(since=SINCE, by="month")
+mo = workdone.rollup_workdone(since=SINCE, by="month")
 nlp_month = next((r for r in mo if r["project"] == "nlp-pipeline" and r["period"] == "2026-06"), None)
 check("month rollup: period is YYYY-MM", nlp_month is not None and nlp_month["period"] == "2026-06")
 check("month rollup: nlp-pipeline 3 commits", nlp_month["n_commits"] == 3)
 
 print("-- rollup: by day (default) keeps day granularity --")
-dy = workdone.rollup(since=SINCE)               # by='day' default
+dy = workdone.rollup_workdone(since=SINCE)               # by='day' default
 days = {(r["period"], r["project"]) for r in dy}
 check("day rollup: each day is its own period", ("2026-06-15", "nlp-pipeline") in days
       and ("2026-06-16", "nlp-pipeline") in days and ("2026-06-17", "nlp-pipeline") in days)
@@ -221,7 +221,7 @@ import spendguard.saas as _saas
 # can't map the member). Set it here so the test is deterministic: without it, a CI runner with no git user.email
 # falls back to an anon usr_<hex> → push_workdone returns {skipped}, and `.get("work")` would be None.
 _saas.conn = lambda: {"enabled": True, "visibility": "org", "project": "nlp-pipeline", "url": "https://x", "api_key": "k", "contributor": "tester@x.test"}
-workdone.rollup = lambda since=None, by="month": [
+workdone.rollup_workdone = lambda since=None, by="month": [
     {"period": "2026-06", "project": "nlp-pipeline", "active_days": 3, "n_commits": 5, "n_batch_calls": 7,
      "commits": ["x" * 250, "short"], "intents": {"entity-extract": 7}},
     {"period": "2026-06", "project": "vision-pipeline", "active_days": 1, "n_commits": 2, "n_batch_calls": 0,

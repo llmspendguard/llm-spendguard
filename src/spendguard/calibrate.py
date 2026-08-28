@@ -580,7 +580,7 @@ def fetch_shared():
 
 
 # ─────────────────────────────────── surfacing ───────────────────────────────────
-def summary_lines(max_lines=4):
+def calibration_summary_lines(max_lines=4):
     """Short calibration-confidence lines for advise/optimize output. Empty list if nothing learned.
     (Model-level: gate_calls keys by sig, so per-intent fill needs the model too — that pairing is
     exactly what estimate() reports per prediction.)"""
@@ -642,7 +642,7 @@ def show(label=None):
         print(f"org prior: {len(org)} shared cell(s) cached (fetched {fetched[:10]}) — local stats shrink toward the ORG")
     else:
         print("org prior: none cached — `spendguard calibrate fetch` pulls the org's shared experience")
-    for ln in summary_lines():
+    for ln in calibration_summary_lines():
         print("  " + ln)
 
 

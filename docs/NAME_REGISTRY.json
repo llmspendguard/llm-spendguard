@@ -212,11 +212,6 @@
       "verdict": "PROTOCOL",
       "why": "Uniform bool probe answering 'can this lane run?' across four interchangeable lanes, each resolving a DIFFERENT resource: _bin() is not None for the CLI lanes (claude/codex/agy) and bool(_key()) for the HTTP-based zai lane. The bodies are near-identical only because the contract is trivial; the intent is one polymorphic gate per lane. Its docstrings explicitly note the two-line overlap 'stays two lines because each resolves a DIFFERENT binary'. Same contract, distinct implementations — preserve."
     },
-    "build": {
-      "n": 3,
-      "verdict": "COLLISION",
-      "why": "Three unrelated builders producing different domain records: close.build makes a month-end cost close per provider, signal.build makes per-(project,intent,model) signal rows from a call corpus, workdo"
-    },
     "call": {
       "n": 2,
       "verdict": "PROTOCOL",
@@ -272,11 +267,6 @@
       "verdict": "PROTOCOL",
       "why": "Four source-specific implementations of one server contract: each aggregates its own channel's est-value into per-(project,day,model) /v1/ledger rows (billed=False) — chat=claude-ai, claudecode=claude-code, codex=codex, lane_value=gemini/zai (ledger-valued lanes, no session miner). Same shape, dispatched by each source's own sync."
     },
-    "discover": {
-      "n": 3,
-      "verdict": "COLLISION",
-      "why": "Three unrelated 'discover' operations: chat.discover proposes a taxonomy from conversations via LLM, resources.discover mines transcripts for vast.ai instance records, and sources.discover assembles a"
-    },
     "emit": {
       "n": 2,
       "verdict": "COLLISION",
@@ -322,11 +312,6 @@
       "verdict": "PROTOCOL",
       "why": "resources.project_of is a thin convenience wrapper that delegates to gpu_port.project_of, supplying a default label_map. Not a duplicate implementation—it's a bound/defaulted adapter over the single c"
     },
-    "push": {
-      "n": 2,
-      "verdict": "COLLISION",
-      "why": "Both push data to the SaaS server but to different endpoints (/v1/signal vs /v1/truth) with different payloads, filters, and guard logic. They are distinct jobs sharing a bare name, not interchangeabl"
-    },
     "ratios": {
       "n": 2,
       "verdict": "COLLISION",
@@ -346,11 +331,6 @@
       "n": 2,
       "verdict": "PROTOCOL",
       "why": "Both are per-command view renderers: scan.render turns scan data into text lines, sources.render turns discovery data into text lines. Same 'format command output' contract, different inputs/outputs, "
-    },
-    "rollup": {
-      "n": 2,
-      "verdict": "COLLISION",
-      "why": "Different jobs sharing a name: SpendLedger.rollup aggregates spend_events micros into USD sums via SQL; workdone.rollup aggregates per-day commit/intent records by day/week/month. Different domains, s"
     },
     "run": {
       "n": 2,
@@ -382,11 +362,6 @@
       "verdict": "PROTOCOL",
       "why": "Each lives in a distinct adapter module (lambda/modal/runpod) and closes over its own module-level PROVIDER; all conform to the same reconcile.Source factory contract the gpu_port registry expects. Th"
     },
-    "status": {
-      "n": 3,
-      "verdict": "COLLISION",
-      "why": "Three unrelated jobs: bulkgate.status returns a freshness dict for a test-gate ledger sig, lanes.status returns lane/CLI/auth readiness dicts, saas.status prints SaaS config to stdout and returns an e"
-    },
     "story": {
       "n": 2,
       "verdict": "DUPLICATION",
@@ -402,20 +377,10 @@
       "verdict": "COLLISION",
       "why": "One queries a SQLite DB for per-intent call/cost aggregates returning rows; the other formats a parse-result object into a human-readable status string. Entirely different jobs, return types, and sema"
     },
-    "summary_lines": {
-      "n": 2,
-      "verdict": "COLLISION",
-      "why": "Both produce lists of display lines but for entirely different subsystems: one reports calibration-confidence stats from gate_calls, the other reports subscription lane readiness. Different data sourc"
-    },
     "sync": {
       "n": 9,
       "verdict": "PROTOCOL",
       "why": "One adapter contract `sync(dry=False)` pushing a channel's spend/value rows → the server, org-routed, honoring visibility/contributor: chat/claudecode/codex/resources/lane_value.sync (per source) plus saas/remote.sync. Intentional polymorphism, one per source."
-    },
-    "test": {
-      "n": 2,
-      "verdict": "COLLISION",
-      "why": "`_Job.test` configures/dispatches a test job with a run/verify contract (a builder-style method), while `chat.test` is a standalone diagnostic that checks cookie decryption and API connectivity, retur"
     },
     "truth_total": {
       "n": 5,
@@ -426,11 +391,6 @@
       "n": 4,
       "verdict": "PROTOCOL",
       "why": "chat/claudecode/codex.update all share a duck-typed contract: each is an incremental 'read new data since watermark, digest into local state' operation for a different provider (Claude web, Claude Cod"
-    },
-    "verify": {
-      "n": 2,
-      "verdict": "COLLISION",
-      "why": "pricing.verify() self-checks hardcoded price rates and takes no arguments; remote.verify(ssh, timeout) runs a doctor command over SSH and returns (ok, detail). Entirely different jobs, signatures, and"
     },
     "w": {
       "n": 12,
