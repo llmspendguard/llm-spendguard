@@ -81,7 +81,7 @@ def _ledger_llm_total(since):
     return round(sum(by.values()) + sum(rt.values()), 2)
 
 
-def check(since=None, with_server=True):
+def trust_report(since=None, with_server=True):
     """Pull provider truth + the local ledger (+ the server total, if connected) and return the verdicts. The
     daily trust report. Free."""
     since = since or config.month_start_utc()
@@ -125,7 +125,7 @@ def cmd(argv=None):
         for i, a in enumerate(argv):
             if a == "--since" and i + 1 < len(argv):
                 since = argv[i + 1]
-    r = check(since=since)
+    r = trust_report(since=since)
     lv = r["ledger_verdict"]
     icon = {"ok": "🟢", "warn": "🟡", "alarm": "🔴", "unknown": "⚪"}.get(lv["level"], "·")
     print(f"TRUST CHECK — provider billing vs recorded (since {r['since']})")

@@ -3,7 +3,7 @@
   * crossllm.ask REFUSES (BudgetRefused) when a metered vendor is UNPRICEABLE and a budget_usd is set — an
     unknown price estimates to $0, and a $0 estimate must never sail past a budget and then spend unbounded.
   * trust.cmd exits NON-ZERO (3) when provider billing could not be fetched ('unknown'), so a scheduled/CI run
-    never reads a failed verification as success; and trust.check SURFACES a server crosscheck error instead of
+    never reads a failed verification as success; and trust.trust_report SURFACES a server crosscheck error instead of
     dropping it (an unverified server side is not a healthy one).
 
 Offline, isolated home; no network, no real keys — every price/lane/crosscheck is stubbed in-process.
@@ -21,7 +21,7 @@ from spendguard import crossllm, trust             # noqa: E402
 from spendguard.crossllm import BudgetRefused       # noqa: E402
 
 fails = 0
-_orig_check = trust.check                            # saved before the loop overwrites it
+_orig_check = trust.trust_report                            # saved before the loop overwrites it
 
 
 def ck(label, cond, extra=""):
@@ -71,7 +71,7 @@ ck("verdict(truth=None) is 'unknown', never a silent 'ok'", lvl == "unknown")
 
 # cmd exit codes map the OVERALL level: ok→0, warn→1, alarm→2, unknown→3 (every non-ok is non-zero)
 for level, code in {"ok": 0, "warn": 1, "alarm": 2, "unknown": 3}.items():
-    trust.check = lambda since=None, _lvl=level: {
+    trust.trust_report = lambda since=None, _lvl=level: {
         "since": "2026-08-01", "provider_truth": None, "ledger": 0.0,
         "ledger_verdict": {"level": _lvl, "msg": "x"}, "level": _lvl}
     rc = trust.cmd([])

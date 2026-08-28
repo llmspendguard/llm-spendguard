@@ -75,7 +75,7 @@ def _uid():
     return config.uid()          # one implementation; learn.py carried a byte-identical copy
 
 
-def count(intent, model):
+def count_rows(intent, model):
     with _lock:
         return _db().execute("SELECT COUNT(*) FROM call_io WHERE intent IS ? AND model=?",
                              (intent, model)).fetchone()[0]
@@ -298,7 +298,7 @@ def fetch_openai(client, batch_id, intent, model, cap, sample_n):
                     need.discard(cid)
     added = 0
     for cid, d in want.items():
-        if count(intent, model) >= cap:
+        if count_rows(intent, model) >= cap:
             break
         if record(intent, "openai", model, batch_id, cid, d.get("prompt", ""), d["output"],
                   out_tok=d.get("out_tok", 0), system=d.get("system"),
@@ -314,7 +314,7 @@ def fetch_anthropic(client, batch_id, intent, model, cap, sample_n, jsonl_inputs
         return 0, "no results (expired >29d or not ended)"
     added = 0
     for res in client.messages.batches.results(batch_id):
-        if count(intent, model) >= cap or added >= sample_n:
+        if count_rows(intent, model) >= cap or added >= sample_n:
             break
         r = res.result
         if getattr(r, "type", None) != "succeeded":
@@ -367,7 +367,7 @@ def fetch_history(cap=DEFAULT_CAP, sample_n=None, limit_batches=None):
                 break
             if "embedding" in (model or "").lower():    # embeddings are vectors, not judgeable text output
                 continue
-            if count(intent, model) >= cap:
+            if count_rows(intent, model) >= cap:
                 skipped_full += 1
                 continue
             try:

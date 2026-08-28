@@ -694,7 +694,7 @@ def sync(if_due=False, since=None):
         return {"skipped": f"not connected: {reason}"}
     try:                                                  # record GPU instances EVERY run (cheap, free) so a frequent
         from . import resources as _r                     # scheduler captures short-lived/destroyed instances even
-        _r.snapshot()                                     # when the full push isn't due yet
+        _r.record_instance_history()                      # when the full push isn't due yet
     except Exception:
         pass
     prices = {}
@@ -746,7 +746,7 @@ def sync(if_due=False, since=None):
     tg = {}
     try:
         from . import trust
-        tg = trust.check(since=since, with_server=False)
+        tg = trust.trust_report(since=since, with_server=False)
         if tg.get("ledger_verdict", {}).get("level") == "alarm":
             return {"skipped": "TRUST GATE — push blocked", "trust": tg["ledger_verdict"]["msg"],
                     "fix": "run `spendguard trust` + `spendguard reconcile-ledger`; do not push until recorded ≈ provider-billed"}

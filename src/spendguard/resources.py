@@ -90,7 +90,7 @@ def _load_history():
         return {}
 
 
-def snapshot():
+def record_instance_history():
     """Record each LIVE instance's reconstruction state (id → gpu/dph/start/end/label/last_seen), so DESTROYED
     instances stay reconstructable per-day. vast.ai exposes NO per-day consumption AND drops destroyed instances
     from the API (the invoice/CSV export is top-ups only) — so we must persist their state while they're live.
@@ -769,7 +769,7 @@ def record_recovered(box):
     """Record a box DESTROYED before snapshotting began, reconstructed from evidence (e.g. session transcripts), so
     it flows through the normal reconcile. Same shape as a live instance + `source:"recovered"` (id, gpu_name,
     dph_total, start_date, end_date, label). Idempotent by id. The runtime is an ESTIMATE — the durable fix is
-    continuous `snapshot()` so boxes are captured live, not reconstructed after the fact."""
+    continuous `record_instance_history()` so boxes are captured live, not reconstructed after the fact."""
     hist = _load_history()
     b = dict(box)
     b["source"] = "recovered"
@@ -821,11 +821,11 @@ def sync(dry=False):
     project is in this connection's org rides one push, EACH ROW KEEPING ITS OWN project/team (not collapsed onto a
     single repo) — the same agentic, per-item attribution as the LLM ledger. Account-anchored: the unrecoverable
     remainder is an EXPLICIT `residual` (account total − Σ recorded boxes), surfaced but NEVER dumped on a project/org
-    (a shared vast.ai account would otherwise leak cross-org). snapshot() runs first so live boxes are captured."""
+    (a shared vast.ai account would otherwise leak cross-org). record_instance_history() runs first so live boxes are captured."""
     from . import saas
     c = saas.conn()
     ref = saas.contributor()
-    snapshot()                                             # RECORD live instances first (so destroyed ones survive)
+    record_instance_history()                                             # RECORD live instances first (so destroyed ones survive)
     from . import attribution
     _ptmap = attribution.project_team_map(attribution.taxonomy()[0])
     _meta = lambda p: _ptmap.get((p or "").lower(), ("", ""))      # (org, team) for a project
@@ -873,7 +873,7 @@ def cmd(argv=None):
     argv = argv or []
     sub = argv[0] if argv else "show"
     if sub == "snapshot":                                  # record live instances → history (cron this; runs on sync too)
-        print("resources snapshot:", snapshot())
+        print("resources snapshot:", record_instance_history())
         return 0
     if sub == "sync":
         print("resources sync:", sync(dry="--dry" in argv))
@@ -908,5 +908,5 @@ def cmd(argv=None):
     print(f"  {'→ residual':14} {money(residual)}  (account − attributed; should ≈ unspent balance buffer)")
     w = reconcile.residual_warning(truth, residual)         # shared core: flags an under-attributed source/tenant
     if w:
-        print("  ⚠  " + w + " (GPU: resources.record_recovered / discover --agentic; or schedule snapshot()).")
+        print("  ⚠  " + w + " (GPU: resources.record_recovered / discover --agentic; or schedule record_instance_history()).")
     return 0

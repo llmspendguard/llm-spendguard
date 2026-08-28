@@ -73,12 +73,12 @@ trust._ledger_llm_total = lambda since: {"total": 0.0}
 trust.verdict = lambda truth, recorded: ("ok", "ledger fine")
 saas.crosscheck = lambda since=None: {"error": None, "in_sync": False, "value_drift": 3.0,
                                       "server_rows": 1, "server_only": 0, "local_only": 2}
-r = trust.check(since="2026-08-01", with_server=True)
+r = trust.trust_report(since="2026-08-01", with_server=True)
 ck("server drift (in_sync False) elevates the overall level to warn even when the ledger is ok",
    r.get("level") == "warn", str(r.get("level")))
 saas.crosscheck = lambda since=None: {"error": None, "in_sync": True, "value_drift": 0.0,
                                       "server_rows": 1, "server_only": 0, "local_only": 0}
-ck("an in-sync server keeps the overall level ok", trust.check(since="2026-08-01", with_server=True).get("level") == "ok")
+ck("an in-sync server keeps the overall level ok", trust.trust_report(since="2026-08-01", with_server=True).get("level") == "ok")
 
 
 # ── 5. estimate-divergence: UNJUDGED is not a clean pass ─────────────────────────────────────────────────────

@@ -605,7 +605,7 @@ def test_job(sig, run_fn, n=None, verify_fn=None, contract=None, items=None):
     from . import output_contract
     n = min(int(n or preview_max()), preview_max())
     out = run_fn(n)
-    res = output_contract.check(out if contract is not None else [], contract) if contract is not None else None
+    res = output_contract.check_items_against_contract(out if contract is not None else [], contract) if contract is not None else None
     if contract is not None:
         ok = res.clean
         if not ok:

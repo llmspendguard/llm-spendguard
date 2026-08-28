@@ -119,12 +119,12 @@ check("no substring matching on provider or model identity in the code",
 print("-- THE BUG: the count must not scale with the encoded payload --")
 small = [{"type": "text", "text": "describe this page"}, anth_block(png_b64(448, 448, filler_kb=8))]
 big = [{"type": "text", "text": "describe this page"}, anth_block(png_b64(448, 448, filler_kb=4096))]
-t_small = ct.count(small, provider="anthropic")
-t_big = ct.count(big, provider="anthropic")
+t_small = ct.count_tokens(small, provider="anthropic")
+t_big = ct.count_tokens(big, provider="anthropic")
 check("a 512× bigger encoded payload for the SAME pixels costs the same", t_small == t_big,
       f"{t_small} vs {t_big}")
 # Exact identity: adding the image adds EXACTLY the image's modelled tokens and nothing payload-sized.
-text_only = ct.count([small[0]], provider="anthropic")
+text_only = ct.count_tokens([small[0]], provider="anthropic")
 check("adding the panel adds exactly (448·448)/750 tokens, nothing payload-sized",
       t_small - text_only == ct.anthropic_image_tokens(448, 448), f"delta {t_small - text_only}")
 # what the old code did, for the record: json.dumps the block and count it as text.
@@ -134,13 +134,13 @@ check("the OLD behaviour is reproducibly ~1000× worse (that was the 25× on rea
 
 print("-- 800 pages: the number a cap is compared against --")
 page = [{"type": "text", "text": "extract the fields"}, anth_block(jpeg_b64(1224, 1584), "image/jpeg")]
-per_page = ct.count(page, provider="anthropic")
-page_text = ct.count([page[0]], provider="anthropic")
+per_page = ct.count_tokens(page, provider="anthropic")
+page_text = ct.count_tokens([page[0]], provider="anthropic")
 check("the page image contributes exactly its pixel cost",
       per_page - page_text == ct.anthropic_image_tokens(1224, 1584), f"delta {per_page - page_text}")
 # The number a cap is actually compared against: 800 pages of the SAME image must cost 800× one page —
 # under the old estimator it scaled with the JPEG's byte size instead, which is what tripped the cap.
-book = ct.count([page[0]] + [page[1]] * 800, provider="anthropic")
+book = ct.count_tokens([page[0]] + [page[1]] * 800, provider="anthropic")
 check("800 pages = 800 × the per-image cost, exactly",
       book - page_text == 800 * ct.anthropic_image_tokens(1224, 1584), f"got {book:,}")
 
@@ -158,9 +158,9 @@ print("-- nested content (tool results carry images too) --")
 nested = [{"type": "tool_result", "tool_use_id": "t1",
            "content": [{"type": "text", "text": "here"}, anth_block(png_b64(448, 448))]}]
 check("an image nested inside a tool_result is measured, not stringified",
-      ct.count(nested, provider="anthropic") < 500, f"got {ct.count(nested, provider='anthropic')}")
+      ct.count_tokens(nested, provider="anthropic") < 500, f"got {ct.count_tokens(nested, provider='anthropic')}")
 check("has_media sees it", ct.has_media(nested) is True)
-check("plain text is unaffected", ct.count("hello world" * 100, provider="anthropic") > 0)
+check("plain text is unaffected", ct.count_tokens("hello world" * 100, provider="anthropic") > 0)
 check("has_media is False for pure text", ct.has_media([{"type": "text", "text": "hi"}]) is False)
 
 print("-- PDFs are pages, not bytes --")

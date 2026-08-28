@@ -221,7 +221,7 @@ def check_item(item, contract):
         return False, False, f"{type(e).__name__}: {e}"
 
 
-def check(items, contract, max_failures=5):
+def check_items_against_contract(items, contract, max_failures=5):
     """Validate EVERY item of a sample against the contract. Checking only the first would miss precisely the
     failure this is for — the one that appears at item 400."""
     items = list(items or [])

@@ -31,7 +31,7 @@ total = sum(r["cost"] for r in rows)
 ck("total ≈ inst1 $48 + inst2 $24", abs(total - (48 + 24)) < 3.0)
 
 # snapshot records both; then inst1 is "destroyed" (gone from the live API) → still reconstructed from history
-resources.snapshot()
+resources.record_instance_history()
 resources.instances = lambda: [inst2]
 ids = {str(i.get("id")) for i in resources._all_instances()}
 ck("destroyed instance reconstructed from snapshot history", ids == {"1", "2"})

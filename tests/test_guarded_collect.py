@@ -105,14 +105,14 @@ rows_mixed = list(callio.guarded_collect(["batch-notready", "batch-A"], INTENT, 
 ck("the ready batch's rows come through, the not-ready one contributes nothing", len(rows_mixed) == N_OK + 1)
 
 print("\n-- (d) record_io=True attributes rows to (intent, model), idempotently --")
-before = callio.count(INTENT, MODEL)
+before = callio.count_rows(INTENT, MODEL)
 for _ in callio.guarded_collect("batch-A", INTENT, MODEL, client=CLIENT, record_io=True):
     pass
-after = callio.count(INTENT, MODEL)
+after = callio.count_rows(INTENT, MODEL)
 ck("each success is recorded under (intent, model) — the error row is not", after - before == N_OK)
 for _ in callio.guarded_collect("batch-A", INTENT, MODEL, client=CLIENT, record_io=True):
     pass
-ck("re-collecting does NOT double-count (idempotent on batch+custom_id)", callio.count(INTENT, MODEL) == after)
+ck("re-collecting does NOT double-count (idempotent on batch+custom_id)", callio.count_rows(INTENT, MODEL) == after)
 ck("default (record_io=False) records nothing", True)   # (a)/(c) above ran without record_io and count stayed 0 pre-(d)
 
 print("\n-- (b2) unparseable / custom_id-less rows are SURFACED as anomalies, never silently dropped --")

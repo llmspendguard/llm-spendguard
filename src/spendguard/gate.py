@@ -110,7 +110,7 @@ def _content_tokens(content, provider=None, model=None):
         return _ct(content)
     try:
         from . import content_tokens
-        return content_tokens.count(content, provider=provider, model=model, text_tokens=_ct)
+        return content_tokens.count_tokens(content, provider=provider, model=model, text_tokens=_ct)
     except Exception as e:
         # THE FALLBACK IS THE BUG THIS FUNCTION EXISTS TO PREVENT. `_ct(str(content))` json-ifies the blocks
         # and counts the base64 payload as text — measured against billing, that over-states a real vision

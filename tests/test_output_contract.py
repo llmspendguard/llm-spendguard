@@ -53,43 +53,43 @@ PROSE = 'I was unable to read this page.'
 KEYS = ["patient_id", "findings"]
 
 print("-- required keys: the cheapest useful contract --")
-r = oc.check([GOOD, GOOD], KEYS)
+r = oc.check_items_against_contract([GOOD, GOOD], KEYS)
 check("clean output is clean", r.clean and r.parsed == 2 and r.failed == 0)
-r = oc.check([GOOD, MISSING], KEYS)
+r = oc.check_items_against_contract([GOOD, MISSING], KEYS)
 check("a missing key FAILS, and names the key", r.failed == 1 and "findings" in r.first_failure, r.first_failure)
-r = oc.check([GOOD, PROSE], KEYS)
+r = oc.check_items_against_contract([GOOD, PROSE], KEYS)
 check("prose instead of JSON fails with a readable reason", r.failed == 1 and "not JSON" in r.first_failure,
       r.first_failure)
 
 print("-- salvaged output is NOT clean (this is the item-400 failure) --")
-r = oc.check([GOOD, FENCED], KEYS)
+r = oc.check_items_against_contract([GOOD, FENCED], KEYS)
 check("a code fence parses but is counted as salvaged", r.parsed == 2 and r.salvaged == 1)
 check("…and salvaged is therefore NOT clean", r.clean is False)
-r = oc.check([GOOD, PREAMBLE], KEYS)
+r = oc.check_items_against_contract([GOOD, PREAMBLE], KEYS)
 check("a prose preamble is salvaged too", r.salvaged == 1)
-check("the summary tells the operator what to do about it", "salvaged" in oc.check([FENCED], KEYS).summary())
+check("the summary tells the operator what to do about it", "salvaged" in oc.check_items_against_contract([FENCED], KEYS).summary())
 
 print("-- EVERY item is checked, not just the first --")
 big = [GOOD] * 399 + [MISSING]
-r = oc.check(big, KEYS)
+r = oc.check_items_against_contract(big, KEYS)
 check("a failure at item 400 of 400 is caught", r.failed == 1 and r.failures[0]["index"] == 399)
 check("the counts add up", r.parsed + r.failed == 400)
 
 print("-- the other contract forms --")
-check("'json' accepts any parseable JSON", oc.check([GOOD, '[]'], "json").clean)
-check("'json' still rejects prose", oc.check([PROSE], "json").failed == 1)
+check("'json' accepts any parseable JSON", oc.check_items_against_contract([GOOD, '[]'], "json").clean)
+check("'json' still rejects prose", oc.check_items_against_contract([PROSE], "json").failed == 1)
 schema = {"type": "object", "required": ["n"], "properties": {"n": {"type": "number"}}}
 check("schema: type mismatch fails and names the path",
-      "n" in oc.check(['{"n": "seven"}'], schema).first_failure)
+      "n" in oc.check_items_against_contract(['{"n": "seven"}'], schema).first_failure)
 check("schema: a boolean is not a number (the classic JSON trap)",
-      oc.check(['{"n": true}'], schema).failed == 1)
-check("schema: correct types pass", oc.check(['{"n": 7}'], schema).clean)
-check("callable: False means fail", oc.check([{"score": 0}], lambda i: i["score"] > 0).failed == 1)
+      oc.check_items_against_contract(['{"n": true}'], schema).failed == 1)
+check("schema: correct types pass", oc.check_items_against_contract(['{"n": 7}'], schema).clean)
+check("callable: False means fail", oc.check_items_against_contract([{"score": 0}], lambda i: i["score"] > 0).failed == 1)
 check("callable: a raise is a failure, not a crash",
-      oc.check([{}], lambda i: i["missing"]).failed == 1)
+      oc.check_items_against_contract([{}], lambda i: i["missing"]).failed == 1)
 
 calls = []
-oc.check([1, 2, 3], lambda i: calls.append(i) or True)
+oc.check_items_against_contract([1, 2, 3], lambda i: calls.append(i) or True)
 check("a callable verifier runs ONCE per item (may be expensive/stateful)", len(calls) == 3, str(len(calls)))
 
 print("-- identity: a changed contract must expire the authorization --")

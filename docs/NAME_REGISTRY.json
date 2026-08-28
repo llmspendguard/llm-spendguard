@@ -222,11 +222,6 @@
       "verdict": "PROTOCOL",
       "why": "All five share the same signature captured(self, since=None) and return a list of cost/project row dicts (or empty base default). reconcile.Source.captured returning [] is the abstract/default base; t"
     },
-    "check": {
-      "n": 2,
-      "verdict": "COLLISION",
-      "why": "output_contract.check validates a sample of items against a data contract; trust.check pulls provider/ledger financial truth into a daily report. Completely different jobs sharing a generic verb name."
-    },
     "classify": {
       "n": 3,
       "verdict": "PROTOCOL",
@@ -256,11 +251,6 @@
       "n": 2,
       "verdict": "COLLISION",
       "why": "Different jobs, different signatures, different domains. gpu_port.cost_by_day computes per-day GPU instance costs from normalized rows returning a single {date:$} dict; reconcile_anthropic.cost_by_day"
-    },
-    "count": {
-      "n": 2,
-      "verdict": "COLLISION",
-      "why": "callio.count counts database rows matching intent/model; content_tokens.count counts input tokens in a message content. Entirely different jobs sharing a bare, generic name."
     },
     "day_totals": {
       "n": 4,
@@ -351,11 +341,6 @@
       "n": 4,
       "verdict": "PROTOCOL",
       "why": "Each show() is a per-source reporting entry point (calibration, claude.ai chat, claude-code, codex) invoked polymorphically by the CLI dispatch — same 'render this source's report' contract, different"
-    },
-    "snapshot": {
-      "n": 2,
-      "verdict": "COLLISION",
-      "why": "budget.snapshot copies a sqlite ledger DB to a backup file before mutation; resources.snapshot records live vast.ai instance reconstruction state to a history JSON. Different jobs, different return ty"
     },
     "source": {
       "n": 3,

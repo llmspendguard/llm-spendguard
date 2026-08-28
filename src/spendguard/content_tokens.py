@@ -314,7 +314,7 @@ def _walk(node, out):
             _walk(v, out)
 
 
-def count(content, provider=None, model=None, text_tokens=None):
+def count_tokens(content, provider=None, model=None, text_tokens=None):
     """INPUT tokens for a message's `content` (a plain string, or a list of blocks).
 
     `text_tokens` is the caller's text counter (tiktoken where available) so this module never has to own a
