@@ -75,6 +75,72 @@ def _pool_meta(vendor):
     return m if isinstance(m, dict) else {}
 
 
+def _declared(vendor):
+    """User-DECLARED prepay for a vendor with NO balance API (openai/anthropic/gemini expose none with a plain key):
+    config balances.declared[vendor] = {amount, currency, as_of ('YYYY-MM-DD' the amount was true), auto_reload
+    {trigger, to}|null, monthly_cap|null}. The operator STATES it (never guessed); combined with metered spend
+    since as_of, it is the declared-minus-spend ledger that fills the 'unknown' gap for the no-API providers."""
+    dec = config._cfg_get("balances", "declared", None) or {}
+    m = dec.get(vendor) if isinstance(dec, dict) else None
+    return m if isinstance(m, dict) else {}
+
+
+def _spend_since(vendor, as_of):
+    """Metered $ this vendor has drawn down SINCE `as_of` (a 'YYYY-MM-DD'), from the GATE ledger — the same countable
+    spend reconcile mirrors against provider truth. None (NOT 0.0) when the ledger can't be read: a can't-read must
+    NOT read as 'no spend', or declared_balance would report the FULL declared amount as available (overstating money
+    in the unsafe direction) — the module's invariant is that a gap stays 'unknown', never a fabricated number."""
+    from . import budget
+    try:
+        rows = budget.by_provider_day(since=str(as_of)[:10])
+    except Exception:
+        return None
+    return float(sum(v for (p, _d), v in rows.items() if p == vendor))
+
+
+def _apply_auto_reload(declared_amount, spent, trigger, to):
+    """Current balance of an AUTO-RELOADING prepay: it starts at `declared_amount` and tops up to `to` each time it
+    would fall below `trigger` (adding to-trigger of REAL money per reload), so after `spent` drawdown it lands in
+    [trigger, to]. A malformed reload (to<=trigger) or none → a plain declared-minus-spend drawdown (floored at 0)."""
+    if trigger is None or not to or to <= trigger:
+        return max(0.0, declared_amount - spent)
+    add = to - trigger
+    usable_before_first = declared_amount - trigger        # spend that fits before the first reload fires
+    if spent <= usable_before_first:
+        return declared_amount - spent
+    import math
+    reloads = math.ceil((spent - usable_before_first) / add)
+    return declared_amount + reloads * add - spent         # stays within [trigger, to]
+
+
+def declared_balance(vendor):
+    """{vendor, available, currency, source, kind, auto_topup, as_of, reloading, ...} from the declared-minus-spend
+    ledger, for a vendor with no balance API. available None (source 'unknown') when nothing is declared OR the spend
+    ledger can't be read — NEVER a fabricated number (a can't-read is not a full balance). An auto_reload account is
+    'on_demand' (fresh money, reloads on use); a plain declared pool is 'sunk_pool'. `reloading`=True flags that spend
+    has crossed the reload trigger at least once."""
+    d = _declared(vendor)
+    amt = d.get("amount")
+    unknown = {"vendor": vendor, "available": None, "currency": d.get("currency"), "source": "unknown",
+               "kind": "unknown", "auto_topup": False, "as_of": d.get("as_of"), "reloading": False}
+    if amt is None:
+        return unknown
+    spent = _spend_since(vendor, d.get("as_of") or "1970-01-01")
+    if spent is None:                                      # ledger unreadable → cannot compute drawdown → UNKNOWN
+        return {**unknown, "_note": "spend ledger unread"}
+    reload_cfg = d.get("auto_reload") if isinstance(d.get("auto_reload"), dict) else None
+    if reload_cfg:
+        avail = _apply_auto_reload(float(amt), spent, reload_cfg.get("trigger"), reload_cfg.get("to"))
+        reloading = spent > (float(amt) - float(reload_cfg.get("trigger") or 0))
+    else:
+        avail = max(0.0, float(amt) - spent)
+        reloading = False
+    return {"vendor": vendor, "available": round(avail, 4), "currency": d.get("currency") or "USD",
+            "source": "declared", "kind": ("on_demand" if reload_cfg else "sunk_pool"),
+            "auto_topup": bool(reload_cfg), "as_of": d.get("as_of"), "reloading": reloading,
+            "monthly_cap": d.get("monthly_cap"), "spent_since": round(spent, 4)}
+
+
 def fetch_balance_raw(vendor, timeout_s=15):
     """The vendor's raw balance JSON (dict), or None when there is no endpoint / no key / the GET fails. $0 — a
     GET, no generation. Never raises: a discovery failure is a None (can't-check), not an exception."""
@@ -141,6 +207,8 @@ def vendor_balance(vendor, refresh=False):
       kind   'on_demand' when the operator declared auto-top-up (fresh spend, no idle-pool incentive), else
              'sunk_pool' (manual prepay worth drawing down) — only meaningful when there IS an available number.
     Cached; the agentic read is skipped when the raw balance is byte-identical to the cached one (raw-hash)."""
+    if vendor not in _endpoints() and _declared(vendor).get("amount") is not None:
+        return declared_balance(vendor)      # no balance API (openai/anthropic/gemini) → the declared-minus-spend ledger
     cache = _load_cache()
     cached = (cache.get("vendors") or {}).get(vendor) or {}
     meta = _pool_meta(vendor)
@@ -212,11 +280,17 @@ def refresh_balances_if_stale():
 
 
 def all_balances(refresh=False):
-    """Per-vendor balance for every configured endpoint, from cache (or a live refresh)."""
-    if refresh:
-        return refresh_balances()
-    cache = _load_cache()
-    return list((cache.get("vendors") or {}).values()) or refresh_balances()
+    """Per-vendor balance for EVERY provider we can price: the API-endpoint vendors (deepseek/moonshot — real
+    balance) PLUS every config-declared vendor with no endpoint (openai/anthropic/gemini — declared-minus-spend).
+    One 'how much is available' view across all providers, from cache (or a live refresh of the API ones)."""
+    api_rows = refresh_balances() if refresh else (list((_load_cache().get("vendors") or {}).values()) or refresh_balances())
+    # vendor names are canonical provider ids (adapters.PROVIDERS keys — a controlled vocabulary, no aliases); the
+    # only slip is case, so dedup case-insensitively (a mechanical case-fold, not a semantic match) to avoid a
+    # declared vendor also shown from the API path.
+    seen = {(r.get("vendor") or "").lower() for r in api_rows}
+    declared_cfg = config._cfg_get("balances", "declared", None) or {}
+    declared_rows = [declared_balance(v) for v in sorted(declared_cfg) if v.lower() not in seen]
+    return api_rows + declared_rows
 
 
 def main(argv=None):
