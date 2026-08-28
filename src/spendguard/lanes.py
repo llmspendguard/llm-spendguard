@@ -27,6 +27,8 @@ _PROBE_PROMPT = "Reply with exactly: OK"
 # can be stale (live 2026-07-16: a 404 on an old sonnet snapshot) — real lane calls always pass the advisor's
 # tier, so the probe must too or it reports a failure the lane would never hit.
 _PROBE_TIER = {"claude-code": "haiku", "codex": None, "gemini": None, "zai-coding": None}   # None → each lane's own default model
+_QUOTA_WARN_PCT = 25          # DISPLAY-ONLY: the headroom bar flags yellow below this. NOT a routing threshold (that is
+#                               config-driven + evidence-based, Phase 2) — this only colours a human-facing gauge.
 
 
 def _probe_cache_path():
@@ -144,11 +146,17 @@ def status():
     return {"executor": ex, "lanes": out}
 
 
+def _lane_mods():
+    """lane name → its executor module. The SINGLE source for 'which module runs and reports this lane', shared by
+    probe() (run_prompt) and lane_headroom() (usage()), so the mapping is defined once, not copied per consumer."""
+    from . import subscription_exec, codex_exec, antigravity_exec, zai_exec
+    return {"claude-code": subscription_exec, "codex": codex_exec, "gemini": antigravity_exec, "zai-coding": zai_exec}
+
+
 def probe():
     """Definitive activation check: ONE tiny prompt per enabled lane, straight through its CLI ($0 billed —
     plan-covered; the only spend is a few plan tokens). Returns per-lane live results."""
-    from . import subscription_exec, codex_exec, antigravity_exec, zai_exec
-    mods = {"claude-code": subscription_exec, "codex": codex_exec, "gemini": antigravity_exec, "zai-coding": zai_exec}
+    mods = _lane_mods()
     res = []
     for ln in status()["lanes"]:
         if not ln["enabled"]:
@@ -169,6 +177,32 @@ def probe():
         res.append(dict(lane=ln["lane"], ok=ok, error=r.get("error"),
                         text=(r.get("text") or "")[:40], latency=round(r.get("latency") or 0, 1)))
     return res
+
+
+def lane_headroom():
+    """Per-lane subscription QUOTA headroom, from each executor's usage() — provider TRUTH where the plan exposes it
+    (gemini/claude-code status commands; codex/zai captured from real calls), None where it does not. One dict per
+    ENABLED lane: {lane, provider, remaining_pct, reset_ts, buckets, known}. known=False ⇒ the provider exposes no
+    quota surface — 'UNKNOWN', which callers must treat as DISTINCT from 0% remaining (never as exhausted). Reading
+    a lane's usage() may cost one cached $0 status call (gemini/claude-code); codex/zai are read from captured
+    metadata (no call). This is NOT called from the fast auth-only summary/doctor path — only on demand."""
+    from . import lane_quota
+    mods = _lane_mods()
+    out = []
+    for ln in status()["lanes"]:
+        if not ln["enabled"]:
+            continue
+        mod = mods.get(ln["lane"])
+        buckets = None
+        if mod is not None and hasattr(mod, "usage"):
+            try:
+                buckets = mod.usage()
+            except Exception:
+                buckets = None                              # a lane's quota read must never break the cross-lane view
+        hr = lane_quota.bucket_headroom(buckets) or {}
+        out.append({"lane": ln["lane"], "provider": ln["provider"], "remaining_pct": hr.get("remaining_pct"),
+                    "reset_ts": hr.get("reset_ts"), "buckets": buckets, "known": buckets is not None})
+    return out
 
 
 def summary_lines():
@@ -206,6 +240,18 @@ def main(argv=None):
                 print(f"  {r['lane']:<12} 🟢 LIVE — answered in {r['latency']}s at $0 billed")
             else:
                 print(f"  {r['lane']:<12} 🔴 {r['error']}")
+    if "--usage" in argv:                                 # per-lane PLAN QUOTA headroom (provider truth where exposed)
+        import datetime
+        print("\nplan quota headroom (provider truth where the plan exposes it; 'unknown' = no quota surface yet):")
+        for h in lane_headroom():
+            if not h["known"]:
+                print(f"  {h['lane']:<12} ({h['provider']} plan): quota unknown — no status surface / no call captured yet")
+                continue
+            rem = int(h["remaining_pct"])
+            bar = "█" * (rem // 10) + "░" * (10 - rem // 10)
+            when = (" · resets " + datetime.datetime.fromtimestamp(h["reset_ts"]).strftime("%b %d %H:%M")) if h.get("reset_ts") else ""
+            flag = "🟢" if rem >= _QUOTA_WARN_PCT else ("🟡" if rem > 0 else "🔴")
+            print(f"  {h['lane']:<12} ({h['provider']} plan): {flag} {rem:3}% left {bar}{when}")
     if "--catalog" in argv:                               # the lane model catalog: use-names · provider · reasoning · $
         from . import lane_catalog
         print()

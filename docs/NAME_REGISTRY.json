@@ -2,6 +2,16 @@
   "_comment": "Every bare function name shared by more than one definition in src/spendguard, with the verdict a model reached by reading the BODIES (scripts/probe/review_axes.py name). PROTOCOL = intentional polymorphism, correct as-is. DUPLICATION = one job, many copies; merge. COLLISION = different jobs wearing one name; rename. This file is a BASELINE, not an approval: tests/test_names_stay_unique.py fails on any name NOT listed here, so new collisions must be judged before they land. Shrinking this file is the goal.",
   "generated_by": "scripts/probe/review_axes.py name --run",
   "names": {
+    "_fetch_usage": {
+      "n": 3,
+      "verdict": "PROTOCOL",
+      "why": "Each _fetch_usage lives in a different exec module (antigravity/codex/subscription) and implements the same contract — return usage buckets or None — for a different backend (agy CLI, codex sqlite logs, claude CLI). They are the raw fetch behind each lane's usage(), wrapped uniformly by lane_quota.cached_usage. Same interface, deliberately parallel, dispatched per-lane. [Adjudicated PROTOCOL by honestreview name --run, 2026-08-27.]"
+    },
+    "usage": {
+      "n": 3,
+      "verdict": "PROTOCOL",
+      "why": "Each usage() is a per-lane implementation of the same lane-quota contract (return buckets [{bucket, remaining_pct, reset_ts}] or None), delegating to a shared lane_quota.cached_usage with lane-specific _fetch_usage. Intentional polymorphism across lane modules (antigravity/codex/subscription exec), consumed uniformly by lanes.lane_headroom() iterating mod.usage(). [Adjudicated PROTOCOL by honestreview name --run, 2026-08-27.]"
+    },
     "_apply": {
       "n": 2,
       "verdict": "COLLISION",

@@ -141,38 +141,25 @@ def _parse_usage(text):
     return out or None
 
 
+def _fetch_usage():
+    """Run `agy /usage` on the subscription OAuth (metered keys stripped) and parse it → buckets or None. The raw
+    fetch behind usage(); lane_quota.cached_usage wraps it with the TTL + reset-boundary freshness bounds."""
+    exe = _bin()
+    if not exe:
+        return None
+    from . import config
+    r = subprocess.run([exe, "-p", "/usage", "--output-format", "text", "--print-timeout", "30s"],
+                       capture_output=True, text=True, timeout=45, env=config.lane_plan_env())
+    return _parse_usage(r.stdout) if r.returncode == 0 else None
+
+
 def usage():
     """agy's quota report parsed into buckets [{bucket, remaining_pct, reset_ts}], or None (agy absent / call or
-    parse failed → the caller falls back to ordinary lane handling). Cached _USAGE_TTL_S so a burst of lane failures
-    costs ONE $0 CLI round-trip. Runs on the subscription OAuth (metered keys stripped), exactly like run_prompt.
-
-    Freshness has TWO bounds, because acting on a STALE-EXHAUSTED snapshot is the harmful direction (it would cool a
-    lane whose quota has since refilled): the _USAGE_TTL_S window AND — crucially — the soonest RESET the cached
-    snapshot itself reported. Once we are past that reset, the quota has refilled by definition, so the cache is
-    invalidated and refetched; a weekly-reset restoration can never be masked. (A restoration WITHOUT a reset — a
-    plan upgrade — is still bounded by the TTL, an acceptable few-minutes lag for a rare event.)"""
-    now = time.time()
-    cached = _usage_cache["val"]
-    fresh = now - _usage_cache["at"] < _USAGE_TTL_S
-    if fresh and cached:                                  # invalidate a cached snapshot once past the reset it promised
-        soonest = min((float(r.get("reset_ts") or 0) for r in cached), default=0.0)
-        if soonest and now >= soonest:
-            fresh = False
-    if fresh:
-        return cached
-    exe = _bin()
-    rows = None
-    if exe:
-        from . import config
-        try:
-            r = subprocess.run([exe, "-p", "/usage", "--output-format", "text", "--print-timeout", "30s"],
-                               capture_output=True, text=True, timeout=45, env=config.lane_plan_env())
-            if r.returncode == 0:
-                rows = _parse_usage(r.stdout)
-        except Exception:
-            rows = None
-    _usage_cache["at"], _usage_cache["val"] = now, rows
-    return rows
+    parse failed → ordinary lane handling). Cached via lane_quota.cached_usage: TTL + reset-boundary invalidation
+    (past a cached snapshot's soonest reset the quota has refilled, so a stale-EXHAUSTED read never masks a
+    recovered lane), so a burst of lane failures costs ONE $0 CLI round-trip."""
+    from . import lane_quota
+    return lane_quota.cached_usage(_usage_cache, _USAGE_TTL_S, _fetch_usage)
 
 
 def _quota_reset_s():

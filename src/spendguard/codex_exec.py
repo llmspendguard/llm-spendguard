@@ -32,6 +32,8 @@ import tempfile
 import time
 
 TIMEOUT_S = 300               # meta prompts are small; a hung CLI must not stall the daily report
+_USAGE_TTL_S = 300            # the codex rate-limit log is re-read at most this often (shared cache adds reset-boundary)
+_usage_cache = {"at": 0.0, "val": None}
 
 
 def _bin():
@@ -124,6 +126,83 @@ def _codex_effort(level):
     if not lv:
         return None
     return "none" if lv == "minimal" else lv
+
+
+# ── codex QUOTA: read the rate-limit events codex records in its logs sqlite (opportunistic, FILE-based) ───────
+# The ChatGPT plan exposes no quota status command, and `codex exec --json` emits only token counts (verified: no
+# rate-limit field). But the CLI LOGS the rate-limit envelope it receives on every real call into its logs sqlite,
+# as `codex.rate_limits` — {primary/secondary: {used_percent, window_minutes, reset_at (unix ts)}}. Reading the
+# freshest one (read-only) gives real plan headroom, refreshed by traffic, with no extra call. None on any gap.
+def _codex_home():
+    """Codex's state dir: $CODEX_HOME, else the documented default ~/.codex. Not hardcoded to one path — an override
+    or a relocated home still resolves (and _plugin_disable_flags already reads config.toml from the same home)."""
+    return os.environ.get("CODEX_HOME") or os.path.expanduser("~/.codex")
+
+
+def _parse_rate_limits(obj):
+    """A codex.rate_limits payload → buckets [{bucket, remaining_pct, reset_ts}]. primary/secondary each carry
+    used_percent (remaining = 100 - used) and reset_at (absolute unix ts; reset_after_seconds is the relative
+    fallback). PARSE of a fixed provider schema, not a judgement. None when neither bucket is present."""
+    rl = (obj or {}).get("rate_limits") or {}
+    out = []
+    for name in ("primary", "secondary"):
+        b = rl.get(name)
+        if not isinstance(b, dict) or b.get("used_percent") is None:
+            continue
+        reset = b.get("reset_at")
+        if reset is None and b.get("reset_after_seconds") is not None:
+            reset = time.time() + float(b["reset_after_seconds"])
+        # The event is a point-in-time snapshot; codex logs it per call, so it can be days old and its window may
+        # have CYCLED. Roll a past reset forward by whole windows → the NEXT actual reset, so a stale record shows a
+        # meaningful future date (not a past one) and the reset-boundary cache does not thrash. window_minutes is
+        # the period; without it a past reset is left as-is (best effort).
+        win = float(b.get("window_minutes") or 0) * 60.0
+        if reset is not None and win > 0 and float(reset) < time.time():
+            import math
+            reset = float(reset) + math.ceil((time.time() - float(reset)) / win) * win
+        out.append({"bucket": f"{name} ({int(b.get('window_minutes') or 0)}m window)",
+                    "remaining_pct": max(0, 100 - int(round(float(b["used_percent"])))),
+                    "reset_ts": (float(reset) if reset is not None else None)})
+    return out or None
+
+
+def _fetch_usage():
+    """The FRESHEST codex.rate_limits event across every logs*.sqlite in the codex home → buckets or None. Freshness
+    is decided by each event's OWN `ts` column, NOT the file's mtime — a restore/rsync/iCloud sync/`touch` can
+    scramble mtimes and make a stale logs_1.sqlite outrank the current logs_2.sqlite, but the event timestamp
+    cannot lie. Read-ONLY (codex is writing live); any absence/lock/parse gap → None (fail safe, quota UNKNOWN)."""
+    import glob
+    import sqlite3
+    best = None                                        # (event_ts, body) with the greatest event_ts seen
+    for db in glob.glob(os.path.join(_codex_home(), "logs*.sqlite")):
+        try:
+            con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=2.0)
+            try:
+                row = con.execute("SELECT ts, feedback_log_body FROM logs WHERE feedback_log_body LIKE "
+                                  "'%codex.rate_limits%' ORDER BY id DESC LIMIT 1").fetchone()
+            finally:
+                con.close()
+        except Exception:
+            continue
+        if row and row[1] and (best is None or (row[0] or 0) > best[0]):
+            best = ((row[0] or 0), row[1])
+    if not best:
+        return None
+    i = best[1].find("{")
+    if i < 0:
+        return None
+    try:
+        return _parse_rate_limits(json.loads(best[1][i:]))
+    except Exception:
+        return None
+
+
+def usage():
+    """This lane's ChatGPT-plan quota parsed into buckets [{bucket, remaining_pct, reset_ts}], or None (quota
+    UNKNOWN). Read from the rate-limit events codex records in its logs sqlite — reflecting codex's LAST real call,
+    refreshed by traffic. Cached via lane_quota.cached_usage (TTL + reset-boundary invalidation). $0, no call."""
+    from . import lane_quota
+    return lane_quota.cached_usage(_usage_cache, _USAGE_TTL_S, _fetch_usage)
 
 
 def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=None):

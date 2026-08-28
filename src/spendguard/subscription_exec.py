@@ -25,6 +25,8 @@ import subprocess
 import time
 
 TIMEOUT_S = 300               # meta prompts are small; a hung CLI must not stall the daily report
+_USAGE_TTL_S = 300            # `claude /usage` is re-read at most this often (the shared cache adds reset-boundary invalidation)
+_usage_cache = {"at": 0.0, "val": None}
 
 
 def _bin():
@@ -55,6 +57,74 @@ def _model_alias(model):
         if family in m:
             return family
     return None
+
+
+# ── claude /usage as this lane's QUOTA surface (a pure status command, $0) ────────────────────────────────────
+# Claude Code exposes real plan limits in print mode: `claude -p "/usage"` prints, per window, "<label>: N% used ·
+# resets <date>". USED %, so remaining = 100 - N. Parsed into the shared bucket shape so the cross-lane headroom
+# view and (later) routing read every lane the same way. STATUS-POLL like agy — no model call, no metered spend.
+def _parse_reset(text):
+    """Best-effort unix ts from a Claude /usage 'resets …' phrase ('Aug 28 at 12:10am (America/Los_Angeles)',
+    'Sep 3 at 9am (…)'). A PARSE of a known human-date shape (month, day, clock time, optional tz); the YEAR is
+    absent so the NEXT occurrence is taken. None on any gap — remaining_pct (the primary signal) never needs it."""
+    import re
+    import datetime
+    m = re.search(r"resets\s+([A-Za-z]{3,9})\s+(\d{1,2})\s+at\s+(\d{1,2})(?::(\d{2}))?\s*([ap]m)?\s*(?:\(([^)]+)\))?",
+                  text, re.I)
+    if not m:
+        return None
+    mon_s, day_s, hh_s, mm_s, ampm, tzname = m.groups()
+    try:
+        month = datetime.datetime.strptime(mon_s[:3].title(), "%b").month
+        hh = int(hh_s) % 12 + (12 if (ampm or "").lower() == "pm" else 0)
+        tz = None
+        if tzname:
+            try:
+                from zoneinfo import ZoneInfo
+                tz = ZoneInfo(tzname)
+            except Exception:
+                tz = None
+        nowdt = datetime.datetime.now(tz)
+        cand = datetime.datetime(nowdt.year, month, int(day_s), hh, int(mm_s or 0), tzinfo=tz)
+        if cand < nowdt - datetime.timedelta(days=1):     # the date already well past → it is next year's occurrence
+            cand = cand.replace(year=nowdt.year + 1)
+        return cand.timestamp()
+    except Exception:
+        return None
+
+
+def _parse_usage_claude(text):
+    """PARSE (fixed-shape) Claude Code's /usage into buckets [{bucket, remaining_pct, reset_ts}]. Each quota line is
+    '<label>: <N>% used[ · resets <date>]'; the percent is USED, so remaining = 100 - used. Extraction of known
+    tokens (a percent, a date) from a fixed layout, NOT a wording judgement (mirrors antigravity_exec._parse_usage)."""
+    import re
+    out = []
+    for line in (text or "").splitlines():
+        m = re.search(r"([^:]+):\s*(\d+)%\s*used", line)
+        if not m:
+            continue
+        out.append({"bucket": m.group(1).strip(), "remaining_pct": max(0, 100 - int(m.group(2))),
+                    "reset_ts": _parse_reset(line)})
+    return out or None
+
+
+def _fetch_usage():
+    """Run `claude -p /usage` on the plan LOGIN (metered keys stripped) and parse it → buckets or None. The raw
+    fetch behind usage(); lane_quota.cached_usage adds the TTL + reset-boundary freshness bounds."""
+    exe = _bin()
+    if not exe:
+        return None
+    from . import config
+    r = subprocess.run([exe, "-p", "/usage"], capture_output=True, text=True, timeout=45, env=config.lane_plan_env())
+    return _parse_usage_claude((r.stdout or "") + "\n" + (r.stderr or "")) if r.returncode == 0 else None
+
+
+def usage():
+    """This lane's plan quota parsed into buckets [{bucket, remaining_pct, reset_ts}], or None (claude CLI absent /
+    call or parse failed → quota UNKNOWN, ordinary handling). Cached via lane_quota.cached_usage (TTL +
+    reset-boundary invalidation). $0 — a pure status command, no model call."""
+    from . import lane_quota
+    return lane_quota.cached_usage(_usage_cache, _USAGE_TTL_S, _fetch_usage)
 
 
 def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=None):   # reasoning: protocol-uniform; the Claude CLI has no one-shot effort flag → ignored for now
