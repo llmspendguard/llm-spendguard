@@ -26,6 +26,13 @@ class BulkResilienceRefused(Exception):
 IDLE_RATIO_DEFAULT = 0.5
 HOT_RATIO_DEFAULT = 1.5
 
+# route_decision is PROMPT-FREE by design (registry + utilisation only), but ranking metered substitutes by cost
+# needs a call size. These give a stable per-unit-price PROXY for that ranking (cheaper-per-token wins); the ACTUAL
+# call is billed exactly by the provider, so the proxy only affects WHICH cheap substitute is picked, never the $
+# recorded. Config: advisor.route_est_in / route_est_out.
+ROUTE_EST_IN_DEFAULT = 2000
+ROUTE_EST_OUT_DEFAULT = 500
+
 
 def _util_ratio_cfg(name, default):
     try:
@@ -452,6 +459,28 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
     return results
 
 
+def _metered_substitute(subs, primary_spec):
+    """Cheapest AFFORDABLE confirmed metered substitute for an intent, or None. A 'provider:model' spec counts as
+    METERED here when its provider has NO subscription lane (adapters._LANES) — so it can only be served by the paid
+    API — and is a provider we can actually call (adapters.PROVIDERS). Ranked by route_utility.rank_metered
+    (cheapest-per-token that still has prepay first; an exhausted sunk-pool balance surfaces available=False and is
+    skipped, never picked). route_decision is prompt-free, so the ranking uses a config NOMINAL call size
+    (ROUTE_EST_IN/OUT) — a stable unit-price PROXY for WHICH cheap substitute to pick; the real call is billed
+    exactly by the provider. Free lanes are always preferred UPSTREAM of this; it is the reactive last hop before
+    paying full price on the ORIGINAL model, and it never leaves the user-CONFIRMED substitute set."""
+    metered = [s for s in subs
+               if s != primary_spec
+               and not adapters._LANES.get(s.split(":", 1)[0], (None,))[0]      # no subscription lane → paid API only
+               and s.split(":", 1)[0] in adapters.PROVIDERS]                    # …and a provider we can actually call
+    if not metered:
+        return None
+    from . import route_utility
+    nin = int(config._cfg_get("advisor", "route_est_in", None) or ROUTE_EST_IN_DEFAULT)
+    nout = int(config._cfg_get("advisor", "route_est_out", None) or ROUTE_EST_OUT_DEFAULT)
+    ranked = route_utility.rank_metered(metered, nin, nout)                     # cheapest-affordable first; rest surfaced
+    return next((r for r in ranked if r["available"]), None)
+
+
 def route_decision(intent, model, reactive=False):
     """(substitute_spec or None, why) — the routing brain, PURE (registry + utilisation only, no LLM; the agentic
     proposer fills the registry separately). Default OFF: an intent with no CONFIRMED substitute yields (None, …), so
@@ -517,6 +546,15 @@ def route_decision(intent, model, reactive=False):
         _su = _s.get("utilization")
         ranked.append((_s.get("calls_recent", 0), float(_su) if _su is not None else 0.0, spec, slane))
     if not ranked:
+        # No FREE substitute LANE available (all cooling / same plan / none configured). REACTIVE ONLY: before the
+        # caller pays FULL price on the ORIGINAL model's metered API, take the cheapest AFFORDABLE confirmed METERED
+        # substitute (route_utility.rank_metered) — still inside the user-confirmed set, still surfaced/recorded by
+        # the caller. Proactive never pays to fill idle plans, so it stops here.
+        if reactive:
+            _m = _metered_substitute(subs, model)
+            if _m:
+                return _m["target"], (f"primary lane {primary_lane} FAILED, no idle plan → cheapest metered "
+                                      f"substitute {_m['target']} ({_m['why']})")
         return None, "no available substitute lane right now (all cooling, or same plan as primary)"
     ranked.sort(key=lambda t: (t[0], t[1]))
     _cr, su, spec, slane = ranked[0]
