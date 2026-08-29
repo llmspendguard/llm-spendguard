@@ -149,7 +149,7 @@ import importlib
 from spendguard import cli, report, advise
 naive_est = importlib.import_module("spendguard.estimate")   # __init__ exports estimate() the function
 ck("CLI wired: `spendguard calibrate`", '"calibrate"' in inspect.getsource(cli))
-ck("report auto-pairs predictions each run", "calibrate" in inspect.getsource(report._run))
+ck("report auto-pairs predictions each run", "calibrate" in inspect.getsource(report.generate_report))
 ck("advise surfaces calibration confidence", "summary_lines" in inspect.getsource(advise.advise))
 ck("naive `spendguard estimate --label` prints the learned correction",
    "--label" in inspect.getsource(naive_est.main) and "calibrate" in inspect.getsource(naive_est.main))
@@ -197,7 +197,7 @@ r_local = calibrate.estimate(LABEL, n=100, model=MODEL, transport="batch",
 ck("a locally-rich cell KEEPS its local evidence on top of the org prior (level stays exact)",
    r_local["level"] == "exact" and abs(r_local["p50_usd"] - r["p50_usd"]) / r["p50_usd"] < 0.15)
 ck("report wires the org loop (push + fetch ride the daily report)",
-   "push_shared" in inspect.getsource(report._run) and "fetch_shared" in inspect.getsource(report._run))
+   "push_shared" in inspect.getsource(report.generate_report) and "fetch_shared" in inspect.getsource(report.generate_report))
 
 # ── rails: pricing only via pricing.py — no $/token literals in the module ──
 src = inspect.getsource(calibrate)

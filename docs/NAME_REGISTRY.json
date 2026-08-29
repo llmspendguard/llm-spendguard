@@ -22,11 +22,6 @@
       "verdict": "PROTOCOL",
       "why": "Each lane module (subscription_exec, codex_exec, antigravity_exec) exposes _bin() to resolve ITS OWN distinct host CLI ('claude', 'codex', 'agy') — subscription_exec keeps a shutil.which fast-path while codex/antigravity deliberately drop it to honor the pin, but all share the same contract: return the resolvable binary path or None. lanes.status() dispatches it polymorphically via mod._bin() over the module list, and probe() relies on that uniform check. Different resources behind one uniform, name-dispatched contract — not two copies of one job. [Re-adjudicated PROTOCOL (was COLLISION at n=2) when the antigravity lane added a 3rd member; the dispatch pattern that makes it a protocol was already implicit in the 'available' verdict.]"
     },
-    "_capture": {
-      "n": 2,
-      "verdict": "COLLISION",
-      "why": "Both funnel usage into gate._record_rt, but they take entirely different inputs and do different jobs: http_capture._capture parses raw HTTP body bytes with host/path/status routing and emits unmetere"
-    },
     "_cfg": {
       "n": 3,
       "verdict": "COLLISION",
@@ -51,16 +46,6 @@
       "n": 2,
       "verdict": "PROTOCOL",
       "why": "Both parse one session file into a digest dict/row for their respective provider format (claudecode's jsonl vs codex's jsonl). Same contract — 'one session → digest' — over different formats, dispatch"
-    },
-    "_enabled": {
-      "n": 2,
-      "verdict": "COLLISION",
-      "why": "Both are module-private feature-flag checks but for entirely different features (chat vs http_capture), reading different env vars and config keys with different default semantics. They share a name b"
-    },
-    "_est_line": {
-      "n": 2,
-      "verdict": "COLLISION",
-      "why": "advisor._est_line takes many positional args and prints a formatted table row; gate._est_line takes an est dict and returns a human-facing cost phrase string. Different signatures, different jobs (pri"
     },
     "_fire": {
       "n": 2,
@@ -87,11 +72,6 @@
       "verdict": "PROTOCOL",
       "why": "Each adapter's _load_state loads its OWN namespaced state with its OWN empty shape via the shared config.load_state helper. The docstring notes the FOUR duplicated bare-except copies were already refa[ctored]. n 4→5: resource_state._load_state (the unified per-resource cooldown/state store) added — same role, same shared config.load_state helper, its own namespace ('resource_state') and shape (per-key axes, with an expiry prune), read and confirmed as protocol."
     },
-    "_norm": {
-      "n": 2,
-      "verdict": "COLLISION",
-      "why": "One normalizes an adapter response dict; the other normalizes whitespace in a string. Completely different jobs sharing a terse name."
-    },
     "_one": {
       "n": 2,
       "verdict": "DUPLICATION",
@@ -112,11 +92,6 @@
       "verdict": "DUPLICATION",
       "why": "Both compute a percentile of token counts. bulkgate._pctl explicitly documents that it delegates to the canonical calibrate._quantile and fixes the empty-sample invariant (returns None, not 0). prompt"
     },
-    "_persist": {
-      "n": 2,
-      "verdict": "COLLISION",
-      "why": "review._persist parses insights and writes to a learning store; vendor_call._persist appends a call-record log line. Completely different jobs sharing a generic name."
-    },
     "_project_of": {
       "n": 2,
       "verdict": "DUPLICATION",
@@ -126,21 +101,6 @@
       "n": 2,
       "verdict": "PROTOCOL",
       "why": "These are sync and async variants of the same wrapper contract, each living on its respective stream class (_GatedMessageStream vs _GatedAsyncMessageStream). They are intentionally parallel implementations for sync/async duck-typed attribute wrapping, not accidental copies nor different jobs."
-    },
-    "_register_builtins": {
-      "n": 2,
-      "verdict": "COLLISION",
-      "why": "Both are module-private idempotent registration hooks but register entirely different things into different registries: gpu_port registers GPU source adapters via register_source(), while sources regi"
-    },
-    "_resolve": {
-      "n": 2,
-      "verdict": "COLLISION",
-      "why": "One resolves a conversation by id using cached segments/store; the other resolves a setting's value and source from env/file/default. Entirely different jobs sharing the bare name."
-    },
-    "_run": {
-      "n": 2,
-      "verdict": "COLLISION",
-      "why": "report._run(a) drives the full spend-report pipeline (fetch, transform, print); vendor_call._attempt._run() is a zero-arg inner closure that runs a single vendor adapter call into a shared box. Entire"
     },
     "_save_state": {
       "n": 3,
@@ -176,11 +136,6 @@
       "n": 2,
       "verdict": "DUPLICATION",
       "why": "Both are thin wrappers over config.warn_once that delegate to the same single registry; the only difference is a prefix arg. The comments explicitly note each module 'had its own copy'. Same job, two "
-    },
-    "_windows": {
-      "n": 2,
-      "verdict": "COLLISION",
-      "why": "receipt._windows() computes date-range strings (today, 7-day, month-start) for reporting; schedule._windows(interval, remove) manages a Windows Task Scheduler job. Same bare name, unrelated jobs and s"
     },
     "_wrap": {
       "n": 3,
@@ -247,11 +202,6 @@
       "verdict": "PROTOCOL",
       "why": "`AskResult.consensus` is a thin facade that delegates directly to `vendor_call.consensus`, which holds the single implementation of the N-of-N refusal check; one job, one implementation dispatched by name, not two divergent copies."
     },
-    "cost_by_day": {
-      "n": 2,
-      "verdict": "COLLISION",
-      "why": "Different jobs, different signatures, different domains. gpu_port.cost_by_day computes per-day GPU instance costs from normalized rows returning a single {date:$} dict; reconcile_anthropic.cost_by_day"
-    },
     "day_totals": {
       "n": 4,
       "verdict": "PROTOCOL",
@@ -267,11 +217,6 @@
       "verdict": "COLLISION",
       "why": "One is a builder method recording an estimate on a job and returning self; the other computes a pre-flight cost dollar figure. Different jobs, same name."
     },
-    "get": {
-      "n": 2,
-      "verdict": "COLLISION",
-      "why": "One fetches a spend-event row by id from a ledger; the other does semantic/exact cache lookup by prompt+model. Entirely different jobs, signatures, and semantics sharing the bare name 'get'."
-    },
     "install": {
       "n": 6,
       "verdict": "COLLISION",
@@ -281,11 +226,6 @@
       "n": 5,
       "verdict": "PROTOCOL",
       "why": "GPUProvider.instances is an ABC method; Lambda/Modal/RunPod adapters each implement the same GPUProvider contract returning normalized rows with the identical NEVER-raises doctrine. resources.instance"
-    },
-    "load": {
-      "n": 2,
-      "verdict": "COLLISION",
-      "why": "One is an entry-point mock (`_Boom.load` returns a callable that raises, mimicking the `ep.load()` contract used inside the real function) and the other discovers/activates provider plugins. Different"
     },
     "load_cls": {
       "n": 2,
@@ -332,11 +272,6 @@
       "verdict": "PROTOCOL",
       "why": "The canonical lane contract: identical signature (prompt, system=None, model=None, timeout=TIMEOUT_S) and identical return shape {text,in_tok,out_tok,latency,error} across all four lanes, but wildly different bodies — claude via `claude -p` subprocess, codex via `codex exec` with temp-file output, agy via `agy -p` JSON, zai via raw urllib POST. lanes.probe() dispatches mod.run_prompt(...) polymorphically over the module map. This is the textbook one-uniform-contract-across-interchangeable-implementations case."
     },
-    "scrub": {
-      "n": 2,
-      "verdict": "COLLISION",
-      "why": "One redacts a label string for de-identification (returns truncated string), the other abstracts an insight dict into a shareable rule (returns dict or None). Completely different inputs, outputs, and"
-    },
     "show": {
       "n": 4,
       "verdict": "PROTOCOL",
@@ -356,11 +291,6 @@
       "n": 2,
       "verdict": "PROTOCOL",
       "why": "One wraps the async stream manager (_GatedAsyncStreamManager), the other the sync one (_GatedStreamManager). These are parallel sync/async implementations of the same wrapping contract, each installed onto its respective client class. They intentionally share the name because they patch the same method on different (sync vs async) client types."
-    },
-    "summary": {
-      "n": 2,
-      "verdict": "COLLISION",
-      "why": "One queries a SQLite DB for per-intent call/cost aggregates returning rows; the other formats a parse-result object into a human-readable status string. Entirely different jobs, return types, and sema"
     },
     "sync": {
       "n": 9,

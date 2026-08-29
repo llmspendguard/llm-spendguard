@@ -36,7 +36,7 @@ def _embed_toks(result):
     return None
 
 
-def _capture(kw, result, toks_fn=_toks):
+def _capture_vertex_result(kw, result, toks_fn=_toks):
     try:
         from . import gate
         model = (kw or {}).get("model") or getattr(result, "model_version", "") or ""
@@ -52,13 +52,13 @@ def _wrap(orig, is_async, toks_fn=_toks):
         @functools.wraps(orig)
         async def w(self, *a, **kw):
             r = await orig(self, *a, **kw)                # real call untouched; errors propagate
-            _capture(kw, r, toks_fn)
+            _capture_vertex_result(kw, r, toks_fn)
             return r
     else:
         @functools.wraps(orig)
         def w(self, *a, **kw):
             r = orig(self, *a, **kw)
-            _capture(kw, r, toks_fn)
+            _capture_vertex_result(kw, r, toks_fn)
             return r
     w._spend_gated = True
     return w

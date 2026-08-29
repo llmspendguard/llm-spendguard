@@ -641,7 +641,7 @@ def run_commands(since=None):
             if kind == "attribute":                        # ORG REQUEST: run the chat-attribution loop (consent-gated)
                 from . import chat as _chat
                 pull_taxonomy()                            # adopt the org's canonical taxonomy first
-                if _chat._enabled():
+                if _chat._chat_enabled():
                     res["loop"] = _chat.loop(run=True, quiet=True)   # member already consented → run + sync
                     res["status"] = "running"
                 else:
@@ -764,7 +764,7 @@ def sync(if_due=False, since=None):
         out["truth"] = {"skipped": f"truth push: {str(e)[:80]}"}
     try:                                                  # claude.ai chat attribution loop (only if opted in)
         from . import chat as _chat
-        out["chat"] = _chat.loop(run=True, quiet=True) if _chat._enabled() else {"skipped": "chat not enabled"}
+        out["chat"] = _chat.loop(run=True, quiet=True) if _chat._chat_enabled() else {"skipped": "chat not enabled"}
     except Exception as e:
         out["chat"] = {"skipped": f"chat loop: {str(e)[:80]}"}
     try:                                                  # ledger-valued lanes (gemini/zai) plan VALUE → the est-value

@@ -98,7 +98,7 @@ def _cos(a, b):
 _SCOPE_ANY = "*"
 
 
-def get(prompt, model, threshold=0.0):
+def get_cached(prompt, model, threshold=0.0):
     """Cached output for an exact (and, if threshold>0, semantic) match — else None. Matches the given model OR
     the any-model sentinel (_SCOPE_ANY = model-agnostic content), so a concrete-model read finds a '*'-scoped
     entry — but a '*' read matches only '*' rows, NOT a real model's entry: reusing model-M's specific output for
@@ -153,7 +153,7 @@ def put(prompt, model, output, store_embedding=False):
 
 def cached_call(fn, prompt, model, threshold=0.0, est_cost=0.0):
     """Return cached output on hit (free), else fn(prompt) → store → return. fn returns the text output."""
-    hit = get(prompt, model, threshold=threshold)
+    hit = get_cached(prompt, model, threshold=threshold)
     if hit is not None:
         _stats["saved"] += est_cost
         from . import guard

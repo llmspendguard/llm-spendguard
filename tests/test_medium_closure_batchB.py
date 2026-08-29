@@ -56,7 +56,7 @@ ck("legacy duplicate rows migrate (dedupe) instead of bricking the cache", migra
 semcache._embed = lambda t: [1.0, 2.0, 3.0]      # deterministic embedding, offline
 semcache.put("pp", "mm", "OUT1", store_embedding=True)
 semcache.put("pp", "mm", "OUT2", store_embedding=False)   # re-put with NO embedding
-ck("re-put replaces the output", semcache.get("pp", "mm") == "OUT2")
+ck("re-put replaces the output", semcache.get_cached("pp", "mm") == "OUT2")
 with semcache._lock:
     cnt, emb = semcache._db().execute(
         "SELECT COUNT(*), COUNT(emb) FROM semcache WHERE model='mm' AND prompt_hash=?",

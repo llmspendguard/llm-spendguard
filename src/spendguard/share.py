@@ -27,7 +27,7 @@ def _scrub_text(s, intent=None):
     return deid.redact(s, drop=[intent] if intent else None).strip()
 
 
-def scrub(ins):
+def generalize_insight(ins):
     """Abstract a private insight into a shareable, generalizable rule (or None if not shareable)."""
     # only share things with real applicability context — a bare sentence isn't reasoning-able elsewhere
     if not (ins.get("task_class") or ins.get("action") or ins.get("regime")):
@@ -69,7 +69,7 @@ def _shareable(min_conf, require_active):
             continue
         if require_active and (ins.get("status") != "active"):
             continue
-        s = scrub(ins)
+        s = generalize_insight(ins)
         if s:
             out.append(s)
     return out

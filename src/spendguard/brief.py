@@ -38,7 +38,7 @@ def _match_intent(task):
 
 def _defaults(intent, task):
     from . import calls, callio, learn, models, config
-    rows = [r for r in calls.summary(intent)]                 # (intent, model, jobs, cost, good, bad)
+    rows = [r for r in calls.cost_summary(intent)]                 # (intent, model, jobs, cost, good, bad)
     rates = callio.good_rates()
     # per-model cost + quality for this intent
     permodel = []

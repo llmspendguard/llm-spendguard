@@ -335,7 +335,7 @@ def cmd_install_hook(argv=None):
     return install_hook(a.venv, uninstall=a.uninstall, install_pkg=not a.no_pkg, user=a.user, python=a.python)
 
 
-def _resolve(s):
+def _resolve_setting(s):
     """(value, source) for one setting. env always wins; then the file; then the default."""
     env = s.get("env")
     if env and os.environ.get(env) not in (None, ""):
@@ -432,7 +432,7 @@ def cmd_config(argv=None):
             return 1
         shown = "***set***" if s["secret"] else ("(unset → default)" if value is None else value)
         print(f"{dotted} = {shown}   → {path}")
-        now, src = _resolve(s)
+        now, src = _resolve_setting(s)
         if src.startswith("env:"):                      # a live env var still wins — say so, don't pretend
             print(f"  ⚠ an environment variable ({src[4:]}) overrides this at runtime; current effective value: {now}")
         return 0
@@ -443,7 +443,7 @@ def cmd_config(argv=None):
     for sec, items in config_schema.sections().items():
         print(f"[{sec}]")
         for s in items:
-            v, src = _resolve(s)
+            v, src = _resolve_setting(s)
             if s["secret"] and v:
                 disp = "***set***"
             elif v in (None, ""):
@@ -598,7 +598,7 @@ def cmd_init(argv=None):
             continue  # env-only (API keys, home, prices override) — instructed below, not written
         if not connect and s["section"] == "saas":
             continue  # local-only: skip all team/org connection prompts
-        cur, _src = _resolve(s)
+        cur, _src = _resolve_setting(s)
         try:
             ans = input(f"{s['section']}.{s['key']}  [{cur}]  — {s['desc']}\n  > ").strip()
         except EOFError:

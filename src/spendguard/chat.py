@@ -35,7 +35,7 @@ _UA = os.environ.get("SPENDGUARD_CHAT_UA") or (
 
 
 # ── opt-in gate ────────────────────────────────────────────────────────────────────────────────────────────────
-def _enabled():
+def _chat_enabled():
     v = os.environ.get("SPENDGUARD_CHAT_ENABLED")
     if v is not None:
         return v.lower() not in ("0", "false", "no", "")
@@ -546,7 +546,7 @@ def day_totals(member_ref, org_label=None):
 def sync(dry=False):
     """Push claude.ai chat value (channel=claude-ai) → the server. OPT-IN: requires chat.enabled. Refreshes first.
     Routes by agentic org: only conversations whose org matches THIS connection's org (or are unclassified) push here."""
-    if not _enabled() and not dry:
+    if not _chat_enabled() and not dry:
         return {"skipped": "chat adapter not enabled — `spendguard chat enable` (or set chat.enabled / "
                            "SPENDGUARD_CHAT_ENABLED=1). On-device, opt-in, your session only."}
     from . import saas
@@ -938,7 +938,7 @@ def loop(run=False, force_discover=False, quiet=False):
       4. sync the rollup to the org (org-routed, channel=claude-ai, billed=false)
     Caged steps degrade gracefully (over meta budget → deferred, loop continues). Returns a result dict; prints
     unless quiet. Cron-friendly: `chat loop --run` (or folded into `saas sync --if-due`)."""
-    if not _enabled():
+    if not _chat_enabled():
         return {"skipped": "chat.enabled off — `spendguard chat enable` (or accept an org request)"}
     steps = []
     try:
@@ -1028,11 +1028,11 @@ def _set_enabled(on):
 
 def _status():
     """Show adapter state + any PENDING org attribution request (the consent surface)."""
-    print(f"chat adapter: {'🟢 ENABLED' if _enabled() else 'disabled'}")
+    print(f"chat adapter: {'🟢 ENABLED' if _chat_enabled() else 'disabled'}")
     try:
         from . import saas
         s = saas._state()
-        if s.get("chat_request_pending") and not _enabled():
+        if s.get("chat_request_pending") and not _chat_enabled():
             by = s.get("chat_requested_by") or "your org"
             print(f"  ⚑ {by} has REQUESTED chat work-attribution.")
             print("    → consent: `spendguard chat accept`  (runs on YOUR machine, YOUR session; only org→team×project")

@@ -45,7 +45,7 @@ with semcache._lock:                                  # inject a corrupt-emb row
                            ("corrupt1", "2026-08-15", semcache._SCOPE_ANY, "hh", "junk prompt", "BAD-OUTPUT", b"abc"))
     semcache._db().commit()
 try:
-    hit = semcache.get("a semantically-near prompt", "openai:gpt-x", threshold=0.5)
+    hit = semcache.get_cached("a semantically-near prompt", "openai:gpt-x", threshold=0.5)
     crashed = False
 except Exception:
     hit, crashed = None, True

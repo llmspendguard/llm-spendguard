@@ -89,8 +89,8 @@ ck("later calls sync only the increment (5 × $0.06 = $0.30)", abs(r3["synced_us
 import inspect
 from spendguard import cli, report
 ck("CLI wired: `spendguard realized`", '"realized"' in inspect.getsource(cli))
-ck("report wired: realized sync + auto_fresh", "sync_to_guarded" in inspect.getsource(report._run)
-   and "auto_fresh" in inspect.getsource(report._run))
+ck("report wired: realized sync + auto_fresh", "sync_to_guarded" in inspect.getsource(report.generate_report)
+   and "auto_fresh" in inspect.getsource(report.generate_report))
 
 print(("[OK]" if not fails else "[FAIL]") + " realized: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)

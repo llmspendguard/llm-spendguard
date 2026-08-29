@@ -111,7 +111,7 @@ def implausible_row(inst, now=None):
     return False, ""
 
 
-def cost_by_day(instances, since=None, now=None):
+def gpu_cost_by_day(instances, since=None, now=None):
     """{YYYY-MM-DD: $} for NORMALIZED instance rows. Provider-billed rows (`usd` present) book whole to the UTC
     day of start_ts (they are already per-interval — splitting a billed $ would fabricate). Rate rows split
     dph_usd × hours across UTC days via `day_slices` — the SAME math vast.ai uses. Unpriced/untimed rows
@@ -259,7 +259,7 @@ def register_source(key, factory):
     _SOURCES[key] = factory
 
 
-def _register_builtins():
+def _register_gpu_sources():
     """vast.ai keeps its historical registry key ("gpu" — dashboards/tests key on it); the port adapters
     register as gpu:<provider>. Fail-open per adapter (the provider_plugins doctrine): a broken adapter module
     warns and is skipped — it can never break the reconcile or the other providers."""
@@ -284,5 +284,5 @@ def _register_builtins():
 def sources():
     """{registry_key: factory} for every registered GPU spend source, built-ins first. reconcile.all_sources
     calls each factory inside its own try (one failing source becomes {error}, the rest still reconcile)."""
-    _register_builtins()
+    _register_gpu_sources()
     return dict(_SOURCES)

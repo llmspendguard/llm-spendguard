@@ -61,7 +61,7 @@ def _register_builtins():
     # third-party sources: same entry-point group the GPU adapters use.
     try:
         from . import provider_plugins
-        provider_plugins.load()
+        provider_plugins.load_plugins()
     except Exception:
         pass
 

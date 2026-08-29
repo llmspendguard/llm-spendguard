@@ -312,7 +312,7 @@ def _link_used(chain, current_prompt):
         pass
 
 
-def summary(intent=None):
+def cost_summary(intent=None):
     """Per (intent, model): calls, $ total, %good, and cost-per-good-result."""
     cond = ["(intent IS NULL OR intent NOT LIKE 'spendguard:%')"]   # exclude spendguard's own meta calls
     args = []

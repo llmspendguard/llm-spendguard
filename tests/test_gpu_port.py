@@ -50,11 +50,11 @@ port_rows = [
     {"id": "1", "label": "train-a", "gpu": "H100", "dph_usd": 2.0, "start_ts": now - 3 * 86400, "end_ts": now - 2 * 86400},
     {"id": "2", "label": "train-b", "gpu": "A100", "dph_usd": 3.61, "start_ts": now - 1.5 * 86400, "end_ts": None},  # running
 ]
-cbd = gpu_port.cost_by_day(port_rows, since=now - 5 * 86400, now=now)
+cbd = gpu_port.gpu_cost_by_day(port_rows, since=now - 5 * 86400, now=now)
 ck("cost_by_day: dph × hours per UTC day (24h × $2 → $48 on its day)", abs(cbd.get("2026-06-07", 0) - 48.0) < 1e-6)
 ck("cost_by_day: running instance (end None) capped at now, split across days",
    abs(cbd.get("2026-06-08", 0) - 3.61 * 12) < 1e-6 and abs(cbd.get("2026-06-09", 0) - 3.61 * 24) < 1e-6)
-ck("cost_by_day: since accepts YYYY-MM-DD", gpu_port.cost_by_day(port_rows, since="2026-06-05", now=now) == cbd)
+ck("cost_by_day: since accepts YYYY-MM-DD", gpu_port.gpu_cost_by_day(port_rows, since="2026-06-05", now=now) == cbd)
 
 # EQUIVALENCE with vast.ai — the math was EXTRACTED from resources.gpu_rows_by_day; identical instances must
 # land identical per-day $ through both paths (guards the refactor: vast behavior unchanged, one math for all).
@@ -72,14 +72,14 @@ ck("EQUIVALENCE: vast gpu_rows_by_day per-day $ == shared cost_by_day on the sam
 # ── honesty markers: UNKNOWN stays visible, never becomes $0 rows ────────────────────────────────────────────
 unk = [{"id": "u1", "label": "x", "gpu": "H100", "dph_usd": None, "start_ts": now - 86400, "end_ts": now, "unpriced": True},
        {"id": "u2", "label": "y", "gpu": "A100", "dph_usd": 1.0, "start_ts": None, "end_ts": None, "untimed": True}]
-ck("cost_by_day: unpriced row contributes NOTHING (unknown ≠ $0)", gpu_port.cost_by_day(unk, since=now - 5 * 86400, now=now) == {})
+ck("cost_by_day: unpriced row contributes NOTHING (unknown ≠ $0)", gpu_port.gpu_cost_by_day(unk, since=now - 5 * 86400, now=now) == {})
 
 # provider-billed rows (`usd`, e.g. Modal daily report): booked WHOLE to their UTC day, never split/re-derived
 usd_rows = [{"id": "ap-1", "label": "m2a-app", "gpu": "?", "dph_usd": None, "usd": 12.34,
              "start_ts": now - 2 * 86400, "end_ts": now - 86400},
             {"id": "ap-1", "label": "m2a-app", "gpu": "?", "dph_usd": None, "usd": 5.0,
              "start_ts": now - 30 * 86400, "end_ts": now - 29 * 86400}]                  # before since → clipped
-u = gpu_port.cost_by_day(usd_rows, since=now - 5 * 86400, now=now)
+u = gpu_port.gpu_cost_by_day(usd_rows, since=now - 5 * 86400, now=now)
 ck("cost_by_day: provider-billed usd row books whole to its UTC day", u == {"2026-06-08": 12.34})
 
 # ── label → project attribution via config resources.<provider>.label_map (the vast pattern, per provider) ──
@@ -123,7 +123,7 @@ ck("runpod: exited pod (past runtime NOT exposed by the listing) → untimed=Tru
 np_ = next(r for r in rp if r["id"] == "podnoprice03")
 ck("runpod: pod without costPerHr → unpriced=True (visible UNKNOWN, never $0-clean)", np_.get("unpriced") is True)
 ck("runpod: cost math uses ONLY priced+timed rows (2h × $0.69)",
-   abs(sum(gpu_port.cost_by_day(rp, since=now - 5 * 86400, now=now).values()) - 1.38) < 1e-6)
+   abs(sum(gpu_port.gpu_cost_by_day(rp, since=now - 5 * 86400, now=now).values()) - 1.38) < 1e-6)
 _boom = lambda q: (_ for _ in ()).throw(RuntimeError("api down"))
 runpod_adapter._graphql = _boom
 ck("runpod: API failure → [] (never raises; a flake must not error the reconcile)",
@@ -166,7 +166,7 @@ mi = modal_adapter.PROVIDER.instances(since_ts=now - 5 * 86400)
 ck("modal: report items → per-app-per-day rows carrying Modal's own billed $ (usd), no dph re-derivation",
    len(mi) == 2 and mi[0]["usd"] == 12.34 and mi[0]["dph_usd"] is None and mi[0]["label"] == "m2a-render")
 ck("modal: each daily row books whole to its own UTC day",
-   gpu_port.cost_by_day(mi, since=now - 5 * 86400, now=now) == {"2026-06-08": 12.34, "2026-06-09": 2.66})
+   gpu_port.gpu_cost_by_day(mi, since=now - 5 * 86400, now=now) == {"2026-06-08": 12.34, "2026-06-09": 2.66})
 ck("modal: account_total = Σ report (the report IS the provider bill)",
    modal_adapter.PROVIDER.account_total(since="2026-06-05") == 15.0)
 rows_m = gpu_port.rows_by_day(modal_adapter.PROVIDER, since="2026-06-05", now=now)
@@ -206,7 +206,7 @@ ck("lambda: NO launch timestamp in the listing → every row untimed=True (visib
    all(r.get("untimed") is True and r["start_ts"] is None for r in li))
 ck("lambda: missing price → unpriced=True as well", li[1].get("unpriced") is True and li[1]["dph_usd"] is None)
 ck("lambda: untimed rows contribute NOTHING to per-day $ (unknown ≠ $0)",
-   gpu_port.cost_by_day(li, since=now - 5 * 86400, now=now) == {})
+   gpu_port.gpu_cost_by_day(li, since=now - 5 * 86400, now=now) == {})
 lambda_adapter._get = lambda path: (_ for _ in ()).throw(RuntimeError("api down"))
 ck("lambda: API failure → [] (never raises)", lambda_adapter.PROVIDER.instances() == [])
 lambda_adapter._get = lambda path: _LAMBDA_FIXTURE

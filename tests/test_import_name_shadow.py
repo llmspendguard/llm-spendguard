@@ -77,7 +77,7 @@ _md.entry_points = _legacy_eps
 _buf = io.StringIO()
 try:
     with contextlib.redirect_stderr(_buf):
-        _pp.load()
+        _pp.load_plugins()
 finally:
     _md.entry_points = _real_eps
 check("plugin discovery is silent under the 3.9 entry_points API (it WARNed on every import)",

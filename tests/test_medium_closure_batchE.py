@@ -62,7 +62,7 @@ ck("a failed rubric judge degrades to the text tier (not a 0.0 that kills the va
 now = 1_000_000.0
 inwin = {"usd": 5.0, "start_ts": now - 3600, "end_ts": None}      # within window
 future = {"usd": 9.0, "start_ts": now + 10_000, "end_ts": None}   # future-dated (ms/seconds bug) → excluded
-by_day = gpu_port.cost_by_day([inwin, future], since=now - 86400, now=now)
+by_day = gpu_port.gpu_cost_by_day([inwin, future], since=now - 86400, now=now)
 ck("a future-dated billed row is NOT booked; the in-window one is", round(sum(by_day.values()), 2) == 5.0, f"got {by_day}")
 
 # ── [29] coverage.audit(roots=[]) scans nothing ────────────────────────────────────────────────────────────────

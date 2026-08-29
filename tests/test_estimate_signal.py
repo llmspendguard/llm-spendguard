@@ -42,7 +42,7 @@ check("calibration attached with p50/p90/basis/n_obs",
       c and abs(c["cost_p50"] - 0.60) < 1e-9 and abs(c["cost_p90"] - 1.10) < 1e-9
       and c["basis"] == "model" and c["n_obs"] == 1666)
 e["_cal"] = c
-line = gate._est_line(e)
+line = gate._est_cost_phrase(e)
 check("likely cost is first in the phrase", line.startswith("~$0.60 likely"))
 check("p90 band shown", "$1.10 p90" in line)
 check("the ceiling is present but LABELLED a ceiling", "ceiling $16.20" in line)
@@ -69,7 +69,7 @@ cal.predict_cost = _boom      # canonical name, same reason as above
 e2 = dict(EST)
 check("a failing learner returns None (never raises into the gate)", gate._calibrate_est(e2) is None)
 e2["_cal"] = None
-line2 = gate._est_line(e2)
+line2 = gate._est_cost_phrase(e2)
 check("falls back to the ceiling, SAYING it's a ceiling", "$16.20" in line2 and "ceiling" in line2)
 check("no invented 'likely' number when nothing is learned", "likely" not in line2)
 

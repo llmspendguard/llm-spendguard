@@ -19,7 +19,7 @@ import re, json, difflib
 _WS = re.compile(r"\s+")
 
 
-def _norm(s):
+def _norm_ws(s):
     return _WS.sub(" ", (s or "").strip())
 
 
@@ -79,7 +79,7 @@ def _scalar(a, b):
 
 
 def _text_ratio(ref, out):
-    return difflib.SequenceMatcher(None, _norm(ref), _norm(out)).ratio()
+    return difflib.SequenceMatcher(None, _norm_ws(ref), _norm_ws(out)).ratio()
 
 
 def _embed_cosine(ref, out, model="text-embedding-3-small"):
@@ -126,7 +126,7 @@ def grade(ref, out, mode="auto", model=None):
         modpath, _, fn = path.replace(":", ".").rpartition(".")
         judge = getattr(importlib.import_module(modpath), fn)
         return max(0.0, min(1.0, float(judge(ref, out)))), "custom"
-    if _norm(ref) == _norm(out):
+    if _norm_ws(ref) == _norm_ws(out):
         return 1.0, "exact"
     if mode == "embed":                       # explicit semantic tier — applies even to JSON
         return _embed_cosine(ref, out), "embed"

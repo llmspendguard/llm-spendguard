@@ -31,17 +31,17 @@ def ck(label, cond, extra=""):
 # a wildcard-scoped (any-model) cache row must be found by a concrete-model read (the drift the review found)
 semcache.put("prompt-A", semcache._SCOPE_ANY, "OUT-any")
 ck("a wildcard-scoped cache row is found by a CONCRETE-model read (writer/reader scopes now agree)",
-   semcache.get("prompt-A", "gpt-5.5") == "OUT-any")
+   semcache.get_cached("prompt-A", "gpt-5.5") == "OUT-any")
 
 # a concrete-model row is found by that model...
 semcache.put("prompt-B", "m1", "OUT-m1")
-ck("a concrete-model row is found by that model", semcache.get("prompt-B", "m1") == "OUT-m1")
+ck("a concrete-model row is found by that model", semcache.get_cached("prompt-B", "m1") == "OUT-m1")
 
 # ...but must NOT leak across different concrete models
-ck("a concrete-model row does NOT leak to a different concrete model", semcache.get("prompt-B", "m2") is None)
+ck("a concrete-model row does NOT leak to a different concrete model", semcache.get_cached("prompt-B", "m2") is None)
 
 # and a plain miss is still a miss
-ck("an uncached prompt is a miss", semcache.get("prompt-never-seen", "m1") is None)
+ck("an uncached prompt is a miss", semcache.get_cached("prompt-never-seen", "m1") is None)
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_semcache_scope_is_consistent: {fails} failure(s)")
 sys.exit(1 if fails else 0)

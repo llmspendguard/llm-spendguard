@@ -29,11 +29,11 @@ def bad_activate():
     raise RuntimeError("boom")
 
 # ── loader: activation, containment, idempotence ──
-status = provider_plugins.load(eps=[EP("good", good_activate), EP("bad", bad_activate)])
+status = provider_plugins.load_plugins(eps=[EP("good", good_activate), EP("bad", bad_activate)])
 ck("good plugin activated", status.get("good") == "ok" and calls["good"] == 1)
 ck("bad plugin contained (error status, no raise)", str(status.get("bad", "")).startswith("error:"))
 ck("provider actually registered", "toyprov" in adapters.PROVIDERS)
-status2 = provider_plugins.load(eps=[EP("good", good_activate)])
+status2 = provider_plugins.load_plugins(eps=[EP("good", good_activate)])
 ck("second load() is idempotent (no re-activation)", calls["good"] == 1 and status2.get("good") == "ok")
 ck("loaded() surfaces both", set(provider_plugins.loaded()) >= {"good", "bad"})
 

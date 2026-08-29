@@ -82,7 +82,7 @@ def _judge_prompt(prompt_snip, output_snip):
 def _evidence_table(intent=None, top=40):
     """Compact per-(intent, model) evidence — the reasoner's input (so it sees reconstructed intents,
     e.g. phase_taxonomy=$1127, not just model totals). Cheap; no PII beyond model/intent labels."""
-    rows = calls.summary(intent)   # (intent, model, jobs, cost, good, bad) — excludes meta
+    rows = calls.cost_summary(intent)   # (intent, model, jobs, cost, good, bad) — excludes meta
     if not rows:
         return None, 0
     rows = sorted(rows, key=lambda r: -(r[3] or 0))[:top]

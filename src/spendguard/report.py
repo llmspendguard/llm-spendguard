@@ -163,7 +163,7 @@ def main():
     import io, contextlib
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
-        rc = _run(a)
+        rc = generate_report(a)
     text = buf.getvalue()
     print(text, end="")
     if a.email:
@@ -188,7 +188,7 @@ def main():
     return rc
 
 
-def _run(a):
+def generate_report(a):
     today = datetime.datetime.now(datetime.timezone.utc).date()
     tstr, week_start, month_start = windows(today)
 

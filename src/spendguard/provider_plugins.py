@@ -16,7 +16,7 @@ GROUP = "spendguard.providers"
 _LOADED = {}   # name -> "ok" | "error: …"  (idempotence + `spendguard doctor` surface)
 
 
-def load(eps=None):
+def load_plugins(eps=None):
     """Activate every installed provider plugin once. `eps` is injectable for tests; None = discover
     installed entry points. Returns {name: status}. Never raises."""
     if eps is None:

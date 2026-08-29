@@ -183,12 +183,12 @@ os.unlink(_jsonl)
 
 print("-- an UNKNOWN output side is stated where the cap decision is read --")
 check("unknown is called out as a FLOOR, not resolved to a number",
-      "UNKNOWN" in gate._est_line({"cost": 1.0, "out_basis": "unknown"})
-      and "FLOOR" in gate._est_line({"cost": 1.0, "out_basis": "unknown"}))
+      "UNKNOWN" in gate._est_cost_phrase({"cost": 1.0, "out_basis": "unknown"})
+      and "FLOOR" in gate._est_cost_phrase({"cost": 1.0, "out_basis": "unknown"}))
 check("the model ceiling is named as a worst case, not as an expectation",
-      "worst case" in gate._est_line({"cost": 1.0, "out_basis": "model-max"}))
+      "worst case" in gate._est_cost_phrase({"cost": 1.0, "out_basis": "model-max"}))
 check("a measured estimate says nothing extra (no noise on the normal path)",
-      "UNKNOWN" not in gate._est_line({"cost": 1.0, "out_basis": "learned"}))
+      "UNKNOWN" not in gate._est_cost_phrase({"cost": 1.0, "out_basis": "learned"}))
 
 print("-- expected (p90) and cap-sizing (p99x1.5) are deliberately different numbers --")
 mt4 = bulkgate.maxtokens(SIG)

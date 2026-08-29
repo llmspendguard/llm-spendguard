@@ -54,8 +54,8 @@ ck("line names the source + says verify-vs-provider",
 # ── wiring guard: the daily report actually runs the check ──
 import inspect
 from spendguard import report
-src = inspect.getsource(report._run)
-ck("report._run wired through anomaly.lines", "anomaly" in src and "anomaly check could not run" in src)
+src = inspect.getsource(report.generate_report)
+ck("report.generate_report wired through anomaly.lines", "anomaly" in src and "anomaly check could not run" in src)
 
 print(("[OK]" if not fails else "[FAIL]") + " anomaly: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)

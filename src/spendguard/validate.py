@@ -21,7 +21,7 @@ def _known_models():
     models = set()
     for _prov, ms in pricing.providers().items():
         models |= set(ms)
-    for _i, m, *_ in calls.summary():
+    for _i, m, *_ in calls.cost_summary():
         if m:
             models.add(m)
     return models
@@ -29,7 +29,7 @@ def _known_models():
 
 def _per_job():
     agg = {}
-    for _i, m, jobs, cost, _g, _b in calls.summary():
+    for _i, m, jobs, cost, _g, _b in calls.cost_summary():
         a = agg.setdefault(m, [0, 0.0])
         a[0] += jobs or 0
         a[1] += cost or 0
@@ -41,11 +41,11 @@ def _observed_models():
 
     Split out from _per_job() because callers used `set(_per_job())` to mean "models present in the corpus",
     and _per_job() drops any model with jobs==0 (it cannot divide by it). So a model that is demonstrably
-    present — it is right there in calls.summary() — read as ABSENT, and every insight citing it was retired
+    present — it is right there in calls.cost_summary() — read as ABSENT, and every insight citing it was retired
     as 'superseded: cited model absent from corpus'. Retiring a true insight is the expensive direction:
     nothing surfaces it again. Two different questions ("what does it cost per job" and "have we seen it")
     now have two different functions."""
-    return {m for _i, m, _j, _c, _g, _b in calls.summary() if m}
+    return {m for _i, m, _j, _c, _g, _b in calls.cost_summary() if m}
 
 
 def _models_in(text, known):

@@ -75,7 +75,7 @@ def run_conformance(activate, *, name, sample_model=None, kind="adapter"):
             def _raise():
                 raise RuntimeError("intentional conformance failure")
             return _raise
-    status = provider_plugins.load(eps=[_Boom])
+    status = provider_plugins.load_plugins(eps=[_Boom])
     contained = str(status.get(_boom_name, "")).startswith("error:")
     results.append(("fail_open", contained, "a raising plugin is warned + skipped, never propagated"))
     return results

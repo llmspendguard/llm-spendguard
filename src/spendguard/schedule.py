@@ -28,7 +28,7 @@ def install(interval="hourly", remove=False):
     if plat.startswith("linux"):
         return _linux(interval, remove)
     if plat in ("win32", "cygwin"):
-        return _windows(interval, remove)
+        return _windows_schtasks(interval, remove)
     return {"error": f"unsupported platform {plat} — run `{' '.join(_cmd())}` from your own scheduler"}
 
 
@@ -86,7 +86,7 @@ def _linux(interval, remove):
     return {"removed": True, "scheduler": "cron"} if remove else {"installed": "crontab", "scheduler": "cron", "interval": interval}
 
 
-def _windows(interval, remove):
+def _windows_schtasks(interval, remove):
     if remove:
         subprocess.run(["schtasks", "/delete", "/tn", "SpendguardSync", "/f"], capture_output=True)
         return {"removed": True, "scheduler": "schtasks"}

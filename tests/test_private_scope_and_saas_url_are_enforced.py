@@ -61,7 +61,7 @@ _INS = [
     {"scope": None, "confidence": 0.9, "status": "active", "task_class": "NONE"},
 ]
 share.learn.insights_full = lambda: [dict(x) for x in _INS]
-share.scrub = lambda ins: {"task_class": ins.get("task_class")}      # isolate the SCOPE gate from scrub internals
+share.generalize_insight = lambda ins: {"task_class": ins.get("task_class")}  # TEST DOUBLE for share.generalize_insight (renamed from scrub): a trivial pass-through so this test exercises only the SCOPE gate, not the real generalization
 shared = share._shareable(min_conf=0.6, require_active=True)
 tcs = {o.get("task_class") for o in shared}
 ck("a PRIVATE-scoped insight is NOT shared", "PRIV" not in tcs, str(tcs))

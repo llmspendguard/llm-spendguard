@@ -336,7 +336,7 @@ def _calibrate_est(est):
         return None                                   # never let the nicety break or delay a gate decision
 
 
-def _est_line(est):
+def _est_cost_phrase(est):
     """The human-facing cost phrase: the LIKELY cost first (learned), the ceiling named as a ceiling, and the
     OUTPUT BASIS said out loud when it is not measured — an estimate whose output side is unknown must not
     resolve quietly to a number and slip past a cap (absence is unknown, never zero)."""
@@ -360,7 +360,7 @@ def _decide(est):
     cap = _cap()
     est.setdefault("_cal", _calibrate_est(est))
     line = (f"[spend_gate] {est['provider']} {est.get('model')} · {est['requests']} req · "
-            f"in~{est['in_tok']:,} out≤{est['out_tok']:,} -> {_est_line(est)} (cap ${cap:.0f})")
+            f"in~{est['in_tok']:,} out≤{est['out_tok']:,} -> {_est_cost_phrase(est)} (cap ${cap:.0f})")
     if est["cost"] <= cap:
         _log({**est, "decision": "under_cap"}); print(line + "  OK", file=sys.stderr); _submit_receipt(est); return
     if _allow():
@@ -1880,7 +1880,7 @@ def install(cap: "float | None" = None) -> None:
             pass                                 # Users call spendguard.install_{litellm,bedrock,vertex}() explicitly.
     try:                                         # third-party providers: `pip install spendguard-provider-X` is all a
         from . import provider_plugins           # user does — entry points activate here, fail-open per plugin
-        provider_plugins.load()                  # (recipe: docs/PROVIDERS.md; conformance: spendguard.provider_kit)
+        provider_plugins.load_plugins()                  # (recipe: docs/PROVIDERS.md; conformance: spendguard.provider_kit)
     except Exception as e:
         print(f"[spend_gate] WARN provider plugins skipped: {e}", file=sys.stderr)
     try:                                         # raw-HTTP visibility net (capture-first, never blocks) — SDK-originated

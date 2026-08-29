@@ -18,7 +18,7 @@ ins = {"task_class": "classification", "regime": "bulk", "output_shape": "short-
        "lesson": "phase_taxonomy on gpt-5.5 cost $1127 (~$49/job); gpt-4o-mini 26x cheaper",
        "action": "THEN use gpt-4o-mini not gpt-5.5 for phase_taxonomy", "condition": "IF bulk classify",
        "mechanism": "BECAUSE 2.50/15.00 input dominates"}
-s = share.scrub(ins)
+s = share.generalize_insight(ins)
 blob = (s["lesson"] + " " + s["action"] + " " + s["mechanism"])
 check("returns a rule (has applicability context)", s is not None)
 check("$ amounts scrubbed", "$1127" not in blob and "$49" not in blob)
@@ -27,7 +27,7 @@ check("intent name scrubbed", "phase_taxonomy" not in blob)
 check("model names KEPT (generalizable)", "gpt-4o-mini" in blob and "gpt-5.5" in blob)
 check("ratio KEPT (generalizable)", "26x" in blob)
 check("task context KEPT", s["task_class"] == "classification" and s["regime"] == "bulk")
-check("bare sentence (no context) is NOT shareable", share.scrub({"lesson": "things cost money"}) is None)
+check("bare sentence (no context) is NOT shareable", share.generalize_insight({"lesson": "things cost money"}) is None)
 
 print("-- validate._models_in (token-bounded, not substring) --")
 known = ["gpt-5", "gpt-5.5", "gpt-5-nano", "claude-opus-4-8", "gpt-4o-mini"]

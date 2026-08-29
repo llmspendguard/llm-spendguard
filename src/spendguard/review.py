@@ -70,7 +70,7 @@ def _bundles(top=10):
     """Top (intent, model) combos by cost, each with cost + quality + token-ratio + a sample + chat notes."""
     rates = callio.good_rates()
     out = []
-    for intent, model, jobs, cost, good, bad in sorted(calls.summary(), key=lambda r: -(r[3] or 0)):
+    for intent, model, jobs, cost, good, bad in sorted(calls.cost_summary(), key=lambda r: -(r[3] or 0)):
         tr = _token_ratio(None if intent == "(none)" else intent, model)
         if not tr or not (tr["prompt"] or "").strip():   # need the prompt to assess approach (skips empty/anthropic)
             continue
@@ -131,12 +131,12 @@ def review(run=False, top=10):
     if r["error"]:
         print(f"  ERROR: {r['error']}")
         return dict(error=r["error"])
-    added = _persist(r["text"])
+    added = _persist_review_insight(r["text"])
     print(f"  produced {added} approach-quality insight(s) → learn.insights. Cost ${r['cost']:.4f}.")
     return dict(insights=added, cost=r["cost"], model=model)
 
 
-def _persist(text):
+def _persist_review_insight(text):
     from .advisor import _parse_insights
     data = _parse_insights(text)
     if data is None:
