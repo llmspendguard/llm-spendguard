@@ -90,7 +90,15 @@ def budget_basis_billed():
 
 
 class SpendGateRefused(RuntimeError):
-    """Raised to block a submission the user/policy declined. Propagates out of the SDK call."""
+    """Raised to block a submission the user/policy declined. Propagates out of the SDK call.
+
+    This is the ROOT of every DELIBERATE gate refusal — the CONCEPT the fail-open handlers name. `_guard` and
+    the pre/post-call wrappers catch `SpendGateRefused` and re-raise it, while swallowing genuine malfunctions
+    (`database is locked`, a buggy register()'d fn) so a legitimate job never breaks. Subtypes of a refusal
+    (e.g. bulkgate.GateBlocked, the estimate+test-first lifecycle block) therefore propagate BY CONSTRUCTION;
+    a new refusal type must subclass this rather than be added to an enumerated `except (…)` list — the
+    enumeration is the latent hole that once let un-estimated batches through, live 2026-08-28 (guarded by
+    tests/test_deliberate_refusal_is_never_failopen.py)."""
 
 
 def _ct(text):
@@ -1323,9 +1331,8 @@ def _autotune(kw, model):
 
 def _rt_precheck_guard(est_fn, kw):
     """PRE-call: autotune + estimate + realtime precheck + usage injection, FAIL-OPEN. Only a DELIBERATE
-    enforcement decision (SpendGateRefused / bulkgate.GateBlocked) propagates to block the call; ANY other
-    error — a bug in est_fn, a gate hiccup — is swallowed so a legitimate call is never broken."""
-    from . import bulkgate
+    refusal (SpendGateRefused and its subclasses — e.g. bulkgate.GateBlocked) propagates to block the call;
+    ANY other error — a bug in est_fn, a gate hiccup — is swallowed so a legitimate call is never broken."""
     try:
         try:
             _autotune(kw, (est_fn(kw) or (None,))[0])
@@ -1334,8 +1341,8 @@ def _rt_precheck_guard(est_fn, kw):
         m, i, o = est_fn(kw)
         _rt_precheck(None, m, i, o)
         _inject_usage(kw, est_fn)
-    except (SpendGateRefused, bulkgate.GateBlocked):
-        raise                                                 # deliberate enforcement — propagate
+    except SpendGateRefused:                                  # the CONCEPT (incl. GateBlocked), not an enumerated list
+        raise                                                 # deliberate refusal — propagate
     except Exception as e:
         print(f"[spend_gate] WARN realtime precheck error ({e}); allowing (fail-open)", file=sys.stderr)
 
@@ -1791,12 +1798,16 @@ def register(module_path: str, class_name: str, method: str, gate_fn, is_async: 
 
 
 def _guard(gate_fn, kw, a):
-    """Run a gate_fn fail-OPEN: only a deliberate SpendGateRefused blocks; any other error (e.g. a
-    `database is locked` under fleet concurrency, or a third-party register()'d fn) logs and lets the
-    call proceed — the gate must never break a legitimate job by accident."""
+    """Run a gate_fn fail-OPEN: only a DELIBERATE refusal blocks; any other error (e.g. a `database is locked`
+    under fleet concurrency, or a third-party register()'d fn) logs and lets the call proceed — the gate must
+    never break a legitimate job by accident. `except SpendGateRefused` names the CONCEPT: it catches every
+    deliberate refusal — SpendGateRefused itself AND its subclasses (bulkgate.GateBlocked, the estimate+test-first
+    lifecycle block) — so a refusal is NEVER mistaken for a malfunction and let through. This is the single
+    chokepoint every gated SDK call passes; a deliberate refusal leaking into the `except Exception` fail-open
+    arm here silently stops the gate from gating (see tests/test_deliberate_refusal_is_never_failopen.py)."""
     try:
         gate_fn(kw, a)
-    except SpendGateRefused:
+    except SpendGateRefused:                 # the CONCEPT — incl. every refusal subclass; NEVER an enumerated list
         raise
     except Exception as e:
         print(f"[spend_gate] WARN gate error ({e}); allowing (fail-open)", file=sys.stderr)

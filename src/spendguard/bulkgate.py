@@ -22,6 +22,9 @@ import sqlite3
 import threading
 import contextlib
 from . import config
+from .gate import SpendGateRefused   # the common base for DELIBERATE gate refusals (see GateBlocked below).
+# Import direction: gate depends on bulkgate but only LAZILY (inside functions), and bulkgate imports nothing
+# else from gate — so this top-level import is acyclic (gate always finishes loading before bulkgate here).
 
 PREVIEW_MAX_DEFAULT = 25          # a run of <= this many requests is a PREVIEW/TEST — allowed WITHOUT flags (it IS the test)
 BULK_MIN_USD_DEFAULT = 0.25       # $-primary trigger DEFAULT (tunable: gate.bulk_min_usd): below this estimated cost,
@@ -33,8 +36,16 @@ _lock = threading.RLock()
 _conn = None
 
 
-class GateBlocked(Exception):
-    """Raised when a BULK paid run is attempted without a FRESH estimate+test for its call-class signature."""
+class GateBlocked(SpendGateRefused):
+    """Raised when a BULK paid run is attempted without a FRESH estimate+test for its call-class signature.
+
+    Subclasses SpendGateRefused ON PURPOSE: it is a DELIBERATE refusal, not a gate malfunction. Every fail-open
+    handler in the gate (`_guard` and the pre/post-call wrappers) catches the CONCEPT — `except SpendGateRefused`
+    — and re-raises it, swallowing only genuine malfunctions (`database is locked`, a buggy register()'d fn). If
+    GateBlocked did NOT share that base (it used to be `Exception`), those handlers would treat this block as a
+    malfunction and let the un-estimated batch through — which is exactly the bug this inheritance closes. Any new
+    deliberate-refusal type must likewise subclass SpendGateRefused so it blocks by CONSTRUCTION, never by an
+    enumerated `except (A, B, …)` list that someone has to remember to extend."""
 
 
 def _gate_db():
