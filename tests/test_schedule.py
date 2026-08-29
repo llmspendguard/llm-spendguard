@@ -67,55 +67,55 @@ def _crontab_write(rec):
 # ── macOS: daily = wall-clock StartCalendarInterval (no drift); hourly = StartInterval ──
 home = pathlib.Path(tempfile.mkdtemp(prefix="sg-mac-"))
 with _Patches("darwin", home=home) as p:
-    r = schedule.install(interval="daily")
+    r = schedule.install_schedule(interval="daily")
     plist = plistlib.loads(pathlib.Path(r["installed"]).read_bytes())
     ck("macOS daily → StartCalendarInterval 00:00 (clock-anchored, no drift)",
        plist.get("StartCalendarInterval") == {"Hour": 0, "Minute": 0} and "StartInterval" not in plist)
     ck("macOS → ProgramArguments end with the saas sync --if-due command",
        plist["ProgramArguments"][-3:] == ["saas", "sync", "--if-due"] and r["scheduler"] == "launchd")
 with _Patches("darwin", home=home) as p:
-    plist = plistlib.loads(pathlib.Path(schedule.install(interval="hourly")["installed"]).read_bytes())
+    plist = plistlib.loads(pathlib.Path(schedule.install_schedule(interval="hourly")["installed"]).read_bytes())
     ck("macOS hourly → StartInterval 3600 (no StartCalendarInterval)",
        plist.get("StartInterval") == 3600 and "StartCalendarInterval" not in plist)
 with _Patches("darwin", home=home) as p:
-    schedule.install(interval="daily")
-    r = schedule.install(remove=True)
+    schedule.install_schedule(interval="daily")
+    r = schedule.install_schedule(remove=True)
     ck("macOS remove → unloads + deletes the plist",
        "removed" in r and not pathlib.Path(r["removed"]).exists()
        and any(list(c[0][:2]) == ["launchctl", "unload"] for c in p.rec.calls))
 
 # ── Windows: the /tr command MUST quote the executable (path-with-spaces is the common case) ──
 with _Patches("win32", exe=r"C:\Program Files\Python311\python.exe") as p:
-    schedule.install(interval="hourly")
+    schedule.install_schedule(interval="hourly")
     cmd = _create(p.rec)[0]
     tr = cmd[cmd.index("/tr") + 1]
     ck("Windows /tr quotes a python path WITH SPACES (else schtasks splits it and the task fails)",
        tr.startswith('"C:\\Program Files\\Python311\\python.exe"') and tr.endswith("saas sync --if-due"))
     ck("Windows hourly → /sc HOURLY", cmd[cmd.index("/sc") + 1] == "HOURLY")
 with _Patches("win32", exe=r"C:\py\python.exe") as p:
-    schedule.install(interval="daily")
+    schedule.install_schedule(interval="daily")
     cmd = _create(p.rec)[0]
     ck("Windows daily → /sc DAILY", cmd[cmd.index("/sc") + 1] == "DAILY")
 
 # ── Linux: marker-tagged crontab line, idempotent install, clean removal that spares other entries ──
 with _Patches("linux", crontab_out="0 9 * * * /usr/bin/backup\n") as p:
-    schedule.install(interval="hourly")
+    schedule.install_schedule(interval="hourly")
     w = _crontab_write(p.rec)
     ck("Linux install → appends our marked line + PRESERVES the user's existing crontab",
        "/usr/bin/backup" in w and schedule._MARKER in w and "0 * * * *" in w)
 with _Patches("linux", crontab_out=f"0 0 * * * {' '.join(schedule._cmd())}  {schedule._MARKER}\n") as p:
-    schedule.install(interval="daily")
+    schedule.install_schedule(interval="daily")
     ck("Linux install is idempotent → our marker appears exactly once (no duplicate)",
        _crontab_write(p.rec).count(schedule._MARKER) == 1)
 with _Patches("linux", crontab_out=f"0 9 * * * /usr/bin/backup\n0 0 * * * x  {schedule._MARKER}\n") as p:
-    schedule.install(remove=True)
+    schedule.install_schedule(remove=True)
     w = _crontab_write(p.rec)
     ck("Linux remove → strips ONLY our line, keeps the user's other entries",
        "/usr/bin/backup" in w and schedule._MARKER not in w)
 
 # ── Unsupported platform: no crash, returns the manual command, main() signals failure ──
 with _Patches("freebsd13") as p:
-    r = schedule.install()
+    r = schedule.install_schedule()
     ck("unsupported platform → error carries the manual command to run by hand",
        "error" in r and "saas" in r["error"] and "sync" in r["error"])
     ck("main() returns 1 on unsupported platform", schedule.main(["--daily"]) == 1)

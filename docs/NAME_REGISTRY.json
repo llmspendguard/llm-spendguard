@@ -173,9 +173,9 @@
       "why": "Four source-specific implementations of one server contract: each aggregates its own channel's est-value into per-(project,day,model) /v1/ledger rows (billed=False) — chat=claude-ai, claudecode=claude-code, codex=codex, lane_value=gemini/zai (ledger-valued lanes, no session miner). Same shape, dispatched by each source's own sync."
     },
     "install": {
-      "n": 6,
-      "verdict": "COLLISION",
-      "why": "Five of these form a coherent patch-a-surface protocol: the four adapters (bedrock, litellm, vertex, http_capture) share the same `install(force=...) -> bool` idempotent-patch contract, and gate.insta"
+      "n": 5,
+      "verdict": "PROTOCOL",
+      "why": "A name-DISPATCHED patch/activate protocol: gate.install is the public `spendguard.install()` entrypoint (re-exported in __init__, baked into the usercustomize hook template, asserted verbatim by tests) AND the orchestrator that loops registered SDK modules calling `.install(force=False)` on each BY NAME (gate.py). The four adapters (bedrock, litellm, vertex, http_capture) implement that per-surface `install(force=...) -> bool` idempotent-patch contract it dispatches to. Renaming any of them — especially gate.install — would silently un-gate every already-installed user hook, so the shared name IS the contract. The one true outlier, schedule.install (OS scheduler task, dict return, unrelated semantics), was renamed to install_schedule, leaving this a clean 5-member protocol."
     },
     "instances": {
       "n": 5,

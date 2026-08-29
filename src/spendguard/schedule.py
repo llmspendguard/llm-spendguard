@@ -21,7 +21,7 @@ def _logpath():
     return str(config.HOME / "schedule.log")
 
 
-def install(interval="hourly", remove=False):
+def install_schedule(interval="hourly", remove=False):
     plat = sys.platform
     if plat == "darwin":
         return _macos(interval, remove)
@@ -103,7 +103,7 @@ def _windows_schtasks(interval, remove):
 def main(argv=None):
     argv = list(argv or [])
     interval = "daily" if "--daily" in argv else "hourly"
-    r = install(interval=interval, remove="--remove" in argv)
+    r = install_schedule(interval=interval, remove="--remove" in argv)
     print("spendguard schedule:", r)
     if r.get("error"):
         return 1
