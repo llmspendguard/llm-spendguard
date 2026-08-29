@@ -807,7 +807,7 @@ def _conv_org():
     """The org this conversation/connection belongs to (the repo's .spendguard.json org) — the default tree scope."""
     try:
         from . import saas
-        return (saas.conn().get("org") or "").strip().lower() or None
+        return (saas.saas_connection().get("org") or "").strip().lower() or None
     except Exception:
         return None
 

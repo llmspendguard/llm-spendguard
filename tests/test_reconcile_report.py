@@ -24,7 +24,7 @@ ck("Source.captured() default []", s.captured() == [])
 ck("Source.attribute_gap() default []", s.attribute_gap(100.0) == [])
 
 # ── stub both sources' EXTERNAL I/O so all_sources/report run fully offline + account-owned ──
-saas.conn = lambda: {"enabled": True, "owns_account": True, "visibility": "org"}
+saas.saas_connection = lambda: {"enabled": True, "owns_account": True, "visibility": "org"}
 ledger_sync._provider_total = lambda since: 800.0
 ledger_sync._gate_captured_rows = lambda since: [{"cost": 600.0, "project": "lmm"}]
 resources.account_gpu_total = lambda since=None: 1000.0

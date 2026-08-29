@@ -178,7 +178,7 @@ def p_batch(is_async, mode):
     def gate_fn(kw, a):
         if mode == "bug": raise ValueError("injected batch gate bug")
         if mode == "refuse": raise SpendGateRefused("blocked")
-    w = gate._wrap(orig, gate_fn, is_async)
+    w = gate._gate_wrap(orig, gate_fn, is_async)
     if mode == "refuse":
         raised = False
         try:

@@ -290,7 +290,7 @@ def sync(dry=False):
     """Push Claude Code spend (channel=claude-code) → the server. Honors visibility + contributor; ORG-ROUTED by the
     session's classified org (only rows whose org matches THIS connection — or are unclassified — push here)."""
     from . import saas
-    c = saas.conn()
+    c = saas.saas_connection()
     if c.get("visibility", "private") == "private":
         return {"skipped": "visibility=private"}
     cok, cwhy = saas.contributor_ok()

@@ -47,7 +47,7 @@ def _capture_vertex_result(kw, result, toks_fn=_toks):
         print(f"[spend_gate] WARN vertex capture failed ({e}); call unaffected", file=sys.stderr)
 
 
-def _wrap(orig, is_async, toks_fn=_toks):
+def _vertex_wrap(orig, is_async, toks_fn=_toks):
     if is_async:
         @functools.wraps(orig)
         async def w(self, *a, **kw):
@@ -85,6 +85,6 @@ def install(force: bool = False) -> bool:
             if getattr(cur, "_spend_gated", False):
                 wired = True
                 continue
-            setattr(cls, method, _wrap(cur, is_async, toks_fn))
+            setattr(cls, method, _vertex_wrap(cur, is_async, toks_fn))
             wired = True
     return wired

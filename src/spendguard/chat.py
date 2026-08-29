@@ -550,7 +550,7 @@ def sync(dry=False):
         return {"skipped": "chat adapter not enabled — `spendguard chat enable` (or set chat.enabled / "
                            "SPENDGUARD_CHAT_ENABLED=1). On-device, opt-in, your session only."}
     from . import saas
-    c = saas.conn()
+    c = saas.saas_connection()
     if c.get("visibility", "private") == "private":
         return {"skipped": "visibility=private"}
     cok, cwhy = saas.contributor_ok()

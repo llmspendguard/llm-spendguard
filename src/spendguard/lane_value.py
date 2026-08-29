@@ -175,7 +175,7 @@ def sync(dry=False):
     THIS connection's owned projects (no cross-attribution); declares a per-channel replace so re-syncs never stack.
     Runs inside `saas sync` (hourly via launchd). Best-effort; never raises out."""
     from . import saas
-    c = saas.conn()
+    c = saas.saas_connection()
     if c.get("visibility", "private") == "private":
         return {"skipped": "visibility=private"}
     cok, cwhy = saas.contributor_ok()

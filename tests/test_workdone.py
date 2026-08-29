@@ -220,7 +220,7 @@ import spendguard.saas as _saas
 # contributor email REQUIRED — push_workdone gates on contributor_ok(), which needs a real email (else the server
 # can't map the member). Set it here so the test is deterministic: without it, a CI runner with no git user.email
 # falls back to an anon usr_<hex> → push_workdone returns {skipped}, and `.get("work")` would be None.
-_saas.conn = lambda: {"enabled": True, "visibility": "org", "project": "nlp-pipeline", "url": "https://x", "api_key": "k", "contributor": "tester@x.test"}
+_saas.saas_connection = lambda: {"enabled": True, "visibility": "org", "project": "nlp-pipeline", "url": "https://x", "api_key": "k", "contributor": "tester@x.test"}
 workdone.rollup_workdone = lambda since=None, by="month": [
     {"period": "2026-06", "project": "nlp-pipeline", "active_days": 3, "n_commits": 5, "n_batch_calls": 7,
      "commits": ["x" * 250, "short"], "intents": {"entity-extract": 7}},
@@ -233,7 +233,7 @@ check("push_workdone dry: filtered to the connection's project only", [w["projec
 check("push_workdone dry: counts carried", _pw["work"][0]["n_commits"] == 5 and _pw["work"][0]["n_batch_calls"] == 7)
 check("push_workdone dry: commit subjects truncated to 200 chars", len(_pw["work"][0]["commits"][0]) == 200)
 check("push_workdone dry: monthly period", _pw["work"][0]["period"] == "2026-06")
-_saas.conn = lambda: {"visibility": "private"}
+_saas.saas_connection = lambda: {"visibility": "private"}
 check("push_workdone: visibility=private → no-op skip", bool(_saas.push_workdone(dry=True).get("skipped")))
 
 

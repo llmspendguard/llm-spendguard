@@ -226,7 +226,7 @@ gpu_port._SOURCES.pop("gpu:acme")
 
 # reconcile.all_sources: configured providers appear; unconfigured never do; one failing source is isolated.
 from spendguard import reconcile, ledger_sync, saas
-saas.conn = lambda: {"enabled": True, "owns_account": True, "visibility": "org"}
+saas.saas_connection = lambda: {"enabled": True, "owns_account": True, "visibility": "org"}
 ledger_sync._provider_total = lambda since: 800.0
 ledger_sync._gate_captured_rows = lambda since: [{"cost": 600.0, "project": "lmm"}]
 resources.account_gpu_total = lambda since=None: 1000.0

@@ -112,11 +112,6 @@
       "verdict": "DUPLICATION",
       "why": "Both are thin wrappers over config.warn_once that delegate to the same single registry; the only difference is a prefix arg. The comments explicitly note each module 'had its own copy'. Same job, two "
     },
-    "_wrap": {
-      "n": 3,
-      "verdict": "COLLISION",
-      "why": "All three are decorator factories that wrap a call and set w._spend_gated, but they have different signatures and different jobs: bedrock's _wrap intercepts boto3 make_api_call to record token usage, "
-    },
     "acquire": {
       "n": 3,
       "verdict": "PROTOCOL",
@@ -163,9 +158,9 @@
       "why": "GPUProvider defines an abstract 'configured' contract and each adapter (Lambda, Modal, RunPod) implements provider-specific readiness checks. The Lambda/RunPod bodies look identical but check differen"
     },
     "conn": {
-      "n": 6,
-      "verdict": "COLLISION",
-      "why": "Five are property-style accessors returning a per-instance `_conn` (a genuine duck-typed Source contract, plus reconcile.Source returning {} as a default stub), but saas.conn() is a module-level funct"
+      "n": 5,
+      "verdict": "PROTOCOL",
+      "why": "The 5 remaining conn(self) are a uniform Source-connection accessor protocol: each reconcile Source-like class (ledger_sync x2, gpu_port, resources, reconcile) exposes .conn returning its connection/identity metadata, dispatched uniformly by the reconcile framework. The odd module-level saas.conn (a different job — the SaaS server connection) was renamed to saas_connection. [conn methods = protocol; saas.conn renamed 2026-08-29.]"
     },
     "consensus": {
       "n": 2,

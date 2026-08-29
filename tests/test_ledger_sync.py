@@ -202,7 +202,7 @@ backfill._anthropic_rows = lambda: [("anthropic", "claude-opus-4-8", 5.0, 100, 1
 conv.batch_project_map = lambda tdir=None: {}           # no conversation evidence → batches hit the fallback
 # owns_account is STATED. A connection that omits it is now refused rather than assumed to own the
 # account (reconcile.owner_ok) — absence is not permission, and this stub used to rely on it.
-saas.conn = lambda: {"project": "nlp-pipeline", "projects": ["nlp-pipeline"],
+saas.saas_connection = lambda: {"project": "nlp-pipeline", "projects": ["nlp-pipeline"],
                      "owns_account": True}   # single-project → fallback = 'nlp-pipeline'
 
 summ = LS.reconcile_into_ledger(since=SINCE)
@@ -252,7 +252,7 @@ conv.batch_project_map = lambda tdir=None: {
     "bx-linked": {"project": "vision-pipeline", "evidenced": True},
     "bx-intent": {"project": "vision-pipeline", "evidenced": True},
 }
-saas.conn = lambda: {"project": "nlp-pipeline", "projects": ["nlp-pipeline"], "owns_account": True}
+saas.saas_connection = lambda: {"project": "nlp-pipeline", "projects": ["nlp-pipeline"], "owns_account": True}
 summ_attr = LS.reconcile_into_ledger(since=SINCE)
 # bx-linked ($40) + bx-intent ($9) both → vision-pipeline (no gate spend there) → a real gap row
 check("vision-pipeline gap from agentic attribution = $49", abs(summ_attr["gap_by_project"].get("vision-pipeline", 0) - 49.0) < 1e-9)
@@ -279,15 +279,15 @@ ra.cost_by_day = lambda since=None: ({}, {})
 backfill._openai_rows = lambda: [("openai", "gpt-5.5", 40.0, 1_000_000, 0, DAYS[1], "bx-multi")]
 backfill._anthropic_rows = lambda: []
 conv.batch_project_map = lambda tdir=None: {}                            # no conversation evidence at all
-saas.conn = lambda: {"projects": ["nlp-pipeline", "vision-pipeline"],
+saas.saas_connection = lambda: {"projects": ["nlp-pipeline", "vision-pipeline"],
                      "owns_account": True}   # >1 project → fallback = 'unattributed'
 summ4 = LS.reconcile_into_ledger(since=SINCE)
 check("no-evidence (no segment) gap lands in 'unattributed'", "unattributed" in summ4["gap_by_project"])
 
-print("-- reconcile_into_ledger: saas.conn raising → tolerated (except path) --")
+print("-- reconcile_into_ledger: saas.saas_connection raising → tolerated (except path) --")
 def conn_boom():
     raise RuntimeError("no saas")
-saas.conn = conn_boom
+saas.saas_connection = conn_boom
 conv.batch_project_map = lambda tdir=None: {}
 summ5 = LS.reconcile_into_ledger(since=SINCE)
 check("saas error → still attributes a gap", summ5["ungoverned"] > 0)
@@ -299,18 +299,18 @@ ra.cost_by_day = lambda since=None: ({}, {})
 backfill._openai_rows = lambda: [("openai", "gpt-5.5", 40.0, 1_000_000, 0, DAYS[1], "bx-shared")]
 backfill._anthropic_rows = lambda: []
 conv.batch_project_map = lambda tdir=None: {}
-saas.conn = lambda: {"enabled": True, "project": "vision-pipeline", "owns_account": False}
+saas.saas_connection = lambda: {"enabled": True, "project": "vision-pipeline", "owns_account": False}
 summ_no = LS.reconcile_into_ledger(since=SINCE)
 check("non-owner reconcile is skipped", bool(summ_no.get("skipped")))
 check("non-owner records NO gap rows", summ_no["gap_rows"] == 0 and summ_no["gap_by_project"] == {})
-saas.conn = lambda: {"enabled": True, "project": "vision-pipeline", "owns_account": True}
+saas.saas_connection = lambda: {"enabled": True, "project": "vision-pipeline", "owns_account": True}
 summ_own = LS.reconcile_into_ledger(since=SINCE)
 check("owner DOES reconcile the shared gap (not skipped)", not summ_own.get("skipped"))
 
 print("-- reconcile_realtime: backfill realtime_log → ledger gap (idempotent) --")
 from spendguard import config as _cfg
 import spendguard.saas as _saas_rt
-_saas_rt.conn = lambda: {"project": "vision-pipeline"}   # single-project → fallback = vision-pipeline
+_saas_rt.saas_connection = lambda: {"project": "vision-pipeline"}   # single-project → fallback = vision-pipeline
 RT_D1, RT_D2 = "2026-06-05", "2026-06-06"
 with open(_cfg.RT_LOG, "w") as _f:
     _f.write(json.dumps({"day": RT_D1, "provider": "anthropic", "model": "claude-opus-4-8", "calls": 2, "cost": 3.0}) + "\n")

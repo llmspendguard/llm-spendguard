@@ -216,7 +216,7 @@ def sync(dry=False):
     """Push Codex spend (channel=codex, billed=false) → the server, ORG-ROUTED by each session's classified org.
     Mirrors claudecode.sync."""
     from . import saas
-    c = saas.conn()
+    c = saas.saas_connection()
     if c.get("visibility", "private") == "private":
         return {"skipped": "visibility=private"}
     cok, cwhy = saas.contributor_ok()

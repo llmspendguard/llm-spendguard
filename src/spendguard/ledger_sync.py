@@ -231,7 +231,7 @@ def reconcile_into_ledger(since=None):
     # batch). Standalone / unconnected use (no saas.json) still reconciles fully — the whole account is genuinely theirs.
     try:
         from . import saas as _saas
-        _conn = _saas.conn()
+        _conn = _saas.saas_connection()
     except Exception:
         _conn = {}
     from . import reconcile                                 # shared reconcile core (same account-anchor guard as GPU)
@@ -276,7 +276,7 @@ def reconcile_into_ledger(since=None):
     # "most-recent/primary task" rule the user asked for; it takes LLM attribution to ~100% for single-project orgs.
     try:
         from . import saas
-        _c = saas.conn()
+        _c = saas.saas_connection()
         _ps = _c.get("projects")
         fallback = "unattributed" if (isinstance(_ps, list) and len(_ps) > 1) else \
             (_c.get("project") or budget._project() or "unattributed").strip().lower()
@@ -454,7 +454,7 @@ def reconcile_realtime(since=None):
     gate_pd = budget.by_provider_day(kind="realtime", since=since)   # REAL gate realtime (markers just cleared)
     try:
         from . import saas
-        _c = saas.conn()
+        _c = saas.saas_connection()
         _ps = _c.get("projects")
         fallback = "unattributed" if (isinstance(_ps, list) and len(_ps) > 1) else \
             (_c.get("project") or budget._project() or "unattributed").strip().lower()
@@ -719,7 +719,7 @@ class LLMSource:
     def __init__(self, conn=None, since=None):
         from . import saas
         try:
-            self._conn = conn if conn is not None else saas.conn()
+            self._conn = conn if conn is not None else saas.saas_connection()
         except Exception:
             self._conn = {}
         self._since = since or config.month_start_utc()
@@ -753,7 +753,7 @@ class RealtimeSource:
     def __init__(self, conn=None, since=None):
         from . import saas
         try:
-            self._conn = conn if conn is not None else saas.conn()
+            self._conn = conn if conn is not None else saas.saas_connection()
         except Exception:
             self._conn = {}
         self._since = since or config.month_start_utc()

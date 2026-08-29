@@ -143,7 +143,7 @@ ra.cost_by_day = lambda since=None: ({D1: 70.0}, {})
 backfill._openai_rows = lambda: []
 backfill._anthropic_rows = lambda: [("anthropic", SONNET, 70.0, 1_000_000, 50_000, D1, "b-a1")]
 conv.batch_project_map = lambda tdir=None: {}
-saas.conn = lambda: {"enabled": True, "project": "lmm", "owns_account": True}
+saas.saas_connection = lambda: {"enabled": True, "project": "lmm", "owns_account": True}
 summ = LS.reconcile_into_ledger(since=SINCE)
 check("summary carries the true-down stats", abs(summ["true_down"]["trued_down"] - 30.0) < 0.01)
 check("no spurious gap rows (account net is 0 after true-down)", summ["gap_rows"] == 0)

@@ -119,7 +119,7 @@ def push_signal(dry=False):
     ledger roll-up: the connection's own project(s), plus 'unattributed'/'llm-spendguard' (own meta) iff it owns_account
     — so the account-owner also carries the shared no-evidence cancellation loss, and other repos don't double-count."""
     from . import saas
-    c = saas.conn()
+    c = saas.saas_connection()
     flt = saas._project_filter(c)
     rows = [r for r in build_signals() if flt is None or (r.get("project") or "") in flt]
     payload = {"signal": rows}

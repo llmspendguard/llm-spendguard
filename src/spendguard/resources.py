@@ -801,7 +801,7 @@ class GPUSource:
 
     def __init__(self, conn=None):
         from . import saas
-        self._conn = conn if conn is not None else saas.conn()
+        self._conn = conn if conn is not None else saas.saas_connection()
 
     def conn(self):
         return self._conn
@@ -823,7 +823,7 @@ def sync(dry=False):
     remainder is an EXPLICIT `residual` (account total − Σ recorded boxes), surfaced but NEVER dumped on a project/org
     (a shared vast.ai account would otherwise leak cross-org). record_instance_history() runs first so live boxes are captured."""
     from . import saas
-    c = saas.conn()
+    c = saas.saas_connection()
     ref = saas.contributor()
     record_instance_history()                                             # RECORD live instances first (so destroyed ones survive)
     from . import attribution

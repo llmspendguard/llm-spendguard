@@ -27,19 +27,19 @@ ck("since respected + day/provider/usd shape", all(r["day"] >= "2026-07-01" and 
 ck("totals faithful", abs(sum(r["usd"] for r in rs) - 27.75) < 1e-9)
 
 sent = {}
-saas.conn = lambda: {"visibility": "org", "enabled": True, "owns_account": True}
+saas.saas_connection = lambda: {"visibility": "org", "enabled": True, "owns_account": True}
 saas._request = lambda m, p, payload=None: sent.update(m=m, p=p, payload=payload) or {"accepted": len(payload["truth"])}
 res = truth.push_truth(since="2026-07-01")
 ck("push posts /v1/truth with the rows", sent["m"] == "POST" and sent["p"] == "/v1/truth" and len(sent["payload"]["truth"]) == 4)
 ck("push returns server result", res == {"accepted": 4})
 
-saas.conn = lambda: {"visibility": "private"}
+saas.saas_connection = lambda: {"visibility": "private"}
 ck("visibility=private → nothing leaves", "skipped" in truth.push_truth())
 
-saas.conn = lambda: {"visibility": "org", "enabled": True, "owns_account": False}
+saas.saas_connection = lambda: {"visibility": "org", "enabled": True, "owns_account": False}
 ck("non-owner connection cannot push account-level truth", "not the account owner" in truth.push_truth().get("skipped", ""))
 
-saas.conn = lambda: {"visibility": "org"}
+saas.saas_connection = lambda: {"visibility": "org"}
 def _404(m, p, payload=None):
     raise RuntimeError("HTTP 404 not found")
 saas._request = _404

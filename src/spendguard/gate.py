@@ -1802,7 +1802,7 @@ def _guard(gate_fn, kw, a):
         print(f"[spend_gate] WARN gate error ({e}); allowing (fail-open)", file=sys.stderr)
 
 
-def _wrap(orig, gate_fn, is_async):
+def _gate_wrap(orig, gate_fn, is_async):
     if is_async:
         @functools.wraps(orig)
         async def w(self, *a, **kw):
@@ -1825,7 +1825,7 @@ def _apply(module_path, class_name, method, gate_fn, is_async):
     cur = getattr(cls, method)
     if getattr(cur, "_spend_gated", False):
         return
-    setattr(cls, method, _wrap(cur, gate_fn, is_async))
+    setattr(cls, method, _gate_wrap(cur, gate_fn, is_async))
 
 
 def _apply_rt(module_path, class_name, method, est_fn, act_fn, is_async):
@@ -2000,7 +2000,7 @@ def _cli(cmd="status", live=False):
             # SaaS push readiness — confirm THIS repo will independently push to the aggregation server.
             try:
                 from . import saas as _saas
-                c = _saas.conn()
+                c = _saas.saas_connection()
                 ok, reason = _saas.ready()
                 if c.get("enabled"):
                     print(f"  saas      : {'🟢 ' + reason if ok else '🔴 ' + reason}  url={c.get('url') or '(unset)'}")

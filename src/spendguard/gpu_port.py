@@ -227,7 +227,7 @@ class ProviderGPUSource:
         from . import saas
         self.provider = provider
         self.name = f"gpu:{provider.name}"
-        self._conn = conn if conn is not None else saas.conn()
+        self._conn = conn if conn is not None else saas.saas_connection()
 
     def conn(self):
         return self._conn

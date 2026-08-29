@@ -36,7 +36,7 @@ from . import config
 _INTERVAL_SECONDS = {"off": None, "hourly": 3600, "daily": 86400, "weekly": 604800}
 
 
-def conn():
+def saas_connection():
     """Resolved SaaS connection (saas.json overlaid by env). See config.saas_config()."""
     return config.saas_config()
 
@@ -51,7 +51,7 @@ def _client_version():
 
 def ready():
     """(ok, reason). ok only if enabled AND a url is set AND a key is set — i.e. we COULD talk to a server."""
-    c = conn()
+    c = saas_connection()
     if not c.get("enabled"):
         return False, "saas.enabled is off (set it on once the server exists)"
     if not c.get("url"):
@@ -80,7 +80,7 @@ def _request(method, path, payload=None, timeout=15):
     ok, reason = ready()
     if not ok:
         raise RuntimeError(f"spendguard SaaS not connected: {reason}")
-    c = conn()
+    c = saas_connection()
     base = c["url"].rstrip("/")
     # The Bearer key (the org identity) rides every request, so the destination must be trusted. `saas_config`
     # overlays a repo-local `.spendguard.json` walking up the tree — a planted `url` could exfiltrate the key or
@@ -114,7 +114,7 @@ def contributor():
     explicit email/string → git user.email → a stable persisted anonymous id (`usr_<hex>`). An email doubles as
     the alert target; an auto-id still gives clean per-user attribution + billing. Set your ORG email so the server
     maps you to your SaaS member + can email you alerts. (Set via `spendguard init` or saas.json `contributor`.)"""
-    c = conn()
+    c = saas_connection()
     v = (c.get("contributor") or "").strip()
     if v:
         return v.lower()[:128]
@@ -133,7 +133,7 @@ def identity_for_org(org, default=None):
     an org also carries the right USER — e.g. a vast.ai box classified to Ensight → ash@ensight.ai, while Healiom
     work → ash@healiom.com — even though one machine pushes both. Config-driven (`identities` map {org: email}); NO
     hardcoding. Falls back to the connection contributor when an org isn't mapped."""
-    ids = conn().get("identities") or {}
+    ids = saas_connection().get("identities") or {}
     if isinstance(ids, dict) and org:
         for k, v in ids.items():
             if str(k).lower() == str(org).lower() and v:
@@ -150,7 +150,7 @@ def contributor_ok():
     link` (verifies + persists your org email). Solo/local dashboards that don't need per-person mapping can opt out
     with SPENDGUARD_ALLOW_ANON=1."""
     import os
-    c = conn()
+    c = saas_connection()
     if not c.get("enabled") or c.get("visibility", "private") == "private":
         return True, "n/a (not pushing per-user data)"
     if os.environ.get("SPENDGUARD_ALLOW_ANON") == "1":
@@ -359,7 +359,7 @@ def _rollup_rows(since=None):
         raw = budget.by_dims(since=since)
     except Exception:
         raw = []
-    return build_rollup_rows(raw, contributor(), _project_filter(conn()))
+    return build_rollup_rows(raw, contributor(), _project_filter(saas_connection()))
 
 
 def _guarded_rows(since=None):
@@ -369,14 +369,14 @@ def _guarded_rows(since=None):
         rows = guard.by_dims_guarded(since=since)
     except Exception:
         return []
-    return build_guarded_rows(rows, _conn_project_base(conn()))
+    return build_guarded_rows(rows, _conn_project_base(saas_connection()))
 
 
 def push_rollup(since=None, dry=False):
     """Push this machine's per-day spend roll-up + GUARDED cumulants (NOT per-call, NOT prompts), stamped with the
     contributor so the server can roll up per user → team → org. Honors visibility: no-op note if private.
     dry=True returns the payload without sending (offline-testable)."""
-    c = conn()
+    c = saas_connection()
     if c.get("visibility", "private") == "private":
         return {"skipped": "visibility=private — nothing leaves this machine"}
     cok, cwhy = contributor_ok()
@@ -397,7 +397,7 @@ def push_rollup(since=None, dry=False):
 
 def push_insights():
     """Push SCRUBBED insight abstracts (reuses share.py's scrub). Honors visibility."""
-    c = conn()
+    c = saas_connection()
     if c.get("visibility", "private") == "private":
         return {"skipped": "visibility=private — nothing leaves this machine"}
     cok, cwhy = contributor_ok()
@@ -422,7 +422,7 @@ def push_calibration(cells=None):
     quantity) only {n, p50, p90}: aggregate ratios, never prompts, outputs, or raw calls. Labels ride
     through de-id like every text egress. The server aggregates across members so the whole org's
     history becomes each member's PRIOR (`spendguard calibrate fetch`). Honors visibility."""
-    c = conn()
+    c = saas_connection()
     if c.get("visibility", "private") == "private":
         return {"skipped": "visibility=private — nothing leaves this machine"}
     cok, cwhy = contributor_ok()
@@ -459,7 +459,7 @@ def push_workdone(since=None, by="month", dry=False):
     dashboard reads "spent $X, here's what got done." Tier-1: deterministic + FREE (no diffs, no prompts). Honors
     visibility (private → no-op) and the connection's project filter. Monthly periods by default, to match the
     dashboard's current-month view. dry=True returns the payload without sending (offline-testable)."""
-    c = conn()
+    c = saas_connection()
     if c.get("visibility", "private") == "private":
         return {"skipped": "visibility=private — nothing leaves this machine"}
     cok, cwhy = contributor_ok()
@@ -502,7 +502,7 @@ def push_status(dry=False):
     interpreter auto-enforce the gate at startup — the honest per-seat signal, probed in a clean subprocess so the
     CLI's own install() doesn't mask it), interpreter counts, and {model, pct} drift vs OpenRouter. No paths/$.
     Honors visibility + the contributor-email requirement. Graceful if the server lacks the endpoint."""
-    c = conn()
+    c = saas_connection()
     if c.get("visibility", "private") == "private":
         return {"skipped": "visibility=private — nothing leaves this machine"}
     cok, cwhy = contributor_ok()
@@ -675,7 +675,7 @@ def _set_state(**kw):
 
 def due():
     """(is_due, reason). Due if sync_interval != off AND (never synced OR interval elapsed since last_sync)."""
-    interval = conn().get("sync_interval", "daily")
+    interval = saas_connection().get("sync_interval", "daily")
     secs = _INTERVAL_SECONDS.get(interval)
     if secs is None:
         return False, "sync_interval=off (manual only)"
@@ -868,7 +868,7 @@ def crosscheck(since=None):
 
 
 def print_saas_status():
-    c = conn()
+    c = saas_connection()
     ok, reason = ready()
     _, why = due()
     print("spendguard SaaS (team/org roll-up) — client seam")
