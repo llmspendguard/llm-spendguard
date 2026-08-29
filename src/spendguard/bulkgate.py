@@ -725,22 +725,22 @@ def check_realtime(sig, model, est_usd=0.0, force=False):
 def gated_batch(sig, model):
     """Ordered unblock wrapper so a consumer CAN'T run before estimate+test+eval:
         with bulkgate.gated_batch(sig, model) as job:
-            job.estimate(worst_case_usd, count)              # record_estimate
+            job.note_estimate(worst_case_usd, count)
             sample = job.test(n, run_fn, contract=[...], items=[...])   # <=preview_max sample (allowed), verify shape
             job.eval(bar="what a passing output looks like")            # AGENTIC verdict on that sample (defaults to it)
-            job.run(count, est_usd, submit_fn)               # check_bulk (raises if estimate/test/eval missing) → submit_fn()
+            job.gated_submit(count, est_usd, submit_fn)      # check_bulk (raises if estimate/test/eval missing) → submit_fn()
     a consumer's batch pool becomes a CONSUMER of this, not a reimplementation."""
     class _Job:
         _contract = None
         _items = None
         _sample = None
 
-        def estimate(self, est_usd, count):
+        def note_estimate(self, est_usd, count):
             record_estimate(sig, model, est_usd, count)
             return self
 
         def test(self, n, run_fn, verify_fn=None, contract=None, items=None):
-            self._contract = contract                             # remembered so .run() asserts the SAME shape
+            self._contract = contract                             # remembered so .gated_submit() asserts the SAME shape
             self._items = items
             self._sample = test_job(sig, run_fn, n=n, verify_fn=verify_fn, contract=contract, items=items)
             return self._sample                                   # remembered so .eval() can judge it without re-running
@@ -749,7 +749,7 @@ def gated_batch(sig, model):
             """AGENTIC eval of the test sample against a STATED bar. Defaults to the sample .test() just produced."""
             return eval_job(sig, bar, sample if sample is not None else self._sample, model=model)
 
-        def run(self, count, est_usd, submit_fn, force=False):
+        def gated_submit(self, count, est_usd, submit_fn, force=False):
             from . import output_contract
             ds = output_contract.data_signature(self._items) if getattr(self, "_items", None) else None
             check_bulk(sig, model, count, est_usd, force=force,   # raises GateBlocked if estimate/test missing

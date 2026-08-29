@@ -12,11 +12,6 @@
       "verdict": "PROTOCOL",
       "why": "Each usage() is a per-lane implementation of the same lane-quota contract (return buckets [{bucket, remaining_pct, reset_ts}] or None), delegating to a shared lane_quota.cached_usage with lane-specific _fetch_usage. Intentional polymorphism across lane modules (antigravity/codex/subscription exec), consumed uniformly by lanes.lane_headroom() iterating mod.usage(). [Adjudicated PROTOCOL by honestreview name --run, 2026-08-27.]"
     },
-    "_apply": {
-      "n": 2,
-      "verdict": "COLLISION",
-      "why": "gate._apply monkeypatches a method with a spend-gate wrapper; validate._apply computes lifecycle field updates from a verdict. Completely unrelated jobs sharing a bare name."
-    },
     "_bin": {
       "n": 3,
       "verdict": "PROTOCOL",
@@ -207,16 +202,6 @@
       "verdict": "PROTOCOL",
       "why": "Four source-specific implementations of one server contract: each aggregates its own channel's est-value into per-(project,day,model) /v1/ledger rows (billed=False) — chat=claude-ai, claudecode=claude-code, codex=codex, lane_value=gemini/zai (ledger-valued lanes, no session miner). Same shape, dispatched by each source's own sync."
     },
-    "emit": {
-      "n": 2,
-      "verdict": "COLLISION",
-      "why": "One is a local helper that appends aggregated cell-stats records during calibration; the other is a module-level observability fan-out that dispatches events to callbacks/webhooks. Entirely different "
-    },
-    "estimate": {
-      "n": 2,
-      "verdict": "COLLISION",
-      "why": "One is a builder method recording an estimate on a job and returning self; the other computes a pre-flight cost dollar figure. Different jobs, same name."
-    },
     "install": {
       "n": 6,
       "verdict": "COLLISION",
@@ -242,11 +227,6 @@
       "verdict": "PROTOCOL",
       "why": "resources.project_of is a thin convenience wrapper that delegates to gpu_port.project_of, supplying a default label_map. Not a duplicate implementation—it's a bound/defaulted adapter over the single c"
     },
-    "ratios": {
-      "n": 2,
-      "verdict": "COLLISION",
-      "why": "Both are nested helpers named ratios but compute different things: _opi_obs.ratios returns output/input token ratios, while _residual_obs.ratios returns actual-cost/expected-cost ratios (residuals aga"
-    },
     "record": {
       "n": 6,
       "verdict": "COLLISION",
@@ -261,11 +241,6 @@
       "n": 2,
       "verdict": "PROTOCOL",
       "why": "Both are per-command view renderers: scan.render turns scan data into text lines, sources.render turns discovery data into text lines. Same 'format command output' contract, different inputs/outputs, "
-    },
-    "run": {
-      "n": 2,
-      "verdict": "COLLISION",
-      "why": "One is a batch-gate method that checks bulk-submission gates then calls submit_fn; the other is a reconciliation loop over a cost source adapter. Entirely different jobs sharing the bare name 'run'."
     },
     "run_prompt": {
       "n": 4,

@@ -87,10 +87,10 @@ os.environ["SPENDGUARD_ENFORCE"] = "block"
 # ── 10. gated_batch enforces the order (can't run before estimate+test) ──
 ran = {"submitted": False}
 with bulkgate.gated_batch(sig_n := bulkgate.sig("opus", template_id="flow", template_version="v1", schema_name="s"), "opus") as job:
-    ck("gated_batch.run BEFORE estimate/test → blocks", raised(lambda: job.run(9000, 20.0, lambda: ran.__setitem__("submitted", True))))
-    job.estimate(20.0, 9000)
+    ck("gated_batch.run BEFORE estimate/test → blocks", raised(lambda: job.gated_submit(9000, 20.0, lambda: ran.__setitem__("submitted", True))))
+    job.note_estimate(20.0, 9000)
     job.test(15, run_fn=lambda n: [1] * n, verify_fn=lambda out: len(out) == 15)
-    job.run(9000, 20.0, lambda: ran.__setitem__("submitted", True))
+    job.gated_submit(9000, 20.0, lambda: ran.__setitem__("submitted", True))
 ck("gated_batch.run AFTER estimate+verified test → submits", ran["submitted"] is True)
 
 # ── 11. realtime BURST gate: first preview_max calls allowed (the test sample), beyond → estimate+test enforced ──

@@ -189,10 +189,10 @@ def _calls_rows(label, model, transport, as_of=None):
 def _opi_obs(label, model, as_of=None):
     """OUT_PER_IN levels: exact (label+model) → label → model → global (transport-pooled: token
     behavior is a property of the work, not the channel)."""
-    def ratios(la, mo):
+    def output_per_input_ratios(la, mo):
         return [o / i for _it, _m, _k, i, o, _c, _ts in _calls_rows(la, mo, None, as_of)]
-    return [("exact", ratios(label, model)), ("label", ratios(label, None)),
-            ("model", ratios(None, model)), ("global", ratios(None, None))]
+    return [("exact", output_per_input_ratios(label, model)), ("label", output_per_input_ratios(label, None)),
+            ("model", output_per_input_ratios(None, model)), ("global", output_per_input_ratios(None, None))]
 
 
 def _residual_obs(label, model, transport, as_of=None):
@@ -524,7 +524,7 @@ def cell_stats(as_of=None):
 
     cells = []
 
-    def emit(label, model, transport, quantity, vals):
+    def add_cell(label, model, transport, quantity, vals):
         vals = [v for v in vals if v is not None]
         if len(vals) >= MIN_SHARE_OBS:
             cells.append({"label": scrub(label or ""), "model": pricing.normalize(model),
@@ -542,14 +542,14 @@ def cell_stats(as_of=None):
     finally:
         con.close()
     for label, model in sorted({(la, mo) for la, mo, _k in pairs}):
-        emit(label, model, "", "opi",
+        add_cell(label, model, "", "opi",
              [o / i for _it, _m, _k, i, o, _c, _ts in _calls_rows(label, model, None, as_of)])
         for _l, obs in _fill_obs(label, model, as_of)[:1]:            # the exact-cell fill level only
-            emit(label, model, "", "fill", obs)
+            add_cell(label, model, "", "fill", obs)
         for _l, obs in _in_ratio_obs(label, model, as_of)[:1]:
-            emit(label, model, "", "in_ratio", obs)
+            add_cell(label, model, "", "in_ratio", obs)
     for label, model, kind in sorted(set(pairs)):
-        emit(label, model, kind, "residual",
+        add_cell(label, model, kind, "residual",
              [r for _n, rs in _residual_obs(label, model, kind, as_of)[:1] for r in rs])
     cells.sort(key=lambda c: -c["n"])
     if len(cells) > MAX_SHARE_CELLS:

@@ -105,7 +105,7 @@ def _stale(ins):
         return True
 
 
-def _apply(ins, verdict):
+def _apply_verdict(ins, verdict):
     """Lifecycle transition. Returns the fields to update (or None)."""
     conf = ins.get("confidence") or 0.5
     support = ins.get("support") or 0.0
@@ -148,7 +148,7 @@ def validate(verbose=True):
         verdict, note = _recheck(ins, known, perjob, present)
         counts[verdict] += 1
         before = ins.get("status")
-        fields = _apply(ins, verdict)
+        fields = _apply_verdict(ins, verdict)
         learn.update_insight(ins["id"], **fields)
         if fields["status"] == "active" and before != "active":
             promoted += 1

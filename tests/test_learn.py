@@ -43,14 +43,14 @@ from spendguard import learn
 _old, _fresh = "2020-01-01T00:00:00Z", learn._now()
 # unverifiable + uncorroborated + STALE → confidence decays so stale advice sinks (the gap: it used to keep confidence forever)
 check("stale uncorroborated 'unknown' insight decays (0.80 → <0.80)",
-      validate._apply({"confidence": 0.80, "support": 0, "last_validated": _old}, "unknown")["confidence"] < 0.80)
+      validate._apply_verdict({"confidence": 0.80, "support": 0, "last_validated": _old}, "unknown")["confidence"] < 0.80)
 # fresh → NO decay (time-gated by _stale → daily auto-validate doesn't grind it down 0.9^365)
 check("fresh 'unknown' insight does NOT decay (time-gated)",
-      validate._apply({"confidence": 0.80, "support": 0, "last_validated": _fresh}, "unknown")["confidence"] == 0.80)
+      validate._apply_verdict({"confidence": 0.80, "support": 0, "last_validated": _fresh}, "unknown")["confidence"] == 0.80)
 # corroborated (support>=2) → never decays, even if old
 check("corroborated insight (support>=2) never decays",
-      validate._apply({"confidence": 0.80, "support": 3, "last_validated": _old}, "unknown")["confidence"] == 0.80)
+      validate._apply_verdict({"confidence": 0.80, "support": 3, "last_validated": _old}, "unknown")["confidence"] == 0.80)
 # the corroborate path is intact (support still raises confidence)
-_sup = validate._apply({"confidence": 0.80, "support": 1, "last_validated": _old}, "support")
+_sup = validate._apply_verdict({"confidence": 0.80, "support": 1, "last_validated": _old}, "support")
 check("support verdict still raises confidence + support", _sup["confidence"] > 0.80 and _sup["support"] == 2)
 print("done.")
