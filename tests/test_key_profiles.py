@@ -2,7 +2,7 @@
 
 Profiles: one global keys.env holds every workspace/project-scoped key as `<VAR>__<profile>` entries;
 a repo's `key_profile` (or $SPENDGUARD_KEY_PROFILE) selects them. Precedence: real env → profile entry
-→ unsuffixed entry; suffixed entries NEVER leak without their profile. Fingerprint: budget.record
+→ unsuffixed entry; suffixed entries NEVER leak without their profile. Fingerprint: budget.record_charge
 stamps sha256[:8]:last4 of the env-resolved provider key on every charge (local-only); by_key rolls up
 $ per (provider, key); reconcile/true-down marker rows carry no key. Offline, zero network.
 """
@@ -75,10 +75,10 @@ ck("no key set → ''", config.key_fingerprint("anthropic") == "")
 os.environ["ANTHROPIC_API_KEY"] = key
 
 print("-- charges stamp the key; by_key rolls up per (provider, key); marker rows carry none --")
-budget.record("anthropic", "claude-haiku-4-5", "batch", 12.5, project="lmm")
-budget.record("anthropic", "claude-haiku-4-5", "realtime", 2.5, project="lmm")
+budget.record_charge("anthropic", "claude-haiku-4-5", "batch", 12.5, project="lmm")
+budget.record_charge("anthropic", "claude-haiku-4-5", "realtime", 2.5, project="lmm")
 os.environ["ANTHROPIC_API_KEY"] = "sk-second-key-9999"      # a second key serves the next call
-budget.record("anthropic", "claude-opus-4-8", "batch", 5.0, project="healiom")
+budget.record_charge("anthropic", "claude-opus-4-8", "batch", 5.0, project="healiom")
 budget.record_reconciled("2026-06-03", "anthropic", 7.0, project="lmm")           # mirror row: no key
 budget.record_true_down("2026-06-03", "anthropic", "claude-haiku-4-5", 1.0, "lmm")  # correction row: no key
 bk = budget.by_key()

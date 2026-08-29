@@ -82,7 +82,7 @@ check("the warn path still returns the facts to its caller",
 
 print("-- quarantined money is excluded from every total, and never deleted --")
 DAY = budget._ledger_db().execute("SELECT date('now')").fetchone()[0]
-budget.record("anthropic", MODEL, "batch", 54.51, project="saga")
+budget.record_charge("anthropic", MODEL, "batch", 54.51, project="saga")
 plain = budget.spent_since(DAY)
 check("a normal charge counts", plain >= 54.51, f"{plain}")
 from spendguard import ledger as _L
@@ -248,7 +248,7 @@ print("-- a wrongly-quarantined BILLED row can be RECOVERED (unquarantine_charge
 # ledger stops under-counting real spend — the mirror of quarantine_charge, through the same audited update().
 # a distinctive cost so the row is fetchable by id — recovery targets by row id (rows can share a second, which
 # is exactly why unquarantine_charge/the recovery script key on the exact id, never a timestamp).
-budget.record("openai", EMB, "realtime", 0.0517, project="rec", basis=budget.BASIS_BILLED)
+budget.record_charge("openai", EMB, "realtime", 0.0517, project="rec", basis=budget.BASIS_BILLED)
 _recid = next(r["id"] for r in budget._ledger().query()
               if _L.to_dec(r.get("realtime_usd")) == _L.to_dec("0.0517"))
 _before = budget.spent_since(DAY)

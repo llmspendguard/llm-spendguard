@@ -9,7 +9,7 @@ import contextlib, sqlite3, datetime, threading
 from . import config
 
 _conn = None
-_lock = threading.RLock()   # reentrant: record()/spent_since() hold it AND call _ledger_db() which re-acquires
+_lock = threading.RLock()   # reentrant: record_charge()/spent_since() hold it AND call _ledger_db() which re-acquires
 
 
 def _ledger_db():
@@ -120,7 +120,7 @@ def _record_spend_event(provider, model, kind, cost, *, conv_id="", basis="", in
         ev["dedup_key"] = live_dedup_key(oa + dedup_suffix)
         ev["source"] = ev["recorded_by"] = source
         with _lock:
-            _ledger().record(ev)
+            _ledger().record_event(ev)
     except Exception as e:
         # spend_events is the SOLE ledger now, so a failed write means this charge is genuinely absent — NOT
         # sitting safe in `charges` (dropped) and NOT rebuildable by `spendguard migrate` (which read charges).
@@ -224,7 +224,7 @@ def is_reading_history():
     return bool(getattr(_reading, "on", False))
 
 
-def record(provider, model, kind, cost, project=None, conv_id=None, basis=None,
+def record_charge(provider, model, kind, cost, project=None, conv_id=None, basis=None,
            intent=None, actor=None):
     """Write one charge. `basis` says WHAT KIND of number it is (estimate · billed · assumed · reconstructed) —
     known for certain by the writer, unknowable by the reader, and the thing that makes a displayed figure
@@ -809,7 +809,7 @@ def clear_true_down(since=None):
 # ── spendguard's own advisor LLM use (segregated: own cap, own line, excluded from workload) ──
 def record_meta(provider, model, cost):
     # spendguard's OWN spend → the llm-spendguard project, kept distinct by kind='meta' (NOT a separate project tag).
-    record(provider, model, "meta", cost, project="llm-spendguard")
+    record_charge(provider, model, "meta", cost, project="llm-spendguard")
 
 
 def meta_spent_since(day):

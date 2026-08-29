@@ -45,7 +45,7 @@ for day, prov, model, proj, cost in GATE:
     ev["occurred_at"] = ev["ts_utc"] = day + "T00:00:00+00:00"
     ev["source"] = ev["recorded_by"] = "test"
     ev["dedup_key"] = "test:%s:%s:%s:%s" % (day, prov, model, cost)
-    budget._ledger().record(ev)
+    budget._ledger().record_event(ev)
 # attributed (reconciled) row — the agentic gap attribution, real reconciled marker so reconciled_by_project sees it
 budget.record_reconciled("2026-06-10", "openai", 25.0, project="lmm")
 

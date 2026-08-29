@@ -44,7 +44,7 @@ ck("fork reset drops the thread-local ledger", getattr(budget._LEDGER_TL, "led",
 
 # ── 2. a failed ledger write is durably captured (not just stderr) ───────────────────────────────────────────
 class _Boom:
-    def record(self, ev):
+    def record_event(self, ev):
         raise RuntimeError("disk full")
 
 

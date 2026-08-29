@@ -52,7 +52,7 @@ L = SpendLedger()
 total = lambda c: Decimal(L._conn.execute(f"SELECT dec_sum({c}) FROM spend_events").fetchone()[0])
 
 print("  a correction posts the difference:")
-e = L.record({"source": "guard-a", "provider": "openai", "model": "m", "kind": "realtime",
+e = L.record_event({"source": "guard-a", "provider": "openai", "model": "m", "kind": "realtime",
               "realtime_usd": "1.00", "batch_usd": "0.25"})
 L.adjust(e, {"realtime_usd": "0.40"}, actor="guard", reason="the real figure was 0.40")
 check("the corrected column SUMS to the intended value", total("realtime_usd") == Decimal("0.40"),
@@ -69,7 +69,7 @@ except ValueError as err:
     check("reversing an ADJUSTED event is refused, not silently wrong", True)
     check("...and the refusal names what is in the way", "adjustment" in str(err), str(err)[:70])
 
-e2 = L.record({"source": "guard-b", "provider": "openai", "model": "m2", "kind": "realtime",
+e2 = L.record_event({"source": "guard-b", "provider": "openai", "model": "m2", "kind": "realtime",
                "realtime_usd": "0.50"})
 before = total("realtime_usd")
 L.reverse(e2, actor="guard", reason="clean")

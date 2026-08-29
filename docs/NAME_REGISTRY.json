@@ -198,9 +198,9 @@
       "why": "resources.project_of is a thin convenience wrapper that delegates to gpu_port.project_of, supplying a default label_map. Not a duplicate implementation—it's a bound/defaulted adapter over the single c"
     },
     "record": {
-      "n": 6,
-      "verdict": "COLLISION",
-      "why": "These share the verb 'record' but write to different stores with different schemas and semantics: budget.record writes a money charge to the budget ledger, callio.record inserts a call_io sample (prompt/output capture), calls.record logs a call with token/latency/feedback tracking, ledger.SpendLedger.record normalizes a spend event dict into the spend ledger, and the two gate stream managers finalize streamed accounting. The two gate methods DO form a real protocol pair (stream-manager finalization, nearly identical bodies), but the four module-level 'record' functions are distinct jobs with distinct signatures. A grep or careless import of 'record' lands on the wrong ledger."
+      "n": 2,
+      "verdict": "PROTOCOL",
+      "why": "Resolved: the four module-level 'record' functions — each a distinct job writing a different store — were renamed to their store-specific verbs (budget.record->record_charge [money charge], callio.record->record_io_sample [prompt/output capture], calls.record->record_call [token/latency/feedback call log], ledger.SpendLedger.record->record_event [normalize+post a spend event]). What remains is the genuine protocol pair: the two gate stream-manager `.record(self, msg)` finalizers (sync + async), byte-identical bodies that finalize streamed real-time accounting on close — a uniform contract dispatched by the streaming wrapper as `self.record(...)`/`_owner.record(...)`. Kept shared by design. (The test-local tests/wire_recorder.record and the _Boom SpendLedger stub are out of the src/spendguard guard scope; the stub was tracked to record_event to keep implementing the renamed interface.)"
     },
     "release": {
       "n": 4,

@@ -36,7 +36,7 @@ def _seed(day, provider, model, kind, cost, project):
     ev["occurred_at"] = ev["ts_utc"] = day + "T00:00:00+00:00"
     ev["source"] = ev["recorded_by"] = "test"
     ev["dedup_key"] = "test:%s:%s:%s:%s:%s" % (day, provider, model, kind, cost)
-    budget._ledger().record(ev)
+    budget._ledger().record_event(ev)
 
 
 _seed(DAYS[0], "openai", "gpt-5.5", "batch", 10.0, "nlp-pipeline")

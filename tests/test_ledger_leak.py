@@ -32,7 +32,7 @@ def _ins(day, provider, model, kind, cost):
     ev["occurred_at"] = ev["ts_utc"] = day + "T00:00:00+00:00"
     ev["source"] = ev["recorded_by"] = "test"
     ev["dedup_key"] = "test:%s:%s:%s:%s:%s" % (day, provider, model, kind, cost)
-    budget._ledger().record(ev)
+    budget._ledger().record_event(ev)
 
 # realtime since April → the GLOBAL ledger_start is realtime-driven (the trap: it predates batch recording)
 _ins("2026-04-25", "openai", "gpt-5.5", "realtime", 12.0)

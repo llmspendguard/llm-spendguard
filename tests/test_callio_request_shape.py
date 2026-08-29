@@ -31,7 +31,7 @@ def check(label, ok, extra=""):
 
 
 SCHEMA = {"type": "json_schema", "json_schema": {"name": "verdict"}}
-callio.record("probe", "openai", "gpt-5.5", "batch_1", "cid_1", "is X a Y?", "NO", out_tok=4,
+callio.record_io_sample("probe", "openai", "gpt-5.5", "batch_1", "cid_1", "is X a Y?", "NO", out_tok=4,
               system="Answer with exactly YES or NO.", req_schema=SCHEMA, req_max_tokens=16)
 
 c = sqlite3.connect(config.db_path())
@@ -41,8 +41,8 @@ check("the output CONTRACT is stored", row and json.loads(row[1]) == SCHEMA, str
 check("the request's max_tokens is stored", row and row[2] == 16, str(row[2] if row else None))
 
 # A later capture that learns the shape must backfill a row that predates it -- strictly new information.
-callio.record("probe", "openai", "gpt-5.5", "batch_2", "cid_2", "q", "a", out_tok=3)
-callio.record("probe", "openai", "gpt-5.5", "batch_2", "cid_2", "q", "a", out_tok=3,
+callio.record_io_sample("probe", "openai", "gpt-5.5", "batch_2", "cid_2", "q", "a", out_tok=3)
+callio.record_io_sample("probe", "openai", "gpt-5.5", "batch_2", "cid_2", "q", "a", out_tok=3,
               system="sys-later", req_max_tokens=32)
 row2 = c.execute("SELECT system, req_max_tokens FROM call_io WHERE custom_id='cid_2'").fetchone()
 check("a row captured before the shape existed is BACKFILLED, not left blank",

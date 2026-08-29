@@ -225,7 +225,7 @@ def _run_arm(arm, task, system, reasoning, timeout_s):
         if not isinstance(r, dict) or r.get("error") or not (r.get("text") or "").strip():
             return ""
         try:
-            calls.record(prov, model, "subscription", 0.0, in_tok=r.get("in_tok", 0), out_tok=r.get("out_tok", 0),
+            calls.record_call(prov, model, "subscription", 0.0, in_tok=r.get("in_tok", 0), out_tok=r.get("out_tok", 0),
                          latency=r.get("latency"), executor=lane)
         except Exception:
             pass

@@ -211,7 +211,7 @@ def _uuid():
     return uuid.uuid4().hex[:16]
 
 
-def record(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
+def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
            prompt=None, output=None, finish=None, intent=None, chain=None, who=None,
            executor=None, project=None):
     """Record one call. Returns call_id (or None if logging is off). Never raises.

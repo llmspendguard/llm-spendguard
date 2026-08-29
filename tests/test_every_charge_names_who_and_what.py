@@ -99,14 +99,14 @@ check("a charge written by the gate names the REAL vendor",
 
 print("\n  every charge carries WHAT it bought and WHAT ran it:")
 with calls.context(intent="review:some-file.py"):
-    budget.record(provider="moonshot", model="kimi-k3", kind="realtime", cost=1.23)
+    budget.record_charge(provider="moonshot", model="kimi-k3", kind="realtime", cost=1.23)
 row = _newest()
 check("the charge records the intent it was made under", row["intent"] == "review:some-file.py", str(row))
 check("...and what ran it", bool(row["actor"]), f"actor was {row['actor']!r}")
 check("...and the vendor as given", row["provider"] == "moonshot", str(row))
 
 # A charge made OUTSIDE any declared intent must be honest about that rather than borrowing a stale one.
-budget.record(provider="openai", model="gpt-5.5", kind="realtime", cost=0.5)
+budget.record_charge(provider="openai", model="gpt-5.5", kind="realtime", cost=0.5)
 check("a charge with no declared intent records an empty one, not the previous flow's",
       _newest()["intent"] == "", f"got {_newest()['intent']!r}")
 
@@ -134,7 +134,7 @@ check("...and says WHY, not just what", bool(budget._ledger_db().execute(
 
 # A REPAIR MUST NOT DESTROY INFORMATION. Overwriting a recorded vendor with "unknown" is a downgrade
 # dressed as a correction — only a positive identification that disagrees may change a row.
-budget.record(provider="some-vendor-we-recorded", model="a-model-nobody-registered",
+budget.record_charge(provider="some-vendor-we-recorded", model="a-model-nobody-registered",
               kind="realtime", cost=0.25)
 budget.reattribute_providers(apply=True)
 check("a recorded vendor is never overwritten with 'unknown'",
@@ -146,7 +146,7 @@ check("a recorded vendor is never overwritten with 'unknown'",
 # Re-attributing the vendor fixed `provider` and left `key_fp`, so 688 rows read "moonshot spend, served
 # by an OpenAI key" — a self-contradicting record, which in a forensic table is its own kind of wrong.
 print("\n  the key fingerprint belongs to the vendor on the row:")
-budget.record(provider="moonshot", model="kimi-k3", kind="realtime", cost=2.0)
+budget.record_charge(provider="moonshot", model="kimi-k3", kind="realtime", cost=2.0)
 _eid = _newest(where={"model": "kimi-k3"})["id"]           # the spend_events id of the row we stamp
 _openai_fp = "aaaaaaaa:bbbb"
 _led._conn.execute("UPDATE spend_events SET key_fp=? WHERE id=?", (_openai_fp, _eid))

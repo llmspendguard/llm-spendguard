@@ -176,7 +176,7 @@ def key_fingerprint(provider):
 def month_start_utc():
     """First day of the CURRENT month in UTC, as 'YYYY-MM-DD' — the default `since` for every money window.
 
-    Every ledger day-key is written in UTC (budget.record, gate, ledger, receipt, report all use
+    Every ledger day-key is written in UTC (budget.record_charge, gate, ledger, receipt, report all use
     datetime.now(timezone.utc)), but the default windows used to be built from `date.today()` — LOCAL time. West
     of UTC that makes the month boundary wrong for 7-8 hours around the 1st: `trust`, `close` and the leak check
     computed a residual that CHANGED depending on what time of day you ran them, and then silently self-corrected

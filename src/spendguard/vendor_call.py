@@ -484,7 +484,7 @@ def _attempt(vendor, model, prompt, system, max_tokens, budget_s, schema=None, r
     cannot bound a call that never returns, which is exactly what produced the 3h30m run."""
     from . import adapters
     box = {}
-    # CARRY THE CONTEXT ACROSS THE THREAD BOUNDARY. calls.record() reads intent/chain from a THREAD-LOCAL
+    # CARRY THE CONTEXT ACROSS THE THREAD BOUNDARY. calls.record_call() reads intent/chain from a THREAD-LOCAL
     # context, and this runs the adapter on a worker — so the tag is set on the calling thread and the ledger
     # row is written on another one, with an empty context. "Thread-local; safe under ThreadPool" is true for
     # isolation and precisely wrong for propagation: 533 of 535 calls in a $25.29 session were recorded with

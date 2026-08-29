@@ -617,7 +617,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                       file=_syse.stderr)
             try:
                 from . import calls
-                calls.record(prov, raw, "subscription", 0.0,
+                calls.record_call(prov, raw, "subscription", 0.0,
                              in_tok=s.get("in_tok", 0), out_tok=s.get("out_tok", 0), latency=s.get("latency"),
                              executor=lane_name)     # WHICH plan served it — a stored fact, not a provider-guess
             except Exception:

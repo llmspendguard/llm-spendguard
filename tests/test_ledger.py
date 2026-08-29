@@ -15,8 +15,8 @@ def check(name, cond):
 
 
 # record workload (batch + realtime) and meta charges
-budget.record("openai", "gpt-5.5", "batch", 100.0)
-budget.record("openai", "gpt-5.5", "realtime", 5.0)
+budget.record_charge("openai", "gpt-5.5", "batch", 100.0)
+budget.record_charge("openai", "gpt-5.5", "realtime", 5.0)
 budget.record_meta("anthropic", "claude-opus-4-8", 2.0)
 
 print("-- by_day / kind filters --")

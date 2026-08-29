@@ -61,16 +61,16 @@ UNPRICED_MODEL = "kimi-k3-unpriceable"     # a real call whose $ is unknown — 
 
 
 def seed():
-    budget.record("anthropic", "test-model", "batch", AMOUNTS["plain"], project="p1")
-    budget.record("anthropic", "test-model", "batch", AMOUNTS["quarantined"], project="p1")
+    budget.record_charge("anthropic", "test-model", "batch", AMOUNTS["plain"], project="p1")
+    budget.record_charge("anthropic", "test-model", "batch", AMOUNTS["quarantined"], project="p1")
     # Target by ROWID. Seeding these in the same second is exactly the collision that made a ts-targeted
     # quarantine tag the plain row too — the failure this test found in the repair tool itself.
     rid = _se_id_by_cost(AMOUNTS["quarantined"])   # the spend_events id of the row to void
     budget.quarantine_charge(reason="seed: impossible estimate", row=rid)
-    budget.record("anthropic", budget._RECONCILED, "batch", AMOUNTS["reconciled"], project="p1")
-    budget.record("anthropic", "test-model", "batch", AMOUNTS["true_down"], project="p1",
+    budget.record_charge("anthropic", budget._RECONCILED, "batch", AMOUNTS["reconciled"], project="p1")
+    budget.record_charge("anthropic", "test-model", "batch", AMOUNTS["true_down"], project="p1",
                   conv_id=budget._TRUE_DOWN_CONV)
-    budget.record("anthropic", "test-model", "meta", AMOUNTS["meta"], project="p1")
+    budget.record_charge("anthropic", "test-model", "meta", AMOUNTS["meta"], project="p1")
     budget.record_unpriced("moonshot", UNPRICED_MODEL, "realtime", in_tok=1200, out_tok=400, project="p1")
 
 
@@ -220,8 +220,8 @@ check("a ZERO rate is refused — that is what makes spend record as free", _z)
 print("-- BASIS: every number says what KIND of number it is --")
 # "the receipt reads as $12,000" was a basis problem: a max_tokens CEILING and a provider bill were summed
 # into one figure with nothing saying which was which. The writer always knows; the reader never can.
-budget.record("anthropic", "test-model", "batch", 32.0, project="p1", basis=budget.BASIS_ESTIMATE)
-budget.record("anthropic", "test-model", "realtime", 64.0, project="p1", basis=budget.BASIS_BILLED)
+budget.record_charge("anthropic", "test-model", "batch", 32.0, project="p1", basis=budget.BASIS_ESTIMATE)
+budget.record_charge("anthropic", "test-model", "realtime", 64.0, project="p1", basis=budget.BASIS_BILLED)
 bb = budget.by_basis("2000-01-01")
 check("an estimate is labelled as one", abs(bb.get("estimate", {}).get("cost", 0) - 32.0) < 1e-6)
 check("provider-reported usage is labelled billed", abs(bb.get("billed", {}).get("cost", 0) - 64.0) < 1e-6)
@@ -230,7 +230,7 @@ check("provider-reported usage is labelled billed", abs(bb.get("billed", {}).get
 check("rows written before basis existed read as UNLABELLED, not folded into billed",
       "" in bb and abs(bb.get("billed", {}).get("cost", 0) - 64.0) < 1e-6, str(sorted(bb)))
 check("an unknown basis string is refused rather than stored", (
-    budget.record("anthropic", "test-model", "batch", 0.5, project="p1", basis="wishful") or True)
+    budget.record_charge("anthropic", "test-model", "batch", 0.5, project="p1", basis="wishful") or True)
     and budget.by_basis("2000-01-01").get("wishful") is None)
 check("quarantined rows never appear under any basis",
       not any(abs(v["cost"] - AMOUNTS["quarantined"]) < 1e-6 for v in bb.values()))

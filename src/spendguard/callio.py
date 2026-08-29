@@ -88,7 +88,7 @@ def counts():
                              "ORDER BY COUNT(*) DESC").fetchall()
 
 
-def record(intent, provider, model, batch, custom_id, prompt, output, in_tok=0, out_tok=0, source="batch_io",
+def record_io_sample(intent, provider, model, batch, custom_id, prompt, output, in_tok=0, out_tok=0, source="batch_io",
            system=None, req_schema=None, req_max_tokens=0):
     """Insert one sample (idempotent on batch+custom_id). Returns id or None if duplicate."""
     cid = _uid()
@@ -300,7 +300,7 @@ def fetch_openai(client, batch_id, intent, model, cap, sample_n):
     for cid, d in want.items():
         if count_rows(intent, model) >= cap:
             break
-        if record(intent, "openai", model, batch_id, cid, d.get("prompt", ""), d["output"],
+        if record_io_sample(intent, "openai", model, batch_id, cid, d.get("prompt", ""), d["output"],
                   out_tok=d.get("out_tok", 0), system=d.get("system"),
                   req_schema=d.get("req_schema"), req_max_tokens=d.get("req_max_tokens", 0)):
             added += 1
@@ -329,7 +329,7 @@ def fetch_anthropic(client, batch_id, intent, model, cap, sample_n, jsonl_inputs
         except Exception:
             pass
         prompt = (jsonl_inputs or {}).get(res.custom_id, "")
-        if record(intent, "anthropic", model, batch_id, res.custom_id, prompt, txt, out_tok=out_tok):
+        if record_io_sample(intent, "anthropic", model, batch_id, res.custom_id, prompt, txt, out_tok=out_tok):
             added += 1
     return added, None
 
@@ -417,7 +417,7 @@ def guarded_collect(batch_ids, intent, model, client=None, record_io=False):
     $0: it only STREAMS the finished output file(s) — the generation already billed at submit time; a file
     download carries no token cost. STREAMING, so a 60k-row batch stays constant-memory. Attributed to `intent`:
     intent scopes the pull and, when record_io=True, each row is also captured in the call_io corpus under
-    (intent, model) via the idempotent record() (re-collecting never double-counts — UNIQUE on batch+custom_id).
+    (intent, model) via the idempotent record_io_sample() (re-collecting never double-counts — UNIQUE on batch+custom_id).
     A batch whose output is not ready (poll batch_status first) is SKIPPED with a stderr note, never a silent
     empty. A per-request FAILURE yields (custom_id, None, {"error": <message>}) so the caller sees which items
     failed instead of losing them; likewise an unparseable / non-object / custom_id-less output row is surfaced as
@@ -461,7 +461,7 @@ def guarded_collect(batch_ids, intent, model, client=None, record_io=False):
                 msg = ((body.get("choices") or [{}])[0].get("message") or {}).get("content")
                 text = msg if isinstance(msg, str) else (json.dumps(msg) if msg is not None else None)
                 if record_io and text is not None:
-                    record(intent, "openai", model, bid, cid, "", text,
+                    record_io_sample(intent, "openai", model, bid, cid, "", text,
                            in_tok=usage.get("prompt_tokens", 0), out_tok=usage.get("completion_tokens", 0))
                 yield (cid, text, usage)
 

@@ -23,7 +23,7 @@ def _insert(day, kind, cost, project, model="gpt-5.5"):
     ev["occurred_at"] = ev["ts_utc"] = day + "T00:00:00+00:00"
     ev["source"] = ev["recorded_by"] = "test"
     ev["dedup_key"] = "test:%s:%s:%s:%s" % (day, kind, cost, project)
-    budget._ledger().record(ev)
+    budget._ledger().record_event(ev)
 
 # ── retag_deterministic: meta → 'llm-spendguard'; empty workload → the repo project; existing tags untouched ──
 _insert("2026-06-01", "meta", 1.0, "")          # → llm-spendguard

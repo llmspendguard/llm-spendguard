@@ -39,7 +39,7 @@ fails = []
 
 # ── (A) the ledger row records the lane + project ────────────────────────────────────────────────────
 print("-- (A) a subscription call records WHICH lane (executor) + project on the ledger row --")
-cid = calls.record("gemini", "gemini-3-flash", "subscription", 0.0, in_tok=120_000, out_tok=20_000,
+cid = calls.record_call("gemini", "gemini-3-flash", "subscription", 0.0, in_tok=120_000, out_tok=20_000,
                    executor="gemini", project="Demo-Repo")
 r = _row(cid)
 fails += ck("executor persisted (the lane that served it)", r and r[0] == "gemini")
@@ -50,7 +50,7 @@ fails += ck("$0 billed · kind=subscription (the flat-fee plan served it)", r an
 print("\n-- (B) lane_value stamps est-value for lanes with NO session miner (gemini/zai), never the mined ones --")
 # a session-mined lane (claude-code) ALSO in the ledger — it must NOT be re-priced here (its value is mined elsewhere)
 for ex, prov, model in (("zai-coding", "zai", "glm-4.6"), ("claude-code", "anthropic", "claude-3-5-sonnet")):
-    calls.record(prov, model, "subscription", 0.0, in_tok=120_000, out_tok=20_000, executor=ex, project="demo-repo")
+    calls.record_call(prov, model, "subscription", 0.0, in_tok=120_000, out_tok=20_000, executor=ex, project="demo-repo")
 
 fails += ck("ledger_valued_lanes = lanes with no session miner (derived, not hardcoded)",
             lane_value.ledger_valued_lanes() == {"gemini", "zai-coding"})

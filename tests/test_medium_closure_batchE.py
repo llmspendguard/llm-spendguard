@@ -2,7 +2,7 @@
 
   * anomaly.robust_z [9] — MAD==0 no longer flags a value that has a PRECEDENT in the baseline ([0,…,50] + a $10
     day is not anomalous), only a value above the largest already-seen.
-  * callio.record [20/21] — returns None on a duplicate (batch, custom_id) instead of a fresh id (was inflating
+  * callio.record_io_sample [20/21] — returns None on a duplicate (batch, custom_id) instead of a fresh id (was inflating
     'added' counts).
   * equivalence._norm_json [35] — a top-level array is parsed as the array, not silently as its inner object.
   * equivalence.grade [36] — a rubric-judge FAILURE degrades to the text tier, never a fabricated 0.0 that would
@@ -41,9 +41,9 @@ ck("MAD==0 + in-range value → NOT flagged (has a precedent)", z_inrange == 0.0
 ck("MAD==0 + new all-time high → flagged", z_newhigh == 99.0, f"z={z_newhigh}")
 ck("truly-flat history + a rise → still flagged", z_flat_up == 99.0, f"z={z_flat_up}")
 
-# ── [20/21] callio.record returns None on a duplicate ───────────────────────────────────────────────────────────
-a = callio.record("i", "openai", "gpt", "batchX", "cid1", "p", "o")
-b = callio.record("i", "openai", "gpt", "batchX", "cid1", "p", "o")   # same (batch, custom_id) → duplicate
+# ── [20/21] callio.record_io_sample returns None on a duplicate ───────────────────────────────────────────────────────────
+a = callio.record_io_sample("i", "openai", "gpt", "batchX", "cid1", "p", "o")
+b = callio.record_io_sample("i", "openai", "gpt", "batchX", "cid1", "p", "o")   # same (batch, custom_id) → duplicate
 ck("first record returns an id", bool(a))
 ck("a duplicate (batch, custom_id) record returns None (not a fresh id)", b is None, f"got {b!r}")
 

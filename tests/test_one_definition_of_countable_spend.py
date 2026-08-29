@@ -50,7 +50,7 @@ def test_countable_excludes_the_right_rows_on_spend_events():
         ev = {"provider": "openai", "model": "gpt-5.5", "kind": "realtime", "usd": usd,
               "source": "t", "dedup_key": L.live_dedup_key(str(usd) + repr(sorted(kw.items())))}
         ev.update(kw)
-        led.record(ev)
+        led.record_event(ev)
 
     rec("1.00", cost_basis="billed")                              # a real charge → counts
     rec("2.00", cost_basis="estimate")                            # a pre-spend estimate → still counts (binds the cap)

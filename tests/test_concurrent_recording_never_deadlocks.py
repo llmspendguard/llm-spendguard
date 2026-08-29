@@ -41,7 +41,7 @@ errors = []
 def worker(tid):
     try:
         for i in range(PER_THREAD):
-            budget.record(provider="anthropic", model="claude-haiku-4-5", kind="realtime", cost=COST,
+            budget.record_charge(provider="anthropic", model="claude-haiku-4-5", kind="realtime", cost=COST,
                           project="conc", conv_id=f"t{tid}-{i}")
             # the dec_sum READ paths, run concurrently with every other thread's writes — the deadlock condition
             budget.spent_since(DAY)

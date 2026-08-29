@@ -34,11 +34,11 @@ def check(label, ok, extra=""):
 
 today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
 
-budget.record("openai", "gpt-5.5", "realtime", 5.00, basis=budget.BASIS_BILLED)
+budget.record_charge("openai", "gpt-5.5", "realtime", 5.00, basis=budget.BASIS_BILLED)
 base = budget.spent_since(today)
 check("billed spend counts toward the period", base >= 5.00, str(base))
 
-budget.record("openai", "(realtime-history)", "realtime", 10_409.24, basis=budget.BASIS_RECONSTRUCTED)
+budget.record_charge("openai", "(realtime-history)", "realtime", 10_409.24, basis=budget.BASIS_RECONSTRUCTED)
 after = budget.spent_since(today)
 check("a RECONSTRUCTED backfill does NOT count toward the period", after == base, f"{base} -> {after}")
 
@@ -46,14 +46,14 @@ check("...so it cannot exhaust a cap either",
       budget.exceeded(1.0) is None or budget.exceeded(1.0)[2] < 100,
       str(budget.exceeded(1.0)))
 
-budget.record("openai", "gpt-5.5", "realtime", 2.50, basis=budget.BASIS_ESTIMATE)
+budget.record_charge("openai", "gpt-5.5", "realtime", 2.50, basis=budget.BASIS_ESTIMATE)
 check("an ESTIMATE still counts — it is the pre-spend guard and must bind",
       budget.spent_since(today) > after, str(budget.spent_since(today)))
 
 # The three markers that must all stay out, for three different reasons. Seeded through the real writer, which
 # maps a quarantine conv → status=void and a marker model → reconciled=1 on the money-of-record (spend_events).
 before = budget.spent_since(today)
-budget.record("openai", "gpt-5.5", "realtime", 999.0, conv_id=budget.QUARANTINE_CONV, basis=budget.BASIS_ESTIMATE)
+budget.record_charge("openai", "gpt-5.5", "realtime", 999.0, conv_id=budget.QUARANTINE_CONV, basis=budget.BASIS_ESTIMATE)
 check("a QUARANTINED impossible estimate stays out", budget.spent_since(today) == before,
       str(budget.spent_since(today)))
 
@@ -63,7 +63,7 @@ check("a QUARANTINED impossible estimate stays out", budget.spent_since(today) =
 # must key on — a marker model → reconciled=1, excluded whatever basis the writer left.
 before = budget.spent_since(today)
 for marker in budget._MARKER_MODELS:
-    budget.record("openai", marker, "realtime", 9_999.0, basis=budget.BASIS_BILLED)
+    budget.record_charge("openai", marker, "realtime", 9_999.0, basis=budget.BASIS_BILLED)
 check("every marker model stays out of the period, whatever basis the writer left",
       budget.spent_since(today) == before, f"{before} -> {budget.spent_since(today)}")
 check(f"...and there are {len(budget._MARKER_MODELS)} of them, all wired in",

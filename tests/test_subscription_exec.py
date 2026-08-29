@@ -75,7 +75,7 @@ se.shutil.which = lambda name: "/usr/local/bin/claude"
 os.environ["SPENDGUARD_ADVISOR_EXECUTOR"] = "claude-code"
 se.subprocess.run = fake_run
 recorded = []
-calls.record = lambda provider, model, kind, cost, **k: recorded.append((provider, model, kind, cost))
+calls.record_call = lambda provider, model, kind, cost, **k: recorded.append((provider, model, kind, cost))
 out = adapters.call("claude-opus-4-8", "prompt", max_tokens=400, system="sys")
 ck("adapters.call routes to the plan: $0 billed + executor tagged",
    out["cost"] == 0.0 and out["executor"] == "claude-code" and out["text"] == "SYNTHESIZED INSIGHT")

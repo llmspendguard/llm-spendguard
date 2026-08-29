@@ -119,7 +119,7 @@ ck("audit hash-chain intact after migration", ok)
 # ── SECTION B: the five categories STAY APART (directly-recorded events) ───────────────────────────────────
 b = L.SpendLedger(db_path=os.path.join(tempfile.mkdtemp(prefix="sg-cat-"), "cat.db"))
 def rec(kind, usd):
-    b.record({"kind": kind, "usd": usd, "provider": "p", "model": "m", "dedup_key": L.live_dedup_key(kind)})
+    b.record_event({"kind": kind, "usd": usd, "provider": "p", "model": "m", "dedup_key": L.live_dedup_key(kind)})
 rec("batch", "3.00"); rec("realtime", "1.00"); rec("est_chat", "9.99"); rec("remote", "7.77"); rec("subscription", "200.00")
 ck("split: spent_dec is batch+realtime ONLY == $4.00 (NOT est-value/GPU/sub)", Decimal(b.spent_dec()) == Decimal("4.00"))
 ck("split: est_value_dec reads est_chat only == $9.99", Decimal(b.est_value_dec()) == Decimal("9.99"))
@@ -131,11 +131,11 @@ ck("split: sum_dec (reconciliation) is the grand total across all five == $221.7
 # ── SECTION C: the record guard — missing cost fails, explicit unpriced is allowed ─────────────────────────
 raised = False
 try:
-    b.record({"kind": "realtime", "usd": "0", "provider": "p", "model": "m", "dedup_key": L.live_dedup_key("zero")})
+    b.record_event({"kind": "realtime", "usd": "0", "provider": "p", "model": "m", "dedup_key": L.live_dedup_key("zero")})
 except ValueError:
     raised = True
 ck("guard: a genuinely $0 (non-unpriced) row still RAISES", raised)
-b.record({"provider": "p", "model": "m2", "cost_basis": "unpriced", "dedup_key": L.live_dedup_key("unp")})
+b.record_event({"provider": "p", "model": "m2", "cost_basis": "unpriced", "dedup_key": L.live_dedup_key("unp")})
 ck("guard: an explicit unpriced $0 row is ALLOWED and findable by cost_basis",
    len(b.query(where={"cost_basis": "unpriced"})) == 1)
 

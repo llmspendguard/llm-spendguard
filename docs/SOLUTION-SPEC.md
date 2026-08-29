@@ -97,7 +97,7 @@ the [server spec](https://github.com/llmspendguard/llm-spendguard-server/blob/ma
 3. **Decide.** `_decide` checks the estimate against the caps — per-batch cap, daily/monthly caps, and the
    real-time cumulative budget. Over cap → `SpendGateRefused` (fail-**closed**: the paid call does not happen). A
    bug *in the gate itself* → fail-**open** (your call proceeds; governance must never break the call path).
-4. **Record.** The actual cost is written to the local SQLite ledger (`budget.record`) tagged with provider, model,
+4. **Record.** The actual cost is written to the local SQLite ledger (`budget.record_charge`) tagged with provider, model,
    kind (batch/realtime/meta), and a **project** resolved by `tag.py`'s free deterministic cascade (repo/cwd/config;
    `meta` → spendguard's own `llm-spendguard`). Guarded savings (a cache hit, a blocked call, a cascade downgrade) are
    recorded by `guard.py` as a lognormal distribution (cumulants that add).

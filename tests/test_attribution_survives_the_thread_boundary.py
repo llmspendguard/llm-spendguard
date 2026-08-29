@@ -8,7 +8,7 @@ Two causes, and both were mine:
 
   1. vendor_call recorded `purpose` on 400/400 of its own results and never passed it to the ledger. The
      information existed the whole time and did not reach the consumer.
-  2. calls.record() reads intent from a THREAD-LOCAL context, and _attempt runs the adapter on a WORKER.
+  2. calls.record_call() reads intent from a THREAD-LOCAL context, and _attempt runs the adapter on a WORKER.
      So the tag was set on the calling thread and the row written on another one with an empty context.
      "Thread-local; safe under ThreadPool" is true for isolation and exactly wrong for propagation — and
      the same thread boundary made `caller` read `threading.py:run:1024`, the worker frame, for 450 calls

@@ -93,9 +93,9 @@ ck("render_flow verbose: shows caller", "run.py:main:10" in rv)
 # ── flow aggregation from the calls log ──────────────────────────────────────
 ck("calls logging enabled in this test", calls.enabled())
 start = calls._max_rowid()
-calls.record("anthropic", "claude-opus-4-8", "completion", 0.10, in_tok=1000, out_tok=200, intent="t", chain="run-1")
-calls.record("anthropic", "claude-opus-4-8", "completion", 0.05, in_tok=500, out_tok=100, intent="t", chain="run-1")
-calls.record("openai", "gpt-5.5", "completion", 0.20, in_tok=9, out_tok=9, intent="t", chain="OTHER")
+calls.record_call("anthropic", "claude-opus-4-8", "completion", 0.10, in_tok=1000, out_tok=200, intent="t", chain="run-1")
+calls.record_call("anthropic", "claude-opus-4-8", "completion", 0.05, in_tok=500, out_tok=100, intent="t", chain="run-1")
+calls.record_call("openai", "gpt-5.5", "completion", 0.20, in_tok=9, out_tok=9, intent="t", chain="OTHER")
 agg = calls.flow_agg(start, chain="run-1")
 ck("flow_agg: counts only this chain's calls since the marker", agg and agg["n"] == 2)
 ck("flow_agg: sums tokens", agg and agg["in_tok"] == 1500 and agg["out_tok"] == 300)
@@ -111,7 +111,7 @@ def _emit_capture(intent, chain, start, level_val):
     return buf.getvalue()
 
 s0 = calls._max_rowid()
-calls.record("anthropic", "claude-opus-4-8", "completion", 0.07, in_tok=300, out_tok=50, intent="emit-test", chain="run-2")
+calls.record_call("anthropic", "claude-opus-4-8", "completion", 0.07, in_tok=300, out_tok=50, intent="emit-test", chain="run-2")
 ck("emit_flow: level off → silent", _emit_capture("emit-test", "run-2", (s0, 0.0), "off") == "")
 emitted = _emit_capture("emit-test", "run-2", (s0, 0.0), "flow")
 ck("emit_flow: level flow → emits a receipt with the intent", "spendguard ▸ emit-test" in emitted)
@@ -134,14 +134,14 @@ os.environ["SPENDGUARD_RECEIPTS"] = "flow"
 buf = io.StringIO()
 with contextlib.redirect_stderr(buf):
     with calls.context(intent="ctx-flow", chain="ctx-1"):
-        calls.record("anthropic", "claude-opus-4-8", "completion", 0.03, in_tok=100, out_tok=20, chain="ctx-1")
+        calls.record_call("anthropic", "claude-opus-4-8", "completion", 0.03, in_tok=100, out_tok=20, chain="ctx-1")
 del os.environ["SPENDGUARD_RECEIPTS"]
 ck("context(): emits a per-flow receipt on exit (real boundary)", "spendguard ▸ ctx-flow" in buf.getvalue())
 os.environ["SPENDGUARD_RECEIPTS"] = "off"
 buf = io.StringIO()
 with contextlib.redirect_stderr(buf):
     with calls.context(intent="ctx-flow", chain="ctx-2"):
-        calls.record("anthropic", "claude-opus-4-8", "completion", 0.03, chain="ctx-2")
+        calls.record_call("anthropic", "claude-opus-4-8", "completion", 0.03, chain="ctx-2")
 del os.environ["SPENDGUARD_RECEIPTS"]
 ck("context(): respects level off (no emit)", buf.getvalue() == "")
 

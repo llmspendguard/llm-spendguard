@@ -51,7 +51,7 @@ flowchart LR
    - **Cross-process daily/monthly** — `_budget_check` → `budget.exceeded` (only when
      `budget.backend=sqlite`).
    - **Per-batch** — `_decide` compares the estimate to `config.cap()` (`GATE_CAP`, default $75).
-   - **Record** — `_budget_record` writes the charge to the SQLite ledger; `calls.record` adds a corpus row
+   - **Record** — `_budget_record` writes the charge to the SQLite ledger; `calls.record_call` adds a corpus row
      if call-logging is on.
 4. **Allow / refuse / ask** (`_decide`): under cap → log `under_cap`, proceed. Over cap → if a TTY, **ask**
    "allow this $X anyway?" (override + learn); if non-interactive, raise `SpendGateRefused` unless

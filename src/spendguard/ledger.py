@@ -330,7 +330,7 @@ class SpendLedger:
         for ddl in (_DDL_EVENTS, _DDL_AUDIT, _DDL_LOCKS):
             self._conn.execute(ddl)
         # Forward-only additive migration: CREATE TABLE IF NOT EXISTS leaves an existing table's columns as
-        # they were, so a column added after v5 must be ALTER-ADDed here or record() silently drops it (it
+        # they were, so a column added after v5 must be ALTER-ADDed here or record_event() silently drops it (it
         # only writes columns present in self._cols). Idempotent — skips a column that already exists.
         have = {r[1] for r in self._conn.execute("PRAGMA table_info(spend_events)")}
         for col, decl in _ADDITIVE_COLUMNS:
@@ -378,7 +378,7 @@ class SpendLedger:
                            [rec[c] for c in cols])
 
     # ── C: create (a draft event; logged to the audit chain) ──
-    def record(self, ev):
+    def record_event(self, ev):
         ev = dict(ev)
         kind = (ev.pop("kind", None) or "").lower()
         usd = ev.pop("usd", None)
@@ -513,7 +513,7 @@ class SpendLedger:
         if not row:
             raise ValueError(f"no spend event {eid!r}")
         ev = {k: row[k] for k in row.keys()}
-        for jc in _JSON_COLS:                                 # deserialise so record() re-serialises cleanly
+        for jc in _JSON_COLS:                                 # deserialise so record_event() re-serialises cleanly
             if ev.get(jc):
                 try:
                     ev[jc] = json.loads(ev[jc])
@@ -545,7 +545,7 @@ class SpendLedger:
         ev[kind_field] = eid
         ev["source"] = (row["source"] or "") + (":" + kind_field.split("_")[0])   # distinct id from the original
         ev.update(overrides or {})
-        new_id = self.record(ev)                              # posts into the CURRENT open period
+        new_id = self.record_event(ev)                              # posts into the CURRENT open period
         self._audit(new_id, actor, "reverse" if negate else "adjust", kind_field, None, eid, reason)
         self._conn.commit()
         return new_id

@@ -2,7 +2,7 @@
 `spend_events` (SpendLedger — integer micros, lifecycle, audit, unified attribution).
 
 Faithful + IDEMPOTENT: each charge maps to one spend_event keyed by `charge:<rowid>` (re-running re-books nothing,
-SpendLedger.record dedups on id). Money is preserved to the micro (Σ charges == Σ spend_events, asserted by the
+SpendLedger.record_event dedups on id). Money is preserved to the micro (Σ charges == Σ spend_events, asserted by the
 caller). Attribution comes from the charge's gate-recorded `project` mapped to org+team via the taxonomy
 (`conv._prior_org_team`), falling back to the unified `conv.resolve(conv_id)` when the project is blank — never a
 regex guess. This does NOT touch the `charges` table (additive); it backfills the new ledger so consumers can move
@@ -99,7 +99,7 @@ def to_spend_events(led=None, src_path=None, since=None):
     n = 0
     with led.bulk():
         for ev in events:
-            led.record(ev)
+            led.record_event(ev)
             n += 1
     # include_void=True: quarantined-impossible rows land as status=void, so the conservation total must count
     # them too — else delta shows a phantom loss exactly equal to the quarantined $ (here ~$10.5k of it).

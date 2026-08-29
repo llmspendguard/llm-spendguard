@@ -450,7 +450,7 @@ def _budget_record(cost, model, provider, kind, quarantine=False, basis=None):
     from . import config
     if config.budget_backend() == "sqlite":
         from . import budget
-        budget.record(provider, model, kind, cost, basis=basis,
+        budget.record_charge(provider, model, kind, cost, basis=basis,
                       conv_id=(budget.QUARANTINE_CONV if quarantine else None))
 
 
@@ -567,7 +567,7 @@ def _decide_and_account(est):
     _budget_record(est["cost"], est.get("model"), est.get("provider"), "batch",   # ledger (sqlite)
                    quarantine=bool(est.get("implausible")), basis=budget_basis_estimate())
     if _calls.enabled():                                                          # job-level call-context row
-        _calls.record(est.get("provider"), est.get("model"), "batch", est["cost"],
+        _calls.record_call(est.get("provider"), est.get("model"), "batch", est["cost"],
                       in_tok=est.get("in_tok", 0), out_tok=est.get("out_tok", 0))
 
 
@@ -938,7 +938,7 @@ def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, 
         from . import budget
         budget.record_meta(prov, model, cost)
         if _calls.enabled():
-            _calls.record(prov, model, "realtime", cost, in_tok=in_tok, out_tok=out_tok, latency=latency,
+            _calls.record_call(prov, model, "realtime", cost, in_tok=in_tok, out_tok=out_tok, latency=latency,
                           prompt=_prompt_text(kw), output=output, finish=finish)
         return
     _calls.check_output(output)      # realtime output CONTRACT (no-op unless the flow declared one)
@@ -952,7 +952,7 @@ def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, 
     except Exception:
         pass
     if _calls.enabled():
-        _calls.record(prov, model, "realtime", cost, in_tok=in_tok, out_tok=out_tok, latency=latency,
+        _calls.record_call(prov, model, "realtime", cost, in_tok=in_tok, out_tok=out_tok, latency=latency,
                       prompt=_prompt_text(kw), output=output, finish=finish)
 
 

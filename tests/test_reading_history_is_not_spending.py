@@ -42,12 +42,12 @@ def _today_total():
         return 0.0
 
 
-budget.record("openai", "gpt-5.5", "realtime", 1.25, basis="billed")
+budget.record_charge("openai", "gpt-5.5", "realtime", 1.25, basis="billed")
 base = _today_total()
 check("a normal charge IS recorded", base >= 1.25, str(base))
 
 with budget.reading_history("probe"):
-    budget.record("openai", "gpt-5.5", "realtime", 999.0, basis="estimate")
+    budget.record_charge("openai", "gpt-5.5", "realtime", 999.0, basis="estimate")
 check("a charge inside reading_history is NOT recorded", _today_total() == base, str(_today_total()))
 
 check("the flag is off by default", budget.is_reading_history() is False)
@@ -55,7 +55,7 @@ with budget.reading_history("probe"):
     check("...on inside the block", budget.is_reading_history() is True)
 check("...and restored on exit", budget.is_reading_history() is False)
 
-budget.record("openai", "gpt-5.5", "realtime", 0.50, basis="billed")
+budget.record_charge("openai", "gpt-5.5", "realtime", 0.50, basis="billed")
 check("recording resumes after the block", _today_total() > base, str(_today_total()))
 
 # The context is worthless if the one caller that caused the bug does not use it.

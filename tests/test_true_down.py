@@ -35,7 +35,7 @@ def seed(day, provider, model, kind, cost, project, conv="conv-x"):
     ev["occurred_at"] = ev["ts_utc"] = day + "T00:00:00+00:00"
     ev["source"] = ev["recorded_by"] = "test"
     ev["dedup_key"] = "test:%s:%s:%s:%s:%s:%s" % (day, provider, model, kind, cost, conv)
-    budget._ledger().record(ev)
+    budget._ledger().record_event(ev)
 
 
 def reset_ledger():

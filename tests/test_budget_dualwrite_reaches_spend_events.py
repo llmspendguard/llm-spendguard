@@ -32,8 +32,8 @@ conv._seg_get_all = lambda: {}
 DAY = budget._utc().strftime("%Y-%m-%d")
 
 # ── seed through the real budget writers (each dual-writes charges + spend_events) ──
-budget.record("openai", "gpt-5.5", "realtime", 1.50, project="lmm")
-budget.record("anthropic", "claude-haiku-4-5", "batch", 2.00, project="lmm")
+budget.record_charge("openai", "gpt-5.5", "realtime", 1.50, project="lmm")
+budget.record_charge("anthropic", "claude-haiku-4-5", "batch", 2.00, project="lmm")
 budget.record_meta("anthropic", "claude-opus-4-8", 0.25)                       # excluded (is_meta)
 budget.record_unpriced("bedrock", "some-model", "realtime", in_tok=1000, out_tok=50, project="lmm")  # $0 forensic
 budget.record_reconciled(DAY, "openai", 10.00, project="lmm")                  # excluded (reconciled marker)
@@ -85,14 +85,14 @@ import io, contextlib
 def _boom(self, ev):
     raise RuntimeError("induced write failure — spend_events unreachable")
 
-_orig_record = L.SpendLedger.record
-L.SpendLedger.record = _boom
+_orig_record = L.SpendLedger.record_event
+L.SpendLedger.record_event = _boom
 _buf = io.StringIO()
 try:
     with contextlib.redirect_stderr(_buf):
-        budget.record("openai", "gpt-5.5", "realtime", 0.99, project="lmm")
+        budget.record_charge("openai", "gpt-5.5", "realtime", 0.99, project="lmm")
 finally:
-    L.SpendLedger.record = _orig_record
+    L.SpendLedger.record_event = _orig_record
 _msg = _buf.getvalue()
 ck("a failed write warns LOUDLY, never silent", _msg.strip() != "")
 ck("...names the charge as MISSING from the ledger", "MISSING" in _msg)

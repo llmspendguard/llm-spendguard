@@ -78,7 +78,7 @@ print("  audit trail:")
 from spendguard.ledger import SpendLedger                                   # noqa: E402
 SpendLedger()
 
-budget.record(provider="openai", model="gpt-5.5", kind="realtime", cost=1.23,
+budget.record_charge(provider="openai", model="gpt-5.5", kind="realtime", cost=1.23,
               project="absence-guard", conv_id="c-absence")
 _se = budget._ledger().query(where={"project_primary": "absence-guard"})
 row = _se[0]["id"] if _se else None                        # the spend_events id (the row quarantine targets)
@@ -97,7 +97,7 @@ if row:
     # ATOMIC update() — the status change and its chained audit row commit together or not at all — so a failed
     # audit ROLLS BACK the void and RAISES rather than leaving a changed ledger with no record of the change.
     # Simulated by making the ledger's chained _audit raise (the way an unmigrated schema would), no schema surgery.
-    budget.record(provider="openai", model="gpt-5.5", kind="realtime", cost=4.56,
+    budget.record_charge(provider="openai", model="gpt-5.5", kind="realtime", cost=4.56,
                   project="absence-guard-2", conv_id="c-absence-2")
     _se2 = budget._ledger().query(where={"project_primary": "absence-guard-2"})
     row2 = _se2[0]["id"] if _se2 else None

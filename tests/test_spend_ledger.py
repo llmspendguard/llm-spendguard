@@ -17,7 +17,7 @@ def _led(tmp_path):
 
 def test_cost_routes_to_correct_usd_column_and_json_roundtrips(tmp_path):
     led = _led(tmp_path)
-    eid = led.record({"source": "reconstruction", "kind": "realtime", "usd": 220.0,
+    eid = led.record_event({"source": "reconstruction", "kind": "realtime", "usd": 220.0,
                       "provider": "openai", "model": "gpt-5.5", "model_kind": "completion",
                       "org": "Healiom", "team": "lmm", "projects": ["lmm", "medical-taxonomy"],
                       "cwd": "/Users/x/Documents/claude/lmm", "conv_id": "c1", "batch_id": "b1",
@@ -36,7 +36,7 @@ def test_cost_routes_to_correct_usd_column_and_json_roundtrips(tmp_path):
                                       ("subscription", "subscription_usd")])
 def test_every_kind_routes_to_its_own_usd_column(tmp_path, kind, col):
     led = _led(tmp_path)
-    ev = led.get(led.record({"source": "s", "kind": kind, "usd": 5.0, "conv_id": kind}))
+    ev = led.get(led.record_event({"source": "s", "kind": kind, "usd": 5.0, "conv_id": kind}))
     assert to_dec(ev[col]) == Decimal("5")
     assert sum((to_dec(ev[c]) for c in USD_COLS), Decimal(0)) == Decimal("5")
 
@@ -45,8 +45,8 @@ def test_dedup_same_evidence_records_once(tmp_path):
     led = _led(tmp_path)
     base = {"source": "reconstruction", "kind": "realtime", "usd": 220.0,
             "provider": "openai", "model": "gpt-5.5", "conv_id": "c1", "batch_id": "b1", "attr_what": "loinc"}
-    a = led.record(base)
-    b = led.record({**base, "org": "Healiom"})
+    a = led.record_event(base)
+    b = led.record_event({**base, "org": "Healiom"})
     assert a == b
     assert led._conn.execute("SELECT COUNT(*) FROM spend_events").fetchone()[0] == 1
 
@@ -54,11 +54,11 @@ def test_dedup_same_evidence_records_once(tmp_path):
 def test_invalid_events_rejected(tmp_path):
     led = _led(tmp_path)
     with pytest.raises(ValueError):
-        led.record({"source": "x", "provider": "openai"})
+        led.record_event({"source": "x", "provider": "openai"})
     with pytest.raises(ValueError):
-        led.record({"source": "x", "kind": "weird", "usd": 1.0})
+        led.record_event({"source": "x", "kind": "weird", "usd": 1.0})
     with pytest.raises(ValueError):
-        led.record({"kind": "realtime", "usd": 1.0})
+        led.record_event({"kind": "realtime", "usd": 1.0})
 
 
 # ── money: exact DECIMAL (float would drift) ──
@@ -66,7 +66,7 @@ def test_invalid_events_rejected(tmp_path):
 def test_decimal_money_is_exact_where_float_drifts(tmp_path):
     led = _led(tmp_path)
     for i in range(3):
-        led.record({"source": "x", "kind": "realtime", "usd": 0.1, "conv_id": f"c{i}", "attr_what": f"a{i}"})
+        led.record_event({"source": "x", "kind": "realtime", "usd": 0.1, "conv_id": f"c{i}", "attr_what": f"a{i}"})
     assert led.sum_dec() == "0.3"              # EXACT — the reconciliation primitive, no float rounding
     assert led.rollup()["realtime_usd"] == 0.3
     assert 0.1 + 0.1 + 0.1 != 0.3             # the float trap this avoids
@@ -78,7 +78,7 @@ def test_rollup_billed_vs_estvalue_split(tmp_path):
     led = _led(tmp_path)
     for k, u, c in [("batch", 100, "a"), ("realtime", 5, "b"), ("remote", 20, "c"),
                     ("est_chat", 50, "d"), ("subscription", 400, "s")]:
-        led.record({"source": "x", "kind": k, "usd": u, "conv_id": c, "attr_what": k})
+        led.record_event({"source": "x", "kind": k, "usd": u, "conv_id": c, "attr_what": k})
     t = led.rollup()
     assert (t["batch_usd"], t["realtime_usd"], t["remote_compute_usd"], t["est_chat_usd"], t["subscription_usd"]) \
         == (100, 5, 20, 50, 400)
@@ -89,17 +89,17 @@ def test_rollup_billed_vs_estvalue_split(tmp_path):
 
 def test_rollup_by_org(tmp_path):
     led = _led(tmp_path)
-    led.record({"source": "x", "kind": "realtime", "usd": 220.0, "org": "Healiom", "conv_id": "h", "attr_what": "loinc"})
-    led.record({"source": "x", "kind": "realtime", "usd": 10.0, "org": "Ensight", "conv_id": "e", "attr_what": "sg"})
+    led.record_event({"source": "x", "kind": "realtime", "usd": 220.0, "org": "Healiom", "conv_id": "h", "attr_what": "loinc"})
+    led.record_event({"source": "x", "kind": "realtime", "usd": 10.0, "org": "Ensight", "conv_id": "e", "attr_what": "sg"})
     by = led.rollup("org")
     assert by["Healiom"]["realtime_usd"] == 220 and by["Ensight"]["realtime_usd"] == 10
 
 
 def test_by_repo_scopes_remote(tmp_path):
     led = _led(tmp_path)
-    led.record({"source": "x", "kind": "batch", "usd": 26.0, "repo": "charm", "conv_id": "c1", "attr_what": "charm"})
-    led.record({"source": "x", "kind": "realtime", "usd": 100.0, "repo": "lmm", "conv_id": "l1", "attr_what": "lmm"})
-    led.record({"source": "x", "kind": "remote", "usd": 1225.0, "repo": "lmm", "conv_id": "l2", "attr_what": "vast"})
+    led.record_event({"source": "x", "kind": "batch", "usd": 26.0, "repo": "charm", "conv_id": "c1", "attr_what": "charm"})
+    led.record_event({"source": "x", "kind": "realtime", "usd": 100.0, "repo": "lmm", "conv_id": "l1", "attr_what": "lmm"})
+    led.record_event({"source": "x", "kind": "remote", "usd": 1225.0, "repo": "lmm", "conv_id": "l2", "attr_what": "vast"})
     charm, lmm = led.by_repo("charm"), led.by_repo("lmm")
     assert charm["batch_usd"] == 26 and charm["remote_compute_usd"] == 0   # charm ran NO vast.ai → $0
     assert charm["billed_usd"] == 26
@@ -108,8 +108,8 @@ def test_by_repo_scopes_remote(tmp_path):
 
 def test_meta_excluded_from_workload_rollup(tmp_path):
     led = _led(tmp_path)
-    led.record({"source": "x", "kind": "realtime", "usd": 10.0, "conv_id": "w", "attr_what": "work"})
-    led.record({"source": "x", "kind": "realtime", "usd": 5.0, "conv_id": "m", "is_meta": 1, "attr_what": "usage pull"})
+    led.record_event({"source": "x", "kind": "realtime", "usd": 10.0, "conv_id": "w", "attr_what": "work"})
+    led.record_event({"source": "x", "kind": "realtime", "usd": 5.0, "conv_id": "m", "is_meta": 1, "attr_what": "usage pull"})
     assert led.rollup()["realtime_usd"] == 10.0
     assert led.rollup(include_meta=True)["realtime_usd"] == 15.0
 
@@ -118,7 +118,7 @@ def test_meta_excluded_from_workload_rollup(tmp_path):
 
 def test_timestamps_are_utc_with_defaults(tmp_path):
     led = _led(tmp_path)
-    ev = led.get(led.record({"source": "x", "kind": "realtime", "usd": 1.0, "conv_id": "c", "attr_what": "a"}))
+    ev = led.get(led.record_event({"source": "x", "kind": "realtime", "usd": 1.0, "conv_id": "c", "attr_what": "a"}))
     assert ev["ts_utc"].endswith("+00:00")           # tz-aware UTC
     assert ev["recorded_at"] and ev["occurred_at"]
     assert ev["currency"] == "USD" and ev["status"] == "draft"   # newly ingested
@@ -126,7 +126,7 @@ def test_timestamps_are_utc_with_defaults(tmp_path):
 
 def test_occurred_vs_recorded_accounting_day(tmp_path):
     led = _led(tmp_path)
-    ev = led.get(led.record({"source": "reconstruction", "kind": "realtime", "usd": 1.0, "conv_id": "c",
+    ev = led.get(led.record_event({"source": "reconstruction", "kind": "realtime", "usd": 1.0, "conv_id": "c",
                              "occurred_at": "2026-05-15T10:00:00+00:00", "attr_what": "loinc"}))
     assert ev["day"] == "2026-05-15" and ev["period"] == "2026-05"   # accounting day from the TRANSACTION date
     assert ev["recorded_at"] != ev["occurred_at"]                    # booked later than it happened
@@ -136,7 +136,7 @@ def test_occurred_vs_recorded_accounting_day(tmp_path):
 
 def test_update_logs_to_audit_and_bumps_revision(tmp_path):
     led = _led(tmp_path)
-    a = led.record({"source": "gate", "kind": "realtime", "usd": 1.0, "conv_id": "c", "attr_what": "x"})
+    a = led.record_event({"source": "gate", "kind": "realtime", "usd": 1.0, "conv_id": "c", "attr_what": "x"})
     assert led.get(a)["status"] == "draft" and led.get(a)["revision"] == 1
     n = led.update(a, {"org": "Healiom", "status": "posted", "attr_how": "cwd-match"}, actor="attr", reason="cwd=lmm")
     assert n == 3                                       # three fields changed
@@ -149,21 +149,21 @@ def test_update_logs_to_audit_and_bumps_revision(tmp_path):
 
 def test_protected_fields_cannot_be_updated(tmp_path):
     led = _led(tmp_path)
-    a = led.record({"source": "gate", "kind": "realtime", "usd": 1.0, "conv_id": "c", "attr_what": "x"})
+    a = led.record_event({"source": "gate", "kind": "realtime", "usd": 1.0, "conv_id": "c", "attr_what": "x"})
     with pytest.raises(ValueError):
         led.update(a, {"period": "2099-01"})           # identity/period is immutable → reverse/adjust
 
 
 def test_lock_refuses_update_and_new_post_then_reverse(tmp_path):
     led = _led(tmp_path)
-    a = led.record({"source": "gate", "kind": "realtime", "usd": 10.0, "conv_id": "c",
+    a = led.record_event({"source": "gate", "kind": "realtime", "usd": 10.0, "conv_id": "c",
                     "occurred_at": "2026-05-10T00:00:00+00:00", "attr_what": "x"})
     assert led.lock_period("2026-05", reason="close May", actor="ash") == 1
     assert led.get(a)["status"] == "locked"
     with pytest.raises(LockedError):
         led.update(a, {"org": "Healiom"})              # locked row is immutable
     with pytest.raises(LockedError):
-        led.record({"source": "gate", "kind": "realtime", "usd": 1.0, "conv_id": "late",
+        led.record_event({"source": "gate", "kind": "realtime", "usd": 1.0, "conv_id": "late",
                     "occurred_at": "2026-05-11T00:00:00+00:00", "attr_what": "late"})   # no posting into a closed period
     rid = led.reverse(a, actor="ash", reason="wrong")  # correction = reversal into the open period
     rev = led.get(rid)
@@ -173,7 +173,7 @@ def test_lock_refuses_update_and_new_post_then_reverse(tmp_path):
 
 def test_reversed_pair_nets_to_zero(tmp_path):
     led = _led(tmp_path)
-    a = led.record({"source": "gate", "kind": "realtime", "usd": 10.0, "conv_id": "c",
+    a = led.record_event({"source": "gate", "kind": "realtime", "usd": 10.0, "conv_id": "c",
                     "occurred_at": "2026-05-10T00:00:00+00:00", "attr_what": "x"})
     led.lock_period("2026-05")
     led.reverse(a)
@@ -182,7 +182,7 @@ def test_reversed_pair_nets_to_zero(tmp_path):
 
 def test_audit_chain_verifies_and_detects_tamper(tmp_path):
     led = _led(tmp_path)
-    a = led.record({"source": "x", "kind": "realtime", "usd": 1.0, "conv_id": "c1", "attr_what": "a"})
+    a = led.record_event({"source": "x", "kind": "realtime", "usd": 1.0, "conv_id": "c1", "attr_what": "a"})
     led.update(a, {"org": "Healiom"}, actor="attr", reason="cwd=lmm")
     ok, bad = led.verify_audit_chain()
     assert ok and bad is None
@@ -196,14 +196,14 @@ def test_audit_chain_verifies_and_detects_tamper(tmp_path):
 
 def test_rate_snapshot_from_price_book(tmp_path):
     led = _led(tmp_path)
-    ev = led.get(led.record({"source": "gate", "kind": "realtime", "usd": 1.0,
+    ev = led.get(led.record_event({"source": "gate", "kind": "realtime", "usd": 1.0,
                              "provider": "openai", "model": "gpt-5.5", "conv_id": "rt", "attr_what": "x"}))
     assert ev["rate_in"] is not None and ev["rate_out"] is not None
 
 
 def test_confidence_is_float(tmp_path):
     led = _led(tmp_path)
-    ev = led.get(led.record({"source": "x", "kind": "realtime", "usd": 1.0, "conv_id": "f",
+    ev = led.get(led.record_event({"source": "x", "kind": "realtime", "usd": 1.0, "conv_id": "f",
                              "amount_confidence": 0.85, "attr_confidence": 0.9, "attr_what": "z"}))
     assert ev["amount_confidence"] == 0.85 and ev["attr_confidence"] == 0.9
 
@@ -212,7 +212,7 @@ def test_confidence_is_float(tmp_path):
 
 def test_attribute_pass_posts_and_logs(tmp_path):
     led = _led(tmp_path)
-    a = led.record({"source": "reconstruction", "kind": "realtime", "usd": 220.0, "conv_id": "c",
+    a = led.record_event({"source": "reconstruction", "kind": "realtime", "usd": 220.0, "conv_id": "c",
                     "cwd": "/Users/x/Documents/claude/lmm", "attr_what": "loinc stem pass"})
     assert led.get(a)["status"] == "draft" and led.get(a)["org"] is None
     led.attribute(a, org="Healiom", team="lmm", projects=["lmm"], attr_how="cwd-match",

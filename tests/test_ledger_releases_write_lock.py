@@ -3,7 +3,7 @@
 WHY, MEASURED. A `conversation_digest --watch` daemon (ccwatch) ran for 31 days holding a spendguard connection
 whose write transaction was never released — so its spend.db write lock stayed held and its WAL grew to 36 MB,
 uncheckpointed. Every OTHER writer then got sqlite `database is locked`: a commit hook's own gated LLM call, and
-a plain `budget.record`, both failed — and POST-CUTOVER a failed write DROPS the charge (spend_events is the
+a plain `budget.record_charge`, both failed — and POST-CUTOVER a failed write DROPS the charge (spend_events is the
 sole money-of-record; there is no `charges` fallback to catch it). The holder was stale pre-cutover code; the
 current writers commit per call and release. This test PINS that discipline so it cannot silently regress:
 
@@ -58,7 +58,7 @@ ck("a query() leaves the write lock free", writer_can_acquire())
 
 _buf = io.StringIO()
 with contextlib.redirect_stderr(_buf):
-    budget.record("anthropic", "claude-haiku-4-5", "realtime", 0.01, project="lock-test")
+    budget.record_charge("anthropic", "claude-haiku-4-5", "realtime", 0.01, project="lock-test")
 ck("a WRITE commits and RELEASES the lock (lock → write → unlock)", writer_can_acquire())
 ck("...the write actually landed (no fail-open warning)", _buf.getvalue().strip() == "")
 ck("...the ledger connection is left OUT of any transaction", not L._conn.in_transaction)
@@ -73,7 +73,7 @@ ck("...and leaves no open transaction behind", not L._conn.in_transaction)
 # a bulk() load defers per-row commits, so it MAY hold the lock inside the block — but on exit it commits and
 # must release. (Inside the block the lock being held is correct: that is an active transaction, not idle.)
 with L.bulk():
-    budget.record("openai", "gpt-5.5", "realtime", 0.02, project="lock-test")
+    budget.record_charge("openai", "gpt-5.5", "realtime", 0.02, project="lock-test")
 ck("a bulk() context RELEASES the lock on exit (commit)", writer_can_acquire())
 ck("...and leaves no open transaction behind", not L._conn.in_transaction)
 

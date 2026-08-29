@@ -57,7 +57,7 @@ with calls.context(intent="loinc-typing"):
 check("no intent -> batch-1 check skipped -> PASS", not refuses(submit))
 
 # 3) record a realtime test for the intent -> now it's "tested" -> PASS
-calls.record("anthropic", "claude-haiku-4-5", "realtime", 0.001, intent="loinc-typing")  # diff model = fine
+calls.record_call("anthropic", "claude-haiku-4-5", "realtime", 0.001, intent="loinc-typing")  # diff model = fine
 check("calls.tested_recently sees the realtime test", calls.tested_recently("loinc-typing"))
 with calls.context(intent="loinc-typing"):
     check("tested intent (strict) -> PASS", not refuses(submit))
