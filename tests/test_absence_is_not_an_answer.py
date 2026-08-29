@@ -72,7 +72,7 @@ check("...and the refusal says which flag to set, so a wrong refusal is one mess
 # had already committed, wrapped in `except Exception: pass` — so a changed ledger with no record of the
 # change was indistinguishable from an unchanged one, and nobody was told.
 print("  audit trail:")
-# spend_audit is created by SpendLedger's schema, NOT by budget._db(), so its existence depends on whether
+# spend_audit is created by SpendLedger's schema, NOT by budget._ledger_db(), so its existence depends on whether
 # a ledger has ever been opened against this database. Opened explicitly here rather than assumed — the
 # whole point below is that the two states (table present / absent) must behave differently and visibly.
 from spendguard.ledger import SpendLedger                                   # noqa: E402
@@ -87,7 +87,7 @@ check("seeded a charge to quarantine", row is not None)
 if row:
     n = budget.quarantine_charge(row=row, reason="guard: audit must accompany the mutation")
     check("the charge was quarantined", n == 1, f"rowcount={n}")
-    audited = budget._db().execute(
+    audited = budget._ledger_db().execute(
         "SELECT COUNT(*) FROM spend_audit WHERE actor='quarantine_charge' AND event_id=?",
         (str(row),)).fetchone()[0]
     check("the mutation left an audit row, written under the same lock and commit",

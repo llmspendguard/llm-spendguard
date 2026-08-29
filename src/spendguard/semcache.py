@@ -20,7 +20,7 @@ _lock = threading.RLock()
 _stats = {"exact": 0, "semantic": 0, "miss": 0, "saved": 0.0}
 
 
-def _db():
+def _semcache_db():
     global _conn
     if _conn is None:
         with _lock:
@@ -107,7 +107,7 @@ def get_cached(prompt, model, threshold=0.0):
     call); an exact-only entry carries none and is invisible to semantic matching — by design, to keep exact free."""
     h = _hash(prompt)
     with _lock:
-        row = _db().execute("SELECT output FROM semcache WHERE model IN (?, ?) AND prompt_hash=? LIMIT 1",
+        row = _semcache_db().execute("SELECT output FROM semcache WHERE model IN (?, ?) AND prompt_hash=? LIMIT 1",
                             (model, _SCOPE_ANY, h)).fetchone()
     if row:
         _stats["exact"] += 1
@@ -116,7 +116,7 @@ def get_cached(prompt, model, threshold=0.0):
         qv = _embed(prompt)
         if qv:
             with _lock:
-                rows = _db().execute("SELECT output, emb FROM semcache WHERE model IN (?, ?) AND emb IS NOT NULL",
+                rows = _semcache_db().execute("SELECT output, emb FROM semcache WHERE model IN (?, ?) AND emb IS NOT NULL",
                                      (model, _SCOPE_ANY)).fetchall()
             best, bout = threshold, None
             for out, emb in rows:
@@ -141,14 +141,14 @@ def put(prompt, model, output, store_embedding=False):
         # with an unhandled IntegrityError. ON CONFLICT DO UPDATE resolves it in ONE statement (no window),
         # overwrites the stale output, and COALESCE keeps an existing embedding when this put has none — so a
         # later exact-only put never discards a paid-for embedding.
-        _db().execute(
+        _semcache_db().execute(
             "INSERT INTO semcache(id, ts, model, prompt_hash, prompt, output, emb) VALUES (?,?,?,?,?,?,?) "
             "ON CONFLICT(model, prompt_hash) DO UPDATE SET "
             "ts=excluded.ts, prompt=excluded.prompt, output=excluded.output, "
             "emb=COALESCE(excluded.emb, semcache.emb)",
             (uuid.uuid4().hex[:16], datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
              model, _hash(prompt), prompt[:2000], output, emb))
-        _db().commit()
+        _semcache_db().commit()
 
 
 def cached_call(fn, prompt, model, threshold=0.0, est_cost=0.0):
@@ -166,7 +166,7 @@ def cached_call(fn, prompt, model, threshold=0.0, est_cost=0.0):
 
 def stats():
     with _lock:
-        n = _db().execute("SELECT COUNT(*), COUNT(emb) FROM semcache").fetchone()
+        n = _semcache_db().execute("SELECT COUNT(*), COUNT(emb) FROM semcache").fetchone()
     return {**_stats, "cached_entries": n[0], "with_embedding": n[1]}
 
 
@@ -231,7 +231,7 @@ def dedup_jsonl(input_path, out_path, model=_SCOPE_ANY, map_path=None):
                 dup_map.setdefault(h, []).append(cid)
                 continue
             with _lock:
-                row = _db().execute("SELECT 1 FROM semcache WHERE model IN (?,?) AND prompt_hash=? LIMIT 1",
+                row = _semcache_db().execute("SELECT 1 FROM semcache WHERE model IN (?,?) AND prompt_hash=? LIMIT 1",
                                     (model, _SCOPE_ANY, h)).fetchone()
             if row:
                 cache_hit += 1

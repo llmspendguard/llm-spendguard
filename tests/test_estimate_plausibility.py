@@ -81,7 +81,7 @@ check("the warn path still returns the facts to its caller",
       gate._warn_implausible(MODEL, 48_110_544, 10).get("limit") == LIMIT)
 
 print("-- quarantined money is excluded from every total, and never deleted --")
-DAY = budget._db().execute("SELECT date('now')").fetchone()[0]
+DAY = budget._ledger_db().execute("SELECT date('now')").fetchone()[0]
 budget.record("anthropic", MODEL, "batch", 54.51, project="saga")
 plain = budget.spent_since(DAY)
 check("a normal charge counts", plain >= 54.51, f"{plain}")

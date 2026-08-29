@@ -167,7 +167,7 @@ def discover_sources(days=None):
         tools.append(rec)
     try:
         from . import coverage
-        venvs = coverage.audit()
+        venvs = coverage.audit_gating_coverage()
     except Exception:
         venvs = []
     return {"providers": providers_paid(), "tools": tools, "venvs": venvs,

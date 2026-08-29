@@ -22,12 +22,12 @@ def ck(name, cond):
 # ── seed call_io + stub provider batch costs + project mapping, then assert build() math ──
 def _seed(intent, model, batch, custom_id, quality, in_tok, out_tok):
     with callio._lock if hasattr(callio, "_lock") else _NullCtx():
-        callio._db().execute(
+        callio._callio_db().execute(
             "INSERT OR REPLACE INTO call_io (id,ts,intent,provider,model,batch,custom_id,prompt,output,in_tok,out_tok,quality,source) "
             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (f"{batch}:{custom_id}", "2026-06-10T00:00:00", intent, "openai", model, batch, custom_id,
              "p", "o", in_tok, out_tok, quality, "batch_io"))
-        callio._db().commit()
+        callio._callio_db().commit()
 
 class _NullCtx:
     def __enter__(self): return self

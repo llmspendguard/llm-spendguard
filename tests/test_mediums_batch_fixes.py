@@ -42,7 +42,7 @@ def _boom():
     raise RuntimeError("db down")
 
 
-guard._db = _boom
+guard._savings_db = _boom
 warns.clear()
 guard.record_saving("cache", 5.0)                       # must NOT raise
 ck("record_saving warns (not silently swallows) on a failed write", any("record_saving" in w for w in warns))
@@ -90,10 +90,10 @@ ck("_dph is safe on non-numeric / None / empty, correct on a number",
 ck("_rate_or is safe on non-numeric / None, correct on a number",
    sync._rate_or("abc", 5.0) == 5.0 and sync._rate_or(None, 5.0) == 5.0 and abs(sync._rate_or(1e-6, 5.0) - 1.0) < 1e-9)
 
-resources._get = lambda path: {"error": "boom"}
+resources._vast_get = lambda path: {"error": "boom"}
 ck("resources.instances() returns [] on an error payload (never iterates the payload as instances)",
    resources.instances() == [])
-resources._get = lambda path: {"instances": [{"id": 1}]}
+resources._vast_get = lambda path: {"instances": [{"id": 1}]}
 ck("resources.instances() returns the list when present", resources.instances() == [{"id": 1}])
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_mediums_batch_fixes: {fails} failure(s)")

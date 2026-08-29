@@ -29,7 +29,7 @@ _SYS = (
 
 def _token_ratio(intent, model, n=8):
     with callio._lock:
-        rows = callio._db().execute(
+        rows = callio._callio_db().execute(
             "SELECT prompt, output, out_tok FROM call_io WHERE intent IS ? AND model=? LIMIT ?",
             (intent, model, n)).fetchall()
     if not rows:
@@ -45,7 +45,7 @@ def _conversation_for(intent):
     if not intent:
         return []
     with learn._lock:
-        rows = learn._db().execute(
+        rows = learn._insights_db().execute(
             "SELECT DISTINCT n.label FROM graph_nodes n JOIN graph_edges e ON n.id=e.src "
             "JOIN graph_nodes r ON e.dst=r.id WHERE e.rel='comments_on' AND r.type='run' "
             "AND json_extract(r.attrs,'$.intent')=? LIMIT 6", (intent,)).fetchall()

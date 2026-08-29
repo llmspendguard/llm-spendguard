@@ -9,10 +9,10 @@ import contextlib, sqlite3, datetime, threading
 from . import config
 
 _conn = None
-_lock = threading.RLock()   # reentrant: record()/spent_since() hold it AND call _db() which re-acquires
+_lock = threading.RLock()   # reentrant: record()/spent_since() hold it AND call _ledger_db() which re-acquires
 
 
-def _db():
+def _ledger_db():
     """A WAL SQLite connection to the ledger file, shared across this module and by guard.py's `savings` table.
     It NO LONGER creates the retired `charges` table: the money-of-record is `spend_events` (owned by
     SpendLedger), every reader/writer here goes through it, and a fresh install has no `charges` to make.

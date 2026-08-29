@@ -54,7 +54,7 @@ print("-- cost_by_day(): seed the cache file, no-op the network refresh, assert 
 ra.UNKNOWN_MODELS.clear()
 # stub network + key so cost_by_day touches NEITHER provider
 ra.refresh_cache = lambda k, cache: 0
-ra._key = lambda: "sk-ant-OFFLINE"
+ra._anthropic_key = lambda: "sk-ant-OFFLINE"
 
 # cache record shape written by refresh_cache: {bid: {created_at, cost, by_model:{model:{in,out,cost}}}}
 cache = {

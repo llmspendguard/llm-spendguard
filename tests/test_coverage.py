@@ -35,7 +35,7 @@ mk_venv(tmp, "no-llm-tool", llm=(), gated=False)              # no LLM SDK → n
 mk_venv(tmp, "llm-spendguard-dev", llm=("openai",), gated=False)   # spendguard's OWN → self-gates, not a gap
 ROOTS = [os.path.join(tmp, "*")]
 
-rows = coverage.audit(roots=ROOTS)
+rows = coverage.audit_gating_coverage(roots=ROOTS)
 by = {os.path.basename(r["venv"]): r for r in rows}
 ck("no-LLM venv excluded (no openai/anthropic SDK)", "no-llm-tool" not in by)
 ck("gated LLM venv → gated=True", by.get("gated-llm", {}).get("gated") is True)

@@ -92,7 +92,7 @@ try:
 except Exception as e:
     msgs.append(str(e))
 try:
-    ra._key()
+    ra._anthropic_key()
 except Exception as e:
     msgs.append(str(e))
 config.api_key, ra._api_key = _real_key, _real_ra

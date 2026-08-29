@@ -21,7 +21,7 @@ CACHE_PATH = str(CACHE_PATH)
 socket.setdefaulttimeout(60)
 
 
-def _key():
+def _anthropic_key():
     k = _api_key("ANTHROPIC_API_KEY")
     if not k:
         # RAISE, not sys.exit: SystemExit is a BaseException that escapes `except Exception` guards in degradable
@@ -43,7 +43,7 @@ def _get_text(url, k):
     return config.api_get_text(url, _h(k))
 
 
-def _get(url, k):
+def _anthropic_get(url, k):
     """Parsed JSON from the Anthropic API. Delegates to config.api_get — this had no timeout and handed the
     caller an unread, unclosed response object."""
     from . import config
@@ -54,7 +54,7 @@ def list_batches(k):
     rows, after = [], None
     while True:
         u = "https://api.anthropic.com/v1/messages/batches?limit=100" + (f"&after_id={after}" if after else "")
-        d = _get(u, k)
+        d = _anthropic_get(u, k)
         rows.extend(d["data"])
         if d.get("has_more"):
             after = d["data"][-1]["id"]
@@ -151,7 +151,7 @@ def refresh_cache(k, cache):
 
 def cost_by_day(since=None):
     """Returns (by_day:{date:$}, by_model:{model:$}). Refreshes cache first."""
-    k = _key()
+    k = _anthropic_key()
     if os.path.exists(CACHE_PATH):
         with open(CACHE_PATH) as _fh:                 # closed deterministically (was a leaked handle)
             cache = json.load(_fh)

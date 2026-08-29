@@ -41,9 +41,9 @@ VEC = [1.0, 0.0, 0.0]
 semcache._embed = lambda text: VEC                    # deterministic, offline
 semcache.put("the good prompt", semcache._SCOPE_ANY, "GOOD-OUTPUT", store_embedding=True)
 with semcache._lock:                                  # inject a corrupt-emb row (3-byte blob) under the same scope
-    semcache._db().execute("INSERT INTO semcache VALUES (?,?,?,?,?,?,?)",
+    semcache._semcache_db().execute("INSERT INTO semcache VALUES (?,?,?,?,?,?,?)",
                            ("corrupt1", "2026-08-15", semcache._SCOPE_ANY, "hh", "junk prompt", "BAD-OUTPUT", b"abc"))
-    semcache._db().commit()
+    semcache._semcache_db().commit()
 try:
     hit = semcache.get_cached("a semantically-near prompt", "openai:gpt-x", threshold=0.5)
     crashed = False

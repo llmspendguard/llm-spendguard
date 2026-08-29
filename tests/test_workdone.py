@@ -1,7 +1,7 @@
 """Offline test for the work-done layer (_period / _repos / build / rollup / cmd) — isolated home.
 
 NO network, NO git shell-out (we monkeypatch _git_commits), NO LLM. _batch_intents reads the local
-call_io corpus, which we seed directly via callio._db(). Pairs git commit subjects + batch intents per
+call_io corpus, which we seed directly via callio._callio_db(). Pairs git commit subjects + batch intents per
 (day, project), then rolls them up by day | week | month.
 """
 import os, sys, tempfile, json
@@ -73,7 +73,7 @@ workdone._git_commits = lambda repo, since: list(_COMMITS.get(repo, []))
 
 # Seed the call_io corpus directly (this is what _batch_intents reads).
 def seed_io(ts, intent, model):
-    db = callio._db()
+    db = callio._callio_db()
     with callio._lock:
         db.execute(
             "INSERT INTO call_io (id,ts,intent,provider,model,batch,custom_id,prompt,output,in_tok,out_tok,source) "
@@ -205,13 +205,13 @@ finally:
 # ─────────────────────────── _batch_intents exception branch ───────────────────────────
 print("-- _batch_intents: swallows errors, returns empty on bad db access --")
 import spendguard.callio as _callio
-orig_db = _callio._db
-_callio._db = lambda: (_ for _ in ()).throw(RuntimeError("db down"))
+orig_db = _callio._callio_db
+_callio._callio_db = lambda: (_ for _ in ()).throw(RuntimeError("db down"))
 try:
     bi = workdone._batch_intents("2026-06-01")
     check("_batch_intents returns empty mapping on error", len(bi) == 0)
 finally:
-    _callio._db = orig_db
+    _callio._callio_db = orig_db
 
 
 # ─────────────────────────── push_workdone: dry-run payload (REAL fn — run before cmd test monkeypatches it) ───────────────────────────

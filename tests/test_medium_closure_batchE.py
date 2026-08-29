@@ -65,8 +65,8 @@ future = {"usd": 9.0, "start_ts": now + 10_000, "end_ts": None}   # future-dated
 by_day = gpu_port.gpu_cost_by_day([inwin, future], since=now - 86400, now=now)
 ck("a future-dated billed row is NOT booked; the in-window one is", round(sum(by_day.values()), 2) == 5.0, f"got {by_day}")
 
-# ── [29] coverage.audit(roots=[]) scans nothing ────────────────────────────────────────────────────────────────
-ck("an explicit roots=[] scans nothing (not the defaults)", coverage.audit(roots=[]) == [])
+# ── [29] coverage.audit_gating_coverage(roots=[]) scans nothing ────────────────────────────────────────────────────────────────
+ck("an explicit roots=[] scans nothing (not the defaults)", coverage.audit_gating_coverage(roots=[]) == [])
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_medium_closure_batchE: {fails} failure(s)")
 sys.exit(1 if fails else 0)

@@ -37,7 +37,7 @@ class GateBlocked(Exception):
     """Raised when a BULK paid run is attempted without a FRESH estimate+test for its call-class signature."""
 
 
-def _db():
+def _gate_db():
     global _conn
     if _conn is None:
         with _lock:
@@ -71,7 +71,7 @@ def _db():
 
 
 # ── config (env > config.json gate.<name> > default) ──
-def _cfg(name, default, cast):
+def _gate_setting(name, default, cast):
     v = os.getenv("SPENDGUARD_" + name.upper())
     if v is None:
         try:
@@ -85,15 +85,15 @@ def _cfg(name, default, cast):
 
 
 def preview_max():
-    return _cfg("preview_max", PREVIEW_MAX_DEFAULT, int)
+    return _gate_setting("preview_max", PREVIEW_MAX_DEFAULT, int)
 
 
 def bulk_min_usd():
-    return _cfg("bulk_min_usd", BULK_MIN_USD_DEFAULT, float)
+    return _gate_setting("bulk_min_usd", BULK_MIN_USD_DEFAULT, float)
 
 
 def freshness_hours():
-    return _cfg("freshness_hours", FRESHNESS_HOURS_DEFAULT, float)
+    return _gate_setting("freshness_hours", FRESHNESS_HOURS_DEFAULT, float)
 
 
 def require_eval():
@@ -140,12 +140,12 @@ def record_estimate(sig, model, est_usd, est_count):
     escalation path — not the cheap path (the nano-only estimate that hid the $5.61 opus run is the cautionary tale)."""
     now = time.time()
     with _lock:
-        _db().execute(
+        _gate_db().execute(
             "INSERT INTO gate_ledger (sig,model,estimated_at,est_usd,est_count,updated_at) VALUES (?,?,?,?,?,?) "
             "ON CONFLICT(sig) DO UPDATE SET model=excluded.model, estimated_at=excluded.estimated_at, "
             "est_usd=excluded.est_usd, est_count=excluded.est_count, updated_at=excluded.updated_at",
             (sig, model, now, float(est_usd), int(est_count), now))
-        _db().commit()
+        _gate_db().commit()
     # FORWARD IT TO THE LEARNED ESTIMATOR. This wrote gate_ledger and stopped. calibrate.pair() reads
     # cost_predictions and NOTHING bridged the two, so every estimate spendguard's own gate recorded was
     # invisible to spendguard's own calibrator — which then trained only on predictions an external consumer
@@ -172,7 +172,7 @@ def record_tested(sig, test_n, verified=True, contract=None, result=None, data_s
     chash = output_contract.contract_hash(contract) if contract is not None else ""
     r = result.as_dict() if result is not None else {"parsed": 0, "salvaged": 0, "failed": 0, "first_failure": ""}
     with _lock:
-        _db().execute(
+        _gate_db().execute(
             "INSERT INTO gate_ledger (sig,tested_at,test_n,verified,contract,contract_hash,data_sig,"
             " test_parsed,test_salvaged,test_failed,test_failure,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(sig) DO UPDATE SET tested_at=excluded.tested_at, test_n=excluded.test_n, "
@@ -181,7 +181,7 @@ def record_tested(sig, test_n, verified=True, contract=None, result=None, data_s
             "test_failed=excluded.test_failed, test_failure=excluded.test_failure, updated_at=excluded.updated_at",
             (sig, now, int(test_n), int(bool(verified)), desc, chash, data_sig or "",
              int(r["parsed"]), int(r["salvaged"]), int(r["failed"]), str(r["first_failure"])[:300], now))
-        _db().commit()
+        _gate_db().commit()
     return now
 
 
@@ -197,14 +197,14 @@ def record_eval(sig, bar, verdict, score=None, note=None, model=None):
                          "empty rubber-stamp and cannot authorize a run. Pass bar='...'.")
     now = time.time()
     with _lock:
-        _db().execute(
+        _gate_db().execute(
             "INSERT INTO gate_ledger (sig,eval_at,eval_bar,eval_verdict,eval_score,eval_note,eval_model,updated_at) "
             "VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(sig) DO UPDATE SET eval_at=excluded.eval_at, "
             "eval_bar=excluded.eval_bar, eval_verdict=excluded.eval_verdict, eval_score=excluded.eval_score, "
             "eval_note=excluded.eval_note, eval_model=excluded.eval_model, updated_at=excluded.updated_at",
             (sig, now, bar, int(bool(verdict)), (float(score) if score is not None else None),
              (str(note)[:500] if note else ""), (model or ""), now))
-        _db().commit()
+        _gate_db().commit()
     return now
 
 
@@ -216,7 +216,7 @@ def gate_status(sig, contract=None, data_sig=None):
     shape or a different corpus is the "tested v1, ran v2" hole the sig already closes for the prompt."""
     from . import output_contract
     with _lock:
-        r = _db().execute("SELECT model,estimated_at,est_usd,est_count,tested_at,test_n,verified,"
+        r = _gate_db().execute("SELECT model,estimated_at,est_usd,est_count,tested_at,test_n,verified,"
                           "contract,contract_hash,data_sig,test_parsed,test_salvaged,test_failed,test_failure,"
                           "eval_at,eval_bar,eval_verdict,eval_score,eval_note "
                           "FROM gate_ledger WHERE sig=?", (sig,)).fetchone()
@@ -313,8 +313,8 @@ def check_bulk(sig, model, count, est_usd, force=False, contract=None, data_sig=
 # ── max_tokens: truncation DETECTION (the API states it — a fact, not a guess) + data-driven bounds (measure the
 #    output distribution) — keyed by the SAME call-class sig. The single chokepoint sees both the request's max_tokens
 #    and the response usage, so this protects every repo with zero per-repo work. ──
-def _calls_db():
-    db = _db()
+def _gate_calls_db():
+    db = _gate_db()
     db.execute("CREATE TABLE IF NOT EXISTS gate_calls "
                "(sig TEXT, model TEXT, out_tok INTEGER, max_tokens INTEGER, truncated INTEGER, ts REAL)")
     db.execute("CREATE INDEX IF NOT EXISTS idx_gatecalls_sig ON gate_calls(sig)")
@@ -352,12 +352,12 @@ def note_latency(sig, model, seconds, hit_deadline=False, in_chars=0):
     116.8s — a single global 180s was simultaneously far too generous for one and marginal for another."""
     try:
         with _lock:
-            _calls_db().execute(
+            _gate_calls_db().execute(
                 "INSERT INTO gate_latency (sig,model,seconds,hit_deadline,ts,in_chars) "
                 "VALUES (?,?,?,?,?,?)",
                 (sig, model, float(seconds or 0), int(bool(hit_deadline)), time.time(),
                  int(in_chars or 0)))
-            _db().commit()
+            _gate_db().commit()
     except Exception:
         pass
 
@@ -395,7 +395,7 @@ def latency(sig=None, model=None, near_chars=None):
          + (" WHERE " + " AND ".join(where) if where else ""))
     try:
         with _lock:
-            rows = _calls_db().execute(q, args).fetchall()
+            rows = _gate_calls_db().execute(q, args).fetchall()
     except Exception:
         return {}
     scope = "all-sizes"
@@ -436,9 +436,9 @@ def note_response(sig, model, out_tok, max_tokens=None, finish_reason=None):
     trunc = is_truncated(finish_reason, out_tok, max_tokens)
     try:
         with _lock:
-            _calls_db().execute("INSERT INTO gate_calls (sig,model,out_tok,max_tokens,truncated,ts) VALUES (?,?,?,?,?,?)",
+            _gate_calls_db().execute("INSERT INTO gate_calls (sig,model,out_tok,max_tokens,truncated,ts) VALUES (?,?,?,?,?,?)",
                                 (sig, model, int(out_tok or 0), int(max_tokens or 0), int(trunc), time.time()))
-            _db().commit()
+            _gate_db().commit()
     except Exception:
         pass
     if trunc:
@@ -494,7 +494,7 @@ def maxtokens(sig, current_max=None):
     'measure'. Returns {n, p50, p95, p99, max, recommend=p99*1.5, truncations, warn}. warn if current_max < p95
     (TRUNCATION RISK) or >> p99 (cost-estimate inflation → false cap trips). For packed calls, feed per-ITEM out_tok."""
     with _lock:
-        rows = _calls_db().execute("SELECT out_tok,truncated FROM gate_calls WHERE sig=? AND out_tok>0", (sig,)).fetchall()
+        rows = _gate_calls_db().execute("SELECT out_tok,truncated FROM gate_calls WHERE sig=? AND out_tok>0", (sig,)).fetchall()
     # CENSORING: a truncated response was cut AT its cap, so its out_tok measures the CAP, not the work.
     # Including those dragged every percentile down — and the recommendation with it, so the more a class
     # truncated the lower the advice went. A ratchet pointing the wrong way. Percentiles come from COMPLETE
@@ -536,13 +536,13 @@ def model_outputs(model):
     right direction for a BOUND, useless as an EXPECTATION, and estimate-first stops being usable when the two
     are confused. Same censoring as maxtokens(): a truncated response measures its cap, not the work."""
     with _lock:
-        rows = _calls_db().execute(
+        rows = _gate_calls_db().execute(
             "SELECT out_tok,truncated FROM gate_calls WHERE model=? AND out_tok>0", (model,)).fetchall()
     outs = [r[0] for r in rows if not r[1]]
     if not outs:
         return {}
     return {"model": model, "n": len(outs), "p50": _pctl(outs, 0.50), "p90": _pctl(outs, 0.90),
-            "p99": _pctl(outs, 0.99), "n_classes": len({r[0] for r in _calls_db().execute(
+            "p99": _pctl(outs, 0.99), "n_classes": len({r[0] for r in _gate_calls_db().execute(
                 "SELECT DISTINCT sig FROM gate_calls WHERE model=? AND out_tok>0", (model,)).fetchall()})}
 
 
@@ -551,7 +551,7 @@ def truncated_recently(sig, window_sec=None):
     bulk run, so the max_tokens bug is structurally caught by the SAME gate (test_job flips verified→False on it)."""
     cut = time.time() - (window_sec or rt_window_sec())
     with _lock:
-        r = _calls_db().execute("SELECT COALESCE(SUM(truncated),0) FROM gate_calls WHERE sig=? AND ts>=?", (sig, cut)).fetchone()
+        r = _gate_calls_db().execute("SELECT COALESCE(SUM(truncated),0) FROM gate_calls WHERE sig=? AND ts>=?", (sig, cut)).fetchone()
     return bool(r and r[0])
 
 
@@ -675,7 +675,7 @@ def eval_job(sig, bar, sample, model=None):
         raise ValueError("eval_job needs a STATED bar (what a passing output looks like) — pass bar='...'.")
     from . import adapters, calls, config
     from .advisor import META                                    # ONE source of the meta-intent prefix
-    judge = model or _cfg("eval_model", None, str) or config.advisor_judge_model()
+    judge = model or _gate_setting("eval_model", None, str) or config.advisor_judge_model()
     body = sample if isinstance(sample, str) else "\n---\n".join(str(x) for x in sample)
     shown = body[:_EVAL_SAMPLE_CHARS]
     more = "" if len(body) <= _EVAL_SAMPLE_CHARS else (       # HONEST bound — the judge is told it saw a prefix
@@ -695,7 +695,7 @@ _rt_warned = {}    # sig -> last warn ts — warn-mode log dedup (a big un-adopt
 
 
 def rt_window_sec():
-    return _cfg("rt_window_sec", 600.0, float)   # rolling window (default 10 min) for "a burst of same-sig calls"
+    return _gate_setting("rt_window_sec", 600.0, float)   # rolling window (default 10 min) for "a burst of same-sig calls"
 
 
 def check_realtime(sig, model, est_usd=0.0, force=False):

@@ -32,7 +32,7 @@ conv._prior_index = lambda: {"lmm": ("healiom", "lmm"), "manga2anime": ("ensight
 conv.segments = lambda *a, **k: []
 conv._seg_get_all = lambda: {}
 
-db = budget._db()
+db = budget._ledger_db()
 # charges is the RETIRED source table — budget no longer creates it (the money-of-record is spend_events), so
 # this migration test creates its own fixture to exercise the one-time migrate_charges bridge.
 db.execute("CREATE TABLE IF NOT EXISTS charges (ts TEXT, day TEXT, provider TEXT, model TEXT, kind TEXT, "

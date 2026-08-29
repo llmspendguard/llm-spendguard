@@ -49,10 +49,10 @@ def _db():
     # reuse the learn db connection (shared sqlite); a tiny model_facts table
     from . import learn
     with learn._lock:
-        learn._db().execute("""CREATE TABLE IF NOT EXISTS model_facts(
+        learn._insights_db().execute("""CREATE TABLE IF NOT EXISTS model_facts(
             model TEXT, key TEXT, value TEXT, confidence REAL, source TEXT, verified INTEGER, ts TEXT,
             PRIMARY KEY (model, key))""")
-        learn._db().commit()
+        learn._insights_db().commit()
     return learn
 
 
@@ -74,10 +74,10 @@ def add_fact(model, key, value, confidence=0.9, source="manual", verified=True):
         # TypeError on Python 3, or a silently wrong answer anywhere the value is used in a truthy test
         # (bool("False") is True, which is the same bug for a boolean fact). JSON keeps the type; the
         # reader below falls back to the raw text so rows already written as bare strings still load.
-        L._db().execute("INSERT OR REPLACE INTO model_facts VALUES (?,?,?,?,?,?,?)",
+        L._insights_db().execute("INSERT OR REPLACE INTO model_facts VALUES (?,?,?,?,?,?,?)",
                         (model, key, json.dumps(value), float(confidence), source,
                          1 if verified else 0, learn_now()))
-        L._db().commit()
+        L._insights_db().commit()
 
 
 def clear_fact(model, key):
@@ -86,8 +86,8 @@ def clear_fact(model, key):
     this the model falls back to the family default and can re-learn correctly."""
     L = _db()
     with L._lock:
-        cur = L._db().execute("DELETE FROM model_facts WHERE model=? AND key=?", (model, key))
-        L._db().commit()
+        cur = L._insights_db().execute("DELETE FROM model_facts WHERE model=? AND key=?", (model, key))
+        L._insights_db().commit()
         return cur.rowcount
 
 
@@ -95,7 +95,7 @@ def facts(model):
     L = _db()
     with L._lock:
         return {k: (_decode_fact(v), c, src, bool(ver)) for k, v, c, src, ver in
-                L._db().execute("SELECT key,value,confidence,source,verified FROM model_facts WHERE model=?",
+                L._insights_db().execute("SELECT key,value,confidence,source,verified FROM model_facts WHERE model=?",
                                 (model,)).fetchall()}
 
 
@@ -190,7 +190,7 @@ def ineffective(model, intent):
         if key in f:
             v, c, _src, _ver = f[key]
             with L._lock:
-                r = L._db().execute("SELECT ts FROM model_facts WHERE model=? AND key=?", (model, key)).fetchone()
+                r = L._insights_db().execute("SELECT ts FROM model_facts WHERE model=? AND key=?", (model, key)).fetchone()
             return (v, c, r[0] if r else None)
     return None
 
@@ -309,7 +309,7 @@ def cmd(argv=None):
         print(f"  {pat:<28} reasoning={d['reasoning']}  tokens={d['tokens_param']}  cache={d['cache']}(min {d['cache_min']})")
     L = _db()
     with L._lock:
-        rows = L._db().execute("SELECT DISTINCT model FROM model_facts").fetchall()
+        rows = L._insights_db().execute("SELECT DISTINCT model FROM model_facts").fetchall()
     if rows:
         print("models with stored learnings: " + ", ".join(r[0] for r in rows))
     print("  `spendguard models show <model>` for the full profile.")

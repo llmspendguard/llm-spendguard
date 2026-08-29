@@ -32,7 +32,7 @@ guard.record_saving("cache", 0.0, project="lmm")         # non-positive → drop
 guard.record_saving("cache", -5.0, project="lmm")        # negative → dropped
 guard.record_saving("cache", "not-a-number", project="lmm")  # bad input → swallowed, never raises
 
-db = guard._db()
+db = guard._savings_db()
 with guard.budget._lock:
     rows = db.execute("SELECT source, amount, cv, project FROM savings ORDER BY amount DESC").fetchall()
 ck("record_saving: only the 3 positive events recorded (0/neg/garbage dropped)", len(rows) == 3)

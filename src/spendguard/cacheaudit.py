@@ -39,7 +39,7 @@ def _common_prefix(strs):
 def _intent_prefixes():
     out = []
     with callio._lock:
-        combos = callio._db().execute(
+        combos = callio._callio_db().execute(
             # GROUPED BY PROVIDER TOO. call_io HAS a provider column and this ignored it, so two vendors
             # serving the same model id had their prompts pooled into one prefix analysis — and a "shared
             # prefix" computed across two different systems' prompts is not a cache candidate for either.
@@ -48,7 +48,7 @@ def _intent_prefixes():
             "WHERE prompt!='' GROUP BY intent, provider, model HAVING COUNT(*) >= 3").fetchall()
     for intent, provider, model, n in combos:
         with callio._lock:
-            prompts = [r[0] for r in callio._db().execute(
+            prompts = [r[0] for r in callio._callio_db().execute(
                 "SELECT prompt FROM call_io WHERE COALESCE(intent,'(none)')=? AND COALESCE(provider,'')=? "
                 "AND model=? AND prompt!='' LIMIT 30", (intent, provider, model)).fetchall()]
         if len(prompts) < 3:
@@ -152,7 +152,7 @@ def _realized_hit_rate():
     return (max(0.0, min(1.0, cached / tot)) if tot else None), tot
 
 
-def audit(repo=None):
+def audit_cache_opportunities(repo=None):
     repo = repo or os.getcwd()
     print("cache-audit — where prompt caching would cut spend (read ≈0.1× base Anthropic / 0.5× OpenAI)\n")
 
@@ -201,5 +201,5 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="spendguard cache-audit")
     ap.add_argument("--repo", help="repo to scan for big system prompts (default: cwd)")
     a = ap.parse_args(argv)
-    audit(a.repo)
+    audit_cache_opportunities(a.repo)
     return 0

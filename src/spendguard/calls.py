@@ -8,7 +8,7 @@ prompt hash (+ optional snippet), output snippet, finish reason, and a DEFERRED 
 That powers cost-per-GOOD-result per intent (`spendguard calls`) and, later, an `optimize` loop.
 
 Shares the SQLite db with budget (config.db_path()), table `calls`. RLock — reentrant (record/query
-hold it and call _db() which re-acquires).
+hold it and call _calls_db() which re-acquires).
 """
 import os, sqlite3, datetime, threading, hashlib, inspect, contextlib
 from typing import Optional
@@ -135,7 +135,7 @@ def _max_rowid() -> int:
         return 0
     try:
         with _lock:
-            r = _db().execute("SELECT COALESCE(MAX(rowid),0) FROM calls").fetchone()
+            r = _calls_db().execute("SELECT COALESCE(MAX(rowid),0) FROM calls").fetchone()
         return int(r[0] or 0)
     except Exception:
         return 0
@@ -154,7 +154,7 @@ def flow_agg(since_rowid: int = 0, chain: Optional[str] = None):
             q += " AND chain = ?"
             a.append(chain)
         with _lock:
-            row = _db().execute(q, a).fetchone()
+            row = _calls_db().execute(q, a).fetchone()
         if not row or not row[0]:
             return None
         return {"n": int(row[0]), "in_tok": int(row[1] or 0), "out_tok": int(row[2] or 0),
@@ -175,7 +175,7 @@ def caller():
 
 
 # ── storage ──
-def _db():
+def _calls_db():
     global _conn
     if _conn is None:
         with _lock:
@@ -241,14 +241,14 @@ def record(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
         osnip = output[:sp] if (output and _store_prompts()) else None
         ts = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
         with _lock:
-            _db().execute(
+            _calls_db().execute(
                 "INSERT INTO calls (id,ts,chain,intent,caller,provider,model,kind,in_tok,out_tok,"
                 "cost,latency,prompt_hash,prompt_snip,output_snip,finish,executor,project) "
                 "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (cid, ts, chain, intent, who or caller(), provider, model, kind,
                  int(in_tok or 0), int(out_tok or 0), float(cost or 0), latency, ph, psnip, osnip, finish,
                  executor, proj))
-            _db().commit()
+            _calls_db().commit()
         # deferred implicit feedback: did THIS call reuse an earlier output in the same chain?
         if chain and prompt:
             _link_used(chain, prompt)
@@ -269,9 +269,9 @@ def feedback(call_id: Optional[str], ok: bool = True, source: str = "explicit",
     conf = confidence if confidence is not None else _CONF.get(source, 0.7)
     try:
         with _lock:
-            _db().execute("UPDATE calls SET quality=?, quality_src=?, quality_conf=? WHERE id=?",
+            _calls_db().execute("UPDATE calls SET quality=?, quality_src=?, quality_conf=? WHERE id=?",
                           ("good" if ok else "bad", source, conf, call_id))
-            _db().commit()
+            _calls_db().commit()
     except Exception:
         pass
 
@@ -282,12 +282,12 @@ def insert(provider, model, kind, cost, in_tok=0, out_tok=0, ts=None, intent=Non
     cid = _uuid()
     ts = ts or datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     with _lock:
-        _db().execute(
+        _calls_db().execute(
             "INSERT INTO calls (id,ts,chain,intent,caller,provider,model,kind,in_tok,out_tok,"
             "cost,quality,quality_src,quality_conf) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (cid, ts, chain, intent, who, provider, model, kind,
              int(in_tok or 0), int(out_tok or 0), float(cost or 0), quality, quality_src, quality_conf))
-        _db().commit()
+        _calls_db().commit()
     return cid
 
 
@@ -297,7 +297,7 @@ def _link_used(chain, current_prompt):
         return
     try:
         with _lock:
-            rows = _db().execute(
+            rows = _calls_db().execute(
                 "SELECT id, output_snip FROM calls WHERE chain=? AND quality IS NULL "
                 "AND output_snip IS NOT NULL ORDER BY ts DESC LIMIT 10", (chain,)).fetchall()
             for cid, out in rows:
@@ -306,8 +306,8 @@ def _link_used(chain, current_prompt):
                 # mislabelling unrelated outputs 'used'. Requiring the whole snippet to reappear, and skipping short
                 # boilerplate, keeps the signal specific. (Still a low-confidence 0.6 'used' label, never authoritative.)
                 if out and len(out) >= 40 and out in current_prompt:
-                    _db().execute("UPDATE calls SET quality='good', quality_src='used', quality_conf=0.6 WHERE id=?", (cid,))
-            _db().commit()
+                    _calls_db().execute("UPDATE calls SET quality='good', quality_src='used', quality_conf=0.6 WHERE id=?", (cid,))
+            _calls_db().commit()
     except Exception:
         pass
 
@@ -322,7 +322,7 @@ def cost_summary(intent=None):
     # via `args` as a `?` parameter. The f-string below interpolates this fixed WHERE clause, never user data.
     where, args = ("WHERE " + " AND ".join(cond), tuple(args))
     with _lock:
-        rows = _db().execute(
+        rows = _calls_db().execute(
             f"""SELECT COALESCE(intent,'(none)'), COALESCE(model,'?'), COUNT(*), COALESCE(SUM(cost),0),
                    SUM(CASE WHEN quality='good' THEN 1 ELSE 0 END),
                    SUM(CASE WHEN quality='bad'  THEN 1 ELSE 0 END)
@@ -354,7 +354,7 @@ def tested_recently(intent, model=None, days=14, kinds=("realtime",)):
         if model:
             q += " AND model=?"; args.append(model)
         with _lock:
-            return _db().execute(q, args).fetchone()[0] > 0
+            return _calls_db().execute(q, args).fetchone()[0] > 0
     except Exception:
         return False
 

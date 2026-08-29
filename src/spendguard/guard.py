@@ -18,8 +18,8 @@ CONFIDENCE = {"cache": 0.95, "block": 0.70, "cascade": 0.90, "advisor": 0.50, "p
 CERTAIN = ("cache", "block", "cascade", "realized")   # vs counterfactual: advisor, plan
 
 
-def _db():
-    db = budget._db()                      # reuse the gate's SQLite file/connection
+def _savings_db():
+    db = budget._ledger_db()                      # reuse the gate's SQLite file/connection
     with budget._lock:
         db.execute("CREATE TABLE IF NOT EXISTS savings "
                    "(ts TEXT, day TEXT, project TEXT, source TEXT, amount REAL, cv REAL)")
@@ -39,7 +39,7 @@ def record_saving(source, amount, confidence=None, project=None):
         cv = max(0.05, min(0.9, 1.0 - conf))
         proj = project if project is not None else budget._project()
         now = datetime.datetime.now(datetime.timezone.utc)
-        db = _db()
+        db = _savings_db()
         with budget._lock:
             db.execute("INSERT INTO savings (ts,day,project,source,amount,cv) VALUES (?,?,?,?,?,?)",
                        (now.isoformat(timespec="seconds"), now.strftime("%Y-%m-%d"), proj, source, amount, cv))
@@ -72,7 +72,7 @@ def _lognormal_cumulants(mu, cv):
 
 def by_dims_guarded(since=None):
     """Per (day, project, source): event count + SUMMED cumulants — the additive payload the server rolls up."""
-    db = _db()
+    db = _savings_db()
     cond, args = [], []
     if since:
         cond.append("day >= ?"); args.append(since)

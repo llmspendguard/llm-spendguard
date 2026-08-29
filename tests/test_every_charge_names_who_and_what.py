@@ -125,11 +125,11 @@ check("...and really did not write", _provider_of("kimi-k3") == "openai", _provi
 
 res = budget.reattribute_providers(apply=True)
 check("applying corrects the vendor", _provider_of("kimi-k3") == "moonshot", _provider_of("kimi-k3"))
-aud = budget._db().execute(
+aud = budget._ledger_db().execute(
     "SELECT field, old_value, new_value FROM spend_audit WHERE actor='reattribute_providers'").fetchall()
 check("...and the correction is journalled with its before and after",
       any(a == ("provider", "openai", "moonshot") for a in aud), str(aud[:3]))
-check("...and says WHY, not just what", bool(budget._db().execute(
+check("...and says WHY, not just what", bool(budget._ledger_db().execute(
     "SELECT reason FROM spend_audit WHERE actor='reattribute_providers' LIMIT 1").fetchone()[0]))
 
 # A REPAIR MUST NOT DESTROY INFORMATION. Overwriting a recorded vendor with "unknown" is a downgrade

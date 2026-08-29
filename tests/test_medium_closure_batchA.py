@@ -31,7 +31,7 @@ def ck(label, cond, extra=""):
 
 os.makedirs(os.path.dirname(ra.CACHE_PATH), exist_ok=True)
 ra.refresh_cache = lambda k, c: 0          # don't fetch; price only what's seeded
-ra._key = lambda: "x"
+ra._anthropic_key = lambda: "x"
 M = "claude-opus-4-8"
 
 # ── reconcile_anthropic: cache tokens are re-priced, not dropped ────────────────────────────────────────────────

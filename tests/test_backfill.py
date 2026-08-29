@@ -90,11 +90,11 @@ backfill._anthropic_rows = lambda: list(ANTH)      # NO network
 
 
 def _calls_count():
-    return calls._db().execute("SELECT COUNT(*) FROM calls WHERE caller='backfill:ledger'").fetchone()[0]
+    return calls._calls_db().execute("SELECT COUNT(*) FROM calls WHERE caller='backfill:ledger'").fetchone()[0]
 
 
 def _run_nodes():
-    return {r[0] for r in learn._db().execute("SELECT id FROM graph_nodes WHERE type='run'").fetchall()}
+    return {r[0] for r in learn._insights_db().execute("SELECT id FROM graph_nodes WHERE type='run'").fetchall()}
 
 
 print("-- backfill: canned rows land in calls + run graph --")
@@ -106,7 +106,7 @@ check("3 call rows written", _calls_count() == 3)
 check("3 run nodes (id == batch id)", _run_nodes() == {"oai-batch-1", "oai-batch-2", "anth-batch-1"})
 
 print("-- intent_map tags the matching rows --")
-tags = [r[0] for r in calls._db().execute(
+tags = [r[0] for r in calls._calls_db().execute(
     "SELECT intent FROM calls WHERE caller='backfill:ledger' AND intent IS NOT NULL").fetchall()]
 check("two intents tagged (edge-typing, loinc-mapping)", sorted(tags) == ["edge-typing", "loinc-mapping"])
 
@@ -132,7 +132,7 @@ backfill._openai_rows = lambda: [("openai", "gpt-5.5", 1.0, 100, 100, "2026-06-0
 backfill._anthropic_rows = lambda: []
 addedN, _ = backfill.backfill(providers=("openai",))
 check("untagged row added", addedN == 1)
-row_intent = calls._db().execute(
+row_intent = calls._calls_db().execute(
     "SELECT intent FROM calls WHERE caller='backfill:ledger' ORDER BY ts DESC LIMIT 1").fetchone()
 check("untagged row intent is NULL", row_intent[0] is None)
 
@@ -171,7 +171,7 @@ backfill._openai_rows = lambda: [("openai", "gpt-5.5", 2.0, 1000, 1000, "2026-06
 backfill._anthropic_rows = lambda: []
 rc = backfill.main(["--intent-map", mdir, "--providers", "openai"])
 check("main returns 0", rc == 0)
-bx1_intent = calls._db().execute("SELECT intent FROM calls WHERE caller='backfill:ledger' "
+bx1_intent = calls._calls_db().execute("SELECT intent FROM calls WHERE caller='backfill:ledger' "
                                  "ORDER BY ts DESC LIMIT 1").fetchone()
 check("main applied intent map (BX1 → edge_typing)", bx1_intent[0] == "edge_typing")
 

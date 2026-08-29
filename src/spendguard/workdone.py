@@ -58,7 +58,7 @@ def _batch_intents(since):
     try:
         from . import callio, conv
         bmap = conv.batch_project_map()       # AGENTIC: batch → its subconversation's classified project (no regex)
-        for day, intent, batch, n in callio._db().execute(
+        for day, intent, batch, n in callio._callio_db().execute(
             "SELECT substr(ts,1,10) d, COALESCE(NULLIF(intent,''),'(unlabeled)'), COALESCE(batch,''), COUNT(*) "
             "FROM call_io WHERE ts >= ? GROUP BY d, intent, batch", (since,)):
             proj = (bmap.get(batch, {}).get("project") or "")

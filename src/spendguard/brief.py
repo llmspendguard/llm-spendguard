@@ -20,7 +20,7 @@ def _slug(task):
 def _known_intents():
     from . import calls
     with calls._lock:
-        return [r[0] for r in calls._db().execute(
+        return [r[0] for r in calls._calls_db().execute(
             "SELECT DISTINCT intent FROM calls WHERE intent IS NOT NULL "
             "AND intent NOT LIKE 'spendguard:%'").fetchall()]
 
@@ -62,7 +62,7 @@ def _defaults(intent, task):
     ins = learn.insights(intent=intent)[:3]
     sample = ""
     with callio._lock:
-        r = callio._db().execute("SELECT output FROM call_io WHERE COALESCE(intent,'(none)')=? AND output!='' LIMIT 1",
+        r = callio._callio_db().execute("SELECT output FROM call_io WHERE COALESCE(intent,'(none)')=? AND output!='' LIMIT 1",
                                  (intent,)).fetchone()
         if r:
             sample = (r[0] or "")[:90]

@@ -34,7 +34,7 @@ VAST_BASE = "https://console.vast.ai/api/v0"
 DEFAULT_LABEL_MAP = []
 
 
-def _key():
+def _vast_key():
     k = os.environ.get("VAST_API_KEY", "")
     if not k:
         p = pathlib.Path.home() / ".config" / "vastai" / "vast_api_key"
@@ -45,8 +45,8 @@ def _key():
     return k
 
 
-def _get(path):
-    k = _key()
+def _vast_get(path):
+    k = _vast_key()
     if not k:
         raise RuntimeError("no vast.ai key (set VAST_API_KEY or ~/.config/vastai/vast_api_key)")
     req = urllib.request.Request(f"{VAST_BASE}/{path}", headers={"Authorization": f"Bearer {k}"})
@@ -71,7 +71,7 @@ def instances():
     # gpu_rows_by_day, sync, crosscheck) falls back to RECORDED HISTORY instead of erroring out. A transient outage
     # must not zero the GPU set — that's what produced false `server_only`/in_sync=False in the cross-check.
     try:
-        d = _get("instances/")
+        d = _vast_get("instances/")
     except Exception:
         return []
     # A dict WITHOUT an 'instances' key is an error payload (e.g. {"error": ...}) — return [] (fall back to
@@ -231,7 +231,7 @@ def account_gpu_total(since_ts=None):
     account-level GPU truth for the reconcile gap, mirroring the LLM provider-billing gap."""
     since_ts = since_ts if since_ts is not None else _month_start_ts()
     try:
-        inv = (_get("users/current/invoices/") or {}).get("invoices", [])
+        inv = (_vast_get("users/current/invoices/") or {}).get("invoices", [])
     except Exception:
         return None   # UNKNOWN (fetch failed) — NOT $0. $0 would masquerade as "no spend / fully reconciled".
     return round(sum(abs(float(i.get("amount") or 0)) for i in inv

@@ -54,7 +54,7 @@ def _system_and_users_from_intent(intent, n):
     from . import callio
     from .cacheaudit import _common_prefix
     with callio._lock:
-        prompts = [r[0] for r in callio._db().execute(
+        prompts = [r[0] for r in callio._callio_db().execute(
             "SELECT prompt FROM call_io WHERE COALESCE(intent,'(none)')=? AND prompt!='' LIMIT ?",
             (intent, max(n, 8))).fetchall()]
     if len(prompts) < 2:

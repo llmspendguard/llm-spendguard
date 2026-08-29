@@ -34,21 +34,21 @@ def ck(name, cond):
 from spendguard import calls, bulkgate, learn, budget, calibrate, guard, config  # noqa: E402
 from spendguard.ledger import SpendLedger  # noqa: E402
 
-calls._db()
-bulkgate._calls_db()
-learn._db()
-budget._db()
-guard._db()
+calls._calls_db()
+bulkgate._gate_calls_db()
+learn._insights_db()
+budget._ledger_db()
+guard._savings_db()
 calibrate._con().close()
 SpendLedger()          # creates spend_events + spend_audit (+ its 10-column index set)
 try:
     from spendguard import callio
-    callio._db()
+    callio._callio_db()
 except Exception:
     pass
 try:
     from spendguard import semcache as _sc
-    _sc._db()
+    _sc._semcache_db()
 except Exception:
     pass
 

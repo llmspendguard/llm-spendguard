@@ -34,7 +34,7 @@ def on_event(fn: "Callable[[dict], Any]") -> "Callable[[dict], Any]":
     return fn
 
 
-def _cfg():
+def _emit_config():
     global _cfg_cache, _cfg_mtime
     p = config.HOME / "config.json"
     try:
@@ -179,7 +179,7 @@ def emit(event):
                 fn(event)
             except Exception:
                 pass
-        cfg = _cfg()
+        cfg = _emit_config()
         if cfg.get("webhook") or cfg.get("otel"):
             _ensure_worker()
             try:

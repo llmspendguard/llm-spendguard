@@ -36,7 +36,7 @@ IO_SNIP = snip_chars()
 DEFAULT_CAP = 50         # samples per (intent, model)
 
 
-def _db():
+def _callio_db():
     global _conn
     if _conn is None:
         with _lock:
@@ -77,13 +77,13 @@ def _uid():
 
 def count_rows(intent, model):
     with _lock:
-        return _db().execute("SELECT COUNT(*) FROM call_io WHERE intent IS ? AND model=?",
+        return _callio_db().execute("SELECT COUNT(*) FROM call_io WHERE intent IS ? AND model=?",
                              (intent, model)).fetchone()[0]
 
 
 def counts():
     with _lock:
-        return _db().execute("SELECT COALESCE(intent,'(none)'), model, COUNT(*), "
+        return _callio_db().execute("SELECT COALESCE(intent,'(none)'), model, COUNT(*), "
                              "SUM(quality IS NOT NULL) FROM call_io GROUP BY intent, model "
                              "ORDER BY COUNT(*) DESC").fetchall()
 
@@ -95,7 +95,7 @@ def record(intent, provider, model, batch, custom_id, prompt, output, in_tok=0, 
     ts = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     try:
         with _lock:
-            cur = _db().execute(
+            cur = _callio_db().execute(
                 "INSERT OR IGNORE INTO call_io (id,ts,intent,provider,model,batch,custom_id,prompt,output,"
                 "in_tok,out_tok,source,system,req_schema,req_max_tokens) "
                 "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -116,7 +116,7 @@ def record(intent, provider, model, batch, custom_id, prompt, output, in_tok=0, 
             # output with the shorter one. That is the exact truncation this grow-only rule exists to
             # prevent, performed by the rule itself. CASE per column keeps them independent.
             _p, _o = (prompt or "")[:snip_chars()], (output or "")[:snip_chars()]
-            _db().execute(
+            _callio_db().execute(
                 "UPDATE call_io SET "
                 "prompt = CASE WHEN LENGTH(?) > LENGTH(COALESCE(prompt,'')) THEN ? ELSE prompt END, "
                 "output = CASE WHEN LENGTH(?) > LENGTH(COALESCE(output,'')) THEN ? ELSE output END "
@@ -125,7 +125,7 @@ def record(intent, provider, model, batch, custom_id, prompt, output, in_tok=0, 
             # The request shape backfills onto rows captured before it was stored — it is strictly new
             # information, so fill only where we currently hold nothing.
             if system or req_schema or req_max_tokens:
-                _db().execute(
+                _callio_db().execute(
                     "UPDATE call_io SET system=COALESCE(NULLIF(system,''),?), "
                     "req_schema=COALESCE(NULLIF(req_schema,''),?), "
                     "req_max_tokens=CASE WHEN COALESCE(req_max_tokens,0)=0 THEN ? ELSE req_max_tokens END "
@@ -133,7 +133,7 @@ def record(intent, provider, model, batch, custom_id, prompt, output, in_tok=0, 
                     ((system or "")[:snip_chars()],
                      (req_schema if isinstance(req_schema, str) else json.dumps(req_schema or ""))[:snip_chars()],
                      int(req_max_tokens or 0), batch, str(custom_id)))
-            _db().commit()
+            _callio_db().commit()
         # Honor the docstring ('Returns id or None if duplicate'): a duplicate still GROWS the row above (a
         # refill's fidelity is kept), but returning the fresh cid made callers count it as a NEW sample and
         # inflate `added` / mis-trigger the added>=sample_n early stop. Return None when nothing was inserted.
@@ -150,7 +150,7 @@ def unjudged(limit=None):
     if limit is not None:
         q += f" LIMIT {int(limit)}"
     with _lock:
-        return _db().execute(q).fetchall()
+        return _callio_db().execute(q).fetchall()
 
 
 def set_quality(io_id, ok, src="judge", conf=None):
@@ -168,9 +168,9 @@ def set_quality(io_id, ok, src="judge", conf=None):
     c = conf if conf is not None else _CONF.get(src, 0.7)
     try:
         with _lock:
-            _db().execute("UPDATE call_io SET quality=?, quality_src=?, quality_conf=? WHERE id=?",
+            _callio_db().execute("UPDATE call_io SET quality=?, quality_src=?, quality_conf=? WHERE id=?",
                           ("good" if ok else "bad", src, c, io_id))
-            _db().commit()
+            _callio_db().commit()
     except Exception:
         pass
 
@@ -178,7 +178,7 @@ def set_quality(io_id, ok, src="judge", conf=None):
 def good_rates():
     """Per (intent, model): (n_sampled, n_judged, weighted good rate). The empirical quality signal."""
     with _lock:
-        rows = _db().execute(
+        rows = _callio_db().execute(
             "SELECT COALESCE(intent,'(none)'), model, COUNT(*), "
             "SUM(quality IS NOT NULL), "
             "SUM(CASE WHEN quality='good' THEN COALESCE(quality_conf,0.9) ELSE 0 END), "
@@ -203,7 +203,7 @@ def link_conversations(tdir=None, turns=10):
     ctxs = conv.batch_contexts(tdir, turns=turns)
     n = 0
     with _lock:
-        db = _db()
+        db = _callio_db()
         for bid, d in ctxs.items():
             ctx = (d.get("before", "") + "\n--- [batch ran here: " + (d.get("at", "") or "")[:120] + "] ---\n" + d.get("after", "")).strip()
             r = db.execute("UPDATE call_io SET conv_id=?, context=? WHERE batch=?", (d.get("conv", ""), ctx[:8000], bid))
@@ -215,7 +215,7 @@ def link_conversations(tdir=None, turns=10):
 def linked_sample(limit=5):
     """A few recovered calls WITH their conversation context — proves the depth layer (prompt + output + why)."""
     with _lock:
-        return _db().execute(
+        return _callio_db().execute(
             "SELECT intent, model, conv_id, substr(prompt,1,80), substr(output,1,80), substr(context,1,90) "
             "FROM call_io WHERE conv_id<>'' ORDER BY ts DESC LIMIT ?", (limit,)).fetchall()
 
@@ -224,7 +224,7 @@ def linked_sample(limit=5):
 def _runs_with_intent():
     from . import learn
     with learn._lock:
-        rows = learn._db().execute(
+        rows = learn._insights_db().execute(
             "SELECT id, label, attrs FROM graph_nodes WHERE type='run' ORDER BY ts DESC").fetchall()
     out = []
     for rid, label, attrs in rows:

@@ -41,7 +41,7 @@ conv.segments = lambda *a, **k: []
 conv._seg_get_all = lambda: {}
 
 DAY = "2026-06-01"
-db = budget._db()
+db = budget._ledger_db()
 # charges is the RETIRED source table — budget no longer creates it; this migration test makes its own fixture.
 db.execute("CREATE TABLE IF NOT EXISTS charges (ts TEXT, day TEXT, provider TEXT, model TEXT, kind TEXT, "
            "cost REAL, project TEXT DEFAULT '', conv_id TEXT DEFAULT '', key_fp TEXT DEFAULT '', "

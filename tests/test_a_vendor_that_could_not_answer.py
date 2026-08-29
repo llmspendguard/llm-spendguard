@@ -109,7 +109,7 @@ for _ in range(12):
     bulkgate.note_latency(SIG, MODEL, 500.0, in_chars=37_000)
 
 check("the observation carries its payload size",
-      bool(bulkgate._calls_db().execute(
+      bool(bulkgate._gate_db().execute(
           "SELECT COUNT(*) FROM gate_latency WHERE in_chars > 0").fetchone()[0]))
 
 mixed = bulkgate.latency(sig=SIG, model=MODEL)

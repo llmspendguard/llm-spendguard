@@ -15,7 +15,7 @@ def build_signals(since=None):
     for _prov, model, cost, _it, _ot, day, bid in (backfill._openai_rows() + backfill._anthropic_rows()):
         if (day or "") >= since:
             bcost[bid] = bcost.get(bid, 0.0) + (cost or 0.0)   # unpriced (None) contributes nothing, never a TypeError
-    db = callio._db()
+    db = callio._callio_db()
     # THE SAME WINDOW ON BOTH SIDES. `since` gated the billing rows above but not this aggregate, so call
     # counts and quality ratios were computed over the ENTIRE corpus while the costs beside them covered one
     # month. Every derived $/call was that month's spend divided by all-time calls — too low, by however

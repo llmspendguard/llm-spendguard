@@ -17,11 +17,6 @@
       "verdict": "PROTOCOL",
       "why": "Each lane module (subscription_exec, codex_exec, antigravity_exec) exposes _bin() to resolve ITS OWN distinct host CLI ('claude', 'codex', 'agy') — subscription_exec keeps a shutil.which fast-path while codex/antigravity deliberately drop it to honor the pin, but all share the same contract: return the resolvable binary path or None. lanes.status() dispatches it polymorphically via mod._bin() over the module list, and probe() relies on that uniform check. Different resources behind one uniform, name-dispatched contract — not two copies of one job. [Re-adjudicated PROTOCOL (was COLLISION at n=2) when the antigravity lane added a 3rd member; the dispatch pattern that makes it a protocol was already implicit in the 'available' verdict.]"
     },
-    "_cfg": {
-      "n": 3,
-      "verdict": "COLLISION",
-      "why": "Three different jobs: bulkgate._cfg(name,default,cast) reads a single typed setting; config._cfg() returns the whole cached config dict with mtime invalidation; emit._cfg() returns the 'emit' subsecti"
-    },
     "_conf": {
       "n": 2,
       "verdict": "DUPLICATION",
@@ -31,11 +26,6 @@
       "n": 2,
       "verdict": "DUPLICATION",
       "why": "Both compute the same thing — dollar cost of token usage via pricing table, cache-aware, with the identical batch-cache-read rate logic. The comments in both explicitly call out that this is the same "
-    },
-    "_db": {
-      "n": 8,
-      "verdict": "COLLISION",
-      "why": "Each _db() is a per-module lazy singleton connecting to the SAME sqlite file but creating and migrating a DIFFERENT table (charges, gate_ledger, call_io, calls, insights, savings). They share the conn"
     },
     "_digest": {
       "n": 2,
@@ -47,20 +37,10 @@
       "verdict": "DUPLICATION",
       "why": "Both bodies are byte-for-byte identical, performing the same lazy-fire logic on the shared _sg state tuple. The two proxy classes duplicate the exact same job rather than expressing distinct behavior."
     },
-    "_get": {
-      "n": 3,
-      "verdict": "COLLISION",
-      "why": "Three different `_get` helpers hit three different APIs (Lambda, Anthropic, vast.ai) with different signatures — (path), (url, k), (path) — and different auth/key logic. They share a name but do diffe"
-    },
     "_iso_period": {
       "n": 2,
       "verdict": "DUPLICATION",
       "why": "Both are identical one-line wrappers delegating to attribution.iso_period; the docstring even admits chat and claudecode each carried this same wrapper. The real logic already lives in one place, but "
-    },
-    "_key": {
-      "n": 3,
-      "verdict": "COLLISION",
-      "why": "Three provider-specific credential resolvers each fetching a DIFFERENT key from different sources: ANTHROPIC_API_KEY/keys.env, VAST_API_KEY/vastai config, and ZAI coding/api key. Same bare name, entirely different jobs and error semantics (one raises, others return empty/fallback)."
     },
     "_load_state": {
       "n": 5,
@@ -151,11 +131,6 @@
       "n": 5,
       "verdict": "PROTOCOL",
       "why": "These implement a common Source contract (attribute_gap(gap, since)) with varying strategies: LLMSource returns reconciled attributions, others return empty because their gaps aren't reconstructable/r"
-    },
-    "audit": {
-      "n": 3,
-      "verdict": "COLLISION",
-      "why": "Three unrelated jobs: cacheaudit.audit reports prompt-caching cost opportunities, coverage.audit enumerates venvs with LLM SDKs for gating coverage, ledger.SpendLedger.audit appends a hash-chained aud"
     },
     "available": {
       "n": 4,

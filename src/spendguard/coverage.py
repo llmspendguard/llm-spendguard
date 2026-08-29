@@ -71,7 +71,7 @@ def _is_own(sp, venv):
     return False
 
 
-def audit(roots=None):
+def audit_gating_coverage(roots=None):
     """[{venv, llm:[providers], gated:bool, own:bool}] for every venv (under roots) that has an LLM SDK installed.
     `own` = it's spendguard's own venv, which self-gates via `import spendguard; spendguard.require()` in its scripts
     (gating it via sitecustomize would spam the receipt on every dev `python` — so that's intentional, not a gap)."""
@@ -96,12 +96,12 @@ def gaps(rows=None, roots=None):
 
     `rows` lets a caller that has already run audit() reuse it instead of re-scanning every venv on the
     machine; the definition of "a gap" stays here either way."""
-    return [r for r in (audit(roots) if rows is None else rows)
+    return [r for r in (audit_gating_coverage(roots) if rows is None else rows)
             if r["llm"] and not r["gated"] and not r["own"]]
 
 
 def cmd(argv=None):
-    rows = audit()
+    rows = audit_gating_coverage()
     print("spendguard coverage — LLM-calling venvs (gated = live realtime captured at the source, no reconstruction):")
     if not rows:
         print("  (no venvs with an LLM SDK found under the scanned roots; set SPENDGUARD_COVERAGE_ROOTS to widen)")

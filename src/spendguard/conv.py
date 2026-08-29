@@ -91,7 +91,7 @@ def _events_in(path, run_ids):
 # ─────────────────────────── index (cached, deterministic) ───────────────────────────
 def _run_ids():
     with learn._lock:
-        return {r[0] for r in learn._db().execute("SELECT id FROM graph_nodes WHERE type='run'").fetchall()}
+        return {r[0] for r in learn._insights_db().execute("SELECT id FROM graph_nodes WHERE type='run'").fetchall()}
 
 
 def build_index(tdir=None, rebuild=False):
@@ -242,7 +242,7 @@ _ASK_SYS = (
 
 
 def _ask_db():
-    db = learn._db()
+    db = learn._insights_db()
     db.execute("CREATE TABLE IF NOT EXISTS user_ask_class "
                "(hash TEXT PRIMARY KEY, is_ask INT, model TEXT, ts TEXT)")
     return db
@@ -383,7 +383,7 @@ def _seg_get_all():
     out = {}
     try:
         with learn._lock:
-            for r in learn._db().execute(
+            for r in learn._insights_db().execute(
                     "SELECT seg_id, project, org, team, confidence, source, model FROM seg_attribution"):
                 out[r[0]] = {"project": r[1] or "", "org": r[2] or "", "team": r[3] or "",
                              "confidence": int(r[4] or 0), "source": r[5] or "", "model": r[6] or ""}
@@ -398,7 +398,7 @@ def _seg_put_cls(seg_id, cls, source="llm", model="", seg=None):
     can re-derive / selectively re-run when the model or prompt changes. An llm write NEVER overwrites a human one."""
     from . import learn
     with learn._lock:
-        db = learn._db()
+        db = learn._insights_db()
         cur = db.execute("SELECT source FROM seg_attribution WHERE seg_id=?", (seg_id,)).fetchone()
         if cur and cur[0] == "human" and source != "human":
             return                                         # human is final
@@ -419,7 +419,7 @@ def seg_record(seg_id):
     deciding whether to re-run. Returns None if not recorded."""
     from . import learn
     with learn._lock:
-        r = learn._db().execute(
+        r = learn._insights_db().execute(
             "SELECT seg_id,sid,cwd,prompt,project,org,team,confidence,source,model,ts,determination "
             "FROM seg_attribution WHERE seg_id=?", (seg_id,)).fetchone()
     if not r:
@@ -511,7 +511,7 @@ def session_classification(sid):
     from . import learn
     rows = []
     with learn._lock:
-        for r in learn._db().execute(
+        for r in learn._insights_db().execute(
                 "SELECT project,org,team,confidence,ts FROM seg_attribution "
                 "WHERE sid=? AND source IN ('llm','human') AND (project<>'' OR org<>'')", (sid,)):
             rows.append(r)
@@ -692,7 +692,7 @@ def _chash(text):
 
 
 def _evidence_db():
-    db = learn._db()
+    db = learn._insights_db()
     db.execute("CREATE TABLE IF NOT EXISTS evidence_class "
                "(hash TEXT PRIMARY KEY, spend_evidence INT, kind TEXT, cost_lesson INT, model TEXT, ts TEXT)")
     return db
@@ -1026,9 +1026,9 @@ def index_cmd(tdir=None, apply=False, rebuild=False):
         return dict(events=len(events), discussed=len(mentioned))
     added = 0
     with learn._lock:
-        learn._db().execute("DELETE FROM graph_edges WHERE rel='comments_on'")
-        learn._db().execute("DELETE FROM graph_nodes WHERE type='conversation_event'")
-        learn._db().commit()
+        learn._insights_db().execute("DELETE FROM graph_edges WHERE rel='comments_on'")
+        learn._insights_db().execute("DELETE FROM graph_nodes WHERE type='conversation_event'")
+        learn._insights_db().commit()
     for ev in sorted(events, key=_score, reverse=True)[:200]:   # cap node blast radius
         nid = learn.add_node("conversation_event", ev["text"][:80],
                              attrs={"role": ev.get("role"), "costs": ev.get("costs"), "sigs": ev.get("sigs")},

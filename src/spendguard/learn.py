@@ -12,7 +12,7 @@ _conn = None
 _lock = threading.RLock()
 
 
-def _db():
+def _insights_db():
     global _conn
     if _conn is None:
         with _lock:
@@ -103,8 +103,8 @@ def add_insight(intent, lesson, evidence=None, source="manual", confidence=0.5, 
             status, 0.0, 0.0, _now(), 1] + [ctx.get(k) for k in _CTX]
     assert len(cols) == len(vals), f"insight column/value mismatch: {len(cols)} vs {len(vals)}"
     with _lock:
-        _db().execute(f"INSERT INTO insights ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})", vals)
-        _db().commit()
+        _insights_db().execute(f"INSERT INTO insights ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})", vals)
+        _insights_db().commit()
     return iid
 
 
@@ -122,7 +122,7 @@ def insights(intent=None, min_conf=0.0, include_refuted=False, scope=None):
     if scope:
         where.append("scope = ?"); args.append(scope)
     with _lock:
-        return _db().execute(
+        return _insights_db().execute(
             f"SELECT intent, lesson, source, confidence, evidence FROM insights "
             f"WHERE {' AND '.join(where)} ORDER BY {_STATUS_RANK} DESC, confidence DESC", args).fetchall()
 
@@ -135,7 +135,7 @@ def insights_full(intent=None, include_refuted=False):
         where.append("intent = ?"); args.append(intent)
     w = ("WHERE " + " AND ".join(where)) if where else ""
     with _lock:
-        cur = _db().execute(
+        cur = _insights_db().execute(
             f"SELECT id,intent,lesson,evidence,source,confidence,status,support,contradiction,"
             f"last_validated,version,scope,{','.join(_CTX)} FROM insights {w} "
             f"ORDER BY {_STATUS_RANK} DESC, confidence DESC", args)
@@ -152,36 +152,36 @@ def update_insight(iid, **fields):
     # arbitrary SQL into an UPDATE on this table. Callers here are internal today, which is exactly the
     # assumption that stops being true quietly. Read from the live schema so it cannot drift from the table.
     with _lock:
-        allowed = {r[1] for r in _db().execute("PRAGMA table_info(insights)")}
+        allowed = {r[1] for r in _insights_db().execute("PRAGMA table_info(insights)")}
     bad = [k for k in fields if k not in allowed or k == "id"]
     if bad:
         raise ValueError(f"update_insight: {bad} are not updatable columns of `insights` "
                          f"(known: {sorted(allowed - {'id'})})")
     keys = ", ".join(f"{k}=?" for k in fields)
     with _lock:
-        _db().execute(f"UPDATE insights SET {keys} WHERE id=?", list(fields.values()) + [iid])
-        _db().commit()
+        _insights_db().execute(f"UPDATE insights SET {keys} WHERE id=?", list(fields.values()) + [iid])
+        _insights_db().commit()
 
 
 # ── temporal learning graph ──
 def add_node(type, label, attrs=None, ts=None, id=None):
     nid = id or _uid()
     with _lock:
-        _db().execute("INSERT OR REPLACE INTO graph_nodes VALUES (?,?,?,?,?)",
+        _insights_db().execute("INSERT OR REPLACE INTO graph_nodes VALUES (?,?,?,?,?)",
                       (nid, ts or _now(), type, label, json.dumps(attrs or {})))
-        _db().commit()
+        _insights_db().commit()
     return nid
 
 
 def add_edge(src, dst, rel, ts=None, attrs=None):
     with _lock:
-        _db().execute("INSERT INTO graph_edges VALUES (?,?,?,?,?)",
+        _insights_db().execute("INSERT INTO graph_edges VALUES (?,?,?,?,?)",
                       (src, dst, rel, ts or _now(), json.dumps(attrs or {})))
-        _db().commit()
+        _insights_db().commit()
 
 
 def graph_stats():
     with _lock:
-        nodes = _db().execute("SELECT type, COUNT(*) FROM graph_nodes GROUP BY type ORDER BY 2 DESC").fetchall()
-        edges = _db().execute("SELECT rel, COUNT(*) FROM graph_edges GROUP BY rel ORDER BY 2 DESC").fetchall()
+        nodes = _insights_db().execute("SELECT type, COUNT(*) FROM graph_nodes GROUP BY type ORDER BY 2 DESC").fetchall()
+        edges = _insights_db().execute("SELECT rel, COUNT(*) FROM graph_edges GROUP BY rel ORDER BY 2 DESC").fetchall()
     return nodes, edges

@@ -47,7 +47,7 @@ con.close()
 semcache._conn = None                            # reset the singleton so _db() runs the (migrating) init path
 migrated, n = True, -1
 try:
-    n = semcache._db().execute("SELECT COUNT(*) FROM semcache WHERE model='m' AND prompt_hash='H'").fetchone()[0]
+    n = semcache._semcache_db().execute("SELECT COUNT(*) FROM semcache WHERE model='m' AND prompt_hash='H'").fetchone()[0]
 except Exception:
     migrated = False
 ck("legacy duplicate rows migrate (dedupe) instead of bricking the cache", migrated and n == 1, f"n={n}")
@@ -58,7 +58,7 @@ semcache.put("pp", "mm", "OUT1", store_embedding=True)
 semcache.put("pp", "mm", "OUT2", store_embedding=False)   # re-put with NO embedding
 ck("re-put replaces the output", semcache.get_cached("pp", "mm") == "OUT2")
 with semcache._lock:
-    cnt, emb = semcache._db().execute(
+    cnt, emb = semcache._semcache_db().execute(
         "SELECT COUNT(*), COUNT(emb) FROM semcache WHERE model='mm' AND prompt_hash=?",
         (semcache._hash("pp"),)).fetchone()
 ck("exactly one row for the key (atomic upsert, no dup)", cnt == 1, f"cnt={cnt}")

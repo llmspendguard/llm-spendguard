@@ -124,7 +124,7 @@ def scan_intent_map(repo, content_scan=True, max_bytes=1_000_000):
 def reconstruct_intents(repo, apply=False):
     """Match the mined intent map against our run nodes; report coverage; optionally write it on."""
     with learn._lock:
-        runs = learn._db().execute("SELECT id, attrs FROM graph_nodes WHERE type='run'").fetchall()
+        runs = learn._insights_db().execute("SELECT id, attrs FROM graph_nodes WHERE type='run'").fetchall()
     run_ids = {r[0] for r in runs}
     attrs_by_id = {r[0]: json.loads(r[1] or "{}") for r in runs}
 
@@ -148,21 +148,21 @@ def reconstruct_intents(repo, apply=False):
         for bid, intent in matched.items():
             a = attrs_by_id.get(bid, {})
             a["intent"] = intent
-            learn._db().execute("UPDATE graph_nodes SET attrs=? WHERE id=?", (json.dumps(a), bid))
-        learn._db().commit()
+            learn._insights_db().execute("UPDATE graph_nodes SET attrs=? WHERE id=?", (json.dumps(a), bid))
+        learn._insights_db().commit()
     updated = 0
     with calls._lock:
         for bid, intent in matched.items():
             cid = attrs_by_id.get(bid, {}).get("call")
             if not cid:
                 continue
-            cur = calls._db().execute("UPDATE calls SET intent=? WHERE id=? AND (intent IS NULL OR intent='')",
+            cur = calls._calls_db().execute("UPDATE calls SET intent=? WHERE id=? AND (intent IS NULL OR intent='')",
                                       (intent, cid))
             # count ONLY the call rows we ACTUALLY tagged — not matches with no linked call, nor rows already
             # tagged (UPDATE affected 0). The old `updated += 1` for every match overstated the 'applied' total.
             if cur.rowcount and cur.rowcount > 0:
                 updated += 1
-        calls._db().commit()
+        calls._calls_db().commit()
     print(f"  applied: {updated} call row(s) tagged with reconstructed intents (of {len(matched)} matched).")
     return dict(mapped=len(imap), matched=len(matched), intents=len(by_intent), applied=updated)
 
@@ -171,11 +171,11 @@ def reconstruct_intents(repo, apply=False):
 def enrich_graph():
     """Add `preceded` (per-intent chronological run chain) + `derived_from` (insight → cited runs)."""
     with learn._lock:
-        runs = learn._db().execute(
+        runs = learn._insights_db().execute(
             "SELECT id, ts, attrs FROM graph_nodes WHERE type='run' ORDER BY ts").fetchall()
         # idempotent: drop the edges we own and rebuild (intents may have changed since last run)
-        learn._db().execute("DELETE FROM graph_edges WHERE rel IN ('preceded','derived_from')")
-        learn._db().commit()
+        learn._insights_db().execute("DELETE FROM graph_edges WHERE rel IN ('preceded','derived_from')")
+        learn._insights_db().commit()
         existing = set()
 
     # group runs by reconstructed intent, link consecutive in time
@@ -196,7 +196,7 @@ def enrich_graph():
 
     # link each mined insight to the runs whose model/intent it cites
     with learn._lock:
-        ins = learn._db().execute("SELECT id, intent FROM insights WHERE source='mined'").fetchall()
+        ins = learn._insights_db().execute("SELECT id, intent FROM insights WHERE source='mined'").fetchall()
     derived = 0
     for iid, it in ins:
         if not it:

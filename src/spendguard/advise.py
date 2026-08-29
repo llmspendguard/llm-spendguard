@@ -21,7 +21,7 @@ def _rows(as_of=None, intent=None):
     if cond:
         q += " WHERE " + " AND ".join(cond)
     with calls._lock:
-        return calls._db().execute(q, args).fetchall()
+        return calls._calls_db().execute(q, args).fetchall()
 
 
 # Weight given to a quality label from a row that never recorded a confidence at all (legacy rows, written
