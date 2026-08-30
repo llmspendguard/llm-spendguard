@@ -101,7 +101,8 @@ def _attribute(ev, project):
 
 
 def _record_spend_event(provider, model, kind, cost, *, conv_id="", basis="", intent="", actor="", key_fp="",
-                        project="", occurred_at=None, in_tok=0, out_tok=0, source="gate", dedup_suffix=""):
+                        project="", occurred_at=None, in_tok=0, out_tok=0, source="gate", dedup_suffix="",
+                        invoice_id=""):
     """THE write for a live charge → `spend_events`, the single money-of-record, through the ONE shared mapping
     (charge_to_event). Every budget writer records through here; there is no second ledger, and — since the
     cutover — no `charges` fallback behind it, so a dropped write is a dropped charge. The ledger connection
@@ -119,6 +120,8 @@ def _record_spend_event(provider, model, kind, cost, *, conv_id="", basis="", in
         ev["in_tok"], ev["out_tok"] = int(in_tok or 0), int(out_tok or 0)
         ev["dedup_key"] = live_dedup_key(oa + dedup_suffix)
         ev["source"] = ev["recorded_by"] = source
+        if invoice_id:                                # FOCUS InvoiceId anchor — set only when reconciled to a bill
+            ev["invoice_id"] = invoice_id
         with _lock:
             _ledger().record_event(ev)
     except Exception as e:
@@ -518,7 +521,12 @@ BASES = (BASIS_ESTIMATE, BASIS_BILLED, BASIS_ASSUMED, BASIS_RECONSTRUCTED, BASIS
 # charge `kind` → (spend_events money-kind, is_meta). meta is a FLAG on a realtime row, not its own money
 # column. THE one mapping — used by the live gate write AND the bulk migration, so the two cannot drift.
 _KIND_TO_EVENT = {"realtime": ("realtime", 0), "batch": ("batch", 0), "meta": ("realtime", 1),
-                  "remote": ("remote", 0), "est_chat": ("est_chat", 0)}
+                  "remote": ("remote", 0), "est_chat": ("est_chat", 0),
+                  # subscription (the flat plan fee) + est_chat (plan-covered usage value) each have their OWN money
+                  # column and are valid kinds in record_event / _KIND_TO_USD; without these two entries a
+                  # subscription charge fell through to ('realtime', 0) and a flat plan fee was silently
+                  # misclassified as metered API spend. Lane rows are $0 so existing rows are unaffected.
+                  "subscription": ("subscription", 0), "sub": ("subscription", 0)}
 
 
 def charge_to_event(provider, model, kind, cost, conv_id="", basis="", intent="", actor="", key_fp=""):
@@ -739,8 +747,12 @@ def record_reconciled(day, provider, cost, project="unattributed", kind="batch",
     marker = model or _RECONCILED
     # basis=BILLED: a reconciliation row IS the provider's own number, not a projection of ours. The marker
     # model → reconciled=1 + recon_marker, so it is excluded from the gate/cap totals.
+    # invoice_id = a PERIOD-level provider-invoice reference (provider:YYYY-MM). The batch API exposes no raw invoice
+    # number; this groups reconciled rows to the provider's monthly invoice (FOCUS InvoiceId), and is stamped ONLY on
+    # rows we reconciled to the bill — an unreconciled estimate row keeps invoice_id NULL, so it never claims a bill.
     _record_spend_event(provider, marker, kind, float(cost), basis=BASIS_BILLED, project=project or "unattributed",
-                        occurred_at=day + "T00:00:00+00:00", source="reconcile", dedup_suffix=":recon")
+                        occurred_at=day + "T00:00:00+00:00", source="reconcile", dedup_suffix=":recon",
+                        invoice_id="%s:%s" % (provider, (day or "")[:7]))
 
 
 def clear_reconciled(since=None, model=None):
@@ -783,7 +795,8 @@ def record_true_down(day, provider, model, delta, project):
     # spend_events here is complete, not partial.
     _record_spend_event(provider, model, "batch", -abs(float(delta)), conv_id=_TRUE_DOWN_CONV,
                         project=project or "unattributed", occurred_at=day + "T00:00:00+00:00",
-                        source="true-down", dedup_suffix=":td")
+                        source="true-down", dedup_suffix=":td",
+                        invoice_id="%s:%s" % (provider, (day or "")[:7]))   # reconciled to this provider-period invoice
 
 
 def clear_true_down(since=None):
