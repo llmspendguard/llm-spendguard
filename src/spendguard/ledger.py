@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS spend_events (
   est_chat_usd          TEXT,
   remote_compute_usd    TEXT,
   subscription_usd      TEXT,
+  external_usd          TEXT,                  -- non-token external cost: MCP/tool calls + external paid APIs (real $)
   cost_type     TEXT,
   billed        INTEGER DEFAULT 1,
   is_meta       INTEGER DEFAULT 0,
@@ -184,25 +185,28 @@ CREATE TABLE IF NOT EXISTS ledger_locks (
 )
 """
 
-USD_COLS = ("batch_usd", "realtime_usd", "est_chat_usd", "remote_compute_usd", "subscription_usd")
-BILLED_USD_COLS = ("batch_usd", "realtime_usd", "remote_compute_usd", "subscription_usd")
-# THE FIVE CATEGORIES STAY APART — a hard rule (never sum est-value into real $). Each cap and report reads
+USD_COLS = ("batch_usd", "realtime_usd", "est_chat_usd", "remote_compute_usd", "subscription_usd", "external_usd")
+BILLED_USD_COLS = ("batch_usd", "realtime_usd", "remote_compute_usd", "subscription_usd", "external_usd")
+# THE SIX CATEGORIES STAY APART — a hard rule (never sum est-value into real $). Each cap and report reads
 # the columns for ITS category, never the whole row:
-#   LLM     batch + realtime      — real, calculated LLM spend; the LLM cap governs THIS
-#   remote  remote_compute        — real GPU/box compute; its OWN cap (resources.compute_exceeded)
-#   sub     subscription          — the flat plan fee (real, but not per-call)
-#   est     est_chat              — est-VALUE of subscription-covered usage; NOT billed, NEVER in a real total
+#   LLM      batch + realtime      — real, calculated LLM spend; the LLM cap governs THIS
+#   remote   remote_compute        — real GPU/box compute; its OWN cap (resources.compute_exceeded)
+#   sub      subscription          — the flat plan fee (real, but not per-call)
+#   external external              — non-token external cost: MCP/tool calls + external paid APIs (real $ out the door)
+#   est      est_chat              — est-VALUE of subscription-covered usage; NOT billed, NEVER in a real total
 LLM_USD_COLS = ("batch_usd", "realtime_usd")
 # Forward-only additive columns: one added after the v5 schema shipped is ALTER-ADDed to an existing table
 # (CREATE TABLE IF NOT EXISTS never adds a column to a table that already exists). Append new columns here.
 # intent/actor are the FORENSIC pair carried from charges: WHAT the money bought · WHAT RAN IT.
-_ADDITIVE_COLUMNS = (("intent", "TEXT"), ("actor", "TEXT"))
+_ADDITIVE_COLUMNS = (("intent", "TEXT"), ("actor", "TEXT"), ("external_usd", "TEXT"))
 _KIND_TO_USD = {"batch": "batch_usd", "realtime": "realtime_usd",
                 "est_chat": "est_chat_usd", "est-chat": "est_chat_usd", "estchat": "est_chat_usd",
                 "remote": "remote_compute_usd", "remote_compute": "remote_compute_usd", "gpu": "remote_compute_usd",
-                "subscription": "subscription_usd", "sub": "subscription_usd"}
+                "subscription": "subscription_usd", "sub": "subscription_usd",
+                "external": "external_usd", "tool": "external_usd", "mcp": "external_usd"}
 _USD_TO_KIND = {"batch_usd": "batch", "realtime_usd": "realtime", "est_chat_usd": "est_chat",
-                "remote_compute_usd": "remote_compute", "subscription_usd": "subscription"}
+                "remote_compute_usd": "remote_compute", "subscription_usd": "subscription",
+                "external_usd": "external"}
 _JSON_COLS = ("projects", "from_message_ids", "prior_message_ids", "post_message_ids", "tags")
 _EVIDENCE = ("source", "conv_id", "batch_id", "script", "model", "prompt_hash", "in_tok", "out_tok", "attr_what")
 _AUDIT_FIELDS = ("event_id", "ts", "actor", "pass", "field", "old_value", "new_value", "reason")
@@ -385,7 +389,7 @@ class SpendLedger:
         if kind and usd is not None:
             col = _KIND_TO_USD.get(kind)
             if not col:
-                raise ValueError(f"unknown spend kind {kind!r}; expected batch | realtime | est_chat | remote | subscription")
+                raise ValueError(f"unknown spend kind {kind!r}; expected batch | realtime | est_chat | remote | subscription | external")
             ev[col] = dec(usd)
         # A caller may set a category column directly (e.g. batch_usd=…). Normalise any to the canonical
         # decimal string so storage is uniform and sums are exact.

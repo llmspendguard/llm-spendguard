@@ -526,7 +526,10 @@ _KIND_TO_EVENT = {"realtime": ("realtime", 0), "batch": ("batch", 0), "meta": ("
                   # column and are valid kinds in record_event / _KIND_TO_USD; without these two entries a
                   # subscription charge fell through to ('realtime', 0) and a flat plan fee was silently
                   # misclassified as metered API spend. Lane rows are $0 so existing rows are unaffected.
-                  "subscription": ("subscription", 0), "sub": ("subscription", 0)}
+                  "subscription": ("subscription", 0), "sub": ("subscription", 0),
+                  # external: non-token cost from an MCP/tool call or an external paid API — a REAL $ axis of its own
+                  # (BILLED_USD_COLS), kept apart from LLM token spend, GPU/remote, and the subscription fee.
+                  "external": ("external", 0), "tool": ("external", 0), "mcp": ("external", 0)}
 
 
 def charge_to_event(provider, model, kind, cost, conv_id="", basis="", intent="", actor="", key_fp=""):
@@ -823,6 +826,18 @@ def clear_true_down(since=None):
 def record_meta(provider, model, cost):
     # spendguard's OWN spend → the llm-spendguard project, kept distinct by kind='meta' (NOT a separate project tag).
     record_charge(provider, model, "meta", cost, project="llm-spendguard")
+
+
+def record_external_cost(provider, service, cost, conv_id=None, intent=None, actor=None, project=None):
+    """Record ONE non-token EXTERNAL cost — an MCP/tool call or a paid external (non-LLM) API — as a first-class
+    ledger row on the `external` axis: its own real-$ column (BILLED_USD_COLS), kept apart from LLM token spend, GPU/
+    remote, and the flat subscription fee. `service` is the tool/endpoint identity (recorded in the model slot so the
+    receipt and FOCUS export name WHAT was paid for); conv_id/intent/actor attribute it to the trace exactly like an
+    LLM charge. This is the RAIL an instrumented tool/MCP wrapper calls after a paid call — real $ out the door, so it
+    joins the receipt's REAL-$ total. Auto-interception and a dedicated external spend cap are a follow-on."""
+    _record_spend_event(provider or "external", service or "?", "external", float(cost),
+                        conv_id=conv_id or "", intent=intent or "", actor=actor or "",
+                        project=project or "", source="external")
 
 
 def meta_spent_since(day):

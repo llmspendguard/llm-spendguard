@@ -42,8 +42,8 @@ _SERVICE_CATEGORY = "AI and Machine Learning"
 # categories an export cares about (batch/realtime are billed usage; est_chat is subscription-covered; subscription
 # is the covering charge; remote_compute is GPU/box). Sourced from the ledger's own map so it can't drift.
 _KIND_COL = {"batch": "batch_usd", "realtime": "realtime_usd", "est_chat": "est_chat_usd",
-             "remote_compute": "remote_compute_usd", "subscription": "subscription_usd"}
-_BILLED_KINDS = frozenset(("batch", "realtime", "remote_compute", "subscription"))
+             "remote_compute": "remote_compute_usd", "subscription": "subscription_usd", "external": "external_usd"}
+_BILLED_KINDS = frozenset(("batch", "realtime", "remote_compute", "subscription", "external"))
 _TAG_KEYS = ("repo", "project_primary", "intent", "actor", "attr_what", "model", "batch_id", "conv_id", "team")
 
 
@@ -85,8 +85,10 @@ def focus_row(ev):
         "ChargePeriodStart": ev.get("occurred_at"), "ChargePeriodEnd": ev.get("occurred_at"),
         "BillingPeriodStart": ev.get("period"),
         "ProviderName": provider, "PublisherName": provider, "InvoiceIssuerName": provider,
-        "ServiceName": "%s %s" % (provider, ev.get("model_kind") or "API"),
-        "ServiceCategory": _SERVICE_CATEGORY,
+        # external (MCP/tool/API) is NOT an AI/ML service — name it by the tool/endpoint (the model slot holds the
+        # service) and file it under FOCUS's "Other" category, so a FinOps reader sees non-token spend for what it is.
+        "ServiceName": (ev.get("model") or "?") if kind == "external" else "%s %s" % (provider, ev.get("model_kind") or "API"),
+        "ServiceCategory": "Other" if kind == "external" else _SERVICE_CATEGORY,
         "SkuId": "%s:%s" % (ev.get("model") or "?", kind or "?"),
         "ChargeCategory": charge_cat,
         "ChargeClass": "Correction" if is_correction else None,

@@ -471,13 +471,30 @@ def _remote_tally():
     return None
 
 
+def _external_tally():
+    """Billed EXTERNAL cost (MCP/tool + external paid APIs) windows {today, week, month} from the ledger's `external`
+    axis — a GLOBAL real-$ component like subscription and remote (both already global in real_month). Unlike remote
+    (stamped async by resources.sync into the cache), external cost is recorded straight to the ledger, so this reads
+    it live. None on any error (never break the receipt over a bookkeeping read)."""
+    try:
+        from . import budget
+        today, week, month = _windows()
+        w = {}
+        for k, since in (("today", today), ("week", week), ("month", month)):
+            w[k] = round(sum(budget.by_day(kind="external", since=since).values()), 6)
+        return w if any(w.values()) else None          # None when there's no external spend → receipt stays clean
+    except Exception:
+        return None
+
+
 # ── the running tally — REAL $ (API + Subscription + Remote) and est-value, NEVER summed ─────────
 def tally(project=None, conv=None) -> dict:
     """The two axes, returned SEPARATELY and never added together:
       • REAL $ (money out the door) = `api` (per-token API billing, from the gate ledger) + `subscription` (the flat
-        plan fee — Anthropic Max, OpenAI Pro, …) + `remote` (billed GPU/vast.ai, cached by resources.sync).
+        plan fee — Anthropic Max, OpenAI Pro, …) + `remote` (billed GPU/vast.ai, cached by resources.sync)
+        + `external` (billed MCP/tool + external-API cost, from the ledger's external axis; None when there's none).
       • `est_value` = the value of subscription-covered usage (Claude Code/claude.ai/Codex), NOT billed.
-    `real_month` = api.month + subscription + remote.month. `actual` is kept as an alias of `api` for back-compat."""
+    `real_month` = api.month + subscription + remote.month + external.month. `actual` is an alias of `api`."""
     today, week, month = _windows()
     api = {"today": None, "week": None, "month": None}
     try:
@@ -492,12 +509,15 @@ def tally(project=None, conv=None) -> dict:
     except Exception:
         pass
     remote = _remote_tally()                       # billed GPU/remote compute (None until resources.sync stamps it)
+    external = _external_tally()                    # billed MCP/tool + external-API cost (None when there's none)
     sub, sub_assumed = _plan_usd()                 # flat monthly subscription fee — a REAL cost (out the door)
     # est-value scoped to the SAME repo as the API-$ when this is a per-repo tally — else a repo line shows its own
     # billed spend beside the GLOBAL plan value (and _sum_repos over-counts it once per repo). Global tally = global.
-    out = {"api": api, "actual": api, "remote": remote, "subscription": sub, "subscription_assumed": sub_assumed,
+    out = {"api": api, "actual": api, "remote": remote, "external": external, "subscription": sub,
+           "subscription_assumed": sub_assumed,
            "est_value": (_est_tally(repo=project) if project else _est_tally())}
-    out["real_month"] = (api.get("month") or 0) + (sub or 0) + ((remote or {}).get("month") or 0)
+    out["real_month"] = ((api.get("month") or 0) + (sub or 0) + ((remote or {}).get("month") or 0)
+                         + ((external or {}).get("month") or 0))
     ev = out["est_value"]
     if ev and (ev.get("month") or 0) > 0 and sub:
         out["plan_usd"] = sub
@@ -605,18 +625,21 @@ def _queue_seg() -> str:
 
 def _tally_lines(t: dict) -> list:
     """The running-tally line(s). HARD RULE: REAL $ (money out the door) is shown as NAMED components — API
-    (per-token) + Subscription (flat plan fee) + Remote (GPU/compute) — then est-value (plan usage, NOT billed) on
-    a SEPARATE line after '::'. The two axes are never combined into one number (that mixed total is the confusion
-    this exists to prevent)."""
+    (per-token) + Subscription (flat plan fee) + Remote (GPU/compute) + External (MCP/tool + external APIs, only when
+    present) — then est-value (plan usage, NOT billed) on a SEPARATE line after '::'. The two axes are never combined
+    into one number (that mixed total is the confusion this exists to prevent)."""
     api = t.get("api") or t.get("actual") or {}
     rem = t.get("remote") or {}
+    ext = t.get("external") or {}
     sub = t.get("subscription") or 0
-    am, rm = api.get("month"), rem.get("month")
-    real = (am or 0) + (sub or 0) + (rm or 0)
+    am, rm, xm = api.get("month"), rem.get("month"), ext.get("month")
+    real = (am or 0) + (sub or 0) + (rm or 0) + (xm or 0)
     parts = [f"API {_money(am)}"]
     if sub:
         parts.append(f"subs {_money(sub)}{'*' if t.get('subscription_assumed') else ''}")
     parts.append(f"remote {_money(rm)}" if rm is not None else "remote —")
+    if xm:                                             # external (MCP/tool/API) — shown only when there IS such spend
+        parts.append(f"external {_money(xm)}")
     extra = "" if (am is None) else f"  (billed; API today {_money(api.get('today'))} · 7d {_money(api.get('week'))})"
     lines = [f"real $ this month: {_money(real)}  =  " + "  +  ".join(parts) + extra]
     ev = t.get("est_value")
@@ -663,18 +686,21 @@ def _k(x: Optional[float]) -> str:
 
 
 def render_line(t: Optional[dict] = None) -> str:
-    """One compact status-bar line — REAL $ (API + subs + remote) then est-value, SEPARATE, never summed."""
+    """One compact status-bar line — REAL $ (API + subs + remote + external) then est-value, SEPARATE, never summed."""
     t = t or tally()
     api = t.get("api") or t.get("actual") or {}
     rem = t.get("remote") or {}
+    ext = t.get("external") or {}
     sub = t.get("subscription") or 0
-    real = (api.get("month") or 0) + (sub or 0) + ((rem.get("month")) or 0)
+    real = (api.get("month") or 0) + (sub or 0) + ((rem.get("month")) or 0) + ((ext.get("month")) or 0)
     scope = f"[{t['scope']}] " if t.get("scope") else ""
     bits = [f"API {_k(api.get('month'))}"]
     if sub:
         bits.append(f"subs {_k(sub)}")
     if rem.get("month") is not None:
         bits.append(f"remote {_k(rem.get('month'))}")
+    if ext.get("month"):                            # external (MCP/tool/API) — only when there IS such spend
+        bits.append(f"external {_k(ext.get('month'))}")
     s = f"◈ {scope}real {_k(real)}/mo = " + " + ".join(bits)
     ev = t.get("est_value")
     if ev:
@@ -818,6 +844,7 @@ def _two_axis_table(t: dict) -> list:
     est-value row is $0 in the Actual column, so the two can never be silently mixed."""
     api = (t.get("api") or {}).get("month")
     rem = (t.get("remote") or {}).get("month")
+    ext = (t.get("external") or {}).get("month")   # non-token external (MCP/tool/API) — a 4th REAL-$ component
     sub = t.get("subscription") or 0
     ev = t.get("est_value") or {}
     evm = ev.get("month")
@@ -830,14 +857,16 @@ def _two_axis_table(t: dict) -> list:
     assumed = bool(t.get("subscription_assumed")) and (sub or 0) > 0
     star = "*" if assumed else ""
     rows = [("API (batch + realtime)", api, None),
-            ("Remote compute (vast.ai)", rem, None),
-            (_plan_label() + star, (sub or None), None),
-            ("Plan usage (Claude Code·Codex·ai)", None, evm)]
+            ("Remote compute (vast.ai)", rem, None)]
+    if ext:                                        # only when there IS external spend — keeps the common table clean
+        rows.append(("External (MCP · tool · APIs)", ext, None))
+    rows += [(_plan_label() + star, (sub or None), None),
+             ("Plan usage (Claude Code·Codex·ai)", None, evm)]
     out = [f"{'':<{LW}}{'Actual $':>12}{'Est value $':>14}    ← two axes, never added"]
     for label, a, e in rows:
         out.append(f"{label:<{LW}}{cell(a):>12}{cell(e):>14}")
     out.append("─" * (LW + 26))
-    total = f"{_money((api or 0) + (rem or 0) + (sub or 0))}{star}"
+    total = f"{_money((api or 0) + (rem or 0) + (sub or 0) + (ext or 0))}{star}"
     out.append(f"{'TOTAL':<{LW}}{total:>12}{cell(evm):>14}")
     # The as-of / STALE caption belongs to the EST-VALUE column only. Actual $ is read live from the ledger on
     # every render; hanging a staleness marker off TOTAL would smear the est-value cache's age onto numbers that
