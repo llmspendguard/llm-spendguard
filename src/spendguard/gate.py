@@ -485,6 +485,29 @@ def _meta_gate(cost, model, provider):
     return True
 
 
+def gate_external(est_cost, service=None):
+    """FAIL-CLOSED gate for a non-token EXTERNAL call — an MCP tool or a paid non-LLM API — BEFORE it is made. Raises
+    SpendGateRefused when today's external spend + est_cost would breach the external cap (caps.external.daily /
+    GATE_EXTERNAL_DAILY): a DELIBERATE refusal that propagates like any spend-gate block, so an instrumented tool/MCP
+    wrapper that calls this is STOPPED from spending, not merely metered — spendguard's edge over observe-only tools.
+    No cap set → no-op (external gating is opt-in). GATE_ALLOW=1 or a disabled gate forces through. An internal error
+    fails OPEN (never break a legitimate call over a bookkeeping hiccup); only the deliberate over-cap decision raises.
+    Pair with budget.record_external_cost(actual_cost, …) AFTER the call to record what it actually cost."""
+    if _disabled() or _allow():
+        return
+    try:
+        from . import budget
+        ex = budget.external_exceeded(float(est_cost or 0))
+    except Exception as e:
+        sys.stderr.write(f"[spend_gate] WARN external gate check failed ({e}); allowing (fail-open)\n")
+        return
+    if ex:
+        _emit({"kind": "external", "service": service, "cost": float(est_cost or 0), "decision": "refused_external"})
+        raise SpendGateRefused(f"external budget ${ex[1]:.2f}/day would be exceeded (projected ${ex[2]:.2f}"
+                               f"{' for ' + str(service) if service else ''}). Raise caps.external.daily, set "
+                               f"GATE_ALLOW=1, or skip the call.")
+
+
 def _on(name):
     return (os.getenv(name) or "").lower() in ("1", "true", "yes", "on")
 

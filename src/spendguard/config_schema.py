@@ -37,6 +37,9 @@ SETTINGS = [
          kind="float|null", secret=False, desc="DAILY LLM (OpenAI+Anthropic) sub-cap ($) — HARD, gate-enforced. null = off."),
     dict(section="caps", key="llm.monthly", store="config.json:caps.llm.monthly", env="GATE_LLM_MONTHLY", default=None,
          kind="float|null", secret=False, desc="MONTHLY LLM sub-cap ($) — HARD, gate-enforced. null = off."),
+    dict(section="caps", key="external.daily", store="config.json:caps.external.daily", env="GATE_EXTERNAL_DAILY", default=None,
+         kind="float|null", secret=False, desc="DAILY non-token EXTERNAL (MCP/tool + external-API) sub-cap ($) — HARD "
+         "for a wrapper that calls spendguard.gate_external() before the paid call. null = off (opt-in)."),
     dict(section="caps", key="compute.daily", store="config.json:caps.compute.daily", env="GATE_COMPUTE_DAILY", default=None,
          kind="float|null", secret=False, desc="DAILY remote-compute (vast.ai GPU) sub-cap ($) — alert/soft. null = off."),
     dict(section="caps", key="compute.monthly", store="config.json:caps.compute.monthly", env="GATE_COMPUTE_MONTHLY", default=None,

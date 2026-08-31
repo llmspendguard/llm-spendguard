@@ -71,5 +71,32 @@ ck("BilledCost set (real $), ChargeCategory Usage", fx["BilledCost"] and fx["Cha
 allrows = focus_export.export_rows(since=SINCE)
 ck("export projects every row incl. the external ones", len(allrows) == len(budget._ledger().query(since=SINCE)))
 
+print("-- (5) FAIL-CLOSED enforcement: gate_external REFUSES an over-cap external call (spendguard's edge) --")
+from spendguard import gate
+from spendguard.gate import SpendGateRefused
+for _k in ("GATE_ALLOW", "GATE_DISABLE", "GATE_EXTERNAL_DAILY"):
+    os.environ.pop(_k, None)
+def blocked(fn):
+    try:
+        fn(); return False
+    except SpendGateRefused:
+        return True
+# today already carries $0.32 of external spend (recorded above)
+ck("no external cap set → gate_external is a NO-OP (enforcement is opt-in)",
+   not blocked(lambda: gate.gate_external(999.0, service="expensive.tool")))
+os.environ["GATE_EXTERNAL_DAILY"] = "1.00"
+ck("under the cap ($0.32 + $0.50 < $1.00) → gate_external allows",
+   not blocked(lambda: gate.gate_external(0.50, service="cheap.tool")))
+ck("would breach the cap ($0.32 + $1.00 > $1.00) → RAISES SpendGateRefused (fail-closed, not observe-only)",
+   blocked(lambda: gate.gate_external(1.00, service="pricey.tool")))
+ex = budget.external_exceeded(1.00)
+ck("external_exceeded reports (kind, cap, projected)",
+   ex and ex[0] == "external" and ex[1] == 1.00 and abs(ex[2] - 1.32) < 1e-9)
+ck("the refusal is DELIBERATE — it propagates through gate._guard, never swallowed as a malfunction",
+   blocked(lambda: gate._guard(lambda kw, a: gate.gate_external(1.00), {}, ())))
+os.environ["GATE_ALLOW"] = "1"
+ck("GATE_ALLOW=1 forces an over-cap external call through", not blocked(lambda: gate.gate_external(1.00)))
+os.environ.pop("GATE_ALLOW", None); os.environ.pop("GATE_EXTERNAL_DAILY", None)
+
 print(("\n[OK] " if not fails else "\n[FAIL] ") + f"external_cost: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

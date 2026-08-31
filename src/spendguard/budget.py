@@ -840,6 +840,26 @@ def record_external_cost(provider, service, cost, conv_id=None, intent=None, act
                         project=project or "", source="external")
 
 
+def external_spent_since(day):
+    """Real EXTERNAL (MCP/tool + external API) $ recorded since `day`, from the ledger's external axis — its OWN
+    number, never mixed into the LLM cap (spent_since reads only batch+realtime)."""
+    return round(sum(by_day(kind="external", since=day).values()), 6)
+
+
+def external_spent_today():
+    return external_spent_since(_utc().strftime("%Y-%m-%d"))
+
+
+def external_exceeded(pending=0.0):
+    """(‑, cap, projected) if today's external spend + `pending` would breach the external cap, else None. ONE read
+    of the spent total so the value compared and the value reported can't diverge (same discipline as meta_exceeded)."""
+    cap = config.external_cap()
+    if cap is None:
+        return None                                     # no external cap set → gating is a no-op (opt-in)
+    spent = external_spent_today() + float(pending or 0)
+    return ("external", cap, spent) if spent > cap else None
+
+
 def meta_spent_since(day):
     """spendguard's OWN (meta) spend since `day` — the is_meta rows, on their own cap line. Read from
     spend_events via meta_dec (excludes voided/reversed; a meta row is never quarantine/unpriced)."""

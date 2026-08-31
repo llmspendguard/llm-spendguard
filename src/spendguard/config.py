@@ -479,6 +479,21 @@ def meta_cap():
     return float(v) if v is not None else float(_cfg_get("caps", "meta", 2.0))
 
 
+def external_cap():
+    """Separate daily $ cap for non-token EXTERNAL spend (MCP/tool calls + external paid APIs). None = NO cap
+    (opt-in — external gating does nothing until a cap is set). env GATE_EXTERNAL_DAILY → config.json
+    caps.external.daily → None."""
+    v = os.getenv("GATE_EXTERNAL_DAILY")
+    if v is None:
+        v = _cfg_get("caps", "external.daily", None)
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def advisor_model():
     """Model for the advisor's REASONING (insight synthesis + `optimize`). Realtime; capped by caps.meta.
     Configurable: env SPENDGUARD_ADVISOR_MODEL > config.json advisor.model > default (Opus 4.8)."""
