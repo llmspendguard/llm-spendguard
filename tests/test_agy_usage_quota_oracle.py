@@ -42,9 +42,13 @@ def _reset_cache():
     agy._usage_cache["at"], agy._usage_cache["val"] = 0.0, None
 
 
-# real shape: "<bucket>\t<label>\t<pct>%\t<ISO8601>"
-_SAMPLE = ("Gemini Models\tWeekly Limit Remaining\t0%\t2026-08-30T19:26:10Z\n"
-           "Claude and GPT models\tWeekly Limit Remaining\t100%\t2026-09-04T02:35:52Z\n")
+# real shape: "<bucket>\t<label>\t<pct>%\t<ISO8601>". The reset timestamps are FUTURE-RELATIVE, not hardcoded: a
+# fixed date rolls into the past and then cached_usage CORRECTLY invalidates the snapshot at its soonest reset (a
+# refilled quota must never read as exhausted), which would break the "cached" assertion in (c) after the date passes.
+_gem_reset = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=3)).replace(microsecond=0)
+_gpt_reset = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=8)).replace(microsecond=0)
+_SAMPLE = ("Gemini Models\tWeekly Limit Remaining\t0%\t" + _gem_reset.strftime("%Y-%m-%dT%H:%M:%SZ") + "\n"
+           "Claude and GPT models\tWeekly Limit Remaining\t100%\t" + _gpt_reset.strftime("%Y-%m-%dT%H:%M:%SZ") + "\n")
 
 print("-- (a) _parse_usage extracts {bucket, remaining_pct, reset_ts} from the real shape --")
 rows = agy._parse_usage(_SAMPLE)
@@ -52,7 +56,7 @@ check("parsed two buckets", rows is not None and len(rows) == 2)
 gem = next((r for r in (rows or []) if "gemini" in r["bucket"].lower()), None)
 check("Gemini bucket at 0%", gem is not None and gem["remaining_pct"] == 0)
 check("...with the ISO reset parsed to a unix ts",
-      gem is not None and abs(gem["reset_ts"] - datetime.datetime.fromisoformat("2026-08-30T19:26:10+00:00").timestamp()) < 1)
+      gem is not None and abs(gem["reset_ts"] - _gem_reset.timestamp()) < 1)
 check("a line without a %+timestamp is ignored (no false bucket)", agy._parse_usage("just some log line\n") is None)
 
 print("\n-- (b) _quota_reset_s: SOONEST reset among EXHAUSTED buckets; None when all have headroom (decision-free) --")

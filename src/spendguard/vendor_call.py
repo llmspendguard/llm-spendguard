@@ -295,6 +295,14 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
         _lat = bulkgate.latency(sig=class_sig(model, purpose), model=model)
         _need = (float(_lat.get("p95") or 0)
                  if _lat and (_lat.get("n") or 0) >= MIN_BOUND_OBS else 0.0)
+        # THE GUARD MAY NOT DEMAND MORE THAN THE ADVISOR IS ALLOWED TO PROPOSE. `time_budget` clamps every
+        # proposal to DEADLINE_CEIL_S, so a class whose p95 exceeds the ceiling could satisfy neither: the advisor
+        # returned the ceiling and this check rejected the ceiling, making the class permanently unservable with
+        # ZERO attempts — which surfaces to the caller as a transport error, not as the arithmetic it is. A p95
+        # above the hard ceiling is a statement that this class cannot be completed within the bound we are willing
+        # to wait; the honest response is to run it AT the bound and let a genuinely slow call hit the deadline
+        # (where it is recorded, censored from the percentiles, and sets a floor), not to refuse to try.
+        _need = min(_need, DEADLINE_CEIL_S)
         if _need and float(deadline_s) < _need:
             raise BadBound(
                 f"{vendor}/{model}: deadline_s={float(deadline_s):.0f}s is below the measured p95 of "
@@ -928,7 +936,13 @@ MIN_BOUND_OBS = 5
 
 DEADLINE_SLACK = 2.0          # measured p99 x this. Slack for TIME, mirroring the cap's p99x1.5 for TOKENS.
 DEADLINE_FLOOR_S = 30.0       # never propose a budget so tight that a healthy call cannot finish
-DEADLINE_CEIL_S = 600.0       # and never an unbounded one — the 3h30m run is what this module exists to end
+# AND NEVER AN UNBOUNDED ONE — the 3h30m run is what this module exists to end. 600 -> 1800 because 600 sat BELOW
+# measured p95s and thereby made real classes unservable: `time_budget` clamps its proposal to this ceiling while
+# `call()` REFUSES any deadline under the class p95, so for a class measuring p95=1117s the advisor could only ever
+# propose 600 and the guard could only ever reject it. Measured 2026-08-29/30: every vendor refused the first file
+# of three warden stage reviews with BadBound at deadline_s=600 vs p95=1117 — zero attempts, and it read as a
+# transport error. A ceiling below what work demonstrably takes is not bounding a hang, it is bounding the work.
+DEADLINE_CEIL_S = 1800.0
 
 
 def time_budget(vendor, model, sig=None, default_s=None, in_chars=None):

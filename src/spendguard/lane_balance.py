@@ -141,7 +141,11 @@ def idle_lanes():
     snap = {r["lane"]: r for r in _lanes.lane_headroom(do_fetch=False)}       # persisted; no CLI in the routing hot path
     rows = [snap.get(l["lane"], {"lane": l["lane"], "provider": l["provider"], "known": False,
                                  "remaining_pct": None, "reset_ts": None}) for l in idle]
-    return [d["lane"] for d in route_utility.rank_lanes(rows) if d["available"]]   # cooling lanes are surfaced but not routed to
+    from . import lane_economics
+    # A prompt-metered lane whose SELF-USE cap is reached is held back from discretionary overflow — its stops-dead
+    # prompt budget is reserved for real coding (spendguard only spends what it can see it spending).
+    return [d["lane"] for d in route_utility.rank_lanes(rows)
+            if d["available"] and not lane_economics.prompt_lane_reserved(d["lane"])]
 
 
 # ── the CONFIRMED-substitute registry (Part 2 authorization = "model proposes, you confirm once") ──────────────────
@@ -481,6 +485,33 @@ def _metered_substitute(subs, primary_spec):
     return next((r for r in ranked if r["available"]), None)
 
 
+def _intent_listed(intent, entries):
+    """Is `intent` covered by a bandit allow/deny list? Exact name, or a PREFIX entry ending in ':' or '*'.
+
+    WHY A PREFIX IS REQUIRED, not a nicety. Both lists were exact-match (`intent in entries`), which silently
+    cannot express a FAMILY of intents whose names are generated per work item. honestreview's cross-vendor
+    consensus panel labels every call `review:<filename>`, so denying it would have meant enumerating every file in
+    every repo forever — i.e. the sanctioned "DENY an intent that genuinely needs the primary model" channel did not
+    exist for the one caller that most needs it.
+
+    MEASURED 2026-08-29, warden S1 wave 1: with `bandit_mode=optout` and an empty denylist, the bandit substituted
+    `openai:gpt-5.5` for gemini (9x), zai (7x), moonshot (7x) and anthropic (7x). The panel's report still printed
+    `anth=ok,moon=ok,gemi=ok` per file, so a FIVE-VENDOR consensus was really one model agreeing with itself while
+    every count in the output claimed otherwise. Substituting the model is exactly right for work that needs AN
+    answer and exactly wrong for work where WHICH MODEL ANSWERED is the measurement.
+
+    Matching a trailing ':'/'*' is parsing a known shape, not deciding meaning."""
+    for e in (entries or []):
+        e = str(e)
+        if e.endswith("*") and str(intent).startswith(e[:-1]):
+            return True
+        if e.endswith(":") and str(intent).startswith(e):
+            return True
+        if str(intent) == e:
+            return True
+    return False
+
+
 def route_decision(intent, model, reactive=False):
     """(substitute_spec or None, why) — the routing brain, PURE (registry + utilisation only, no LLM; the agentic
     proposer fills the registry separately). Default OFF: an intent with no CONFIRMED substitute yields (None, …), so
@@ -514,15 +545,17 @@ def route_decision(intent, model, reactive=False):
         # governed by the bake-off learning; DENY an intent that genuinely needs the primary model.
         _mode = str(config._cfg_get("advisor", "bandit_mode", "allowlist")).strip().lower()
         if _mode == "optout":
-            _eligible = intent not in (config._cfg_get("advisor", "bandit_denylist", None) or [])
+            _eligible = not _intent_listed(intent, config._cfg_get("advisor", "bandit_denylist", None))
         else:
-            _eligible = intent in (config._cfg_get("advisor", "bandit_intents", None) or [])
+            _eligible = _intent_listed(intent, config._cfg_get("advisor", "bandit_intents", None))
         if _bandit_on and not str(intent).startswith(_META) and _eligible:
             try:
-                from . import lane_bandit, lane_catalog
+                from . import lane_bandit, lane_catalog, lane_economics
                 _prim_lane = adapters._LANES.get(adapters.provider_for(model), (None,))[0]
+                # exclude the primary lane AND any prompt-metered lane whose self-use cap is reached (reserve its
+                # stops-dead prompt budget for real coding rather than spend it on discretionary bandit work)
                 _arms = [a for a in lane_catalog.arms(config._cfg_get("advisor", "delegate_lanes", None))
-                         if a[0] != _prim_lane]
+                         if a[0] != _prim_lane and not lane_economics.prompt_lane_reserved(a[0])]
                 _arm = lane_bandit.choose_arm(intent, _arms)
                 if _arm:
                     return f"{lane_catalog.lane_provider(_arm[0])}:{_arm[1]}", f"bandit → {_arm[0]} ({_arm[1]})"

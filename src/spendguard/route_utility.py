@@ -20,6 +20,16 @@ import time
 from . import config
 
 
+def _fmt_tok_short(n):
+    """Compact token count for a rationale string: 1.4M / 525K / 900. (Local so route_utility stays import-cycle-free.)"""
+    n = float(n)
+    if n >= 1e6:
+        return f"{n / 1e6:.1f}M"
+    if n >= 1e3:
+        return f"{n / 1e3:.0f}K"
+    return f"{n:.0f}"
+
+
 def _cfg_num(key, default):
     try:
         return float(config._cfg_get("advisor", key, default))
@@ -43,13 +53,23 @@ def _urgency(reset_ts, now=None):
     return 1.0 + frac_near * (umax - 1.0)
 
 
-def lane_score(row, now=None):
+def lane_score(row, now=None, abs_norm=None):
     """Utility of routing one unit to this subscription lane, or None when its headroom is UNKNOWN (the caller then
     falls back to the call-volume proxy — a can't-know is not a zero). `row` is a lanes.lane_headroom() entry.
-    Always >= 1.0 (free), so it outranks any metered target; more headroom × urgency → higher."""
+    Always >= 1.0 (free), so it outranks any metered target; more headroom × urgency → higher.
+
+    WATER-FILLING on ABSOLUTE tokens when the cap is measured: `remaining_abs` (binding bucket, from lane_economics)
+    normalized by `abs_norm` (the max absolute-remaining across the lanes being ranked) is the headroom fraction —
+    so a big-cap plan at 30% outranks a small-cap plan at 30% (it has more real tokens to give). Falls back to the
+    plan's own remaining_pct FRACTION when the cap is not yet measured (abs unknown) or no abs_norm was supplied, so
+    behaviour is unchanged until a cap exists. Either way the score stays >= 1.0 (a plan token is free)."""
     if not row.get("known") or row.get("remaining_pct") is None:
         return None
-    rf = max(0.0, min(1.0, float(row["remaining_pct"]) / 100.0))
+    ra = row.get("remaining_abs")
+    if ra is not None and abs_norm:
+        rf = max(0.0, min(1.0, float(ra) / float(abs_norm)))
+    else:
+        rf = max(0.0, min(1.0, float(row["remaining_pct"]) / 100.0))
     return 1.0 + rf * _urgency(row.get("reset_ts"), now)
 
 
@@ -62,16 +82,23 @@ def rank_lanes(rows, cooling=None, now=None):
     if cooling is None:
         from . import resource_state
         cooling = lambda ln: resource_state.cooling(resource_state.lane_key(ln))
+    # WATER-FILL normalizer: the largest ABSOLUTE tokens-left across these lanes, so remaining_abs becomes a fraction
+    # comparable to remaining_pct. None when no lane has a measured cap yet → every lane falls back to its own %.
+    abs_norm = max((float(r["remaining_abs"]) for r in rows if r.get("remaining_abs") is not None), default=None)
     out = []
     for r in rows:
         base = {"lane": r["lane"], "provider": r.get("provider"), "remaining_pct": r.get("remaining_pct"),
-                "reset_ts": r.get("reset_ts")}
+                "reset_ts": r.get("reset_ts"), "remaining_abs": r.get("remaining_abs")}
         if cooling(r["lane"]):
             out.append({**base, "available": False, "score": None, "why": "cooling — excluded (reactive backstop)"})
             continue
-        s = lane_score(r, now)
-        why = ("unknown headroom (proxy orders it)" if s is None
-               else f"{int(r['remaining_pct'])}% left × urgency {_urgency(r.get('reset_ts'), now):.2f}")
+        s = lane_score(r, now, abs_norm=abs_norm)
+        if s is None:
+            why = "unknown headroom (proxy orders it)"
+        elif r.get("remaining_abs") is not None and abs_norm:
+            why = f"{_fmt_tok_short(r['remaining_abs'])} tok left × urgency {_urgency(r.get('reset_ts'), now):.2f}"
+        else:
+            why = f"{int(r['remaining_pct'])}% left × urgency {_urgency(r.get('reset_ts'), now):.2f}"
         out.append({**base, "available": True, "score": s, "why": why})
     # available first; among available, scored (higher better) before unknown-headroom; unavailable (cooling) last
     out.sort(key=lambda d: (not d["available"], d["score"] is None, -(d["score"] if d["score"] is not None else 0.0)))

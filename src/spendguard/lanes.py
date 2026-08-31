@@ -238,6 +238,14 @@ def lane_headroom(do_fetch=True):
         out.append({"lane": ln["lane"], "provider": ln["provider"], "remaining_pct": hr.get("remaining_pct"),
                     "reset_ts": hr.get("reset_ts"), "buckets": buckets, "known": buckets is not None})
     try:
+        from . import lane_economics
+        lane_economics.record_samples(out)                  # append a (pct, tokens) sample so caps self-measure over time
+        abs_by = lane_economics.remaining_abs_by_lane(headroom_rows=out)   # binding ABSOLUTE tokens left, where measured
+        for r in out:
+            r["remaining_abs"] = abs_by.get(r["lane"])      # None until the cap is measured → score falls back to %
+    except Exception:
+        pass                                                # sampling is a bonus; never fail the live read over it
+    try:
         config.save_state(_HEADROOM_SNAPSHOT, {"asof": time.time(), "rows": out}, loud=False)
     except Exception:
         pass                                                # persistence is a bonus; never fail the live read over it
@@ -327,6 +335,10 @@ def main(argv=None):
     if "--balance" in argv:                               # per-plan utilisation: which plans are hot vs idle
         from . import lane_balance
         print(lane_balance.format_utilization())
+    if "--economics" in argv:                             # measured token caps · $/token · fee at risk this window
+        from . import lane_economics
+        print()
+        print(lane_economics.format_economics())
     if "--propose" in argv:                               # model PROPOSES acceptable substitutes for an intent (PENDING)
         rest = [a for a in argv[argv.index("--propose") + 1:] if not a.startswith("--")]
         if len(rest) < 2:
