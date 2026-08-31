@@ -515,7 +515,9 @@ def _attempt(vendor, model, prompt, system, max_tokens, budget_s, schema=None, r
             box["r"] = adapters.call(model if ":" in model else f"{vendor}:{model}", prompt,
                                      max_tokens=int(max_tokens), system=system,
                                      schema=schema if isinstance(schema, dict) else None,
-                                     timeout_s=budget_s, reasoning=reasoning)
+                                     timeout_s=budget_s, reasoning=reasoning,
+                                     no_substitution=True)   # vendor_call NAMES a vendor — the lane bandit must
+                                     #                         never swap it (a panel/adjudication would collapse)
         except Exception as e:                      # adapters says it never raises; believe it, verify anyway
             box["r"] = {"error": f"{type(e).__name__}: {e}", "text": None}
 
@@ -778,7 +780,7 @@ def discover_efforts(vendor, model, refresh=False):
     try:
         for eff in CANDIDATE_EFFORTS:
             r = adapters.call(model if ":" in model else f"{vendor}:{model}", "Reply: OK",
-                              max_tokens=16, reasoning=eff, timeout_s=45)
+                              max_tokens=16, reasoning=eff, timeout_s=45, no_substitution=True)  # probe THIS vendor
             err = str(r.get("error") or "")
             # THE PARAMETER MAY HAVE BEEN DROPPED AND THE CALL RETRIED. That returns no error and looks exactly
             # like acceptance — it is how the first version of this probe reported that every vendor supported
