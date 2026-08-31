@@ -2071,6 +2071,19 @@ def _cli(cmd="status", live=False):
                       f"age {_c['age_days']}d{_drift}" + ("" if mr["ok"] else " — run `spendguard metadata`"))
             except Exception:
                 pass
+            try:                                          # PRICE-TABLE FRESHNESS: pricing.freshness() computes it but
+                from . import pricing as _pr              # nothing surfaced it — a stale $/token silently misprices
+                _v, _age, _stale = _pr.freshness()        # every estimate until someone notices. doctor is where it shows.
+                if _age is None:
+                    print(f"  pricing   : ⚪ curated verify date unparseable ({_v})")
+                elif _stale:
+                    print(f"  pricing   : 🟡 curated prices verified {_v} — {_age}d old (> {_pr.STALE_AFTER_DAYS}d "
+                          f"threshold); re-verify vs the provider pages, then `spendguard sync-prices` + `spendguard "
+                          f"cross-check` to corroborate against LiteLLM + OpenRouter")
+                else:
+                    print(f"  pricing   : 🟢 curated prices verified {_v} ({_age}d old, < {_pr.STALE_AFTER_DAYS}d)")
+            except Exception:
+                pass
             try:                                          # import-name shadowing: reported HERE (the diagnostic
                 import spendguard as _sg                  # command), never as an ambient warning on every start
                 _sh = _sg.shadowing_dists()

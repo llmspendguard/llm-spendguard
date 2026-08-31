@@ -124,5 +124,30 @@ k = [o for o in config_schema.SETTINGS if o.get("section") == "pricing" and o.ge
 check("knob present with env + default 1",
       k and k[0].get("env") == "SPENDGUARD_PRICES_REFRESH_DAYS" and k[0].get("default") == 1)
 
+print("-- _validate cross-checks the FULL curated table vs LiteLLM (not 3 hardcoded anchors) --")
+# Build a LiteLLM fetch that matches EVERY curated price except one tampered model, keyed bare as LiteLLM often
+# does. Derived from pricing._FALLBACK so this test can never drift from the curated table it guards.
+fake = {}
+for _m, _r in pricing._FALLBACK.items():
+    if _r.get("in_") is None:
+        continue
+    fake[_m] = {"in_": _r["in_"], "out": _r["out"], "cached_in": 0, "batch_in": 0, "batch_out": 0}
+for _i in range(1000):                                   # pad past the >=1000 structural sanity gate
+    fake[f"pad-{_i}"] = {"in_": 1.0, "out": 2.0}
+TAMPER = "claude-opus-4-8"
+fake[TAMPER] = {"in_": 999.0, "out": 999.0}              # LiteLLM "disagrees" with curated 5/25 on this one
+ok, msgs = price_sync._validate(fake)
+check("_validate does not abort a healthy fetch", ok is True)
+_checked = int(msgs[0].split("/")[1].split()[0])
+check("cross-check covers the FULL curated table (>3 models, not the old 3 anchors)", _checked > 3)
+check("a real per-token disagreement is surfaced as a DIFF (curated wins, re-verify)",
+      any(TAMPER in d and d.startswith("DIFF") and "re-verify" in d for d in msgs[1:]))
+check("only the tampered model is flagged — the agreeing ones are not false-positived",
+      sum(1 for d in msgs[1:] if d.startswith("DIFF")) == 1)
+check("a structurally tiny fetch is still REFUSED (sanity gate holds, never caches junk)",
+      price_sync._validate({"only": {"in_": 1, "out": 2}})[0] is False)
+check("no inline hardcoded price anchor remains in _validate (source-of-record is pricing._FALLBACK)",
+      "5.0, 30.0" not in open(price_sync.__file__).read() and "0.15, 0.60" not in open(price_sync.__file__).read())
+
 print(f"\n{'[FAIL]' if failures else 'OK'} test_price_refresh: {failures} failure(s)")
 sys.exit(1 if failures else 0)

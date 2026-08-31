@@ -112,17 +112,35 @@ def _convert(raw):
 
 
 def _validate(models):
-    """Sanity gate before trusting a fetch. (ok, [messages])."""
+    """Sanity gate + a FULL curated cross-check before trusting a fetch. (ok, [messages]).
+
+    Cross-checks EVERY curated price (pricing._FALLBACK, the source of record) against this LiteLLM fetch — not a
+    hand-copied handful. The old {model: (in, out)} anchor list here DUPLICATED three curated prices as inline
+    literals and could drift from the table it was meant to guard (a hardcoded price is exactly what this module
+    exists to avoid). A per-token disagreement is surfaced as a DIFF and a re-verify signal — curated wins, it never
+    aborts; only a structurally bad fetch (too few models) does. LiteLLM keys a model bare, provider/model, or
+    provider.model, so all three are tried before concluding a curated model is absent."""
     if len(models) < 1000:
         return False, [f"only {len(models)} models parsed — suspicious; not caching"]
-    msgs, checks = [], {"gpt-5.5": (5.0, 30.0), "claude-opus-4-8": (5.0, 25.0), "gpt-4o-mini": (0.15, 0.60)}
-    for m, (ein, eout) in checks.items():
-        r = models.get(m)
-        if not r:
-            msgs.append(f"note: {m} not in LiteLLM (curated value will be used)")
-        elif abs(r["in_"] - ein) > 0.01 or abs(r["out"] - eout) > 0.01:
-            msgs.append(f"DIFF {m}: LiteLLM {r['in_']}/{r['out']} vs verified {ein}/{eout} (curated wins)")
-    return True, msgs
+    from . import pricing
+    diffs, checked, agreed, missing = [], 0, 0, 0
+    for m, r in pricing._FALLBACK.items():
+        ein, eout, prov = r.get("in_"), r.get("out"), r.get("provider")
+        if ein is None:
+            continue
+        lit = next((models[k] for k in (m, f"{prov}/{m}", f"{prov}.{m}") if k in models), None)
+        if not lit:
+            missing += 1
+            continue
+        checked += 1
+        if abs(lit["in_"] - ein) > 0.01 or abs(lit["out"] - eout) > 0.01:
+            diffs.append(f"DIFF {m}: LiteLLM {lit['in_']}/{lit['out']} vs curated {ein}/{eout} (curated wins — re-verify)")
+        else:
+            agreed += 1
+    summary = (f"cross-check: {agreed}/{checked} curated prices agree with LiteLLM"
+               + (f", {len(diffs)} DIFFER (curated wins)" if diffs else "")
+               + (f"; {missing} curated not in LiteLLM" if missing else ""))
+    return True, [summary] + diffs
 
 
 def sync():

@@ -67,6 +67,8 @@ buf2 = io.StringIO()
 with contextlib.redirect_stdout(buf2):
     gate._cli("doctor")
 ck("doctor shows the CACHED verdict with its age", "as of" in buf2.getvalue() and "accounted" in buf2.getvalue())
+ck("doctor SURFACES price-table freshness (pricing.freshness was computed but shown nowhere before)",
+   "pricing" in buf2.getvalue() and "verified" in buf2.getvalue())
 buf3 = io.StringIO()
 with contextlib.redirect_stdout(buf3):
     gate._cli("doctor", live=True)
