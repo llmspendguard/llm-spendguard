@@ -102,7 +102,7 @@ def _attribute(ev, project):
 
 def _record_spend_event(provider, model, kind, cost, *, conv_id="", basis="", intent="", actor="", key_fp="",
                         project="", occurred_at=None, in_tok=0, out_tok=0, source="gate", dedup_suffix="",
-                        invoice_id=""):
+                        invoice_id="", dedup_key=None):
     """THE write for a live charge → `spend_events`, the single money-of-record, through the ONE shared mapping
     (charge_to_event). Every budget writer records through here; there is no second ledger, and — since the
     cutover — no `charges` fallback behind it, so a dropped write is a dropped charge. The ledger connection
@@ -118,7 +118,9 @@ def _record_spend_event(provider, model, kind, cost, *, conv_id="", basis="", in
         oa = occurred_at or datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
         ev["occurred_at"] = ev["ts_utc"] = oa
         ev["in_tok"], ev["out_tok"] = int(in_tok or 0), int(out_tok or 0)
-        ev["dedup_key"] = live_dedup_key(oa + dedup_suffix)
+        # A live charge gets a per-call UNIQUE key (two identical calls must NOT merge). An idempotent IMPORT
+        # (OTel/reconstruction) passes an explicit STABLE dedup_key so re-ingesting the same source never double-counts.
+        ev["dedup_key"] = dedup_key or live_dedup_key(oa + dedup_suffix)
         ev["source"] = ev["recorded_by"] = source
         if invoice_id:                                # FOCUS InvoiceId anchor — set only when reconciled to a bill
             ev["invoice_id"] = invoice_id

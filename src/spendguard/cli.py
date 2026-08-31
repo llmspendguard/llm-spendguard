@@ -32,6 +32,7 @@ _GROUPS = [
         ("trust", "is what we recorded ≈ what you were billed?"),
         ("close", "monthly close: provider truth + residual, named"),
         ("focus-export", "the ledger as FinOps FOCUS 1.2 rows (json|csv) for any FinOps stack"),
+        ("otel-ingest", "import an OTel GenAI trace (OpenLLMetry/Traceloop) → spend_events (idempotent)"),
         ("keys", "spend per API key (which workspace/project key)"),
         ("coverage", "which LLM-capable interpreters are NOT gated"),
     ]),
@@ -133,6 +134,9 @@ def _dispatch(argv=None):
     if cmd == "focus-export":                         # ledger → FinOps FOCUS 1.2 rows (json|csv), read-only, $0
         from . import focus_export
         return focus_export.main(rest)
+    if cmd in ("otel-ingest", "otel"):                # OTel GenAI trace → spend_events (import; idempotent; $0)
+        from . import otel_ingest
+        return otel_ingest.main(rest)
     if cmd == "reconcile":
         _PROV = {"openai", "anthropic", "all"}
         # A bare `spendguard reconcile` defaults to openai. But a FLAG in the first slot (e.g. `--since 2026-08-01`)
