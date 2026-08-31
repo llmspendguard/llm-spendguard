@@ -447,8 +447,16 @@ def _budget_check(cost, model, provider, kind):
             _emit({"kind": kind, "provider": provider, "model": model, "cost": cost, "decision": f"allowed_prompt_{w}"})
             return
     _emit({"kind": kind, "provider": provider, "model": model, "cost": cost, "decision": f"refused_{w}"})
+    hint = ""                                          # on_breach policy: fail-closed by default; opt-in names a $0 lane
+    try:
+        from . import route_utility
+        _act, _tgt, _why = route_utility.breach_decision()
+        if _act == "downgrade":
+            hint = f" · on_breach=downgrade → {_why}"
+    except Exception:
+        pass
     raise SpendGateRefused(f"{w} budget ${capv:.0f} would be exceeded (projected ${proj:.2f}). "
-                           f"Raise caps.{w.replace('-', '.')}, or set GATE_ALLOW=1.")
+                           f"Raise caps.{w.replace('-', '.')}, or set GATE_ALLOW=1.{hint}")
 
 
 def _budget_record(cost, model, provider, kind, quarantine=False, basis=None):
@@ -2010,6 +2018,16 @@ def _cli(cmd="status", live=False):
             print(f"  advisor   : ? could not be checked ({type(_e).__name__}) — not the same as 'fine'")
         print(f"  flag file : {FLAG}  ({'present → off' if os.path.exists(FLAG) else 'absent'})")
         print(f"  env       : GATE_DISABLE={os.getenv('GATE_DISABLE','')!r}  GATE_ALLOW={os.getenv('GATE_ALLOW','')!r}  GATE_CAP={os.getenv('GATE_CAP') or '(default 75)'}")
+        try:                                          # on-cap-breach policy: fail-closed by default; downgrade names a $0 lane
+            from . import route_utility as _ru
+            _pol = _ru.breach_policy()
+            if _pol == "downgrade":
+                _a, _t, _w = _ru.breach_decision()
+                print(f"  on-breach : 🔁 downgrade — {_w}" if _a == "downgrade" else f"  on-breach : 🔁 downgrade set, but {_w}")
+            else:
+                print("  on-breach : ⛔ refuse (fail-closed) — set caps.on_breach=downgrade to name a $0 lane instead")
+        except Exception:
+            pass
         try:
             from openai.resources import files as of
             oai = getattr(of.Files.create, "_spend_gated", False)

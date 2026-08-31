@@ -40,6 +40,9 @@ SETTINGS = [
     dict(section="caps", key="external.daily", store="config.json:caps.external.daily", env="GATE_EXTERNAL_DAILY", default=None,
          kind="float|null", secret=False, desc="DAILY non-token EXTERNAL (MCP/tool + external-API) sub-cap ($) — HARD "
          "for a wrapper that calls spendguard.gate_external() before the paid call. null = off (opt-in)."),
+    dict(section="caps", key="on_breach", store="config.json:caps.on_breach", env="SPENDGUARD_ON_BREACH", default="refuse",
+         kind="str", secret=False, desc="On a cap breach: 'refuse' (default, fail-closed — the gate hard-stops) or "
+         "'downgrade' (opt-in — the refusal names the cheapest idle $0 lane to route to instead)."),
     dict(section="caps", key="compute.daily", store="config.json:caps.compute.daily", env="GATE_COMPUTE_DAILY", default=None,
          kind="float|null", secret=False, desc="DAILY remote-compute (vast.ai GPU) sub-cap ($) — alert/soft. null = off."),
     dict(section="caps", key="compute.monthly", store="config.json:caps.compute.monthly", env="GATE_COMPUTE_MONTHLY", default=None,

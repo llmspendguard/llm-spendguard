@@ -143,3 +143,35 @@ def rank_targets(lane_rows, metered_candidates, est_in, est_out, cooling=None, n
     out += [{"kind": "metered", "target": m["target"], "provider": m["provider"], "available": m["available"],
              "score": m["score"], "why": m["why"]} for m in metered_ranked]
     return out
+
+
+def breach_policy():
+    """The on-cap-breach routing policy — the Cloudflare 'downgrade vs hard-block' choice, spendguard-shaped:
+      • 'refuse'    (DEFAULT) — fail-closed, the identity: a breach hard-refuses.
+      • 'downgrade' (opt-in)  — on a breach, name the cheapest AVAILABLE $0 subscription lane to route to instead.
+    config caps.on_breach / env SPENDGUARD_ON_BREACH. Anything unrecognised → 'refuse' (never silently loosen)."""
+    import os
+    v = os.getenv("SPENDGUARD_ON_BREACH")
+    if v is None:
+        v = config._cfg_get("caps", "on_breach", "refuse")
+    v = str(v or "refuse").strip().lower()
+    return v if v in ("refuse", "downgrade") else "refuse"
+
+
+def breach_decision(policy=None):
+    """(action, target, why) for a cap breach. 'refuse' → ('refuse', None, why): the caller hard-refuses (fail-closed
+    default). 'downgrade' → the cheapest AVAILABLE $0 lane to route to instead ('downgrade', lane, why), or refuse
+    when no idle lane has headroom. A $0 plan call is always cheaper than the metered call being refused, so the
+    top-ranked available lane IS the downgrade. Reads the PERSISTED lane-headroom snapshot — no network on the hot
+    gate path — and never raises (a bookkeeping error degrades to 'refuse', the safe direction)."""
+    pol = (policy or breach_policy())
+    if pol != "downgrade":
+        return "refuse", None, "on_breach=refuse (fail-closed)"
+    try:
+        from . import lanes
+        top = next((d for d in rank_lanes(lanes.lane_headroom(do_fetch=False)) if d.get("available")), None)
+        if top:
+            return "downgrade", top["lane"], f"route to the {top['lane']} plan ($0) instead — {top['why']}"
+    except Exception:
+        pass
+    return "refuse", None, "on_breach=downgrade, but no idle lane has headroom now → refuse"
