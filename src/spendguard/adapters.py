@@ -279,7 +279,8 @@ def _openai_strict(schema):
 # "no answer". That is the whole recurring failure. The number now comes from measurement or from the
 # caller, never from a literal nobody chose.
 def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,
-         sig=None, retries=2, files=None, _no_guard=False, no_metered_fallback=False, images=None):
+         sig=None, retries=2, files=None, _no_guard=False, no_metered_fallback=False, images=None,
+         no_substitution=False):
     """Run one prompt against one model. Returns a result dict (never raises).
 
     `files=[path, …]` is the INPUT twin of the output guard below: each path is assembled into the prompt as a
@@ -316,7 +317,11 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     actually STOPS the call (and its billing), not merely the wait; it applies to BOTH the lane and the API path.
     `schema` (a JSON Schema) forces STRUCTURED output — a forced tool-call on anthropic, response_format
     json_schema/json_object elsewhere. `no_metered_fallback=True` makes a lane MISS return an error instead of
-    paying the API ($0 by construction). `images=[path | data: URL, …]` sends a VISION request — each image is
+    paying the API ($0 by construction). `no_substitution=True` PINS THE VENDOR: it suppresses BOTH lane-bandit
+    load-balancing (proactive) and lane-failover substitution (reactive), so the requested model answers or errors —
+    never a silent swap. Use it whenever the VENDOR IS THE MEASUREMENT (a cross-vendor consensus panel, a 2-judge
+    adjudication): the bandit in optout mode can otherwise run one model in place of four while every result keeps
+    its requested label. `images=[path | data: URL, …]` sends a VISION request — each image is
     loaded once, priced by the PIXEL rule (content_tokens, not the text tokenizer), and the call rides the
     metered API (the subscription lanes are text-only CLIs, so a vision call skips them: executor='api').
 
@@ -350,9 +355,40 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     if not _no_guard:
         return _call_guarded(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
                              schema=schema, timeout_s=timeout_s, sig=sig, retries=retries,
-                             no_metered_fallback=no_metered_fallback, images=images)
+                             no_metered_fallback=no_metered_fallback, images=images, _no_sub=no_substitution)
     return _call_once(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
-                      schema=schema, timeout_s=timeout_s, no_metered_fallback=no_metered_fallback, images=images)
+                      schema=schema, timeout_s=timeout_s, no_metered_fallback=no_metered_fallback, images=images,
+                      _no_sub=no_substitution)
+
+
+def was_substituted(result):
+    """True if a DIFFERENT model answered this call than was requested — a lane-bandit or confirmed-substitute swap.
+    The provenance is `result['substituted_from']` (the model you asked for); `result['model']` is who answered."""
+    return bool(result.get("substituted_from"))
+
+
+def served_by(result):
+    """The vendor that ACTUALLY answered — read from the RESULT, never from what was requested. When the bandit
+    swapped the model this is the SUBSTITUTE's vendor, not the one you asked for. A cross-vendor panel MUST key on
+    this, never on the requested model: the lane bandit (bandit_mode=optout) can run one model 'in place of' four,
+    and every result still carries its REQUESTED label — so keying on the request reads a collapse as four agreeing
+    vendors (measured: gpt-5.5 answering as anthropic/gemini/zai/moonshot, panel printed all-ok). Uses the recorded
+    answering model (the honesty invariant: recorded model == who answered), falling back to the executor/lane."""
+    m = result.get("model")
+    if m:
+        try:
+            return provider_for(m)
+        except Exception:
+            pass
+    return result.get("executor") or "?"
+
+
+def panel_providers(results):
+    """The set of vendors that ACTUALLY answered a group of calls meant to be a cross-vendor panel — so a caller can
+    assert diversity FROM THE RESULTS (`len(panel_providers(rs)) == n`), never assume it. If the bandit collapsed the
+    panel this set is smaller than the number of successful calls, even though every result is labelled with a
+    different requested model. Errored results are excluded (a vendor that failed did not answer)."""
+    return {served_by(r) for r in results if not r.get("error")}
 
 
 CONNECT_TIMEOUT_S = 10.0     # a live vendor's TCP+TLS handshake is well under this; a blackholed one must fail
@@ -531,7 +567,7 @@ def _compose_gemini_reasoning(model_id, reasoning):
 
 
 def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,
-               _skip_lane=False, no_metered_fallback=False, images=None):
+               _skip_lane=False, no_metered_fallback=False, images=None, _no_sub=False):
     """One raw request. Everything public goes through `call`, which adds the input and output guards.
 
     NO DEFAULT CAP. This carried `max_tokens=512` — the last place a number nobody chose could still reach a
@@ -643,7 +679,9 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         # PLAN for this intent — one hop, guarded against recursion. Routed through call() so the substitute resolves
         # its OWN budget and rides its OWN lane; if it answers, the primary lane is cooled (it failed) and the
         # substitution is recorded. Default OFF: no confirmed substitute → route_decision returns None → unchanged.
-        if not getattr(_sub_guard, "on", False):
+        # `_no_sub` (caller's no_substitution=True) pins the vendor: the requested model answers or errors, never a
+        # silent swap — for calls where the vendor IS the measurement (a cross-vendor panel / adjudication).
+        if not _no_sub and not getattr(_sub_guard, "on", False):
             try:
                 from . import lane_balance, calls as _calls
                 _rsub, _rwhy = lane_balance.route_decision((_calls.current() or {}).get("intent"), model, reactive=True)
@@ -666,7 +704,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         # disabled, so the existing API path runs once, unchanged) and let its OUTCOME settle whether the lane was
         # unsuitable for this prompt (keep it) or genuinely down (cool it).
         out = _call_once(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
-                         schema=schema, timeout_s=timeout_s, _skip_lane=True)
+                         schema=schema, timeout_s=timeout_s, _skip_lane=True, _no_sub=_no_sub)
         _kind = _learn_from_fallback(lane_name, prompt, bool(out.get("error")), model=raw, transient=bool(_ra))
         import sys as _sys
         if _kind == "transient":                       # quota/rate — cooled until reset (capped), re-tested; NOT size
@@ -1160,7 +1198,7 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
     max_tokens = min(int(max_tokens), int(_cap))
     attempt, budget = 0, int(max_tokens)
     while True:
-        r = call(model, prompt, max_tokens=budget, _no_guard=True, **kw)
+        r = call(model, prompt, max_tokens=budget, _no_guard=True, no_substitution=_no_sub, **kw)
         if r.get("error"):
             return {**r, "truncated": None}                   # an errored call was not truncated, it failed
         trunc = bulkgate.is_truncated(r.get("finish_reason"), r.get("out_tok"), budget)
