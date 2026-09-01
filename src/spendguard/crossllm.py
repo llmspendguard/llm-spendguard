@@ -28,7 +28,7 @@ Concurrency/rate limiting is automatic: every call routes through the dispatch g
     for text in r.answers:                          # only OK results; failures are never in here
         ...
 """
-from . import vendor_call, pricing
+from . import vendor_call, pricing, gate
 
 # Named defaults (a value with a name, overridable per call) — never a literal at a call site.
 _DEFAULT_DEADLINE_S = 200.0        # per-vendor default when the caller names none; time_budget refines it per model
@@ -38,9 +38,14 @@ _BUDGET_EST_OUTPUT_TOKENS = 4000   # OUTPUT tokens, PRE-FLIGHT COST ESTIMATE ONL
 _CHARS_PER_TOKEN = 4               # rough INPUT-token proxy for that same estimate; the real input count is metered downstream
 
 
-class BudgetRefused(RuntimeError):
+class BudgetRefused(gate.SpendGateRefused):
     """The estimated metered cost of this fan-out exceeds the caller's `budget_usd`. Raised BEFORE any spend —
-    the estimate-first rail, applied to a cross-LLM query. Carries the estimate and the breakdown."""
+    the estimate-first rail, applied to a cross-LLM query. Carries the estimate and the breakdown.
+
+    Subclasses SpendGateRefused ON PURPOSE: a budget refusal IS a deliberate spend refusal, so it must propagate
+    through every fail-open / degrade handler by CONSTRUCTION (the doctrine in gate.SpendGateRefused), not by being
+    remembered in an enumerated `except (…)` tuple that drifts. gate.deliberate_stop_types() therefore covers it
+    automatically, and a handler catching SpendGateRefused now catches an over-budget refusal too."""
 
     def __init__(self, estimate, budget, detail):
         self.estimate, self.budget, self.detail = estimate, budget, detail

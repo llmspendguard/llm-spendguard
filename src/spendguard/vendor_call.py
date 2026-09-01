@@ -697,7 +697,14 @@ def closest_served(vendor, stale_model):
         from . import pricing
         resolved, _ = pricing._same_model_as_ours([stale_model], live, run=True, fact_key="served_id")
         return resolved.get(stale_model), live
-    except Exception:
+    except Exception as e:
+        # A DELIBERATE stop from the tiny identity call — the spend gate, a budget cap, or a drawn-on-purpose dispatch
+        # deadline — must PROPAGATE, never be downgraded to 'uncorrectable' (which would let a caller keep spending
+        # past the very cap that fired). The CONCEPT is named in one place; any other failure (transient/lookup) →
+        # correction unknown, and the $0 served fast-path already passed so the caller still has the live list.
+        from . import gate
+        if isinstance(e, gate.deliberate_stop_types()):
+            raise
         return None, live
 
 

@@ -101,6 +101,24 @@ class SpendGateRefused(RuntimeError):
     tests/test_deliberate_refusal_is_never_failopen.py)."""
 
 
+def deliberate_stop_types():
+    """The exception types that are a DELIBERATE stop — a spend refusal (SpendGateRefused and its subclasses, which
+    now include crossllm.BudgetRefused) OR a drawn-on-purpose dispatch deadline (dispatch.DispatchTimeout) — and so
+    must PROPAGATE through any fail-open / degrade / error-row handler, never be downgraded to 'keep going'. Named in
+    ONE place so a fail-open handler that must catch broadly can do `except Exception as e: if isinstance(e,
+    gate.deliberate_stop_types()): raise` and stay correct as stop types evolve — the concept, not a tuple that
+    drifts. A brand-new REFUSAL should still subclass SpendGateRefused (covered automatically); only a genuinely
+    different KIND of deliberate stop (like the deadline) is enumerated here. DispatchTimeout is imported lazily to
+    keep this module low in the import graph."""
+    types = [SpendGateRefused]
+    try:
+        from .dispatch import DispatchTimeout
+        types.append(DispatchTimeout)
+    except ImportError:
+        pass
+    return tuple(types)
+
+
 def _ct(text):
     try:
         import tiktoken

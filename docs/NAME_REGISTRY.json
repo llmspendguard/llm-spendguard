@@ -148,9 +148,9 @@
       "why": "Three parallel per-source CLI subcommands (chat/claude-code/codex classify) implementing the same command contract for different data backends. claudecode and codex both delegate to the SHARED attribu"
     },
     "cmd": {
-      "n": 17,
+      "n": 19,
       "verdict": "PROTOCOL",
-      "why": "Every module exposes `cmd(argv=None)` as its uniform CLI subcommand entrypoint (parse argv → run that subcommand → return an int exit code), dispatched by name by the top-level `spendguard <subcommand>` router. The bodies differ because each implements a different subcommand, but that is the point of the shared contract, not drift or a name clash. mcp_server.cmd is the 17th member: it parses argv and runs the `spendguard mcp` stdio server, same contract."
+      "why": "Every module exposes `cmd(argv=None)` as its uniform CLI subcommand entrypoint (parse argv → run that subcommand → return an int exit code), dispatched by name by the top-level `spendguard <subcommand>` router. The bodies differ because each implements a different subcommand, but that is the point of the shared contract, not drift or a name clash. mcp_server.cmd runs the `spendguard mcp` stdio server; model_preflight.cmd and verify.cmd are the 18th and 19th members (parse argv → run the `spendguard preflight` / `spendguard verify` subcommand → return an int exit code) — same contract, re-confirmed PROTOCOL by a full honestreview name adjudication of src/spendguard on 2026-09-01."
     },
     "configured": {
       "n": 4,

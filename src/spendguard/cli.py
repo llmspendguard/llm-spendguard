@@ -59,6 +59,8 @@ _GROUPS = [
         ("sync-catalog", "refresh the live model-catalog (validates model ids at dispatch)"),
         ("balances", "per-vendor metered prepay balance (sunk-pool vs on-demand), for routing"),
         ("reliability", "sweep every lane ($0) + metered provider (--run) for reachability"),
+        ("preflight", "resolve model ids (served + priced; stale→fix) BEFORE a batch — catches a bad id for $0"),
+        ("verify", "self-check every money path: model ids · failover map · keys · economics (--probe = live)"),
         ("pricing", "print the canonical price table"),
         ("audit", "fail CI if any code hardcodes a disagreeing price"),
         ("token-caps", "list every hardcoded output-token cap; --judge rules on the unjudged ones"),
@@ -137,6 +139,12 @@ def _dispatch(argv=None):
     if cmd in ("otel-ingest", "otel"):                # OTel GenAI trace → spend_events (import; idempotent; $0)
         from . import otel_ingest
         return otel_ingest.main(rest)
+    if cmd == "preflight":                            # $0: resolve model ids (served + priced + stale→fix) BEFORE a batch
+        from . import model_preflight
+        return model_preflight.cmd(rest)
+    if cmd == "verify":                               # forensic self-check: model ids · failover map · keys · economics (+--probe)
+        from . import verify
+        return verify.cmd(rest)
     if cmd == "reconcile":
         _PROV = {"openai", "anthropic", "all"}
         # A bare `spendguard reconcile` defaults to openai. But a FLAG in the first slot (e.g. `--since 2026-08-01`)
