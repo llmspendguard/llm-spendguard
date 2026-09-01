@@ -1044,15 +1044,90 @@ def emit_flow(intent, chain, start, contract=None) -> None:
         pass
 
 
+_STATUSLINE_CACHE_S = 10        # the status line renders often; recompute the (ledger-reading) tally at most once per
+#                                 this many seconds and serve a cached line otherwise — bounds the per-render WORK.
+
+
+def _statusline_cache_path():
+    from . import config
+    return config.HOME / "statusline_tally.cache"
+
+
+def _write_statusline_cache(line):
+    """Persist the rendered tally line for the FAST status line (spendguard/statusline.py) to read with no import.
+    The per-turn --stop-hook writes it, so a status line that repaints many times between turns is a cheap file read."""
+    try:
+        _statusline_cache_path().write_text(line)
+    except Exception:
+        pass
+
+
+def _cached_tally_line():
+    """The rendered global tally LINE, recomputed at most once per _STATUSLINE_CACHE_S and cached to disk; otherwise
+    the cached line is returned. So even the heavy `spendguard receipt --statusline` path does the tally work (ledger
+    read + lane-value refresh) at most once per window. The FAST path (the standalone statusline.py the installer
+    writes) skips this whole process — it reads the cache directly with no spendguard import."""
+    cache = _statusline_cache_path()
+    try:
+        if (time.time() - cache.stat().st_mtime) < float(_STATUSLINE_CACHE_S):
+            return cache.read_text()
+    except Exception:
+        pass
+    try:                                          # cache MISS → refresh the ledger-valued lanes, then recompute + store
+        from . import lane_value
+        lane_value.refresh_lane_value_if_stale()
+    except Exception:
+        pass
+    line = render_line(tally())
+    _write_statusline_cache(line)
+    return line
+
+
+# The FAST status line — a standalone script the installer drops at HOME/statusline.py and points Claude Code's
+# statusLine at. It reads the cached tally + the session prefix and prints, with NO spendguard import, so it renders
+# in ~50ms instead of ~1s (the spendguard package import). The cache is kept fresh by `receipt --stop-hook` each turn.
+_STATUSLINE_SCRIPT = r'''#!/usr/bin/env python3
+"""spendguard fast status line — reads the cached tally + session prefix, prints. NO spendguard import (~50ms)."""
+import sys, os, json
+HOME = os.environ.get("SPENDGUARD_HOME") or os.path.expanduser("~/.spendguard")
+info = {}
+try:
+    if not sys.stdin.isatty():
+        info = json.loads(sys.stdin.read() or "{}")
+except Exception:
+    info = {}
+bits = []
+cwd = (info.get("workspace") or {}).get("current_dir") or info.get("cwd") or ""
+if cwd:
+    bits.append(os.path.basename(str(cwd).rstrip("/")))
+model = (info.get("model") or {}).get("display_name")
+if model:
+    bits.append(str(model))
+cw = info.get("context_window") or info.get("contextWindow") or {}
+pct = cw.get("used_percentage") if isinstance(cw, dict) else None
+if isinstance(pct, (int, float)):
+    bits.append("%.0f%% ctx" % float(pct))
+prefix = "  ·  ".join(bits)
+line = ""
+try:
+    with open(os.path.join(HOME, "statusline_tally.cache"), encoding="utf-8") as fh:
+        line = fh.read().strip()
+except Exception:
+    line = ""
+sys.stdout.write((prefix + "  ·  " if prefix else "") + line + "\n")
+'''
+
+
 def cli(args) -> int:
     """`spendguard receipt [--footer|--flow|--json]` → prints the running tally to STDOUT (default --footer). This is
     what the Claude Code Stop hook runs to surface the tally in-chat; also handy to check the tally any time."""
     args = list(args or [])
-    try:                                          # keep ledger-valued lanes (gemini/zai) fresh before we render — a
-        from . import lane_value                   # staleness-gated no-op on the common every-turn path
-        lane_value.refresh_lane_value_if_stale()
-    except Exception:
-        pass
+    if "--statusline" not in args:                # the statusline path refreshes lazily inside _cached_tally_line (on a
+        try:                                       # cache MISS only), so a cached repaint does NO refresh; every other
+            from . import lane_value               # receipt path keeps refreshing up front exactly as before
+            lane_value.refresh_lane_value_if_stale()
+        except Exception:
+            pass
 
     def _arg(flag):
         return args[args.index(flag) + 1] if flag in args and args.index(flag) + 1 < len(args) else None
@@ -1070,7 +1145,9 @@ def cli(args) -> int:
             return 0
         if "--stop-hook" in args:
             # Claude Code Stop hook: `systemMessage` is the ONLY hook output the user sees — one global line.
-            print(json.dumps({"systemMessage": render_line(tally())}))
+            _line = render_line(tally())
+            _write_statusline_cache(_line)          # refresh the FAST status line's cache each turn (cheap render reads it)
+            print(json.dumps({"systemMessage": _line}))
             return 0
         if "--statusline" in args:
             # Claude Code statusLine: session JSON on stdin; prepend cwd · model · ctx% to the global one-line tally.
@@ -1095,7 +1172,7 @@ def cli(args) -> int:
                 except Exception:
                     pass
             prefix = "  ·  ".join(bits)
-            print((prefix + "  ·  " if prefix else "") + render_line(tally()))
+            print((prefix + "  ·  " if prefix else "") + _cached_tally_line())
             return 0
         if "--line" in args:                          # compact one-line global tally (scripting)
             print(render_line(tally()))
@@ -1130,7 +1207,8 @@ def _install_claude_code(remove=False):
             cfg = {}
         shutil.copy(p, p.with_suffix(".json.bak"))      # reversible
     if remove:
-        if (cfg.get("statusLine") or {}).get("command", "").endswith("receipt --statusline"):
+        _sl = (cfg.get("statusLine") or {}).get("command", "")
+        if _sl.endswith("receipt --statusline") or _sl.endswith("statusline.py"):
             cfg.pop("statusLine", None)
         hooks = cfg.get("hooks") or {}
         # Remove ONLY our hook from each Stop group, keeping the group's OTHER hooks. The old filter dropped any
@@ -1149,9 +1227,17 @@ def _install_claude_code(remove=False):
                 cfg.pop("hooks", None)
         action = "removed"
     else:
-        # SPENDGUARD_NO_AUTOINSTALL=1 → the read-only receipt skips patching the SDKs (0.6s → ~0.05s warm path)
-        cfg["statusLine"] = {"type": "command",
-                             "command": f"env SPENDGUARD_NO_AUTOINSTALL=1 {sg} receipt --statusline", "padding": 0}
+        # FAST status line: drop a standalone no-import script and point statusLine at it (~50ms vs the ~1s spendguard
+        # package import per repaint). Its cache is refreshed every turn by the --stop-hook below; with no cache yet it
+        # degrades to just the session prefix. Falls back to the heavy `receipt --statusline` only if the drop fails.
+        _script = config.HOME / "statusline.py"
+        try:
+            config.HOME.mkdir(parents=True, exist_ok=True)
+            _script.write_text(_STATUSLINE_SCRIPT)
+            _cmd = f"{sys.executable} {_script}"
+        except Exception:
+            _cmd = f"env SPENDGUARD_NO_AUTOINSTALL=1 {sg} receipt --statusline"
+        cfg["statusLine"] = {"type": "command", "command": _cmd, "padding": 0}
         stop = cfg.setdefault("hooks", {}).setdefault("Stop", [])
         if not any(h.get("command", "").endswith("receipt --stop-hook")
                    for g in stop for h in (g.get("hooks") or [])):

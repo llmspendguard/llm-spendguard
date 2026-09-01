@@ -777,6 +777,21 @@ def sync(if_due=False, since=None):
         out["validated"] = _validate.validate(verbose=False)   # learning: corroborate / contradict / decay-if-stale,
     except Exception:                                     # so stale advice sinks without a manual `spendguard validate`.
         pass
+    try:                                                  # FORENSIC SELF-CHECK rides the sync: with the catalog now
+        from . import verify as _verify                   # fresh, confirm every money path still holds — model ids
+        _vd = _verify.verify_system(probe=False)          # served+priced · failover map · keys · economics ($0)
+        _bad = {"bad_model_ids": [r["spec"] for r in _vd["preflight"] if not r["usable"]],
+                "broken_failover": [r["lane"] for r in _vd["fallback"] if not r["ok"]],
+                "missing_keys": [k["lane"] for k in _vd["keys"] if not k["ok"]]}
+        out["verify"] = {"ok": _vd["ok"], **_bad}
+        if not _vd["ok"]:                                 # a broken money path is an ALERT, surfaced like uid-drift
+            out["verify_alert"] = ("VERIFY FAILED — " + "; ".join(p for p in (
+                f"stale/unpriced model ids {_bad['bad_model_ids']}" if _bad["bad_model_ids"] else "",
+                f"broken failover {_bad['broken_failover']}" if _bad["broken_failover"] else "",
+                f"missing keys {_bad['missing_keys']}" if _bad["missing_keys"] else "") if p)
+                + " — run `spendguard verify` for detail")
+    except Exception as _ve:
+        out["verify"] = {"error": str(_ve)[:120]}         # SURFACED, never silent — a check that didn't run is visible
     # UID-DRIFT early warning: the server recomputes each row's uid (rowUid) and counts disagreements with the client's
     # _row_uid. A nonzero count means the two algorithms have drifted → rows RE-KEY (insert-as-new instead of update)
     # = silent double-count. It otherwise lives only in this transient push response; surface it loudly here so the

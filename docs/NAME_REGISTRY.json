@@ -203,9 +203,9 @@
       "why": "Resolved: the four module-level 'record' functions — each a distinct job writing a different store — were renamed to their store-specific verbs (budget.record->record_charge [money charge], callio.record->record_io_sample [prompt/output capture], calls.record->record_call [token/latency/feedback call log], ledger.SpendLedger.record->record_event [normalize+post a spend event]). What remains is the genuine protocol pair: the two gate stream-manager `.record(self, msg)` finalizers (sync + async), byte-identical bodies that finalize streamed real-time accounting on close — a uniform contract dispatched by the streaming wrapper as `self.record(...)`/`_owner.record(...)`. Kept shared by design. (The test-local tests/wire_recorder.record and the _Boom SpendLedger stub are out of the src/spendguard guard scope; the stub was tracked to record_event to keep implementing the renamed interface.)"
     },
     "release": {
-      "n": 4,
+      "n": 5,
       "verdict": "PROTOCOL",
-      "why": "Module-level `release(vendor, model)` is a facade delegating to `Governor.release`, which orchestrates by calling the uniform `.release()` contract on its held resources (`_XPSlot` unlocks the cross-process flock, `_Bucket` returns its semaphore slot, `_global` releases the global cap); each does a distinct layer's job under one deliberate release-the-slot interface, so they cannot drift into disagreeing answers and none is a wrong-pick hazard."
+      "why": "Module-level `release(vendor, model)` is a facade delegating to `Governor.release`, which orchestrates by calling the uniform `.release()` contract on its held resources (`_XPSlot` unlocks the cross-process flock, `_Bucket` returns its semaphore slot, `_global` releases the global cap; `_NoopAdmit.release()` is the no-op release for the gating-off handle `try_admit()` returns when cross-process admission is disabled); each does a distinct layer's job under one deliberate release-the-slot interface, so they cannot drift into disagreeing answers and none is a wrong-pick hazard."
     },
     "render": {
       "n": 2,

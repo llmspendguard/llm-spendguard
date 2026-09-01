@@ -348,3 +348,45 @@ def queue_state():
     with _GOV._lock:
         return {k: {"limit": b.limit, "rpm": b.rpm, "in_flight": b.in_flight, "waiting": b.waiting}
                 for k, b in _GOV._buckets.items()}
+
+
+# ── ADMISSION CONTROL (the non-blocking axis acquire() lacks) ────────────────────────────────────────────────────
+# acquire() BLOCKS up to a deadline, so a saturated machine leaves callers spawned-and-WAITING — hundreds of hook
+# processes each holding RAM while queued. try_admit() is the missing primitive: a caller checks for a slot and, if
+# none is free, SHEDS immediately (never spawns / never waits). Machine-wide (flock), so one shared ceiling bounds
+# the whole hook fleet (honestreview / ccwatch / 7thsense) across every process, not per-system.
+DEFAULT_ADMIT = 6              # concurrent heavy hook-ops machine-wide; override via SPENDGUARD_DISPATCH_ADMIT_<POOL> / config
+
+
+class _NoopAdmit:
+    """The handle try_admit() returns when cross-process gating is OFF (no fcntl, or XP_OFF) — admits everyone so a
+    non-POSIX host is never blocked; .release() is a no-op."""
+    __slots__ = ()
+
+    def release(self):
+        pass
+
+
+_NOOP_ADMIT = _NoopAdmit()
+
+
+def _admit_limit(pool):
+    """Machine-wide ceiling for a named admission POOL — env SPENDGUARD_DISPATCH_ADMIT_<POOL> wins, then config
+    dispatch.admit_<pool>, else DEFAULT_ADMIT. One number the whole fleet shares."""
+    return _limit(f"admit_{pool}", DEFAULT_ADMIT)
+
+
+def try_admit(pool="hooks", limit=None):
+    """NON-BLOCKING cross-process admission on a named POOL. Reserve one of `limit` machine-wide slots for `pool`
+    RIGHT NOW and return a handle (truthy; call `.release()` when done), or None if every slot is held (SHED — do NOT
+    spawn, do NOT wait). This is what lets a hook fleet self-limit at the SOURCE: honestreview/ccwatch/7thsense call
+    `h = dispatch.try_admit('hooks')` and skip-with-a-note when `h is None`, so a busy machine never accumulates
+    hundreds of waiting review processes — a refused caller never starts. Slots are flock-based, so a crashed
+    holder's slot frees automatically (no stale reap). Gating-off / no fcntl → a no-op handle that always admits."""
+    lim = int(limit) if limit is not None else _admit_limit(pool)
+    if _off() or _xp_off():
+        return _NOOP_ADMIT
+    try:
+        return _acquire_xp(f"admit:{pool}", max(1, lim), 0.0)   # deadline 0 → one non-blocking pass, then shed
+    except DispatchTimeout:
+        return None
