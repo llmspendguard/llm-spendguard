@@ -96,7 +96,17 @@ SETTINGS = [
               "work off it entirely — preserve its remaining allowance for the work only IT can do (e.g. a Claude Max "
               "weekly reserved for interactive coding, so background/fungible calls go to other plans or metered). "
               "A protected plan that is BEHIND pace still absorbs work. General: every user declares which of their "
-              "own plans to protect; nothing here is specific to one setup. e.g. {\"claude-code\":{\"policy\":\"protect\"}}."),
+              "own plans to protect; nothing here is specific to one setup. e.g. {\"claude-code\":{\"policy\":\"protect\"}}. "
+              "Optional per-lane \"reserve_frac\" (0..0.99): the router SHEDS the lane once its remaining window "
+              "capacity is at/below this — the HARD CAP that makes 'use to ~100%, never over' real. Default 0 (use "
+              "fully; shed only at exactly 0%). e.g. {\"gemini\":{\"reserve_frac\":0.05}} stops with 5% held back."),
+    dict(section="subscription", key="pace_reserve_frac", store="config.json:subscription.pace_reserve_frac",
+         env="SPENDGUARD_PACE_RESERVE_FRAC", default=0.0, kind="float", secret=False,
+         desc="GLOBAL fallback for the per-lane subscription.pace[lane].reserve_frac — the fraction of ANY lane's "
+              "window to hold back before the router sheds it (the hard cap enforcing 'never over'). 0.0 = use every "
+              "plan fully, shedding only at exactly 0% remaining (the plan's own boundary); a positive value (e.g. "
+              "0.03) stops a little early to avoid overage from a stale headroom reading on a plan that BILLS past "
+              "100% instead of blocking. Clamped to [0, 0.99]."),
 
     # ── pricing freshness (the LiteLLM breadth layer; curated prices.json always wins) ──
     dict(section="pricing", key="refresh_days", store="config.json:pricing.refresh_days", env="SPENDGUARD_PRICES_REFRESH_DAYS",

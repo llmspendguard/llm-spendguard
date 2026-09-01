@@ -56,8 +56,8 @@ try:
     ck("codex (95% left) ranks first — most headroom", order2[0] == "codex")
     ck("claude-code (20%) ranks above the unknown zai (scored > None)", order2.index("claude-code") < order2.index("zai-coding"))
     ck("unknown-headroom zai-coding is LAST (proxy tail)", order2[-1] == "zai-coding")
-    ck("gemini (0%) still present here (not cooling in this test) but ranks below the others",
-       "gemini" in order2 and order2.index("gemini") > order2.index("claude-code"))
+    ck("gemini (0%) is SHED at the window cap — NOT an idle lane (the plan is not pushed past 100% of its window)",
+       "gemini" not in order2)
 finally:
     lane_balance.lane_utilization = _o_util
 

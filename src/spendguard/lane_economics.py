@@ -284,6 +284,23 @@ def pace_policy(lane):
     return str(pol or "maximize").strip().lower()
 
 
+def pace_reserve_frac(lane):
+    """The fraction of a lane's window to HOLD BACK — the router SHEDS the lane once its remaining capacity is at or
+    below this, so a plan is used to ~100% of its window but never pushed PAST it (the hard cap the pace nudge lacks).
+    Per-lane subscription.pace[lane].reserve_frac, else the global subscription.pace_reserve_frac, else 0.0 (use fully;
+    shed only at exactly 0% — the plan's own boundary). Read HERE (the one reader of subscription.pace) so the router
+    and the economics view never drift. Clamped to [0, 0.99] so a bad value can never make every lane unusable."""
+    pace = config._cfg_get("subscription", "pace", None) or {}
+    e = pace.get(lane) if isinstance(pace, dict) else None
+    raw = e.get("reserve_frac") if isinstance(e, dict) else None
+    if raw is None:
+        raw = config._cfg_get("subscription", "pace_reserve_frac", 0.0)
+    try:
+        return max(0.0, min(0.99, float(raw or 0.0)))
+    except Exception:
+        return 0.0
+
+
 def _plan_total_fee():
     """(total_monthly_plan_fee, is_default) — reuse the receipt's plan total so this equals what `lanes --balance`
     already shows. Best-effort → (0.0, True) so the model degrades to $/token=None rather than raising."""

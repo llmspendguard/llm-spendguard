@@ -126,6 +126,21 @@ def rank_lanes(rows, cooling=None, now=None, pace_by=None, protect=None):
             out.append({**base, "available": False, "score": None,
                         "why": f"protected + ahead of pace ({pc:+.2f}) — held for its own window"})
             continue
+        # HARD CAP at the window boundary — the enforcement the pace NUDGE lacks. A lane at/below its reserve of
+        # remaining capacity is SHED, so 'use each plan to ~100%, never over' is real: without this an exhausted lane
+        # still scored >= 1.0 and OUTRANKED metered, so fungible work kept hitting it PAST 100% (wasted failed
+        # attempts, and real overage on a plan that bills instead of blocking — booked as $0). Applies to EVERY lane,
+        # protected or not: it is the plan's own limit, not a policy. remaining_pct None (proxy lane) → unknown, never
+        # capped (a can't-know is not a no). reserve defaults to 0.0 = use fully, shed only at exactly 0%.
+        _rp = r.get("remaining_pct")
+        if _rp is not None:
+            from . import lane_economics
+            _reserve = lane_economics.pace_reserve_frac(r["lane"])
+            if (float(_rp) / 100.0) <= _reserve:
+                out.append({**base, "available": False, "score": None,
+                            "why": f"at window cap ({int(_rp)}% left ≤ reserve {_reserve*100:.0f}%) — held so the "
+                                   f"plan is not pushed past 100% of its window"})
+                continue
         s = lane_score(r, now, abs_norm=abs_norm, pace=pc)
         if s is None:
             why = "unknown headroom (proxy orders it)"
