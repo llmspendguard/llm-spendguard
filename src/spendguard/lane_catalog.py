@@ -127,6 +127,66 @@ def arms(lanes_filter=None):
     return out
 
 
+def audit_lane_fallback():
+    """For EVERY configured lane use-name: the metered-API id it FALLS BACK to when the lane is down (via the one
+    equivalence fn adapters.metered_fallback_id), and whether that id is PRICED and — when the model catalog is
+    synced — SERVED by the provider. This is the guard for 'a lane's naming must not break its own metered fallback':
+    a row with priced=False or served='stale' is a lane that would STRAND a call when its plan is exhausted, instead
+    of degrading to the paid API. Read-only, $0 (served_check is cache-first + returns a status, never raises; a
+    can't-check is 'unchecked', never a failure). Returns [{lane, provider, use_name, metered_id, reasoning, priced,
+    served, ok}] — ok is False only on a CONFIRMED break (unpriced, or a catalog-CONFIRMED stale id)."""
+    from . import adapters, pricing
+    try:
+        from . import vendor_call as _vc
+    except ImportError:
+        _vc = None                                       # packaging edge — skip the served check, keep the priced one
+    out = []
+    for lane in lanes():
+        prov = lane_provider(lane)
+        uns = use_names(lane) or ([configured_base(lane)] if configured_base(lane) else [])
+        for un in uns:
+            mid, tier = adapters.metered_fallback_id(prov, un)
+            try:
+                pricing.realtime_cost(mid, 1000, 100)
+                priced = True
+            except (KeyError, ValueError):               # the UNPRICED/unknown-model signal — narrow, so a refusal
+                priced = False                           # or deadline is never downgraded to 'just unpriced'
+            served = _vc.served_check(prov, mid) if _vc is not None else None   # returns a status, never raises
+            ok = priced and served != "stale"            # only a CONFIRMED-stale id fails; unchecked/None proceed
+            out.append({"lane": lane, "provider": prov, "use_name": un, "metered_id": mid,
+                        "reasoning": tier, "priced": priced, "served": served, "ok": ok})
+    return out
+
+
+def format_lane_fallback():
+    """The `spendguard lanes --fallback` view of audit_lane_fallback: one line per lane use-name → its metered-API
+    equivalent, with priced/served and a ✓/✗. Names any BROKEN equivalence (a lane that could not fall back to the
+    paid API) at the end, so 'a down lane strands the call' is caught here, not in production."""
+    rows = audit_lane_fallback()
+    if not rows:
+        return "no lanes configured — nothing to audit (set advisor.lane_models)."
+    lines = ["lane → metered-API fallback equivalence (when a plan is down/exhausted, the call bills the paid API):",
+             "  a lane whose id can't map to a PRICED, SERVED metered id would STRAND the call — those are flagged ✗\n",
+             f"  {'lane':<12}{'use-name':<26}{'→ metered id':<24}{'priced':<8}{'served':<12}ok"]
+    broken = []
+    for r in rows:
+        mark = "✓" if r["ok"] else "✗"
+        if not r["ok"]:
+            broken.append(r)
+        served = str(r["served"] if r["served"] is not None else "—")
+        lines.append(f"  {r['lane']:<12}{r['use_name']:<26}{r['metered_id']:<24}"
+                     f"{('yes' if r['priced'] else 'NO'):<8}{served:<12}{mark}")
+    if broken:
+        lines.append("\n  ✗ BROKEN — these lanes would NOT fall back to metered (fix the id / pricing / catalog):")
+        for r in broken:
+            why = "unpriced metered id" if not r["priced"] else f"metered id not served ({r['served']})"
+            lines.append(f"      {r['lane']} ({r['use_name']} → {r['metered_id']}): {why}")
+    else:
+        lines.append("\n  ✓ every lane maps to a priced, served metered id — a down/exhausted plan degrades to the "
+                     "paid API, never strands the call.")
+    return "\n".join(lines)
+
+
 def main(argv=None):
     """`spendguard lanes --catalog` — print the lane model catalog (provider · base · reasoning quirk · use-names ·
     price). The source of truth the pricing, recording, and bandit all read."""

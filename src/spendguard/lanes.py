@@ -339,6 +339,10 @@ def main(argv=None):
         from . import lane_economics
         print()
         print(lane_economics.format_economics())
+    if "--fallback" in argv:                              # lane→metered id equivalence: a down plan must degrade, not strand
+        from . import lane_catalog
+        print()
+        print(lane_catalog.format_lane_fallback())
     if "--propose" in argv:                               # model PROPOSES acceptable substitutes for an intent (PENDING)
         rest = [a for a in argv[argv.index("--propose") + 1:] if not a.startswith("--")]
         if len(rest) < 2:

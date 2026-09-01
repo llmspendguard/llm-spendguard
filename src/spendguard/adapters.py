@@ -566,6 +566,18 @@ def _compose_gemini_reasoning(model_id, reasoning):
     return _base + "-" + tier
 
 
+def metered_fallback_id(provider, use_name):
+    """The metered-API model id equivalent to a lane's USE-NAME — the mapping that lets a lane call fall BACK to the
+    provider's paid API when the lane is down/exhausted, WITHOUT the lane's own naming breaking the call. This is the
+    ONE place that equivalence lives, so the live fallback (_call_once) and the lane-fallback audit can never drift.
+    For gemini/agy the reasoning level rides the id as a SUFFIX (gemini-3.7-flash-medium) while the metered API wants
+    the BARE id + a reasoning PARAMETER, so the suffix is split off; every other provider's lane id already IS its
+    metered id. Returns (metered_id, reasoning_level_or_None)."""
+    if provider == "gemini":
+        return _split_gemini_reasoning(use_name)
+    return use_name, None
+
+
 def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,
                _skip_lane=False, no_metered_fallback=False, images=None, _no_sub=False):
     """One raw request. Everything public goes through `call`, which adds the input and output guards.
@@ -599,9 +611,9 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         _lane = None                                 # prompt too big for this lane, OR this MODEL was rejected here
         #                                              recently (the API served it) → straight to API, don't re-intercept
     if _lane is None and prov == "gemini":           # METERED namespace: effort is a PARAMETER, not an id suffix.
-        _bare, _tier = _split_gemini_reasoning(raw)  # an agy id (…-medium) 404s on the metered API — split it so the
-        if _tier:                                    # bare id rides the request and the tier rides `reasoning` below
-            raw, base["model"], reasoning = _bare, _bare, (reasoning or _tier)
+        _bare, _tier = metered_fallback_id(prov, raw)  # an agy id (…-medium) 404s on the metered API — the ONE
+        if _tier:                                    # equivalence fn splits it so the bare id rides the request and
+            raw, base["model"], reasoning = _bare, _bare, (reasoning or _tier)   # the tier rides `reasoning` below
     if _lane:
         lane_name, lane_mod = _lane
         # THE SHAPE MUST RIDE THE PROMPT ON A LANE, AND THE DEADLINE MUST BE THE CALLER'S. A CLI completion
