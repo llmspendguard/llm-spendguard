@@ -60,6 +60,34 @@ class BudgetRefused(gate.SpendGateRefused):
             f"Raise budget_usd, drop the vendor, sync-prices for it, or route it to a $0 lane.")
 
 
+class ModelPreflightRefused(gate.SpendGateRefused):
+    """A named model id is NOT callable as written — STALE (renamed), UNPRICED, or an UNKNOWN provider — refused
+    BEFORE any spend, the model-validity twin of BudgetRefused. A batch that would otherwise pay for a whole run of
+    failures (the gemini-3-flash → gemini-3-flash-preview case) stops HERE with each bad id and its fix. Subclasses
+    SpendGateRefused so it propagates through every fail-open handler by construction, and carries the preflight rows."""
+
+    def __init__(self, bad_rows):
+        self.bad = list(bad_rows)
+        detail = "; ".join(f"{r.get('spec')}: {r.get('note')}" for r in self.bad)
+        super().__init__(f"refusing before spend — {len(self.bad)} model id(s) not callable as written: {detail}")
+
+
+def _preflight_or_refuse(vlist):
+    """HARD GATE: every named model in `vlist` must be callable AS WRITTEN before we spend. Raises
+    ModelPreflightRefused naming each stale/unpriced/unknown id + its fix if any is not usable, so a bad id is caught
+    for ~$0 up front instead of after paying for a run of failures. Re-checked on EVERY call — NEVER memoized — so a
+    mid-process change (a model revoked, renamed, or unpriced after an earlier clean call) is caught on the next call,
+    not skipped on a stale cached OK. The re-check is cheap: served_check is cache-first ($0), a clean served id makes
+    no agentic call, and a stale id stops the batch on the FIRST call (so there is never a per-item agentic cost). A
+    DELIBERATE stop from the preflight itself (gate/budget/deadline) propagates untouched — it is not 'a bad model'."""
+    from . import model_preflight
+    specs = sorted(f"{v}:{m}" for v, m in vlist)
+    rows = model_preflight.preflight_models(specs)
+    bad = [r for r in rows if not r.get("usable")]
+    if bad:
+        raise ModelPreflightRefused(bad)
+
+
 def _parse_vendors(vendors):
     """Accept ["vendor:model", ...] or [("vendor","model"), ...]; return [(vendor, model)]. A model id may itself
     contain ':' (some providers namespace) — only the FIRST ':' splits vendor from model."""
@@ -223,7 +251,7 @@ class AskResult:
 
 
 def ask(prompt, *, vendors=None, n=None, schema=None, system=None, purpose="ask", deadline_s=None,
-        budget_usd=None, mode="all", require=None, max_tokens=None, est_output_tokens=None):
+        budget_usd=None, mode="all", require=None, max_tokens=None, est_output_tokens=None, preflight=True):
     """Ask N models the same prompt; return an honest AskResult. The stable public entry point for cross-LLM work.
 
     vendors        : ["vendor:model", ...] or [("vendor","model"), ...]. Omit to use the configured default
@@ -236,9 +264,13 @@ def ask(prompt, *, vendors=None, n=None, schema=None, system=None, purpose="ask"
     budget_usd     : if set, REFUSE (BudgetRefused) when the pre-flight metered estimate exceeds it — before spend
     deadline_s     : per-vendor default; time_budget refines it per model. Defaults to a measured-safe value.
     max_tokens     : omit it — the measured output cap (32K floor, clamped to the model max) is used
+    preflight      : HARD GATE (default on) — every named model must be callable AS WRITTEN (served + priced) before
+                     any spend; a stale/unpriced/unknown id is refused with its fix (ModelPreflightRefused). Validated
+                     once per vendor-set per process. Pass preflight=False only when the caller already preflighted.
 
     Never raises for a vendor failure (those are honest kinds in the result); raises only for a caller error
-    (bad vendor spec / no vendors) or a refused budget."""
+    (bad vendor spec / no vendors), a refused budget (BudgetRefused), or a model not callable as written
+    (ModelPreflightRefused) — both deliberate, both BEFORE any spend."""
     if vendors is None:
         vendors = _default_vendors()
     vlist = _parse_vendors(vendors)
@@ -248,6 +280,12 @@ def ask(prompt, *, vendors=None, n=None, schema=None, system=None, purpose="ask"
         k = max(1, int(n))
         if k < len(vlist):
             vlist = vlist[:k]
+    if preflight:
+        # HARD GATE, before the estimate and any spend: every named model must be callable AS WRITTEN (served +
+        # priced). A stale/unpriced/unknown id is refused here with its fix (ModelPreflightRefused) instead of being
+        # discovered after paying for a run of failures — the 'test the model before the full run' rail. Validated
+        # once per vendor-set per process (memoized), so a 26-item batch checks once, not 26×.
+        _preflight_or_refuse(vlist)
     estimate, detail, unpriced = _estimate_metered(vlist, prompt, system, est_output_tokens)
     if budget_usd is not None and (estimate > float(budget_usd) or unpriced):
         # Refuse on EITHER an over-budget estimate OR an unpriceable metered vendor: a vendor whose price we
