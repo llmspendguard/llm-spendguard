@@ -383,12 +383,13 @@ def main(argv=None):
             return rest[rest.index(flag) + 1] if (flag in rest and rest.index(flag) + 1 < len(rest)) else None
         file_p, ck_p, out_p = _optval("--file"), _optval("--checkpoint"), _optval("--out")
         sys_p, sysfile_p = _optval("--system"), _optval("--system-file")
-        opt_vals = {v for v in (file_p, ck_p, out_p, sys_p, sysfile_p) if v}
+        tier_p = _optval("--tier")                        # capability GROUP (advisor.tiers) → confine the fan-out to it
+        opt_vals = {v for v in (file_p, ck_p, out_p, sys_p, sysfile_p, tier_p) if v}  # tier value is NOT the positional intent
         pos = [a for a in rest if not a.startswith("--") and a not in opt_vals]
         intent = pos[0] if pos else None
         if not intent:
             print('usage: spendguard lanes --bulk <intent> [--file tasks.txt] [--jsonl] [--system TEXT | --system-file P] '
-                  '[--refuse-billed] [--checkpoint ck.jsonl] [--out results.jsonl] [--force]')
+                  '[--tier <group>] [--refuse-billed] [--checkpoint ck.jsonl] [--out results.jsonl] [--force]')
             print('       tasks: one per line from --file/stdin (or --jsonl = one JSON-encoded task per line, for '
                   'MULTI-LINE bodies). --system = the shared instruction, sent ONCE not per task; --refuse-billed '
                   'never bills (a lane miss errors); --checkpoint resumes by CONTENT; --out writes {i,task,text,lane,model,...}.')
@@ -426,7 +427,7 @@ def main(argv=None):
                 _stats = {}
                 try:
                     res = lane_balance.bulk_delegate(tasks, intent, system=system, checkpoint=ck_p,
-                                                     refuse_billed=refuse, stats=_stats, force=_force)
+                                                     refuse_billed=refuse, stats=_stats, force=_force, tier=tier_p)
                 except lane_balance.BulkResilienceRefused as _e:
                     print(f"\n  ⛔ {_e}\n  → add --checkpoint <path> and/or split into a durable run, or re-run with "
                           f"--force to override.", file=sys.stderr)

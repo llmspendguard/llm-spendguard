@@ -297,7 +297,7 @@ def _row_succeeded(row):
 
 
 def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, deadline_s=120.0,
-                  checkpoint=None, chunk_size=100, refuse_billed=False, stats=None, force=False):
+                  checkpoint=None, chunk_size=100, refuse_billed=False, stats=None, force=False, tier=None):
     """Fan a LIST of similar tasks across ALL viable idle lanes CONCURRENTLY — the right shape for a BULK job (e.g.
     symgrep's ~6k one-sentence symbol descriptions) that the per-call bandit would trickle one at a time. Each task
     runs on a lane (round-robin across the lanes the bandit rates GOOD for this intent), each admission BOUNDED by
@@ -341,10 +341,28 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
                 f"resilience — " + "; ".join(_gaps) + ". This is the chunk-never-single-shot rule: a large job "
                 "must checkpoint and chunk so a transient no-progress pass cannot kill it. Fix the above, or pass "
                 "force=True to override and own the risk.")
-    arms = _bulk_arms(intent)
+    # TIER CONFINEMENT (a cost RAIL, declared once): when `tier` is given, restrict the fan-out to lanes whose
+    # configured base model is in that capability GROUP (advisor.tiers), reusing the SAME lane→base mapping the router
+    # uses (lane_catalog.configured_base + route_utility.tier_models) — never a hand-rolled one. FAIL-CLOSED: if the
+    # group is undeclared, or NO configured lane serves it, EVERY task errors (undescribed, re-runnable) — we never
+    # widen back to all idle lanes and never let the work fall onto a strong/Opus lane. So an unknown/unserved tier
+    # resolves to a refusal, never to a premium model.
+    allow = None
+    if tier:
+        from . import route_utility
+        _tmods = set(route_utility.tier_models(tier))
+        allow = [ln for ln in lane_catalog.lanes() if lane_catalog.configured_base(ln) in _tmods] if _tmods else []
+        if not allow:
+            return [{"text": None, "lane": None, "use_name": None, "billed": False,
+                     "error": f"--tier {tier!r}: no configured lane serves this group (undeclared, or its models are "
+                              f"on no lane) — refusing rather than widening to a premium lane; configure a {tier}-tier "
+                              f"lane (advisor.tiers / advisor.lane_models) and re-run"} for _ in tasks]
+    arms = _bulk_arms(intent, lanes=allow)
     if not arms:
         return [{"text": None, "lane": None, "use_name": None, "billed": False,
-                 "error": "no viable lane (set advisor.lane_models; check `spendguard lanes`)"} for _ in tasks]
+                 "error": ("no viable lane (set advisor.lane_models; check `spendguard lanes`)" if not tier
+                           else f"--tier {tier!r}: every lane serving this group is cooling or a proven loser for "
+                                f"{intent!r} right now — refusing rather than widening off-tier")} for _ in tasks]
 
     import hashlib as _hl
 
@@ -428,7 +446,11 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
             calls.set_context(intent=intent)          # tag this worker thread's calls with the intent (attribution)
             r = adapters.call(model, task, system=system, reasoning=reasoning,   # sig=intent → the OUTPUT budget is this
                               sig=intent, timeout_s=deadline_s,                  # call-class's measured p99; refuse_billed
-                              no_metered_fallback=refuse_billed)                 # → a lane miss errors, never a paid retry
+                              no_metered_fallback=refuse_billed,                 # → a lane miss errors, never a paid retry
+                              no_substitution=bool(tier))                        # TIER: pin the cheap model — the bandit
+            #                                                                      can NEVER swap it for a strong/Opus one;
+            #                                                                      the only fallback is THIS model's metered
+            #                                                                      API, which is in-tier by construction
             # (receipt suppressed via set_context above, not the context manager)  each reply feeds that measurement
         except Exception as e:
             return i, {"text": None, "lane": lane, "use_name": use_name, "model": model, "billed": False, "error": str(e)[:80]}
