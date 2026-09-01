@@ -88,6 +88,15 @@ SETTINGS = [
          kind="json|null", secret=False,
          desc="Optional per-plan breakdown [{\"name\":\"Claude Max\",\"usd\":200}, …] — sums to the subscription "
               "line and NAMES it on the receipt (the label is built from these, never hardcoded)."),
+    dict(section="subscription", key="pace", store="config.json:subscription.pace", default=None,
+         kind="json|null", secret=False,
+         desc="{lane: {\"policy\": ...}} — per-plan VALUE policy for the pace router. policy=\"maximize\" (default for "
+              "any unlisted lane): fill this plan toward 100% of its window; behind-pace boosts it, ahead-pace just "
+              "eases off. policy=\"protect\" (or \"conservative\"): once this plan is AHEAD of pace, SHED discretionary "
+              "work off it entirely — preserve its remaining allowance for the work only IT can do (e.g. a Claude Max "
+              "weekly reserved for interactive coding, so background/fungible calls go to other plans or metered). "
+              "A protected plan that is BEHIND pace still absorbs work. General: every user declares which of their "
+              "own plans to protect; nothing here is specific to one setup. e.g. {\"claude-code\":{\"policy\":\"protect\"}}."),
 
     # ── pricing freshness (the LiteLLM breadth layer; curated prices.json always wins) ──
     dict(section="pricing", key="refresh_days", store="config.json:pricing.refresh_days", env="SPENDGUARD_PRICES_REFRESH_DAYS",
@@ -139,6 +148,21 @@ SETTINGS = [
          desc="{lane: model} — the representative model each subscription plan offers, e.g. "
               "{\"codex\":\"gpt-5.5\",\"gemini\":\"gemini-3.7-flash-high\",\"zai-coding\":\"glm-4.6\"}. The "
               "load-balancer's substitute CANDIDATES (lane_balance.candidate_models); unset → nothing to propose."),
+    dict(section="advisor", key="tiers", store="config.json:advisor.tiers", default=None,
+         kind="json|null", secret=False,
+         desc="{group: [models YOU declare interchangeable for it]} — named ROUTING GROUPS a fungible caller can "
+              "request instead of pinning a model, e.g. {\"cheap\":[\"glm-5.3\",\"gpt-5.6-luna\"],\"strong\":"
+              "[\"gpt-5.6-sol\",\"claude-opus-4-8\"]}. YOU decide which of your own models belong in a group (the "
+              "capability judgement is yours, made once here — the code asserts nothing); route_utility.rank_for_tier "
+              "then water-fills that group across whichever $0 lane / cheapest credit is best RIGHT NOW (pace-aware). "
+              "A lane serves a group when its advisor.lane_models base is in the group's list. Unset → no group "
+              "routing. This is how a 7thsense-style caller asks for 'my cheap group' and gets the best-value one."),
+    dict(section="advisor", key="lane_pace_weight", store="config.json:advisor.lane_pace_weight",
+         env="SPENDGUARD_LANE_PACE_WEIGHT", default=2.0, kind="float", secret=False,
+         desc="How strongly BEHIND-pace plans are preferred in lane ranking. A plan that has spent less than its "
+              "elapsed window fraction (lane_economics.pace_by_lane > 0) gets score += pace × this weight, so "
+              "discretionary work fills a plan that would otherwise waste its allowance at reset. 0 = ignore pace "
+              "(rank on headroom alone); higher = chase 100%-of-window utilisation harder."),
     dict(section="advisor", key="lane_balance_margin", store="config.json:advisor.lane_balance_margin",
          env="SPENDGUARD_LANE_BALANCE_MARGIN", default=0.5, kind="float", secret=False,
          desc="Load-balance sensitivity: proactively route an intent to an idle substitute plan when that plan sits "

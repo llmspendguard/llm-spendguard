@@ -53,7 +53,7 @@ def _urgency(reset_ts, now=None):
     return 1.0 + frac_near * (umax - 1.0)
 
 
-def lane_score(row, now=None, abs_norm=None):
+def lane_score(row, now=None, abs_norm=None, pace=None):
     """Utility of routing one unit to this subscription lane, or None when its headroom is UNKNOWN (the caller then
     falls back to the call-volume proxy — a can't-know is not a zero). `row` is a lanes.lane_headroom() entry.
     Always >= 1.0 (free), so it outranks any metered target; more headroom × urgency → higher.
@@ -62,7 +62,12 @@ def lane_score(row, now=None, abs_norm=None):
     normalized by `abs_norm` (the max absolute-remaining across the lanes being ranked) is the headroom fraction —
     so a big-cap plan at 30% outranks a small-cap plan at 30% (it has more real tokens to give). Falls back to the
     plan's own remaining_pct FRACTION when the cap is not yet measured (abs unknown) or no abs_norm was supplied, so
-    behaviour is unchanged until a cap exists. Either way the score stays >= 1.0 (a plan token is free)."""
+    behaviour is unchanged until a cap exists. Either way the score stays >= 1.0 (a plan token is free).
+
+    PACE (lane_economics.pace_by_lane, optional): a plan BEHIND pace (positive — spent less than the elapsed window
+    fraction) gets a bonus so discretionary work fills it before its allowance is wasted at reset; a plan AHEAD of
+    pace gets no bonus (baseline), so among free lanes the under-used one wins. This is what makes 'use every plan to
+    ~100% of its window, never over' automatic. (Shedding an ahead-of-pace PROTECTED plan is done in rank_lanes.)"""
     if not row.get("known") or row.get("remaining_pct") is None:
         return None
     ra = row.get("remaining_abs")
@@ -70,35 +75,66 @@ def lane_score(row, now=None, abs_norm=None):
         rf = max(0.0, min(1.0, float(ra) / float(abs_norm)))
     else:
         rf = max(0.0, min(1.0, float(row["remaining_pct"]) / 100.0))
-    return 1.0 + rf * _urgency(row.get("reset_ts"), now)
+    score = 1.0 + rf * _urgency(row.get("reset_ts"), now)
+    if pace is not None:
+        score += max(0.0, float(pace)) * _cfg_num("lane_pace_weight", 2.0)
+    return score
 
 
-def rank_lanes(rows, cooling=None, now=None):
+def _protect_policy():
+    """(lane)->bool from config subscription.pace: a lane whose policy is 'protect' (or 'conservative') is SHED off
+    for discretionary work once it is ahead of pace — its remaining allowance is preserved for its window, for the
+    work only IT can do (e.g. Claude Max weekly, when interactive coding can't run anywhere else). Default: no
+    protection — 'maximize', every plan filled to ~100% of its window. General: any user marks any plan to protect."""
+    from . import lane_economics
+    def _p(lane):
+        return lane_economics.pace_policy(lane) in ("protect", "conservative")
+    return _p
+
+
+def rank_lanes(rows, cooling=None, now=None, pace_by=None, protect=None):
     """EVERY enabled lane ordered BEST-first by utility — nothing is silently dropped: a cooling lane appears with
     available=False and a reason, so 'why isn't it routing to lane X' is answerable from the output. `rows` from
     lanes.lane_headroom(); `cooling(lane)->bool` defaults to resource_state. Each entry: {lane, provider, available,
-    score, remaining_pct, reset_ts, why}. Order: available+scored (best utility) → available+UNKNOWN headroom (usable,
-    no quota signal — the proxy orders these) → unavailable (cooling) last. Callers route to the first available=True."""
+    score, remaining_pct, reset_ts, pace, why}. Order: available+scored (best utility, PACE-weighted) → available+
+    UNKNOWN headroom → unavailable (cooling / protected-and-ahead) last. Callers route to the first available=True.
+    PACE-aware: `pace_by` {lane: pace_headroom} (default: lane_economics.pace_by_lane) — behind-pace plans score
+    higher (fill the paid capacity before reset); a PROTECTED plan that is ahead of pace is held out (`protect`)."""
     if cooling is None:
         from . import resource_state
         cooling = lambda ln: resource_state.cooling(resource_state.lane_key(ln))
+    if pace_by is None:
+        try:
+            from . import lane_economics
+            pace_by = lane_economics.pace_by_lane(rows, now=now)
+        except Exception:
+            pace_by = {}
+    if protect is None:
+        protect = _protect_policy()
     # WATER-FILL normalizer: the largest ABSOLUTE tokens-left across these lanes, so remaining_abs becomes a fraction
     # comparable to remaining_pct. None when no lane has a measured cap yet → every lane falls back to its own %.
     abs_norm = max((float(r["remaining_abs"]) for r in rows if r.get("remaining_abs") is not None), default=None)
     out = []
     for r in rows:
+        pc = (pace_by or {}).get(r["lane"])
         base = {"lane": r["lane"], "provider": r.get("provider"), "remaining_pct": r.get("remaining_pct"),
-                "reset_ts": r.get("reset_ts"), "remaining_abs": r.get("remaining_abs")}
+                "reset_ts": r.get("reset_ts"), "remaining_abs": r.get("remaining_abs"), "pace": pc}
         if cooling(r["lane"]):
             out.append({**base, "available": False, "score": None, "why": "cooling — excluded (reactive backstop)"})
             continue
-        s = lane_score(r, now, abs_norm=abs_norm)
+        if pc is not None and pc < 0 and protect(r["lane"]):
+            out.append({**base, "available": False, "score": None,
+                        "why": f"protected + ahead of pace ({pc:+.2f}) — held for its own window"})
+            continue
+        s = lane_score(r, now, abs_norm=abs_norm, pace=pc)
         if s is None:
             why = "unknown headroom (proxy orders it)"
         elif r.get("remaining_abs") is not None and abs_norm:
             why = f"{_fmt_tok_short(r['remaining_abs'])} tok left × urgency {_urgency(r.get('reset_ts'), now):.2f}"
         else:
             why = f"{int(r['remaining_pct'])}% left × urgency {_urgency(r.get('reset_ts'), now):.2f}"
+        if pc is not None:
+            why += f" · pace {pc:+.2f} ({'behind→fill' if pc >= 0 else 'ahead→ease'})"
         out.append({**base, "available": True, "score": s, "why": why})
     # available first; among available, scored (higher better) before unknown-headroom; unavailable (cooling) last
     out.sort(key=lambda d: (not d["available"], d["score"] is None, -(d["score"] if d["score"] is not None else 0.0)))
@@ -202,3 +238,67 @@ def breach_decision(policy=None):
     except Exception:
         pass
     return "refuse", None, "on_breach=downgrade, but no idle lane has headroom now → refuse"
+
+
+# ── Routing GROUPS ("tiers"): a fungible caller asks for a group NAME the USER declared (advisor.tiers), not a
+#    pinned model, so the value router can water-fill that group across whichever $0 lane / cheapest credit is best
+#    RIGHT NOW. A group is the USER's declaration that those models are interchangeable FOR THEIR PURPOSE — the
+#    judgement of what any model can do is made by the human who knows the models, at config time, and recorded here
+#    as policy; THE CODE ASSERTS NOTHING about a model's capability and ships NO built-in groups. Unset advisor.tiers
+#    → no group routing (the caller keeps its normal path). Same kind of user-declared config as advisor.lane_models
+#    / subscription.lane_plans — routing among the user's OWN handful of plans, not classifying arbitrary models. ──
+
+
+def tiers():
+    """{group: [models the user declared interchangeable for it]} from config advisor.tiers ({} if unset). A caller
+    asks for a GROUP NAME rather than pinning a model; the router then picks the best-value AVAILABLE lane/model the
+    USER placed in that group. The code does NOT decide which models belong to a group — that judgement is the
+    user's, applied as policy (identical in kind to advisor.lane_models). Whoever knows the models makes the call,
+    once, in config; a model that appears/changes is a config edit, exactly like every other model list in the repo."""
+    cfg = config._cfg_get("advisor", "tiers", None)
+    out = {}
+    if isinstance(cfg, dict):
+        for k, v in cfg.items():
+            if isinstance(v, (list, tuple)):
+                out[str(k)] = list(v)
+    return out
+
+
+def tier_models(tier):
+    """The models the user declared for a routing group (or [] for an undeclared group)."""
+    return list(tiers().get(tier, []))
+
+
+def rank_for_tier(tier, est_in=0, est_out=0, lane_rows=None, cooling=None, now=None):
+    """VALUE-RANKED targets for a fungible call in the user-declared routing group `tier`, best-first: available $0
+    subscription lanes whose configured model the USER placed in that group (PACE-aware — behind-pace first; a
+    protected, ahead-of-pace plan excluded) → then the cheapest metered group-model that still has prepay → then
+    metered. Each: {kind 'lane'|'metered', target, provider, available, score, why}. The caller routes to the FIRST
+    available=True. This is the single entry point that makes balance AUTOMATIC: no pinned model, no per-caller lane
+    logic — name a group you declared, the economics pick the plan. Empty when the group is undeclared (advisor.tiers)."""
+    from . import lanes as _lanes, lane_catalog, adapters
+    rows = list(lane_rows if lane_rows is not None else _lanes.lane_headroom(do_fetch=False))
+    tset = set(tier_models(tier))
+    lane_model = {}
+    for ln in lane_catalog.lanes():
+        try:
+            lane_model[ln] = lane_catalog.configured_base(ln)
+        except Exception:
+            lane_model[ln] = None
+    tier_lane_rows = [r for r in rows if lane_model.get(r["lane"]) in tset]
+    ranked_lanes = rank_lanes(tier_lane_rows, cooling=cooling, now=now)
+    served = {m for m in lane_model.values() if m in tset}       # models a $0 lane already offers → don't also pay
+    metered_cands = []
+    for m in tier_models(tier):
+        if m in served:
+            continue
+        try:
+            metered_cands.append("%s:%s" % (adapters.provider_for(m), m))
+        except Exception:
+            pass
+    ranked_metered = rank_metered(metered_cands, est_in, est_out)
+    out = [{"kind": "lane", "target": l["lane"], "provider": l.get("provider"), "available": l["available"],
+            "score": l["score"], "why": l["why"]} for l in ranked_lanes]
+    out += [{"kind": "metered", "target": m["target"], "provider": m["provider"], "available": m["available"],
+             "score": m["score"], "why": m["why"]} for m in ranked_metered]
+    return out

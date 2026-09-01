@@ -241,6 +241,49 @@ def remaining_abs_by_lane(headroom_rows=None):
     return out
 
 
+def _bucket_pace(bucket, now):
+    """PACE of one window: elapsed_frac − used_frac. POSITIVE = the plan is BEHIND pace (it has spent less than the
+    fraction of the window that has elapsed → there is budget to spend NOW before it is wasted at reset, so route
+    here). NEGATIVE = AHEAD of pace (spending faster than the clock → it will run out before reset, so shed off it).
+    None when the window length or reset is not known yet (no pace signal → the router falls back to plain headroom).
+    This is the axis that makes 'use every plan to ~100% of its window, never over' automatic and per-plan."""
+    period_days = bucket.get("period_days")
+    reset = bucket.get("reset_ts")
+    pct = bucket.get("remaining_pct")
+    if not period_days or not reset or pct is None:
+        return None
+    period_s = float(period_days) * 86400.0
+    if period_s <= 0:
+        return None
+    elapsed = min(max((float(now) - (float(reset) - period_s)) / period_s, 1e-6), 1.0)
+    used = 1.0 - float(pct) / 100.0
+    return round(elapsed - used, 4)
+
+
+def pace_by_lane(headroom_rows=None, now=None):
+    """{lane: pace_headroom} over each lane's BINDING bucket (the one that throttles first) — the PACE axis the value
+    router reads. Positive = behind pace (prefer routing here to use the paid capacity before it expires); negative =
+    ahead (shed). None where the window is not measured yet. General: it paces claude/zai/gemini alike, so a plan the
+    user is burning too fast (e.g. a nearly-exhausted weekly) self-identifies as ahead-of-pace with no special-casing."""
+    now = now if now is not None else time.time()
+    out = {}
+    for e in economics(headroom_rows=headroom_rows):
+        b = e.get("binding")
+        out[e["lane"]] = (_bucket_pace(b, now) if b else None)
+    return out
+
+
+def pace_policy(lane):
+    """The declared per-plan VALUE policy string for a lane, normalized — the ONE reader of config subscription.pace,
+    so the router (route_utility._protect_policy) and the `lanes --economics` display never drift. 'maximize' (fill to
+    ~100% of the window; the default for any unlisted lane) or 'protect'/'conservative' (shed discretionary work once
+    ahead of pace, preserving the allowance for what only this plan can do)."""
+    pace = config._cfg_get("subscription", "pace", None) or {}
+    e = pace.get(lane) if isinstance(pace, dict) else None
+    pol = (e.get("policy") if isinstance(e, dict) else e) if e is not None else None
+    return str(pol or "maximize").strip().lower()
+
+
 def _plan_total_fee():
     """(total_monthly_plan_fee, is_default) — reuse the receipt's plan total so this equals what `lanes --balance`
     already shows. Best-effort → (0.0, True) so the model degrades to $/token=None rather than raising."""
@@ -448,6 +491,21 @@ def format_economics(headroom_rows=None):
         lines.append(f"     binding: {b['bucket']}  —  {b['remaining_pct']}% left, "
                      f"{_fmt_tok(b['remaining_abs'])} of ~{_fmt_tok(b['cap'])} tok left{when}  "
                      f"(from {b['n_pairs']} consumption pair(s))")
+        pace = _bucket_pace(b, time.time())
+        if pace is not None:
+            # Band by the SIGN only — the mathematical zero-crossing (elapsed_frac vs used_frac), not a hand-picked
+            # cutoff; this is exactly the boundary the router uses (lane_score boosts iff pace > 0). The raw magnitude
+            # is printed so the reader judges HOW far off pace it is — no threshold decides that for them.
+            pol = pace_policy(e["lane"])
+            protect = pol in ("protect", "conservative")
+            if pace > 0:
+                tag = "BEHIND pace — budget to spend before it resets (route fungible work here)"
+            else:
+                tag = ("AHEAD of pace — will exhaust before reset"
+                       + (" → SHED (protected: held for its own window)" if protect
+                          else " → eases off in ranking"))
+            pol_txt = "" if pol == "maximize" else f"  [policy: {pol}]"
+            lines.append(f"     pace {pace:+.2f}: {tag}{pol_txt}")
         if b["eff_usd_per_tok"] is not None:
             lines.append(f"     ${b['eff_usd_per_tok'] * 1e6:.2f} / 1M tok effective")
         if b["waste_at_reset"] is not None:
