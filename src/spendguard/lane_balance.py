@@ -341,28 +341,26 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
                 f"resilience — " + "; ".join(_gaps) + ". This is the chunk-never-single-shot rule: a large job "
                 "must checkpoint and chunk so a transient no-progress pass cannot kill it. Fix the above, or pass "
                 "force=True to override and own the risk.")
-    # TIER CONFINEMENT (a cost RAIL, declared once): when `tier` is given, restrict the fan-out to lanes whose
-    # configured base model is in that capability GROUP (advisor.tiers), reusing the SAME lane→base mapping the router
-    # uses (lane_catalog.configured_base + route_utility.tier_models) — never a hand-rolled one. FAIL-CLOSED: if the
-    # group is undeclared, or NO configured lane serves it, EVERY task errors (undescribed, re-runnable) — we never
-    # widen back to all idle lanes and never let the work fall onto a strong/Opus lane. So an unknown/unserved tier
-    # resolves to a refusal, never to a premium model.
-    allow = None
+    # TIER CONFINEMENT (a cost RAIL, declared once). When `tier` is given, each lane contributes its OWN model FOR
+    # this capability GROUP — lane_catalog.lane_model_for_tier(lane, tier): its cheap model for `cheap`, its strong
+    # model for `strong`. So a bulk fan spreads across every plan's RIGHT-SIZED model (e.g. cheap describe → codex's
+    # gpt-5.6-luna + claude-code's haiku + zai's glm), never a premium model for cheap work. FAIL-CLOSED: no lane
+    # serves the group (undeclared, its models on no lane), or all serving it are cooling → EVERY task errors
+    # (undescribed, re-runnable); we never widen off-tier and never fall onto a strong/Opus lane.
     if tier:
-        from . import route_utility
-        _tmods = set(route_utility.tier_models(tier))
-        allow = [ln for ln in lane_catalog.lanes() if lane_catalog.configured_base(ln) in _tmods] if _tmods else []
-        if not allow:
+        arms = [(ln, m) for ln in lane_catalog.lanes()
+                if (m := lane_catalog.lane_model_for_tier(ln, tier)) and not adapters._lane_cooling(ln)]
+        if not arms:
             return [{"text": None, "lane": None, "use_name": None, "billed": False,
-                     "error": f"--tier {tier!r}: no configured lane serves this group (undeclared, or its models are "
-                              f"on no lane) — refusing rather than widening to a premium lane; configure a {tier}-tier "
-                              f"lane (advisor.tiers / advisor.lane_models) and re-run"} for _ in tasks]
-    arms = _bulk_arms(intent, lanes=allow)
-    if not arms:
-        return [{"text": None, "lane": None, "use_name": None, "billed": False,
-                 "error": ("no viable lane (set advisor.lane_models; check `spendguard lanes`)" if not tier
-                           else f"--tier {tier!r}: every lane serving this group is cooling or a proven loser for "
-                                f"{intent!r} right now — refusing rather than widening off-tier")} for _ in tasks]
+                     "error": f"--tier {tier!r}: no lane serving this group is available (undeclared, its models are "
+                              f"on no lane, or every such lane is cooling) — refusing rather than widening off-tier; "
+                              f"declare a {tier}-tier model on a lane (advisor.tiers / advisor.lane_models) and re-run"}
+                    for _ in tasks]
+    else:
+        arms = _bulk_arms(intent)
+        if not arms:
+            return [{"text": None, "lane": None, "use_name": None, "billed": False,
+                     "error": "no viable lane (set advisor.lane_models; check `spendguard lanes`)"} for _ in tasks]
 
     import hashlib as _hl
 

@@ -293,16 +293,16 @@ def rank_for_tier(tier, est_in=0, est_out=0, lane_rows=None, cooling=None, now=N
     logic — name a group you declared, the economics pick the plan. Empty when the group is undeclared (advisor.tiers)."""
     from . import lanes as _lanes, lane_catalog, adapters
     rows = list(lane_rows if lane_rows is not None else _lanes.lane_headroom(do_fetch=False))
-    tset = set(tier_models(tier))
-    lane_model = {}
+    # each lane's model FOR THIS group (its cheap model for `cheap`, strong for `strong`) — None if it serves none.
+    tier_lane_model = {}
     for ln in lane_catalog.lanes():
         try:
-            lane_model[ln] = lane_catalog.configured_base(ln)
+            tier_lane_model[ln] = lane_catalog.lane_model_for_tier(ln, tier)
         except Exception:
-            lane_model[ln] = None
-    tier_lane_rows = [r for r in rows if lane_model.get(r["lane"]) in tset]
+            tier_lane_model[ln] = None
+    tier_lane_rows = [r for r in rows if tier_lane_model.get(r["lane"])]     # lanes that SERVE this group
     ranked_lanes = rank_lanes(tier_lane_rows, cooling=cooling, now=now)
-    served = {m for m in lane_model.values() if m in tset}       # models a $0 lane already offers → don't also pay
+    served = {m for m in tier_lane_model.values() if m}          # models a $0 lane already offers → don't also pay
     metered_cands = []
     for m in tier_models(tier):
         if m in served:

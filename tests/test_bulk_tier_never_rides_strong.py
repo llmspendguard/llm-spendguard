@@ -80,6 +80,32 @@ try:
     res3 = lane_balance.bulk_delegate(["p"], "symgrep-index", force=True)
     ck("no tier → still dispatches", len(recorded) == 1)
     ck("no tier → model NOT pinned (no_substitution False, unchanged behaviour)", recorded[0]["no_sub"] is False)
+
+    # 4. PER-TIER lane models: a lane declares {cheap, strong}; tier=cheap uses its CHEAP model, tier=strong its strong
+    #    — the same plan does cheap work on its cheap model, never the strong one.
+    PERTIER = {"claude-code": {"cheap": "claude-haiku-4-5", "strong": "claude-opus-4-8"},
+               "codex": {"cheap": "gpt-5.6-luna", "strong": "gpt-5.6-sol"}, "zai-coding": "glm-5.3"}
+    def _pertier_cfg(*a, **k):
+        if a[:2] == ("advisor", "lane_models"):
+            return {kk: (dict(vv) if isinstance(vv, dict) else vv) for kk, vv in PERTIER.items()}
+        if a[:2] == ("advisor", "tiers"):
+            return {kk: list(vv) for kk, vv in TIERS.items()}
+        if a[:2] == ("advisor", "delegate_lanes"):
+            return None
+        return _orig_cfg(*a, **k)
+    config._cfg_get = _pertier_cfg
+    recorded.clear()
+    res4 = lane_balance.bulk_delegate(["a", "b"], "symgrep-index", tier="cheap", force=True)
+    called4 = [r["model"].split(":", 1)[-1] for r in recorded]
+    ck("per-tier: tier=cheap uses each lane's CHEAP model (haiku / gpt-5.6-luna), never opus/sol",
+       bool(called4) and all(m in {"claude-haiku-4-5", "gpt-5.6-luna", "glm-5.3"} for m in called4))
+    ck("per-tier: claude-code served CHEAP via haiku, its opus is NEVER called",
+       "claude-opus-4-8" not in called4 and "gpt-5.6-sol" not in called4)
+    recorded.clear()
+    res5 = lane_balance.bulk_delegate(["a"], "symgrep-index", tier="strong", force=True)
+    called5 = [r["model"].split(":", 1)[-1] for r in recorded]
+    ck("per-tier: tier=strong uses the STRONG model (opus/sol), never the cheap one",
+       bool(called5) and all(m in {"claude-opus-4-8", "gpt-5.6-sol"} for m in called5))
 finally:
     (config._cfg_get, adapters.call, lane_bandit.arm_stats, lane_bandit._arm_cooling,
      adapters._lane_cooling, calls.set_context) = _saved

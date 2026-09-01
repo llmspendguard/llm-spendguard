@@ -65,12 +65,35 @@ def parse_use_name(use_name, lane):
 
 
 def configured_base(lane):
-    """The lane's configured base model (advisor.lane_models[lane] with any reasoning suffix removed). None if unset."""
+    """The lane's DEFAULT base model (advisor.lane_models[lane] with any reasoning suffix removed). None if unset.
+    When the lane declares a PER-TIER map {tier: model} instead of a plain string, the default is its 'strong' entry
+    (else 'default', else the first) — the highest-capability model — so every NON-tier path (the bandit, use_names,
+    the catalog) keeps its prior behaviour; per-tier selection is lane_model_for_tier()."""
     m = (config._cfg_get("advisor", "lane_models", {}) or {}).get(lane)
+    if isinstance(m, dict):
+        m = m.get("strong") or m.get("default") or next(iter(m.values()), None)
     if not m:
         return None
     base, _lv = parse_use_name(m, lane)
     return base
+
+
+def lane_model_for_tier(lane, tier):
+    """The base model this lane serves for capability GROUP `tier`, or None if it serves none — the PER-TIER resolver
+    that lets one plan do CHEAP work on its cheap model and STRONG work on its strong model (same $0 plan, right-sized
+    per task). advisor.lane_models[lane] is EITHER a plain model string (the lane's single model — it serves `tier`
+    iff that model is in advisor.tiers[tier]) OR a per-tier map {tier: model, …}, e.g.
+    {"cheap": "claude-haiku-4-5", "strong": "claude-opus-4-8"}. Suffix-stripped like configured_base. A lane with no
+    model for `tier` returns None (it is simply not in that group's fan-out)."""
+    m = (config._cfg_get("advisor", "lane_models", {}) or {}).get(lane)
+    if isinstance(m, dict):
+        v = m.get(tier)
+        return parse_use_name(v, lane)[0] if v else None
+    if isinstance(m, str) and m:
+        base, _lv = parse_use_name(m, lane)
+        from . import route_utility
+        return base if base in set(route_utility.tier_models(tier)) else None
+    return None
 
 
 def use_names(lane):
