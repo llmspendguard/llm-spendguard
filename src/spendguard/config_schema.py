@@ -179,6 +179,19 @@ SETTINGS = [
          env="SPENDGUARD_COMPACTION_MIN_TURNS", default=5, kind="int", secret=False,
          desc="How many of a conversation's most-recent turns must ALL exceed compaction_context_tokens before it is "
               "flagged — so a single large turn is not mistaken for a sustained large context. Configurable."),
+    dict(section="advisor", key="precompact_guidance_file", store="config.json:advisor.precompact_guidance_file",
+         env="SPENDGUARD_PRECOMPACT_GUIDANCE_FILE", default=None, kind="string|null", secret=False,
+         desc="Path to the PreCompact PRESERVATION-GUIDANCE text spendguard injects on every compaction (task goal + "
+              "[DONE]/[NEXT] markers, every decision+rationale, all paths/ids/numbers, next action, open questions) — "
+              "it cuts the measured ~19% auto-compaction loss. Unset → the compaction review's generated "
+              "compaction_review/precompact_guidance.txt if present, else a small bundled fallback. Re-running the "
+              "review regenerates the file; nothing here is hardcoded."),
+    dict(section="advisor", key="compact_snippet_file", store="config.json:advisor.compact_snippet_file",
+         env="SPENDGUARD_COMPACT_SNIPPET_FILE", default=None, kind="string|null", secret=False,
+         desc="Path to the ready-to-paste EFFECTIVE '/compact <instructions>' one-liner that `spendguard claude-code "
+              "compact` prints (preserve goal/decisions/paths, collapse exploration). Unset → the review's "
+              "compaction_review/compact_snippet.txt if present, else a bundled fallback. The PreCompact hook injects "
+              "the same intent automatically, so this is for an explicit manual /compact or the model's use."),
     dict(section="advisor", key="lane_pace_weight", store="config.json:advisor.lane_pace_weight",
          env="SPENDGUARD_LANE_PACE_WEIGHT", default=2.0, kind="float", secret=False,
          desc="How strongly BEHIND-pace plans are preferred in lane ranking. A plan that has spent less than its "

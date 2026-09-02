@@ -1221,6 +1221,10 @@ def main(argv=None):
     if sub == "attribute":                              # reconcile real invoice overage → conversations
         attribute_overage(top=limit or 12)
         return 0
+    if sub == "compact":                                # print the ready-to-paste EFFECTIVE /compact command (guided)
+        from . import compaction
+        print(compaction.compact_snippet())
+        return 0
     if sub == "classify":                               # classify sessions into org→team×project (caged, est-first)
         return classify(run="--run" in argv, days=days, recls="--reclassify" in argv)
     if sub == "work":                                   # conversation-derived work rows, bucketed by period

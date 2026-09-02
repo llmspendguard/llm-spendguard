@@ -1100,8 +1100,11 @@ def _compaction_hint():
         thr = 100000
     k = None
     try:
-        from . import claudecode
-        kk, _n = claudecode.measured_compaction_ratio()
+        from . import compaction
+        kk, _kn = compaction.measured_k()             # REAL per-event k× (pre/post) once compactions are recorded
+        if not kk:
+            from . import claudecode
+            kk, _kn = claudecode.measured_compaction_ratio()   # else the ledger context-drop heuristic
         k = round(float(kk), 1) if kk else None
     except Exception:
         k = None
@@ -1255,6 +1258,33 @@ def cli(args) -> int:
             _compaction_hint()                      # refresh the compaction nudge's account-level hint (self-caches hourly)
             print(json.dumps({"systemMessage": _line}))
             return 0
+        if "--precompact-hook" in args:
+            # Claude Code PreCompact hook: record the compaction event (trigger + pre-context) and INJECT the
+            # preservation guidance so both auto AND manual compaction keep task goal / decisions+rationale / paths.
+            info = {}
+            if not sys.stdin.isatty():
+                try:
+                    info = json.loads(sys.stdin.read() or "{}")
+                except Exception:
+                    info = {}
+            from . import compaction
+            guidance = compaction.record_precompact(info)
+            print(json.dumps({"hookSpecificOutput": {
+                "hookEventName": "PreCompact", "permissionDecision": "allow",
+                "additionalContext": "COMPACTION PRESERVATION DIRECTIVE (do not summarize these away):\n" + guidance}}))
+            return 0
+        if "--sessionstart-hook" in args:
+            # Claude Code SessionStart hook: on a post-COMPACT restart, record the post-compaction context so the
+            # REAL per-event k× (pre/post) is measured. Emits nothing user-facing.
+            info = {}
+            if not sys.stdin.isatty():
+                try:
+                    info = json.loads(sys.stdin.read() or "{}")
+                except Exception:
+                    info = {}
+            from . import compaction
+            compaction.record_sessionstart(info)
+            return 0
         if "--statusline" in args:
             # Claude Code statusLine: session JSON on stdin; prepend cwd · model · ctx% to the global one-line tally.
             info = {}
@@ -1331,8 +1361,21 @@ def _install_claude_code(remove=False):
                 hooks["Stop"] = stop
             else:
                 hooks.pop("Stop", None)
-            if not hooks:
-                cfg.pop("hooks", None)
+        # remove ONLY our PreCompact / SessionStart hook from each group, keeping any others the user placed there
+        for _evt, _suffix in (("PreCompact", "receipt --precompact-hook"),
+                              ("SessionStart", "receipt --sessionstart-hook")):
+            groups = []
+            for g in (hooks.get(_evt) or []):
+                kept = [h for h in (g.get("hooks") or []) if not h.get("command", "").endswith(_suffix)]
+                if kept:
+                    groups.append({**g, "hooks": kept})
+            if _evt in hooks:
+                if groups:
+                    hooks[_evt] = groups
+                else:
+                    hooks.pop(_evt, None)
+        if not hooks:
+            cfg.pop("hooks", None)
         action = "removed"
     else:
         # FAST status line: drop a standalone no-import script and point statusLine at it (~50ms vs the ~1s spendguard
@@ -1352,6 +1395,20 @@ def _install_claude_code(remove=False):
             stop.append({"hooks": [{"type": "command",
                                     "command": f"env SPENDGUARD_NO_AUTOINSTALL=1 {sg} receipt --stop-hook",
                                     "timeout": 5}]})
+        # PreCompact: inject the preservation guidance (cuts the measured 19% auto-compaction loss) + record the
+        # event. Added ALONGSIDE any existing PreCompact hooks (e.g. ccwatch's), never replacing them.
+        pre = cfg.setdefault("hooks", {}).setdefault("PreCompact", [])
+        if not any(h.get("command", "").endswith("receipt --precompact-hook")
+                   for g in pre for h in (g.get("hooks") or [])):
+            pre.append({"hooks": [{"type": "command",
+                                   "command": f"env SPENDGUARD_NO_AUTOINSTALL=1 {sg} receipt --precompact-hook",
+                                   "timeout": 10}]})
+        # SessionStart(compact): record the post-compaction context so the real per-event k× (pre/post) is measured.
+        ss = cfg.setdefault("hooks", {}).setdefault("SessionStart", [])
+        if not any(h.get("command", "").endswith("receipt --sessionstart-hook")
+                   for g in ss for h in (g.get("hooks") or [])):
+            ss.append({"matcher": "compact", "hooks": [{"type": "command",
+                       "command": f"env SPENDGUARD_NO_AUTOINSTALL=1 {sg} receipt --sessionstart-hook", "timeout": 5}]})
         action = "installed"
     p.parent.mkdir(parents=True, exist_ok=True)
     config.update_json(p, lambda _d: cfg)
