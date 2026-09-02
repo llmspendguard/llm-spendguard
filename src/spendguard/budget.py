@@ -101,8 +101,8 @@ def _attribute(ev, project):
 
 
 def _record_spend_event(provider, model, kind, cost, *, conv_id="", basis="", intent="", actor="", key_fp="",
-                        project="", occurred_at=None, in_tok=0, out_tok=0, source="gate", dedup_suffix="",
-                        invoice_id="", dedup_key=None):
+                        project="", occurred_at=None, in_tok=0, out_tok=0, cache_read_tok=0, cache_write_tok=0,
+                        reasoning_tok=0, source="gate", dedup_suffix="", invoice_id="", dedup_key=None):
     """THE write for a live charge → `spend_events`, the single money-of-record, through the ONE shared mapping
     (charge_to_event). Every budget writer records through here; there is no second ledger, and — since the
     cutover — no `charges` fallback behind it, so a dropped write is a dropped charge. The ledger connection
@@ -118,6 +118,15 @@ def _record_spend_event(provider, model, kind, cost, *, conv_id="", basis="", in
         oa = occurred_at or datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
         ev["occurred_at"] = ev["ts_utc"] = oa
         ev["in_tok"], ev["out_tok"] = int(in_tok or 0), int(out_tok or 0)
+        # Cache/reasoning token axes — set ONLY when nonzero so the gate's hot path (which passes none) is byte-for-byte
+        # unchanged. Claude Code re-reads the whole context every turn, so cache_read dominates; storing it per-turn as
+        # its OWN column is what the context-trajectory + compaction signal reads (context = in + cache_read + cache_write).
+        if cache_read_tok:
+            ev["cache_read_tok"] = int(cache_read_tok)
+        if cache_write_tok:
+            ev["cache_write_tok"] = int(cache_write_tok)
+        if reasoning_tok:
+            ev["reasoning_tok"] = int(reasoning_tok)
         # A live charge gets a per-call UNIQUE key (two identical calls must NOT merge). An idempotent IMPORT
         # (OTel/reconstruction) passes an explicit STABLE dedup_key so re-ingesting the same source never double-counts.
         ev["dedup_key"] = dedup_key or live_dedup_key(oa + dedup_suffix)
@@ -567,7 +576,9 @@ def charge_to_event(provider, model, kind, cost, conv_id="", basis="", intent=""
         "is_meta": is_meta, "reconciled": reconciled,
         "recon_marker": model if reconciled else None,
         "status": "void" if is_quarantine else ("reconciled" if reconciled else "posted"),
-        "cost_basis": cost_basis, "billed": 1,
+        # est_chat is subscription-COVERED usage VALUE — no $ out the door, so it is NOT billed (it stays out of every
+        # real-$ total via BILLED_USD_COLS AND via this flag). Every other kind is real money → billed.
+        "cost_basis": cost_basis, "billed": 0 if rec_kind == "est_chat" else 1,
     }
     if is_unpriced:
         ev["usd"] = None                                   # price unknown → no money column; a $0 forensic marker

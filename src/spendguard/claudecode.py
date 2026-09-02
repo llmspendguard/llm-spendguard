@@ -154,6 +154,122 @@ def update(st=None):
     return st, {"sessions_updated": touched, "new_lines": added_lines, "new_cost": round(added_cost, 4)}
 
 
+def _turn_usage(msg):
+    """Raw, UN-lumped token split for ONE assistant message.usage → (in_tok, out_tok, cache_read, cache_write).
+    Deliberately not lumped like _row_cost (which folds cache-creation into `in` for a compact display): the ledger
+    stores cache_read_tok / cache_write_tok as their OWN columns, and that per-turn split is exactly what the
+    context-trajectory + compaction signal (Phase 3) reads back — context = in + cache_read + cache_write."""
+    u = msg.get("usage") or {}
+    return (int(u.get("input_tokens") or 0), int(u.get("output_tokens") or 0),
+            int(u.get("cache_read_input_tokens") or 0), int(u.get("cache_creation_input_tokens") or 0))
+
+
+def ingest_events(days=None, limit=None, reset=False, dry=False):
+    """Write each Claude Code assistant TURN into the local spend_events ledger, so the app's OWN turns become
+    queryable next to gate/batch/GPU spend. The ledger had 0 claude-code rows — precisely why token burn AFTER the
+    weekly plan cap was exhausted could not be tracked down: it overflowed to real API $ that no gate call ever saw.
+    Each turn is booked kind="est_chat" → est_chat_usd (plan-covered VALUE, billed=False, kept OUT of real $);
+    Phase 2 reconciles the slice past the weekly cap into a separate realtime/billed stream (never summed with this).
+
+    Idempotent: a STABLE dedup_key ("cc:<message.id>") makes the ledger book each assistant API response ONCE — across
+    resume/branch/compaction replays (same id in several files) AND across re-runs (record_event returns early on an
+    existing id). Incremental via a per-session watermark SEPARATE from update()'s, so the two miners never advance
+    each other's cursor. CHUNK-safe: each session is isolated in its own try, so one malformed transcript cannot wedge
+    the run. Pure parse + arithmetic — $0, no LLM, no network.
+
+    days  — only ingest turns on/after today-`days` (bounds a first measured run to recent activity).
+    limit — only the `limit` most-recently-modified transcripts (bounds the SCAN, not just the write).
+    reset — delete prior source="claude-code" rows + clear the watermark first (dev re-ingest).
+    dry   — count the turns + est-value that WOULD be written, write nothing (measure before a large backfill)."""
+    from . import budget
+    st = _load_state()
+    wm = st.setdefault("ledger_sessions", {})          # OWN watermark {path:{lines,mtime}} — distinct from update()'s
+    if reset and not dry:
+        try:
+            budget._ledger().delete(where={"source": "claude-code"}, actor="claude-code:ingest", reason="reset re-ingest")
+            print("claude-code ingest: cleared prior claude-code rows + watermark")
+        except Exception as e:
+            print(f"claude-code ingest: reset delete failed ({type(e).__name__}: {str(e)[:80]}) — continuing")
+        wm.clear()
+    if not os.path.isdir(_projects_dir()):
+        print(f"no Claude Code session directory at {_projects_dir()} — nothing to ingest (NOT an empty ledger; set "
+              f"SPENDGUARD_CC_DIR if your sessions live elsewhere).")
+        return 0
+    cutoff = (datetime.date.today() - datetime.timedelta(days=int(days))).isoformat() if days else None
+    paths = glob.glob(os.path.join(_projects_dir(), "**", "*.jsonl"), recursive=True)
+    if limit:                                           # bound the SCAN to the most-recently-active transcripts
+        paths = sorted(paths, key=lambda p: (os.path.getmtime(p) if os.path.exists(p) else 0), reverse=True)[:int(limit)]
+    else:
+        paths = sorted(paths)
+    seen = set()                                        # skip re-submitting a replayed message.id within THIS run
+    rows = 0; val = 0.0; sessions = 0; skipped = 0; unpriced = 0; no_id = 0; pre_cut = 0
+    for path in paths:
+        try:
+            mtime = os.path.getmtime(path)
+        except OSError:
+            continue
+        prev = wm.get(path) or {"lines": 0, "mtime": 0}
+        if not reset and not dry and mtime <= prev.get("mtime", 0) and prev.get("lines"):
+            skipped += 1
+            continue                                    # unchanged since last ingest → the watermark
+        conv_id = os.path.basename(path)[:-6] if path.endswith(".jsonl") else os.path.basename(path)
+        try:
+            recs, total = _scan_new_lines(path, 0 if (reset or dry) else prev.get("lines", 0))
+            proj = None; booked = 0
+            for r in recs:
+                if proj is None and r.get("cwd"):
+                    proj = _project_of(r.get("cwd"))
+                msg = r.get("message") or {}
+                mid = msg.get("id"); u = msg.get("usage"); model = msg.get("model")
+                if not (u and model):
+                    continue                             # user msg / tool result / non-metered record — not a dropped turn
+                if not mid:
+                    no_id += 1                           # usage present but NO message.id → no stable dedup_key is possible,
+                    continue                             # so it can't be booked idempotently — COUNTED, never silent (measured
+                if mid in seen:                          # 0 today; a transcript-format change must SURFACE here, not vanish)
+                    continue
+                seen.add(mid)
+                ts = r.get("timestamp") or ""
+                if cutoff and ts[:10] and ts[:10] < cutoff:
+                    pre_cut += 1                          # older than the --days window: intentionally out of scope, but COUNTED
+                    continue
+                intok, outtok, cr, cc = _turn_usage(msg)
+                try:                                     # realtime_cost RETURNS None for some unpriced models but RAISES
+                    cost = pricing.realtime_cost(model, intok + cc + cr, outtok, cr) or 0.0   # KeyError for others (the
+                except Exception:                        # '<synthetic>' marker conv-synth writes) — treat any as unpriced,
+                    cost = 0.0                           # PER TURN, so it never drops the whole session
+                if cost <= 0:                            # unpriced/zero-token turn: a $0 est_chat row is illegal AND
+                    unpriced += 1                        # meaningless as est-value — count it, don't book it
+                    continue
+                rows += 1; val += cost; booked += 1
+                if dry:
+                    continue
+                budget._record_spend_event(
+                    "anthropic", model, "est_chat", float(cost),
+                    conv_id=conv_id, project=proj or "claude-code", occurred_at=ts or None,
+                    in_tok=intok, out_tok=outtok, cache_read_tok=cr, cache_write_tok=cc,
+                    source="claude-code", basis="reconstructed",
+                    intent="claude-code:turn", actor="claudecode.ingest_events",
+                    dedup_key="cc:" + str(mid))
+            if booked:
+                sessions += 1
+            if not dry:
+                wm[path] = {"lines": total, "mtime": mtime}
+                if sessions and sessions % 200 == 0:     # CHUNK: checkpoint the watermark periodically
+                    _save_state(st)
+        except Exception as e:                           # per-session isolation — a bad transcript never wedges the run
+            print(f"claude-code ingest: skip {os.path.basename(path)} ({type(e).__name__}: {str(e)[:80]})")
+    if not dry:
+        _save_state(st)
+    tag = "WOULD ingest (dry)" if dry else "ingested"
+    print(f"claude-code {tag}: {rows:,} turns · ${val:,.2f} est-value · {sessions} sessions · {skipped} unchanged · "
+          f"{unpriced} unpriced-skipped · {no_id} no-id-skipped · {pre_cut} pre-cutoff-skipped")
+    if not dry:
+        print("  → source=\"claude-code\" rows in spend_events (est_chat_usd, billed=False); query per conversation "
+              "WHERE conv_id=<session-uuid>. Re-run is idempotent (stable dedup_key cc:<message.id>).")
+    return 0
+
+
 def show(days=None):
     st, passinfo = update()
     _save_state(st)
@@ -503,6 +619,14 @@ def main(argv=None):
             by = argv[argv.index("--by") + 1]
         except IndexError:
             pass
+    limit = None
+    if "--limit" in argv:
+        try:
+            limit = int(argv[argv.index("--limit") + 1])
+        except (ValueError, IndexError):
+            pass
+    if sub == "ingest":                                 # per-turn rows → local spend_events ledger (queryable, idempotent)
+        return ingest_events(days=days, limit=limit, reset="--reset" in argv, dry="--dry" in argv)
     if sub == "classify":                               # classify sessions into org→team×project (caged, est-first)
         return classify(run="--run" in argv, days=days, recls="--reclassify" in argv)
     if sub == "work":                                   # conversation-derived work rows, bucketed by period
