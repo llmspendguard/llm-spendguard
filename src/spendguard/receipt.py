@@ -1083,6 +1083,79 @@ def _cached_tally_line():
     return line
 
 
+def _compaction_hint():
+    """{threshold_tokens, k} for the status-line compaction nudge: the config re-read-context threshold + the MEASURED
+    compaction ratio (a ledger query via claudecode). Account-level, not per-session. The --stop-hook calls this every
+    turn, so it SELF-CACHES for an hour (k barely moves). Best-effort → safe defaults; never raises."""
+    from . import config
+    hp = config.HOME / "compaction_hint.json"
+    try:
+        if (time.time() - hp.stat().st_mtime) < 3600:
+            return json.loads(hp.read_text())
+    except Exception:
+        pass
+    try:
+        thr = int(config._cfg_get("advisor", "compaction_context_tokens", 100000) or 100000)
+    except Exception:
+        thr = 100000
+    k = None
+    try:
+        from . import claudecode
+        kk, _n = claudecode.measured_compaction_ratio()
+        k = round(float(kk), 1) if kk else None
+    except Exception:
+        k = None
+    hint = {"threshold_tokens": thr, "k": k}
+    try:
+        hp.write_text(json.dumps(hint))
+    except Exception:
+        pass
+    return hint
+
+
+def _compaction_nudge(info, home):
+    """The per-SESSION compaction nudge string (or '') — tails the CURRENT session's transcript for the re-read context
+    of its last turn, and if that is at/above the cached threshold, returns a '/compact' suggestion carrying the
+    measured k×. Cheap (tail only, ~64KB). Mirrored inline in the standalone statusline. Never raises."""
+    try:
+        tp = info.get("transcript_path") or info.get("transcriptPath")
+        if not tp or not os.path.exists(tp):
+            return ""
+        with open(tp, "rb") as f:
+            f.seek(0, 2)
+            sz = f.tell()
+            f.seek(max(0, sz - 65536))
+            tail = f.read().decode("utf-8", "ignore")
+        ctx = 0
+        for ln in reversed(tail.splitlines()):
+            if '"usage"' not in ln:
+                continue
+            try:
+                o = json.loads(ln)
+            except Exception:
+                continue
+            u = ((o.get("message") or {}).get("usage")) or {}
+            if u:
+                ctx = (int(u.get("input_tokens", 0) or 0) + int(u.get("cache_read_input_tokens", 0) or 0)
+                       + int(u.get("cache_creation_input_tokens", 0) or 0))
+                break
+        if not ctx:
+            return ""
+        hint = {}
+        try:
+            with open(os.path.join(home, "compaction_hint.json")) as hf:
+                hint = json.load(hf)
+        except Exception:
+            hint = {}
+        if ctx < int(hint.get("threshold_tokens") or 100000):
+            return ""
+        k = hint.get("k")
+        ktxt = (" ~%.0fx cheaper" % k) if k else ""
+        return "⚠ %dK tok/turn · /compact%s" % (ctx // 1000, ktxt)
+    except Exception:
+        return ""
+
+
 # The FAST status line — a standalone script the installer drops at HOME/statusline.py and points Claude Code's
 # statusLine at. It reads the cached tally + the session prefix and prints, with NO spendguard import, so it renders
 # in ~50ms instead of ~1s (the spendguard package import). The cache is kept fresh by `receipt --stop-hook` each turn.
@@ -1114,7 +1187,39 @@ try:
         line = fh.read().strip()
 except Exception:
     line = ""
-sys.stdout.write((prefix + "  ·  " if prefix else "") + line + "\n")
+nudge = ""
+try:
+    tp = info.get("transcript_path") or info.get("transcriptPath")
+    if tp and os.path.exists(tp):
+        with open(tp, "rb") as f:
+            f.seek(0, 2); sz = f.tell(); f.seek(max(0, sz - 65536))
+            tail = f.read().decode("utf-8", "ignore")
+        ctx = 0
+        for ln in reversed(tail.splitlines()):
+            if '"usage"' not in ln:
+                continue
+            try:
+                o = json.loads(ln)
+            except Exception:
+                continue
+            u = ((o.get("message") or {}).get("usage")) or {}
+            if u:
+                ctx = int(u.get("input_tokens",0) or 0)+int(u.get("cache_read_input_tokens",0) or 0)+int(u.get("cache_creation_input_tokens",0) or 0)
+                break
+        if ctx:
+            hint = {}
+            try:
+                with open(os.path.join(HOME, "compaction_hint.json")) as hf:
+                    hint = json.load(hf)
+            except Exception:
+                hint = {}
+            if ctx >= int(hint.get("threshold_tokens") or 100000):
+                k = hint.get("k")
+                ktxt = (" ~%.0fx cheaper" % k) if k else ""
+                nudge = "  ·  ⚠ %dK tok/turn · /compact%s" % (ctx // 1000, ktxt)
+except Exception:
+    nudge = ""
+sys.stdout.write((prefix + "  ·  " if prefix else "") + line + nudge + "\n")
 '''
 
 
@@ -1147,6 +1252,7 @@ def cli(args) -> int:
             # Claude Code Stop hook: `systemMessage` is the ONLY hook output the user sees — one global line.
             _line = render_line(tally())
             _write_statusline_cache(_line)          # refresh the FAST status line's cache each turn (cheap render reads it)
+            _compaction_hint()                      # refresh the compaction nudge's account-level hint (self-caches hourly)
             print(json.dumps({"systemMessage": _line}))
             return 0
         if "--statusline" in args:
@@ -1172,7 +1278,9 @@ def cli(args) -> int:
                 except Exception:
                     pass
             prefix = "  ·  ".join(bits)
-            print((prefix + "  ·  " if prefix else "") + _cached_tally_line())
+            from . import config as _cfg
+            _nudge = _compaction_nudge(info, str(_cfg.HOME))
+            print((prefix + "  ·  " if prefix else "") + _cached_tally_line() + ("  ·  " + _nudge if _nudge else ""))
             return 0
         if "--line" in args:                          # compact one-line global tally (scripting)
             print(render_line(tally()))
