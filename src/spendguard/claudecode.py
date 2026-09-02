@@ -1221,9 +1221,21 @@ def main(argv=None):
     if sub == "attribute":                              # reconcile real invoice overage → conversations
         attribute_overage(top=limit or 12)
         return 0
-    if sub == "compact":                                # print the ready-to-paste EFFECTIVE /compact command (guided)
+    if sub == "compact":                                # /compact helper: static snippet, or --tailor = agentic advisor
         from . import compaction
-        print(compaction.compact_snippet())
+        if "--tailor" in argv:
+            tp = (argv[argv.index("--transcript") + 1]
+                  if "--transcript" in argv and argv.index("--transcript") + 1 < len(argv) else None)
+            if not tp:                                  # default to the CURRENT (newest) session transcript
+                fs = sorted(glob.glob(os.path.join(_projects_dir(), "**", "*.jsonl"), recursive=True),
+                            key=lambda p: os.path.getmtime(p) if os.path.exists(p) else 0, reverse=True)
+                tp = fs[0] if fs else None
+            if not tp:
+                print("compact --tailor: no transcript found (pass --transcript PATH).")
+            else:
+                compaction.agentic_advise(tp, run="--run" in argv)
+        else:
+            print(compaction.compact_snippet())
         return 0
     if sub == "classify":                               # classify sessions into org→team×project (caged, est-first)
         return classify(run="--run" in argv, days=days, recls="--reclassify" in argv)

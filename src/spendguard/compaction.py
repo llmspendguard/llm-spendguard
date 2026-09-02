@@ -104,6 +104,106 @@ def compact_snippet():
     return _FALLBACK_SNIPPET
 
 
+def _recent_convo(transcript_path, max_chars=6000):
+    """A compact digest of the RECENT conversation for the advisor — the last user/assistant messages, tailed from
+    the transcript and bounded so the advisory LLM call stays cheap. '' when unreadable."""
+    try:
+        with open(transcript_path, "rb") as f:
+            f.seek(0, 2)
+            sz = f.tell()
+            f.seek(max(0, sz - 400000))
+            tail = f.read().decode("utf-8", "ignore")
+    except Exception:
+        return ""
+    out = []
+    for ln in tail.splitlines():
+        if '"role"' not in ln and '"type"' not in ln:
+            continue
+        try:
+            o = json.loads(ln)
+        except Exception:
+            continue
+        m = o.get("message") or {}
+        role = m.get("role") or o.get("type")
+        if role not in ("user", "assistant"):
+            continue
+        c = m.get("content")
+        if isinstance(c, list):
+            txt = " ".join(b.get("text", "") for b in c if isinstance(b, dict) and b.get("type") == "text")
+        else:
+            txt = c if isinstance(c, str) else ""
+        txt = (txt or "").strip().replace("\n", " ")
+        if txt:
+            out.append(f"[{role}] {txt[:400]}")
+    return "\n".join(out[-24:])[-max_chars:]
+
+
+def _parse_advise(text):
+    """Pull the advisor's JSON verdict out of its reply — PARSING a known shape, not deciding (the decision is the
+    LLM's). {} if none."""
+    import re
+    try:
+        m = re.search(r"\{.*\}", text or "", re.S)
+        return json.loads(m.group(0)) if m else {}
+    except Exception:
+        return {}
+
+
+_ADVISE_SYS = (
+    "You decide whether a long AI-assisted coding conversation should be COMPACTED right now, and if so HOW to compact "
+    "it without losing what matters. Compaction summarizes the conversation to reclaim context; done mid-implementation "
+    "or carelessly it drops decisions and the task goal (measured: ~19% of auto-compactions lose data). Look at what "
+    "the conversation is actually DOING. Output STRICT JSON only, no prose:\n"
+    '{"should_compact": true|false,\n'
+    ' "reason": "<one sentence: are we at a natural seam (a sub-task just finished) or mid-implementation, and why '
+    'now or not>",\n'
+    ' "compact_command": "/compact <instructions TAILORED to THIS conversation: name its actual current task goal + '
+    'status, every decision made and WHY, the specific file paths/ids/numbers in play, the immediate next action, and '
+    'any open question; tell the summarizer to collapse exploration and tool output to conclusions only>"}')
+
+
+def agentic_advise(transcript_path, run=False, model=None):
+    """AGENTIC compaction advisor: read what the conversation is DOING and decide (a) whether NOW is a good moment to
+    compact (a natural seam vs mid-implementation) and (b) a compact_command TAILORED to what THIS conversation must
+    preserve. The judgement is the LLM's (not a threshold). Runs UNDER spendguard's own gate, caged (intent
+    spendguard:compact-advise), estimate-first. Returns the verdict dict on run; prints the estimate + returns None
+    otherwise. Never raises out to a hook."""
+    from . import config, adapters, calls, pricing, ui, claudecode
+    convo = _recent_convo(transcript_path)
+    if not convo:
+        print("compact --tailor: no readable recent conversation at that transcript.")
+        return None
+    model = model or config._cfg_get("advisor", "judge_model", "claude-haiku-4-5")
+    OUT = 700
+    est = pricing.realtime_cost(model, claudecode._toklen(_ADVISE_SYS + convo), OUT) or 0.0
+    if not run:
+        ui.estimate_only(action="agentically decide whether/how to compact THIS conversation", cost=est)
+        return None
+    with calls.context(intent="spendguard:compact-advise"):     # caged → meta budget, gated like every LLM call
+        r = adapters.call(model, convo, max_tokens=OUT, system=_ADVISE_SYS)
+    if r.get("error"):
+        print("compact --tailor error:", r["error"])
+        return None
+    data = _parse_advise(r.get("text", ""))
+    print(f"agentic compaction advice ({model}, caged):")
+    print(f"  compact now? {'YES' if data.get('should_compact') else 'NO'} — {data.get('reason', '')}")
+    print("  → " + (data.get("compact_command") or compact_snippet()))
+    # the economics — cents to save dollars: this advisory call costs cents; a bloated session re-reads $/turn, and
+    # compacting cuts that ~k×. Spending cents to save dollars is always a good trade, so this line makes it explicit.
+    try:
+        _ctx, cr, mdl = _tail_context(transcript_path)
+        p = pricing.price(mdl or model) or {}
+        rate = (float(p["cached_in"]) / 1e6) if p.get("cached_in") is not None else None
+        if rate and cr:
+            reread = cr * rate
+            k = measured_k()[0] or 11.0
+            print(f"  economics: advice ${(r.get('cost') or 0):.4f} spent · this session re-reads ~${reread:.4f}/turn · "
+                  f"compacting (~{k:.0f}×) saves ~${reread * (1 - 1 / k):.4f}/turn — cents to save dollars.")
+    except Exception:
+        pass
+    return data
+
+
 def _tail_context(transcript_path):
     """(context_tokens, cache_read_tokens, model) of the LAST usage-bearing turn in the transcript, or (0, 0, None).
     Reads only the last ~64KB — cheap enough for a hook. context = input + cache_read + cache_write."""
