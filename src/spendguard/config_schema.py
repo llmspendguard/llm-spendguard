@@ -108,6 +108,21 @@ SETTINGS = [
               "0.03) stops a little early to avoid overage from a stale headroom reading on a plan that BILLS past "
               "100% instead of blocking. Clamped to [0, 0.99]."),
 
+    dict(section="subscription", key="claude_code_weekly_cap_usd",
+         store="config.json:subscription.claude_code_weekly_cap_usd", env="SPENDGUARD_CC_WEEKLY_CAP_USD",
+         default=None, kind="float|null", secret=False,
+         desc="The est-VALUE ($, at realtime API rates) your Claude Code plan covers per WEEKLY window before usage "
+              "overflows to real pay-as-you-go API $. Used ONLY by `claude-code overflow` to reconstruct which turns "
+              "billed for real once the weekly cap was exhausted — the blind spot behind '$0 in the ledger while the "
+              "balance dropped'. RECONSTRUCTED estimate, never hardcoded: the plan meters in its own opaque unit, so "
+              "this is a proxy you DECLARE and can CALIBRATE against the Admin cost_report (dev-only cross-check). "
+              "Unset (default) → nothing is reconstructed as overflow; every turn stays plan_covered (no fabrication)."),
+    dict(section="subscription", key="claude_code_week_anchor",
+         store="config.json:subscription.claude_code_week_anchor", default=None, kind="string|null", secret=False,
+         desc="Optional ISO datetime of any KNOWN weekly-window boundary for the Claude Code plan (e.g. "
+              "\"2026-08-25T00:00:00Z\"); windows are then [anchor+7k, anchor+7(k+1)). Pin it if you know when your "
+              "weekly limit resets. Unset → the ISO calendar week (Monday 00:00 UTC) is used as the window."),
+
     # ── pricing freshness (the LiteLLM breadth layer; curated prices.json always wins) ──
     dict(section="pricing", key="refresh_days", store="config.json:pricing.refresh_days", env="SPENDGUARD_PRICES_REFRESH_DAYS",
          default=1, kind="float", secret=False,

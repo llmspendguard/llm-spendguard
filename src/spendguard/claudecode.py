@@ -270,6 +270,132 @@ def ingest_events(days=None, limit=None, reset=False, dry=False):
     return 0
 
 
+def _parse_iso(ts):
+    """Parse a transcript/ledger ISO timestamp to a tz-aware datetime, or None. Handles a trailing 'Z'."""
+    try:
+        return datetime.datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def _week_start(dt, anchor):
+    """UTC datetime of the weekly-window START containing `dt`. With `anchor` (a datetime), windows are
+    [anchor+7k, anchor+7(k+1)); else the ISO calendar week (Monday 00:00 UTC). Parsing a fixed cadence, not a
+    meaning judgement — the reset schedule is DECLARED (config), never inferred."""
+    if anchor:
+        k = int((dt - anchor).total_seconds() // (7 * 86400))
+        return anchor + datetime.timedelta(days=7 * k)
+    d = dt.astimezone(datetime.timezone.utc)
+    return (d - datetime.timedelta(days=d.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def reconcile_overflow(cap_usd=None, anchor=None, dry=False):
+    """Reconstruct billing_state for the Claude Code app turns: which of them billed for REAL once the weekly plan
+    cap was exhausted. LOCAL reconstruction is the anchor (never the Admin API): walk each weekly window's turns in
+    TIMESTAMP order, cap-fill cumulative est-value against the DECLARED weekly cap, and book the slice PAST the cap as
+    a SEPARATE realtime/billed stream (source="claude-code-overflow"), tagged by conv_id. The est-value stream
+    (source="claude-code", est_chat_usd) is left untouched — the two are DIFFERENT axes and are never summed:
+        est-value of conv X   = SUM(est_chat_usd)  WHERE source='claude-code'          AND conv_id=X
+        REAL overflow $ of X  = SUM(realtime_usd)   WHERE source='claude-code-overflow' AND conv_id=X
+    This is a reconciliation (idempotent by delete+rebook), so re-run it whenever the cap changes. The cap is a
+    DECLARED proxy (the plan meters in its own opaque unit); unset → nothing is reconstructed (no fabrication).
+    Pure arithmetic over ledger rows — $0, no LLM, no network. Admin cost_report is a DEV-ONLY calibration aid,
+    never in this path."""
+    import sqlite3
+    from . import budget
+    cap = cap_usd if cap_usd is not None else config._cfg_get("subscription", "claude_code_weekly_cap_usd", None)
+    try:
+        cap = float(cap) if cap is not None else None
+    except (TypeError, ValueError):
+        cap = None
+    if not cap or cap <= 0:
+        print("claude-code overflow: no weekly cap declared (subscription.claude_code_weekly_cap_usd) — every turn "
+              "stays plan_covered; nothing is reconstructed as billed overflow. Declare the est-value $/week your plan "
+              "covers (calibrate it against the Admin cost_report, dev-only) to reconstruct which turns overflowed to "
+              "real API $.")
+        return 0
+    anchor_s = anchor if anchor is not None else config._cfg_get("subscription", "claude_code_week_anchor", None)
+    anchor_dt = _parse_iso(anchor_s) if anchor_s else None
+    con = sqlite3.connect(config.db_path())
+    try:
+        rows = con.execute("SELECT occurred_at, conv_id, model, est_chat_usd FROM spend_events "
+                           "WHERE source='claude-code' AND est_chat_usd IS NOT NULL ORDER BY occurred_at").fetchall()
+    finally:
+        con.close()
+    windows = {}                                            # window_start_iso -> [(dt, conv, model, est_value), …]
+    bad = 0
+    for occ, conv, model, val in rows:
+        dt = _parse_iso(occ)
+        try:
+            v = float(val)
+        except (TypeError, ValueError):
+            v = 0.0
+        if dt is None or v <= 0:
+            bad += 1                                         # a ledger row with no parseable ts / no positive value — COUNTED
+            continue
+        windows.setdefault(_week_start(dt, anchor_dt).isoformat(), []).append((dt, conv or "", model or "?", v))
+    overflow = {}                                           # (window_iso, conv, model) -> overflow_usd
+    per_window = []                                         # (window_iso, covered_usd, overflow_usd)
+    for wiso, turns in sorted(windows.items()):
+        turns.sort(key=lambda t: t[0])
+        cum = 0.0; over_w = 0.0
+        for dt, conv, model, v in turns:
+            before = cum
+            cum += v
+            over = max(0.0, cum - max(cap, before))         # exact split of the crossing turn: only the part past the cap
+            if over > 0:
+                overflow[(wiso, conv, model)] = overflow.get((wiso, conv, model), 0.0) + over
+                over_w += over
+        per_window.append((wiso, min(cum, cap), over_w))
+    total_over = sum(overflow.values())
+    if not dry:                                             # reconciliation = delete + rebook (idempotent by construction)
+        try:
+            budget._ledger().delete(where={"source": "claude-code-overflow"},
+                                    actor="claude-code:overflow", reason="reconcile overflow")
+        except Exception as e:
+            print(f"claude-code overflow: clearing prior rows failed ({type(e).__name__}: {str(e)[:60]}) — continuing")
+        for (wiso, conv, model), over in overflow.items():
+            if over <= 0:
+                continue
+            budget._record_spend_event("anthropic", model, "realtime", float(round(over, 6)),
+                                       conv_id=conv, project="claude-code", occurred_at=wiso,
+                                       source="claude-code-overflow", basis="reconstructed",
+                                       intent="claude-code:overflow", actor="claudecode.reconcile_overflow",
+                                       dedup_key=f"cc-of:{wiso}:{conv}:{model}")
+    print(f"claude-code overflow{' (dry)' if dry else ''} — weekly cap ${cap:,.0f} est-value/window"
+          f"{' · anchor ' + anchor_dt.isoformat() if anchor_dt else ' · ISO calendar weeks'}")
+    print(f"  {len(windows)} window(s) · RECONSTRUCTED overflow: Real ${total_over:,.2f} (API overflow) "
+          f":: est-value stream unchanged (the two are NEVER summed)"
+          + (f" · {bad} ledger row(s) skipped (unparseable ts/value)" if bad else ""))
+    for wiso, covered, over in sorted(per_window, reverse=True)[:8]:
+        print(f"    {wiso[:10]}  covered ~${covered:,.0f} of ${cap:,.0f}  ·  overflow ${over:,.2f}"
+              + ("  ⚠ OVER CAP" if over > 0 else ""))
+    byconv = {}
+    for (wiso, conv, model), over in overflow.items():
+        byconv[conv] = byconv.get(conv, 0.0) + over
+    if byconv:
+        print("  top conversations by REAL overflow $ (what billed after the cap):")
+        for conv, over in sorted(byconv.items(), key=lambda x: -x[1])[:6]:
+            print(f"    ${over:8.2f}  {conv[:24]}")
+    if not dry:
+        print("  → source=\"claude-code-overflow\" rows (realtime_usd, billed=1). Real $ for a conversation AFTER the "
+              "cap = SUM(realtime_usd) WHERE source='claude-code-overflow' AND conv_id=<uuid>.")
+    return 0
+
+
+def overflow_by_conversation():
+    """{conv_id: real overflow $} from the reconstructed source='claude-code-overflow' rows — the billed slice past
+    the weekly cap, per conversation. Read-only; empty until `claude-code overflow` has run with a declared cap."""
+    import sqlite3
+    con = sqlite3.connect(config.db_path())
+    try:
+        rows = con.execute("SELECT conv_id, SUM(CAST(realtime_usd AS REAL)) FROM spend_events "
+                           "WHERE source='claude-code-overflow' GROUP BY conv_id").fetchall()
+    finally:
+        con.close()
+    return {c or "": float(v or 0.0) for c, v in rows}
+
+
 def show(days=None):
     st, passinfo = update()
     _save_state(st)
@@ -627,6 +753,15 @@ def main(argv=None):
             pass
     if sub == "ingest":                                 # per-turn rows → local spend_events ledger (queryable, idempotent)
         return ingest_events(days=days, limit=limit, reset="--reset" in argv, dry="--dry" in argv)
+    if sub == "overflow":                               # reconstruct billing_state — which turns billed past the weekly cap
+        cap_usd = None
+        if "--cap-usd" in argv:
+            try:
+                cap_usd = float(argv[argv.index("--cap-usd") + 1])
+            except (ValueError, IndexError):
+                pass
+        anchor = argv[argv.index("--anchor") + 1] if "--anchor" in argv and argv.index("--anchor") + 1 < len(argv) else None
+        return reconcile_overflow(cap_usd=cap_usd, anchor=anchor, dry="--dry" in argv)
     if sub == "classify":                               # classify sessions into org→team×project (caged, est-first)
         return classify(run="--run" in argv, days=days, recls="--reclassify" in argv)
     if sub == "work":                                   # conversation-derived work rows, bucketed by period
