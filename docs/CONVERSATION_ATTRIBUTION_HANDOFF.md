@@ -29,8 +29,9 @@ Grounded against the code + the live ledger before building (repo rule #0). Find
   → conversation title = resolved at READ time from `conv_id` via the session store (titles change — don't
      denormalize a stale copy into the ledger).
 - **Net-new work = a new SOURCE + a reconciliation pass + read views**, not a schema change: (1) write claude-code
-  turns into `spend_events` (`source="claude-code"`); (2) LOCAL weekly cap-fill → billing_state; (3) context
-  trajectory + compaction signal; (4) read-time title join. Revised §2b/§3 below reflect this.
+  turns into `spend_events` (`source="claude-code"`); (2) **OBSERVABLE overage detection** → billing_state (read the
+  transcript's own `quotaLimits.isUsingOverage` / rejected-cap-hit signals — never a guessed cap, never admin);
+  (3) context trajectory + compaction signal; (4) read-time title join. Revised §2b/§3 below reflect this.
 
 ## The gap this closes
 - The Anthropic **admin/billing API cannot attribute below `api_key_id`** — no conversation/session id
@@ -121,20 +122,27 @@ earning its per-turn cost, or should we compact / close it?"* — is an **agenti
 session's recent content, never a hardcoded rule** (a big context that is still actively used is not waste; only an
 LLM can tell the difference).
 
-### 3. Split billed $ from est-value (hard rule — never sum) — LOCAL reconstruction is the anchor
-Transcript pricing yields **est-value** (what the usage is worth at realtime rates). The **real billed** portion is
-only the slice overflowing the exhausted plan cap. **Anchor the overflow on a LOCAL, config-declared reconstruction,
-never on the Admin API.** Take the subscription plan's weekly cap + reset cadence from config (the same
-`subscription.*` the pace engine already declares — never hardcoded), walk each conversation's turns in TIMESTAMP
-order within each weekly window, cap-fill the cumulative usage, and label every turn `plan_covered` up to the cap
-crossing and `billed_overflow` after it. This runs with no external call and names the exact turn that tipped the
-plan into overage. **The Anthropic Admin `cost_report` is DEV-ONLY**: cross-check the reconstructed weekly overflow
-against actual billed $ per `api_key_id` during development to validate the cap-fill — then rely on the local
-reconstruction for ALL display. Never anchor a shown number on the Admin API. Honest caveat: mapping local
-est-value onto the plan's cap unit is approximate, so `billing_state` is a **reconciled estimate carrying its
-evidence** (`reconciled_vs`/`gap_flag`), not per-turn ground truth. Always render
-`Real $X (API overflow) :: Est-value $Y consumed` — **never** one summed number. This is the confusion that
-started the crisis.
+### 3. Split billed $ from est-value — SEGMENT the timeline into subscription vs overage WINDOWS
+Est-value and real-paid apply to DIFFERENT time windows, and that split is the whole point. Est-value is the correct
+frame ONLY while we are UNDER the subscription; once past the weekly limit and running on credits, those are REAL PAID
+tokens (the API). So classify a turn by WHICH WINDOW it falls in — never by a cap number we invent, never by the admin
+API. Segment each timeline (per conversation, and the account) from the transcript's OWN observable limit signals:
+  • SUBSCRIPTION window [reset → weekly-cap hit): usage is PLAN-COVERED → est-value (est_chat, billed=0).
+  • OVERAGE window [weekly-cap hit → next reset), credits available: successful turns run on the API → REAL PAID
+    tokens (realtime, billed=1) — the money spent OUTSIDE the subscription.
+  • BLOCKED: inside an overage window with no credits (out_of_credits / org-disabled), attempts are REJECTED → $0
+    (friction, not paid). Rejected attempts carry no usage, so they never count as spend.
+  • RESET: the weekly allowance refreshes → back to a subscription window.
+Boundaries are OBSERVED: the cap-hit (B) = a `seven_day` quotaLimits record / the 429 "You've hit your weekly limit"
+message; the reset (C) = `resetsAt` (or the "resets <date>" text). RECLASSIFY, don't re-ingest — a turn in an overage
+window MOVES from est_chat to a realtime/billed row (source=claude-code-overflow); the est-value stream is
+subscription-only, the paid stream overage-only. CROSS-CHECK the paid total against the real auto-recharge invoices —
+the overage est-value is an UPPER BOUND that reconciles DOWN to the actual billed $ (the admin usage_report is
+org-API-key scoped and does NOT see Claude Code subscription overage, so it is a partial cross-check only). Always
+render `Real $X (overage, reconciled) :: Est-value $Y (plan-covered)` — never one summed number.
+CAUTION learned the hard way: `quotaLimits.isUsingOverage` appears ONLY on REJECTION records (always false here), so
+it MISSES successful overage — the correct signal is "successful turns that continue PAST a weekly-cap hit until
+reset". Measured that way: usage ran past the wall Aug 17–Sep 2 (~$3.4K est-value of overage turns, upper bound).
 
 ### 4. (Optional) `--watch` / lightweight daemon
 Tail active transcripts and surface a live per-conversation $/min, so a runaway open session is visible

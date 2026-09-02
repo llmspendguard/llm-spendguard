@@ -278,52 +278,117 @@ def _parse_iso(ts):
         return None
 
 
-def _week_start(dt, anchor):
-    """UTC datetime of the weekly-window START containing `dt`. With `anchor` (a datetime), windows are
-    [anchor+7k, anchor+7(k+1)); else the ISO calendar week (Monday 00:00 UTC). Parsing a fixed cadence, not a
-    meaning judgement — the reset schedule is DECLARED (config), never inferred."""
-    if anchor:
-        k = int((dt - anchor).total_seconds() // (7 * 86400))
-        return anchor + datetime.timedelta(days=7 * k)
-    d = dt.astimezone(datetime.timezone.utc)
-    return (d - datetime.timedelta(days=d.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+def _overage_events(min_day=None):
+    """Extract the OBSERVABLE plan-limit machinery from the transcripts — from the PROVIDER's own signals — so
+    billing_state can be CALCULATED (segmented into subscription vs overage windows) without a guessed cap or the
+    admin API. Returns:
+      weekly_resets : [unix]                 the WEEKLY reset grid anchors — `resetsAt` on `seven_day` quotaLimits records.
+      weekly_hits   : [{ts,conv}]            the seven_day cap-hit boundary B: the 429 "You've hit your weekly limit"
+                                             messages + seven_day quotaLimits records.
+      blocked       : [{ts,conv,reason,rate_limit_type}]  rejected cap-hits (out_of_credits / org-disabled) — friction, $0.
+      overage_direct: [{ts,conv,resets_at}]  the RARE direct signal (quotaLimits.isUsingOverage=true). NOT relied on —
+                                             a SUCCESSFUL overage turn need not carry it, so the window detector is primary.
+    Only `seven_day` bounds subscription exhaustion; `five_hour` is a short rolling throttle, not overage.
+    Read-only, pure parse, $0 — no LLM, no network, no admin API."""
+    out = {"weekly_resets": [], "weekly_hits": [], "blocked": [], "overage_direct": []}
+    if not os.path.isdir(_projects_dir()):
+        return out
+    for path in glob.glob(os.path.join(_projects_dir(), "**", "*.jsonl"), recursive=True):
+        conv = os.path.basename(path)[:-6] if path.endswith(".jsonl") else os.path.basename(path)
+        try:
+            for line in open(path, errors="ignore"):
+                line = line.strip()
+                if not line or ("quotaLimits" not in line and "weekly limit" not in line):
+                    continue                                    # cheap pre-filter — only limit-bearing lines are parsed
+                try:
+                    o = json.loads(line)
+                except Exception:
+                    continue
+                ts = o.get("timestamp") or ""
+                if min_day and ts[:10] and ts[:10] < min_day:
+                    continue
+                q = o.get("quotaLimits")
+                if isinstance(q, dict):
+                    rlt = q.get("rateLimitType")
+                    if rlt == "seven_day":
+                        out["weekly_hits"].append({"ts": ts, "conv": conv})   # a WEEKLY cap-hit → boundary B
+                        if q.get("resetsAt"):
+                            try:
+                                out["weekly_resets"].append(float(q["resetsAt"]))  # the provider's reset grid anchor
+                            except (TypeError, ValueError):
+                                pass
+                    if q.get("isUsingOverage") is True:
+                        out["overage_direct"].append({"ts": ts, "conv": conv, "resets_at": q.get("resetsAt")})
+                    elif q.get("overageStatus") == "rejected" or q.get("status") == "rejected":
+                        out["blocked"].append({"ts": ts, "conv": conv, "reason": q.get("overageDisabledReason"),
+                                               "rate_limit_type": rlt})
+                m = o.get("message") or {}
+                c = m.get("content")
+                txt = c if isinstance(c, str) else (json.dumps(c) if c else "")
+                if "hit your weekly limit" in txt:
+                    out["weekly_hits"].append({"ts": ts, "conv": conv})       # the human-facing weekly cap-hit
+        except Exception:
+            continue
+    out["weekly_resets"] = sorted(set(out["weekly_resets"]))
+    return out
 
 
-def reconcile_overflow(cap_usd=None, anchor=None, dry=False):
-    """Reconstruct billing_state for the Claude Code app turns: which of them billed for REAL once the weekly plan
-    cap was exhausted. LOCAL reconstruction is the anchor (never the Admin API): walk each weekly window's turns in
-    TIMESTAMP order, cap-fill cumulative est-value against the DECLARED weekly cap, and book the slice PAST the cap as
-    a SEPARATE realtime/billed stream (source="claude-code-overflow"), tagged by conv_id. The est-value stream
-    (source="claude-code", est_chat_usd) is left untouched — the two are DIFFERENT axes and are never summed:
-        est-value of conv X   = SUM(est_chat_usd)  WHERE source='claude-code'          AND conv_id=X
-        REAL overflow $ of X  = SUM(realtime_usd)   WHERE source='claude-code-overflow' AND conv_id=X
-    This is a reconciliation (idempotent by delete+rebook), so re-run it whenever the cap changes. The cap is a
-    DECLARED proxy (the plan meters in its own opaque unit); unset → nothing is reconstructed (no fabrication).
-    Pure arithmetic over ledger rows — $0, no LLM, no network. Admin cost_report is a DEV-ONLY calibration aid,
-    never in this path."""
+def _overage_windows(ev):
+    """From the observed provider signals, build the OVERAGE windows [B, R): B = the earliest seven_day cap-hit in a
+    week, R = that week's reset. The weekly RESET GRID is the provider's own `resetsAt` anchor + 7-day multiples (the
+    reset cadence, read from the provider — never guessed). Returns (windows sorted, anchor_unix) or ([], None) when
+    the transcripts carry no weekly reset grid + cap-hit to segment on."""
+    import math
+    WEEK = 7 * 86400
+    anchors = ev.get("weekly_resets") or []
+    if not anchors or not ev.get("weekly_hits"):
+        return [], None
+    anchor = anchors[0]
+
+    def reset_after(t):                                     # smallest weekly-grid reset strictly after t
+        r = anchor + math.ceil((t - anchor) / WEEK) * WEEK
+        while r <= t:
+            r += WEEK
+        return r
+
+    win_by_reset = {}                                      # R -> earliest cap-hit unix in that week
+    for h in ev["weekly_hits"]:
+        dt = _parse_iso(h["ts"])
+        if not dt:
+            continue
+        tu = dt.timestamp()
+        r = reset_after(tu)
+        win_by_reset[r] = min(win_by_reset.get(r, tu), tu)
+    return sorted((b, r) for r, b in win_by_reset.items()), anchor
+
+
+def reconcile_billing_state(dry=False):
+    """CALCULATE billing_state by SEGMENTING each timeline into subscription vs overage WINDOWS, from the PROVIDER's
+    OWN observable signals — never a guessed cap, never the admin API (spendguard's core identity). Est-value is the
+    correct frame ONLY inside a subscription window; once past the weekly cap and running on credits, those turns are
+    REAL PAID tokens (the API). Windows:
+      • SUBSCRIPTION [reset → weekly-cap hit): turns are est_chat (plan-covered, billed=0).
+      • OVERAGE [weekly-cap hit → next reset): turns are REAL PAID — booked realtime/billed=1 (source=
+        'claude-code-overflow') at the FULL est-value of those turns = an UNRECONCILED UPPER BOUND, pending
+        reconciliation DOWN to the real auto-recharge invoices.
+      • BLOCKED (out_of_credits inside an overage window): rejected, $0 — surfaced as friction, never billed.
+    Boundaries OBSERVED: B = seven_day cap-hit; the weekly reset grid = the provider's `resetsAt` + 7d. Plan-covered
+    est-value = total est_chat − overage (est-value is subscription-windows-only). The two axes are NEVER summed.
+    Idempotent (delete+rebook). Pure parse + arithmetic, $0."""
     import sqlite3
+    import datetime as _dt
+    from collections import Counter
     from . import budget
-    cap = cap_usd if cap_usd is not None else config._cfg_get("subscription", "claude_code_weekly_cap_usd", None)
-    try:
-        cap = float(cap) if cap is not None else None
-    except (TypeError, ValueError):
-        cap = None
-    if not cap or cap <= 0:
-        print("claude-code overflow: no weekly cap declared (subscription.claude_code_weekly_cap_usd) — every turn "
-              "stays plan_covered; nothing is reconstructed as billed overflow. Declare the est-value $/week your plan "
-              "covers (calibrate it against the Admin cost_report, dev-only) to reconstruct which turns overflowed to "
-              "real API $.")
-        return 0
-    anchor_s = anchor if anchor is not None else config._cfg_get("subscription", "claude_code_week_anchor", None)
-    anchor_dt = _parse_iso(anchor_s) if anchor_s else None
+    ev = _overage_events()
+    windows, anchor = _overage_windows(ev)
     con = sqlite3.connect(config.db_path())
     try:
         rows = con.execute("SELECT occurred_at, conv_id, model, est_chat_usd FROM spend_events "
-                           "WHERE source='claude-code' AND est_chat_usd IS NOT NULL ORDER BY occurred_at").fetchall()
+                           "WHERE source='claude-code' AND est_chat_usd IS NOT NULL").fetchall()
     finally:
         con.close()
-    windows = {}                                            # window_start_iso -> [(dt, conv, model, est_value), …]
-    bad = 0
+    booked = {}                                             # (conv, model, B_iso) -> overage_usd (upper bound)
+    gross_est = 0.0
     for occ, conv, model, val in rows:
         dt = _parse_iso(occ)
         try:
@@ -331,61 +396,61 @@ def reconcile_overflow(cap_usd=None, anchor=None, dry=False):
         except (TypeError, ValueError):
             v = 0.0
         if dt is None or v <= 0:
-            bad += 1                                         # a ledger row with no parseable ts / no positive value — COUNTED
             continue
-        windows.setdefault(_week_start(dt, anchor_dt).isoformat(), []).append((dt, conv or "", model or "?", v))
-    overflow = {}                                           # (window_iso, conv, model) -> overflow_usd
-    per_window = []                                         # (window_iso, covered_usd, overflow_usd)
-    for wiso, turns in sorted(windows.items()):
-        turns.sort(key=lambda t: t[0])
-        cum = 0.0; over_w = 0.0
-        for dt, conv, model, v in turns:
-            before = cum
-            cum += v
-            over = max(0.0, cum - max(cap, before))         # exact split of the crossing turn: only the part past the cap
-            if over > 0:
-                overflow[(wiso, conv, model)] = overflow.get((wiso, conv, model), 0.0) + over
-                over_w += over
-        per_window.append((wiso, min(cum, cap), over_w))
-    total_over = sum(overflow.values())
+        gross_est += v
+        tu = dt.timestamp()
+        for (b, r) in windows:                             # a turn inside an overage window [B, R) = real paid
+            if b <= tu < r:
+                key = (conv or "", model or "?", _dt.datetime.fromtimestamp(b, tz=_dt.timezone.utc).isoformat())
+                booked[key] = booked.get(key, 0.0) + v
+                break
+    total_over = sum(booked.values())
+    plan_covered = gross_est - total_over
     if not dry:                                             # reconciliation = delete + rebook (idempotent by construction)
         try:
             budget._ledger().delete(where={"source": "claude-code-overflow"},
-                                    actor="claude-code:overflow", reason="reconcile overflow")
+                                    actor="claude-code:billing-state", reason="observable window reclassify")
         except Exception as e:
-            print(f"claude-code overflow: clearing prior rows failed ({type(e).__name__}: {str(e)[:60]}) — continuing")
-        for (wiso, conv, model), over in overflow.items():
-            if over <= 0:
-                continue
-            budget._record_spend_event("anthropic", model, "realtime", float(round(over, 6)),
-                                       conv_id=conv, project="claude-code", occurred_at=wiso,
-                                       source="claude-code-overflow", basis="reconstructed",
-                                       intent="claude-code:overflow", actor="claudecode.reconcile_overflow",
-                                       dedup_key=f"cc-of:{wiso}:{conv}:{model}")
-    print(f"claude-code overflow{' (dry)' if dry else ''} — weekly cap ${cap:,.0f} est-value/window"
-          f"{' · anchor ' + anchor_dt.isoformat() if anchor_dt else ' · ISO calendar weeks'}")
-    print(f"  {len(windows)} window(s) · RECONSTRUCTED overflow: Real ${total_over:,.2f} (API overflow) "
-          f":: est-value stream unchanged (the two are NEVER summed)"
-          + (f" · {bad} ledger row(s) skipped (unparseable ts/value)" if bad else ""))
-    for wiso, covered, over in sorted(per_window, reverse=True)[:8]:
-        print(f"    {wiso[:10]}  covered ~${covered:,.0f} of ${cap:,.0f}  ·  overflow ${over:,.2f}"
-              + ("  ⚠ OVER CAP" if over > 0 else ""))
-    byconv = {}
-    for (wiso, conv, model), over in overflow.items():
-        byconv[conv] = byconv.get(conv, 0.0) + over
-    if byconv:
-        print("  top conversations by REAL overflow $ (what billed after the cap):")
-        for conv, over in sorted(byconv.items(), key=lambda x: -x[1])[:6]:
-            print(f"    ${over:8.2f}  {conv[:24]}")
-    if not dry:
-        print("  → source=\"claude-code-overflow\" rows (realtime_usd, billed=1). Real $ for a conversation AFTER the "
-              "cap = SUM(realtime_usd) WHERE source='claude-code-overflow' AND conv_id=<uuid>.")
+            print(f"claude-code billing_state: clearing prior rows failed ({type(e).__name__}: {str(e)[:60]}) — continuing")
+        for (conv, model, biso), over in booked.items():
+            if over > 0:
+                budget._record_spend_event("anthropic", model, "realtime", float(round(over, 6)),
+                                           conv_id=conv, project="claude-code", occurred_at=biso,
+                                           source="claude-code-overflow", basis="reconstructed",
+                                           intent="claude-code:overage", actor="claudecode.reconcile_billing_state",
+                                           dedup_key=f"cc-of:{biso}:{conv}:{model}")
+    blocked_reason = Counter()
+    for r in ev["blocked"]:
+        if r.get("reason"):
+            blocked_reason[r["reason"]] += 1
+    print(f"claude-code billing_state{' (dry)' if dry else ''} — SEGMENTED from observable provider signals "
+          f"(weekly reset grid + cap-hits; no guessed cap, no admin API)")
+    print(f"  Real ${total_over:,.2f} OVERAGE (paid tokens, UNRECONCILED upper bound)  ::  Est-value "
+          f"${plan_covered:,.2f} plan-covered (subscription windows)   [the two are NEVER summed]")
+    if anchor:
+        print(f"  {len(windows)} overage window(s); weekly reset grid anchored at "
+              f"{_dt.datetime.fromtimestamp(anchor, tz=_dt.timezone.utc).isoformat()} (+7d), from the provider's resetsAt")
+        for (b, r) in windows[-6:]:
+            biso = _dt.datetime.fromtimestamp(b, tz=_dt.timezone.utc).isoformat()
+            bo = sum(v for (c, m, bi), v in booked.items() if bi == biso)
+            print(f"    overage [{_dt.datetime.fromtimestamp(b, tz=_dt.timezone.utc).strftime('%b %d %H:%M')} → "
+                  f"{_dt.datetime.fromtimestamp(r, tz=_dt.timezone.utc).strftime('%b %d %H:%M')} UTC]  Real ${bo:,.2f}")
+    else:
+        print("  (no observable weekly reset grid + cap-hit → nothing segmented as overage; all plan-covered)")
+    print(f"  BLOCKED cap-hits (out_of_credits/org-disabled → rejected, $0): {len(ev['blocked'])} quota events + "
+          f"{len(ev['weekly_hits'])} weekly-limit messages"
+          + (f" · reasons {dict(blocked_reason)}" if blocked_reason else ""))
+    if not dry and total_over > 0:
+        print("  → overage = source=\"claude-code-overflow\" (realtime, billed=1, UNRECONCILED upper bound). NEXT: "
+              "reconcile it DOWN to the real auto-recharge invoices (refresh Jun–Aug); admin usage_report is partial "
+              "(org-API-key scoped, blind to subscription overage).")
     return 0
 
 
 def overflow_by_conversation():
-    """{conv_id: real overflow $} from the reconstructed source='claude-code-overflow' rows — the billed slice past
-    the weekly cap, per conversation. Read-only; empty until `claude-code overflow` has run with a declared cap."""
+    """{conv_id: overage paid $ (UNRECONCILED upper bound)} from the source='claude-code-overflow' rows — the turns
+    that fell inside an observed overage window [weekly-cap hit → reset], booked at their full est-value. Read-only;
+    empty until `claude-code overflow` has run (and empty when no overage window was observed)."""
     import sqlite3
     con = sqlite3.connect(config.db_path())
     try:
@@ -956,15 +1021,8 @@ def main(argv=None):
             pass
     if sub == "ingest":                                 # per-turn rows → local spend_events ledger (queryable, idempotent)
         return ingest_events(days=days, limit=limit, reset="--reset" in argv, dry="--dry" in argv)
-    if sub == "overflow":                               # reconstruct billing_state — which turns billed past the weekly cap
-        cap_usd = None
-        if "--cap-usd" in argv:
-            try:
-                cap_usd = float(argv[argv.index("--cap-usd") + 1])
-            except (ValueError, IndexError):
-                pass
-        anchor = argv[argv.index("--anchor") + 1] if "--anchor" in argv and argv.index("--anchor") + 1 < len(argv) else None
-        return reconcile_overflow(cap_usd=cap_usd, anchor=anchor, dry="--dry" in argv)
+    if sub in ("overflow", "billing-state", "billing"):  # CALCULATE billing_state from observable overage signals
+        return reconcile_billing_state(dry="--dry" in argv)
     if sub == "context":                                # compaction view: sustained-large-context conversations + $/turn
         conv_id = argv[argv.index("--conv") + 1] if "--conv" in argv and argv.index("--conv") + 1 < len(argv) else None
         return context_cmd(conv_id=conv_id, top=limit or 10)

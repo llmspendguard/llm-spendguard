@@ -1,23 +1,26 @@
-"""Phase-2 guard: `claude-code overflow` reconstructs billing_state — which app turns billed for REAL once the
-weekly plan cap was exhausted — from a LOCAL cap-fill, never the Admin API. Pins the crisis-fix invariants:
+"""Phase-2 guard (window-segmentation model): `claude-code overflow` CALCULATES billing_state by SEGMENTING each
+timeline into subscription vs overage WINDOWS, from the PROVIDER's own observable signals — never a guessed cap,
+never the admin API. Est-value is the frame ONLY inside a subscription window; a turn PAST the weekly cap (until
+reset) ran on paid credit = REAL PAID tokens. Pins:
 
-  1. NO cap declared → NOTHING is reconstructed as overflow (no fabrication — the safe, honest default).
-  2. With a declared weekly cap, a time-ordered cap-fill marks only the slice PAST the cap as overflow, attributes
-     it to the exact conversation whose turn crossed, and books it as a SEPARATE realtime/billed stream
-     (source="claude-code-overflow", realtime_usd, billed=1).
-  3. The est-value stream is UNTOUCHED — est_value_dec is unchanged. The two axes are never summed:
-     est-value = SUM(est_chat_usd) on source='claude-code'; real overflow = SUM(realtime_usd) on the overflow source.
-  4. It is a RECONCILIATION: re-running is idempotent (delete+rebook, $50 stays $50), and a CHANGED cap re-derives
-     the overflow correctly (never stale).
+  1. The weekly RESET GRID comes from the provider's `resetsAt` (+7d); the cap-hit boundary B from a seven_day
+     quotaLimits / 429 "weekly limit". An overage window is [B, next reset).
+  2. A turn INSIDE an overage window is booked as REAL PAID (realtime/billed=1, source=claude-code-overflow) at its
+     full est-value — the UNRECONCILED upper bound. A turn before B or after the reset stays plan-covered est-value.
+  3. Plan-covered est-value = total est_chat − overage (est-value is subscription-windows-only). The two axes are
+     never summed. Idempotent (delete+rebook).
+  4. No observable weekly reset grid + cap-hit → nothing is segmented as overage (all plan-covered).
 
-Hermetic: isolated SPENDGUARD_HOME, seeded est_chat rows with fixed timestamps in ONE anchored window. Zero spend."""
-import os, sys, tempfile, sqlite3
+Hermetic: isolated SPENDGUARD_HOME + a fabricated transcript carrying the provider limit signals + seeded est_chat
+rows straddling the window. Zero spend."""
+import os, sys, tempfile, json, datetime, sqlite3
 from decimal import Decimal
 
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
-    home = tempfile.mkdtemp(prefix="spendguard-ccoverflow-")
+    home = tempfile.mkdtemp(prefix="spendguard-ccwin-")
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
     os.environ["SPENDGUARD_HOME"] = home
+    os.environ["SPENDGUARD_CC_DIR"] = os.path.join(home, "projects")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 from spendguard import claudecode, budget, config
@@ -28,57 +31,67 @@ def ck(name, cond):
     if not cond:
         fails.append(name)
 
-ANCHOR = "2026-08-24T00:00:00+00:00"                                   # a known window boundary → deterministic weeks
+UTC = datetime.timezone.utc
+RESET = datetime.datetime(2026, 8, 24, 16, 0, 0, tzinfo=UTC).timestamp()   # the week's reset (provider resetsAt)
+
+CC = os.path.join(os.environ["SPENDGUARD_CC_DIR"], "proj")
+os.makedirs(CC, exist_ok=True)
+with open(os.path.join(CC, "sess.jsonl"), "w") as f:
+    # a seven_day cap-hit at 10:00 on Aug 22 (boundary B) carrying the provider's weekly resetsAt (the grid anchor)
+    f.write(json.dumps({"timestamp": "2026-08-22T10:00:00Z",
+                        "quotaLimits": {"rateLimitType": "seven_day", "resetsAt": RESET, "status": "rejected",
+                                        "overageStatus": "rejected", "overageDisabledReason": "out_of_credits",
+                                        "isUsingOverage": False}}) + "\n")
+    # a separate five_hour rejection (friction) — must NOT create a weekly window
+    f.write(json.dumps({"timestamp": "2026-08-23T01:00:00Z",
+                        "quotaLimits": {"rateLimitType": "five_hour", "status": "rejected",
+                                        "overageStatus": "rejected", "overageDisabledReason": "out_of_credits"}}) + "\n")
 
 def seed(conv, ts, val, mid):
     budget._record_spend_event("anthropic", "claude-haiku-4-5", "est_chat", float(val),
-                               conv_id=conv, occurred_at=ts, source="claude-code", basis="reconstructed",
-                               project="claude-code", dedup_key="cc:" + mid)
+                               conv_id=conv, occurred_at=ts, source="claude-code", project="claude-code",
+                               dedup_key="cc:" + mid)
+seed("convA", "2026-08-22T09:00:00+00:00", 50, "before")    # BEFORE B → subscription
+seed("convA", "2026-08-22T11:00:00+00:00", 100, "inA")      # inside [B, RESET) → overage
+seed("convB", "2026-08-23T12:00:00+00:00", 30, "inB")       # inside [B, RESET) → overage
+seed("convB", "2026-08-24T20:00:00+00:00", 20, "after")     # AFTER the reset → subscription
 
-# three turns in ONE window, in time order: convA 100 + 100, then convB 100 (latest). Total $300.
-seed("convA", "2026-08-24T01:00:00+00:00", 100, "s1")
-seed("convA", "2026-08-24T02:00:00+00:00", 100, "s2")
-seed("convB", "2026-08-24T03:00:00+00:00", 100, "s3")
+# 1. observable signals + window construction
+ev = claudecode._overage_events()
+ck("provider weekly reset grid captured (resetsAt from the seven_day record)", RESET in ev["weekly_resets"])
+ck("seven_day cap-hit captured as a weekly-hit boundary", len(ev["weekly_hits"]) >= 1)
+wins, anchor = claudecode._overage_windows(ev)
+ck("exactly ONE overage window [B, reset) is built (five_hour does NOT make a window)", len(wins) == 1)
 
-led = budget._ledger()
-SINCE = "2026-01-01"
-
-def overflow_rows():
-    con = sqlite3.connect(config.db_path())
-    try:
-        return con.execute("SELECT count(*), COALESCE(SUM(CAST(realtime_usd AS REAL)),0), COALESCE(SUM(billed),0) "
-                           "FROM spend_events WHERE source='claude-code-overflow'").fetchone()
-    finally:
-        con.close()
-
-# 1. no cap declared (config unset in this isolated home) → NOTHING reconstructed
-claudecode.reconcile_overflow(cap_usd=None)
-ck("cap unset → NO overflow rows (no fabrication)", claudecode.overflow_by_conversation() == {})
-
-# 2. declared cap $250 → only the $50 past the cap overflows, attributed to convB (whose turn crossed)
-claudecode.reconcile_overflow(cap_usd=250, anchor=ANCHOR)
+# 2. reclassify by window: only the two in-window turns are real paid
+claudecode.reconcile_billing_state()
 ov = claudecode.overflow_by_conversation()
-ck("overflow total = $50 (300 − 250)", round(sum(ov.values()), 2) == 50.0)
-ck("the $50 is attributed to convB — the conversation whose turn crossed the cap", round(ov.get("convB", 0), 2) == 50.0)
-ck("convA (entirely under the cap) has no overflow", round(ov.get("convA", 0.0), 2) == 0.0)
-n, rt, bl = overflow_rows()
-ck("overflow booked as realtime_usd, billed=1 (real $, not est-value)", round(rt, 2) == 50.0 and bl == n and n >= 1)
+ck("overage = $130 upper bound (the two in-window turns: convA $100 + convB $30)", round(sum(ov.values()), 2) == 130.0)
+ck("convA in-window turn billed $100 (its BEFORE-window $50 is not)", round(ov.get("convA", 0), 2) == 100.0)
+ck("convB in-window turn billed $30 (its AFTER-reset $20 is not)", round(ov.get("convB", 0), 2) == 30.0)
+con = sqlite3.connect(config.db_path())
+n, rt, bl = con.execute("SELECT count(*), COALESCE(SUM(CAST(realtime_usd AS REAL)),0), COALESCE(SUM(billed),0) "
+                        "FROM spend_events WHERE source='claude-code-overflow'").fetchone()
+con.close()
+ck("overage booked as realtime_usd, billed=1", round(rt, 2) == 130.0 and bl == n and n >= 1)
 
-# 3. the SPLIT — est-value stream untouched; the two axes are separate
-ck("est-value stream UNTOUCHED — est_value_dec still $300 (overflow did not move it)",
-   Decimal(led.est_value_dec(since=SINCE)) == Decimal("300"))
+# 3. the split: gross est_chat unchanged; plan-covered = gross − overage (est-value is subscription-windows-only)
+led = budget._ledger()
+gross = Decimal(led.est_value_dec(since="2026-01-01"))
+ck("gross est_chat still $200 (the ingest is not mutated)", gross == Decimal("200"))
+ck("plan-covered = gross − overage = $70 (subscription windows only)", gross - Decimal("130") == Decimal("70"))
 
-# 4a. idempotent re-run (delete+rebook) — still $50, never $100
-claudecode.reconcile_overflow(cap_usd=250, anchor=ANCHOR)
-ck("re-reconcile is idempotent — still $50, not doubled", round(sum(claudecode.overflow_by_conversation().values()), 2) == 50.0)
+# 4. idempotent
+claudecode.reconcile_billing_state()
+ck("re-reconcile is idempotent — still $130", round(sum(claudecode.overflow_by_conversation().values()), 2) == 130.0)
 
-# 4b. a CHANGED cap re-derives correctly — cap $150 → $150 overflow (convA turn2 $50 + convB turn3 $100)
-claudecode.reconcile_overflow(cap_usd=150, anchor=ANCHOR)
-ov3 = claudecode.overflow_by_conversation()
-ck("cap change re-reconciles (never stale): cap $150 → $150 overflow, convA $50 + convB $100",
-   round(sum(ov3.values()), 2) == 150.0 and round(ov3.get("convA", 0), 2) == 50.0 and round(ov3.get("convB", 0), 2) == 100.0)
-ck("est-value STILL $300 after cap change (est stream is never touched by reconcile)",
-   Decimal(led.est_value_dec(since=SINCE)) == Decimal("300"))
+# 5. no observable grid + cap-hit → nothing is overage (drop the quota signals)
+with open(os.path.join(CC, "sess.jsonl"), "w") as f:
+    f.write(json.dumps({"timestamp": "2026-08-23T01:00:00Z", "type": "user",
+                        "message": {"role": "user", "content": "hi"}}) + "\n")
+claudecode.reconcile_billing_state()
+ck("no weekly reset grid + cap-hit observed → $0 overage (all plan-covered)",
+   round(sum(claudecode.overflow_by_conversation().values()), 2) == 0.0)
 
-print(("[OK]" if not fails else "[FAIL]") + " claude-code-overflow-reconcile: %d failure(s)" % len(fails))
+print(("[OK]" if not fails else "[FAIL]") + " claude-code-billing-state-windows: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)
