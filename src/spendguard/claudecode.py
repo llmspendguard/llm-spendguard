@@ -461,6 +461,140 @@ def overflow_by_conversation():
     return {c or "": float(v or 0.0) for c, v in rows}
 
 
+def ingest_invoices(csv_path=None, dry=False):
+    """Ingest the REAL Anthropic charges (a by-card CSV export with columns Card, Reimburse, Source, Invoice ID,
+    Date, Type, Amount) into spend_events as the GROUND-TRUTH billed stream — the actual money out the door that the
+    observable est-value only approximates. Three streams, kept DISTINCT (never summed blindly):
+      • claude.ai base SUBSCRIPTION (the recurring $200/mo Max plan — the first $200 claude.ai charge each month) →
+        subscription_usd (the flat plan fee).
+      • claude.ai OVERAGE (everything else on claude.ai: the $45/$90/$250 bundles + $10-25 top-ups) → realtime_usd,
+        source='anthropic-invoice': the REAL Claude Code overage, the truth the window detector only estimates.
+      • Console/API credit GRANTS → realtime_usd, source='anthropic-invoice-api': these fund spendguard's OWN gated
+        API calls (already tracked as USAGE), so they are the PURCHASE side — reconcile against, don't sum with, that.
+    Idempotent: dedup_key='inv:<invoice_id>' (delete+rebook). $0, pure parse — no LLM, no network."""
+    import csv as _csv
+    import glob as _glob
+    from collections import defaultdict
+    from . import budget
+    path = csv_path or config._cfg_get("subscription", "anthropic_invoice_csv", None)
+    if not path:                                            # discover the newest by-card export (pattern, not a hardcode)
+        cands = sorted(_glob.glob(os.path.expanduser("~/Documents/Anthropic*charges*.csv")),
+                       key=lambda p: os.path.getmtime(p) if os.path.exists(p) else 0, reverse=True)
+        path = cands[0] if cands else None
+    if not path or not os.path.exists(path):
+        print("claude-code invoices: no invoice CSV found. Pass --csv <path> (columns: "
+              "Card,Reimburse,Source,Invoice ID,Date,Type,Amount) or set subscription.anthropic_invoice_csv.")
+        return 0
+    with open(path) as fh:
+        raw = list(_csv.reader(fh))
+    seen_base_month = set()
+    parsed = []
+    for r in sorted([x for x in raw[1:] if len(x) >= 7 and x[4] and x[6]], key=lambda x: x[4]):
+        joined = " ".join(r).lower()
+        if "subtotal" in joined or "reimburse" == (r[1] or "").strip().lower() or (len(r) > 5 and "ALL" in (r[5] or "")):
+            continue                                        # skip the summary / subtotal rows
+        try:
+            amt = float(r[6])
+        except (TypeError, ValueError):
+            continue
+        card = "".join(ch for ch in (r[0] or "") if ch.isdigit())[-4:] or "?"
+        src = (r[2] or "").strip()
+        inv = (r[3] or "").strip()
+        date = (r[4] or "").strip()
+        if not inv or amt <= 0:
+            continue
+        mo = date[:7]
+        if src == "claude.ai":
+            if abs(amt - 200.0) < 0.01 and mo not in seen_base_month:
+                seen_base_month.add(mo)                     # the recurring monthly $200 = the base Max subscription
+                stream, kind, source = "subscription", "subscription", "anthropic-invoice"
+            else:
+                stream, kind, source = "cc-overage", "realtime", "anthropic-invoice"
+        else:                                               # Console/API credit grants (the API purchase side)
+            stream, kind, source = "api-credit", "realtime", "anthropic-invoice-api"
+        parsed.append({"card": card, "reimb": (r[1] or "").strip(), "src": src, "inv": inv, "date": date,
+                       "amt": amt, "stream": stream, "kind": kind, "source": source})
+    by_stream = defaultdict(float); by_stream_n = defaultdict(int); over_month = defaultdict(float)
+    for p in parsed:
+        by_stream[p["stream"]] += p["amt"]; by_stream_n[p["stream"]] += 1
+        if p["stream"] == "cc-overage":
+            over_month[p["date"][:7]] += p["amt"]
+    if not dry:
+        for s in ("anthropic-invoice", "anthropic-invoice-api"):
+            try:
+                budget._ledger().delete(where={"source": s}, actor="claude-code:invoices", reason="re-ingest invoices")
+            except Exception as e:
+                print(f"claude-code invoices: clear {s} failed ({type(e).__name__}: {str(e)[:50]})")
+        for p in parsed:
+            proj = "claude-code" if p["stream"] in ("subscription", "cc-overage") else "spendguard-api"
+            budget._record_spend_event(
+                "anthropic", "claude.ai" if p["src"] == "claude.ai" else "console-api", p["kind"], float(p["amt"]),
+                project=proj, occurred_at=p["date"] + "T12:00:00+00:00", source=p["source"], basis="billed",
+                intent=f"anthropic-invoice:{p['stream']}:card{p['card']}:reimb-{p['reimb'][:3].lower()}",
+                actor="claudecode.ingest_invoices", invoice_id=p["inv"], dedup_key="inv:" + p["inv"])
+    print(f"claude-code invoices{' (dry)' if dry else ''} — REAL Anthropic charges from {os.path.basename(path)} "
+          f"({len(parsed)} charges)")
+    print(f"  subscription (base $200/mo Max):  ${by_stream['subscription']:>10,.2f}  ({by_stream_n['subscription']})")
+    print(f"  cc-overage   (REAL Claude Code overage): ${by_stream['cc-overage']:>10,.2f}  ({by_stream_n['cc-overage']})")
+    print(f"  api-credit   (Console/API grants):  ${by_stream['api-credit']:>10,.2f}  ({by_stream_n['api-credit']})")
+    print(f"  ── REAL Claude Code OVERAGE by month (the ground truth) ──")
+    for m in sorted(over_month):
+        print(f"     {m}  ${over_month[m]:,.2f}")
+    if not dry:
+        print("  → Real overage = SUM(realtime_usd) WHERE source='anthropic-invoice' (cc-overage). api-credit is the "
+              "API PURCHASE side (source='anthropic-invoice-api') — reconcile vs tracked usage, do NOT sum into it.")
+    return {"by_stream": dict(by_stream), "over_month": dict(over_month)}
+
+
+def attribute_overage(top=12):
+    """RECONCILE the real Claude Code overage (ingested invoices, source='anthropic-invoice' cc-overage) to the
+    CONVERSATIONS that caused it: distribute each MONTH's real overage across the conversations that were in an
+    observed overage window that month, PROPORTIONAL to their observable overage est-value. The invoice gives the
+    TOTAL truth per month; the observable window detector gives the per-conversation SHAPE. Months with real overage
+    but no observed window can't be attributed (surfaced, not hidden). Read-only, $0."""
+    import sqlite3
+    con = sqlite3.connect(config.db_path())
+    try:
+        real = con.execute("SELECT substr(occurred_at,1,7) mo, SUM(CAST(realtime_usd AS REAL)) FROM spend_events "
+                           "WHERE source='anthropic-invoice' AND intent LIKE 'anthropic-invoice:cc-overage%' "
+                           "GROUP BY mo").fetchall()
+        real_by_month = {m: float(v or 0.0) for m, v in real}
+        rows = con.execute("SELECT occurred_at, conv_id, est_chat_usd FROM spend_events "
+                           "WHERE source='claude-code' AND est_chat_usd IS NOT NULL").fetchall()
+    finally:
+        con.close()
+    windows, _anchor = _overage_windows(_overage_events())
+    obs = {}                                                # (month, conv) -> observable overage est-value
+    obs_month = {}                                          # month -> total observable overage
+    for occ, conv, val in rows:
+        dt = _parse_iso(occ)
+        try:
+            v = float(val)
+        except (TypeError, ValueError):
+            v = 0.0
+        if dt is None or v <= 0:
+            continue
+        tu = dt.timestamp()
+        if any(b <= tu < r for (b, r) in windows):
+            mo = occ[:7]
+            obs[(mo, conv or "")] = obs.get((mo, conv or ""), 0.0) + v
+            obs_month[mo] = obs_month.get(mo, 0.0) + v
+    real_by_conv = {}
+    for (mo, conv), v in obs.items():
+        tot, realm = obs_month.get(mo, 0.0), real_by_month.get(mo, 0.0)
+        if tot > 0 and realm > 0:
+            real_by_conv[conv] = real_by_conv.get(conv, 0.0) + realm * (v / tot)
+    unattr = sum(realm for mo, realm in real_by_month.items() if obs_month.get(mo, 0.0) <= 0)
+    titles = _sidebar_titles()
+    print("claude-code overage ATTRIBUTION — real invoice overage distributed to conversations by observable shape")
+    print(f"  real overage ${sum(real_by_month.values()):,.2f} (invoices) → attributed ${sum(real_by_conv.values()):,.2f}"
+          + (f"  ·  ${unattr:,.2f} in months with NO observed window (unattributable — the detector missed those)"
+             if unattr > 0.005 else ""))
+    for conv, v in sorted(real_by_conv.items(), key=lambda x: -x[1])[:top]:
+        print(f"    ${v:8.2f}  {_conv_label(conv, titles)}")
+    return real_by_conv
+
+
 def _cc_conv_rows(min_day=None):
     """{conv_id: [(occurred_at, model, in_tok, cache_read, cache_write), …] ordered by ts} from the claude-code
     est-value rows. One focused SELECT; read-only. context per turn = in_tok + cache_read + cache_write."""
@@ -1028,6 +1162,13 @@ def main(argv=None):
         return context_cmd(conv_id=conv_id, top=limit or 10)
     if sub in ("conversations", "convs"):               # unified per-conversation view, labeled by human sidebar title
         return conversations_cmd(top=limit or 15)
+    if sub == "invoices":                               # ingest the REAL Anthropic charges (by-card CSV) as ground truth
+        csvp = argv[argv.index("--csv") + 1] if "--csv" in argv and argv.index("--csv") + 1 < len(argv) else None
+        ingest_invoices(csv_path=csvp, dry="--dry" in argv)
+        return 0
+    if sub == "attribute":                              # reconcile real invoice overage → conversations
+        attribute_overage(top=limit or 12)
+        return 0
     if sub == "classify":                               # classify sessions into org→team×project (caged, est-first)
         return classify(run="--run" in argv, days=days, recls="--reclassify" in argv)
     if sub == "work":                                   # conversation-derived work rows, bucketed by period
