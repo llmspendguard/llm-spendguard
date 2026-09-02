@@ -57,6 +57,9 @@ print("-- tools/list: the advisor tools are advertised with schemas --")
 tl = rpc("tools/list")["result"]["tools"]
 names = {t["name"] for t in tl}
 ck("both P1 tools listed", {"spendguard_advise", "spendguard_models"} <= names)
+ck("the 5 spend/compaction tools are ALSO advertised (wired into _TOOLS, not just defined)",
+   {"spendguard_spend_overview", "spendguard_overage_status", "spendguard_top_conversations",
+    "spendguard_conversation_cost", "spendguard_compaction_candidates"} <= names)
 ck("every tool carries a description + inputSchema",
    all(t.get("description") and isinstance(t.get("inputSchema"), dict) for t in tl))
 
@@ -179,6 +182,41 @@ try:
     ck("without budget_usd the tool returns an ESTIMATE and does not run", rt.get("estimate_only") is True)
 finally:
     _sg.require = _orig_req
+
+print("-- (spend/compaction) the read-only Claude Code tools: no crash on an EMPTY ledger + two axes stay SEPARATE --")
+# Hermetic: stub the transcript-reading helpers so this exercises the PROTOCOL + payload SHAPE, not the real
+# ~/.claude transcripts (which would be non-hermetic and slow). The DB is the isolated empty test home.
+from spendguard import claudecode as _cc, compaction as _cp
+_cc._sidebar_titles = lambda: {}
+_cc._overage_events = lambda *a, **k: {"weekly_resets": [], "weekly_hits": [], "blocked": [], "overage_direct": [], "five_hour_hits": []}
+_cc._overage_windows = lambda *a, **k: ([], None)
+_cc.attribute_overage = lambda *a, **k: {}
+_cc.compaction_candidates = lambda *a, **k: ([], (1.0, 0), {"examined": 0, "flagged": 0})
+_cp.compact_snippet = lambda *a, **k: "/compact <keep the goal + open files>"
+
+ov = rpc("tools/call", {"name": "spendguard_spend_overview", "arguments": {}})["result"]
+ck("spend_overview is not an error on an empty ledger", ov.get("isError") is False)
+ovp = ov["structuredContent"]
+ck("spend_overview keeps REAL $ and est-value as SEPARATE axes (the two-axis contract)",
+   "real_usd" in ovp and "est_value_usd" in ovp)
+ck("spend_overview NEVER exposes a single summed grand-total that mixes the two axes",
+   not any("est" in k and "real" in k for k in ovp) and "grand_total" not in ovp)
+
+st = rpc("tools/call", {"name": "spendguard_overage_status", "arguments": {}})["result"]["structuredContent"]
+ck("overage_status answers on_overage_now as a bool", isinstance(st.get("on_overage_now"), bool))
+
+tc = rpc("tools/call", {"name": "spendguard_top_conversations", "arguments": {"by": "est", "limit": 3}})["result"]
+ck("top_conversations returns a conversations list (empty ok on an empty ledger)",
+   tc.get("isError") is False and isinstance(tc["structuredContent"].get("conversations"), list))
+
+cc = rpc("tools/call", {"name": "spendguard_conversation_cost", "arguments": {"conversation_id": "does-not-exist"}})["result"]["structuredContent"]
+ck("conversation_cost keeps the two axes separate (est-value vs overage upper bound)",
+   "est_value_usd_plan_covered" in cc and "observed_overage_usd_upper_bound" in cc)
+
+cand = rpc("tools/call", {"name": "spendguard_compaction_candidates", "arguments": {"limit": 3}})["result"]
+ck("compaction_candidates returns a candidates list + a ready-to-paste /compact command",
+   cand.get("isError") is False and isinstance(cand["structuredContent"].get("candidates"), list)
+   and str(cand["structuredContent"].get("effective_compact_command", "")).startswith("/compact"))
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_mcp_server: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

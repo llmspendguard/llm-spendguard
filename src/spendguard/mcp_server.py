@@ -126,6 +126,121 @@ def _tool_bakeoff(args):
     return _bk.bakeoff(run=True, budget_usd=float(budget), **kw)
 
 
+# ── Claude Code spend + compaction tools (read-only, $0). spendguard's own functions PRINT human text, which would
+#    corrupt JSON-RPC on stdout — so any handler that calls one wraps it in redirect_stdout(). ─────────────────────
+def _cc_db():
+    import sqlite3
+    from . import config
+    return sqlite3.connect(config.db_path())
+
+
+def _cc_titles():
+    try:
+        from . import claudecode
+        return claudecode._sidebar_titles()
+    except Exception:
+        return {}
+
+
+def _cc_label(conv, titles):
+    return titles.get(conv) or (conv or "?")[:40]
+
+
+def _tool_spend_overview(_args):
+    con = _cc_db()
+    try:
+        est = con.execute("SELECT COALESCE(SUM(CAST(est_chat_usd AS REAL)),0) FROM spend_events WHERE source='claude-code'").fetchone()[0]
+        over = con.execute("SELECT COALESCE(SUM(CAST(realtime_usd AS REAL)),0) FROM spend_events WHERE source='anthropic-invoice' AND intent LIKE 'anthropic-invoice:cc-overage%'").fetchone()[0]
+        sub = con.execute("SELECT COALESCE(SUM(CAST(subscription_usd AS REAL)),0) FROM spend_events WHERE source='anthropic-invoice'").fetchone()[0]
+        api = con.execute("SELECT COALESCE(SUM(CAST(realtime_usd AS REAL)),0) FROM spend_events WHERE source='anthropic-invoice-api'").fetchone()[0]
+    finally:
+        con.close()
+    return {"note": "Real $ (money out the door) and est-value (plan-covered usage worth) are SEPARATE axes — never summed.",
+            "real_usd": {"subscription_base": round(sub, 2), "claude_code_overage": round(over, 2),
+                         "api_credits": round(api, 2), "total_real": round(sub + over + api, 2)},
+            "est_value_usd": {"claude_code_plan_covered": round(est, 2)}}
+
+
+def _tool_overage_status(_args):
+    import contextlib
+    import io
+    import time
+    from . import claudecode
+    with contextlib.redirect_stdout(io.StringIO()):
+        windows, _anchor = claudecode._overage_windows(claudecode._overage_events())
+    now = time.time()
+    con = _cc_db()
+    try:
+        month = con.execute("SELECT substr(occurred_at,1,7) mo, ROUND(SUM(CAST(realtime_usd AS REAL)),2) FROM spend_events "
+                            "WHERE source='anthropic-invoice' AND intent LIKE 'anthropic-invoice:cc-overage%' GROUP BY mo ORDER BY mo DESC").fetchall()
+    finally:
+        con.close()
+    return {"on_overage_now": any(b <= now < r for (b, r) in windows),
+            "meaning": "true = the weekly plan cap is hit and this account is paying per-token right now",
+            "observed_overage_windows": len(windows), "real_overage_by_month_usd": {m: v for m, v in month[:6]}}
+
+
+def _tool_top_conversations(args):
+    import contextlib
+    import io
+    by = (args.get("by") or "est").lower()
+    limit = int(args.get("limit") or 10)
+    titles = _cc_titles()
+    if by in ("overage", "real"):
+        from . import claudecode
+        with contextlib.redirect_stdout(io.StringIO()):
+            real = claudecode.attribute_overage(top=10 ** 6)
+        rows = sorted((real or {}).items(), key=lambda x: -x[1])[:limit]
+        return {"ranked_by": "real Claude Code overage $ (reconciled to invoices)",
+                "conversations": [{"title": _cc_label(c, titles), "overage_usd": round(v, 2)} for c, v in rows]}
+    con = _cc_db()
+    try:
+        rows = con.execute("SELECT conv_id, ROUND(SUM(CAST(est_chat_usd AS REAL)),2) v, COUNT(*) n, "
+                          "MAX(COALESCE(in_tok,0)+COALESCE(cache_read_tok,0)+COALESCE(cache_write_tok,0)) mx "
+                          "FROM spend_events WHERE source='claude-code' GROUP BY conv_id ORDER BY v DESC LIMIT ?", (limit,)).fetchall()
+    finally:
+        con.close()
+    return {"ranked_by": "est-value $ (what the usage is worth at API rates)",
+            "conversations": [{"title": _cc_label(c, titles), "est_value_usd": v, "turns": n, "max_context_tokens": mx}
+                              for c, v, n, mx in rows]}
+
+
+def _tool_conversation_cost(args):
+    conv = str(args.get("conversation_id") or "").strip()
+    if not conv:
+        return {"error": "pass conversation_id (a transcript uuid — from spendguard_top_conversations)"}
+    con = _cc_db()
+    try:
+        est = con.execute("SELECT COALESCE(SUM(CAST(est_chat_usd AS REAL)),0), COUNT(*) FROM spend_events "
+                         "WHERE source='claude-code' AND conv_id=?", (conv,)).fetchone()
+        over = con.execute("SELECT COALESCE(SUM(CAST(realtime_usd AS REAL)),0) FROM spend_events "
+                          "WHERE source='claude-code-overflow' AND conv_id=?", (conv,)).fetchone()[0]
+    finally:
+        con.close()
+    return {"conversation_id": conv, "title": _cc_label(conv, _cc_titles()),
+            "est_value_usd_plan_covered": round(est[0], 2), "turns": est[1],
+            "observed_overage_usd_upper_bound": round(over, 2),
+            "note": "est-value and overage are separate axes; overage here is the observable upper bound"}
+
+
+def _tool_compaction_candidates(args):
+    import contextlib
+    import io
+    from . import claudecode, compaction
+    limit = int(args.get("limit") or 10)
+    with contextlib.redirect_stdout(io.StringIO()):
+        cands, (k, _kn), stats = claudecode.compaction_candidates()
+        snippet = compaction.compact_snippet()
+    titles = _cc_titles()
+    return {"measured_compaction_ratio_k": k, "scanned": stats.get("examined"), "flagged": stats.get("flagged"),
+            "candidates": [{"title": _cc_label(c["conv_id"], titles), "current_context_tokens": c["current"], "turns": c["turns"],
+                            "reread_usd_per_turn": round(c["recurring_read_usd_per_turn"], 4) if c.get("recurring_read_usd_per_turn") is not None else None,
+                            "compacting_saves_usd_per_turn": round(c["saved_usd_per_turn"], 4) if c.get("saved_usd_per_turn") is not None else None}
+                           for c in cands[:limit]],
+            "effective_compact_command": snippet,
+            "note": "for a tailored, conversation-specific decision run `spendguard claude-code compact --tailor` (gated)"}
+
+
 # name → (description, JSON-Schema for arguments, handler)
 _TOOLS = {
     "spendguard_advise": (
@@ -170,6 +285,40 @@ _TOOLS = {
             "budget_usd": {"type": "number", "description": "run only if the estimate fits this; OMIT to get just the estimate"}},
          "additionalProperties": False},
         _tool_bakeoff),
+    "spendguard_spend_overview": (
+        "The headline for THIS account: REAL $ out the door (subscription base + Claude Code overage + API "
+        "credits) shown SEPARATELY from est-value (plan-covered Claude Code usage, what it's worth at API "
+        "rates). The two axes are never summed. $0, read-only.",
+        {"type": "object", "properties": {}, "additionalProperties": False},
+        _tool_spend_overview),
+    "spendguard_overage_status": (
+        "Are we on PAID overage right now — i.e. the weekly subscription cap is hit and this account is billing "
+        "per-token — from observable transcript signals, plus reconciled real overage $ by month. $0, read-only.",
+        {"type": "object", "properties": {}, "additionalProperties": False},
+        _tool_overage_status),
+    "spendguard_top_conversations": (
+        "Rank Claude Code conversations by est-value (default) or by real overage $ (by='overage', reconciled to "
+        "invoices), each labeled with its sidebar title. Answers 'what used the tokens'. $0, read-only.",
+        {"type": "object", "properties": {
+            "by": {"type": "string", "enum": ["est", "overage"], "description": "'est' = plan-covered est-value (default); 'overage' = real paid overage $"},
+            "limit": {"type": "integer", "description": "how many to return (default 10)"}},
+         "additionalProperties": False},
+        _tool_top_conversations),
+    "spendguard_conversation_cost": (
+        "Cost of ONE conversation by its transcript id: plan-covered est-value + observed overage upper bound "
+        "(the two axes kept separate). Get ids from spendguard_top_conversations. $0, read-only.",
+        {"type": "object", "properties": {
+            "conversation_id": {"type": "string", "description": "the transcript uuid (conv_id) to price"}},
+         "required": ["conversation_id"], "additionalProperties": False},
+        _tool_conversation_cost),
+    "spendguard_compaction_candidates": (
+        "Open conversations that are expensive to keep alive — large re-read context billing every turn — with "
+        "the $/turn cost, what compacting would save, and the ready-to-paste effective /compact command. "
+        "Surfaces WHEN compacting a conversation is a good trade. $0, read-only.",
+        {"type": "object", "properties": {
+            "limit": {"type": "integer", "description": "how many candidates to return (default 10)"}},
+         "additionalProperties": False},
+        _tool_compaction_candidates),
 }
 
 
@@ -221,7 +370,18 @@ def handle(req):
                              "unless you pass budget_usd.\n"
                              "An 'intent' is a job-type label (e.g. 'loinc-typing', 'code-review') — the same tag "
                              "your calls are recorded under. Every result carries its own `note`/`caveats` "
-                             "explaining coverage and what to run next.")})
+                             "explaining coverage and what to run next.\n"
+                             "\nSPEND & CONVERSATIONS (from this account's Claude Code transcripts + reconciled "
+                             "invoices — all $0, read-only):\n"
+                             "• spendguard_spend_overview() — REAL $ out the door vs est-value (plan-covered), the "
+                             "two axes kept separate, never summed.\n"
+                             "• spendguard_overage_status() — are we on PAID overage right now (weekly cap hit → "
+                             "billing per-token), plus real overage $ by month.\n"
+                             "• spendguard_top_conversations(by, limit) — what used the tokens, ranked by est-value "
+                             "or by real overage $.\n"
+                             "• spendguard_conversation_cost(conversation_id) — price one conversation.\n"
+                             "• spendguard_compaction_candidates(limit) — conversations expensive to keep alive, "
+                             "the $/turn re-read cost, and the ready-to-paste /compact command to save it.")})
     if method in ("notifications/initialized", "initialized"):
         return None                                    # a notification — acknowledged by silence
     if method == "ping":
@@ -266,11 +426,55 @@ def serve_stdio(inp=None, outp=None):
             outp.write(json.dumps(resp, default=str) + "\n"); outp.flush()
 
 
+def install(remove=False):
+    """Register (or unregister) spendguard as a stdio MCP server in the Claude Code client config, so its tools
+    are reachable from every repo. Mirrors exactly how symgrep / 7thsense / ccwatch are registered — a top-level
+    `mcpServers` entry in ~/.claude.json — and both the executable path (via receipt._spendguard_bin, resolved
+    from the running install, never hardcoded) and the write (via config.update_json: atomic + emacs-style backup
+    + never silently clobbering an unparseable file) are borrowed from the code that already does this well."""
+    import pathlib
+
+    from . import config
+    from .receipt import _spendguard_bin
+
+    p = pathlib.Path.home() / ".claude.json"
+    key = "spendguard"
+    if remove and not p.exists():
+        print(f"nothing to remove — {p} does not exist")
+        return 0
+
+    def mutate(cfg):
+        servers = cfg.setdefault("mcpServers", {})
+        if remove:
+            servers.pop(key, None)
+        else:
+            # `spendguard mcp` runs the stdio server on the SAME (gated) interpreter that owns this executable,
+            # so the spend-capable advisor tools stay under the gate.
+            servers[key] = {"type": "stdio", "command": _spendguard_bin(), "args": ["mcp"], "env": {}}
+        return cfg
+
+    # update_json returns None when it DECLINES the write (e.g. the existing config won't parse — it is left
+    # intact rather than clobbered). Report that honestly instead of claiming a success that didn't happen.
+    written = config.update_json(p, mutate, reason=("unregister" if remove else "register") + " spendguard MCP server")
+    if written is None:
+        print(f"could NOT update {p} (it exists but does not parse as JSON — left untouched). "
+              f"Fix or remove that file, then re-run.")
+        return 1
+    if remove:
+        print(f"unregistered spendguard MCP server from {p}")
+    else:
+        print(f"registered spendguard MCP server in {p}  (command: {_spendguard_bin()} mcp)")
+        print("  → restart Claude Code (or reconnect MCP) to pick up all 9 tools: model-advisor + spend/compaction")
+    return 0
+
+
 def cmd(argv=None):
     import argparse
     ap = argparse.ArgumentParser(prog="spendguard mcp",
-                                 description="Model-advisor over MCP (stdio JSON-RPC). Point an MCP client at "
-                                             "`spendguard mcp`.")
+                                 description="spendguard's tools over MCP (stdio JSON-RPC): the model-advisor plus "
+                                             "read-only spend & compaction queries. Point an MCP client at "
+                                             "`spendguard mcp`, or run `spendguard install-mcp` to register it in "
+                                             "Claude Code.")
     ap.parse_args(argv)
     serve_stdio()
     return 0

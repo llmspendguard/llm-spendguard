@@ -23,7 +23,8 @@ _GROUPS = [
         ("doctor", "is the gate enforcing HERE? keys, lanes, ledger status"),
         ("ask", "run ONE prompt across many LLMs — honest per-vendor coverage, $0 lanes"),
         ("serve", "the ask surface over localhost HTTP — POST /ask from any tool/language"),
-        ("mcp", "model-advisor over MCP (stdio) — point any MCP client at `spendguard mcp`"),
+        ("mcp", "spendguard's tools over MCP (stdio): model-advisor + spend/compaction queries"),
+        ("install-mcp", "register `spendguard mcp` in Claude Code (~/.claude.json); --remove to undo"),
     ]),
     ("see the money", [
         ("receipt", "running tally: today / 7d / month, two axes"),
@@ -282,6 +283,9 @@ def _dispatch(argv=None):
     if cmd == "install-receipts":                      # surface the always-on tally in a host (claude-code|codex)
         from . import receipt
         return receipt.install_cli(rest)
+    if cmd == "install-mcp":                            # register the MCP server in the client config (~/.claude.json)
+        from . import mcp_server
+        return mcp_server.install(remove="--remove" in rest)
     if cmd == "remote":                                # enforce the gate on remote/distributed compute (vast.ai)
         from . import remote
         return remote.cmd(rest)
