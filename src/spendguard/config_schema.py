@@ -182,6 +182,18 @@ SETTINGS = [
               "then water-fills that group across whichever $0 lane / cheapest credit is best RIGHT NOW (pace-aware). "
               "A lane serves a group when its advisor.lane_models base is in the group's list. Unset → no group "
               "routing. This is how a 7thsense-style caller asks for 'my cheap group' and gets the best-value one."),
+    dict(section="advisor", key="compaction_context_tokens", store="config.json:advisor.compaction_context_tokens",
+         env="SPENDGUARD_COMPACTION_CONTEXT_TOKENS", default=100000, kind="int", secret=False,
+         desc="Re-read context size (in_tok + cache_read + cache_write, per turn) above which a Claude Code "
+              "conversation is a COMPACTION CANDIDATE — every turn re-reads this much context at the cache-read rate, "
+              "so a session sustaining it is expensive to keep alive. This THRESHOLD only pre-filters which sessions "
+              "`claude-code context` surfaces; whether the retained context is still worth its per-turn cost is an "
+              "agentic judgement, never decided by this number. Absolute (the re-read COST is absolute), not a "
+              "fraction of any model's window."),
+    dict(section="advisor", key="compaction_min_turns", store="config.json:advisor.compaction_min_turns",
+         env="SPENDGUARD_COMPACTION_MIN_TURNS", default=5, kind="int", secret=False,
+         desc="How many of a conversation's most-recent turns must ALL exceed compaction_context_tokens before it is "
+              "flagged — so a single large turn is not mistaken for a sustained large context. Configurable."),
     dict(section="advisor", key="lane_pace_weight", store="config.json:advisor.lane_pace_weight",
          env="SPENDGUARD_LANE_PACE_WEIGHT", default=2.0, kind="float", secret=False,
          desc="How strongly BEHIND-pace plans are preferred in lane ranking. A plan that has spent less than its "

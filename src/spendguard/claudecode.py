@@ -396,6 +396,141 @@ def overflow_by_conversation():
     return {c or "": float(v or 0.0) for c, v in rows}
 
 
+def _cc_conv_rows(min_day=None):
+    """{conv_id: [(occurred_at, model, in_tok, cache_read, cache_write), …] ordered by ts} from the claude-code
+    est-value rows. One focused SELECT; read-only. context per turn = in_tok + cache_read + cache_write."""
+    import sqlite3
+    q = ("SELECT conv_id, occurred_at, model, COALESCE(in_tok,0), COALESCE(cache_read_tok,0), "
+         "COALESCE(cache_write_tok,0) FROM spend_events WHERE source='claude-code'")
+    args = []
+    if min_day:
+        q += " AND occurred_at >= ?"; args.append(min_day)
+    q += " ORDER BY conv_id, occurred_at"
+    con = sqlite3.connect(config.db_path())
+    try:
+        rows = con.execute(q, args).fetchall()
+    finally:
+        con.close()
+    out = {}
+    for conv, occ, model, i, cr, cw in rows:
+        out.setdefault(conv or "", []).append((occ, model or "?", int(i or 0), int(cr or 0), int(cw or 0)))
+    return out
+
+
+def _cache_read_rate(model):
+    """$/token for a cache READ of `model` (the recurring cost of re-reading retained context each turn): the
+    canonical `cached_in` rate if priced, else None. From pricing only — never an invented number."""
+    try:
+        from . import pricing
+        p = pricing.price(model) or {}
+        cin = p.get("cached_in")
+        return (float(cin) / 1e6) if cin is not None else None
+    except Exception:
+        return None
+
+
+def measured_compaction_ratio(min_drop=2.0):
+    """Median k = context_before / context_after over OBSERVED large context DROPS across claude-code conversations.
+    A compaction (or /clear, or topic reset) sharply drops the re-read context between consecutive turns, so the
+    reduction factor is MEASURABLE from the ledger itself — never assumed. Only drops of at least `min_drop`× count
+    (a real reset, not turn-to-turn wobble). Returns (k, n_events); (None, 0) when none is observed — so 'compacting
+    cuts it ~k×' is only ever shown from measured evidence."""
+    ks = []
+    for conv, seq in _cc_conv_rows().items():
+        prev = None
+        for _occ, _model, i, cr, cw in seq:
+            ctx = i + cr + cw
+            if prev and ctx > 0 and prev / ctx >= min_drop:
+                ks.append(prev / ctx)
+            if ctx > 0:
+                prev = ctx
+    if not ks:
+        return None, 0
+    ks.sort()
+    n = len(ks)
+    return (ks[n // 2] if n % 2 else (ks[n // 2 - 1] + ks[n // 2]) / 2.0), n
+
+
+def context_trajectory(conv_id):
+    """Per-conversation context stats from the ledger: {turns, current, max, mean, recurring_read_usd_per_turn,
+    model} where context = in_tok + cache_read + cache_write per turn. `current` = the last turn's context (what each
+    further turn re-reads); recurring_read_usd_per_turn = last turn's cache_read × the model's cache-read rate — the $
+    this open session spends EVERY turn just re-reading its retained context. None where unpriced/empty."""
+    seq = _cc_conv_rows().get(conv_id) or []
+    if not seq:
+        return {"turns": 0, "current": 0, "max": 0, "mean": 0.0, "recurring_read_usd_per_turn": None, "model": None}
+    ctxs = [i + cr + cw for _o, _m, i, cr, cw in seq]
+    _occ, last_model, _li, last_cr, _lcw = seq[-1]
+    rate = _cache_read_rate(last_model)
+    recur = (last_cr * rate) if rate is not None else None
+    return {"turns": len(seq), "current": ctxs[-1], "max": max(ctxs), "mean": sum(ctxs) / len(ctxs),
+            "recurring_read_usd_per_turn": recur, "model": last_model}
+
+
+def compaction_candidates(min_context=None, min_turns=None, min_day=None):
+    """Conversations sustaining a large re-read context — the ones expensive to keep OPEN. A conversation qualifies
+    when its most-recent `min_turns` turns ALL have context (in+cache_read+cache_write) >= `min_context`. For each:
+    current context, mean, recurring re-read $/turn, and (only when k is MEASURED) the $/turn a compaction would save.
+    Config: advisor.compaction_context_tokens, advisor.compaction_min_turns. The threshold only PRE-FILTERS which
+    sessions to surface; whether the retained context is still worth its cost is an agentic call, not made here.
+    Returns (candidates sorted by recurring $/turn desc, (k, k_n), scan-stats {examined, flagged, too_few_turns,
+    below_threshold} — so the scan is transparent and never silently truncates)."""
+    min_context = int(min_context if min_context is not None
+                      else config._cfg_get("advisor", "compaction_context_tokens", 100000))
+    min_turns = int(min_turns if min_turns is not None
+                    else config._cfg_get("advisor", "compaction_min_turns", 5))
+    k, k_n = measured_compaction_ratio()
+    out = []
+    examined = short = below = 0                             # every conversation NOT flagged is COUNTED — the scan is
+    for conv, seq in _cc_conv_rows(min_day=min_day).items():  # transparent (no silent truncation of the candidate set)
+        examined += 1
+        if len(seq) < min_turns:
+            short += 1
+            continue
+        if any((i + cr + cw) < min_context for _o, _m, i, cr, cw in seq[-min_turns:]):
+            below += 1                                      # not SUSTAINED above the threshold (one big turn ≠ bloat)
+            continue
+        traj = context_trajectory(conv)
+        recur = traj["recurring_read_usd_per_turn"]
+        saved = (recur * (1.0 - 1.0 / k)) if (recur is not None and k) else None
+        out.append({"conv_id": conv, "turns": traj["turns"], "current": traj["current"], "mean": traj["mean"],
+                    "recurring_read_usd_per_turn": recur, "compact_k": k, "saved_usd_per_turn": saved})
+    out.sort(key=lambda r: (r["recurring_read_usd_per_turn"] or 0.0), reverse=True)
+    return out, (k, k_n), {"examined": examined, "flagged": len(out), "too_few_turns": short, "below_threshold": below}
+
+
+def context_cmd(conv_id=None, top=10):
+    """`claude-code context` — the compaction view: open conversations whose sustained re-read context makes them
+    expensive to keep alive, each with its $/turn re-read cost and (when k is measured from real compactions) the
+    $/turn a compaction would save. With --conv <uuid>, one conversation's trajectory."""
+    if conv_id:
+        t = context_trajectory(conv_id)
+        r = t["recurring_read_usd_per_turn"]
+        print(f"conversation {conv_id[:16]} — {t['turns']} turns · model {t.get('model') or '?'}")
+        print(f"  context tokens: current {t['current']:,} · max {t['max']:,} · mean {t['mean']:,.0f}")
+        print(f"  recurring re-read cost: {('$%.4f/turn' % r) if r is not None else '—'} at the current context "
+              f"(what every further turn costs just to re-read what's retained)")
+        return 0
+    cands, (k, k_n), stats = compaction_candidates()
+    ktxt = (f"measured compaction ratio k≈{k:.1f}× (from {k_n} observed context drops)" if k
+            else "compaction ratio not yet measured (no context-drop events seen) — savings shown as —")
+    thr = int(config._cfg_get("advisor", "compaction_context_tokens", 100000))
+    print(f"claude-code context — compaction candidates (re-read context ≥ {thr:,} tok sustained); {ktxt}")
+    print(f"  scanned {stats['examined']:,} conversations → {stats['flagged']} candidate(s) "
+          f"({stats['below_threshold']:,} below threshold · {stats['too_few_turns']:,} too few turns)")
+    if not cands:
+        print("  (no open conversation is sustaining a context above the threshold)")
+        return 0
+    for c in cands[:top]:
+        r = c["recurring_read_usd_per_turn"]; s = c["saved_usd_per_turn"]
+        rtxt = ("$%.4f/turn" % r) if r is not None else "—"
+        stxt = (" → compacting saves ~$%.4f/turn" % s) if s is not None else ""
+        print(f"  {c['conv_id'][:20]}  current {c['current']:>9,} tok · {c['turns']:>4} turns · re-read {rtxt}{stxt}")
+    print("  ↑ the threshold only PRE-FILTERS; whether a session's retained context is still worth its per-turn cost "
+          "is an agentic judgement (read the session), never decided by this number.")
+    return 0
+
+
 def show(days=None):
     st, passinfo = update()
     _save_state(st)
@@ -762,6 +897,9 @@ def main(argv=None):
                 pass
         anchor = argv[argv.index("--anchor") + 1] if "--anchor" in argv and argv.index("--anchor") + 1 < len(argv) else None
         return reconcile_overflow(cap_usd=cap_usd, anchor=anchor, dry="--dry" in argv)
+    if sub == "context":                                # compaction view: sustained-large-context conversations + $/turn
+        conv_id = argv[argv.index("--conv") + 1] if "--conv" in argv and argv.index("--conv") + 1 < len(argv) else None
+        return context_cmd(conv_id=conv_id, top=limit or 10)
     if sub == "classify":                               # classify sessions into org→team×project (caged, est-first)
         return classify(run="--run" in argv, days=days, recls="--reclassify" in argv)
     if sub == "work":                                   # conversation-derived work rows, bucketed by period
