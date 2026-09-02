@@ -288,9 +288,11 @@ def _overage_events(min_day=None):
       blocked       : [{ts,conv,reason,rate_limit_type}]  rejected cap-hits (out_of_credits / org-disabled) — friction, $0.
       overage_direct: [{ts,conv,resets_at}]  the RARE direct signal (quotaLimits.isUsingOverage=true). NOT relied on —
                                              a SUCCESSFUL overage turn need not carry it, so the window detector is primary.
-    Only `seven_day` bounds subscription exhaustion; `five_hour` is a short rolling throttle, not overage.
+    five_hour_hits: [{ts,conv,resets_at}]  the 5-hour rolling cap-hits — you continue on PAID overage until each 5h
+                                             window resets, so each is a SHORT overage window (folded in _overage_windows).
+    seven_day bounds the WEEKLY subscription exhaustion; five_hour adds shorter same-plan overage windows.
     Read-only, pure parse, $0 — no LLM, no network, no admin API."""
-    out = {"weekly_resets": [], "weekly_hits": [], "blocked": [], "overage_direct": []}
+    out = {"weekly_resets": [], "weekly_hits": [], "blocked": [], "overage_direct": [], "five_hour_hits": []}
     if not os.path.isdir(_projects_dir()):
         return out
     for path in glob.glob(os.path.join(_projects_dir(), "**", "*.jsonl"), recursive=True):
@@ -310,13 +312,18 @@ def _overage_events(min_day=None):
                 q = o.get("quotaLimits")
                 if isinstance(q, dict):
                     rlt = q.get("rateLimitType")
+                    ra = None
+                    if q.get("resetsAt"):
+                        try:
+                            ra = float(q["resetsAt"])
+                        except (TypeError, ValueError):
+                            ra = None
                     if rlt == "seven_day":
                         out["weekly_hits"].append({"ts": ts, "conv": conv})   # a WEEKLY cap-hit → boundary B
-                        if q.get("resetsAt"):
-                            try:
-                                out["weekly_resets"].append(float(q["resetsAt"]))  # the provider's reset grid anchor
-                            except (TypeError, ValueError):
-                                pass
+                        if ra:
+                            out["weekly_resets"].append(ra)                    # the provider's reset grid anchor
+                    elif rlt == "five_hour":
+                        out["five_hour_hits"].append({"ts": ts, "conv": conv, "resets_at": ra})  # 5h rolling cap-hit → short overage window
                     if q.get("isUsingOverage") is True:
                         out["overage_direct"].append({"ts": ts, "conv": conv, "resets_at": q.get("resetsAt")})
                     elif q.get("overageStatus") == "rejected" or q.get("status") == "rejected":
@@ -334,32 +341,54 @@ def _overage_events(min_day=None):
 
 
 def _overage_windows(ev):
-    """From the observed provider signals, build the OVERAGE windows [B, R): B = the earliest seven_day cap-hit in a
-    week, R = that week's reset. The weekly RESET GRID is the provider's own `resetsAt` anchor + 7-day multiples (the
-    reset cadence, read from the provider — never guessed). Returns (windows sorted, anchor_unix) or ([], None) when
-    the transcripts carry no weekly reset grid + cap-hit to segment on."""
+    """From the observed provider signals, build the OVERAGE windows [B, R), MERGED, from two sources:
+      • WEEKLY: B = the earliest seven_day cap-hit in a week, R = that week's reset (the provider's `resetsAt` anchor
+        + 7-day grid — the reset cadence, read from the provider, never guessed).
+      • 5-HOUR: each five_hour cap-hit → a short window [hit, resetsAt or hit+5h] — you continue on paid overage until
+        the rolling window resets. This is what catches Jun/Jul overage, where the sparse weekly signal missed it.
+    Returns (windows sorted+merged, weekly anchor_unix or None)."""
     import math
     WEEK = 7 * 86400
     anchors = ev.get("weekly_resets") or []
-    if not anchors or not ev.get("weekly_hits"):
-        return [], None
-    anchor = anchors[0]
-
-    def reset_after(t):                                     # smallest weekly-grid reset strictly after t
-        r = anchor + math.ceil((t - anchor) / WEEK) * WEEK
-        while r <= t:
-            r += WEEK
-        return r
-
-    win_by_reset = {}                                      # R -> earliest cap-hit unix in that week
-    for h in ev["weekly_hits"]:
+    anchor = anchors[0] if anchors else None
+    windows = []
+    bad = 0                                                 # cap-hits with an unparseable timestamp — COUNTED, not silent
+    if anchor and ev.get("weekly_hits"):
+        def reset_after(t):                                 # smallest weekly-grid reset strictly after t
+            r = anchor + math.ceil((t - anchor) / WEEK) * WEEK
+            while r <= t:
+                r += WEEK
+            return r
+        win_by_reset = {}                                   # R -> earliest weekly cap-hit unix in that week
+        for h in ev["weekly_hits"]:
+            dt = _parse_iso(h["ts"])
+            if not dt:
+                bad += 1
+                continue
+            tu = dt.timestamp()
+            r = reset_after(tu)
+            win_by_reset[r] = min(win_by_reset.get(r, tu), tu)
+        windows = [(b, r) for r, b in win_by_reset.items()]
+    for h in ev.get("five_hour_hits", []):                  # 5-hour rolling cap-hits → short overage windows
         dt = _parse_iso(h["ts"])
         if not dt:
+            bad += 1
             continue
-        tu = dt.timestamp()
-        r = reset_after(tu)
-        win_by_reset[r] = min(win_by_reset.get(r, tu), tu)
-    return sorted((b, r) for r, b in win_by_reset.items()), anchor
+        b = dt.timestamp()
+        r = float(h["resets_at"]) if h.get("resets_at") else b + 5 * 3600
+        if r > b:
+            windows.append((b, r))
+    if bad:
+        import sys as _sys
+        _sys.stderr.write(f"[claudecode] {bad} cap-hit(s) had an unparseable timestamp — excluded from overage windows\n")
+    windows.sort()
+    merged = []                                             # merge overlapping/adjacent windows into disjoint spans
+    for b, r in windows:
+        if merged and b <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], r))
+        else:
+            merged.append((b, r))
+    return merged, anchor
 
 
 def reconcile_billing_state(dry=False):
@@ -584,12 +613,35 @@ def attribute_overage(top=12):
         tot, realm = obs_month.get(mo, 0.0), real_by_month.get(mo, 0.0)
         if tot > 0 and realm > 0:
             real_by_conv[conv] = real_by_conv.get(conv, 0.0) + realm * (v / tot)
-    unattr = sum(realm for mo, realm in real_by_month.items() if obs_month.get(mo, 0.0) <= 0)
+    # FALLBACK: a month with real overage but NO observed overage window → distribute by that month's TOTAL claude-code
+    # est-value share (the conversations active that month, weighted by usage). Labeled, never hidden.
+    fb_months = [mo for mo in real_by_month if real_by_month[mo] > 0 and obs_month.get(mo, 0.0) <= 0]
+    fb_total = 0.0
+    if fb_months:
+        con2 = sqlite3.connect(config.db_path())
+        try:
+            allrows = con2.execute("SELECT substr(occurred_at,1,7) mo, conv_id, SUM(CAST(est_chat_usd AS REAL)) "
+                                   "FROM spend_events WHERE source='claude-code' AND est_chat_usd IS NOT NULL "
+                                   "GROUP BY mo, conv_id").fetchall()
+        finally:
+            con2.close()
+        by_mo = {}
+        for mo, conv, v in allrows:
+            if mo in fb_months:
+                by_mo.setdefault(mo, {})[conv or ""] = float(v or 0.0)
+        for mo in fb_months:
+            realm, convs = real_by_month[mo], by_mo.get(mo, {})
+            tot = sum(convs.values())
+            if tot > 0:
+                fb_total += realm
+                for conv, v in convs.items():
+                    real_by_conv[conv] = real_by_conv.get(conv, 0.0) + realm * (v / tot)
+    unattr = sum(real_by_month.values()) - sum(real_by_conv.values())
     titles = _sidebar_titles()
-    print("claude-code overage ATTRIBUTION — real invoice overage distributed to conversations by observable shape")
+    print("claude-code overage ATTRIBUTION — real invoice overage distributed to conversations")
     print(f"  real overage ${sum(real_by_month.values()):,.2f} (invoices) → attributed ${sum(real_by_conv.values()):,.2f}"
-          + (f"  ·  ${unattr:,.2f} in months with NO observed window (unattributable — the detector missed those)"
-             if unattr > 0.005 else ""))
+          + (f"  ·  ${fb_total:,.2f} via est-value share (months with no cap-hit window)" if fb_total > 0.005 else "")
+          + (f"  ·  ${unattr:,.2f} unattributable" if unattr > 0.5 else ""))
     for conv, v in sorted(real_by_conv.items(), key=lambda x: -x[1])[:top]:
         print(f"    ${v:8.2f}  {_conv_label(conv, titles)}")
     return real_by_conv
