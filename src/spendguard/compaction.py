@@ -176,7 +176,23 @@ def agentic_advise(transcript_path, run=False, model=None):
     model = model or config._cfg_get("advisor", "judge_model", "claude-haiku-4-5")
     OUT = 700
     est = pricing.realtime_cost(model, claudecode._toklen(_ADVISE_SYS + convo), OUT) or 0.0
+    # the ECONOMICS — computable WITHOUT the call: a bloated session re-reads $/turn, and compacting cuts that ~k×.
+    # Spending cents (this advice) to save dollars (the re-read) is always a good trade — so make it explicit, up front.
+    econ = ""
+    try:
+        _ctx, cr, mdl = _tail_context(transcript_path)
+        p = pricing.price(mdl or model) or {}
+        rate = (float(p["cached_in"]) / 1e6) if p.get("cached_in") is not None else None
+        if rate and cr:
+            reread = cr * rate
+            k = measured_k()[0] or 11.0
+            econ = (f"this session re-reads ~${reread:.4f}/turn · compacting (~{k:.0f}×) saves "
+                    f"~${reread * (1 - 1 / k):.4f}/turn — cents to save dollars.")
+    except Exception:
+        econ = ""
     if not run:
+        if econ:
+            print("  " + econ)
         ui.estimate_only(action="agentically decide whether/how to compact THIS conversation", cost=est)
         return None
     with calls.context(intent="spendguard:compact-advise"):     # caged → meta budget, gated like every LLM call
@@ -188,19 +204,8 @@ def agentic_advise(transcript_path, run=False, model=None):
     print(f"agentic compaction advice ({model}, caged):")
     print(f"  compact now? {'YES' if data.get('should_compact') else 'NO'} — {data.get('reason', '')}")
     print("  → " + (data.get("compact_command") or compact_snippet()))
-    # the economics — cents to save dollars: this advisory call costs cents; a bloated session re-reads $/turn, and
-    # compacting cuts that ~k×. Spending cents to save dollars is always a good trade, so this line makes it explicit.
-    try:
-        _ctx, cr, mdl = _tail_context(transcript_path)
-        p = pricing.price(mdl or model) or {}
-        rate = (float(p["cached_in"]) / 1e6) if p.get("cached_in") is not None else None
-        if rate and cr:
-            reread = cr * rate
-            k = measured_k()[0] or 11.0
-            print(f"  economics: advice ${(r.get('cost') or 0):.4f} spent · this session re-reads ~${reread:.4f}/turn · "
-                  f"compacting (~{k:.0f}×) saves ~${reread * (1 - 1 / k):.4f}/turn — cents to save dollars.")
-    except Exception:
-        pass
+    if econ:
+        print(f"  economics: advice ${(r.get('cost') or 0):.4f} spent · " + econ)
     return data
 
 
