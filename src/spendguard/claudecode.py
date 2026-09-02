@@ -506,7 +506,8 @@ def context_cmd(conv_id=None, top=10):
     if conv_id:
         t = context_trajectory(conv_id)
         r = t["recurring_read_usd_per_turn"]
-        print(f"conversation {conv_id[:16]} — {t['turns']} turns · model {t.get('model') or '?'}")
+        print(f"conversation {_conv_label(conv_id, _sidebar_titles(), 40)} ({conv_id[:12]}) — "
+              f"{t['turns']} turns · model {t.get('model') or '?'}")
         print(f"  context tokens: current {t['current']:,} · max {t['max']:,} · mean {t['mean']:,.0f}")
         print(f"  recurring re-read cost: {('$%.4f/turn' % r) if r is not None else '—'} at the current context "
               f"(what every further turn costs just to re-read what's retained)")
@@ -521,13 +522,80 @@ def context_cmd(conv_id=None, top=10):
     if not cands:
         print("  (no open conversation is sustaining a context above the threshold)")
         return 0
+    titles = _sidebar_titles()
     for c in cands[:top]:
         r = c["recurring_read_usd_per_turn"]; s = c["saved_usd_per_turn"]
         rtxt = ("$%.4f/turn" % r) if r is not None else "—"
         stxt = (" → compacting saves ~$%.4f/turn" % s) if s is not None else ""
-        print(f"  {c['conv_id'][:20]}  current {c['current']:>9,} tok · {c['turns']:>4} turns · re-read {rtxt}{stxt}")
+        print(f"  current {c['current']:>9,} tok · {c['turns']:>4} turns · re-read {rtxt}{stxt}  ·  "
+              f"{_conv_label(c['conv_id'], titles, 30)}")
     print("  ↑ the threshold only PRE-FILTERS; whether a session's retained context is still worth its per-turn cost "
           "is an agentic judgement (read the session), never decided by this number.")
+    return 0
+
+
+def _sidebar_store_dir():
+    """The desktop app's session STORE dir (where sidebar titles live), distinct from the transcript dir
+    (_projects_dir). Env-overridable; defaults to the macOS Application Support location."""
+    return os.environ.get("SPENDGUARD_CC_SESSIONS_DIR") or os.path.expanduser(
+        "~/Library/Application Support/Claude/claude-code-sessions")
+
+
+def _sidebar_titles():
+    """{transcript-uuid: human SIDEBAR title} from the desktop app's session store (each record's cliSessionId ==
+    the transcript uuid). A transcript can have several session json files (resumes/bridges); keep the most recently
+    active one. Best-effort → {} when the store is absent (a non-desktop / headless host) — the caller then falls
+    back to the uuid, so a missing store degrades the LABEL, never the numbers."""
+    out = {}
+    for p in glob.glob(os.path.join(_sidebar_store_dir(), "**", "local_*.json"), recursive=True):
+        try:
+            with open(p, "r", errors="replace") as f:
+                o = json.load(f)
+        except Exception:
+            continue
+        cli = o.get("cliSessionId")
+        title = o.get("title")
+        if not cli or not title:
+            continue
+        la = o.get("lastActivityAt") or 0
+        if cli not in out or la > out[cli][0]:
+            out[cli] = (la, title)
+    return {k: v[1] for k, v in out.items()}
+
+
+def _conv_label(conv_id, titles, width=34):
+    """Human label for a conversation: its sidebar title if the desktop store has one, else the raw uuid. Titles are
+    resolved at READ time (they change; denormalizing a stale copy into the ledger would rot)."""
+    t = titles.get(conv_id)
+    return (t[:width] if t else (conv_id or "?")[:width])
+
+
+def conversations_cmd(top=15):
+    """`claude-code conversations` — the unified per-conversation view: top conversations by est-value, each labeled by
+    its human SIDEBAR TITLE, with turns, current max re-read context, and (when reconciled) the REAL $ that overflowed
+    the weekly cap. The est-value and the real-overflow axes are shown SEPARATELY, never summed."""
+    import sqlite3
+    con = sqlite3.connect(config.db_path())
+    try:
+        rows = con.execute(
+            "SELECT conv_id, ROUND(SUM(CAST(est_chat_usd AS REAL)),2), COUNT(*), "
+            "MAX(COALESCE(in_tok,0)+COALESCE(cache_read_tok,0)+COALESCE(cache_write_tok,0)) "
+            "FROM spend_events WHERE source='claude-code' GROUP BY conv_id").fetchall()
+    finally:
+        con.close()
+    titles = _sidebar_titles()
+    over = overflow_by_conversation()
+    data = [{"conv": c or "", "est": float(e or 0.0), "turns": int(n or 0), "maxctx": int(mx or 0),
+             "over": over.get(c or "", 0.0)} for c, e, n, mx in rows]
+    data.sort(key=lambda r: -r["est"])
+    any_over = any(r["over"] > 0 for r in data)
+    head = ("  ::  Real overflow $ shown as a SEPARATE column (reconciled; never summed with est-value)" if any_over
+            else "  (run `claude-code overflow --cap-usd <$/week>` to add the Real overflow $ column)")
+    print(f"claude-code conversations — top {top} of {len(data)} by est-value{head}")
+    for r in data[:top]:
+        otxt = (f"  ·  Real overflow ${r['over']:,.2f}" if r["over"] > 0 else "")
+        print(f"  ${r['est']:8.2f} est · {r['turns']:>5} turns · {r['maxctx']:>9,} max ctx · "
+              f"{_conv_label(r['conv'], titles)}{otxt}")
     return 0
 
 
@@ -900,6 +968,8 @@ def main(argv=None):
     if sub == "context":                                # compaction view: sustained-large-context conversations + $/turn
         conv_id = argv[argv.index("--conv") + 1] if "--conv" in argv and argv.index("--conv") + 1 < len(argv) else None
         return context_cmd(conv_id=conv_id, top=limit or 10)
+    if sub in ("conversations", "convs"):               # unified per-conversation view, labeled by human sidebar title
+        return conversations_cmd(top=limit or 15)
     if sub == "classify":                               # classify sessions into org→team×project (caged, est-first)
         return classify(run="--run" in argv, days=days, recls="--reclassify" in argv)
     if sub == "work":                                   # conversation-derived work rows, bucketed by period
