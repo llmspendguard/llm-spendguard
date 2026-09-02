@@ -1154,7 +1154,7 @@ def _compaction_nudge(info, home):
             return ""
         k = hint.get("k")
         ktxt = (" ~%.0fx cheaper" % k) if k else ""
-        return "⚠ %dK tok/turn · /compact%s" % (ctx // 1000, ktxt)
+        return "⚠ %dK tok/turn · /compact (guided)%s" % (ctx // 1000, ktxt)
     except Exception:
         return ""
 
@@ -1219,7 +1219,7 @@ try:
             if ctx >= int(hint.get("threshold_tokens") or 100000):
                 k = hint.get("k")
                 ktxt = (" ~%.0fx cheaper" % k) if k else ""
-                nudge = "  ·  ⚠ %dK tok/turn · /compact%s" % (ctx // 1000, ktxt)
+                nudge = "  ·  ⚠ %dK tok/turn · /compact (guided)%s" % (ctx // 1000, ktxt)
 except Exception:
     nudge = ""
 sys.stdout.write((prefix + "  ·  " if prefix else "") + line + nudge + "\n")
@@ -1252,11 +1252,26 @@ def cli(args) -> int:
             print(json.dumps({"tally": tally(), "tree": _est_tree(None)}, indent=2))
             return 0
         if "--stop-hook" in args:
-            # Claude Code Stop hook: `systemMessage` is the ONLY hook output the user sees — one global line.
+            # Claude Code Stop hook: `systemMessage` is the ONLY hook output the user sees — the global tally line,
+            # PLUS, when the CURRENT session is bloated, the ready-to-paste EFFECTIVE /compact prompt to run.
+            info = {}
+            if not sys.stdin.isatty():
+                try:
+                    info = json.loads(sys.stdin.read() or "{}")
+                except Exception:
+                    info = {}
             _line = render_line(tally())
             _write_statusline_cache(_line)          # refresh the FAST status line's cache each turn (cheap render reads it)
             _compaction_hint()                      # refresh the compaction nudge's account-level hint (self-caches hourly)
-            print(json.dumps({"systemMessage": _line}))
+            _msg = _line
+            try:
+                from . import config as _cfg, compaction
+                _nud = _compaction_nudge(info, str(_cfg.HOME))     # non-empty only when this session is over threshold
+                if _nud:
+                    _msg = _line + "\n" + _nud + "\n→ paste to compact well:  " + compaction.compact_snippet()
+            except Exception:
+                pass
+            print(json.dumps({"systemMessage": _msg}))
             return 0
         if "--precompact-hook" in args:
             # Claude Code PreCompact hook: record the compaction event (trigger + pre-context) and INJECT the

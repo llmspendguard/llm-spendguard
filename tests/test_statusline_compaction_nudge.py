@@ -39,6 +39,7 @@ with open(small, "w") as f:
 n_big = receipt._compaction_nudge({"transcript_path": big}, HOME)
 ck("bloated session → nudge names tok/turn + /compact + measured k×",
    "compact" in n_big and "500K" in n_big and "11x" in n_big)
+ck("nudge signals it is (guided) — so the user knows the hook will preserve context", "(guided)" in n_big)
 ck("small session → no nudge", receipt._compaction_nudge({"transcript_path": small}, HOME) == "")
 ck("no transcript → no nudge (graceful)", receipt._compaction_nudge({}, HOME) == "")
 ck("missing transcript file → no nudge", receipt._compaction_nudge({"transcript_path": "/no/such.jsonl"}, HOME) == "")
