@@ -40,8 +40,11 @@ SCHEMA_VIOLATION = "schema_violation"
 UNFUNDED = "unfunded"            # the account cannot pay — deterministic, actionable, and NOT retryable
 OVERLOADED = "overloaded"        # 429/529 — the vendor is rate-limited/overloaded: TRANSIENT, retry (honor Retry-After)
 PAYLOAD_REJECTED = "payload_rejected"  # 400/413/414/401/403 — bad/oversized/unauthenticated request: PERMANENT, never retried
+PREFLIGHT_UNMET = "preflight_unmet"    # never called: the model failed preflight (stale/unpriced/unknown id). A
+#                                        HONEST coverage state — the caller sees WHICH model was skipped and why,
+#                                        instead of the whole cross-LLM batch being refused for one bad id.
 KINDS = (OK, TRUNCATED, EMPTY, REFUSED, TRANSPORT_ERROR, DEADLINE_EXCEEDED, SCHEMA_VIOLATION, UNFUNDED,
-         OVERLOADED, PAYLOAD_REJECTED)
+         OVERLOADED, PAYLOAD_REJECTED, PREFLIGHT_UNMET)
 FAILURES = tuple(k for k in KINDS if k != OK)
 # Transient classes worth retrying: a broken connection (transport) or a vendor asking us to slow down
 # (overloaded). Everything else is deterministic — a truncation, an empty body, a refusal, a bad payload, an

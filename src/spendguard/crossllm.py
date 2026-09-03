@@ -72,20 +72,39 @@ class ModelPreflightRefused(gate.SpendGateRefused):
         super().__init__(f"refusing before spend — {len(self.bad)} model id(s) not callable as written: {detail}")
 
 
-def _preflight_or_refuse(vlist):
-    """HARD GATE: every named model in `vlist` must be callable AS WRITTEN before we spend. Raises
-    ModelPreflightRefused naming each stale/unpriced/unknown id + its fix if any is not usable, so a bad id is caught
-    for ~$0 up front instead of after paying for a run of failures. Re-checked on EVERY call — NEVER memoized — so a
-    mid-process change (a model revoked, renamed, or unpriced after an earlier clean call) is caught on the next call,
-    not skipped on a stale cached OK. The re-check is cheap: served_check is cache-first ($0), a clean served id makes
-    no agentic call, and a stale id stops the batch on the FIRST call (so there is never a per-item agentic cost). A
-    DELIBERATE stop from the preflight itself (gate/budget/deadline) propagates untouched — it is not 'a bad model'."""
+def _preflight_partition(vlist):
+    """Preflight every named model and split (usable, unmet) — the HONEST-PARTIAL gate. `usable` is the subset
+    callable AS WRITTEN (served + priced), in the caller's order; `unmet` is the model_preflight rows for the rest
+    (stale / unpriced / unknown), each carrying its fix. ask() then calls only the usable models and marks each
+    unmet one in the result (PREFLIGHT_UNMET) — one bad id no longer refuses the WHOLE cross-LLM batch; the batch
+    is refused only when NOTHING is callable. Re-checked on EVERY call, never memoized, so a mid-process change is
+    caught on the next call. Cheap: served_check is cache-first ($0) and a clean served id makes no agentic call."""
     from . import model_preflight
-    specs = sorted(f"{v}:{m}" for v, m in vlist)
-    rows = model_preflight.preflight_models(specs)
-    bad = [r for r in rows if not r.get("usable")]
-    if bad:
-        raise ModelPreflightRefused(bad)
+    rows = {r.get("spec"): r for r in model_preflight.preflight_models([f"{v}:{m}" for v, m in vlist])}
+    usable, unmet = [], []
+    for v, m in vlist:
+        r = rows.get(f"{v}:{m}")
+        if r is None or r.get("usable"):     # no row is not a NO — let the actual call surface it, don't drop silently
+            usable.append((v, m))
+        else:
+            unmet.append(r)
+    return usable, unmet
+
+
+def _inject_unmet(fan, unmet_rows):
+    """Append an honest PREFLIGHT_UNMET coverage row for each model that failed preflight (never called, never
+    spent), so the caller sees in by_vendor WHICH model was skipped and why. mode='all' → `complete` goes False
+    (not every requested vendor answered); mode='first' → completeness stays need-met (an uncalled model cannot
+    un-meet it). The un-called models cost $0 and carry no text (the Result invariant holds)."""
+    for r in unmet_rows:
+        res = vendor_call.Result(vendor_call.PREFLIGHT_UNMET, r.get("provider") or "?", r.get("model") or "?",
+                                 error=r.get("note") or "not callable as written (failed preflight)")
+        fan["results"].append(res)
+        fan["failed"].append(res)
+    if unmet_rows and "need" not in fan:     # 'need' present ⇒ mode='first'; absent ⇒ mode='all'
+        fan["n"] = len(fan["results"])
+        fan["complete"] = (fan["n_ok"] == fan["n"])
+    return fan
 
 
 def _parse_vendors(vendors):
@@ -280,12 +299,16 @@ def ask(prompt, *, vendors=None, n=None, schema=None, system=None, purpose="ask"
         k = max(1, int(n))
         if k < len(vlist):
             vlist = vlist[:k]
+    unmet = []
     if preflight:
-        # HARD GATE, before the estimate and any spend: every named model must be callable AS WRITTEN (served +
-        # priced). A stale/unpriced/unknown id is refused here with its fix (ModelPreflightRefused) instead of being
-        # discovered after paying for a run of failures — the 'test the model before the full run' rail. Validated
-        # once per vendor-set per process (memoized), so a 26-item batch checks once, not 26×.
-        _preflight_or_refuse(vlist)
+        # HONEST-PARTIAL gate, before the estimate and any spend: split usable (callable AS WRITTEN — served +
+        # priced) from unmet (stale/unpriced/unknown). We spend only on the usable ones and mark each unmet one in
+        # the result, so one bad id no longer refuses the WHOLE batch. The batch is refused (ModelPreflightRefused)
+        # ONLY when NOTHING is callable — there is then no partial coverage to give. A stale/unpriced id still never
+        # costs a run of failures: it is never called at all.
+        vlist, unmet = _preflight_partition(vlist)
+        if not vlist:
+            raise ModelPreflightRefused(unmet)
     estimate, detail, unpriced = _estimate_metered(vlist, prompt, system, est_output_tokens)
     if budget_usd is not None and (estimate > float(budget_usd) or unpriced):
         # Refuse on EITHER an over-budget estimate OR an unpriceable metered vendor: a vendor whose price we
@@ -300,7 +323,7 @@ def ask(prompt, *, vendors=None, n=None, schema=None, system=None, purpose="ask"
                                   schema=schema, max_tokens=max_tokens)
     else:
         raise ValueError(f"mode must be 'all' or 'first', not {mode!r}")
-    return AskResult(fan, mode, estimate=estimate)
+    return AskResult(_inject_unmet(fan, unmet), mode, estimate=estimate)
 
 
 def cmd(argv=None):

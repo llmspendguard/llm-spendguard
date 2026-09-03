@@ -1,12 +1,13 @@
-"""spendguard.ask HARD-GATES the model before the full run — the 'test the model before real spend' rail, applied to
-every cross-LLM caller. A named model that is not callable AS WRITTEN (stale / unpriced / unknown) is refused with
-its fix BEFORE any fan-out, instead of being discovered after paying for a whole run of failures (the gemini-3-flash
-→ gemini-3-flash-preview case that wasted a 26-doc batch). The gate is RE-CHECKED on every call (never memoized), so
-a model revoked/unpriced mid-process is caught the next call, not skipped on a stale cached OK — cheap because
-served_check is $0 cache-first and a bad model stops the batch on the first call.
+"""spendguard.ask gates the model before the full run — the 'test the model before real spend' rail, applied to
+every cross-LLM caller — but HONEST-PARTIAL, not all-or-nothing. A named model that is not callable AS WRITTEN
+(stale / unpriced / unknown) is never called (never wastes a run of failures — the gemini-3-flash →
+gemini-3-flash-preview case that burned a 26-doc batch), and it is MARKED in the result (PREFLIGHT_UNMET) so the
+caller sees which model was skipped and why. One bad id does NOT refuse the whole batch: the usable models still
+answer. The batch is refused (ModelPreflightRefused) only when NOTHING is callable. The gate is RE-CHECKED on every
+call (never memoized), so a model revoked/unpriced mid-process is caught the next call.
 
-Hermetic: preflight + fan_out are stubbed, so no network and zero spend; the point is that fan_out is NEVER reached
-on a bad model, and reached exactly once per clean call."""
+Hermetic: preflight + fan_out are stubbed, so no network and zero spend; the point is that a bad model is never
+handed to fan_out, an all-bad set refuses before fan_out, and a mixed set fans out only the usable models."""
 import sys
 
 from spendguard import crossllm
@@ -27,16 +28,25 @@ ck("ModelPreflightRefused is a SpendGateRefused (propagates by construction)",
 _fan_calls = []
 def _fake_fan(vlist, prompt, **kw):
     _fan_calls.append(list(vlist))
-    return {"results": [], "ok": [], "failed": [], "n": 0, "n_ok": 0, "complete": False, "run_id": "t"}
+    results = [crossllm.vendor_call.Result(crossllm.vendor_call.OK, v, m, text="ok") for v, m in vlist]
+    return {"results": results, "ok": list(results), "failed": [], "n": len(results), "n_ok": len(results),
+            "complete": True, "run_id": "t"}
 
 # ── stub preflight: an EXPLICIT set of specs is not usable (exact match, never a substring heuristic — the real
 #    preflight decides by served+priced, not by what the id string contains); count how many times it's consulted ──
-_UNUSABLE = {"x:bad-model"}
+_UNUSABLE = {"x:bad-model", "x:bad-model-2"}
 _pf_calls = []
 def _fake_pf(specs, correct=True):
     _pf_calls.append(list(specs))
-    return [{"spec": s, "usable": (s not in _UNUSABLE), "served": ("stale" if s in _UNUSABLE else "served"),
-             "corrected": None, "priced": True, "note": ("STALE — fix it" if s in _UNUSABLE else "ok")} for s in specs]
+    # mirror the REAL preflight_models row shape — provider + model are what _inject_unmet needs to label the
+    # skipped vendor honestly; a mock that omits them would ship an unlabeled '?' coverage row.
+    out = []
+    for s in specs:
+        v, m = s.split(":", 1)
+        out.append({"spec": s, "provider": v, "model": m, "usable": (s not in _UNUSABLE),
+                    "served": ("stale" if s in _UNUSABLE else "served"), "corrected": None, "priced": True,
+                    "note": ("STALE — fix it" if s in _UNUSABLE else "ok")})
+    return out
 
 _orig_fan, _orig_pf = crossllm.vendor_call.fan_out, mp.preflight_models
 crossllm.vendor_call.fan_out = _fake_fan
@@ -64,6 +74,28 @@ try:
     n_pf2 = len(_pf_calls)
     crossllm.ask("hi", vendors=["x:another-model"], preflight=False)
     ck("preflight=False skips the gate entirely", len(_pf_calls) == n_pf2)
+
+    # 5. HONEST PARTIAL: a MIX (usable + bad) → fan out ONLY the usable model (the bad one is never handed to
+    #    fan_out, never spent) and MARK the bad one PREFLIGHT_UNMET. One bad id does NOT refuse the whole batch.
+    _fan_calls.clear()
+    r = crossllm.ask("hi", vendors=["a:good-model", "x:bad-model"], preflight=True)
+    ck("mix → fan_out reached with ONLY the usable model (bad one never handed to it)",
+       len(_fan_calls) == 1 and _fan_calls[0] == [("a", "good-model")])
+    ck("mix → usable model answers, bad one is PREFLIGHT_UNMET in by_vendor (honest, not silently dropped)",
+       r.by_vendor.get("a") == crossllm.vendor_call.OK
+       and r.by_vendor.get("x") == crossllm.vendor_call.PREFLIGHT_UNMET)
+    ck("mix → coverage INCOMPLETE (a requested model was skipped); n counts both, n_ok only the answer",
+       r.complete is False and r.n == 2 and r.n_ok == 1)
+    ck("mix → the unmet model carries NO text (the Result invariant holds — never a failure-as-answer)",
+       all(not res.ok for res in r.results if res.vendor == "x"))
+
+    # 6. ALL bad → STILL refused: there is no partial coverage to give, so the whole batch is refused before spend
+    _fan_calls.clear()
+    try:
+        crossllm.ask("hi", vendors=["x:bad-model", "x:bad-model-2"], preflight=True)
+        ck("all-bad set → refused", False)
+    except ModelPreflightRefused:
+        ck("all-bad set → ModelPreflightRefused (nothing callable), fan_out never reached", len(_fan_calls) == 0)
 finally:
     crossllm.vendor_call.fan_out = _orig_fan
     mp.preflight_models = _orig_pf
