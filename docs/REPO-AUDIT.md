@@ -5,6 +5,14 @@ This is the master audit. It exists because the repo is too large to hold in one
 citations, and marks coverage. A claim without a citation is not allowed here — it is the exact failure
 (inferring instead of reading) this audit was ordered to end.
 
+> **STATUS UPDATE (2026-09-03) — the central finding is RESOLVED.** This audit was written when `charges` was the
+> live money-of-record and `spend_events` was wired to nothing (the "many stores, many answers" problem below).
+> That cutover has SHIPPED: `spend_events` is now the single money-of-record with ONE writer
+> (`budget._record_spend_event`), the `INSERT INTO charges` was removed, and `charges` survives only as the
+> one-time migration source. Sections below that call `charges` the live/wired ledger are the PRE-cutover
+> snapshot — read them as history; see [MONEY-FLOW.md](MONEY-FLOW.md) §4 for the current write path. Other module
+> findings still stand unless separately resolved.
+
 ## Rules
 
 1. **Code is truth.** Every statement cites the `file:line` it was read from, or is marked `UNVERIFIED`.

@@ -5,8 +5,9 @@ an unverified step is marked UNTRACED rather than described, because a map that 
 than a map with a hole in it, and this document exists because inferring from the database instead of
 reading the code produced three wrong answers in one session.
 
-Status: **PARTIAL — the LLM realtime write path and the cap read path are traced, and (2026-09-02) so are the
-conversation/turn capture + subscription legs. The aggregation, receipt and server-push legs are still NOT.**
+Status: **the LLM realtime CAPTURE → PRICE → RECORD write path (now on `spend_events`, the single money-of-record),
+the cap READ path, the conversation/turn + subscription legs, and (2026-09-03) the SERVER-PUSH contract are all
+traced. Still UNTRACED: the aggregation/receipt composition details, the batch submit path, and the GPU/remote cap.**
 
 ---
 
@@ -74,73 +75,79 @@ number is measured or projected.** Everything downstream depends on it.
    tracked apart from workload spend.
 5. otherwise → `_rt_record(...)`.
 
-## 4. RECORD — `_rt_record` (gate.py 627) → `budget.record` (budget.py ~830)
+## 4. RECORD — `_rt_record` (gate.py 715) → `budget.record_charge` (budget.py 241) → `spend_events`
 
 - in-memory aggregate `_rt_agg`, flushed every 200 calls (`_rt_flush`)
-- `_budget_record(...)` → `budget.record(provider, model, kind, cost, basis=...)`, with
+- `_budget_record(...)` (gate.py 480) → `budget.record_charge(provider, model, kind, cost, basis=...)`, with
   `conv_id=QUARANTINE_CONV` when the input exceeded the model's context window (an impossible estimate —
   written for forensics, excluded from totals)
 
-`budget.record` (budget.py ~830) then:
-- returns early if `not cost`
+`budget.record_charge` (budget.py 241) then:
 - returns early if `is_reading_history()` — re-reading a past batch is not a new charge
 - captures `project`, `conv_id`, `key_fp`, and the forensic pair `intent` / `actor` from live context
-- **`INSERT INTO charges (ts,day,provider,model,kind,cost,project,conv_id,key_fp,basis,intent,actor)`**
-  (budget.py ~862)
+- **`_record_spend_event(provider, model, kind, cost, …, source="gate")`** (budget.py 273) — the ONE canonical
+  write, through `charge_to_event` (budget.py 546) → `SpendLedger.record_event` → `INSERT INTO spend_events`.
 
-### THE STRUCTURAL FINDING
+### THE WRITE PATH (corrected 2026-09-03 — supersedes the old "charges is the only table" finding)
 
-`charges` is the ONLY table the live path writes.
+**`spend_events` is the single money-of-record, and `budget._record_spend_event` (budget.py 103) is its ONE
+writer.** Every live path records through it: the gate (`record_charge`, `source="gate"`, budget.py 273),
+remote/GPU (`source="remote"`, 493), unpriced markers (704), reconciliation + true-down (769, 812), external
+non-LLM (851), the `claudecode` ingest (per-turn est-value `source="claude-code"`; reconciled overage
+`source="claude-code-overflow"`; real invoice truth `anthropic-invoice` / `anthropic-invoice-api`), and
+`otel_ingest`. `charge_to_event` (budget.py 546) maps each `kind` to ONE of the typed USD columns and sets
+`billed` (0 for `est_chat` = plan-covered VALUE, 1 for real money) — so the five categories are separated BY
+CONSTRUCTION in the columns, not re-derived by each reader. That closes the old "many stores, many answers"
+problem at the root: there is now one store, with typed columns.
 
-`spend_events` — the hash-chained, richly-typed ledger with `batch_micros` / `realtime_micros` /
-`est_chat_micros` / `remote_compute_micros` / `subscription_micros` as SEPARATE COLUMNS, i.e. the schema
-that actually implements the five categories above — is written by exactly two things:
-
-- `migrate_charges.to_spend_events()` (migrate_charges.py 31), called by **nothing** outside its own module
-- `ledger.SpendLedger` append (ledger.py 354), which the live path never invokes
-
-`budget._ledger()` (budget.py 86) is used ONLY for `.audit(...)` — reattribution and quarantine trails
-(budget.py 318, 361, 578).
-
-**So the ledger that separates the five categories by construction is not being fed.** The live path writes
-a flat `cost` column plus a `basis` string into the legacy table, and every consumer re-derives the
-categories with its own filter. That is the root of the "many stores, many answers" problem, and it is why
-per-file review kept passing: each file is correct about its own table.
-
-**UPDATE 2026-09-02 — this finding is now superseded.** `spend_events` DOES have live writers. The single
-shared write is `budget._record_spend_event` (budget.py 103); the gate's live path now records through it with
-`source="gate"` (budget.py 273), and the `INSERT INTO charges` traced above was REMOVED (see the comments at
-budget.py 780, 832). On top of the gate, the **`claudecode` ingest path is a third, LIVE writer** of
-`spend_events` — per-turn est-value `source="claude-code"` (claudecode.py 247), reconciled overage
-`source="claude-code-overflow"` (claudecode.py 446), and real invoice truth
-`anthropic-invoice`/`anthropic-invoice-api` (claudecode.py 559); `otel_ingest` (164) records through the same
-function. So `spend_events`, not `charges`, is now the money-of-record the live path feeds — "charges is the
-ONLY table the live path writes" no longer holds.
+The legacy flat `charges` table is **retired**. No live path writes it — the `INSERT INTO charges` this section
+used to trace was removed (comments at budget.py 780 / 810 / 832), and a `grep 'FROM charges'` sweep across `src`
+is empty (no reader). It survives ONLY as the one-time MIGRATION SOURCE: `migrate_charges.to_spend_events()`
+(migrate_charges.py) reads `FROM charges` to rebuild `spend_events` under the exact-Decimal schema
+(`spendguard migrate`), proving Σ is preserved across the cutover.
 
 ## 5. READ — what a cap counts
 
-`budget.spent_since(day)` (budget.py ~895) sums `COUNTABLE_VIEW`, not `charges`.
+`budget.spent_since(day)` (budget.py 591) sums `spend_events` through the ONE countable filter
+`SpendLedger._COUNTABLE` (budget.py 35) — NOT the retired `charges` table. `_COUNTABLE` is the single
+definition of "money spent in a period"; it replaced the old `countable_charges` VIEW over `charges` (same
+rule, one place). It keeps batch + realtime BILLED spend and excludes:
+- `kind = 'meta'` — spendguard's own overhead
+- synthetic reconciliation / backfill marker rows
+- `conv_id = QUARANTINE_CONV` — proven-impossible estimates
+- `basis = 'reconstructed'` — a restatement of history, already counted
+- est-VALUE (`billed=0`) — never part of a real total (the five-category rule, enforced in the columns)
 
-`countable_charges` (budget.py 76) = `SELECT * FROM charges WHERE`:
-- `kind != 'meta'` — spendguard's own overhead
-- `model NOT IN (markers)` — synthetic reconciliation/backfill rows
-- `conv_id != QUARANTINE_CONV` — proven-impossible estimates
-- `basis != 'reconstructed'` — a restatement of history, already counted
+`budget.exceeded(pending, kind)` checks class-daily, class-monthly, total-daily, total-monthly in order, each
+`spent + pending > cap`.
 
-`budget.exceeded(pending, kind)` (budget.py 891) checks, in order: class-daily, class-monthly, total-daily,
-total-monthly, each `spent + pending > cap`.
+Because the read is now on the SAME typed ledger the write feeds, the "read `charges` directly and get a number
+~185x too high" mistake this document was written to stop is structurally gone — one store, one number. The
+2026-08-13 OPEN CONTRADICTION (two live answers on one machine, $113 vs $21,009) was a stale process reading
+`charges` directly; with `charges` retired and no reader, it cannot recur.
 
-**Measured 2026-08-13:** `spent_month()` = **$113.08** against a $2,500 cap. Raw `charges` for the same
-month = $21,016.89. The view is doing its job; reading `charges` directly gives a number ~185x too high,
-which is exactly the mistake this document exists to stop.
+---
 
-### OPEN CONTRADICTION — not explained
+## 6. SERVER PUSH — the client→server contract (traced 2026-09-03)
 
-A live process (PID 2636, `tools/conversation_digest.py`, running 30 days) logs
-`total-monthly spend to $21009.23, over the $2500 cap` and retries in a loop. That figure appears only in
-the last 26 lines of a 20,612-line log, so the condition is RECENT. `budget.spent_month()` in a fresh
-interpreter returns $113.08. **Two live answers on one machine.** Cause not yet established. Do not trust
-either number until it is.
+`saas sync` / `saas push` (saas.py) sends this machine's roll-up to the org on TWO SEPARATE AXES that are never
+summed:
+
+- **actual-$** → `budget.by_dims()` (budget.py 929) → `saas.build_rollup_rows` (saas.py 302) → `POST /v1/ledger`
+  `day_totals`. `by_dims` is ACTUAL-$ ONLY: it sums the BILLED columns (`BILLED_USD_COLS`, never `est_chat_usd`)
+  and filters `WHERE COALESCE(billed,1)=1`, so est-VALUE is excluded IN SQL — no est-value can reach the actual-$
+  push. `build_rollup_rows` also drops any `est_chat` / `billed=False` row (defense-in-depth, recorded via
+  `est_excluded`, never a silent drop), scrubs to the contract fields, and stamps a cross-check `uid` the server
+  recomputes (a drift shows up loud, never a silent re-key/double-count).
+- **est-VALUE** → a DIFFERENT path: the chat loop (`chat.loop`) + `lane_value.sync` — the client half of the
+  server's EST_VALUE_CHANNELS (`claude-code` / `claude-ai` / the ledger-valued gemini·zai plan lanes). It NEVER
+  goes to `/v1/ledger`; `saas._is_actual_row` guards the actual-$ crosscheck against ever counting an est-value row.
+
+Overage is reconciled BEFORE the push so actual-$ is factual: the provider INVOICE is the truth and supersedes the
+observable overflow ESTIMATE per (provider, month) — the invoiced month's overflow goes `billed=0` (out of the
+push, kept for attribution), un-invoiced months keep it `billed=1`
+(`claudecode._supersede_overflow_for_invoiced_months`). So the org dashboard receives each real dollar ONCE, on
+the correct axis.
 
 ---
 
@@ -151,7 +158,9 @@ either number until it is.
   `spend_events` row per turn, `source="claude-code"`, `kind="est_chat"` (billed=0 → est-value).
 - **Aggregation** — `_rt_flush`, day rollups, and what `report` / `receipt` actually compose
 - **The receipt's $591.79** — a third monthly figure, composition unread
-- **Server push** — `saas push` / `sync`, what is sent, when, and how the org total is formed
+- ~~**Server push**~~ — **NOW TRACED (2026-09-03) → §6.** The two-axis `/v1/ledger` contract (actual-$ via
+  `by_dims`/`build_rollup_rows`; est-value via chat loop + `lane_value`), and the overage reconciliation that runs
+  before it. Still open: how the server forms the org TOTAL from many members' rows.
 - **Batch path** — `INTERCEPTORS`, submit gating, and batch reconciliation
 - **GPU / remote compute** — `resources.compute_exceeded()` and its own cap
 - ~~**Subscription** — fee vs estimated value~~ — **NOW TRACED (2026-09-02).** The real flat fee lands in

@@ -332,7 +332,7 @@ flowchart LR
       FETCH["fetch-io / backfill<br/>recover real I/O + ledgers (free)"]
       MINE["mine-history / mine-conv<br/>intents + playbook"]
     end
-    CALLS --> CORPUS[("SQLite: calls / call_io /<br/>insights / graph / charges")]
+    CALLS --> CORPUS[("SQLite: calls / call_io /<br/>insights / graph / spend_events")]
     FETCH --> CORPUS
     MINE --> CORPUS
     CORPUS --> RECON["reconstruct (judge) /<br/>review (practice audit)"]
@@ -356,11 +356,13 @@ internals.
 
 ## 8. Data & isolation
 
-One SQLite file under `$SPENDGUARD_HOME` holds `charges` (the ledger), `calls`, `call_io`, `insights`,
-`graph_*`, `model_facts`, `semcache`. Each writer module keeps its own WAL connection; writes that span two
-connections to the same file commit in phases to avoid self-deadlock. The ledger tags every charge with a
-`project` (env > repo-local `.spendguard.json` > git repo basename > cwd) and a `conv_id` (the chat/session
-that spawned it), so spend is attributable per repo and traceable back to its conversation — and a stable
+One SQLite file under `$SPENDGUARD_HOME` holds `spend_events` (+ its `spend_audit` chain) — the single
+money-of-record — plus `calls`, `call_io`, `insights`, `graph_*`, `model_facts`, `semcache`. (The legacy flat
+`charges` table is retired: no live path writes it; it survives only as the one-time migration source that
+`spendguard migrate` rebuilds `spend_events` from. See [MONEY-FLOW.md](MONEY-FLOW.md) §4.) Each writer module keeps
+its own WAL connection; writes that span two connections to the same file commit in phases to avoid self-deadlock.
+The ledger tags every event with a `project` (env > repo-local `.spendguard.json` > git repo basename > cwd) and a
+`conv_id` (the chat/session that spawned it), so spend is attributable per repo and traceable back to its conversation — and a stable
 anonymous `usr_<hex>` identity means spend is **never** unattributed. Operational config is `config.json`;
 secrets are `email.json` / `saas.json` (gitignored). Nothing is written into the host project.
 

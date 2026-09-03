@@ -12,7 +12,7 @@ The package. Zero required deps (SDKs are lazy-imported, optional); all state li
 | `submit.py` | `guarded_submit` — estimate → enforce cap → log → submit, the one chokepoint for OpenAI batch jsonl. |
 | `audit.py` | Guard: fail if any script hardcodes a price disagreeing with `pricing.py`. |
 | `config.py` / `config_schema.py` | Settings resolution (env > file > default) + the declarative SETTINGS registry that drives `config`/`init`/SETUP/validation. |
-| `budget.py` | SQLite cross-process ledger (charges) + daily/monthly/meta caps + `by_day`/`ledger_start`. |
+| `budget.py` | The ONE writer into the `spend_events` ledger (`_record_spend_event`) + daily/monthly/meta caps (read via `_COUNTABLE`) + `by_day`/`by_dims`/`spent_since`. (Legacy `charges` retired → migration source only.) |
 
 ### Accounting, reconcile, report, observability
 | module | what it does |
