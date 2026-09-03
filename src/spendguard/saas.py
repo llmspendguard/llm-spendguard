@@ -305,11 +305,18 @@ def build_rollup_rows(raw, ref, flt):
     (workload|meta) + channel, $ → micros, stamps the contributor `ref` (except the reconciled 'unattributed' gap),
     and computes the cross-check uid. Emits ONLY the contract fields — never prompts/content (scrub by construction)."""
     out = []
+    est_excluded = []                     # est-VALUE rows kept OUT of the actual-$ axis — TRACED, never silently dropped
     for r in raw:
         proj = (r.get("project") or "").lower()
         if flt is not None and proj not in flt:
             continue                      # not this connection's project — don't cross-attribute
         k = (r.get("kind") or "workload").lower()
+        if k == "est_chat" or r.get("billed") is False:
+            # est-VALUE never on the actual-$ axis (defense in depth — by_dims already excludes it in SQL; this
+            # guards any other caller / a future est-value source). It is not lost: it rides the est-value axis
+            # (chat loop + lane_value). Recorded so the exclusion is observable, not an untraced continue.
+            est_excluded.append(f"{proj}/{r.get('provider')}:{r.get('model')}={r.get('cost')}")
+            continue
         row = {
             "day": r["day"], "provider": r.get("provider") or "?", "model": r.get("model") or "?",
             "kind": "meta" if k == "meta" else "workload",
@@ -321,6 +328,11 @@ def build_rollup_rows(raw, ref, flt):
         }
         row["uid"] = _row_uid(row)        # per-row id, local↔server cross-check (server recomputes + verifies)
         out.append(row)
+    if est_excluded:                      # surface the deliberate exclusion so it is auditable, never invisible
+        import sys as _sys
+        print(f"[spendguard] build_rollup_rows: kept {len(est_excluded)} est-VALUE row(s) OFF the actual-$ push "
+              f"(est-value rides its own axis): {', '.join(est_excluded[:8])}"
+              f"{' …' if len(est_excluded) > 8 else ''}", file=_sys.stderr)
     return out
 
 

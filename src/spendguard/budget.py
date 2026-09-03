@@ -928,14 +928,25 @@ def by_day(kind=None, exclude_meta=False, since=None, exclude_reconciled=False):
 # changed what we ship upstream; tests/test_ledger_marker_matrix.py caught it.
 def by_dims(since=None):
     """Per-day rows grouped by (day, provider, model, kind) for the SaaS roll-up push — the structured shape
-    the server's /v1/ledger expects (vs by_day's flat {day: $}). Returns dicts with cost in $ and a call count."""
+    the server's /v1/ledger expects (vs by_day's flat {day: $}). Returns dicts with cost in $ and a call count.
+
+    ACTUAL-$ AXIS ONLY. This feeds the actual-$ roll-up (/v1/ledger), so it sums ONLY the billed money columns
+    (BILLED_USD_COLS — never est_chat_usd) and drops est-VALUE (est_chat) rows outright. est-value is plan-covered,
+    NOT real money, and must NEVER enter an actual-$ total; it reaches the server on its OWN axis (the chat loop +
+    lane_value), never here. Two enforcements — the billed-only sum makes est-value dollars $0 in `cost`, and the
+    est_chat skip drops the now-empty row — so no est-value can leak even if a row is mis-categorized."""
     # This is the SaaS PUSH payload. A quarantined row here would put an invented number on the org dashboard,
     # where nobody has the local context to question it — so void is auto-excluded, and unpriced ($0) too. It
     # DELIBERATELY keeps reconciliation/backfill + meta rows: the org dashboard needs them. `kind` is
     # reconstructed from the row's category — is_meta → 'meta', else the category its money column names.
+    from .ledger import BILLED_USD_COLS
     led = _ledger()
+    # est-VALUE is excluded in the SQL WHERE (billed=0 rows never enter the sum), exactly like void/unpriced —
+    # NOT filtered out row-by-row in Python, so there is no untraced drop. COALESCE(billed,1) keeps legacy rows
+    # (default 1) and drops only the explicit billed=0 est_chat rows. cols=BILLED_USD_COLS is belt-and-suspenders:
+    # even a mis-labeled row contributes $0 of est_chat_usd to the actual-$ total.
     res = led.sum_by(["day", "provider", "model", "cost_type", "is_meta", "project_primary"],
-                     since=since, filt=led._NOT_UNPRICED)
+                     cols=BILLED_USD_COLS, since=since, filt=led._NOT_UNPRICED + " AND COALESCE(billed, 1) = 1")
     out = []
     for (day, prov, model, ctype, ismeta, proj), v in res.items():
         kind = "meta" if ismeta else (ctype or "workload")

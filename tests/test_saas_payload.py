@@ -77,6 +77,20 @@ allowed = {"day", "provider", "model", "kind", "channel", "spend_micros", "calls
 ck("rollup: SCRUBBED — only contract fields leave (no prompt/content)", all(set(r) <= allowed for r in rows))
 ck("rollup: flt=None pushes everything", len(saas.build_rollup_rows(raw, "a", None)) == len(raw))
 
+# ── INVARIANT: est-VALUE NEVER lands on the actual-$ axis. Plan-covered usage (claude-code/claude-ai/zai, billed=
+#    false) is NOT real money; it reaches the server on its OWN axis (chat loop + lane_value), never the /v1/ledger
+#    push. build_rollup_rows must DROP it — even when flt=None ("push everything") — so it can't be summed as spend. ──
+est_mixed = [
+    {"day": "2026-06-22", "provider": "openai", "model": "gpt-5.5", "kind": "batch", "cost": 2.5, "calls": 3, "project": "lmm"},
+    {"day": "2026-06-22", "provider": "anthropic", "model": "claude", "kind": "est_chat", "cost": 9999.0, "calls": 100, "project": "lmm"},
+    {"day": "2026-06-22", "provider": "zai", "model": "glm-5.3", "kind": "workload", "billed": False, "cost": 500.0, "calls": 7, "project": "lmm"},
+]
+er = saas.build_rollup_rows(est_mixed, "alice@x.test", None)
+ck("est-value: est_chat kind is DROPPED from the actual-$ push (never summed as real spend)",
+   all(r["kind"] != "est_chat" for r in er) and sum(x["spend_micros"] for x in er) == 2_500_000)
+ck("est-value: an explicit billed=False row is DROPPED too (defense in depth, even with flt=None)",
+   not any(r["provider"] == "zai" for r in er) and len(er) == 1)
+
 # ── build_guarded_rows: filter (empty base = all) + cumulants pass through ──
 grows = [
     {"day": "2026-06-22", "project": "lmm", "source": "cache", "n": 5, "k1": 10.0, "k2": 2.0, "k3": 0.1, "k4": 0.01},
