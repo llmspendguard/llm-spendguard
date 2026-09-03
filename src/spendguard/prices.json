@@ -92,7 +92,7 @@
       }
     },
     "moonshot": {
-      "_note": "EXCEPTION (verified 2026-08-04): glm-5.2 and kimi-k3 are NOT in the synced table at all \u2014 checked against all 2,391 cached entries and every upstream id. Absent from sync AND absent here means every install records them as UNPRICED, which is a live capture leak on the two newest models. So they ARE curated, each carrying the vendor's own pricing URL in _source. That is the opposite of the hand-typed glm-5 stub this note warns about: that one was INVENTED, these are published and cited. Remove them the day sync starts carrying them.",
+      "_note": "EXCEPTION (verified 2026-08-04): glm-5.2 and kimi-k3 are NOT in the synced table at all \u2014 checked against all 2,391 cached entries and every upstream id. Absent from sync AND absent here means every install records them as UNPRICED, which is a live capture leak on the two newest models. So they ARE curated, each carrying the vendor's own pricing URL in _source. That is the opposite of the hand-typed glm-5 stub this note warns about: that one was INVENTED, these are published and cited.\n  OPERATOR-PINNED (2026-09-02): these actively-used z.ai / Moonshot models stay curated so EVERY install (fresh / CI / isolated test home) prices them without waiting for `sync-prices` to have run there — even once sync carries them (e.g. glm-5.3 is in sync yet pinned here on purpose). A pinned rate OVERRIDES sync, so the standing obligation is to keep each pinned entry current with its cited source whenever the vendor revises rates.",
       "models": {
         "kimi-k3": {
           "_source": "https://platform.kimi.ai/docs/pricing/chat-k3.md (fetched 2026-08-04); the Batch API does NOT support kimi-k3, so batch = standard \u2014 never a discount on a mode the model cannot use",
@@ -225,13 +225,21 @@
       }
     },
     "zai": {
-      "_note": "z.ai / Zhipu GLM and Moonshot Kimi carry NO curated rates on purpose: the synced breadth layer (`spendguard sync-prices`, refreshed daily) publishes real per-1M rates for the whole zai/* and moonshot/* families, and pricing.price() now resolves a bare id (glm-4.6, kimi-k2.5) against them. A curated entry here would OVERRIDE that live data \u2014 which is exactly how a hand-typed glm-5.2 STUB (0.6/2.2) came to under-price the real z.ai 5-series (1.0/3.2) by ~40%. Add an entry here ONLY with a verified source URL + date; otherwise an unpriced id fails LOUD, which is the correct accounting behavior.\n  EXCEPTION (verified 2026-08-04): glm-5.2 and kimi-k3 are NOT in the synced table at all \u2014 checked against all 2,391 cached entries and every upstream id. Absent from sync AND absent here means every install records them as UNPRICED, which is a live capture leak on the two newest models. So they ARE curated, each carrying the vendor's own pricing URL in _source. That is the opposite of the hand-typed glm-5 stub this note warns about: that one was INVENTED, these are published and cited. Remove them the day sync starts carrying them.",
+      "_note": "z.ai / Zhipu GLM and Moonshot Kimi carry NO curated rates on purpose: the synced breadth layer (`spendguard sync-prices`, refreshed daily) publishes real per-1M rates for the whole zai/* and moonshot/* families, and pricing.price() now resolves a bare id (glm-4.6, kimi-k2.5) against them. A curated entry here would OVERRIDE that live data \u2014 which is exactly how a hand-typed glm-5.2 STUB (0.6/2.2) came to under-price the real z.ai 5-series (1.0/3.2) by ~40%. Add an entry here ONLY with a verified source URL + date; otherwise an unpriced id fails LOUD, which is the correct accounting behavior.\n  EXCEPTION (verified 2026-08-04): glm-5.2 and kimi-k3 are NOT in the synced table at all \u2014 checked against all 2,391 cached entries and every upstream id. Absent from sync AND absent here means every install records them as UNPRICED, which is a live capture leak on the two newest models. So they ARE curated, each carrying the vendor's own pricing URL in _source. That is the opposite of the hand-typed glm-5 stub this note warns about: that one was INVENTED, these are published and cited.\n  OPERATOR-PINNED (2026-09-02): these actively-used z.ai / Moonshot models stay curated so EVERY install (fresh / CI / isolated test home) prices them without waiting for `sync-prices` to have run there — even once sync carries them (e.g. glm-5.3 is in sync yet pinned here on purpose). A pinned rate OVERRIDES sync, so the standing obligation is to keep each pinned entry current with its cited source whenever the vendor revises rates.",
       "models": {
         "glm-5.2": {
           "_source": "https://docs.z.ai/guides/overview/pricing (fetched 2026-08-04); no batch discount is published, so batch = standard rather than an assumed 50%",
           "batch_in": 1.4,
           "batch_out": 4.4,
           "cached_in": 0.26,
+          "in_": 1.4,
+          "out": 4.4
+        },
+        "glm-5.3": {
+          "_source": "https://venturebeat.com/technology/glm-5-3-hits-the-api-at-1-4-4-4-per-million-tokens (published 2026-08-21) corroborated against https://docs.z.ai/guides/overview/pricing; PINNED in curated so EVERY install (fresh / CI / isolated test home) prices it without waiting for `sync-prices` to run — per operator directive that this actively-used model be universally visible, not sync-dependent. Keep current if z.ai revises rates.",
+          "batch_in": 0.7,
+          "batch_out": 2.2,
+          "cached_in": 0.14,
           "in_": 1.4,
           "out": 4.4
         }
