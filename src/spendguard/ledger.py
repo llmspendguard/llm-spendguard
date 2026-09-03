@@ -781,6 +781,24 @@ class SpendLedger:
         rows = self._conn.execute(f"SELECT DISTINCT {col} FROM spend_events WHERE 1=1{w}", args).fetchall()
         return sorted(r[0] for r in rows if r[0] not in (None, ""))
 
+    def source_rows(self, source, cols=("id",), only_billed=None, intent_like=None, source_is_like=False):
+        """Rows [(col, ...)] from a `source` (the money-of-record), for reconciliation/attribution that needs
+        identity + a few fields — a GENERAL selector so callers never reach past the ledger with raw SQL. `cols`
+        may name real columns or the virtual "month" (substr(occurred_at,1,7)). `source_is_like=True` treats
+        `source` as a LIKE pattern (e.g. '%-overflow', '%-invoice') so a caller can sweep a FAMILY of lanes/
+        providers in one query, not one hardcoded name. only_billed restricts to billed=1 (True) / billed=0
+        (False); intent_like adds an intent LIKE filter. void/reversed rows excluded."""
+        for c in cols:
+            if c != "month" and c not in self._cols:
+                raise ValueError(f"unknown column {c!r}")
+        sel = ", ".join("substr(occurred_at,1,7)" if c == "month" else c for c in cols)
+        w, args = ("source LIKE ?" if source_is_like else "source=?"), [source]
+        if intent_like is not None:
+            w += " AND intent LIKE ?"; args.append(intent_like)
+        if only_billed is not None:
+            w += " AND COALESCE(billed,1)=?"; args.append(1 if only_billed else 0)
+        return self._conn.execute(f"SELECT {sel} FROM spend_events WHERE {w} AND {self._NOT_VOID}", args).fetchall()
+
     def min_day(self, where=None, filt=""):
         """Earliest accounting `day` present (the pre-ledger cutoff for the leak check)."""
         w, args = self._where(None, None, where)

@@ -469,10 +469,117 @@ def reconcile_billing_state(dry=False):
     print(f"  BLOCKED cap-hits (out_of_credits/org-disabled → rejected, $0): {len(ev['blocked'])} quota events + "
           f"{len(ev['weekly_hits'])} weekly-limit messages"
           + (f" · reasons {dict(blocked_reason)}" if blocked_reason else ""))
-    if not dry and total_over > 0:
-        print("  → overage = source=\"claude-code-overflow\" (realtime, billed=1, UNRECONCILED upper bound). NEXT: "
-              "reconcile it DOWN to the real auto-recharge invoices (refresh Jun–Aug); admin usage_report is partial "
-              "(org-API-key scoped, blind to subscription overage).")
+    if not dry:
+        superseded = _supersede_overflow_for_invoiced_months()   # invoice TRUTH wins per invoiced month
+        if superseded:
+            print(f"  RECONCILED: the invoice supersedes the observable estimate for {superseded} overflow row(s) in "
+                  f"invoiced months → billed=0 (OUT of the actual-$ total, kept for per-conversation attribution). "
+                  f"Un-invoiced months keep their overflow estimate as actual-$ — no double-count.")
+        elif total_over > 0:
+            print("  → overage = source=\"claude-code-overflow\" (realtime, billed=1) — no invoice cc-overage ingested "
+                  "yet to reconcile against. Run `claude-code invoices <csv>`; the estimate is then superseded per "
+                  "month (invoice = actual-$ truth). admin usage_report is org-API-key scoped, blind to sub overage.")
+    return 0
+
+
+# The EXACT invoice stream token that ingest_invoices tags an authoritative overage CHARGE with — the intent it
+# writes is "<source>:<stream>:card...:reimb...", with <stream> a FIXED enum. Matching this segment EXACTLY (not a
+# fuzzy '%overage%' substring) is parsing a known-shape token, so a refund/credit/correction — which carries a
+# DIFFERENT stream token like "overage-refund" — is never mistaken for the authoritative overage that supersedes an
+# estimate. "cc-overage" is the claude-code token in the ledger today; "overage" is the canonical token new lanes use.
+_OVERAGE_STREAMS = ("cc-overage", "overage")
+
+
+def _is_authoritative_overage_intent(intent):
+    """True iff `intent` names an authoritative overage CHARGE line — the STREAM segment of the known-shape invoice
+    intent ("<source>:<stream>:...") is EXACTLY one of _OVERAGE_STREAMS. Precise by construction: "overage"
+    appearing anywhere else in the text (e.g. a "...:overage-refund" correction) does not match."""
+    parts = str(intent or "").split(":")
+    return len(parts) >= 2 and parts[1] in _OVERAGE_STREAMS
+
+
+def _supersede_overflow_for_invoiced_months():
+    """Invoice = the actual-$ TRUTH; supersede the observable overflow ESTIMATE it covers. GENERAL across EVERY
+    subscription lane, matched by DATA (provider + month), never per-lane special-casing:
+
+      * A '<lane>-overflow' source is a lane's observable overage estimate — REAL past-cap $ booked billed=1 as
+        the running actual-$ figure UNTIL its statement arrives (claude-code-overflow today; codex-overflow,
+        zai-overflow, … as those lanes gain overflow detection).
+      * A '<provider>-invoice' source carries that provider's authoritative statement; its overage lines are the
+        truth. Every overflow row whose (provider, month) an invoice overage line covers is SUPERSEDED → billed=0
+        (out of the actual-$ tally, KEPT in the ledger for per-conversation attribution).
+      * Un-invoiced (provider, month)s keep their overflow estimate as actual-$ — so the tally is FACTUAL and
+        running, sharpening to invoice truth as statements come in, never double-counting the two.
+
+    Idempotent (only billed=1 rows are touched) and reversible (a billed flag, never a delete): reconcile_billing_
+    state's delete+rebook restores billed=1, then re-supersedes only the still-invoiced (provider, month)s.
+    Returns the count superseded."""
+    from . import budget
+    led = budget._ledger()
+    invoiced = {(p, m) for (p, m, it) in led.source_rows("%-invoice", cols=("provider", "month", "intent"),
+                                                         source_is_like=True)
+                if _is_authoritative_overage_intent(it)}
+    if not invoiced:
+        return 0
+    n = 0
+    for (eid, prov, month) in led.source_rows("%-overflow", cols=("id", "provider", "month"),
+                                              only_billed=True, source_is_like=True):
+        if (prov, month) in invoiced:
+            try:
+                led.update(eid, {"billed": 0}, actor="claudecode.reconcile_billing_state",
+                           reason=f"provider invoice supersedes the observable overflow estimate ({prov} {month})")
+                n += 1
+            except Exception as e:            # a locked/closed-period row can't be amended — surface, never crash
+                print(f"  supersede: could not amend overflow row {eid} ({type(e).__name__}: {str(e)[:50]})")
+    return n
+
+
+def overage_tally():
+    """The FACTUAL running tally of subscription-lane OVERAGE (real past-cap $), per PROVIDER — the authoritative
+    invoice TRUTH plus any un-invoiced observable ESTIMATE (overflow still billed=1), never double-counted (an
+    invoiced month's overflow is billed=0 by _supersede_overflow_for_invoiced_months). GENERAL across lanes —
+    anthropic (claude-code), openai (codex), zai, … — by the same provider match the reconciliation uses.
+    Read-only, $0. Returns {provider: {invoiced_usd, estimate_usd, total_usd, months_invoiced, months_estimate}}."""
+    from . import budget
+    led = budget._ledger()
+    out = {}
+
+    def _acc(pattern, field, month_field, intent_pred=None, **kw):
+        cols = ("provider", "month", "realtime_usd", "intent") if intent_pred else ("provider", "month", "realtime_usd")
+        for row in led.source_rows(pattern, cols=cols, source_is_like=True, **kw):
+            if intent_pred and not intent_pred(row[3]):
+                continue                                 # not an authoritative overage charge (e.g. a refund) — skip
+            prov, month, rt = row[0], row[1], row[2]
+            d = out.setdefault(prov or "?", {"invoiced_usd": 0.0, "estimate_usd": 0.0,
+                                             "months_invoiced": set(), "months_estimate": set()})
+            d[field] += float(rt or 0.0)
+            d[month_field].add(month)
+
+    _acc("%-invoice", "invoiced_usd", "months_invoiced", intent_pred=_is_authoritative_overage_intent)  # statement truth
+    _acc("%-overflow", "estimate_usd", "months_estimate", only_billed=True)                              # un-invoiced est
+    for d in out.values():
+        d["total_usd"] = round(d["invoiced_usd"] + d["estimate_usd"], 2)
+        d["invoiced_usd"], d["estimate_usd"] = round(d["invoiced_usd"], 2), round(d["estimate_usd"], 2)
+        d["months_invoiced"], d["months_estimate"] = sorted(d["months_invoiced"]), sorted(d["months_estimate"])
+    return out
+
+
+def overage_tally_cmd():
+    """`spendguard claude-code overage` — print the factual per-provider overage tally."""
+    t = overage_tally()
+    if not t:
+        print("subscription-lane overage — nothing recorded yet (no invoice overage line, no billed overflow).")
+        return 0
+    print("Subscription-lane OVERAGE — factual running tally (invoice TRUTH + un-invoiced ESTIMATE), per provider:")
+    grand = 0.0
+    for prov in sorted(t):
+        d = t[prov]
+        grand += d["total_usd"]
+        est = (f" + est ${d['estimate_usd']:,.2f} (un-invoiced {','.join(d['months_estimate']) or '—'})"
+               if d["estimate_usd"] else "")
+        print(f"  {prov:10} ${d['total_usd']:>11,.2f}  = invoice ${d['invoiced_usd']:,.2f} "
+              f"({','.join(d['months_invoiced']) or '—'}){est}")
+    print(f"  {'TOTAL':10} ${grand:>11,.2f}  real overage $ — invoice supersedes the estimate per month, never summed twice")
     return 0
 
 
@@ -570,6 +677,10 @@ def ingest_invoices(csv_path=None, dry=False):
     for m in sorted(over_month):
         print(f"     {m}  ${over_month[m]:,.2f}")
     if not dry:
+        superseded = _supersede_overflow_for_invoiced_months()   # this invoice is now the actual-$ truth for its months
+        if superseded:
+            print(f"  RECONCILED: superseded {superseded} observable overflow row(s) in the newly-invoiced months "
+                  f"(billed=0 → the invoice is the actual-$ overage; the estimate stays for per-conversation attribution).")
         print("  → Real overage = SUM(realtime_usd) WHERE source='anthropic-invoice' (cc-overage). api-credit is the "
               "API PURCHASE side (source='anthropic-invoice-api') — reconcile vs tracked usage, do NOT sum into it.")
     return {"by_stream": dict(by_stream), "over_month": dict(over_month)}
@@ -1221,6 +1332,8 @@ def main(argv=None):
     if sub == "attribute":                              # reconcile real invoice overage → conversations
         attribute_overage(top=limit or 12)
         return 0
+    if sub in ("overage", "overage-tally"):             # factual per-provider overage tally (invoice + un-invoiced est)
+        return overage_tally_cmd()
     if sub == "compact":                                # /compact helper: static snippet, or --tailor = agentic advisor
         from . import compaction
         if "--tailor" in argv:
