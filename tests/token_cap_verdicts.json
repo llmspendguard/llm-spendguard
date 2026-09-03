@@ -34,5 +34,14 @@
     "file": "spendguard/vendor_call.py",
     "symbol": "discover_efforts",
     "kwarg": "max_tokens"
+  },
+  "spendguard/verify.py::_probe_failover::max_tokens=2000": {
+    "verdict": "harmless_probe",
+    "why": "The code only checks that the reply has nonempty text and came from the API without an error; it does not consume the text's content.",
+    "model": "gpt-5.6-sol",
+    "value": 2000,
+    "file": "spendguard/verify.py",
+    "symbol": "_probe_failover",
+    "kwarg": "max_tokens"
   }
 }

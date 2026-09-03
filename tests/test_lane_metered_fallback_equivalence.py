@@ -9,11 +9,14 @@ NAMING (agy's reasoning-suffix ids) must not break that. This pins the equivalen
      catalog is synced, SERVED). A lane whose id is unpriced/unmapped is flagged ok=False — the exact 'a down lane
      strands the call' defect, caught here instead of in production.
 
-Hermetic: config + served_check are monkeypatched (no isolated home, no network, no re-exec), zero spend. If a
-future lane model becomes unpriced or a suffix stops being split, a check here goes red."""
+Hermetic: config, served_check AND pricing are monkeypatched (no isolated home, no network, no re-exec, no sync
+dependency), zero spend. Pricing is stubbed so the check does not depend on which lane models happen to be in the
+synced price table of the home it runs in — an isolated/CI home has no sync, so relying on real pricing for a
+sync-only id (gpt-5.6-sol, gemini-3.7-flash) made this go red there while passing on a synced dev box. If a future
+lane model becomes unpriced or a suffix stops being split, a check here goes red."""
 import sys
 
-from spendguard import adapters, lane_catalog, config, vendor_call
+from spendguard import adapters, lane_catalog, config, vendor_call, pricing
 
 fails = []
 def ck(name, cond):
@@ -35,14 +38,24 @@ for prov, m in [("openai", "gpt-5.6-sol"), ("anthropic", "claude-opus-4-8"), ("z
 # ── 2. audit_lane_fallback catches BOTH a good mapping AND a broken (unpriced) one ───────────────────────────────
 _orig_cfg = config._cfg_get
 _orig_served = vendor_call.served_check
+_orig_price = pricing.realtime_cost
+# the three lane models the audit should find PRICED — stubbed here so the test does not depend on the sync table
+_PRICED = {"claude-opus-4-8", "gpt-5.6-sol", "gemini-3.7-flash"}
 def _fake_cfg(*a, **k):
     if a[:2] == ("advisor", "lane_models"):
         # three real, priced lane models + one deliberately BOGUS unpriced one (the break the audit must catch)
         return {"claude-code": "claude-opus-4-8", "codex": "gpt-5.6-sol",
                 "gemini": "gemini-3.7-flash-medium", "zai-coding": "totally-not-a-real-model-xyz-000"}
     return _orig_cfg(*a, **k)
+def _fake_price(spec, in_tok, out_tok):
+    # hermetic pricing: the three real lane models price; anything else (the BOGUS id) raises KeyError exactly as a
+    # genuinely unpriced id would, so the audit's priced=False path is exercised without depending on sync state.
+    if str(spec).split(":", 1)[-1] in _PRICED:
+        return (in_tok * 1.0 + out_tok * 3.0) / 1_000_000
+    raise KeyError(spec)
 config._cfg_get = _fake_cfg
 vendor_call.served_check = lambda prov, mid: "unchecked"   # hermetic: no catalog cache read, no network
+pricing.realtime_cost = _fake_price                        # hermetic: no dependence on the synced price table
 try:
     rows = lane_catalog.audit_lane_fallback()
     by = {}
@@ -65,6 +78,7 @@ try:
 finally:
     config._cfg_get = _orig_cfg
     vendor_call.served_check = _orig_served
+    pricing.realtime_cost = _orig_price
 
 print(("\n[OK] " if not fails else "\n[FAIL] ") + "lane_metered_fallback_equivalence: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)

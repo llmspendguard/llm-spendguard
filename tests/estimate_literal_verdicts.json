@@ -51,5 +51,27 @@
       1000,
       1000
     ]
+  },
+  "src/spendguard/lane_catalog.py::audit_lane_fallback::realtime_cost(1000, 100)": {
+    "verdict": "not_a_quote",
+    "why": "The return value is discarded; the call only checks whether the fallback model has a valid pricing-table entry without raising an exception.",
+    "model": "gpt-5.6-sol",
+    "file": "src/spendguard/lane_catalog.py",
+    "symbol": "audit_lane_fallback",
+    "literals": [
+      1000,
+      100
+    ]
+  },
+  "src/spendguard/model_preflight.py::_preflight_one::realtime_cost(1000, 100)": {
+    "verdict": "not_a_quote",
+    "why": "The result is discarded; the call only checks whether the model has valid pricing data by observing whether it raises an unknown-model exception.",
+    "model": "gpt-5.6-sol",
+    "file": "src/spendguard/model_preflight.py",
+    "symbol": "_preflight_one",
+    "literals": [
+      1000,
+      100
+    ]
   }
 }

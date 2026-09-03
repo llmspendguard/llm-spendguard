@@ -14,8 +14,11 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     home = tempfile.mkdtemp(prefix="spendguard-cctitles-")
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
     os.environ["SPENDGUARD_HOME"] = home
-    os.environ["SPENDGUARD_CC_SESSIONS_DIR"] = os.path.join(home, "sessions")
     os.execv(sys.executable, [sys.executable] + sys.argv)
+
+# CC sessions dir derived from the isolated HOME — set HERE (not only inside the block above) so it holds whether
+# this test self-re-execs OR the pytest runner pre-isolated it via SPENDGUARD_TEST_ISOLATED (which skips the block).
+os.environ["SPENDGUARD_CC_SESSIONS_DIR"] = os.path.join(os.environ["SPENDGUARD_HOME"], "sessions")
 
 from spendguard import claudecode, budget
 

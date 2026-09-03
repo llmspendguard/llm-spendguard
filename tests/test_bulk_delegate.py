@@ -56,7 +56,8 @@ class _CallRecorder:
         self.calls = []
 
     def __call__(self, model, prompt, max_tokens=None, system=None, reasoning=None, schema=None,
-                 timeout_s=None, sig=None, retries=2, files=None, _no_guard=False, no_metered_fallback=False):
+                 timeout_s=None, sig=None, retries=2, files=None, _no_guard=False, no_metered_fallback=False,
+                 images=None, no_substitution=False):
         assert max_tokens is not None or sig, "adapters.call needs max_tokens or sig (an output budget)"
         self.calls.append({"model": model, "prompt": prompt, "system": system, "no_metered_fallback": no_metered_fallback})
         if prompt == "BOOM":

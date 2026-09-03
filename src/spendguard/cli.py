@@ -285,7 +285,7 @@ def _dispatch(argv=None):
         return receipt.install_cli(rest)
     if cmd == "install-mcp":                            # register the MCP server in the client config (~/.claude.json)
         from . import mcp_server
-        return mcp_server.install(remove="--remove" in rest)
+        return mcp_server.register_client(remove="--remove" in rest)
     if cmd == "remote":                                # enforce the gate on remote/distributed compute (vast.ai)
         from . import remote
         return remote.cmd(rest)

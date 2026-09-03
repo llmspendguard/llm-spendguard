@@ -216,11 +216,15 @@ def cmd(argv=None):
     if "--scan" in argv:
         scan = argv[argv.index("--scan") + 1]
     res = unjudged_and_content(repo_root, scan)
+    # unjudged_and_content returns cleared/failed/stale/unjudged/total (NOT 'harmless' — that stale key crashed this
+    # summary before it could even list, let alone judge).
     print(f"{res['total']} hardcoded token cap(s) under {scan or 'src/'} · "
-          f"{len(res['harmless'])} judged harmless · {len(res['failed'])} judged CONTENT · "
-          f"{len(res['unjudged'])} UNJUDGED")
+          f"{len(res['cleared'])} judged harmless · {len(res['failed'])} judged CONTENT · "
+          f"{len(res['stale'])} STALE · {len(res['unjudged'])} UNJUDGED")
     for c in res["failed"]:
         print(f"  CONTENT CAP  {c['file']}:{c['symbol']} {c['kwarg']}={c['value']} — {c.get('why', '')}")
+    for s in res["stale"]:                                # stale/cleared are verdict-KEY strings, not site dicts
+        print(f"  stale        {s} — a recorded verdict no longer matches the code; re-judge")
     for s in res["unjudged"]:
         print(f"  unjudged     {s['file']}:{s['symbol']} {s['kwarg']}={s['value']} ({s['kind']})")
     if "--judge" not in argv:

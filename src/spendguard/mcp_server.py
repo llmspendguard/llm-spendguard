@@ -426,7 +426,7 @@ def serve_stdio(inp=None, outp=None):
             outp.write(json.dumps(resp, default=str) + "\n"); outp.flush()
 
 
-def install(remove=False):
+def register_client(remove=False):
     """Register (or unregister) spendguard as a stdio MCP server in the Claude Code client config, so its tools
     are reachable from every repo. Mirrors exactly how symgrep / 7thsense / ccwatch are registered — a top-level
     `mcpServers` entry in ~/.claude.json — and both the executable path (via receipt._spendguard_bin, resolved

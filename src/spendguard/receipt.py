@@ -1109,8 +1109,8 @@ def _compaction_hint():
     except Exception:
         k = None
     hint = {"threshold_tokens": thr, "k": k}
-    try:
-        hp.write_text(json.dumps(hint))
+    try:                                                  # through update_json (atomic + `~` backup + refuses to
+        config.update_json(hp, lambda _d: hint, reason="compaction-hint cache", keep_backups=0)
     except Exception:
         pass
     return hint

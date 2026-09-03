@@ -38,7 +38,7 @@ try:
         "numStartups": 42, "theme": "dark"}))
 
     print("-- register --")
-    mcp_server.install()
+    mcp_server.register_client()
     cfg = json.loads(cfgp.read_text())
     ck("spendguard is registered", "spendguard" in cfg["mcpServers"])
     ck("the entry mirrors the sibling schema (type=stdio, args=['mcp'], resolved command)",
@@ -51,22 +51,22 @@ try:
     ck("a backup was written (reversible)", pathlib.Path(str(cfgp) + "~").exists())
 
     print("-- idempotent --")
-    mcp_server.install()
+    mcp_server.register_client()
     cfg2 = json.loads(cfgp.read_text())
     ck("re-register is idempotent (exactly the two servers, no duplication)",
        set(cfg2["mcpServers"]) == {"symgrep", "spendguard"})
 
     print("-- reversible --")
-    mcp_server.install(remove=True)
+    mcp_server.register_client(remove=True)
     cfg3 = json.loads(cfgp.read_text())
     ck("remove unregisters spendguard", "spendguard" not in cfg3["mcpServers"])
     ck("remove keeps the OTHER servers (only ours is dropped)", "symgrep" in cfg3["mcpServers"])
-    rc = mcp_server.install(remove=True)
+    rc = mcp_server.register_client(remove=True)
     ck("removing when already absent is a graceful no-op (rc 0, no crash)", rc == 0)
 
     print("-- parse-safety: an unreadable existing config is NOT silently replaced, and we say so --")
     cfgp.write_text("{ this is not json ]")
-    rc_bad = mcp_server.install()
+    rc_bad = mcp_server.register_client()
     ck("install REFUSES (rc 1) rather than falsely claiming success on an unparseable config", rc_bad == 1)
     ck("the unparseable config is left byte-for-byte intact, never clobbered to empty",
        cfgp.read_text() == "{ this is not json ]")
