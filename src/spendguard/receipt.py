@@ -1016,7 +1016,7 @@ def emit_flow(intent, chain, start, contract=None) -> None:
         actual = None
         try:
             from . import budget
-            actual = max(0.0, budget.spent_since("1970-01-01") - (start_usd or 0.0))
+            actual = max(0.0, budget.spent_all_time() - (start_usd or 0.0))   # memoized baseline (matches the flow-enter snapshot)
         except Exception:
             pass
         n = (agg or {}).get("n") or 0

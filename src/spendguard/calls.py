@@ -125,7 +125,7 @@ def contract_tally():
 def _flow_start_usd() -> float:
     try:
         from . import budget
-        return budget.spent_since("1970-01-01")            # all workload billed-$ to date (cheap; small table)
+        return budget.spent_all_time()                     # running billed-$ to date, O(1) (memoized) — not a full re-scan
     except Exception:
         return 0.0
 

@@ -306,6 +306,7 @@ class SpendLedger:
         self._conn.row_factory = sqlite3.Row
         self._conn.create_aggregate("dec_sum", 1, _DecSum)   # exact decimal SUM for the TEXT money columns
         self._defer = False                              # bulk(): defer per-row commits (still audits every row)
+        self._total_memo = None                          # (freshness_token, decimal-str) for running_llm_total_dec — see below
         self._cols = self._ensure_schema()
 
     @contextlib.contextmanager
@@ -340,8 +341,23 @@ class SpendLedger:
         for col, decl in _ADDITIVE_COLUMNS:
             if col not in have:
                 self._conn.execute(f"ALTER TABLE spend_events ADD COLUMN {col} {decl}")
+        # Secondary indexes on spend_events. A NAME check is not enough here: the charges→spend_events cutover
+        # left a vestigial `spend_events_precutover` table whose indexes still hold the canonical `idx_se_*`
+        # NAMES. `CREATE INDEX IF NOT EXISTS idx_se_day …` keys off the index name across the WHOLE schema, so
+        # those squatters silently no-op it and the LIVE table ended up with ONLY its primary-key autoindex —
+        # every daily-cap / per-conv / dedup read was a full SCAN of the whole table (measured: 356,839 rows,
+        # spent_today scanning all of them). So decide by what is actually indexed ON spend_events (PRAGMA
+        # index_list is table-scoped, immune to the name squatting) and create any missing single-column index
+        # under a table-qualified name that cannot collide. Idempotent: once present each is skipped, so this is
+        # a one-time build (~0.1s/index over 356k rows) then a no-op on every later open.
+        indexed_cols = set()
+        for _ixrow in self._conn.execute("PRAGMA index_list(spend_events)"):
+            info = self._conn.execute(f'PRAGMA index_info("{_ixrow[1]}")').fetchall()
+            if len(info) == 1:                           # single-column index → the column it covers (info=[(seq,cid,name)])
+                indexed_cols.add(info[0][2])
         for ix in _INDEXES:
-            self._conn.execute(f"CREATE INDEX IF NOT EXISTS idx_se_{ix} ON spend_events({ix})")
+            if ix not in indexed_cols:
+                self._conn.execute(f"CREATE INDEX IF NOT EXISTS idx_spendevents_{ix} ON spend_events({ix})")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_event ON spend_audit(event_id)")
         self._conn.commit()
         return [r[1] for r in self._conn.execute("PRAGMA table_info(spend_events)")]
@@ -715,6 +731,34 @@ class SpendLedger:
         summed in here. Excludes meta, reconciliation markers, impossible-quarantined (void), and reconstructed
         rows — the same four the legacy countable_charges view excluded. Returns a decimal string."""
         return self._cat_dec(LLM_USD_COLS, self._COUNTABLE, since=since, until=until, where=where, **filters)
+
+    def _freshness_token(self):
+        """A cheap O(1) token that changes whenever spend_events could have changed — so a value memoized against
+        it is never stale. TWO sources, because a single connection cannot see every writer:
+          • self._conn.total_changes — rows inserted/updated/deleted by THIS connection (our own record_event /
+            update / delete). PRAGMA data_version deliberately does NOT move for our own commits, so this covers them.
+          • PRAGMA data_version — moves when ANOTHER connection commits (another thread here, or another PROCESS
+            sharing this cross-process ledger); it does not move for our own writes.
+        Their union catches every mutation from any writer, so it is safe to trust for cache invalidation. Both are
+        pure reads (an attribute + a pragma) — no table scan."""
+        dv = self._conn.execute("PRAGMA data_version").fetchone()[0]
+        return (self._conn.total_changes, dv)
+
+    def running_llm_total_dec(self):
+        """The whole-ledger countable LLM total (identical to spent_dec() with no window), MEMOIZED on
+        _freshness_token so a REPEAT read is O(1) instead of re-summing the table. This is the flow-receipt
+        baseline (calls.context enter + receipt.emit_flow exit): a chat loop opens hundreds of flow contexts and
+        each enter used to SCAN all of spend_events (356k rows) through the per-row dec_sum aggregate — ~0.14s
+        each, far worse walking the WAL under a concurrent writer (one honestreview run paid ~734 such scans).
+        The NUMBER is byte-identical to spent_dec(); only the re-summation is removed. Caps/reports keep their own
+        live (un-memoized) spent_dec path — this accessor is a display baseline, never a spend gate."""
+        tok = self._freshness_token()
+        memo = self._total_memo
+        if memo is not None and memo[0] == tok:
+            return memo[1]
+        val = self.spent_dec()                           # exact whole-ledger countable LLM Σ (batch + realtime)
+        self._total_memo = (tok, val)
+        return val
 
     def remote_dec(self, since=None, until=None, where=None, **filters):
         """EXACT Decimal total of real GPU/remote-compute spend — the number the COMPUTE cap governs, kept

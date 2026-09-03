@@ -605,6 +605,15 @@ def spent_since(day, project=None, conv=None):
     return float(_ledger().spent_dec(since=day, where=where or None))
 
 
+def spent_all_time():
+    """Running total of ALL gate-recorded countable LLM billed-$ to date — the flow-receipt BASELINE, read at a
+    flow's enter and its exit so the DELTA is what that flow spent (calls.context / receipt.emit_flow). Memoized
+    on a ledger-freshness token (SpendLedger.running_llm_total_dec), so opening many flow contexts no longer
+    re-sums the whole 356k-row ledger each time. Same number as the old spent_since('1970-01-01') idiom — which
+    forced a full SCAN of spend_events on every context enter — without the scan."""
+    return float(_ledger().running_llm_total_dec())
+
+
 def suspect_batches(since):
     """Batch spend since `since`, with the token counts, so an operator can SEE the arithmetic behind a number
     they doubt. `row` is the spend_events id — the exact handle for `spendguard quarantine --row`. Batch rows
