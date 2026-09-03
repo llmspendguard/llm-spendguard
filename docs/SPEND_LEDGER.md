@@ -18,8 +18,11 @@ writes raw SQL** — the class owns the schema and all queries/joins, returns di
 - **Self-contained record + link-ids** — snapshots cost/attribution/rates + `seg_id`/`call_id`/`conv_id`/`batch_id`/`model`.
 
 **Status:** v4 schema + **lifecycle/audit built + validated** (**22/22** tests, `tests/test_spend_ledger.py`):
-record/update/lock_period/reverse/adjust/history + `spend_audit` hash chain. Attribution engine (Step 3) + migration +
-consumer hookup planned. File: `src/spendguard/ledger.py`. DB: `~/.spendguard/spend.db`.
+record/update/lock_period/reverse/adjust/history + `spend_audit` hash chain. `spend_events` now has a **LIVE
+production writer** — `budget._record_spend_event` (the single shared write), driven by the gate AND by the
+`claudecode` ingest path (`source="claude-code"` est-value + `claude-code-overflow`/`anthropic-invoice` overage) —
+so it is no longer migration-/planned-only (the attribution engine, Step 3, continues to build on top). File:
+`src/spendguard/ledger.py`. DB: `~/.spendguard/spend.db`.
 
 ---
 
@@ -33,7 +36,7 @@ consumer hookup planned. File: `src/spendguard/ledger.py`. DB: `~/.spendguard/sp
 |---|---|---|
 | `id` | TEXT PK | deterministic evidence hash — re-recording the same event is a no-op (**kills double-count**) |
 | `dedup_key` | TEXT | natural key (message-id / batch+custom_id); else derived from the evidence signature |
-| `source` | TEXT | `gate` \| `reconstruction` \| `batch-api` \| `gpu` \| `est-chat` |
+| `source` | TEXT | `gate` \| `reconstruction` \| `batch-api` \| `gpu` \| `est-chat` \| `claude-code` \| `claude-code-overflow` \| `anthropic-invoice` \| `anthropic-invoice-api` |
 | `content_hash` | TEXT | content fingerprint (from `seg_attribution`) |
 
 ### Time — UTC canonical; accounting day/period in the reporting tz

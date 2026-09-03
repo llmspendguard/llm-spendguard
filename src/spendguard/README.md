@@ -53,6 +53,15 @@ The package. Zero required deps (SDKs are lazy-imported, optional); all state li
 | `sync.py` / `refresh.py` | Sync the price table from LiteLLM's published JSON. |
 | `bootstrap.py` | Cold start — chain all the free mining + estimate the caged reasoning. |
 
+### Conversation attribution & client surfaces
+| module | what it does |
+|---|---|
+| `claudecode.py` | `spendguard claude-code` — mine `~/.claude` transcripts into `spend_events`: per-turn est-value (`source="claude-code"`, `kind="est_chat"`, billed=0) + observable overage reconciled to real $ (`claude-code-overflow` → `anthropic-invoice`); per-conversation/context views labeled by sidebar title. |
+| `compaction.py` | Compaction lifecycle — the agentic `/compact` advisor (`compact --tailor`) + the PreCompact preservation-guidance / SessionStart(compact) hooks that measure the real before/after ratio (cuts the ~19% auto-compaction loss). |
+| `mcp_server.py` | `spendguard mcp` — a stdlib-only stdio MCP server exposing **9 tools** (4 model-advisor + 5 read-only spend/compaction); `install-mcp` registers it in `~/.claude.json`. |
+| `receipt.py` | The inline spend tally (per-flow receipt + status-line footer) and the Claude Code hooks it installs (`install-receipts`: statusLine + Stop + PreCompact + SessionStart). |
+| `ledger.py` | The `spend_events` / `spend_audit` forensic ledger — the single money-of-record every budget writer records through. |
+
 ### Entrypoints
 | module | what it does |
 |---|---|

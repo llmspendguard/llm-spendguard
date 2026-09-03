@@ -60,3 +60,21 @@ across any language/machine is the key-holding proxy on the roadmap).
 | `/spendguard-close` | the monthly close: truth push (owner) → close view → the org statement + residual |
 
 All are zero-model-spend by default; experiments are caged + estimate-first.
+
+## MCP tools — let the assistant query spend directly
+
+`spendguard install-mcp` registers `spendguard mcp` as a stdio MCP server in `~/.claude.json`, so any repo
+agent can query spend/overage/compaction directly (no shelling out): **9 tools** — 4 model-advisor
+(`spendguard_advise` / `models` / `recommend` / `bakeoff`) + 5 read-only spend/compaction
+(`spendguard_spend_overview`, `spendguard_overage_status`, `spendguard_top_conversations`,
+`spendguard_conversation_cost`, `spendguard_compaction_candidates`). The read-only tools are $0. Restart Claude
+Code (or reconnect MCP) to pick them up; `spendguard install-mcp --remove` unregisters. See
+[MODEL_ADVISOR.md](MODEL_ADVISOR.md).
+
+## Compaction guards
+
+`spendguard install-receipts` also installs a **PreCompact** hook that injects context-preservation guidance
+before every compaction — cutting the measured ~19% auto-compaction loss toward the manual 0% — plus a
+status-line **`/compact` nudge** when an open conversation's context is large enough that compacting would pay
+off. When you do compact, `spendguard claude-code compact [--tailor]` prints the effective `/compact` command
+(`--tailor` is an agentic, conversation-specific advisor).

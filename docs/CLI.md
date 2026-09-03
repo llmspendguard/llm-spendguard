@@ -12,7 +12,9 @@ spendguard install-hook --venv <path>        # gate every process in ANOTHER ven
 spendguard install-hook --user [--python P]  # gate a python's per-USER site (system-python bypass; PEP668-safe, no pip)
 spendguard install-rule [--global|--project DIR]  # drop the spendguard rule into CLAUDE.md → every AI chat wires it in
 spendguard install-skills                    # deploy the 5 slash-commands (/spend, /spendguard-{reconcile,learn,prompts,close})
-spendguard install-receipts --host claude-code|codex   # surface the always-on tally in a host (statusline + per-turn)
+spendguard install-receipts --host claude-code|codex   # surface the always-on tally in a host (statusline + per-turn + compaction hooks)
+spendguard install-mcp [--remove]            # register `spendguard mcp` in ~/.claude.json → 9 MCP tools in every repo (model-advisor + spend/compaction)
+spendguard mcp                               # stdio MCP server: model-advisor + read-only spend/compaction tools (point any MCP client here)
 spendguard coverage                          # which LLM-calling VENVS aren't gated (ungated realtime spend sources)
 spendguard gate-coverage                     # per-INTERPRETER gate check across EVERY python on the machine (3.11/3.14/…)
 spendguard remote onstart|verify|sync        # enforce the gate on remote/distributed compute (vast.ai / any SSH host)
@@ -66,7 +68,12 @@ spendguard cascade --ladder cheap,…,strong --intent X [--prompt …] --run    
 spendguard cache-stats | dedup --input f.jsonl --out u.jsonl | dedup-populate      # response cache + batch dedup
 
 # work-done attribution (org → team × project), all sources
-spendguard claude-code [show|sync|classify|work|story]   # mine ~/.claude → Claude Code spend + work (incremental, classified; alias: cc)
+spendguard claude-code [show|sync|ingest|overflow|invoices|attribute|overage|context|conversations|compact|classify|work|story]   # mine ~/.claude (alias: cc)
+#   ingest → per-turn rows into spend_events (source=claude-code, kind=est_chat, billed=0 = est-value) · overflow|billing-state → calc overage windows from observable signals
+#   invoices → ingest the REAL Anthropic charges as ground truth · attribute → reconcile invoice overage → conversations
+#   overage → factual per-PROVIDER overage tally (invoice TRUTH + un-invoiced ESTIMATE, never double-counted; general across lanes)
+#   context → sustained-large-context $/turn compaction view · conversations|convs → per-conversation view, labeled by sidebar title
+#   compact [--tailor] → the effective /compact command (--tailor = agentic, conversation-specific advisor) · show|sync|classify|work|story as before
 spendguard codex [show|sync|...]             # mine ~/.codex sessions → Codex est-value (channel=codex, billed=false)
 spendguard chat [test|show|discover|classify|loop|work|story|sync|status|accept]   # claude.ai chat adapter (OPT-IN, on-device, macOS)
 spendguard resources [show|snapshot|sync|discover]   # vast.ai GPU → org/team/project (discover [--agentic] recovers destroyed boxes)
@@ -135,11 +142,15 @@ spendguard receipt            # the two-line tally   ·   --line = one compact l
 
 **Surface it in your Claude Code chat** — one command (idempotent; backs up + can `--remove`):
 ```
-spendguard install-receipts --host claude-code      # adds a statusLine footer + a per-turn transcript notice
+spendguard install-receipts --host claude-code      # statusLine footer + per-turn notice + compaction-preservation hooks
 ```
-It registers two guarded hook protocols in `~/.claude/settings.json`: `receipt --statusline` (always-on footer:
-`cwd · model · ctx% · tally`) and `receipt --stop-hook` (a `systemMessage` line each turn). A hook can never block or
-break a turn. Restart Claude Code to apply.
+It registers four guarded hook protocols in `~/.claude/settings.json`: `receipt --statusline` (always-on footer:
+`cwd · model · ctx% · tally`, which also carries a **compaction nudge** when a session's context is large enough that
+compacting would pay off), `receipt --stop-hook` (a `systemMessage` line each turn), `receipt --precompact-hook` (a
+**PreCompact** hook that injects context-preservation guidance — cutting the measured ~19% auto-compaction loss — and
+records the event), and `receipt --sessionstart-hook` (a **SessionStart** matcher=`compact` hook that records the
+post-compaction context so the real compaction ratio is measured). A hook can never block or break a turn. Restart
+Claude Code to apply.
 
 **Other hosts (Codex, editors, menubar).** Codex has no in-chat hook, but spendguard still TRACKS it
 (`spendguard codex show` → channel=codex, billed=false). To surface the tally anywhere, point a **sink** at a file

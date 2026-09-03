@@ -5,8 +5,8 @@ an unverified step is marked UNTRACED rather than described, because a map that 
 than a map with a hole in it, and this document exists because inferring from the database instead of
 reading the code produced three wrong answers in one session.
 
-Status: **PARTIAL — the LLM realtime write path and the cap read path are traced. The aggregation,
-receipt, server-push and conversation/turn capture legs are NOT.**
+Status: **PARTIAL — the LLM realtime write path and the cap read path are traced, and (2026-09-02) so are the
+conversation/turn capture + subscription legs. The aggregation, receipt and server-push legs are still NOT.**
 
 ---
 
@@ -107,6 +107,16 @@ a flat `cost` column plus a `basis` string into the legacy table, and every cons
 categories with its own filter. That is the root of the "many stores, many answers" problem, and it is why
 per-file review kept passing: each file is correct about its own table.
 
+**UPDATE 2026-09-02 — this finding is now superseded.** `spend_events` DOES have live writers. The single
+shared write is `budget._record_spend_event` (budget.py 103); the gate's live path now records through it with
+`source="gate"` (budget.py 273), and the `INSERT INTO charges` traced above was REMOVED (see the comments at
+budget.py 780, 832). On top of the gate, the **`claudecode` ingest path is a third, LIVE writer** of
+`spend_events` — per-turn est-value `source="claude-code"` (claudecode.py 247), reconciled overage
+`source="claude-code-overflow"` (claudecode.py 446), and real invoice truth
+`anthropic-invoice`/`anthropic-invoice-api` (claudecode.py 559); `otel_ingest` (164) records through the same
+function. So `spend_events`, not `charges`, is now the money-of-record the live path feeds — "charges is the
+ONLY table the live path writes" no longer holds.
+
 ## 5. READ — what a cap counts
 
 `budget.spent_since(day)` (budget.py ~895) sums `COUNTABLE_VIEW`, not `charges`.
@@ -136,12 +146,17 @@ either number until it is.
 
 ## UNTRACED — do not treat as described
 
-- **Conversation / turn capture** — how live turns are read, what is extracted, where it lands
+- ~~**Conversation / turn capture**~~ — **NOW TRACED (2026-09-02) → `claudecode.py`.** `ingest_events`
+  (claudecode.py 167) reads `~/.claude` transcripts per-turn (dedup by API `message.id`) and writes one
+  `spend_events` row per turn, `source="claude-code"`, `kind="est_chat"` (billed=0 → est-value).
 - **Aggregation** — `_rt_flush`, day rollups, and what `report` / `receipt` actually compose
 - **The receipt's $591.79** — a third monthly figure, composition unread
 - **Server push** — `saas push` / `sync`, what is sent, when, and how the org total is formed
 - **Batch path** — `INTERCEPTORS`, submit gating, and batch reconciliation
 - **GPU / remote compute** — `resources.compute_exceeded()` and its own cap
-- **Subscription** — fee vs estimated value, where each is stored and how they are kept apart
+- ~~**Subscription** — fee vs estimated value~~ — **NOW TRACED (2026-09-02).** The real flat fee lands in
+  `subscription_usd` via `ingest_invoices` (`source="anthropic-invoice"`, claudecode.py 493); the plan's
+  ESTIMATED VALUE is `est_chat_usd` from the per-turn ingest (`kind="est_chat"`, billed=0). Separate columns,
+  separate axes — never summed. (Open: how the flat fee is amortized across orgs.)
 
 Each needs the same treatment: read the code, cite the line, state what it does.

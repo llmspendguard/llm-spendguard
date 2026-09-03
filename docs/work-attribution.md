@@ -26,10 +26,14 @@ Claude Code are covered by your subscription, not billed per token):
 | ④ | **Est code-chat value** | plan-covered estimate | Claude Code sessions |
 | ⑤ | **Cowork** | placeholder | (reserved) |
 | ⑥ | **Infra / storage egress** | hard $ | e.g. B2 |
+| ⑦ | **Claude Code overage** | hard $ | CC turns past the weekly plan cap — `claude-code-overflow`, reconciled DOWN to the `anthropic-invoice` |
 
-A **subscription line** (per-seat Max + Pro) sits alongside as the fixed cost behind ③/④. Periods are
-**day / week / month / quarter / ytd**, and the *same* breakdown renders at **org**, **team**, and **user**
-scope.
+A **subscription line** (per-seat Max + Pro) sits alongside as the fixed cost behind ③/④. Claude Code is a
+**two-axis** case: while the weekly plan cap holds, its usage is ④ **est code-chat value** (plan-covered, $0
+real); once the cap is exhausted the same turns overflow to **real billed dollars** → ⑦, reconciled DOWN to the
+Anthropic invoice. The two axes are **never summed** — always `Real $X (overage, reconciled) :: est-value $Y
+(plan-covered)`. Periods are **day / week / month / quarter / ytd**, and the *same* breakdown renders at
+**org**, **team**, and **user** scope.
 
 !!! warning "Don't mix period grains"
     A daily point and a weekly/monthly point are never shown on the same axis — that's the fastest way to make a
@@ -51,7 +55,7 @@ flowchart LR
 
 | Command | What it attributes |
 |---|---|
-| `spendguard claude-code [show\|sync\|classify\|work\|story]` | mines `~/.claude` transcripts → Claude Code spend + work, classified per session |
+| `spendguard claude-code [show\|sync\|ingest\|overflow\|invoices\|attribute\|overage\|context\|conversations\|compact\|classify\|work\|story]` | mines `~/.claude` transcripts → per-turn Claude Code spend (est-value + reconciled overage) + work, classified per session; `overage` = factual per-provider overage tally |
 | `spendguard chat [test\|show\|discover\|classify\|loop\|work\|story\|sync\|status\|accept]` | the **claude.ai chat adapter** (opt-in, on-device, macOS) |
 | `spendguard resources [show\|snapshot\|sync]` | vast.ai GPU → org/team/project; `snapshot` records instances so **destroyed** ones stay reconstructable |
 | `spendguard schedule [--daily] [--remove]` | installs the OS-native scheduler that keeps all of the above synced |

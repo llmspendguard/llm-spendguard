@@ -3,14 +3,26 @@ Claude Desktop, an IDE agent) can ask spendguard, from inside a repo, "which mod
 for THIS kind of job, at the quality it needs?" — answered from the caller's OWN measured usage, not a vendor's
 marketing.
 
-Tools (P1 — read-only, $0, from data spendguard already has):
-  • spendguard_advise    {intent?, plan?, as_of?}  → per-(vendor:model) cost×quality ranking for an intent
-                          (jobs · $total · $/M-out · good% · $/good), best-first, with the pick and caveats.
-  • spendguard_models    {}                        → the actionable model catalogue (curated + your verified
-                          prices), each with its per-1M rates and provider.
+Tools — NINE, in two families (every read-only tool is $0, from data spendguard already has):
 
-Later phases add spendguard_recommend (agentic top-K on the cost×quality frontier + an intent quality-bar) and
-spendguard_bakeoff (gated, estimate-first head-to-head over a task sample that fills quality for untried models).
+MODEL-ADVISOR (rank / recommend / prove models for a job-type):
+  • spendguard_advise    {intent?, plan?, as_of?}  → per-(vendor:model) cost×quality ranking for an intent
+                          (jobs · $total · $/M-out · good% · $/good), best-first, with the pick and caveats. $0.
+  • spendguard_models    {}                        → the actionable model catalogue (curated + your verified
+                          prices), each with its per-1M rates and provider. $0.
+  • spendguard_recommend {intent, k?, quality_bar?, budget_usd?} → agentic top-K on the cost×quality frontier +
+                          an intent quality-bar. SPENDS a small meta-capped call; estimates first, refuses over budget.
+  • spendguard_bakeoff   {intent, candidates, prompts?, sample_n?, budget_usd?} → gated, estimate-first head-to-head
+                          over a task sample that fills quality for untried models. No budget_usd → estimate only.
+
+SPEND & COMPACTION (read-only, $0, over this account's Claude Code transcripts + reconciled invoices):
+  • spendguard_spend_overview        {}                → REAL $ out the door vs est-value (plan-covered), the two
+                                     axes kept SEPARATE, never summed.
+  • spendguard_overage_status        {}                → on PAID overage right now? (weekly cap hit → billing per
+                                     token) + real overage $ by month.
+  • spendguard_top_conversations     {by?, limit?}     → what used the tokens, ranked by est-value or real overage $.
+  • spendguard_conversation_cost     {conversation_id} → price one conversation (est-value + overage upper bound).
+  • spendguard_compaction_candidates {limit?}          → conversations expensive to keep alive + the /compact command.
 
 Transport: newline-delimited JSON-RPC 2.0 over stdio — stdlib only (no MCP SDK dependency), matching spendguard's
 portable, self-contained surfaces (see serve.py). `handle(request)` is a pure function (request dict → response

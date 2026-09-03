@@ -1,5 +1,24 @@
 # Handoff: make Claude Code **conversation-level** spend a first-class tracked dimension
 
+> **STATUS: IMPLEMENTED (2026-09-02).** This handoff shipped — as an EXTENSION of `claudecode.py`
+> (`spendguard claude-code`), NOT the standalone `spendguard conversations` command the "What to build"
+> sections below still describe. Section → shipped code:
+> - **§1 (conversations view)** → `spendguard claude-code conversations` / `context`
+>   (`claudecode.conversations_cmd` / `context_cmd`), each labeled by sidebar title. It shipped under the
+>   `claude-code` subcommand, NOT as a top-level `spendguard conversations`.
+> - **§2 (ledger ingest)** → `claudecode.ingest_events`, writing one row per turn into `spend_events` with
+>   `source="claude-code"`, `kind="est_chat"` (`billed=0` → est-VALUE, kept OUT of real $). NOTE: §2's older
+>   `executor="claude-code"` / `kind="realtime"` wording is SUPERSEDED by this est_chat design.
+> - **§2b (context size + compaction signal)** → the context trajectory (`context_cmd`) and the compaction
+>   candidates with a MEASURED before/after ratio, never hardcoded (`claudecode.compaction_candidates`).
+> - **§3 (subscription vs overage windows)** → `claudecode.reconcile_billing_state` (overage turns →
+>   `source="claude-code-overflow"`, `billed=1`), `ingest_invoices` (real `anthropic-invoice` /
+>   `anthropic-invoice-api` truth), and `attribute_overage` (reconcile invoice overage → conversations).
+> - **§4 (`--watch` daemon)** → still OPEN — the one unbuilt item.
+>
+> `scripts/conversation_cost_attributor.py` (called "the spec" / "reference implementation" below) is
+> SUPERSEDED by the shipped `claudecode.py` path; treat it as history, not the product.
+
 **Date:** 2026-09-01 · **Origin:** cost-crisis investigation. Weekly plan cap was exhausted; Claude Code
 turns began overflowing onto pay-as-you-go API credit. spendguard reported ~$0 because it only sees
 **gated** calls — it never saw the Claude Code *app's own turns*, which are where the money actually went.
