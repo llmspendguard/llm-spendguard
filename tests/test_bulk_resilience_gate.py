@@ -39,7 +39,7 @@ def ck(name, cond):
 # An ALLOWED run must not touch a lane in this test — _bulk_arms=[] makes bulk_delegate return "no viable lane"
 # rows immediately (its own early-out), which is proof the RESILIENCE GATE let it through. A REFUSED run raises
 # before ever reaching this, so the two cases are unambiguous.
-lane_balance._bulk_arms = lambda intent: []
+lane_balance._bulk_arms = lambda intent, lanes=None: []
 
 BIG = [f"task-{i}" for i in range(6)]        # 6 > threshold 5
 SMALL = [f"task-{i}" for i in range(4)]      # 4 <= threshold 5

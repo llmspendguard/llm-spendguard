@@ -306,7 +306,7 @@ def _row_succeeded(row):
 
 def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, deadline_s=120.0,
                   checkpoint=None, chunk_size=100, refuse_billed=False, stats=None, force=False, tier=None,
-                  schema=None, expect_ids=None, gate_sig=None):
+                  schema=None, expect_ids=None, gate_sig=None, lanes=None):
     """Fan a LIST of similar tasks across ALL viable idle lanes CONCURRENTLY — the right shape for a BULK job (e.g.
     symgrep's ~6k one-sentence symbol descriptions) that the per-call bandit would trickle one at a time. Each task
     runs on a lane (round-robin across the lanes the bandit rates GOOD for this intent), each admission BOUNDED by
@@ -335,6 +335,11 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
     (task → the ids that task packed) or a single id-list (all tasks); each result runs through
     output_contract.check_envelope, and an INCOMPLETE envelope becomes a MISS (retried via the checkpoint, surfaced
     with `arity_miss`), NEVER silently counted done.
+
+    `lanes` CONFINES the fan to an explicit lane subset (e.g. only the fungible lanes, excluding a protected
+    interactive one) — the same `lanes=` `_bulk_arms` and the tier path already accept, forwarded so a caller can
+    say "fan across codex+gemini+zai, never claude-code" without mutating advisor.delegate_lanes. None = every
+    delegate lane. A lane named here that is reserved/cooling still drops out (fail-closed), never widened past.
 
     `gate_sig` carries the bulk gate onto the LANE path (a lane runs a CLI subprocess, so the SDK-patch gate never
     fires — lane bulk was otherwise ungoverned). A genuinely-bulk fan (>= bulkgate.preview_max) is subject to the
@@ -403,7 +408,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
     # serves the group (undeclared, its models on no lane), or all serving it are cooling → EVERY task errors
     # (undescribed, re-runnable); we never widen off-tier and never fall onto a strong/Opus lane.
     if tier:
-        arms = [(ln, m) for ln in lane_catalog.lanes()
+        arms = [(ln, m) for ln in (lanes or lane_catalog.lanes())
                 if (m := lane_catalog.lane_model_for_tier(ln, tier)) and not adapters._lane_cooling(ln)]
         if not arms:
             return [{"text": None, "lane": None, "use_name": None, "billed": False,
@@ -412,7 +417,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
                               f"declare a {tier}-tier model on a lane (advisor.tiers / advisor.lane_models) and re-run"}
                     for _ in tasks]
     else:
-        arms = _bulk_arms(intent)
+        arms = _bulk_arms(intent, lanes=lanes)
         if not arms:
             return [{"text": None, "lane": None, "use_name": None, "billed": False,
                      "error": "no viable lane (set advisor.lane_models; check `spendguard lanes`)"} for _ in tasks]
