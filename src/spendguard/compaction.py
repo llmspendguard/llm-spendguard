@@ -267,8 +267,28 @@ def record_sessionstart(info):
                 ev["post_context"] = post
                 if ev.get("pre_context") and post > 0:
                     ev["k"] = round(ev["pre_context"] / post, 2)
+                    _credit_compaction_saving(ev, post)   # book the avoided context re-read $ (conservative one-turn floor)
                 _save_events(evs)
                 return
+    except Exception:
+        pass
+
+
+def _credit_compaction_saving(ev, post):
+    """Book the $ this compaction avoids — the context re-read the NEXT turn no longer pays. A CONSERVATIVE ONE-TURN
+    floor: the dropped context (pre−post tokens) × the model's cached-input rate. This fires on a post-compact
+    SessionStart, so the session DID continue and at least one turn re-reads the smaller context — a measured basis,
+    not a guess; the true saving accrues on EVERY subsequent turn, so this floors it and never inflates. Routed
+    through guard.record_saving(source='compaction') — a counterfactual, honestly labelled. Best-effort; never raises."""
+    try:
+        from . import pricing, guard
+        dropped = int(ev.get("pre_context") or 0) - int(post or 0)
+        if dropped <= 0:
+            return
+        rate = (pricing.price(ev.get("model")) or {}).get("cached_in")   # $/1M cached-input tokens (the re-read rate)
+        if rate is None:
+            return
+        guard.record_saving("compaction", dropped * (float(rate) / 1e6))
     except Exception:
         pass
 

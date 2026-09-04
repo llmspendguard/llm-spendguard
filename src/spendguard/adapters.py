@@ -278,6 +278,26 @@ def _openai_strict(schema):
 # instead truncates the answer — and a truncated JSON body reads downstream as "no findings" rather than
 # "no answer". That is the whole recurring failure. The number now comes from measurement or from the
 # caller, never from a literal nobody chose.
+def _maybe_credit_advisor(requested, r):
+    """When a call was SUBSTITUTED onto a CHEAPER, METERED model than the one requested, book the difference as a
+    guarded 'advisor' saving (counterfactual — the requested model is the honest baseline). SKIPPED for a $0
+    plan-lane substitution: that avoided-API value is the EST-VALUE axis, so booking it here too would double-count.
+    The dominant routing saving (plan-served) therefore stays on est-value; this credits ONLY the genuinely-
+    uncaptured metered→cheaper swap. Best-effort; never raises into the call path."""
+    try:
+        if not isinstance(r, dict) or not r.get("substituted_from"):
+            return
+        cost = r.get("cost")
+        if not cost or float(cost) <= 0:          # $0 → plan-served = est-value axis, not a savings-ledger row
+            return
+        from . import pricing, guard
+        base = pricing.realtime_cost(requested, int(r.get("in_tok") or 0), int(r.get("out_tok") or 0))
+        if base and float(base) > float(cost):
+            guard.record_saving("advisor", float(base) - float(cost))
+    except Exception:
+        pass
+
+
 def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,
          sig=None, retries=2, files=None, _no_guard=False, no_metered_fallback=False, images=None,
          no_substitution=False):
@@ -353,12 +373,15 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
         # not a subscription lane (the lane CLIs are text-only) — _call_once forces that.
         images = [_load_image(i) for i in images]
     if not _no_guard:
-        return _call_guarded(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
-                             schema=schema, timeout_s=timeout_s, sig=sig, retries=retries,
-                             no_metered_fallback=no_metered_fallback, images=images, _no_sub=no_substitution)
-    return _call_once(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
-                      schema=schema, timeout_s=timeout_s, no_metered_fallback=no_metered_fallback, images=images,
-                      _no_sub=no_substitution)
+        r = _call_guarded(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
+                          schema=schema, timeout_s=timeout_s, sig=sig, retries=retries,
+                          no_metered_fallback=no_metered_fallback, images=images, _no_sub=no_substitution)
+    else:
+        r = _call_once(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
+                       schema=schema, timeout_s=timeout_s, no_metered_fallback=no_metered_fallback, images=images,
+                       _no_sub=no_substitution)
+    _maybe_credit_advisor(model, r)   # metered substitution to a CHEAPER model → guarded 'advisor' saving (savings tally)
+    return r
 
 
 def was_substituted(result):

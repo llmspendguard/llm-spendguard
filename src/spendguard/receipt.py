@@ -895,12 +895,44 @@ def _two_axis_table(t: dict) -> list:
     return out
 
 
+def _saved_lines(t: dict) -> list:
+    """The THIRD axis — GUARDED SAVINGS (avoided $), shown SEPARATELY and NEVER added into Actual $ or Est value $.
+    Measured sources (cache·block·cascade·realized) and counterfactual ones (advisor·compaction) are kept apart so a
+    counterfactual is never blurred into a measured number, and a sanity ratio vs the (real + est-value) baseline
+    FLAGS a vanity figure rather than hiding it. Empty when nothing has been guarded yet."""
+    try:
+        from . import guard
+        month = _windows()[2]
+        s = guard.saved_since(month)
+    except Exception:
+        return []
+    if not s or (s.get("total") or 0) <= 0:
+        return []
+    ev = (t.get("est_value") or {}).get("month") or 0
+    baseline = (t.get("real_month") or ((t.get("api") or {}).get("month") or 0)) + ev
+    try:
+        cx = guard.savings_crosscheck(baseline, since=month)
+    except Exception:
+        cx = {}
+    out = ["guarded savings this month (avoided $ — a 3rd axis, NEVER added to Actual or Est value):"]
+    if s.get("certain"):
+        out.append(f"   measured (cache·block·cascade·realized)   {_money(s['certain'])}")
+    if s.get("counterfactual"):
+        out.append(f"   counterfactual (advisor·compaction)       {_money(s['counterfactual'])}  (estimated)")
+    # ratio vs the (real + est-value) baseline is shown as a FACT, not judged by a threshold — the reader decides
+    # whether a big number is legitimate (a blocked batch can dwarf a low month). The number is auditable by source.
+    tail = f"   [{cx['ratio']}× the {_money(cx['baseline'])} baseline]" if cx.get("ratio") is not None else ""
+    out.append(f"   Σ saved ~{_money(s['total'])}{tail}")
+    return out
+
+
 def render_tree(scope_org=None) -> str:
     """The receipt: the two-axis Actual$ | Est-value$ TABLE, then the ORG → TEAM → PROJECT est-value tree (the
     attribution, matching the server). `scope_org` limits to one org (None = all orgs)."""
     t = tally()
     parts = [_PREFIX + "spend this month"]
     parts += [_INDENT + ln for ln in _two_axis_table(t)]
+    parts += [_INDENT + ln for ln in _saved_lines(t)]      # 3rd axis: guarded savings (avoided $) — never summed in
     tree = _est_tree(scope_org)
     if not tree:
         return "\n".join(parts)
