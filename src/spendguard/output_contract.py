@@ -242,6 +242,41 @@ def check_items_against_contract(items, contract, max_failures=5):
     return r
 
 
+def check_envelope(text, expected_ids, results_key="results", id_key="id"):
+    """ARITY / completeness for an id-keyed batch envelope — the check `check_item` CANNOT do. A PACKED request
+    sends N items and expects ONE envelope {results:[{id,…},…]} carrying EVERY id back exactly once. check_item
+    validates each PRESENT item's shape; it is blind to an item that never came back — the model silently OMITS
+    ids from results[] (measured ~7% on packed batches), and an envelope of N−1 shape-perfect items passes every
+    per-item check. So the fallback decision (adapters `_shape_ok`) made on check_item alone cannot see the loss.
+
+    This checks the ID SET, which is FORMAT (counting ids is mechanical, fully determined by the bytes), never
+    meaning. Returns (ok, detail) where detail = {reason, missing, extra, dupes, n_expected, n_got}. `text` may be a
+    JSON string/bytes or an already-parsed dict/list; a top-level list is accepted as the results array directly."""
+    exp = [str(i) for i in (expected_ids or [])]
+    try:
+        obj, _sal = _as_obj(text) if isinstance(text, (str, bytes, bytearray)) else (text, False)
+    except Exception as e:
+        return False, {"reason": f"envelope did not parse: {type(e).__name__}: {e}",
+                       "missing": exp, "extra": [], "dupes": [], "n_expected": len(exp), "n_got": 0}
+    rows = obj.get(results_key) if isinstance(obj, dict) else obj      # a bare top-level list is the results array
+    if not isinstance(rows, (list, tuple)):
+        return False, {"reason": f"no '{results_key}' array in the envelope (got {type(rows).__name__})",
+                       "missing": exp, "extra": [], "dupes": [], "n_expected": len(exp), "n_got": 0}
+    from collections import Counter
+    cnt = Counter(str(r.get(id_key)) for r in rows if isinstance(r, dict) and r.get(id_key) is not None)
+    exp_set = set(exp)
+    missing = [i for i in exp if i not in cnt]                        # sent but never came back
+    extra = [g for g in cnt if g not in exp_set]                     # came back but never sent (hallucinated id)
+    dupes = [g for g, c in cnt.items() if c > 1]                     # same id answered twice
+    ok = not missing and not extra and not dupes
+    reason = "" if ok else "; ".join(p for p in (
+        (f"missing {len(missing)}: {missing[:5]}" if missing else ""),
+        (f"extra {len(extra)}: {extra[:5]}" if extra else ""),
+        (f"duplicated {len(dupes)}: {dupes[:5]}" if dupes else "")) if p)
+    return ok, {"reason": reason, "missing": missing, "extra": extra, "dupes": dupes,
+                "n_expected": len(exp), "n_got": len(cnt)}
+
+
 def data_signature(items):
     """A stable fingerprint of the INPUTS a test ran on — so a sig tested on three toy rows cannot authorize a
     run over the real corpus. Hashes only; the data itself never leaves the caller (this file stores nothing)."""

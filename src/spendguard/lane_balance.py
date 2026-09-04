@@ -306,7 +306,7 @@ def _row_succeeded(row):
 
 def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, deadline_s=120.0,
                   checkpoint=None, chunk_size=100, refuse_billed=False, stats=None, force=False, tier=None,
-                  schema=None):
+                  schema=None, expect_ids=None, gate_sig=None):
     """Fan a LIST of similar tasks across ALL viable idle lanes CONCURRENTLY — the right shape for a BULK job (e.g.
     symgrep's ~6k one-sentence symbol descriptions) that the per-call bandit would trickle one at a time. Each task
     runs on a lane (round-robin across the lanes the bandit rates GOOD for this intent), each admission BOUNDED by
@@ -328,6 +328,20 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
     prompt and is validated locally (output_contract), and a lane whose reply is off-shape falls back to that model's
     metered API (strict on OpenAI/Anthropic) — so the envelope holds on every lane. The result stays in `text` (the
     JSON string), so the success contract, checkpoint/resume, and tier confinement are unchanged.
+
+    `expect_ids` closes the ARITY hole for PACKED envelopes: a lane can return a shape-PERFECT {results:[{id,…}]}
+    that silently OMITS ids (measured ~7% on packed batches), and the per-item shape check is blind to an item that
+    never came back — so it would be accepted as a $0 lane success and lost. Pass `expect_ids` = a callable
+    (task → the ids that task packed) or a single id-list (all tasks); each result runs through
+    output_contract.check_envelope, and an INCOMPLETE envelope becomes a MISS (retried via the checkpoint, surfaced
+    with `arity_miss`), NEVER silently counted done.
+
+    `gate_sig` carries the bulk gate onto the LANE path (a lane runs a CLI subprocess, so the SDK-patch gate never
+    fires — lane bulk was otherwise ungoverned). A genuinely-bulk fan (>= bulkgate.preview_max) is subject to the
+    SAME SPENDGUARD_ENFORCE discipline the SDK path gets: run bulkgate.gated_batch(...) (estimate→test→eval) and pass
+    the sig you gated as `gate_sig`; an ungated fan is refused under `block`, logged 'would-block' under `warn`
+    (the default), allowed under `off`. force=True overrides. ($0 lanes have no spend to cap — this gate is the
+    test/eval discipline, which is about whether the job was proven before N thousand items ran, not about dollars.)
     Returns [{text, lane, use_name, model, billed, error}] in task order."""
     import os as _os
     import json as _json
@@ -358,6 +372,30 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
                 f"resilience — " + "; ".join(_gaps) + ". This is the chunk-never-single-shot rule: a large job "
                 "must checkpoint and chunk so a transient no-progress pass cannot kill it. Fix the above, or pass "
                 "force=True to override and own the risk.")
+    # BULK-GATE REACH (the axis-4 gap warden's Q8 found). The estimate→test→eval discipline does NOT follow work
+    # onto a lane: a lane runs a CLI subprocess, touching no patched SDK, so gate._bulkgate_check never fires and a
+    # lane fan is otherwise UNGOVERNED. The SPEND gate is moot ($0 on a plan) — but "was this proven to work before N
+    # thousand ran?" is not about dollars: a free run that emits garbage still burns wall-clock and corrupts
+    # downstream. So a genuinely-bulk fan (>= preview_max) gets the SAME enforce-mode gate the SDK path gets. The
+    # caller runs bulkgate.gated_batch(...) (estimate→test→eval) and passes the sig it gated as `gate_sig`; here we
+    # verify it is fresh+passing. block → REFUSE (GateBlocked, a deliberate stop fail-open handlers re-raise by
+    # construction); warn → log 'would-block' and allow (the roll-out default); off → allow. force=True overrides.
+    # bulkgate is imported DIRECTLY (not guarded into 'off'): if the safety gate itself cannot load, that is a real
+    # failure and must FAIL CLOSED — silently substituting 'off' would let an un-proven fan of thousands run.
+    if not force:
+        from . import bulkgate as _bg
+        _bmode = _bg.mode()
+        if _bmode != "off" and len(tasks) >= _bg.preview_max():
+            _st = (_bg.gate_status(gate_sig) if gate_sig else
+                   {"fresh": False, "reason": "no gate_sig — this fan was never estimated/tested/evaluated"})
+            if not _st.get("fresh"):
+                _bg._log_block(gate_sig or "lane-bulk", "lanes", len(tasks), 0.0,
+                               "blocked" if _bmode == "block" else "would-block")   # (fail-safe internally)
+                if _bmode == "block":
+                    raise _bg.GateBlocked(
+                        f"REFUSED: {len(tasks)} tasks fanned onto lanes for {intent!r} without a fresh gate "
+                        f"({_st.get('reason')}). A lane run is $0 but NOT proven — run bulkgate.gated_batch(...) "
+                        f"(estimate→test→eval) and pass gate_sig=<the sig you gated>, or force=True to own the risk.")
     # TIER CONFINEMENT (a cost RAIL, declared once). When `tier` is given, each lane contributes its OWN model FOR
     # this capability GROUP — lane_catalog.lane_model_for_tier(lane, tier): its cheap model for `cheap`, its strong
     # model for `strong`. So a bulk fan spreads across every plan's RIGHT-SIZED model (e.g. cheap describe → codex's
@@ -505,6 +543,28 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
         if r.get("substituted_from") and f"{served_prov}:{served_model}" != f"{prov}:{use_name}":
             row["intended"] = f"{prov}:{use_name}"           # what the round-robin picked, before the substitution
             row["substituted_from"] = r["substituted_from"]
+        # ITEM COMPLETENESS (arity) — the one check the per-item shape validator CANNOT do. A PACKED envelope that is
+        # shape-perfect but silently DROPS ids (measured ~7% on packed batches) would otherwise be accepted as a $0
+        # lane success and its missing items lost forever. When the caller declares the ids a task expects, verify the
+        # id SET here: an INCOMPLETE envelope becomes a MISS (error row, text cleared), so the checkpoint/resume
+        # RE-RUNS it and it is NEVER counted done — exactly like an off-shape reply. check_envelope counts ids
+        # (FORMAT), never judges meaning. Best-effort: a validator that itself errors never fails a genuine answer.
+        if expect_ids and _row_succeeded(row):
+            try:
+                from . import output_contract
+                _exp = expect_ids(task) if callable(expect_ids) else expect_ids
+                if _exp:
+                    _ok, _det = output_contract.check_envelope(row["text"], _exp)
+                    if not _ok:
+                        row = {**row, "text": None, "arity_miss": _det,
+                               "error": f"envelope INCOMPLETE: {_det['n_got']}/{_det['n_expected']} ids "
+                                        f"({_det['reason']}) — retried, not silently accepted"}
+            except Exception as _ae:
+                # the completeness check could not be EVALUATED (a broken expect_ids callback, or worse) — an
+                # UNVALIDATED unit must NOT read as a clean success, or the checkpoint counts it done. Fail CLOSED:
+                # mark it an error so it is retried and the failure is VISIBLE, never swallowed.
+                row = {**row, "text": None,
+                       "error": f"completeness check errored ({type(_ae).__name__}: {str(_ae)[:60]}) — not counted done"}
         return i, row
 
     # CHUNKED: bound how many futures are in flight at once, and make each chunk's results durable before the next.
