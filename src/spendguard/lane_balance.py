@@ -202,7 +202,7 @@ _DELEGATE_OUT = 1500             # OUTPUT budget for a delegated task — NAMED,
 
 
 def delegate(task, system=None, lanes=None, reasoning="low", max_tokens=_DELEGATE_OUT, intent=None,
-             enqueue=False, priority=None):
+             enqueue=False, priority=None, schema=None):
     """Offload one task to the cheapest VIABLE idle subscription lane and return the answer — so heavy work runs $0
     on an idle plan while the orchestrator (e.g. this Claude Code session) spends nothing but coordination.
 
@@ -217,7 +217,12 @@ def delegate(task, system=None, lanes=None, reasoning="low", max_tokens=_DELEGAT
     reasoning eats the budget, so lane_models should point gemini at a `-low` variant). EMPTY or errored output is a
     FAILURE → fall through to the next lane; billed fallback is NOT silent (a lane that answered via the metered API
     is flagged `billed=True`). Returns {text, lane, model, cost, billed, executor, tried} or {text:None, error, tried}.
-    The model that answered is the one recorded — attribution stays honest."""
+    The model that answered is the one recorded — attribution stays honest.
+
+    `schema` (a JSON Schema) forces STRUCTURED output — threaded to adapters.call, which folds the shape into the
+    lane's prompt, validates the reply locally (output_contract), and falls back to that model's metered API (strict
+    on OpenAI/Anthropic) if a lane's output is off-shape. The JSON answer stays in `text`. (A schema request skips
+    the text-only lane bandit and uses this cheapest-idle path, which still gets adapters-level lane arbitrage.)"""
     from . import adapters, calls
     intent = intent or "spendguard:delegate"
     if enqueue:                                   # durable fire-and-forget: park it for the drainer, don't run now
@@ -229,7 +234,9 @@ def delegate(task, system=None, lanes=None, reasoning="low", max_tokens=_DELEGAT
     # LEARNED routing: with the bandit enabled (advisor.lane_bandit) it picks the lane by what it has LEARNED wins
     # for THIS intent — equal-start → bake-off-judge → exploit — instead of the static cheapest-idle heuristic below,
     # and echoes which lane served. Falls through to the heuristic if it had no live arm / none answered.
-    if str(config._cfg_get("advisor", "lane_bandit", False)).strip().lower() in ("1", "true", "yes", "on"):
+    if schema is None and str(config._cfg_get("advisor", "lane_bandit", False)).strip().lower() in ("1", "true", "yes", "on"):
+        # bandit_call is TEXT-only — a schema request skips it and takes the adapters.call path below, which folds
+        # the shape into the lane prompt, validates locally, and falls back to the (strict) API if off-shape.
         try:
             from . import lane_bandit
             r = lane_bandit.bandit_call(intent, task, system=system, reasoning=reasoning)
@@ -253,7 +260,8 @@ def delegate(task, system=None, lanes=None, reasoning="low", max_tokens=_DELEGAT
         model = f"{prov_of[lane]}:{lm[lane]}"
         tried.append(model)
         with calls.context(intent=intent):
-            r = adapters.call(model, task, system=system, reasoning=reasoning, max_tokens=max_tokens, sig=intent)
+            r = adapters.call(model, task, system=system, reasoning=reasoning, max_tokens=max_tokens, sig=intent,
+                              schema=schema)   # structured output: shape rides the lane prompt + local-validate + API fallback
             # sig=intent → autotune raises this class's OUTPUT budget from its measured p99 (over the 1500 floor),
             # so a long delegated answer stops truncating at 1500/3000/6000 as the class is learned.
         txt = (r.get("text") or "").strip()
@@ -297,7 +305,8 @@ def _row_succeeded(row):
 
 
 def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, deadline_s=120.0,
-                  checkpoint=None, chunk_size=100, refuse_billed=False, stats=None, force=False, tier=None):
+                  checkpoint=None, chunk_size=100, refuse_billed=False, stats=None, force=False, tier=None,
+                  schema=None):
     """Fan a LIST of similar tasks across ALL viable idle lanes CONCURRENTLY — the right shape for a BULK job (e.g.
     symgrep's ~6k one-sentence symbol descriptions) that the per-call bandit would trickle one at a time. Each task
     runs on a lane (round-robin across the lanes the bandit rates GOOD for this intent), each admission BOUNDED by
@@ -311,7 +320,15 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
     Resume is keyed by CONTENT (sha256 of system+task+intent), never position — a re-run whose task list changed
     (different order/composition) maps each saved result back by MEANING, so it can never land on the wrong task; an
     older POSITIONAL checkpoint is detected and ignored with a notice, never misread. One task that errors returns an
-    error row and never wedges the chunk. Returns [{text, lane, use_name, model, billed, error}] in task order."""
+    error row and never wedges the chunk.
+
+    `schema` (a JSON Schema) forces STRUCTURED output on every task — so a JSON-envelope job (e.g. warden's
+    {results:[{id,…}]} contract with cross-model strict-mode parity) can ride the parallel lane fan instead of being
+    forced through per-call adapters.call. It is threaded straight to adapters.call: the shape rides each lane's
+    prompt and is validated locally (output_contract), and a lane whose reply is off-shape falls back to that model's
+    metered API (strict on OpenAI/Anthropic) — so the envelope holds on every lane. The result stays in `text` (the
+    JSON string), so the success contract, checkpoint/resume, and tier confinement are unchanged.
+    Returns [{text, lane, use_name, model, billed, error}] in task order."""
     import os as _os
     import json as _json
     import threading as _th
@@ -361,6 +378,21 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
         if not arms:
             return [{"text": None, "lane": None, "use_name": None, "billed": False,
                      "error": "no viable lane (set advisor.lane_models; check `spendguard lanes`)"} for _ in tasks]
+
+    # RESERVED-LANE GUARD — the SAME reservation idle_lanes() and route_decision() already honor, applied here too
+    # (bulk_delegate was the one router that skipped it). A prompt-metered lane whose SELF-USE cap is reached keeps
+    # its stops-dead budget for real coding, so it must not take DISCRETIONARY bulk overflow — and the tier= path
+    # draws from lane_catalog.lanes(), which would otherwise ride a protected lane's cheap model. Filter in ONE
+    # place so BOTH the tier path and _bulk_arms honor it; fail closed (error rows, never widen onto a reserved lane).
+    from . import lane_economics
+    _reserved = sorted({a[0] for a in arms if lane_economics.prompt_lane_reserved(a[0])})
+    if _reserved:
+        arms = [a for a in arms if a[0] not in _reserved]
+        if not arms:
+            return [{"text": None, "lane": None, "use_name": None, "billed": False,
+                     "error": f"every viable lane is reserved ({', '.join(_reserved)}: self-use cap reached — its "
+                              f"prompt budget is held for real coding, not discretionary bulk). Re-run when a lane "
+                              f"frees up, or widen advisor.delegate_lanes."} for _ in tasks]
 
     import hashlib as _hl
 
@@ -445,6 +477,9 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
             r = adapters.call(model, task, system=system, reasoning=reasoning,   # sig=intent → the OUTPUT budget is this
                               sig=intent, timeout_s=deadline_s,                  # call-class's measured p99; refuse_billed
                               no_metered_fallback=refuse_billed,                 # → a lane miss errors, never a paid retry
+                              schema=schema,                                     # STRUCTURED output: adapters folds the shape
+                              #                                                    into the lane's prompt + validates locally,
+                              #                                                    falling back to the API (strict) if off-shape
                               no_substitution=bool(tier))                        # TIER: pin the cheap model — the bandit
             #                                                                      can NEVER swap it for a strong/Opus one;
             #                                                                      the only fallback is THIS model's metered

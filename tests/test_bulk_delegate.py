@@ -13,7 +13,7 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from spendguard import lane_balance, lane_catalog, lane_bandit, adapters, dispatch                     # noqa: E402
+from spendguard import lane_balance, lane_catalog, lane_bandit, adapters, dispatch, lane_economics      # noqa: E402
 
 
 def ck(name, cond):
@@ -26,6 +26,7 @@ fails = []
 lane_catalog.arms = lambda flt=None: [("gemini", "g-low"), ("gemini", "g-high"), ("codex", "gpt-5.5"), ("zai-coding", "glm")]
 lane_catalog.lane_provider = lambda l: {"gemini": "gemini", "codex": "openai", "zai-coding": "zai"}.get(l)
 lane_bandit._arm_cooling = lambda l, u: False
+lane_economics.prompt_lane_reserved = lambda lane: False        # default: nothing reserved (the reserved-guard is tested below)
 lane_bandit.arm_stats = lambda intent: {
     ("gemini", "g-low"): {"winrate": 0.0, "trials": 2},     # gemini's WEAK variant (won nothing) — not the lane's best
     ("gemini", "g-high"): {"winrate": 1.0, "trials": 2},    # gemini's best variant
@@ -59,7 +60,8 @@ class _CallRecorder:
                  timeout_s=None, sig=None, retries=2, files=None, _no_guard=False, no_metered_fallback=False,
                  images=None, no_substitution=False):
         assert max_tokens is not None or sig, "adapters.call needs max_tokens or sig (an output budget)"
-        self.calls.append({"model": model, "prompt": prompt, "system": system, "no_metered_fallback": no_metered_fallback})
+        self.calls.append({"model": model, "prompt": prompt, "system": system,
+                           "no_metered_fallback": no_metered_fallback, "schema": schema})
         if prompt == "BOOM":
             raise RuntimeError("boom")
         if prompt == "WOULDBILL":                        # a task the lane misses → would fall back to metered
@@ -168,6 +170,54 @@ lane_balance.bulk_delegate(["p", "q"], "myintent", checkpoint=cks)              
 stS = {}
 lane_balance.bulk_delegate(["p", "q"], "myintent", checkpoint=cks, stats=stS)         # fully resumed
 fails += ck("(B) a fully-successful resume: resumed 2 · dispatched 0", stS.get("resumed") == 2 and stS.get("dispatched") == 0)
+
+print("\n-- Part 2: schema= is forwarded to adapters.call on every task (warden's JSON envelope rides the fan) --")
+SCHEMA = {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}
+_rec.calls.clear()
+lane_balance.bulk_delegate(["e0", "e1"], "myintent", schema=SCHEMA)
+fails += ck("Part2: bulk_delegate forwards schema= to adapters.call on every task",
+            bool(_rec.calls) and all(c["schema"] is SCHEMA for c in _rec.calls))
+_rec.calls.clear()
+lane_balance.bulk_delegate(["e2"], "myintent")                 # no schema → schema=None reaches the call (default)
+fails += ck("Part2: default (no schema) forwards schema=None", all(c["schema"] is None for c in _rec.calls))
+
+print("\n-- Part 1: a RESERVED lane (self-use cap reached) gets NO discretionary bulk work (_bulk_arms path) --")
+lane_economics.prompt_lane_reserved = lambda lane: lane == "codex"    # codex's prompt budget is held for real coding
+_rec.calls.clear()
+resR = lane_balance.bulk_delegate(["r0", "r1", "r2", "r3"], "myintent")
+fails += ck("Part1: no task ran on the reserved lane (codex)",
+            all(r.get("lane") != "codex" for r in resR) and all("codex" not in (c["model"] or "") for c in _rec.calls))
+fails += ck("Part1: work still runs on the un-reserved lane (gemini)", all(r.get("text") for r in resR))
+lane_economics.prompt_lane_reserved = lambda lane: True               # EVERY lane reserved → fail closed, never ride one
+resAll = lane_balance.bulk_delegate(["z0", "z1"], "myintent")
+fails += ck("Part1: all lanes reserved → error rows (never rides a reserved lane, never widens)",
+            all(r.get("error") and "reserved" in r["error"] and not r.get("text") for r in resAll))
+lane_economics.prompt_lane_reserved = lambda lane: False
+
+print("\n-- Part 1 (the reported case): tier='cheap' fan must NOT ride a reserved protected lane --")
+lane_catalog.lanes = lambda: ["gemini", "codex", "claude-code"]
+lane_catalog.lane_model_for_tier = lambda ln, tier: {"gemini": "g-cheap", "codex": "gpt-cheap", "claude-code": "haiku"}.get(ln)
+lane_catalog.lane_provider = lambda l: {"gemini": "gemini", "codex": "openai", "claude-code": "anthropic"}.get(l)
+adapters._lane_cooling = lambda ln: False
+lane_economics.prompt_lane_reserved = lambda ln: ln == "claude-code"   # policy:protect, ahead of pace, fee at risk
+_rec.calls.clear()
+resT = lane_balance.bulk_delegate(["c0", "c1", "c2", "c3"], "myintent", tier="cheap")
+fails += ck("Part1: tier='cheap' fan does NOT ride the reserved claude-code lane (nor its haiku model)",
+            all(r.get("lane") != "claude-code" for r in resT) and all("haiku" not in (c["model"] or "") for c in _rec.calls))
+fails += ck("Part1: tier fan still runs on the un-reserved cheap lanes", all(r.get("text") for r in resT))
+lane_economics.prompt_lane_reserved = lambda ln: False
+
+print("\n-- Part 2: delegate with a schema SKIPS the text-only lane bandit (adapters.call handles the shape) --")
+_bandit_hits = []
+_orig_bandit, _orig_util, _orig_cfg = lane_bandit.bandit_call, lane_balance.lane_utilization, lane_balance.config._cfg_get
+lane_bandit.bandit_call = lambda *a, **k: (_bandit_hits.append(1), {"text": "b", "lane": "gemini", "use_name": "g"})[1]
+lane_balance.lane_utilization = lambda: {"lanes": []}                  # keep the post-bandit path trivial (no viable → error)
+lane_balance.config._cfg_get = lambda s, k, d=None: ("on" if (s, k) == ("advisor", "lane_bandit") else _orig_cfg(s, k, d))
+lane_balance.delegate("t", intent="myintent", schema={"type": "object"})
+fails += ck("Part2: delegate WITH schema skips the text-only bandit", not _bandit_hits)
+lane_balance.delegate("t", intent="myintent")                         # no schema → bandit path is used
+fails += ck("Part2: delegate WITHOUT schema uses the bandit", bool(_bandit_hits))
+lane_bandit.bandit_call, lane_balance.lane_utilization, lane_balance.config._cfg_get = _orig_bandit, _orig_util, _orig_cfg
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_bulk_delegate: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)
