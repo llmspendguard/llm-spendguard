@@ -2020,6 +2020,20 @@ def _cli(cmd="status", live=False):
                   f"  (>{bulkgate.preview_max()} reqs needs fresh estimate+test; SPENDGUARD_ENFORCE=off|warn|block)")
         except Exception:
             pass
+        try:                                          # DEAD bandit-list entries — a name matching NO recorded intent
+            from . import lane_balance                #   protects/selects nothing (axis-4: absence read as success)
+            for _lk, _cov in (lane_balance.bandit_list_coverage() or {}).items():
+                if not _cov.get("read_ok"):           # a ledger read failure is not 'all fine' AND not 'all unmatched'
+                    print(f"  ? advisor.{_lk}: could not check entries (calls ledger unreadable) — not 'all fine'")
+                    continue
+                _un = _cov.get("unmatched") or []
+                if _un:
+                    print(f"  🟡 advisor.{_lk}: {len(_un)} entr{'y' if len(_un) == 1 else 'ies'} match NO recorded "
+                          f"intent — {', '.join(_un)}  (a typo, a stale name, or an intent not yet run — verify)")
+                else:
+                    print(f"  🟢 advisor.{_lk}: all {len(_cov.get('entries') or [])} entries match a recorded intent")
+        except Exception:
+            pass
         # AN UNPRICED ADVISOR MODEL IS A BROKEN CAP, and config.validate_advisor() has said so since it was
         # written — to nobody, because nothing called it. If either advisor model is missing from pricing.py
         # the meta ESTIMATE cannot be computed, so the meta cap has nothing to compare against and the

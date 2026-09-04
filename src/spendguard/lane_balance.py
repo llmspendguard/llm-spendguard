@@ -567,6 +567,36 @@ def _intent_listed(intent, entries):
     return False
 
 
+def bandit_list_coverage():
+    """Which bandit allow/deny-list entries are UNMATCHED — they match NO intent recorded in the calls ledger. This
+    is a FACT, not a verdict: the determination runs the SAME _intent_listed the router uses (exact / trailing ':'
+    or '*' prefix) against the DISTINCT recorded intents, so an unmatched entry is one the router would never act on
+    given what has actually been seen. It may be a typo, a stale name, OR an intent not yet run — which of those is
+    for the operator to judge; the guard's job is only to make the absence VISIBLE (two unmatched denylist entries
+    once sat in a live config and nothing said so — axis-4). {list_key: {entries, unmatched, seen_n, read_ok}} per
+    configured list; unmatched is None when the ledger could not be read. Read-only, $0 — surfaced by `spendguard doctor`."""
+    import sqlite3
+    seen, read_ok = [], True
+    try:
+        con = sqlite3.connect(config.db_path(), timeout=10)
+        seen = [r[0] for r in con.execute(
+            "SELECT DISTINCT intent FROM calls WHERE intent IS NOT NULL AND intent != ''").fetchall()]
+        con.close()
+    except sqlite3.Error:
+        # ONLY a sqlite read failure is handled here (a config deliberate-stop from db_path() propagates). A read
+        # FAILURE is not "no intents recorded" — flagging every entry DEAD then would cry wolf. 'cannot tell' !=
+        # 'all dead': report read_ok=False, dead=None, and let the surface say "could not check", not invent a finding.
+        read_ok = False
+    out = {}
+    for key in ("bandit_denylist", "bandit_intents"):
+        entries = list(config._cfg_get("advisor", key, None) or [])
+        if not entries:
+            continue
+        out[key] = {"entries": entries, "seen_n": len(seen), "read_ok": read_ok,
+                    "unmatched": ([e for e in entries if not any(_intent_listed(it, [e]) for it in seen)] if read_ok else None)}
+    return out
+
+
 def route_decision(intent, model, reactive=False):
     """(substitute_spec or None, why) — the routing brain, PURE (registry + utilisation only, no LLM; the agentic
     proposer fills the registry separately). Default OFF: an intent with no CONFIRMED substitute yields (None, …), so
