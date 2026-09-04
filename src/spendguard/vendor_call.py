@@ -310,8 +310,8 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
             raise BadBound(
                 f"{vendor}/{model}: deadline_s={float(deadline_s):.0f}s is below the measured p95 of "
                 f"{_need:.0f}s for this call-class (n={_lat.get('n')}). The call would be abandoned after "
-                f"the input was already billed. Omit it and use "
-                f"vendor_call.time_budget({vendor!r}, {model!r}, sig=...), or pass a number above the "
+                f"the input was already billed. Omit it and size it from the PUBLIC advisor "
+                f"adapters.deadline_for({model!r}, intent=..., in_chars=...), or pass a number above the "
                 f"measurement deliberately.")
     except BadBound:
         raise

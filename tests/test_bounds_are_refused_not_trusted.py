@@ -106,8 +106,8 @@ try:
     check("a deadline below the measured p95 is REFUSED", False, "the call went through")
 except vc.BadBound as e:
     check("a deadline below the measured p95 is REFUSED", True)
-    check("...and it names the measured number and the remedy",
-          "90s" in str(e) and "time_budget" in str(e), str(e)[:100])
+    check("...and it names the measured number and the PUBLIC remedy (adapters.deadline_for, not the internal)",
+          "90s" in str(e) and "deadline_for" in str(e), str(e)[:100])
 check("nothing was SENT for an under-budgeted call", not sent)
 
 for _ in range(30):                       # the sig also needs an output-cap measurement, or call() stops

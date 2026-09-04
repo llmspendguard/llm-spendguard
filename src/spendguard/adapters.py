@@ -384,6 +384,28 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     return r
 
 
+def deadline_for(model, intent=None, in_chars=None, default_s=None):
+    """PUBLIC deadline advisor — how many seconds a call should be ALLOWED to take, sized from MEASURED latency
+    (never a hardcoded number). Returns (seconds, basis): `seconds` is a proposed deadline you pass as timeout_s;
+    `basis` names where it came from — 'measured:class(n=…)' / 'measured:model(n=…)' / 'caller' / 'lane-floor' /
+    'unknown'. `seconds` is None with basis 'unknown' when there is not yet enough measurement (>= 5 obs) — answer
+    that with your own default_s rather than have a guess invented for you. Clamped to [DEADLINE_FLOOR_S,
+    DEADLINE_CEIL_S] (30s..1800s) and floored to a lane's minimum when a $0 lane serves the vendor.
+
+    This is the ONE public door onto the internal sizing (vendor_call.time_budget), so a consumer never imports
+    that internal: pass the model (a bare id or 'provider:model'), the job `intent`, and the input size in chars;
+    the vendor and call-class are derived here. Read-only, $0 — no model call. NOTE: adapters.call and crossllm.ask
+    already APPLY this sizing transitively — use this only to SIZE a deadline you pass yourself (e.g. a Batch submit)."""
+    try:
+        from . import vendor_call
+        prov = model.split(":", 1)[0] if ":" in model else provider_for(model)
+        mid = model.split(":", 1)[1] if ":" in model else model
+        sig = vendor_call.class_sig(mid, intent) if intent else None
+        return vendor_call.time_budget(prov, mid, sig=sig, default_s=default_s, in_chars=in_chars)
+    except Exception:
+        return (float(default_s), "caller") if default_s else (None, "unknown")
+
+
 def was_substituted(result):
     """True if a DIFFERENT model answered this call than was requested — a lane-bandit or confirmed-substitute swap.
     The provenance is `result['substituted_from']` (the model you asked for); `result['model']` is who answered."""
