@@ -304,9 +304,34 @@ def _row_succeeded(row):
     return bool(row) and bool(row.get("text")) and not row.get("error")
 
 
+def _arity_checked(row, task, expect_ids):
+    """ITEM COMPLETENESS (arity) — the one check the per-item shape validator CANNOT do, applied identically to the
+    LANE and the vision(API) runners so ONE contract governs both (no drift). A PACKED envelope that is shape-perfect
+    but silently DROPS ids (measured ~7% on packed batches) would otherwise be accepted as a success and its missing
+    items lost forever. When the caller declares the ids a task expects, verify the id SET: an INCOMPLETE envelope
+    becomes a MISS (error row, text cleared) so checkpoint/resume RE-RUNS it and it is NEVER counted done — exactly
+    like an off-shape reply. check_envelope counts ids (FORMAT), never judges meaning. Fail CLOSED: a check that
+    itself errors marks the row an error (retried, visible), never a swallowed success."""
+    if not (expect_ids and _row_succeeded(row)):
+        return row
+    try:
+        from . import output_contract
+        _exp = expect_ids(task) if callable(expect_ids) else expect_ids
+        if _exp:
+            _ok, _det = output_contract.check_envelope(row["text"], _exp)
+            if not _ok:
+                return {**row, "text": None, "arity_miss": _det,
+                        "error": f"envelope INCOMPLETE: {_det['n_got']}/{_det['n_expected']} ids "
+                                 f"({_det['reason']}) — retried, not silently accepted"}
+    except Exception as _ae:
+        return {**row, "text": None,
+                "error": f"completeness check errored ({type(_ae).__name__}: {str(_ae)[:60]}) — not counted done"}
+    return row
+
+
 def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, deadline_s=120.0,
                   checkpoint=None, chunk_size=100, refuse_billed=False, stats=None, force=False, tier=None,
-                  schema=None, expect_ids=None, gate_sig=None, lanes=None):
+                  schema=None, expect_ids=None, gate_sig=None, lanes=None, images_for=None, vision_model=None):
     """Fan a LIST of similar tasks across ALL viable idle lanes CONCURRENTLY — the right shape for a BULK job (e.g.
     symgrep's ~6k one-sentence symbol descriptions) that the per-call bandit would trickle one at a time. Each task
     runs on a lane (round-robin across the lanes the bandit rates GOOD for this intent), each admission BOUNDED by
@@ -340,6 +365,14 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
     interactive one) — the same `lanes=` `_bulk_arms` and the tier path already accept, forwarded so a caller can
     say "fan across codex+gemini+zai, never claude-code" without mutating advisor.delegate_lanes. None = every
     delegate lane. A lane named here that is reserved/cooling still drops out (fail-closed), never widened past.
+
+    `images_for` + `vision_model` fan a BULK VISION job across the metered API instead of lanes — the lane executors
+    are text-only CLIs with no image channel (the exact trap behind a labeler that cold-400'd). Pass `images_for` =
+    a callable (task → the image path(s)/data-URL(s) that task labels) or a single image list (all tasks), and
+    `vision_model` = a vision-capable API model (e.g. 'openai:gpt-5-nano', 'gemini:gemini-3-flash'). Every task then
+    rides adapters.call(images=…) on that model — governed, checkpointed/resumed, refuse-billed and arity-checked by
+    the SAME durable core as the lane fan, just a different per-task runner. lanes/tier/arms do not apply (vision
+    never rides a lane); vision_model is REQUIRED when images_for is set (else every task errors, re-runnable).
 
     `gate_sig` carries the bulk gate onto the LANE path (a lane runs a CLI subprocess, so the SDK-patch gate never
     fires — lane bulk was otherwise ungoverned). A genuinely-bulk fan (>= bulkgate.preview_max) is subject to the
@@ -407,7 +440,17 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
     # gpt-5.6-luna + claude-code's haiku + zai's glm), never a premium model for cheap work. FAIL-CLOSED: no lane
     # serves the group (undeclared, its models on no lane), or all serving it are cooling → EVERY task errors
     # (undescribed, re-runnable); we never widen off-tier and never fall onto a strong/Opus lane.
-    if tier:
+    # VISION fans across the metered API, not lanes (the lane executors are text-only CLIs). When images_for is set,
+    # each task's image(s) ride adapters.call(images=…) on vision_model via a different per-task runner (below);
+    # arms stay None (no lane picked) and the lane-only tier/reserved machinery is skipped.
+    _vision = images_for is not None
+    if _vision and not vision_model:
+        return [{"text": None, "lane": None, "use_name": None, "billed": False, "reason": "no_vision_model",
+                 "error": "bulk_delegate(images_for=…) needs vision_model=… (a vision-capable API model); the "
+                          "subscription lanes are text-only, so bulk vision fans across the metered API"} for _ in tasks]
+    if _vision:
+        arms = None
+    elif tier:
         arms = [(ln, m) for ln in (lanes or lane_catalog.lanes())
                 if (m := lane_catalog.lane_model_for_tier(ln, tier)) and not adapters._lane_cooling(ln)]
         if not arms:
@@ -422,20 +465,21 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
             return [{"text": None, "lane": None, "use_name": None, "billed": False,
                      "error": "no viable lane (set advisor.lane_models; check `spendguard lanes`)"} for _ in tasks]
 
-    # RESERVED-LANE GUARD — the SAME reservation idle_lanes() and route_decision() already honor, applied here too
-    # (bulk_delegate was the one router that skipped it). A prompt-metered lane whose SELF-USE cap is reached keeps
-    # its stops-dead budget for real coding, so it must not take DISCRETIONARY bulk overflow — and the tier= path
-    # draws from lane_catalog.lanes(), which would otherwise ride a protected lane's cheap model. Filter in ONE
-    # place so BOTH the tier path and _bulk_arms honor it; fail closed (error rows, never widen onto a reserved lane).
-    from . import lane_economics
-    _reserved = sorted({a[0] for a in arms if lane_economics.prompt_lane_reserved(a[0])})
-    if _reserved:
-        arms = [a for a in arms if a[0] not in _reserved]
-        if not arms:
-            return [{"text": None, "lane": None, "use_name": None, "billed": False,
-                     "error": f"every viable lane is reserved ({', '.join(_reserved)}: self-use cap reached — its "
-                              f"prompt budget is held for real coding, not discretionary bulk). Re-run when a lane "
-                              f"frees up, or widen advisor.delegate_lanes."} for _ in tasks]
+    if not _vision:
+        # RESERVED-LANE GUARD — the SAME reservation idle_lanes() and route_decision() already honor, applied here
+        # too (bulk_delegate was the one router that skipped it). A prompt-metered lane whose SELF-USE cap is reached
+        # keeps its stops-dead budget for real coding, so it must not take DISCRETIONARY bulk overflow — and the
+        # tier= path draws from lane_catalog.lanes(), which would otherwise ride a protected lane's cheap model.
+        # Filter in ONE place so BOTH tier and _bulk_arms honor it; fail closed (error rows, never widen onto one).
+        from . import lane_economics
+        _reserved = sorted({a[0] for a in arms if lane_economics.prompt_lane_reserved(a[0])})
+        if _reserved:
+            arms = [a for a in arms if a[0] not in _reserved]
+            if not arms:
+                return [{"text": None, "lane": None, "use_name": None, "billed": False,
+                         "error": f"every viable lane is reserved ({', '.join(_reserved)}: self-use cap reached — "
+                                  f"its prompt budget is held for real coding, not discretionary bulk). Re-run when "
+                                  f"a lane frees up, or widen advisor.delegate_lanes."} for _ in tasks]
 
     import hashlib as _hl
 
@@ -497,7 +541,61 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
 
     n = int(max_workers or dispatch._limit("global_concurrency", 24))
 
+    _MAX_IMAGE_BYTES = 32 * 1024 * 1024               # bound raw image bytes so a giant file is a LOUD row, not an OOM
+    from . import gate as _gate
+    _STOP_TYPES = tuple(_gate.deliberate_stop_types())  # includes DispatchTimeout — fail CLOSED (no degrading fallback)
+
+    def _image_too_big(imgs):
+        # size BEFORE load: a data: URL by its string length, a path by its file size. Returns (reason_code, message)
+        # so callers branch on the CODE (structured), not free-form text — an image that would OOM fails loud and
+        # re-runnable instead. None when every image is within cap.
+        for im in imgs:
+            try:
+                sz = len(im) if (isinstance(im, str) and im.startswith("data:")) else _os.path.getsize(im)
+            except Exception as e:
+                return ("image_unreadable", f"image unreadable ({type(e).__name__}: {str(e)[:50]})")
+            if sz > _MAX_IMAGE_BYTES:
+                return ("image_too_big", f"image {sz // 1024}KB exceeds {_MAX_IMAGE_BYTES // 1024}KB cap — downscale first")
+        return None
+
+    def _run_task_on_api(i, task):
+        # VISION (images_for) task: ride the metered API on vision_model — the lanes have no image channel — governed
+        # like a lane slot (dispatch), with the SAME arity/shape handling. images_for(task) → the image(s) to label.
+        _raw = vision_model.split(":", 1)[1] if ":" in vision_model else vision_model
+        _imgs = list(images_for(task) if callable(images_for) else (images_for or []))
+        _b = {"text": None, "lane": "api", "use_name": _raw, "model": vision_model, "billed": False}
+        if not _imgs:
+            return i, {**_b, "reason": "no_image", "error": "images_for returned empty — a vision task needs an image"}
+        _big = _image_too_big(_imgs)
+        if _big:
+            return i, {**_b, "reason": _big[0], "error": _big[1]}
+        _prov = adapters.provider_for(vision_model)
+        try:
+            dispatch.acquire(_prov, _raw, deadline_s)   # governor: bound in-flight vision calls, like the lane path
+        except _STOP_TYPES:
+            raise                                       # a DELIBERATE stop (deadline/refusal) halts — never a per-task row
+        except Exception as e:
+            return i, {**_b, "reason": "dispatch", "error": f"dispatch: {str(e)[:60]}"}
+        try:
+            calls.set_context(intent=intent)            # tag this worker's calls with the intent (attribution)
+            r = adapters.call(vision_model, task, system=system, reasoning=reasoning, sig=intent,
+                              timeout_s=deadline_s, no_metered_fallback=refuse_billed, schema=schema,
+                              images=_imgs, no_substitution=True)   # NAMED vision model — never swap it
+        except _STOP_TYPES:
+            raise
+        except Exception as e:
+            return i, {**_b, "reason": "call_raised", "error": str(e)[:80]}
+        finally:
+            dispatch.release(_prov, _raw)
+        r = r if isinstance(r, dict) else {}
+        _sp, _sm = r.get("provider") or _prov, r.get("model") or _raw
+        row = {"text": (r.get("text") or None), "lane": r.get("executor") or "api", "use_name": _sm,
+               "model": f"{_sp}:{_sm}", "billed": bool(r.get("cost")), "error": r.get("error")}
+        return i, _arity_checked(row, task, expect_ids)
+
     def _run_task_on_lane(i, task):
+        if _vision:                                    # vision fans across the API (lanes are text-only) — same core
+            return _run_task_on_api(i, task)
         lane, use_name = arms[i % len(arms)]          # round-robin — spread across the good lanes for parallelism
         # A lane can start COOLING mid-run (an earlier task hit its quota → persisted reset window). `arms` was
         # fixed at the start, so round-robin would keep landing work here; rotate to the next arm that is not
@@ -548,29 +646,9 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
         if r.get("substituted_from") and f"{served_prov}:{served_model}" != f"{prov}:{use_name}":
             row["intended"] = f"{prov}:{use_name}"           # what the round-robin picked, before the substitution
             row["substituted_from"] = r["substituted_from"]
-        # ITEM COMPLETENESS (arity) — the one check the per-item shape validator CANNOT do. A PACKED envelope that is
-        # shape-perfect but silently DROPS ids (measured ~7% on packed batches) would otherwise be accepted as a $0
-        # lane success and its missing items lost forever. When the caller declares the ids a task expects, verify the
-        # id SET here: an INCOMPLETE envelope becomes a MISS (error row, text cleared), so the checkpoint/resume
-        # RE-RUNS it and it is NEVER counted done — exactly like an off-shape reply. check_envelope counts ids
-        # (FORMAT), never judges meaning. Best-effort: a validator that itself errors never fails a genuine answer.
-        if expect_ids and _row_succeeded(row):
-            try:
-                from . import output_contract
-                _exp = expect_ids(task) if callable(expect_ids) else expect_ids
-                if _exp:
-                    _ok, _det = output_contract.check_envelope(row["text"], _exp)
-                    if not _ok:
-                        row = {**row, "text": None, "arity_miss": _det,
-                               "error": f"envelope INCOMPLETE: {_det['n_got']}/{_det['n_expected']} ids "
-                                        f"({_det['reason']}) — retried, not silently accepted"}
-            except Exception as _ae:
-                # the completeness check could not be EVALUATED (a broken expect_ids callback, or worse) — an
-                # UNVALIDATED unit must NOT read as a clean success, or the checkpoint counts it done. Fail CLOSED:
-                # mark it an error so it is retried and the failure is VISIBLE, never swallowed.
-                row = {**row, "text": None,
-                       "error": f"completeness check errored ({type(_ae).__name__}: {str(_ae)[:60]}) — not counted done"}
-        return i, row
+        # ITEM COMPLETENESS (arity): a shape-perfect packed envelope that silently DROPPED ids becomes a retried MISS,
+        # never a $0 success with items lost. One shared contract with the vision runner (_arity_checked).
+        return i, _arity_checked(row, task, expect_ids)
 
     # CHUNKED: bound how many futures are in flight at once, and make each chunk's results durable before the next.
     for c0 in range(0, len(todo), max(1, int(chunk_size))):

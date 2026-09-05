@@ -138,6 +138,118 @@ def _tool_bakeoff(args):
     return _bk.bakeoff(run=True, budget_usd=float(budget), **kw)
 
 
+_VISION_OUT_EST = 1024                        # conservative default OUTPUT tokens for a label envelope (override: max_out_tokens)
+_VISION_TIMEOUT_S = 120                        # default per-call deadline so a hung request cannot wedge the tool (override: timeout_s)
+_VISION_MAX_TOTAL_IMAGE_BYTES = 48 * 1024 * 1024   # bound TOTAL image bytes per call so a giant batch can't OOM the server
+
+
+def _image_bytes(images):
+    """Total raw bytes of the images (a data: URL by string length, a path by file size), or (None, reason) NAMING
+    the first unreadable one. Sized WITHOUT loading pixels, so an oversized batch is refused before it can OOM."""
+    import os
+    total = 0
+    for idx, im in enumerate(images):
+        try:
+            total += len(im) if (isinstance(im, str) and im.startswith("data:")) else os.path.getsize(im)
+        except Exception as e:
+            return None, f"image[{idx}] unreadable ({type(e).__name__}: {str(e)[:60]})"
+    return total, None
+
+
+def _vision_cache_paths(model, prompt, images, schema, system):
+    """The DURABLE cache location for one vision request, keyed by CONTENT (sha256 of the exact request). A paid
+    result is written here before it returns, so a crash after spend does not lose it and an identical re-request
+    is served from disk for $0 instead of re-paying — the same idempotence the bulk fan gets from its checkpoint."""
+    import hashlib
+    import json as _json
+    import os
+    home = os.environ.get("SPENDGUARD_HOME") or os.path.expanduser("~/.spendguard")
+    key = hashlib.sha256(("\x00".join([str(model), str(prompt), _json.dumps(images, sort_keys=True, default=str),
+                                        _json.dumps(schema, sort_keys=True, default=str), str(system)]))
+                         .encode("utf-8", "replace")).hexdigest()[:32]
+    d = os.path.join(home, "vision_cache")
+    return d, os.path.join(d, key + ".json")
+
+
+def _tool_vision(args):
+    """Run ONE metered VISION call (image(s) + prompt) through the governed adapter. The subscription lanes are
+    text-only CLIs, so a vision request rides the metered API (executor='api'), pixel-priced, and is bounded by a
+    per-call deadline so a hung request cannot wedge the tool. Estimate-first: with NO budget_usd it returns ONLY
+    the estimate (0 spend); pass budget_usd to actually run (refused if the estimate exceeds it). DURABLE +
+    idempotent: a paid result is cached by request content (atomic fsync), so a crash after spend does not lose it
+    and an identical re-request is served for $0 (pass no_cache=true to force fresh). A dynamic-key MAP schema is
+    refused BEFORE any spend (strict → {}); total image bytes are capped before load."""
+    import spendguard
+    spendguard.require()                     # real spend → fail closed if the gate is not enforcing here
+    import json as _json
+    import os
+    from . import adapters, pricing
+    model, prompt = args.get("model"), args.get("prompt")
+    images = args.get("images") or []
+    schema = args.get("schema") if isinstance(args.get("schema"), dict) else None
+    system = args.get("system")
+    if not model or not prompt:
+        return {"error": "model and prompt are required"}
+    if not images:
+        return {"error": "images must be a non-empty list of file paths or data: URLs — a vision call needs an image"}
+    # SCHEMA guard BEFORE any spend: a dynamic-key map collapses to {} under OpenAI strict mode
+    if schema is not None:
+        _v = adapters.strict_map_violation(schema)
+        if _v and adapters.provider_for(model) == "openai":
+            return {"error": f"schema at {_v} is a dynamic-key map; OpenAI strict mode would return {{}} — use an "
+                             f"ARRAY of {{key,value}} objects (e.g. results:[{{id,label}}])"}
+    # DURABLE cache: an identical prior request is served for $0 (idempotent), and this is where a paid result lands
+    cache_dir, cache_path = _vision_cache_paths(model, prompt, images, schema, system)
+    if not args.get("no_cache") and os.path.exists(cache_path):
+        try:
+            with open(cache_path) as f:
+                return {**_json.load(f), "cached": True}
+        except Exception:
+            pass                             # a corrupt cache line must not block a real call — fall through and re-run
+    # SIZE guard BEFORE load (bytes only, no pixels) so an oversized batch is a loud refusal, never an OOM
+    total_bytes, bad = _image_bytes(images)
+    if bad:
+        return {"error": bad}
+    if total_bytes > _VISION_MAX_TOTAL_IMAGE_BYTES:
+        return {"error": f"images total {total_bytes // 1024}KB exceeds the {_VISION_MAX_TOTAL_IMAGE_BYTES // 1024}KB "
+                         f"per-call cap — send fewer/smaller images or downscale"}
+    # 0-spend ESTIMATE (pixel-priced input + a conservative output)
+    try:
+        prov = adapters.provider_for(model)
+        raw = model.split(":", 1)[1] if ":" in model else model
+        loaded = [adapters._load_image(i) for i in images]
+    except Exception as e:
+        return {"error": f"could not load an image ({type(e).__name__}: {str(e)[:80]})"}
+    in_tok = adapters._image_input_tokens(loaded, prov, raw) + (len(prompt) + len(system or "")) // 4
+    out_est = int(args.get("max_out_tokens") or _VISION_OUT_EST)
+    est = pricing.cost_or_unpriced(model, in_tok, out_est, batch=False, provider=prov)
+    budget = args.get("budget_usd")
+    if budget is None:                       # no budget → NEVER auto-spends; a vision call bills the metered API
+        return {"estimate_usd": round(est, 6), "in_tok_est": in_tok, "out_tok_est": out_est, "n_images": len(images),
+                "note": "estimate only — pass budget_usd to actually RUN this metered vision call (executor='api')."}
+    if est > float(budget):
+        return {"error": f"refused: estimate ${est:.4f} exceeds budget_usd ${float(budget):.4f}", "estimate_usd": round(est, 6)}
+    r = adapters.vision(model, prompt, images, schema=schema, system=system, sig="mcp-vision",
+                        timeout_s=int(args.get("timeout_s") or _VISION_TIMEOUT_S))   # bounded: a hung call cannot wedge
+    out = {"text": r.get("text"), "cost": r.get("cost"), "executor": r.get("executor"), "error": r.get("error"),
+           "in_tok": r.get("in_tok"), "out_tok": r.get("out_tok"), "estimate_usd": round(est, 6)}
+    if not r.get("error") and r.get("text") is not None:   # persist the PAID result so a crash cannot lose it
+        try:
+            os.makedirs(cache_dir, exist_ok=True)
+            tmp = cache_path + ".tmp"
+            with open(tmp, "w") as f:
+                # raw-write-ok: disposable content-keyed cache entry, write-once and atomic (os.replace below).
+                # A cache file has NO prior version to preserve, so config.update_json's backup discipline is moot;
+                # a stale/corrupt entry is self-healing (the reader falls through and re-runs).
+                _json.dump(out, f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, cache_path)       # atomic: a reader never sees a half-written cache entry
+        except Exception:
+            pass                              # a cache-write failure must not lose the in-hand paid result
+    return out
+
+
 # ── Claude Code spend + compaction tools (read-only, $0). spendguard's own functions PRINT human text, which would
 #    corrupt JSON-RPC on stdout — so any handler that calls one wraps it in redirect_stdout(). ─────────────────────
 def _cc_db():
@@ -297,6 +409,25 @@ _TOOLS = {
             "budget_usd": {"type": "number", "description": "run only if the estimate fits this; OMIT to get just the estimate"}},
          "additionalProperties": False},
         _tool_bakeoff),
+    "spendguard_vision": (
+        "Run ONE metered VISION call (image(s) + prompt) through spendguard's governed adapter. The subscription "
+        "lanes are text-only CLIs, so vision rides the metered API (executor='api'), pixel-priced and bounded by a "
+        "deadline. Estimate-first: with NO budget_usd it returns ONLY the estimate ($0); pass budget_usd to run "
+        "(refused over it). A dynamic-key MAP schema is refused before any spend (strict mode empties it to {} — "
+        "use an ARRAY of {key,value}); paid results are cached by request content, so an identical re-request is $0.",
+        {"type": "object", "properties": {
+            "model": {"type": "string", "description": "vision-capable model 'vendor:model' (e.g. 'openai:gpt-5-nano', 'gemini:gemini-3-flash')"},
+            "prompt": {"type": "string", "description": "the instruction — what to label/extract from the image(s)"},
+            "images": {"type": "array", "items": {"type": "string"},
+                       "description": "non-empty list of file paths (server-side) or data: URLs"},
+            "schema": {"type": "object", "description": "optional JSON Schema for structured output — use an ARRAY of {key,value}, NEVER a dynamic-key map"},
+            "system": {"type": "string", "description": "optional system instruction"},
+            "budget_usd": {"type": "number", "description": "run only if the estimate fits this; OMIT to get just the estimate (0 spend)"},
+            "max_out_tokens": {"type": "integer", "description": "optional output-token estimate for the pre-spend cost estimate"},
+            "no_cache": {"type": "boolean", "description": "force a fresh call instead of returning a cached identical result"},
+            "timeout_s": {"type": "integer", "description": "optional per-call deadline in seconds (default 120)"}},
+         "required": ["model", "prompt", "images"], "additionalProperties": False},
+        _tool_vision),
     "spendguard_spend_overview": (
         "The headline for THIS account: REAL $ out the door (subscription base + Claude Code overage + API "
         "credits) shown SEPARATELY from est-value (plan-covered Claude Code usage, what it's worth at API "

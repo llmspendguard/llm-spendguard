@@ -197,6 +197,38 @@ def _lane_for(prov):
         return None
 
 
+class SchemaNotStrictExpressible(ValueError):
+    """A JSON Schema OpenAI strict mode cannot express without SILENTLY emptying it — surfaced as a loud, typed
+    error instead of the {} it would otherwise return. Carries `.path` (where the offending map is)."""
+
+    def __init__(self, message, path=None):
+        super().__init__(message)
+        self.path = path
+
+
+def strict_map_violation(schema, _path="$"):
+    """The first path where an object uses a DYNAMIC-KEY MAP (`additionalProperties` set to a sub-SCHEMA, i.e. a
+    dict) — or None if the schema is strict-expressible. OpenAI strict mode forces additionalProperties=false and
+    `required`=every DECLARED property (_openai_strict); a map declares none, so strict collapses it to the only
+    value left: {}. The model then 'correctly' returns an empty object and no error fires. This is PARSING the
+    schema's SHAPE (additionalProperties being a dict is a fixed structural fact), never judging meaning — so a
+    literal shape check is right here, not an LLM. `additionalProperties: false`/absent is fine (not a map)."""
+    if not isinstance(schema, dict):
+        return None
+    if schema.get("type") == "object" and isinstance(schema.get("additionalProperties"), dict):
+        return _path
+    for k, v in (schema.get("properties") or {}).items():
+        hit = strict_map_violation(v, "%s.%s" % (_path, k))
+        if hit:
+            return hit
+    items = schema.get("items")
+    if isinstance(items, dict):
+        hit = strict_map_violation(items, "%s[]" % _path)
+        if hit:
+            return hit
+    return None
+
+
 def json_schema_request(kind, schema, name="result"):
     """Per-vendor kwargs that make the VENDOR enforce the shape, instead of a prompt asking politely.
 
@@ -223,6 +255,13 @@ def json_schema_request(kind, schema, name="result"):
                           ],
                 "tool_choice": {"type": "tool", "name": name}}
     if kind == "openai":
+        _v = strict_map_violation(schema)
+        if _v:
+            raise SchemaNotStrictExpressible(
+                "schema at %s is a dynamic-key MAP (additionalProperties: <schema>). OpenAI strict mode forces "
+                "additionalProperties=false + required=every declared property, so a map has no allowed keys and "
+                "the model returns {} with NO error. Restructure it as an ARRAY of {key,value} objects "
+                "(e.g. results:[{id,label}], not labels:{<id>:<label>}) — reliable on every vendor." % _v, path=_v)
         return {"response_format": {"type": "json_schema",
                                     "json_schema": {"name": name, "schema": _openai_strict(schema),
                                                     "strict": True}}}
@@ -382,6 +421,38 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                        _no_sub=no_substitution)
     _maybe_credit_advisor(model, r)   # metered substitution to a CHEAPER model → guarded 'advisor' saving (savings tally)
     return r
+
+
+def vision(model, prompt, images, *, schema=None, system=None, sig=None, reasoning=None,
+           max_tokens=None, timeout_s=None, retries=2, no_metered_fallback=False, no_substitution=False):
+    """Run one VISION prompt (image(s) + text) against a vision-capable model — the explicit, discoverable entry
+    for what `call(images=…)` does, so a vision request is never accidentally sent as a text call.
+
+    WHY A NAMED ENTRY. Vision has one non-obvious rule: the subscription LANES are text-only print-mode CLIs
+    (agy/codex/claude-code) with NO image channel, so a vision call must ride the metered API. `call` already does
+    this — an `images=` argument skips the lane by construction (executor='api') and prices each image by PIXELS
+    (content_tokens), not the text tokenizer. But that lived as one kwarg on a long signature, easy to miss: a
+    caller who did not find it embedded the image elsewhere, the request rode a text lane, and the CLI cold-400'd
+    or returned an empty/garbled reply. This entry makes the capability impossible to miss and REFUSES to silently
+    degrade — `images` is required and must be non-empty (a vision call with no image is a bug, not a text call).
+    Each image is a file PATH or a data: URL. NB: `no_substitution` does NOT route a call to the API — only
+    `images` skips the lane; that mix-up (no_substitution as a vision fix) is why this entry exists.
+
+    SCHEMA. Pass `schema` for structured output, but on OpenAI models keep it strict-expressible: a DYNAMIC-KEY MAP
+    (labels:{<id>:<label>}) is collapsed to {} by strict mode and comes back empty — use an ARRAY of {key,value}
+    objects (results:[{id,label}]). `call` refuses such a map with a typed SchemaNotStrictExpressible error rather
+    than returning the empty object, so the failure is loud, not a plausible blank.
+
+    Returns the same result dict as `call` (executor='api'); raises ONLY the empty-images guard."""
+    imgs = list(images or [])
+    if not imgs:
+        raise ValueError(
+            "vision(images=…) requires at least one image (a file path or data: URL). A vision call with no image "
+            "would silently become a TEXT call routed to a text-only lane — the exact failure this entry prevents. "
+            "Use adapters.call(...) for a text-only prompt.")
+    return call(model, prompt, images=imgs, schema=schema, system=system, sig=sig, reasoning=reasoning,
+                max_tokens=max_tokens, timeout_s=timeout_s, retries=retries,
+                no_metered_fallback=no_metered_fallback, no_substitution=no_substitution)
 
 
 def deadline_for(model, intent=None, in_chars=None, default_s=None):
@@ -870,7 +941,10 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             msgs = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": _uc}]
             okw = {"model": raw, "messages": msgs}
             if schema is not None:
-                sk = json_schema_request("openai" if prov == "openai" else "compat", schema)
+                try:
+                    sk = json_schema_request("openai" if prov == "openai" else "compat", schema)
+                except SchemaNotStrictExpressible as _se:   # a map schema strict mode would empty to {} → refuse LOUD
+                    return {**base, "error": str(_se), "error_type": "SchemaNotStrictExpressible", "cost": None}
                 # `_schema_prompt` is OURS, not the provider's — it carries the shape that json_object mode
                 # cannot express. Sending it as an API parameter would 400; it belongs in the system message,
                 # which is the only channel a compat endpoint has for "which JSON".
