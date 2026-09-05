@@ -326,6 +326,71 @@ def ask(prompt, *, vendors=None, n=None, schema=None, system=None, purpose="ask"
     return AskResult(_inject_unmet(fan, unmet), mode, estimate=estimate)
 
 
+_ASK_VISION_MAX_TOTAL_IMAGE_BYTES = 48 * 1024 * 1024   # bound total image bytes before load so the estimate can't OOM
+_ASK_VISION_OUT_EST = 1024                             # conservative per-vendor OUTPUT tokens for the estimate
+
+
+def ask_vision(prompt, images, vendors, *, schema=None, system=None, budget_usd=None, checkpoint=None,
+               deadline_s=None, intent="ask-vision", max_out_tokens=None):
+    """Ask N vision models to label the SAME image(s) — a DURABLE cross-vendor panel.
+
+    ask() runs a SYNCHRONOUS fan (fan_out): a crash mid-panel loses every paid result and rerunning re-pays. Vision
+    calls are expensive (pixel-priced), so this panel instead rides bulk_delegate's durable core — each vendor's call
+    is CHECKPOINTED per-vendor (keyed by content+model), so a crash RESUMES without re-paying the vendors that already
+    answered. Each vendor gets the same prompt+image on its own vision model (lanes are text-only → the metered API).
+
+    Estimate-first: with NO budget_usd it returns ONLY the estimate (0 spend); pass budget_usd to run — refused
+    (BudgetRefused, a deliberate stop) BEFORE any spend if the summed estimate exceeds it. `vendors` are
+    vision-capable 'vendor:model' ids (or (vendor,model) tuples). Total image bytes are capped before load.
+
+    Returns {results:[{vendor,text,cost,executor,error}], ok, n, n_ok, complete, estimate_usd} — or the estimate."""
+    import os
+    from . import adapters, pricing, lane_balance
+    vlist = [v if isinstance(v, str) else f"{v[0]}:{v[1]}" for v in (vendors or [])]
+    if not vlist:
+        raise ValueError("ask_vision needs at least one vendor (a vision-capable 'vendor:model')")
+    imgs = list(images or [])
+    if not imgs:
+        raise ValueError("ask_vision needs at least one image (a file path or data: URL)")
+    # SIZE guard BEFORE load (bytes only) so the estimate's image load cannot OOM
+    total = 0
+    for idx, im in enumerate(imgs):
+        try:
+            total += len(im) if (isinstance(im, str) and im.startswith("data:")) else os.path.getsize(im)
+        except Exception as e:
+            raise ValueError(f"image[{idx}] unreadable ({type(e).__name__}: {str(e)[:60]})")
+    if total > _ASK_VISION_MAX_TOTAL_IMAGE_BYTES:
+        raise ValueError(f"images total {total // 1024}KB exceeds the {_ASK_VISION_MAX_TOTAL_IMAGE_BYTES // 1024}KB "
+                         f"cap — send fewer/smaller images")
+    # per-vendor ESTIMATE (image tokens are provider-aware; conservative output)
+    loaded = [adapters._load_image(i) for i in imgs]
+    out_est = int(max_out_tokens or _ASK_VISION_OUT_EST)
+    per, est = [], 0.0
+    for v in vlist:
+        prov = adapters.provider_for(v)
+        raw = v.split(":", 1)[1] if ":" in v else v
+        in_tok = adapters._image_input_tokens(loaded, prov, raw) + (len(prompt) + len(system or "")) // 4
+        c = pricing.cost_or_unpriced(v, in_tok, out_est, batch=False, provider=prov)
+        per.append({"vendor": v, "estimate_usd": round(c, 6)})
+        est += c
+    if budget_usd is None:                       # estimate-first: no budget → never spends
+        return {"estimate_usd": round(est, 6), "per_vendor": per, "n": len(vlist),
+                "note": "estimate only — pass budget_usd to actually RUN the panel (each vendor is a metered vision call)."}
+    if est > float(budget_usd):
+        raise BudgetRefused(est, float(budget_usd), {p["vendor"]: p["estimate_usd"] for p in per})   # deliberate stop, BEFORE any spend
+    # DURABLE panel: one task per vendor (keyed per-vendor via model_for), same prompt+images, checkpointed/resumable
+    rows = lane_balance.bulk_delegate(
+        list(vlist), intent, images_for=lambda t: imgs, model_for=lambda t: t, prompt_for=lambda t: prompt,
+        schema=schema, system=system, checkpoint=checkpoint, chunk_size=max(1, len(vlist)),
+        deadline_s=float(deadline_s or 120.0), force=True)   # budget_usd is the spend gate; force skips the bulk test-gate
+    results = [{"vendor": vlist[i], "text": r.get("text"), "cost": r.get("cost"),
+                "executor": r.get("executor"), "error": r.get("error"), "reason": r.get("reason")}
+               for i, r in enumerate(rows)]
+    ok = [r for r in results if r["text"] and not r["error"]]
+    return {"results": results, "ok": ok, "n": len(vlist), "n_ok": len(ok),
+            "complete": len(ok) == len(vlist), "estimate_usd": round(est, 6)}
+
+
 def cmd(argv=None):
     """`spendguard ask` — run one prompt across models from the shell. Honest by construction: a non-ok vendor
     prints its FAILURE KIND, never text, and the exit code is 0 only when the run is complete."""

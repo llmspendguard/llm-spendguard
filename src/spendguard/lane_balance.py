@@ -331,7 +331,8 @@ def _arity_checked(row, task, expect_ids):
 
 def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, deadline_s=120.0,
                   checkpoint=None, chunk_size=100, refuse_billed=False, stats=None, force=False, tier=None,
-                  schema=None, expect_ids=None, gate_sig=None, lanes=None, images_for=None, vision_model=None):
+                  schema=None, expect_ids=None, gate_sig=None, lanes=None, images_for=None, vision_model=None,
+                  model_for=None, prompt_for=None):
     """Fan a LIST of similar tasks across ALL viable idle lanes CONCURRENTLY — the right shape for a BULK job (e.g.
     symgrep's ~6k one-sentence symbol descriptions) that the per-call bandit would trickle one at a time. Each task
     runs on a lane (round-robin across the lanes the bandit rates GOOD for this intent), each admission BOUNDED by
@@ -444,10 +445,11 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
     # each task's image(s) ride adapters.call(images=…) on vision_model via a different per-task runner (below);
     # arms stay None (no lane picked) and the lane-only tier/reserved machinery is skipped.
     _vision = images_for is not None
-    if _vision and not vision_model:
+    if _vision and not (vision_model or model_for):
         return [{"text": None, "lane": None, "use_name": None, "billed": False, "reason": "no_vision_model",
-                 "error": "bulk_delegate(images_for=…) needs vision_model=… (a vision-capable API model); the "
-                          "subscription lanes are text-only, so bulk vision fans across the metered API"} for _ in tasks]
+                 "error": "bulk_delegate(images_for=…) needs vision_model=… or model_for=… (a vision-capable API "
+                          "model); the subscription lanes are text-only, so bulk vision fans across the metered API"}
+                for _ in tasks]
     if _vision:
         arms = None
     elif tier:
@@ -489,7 +491,12 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
         # saved result can never be mapped onto a different task (a wrong description written into an index is the
         # worst failure class). Two identical tasks share a key (identical result) — correct, not a collision.
         h = _hl.sha256()
-        h.update((str(system) + "\x00" + str(task) + "\x00" + str(intent)).encode("utf-8", "replace"))
+        base = str(system) + "\x00" + str(task) + "\x00" + str(intent)
+        _m = model_for(task) if callable(model_for) else None
+        if _m:                                           # a resolved PER-TASK model (cross-vendor panel) is part of the
+            base += "\x00" + str(_m)                     # identity → two vendors on one task resume as SEPARATE results;
+            #                                              no per-task model (None, or model_for absent) → key unchanged
+        h.update(base.encode("utf-8", "replace"))
         return h.hexdigest()[:24]
 
     _keys = [_content_key(t) for t in tasks]
@@ -559,17 +566,23 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
         return None
 
     def _run_task_on_api(i, task):
-        # VISION (images_for) task: ride the metered API on vision_model — the lanes have no image channel — governed
-        # like a lane slot (dispatch), with the SAME arity/shape handling. images_for(task) → the image(s) to label.
-        _raw = vision_model.split(":", 1)[1] if ":" in vision_model else vision_model
+        # VISION (images_for) task: ride the metered API — the lanes have no image channel — governed like a lane
+        # slot, with the SAME arity/shape handling. model_for(task) gives a PER-TASK model (durable cross-vendor
+        # PANEL), else the single vision_model; prompt_for(task) lets the task be an opaque identity (e.g. a vendor
+        # id, so each vendor is keyed separately) while every task shares the same prompt. images_for(task) → images.
+        _vm = (model_for(task) if callable(model_for) else None) or vision_model
+        _p = prompt_for(task) if callable(prompt_for) else task
+        _raw = _vm.split(":", 1)[1] if (_vm and ":" in _vm) else (_vm or "?")
+        _b = {"text": None, "lane": "api", "use_name": _raw, "model": _vm, "billed": False}
+        if not _vm:
+            return i, {**_b, "reason": "no_vision_model", "error": "model_for returned no model for this task"}
         _imgs = list(images_for(task) if callable(images_for) else (images_for or []))
-        _b = {"text": None, "lane": "api", "use_name": _raw, "model": vision_model, "billed": False}
         if not _imgs:
             return i, {**_b, "reason": "no_image", "error": "images_for returned empty — a vision task needs an image"}
         _big = _image_too_big(_imgs)
         if _big:
             return i, {**_b, "reason": _big[0], "error": _big[1]}
-        _prov = adapters.provider_for(vision_model)
+        _prov = adapters.provider_for(_vm)
         try:
             dispatch.acquire(_prov, _raw, deadline_s)   # governor: bound in-flight vision calls, like the lane path
         except _STOP_TYPES:
@@ -578,7 +591,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
             return i, {**_b, "reason": "dispatch", "error": f"dispatch: {str(e)[:60]}"}
         try:
             calls.set_context(intent=intent)            # tag this worker's calls with the intent (attribution)
-            r = adapters.call(vision_model, task, system=system, reasoning=reasoning, sig=intent,
+            r = adapters.call(_vm, _p, system=system, reasoning=reasoning, sig=intent,
                               timeout_s=deadline_s, no_metered_fallback=refuse_billed, schema=schema,
                               images=_imgs, no_substitution=True)   # NAMED vision model — never swap it
         except _STOP_TYPES:

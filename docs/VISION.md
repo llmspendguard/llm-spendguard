@@ -62,6 +62,27 @@ A governed, estimate-first, idempotent metered vision call:
   deadline-bounded; and a **paid result is cached by request content**, so an identical re-request is `$0`
   (`no_cache: true` forces a fresh call).
 
+## Many vendors, one image — `crossllm.ask_vision` (durable panel)
+
+To label one image across several vision models (consensus / adjudication), use a **durable** panel — not the
+synchronous `crossllm.ask` fan, which loses paid results on a crash:
+
+```python
+from spendguard import crossllm
+panel = crossllm.ask_vision(
+    "Label the defect in this photo.",
+    images=["/path/to/photo.jpg"],
+    vendors=["openai:gpt-5-nano", "gemini:gemini-3-flash", "anthropic:claude-…"],
+    schema=SCHEMA, budget_usd=0.05, checkpoint="panel.jsonl",
+)
+# panel["results"] == [{vendor, text, cost, executor, error}, …]   (one per vendor)
+```
+
+Each vendor's call is **checkpointed per-vendor**, so a crash mid-panel resumes without re-paying the vendors that
+already answered. Estimate-first: omit `budget_usd` to get only the summed estimate (0 spend); with it, the panel is
+refused (`BudgetRefused`, a deliberate stop) before any spend if the estimate exceeds it. Under the hood it is
+`bulk_delegate(images_for=…, model_for=…, prompt_for=…)` — the same durable core, one task per vendor.
+
 ## Schema rule (all paths)
 
 Keep structured-output schemas **strict-expressible**: an ARRAY of `{key,value}` objects, never a dynamic-key map
