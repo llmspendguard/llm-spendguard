@@ -147,11 +147,31 @@ def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget
                           good_rate=(n_good / n_lab if n_lab else None), spent=round(spent, 6),
                           per_good=(spent / n_good if n_good else None))
 
-    from . import advise
+    from . import advise, measurement
+    import time as _time
     ranked = advise.ranked(intent=intent)                          # re-rank now that the candidates have evidence
-    return dict(intent=intent, sample=len(prompts), judged_by=judge_model, per_candidate=results,
-                ranking=ranked["models"], pick=ranked["pick"], ranked_by=ranked["metric"],
-                note="recorded to the corpus — spendguard_advise / spendguard_recommend now include these models.")
+    # MEASUREMENT RECEIPT: stamp WHAT produced these good_rates — judge, sample, rubric — so the number is
+    # reproducible + comparable later (docs/MEASUREMENT_RECEIPTS.md). judge_basis='configured': the judge is
+    # config.advisor_judge_model() (the bandit could swap it; the measurement_stable pin, added next, makes
+    # configured==served). A receipt-write failure is made LOUD but must NOT lose the bakeoff result.
+    _values = {c: {"good": results[c]["good"], "labeled": results[c]["labeled"],
+                   "good_rate": results[c]["good_rate"]} for c in results}
+    reading_id = None
+    try:
+        reading_id = measurement.record_reading(
+            intent=intent, kind="bakeoff", judge_mix=[judge_model], judge_basis="configured",
+            sample_ids=[measurement.item_id(p) for p in prompts],
+            rubric={"system": _JUDGE_SYS, "schema": _JUDGE_SCHEMA}, candidates=candidates,
+            values=_values, aggregation="single",
+            spend_usd=sum((results[c]["spent"] or 0.0) for c in results), ts=_time.time())
+    except Exception as _e:
+        import sys as _sys
+        _sys.stderr.write("[spendguard] bakeoff: measurement receipt NOT recorded (%s: %s) — the bakeoff "
+                          "result stands\n" % (type(_e).__name__, str(_e)[:80]))
+    return dict(intent=intent, sample=len(prompts), judged_by=judge_model, reading_id=reading_id,
+                per_candidate=results, ranking=ranked["models"], pick=ranked["pick"], ranked_by=ranked["metric"],
+                note="recorded to the corpus + a measurement receipt — `spendguard measurement inspect %s` shows "
+                     "the judge mix / sample / rubric." % reading_id)
 
 
 def main(argv=None):

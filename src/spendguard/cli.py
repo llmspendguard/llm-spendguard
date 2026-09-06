@@ -44,6 +44,7 @@ _GROUPS = [
         ("experiment", "A/B a cheaper config with graded output-equivalence"),
         ("maxtokens", "measured p99 bound for a call class (autotune's input)"),
         ("realized", "what the changes actually saved"),
+        ("measurement", "receipts for a judged number: `measurement inspect|list|reconstruct` — the judge/sample/rubric behind it"),
     ]),
     ("teams", [
         ("saas", "`saas link|sync|push|reconcile|reattribute` — org roll-up (opt-in)"),
@@ -187,6 +188,9 @@ def _dispatch(argv=None):
     if cmd == "calibrate":                            # learned estimator over the captured corpus (zero spend)
         from . import calibrate
         return calibrate.main(rest)
+    if cmd == "measurement":                          # receipts for a judged number — inspect/list/reconstruct ($0)
+        from . import measurement
+        return measurement.cmd(rest)
     if cmd == "audit":
         from . import audit as a
         sys.argv = ["audit"] + rest
