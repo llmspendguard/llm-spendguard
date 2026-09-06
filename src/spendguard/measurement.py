@@ -171,6 +171,105 @@ def inspect(reading_id):
     return get_reading(reading_id)
 
 
+def _good_rate(reading, candidate):
+    v = (reading.get("values") or {}).get(candidate)
+    return v.get("good_rate") if isinstance(v, dict) else v
+
+
+def compare(a_id, b_id):
+    """$0 DRIFT-FLAG: are two readings COMPARABLE — same instrument_id (same judge + sample + rubric + candidates)?
+    If so, the per-candidate delta; if not, WHY the ruler changed. So a time series is never silently continued
+    across an instrument change: a 0.88→0.85 that is really 'different judge' is named, not read as a quality drop."""
+    a, b = get_reading(a_id), get_reading(b_id)
+    if not a or not b:
+        return {"error": "one or both readings not found (%s, %s)" % (a_id, b_id)}
+    comparable = a["instrument_id"] == b["instrument_id"]
+    # `drift` = STRUCTURED codes for what changed (branchable by a caller/test); `reasons` = the human phrasing.
+    drift, reasons = [], []
+    if not comparable:
+        if sorted(a["judge_mix"] or []) != sorted(b["judge_mix"] or []):
+            drift.append("judge")
+            reasons.append("judge %s → %s" % (a["judge_mix"], b["judge_mix"]))
+        if a["rubric_hash"] != b["rubric_hash"]:
+            drift.append("rubric")
+            reasons.append("rubric changed")
+        if a["sample_hash"] != b["sample_hash"]:
+            drift.append("sample")
+            reasons.append("sample changed")
+        if sorted(a["candidates"] or []) != sorted(b["candidates"] or []):
+            drift.append("candidates")
+            reasons.append("candidates changed")
+    delta = None
+    if comparable:
+        delta = {}
+        for c in (a["candidates"] or []):
+            ra, rb = _good_rate(a, c), _good_rate(b, c)
+            delta[c] = {"from": ra, "to": rb,
+                        "delta": (None if ra is None or rb is None else round(rb - ra, 4))}
+    return {"comparable": comparable, "baseline": a_id, "candidate_reading": b_id, "drift": drift,
+            "note": ("same instrument — comparable" if comparable
+                     else "DIFFERENT instrument — NOT comparable to the baseline; this is a re-baseline, not a series point"),
+            "reasons": reasons, "delta": delta,
+            "caveat": ("a single rerun carries the judge's own noise — a small delta may not be significant; "
+                       "rerun again for a spread" if comparable else None)}
+
+
+def _recover_sample(intent, sample_ids):
+    """Recover the ACTUAL prompts for a reading's sample (stored as item_id content-hashes) from the corpus, so a
+    rerun replays the SAME items. Returns (prompts_in_order, missing_ids). A missing id = that item is no longer
+    recorded → the sample cannot be fully reproduced, and the caller must re-baseline rather than pretend."""
+    from . import callio
+    # callio's OWN connection (the call_io table lives in config.db_path(), where record_io_sample writes) — never a
+    # hand-rolled path, so a rerun reads exactly what the corpus stored. A real DB failure PROPAGATES; it is not
+    # masked as 'nothing recovered' (which would mis-report a broken corpus as 'sample_unreproducible').
+    con = callio._callio_db()
+    by_id = {}
+    for (p,) in con.execute("SELECT DISTINCT prompt FROM call_io WHERE intent IS ? AND prompt IS NOT NULL "
+                            "AND length(prompt) > 0", (intent,)):
+        by_id[item_id(p)] = p
+    prompts, missing = [], []
+    for sid in (sample_ids or []):
+        (prompts.append(by_id[sid]) if sid in by_id else missing.append(sid))
+    return prompts, missing
+
+
+def rerun(reading_id, *, budget_usd=None, same_sample=True):
+    """Re-run a reading's INSTRUMENT — same judge (pinned), same sample, same rubric — for a COMPARABLE number.
+    ESTIMATE-FIRST: no budget_usd → returns the estimate only (0 spend); with it, bakeoff refuses over budget before
+    spending. Records a CHILD reading (parent=reading_id) and reports the delta vs the baseline + whether the
+    instrument reproduced. same_sample=False re-baselines on a FRESH sample with the same judge (tracks the
+    population — a NEW instrument, flagged as such by compare). Rerun re-judges → it SPENDS."""
+    r = get_reading(reading_id)
+    if not r:
+        return {"reason": "no_reading",
+                "error": "no stored reading %r — for a past run try `measurement reconstruct <intent>`" % reading_id}
+    if r.get("kind") != "bakeoff":
+        return {"reason": "unsupported_kind",
+                "error": "rerun currently supports bakeoff readings (this one is kind=%r)" % r.get("kind")}
+    judge = (r.get("judge_mix") or [None])[0]
+    prompts, missing = (None, [])
+    if same_sample:
+        prompts, missing = _recover_sample(r["intent"], r.get("sample_ids") or [])
+        if missing:
+            return {"reason": "sample_unreproducible", "baseline": reading_id,
+                    "error": "cannot reproduce %d/%d sample items from the corpus (no longer recorded) — the SAME "
+                    "sample is unavailable, so a comparable rerun is impossible. Use same_sample=False to re-baseline "
+                    "on a fresh sample (same judge, a NEW instrument)." % (len(missing), len(r.get("sample_ids") or []))}
+    from . import bakeoff
+    res = bakeoff.bakeoff(r["intent"], candidates=r.get("candidates"), prompts=prompts, judge_model=judge,
+                          parent_reading=reading_id, run=(budget_usd is not None), budget_usd=budget_usd)
+    if budget_usd is None:
+        return {"estimate": res, "baseline": reading_id, "pinned_judge": judge,
+                "note": "estimate only — pass budget_usd to actually rerun this instrument (it re-judges → spends)."}
+    if res.get("refused") or res.get("error"):
+        return {"reason": "bakeoff_refused", "error": res.get("error") or res.get("note"), "baseline": reading_id}
+    child = res.get("reading_id")
+    return {"reading_id": child, "baseline": reading_id, "pinned_judge": judge,
+            "comparison": (compare(reading_id, child) if child else None),
+            "note": "rerun recorded — `measurement compare %s %s` shows the delta on the same instrument."
+                    % (reading_id, child)}
+
+
 def cmd(argv=None):
     """`spendguard measurement <inspect|list|reconstruct> …` — read the judge mix / sample / rubric behind a number."""
     import argparse
@@ -184,6 +283,13 @@ def cmd(argv=None):
     p_l.add_argument("--limit", type=int, default=25)
     p_r = sub.add_parser("reconstruct", help="best-effort reading for a PAST bakeoff intent (judge=unknown)")
     p_r.add_argument("intent")
+    p_rr = sub.add_parser("rerun", help="re-run a reading's instrument (same judge/sample/rubric) for a comparable number")
+    p_rr.add_argument("reading_id")
+    p_rr.add_argument("--budget", type=float, default=None, help="spend up to this; OMIT for an estimate only (0 spend)")
+    p_rr.add_argument("--fresh", action="store_true", help="re-baseline on a FRESH sample (same judge, a new instrument)")
+    p_c = sub.add_parser("compare", help="drift-flag: are two readings comparable (same instrument)? show the delta")
+    p_c.add_argument("baseline")
+    p_c.add_argument("candidate")
     a = ap.parse_args(argv)
     if a.op == "inspect":
         r = inspect(a.reading_id)
@@ -200,4 +306,12 @@ def cmd(argv=None):
         r = reconstruct_reading(a.intent)
         print(json.dumps(r or {"error": f"no recorded bakeoff rows for intent {a.intent!r}"}, indent=1, default=str))
         return 0 if r else 1
+    if a.op == "rerun":
+        r = rerun(a.reading_id, budget_usd=a.budget, same_sample=not a.fresh)
+        print(json.dumps(r, indent=1, default=str))
+        return 1 if r.get("error") else 0
+    if a.op == "compare":
+        r = compare(a.baseline, a.candidate)
+        print(json.dumps(r, indent=1, default=str))
+        return 1 if r.get("error") else 0
     return 1

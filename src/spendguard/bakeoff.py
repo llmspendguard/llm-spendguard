@@ -13,8 +13,6 @@ otherwise, and the quality JUDGE is an LLM (never a keyword rule) — the same j
   bakeoff('code-review', candidates=['openai:gpt-5.5','deepseek:deepseek-v4-flash'], sample_n=5)  # estimate
   bakeoff('code-review', candidates=[...], sample_n=5, run=True, budget_usd=0.50)                 # measure
 """
-import sqlite3
-
 from . import calls, config, pricing, callio
 from .submit import _count_tokens
 
@@ -33,21 +31,16 @@ _JUDGE_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["
 
 def _sample_prompts(intent, n):
     """Up to `n` DISTINCT real prompts recorded for this intent (the tasks to replay on the candidates). Returns
-    [] when the intent has no recovered prompts — the caller must then pass prompts explicitly (a bakeoff cannot
-    invent representative work)."""
-    try:
-        con = sqlite3.connect(getattr(callio, "DB_PATH", None) or str(config.HOME / "call_io.sqlite"))
-    except Exception:
-        return []
-    try:
-        con.row_factory = sqlite3.Row
-        rows = con.execute("SELECT DISTINCT prompt FROM call_io WHERE intent IS ? AND prompt IS NOT NULL "
-                           "AND length(prompt) > 0 LIMIT ?", (intent, int(n))).fetchall()
-        return [r["prompt"] for r in rows]
-    except Exception:
-        return []
-    finally:
-        con.close()
+    [] ONLY when the intent genuinely has no recorded prompts — the caller must then pass prompts explicitly (a
+    bakeoff cannot invent representative work). Reads callio's OWN connection: the call_io table lives in
+    config.db_path(), NOT a HOME/call_io.sqlite path — the old getattr(callio,'DB_PATH')-or-that-path read an empty
+    WRONG file, so auto-sample silently returned nothing and every bakeoff demanded explicit prompts. A real DB
+    failure PROPAGATES (it is not masked as 'no prompts' — that fail-open hid the wrong-path bug for exactly this
+    reason); the table is auto-created, so an empty corpus is a clean [] while a broken db surfaces."""
+    con = callio._callio_db()
+    rows = con.execute("SELECT DISTINCT prompt FROM call_io WHERE intent IS ? AND prompt IS NOT NULL "
+                       "AND length(prompt) > 0 LIMIT ?", (intent, int(n))).fetchall()
+    return [r[0] for r in rows]
 
 
 def _judge_one(prompt, output, judge_model):
@@ -92,13 +85,17 @@ def _plan(intent, candidates, prompts, judge_model):
     return total, detail, len(candidates) * len(prompts), n_judge
 
 
-def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget_usd=None):
+def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget_usd=None,
+            judge_model=None, parent_reading=None):
     """Measure cost×quality for `candidates` on a SAMPLE of `intent`'s real tasks, judge each output, and (run=True)
     record it so advise/recommend rank the candidates. `candidates` = ['vendor:model', …] (required — the slate to
     test). `prompts` overrides the auto-sample (from the intent's recorded prompts). ESTIMATE-FIRST: run=False
     returns the plan + $ estimate and spends nothing; run=True executes (refusing if the estimate exceeds
-    `budget_usd`). Returns a structured dict."""
-    judge_model = config.advisor_judge_model()
+    `budget_usd`). `judge_model` PINS a specific judge (else config.advisor_judge_model()) — this is how a
+    measurement rerun keeps the SAME ruler for a comparable number; `parent_reading` links the emitted receipt to
+    the reading it re-runs (a lineage). Returns a structured dict."""
+    _judge_pinned = judge_model is not None
+    judge_model = judge_model or config.advisor_judge_model()
     candidates = [c.strip() for c in (candidates or []) if c and c.strip()]
     if not candidates:
         return dict(intent=intent, error="no candidates — pass candidates=['vendor:model', …] (the slate to test). "
@@ -160,6 +157,7 @@ def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget
     try:
         reading_id = measurement.record_reading(
             intent=intent, kind="bakeoff", judge_mix=[judge_model], judge_basis="configured",
+            judge_pinned=_judge_pinned, parent_id=parent_reading,
             sample_ids=[measurement.item_id(p) for p in prompts],
             rubric={"system": _JUDGE_SYS, "schema": _JUDGE_SCHEMA}, candidates=candidates,
             values=_values, aggregation="single",
