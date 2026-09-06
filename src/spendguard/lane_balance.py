@@ -634,9 +634,11 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
                               schema=schema,                                     # STRUCTURED output: adapters folds the shape
                               #                                                    into the lane's prompt + validates locally,
                               #                                                    falling back to the API (strict) if off-shape
-                              no_substitution=bool(tier))                        # TIER: pin the cheap model — the bandit
-            #                                                                      can NEVER swap it for a strong/Opus one;
-            #                                                                      the only fallback is THIS model's metered
+                              no_substitution=bool(tier or lanes))               # CONFINEMENT: tier= OR lanes= pins the
+            #                                                                      arm — the bandit can NEVER swap it for a
+            #                                                                      model OUTSIDE the requested set (lanes=
+            #                                                                      was a suggestion, not a confinement, until
+            #                                                                      this); the only fallback is THIS model's metered
             #                                                                      API, which is in-tier by construction
             # (receipt suppressed via set_context above, not the context manager)  each reply feeds that measurement
         except Exception as e:

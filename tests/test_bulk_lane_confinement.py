@@ -37,10 +37,12 @@ dispatch.acquire = lambda *a, **k: 0.0
 dispatch.release = lambda *a, **k: None
 
 _seen_models = []
+_seen_nosub = []
 
 
 def _fake_call(model, prompt, **kw):
     _seen_models.append(model)
+    _seen_nosub.append(kw.get("no_substitution"))
     return {"text": "ok", "cost": 0, "executor": model.split(":")[0], "model": model.split(":")[1], "provider": model.split(":")[0]}
 
 
@@ -48,18 +50,23 @@ adapters.call = _fake_call
 
 TASKS = ["t%d" % i for i in range(12)]
 
-# ── unconfined: all three lanes serve (round-robin) ──
+# ── unconfined: all three lanes serve (round-robin), and the bandit is FREE to substitute ──
 _seen_models.clear()
+_seen_nosub.clear()
 r0 = lane_balance.bulk_delegate(TASKS, "conf:none")
 lanes0 = {m.split(":")[0] for m in _seen_models}
 ck("unconfined fan uses all three lanes", lanes0 == set(ALL) and len(r0) == 12)
+ck("unconfined → each task is NOT pinned (bandit free to substitute)", all(x is not True for x in _seen_nosub))
 
-# ── confined to a subset: ONLY those lanes serve, the excluded lane gets NOTHING ──
+# ── confined to a subset: ONLY those lanes serve, the excluded lane gets NOTHING, and each task is PINNED ──
 _seen_models.clear()
+_seen_nosub.clear()
 r1 = lane_balance.bulk_delegate(TASKS, "conf:sub", lanes=["gemini", "zai-coding"])
 lanes1 = {m.split(":")[0] for m in _seen_models}
 ck("lanes=[gemini,zai] → only those two serve", lanes1 == {"gemini", "zai-coding"})
 ck("...the excluded lane (codex) received ZERO tasks", "codex" not in lanes1 and len(r1) == 12)
+ck("lanes= → each task is PINNED (no_substitution=True): the bandit CANNOT route past the set (the confinement, not a suggestion)",
+   len(_seen_nosub) == 12 and all(x is True for x in _seen_nosub))
 
 # ── confined to ONE lane: every task lands there ──
 _seen_models.clear()
