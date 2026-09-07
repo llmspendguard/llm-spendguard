@@ -806,11 +806,18 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 pass
             return {**base, "text": s["text"], "in_tok": s.get("in_tok", 0), "out_tok": s.get("out_tok", 0),
                     "latency": s.get("latency", 0.0), "cost": 0.0, "executor": lane_name, "error": None}
+        # STRUCTURED miss reason — a CODE, not the free-form error string — so a consumer splits shed vs shape vs
+        # empty vs quota without parsing prose (the lane twin of the vision runner's reason codes). The branch below
+        # ALREADY knows the category; this only names it.
         if not s.get("error"):                         # no error but not a usable answer → say WHY (empty vs off-shape)
+            _lane_reason = "empty" if not _txt else "shape_miss"
             s = {**s, "error": (f"{lane_name} lane returned no usable text (empty/whitespace)" if not _txt
                                 else f"{lane_name} lane output did not satisfy the requested shape → API")}
+        else:
+            _lane_reason = "lane_error"                # the lane set its OWN error upstream (raised / non-dict / envelope)
         _ra = s.get("retry_after_s") if isinstance(s, dict) else None
         if _ra:
+            _lane_reason = "quota"                     # a parsed quota/reset signal overrides the generic classification
             # A STRUCTURED quota/exhaustion signal the lane EXECUTOR parsed from its own CLI's envelope (a known
             # shape it owns — see antigravity_exec._reset_window_s). This is the one failure the API-outcome
             # doctrine below cannot see: a quota-limited lane's metered API twin answers fine, so the fallback would
@@ -819,8 +826,8 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             # days. `transient` then tells _learn_from_fallback this was quota, so it learns NO size ceiling.
             _lane_cool(lane_name, seconds=min(float(_ra), _max_quota_cool_s()), reason="quota")
         if no_metered_fallback:                        # caller opted out of ALL metered spend (--refuse-billed): a lane
-            return {**base, "text": None, "cost": None, "executor": lane_name,   # MISS is an error row, NOT a paid
-                    "error": f"refused: would bill metered API ({s.get('error')})"}   # retry — $0 by construction
+            return {**base, "text": None, "cost": None, "executor": lane_name, "reason": _lane_reason,   # MISS is an
+                    "error": f"refused: would bill metered API ({s.get('error')})"}   # error row, NOT a paid retry — $0
         # LANE FAILED. REACTIVE FAILOVER (Part 2) FIRST: before paying the metered API, try a CONFIRMED substitute
         # PLAN for this intent — one hop, guarded against recursion. Routed through call() so the substitute resolves
         # its OWN budget and rides its OWN lane; if it answers, the primary lane is cooled (it failed) and the

@@ -320,11 +320,14 @@ def _arity_checked(row, task, expect_ids):
         if _exp:
             _ok, _det = output_contract.check_envelope(row["text"], _exp)
             if not _ok:
-                return {**row, "text": None, "parsed": None, "arity_miss": _det,
+                # reason='arity_miss' — shape-perfect but items DROPPED; a distinct cause from an off-shape/empty miss
+                # so a caller can see "the envelope came back short" without parsing the human `error` string.
+                return {**row, "text": None, "parsed": None, "arity_miss": _det, "reason": "arity_miss",
                         "error": f"envelope INCOMPLETE: {_det['n_got']}/{_det['n_expected']} ids "
                                  f"({_det['reason']}) — retried, not silently accepted"}
     except Exception as _ae:
-        return {**row, "text": None, "parsed": None,
+        # reason='arity_check_error' — the completeness check itself broke (fail CLOSED: retried, never a swallowed pass).
+        return {**row, "text": None, "parsed": None, "reason": "arity_check_error",
                 "error": f"completeness check errored ({type(_ae).__name__}: {str(_ae)[:60]}) — not counted done"}
     return row
 
@@ -602,10 +605,14 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
             dispatch.release(_prov, _raw)
         r = r if isinstance(r, dict) else {}
         _sp, _sm = r.get("provider") or _prov, r.get("model") or _raw
+        # Same structured-reason contract as the lane row: adapters' code, else 'api_error' on a failed metered call
+        # (vision always rides the metered API), else None when served. No error row is ever reason-less.
+        _row_reason = r.get("reason") or ("api_error" if r.get("error") else None)
         row = {"text": (r.get("text") or None), "lane": r.get("executor") or "api", "use_name": _sm,
                "model": f"{_sp}:{_sm}", "billed": bool(r.get("cost")),
                "served_by_metered_api": (r.get("executor") or "api") in ("api", "api-fallback"),
-               "parsed": (r.get("parsed") if schema is not None else None), "error": r.get("error")}
+               "parsed": (r.get("parsed") if schema is not None else None),
+               "reason": _row_reason, "error": r.get("error")}
         return i, _arity_checked(row, task, expect_ids)
 
     def _run_task_on_lane(i, task):
@@ -625,9 +632,14 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
         model = f"{prov}:{use_name}"
         try:
             dispatch.acquire(prov, use_name, deadline_s)     # governor: bounds per-lane in-flight (fills, never swarms)
+        except _STOP_TYPES:
+            raise                                            # a DELIBERATE stop (DispatchTimeout admission shed / a
+            #                                                  refusal) HALTS the fan — NOT buried as an unserved row;
+            #                                                  the caller sees the raise and decides (retry lanes, or batch)
         except Exception as e:
+            # reason='dispatch' — a NON-deliberate dispatch error, structurally separable from a shape/empty/quota miss.
             return i, {"text": None, "lane": lane, "use_name": use_name, "model": model, "billed": False,
-                       "error": f"dispatch: {str(e)[:60]}"}
+                       "reason": "dispatch", "error": f"dispatch: {str(e)[:60]}"}
         try:
             calls.set_context(intent=intent)          # tag this worker thread's calls with the intent (attribution)
             r = adapters.call(model, task, system=system, reasoning=reasoning,   # sig=intent → the OUTPUT budget is this
@@ -643,8 +655,15 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
             #                                                                      this); the only fallback is THIS model's metered
             #                                                                      API, which is in-tier by construction
             # (receipt suppressed via set_context above, not the context manager)  each reply feeds that measurement
+        except _STOP_TYPES:
+            raise                                            # a deliberate stop (refusal / deadline) propagates — it is
+            #                                                  NOT downgraded to a textless row (adapters.call is not
+            #                                                  supposed to raise these, but if one escapes, halt not hide)
         except Exception as e:
-            return i, {"text": None, "lane": lane, "use_name": use_name, "model": model, "billed": False, "error": str(e)[:80]}
+            # reason='call_raised' — adapters.call itself raised (it normally returns an error dict); a distinct cause
+            # from a shape/empty/quota miss, so a caller can tell "the call machinery broke" from "the model missed".
+            return i, {"text": None, "lane": lane, "use_name": use_name, "model": model, "billed": False,
+                       "reason": "call_raised", "error": str(e)[:80]}
         finally:
             dispatch.release(prov, use_name)
         r = r if isinstance(r, dict) else {}
@@ -658,6 +677,11 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
         served_lane = r.get("executor") or ("api-fallback" if r.get("cost") else lane)
         if served_lane == "api":                             # the metered API served it — in a bulk fan-out that IS a
             served_lane = "api-fallback"                     # fallback from the intended lane; keep the descriptive label
+        # STRUCTURED reason: adapters' code (empty/shape_miss/lane_error/quota) when it gave one; else, if this is an
+        # error row with NO adapters reason, it is the refuse_billed=False path whose METERED fallback itself failed —
+        # 'api_error'. A served row (text, no error) is reason=None. So NO error row is ever reason-less (from KNOWN
+        # state — which branch produced it — not a judgement about the text).
+        _row_reason = r.get("reason") or ("api_error" if r.get("error") else None)
         row = {"text": (r.get("text") or None), "lane": served_lane, "use_name": served_model,
                "model": f"{served_prov}:{served_model}", "billed": bool(r.get("cost")),
                # `billed`=cost>0 (true for a costing key-lane too); THIS is the field to prove metered-API service —
@@ -665,7 +689,11 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
                "served_by_metered_api": served_lane in ("api", "api-fallback"),
                # DECODED object when a schema was requested (adapters already parsed it) — so the demux scatters the
                # object, never a re-parse of `text`. None if it did not decode; cleared to None on an arity miss.
-               "parsed": (r.get("parsed") if schema is not None else None), "error": r.get("error")}
+               "parsed": (r.get("parsed") if schema is not None else None),
+               # reason: empty / shape_miss / lane_error / quota (from adapters) or api_error (metered fallback failed).
+               # Structurally separable from a dispatch/arity miss so a caller routes by CAUSE, never by string-sniffing
+               # `error`. None only when the row was SERVED (has text). See _row_reason above.
+               "reason": _row_reason, "error": r.get("error")}
         if r.get("substituted_from") and f"{served_prov}:{served_model}" != f"{prov}:{use_name}":
             row["intended"] = f"{prov}:{use_name}"           # what the round-robin picked, before the substitution
             row["substituted_from"] = r["substituted_from"]
