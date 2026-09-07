@@ -46,6 +46,40 @@ def available() -> bool:
     return _bin() is not None
 
 
+def _parse_agy_models(stdout):
+    """The served id from each '<id>\\t<display-name>' row of `agy models` (e.g. 'gemini-3.1-pro-high\\tGemini 3.1
+    Pro (High)'). The id is column 1, TAB-delimited. Pure PARSE of a fixed two-column format — the row's SHAPE
+    decides, no meaning is judged. The 'Fetching available models…' banner has no TAB and is skipped, so a stray
+    non-row line can never masquerade as an id."""
+    ids = []
+    for line in (stdout or "").splitlines():
+        if "\t" not in line:                          # banner / blank line — not a model row
+            continue
+        tok = line.split("\t", 1)[0].strip()
+        if tok:
+            ids.append(tok)
+    return ids
+
+
+def model_ids(timeout_s=30):
+    """The model ids the agy SUBSCRIPTION lane serves right now, via `agy models`. agy's ids carry a reasoning-tier
+    suffix (gemini-3.1-pro-high, gemini-3.7-flash-high, …) and live in a DIFFERENT namespace from the metered
+    Gemini API (L18-22) — so this is the ONLY served-set that recognises an agy id; the metered catalog
+    (catalog.live_model_ids) never lists them, which is exactly why a served-check on an agy id false-negatives
+    against it. Fail-soft: [] when agy is absent/errors, so a served-check simply degrades to the metered
+    namespace. PURE (no memo): the CALLER caches it — catalog.pull_live_catalog records it in the catalog cache
+    alongside the metered ids, so a served-check reads the cache and this subprocess runs only at pull time, not
+    per check. The agy lane also serves non-gemini families (claude-*, gpt-oss-*); the caller filters to the
+    family it wants."""
+    if not available():
+        return []
+    try:
+        p = subprocess.run([_bin(), "models"], capture_output=True, text=True, timeout=timeout_s)
+    except Exception:
+        return []
+    return _parse_agy_models(p.stdout) if p.returncode == 0 else []
+
+
 def _result_obj(stdout):
     """The single json result object from `agy --output-format json`. Robust to any leading log lines: parse the
     whole thing, else the LAST json object line. Absent/unparseable → None (caller returns {error})."""

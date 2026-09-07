@@ -675,14 +675,24 @@ def served_check(vendor, model):
     cause a false 'stale', so a miss is CONFIRMED LIVE via serves() before it is ever called stale. And when there
     is no cached list at all for this vendor, the pre-flight stays DORMANT ('unchecked', pass through) rather than
     doing a live /models GET on the hot path — the sync cadence is what populates it. 'unchecked' is also what a
-    live discovery failure yields: a can't-check is never turned into a 'no' (the same rule _input_fits states)."""
+    live discovery failure yields: a can't-check is never turned into a 'no' (the same rule _input_fits states).
+
+    BOTH NAMESPACES: a subscription lane serves under its OWN id namespace (agy's gemini ids carry a reasoning-tier
+    suffix the metered /models list never returns), so the fast-path also honours catalog.lane_model_ids. Without
+    this, serves() would live-confirm an agy id against the METERED /models, not find it, and wrongly call a
+    perfectly-served lane id 'stale' — so the live confirm runs ONLY when a metered list exists and misses (a lane
+    id absent from the metered namespace is expected, never stale)."""
     from . import catalog
-    ids = catalog.live_model_ids(vendor)               # cached served ids (dispatch form), or None if not cached
+    ids = catalog.live_model_ids(vendor)               # cached METERED served ids (dispatch form), or None if not cached
+    lane_ids = catalog.lane_model_ids(vendor)          # cached SUBSCRIPTION-LANE ids (agy's own namespace), or None
+    if ids is None and lane_ids is None:
+        return "unchecked"                             # no maintained list of EITHER kind → dormant, no live fetch
+    bare = model.split(":", 1)[-1]
+    if model in (ids or ()) or bare in (ids or ()) or model in (lane_ids or ()) or bare in (lane_ids or ()):
+        return "served"                                # $0 fast path — a fresh cache (metered OR lane) says served
     if ids is None:
-        return "unchecked"                             # no maintained list → dormant, no per-call live fetch
-    if model in ids or model.split(":", 1)[-1] in ids:
-        return "served"                                # $0 fast path — the fresh cache says served
-    live = serves(vendor, model)                       # cache HAS the vendor but not this id → CONFIRM LIVE
+        return "unchecked"                             # only a lane list exists and lacks this id → cannot metered-confirm
+    live = serves(vendor, model)                       # metered cache HAS the vendor but not this id → CONFIRM LIVE
     return "served" if live is True else ("unchecked" if live is None else "stale")
 
 

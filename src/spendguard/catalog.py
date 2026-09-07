@@ -62,8 +62,22 @@ def pull_live_catalog(providers=None, timeout_s=20):
                 ceilings[prov] = c
         else:
             errors[prov] = "provider returned an empty model list"
+    # SUBSCRIPTION-lane served-sets, recorded SEPARATELY from the metered `models`: a lane serves under its OWN id
+    # namespace (agy's gemini ids carry a reasoning-tier suffix — gemini-3.1-pro-high — that the metered Gemini API
+    # never lists), so a served-check must union the two while metered-only callers keep the clean metered
+    # namespace. Key-INDEPENDENT: agy runs on OAuth, so this populates even with no metered Gemini key. The
+    # `gemini-` filter is namespace-prefix parsing (agy also serves claude-*/gpt-oss-*), not a meaning judgement —
+    # the vendor's own id convention names the family. Fail-soft: agy absent → no lane_models, no regression.
+    lane_models = {}
+    try:
+        from . import antigravity_exec
+        agy_gemini = sorted({m for m in antigravity_exec.model_ids() if m.startswith("gemini-")})
+        if agy_gemini:
+            lane_models["gemini"] = agy_gemini
+    except Exception as e:
+        errors["gemini/agy-lane"] = str(e)[:120]          # namespaced so it is not read as a metered-fetch error
     out = {"_fetched": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
-           "models": models, "errors": errors, "ceilings": ceilings}
+           "models": models, "lane_models": lane_models, "errors": errors, "ceilings": ceilings}
     config.update_json(CATALOG_CACHE, lambda _d: out)     # the one atomic writer (+~backup), like sync.CACHE
     _CACHE_MEM["mtime"] = None                             # force the memo to reload the freshly-written file
     return len(models), sum(len(v) for v in models.values()), errors
@@ -87,14 +101,41 @@ def _load_catalog():
 
 
 def live_model_ids(provider):
-    """The provider's fresh live id list, or None when it is NOT positively known (no cache, or this provider is
-    absent from the cache / its last fetch errored). None means 'cannot check', never 'no models' — the caller
-    must treat it as unverifiable, not as a stale id."""
+    """The provider's fresh live id list on the METERED API, or None when it is NOT positively known (no cache, or
+    this provider is absent from the cache / its last fetch errored). None means 'cannot check', never 'no models'
+    — the caller must treat it as unverifiable, not as a stale id. METERED namespace only, on purpose: a caller
+    that needs a metered id (reliability's probe target) must never be handed a lane-only id (see lane_model_ids /
+    served)."""
     data = _load_catalog()
     if not data:
         return None
     ids = (data.get("models") or {}).get(provider)
     return list(ids) if ids else None
+
+
+def lane_model_ids(provider):
+    """The provider's SUBSCRIPTION-lane served ids — the lane's OWN id namespace, which can DIFFER from the metered
+    API's (agy serves gemini under reasoning-tier-suffixed ids the metered catalog never lists). Recorded in the
+    catalog at pull time under data['lane_models'][provider]; None when not present (a pre-lane-models cache, or no
+    such lane for this provider). Kept SEPARATE from live_model_ids so the metered namespace stays clean."""
+    data = _load_catalog()
+    if not data:
+        return None
+    ids = (data.get("lane_models") or {}).get(provider)
+    return list(ids) if ids else None
+
+
+def served(provider, model):
+    """True / False / None — is `model` servable for `provider` on ANY route spendguard knows: the metered API
+    catalog OR a subscription lane's own namespace. None = cannot check (NEITHER is known) — a caveat, never read
+    as 'no'. This is the check a PREFLIGHT wants ('will this call fire, or into the dark?') across BOTH namespaces,
+    so an agy-routed gemini id (gemini-3.1-pro-high) reads served even though it is absent from the metered
+    catalog. live_model_ids stays metered-only for callers that specifically need the metered namespace."""
+    metered = live_model_ids(provider)
+    lane = lane_model_ids(provider)
+    if metered is None and lane is None:
+        return None
+    return model in (set(metered or []) | set(lane or []))
 
 
 def model_ceiling(vendor, model):
