@@ -420,6 +420,13 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                        schema=schema, timeout_s=timeout_s, no_metered_fallback=no_metered_fallback, images=images,
                        _no_sub=no_substitution)
     _maybe_credit_advisor(model, r)   # metered substitution to a CHEAPER model → guarded 'advisor' saving (savings tally)
+    # `billed` (cost>0) is NOT "served by the metered API": a per-token key LANE (e.g. zai-coding) costs while still
+    # being lane-served, so a caller proving refuse_billed/$0 via `billed` gets false positives. This is the field to
+    # reach for instead — the metered provider API served it (a lane miss fell through, or there was no lane): executor
+    # 'api'/'api-fallback', or (defensively) a cost with no lane executor recorded.
+    if isinstance(r, dict):
+        _ex = r.get("executor")
+        r["served_by_metered_api"] = _ex in ("api", "api-fallback") or (not _ex and bool(r.get("cost")))
     return r
 
 
@@ -1297,7 +1304,12 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
         raise ValueError(
             "call needs either an explicit max_tokens or a `sig` naming the call-class, so the budget is "
             "either something you chose deliberately or something measured — never a literal nobody picked.")
-    _predicted = int((bulkgate.maxtokens(sig) or {}).get("recommend") or 0) if sig else 0
+    # sig= names the call CLASS as an intent-like label; the measured p99 must be keyed PER MODEL (testing Haiku
+    # must never size Opus or nano). Derive the model-inclusive key here — bulkgate.sig(model, template_id=sig) — so a
+    # caller passing a raw intent is NOT silently pooled across models (the shape that gave gpt-5-nano and
+    # claude-opus-4-8 one shared output-length profile). Matches how register-side estimates are keyed.
+    _sig_key = bulkgate.sig(model, template_id=sig) if sig else None
+    _predicted = int((bulkgate.maxtokens(_sig_key) or {}).get("recommend") or 0) if _sig_key else 0
     if _explicit:
         # The caller named a number, so they meant it — a 16-token connectivity probe is a legitimate,
         # deliberate choice, and token_caps has a recorded verdict for every such literal in this tree.
@@ -1347,10 +1359,10 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
         if not trunc and (r.get("out_tok") or 0) > 0 and not (r.get("text") or "").strip():
             trunc = True
             r = {**r, "empty_answer": True}
-        if sig:
+        if _sig_key:
             try:
-                bulkgate.note_response(sig, model, r.get("out_tok") or 0, max_tokens=budget,
-                                       finish_reason=r.get("finish_reason"))
+                bulkgate.note_response(_sig_key, model, r.get("out_tok") or 0, max_tokens=budget,
+                                       finish_reason=r.get("finish_reason"))   # per-model key (see _sig_key above)
             except Exception:
                 pass                                          # telemetry must not break the call
         if not trunc:

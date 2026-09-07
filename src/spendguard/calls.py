@@ -221,6 +221,22 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
     can show and the lane est-value stamper can price — rather than a guess inferred from the provider. `project` is
     the repo the call belongs to (derived from the live gate context when not passed), so a lane's plan VALUE
     attributes to a project exactly like billed spend does."""
+    # ATTRIBUTION SIGNAL — checked BEFORE `enabled()` and BEFORE the never-raise try below. Before enabled() because a
+    # PAID call with no intent is a problem whether or not the ledger is on (enforcement must still fire); before the
+    # try because a raise inside it is swallowed by its `except Exception: return None`, so SPENDGUARD_REQUIRE_INTENT
+    # would silently not propagate. An un-intented paid call lands in '(none)' — invisible to advise/denylists/rollups
+    # (judge-class denylist entries matched zero rows for weeks). The SAFETY half (un-intented → refuse substitution)
+    # already holds; this is the ATTRIBUTION half. Enforcement raises on EVERY such call; else a once-per-SITE warn
+    # via the stdlib warnings registry (no module flag to race on).
+    if not (intent or (current() or {}).get("intent")) and float(cost or 0) > 0:
+        import os as _osw
+        _msg = ("a PAID call (%s, $%.4f) with NO intent → would attribute to '(none)'. Tag it via "
+                "calls.set_context(intent=…) or adapters.call(sig=…) so spend/advise/denylists can see it."
+                % (model, float(cost or 0)))
+        if _osw.getenv("SPENDGUARD_REQUIRE_INTENT") == "1":
+            raise ValueError("[spendguard] " + _msg + " (SPENDGUARD_REQUIRE_INTENT=1)")
+        import warnings as _warnings
+        _warnings.warn("[spendguard] " + _msg + " (SPENDGUARD_REQUIRE_INTENT=1 to enforce)", stacklevel=2)
     if not enabled():
         return None
     try:

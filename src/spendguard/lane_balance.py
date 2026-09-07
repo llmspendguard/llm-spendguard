@@ -657,7 +657,10 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
         if served_lane == "api":                             # the metered API served it — in a bulk fan-out that IS a
             served_lane = "api-fallback"                     # fallback from the intended lane; keep the descriptive label
         row = {"text": (r.get("text") or None), "lane": served_lane, "use_name": served_model,
-               "model": f"{served_prov}:{served_model}", "billed": bool(r.get("cost")), "error": r.get("error")}
+               "model": f"{served_prov}:{served_model}", "billed": bool(r.get("cost")),
+               # `billed`=cost>0 (true for a costing key-lane too); THIS is the field to prove metered-API service —
+               # a lane miss fell through to the paid provider. A $0 or costing LANE is served_by_metered_api=False.
+               "served_by_metered_api": served_lane in ("api", "api-fallback"), "error": r.get("error")}
         if r.get("substituted_from") and f"{served_prov}:{served_model}" != f"{prov}:{use_name}":
             row["intended"] = f"{prov}:{use_name}"           # what the round-robin picked, before the substitution
             row["substituted_from"] = r["substituted_from"]
