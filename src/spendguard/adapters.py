@@ -427,6 +427,17 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     if isinstance(r, dict):
         _ex = r.get("executor")
         r["served_by_metered_api"] = _ex in ("api", "api-fallback") or (not _ex and bool(r.get("cost")))
+        # STRUCTURED OUTPUT: when a schema was requested, surface the DECODED object alongside `text` (provenance
+        # kept — purely additive), so N consumers don't each re-json.loads + reinvent a salvage; the shape gate
+        # already parsed this body. `parsed` is the object, or None if it did not decode (undecodable → the caller
+        # sees None, not the silent-nothing that reads as "the model had little to say").
+        if schema is not None and r.get("text") and not r.get("error"):
+            try:
+                from . import output_contract as _oc
+                _obj, _ = _oc._as_obj(r["text"])
+                r["parsed"] = _obj if isinstance(_obj, (dict, list)) else None
+            except Exception:
+                r["parsed"] = None
     return r
 
 
@@ -1308,7 +1319,13 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
     # must never size Opus or nano). Derive the model-inclusive key here — bulkgate.sig(model, template_id=sig) — so a
     # caller passing a raw intent is NOT silently pooled across models (the shape that gave gpt-5-nano and
     # claude-opus-4-8 one shared output-length profile). Matches how register-side estimates are keyed.
-    _sig_key = bulkgate.sig(model, template_id=sig) if sig else None
+    # A caller may pass a raw INTENT (keyed per-model here) OR an already-built bulkgate.sig (its 16-hex digest) — e.g.
+    # a consumer that hand-built the key as a workaround BEFORE this derivation existed. Re-wrapping a real sig would
+    # DOUBLE-KEY it (a sig of a sig → a namespace the registered estimate never reads), silently. So a value that IS a
+    # bulkgate.sig (16 lowercase hex — a FORMAT check, not a meaning one) is used AS-IS; anything else is an intent →
+    # derive the per-model key. (Rescues the workaround that warden and any similar consumer built for the old defect.)
+    _is_sig = isinstance(sig, str) and len(sig) == 16 and all(c in "0123456789abcdef" for c in sig)
+    _sig_key = (sig if _is_sig else bulkgate.sig(model, template_id=sig)) if sig else None
     _predicted = int((bulkgate.maxtokens(_sig_key) or {}).get("recommend") or 0) if _sig_key else 0
     if _explicit:
         # The caller named a number, so they meant it — a 16-token connectivity probe is a legitimate,

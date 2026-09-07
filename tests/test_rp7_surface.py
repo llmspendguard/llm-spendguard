@@ -88,5 +88,52 @@ ck("SPENDGUARD_REQUIRE_INTENT=1 raises on EVERY un-intented paid call (enforceme
 del os.environ["SPENDGUARD_REQUIRE_INTENT"]
 calls._local.ctx = {}
 
+# ── FIRST (double-key rescue): a PRE-BUILT bulkgate.sig (16-hex) is used AS-IS, never re-wrapped into a sig-of-a-sig ──
+_seen2 = []
+_orig_mt2 = bulkgate.maxtokens
+bulkgate.maxtokens = lambda s, **k: (_seen2.append(s), {})[1]
+adapters._call_once = lambda model, prompt, **kw: {"text": "ok", "cost": 0.0, "in_tok": 1, "out_tok": 1,
+                                                   "executor": "api", "provider": model.split(":")[0],
+                                                   "model": model.split(":")[1], "finish_reason": "stop"}
+_prebuilt = bulkgate.sig("openai:gpt-5-nano", template_id="warden:describe")   # a real 16-hex sig
+adapters.call("openai:gpt-5-nano", "p", sig=_prebuilt, max_tokens=64)
+bulkgate.maxtokens = _orig_mt2
+ck("a pre-built bulkgate.sig (16-hex) is used AS-IS — not double-keyed (rescues the consumer workaround)",
+   _seen2 and _seen2[0] == _prebuilt)
+
+# ── GAP 1: schema= → the result carries the DECODED object as `parsed` (None if undecodable; absent without schema) ──
+SCH = {"type": "object", "required": ["x"], "properties": {"x": {"type": "string"}}}
+
+
+def _text_res(txt):
+    return lambda model, prompt, **kw: {"text": txt, "cost": 0.0, "in_tok": 1, "out_tok": 1, "executor": "api",
+                                        "provider": "o", "model": "m", "finish_reason": "stop"}
+
+
+adapters._call_once = _text_res('{"x":"hi"}')
+ck("schema= → result carries `parsed` (the decoded object)",
+   adapters.call("openai:gpt-5-nano", "p", schema=SCH, max_tokens=64).get("parsed") == {"x": "hi"})
+adapters._call_once = _text_res("not json at all")
+ck("undecodable text → parsed is None (not silent nothing)",
+   adapters.call("openai:gpt-5-nano", "p", schema=SCH, max_tokens=64).get("parsed") is None)
+adapters._call_once = _text_res("plain")
+ck("no schema → no `parsed` key (purely additive)", "parsed" not in adapters.call("openai:gpt-5-nano", "p", max_tokens=64))
+
+# ── GAP 1 on the bulk row: the decoded object rides the row so the demux scatters the OBJECT, not a re-parse ──
+from spendguard import lane_catalog, lane_bandit, lane_economics, dispatch as _dispatch
+lane_catalog.arms = lambda flt=None: [("codex", "gpt-5.6-luna")]
+lane_catalog.lane_provider = lambda l: "openai"
+lane_bandit._arm_cooling = lambda l, u: False
+lane_bandit.arm_stats = lambda intent: {("codex", "gpt-5.6-luna"): {"winrate": 1.0, "trials": 2}}
+lane_economics.prompt_lane_reserved = lambda lane: False
+adapters._lane_cooling = lambda ln: False
+_dispatch.acquire = lambda *a, **k: 0.0
+_dispatch.release = lambda *a, **k: None
+adapters.call = lambda model, prompt, **kw: {"text": '{"x":"hi"}', "parsed": {"x": "hi"}, "cost": 0,
+                                             "executor": "codex", "provider": "openai", "model": "gpt-5.6-luna"}
+from spendguard import lane_balance
+_rows = lane_balance.bulk_delegate(["t"], "rp7:parsed", schema=SCH)
+ck("bulk_delegate row carries `parsed` from the decoded envelope", _rows[0].get("parsed") == {"x": "hi"})
+
 print(("[OK]" if not fails else "[FAIL]") + " rp7 surface: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)

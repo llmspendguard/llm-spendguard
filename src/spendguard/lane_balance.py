@@ -320,11 +320,11 @@ def _arity_checked(row, task, expect_ids):
         if _exp:
             _ok, _det = output_contract.check_envelope(row["text"], _exp)
             if not _ok:
-                return {**row, "text": None, "arity_miss": _det,
+                return {**row, "text": None, "parsed": None, "arity_miss": _det,
                         "error": f"envelope INCOMPLETE: {_det['n_got']}/{_det['n_expected']} ids "
                                  f"({_det['reason']}) — retried, not silently accepted"}
     except Exception as _ae:
-        return {**row, "text": None,
+        return {**row, "text": None, "parsed": None,
                 "error": f"completeness check errored ({type(_ae).__name__}: {str(_ae)[:60]}) — not counted done"}
     return row
 
@@ -603,7 +603,9 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
         r = r if isinstance(r, dict) else {}
         _sp, _sm = r.get("provider") or _prov, r.get("model") or _raw
         row = {"text": (r.get("text") or None), "lane": r.get("executor") or "api", "use_name": _sm,
-               "model": f"{_sp}:{_sm}", "billed": bool(r.get("cost")), "error": r.get("error")}
+               "model": f"{_sp}:{_sm}", "billed": bool(r.get("cost")),
+               "served_by_metered_api": (r.get("executor") or "api") in ("api", "api-fallback"),
+               "parsed": (r.get("parsed") if schema is not None else None), "error": r.get("error")}
         return i, _arity_checked(row, task, expect_ids)
 
     def _run_task_on_lane(i, task):
@@ -660,7 +662,10 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
                "model": f"{served_prov}:{served_model}", "billed": bool(r.get("cost")),
                # `billed`=cost>0 (true for a costing key-lane too); THIS is the field to prove metered-API service —
                # a lane miss fell through to the paid provider. A $0 or costing LANE is served_by_metered_api=False.
-               "served_by_metered_api": served_lane in ("api", "api-fallback"), "error": r.get("error")}
+               "served_by_metered_api": served_lane in ("api", "api-fallback"),
+               # DECODED object when a schema was requested (adapters already parsed it) — so the demux scatters the
+               # object, never a re-parse of `text`. None if it did not decode; cleared to None on an arity miss.
+               "parsed": (r.get("parsed") if schema is not None else None), "error": r.get("error")}
         if r.get("substituted_from") and f"{served_prov}:{served_model}" != f"{prov}:{use_name}":
             row["intended"] = f"{prov}:{use_name}"           # what the round-robin picked, before the substitution
             row["substituted_from"] = r["substituted_from"]
