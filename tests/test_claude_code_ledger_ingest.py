@@ -37,7 +37,7 @@ def ck(name, cond):
         fails.append(name)
 
 # ── deterministic, hermetic pricing: cost = (in+out)/1000; '<synthetic>' is unpriceable (RAISES, like the real one) ──
-def _fake_price(model, in_tok, out_tok, cached=0):
+def _fake_price(model, in_tok, out_tok, cached=0, provider=None, cache_creation_tok=0):
     if model == "<synthetic>":
         raise KeyError("no canonical price for '<synthetic>'")
     return round((in_tok + out_tok) / 1000.0, 6)
@@ -73,8 +73,9 @@ SINCE = "2026-01-01"
 rows = [r for r in led.query(since=SINCE) if r.get("source") == "claude-code"]
 by_key = {r["dedup_key"]: r for r in rows}
 
-# fake price = (in_tok+out_tok)/1000, and ingest passes in_tok = input+cache_write+cache_read (the FULL context re-read):
-M1, M2 = Decimal("6.5"), Decimal("11.0")                             # (1000+300+5000+200)/1e3, (2000+600+8000+400)/1e3
+# fake price = (in_tok+out_tok)/1000, and ingest passes in_tok = input+cache_read with cache_write as its own
+# class (the fake ignores cache_creation_tok, so it is excluded from the fake's arithmetic):
+M1, M2 = Decimal("6.2"), Decimal("10.4")                               # (1000+5000+200)/1e3, (2000+8000+400)/1e3
 ck("2 priced turns booked (m1,m2); the '<synthetic>' turn is skipped, session not dropped", len(rows) == 2)
 ck("dedup_keys are exactly cc:m1 and cc:m2", set(by_key) == {"cc:m1", "cc:m2"})
 ck("m1 (replayed in a 2nd file) is booked ONCE — cross-file dedup by message.id",
