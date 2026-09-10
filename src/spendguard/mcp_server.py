@@ -366,7 +366,34 @@ def _tool_compaction_candidates(args):
 
 
 # name → (description, JSON-Schema for arguments, handler)
+def _tool_health(args):
+    from . import reliability
+    run = args.get("run", True)
+    timeout_s = int(args.get("timeout_s") or 20)
+    res = reliability.sweep(run=run, timeout_s=timeout_s)
+    lanes_up = sum(1 for d in res["lanes"].values() if d.get("reachable"))
+    met_up = sum(1 for d in res["metered"].values() if d.get("reachable"))
+    down = ([f"lane:{k}" for k, d in res["lanes"].items() if not d.get("reachable")]
+            + [f"metered:{k}" for k, d in res["metered"].items() if not d.get("reachable")])
+    return {"note": ("live reachability — lanes are $0, the metered pings cost ~a few $0.0001 total; each probe is "
+                     "bounded by timeout_s so a dead endpoint (e.g. the flaky agy lane) fails fast" if run
+                     else "estimate only (run=false) — $0, no probe"),
+            "lanes": res["lanes"], "metered": res["metered"],
+            "summary": {"lanes_up": lanes_up, "lanes_total": len(res["lanes"]),
+                        "metered_up": met_up, "metered_total": len(res["metered"]), "down": down}}
+
+
 _TOOLS = {
+    "spendguard_health": (
+        "Live reachability of every $0 subscription LANE + every metered PROVIDER — a fast, BOUNDED health check. "
+        "Each probe is time-bounded (timeout_s) so ONE hung endpoint (e.g. the flaky agy/gemini lane) cannot wedge "
+        "the sweep. Lanes are $0; the metered pings cost ~a few $0.0001 total. Returns per-resource {reachable, "
+        "executor, cost, latency, reason} + a summary of what is DOWN. run=false → estimate only ($0).",
+        {"type": "object", "properties": {
+            "run": {"type": "boolean", "description": "actually probe (default true); false = $0 estimate only"},
+            "timeout_s": {"type": "integer", "description": "per-probe bound in seconds (default 20) — a dead endpoint fails this fast"}},
+         "additionalProperties": False},
+        _tool_health),
     "spendguard_advise": (
         "Rank the models you have ALREADY used for a job-type ('intent') by cost-effectiveness at the quality it "
         "held: $/good-result where quality is labeled, else $/M output. Returns the ranked models, the pick, and "

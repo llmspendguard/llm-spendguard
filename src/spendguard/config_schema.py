@@ -167,6 +167,12 @@ SETTINGS = [
               "then water-fills that group across whichever $0 lane / cheapest credit is best RIGHT NOW (pace-aware). "
               "A lane serves a group when its advisor.lane_models base is in the group's list. Unset → no group "
               "routing. This is how a 7thsense-style caller asks for 'my cheap group' and gets the best-value one."),
+    dict(section="reliability", key="probe_models", store="config.json:reliability.probe_models", default=None,
+         kind="json|null", secret=False,
+         desc="{provider: model} — pin the exact model `spendguard reliability --run` / the spendguard_health MCP "
+              "tool probes for a provider, so the check verifies the id you DEPEND on (e.g. "
+              "{\"moonshot\":\"kimi-k3\"}) rather than the cheapest served one. Unset → prefer a configured model, "
+              "else the cheapest served with output pricing."),
     dict(section="advisor", key="compaction_context_tokens", store="config.json:advisor.compaction_context_tokens",
          env="SPENDGUARD_COMPACTION_CONTEXT_TOKENS", default=100000, kind="int", secret=False,
          desc="Re-read context size (in_tok + cache_read + cache_write, per turn) above which a Claude Code "

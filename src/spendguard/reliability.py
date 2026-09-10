@@ -22,12 +22,22 @@ _PROBE_IN, _PROBE_OUT = 12, 8          # a one-line probe prompt + a one-word re
 
 
 def _metered_target(provider):
-    """The model to probe a provider's metered API: config override → named cheap-chat default (if the live
-    catalog serves it) → the cheapest LIVE model with OUTPUT pricing (a chat model; embeddings have no output
-    price). None when the provider has no usable target. Derived, never a blind hardcode."""
+    """The model to probe a provider's metered API: config override → a model THIS install actually depends on for
+    this provider → named cheap-chat default (if the live catalog serves it) → the cheapest LIVE model with OUTPUT
+    pricing. None when the provider has no usable target. Derived, never a blind hardcode."""
     ov = config._cfg_get("reliability", "probe_models", None)
     if isinstance(ov, dict) and ov.get(provider):
         return ov[provider]
+    # PREFER a model the user's config actually calls for this provider (advisor.model/judge/tiers/lane_models), so
+    # the check verifies the ids you DEPEND on (e.g. kimi-k3) rather than merely the cheapest one served. Explicit
+    # `reliability.probe_models` still wins above.
+    try:
+        from . import model_preflight, gate as _g
+        for spec in model_preflight.configured_specs():
+            if _g._provider_of(spec) == provider:
+                return spec.split(":", 1)[-1]
+    except Exception:
+        pass
     from . import catalog, pricing
     live = set(catalog.live_model_ids(provider) or [])
     default = _PROBE_DEFAULTS.get(provider)
@@ -74,29 +84,42 @@ def sweep_estimate(pl=None):
     return {"metered_cost": total, "rows": rows, "n_lanes": len(pl["lanes"]), "n_metered": len(pl["metered"])}
 
 
-def sweep(run=False):
-    """The reachability matrix. run=False → estimate only ($0). run=True → probe every lane ($0, existing probe)
-    + every metered provider (tiny spend) → {resource: {reachable, executor, cost, reason}}."""
+def sweep(run=False, timeout_s=20):
+    """The reachability matrix. run=False → estimate only ($0). run=True → probe every lane ($0) + every metered
+    provider (a tiny gated ping) → {resource: {reachable, executor, cost, reason, latency}}. Each probe is BOUNDED
+    by `timeout_s`, so ONE hung endpoint fails in ~timeout_s instead of its full work-timeout (the agy lane's 300s
+    was exactly that wedge). The lane probes run concurrently + persisted inside lanes.probe; the metered pings are a
+    short sequential pass (a handful of providers, pennies total — cheap to re-run, so no checkpoint is warranted)."""
+    import time as _t
     pl = plan()
     out = {"estimate": sweep_estimate(pl), "lanes": {}, "metered": {}}
     if not run:
         return out
     from . import lanes as _lanes
-    for r in _lanes.probe():                              # $0 subscription probe, one per enabled lane
+    for r in _lanes.probe(timeout_s=timeout_s):          # $0 subscription probe — bounded + concurrent inside lanes.probe
+        if r.get("skipped"):
+            continue                                     # a lane the executor did not enable is not a reachability row
         out["lanes"][r["lane"]] = {"reachable": bool(r.get("ok")), "cost": 0.0,
                                    "reason": r.get("error"), "latency": r.get("latency")}
     for prov, mid in pl["metered"]:                      # a tiny metered call per provider, through the gate. No
-        # max_tokens literal: it is a reachability ping (only `error` is read, the reply is discarded), the model
-        # emits ~a word regardless of the cap, and the sig lets _call_guarded size + ceiling-clamp the budget.
-        r = adapters.call(f"{prov}:{mid}", "Reply with one word: ok.", sig="spendguard:reliability-sweep")
+        # max_tokens literal: a reachability ping (only `error` is read, the reply discarded); the sig lets
+        # _call_guarded size + ceiling-clamp the budget, and timeout_s bounds a dead provider.
+        t0 = _t.time()
+        r = adapters.call(f"{prov}:{mid}", "Reply with one word: ok.", sig="spendguard:reliability-sweep",
+                          timeout_s=timeout_s)
         out["metered"][prov] = {"model": mid, "reachable": not r.get("error"), "cost": r.get("cost"),
-                                "executor": r.get("executor"), "reason": r.get("error_type") or r.get("error")}
+                                "executor": r.get("executor"), "latency": round(_t.time() - t0, 2),
+                                "reason": r.get("error_type") or r.get("error")}
     return out
 
 
 def main(argv=None):
     argv = list(argv or [])
     run = "--run" in argv
+    if "--json" in argv:                                 # machine-readable status of every lane + metered provider
+        import json as _json
+        print(_json.dumps(sweep(run=run), indent=2))
+        return 0
     est = sweep_estimate()
     print(f"Reliability sweep — {est['n_lanes']} lanes ($0 probe) + {est['n_metered']} metered providers "
           f"(estimate ~${est['metered_cost']:.4f} total, tiny per-provider):")

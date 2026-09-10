@@ -28,6 +28,11 @@ import subprocess
 import time
 
 TIMEOUT_S = 300               # meta prompts are small; a hung CLI must not stall the daily report
+MIN_TIMEOUT_S = 30            # agy's real working latency is ~5s (no big cold-start), and its plan quota OSCILLATES
+#                              (it is the flaky lane) — so bound a lane ATTEMPT to ~30s: a working call answers well
+#                              within it, a DOWN/hung agy fails fast and degrades to the metered Gemini API in
+#                              seconds instead of the 150s global floor, and the miss then cools the lane. Unlike a
+#                              codex COLD start (~75s+), agy has no long warm-up to protect, so this floor is safe.
 _USAGE_TTL_S = 300            # /usage (the quota oracle) is re-read at most this often — weekly windows don't move fast
 _LANE_FAMILY = "gemini"       # the model family this lane serves; the /usage bucket to consult when a probe has no model
 _usage_cache = {"at": 0.0, "val": None}   # {at: last-read unix ts, val: parsed buckets or None} — see usage()

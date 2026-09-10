@@ -79,6 +79,17 @@ def estimate_jsonl_cost(jsonl_path, model, batch=True, avg_out_tokens=None, prov
         row_model = body.get("model") or model
         slot = by_model.setdefault(row_model, {"in": 0, "out": 0, "n": 0})
         slot["n"] += 1
+        # EMBEDDINGS batch bodies carry `input` (a str, a list of strs, or pre-tokenized int arrays), NOT `messages`,
+        # and output tokens are always 0 — priced by input alone. Counting only `messages` estimated these at $0, so
+        # the cap could never see an embeddings batch coming (same fix as gate._estimate_openai_jsonl).
+        if body.get("input") is not None and not body.get("messages"):
+            _inp = body["input"]
+            for s in (_inp if isinstance(_inp, list) else [_inp]):
+                t = tt(s) if isinstance(s, str) else (len(s) if isinstance(s, (list, tuple)) else 0)
+                in_tok += t
+                slot["in"] += t
+            out_basis = "embeddings(out=0)"
+            continue                                       # no output tokens, no expected-output rung for embeddings
         for m in body.get("messages", []):
             t, d = content_tokens.count_detail(m.get("content", ""), provider=provider,
                                                model=row_model, text_tokens=tt)
@@ -119,8 +130,10 @@ def estimate_jsonl_cost(jsonl_path, model, batch=True, avg_out_tokens=None, prov
 
 def guarded_submit(jsonl_path, model, cap_dollars, batch=True, avg_out_tokens=None,
                    expected_cost=None, submit=True, request_cap=25000,
-                   overrun_tolerance=DEFAULT_OVERRUN_TOLERANCE):
-    """Estimate -> enforce cap -> log -> submit. Raises RuntimeError if it won't pass."""
+                   overrun_tolerance=DEFAULT_OVERRUN_TOLERANCE, endpoint="/v1/chat/completions"):
+    """Estimate -> enforce cap -> log -> submit. Raises RuntimeError if it won't pass. `endpoint` is the Batch API
+    target the .jsonl lines address ('/v1/chat/completions' by default, '/v1/embeddings' for an embeddings batch) —
+    it must match the lines' `url`, so it is a parameter, not a hardcoded literal at the batches.create call."""
     est = estimate_jsonl_cost(jsonl_path, model, batch=batch, avg_out_tokens=avg_out_tokens)
     print(f"[submit_gate] {est['requests']:,} req · {est['mode']} · in={est['in_tok']:,} "
           f"out={est['out_tok']:,} ({est['out_basis']}; {est['token_basis']}) -> ${est['cost']:,.2f}")
@@ -156,7 +169,7 @@ def guarded_submit(jsonl_path, model, cap_dollars, batch=True, avg_out_tokens=No
     client = OpenAI(api_key=_api_key("OPENAI_API_KEY"))
     with open(jsonl_path, "rb") as fh:        # the upload handle was never closed
         f = client.files.create(file=fh, purpose="batch")
-    b = client.batches.create(input_file_id=f.id, endpoint="/v1/chat/completions", completion_window="24h")
+    b = client.batches.create(input_file_id=f.id, endpoint=endpoint, completion_window="24h")
     print(f"[submit_gate] SUBMITTED batch {b.id} (projected ${est['cost']:,.2f}). "
           f"Verify after: reconcile_openai_spend.py --estimate {est['cost']:.2f}")
     return b.id

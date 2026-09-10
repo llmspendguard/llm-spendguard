@@ -44,7 +44,7 @@ def _stub_call(model, prompt, **kw):
 
 
 adapters.call = _stub_call
-lanes.probe = lambda: [{"lane": "codex", "ok": True, "latency": 2.0}, {"lane": "gemini", "ok": False, "error": "quota"}]
+lanes.probe = lambda timeout_s=None: [{"lane": "codex", "ok": True, "latency": 2.0}, {"lane": "gemini", "ok": False, "error": "quota"}]
 
 
 print("-- (d) the metered target is derived, never a blind hardcode --")

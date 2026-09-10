@@ -155,9 +155,13 @@ def _lane_mods():
     return {"claude-code": subscription_exec, "codex": codex_exec, "gemini": antigravity_exec, "zai-coding": zai_exec}
 
 
-def probe():
+def probe(timeout_s=None):
     """Definitive activation check: ONE tiny prompt per enabled lane, straight through its CLI ($0 billed —
-    plan-covered; the only spend is a few plan tokens). Returns per-lane live results."""
+    plan-covered; the only spend is a few plan tokens). Each probe is bounded by `timeout_s` when given — a
+    reachability ping must NOT wait a lane's full work-timeout (agy's is 300s), so a dead lane fails FAST (in
+    timeout_s) instead of wedging the whole sweep. None → each lane's own default. Returns per-lane live results;
+    a fresh probe each call (a point-in-time reachability, not a resumable job — nothing to checkpoint)."""
+    from . import gate as _gate
     mods = _lane_mods()
     res = []
     for ln in lanes_status()["lanes"]:
@@ -168,14 +172,19 @@ def probe():
         if mod is None:
             res.append(dict(lane=ln["lane"], ok=False, error="no probe runner for this lane"))
             continue
+        kw = {"model": _PROBE_TIER.get(ln["lane"])}
+        if timeout_s:
+            kw["timeout"] = timeout_s              # bound the CLI subprocess itself — a dead lane fails in timeout_s
         try:
-            r = mod.run_prompt(_PROBE_PROMPT, model=_PROBE_TIER.get(ln["lane"]))
+            r = mod.run_prompt(_PROBE_PROMPT, **kw)
+        except _gate.deliberate_stop_types():
+            raise                                  # a spend refusal / deadline HALTS the sweep — never a 'lane down' row
         except Exception as e:
             # a lane's CLI can be missing (FileNotFoundError) or hang (TimeoutExpired); one lane's probe raising
-            # must not abort the WHOLE --probe run and lose the other lanes' already-collected results.
+            # must not abort the WHOLE run and lose the other lanes' already-collected results.
             r = {"error": f"{type(e).__name__}: {str(e)[:100]}"}
         ok = not r.get("error")
-        _record_probe(ln["lane"], ok)     # persisted: the definitive auth evidence lanes_status()/doctor read back
+        _record_probe(ln["lane"], ok)              # persisted: the definitive auth evidence lanes_status()/doctor read
         res.append(dict(lane=ln["lane"], ok=ok, error=r.get("error"),
                         text=(r.get("text") or "")[:40], latency=round(r.get("latency") or 0, 1)))
     return res

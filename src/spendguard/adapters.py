@@ -13,7 +13,7 @@ from . import config, pricing
 # name -> {base_url, key_env, prefixes, kind}
 PROVIDERS = {
     "openai":    {"base_url": None, "key_env": "OPENAI_API_KEY",
-                  "prefixes": ("gpt-", "o1", "o3", "chatgpt"), "kind": "openai"},
+                  "prefixes": ("gpt-", "o1", "o3", "chatgpt"), "kind": "openai", "batch": True},
     "anthropic": {"base_url": None, "key_env": "ANTHROPIC_API_KEY",
                   "prefixes": ("claude-",), "kind": "anthropic"},
     "gemini":    {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
@@ -24,6 +24,10 @@ PROVIDERS = {
                   "key_env": "DASHSCOPE_API_KEY", "prefixes": ("qwen", "qwq"), "kind": "openai"},
     "zai":       {"base_url": "https://api.z.ai/api/paas/v4",   # z.ai / Zhipu GLM — OpenAI-compatible (verify base_url with your key)
                   "key_env": "ZAI_API_KEY", "prefixes": ("glm-",), "kind": "openai"},
+    "voyage":    {"base_url": "https://api.voyageai.com/v1",     # Voyage AI — OpenAI-compatible /EMBEDDINGS only (no
+                  #                                                chat, no async Batch API). Anthropic's recommended
+                  #                                                embeddings; reached via adapters.embed(model="voyage-…").
+                  "key_env": "VOYAGE_API_KEY", "prefixes": ("voyage-",), "kind": "openai", "batch": False},
     "moonshot":  {"base_url": "https://api.moonshot.ai/v1",     # Moonshot AI (Kimi) — OpenAI-compatible.
                   # Prefixes cover the WHOLE family (kimi-k2/k2.5/k2.6/kimi-latest and any future kimi-*), so a
                   # newer Kimi routes + prices itself the day the synced table carries it — no code change, no
@@ -502,6 +506,244 @@ def vision(model, prompt, images, *, schema=None, system=None, sig=None, reasoni
                 no_metered_fallback=no_metered_fallback, no_substitution=no_substitution)
 
 
+_EMBED_MAX_BATCH = 128            # inputs per /embeddings request — conservative, well under provider caps (OpenAI
+#                                   2048, Gemini smaller); overridable via max_batch=. A NAMED default, never magic.
+_EMBED_TIMEOUT_S = 60             # per-request wall bound so a hung embeddings call can't wedge a whole corpus run.
+_EMBED_MAX_INPUT_CHARS = 32000    # ~8k-token per-input ceiling (OpenAI) as a conservative CHAR guard — an oversized
+#                                   text is marked failed for THAT item, never sent to 400 the whole chunk it rides in.
+_DEFAULT_EMBED_MODEL = "text-embedding-3-small"   # the fallback embed model (cheap OpenAI) when none is given and
+#                                                   config advisor.embed_model is unset — OpenAI is the default we use.
+
+
+def _embed_default_model():
+    """The embed model to use when a caller passes none: config `advisor.embed_model` if set, else the named OpenAI
+    default — resolved, never a bare literal at the call site (change the default in ONE place / via config)."""
+    try:
+        return config._cfg_get("advisor", "embed_model", None) or _DEFAULT_EMBED_MODEL
+    except Exception:
+        return _DEFAULT_EMBED_MODEL
+
+
+def _oai_compat_client(provider, timeout_s=None):
+    """The OpenAI-SDK client for an OpenAI-COMPATIBLE provider — the ONE place the per-provider base_url + key +
+    fast-connect discipline is assembled, so completions AND embeddings build the client identically (no drift).
+    Raises for an unknown provider, a non-OpenAI-compatible one, or a missing key."""
+    spec = PROVIDERS.get(provider)
+    if not spec:
+        raise ValueError(f"unknown provider {provider!r}")
+    if spec.get("kind") != "openai":
+        raise ValueError(f"{provider} is not OpenAI-compatible (kind={spec.get('kind')!r}) — no /embeddings shape")
+    key = config.api_key(spec["key_env"])
+    if not key:
+        raise ValueError(f"no key ({spec['key_env']}) for {provider}")
+    from openai import OpenAI
+    return (OpenAI(api_key=key, base_url=spec["base_url"], timeout=_http_timeout(timeout_s), max_retries=0)
+            if timeout_s else OpenAI(api_key=key, base_url=spec["base_url"]))
+
+
+def embed(texts, model=None, *, dimensions=None, max_batch=None, timeout_s=None, checkpoint=None):
+    """The first-class REALTIME embedding surface — embed a list of texts on an OpenAI-COMPATIBLE provider (openai
+    + gemini today; both speak /embeddings), gated + priced + metered exactly like adapters.call (the gate already
+    intercepts .embeddings.create). `model` defaults to the OpenAI default (config advisor.embed_model, else
+    text-embedding-3-small); pass a gemini id (e.g. 'gemini-embedding-001') to embed there, so the SAME corpus can
+    be embedded on both for an A/B.
+
+    ROBUST BULK (the CHUNK-never-single-shot rule, all four parts):
+      • CHUNKED into requests of at most `max_batch` inputs;
+      • DURABLE BY DEFAULT — a MULTI-chunk run auto-checkpoints to a jsonl under HOME (a single request is atomic;
+        more than one is crash-losable), each chunk APPENDED (keyed by sha256(text) — CONTENT, not position) BEFORE
+        the next runs, so a crash RESUMES and never re-pays, and a changed list re-embeds only new texts;
+      • per-request TIMEOUT (default _EMBED_TIMEOUT_S) so a hung call can't wedge the run;
+      • per-input SIZE GUARD + per-chunk ISOLATION — an oversized text is marked failed for that item (never sent to
+        400 its chunk), and one chunk's failure marks its items and KEEPS GOING (the rest still embed + checkpoint).
+
+    Returns a dict — NEVER raises (except a deliberate spend stop, which PROPAGATES) — {vectors, model, dims, n,
+    checkpoint, failed, error}. `vectors` is ALIGNED to inputs (None where an item failed) and `failed` lists
+    {i, reason}; it is never a SILENTLY short list — a None + a failed[] entry, or an explicit error. Re-run to
+    retry only the failed items (the checkpoint already holds the rest)."""
+    import json as _json, hashlib as _hl
+    from . import gate as _gp
+    model = model or _embed_default_model()
+    prov = _gp._provider_of(model)               # provider_for (prefix) → priced catalog; the canonical resolver
+    raw = model.split(":", 1)[1] if ":" in model else model
+    items = list(texts or [])
+    timeout_s = timeout_s or _EMBED_TIMEOUT_S
+    base = {"vectors": [], "model": raw, "dims": dimensions, "n": len(items),
+            "checkpoint": checkpoint, "failed": [], "error": None}
+    if not prov or prov == _gp.UNKNOWN_PROVIDER:
+        return {**base, "error": f"cannot resolve a provider for {model!r} — pass 'provider:model'"}
+    if not items:
+        return base
+    keys = [_hl.sha256(t.encode("utf-8", "replace")).hexdigest() for t in items]
+    _n = max(1, int(max_batch or _EMBED_MAX_BATCH))
+    if checkpoint is None and len(items) > _n:
+        _ck = _hl.sha256(f"{raw}|{len(items)}|{keys[0]}|{keys[-1]}".encode()).hexdigest()[:10]
+        checkpoint = str(config.HOME / f"embed_{raw}_{_ck}.jsonl")    # durable by default for a multi-request run
+    base["checkpoint"] = checkpoint
+    done = {}                                                          # sha(text) -> vector, seeded from the checkpoint
+    if checkpoint:
+        try:
+            with open(checkpoint) as fh:
+                for line in fh:
+                    line = line.strip()
+                    if line:
+                        row = _json.loads(line)
+                        done[row["k"]] = row["v"]
+        except FileNotFoundError:
+            pass
+    _extra = {"dimensions": dimensions} if dimensions else {}
+    from . import gate as _g
+    _stop = _g.deliberate_stop_types()
+    try:
+        c = _oai_compat_client(prov, timeout_s)
+    except Exception as e:
+        return {**base, "error": str(e)[:200]}                        # client build (unknown provider / no key)
+    failed = []
+    todo = []                                                         # not-yet-embedded AND within the size guard
+    for i, k in enumerate(keys):
+        if k in done:
+            continue
+        if len(items[i]) > _EMBED_MAX_INPUT_CHARS:
+            failed.append({"i": i, "reason": f"input {len(items[i])} chars > {_EMBED_MAX_INPUT_CHARS} cap — split it"})
+        else:
+            todo.append(i)
+    for c0 in range(0, len(todo), _n):
+        grp = todo[c0:c0 + _n]
+        try:
+            r = c.embeddings.create(model=raw, input=[items[i] for i in grp], **_extra)  # gate meters this
+        except Exception as e:
+            if isinstance(e, _stop):
+                raise                                                 # a spend refusal / cap HALTS — never isolated
+            failed.extend({"i": i, "reason": str(e)[:120]} for i in grp)  # ISOLATE: mark the chunk, keep going
+            continue
+        vecs = {int(d.index): list(d.embedding) for d in r.data}      # index is CHUNK-relative → map to the group
+        _fh = open(checkpoint, "a") if checkpoint else None           # append this chunk BEFORE the next → durable
+        try:
+            for j, i in enumerate(grp):
+                v = vecs.get(j)
+                if v is None:
+                    # the provider accepted the input but returned NO vector for it (a short r.data) — record WHICH
+                    # item, so every None in `vectors` has a failed[] entry (the 'never a silently-short list' rule).
+                    failed.append({"i": i, "reason": "provider returned no vector for this input (omitted from r.data)"})
+                    continue
+                done[keys[i]] = v
+                if _fh:
+                    _fh.write(_json.dumps({"k": keys[i], "v": v}) + "\n")
+        finally:
+            if _fh:
+                _fh.close()
+    out = [done.get(k) for k in keys]
+    n_missing = sum(1 for v in out if v is None)
+    dims = next((len(v) for v in out if v is not None), dimensions)
+    return {**base, "vectors": out, "dims": dims, "failed": failed,
+            "error": (f"{n_missing}/{len(items)} inputs unembedded (see failed[]); re-run to retry only those"
+                      if n_missing else None)}
+
+
+def embed_batch(texts, model=None, *, dimensions=None, jsonl_path=None, cap_dollars=None, submit=True):
+    """The first-class BATCH embedding surface — the ASYNC Batch API (~50% cheaper) for a LARGE corpus, gated
+    estimate-first + capped by the SAME chokepoint every batch submission passes (submit.guarded_submit). Builds a
+    /v1/embeddings JSONL (one input per line, custom_id 'emb-<i>' = input index) at a durable path, estimates +
+    cap-checks it ($0, no paid call), then submits. Returns {batch_id, jsonl, requests, error}; submit=False
+    writes + estimates only. Collect results later with callio.guarded_collect(batch_id) — vectors map by custom_id.
+
+    Batch availability is a CONFIG CAPABILITY on the provider spec (`batch`), never a hardcoded id check: OpenAI
+    declares it (its async Batch API). A provider that does not (gemini's OpenAI-compat endpoint exposes no
+    /batches — its async batch is a separate native API) returns a clear error pointing to embed() (chunked
+    realtime) until its native batch path is wired — a LOUD boundary, never a silent metered fallback."""
+    import json as _json, hashlib as _hl
+    from . import gate as _gp
+    model = model or _embed_default_model()
+    prov = _gp._provider_of(model)               # provider_for (prefix) → priced catalog; the canonical resolver
+    raw = model.split(":", 1)[1] if ":" in model else model
+    items = list(texts or [])
+    base = {"batch_id": None, "jsonl": None, "requests": len(items), "error": None}
+    if not PROVIDERS.get(prov or "", {}).get("batch"):
+        return {**base, "error": f"{prov} does not declare the async Batch API (provider spec 'batch') — use embed() "
+                                 f"(chunked realtime) for {prov}, or wire + declare its native batch path."}
+    if not items:
+        return base
+    if not jsonl_path:                                               # a stable, content-derived name (so a re-run reuses it)
+        _tag = _hl.sha256(f"{raw}|{len(items)}|{items[0][:80]}|{items[-1][:80]}".encode("utf-8", "replace")).hexdigest()[:10]
+        jsonl_path = str(config.HOME / f"embed_batch_{raw}_{_tag}.jsonl")
+    try:
+        with open(jsonl_path, "w") as fh:
+            for i, t in enumerate(items):
+                body = {"model": raw, "input": t}
+                if dimensions:
+                    body["dimensions"] = dimensions
+                fh.write(_json.dumps({"custom_id": f"emb-{i}", "method": "POST",
+                                      "url": "/v1/embeddings", "body": body}) + "\n")
+        from . import submit as _submit
+        bid = _submit.guarded_submit(jsonl_path, model=raw, cap_dollars=cap_dollars, batch=True,
+                                     submit=submit, endpoint="/v1/embeddings")
+        return {**base, "batch_id": bid, "jsonl": jsonl_path}
+    except Exception as e:
+        from . import gate as _g2
+        if isinstance(e, _g2.deliberate_stop_types()):
+            raise                                                     # a cap refusal HALTS — never a silent partial
+        return {**base, "jsonl": jsonl_path, "error": str(e)[:200]}
+
+
+_EMBED_COMPARE_SAMPLE = 200       # texts embedded per model for an A/B — a sample is enough for a STRUCTURE compare
+
+
+def embed_compare(texts, models=None, *, sample=None):
+    """A/B two or more embedding models on the SAME texts — the cheap way to decide openai vs gemini (vs voyage)
+    BEFORE committing a corpus + a Qdrant collection to one. Embeds a SAMPLE of `texts` on each model (default: the
+    OpenAI default + gemini-embedding-001), then reports per-model {dims, rate_per_1m, n_failed} and — PAIRWISE — how
+    much the models AGREE on neighbourhood STRUCTURE: the Pearson correlation of their off-diagonal cosine-similarity
+    matrices (≈1.0 = the models call the same texts near/far; low = they disagree on what is similar). A quality
+    signal that needs NO labelled retrieval set. Makes REAL (gated) embedding calls on the sample — small, not free.
+
+    Returns {sample_n, models: [{model, dims, rate_per_1m, n_failed, error}],
+             agreement: [{a, b, structure_corr, pairs}]}."""
+    from . import pricing as _pr
+
+    def _cosine_sim(a, b):
+        dot = sum(x * y for x, y in zip(a, b))
+        na = sum(x * x for x in a) ** 0.5
+        nb = sum(y * y for y in b) ** 0.5
+        return (dot / (na * nb)) if na and nb else 0.0
+
+    def _pearson(xs, ys):
+        n = len(xs)
+        if n < 2:
+            return None
+        mx, my = sum(xs) / n, sum(ys) / n
+        cov = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+        vx = sum((x - mx) ** 2 for x in xs) ** 0.5
+        vy = sum((y - my) ** 2 for y in ys) ** 0.5
+        return (cov / (vx * vy)) if vx and vy else None
+
+    models = list(models) if models else [_embed_default_model(), "gemini-embedding-001"]
+    items = list(texts or [])
+    _s = int(sample or _EMBED_COMPARE_SAMPLE)
+    items = items[:_s] if len(items) > _s else items
+    per, sims = [], {}
+    for m in models:
+        r = embed(items, m)                                          # gated + metered; a sample, so bounded spend
+        vecs = r.get("vectors") or []
+        try:
+            rate = _pr.price(m.split(":", 1)[-1]).get("in_")
+        except Exception:
+            rate = None
+        per.append({"model": m, "dims": r.get("dims"), "rate_per_1m": rate,
+                    "n_failed": len(r.get("failed") or []), "error": r.get("error")})
+        sims[m] = {(i, j): _cosine_sim(vecs[i], vecs[j])            # off-diagonal cosine over pairs both models have
+                   for i in range(len(vecs)) for j in range(i + 1, len(vecs))
+                   if vecs[i] is not None and vecs[j] is not None}
+    agreement = []
+    for a in range(len(models)):
+        for b in range(a + 1, len(models)):
+            ma, mb = models[a], models[b]
+            common = [k for k in sims.get(ma, {}) if k in sims.get(mb, {})]
+            agreement.append({"a": ma, "b": mb, "pairs": len(common),
+                              "structure_corr": _pearson([sims[ma][k] for k in common],
+                                                         [sims[mb][k] for k in common])})
+    return {"sample_n": len(items), "models": per, "agreement": agreement}
+
+
 def deadline_for(model, intent=None, in_chars=None, default_s=None):
     """PUBLIC deadline advisor — how many seconds a call should be ALLOWED to take, sized from MEASURED latency
     (never a hardcoded number). Returns (seconds, basis): `seconds` is a proposed deadline you pass as timeout_s;
@@ -791,11 +1033,15 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             _shape = json_schema_request("compat", schema).get("_schema_prompt")
             if _shape:
                 _lane_sys = ((system + "\n\n") if system else "") + _shape
-        # Floor the lane deadline (LANE_MIN_TIMEOUT_S) so a slow CLI/plan call is not timed out by a metered
-        # call's tight budget and churned to the paid API; cap it at the lane's own TIMEOUT_S so a hung lane is
-        # still bounded. The lane is $0, so a generous wait costs latency, not money.
+        # Floor the lane deadline so a slow CLI/plan call is not timed out by a metered call's tight budget and
+        # churned to the paid API; cap it at the lane's own TIMEOUT_S so a hung lane is still bounded. The floor is
+        # PER-LANE (lane_mod.MIN_TIMEOUT_S, else the global): a codex COLD start needs ~75s+ (keep the generous
+        # global floor), but a lane whose real latency is a few seconds (agy ~5s) declares a SHORT floor so a FLAKY
+        # lane fails fast and degrades to the metered API in seconds, not 150s — the user gets a timely answer, and
+        # the miss then cools the lane so subsequent calls skip it. The lane is $0, so the wait costs latency, not money.
         _lane_cap = int(getattr(lane_mod, "TIMEOUT_S", 300))
-        _lane_timeout = min(_lane_cap, max(int(timeout_s or 0), int(LANE_MIN_TIMEOUT_S)))
+        _lane_floor = int(getattr(lane_mod, "MIN_TIMEOUT_S", LANE_MIN_TIMEOUT_S))
+        _lane_timeout = min(_lane_cap, max(int(timeout_s or 0), _lane_floor))
         try:
             # AGY namespace: effort rides the MODEL-ID SUFFIX, and agy ignores the reasoning kwarg. So a bare id
             # + reasoning=medium must be respelled gemini-…-flash-medium here, or the tier is silently dropped and
