@@ -65,9 +65,10 @@ def _preflight_one(spec, correct):
     except (KeyError, ValueError):                                      # the UNPRICED/unknown-model signal, narrowly
         priced = False
     # usable = callable EXACTLY AS WRITTEN: served (or unchecked — a can't-know is not a no) AND priced. A STALE id is
-    # NOT usable even when a correction exists, because dispatch REFUSES a stale id (it does not auto-swap) — the
-    # `corrected` field is the fix the CALLER must apply (edit config, or swap the id for this batch), not an
-    # auto-substitution. So a stale id fails preflight/verify until it is actually changed.
+    # NOT usable here even though DISPATCH now auto-resolves it (adapters.call → vendor_call.served_substitute picks
+    # the best served model AGENTICALLY and records resolved_from) — because this is the CONFIG-hygiene report: a
+    # configured id that is not served should be FIXED, not silently leaned on at every call. `corrected` names the
+    # identity-preserving swap for the caller to apply to config; runtime resolution is the safety net, not the plan.
     usable = priced and served in ("served", "unchecked")
     if served == "stale" and corrected:
         note = f"STALE id — use '{corrected}' (currently-served same model)"

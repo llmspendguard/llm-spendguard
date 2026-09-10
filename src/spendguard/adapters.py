@@ -75,6 +75,8 @@ _LANES = {"anthropic": ("claude-code", "subscription_exec"), "openai": ("codex",
 from . import resource_state   # AXIS-1 of the resource_state migration: cooldowns now live in the unified store
 _sub_guard = threading.local()   # one-hop lane-substitution guard: while a substitute call is in flight (proactive OR
                                  # reactive), no nested substitution — a substitute failing does not chain to a third.
+_resolve_guard = threading.local()  # while the agentic model-RESOLVER's own advisor call is in flight, dispatch does
+                                    # not re-resolve — the resolver picks an id, it must not be resolved again (recursion).
 _lane_echoed = set()             # lanes already announced this run — echo "a plan is serving these prompts" ONCE per
                                  # lane so the user KNOWS their work rode a subscription (not once per call = spam).
 
@@ -411,6 +413,27 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
         # so the input estimate and the request build never re-read the file. A vision call rides the metered API,
         # not a subscription lane (the lane CLIs are text-only) — _call_once forces that.
         images = [_load_image(i) for i in images]
+    # AGENTIC MODEL RESOLUTION (transparent, cached) — do it HERE so the budget, guards, and dispatch all use the
+    # SERVED id. If the vendor does not serve the requested id, an LLM picks the served model that best delivers what
+    # was asked (a phantom or renamed id: gpt-5.6 → the served gpt-5.6-sol; gemini-3-flash → gemini-3-flash-preview).
+    # It only ever CHANGES an id the vendor would otherwise reject, so a served id is untouched ($0 cache read); the
+    # swap is RECORDED on the result (resolved_from/resolution) — never silent, never cross-VENDOR. Skipped inside the
+    # resolver's own advisor call (_resolve_guard) so it cannot recurse. A DELIBERATE stop from the tiny resolver call
+    # propagates (never a silent guess); any other resolver failure leaves the id as-is (the honest unserved path).
+    _resolved_from = _resolution = None
+    if not getattr(_resolve_guard, "on", False):
+        try:
+            from . import vendor_call as _vcres
+            _rprov = provider_for(model)               # raises for a bare id with no registered provider
+            _rraw = model.split(":", 1)[1] if ":" in model else model
+            _rid, _rreason = _vcres.served_substitute(_rprov, _rraw)
+            if _rid and _rid != _rraw:                 # a served substitute was chosen → use it, record the swap
+                _resolved_from, _resolution, model = f"{_rprov}:{_rraw}", _rreason, f"{_rprov}:{_rid}"
+        except Exception as _rex:
+            from . import gate as _rgate
+            if isinstance(_rex, _rgate.deliberate_stop_types()):
+                raise                                  # a spend/budget refusal or deadline HALTS — never a silent guess
+            # unknown provider / resolver hiccup → leave the id UNCHANGED and proceed (the honest unresolved path)
     if not _no_guard:
         r = _call_guarded(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
                           schema=schema, timeout_s=timeout_s, sig=sig, retries=retries,
@@ -425,6 +448,9 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     # reach for instead — the metered provider API served it (a lane miss fell through, or there was no lane): executor
     # 'api'/'api-fallback', or (defensively) a cost with no lane executor recorded.
     if isinstance(r, dict):
+        if _resolved_from:                            # TRANSPARENCY: the caller asked for one id and a served one
+            r["resolved_from"] = _resolved_from       # answered — surface BOTH, so the swap is auditable, never silent
+            r["resolution"] = _resolution
         _ex = r.get("executor")
         r["served_by_metered_api"] = _ex in ("api", "api-fallback") or (not _ex and bool(r.get("cost")))
         # STRUCTURED OUTPUT: when a schema was requested, surface the DECODED object alongside `text` (provenance

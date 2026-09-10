@@ -721,6 +721,75 @@ def closest_served(vendor, stale_model):
         return None, live
 
 
+_SYS_SERVED_SUBSTITUTE = (
+    "You pick the SERVED model that best delivers what a caller asked for, when the vendor does not serve the exact "
+    "id they named. The requested id may be a phantom, a renamed alias, or a base name whose served forms carry "
+    "suffixes. Choose the single served id closest in family, tier, and capability to the request — it need NOT be "
+    "identical. If no served id is a reasonable substitute, answer null; never force a bad match.")
+
+
+def served_substitute(vendor, requested):
+    """(served_id, reason) — the served model that best delivers what `requested` asked for, chosen AGENTICALLY when
+    `vendor` does not serve `requested`, or (requested, None) when it is already served (nothing to resolve).
+
+    The TRANSPARENT, intent-matching sibling of closest_served. closest_served answers 'the SAME model under its
+    current name' (strict IDENTITY — it returns None for gpt-5.6, because gpt-5.6-sol/luna/terra are DISTINCT
+    models); served_substitute answers 'the best SERVED model for what you asked', which is what a caller needs when
+    the exact id is a phantom with distinct siblings. It is an LLM judgement, RECORDED (per-model fact
+    'served_substitute') so it is one-time + auditable, and the caller SURFACES it (resolved_from) — never a silent
+    swap. Candidates are the vendor's live served ids (subscription-lane namespace ∪ metered catalog); dispatch
+    tries the result LANE-first then metered. A deliberate stop from the tiny call propagates; any other failure →
+    (requested, None), so a resolver hiccup degrades to the honest unserved path, never a crash."""
+    import json as _json
+    import re as _re
+    if served_check(vendor, requested) in ("served", "unchecked"):
+        return requested, None                        # already callable (or can't-check) — nothing to resolve
+    from . import catalog, models as _models
+    rec = _models.facts(requested).get("served_substitute")
+    if rec is not None:                               # judged before ("" = judged: NO good substitute — a real answer)
+        val, src = rec[0], (rec[2] if len(rec) > 2 else "")
+        reason = src.split("::", 1)[1].strip() if isinstance(src, str) and "::" in src else None
+        return (val, reason) if val else (requested, None)
+    cands = sorted(set(catalog.live_model_ids(vendor) or []) | set(catalog.lane_model_ids(vendor) or []))
+    if not cands:
+        return requested, None                        # no served id to choose from → dispatch errors honestly
+    from . import adapters, calls, config, gate
+    prompt = (f"Vendor: {vendor}\nRequested (NOT served by this vendor): {requested}\n\nServed ids to choose from:\n"
+              + "\n".join(f"  {c}" for c in cands)
+              + '\n\nReply JSON only: {"id": "<the best served id, or null>", "reason": "<one short line>"}')
+    adapters._resolve_guard.on = True                 # the resolver's OWN advisor call must not itself resolve (recursion)
+    try:
+        with calls.context(intent="spendguard:resolve-servable-model"):
+            # sig= (not a hardcoded cap): the OUTPUT budget is this call-class's MEASURED p99, and a truncated reply
+            # is retried at double — the reply is a tiny {id, reason} JSON, so the measured budget converges small.
+            r = adapters.call(config.advisor_model(), prompt, sig="resolve-servable-model",
+                              system=_SYS_SERVED_SUBSTITUTE, no_substitution=True)
+    except Exception as e:
+        if isinstance(e, gate.deliberate_stop_types()):
+            raise                                     # over budget / refused / deadline → halt, never a silent guess
+        return requested, None
+    finally:
+        adapters._resolve_guard.on = False
+    if r.get("error"):
+        return requested, None                        # the resolver call failed → honest unserved path (nothing cached)
+    try:
+        blob = _re.search(r"\{.*\}", r.get("text") or "", _re.S)   # PARSE the JSON envelope; the model decided, not this
+        obj = _json.loads(blob.group(0)) if blob else {}
+    except Exception:
+        obj = {}
+    pick = obj.get("id") if isinstance(obj, dict) else None
+    reason = ((obj.get("reason") if isinstance(obj, dict) else "") or "").strip()
+    if pick and pick not in set(cands):
+        pick = None                                   # a name the model invented is not an answer
+    _models.add_fact(requested, "served_substitute", pick or "", confidence=0.9,
+                     source=f"agentic servable-substitute ({config.advisor_model()}) :: {reason}", verified=False)
+    if pick:                                          # announce the substitution ONCE (this branch only runs on the
+        import sys as _sysr                           # first, uncached resolution per id) — thereafter resolved_from
+        print(f"[spendguard] {vendor} does not serve {requested!r} → resolved to {pick!r} "   # on the result carries it
+              f"({reason or 'best served match'}); recorded. Set a served id to skip this.", file=_sysr.stderr)
+    return (pick, reason or None) if pick else (requested, None)
+
+
 # ── E: the MEASURED output-cap registry ───────────────────────────────────────────────────────────────────
 # max_tokens is a TERMINATION bound sized from measured need — not a cost control (billing is on tokens
 # generated) and never a guess. The probe that motivated this found both reasoning models returning HTTP 200
