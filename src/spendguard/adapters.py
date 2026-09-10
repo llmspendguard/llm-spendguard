@@ -77,6 +77,9 @@ _sub_guard = threading.local()   # one-hop lane-substitution guard: while a subs
                                  # reactive), no nested substitution — a substitute failing does not chain to a third.
 _resolve_guard = threading.local()  # while the agentic model-RESOLVER's own advisor call is in flight, dispatch does
                                     # not re-resolve — the resolver picks an id, it must not be resolved again (recursion).
+_heal_guard = threading.local()     # while discover_efforts is PROBING which reasoning tiers an endpoint accepts, the
+                                    # rung must DROP a rejected effort (so discovery sees it as rejected), NOT heal it —
+                                    # else the probe self-heals, looks accepted, and discovery learns the opposite.
 _lane_echoed = set()             # lanes already announced this run — echo "a plan is serving these prompts" ONCE per
                                  # lane so the user KNOWS their work rode a subscription (not once per call = spam).
 
@@ -1066,7 +1069,9 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 # MENTIONED a parameter (a validation error listing the whole request, a message quoting the
                 # body back) took the retry path and silently dropped a parameter the caller asked for —
                 # and the schema being dropped is precisely how "required" fields come back as zeros.
-                from . import models as _mp
+                from . import models as _mp, gate as _og
+                if isinstance(e, _og.deliberate_stop_types()):
+                    raise                                   # a spend refusal / deadline must NOT enter the retry ladder
                 _bad = _mp._rejected_param(e)
                 # THE LADDER. Each rung removes ONE optional thing and retries. Which rung to take comes
                 # from the provider's typed `param` when it supplies one; when it supplies none there is
@@ -1113,6 +1118,28 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                         except Exception as e2:
                             _last = e2
                             continue
+                    if _rung == "reasoning_effort" and "reasoning_effort" in okw and not getattr(_heal_guard, "on", False):
+                        # HEAL before dropping: the endpoint rejected this effort, but the caller asked for a TIER —
+                        # discover a value it accepts that preserves that tier (gpt-5.4-nano: 'minimal'→'none'),
+                        # retry, and on success mark it VERIFIED so every later call (and normalize_reasoning, which
+                        # a batch builder reads) sends the right value with no 400. Only if healing finds nothing do
+                        # we fall through to the drop below (degrade to the model's default effort). Skipped while
+                        # discover_efforts is probing (_heal_guard) — a probe must be DROPPED so it reads as rejected.
+                        from . import models as _mh, gate as _hg
+                        _pre = okw.get("reasoning_effort")
+                        if _mh.heal_reasoning(raw, okw, e):
+                            try:
+                                r = c.chat.completions.create(max_completion_tokens=max_tokens, **okw)
+                                _mh.confirm_reasoning(raw, okw)      # the healed value WORKED → promote it to verified
+                                import sys as _sh
+                                print(f"[spendguard] {prov}/{raw} rejected reasoning_effort={_pre!r} → healed to "
+                                      f"{okw.get('reasoning_effort')!r} (learned; kept the requested tier).", file=_sh.stderr)
+                                break
+                            except Exception as e2:
+                                if isinstance(e2, _hg.deliberate_stop_types()):
+                                    raise                    # a spend refusal / deadline HALTS — never downgraded to a drop
+                                okw["reasoning_effort"] = _pre   # heal's value also failed → restore, fall to the drop
+                                _last = e2
                     if _rung not in okw:
                         continue                          # not sent, so it cannot be what was refused
                     _saved = okw.pop(_rung)

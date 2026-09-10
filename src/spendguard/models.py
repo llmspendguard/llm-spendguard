@@ -231,9 +231,31 @@ def _rejected_param(err):
     return ""
 
 
+_EFFORT_LADDER = ("none", "minimal", "low", "medium", "high", "xhigh", "max")   # the reasoning ordinal, floor→ceiling
+
+
+def _pick_effort(tier, accepted):
+    """The value in `accepted` (efforts an endpoint VERIFIABLY takes) that best serves the requested `tier`, on the
+    fixed reasoning ordinal — a floor request ('minimal'/'none') → the LOWEST accepted; a named tier → that tier if
+    accepted, else the nearest accepted at-or-below it, else the lowest. None if `accepted` is empty. Ordinal
+    arithmetic on a DEFINED scale (the enumerated efforts), never a judgement about prose — so a literal pick is
+    right here, not an LLM. It is what turns 'the endpoint rejected minimal and accepts none/low/…' into a value."""
+    acc = [e for e in _EFFORT_LADDER if e in set(accepted or ())]
+    if not acc:
+        return None
+    t = (tier or "").strip().lower()
+    if t in ("minimal", "none", ""):
+        return acc[0]                                    # the lowest effort this endpoint accepts
+    if t in acc:
+        return t
+    idx = _EFFORT_LADDER.index(t) if t in _EFFORT_LADDER else 0
+    below = [e for e in acc if _EFFORT_LADDER.index(e) <= idx]
+    return below[-1] if below else acc[0]                # nearest accepted at-or-below the tier, else the floor
+
+
 def heal_reasoning(model, kw, err):
-    """If a call failed while sending a reasoning_effort this model does not take, substitute the literal its
-    family DOES take and return True so the caller retries. Else False.
+    """If a call failed while sending a reasoning_effort this model does not take, substitute a value it DOES take
+    and return True so the caller retries. Else False.
 
     Three things were wrong here, and all three came from guessing rather than consulting the table this
     module already maintains:
@@ -265,10 +287,27 @@ def heal_reasoning(model, kw, err):
         return False
     sent = kw.get("reasoning_effort")
     want = profile(model).get("reasoning")
-    if not want or want == sent:
-        return False      # nothing better to try — this failure is not this function's to fix
-    kw["reasoning_effort"] = want
-    add_fact(model, "reasoning", want, source=f"auto-heal(retry after {sent!r} failed)", verified=False)
+    if want and want not in ("?", sent):
+        kw["reasoning_effort"] = want          # the family/fact value DIFFERS from what failed → try it (no probe)
+        add_fact(model, "reasoning", want, source=f"auto-heal(retry after {sent!r} failed)", verified=False)
+        return True
+    # The family value is ABSENT, '?', or IS the value that just failed — a model on a scale the family rule does
+    # NOT know (gpt-5.4-nano: the seed says 'minimal', the endpoint REJECTS it, so want==sent and the old code gave
+    # up, dropping the tier). DISCOVER what this endpoint actually accepts (empirical, cached, nearly-free — a
+    # rejected param bills nothing) and pick a value that PRESERVES the requested tier. Recorded UNVERIFIED;
+    # confirm_reasoning marks it verified once a retry with it actually succeeds, so one good heal serves every
+    # later call (and normalize_reasoning, so a BATCH builder reading it sends the right value up front).
+    try:
+        from . import vendor_call as _vc
+        _prov = model.split(":", 1)[0] if ":" in model else (profile(model).get("provider") or "")
+        _acc = (_vc.discover_efforts(_prov, model.split(":", 1)[-1]) or {}).get("accepted")
+    except Exception:
+        _acc = None
+    pick = _pick_effort(sent, _acc)
+    if not pick or pick == sent:
+        return False                           # discovery unavailable, or its only accepted value is the one that failed
+    kw["reasoning_effort"] = pick
+    add_fact(model, "reasoning", pick, source=f"auto-heal(discovered accepted={_acc}; after {sent!r})", verified=False)
     return True
 
 
@@ -281,6 +320,35 @@ def confirm_reasoning(model, kw):
     v = kw.get("reasoning_effort")
     if v:
         add_fact(model, "reasoning", v, source="auto-heal(confirmed by successful retry)", verified=True)
+
+
+def resolve_effort(model, level):
+    """The reasoning_effort to SEND for `model` at ordinal `level`, resolved to a value the endpoint VERIFIABLY
+    accepts — for a caller with NO per-request retry (a BATCH builder, which cannot heal per row the way
+    adapters.call does). Realtime callers do NOT need this: adapters.call's send+heal ladder self-corrects and
+    LEARNS. A batch build has one shot per request, so it should resolve up front.
+
+    normalize_reasoning first (the family/fact value); then, for an OpenAI-shape endpoint, CONFIRM that value is
+    accepted by DISCOVERING the accepted set (empirical, cached, nearly-free) — and if the family value is NOT
+    accepted (the gpt-5.4-nano case: family says 'minimal', endpoint rejects it), pick a valid one that preserves
+    the tier and RECORD it so normalize_reasoning agrees thereafter. Returns the value to send, or None to omit the
+    parameter (a non-reasoning model). Discovery unavailable → the family value (best effort, unchanged)."""
+    base = normalize_reasoning(model, level)
+    prof = profile(model)
+    if base is None or not (prof.get("provider") == "openai" or ":" in str(model)):
+        return base                                      # non-reasoning model, or not an OpenAI-shape endpoint
+    try:
+        from . import vendor_call as _vc
+        _prov = str(model).split(":", 1)[0] if ":" in str(model) else prof.get("provider")
+        _acc = (_vc.discover_efforts(_prov, str(model).split(":", 1)[-1]) or {}).get("accepted")
+    except Exception:
+        _acc = None
+    if _acc and base not in set(_acc):                   # the family value is NOT actually accepted → correct it
+        pick = _pick_effort(level, _acc)
+        if pick:
+            add_fact(model, "reasoning", pick, source=f"resolve_effort(discovered accepted={_acc})", verified=False)
+            return pick
+    return base
 
 
 def learn_now():

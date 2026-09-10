@@ -865,6 +865,8 @@ def discover_efforts(vendor, model, refresh=False):
     import os as _os
     _prev = _os.environ.get("SPENDGUARD_ADVISOR_EXECUTOR")
     _os.environ["SPENDGUARD_ADVISOR_EXECUTOR"] = "api"
+    adapters._heal_guard.on = True     # while probing, the rung must DROP a rejected effort (so we SEE the rejection),
+    #                                    never heal it — else the probe self-heals and discovery learns the opposite.
     ok, rejected, unknown = [], [], []
     try:
         for eff in CANDIDATE_EFFORTS:
@@ -889,6 +891,7 @@ def discover_efforts(vendor, model, refresh=False):
                 # Everything else is genuinely unknown, and unknown is the honest answer.
                 unknown.append(eff)                    # transport/other/unattributable: evidence of nothing
     finally:
+        adapters._heal_guard.on = False
         if _prev is None:
             _os.environ.pop("SPENDGUARD_ADVISOR_EXECUTOR", None)
         else:
