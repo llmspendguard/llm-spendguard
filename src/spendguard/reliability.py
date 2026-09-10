@@ -84,6 +84,9 @@ def sweep_estimate(pl=None):
     return {"metered_cost": total, "rows": rows, "n_lanes": len(pl["lanes"]), "n_metered": len(pl["metered"])}
 
 
+_PROBE_OUT_TOKENS = 64          # a reachability ping only needs room for "ok" — deliberately tiny so a reasoning model's probe stays fast
+
+
 def sweep(run=False, timeout_s=20):
     """The reachability matrix. run=False → estimate only ($0). run=True → probe every lane ($0) + every metered
     provider (a tiny gated ping) → {resource: {reachable, executor, cost, reason, latency}}. Each probe is BOUNDED
@@ -101,12 +104,14 @@ def sweep(run=False, timeout_s=20):
             continue                                     # a lane the executor did not enable is not a reachability row
         out["lanes"][r["lane"]] = {"reachable": bool(r.get("ok")), "cost": 0.0,
                                    "reason": r.get("error"), "latency": r.get("latency")}
-    for prov, mid in pl["metered"]:                      # a tiny metered call per provider, through the gate. No
-        # max_tokens literal: a reachability ping (only `error` is read, the reply discarded); the sig lets
-        # _call_guarded size + ceiling-clamp the budget, and timeout_s bounds a dead provider.
+    for prov, mid in pl["metered"]:                      # a tiny metered call per provider, through the gate.
+        # A REACHABILITY ping reads only `error` (the reply is discarded), so it is a PROBE: _probe=True keeps it a
+        # single tiny shot — it is NOT floored to reasoning headroom and does NOT grow on an empty reply, so a heavy
+        # REASONING model (kimi-k3 at high effort) answers the probe in seconds instead of reasoning through a 32k
+        # budget. An empty-but-error-free reply still reads as reachable. timeout_s bounds a dead provider.
         t0 = _t.time()
         r = adapters.call(f"{prov}:{mid}", "Reply with one word: ok.", sig="spendguard:reliability-sweep",
-                          timeout_s=timeout_s)
+                          max_tokens=_PROBE_OUT_TOKENS, timeout_s=timeout_s, _probe=True)
         out["metered"][prov] = {"model": mid, "reachable": not r.get("error"), "cost": r.get("cost"),
                                 "executor": r.get("executor"), "latency": round(_t.time() - t0, 2),
                                 "reason": r.get("error_type") or r.get("error")}

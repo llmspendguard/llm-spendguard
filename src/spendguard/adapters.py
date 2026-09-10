@@ -348,7 +348,7 @@ def _maybe_credit_advisor(requested, r):
 
 def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,
          sig=None, retries=2, files=None, _no_guard=False, no_metered_fallback=False, images=None,
-         no_substitution=False):
+         no_substitution=False, _probe=False):
     """Run one prompt against one model. Returns a result dict (never raises).
 
     `files=[path, …]` is the INPUT twin of the output guard below: each path is assembled into the prompt as a
@@ -444,7 +444,8 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     if not _no_guard:
         r = _call_guarded(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
                           schema=schema, timeout_s=timeout_s, sig=sig, retries=retries,
-                          no_metered_fallback=no_metered_fallback, images=images, _no_sub=no_substitution)
+                          no_metered_fallback=no_metered_fallback, images=images, _no_sub=no_substitution,
+                          _probe=_probe)
     else:
         r = _call_once(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
                        schema=schema, timeout_s=timeout_s, no_metered_fallback=no_metered_fallback, images=images,
@@ -1581,6 +1582,8 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
     everything already takes.
     """
     _no_sub = kw.pop("_no_sub", False)
+    _probe = kw.pop("_probe", False)                       # a reachability/connectivity probe: keep it tiny + fast,
+    #                                                        never floored to reasoning headroom or grown on an empty
     from . import bulkgate
     # PROACTIVE LANE LOAD-BALANCING (Part 2): if this call's INTENT has a CONFIRMED substitute and the primary plan is
     # HOT while an acceptable substitute's plan is IDLE, run the substitute model instead — resolved through THIS same
@@ -1645,6 +1648,21 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
         # that most needed it. Costing nothing to over-provision and everything to under-provision, the
         # asymmetry only points one way.
         max_tokens = max(TOKEN_FLOOR, _predicted)
+    # REASONING MODELS NEED HEADROOM, AND A CEILING IS FREE. A model that ALWAYS reasons (gpt-5.x, o-series, or one
+    # with a measured reasoning fact — kimi-k3, glm) spends HIDDEN tokens against max_tokens before it writes a word,
+    # so an output cap sized from the VISIBLE answer (a caller's max_tokens_per=1200 from card length) is eaten by
+    # thinking → an EMPTY reply that certifies as "no card" and re-fires forever (measured: ~90% of a describe run).
+    # max_tokens is a CEILING billed on ACTUAL tokens, so flooring a reasoning model to TOKEN_FLOOR costs nothing when
+    # the answer is short and RESCUES it when thinking is heavy. RAISE-only. Skipped for a probe (_probe) or an
+    # internal resolver/effort probe (_resolve_guard/_heal_guard), which deliberately want a tiny bounded call. This
+    # is the PREEMPTIVE fix; the empty-answer heal in the ladder below is the model-agnostic backstop.
+    if not _probe and not getattr(_resolve_guard, "on", False) and not getattr(_heal_guard, "on", False):
+        try:
+            from . import models as _mrf
+            if _mrf.reasons_by_default(model):
+                max_tokens = max(int(max_tokens), TOKEN_FLOOR)
+        except Exception:
+            pass                                          # a missing fact store must never block the call
     # CLAMP TO THE MODEL'S PUBLISHED OUTPUT CEILING — output = min(max(provided|predicted, floor), model_max).
     # model_max must come from an AUTHORITATIVE catalog, NOT the learned per-model max_output FACT: that fact is
     # auto-heal's guess and has POISONED the clamp BOTH ways — gpt-5-nano learned max_output=2000 and under-truncated
@@ -1684,20 +1702,35 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
             r = {**r, "empty_answer": True}
         if _sig_key:
             try:
+                # An EMPTY reasoning reply (out_tok>0, no visible text) is NOT a real short output — record it as
+                # TRUNCATED so bulkgate.maxtokens CENSORS it (it measured a too-small cap, not the work). Recorded as a
+                # genuine tiny output it would drag the learned recommend DOWN and the class would re-fire low forever;
+                # censoring it lets the successful heal's large out_tok become the recommend the next call starts from.
+                _fr = "length" if r.get("empty_answer") else r.get("finish_reason")
                 bulkgate.note_response(_sig_key, model, r.get("out_tok") or 0, max_tokens=budget,
-                                       finish_reason=r.get("finish_reason"))   # per-model key (see _sig_key above)
+                                       finish_reason=_fr)   # per-model key (see _sig_key above)
             except Exception:
                 pass                                          # telemetry must not break the call
         if not trunc:
             return {**r, "truncated": False, "max_tokens_used": budget}
         attempt += 1
-        if attempt > retries or budget >= MAX_TOKEN_CEILING:
+        _empty = bool(r.get("empty_answer"))
+        # A REASONING-EMPTY is not "the answer was too long" — the model spent the whole cap THINKING and never began
+        # to write. Returning text=None hands the caller nothing and the task re-fires forever; the only remedy is
+        # MORE room. So an empty JUMPS to the reasoning floor and is NOT abandoned when `retries` (which bounds
+        # long-answer doublings) is spent — only the model's own output ceiling stops it. Ordinary truncation keeps
+        # the `retries` bound. A probe never grows (it is one deliberate tiny shot). Crucially, the heal that finally
+        # succeeds records a NON-truncated out_tok via note_response above, so bulkgate.maxtokens LEARNS the real need
+        # → the next call of this class STARTS high enough and never empties again (this is what ends the every-run re-fire).
+        _can_grow = budget < int(_cap) and not _probe and (_empty or attempt <= retries)
+        if not _can_grow:
             import sys as _sys
-            _sys.stderr.write(f"[spendguard] reply STILL truncated at {budget} tokens after {attempt} "
-                              f"attempt(s) — returning text=None so it cannot be read as a short answer.\n")
+            _why = "empty (reasoning consumed the budget)" if _empty else "truncated"
+            _sys.stderr.write(f"[spendguard] reply STILL {_why} at {budget} tokens after {attempt} attempt(s) — "
+                              f"returning text=None so it cannot be read as a short answer.\n")
             return {**r, "text": None, "truncated": True, "max_tokens_used": budget,
-                    "error": f"truncated at {budget} tokens"}
-        budget = min(budget * 2, MAX_TOKEN_CEILING)
+                    "error": f"{_why} at {budget} tokens"}
+        budget = min(max(budget * 2, TOKEN_FLOOR if _empty else 0), int(_cap))
 
 
 # `call` now does everything this did. Kept as an alias so the callers wired to it this morning keep working

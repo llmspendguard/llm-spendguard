@@ -48,7 +48,8 @@ _GROUPS = [
     ]),
     ("teams", [
         ("saas", "`saas link|sync|push|reconcile|reattribute` — org roll-up (opt-in)"),
-        ("lanes", "subscription lanes: run meta prompts on your plan"),
+        ("lanes", "subscription lanes: run meta prompts on your plan (+ `lanes set-model <lane> <model>`)"),
+        ("tiers", "bulk-lane routing groups: show/validate + `tiers set <group> <model…>`"),
         ("truth", "push provider-truth totals (owner only)"),
     ]),
     ("setup & plumbing", [
@@ -510,6 +511,9 @@ def _dispatch(argv=None):
     if cmd == "lanes":                                # subscription-lane activation status (+ --probe live check)
         from . import lanes
         return lanes.main(rest)
+    if cmd == "tiers":                                # bulk-lane routing GROUPS: show/validate + `tiers set …`
+        from . import tier_config
+        return tier_config.main(rest)
     if cmd == "keys":                                 # per-KEY spend (which workspace/project key) — local-only
         from . import budget, config as _c
         since = None

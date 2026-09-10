@@ -332,6 +332,17 @@ def _arity_checked(row, task, expect_ids):
     return row
 
 
+def _bulk_notify(msg):
+    """A fan-wide refusal (an UNDECLARED tier group) is a CONFIG gap that refuses every task of THIS fan — not a
+    transient miss. Emit it ONCE PER FAN CALL on stderr: bulk_delegate returns all of a fan's task rows in one shot,
+    so this fires once per fan, never per-task/per-row (the spam it was built to avoid). PURE — no module state to go
+    stale or grow — so a fan that refuses ALWAYS says why, and a long-lived process that fixes then re-breaks the
+    config is never left silently un-warned. The robust machine signal is the structured `reason` on every returned
+    row; this stderr line is the human convenience on top."""
+    import sys as _s
+    print(f"[spendguard] bulk_delegate: {msg}", file=_s.stderr)
+
+
 def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, deadline_s=120.0,
                   checkpoint=None, chunk_size=100, refuse_billed=False, stats=None, force=False, tier=None,
                   schema=None, expect_ids=None, gate_sig=None, lanes=None, images_for=None, vision_model=None,
@@ -456,18 +467,31 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
     if _vision:
         arms = None
     elif tier:
-        arms = [(ln, m) for ln in (lanes or lane_catalog.lanes())
-                if (m := lane_catalog.lane_model_for_tier(ln, tier)) and not adapters._lane_cooling(ln)]
+        # Split the model-DECLARED lanes from the AVAILABLE ones so a PERMANENT config gap (no lane serves this group
+        # at all → refuses every run) is DISTINGUISHABLE from a TRANSIENT one (lanes serve it but are all cooling right
+        # now → retry later). They demand opposite responses and used to be one message, indistinguishable as N misses.
+        _pool = lanes or lane_catalog.lanes()
+        _declared = [(ln, m) for ln in _pool if (m := lane_catalog.lane_model_for_tier(ln, tier))]
+        arms = [(ln, m) for ln, m in _declared if not adapters._lane_cooling(ln)]
         if not arms:
-            return [{"text": None, "lane": None, "use_name": None, "billed": False,
-                     "error": f"--tier {tier!r}: no lane serving this group is available (undeclared, its models are "
-                              f"on no lane, or every such lane is cooling) — refusing rather than widening off-tier; "
-                              f"declare a {tier}-tier model on a lane (advisor.tiers / advisor.lane_models) and re-run"}
+            if not _declared:                            # PERMANENT: nothing serves this group → refuses every run
+                _reason, _msg = "tier_undeclared", (
+                    f"--tier {tier!r}: NO lane declares a model for this group — advisor.tiers[{tier!r}] is unset, or "
+                    f"none of its models is any lane's advisor.lane_models entry. A CONFIG gap: it refuses every task, "
+                    f"every run (not a busy-capacity blip). Declare it — `spendguard tiers set {tier} <model…>` and "
+                    f"`spendguard lanes set-model <lane> <model>` — then re-run.")
+                _bulk_notify(_msg)                       # loud at the door (once per fan), never per-row
+            else:                                        # TRANSIENT: lanes DO serve it, all cooling now → retry later
+                _reason, _msg = "all_lanes_cooling", (
+                    f"--tier {tier!r}: every lane serving this group is cooling right now "
+                    f"({', '.join(ln for ln, _m in _declared)}) — refusing rather than widening off-tier. TRANSIENT "
+                    f"(capacity), NOT a config gap; retry when a lane frees, or add another lane to the group.")
+            return [{"text": None, "lane": None, "use_name": None, "billed": False, "reason": _reason, "error": _msg}
                     for _ in tasks]
     else:
         arms = _bulk_arms(intent, lanes=lanes)
         if not arms:
-            return [{"text": None, "lane": None, "use_name": None, "billed": False,
+            return [{"text": None, "lane": None, "use_name": None, "billed": False, "reason": "no_viable_lane",
                      "error": "no viable lane (set advisor.lane_models; check `spendguard lanes`)"} for _ in tasks]
 
     if not _vision:
@@ -481,7 +505,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
         if _reserved:
             arms = [a for a in arms if a[0] not in _reserved]
             if not arms:
-                return [{"text": None, "lane": None, "use_name": None, "billed": False,
+                return [{"text": None, "lane": None, "use_name": None, "billed": False, "reason": "all_lanes_reserved",
                          "error": f"every viable lane is reserved ({', '.join(_reserved)}: self-use cap reached — "
                                   f"its prompt budget is held for real coding, not discretionary bulk). Re-run when "
                                   f"a lane frees up, or widen advisor.delegate_lanes."} for _ in tasks]

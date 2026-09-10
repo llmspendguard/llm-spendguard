@@ -33,7 +33,7 @@ def _provider_batch_by_day(since):
     from . import reconcile_anthropic as anth
     prov = {}
     try:
-        oai, pending = openai_by_day()
+        oai, pending = openai_by_day(since=since)         # page-bound the pull to the window (was all-history)
     except Exception as e:
         oai, pending = {}, 0
         _warn_fetch("openai", e)

@@ -58,7 +58,7 @@ def stub_provider(since):
 print("-- _provider_batch_by_day: REAL fn, inner provider readers stubbed (no network) --")
 from spendguard import report
 from spendguard import reconcile_anthropic as _anth
-report.openai_by_day = lambda: ({DAYS[0]: 10.0, "2026-05-01": 99.0}, 5)   # incl. a pre-`since` day
+report.openai_by_day = lambda since=None: ({DAYS[0]: 10.0, "2026-05-01": 99.0}, 5)   # incl. a pre-`since` day
 _anth.cost_by_day = lambda since=None: ({DAYS[1]: 20.0}, {})
 pb, pend = LS._provider_batch_by_day(SINCE)
 check("merges openai+anthropic per day", abs(pb.get(DAYS[0], 0) - 10.0) < 1e-9 and abs(pb.get(DAYS[1], 0) - 20.0) < 1e-9)
@@ -66,7 +66,7 @@ check("drops days before `since`", "2026-05-01" not in pb)
 check("pending passthrough from openai", pend == 5)
 
 print("-- _provider_batch_by_day: provider errors fall back to empty (never crashes) --")
-def _oai_boom():
+def _oai_boom(since=None):
     raise RuntimeError("oai down")
 def _anth_boom(since=None):
     raise RuntimeError("anth down")
@@ -194,7 +194,7 @@ ro.load_key = lambda: "sk-test"
 print("-- reconcile_into_ledger: fully stubbed providers → per-project gap rows, idempotent --")
 # stub every provider/network source the function reaches into
 from spendguard import report, backfill, conv, saas
-report.openai_by_day = lambda: ({DAYS[1]: 40.0}, 0)
+report.openai_by_day = lambda since=None: ({DAYS[1]: 40.0}, 0)
 ra.cost_by_day = lambda since=None: ({DAYS[1]: 5.0}, {})
 # evidence rows (provider-billed) used for per-project attribution; no conversation links → fallback project
 backfill._openai_rows = lambda: [("openai", "gpt-5.5", 40.0, 1_000_000, 0, DAYS[1], "bx-oai")]
@@ -223,7 +223,7 @@ check("still one reconciled row after re-run (idempotent)", recon_rows2 == 1)
 check("same gap on re-run", abs(summ2["ungoverned"] - 15.0) < 1e-9)
 
 print("-- reconcile_into_ledger: provider fetch errors are surfaced, not hidden --")
-def oai_boom():
+def oai_boom(since=None):
     raise RuntimeError("openai 500")
 def anth_boom(since=None):
     raise RuntimeError("anthropic 500")
@@ -235,7 +235,7 @@ check("anthropic error recorded", "anthropic" in summ3["errors"])
 check("both dropped from providers_ok", summ3["providers_ok"] == [])
 
 print("-- reconcile_into_ledger: AGENTIC per-subconversation attribution, day<since skipped --")
-report.openai_by_day = lambda: ({DAYS[1]: 40.0}, 0)
+report.openai_by_day = lambda since=None: ({DAYS[1]: 40.0}, 0)
 ra.cost_by_day = lambda since=None: ({}, {})
 backfill._openai_rows = lambda: [
     ("openai", "gpt-5.5", 40.0, 1_000_000, 0, DAYS[1], "bx-linked"),   # agentic → vision-pipeline
@@ -265,7 +265,7 @@ check("evidenced batches never fall to 'unattributed'", summ_attr["gap_by_projec
 print("-- reconcile_into_ledger: cross-classifier mismatch is CAPPED at provider truth (no double-count) --")
 # gate recorded $30 under nlp (the seed). Provider evidence attributes the SAME $30 to vision (different classifier).
 # Without the account-net cap: ledger = gate $30 + reconciled $30 = $60 = 2× the real $30. The cap holds it to $30.
-report.openai_by_day = lambda: ({DAYS[1]: 30.0}, 0)
+report.openai_by_day = lambda since=None: ({DAYS[1]: 30.0}, 0)
 backfill._openai_rows = lambda: [("openai", "gpt-5.5", 30.0, 100, 0, DAYS[1], "bx-vis")]
 conv.batch_project_map = lambda tdir=None: {"bx-vis": {"project": "vision-pipeline", "evidenced": True}}
 summ_cap = LS.reconcile_into_ledger(since=SINCE)
@@ -274,7 +274,7 @@ check("double-count capped: gate + reconciled ≤ provider ($30, not $60)",
 check("vision gap scaled toward 0 (account net = provider − gate = 0)", summ_cap["gap_by_project"].get("vision-pipeline", 0) < 0.5)
 
 print("-- reconcile_into_ledger: multi-project saas → 'unattributed' fallback bucket --")
-report.openai_by_day = lambda: ({DAYS[1]: 40.0}, 0)
+report.openai_by_day = lambda since=None: ({DAYS[1]: 40.0}, 0)
 ra.cost_by_day = lambda since=None: ({}, {})
 backfill._openai_rows = lambda: [("openai", "gpt-5.5", 40.0, 1_000_000, 0, DAYS[1], "bx-multi")]
 backfill._anthropic_rows = lambda: []
@@ -294,7 +294,7 @@ check("saas error → still attributes a gap", summ5["ungoverned"] > 0)
 check("gap_by_project is a dict", isinstance(summ5["gap_by_project"], dict))
 
 print("-- reconcile_into_ledger: connected NON-owner (owns_account=false) skips the shared-account gap --")
-report.openai_by_day = lambda: ({DAYS[1]: 40.0}, 0)
+report.openai_by_day = lambda since=None: ({DAYS[1]: 40.0}, 0)
 ra.cost_by_day = lambda since=None: ({}, {})
 backfill._openai_rows = lambda: [("openai", "gpt-5.5", 40.0, 1_000_000, 0, DAYS[1], "bx-shared")]
 backfill._anthropic_rows = lambda: []

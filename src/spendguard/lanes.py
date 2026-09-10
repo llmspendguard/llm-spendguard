@@ -283,6 +283,44 @@ def lane_summary_lines():
 
 def main(argv=None):
     argv = list(argv or [])
+    if argv and argv[0] == "set-model":
+        # Declare the model a subscription LANE calls with (advisor.lane_models[lane]), VALIDATED at declaration: the
+        # lane must be real and the model must be priced. `set-model <lane> <model>` sets the lane's single model;
+        # `set-model <lane> <tier> <model>` sets ONE tier of its per-tier map, preserving the others (no clobber).
+        from . import lane_catalog, config as _cfg, tier_config, route_utility
+        rest = argv[1:]
+        if len(rest) == 2:
+            lane, tier, model = rest[0], None, rest[1]
+        elif len(rest) == 3:
+            lane, tier, model = rest[0], rest[1], rest[2]
+        else:
+            print("usage: spendguard lanes set-model <lane> <model>            (the lane's single model)")
+            print("       spendguard lanes set-model <lane> <tier> <model>     (one tier of its per-tier map)")
+            print(f"  lanes: {', '.join(lane_catalog.lanes())}")
+            return 2
+        if lane not in lane_catalog.lanes():
+            print(f"unknown lane {lane!r} — known lanes: {', '.join(lane_catalog.lanes())}")
+            return 2
+        if not tier_config._model_is_priced(model):
+            print(f"refusing: {model!r} is not priced — a lane model must be priced (so lane VALUE + metered fallback "
+                  f"are cost-visible). `spendguard sync-prices`, or add it to prices.json WITH A SOURCE, then re-run.")
+            return 2
+        cur = _cfg._cfg_get("advisor", "lane_models", {}) or {}
+        if tier:
+            entry = dict(cur.get(lane)) if isinstance(cur.get(lane), dict) else {}
+            entry[tier] = model
+            newval = {**cur, lane: entry}
+        else:
+            newval = {**cur, lane: model}
+        tier_config._write_advisor_cfg("lane_models", newval)
+        print(f"advisor.lane_models[{lane!r}]{('[' + repr(tier) + ']') if tier else ''} = {model!r}   → {_cfg.CONFIG_JSON}")
+        _served = [g for g in route_utility.tiers() if model in route_utility.tier_models(g)]
+        if _served:
+            print(f"  serves `--tier` group(s): {', '.join(_served)}")
+        else:
+            print(f"  ⚠ {model!r} is in no advisor.tiers group yet → this lane serves no `--tier` fan. "
+                  f"Add it: `spendguard tiers set <group> {model}`.")
+        return 0
     for line in (lane_summary_lines() or ["subscription lanes: none enabled (advisor.executor = api) — set "
                                      "advisor.executor to claude-code / codex / zai-coding / gemini / pool "
                                      "to use your plans"]):

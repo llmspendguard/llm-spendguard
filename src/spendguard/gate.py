@@ -2125,6 +2125,23 @@ def _cli(cmd="status", live=False):
                     print("  " + _ln)
             except Exception:
                 pass
+            try:                                          # BULK-LANE SURFACE: an estate can migrate its bulk onto
+                from . import tier_config                 # bulk_delegate, pass every check, and STILL route 100% to
+                _tc = tier_config.tier_config_report()    # the metered API if advisor.tiers is unset — inert while the
+                if not _tc["configured"]:                 # code looks protected. doctor is where that becomes visible.
+                    print("  bulk lanes: 🔴 NOT CONFIGURED — advisor.tiers unset, so a --tier bulk_delegate fan refuses every task.")
+                    if _tc["idle"]:
+                        print(f"              idle capacity available: {', '.join(_tc['idle'])}")
+                    print("              declare: `spendguard tiers set <group> <model…>`  (`spendguard tiers` shows status)")
+                else:
+                    _bad = [g for g, d in _tc["groups"].items() if not d["lanes"] or d["unpriced"]]
+                    print(f"  bulk lanes: {'🔴' if _bad else '🟢'} "
+                          + " · ".join(f"{g}→{len(d['lanes'])} lane(s)" for g, d in _tc["groups"].items()))
+                    if _tc["issues"]:
+                        _more = f" (+{len(_tc['issues']) - 1} more; `spendguard tiers`)" if len(_tc["issues"]) > 1 else ""
+                        print(f"              ⚠ {_tc['issues'][0]}{_more}")
+            except Exception:
+                pass
             try:                                          # MODEL-METADATA BACKBONE: the LiteLLM limits cache that
                 from . import metadata_audit              # output_cap clamps to. Its silent EMPTY state once
                 mr = metadata_audit.backbone_health()     # disabled the clamp — so doctor surfaces it, and

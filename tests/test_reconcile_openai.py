@@ -82,7 +82,7 @@ _ROWS = [
      "usage": {"input_tokens": 0, "output_tokens": 0,
                "input_tokens_details": {"cached_tokens": 0}}},
 ]
-ro.fetch_batches = lambda key: _ROWS      # no network
+ro.fetch_batches = lambda key, since=None, **kw: _ROWS      # no network (accepts the since/bound kwargs)
 ro.load_key = lambda: "sk-test-OFFLINE"
 _argv = sys.argv
 try:

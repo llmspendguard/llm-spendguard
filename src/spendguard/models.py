@@ -176,6 +176,23 @@ def apply_call_params(model, kw, *, dialect=None):
     return kw
 
 
+def reasons_by_default(model):
+    """True iff this model emits HIDDEN reasoning tokens on a plain call — so an output cap sized from the VISIBLE
+    answer length is consumed by thinking before a word is written, and the reply comes back EMPTY (the family rules
+    above name this exact failure: 'without it reasoning eats the budget → EMPTY output'). Fact/rule-driven, never a
+    guess: a MANDATORY reasoning floor (gpt-5.x='none', gpt-5-nano/o-series='minimal') means it ALWAYS reasons; a
+    stored reasoning fact (an A/B wrote kimi-k3='auto', glm-5.2='high') says the same. `reasoning_effort_ok` ALONE
+    (Gemini metered) does NOT qualify — a direct call sends no effort and gets only light default thinking.
+
+    Used by adapters._call_guarded to FLOOR a reasoning model's output budget (a ceiling is billed on ACTUAL tokens,
+    so over-provisioning costs nothing while under-provisioning destroys the call). See adapters.TOKEN_FLOOR."""
+    p = profile(model)
+    fl = p.get("reasoning")
+    if fl and fl != "?":
+        return True                                  # a mandatory reasoning floor ⇒ it always reasons
+    return bool(p.get("_facts", {}).get("reasoning"))  # a measured reasoning fact (kimi-k3, glm) ⇒ it reasons
+
+
 def mark_ineffective(model, intent, reason, confidence=0.85):
     """Record that a model just doesn't work for an intent (or globally if intent falsy) — so future
     experiments/recommendations skip it instead of re-paying to rediscover it."""

@@ -16,10 +16,13 @@ from collections import defaultdict
 from . import config, pricing
 from .reconcile_openai import load_key, fetch_batches, day as oai_day
 from . import reconcile_anthropic as anth
-def openai_by_day():
+def openai_by_day(since=None):
+    """{day: $} of OpenAI batch spend + a pending-request count. `since` (YYYY-MM-DD) page-bounds the underlying
+    /batches pull to the window the caller needs (the report only shows today/7d/month) — a huge saving vs pulling
+    all history, with identical window sums (callers sum by day)."""
     by_day = defaultdict(float)
     pending = 0
-    for b in fetch_batches(load_key()):
+    for b in fetch_batches(load_key(), since=since):
         status = b.get("status")
         if status in ("in_progress", "finalizing", "validating"):
             # request_counts / total are read defensively: one malformed batch dict must not take the whole
@@ -153,17 +156,55 @@ def build_rows(oai, an, rt, gpu, tstr, week_start, month_start):
     return [r_oai, r_an, r_rt, llm_sub, r_gpu, total]
 
 
+class _WatchdogFired(RuntimeError):
+    """The --max-seconds wall-clock watchdog tripped — the run was aborted mid-flight (a hung/looping phase).
+    A backstop OVER the bounded provider fetches: even if a new unbounded path slips in, a scheduled run can
+    never pin CPU for 25 minutes again — it exits non-zero within the wall-clock budget."""
+
+
+def _install_watchdog(max_seconds):
+    """Arm a wall-clock watchdog that raises _WatchdogFired in the main thread after `max_seconds`, then RETURN a
+    cancel() callable (always invoke it in a finally). No-op when max_seconds is falsy or SIGALRM is unavailable
+    (non-Unix) — the bounded fetch is the primary guard; this is the belt-and-suspenders wall-clock bound."""
+    import signal
+    if not max_seconds or not hasattr(signal, "SIGALRM"):
+        return lambda: None
+
+    def _raise_watchdog(_signum, _frame):
+        raise _WatchdogFired(f"spend report exceeded --max-seconds={max_seconds:g}s watchdog — aborted "
+                             f"(a phase is hung or looping; the bounded provider fetch is meant to prevent this)")
+
+    prev = signal.signal(signal.SIGALRM, _raise_watchdog)
+    signal.setitimer(signal.ITIMER_REAL, float(max_seconds))
+
+    def _cancel():
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, prev)
+    return _cancel
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--alert-threshold", type=float, help="ALERT if TODAY combined exceeds this $")
     ap.add_argument("--email", action="store_true", help="also email the report (SMTP config required)")
     ap.add_argument("--email-to", help="recipient override (else SPENDGUARD_EMAIL_TO / ~/.spendguard/email.json)")
+    ap.add_argument("--max-seconds", type=float,
+                    help="wall-clock watchdog: abort with a non-zero exit if the run exceeds this many seconds "
+                         "(guards a scheduled run against a hung/looping provider fetch)")
     a = ap.parse_args()
 
     import io, contextlib
     buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
-        rc = generate_report(a)
+    cancel_watchdog = _install_watchdog(a.max_seconds)
+    try:
+        with contextlib.redirect_stdout(buf):
+            rc = generate_report(a)
+    except _WatchdogFired as w:
+        print(buf.getvalue(), end="")                     # emit whatever completed before the abort
+        print(f"\n*** {w} ***")
+        return 3
+    finally:
+        cancel_watchdog()
     text = buf.getvalue()
     print(text, end="")
     if a.email:
@@ -188,16 +229,31 @@ def main():
     return rc
 
 
+def _fetch_sources_concurrently(month_start):
+    """Run the report's three INDEPENDENT provider pulls at once (they share no state) and return their results as
+    (oai, pending, an, an_models, gpu, gpu_err). Wall-clock becomes the slowest single pull instead of the sum.
+    Error semantics are preserved exactly: the batch pulls re-raise on failure (as the sequential version did, so a
+    missing key still fails the report loudly), while gpu_by_day already returns its own ({}, note) on any error."""
+    import concurrent.futures as cf
+    with cf.ThreadPoolExecutor(max_workers=3, thread_name_prefix="sg-report") as ex:
+        f_oai = ex.submit(openai_by_day, since=month_start)      # page-bound to the window (was all-history)
+        f_an = ex.submit(anth.cost_by_day, since=month_start)    # this month onward; cache-backed + incremental
+        f_gpu = ex.submit(gpu_by_day, month_start)               # vast.ai instance GETs (free); returns ({}, err) on failure
+        oai, pending = f_oai.result()                            # .result() re-raises in the caller — same as sequential
+        an, an_models = f_an.result()
+        gpu, gpu_err = f_gpu.result()
+    return oai, pending, an, an_models, gpu, gpu_err
+
+
 def generate_report(a):
     today = datetime.datetime.now(datetime.timezone.utc).date()
     tstr, week_start, month_start = windows(today)
 
-    oai, pending = openai_by_day()
-    an, an_models = anth.cost_by_day(since=month_start)  # only need this month onward for the windows
+    # The THREE provider pulls (OpenAI batches, Anthropic batches, vast.ai GPU) are independent I/O — run them
+    # concurrently so the wall-clock is the SLOWEST single pull, not their sum (~22+6+15s back-to-back → ~max).
+    oai, pending, an, an_models, gpu, gpu_err = _fetch_sources_concurrently(month_start)
     from . import gate
-    rt, _rt_models = gate.realtime_by_day(since=month_start)  # real-time spend the gate logged
-
-    gpu, gpu_err = gpu_by_day(month_start)               # remote compute (vast.ai GPU) — free instance GETs
+    rt, _rt_models = gate.realtime_by_day(since=month_start)  # real-time spend the gate logged (local file — fast, kept inline)
 
     # transform (pure) → the report rows + grand total; the alert threshold tracks the last row (grand total).
     rows = build_rows(oai, an, rt, gpu, tstr, week_start, month_start)
