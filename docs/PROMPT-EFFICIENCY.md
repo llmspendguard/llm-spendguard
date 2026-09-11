@@ -18,6 +18,9 @@ measured $ at stake, each with its exact next command:
 | `context_spread` | input p95 ≥ 3× p50 (and ≥500 tok apart) — the big calls are stuffing context | trim retrieval on the top decile, verify equivalence |
 | `truncation` | `finish=length` observed — truncated output wastes the whole call | set max_tokens ≈ p99×1.5 (batch sigs: `spendguard maxtokens <sig>`) |
 | `model_mix` | the same intent already runs ≥2× cheaper on another model | a measured cascade candidate — let the ladder decide |
+| `batch_savings` — **opt-in `--judge-batchable`** (spends a small meta-caged call/candidate) | many (≥20) small **realtime** calls of one shape, **agentically ruled PACKABLE** (an LLM decides job-items vs latency-sensitive interactive turns — never a threshold) | pack many per call + use the Batch API; saving priced from `batch_cost` vs the metered $ actually paid (a floor; $0 lane-served calls have nothing to save) |
+
+> `batch_savings` is the one finding that is not $0: whether many small realtime calls are *packable* (a batch job) or must stay realtime (interactive) is a **meaning** judgement, so it is decided by an LLM under `--judge-batchable`, never by a threshold. Every candidate's outcome (packable / not / unjudged) is tallied so a skip is never silent.
 
 `--intent X` narrows, `--json` for machines. Prices come from `pricing.py` only.
 

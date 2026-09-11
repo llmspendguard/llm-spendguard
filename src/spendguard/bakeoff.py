@@ -38,8 +38,12 @@ def _sample_prompts(intent, n):
     failure PROPAGATES (it is not masked as 'no prompts' — that fail-open hid the wrong-path bug for exactly this
     reason); the table is auto-created, so an empty corpus is a clean [] while a broken db surfaces."""
     con = callio._callio_db()
+    # EXCLUDE truncated rows: a prompt CUT at the capture cap is a different task, so replaying it measures
+    # something other than the work it claims to (the 800-char silent-truncation failure). Only full-fidelity
+    # bodies feed a bakeoff/titration; an intent whose corpus is entirely truncated returns [] → the caller
+    # refuses cleanly ("no sample tasks — re-fetch with a higher callio.snip_chars"), never a partial replay.
     rows = con.execute("SELECT DISTINCT prompt FROM call_io WHERE intent IS ? AND prompt IS NOT NULL "
-                       "AND length(prompt) > 0 LIMIT ?", (intent, int(n))).fetchall()
+                       "AND length(prompt) > 0 AND COALESCE(truncated,0) = 0 LIMIT ?", (intent, int(n))).fetchall()
     return [r[0] for r in rows]
 
 

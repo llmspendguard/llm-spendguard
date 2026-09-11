@@ -64,6 +64,14 @@ def _callio_db():
                         c.execute(f"ALTER TABLE call_io ADD COLUMN {col} TEXT DEFAULT ''")
                 if "req_max_tokens" not in cols:
                     c.execute("ALTER TABLE call_io ADD COLUMN req_max_tokens INTEGER DEFAULT 0")
+                if "truncated" not in cols:                # 1 = the stored body was CUT at the cap → INCOMPLETE, unfit
+                    c.execute("ALTER TABLE call_io ADD COLUMN truncated INTEGER DEFAULT 0")   # to REPLAY (a partial task)
+                    # ONE-TIME backfill (runs only when the column is first added): a row whose body is EXACTLY the
+                    # legacy judge-sized default (_IO_SNIP_DEFAULT chars) was CUT at that old cap — flag it so the
+                    # replay guard excludes it until a full re-fetch grows it. A genuine exactly-that-length prompt is
+                    # conservatively excluded from replay (safe), never silently replayed as a partial task.
+                    c.execute("UPDATE call_io SET truncated=1 WHERE length(prompt)=? OR length(output)=?",
+                              (_IO_SNIP_DEFAULT, _IO_SNIP_DEFAULT))
                 c.execute("CREATE INDEX IF NOT EXISTS idx_io_im ON call_io(intent, model)")
                 c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_io_key ON call_io(batch, custom_id)")
                 c.commit()
@@ -93,18 +101,27 @@ def record_io_sample(intent, provider, model, batch, custom_id, prompt, output, 
     """Insert one sample (idempotent on batch+custom_id). Returns id or None if duplicate."""
     cid = _uid()
     ts = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+    cap = snip_chars()
+    # The replay guard keys on PROMPT truncation ONLY: bakeoff/titration REPLAY the prompt, so a cut prompt is a
+    # different task and must be excluded — but a full prompt with a cut OUTPUT stays perfectly replayable (the output
+    # is regenerated). Conflating the two would wrongly exclude a usable prompt. The warning still fires on either cut.
+    _trunc = 1 if len(prompt or "") > cap else 0
+    if _trunc or len(output or "") > cap:
+        config.warn_once("[spendguard] call_io capture for intent %r CUT a body at %d chars — a cut PROMPT excludes the "
+                         "row from replay/bakeoff (a partial task); raise callio.snip_chars and re-fetch for full "
+                         "fidelity. (An output-only cut is kept: the prompt stays replayable.)" % (intent, cap))
     try:
         with _lock:
             cur = _callio_db().execute(
                 "INSERT OR IGNORE INTO call_io (id,ts,intent,provider,model,batch,custom_id,prompt,output,"
-                "in_tok,out_tok,source,system,req_schema,req_max_tokens) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "in_tok,out_tok,source,system,req_schema,req_max_tokens,truncated) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (cid, ts, intent, provider, model, batch, str(custom_id),
-                 (prompt or "")[:snip_chars()], (output or "")[:snip_chars()],
+                 (prompt or "")[:cap], (output or "")[:cap],
                  int(in_tok or 0), int(out_tok or 0), source,
-                 (system or "")[:snip_chars()],
-                 (req_schema if isinstance(req_schema, str) else json.dumps(req_schema or ""))[:snip_chars()],
-                 int(req_max_tokens or 0)))
+                 (system or "")[:cap],
+                 (req_schema if isinstance(req_schema, str) else json.dumps(req_schema or ""))[:cap],
+                 int(req_max_tokens or 0), _trunc))
             inserted = cur.rowcount == 1        # 0 → the (batch, custom_id) row already existed (IGNORE) = DUPLICATE
             # INSERT OR IGNORE alone makes a refill a NO-OP: a row captured under a smaller snip cap keeps its
             # truncated prompt forever, and `added: 0` reads as "nothing new to get" rather than "the fidelity
@@ -115,13 +132,16 @@ def record_io_sample(intent, provider, model, batch, custom_id, prompt, output, 
             # was longer, so a fetch carrying a longer prompt and a shorter output overwrote the stored
             # output with the shorter one. That is the exact truncation this grow-only rule exists to
             # prevent, performed by the rule itself. CASE per column keeps them independent.
-            _p, _o = (prompt or "")[:snip_chars()], (output or "")[:snip_chars()]
+            _p, _o = (prompt or "")[:cap], (output or "")[:cap]
             _callio_db().execute(
                 "UPDATE call_io SET "
                 "prompt = CASE WHEN LENGTH(?) > LENGTH(COALESCE(prompt,'')) THEN ? ELSE prompt END, "
-                "output = CASE WHEN LENGTH(?) > LENGTH(COALESCE(output,'')) THEN ? ELSE output END "
+                "output = CASE WHEN LENGTH(?) > LENGTH(COALESCE(output,'')) THEN ? ELSE output END, "
+                # a bigger-cap refill that GROWS the stored prompt adopts THIS capture's truncated flag (so a
+                # full re-fetch clears it); an unchanged/shorter capture leaves the existing flag untouched.
+                "truncated = CASE WHEN LENGTH(?) > LENGTH(COALESCE(prompt,'')) THEN ? ELSE truncated END "
                 "WHERE batch=? AND custom_id=?",
-                (_p, _p, _o, _o, batch, str(custom_id)))
+                (_p, _p, _o, _o, _p, _trunc, batch, str(custom_id)))
             # The request shape backfills onto rows captured before it was stored — it is strictly new
             # information, so fill only where we currently hold nothing.
             if system or req_schema or req_max_tokens:

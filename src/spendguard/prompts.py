@@ -16,6 +16,35 @@ MIN_CALLS = 5          # fewer samples than this → not judged (law of small nu
 LCP_MIN_CHARS = 60     # a shared prefix shorter than this isn't worth restructuring
 SPREAD_RATIO = 3.0     # p95(in_tok) ≥ 3× p50 → context varies wildly (stuffing suspect)
 SPREAD_MIN_TOK = 500   # …and the spread must be material in absolute tokens
+UNDERBATCH_MIN_CALLS = 20   # a one-item-per-call pattern only wastes money at volume
+UNDERBATCH_SMALL_TOK = 400  # a small median prompt → one item per call (pack many, or use the Batch API)
+_BATCH_JUDGE_OUT = 120      # the packability verdict is one tiny JSON ({batchable, why}); a named cap, not a magic literal
+
+
+def _batchable_verdict(intent, model, n, med_in):
+    """AGENTIC: are these many small realtime calls PACKABLE batch-job items, or latency-sensitive interactive turns?
+    The thresholds only LOCATED the candidate; whether it is a real batching opportunity is a MEANING judgement (two
+    reasonable people can disagree — a bulk classify vs a chat turn), so a meta-caged LLM decides it, never a rule.
+    Returns {batchable: bool, why: str}, or None when the judge is unavailable (→ the candidate is not emitted).
+    A deliberate spend refusal (caps.meta) PROPAGATES — it halts the analysis, never degrades to a silent skip."""
+    from . import adapters, calls, config, gate
+    import json as _json
+    q = (f"A job-type '{intent}' made {n} separate REALTIME LLM calls on {model}, each with a small (~{med_in}-token) "
+         f"prompt. Are these INDEPENDENT items of one job that could be PACKED many-per-call or sent via the async "
+         f"Batch API — or LATENCY-SENSITIVE interactive turns (a user waiting) that must stay realtime? "
+         f'Return JSON only: {{"batchable": true|false, "why": "<one sentence>"}}.')
+    try:
+        with calls.context(intent="spendguard:batchable-judge"):           # meta-caged (caps.meta)
+            r = adapters.call(config.advisor_judge_model(), q, sig="spendguard:batchable-judge",
+                              max_tokens=_BATCH_JUDGE_OUT,
+                              schema={"type": "object", "additionalProperties": False, "required": ["batchable"],
+                                      "properties": {"batchable": {"type": "boolean"}, "why": {"type": "string"}}})
+        j = r.get("json") if isinstance(r.get("json"), dict) else _json.loads(r.get("text") or "")
+        return j if isinstance(j, dict) and isinstance(j.get("batchable"), bool) else None
+    except gate.deliberate_stop_types():                                   # a spend refusal must HALT, not skip silently
+        raise
+    except Exception:
+        return None
 
 
 def _pctl(sorted_vals, p):
@@ -54,12 +83,18 @@ def _in_price_per_tok(model):
         return None
 
 
-def lint(intent=None, since=None, min_calls=MIN_CALLS):
-    """Findings, ranked by measured $ at stake. Each: {intent, kind, detail, est_usd, next}."""
+def lint(intent=None, since=None, min_calls=MIN_CALLS, judge_batchable=False):
+    """Findings, ranked by measured $ at stake. Each: {intent, kind, detail, est_usd, next}.
+
+    The structural findings (boilerplate / context_spread / truncation / model_mix) are $0 — each fires on an
+    OBJECTIVE fact whose remedy always applies. `batch_savings` is different: many small realtime calls only WASTE
+    money if they are PACKABLE (independent items of one job), not if they are latency-sensitive interactive turns —
+    and that is a MEANING judgement, not a threshold. So it is emitted ONLY under `judge_batchable=True`, which asks a
+    small meta-caged LLM to rule packability per candidate (never a free $0 threshold-verdict). Default off → $0."""
     from . import config
     con = sqlite3.connect(config.db_path(), timeout=10)
     try:
-        q = "SELECT intent, model, in_tok, out_tok, cost, finish, prompt_snip FROM calls WHERE intent IS NOT NULL"
+        q = "SELECT intent, model, in_tok, out_tok, cost, finish, prompt_snip, kind FROM calls WHERE intent IS NOT NULL"
         args = []
         if intent:
             q += " AND intent = ?"; args.append(intent)
@@ -73,10 +108,11 @@ def lint(intent=None, since=None, min_calls=MIN_CALLS):
         con.close()
 
     by_intent = {}
-    for it, model, in_tok, out_tok, cost, finish, snip in rows:
-        by_intent.setdefault(it, []).append((model or "", in_tok or 0, out_tok or 0, cost or 0.0, finish or "", snip or ""))
+    for it, model, in_tok, out_tok, cost, finish, snip, kind in rows:
+        by_intent.setdefault(it, []).append((model or "", in_tok or 0, out_tok or 0, cost or 0.0, finish or "", snip or "", kind or ""))
 
     findings = []
+    _batch_cands = []          # (intent, model, rows, med_in, metered) → judged for packability after the loop (agentic)
     for it, rs in sorted(by_intent.items()):
         n = len(rs)
         if n < min_calls:
@@ -133,7 +169,7 @@ def lint(intent=None, since=None, min_calls=MIN_CALLS):
         # ── model mix: the same intent on multiple models → measured cascade candidate ──
         if len(models) >= 2:
             per_model = {}
-            for m, in_t, out_t, cost, _f, _s in rs:
+            for m, in_t, out_t, cost, _f, _s, _k in rs:
                 a = per_model.setdefault(m, [0, 0.0])
                 a[0] += 1; a[1] += cost
             costs = {m: (c / max(k, 1)) for m, (k, c) in per_model.items()}
@@ -147,6 +183,53 @@ def lint(intent=None, since=None, min_calls=MIN_CALLS):
                     "next": f"spendguard experiment '{it}' --models {cheap} --n 20   (equivalence ladder decides, not the price)",
                 })
 
+        # ── batching candidate (STRUCTURAL): many small REALTIME calls of one shape. Only COLLECTED here; whether it
+        #    is a real batching opportunity (packable job items vs latency-sensitive interactive turns) is a MEANING
+        #    judgement decided agentically after the loop — never by these thresholds, and only under judge_batchable.
+        if judge_batchable:
+            rt = [r for r in rs if r[6] == "realtime" and r[1] > 0]    # realtime kind, has an input token count
+            if len(rt) >= UNDERBATCH_MIN_CALLS:
+                med_in = sorted(r[1] for r in rt)[len(rt) // 2]
+                metered = sum(r[3] for r in rt)                        # real $ paid ($0 rows were lane-served)
+                if med_in <= UNDERBATCH_SMALL_TOK and metered > 0:
+                    _batch_cands.append((it, dominant, rt, med_in, metered))
+
+    # batch_savings — the PACKABILITY verdict is AGENTIC (one meta-caged LLM per candidate), never a threshold. A
+    # candidate is emitted only when the model rules it PACKABLE; a latency-sensitive interactive workload is skipped.
+    # EVERY candidate's outcome is COUNTED (emitted / not-packable / judge-unavailable) and the tally surfaced — a
+    # dropped candidate is never silent.
+    from . import pricing, gate, config as _cfg
+    _considered, _emitted, _notpack, _unjudged = len(_batch_cands), 0, 0, 0
+    for it, dominant, rt, med_in, metered in _batch_cands:
+        v = _batchable_verdict(it, dominant, len(rt), med_in)
+        if v is None:
+            _unjudged += 1                                            # the judge was unavailable — traced, not dropped silently
+            continue
+        if not v.get("batchable"):
+            _notpack += 1                                            # ruled NOT an opportunity (interactive / unpackable)
+            continue
+        save, n_unpriced = 0.0, 0
+        for r in rt:
+            if r[3] > 0:                                             # only a metered call has a batch saving
+                try:
+                    save += max(0.0, r[3] - pricing.batch_cost(r[0] or dominant, r[1], r[2]))
+                except gate.deliberate_stop_types():                # a bad-bound / refusal must HALT, never be swallowed
+                    raise
+                except Exception:
+                    n_unpriced += 1                                 # a genuinely unpriced model is COUNTED, not silent
+        floor = f" (≥ floor: {n_unpriced} call(s) unpriced)" if n_unpriced else ""
+        findings.append({
+            "intent": it, "kind": "batch_savings", "est_usd": round(save, 4),
+            "detail": (f"{len(rt)} small REALTIME calls (~{med_in}-tok median prompt) on {dominant} "
+                       f"(${metered:.4f} metered) would cost ~${round(save, 4)} less at Batch-API rates — "
+                       f"{(v.get('why') or '')[:120]}{floor}"),
+            "next": "pack many items per call + submit via the Batch API; verify: spendguard experiment '%s' --n 20" % it,
+        })
+        _emitted += 1
+    if _considered:                                                 # surface the tally so skipped candidates leave a trace
+        _cfg.warn_once("[spendguard] prompts: batch_savings judged %d candidate(s) → %d packable, %d not-packable, "
+                       "%d unjudged" % (_considered, _emitted, _notpack, _unjudged))
+
     findings.sort(key=lambda f: -(f["est_usd"] or 0))
     return findings
 
@@ -159,8 +242,11 @@ def main(argv=None):
     ap.add_argument("--since", help="ISO date/ts lower bound")
     ap.add_argument("--min-calls", type=int, default=MIN_CALLS)
     ap.add_argument("--json", action="store_true", help="machine-readable output")
+    ap.add_argument("--judge-batchable", action="store_true",
+                    help="agentically judge batching candidates (packable job items vs latency-sensitive interactive) "
+                         "and emit `batch_savings` — SPENDS a small meta-caged call per candidate")
     a = ap.parse_args(sys.argv[2:] if argv is None else argv)
-    fs = lint(intent=a.intent, since=a.since, min_calls=a.min_calls)
+    fs = lint(intent=a.intent, since=a.since, min_calls=a.min_calls, judge_batchable=a.judge_batchable)
     if a.json:
         print(_json.dumps(fs, indent=1))
         return 0

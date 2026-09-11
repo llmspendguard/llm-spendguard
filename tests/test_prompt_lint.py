@@ -23,9 +23,9 @@ con.execute("""CREATE TABLE IF NOT EXISTS calls(
     in_tok INTEGER, out_tok INTEGER, cost REAL, latency REAL,
     prompt_hash TEXT, prompt_snip TEXT, output_snip TEXT, finish TEXT,
     quality TEXT, quality_src TEXT, quality_conf REAL)""")
-def row(i, intent, model="gpt-5.5", in_tok=100, out_tok=50, cost=0.01, finish="stop", snip=""):
-    con.execute("INSERT INTO calls (id, ts, intent, model, in_tok, out_tok, cost, finish, prompt_snip) VALUES (?,?,?,?,?,?,?,?,?)",
-                (f"{intent}-{i}", "2026-07-01T00:00:00", intent, model, in_tok, out_tok, cost, finish, snip))
+def row(i, intent, model="gpt-5.5", in_tok=100, out_tok=50, cost=0.01, finish="stop", snip="", kind=""):
+    con.execute("INSERT INTO calls (id, ts, intent, model, in_tok, out_tok, cost, finish, prompt_snip, kind) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (f"{intent}-{i}", "2026-07-01T00:00:00", intent, model, in_tok, out_tok, cost, finish, snip, kind))
 
 BOILER = "You are an expert clinical coder. Follow the 12 rules below exactly. Rules: " + "R" * 40
 for i in range(8):
@@ -39,6 +39,14 @@ for i in range(12):
         cost=(0.001 if i < 6 else 0.05))                              # 50x cheaper alternative in the mix
 for i in range(3):
     row(i, "tiny", snip=BOILER)                                       # below min_calls → silent
+for i in range(25):
+    row(i, "underbatched", in_tok=40, out_tok=15, cost=0.02, kind="realtime")   # many tiny REALTIME metered calls → pack/batch
+for i in range(25):
+    row(i, "alreadybatch", in_tok=40, out_tok=15, cost=0.02, kind="batch")      # already batched → NOT flagged
+for i in range(25):
+    row(i, "laneserved", in_tok=40, out_tok=15, cost=0.0, kind="realtime")      # $0 lane-served → nothing to save
+for i in range(25):
+    row(i, "interactive", in_tok=40, out_tok=15, cost=0.02, kind="realtime")    # tiny realtime, but the LLM rules NOT packable
 con.commit(); con.close()
 
 fs = prompts.lint()
@@ -50,6 +58,20 @@ ck("truncation flagged with a p99-based recommendation",
 ck("model mix flagged as a measured cascade candidate",
    any(f["kind"] == "model_mix" and "experiment" in f["next"] for f in fs))
 ck("below min_calls stays silent", not any(f["intent"] == "tiny" for f in fs))
+# ── batch_savings is OPT-IN + AGENTIC: absent from the $0 default lint; emitted only under judge_batchable, and only
+#    for candidates an LLM rules PACKABLE (interactive workloads are skipped). Stub the verdict to stay offline. ──
+ck("batch_savings ABSENT from the $0 default lint (opt-in; never a free threshold-verdict)",
+   not any(f["kind"] == "batch_savings" for f in fs))
+prompts._batchable_verdict = lambda intent, model, n, med_in: {"batchable": intent == "underbatched", "why": "stub"}
+fj = prompts.lint(judge_batchable=True)
+jk = {(f["intent"], f["kind"]) for f in fj}
+ck("judge_batchable emits batch_savings for the PACKABLE candidate (priced saving > 0)",
+   any(f["kind"] == "batch_savings" and f["intent"] == "underbatched" and (f["est_usd"] or 0) > 0 for f in fj))
+ck("an LLM-ruled-NOT-packable (interactive) candidate is NOT emitted", ("interactive", "batch_savings") not in jk)
+ck("already-batched calls are never candidates", ("alreadybatch", "batch_savings") not in jk)
+ck("$0 lane-served calls are never candidates (nothing to save)", ("laneserved", "batch_savings") not in jk)
+ck("batch_savings next step points at packing + the Batch API",
+   all("Batch API" in f["next"] for f in fj if f["kind"] == "batch_savings"))
 ck("every finding carries a next step", all(f.get("next") for f in fs))
 ck("ranked by $ at stake", [f.get("est_usd") or 0 for f in fs] == sorted((f.get("est_usd") or 0 for f in fs), reverse=True))
 ck("intent filter narrows", {f["intent"] for f in prompts.lint(intent="typing")} == {"typing"})
