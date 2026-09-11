@@ -38,12 +38,15 @@ _GROUPS = [
         ("coverage", "which LLM-capable interpreters are NOT gated"),
     ]),
     ("spend less (measured, not guessed)", [
-        ("advise", "cheapest config that HELD quality, per intent"),
+        ("advise", "cheapest config that HELD quality, per intent (the auto knob: reasoning='best-value')"),
+        ("bakeoff", "measure cost×quality for a SLATE of untried models on an intent's tasks (feeds advise)"),
+        ("effort-titrate", "learn the CHEAPEST reasoning effort that HOLDS quality, per (intent, model)"),
         ("calibrate", "learned estimator: your history corrects the naive $"),
         ("prompts", "lint the call corpus for prompt waste"),
         ("experiment", "A/B a cheaper config with graded output-equivalence"),
         ("maxtokens", "measured p99 bound for a call class (autotune's input)"),
         ("realized", "what the changes actually saved"),
+        ("savings", "what spendguard SAVED — measured + counterfactual, by source (the 3rd axis, never summed)"),
         ("measurement", "receipts for a judged number: `measurement inspect|list|reconstruct` — the judge/sample/rubric behind it"),
     ]),
     ("teams", [
@@ -493,6 +496,24 @@ def _dispatch(argv=None):
     if cmd == "realized":                             # measured before/after $ per call around insight adoptions
         from . import realized
         return realized.main()
+    if cmd == "savings":                              # the 3rd axis: what spendguard SAVED (measured + counterfactual)
+        from . import guard as _g
+        s, ds = _g.saved_since(), _g.decisions_summary()
+        if "--json" in rest:
+            import json as _j
+            print(_j.dumps({"saved": s, "decisions": ds}, indent=2, default=str))
+            return 0
+        print("spendguard SAVINGS — a THIRD axis, kept SEPARATE from real-$ and est-value (never summed into either):")
+        print(f"  certain (measured)     ${s.get('certain', 0):.2f}")
+        print(f"  counterfactual (est)   ${s.get('counterfactual', 0):.2f}")
+        print(f"  ── total guarded       ${s.get('total', 0):.2f}")
+        _by = s.get("by_source") or {}
+        if _by:
+            print("  by source: " + "   ".join(f"{k} ${v:.2f}" for k, v in sorted(_by.items(), key=lambda kv: -kv[1])))
+        print(f"  decisions booked: {ds.get('decisions', 0)}  (best-value / advisor swaps, each priced vs its counterfactual)")
+        for row in (ds.get("by_intent") or [])[:8]:
+            print(f"    {str(row.get('intent', '?'))[:44]:44} {row.get('decisions', 0):>5} dec  ${row.get('saved_usd', 0):.2f}")
+        return 0
     if cmd == "prompts":                              # prompt-efficiency lint over the call corpus (zero spend)
         from . import prompts
         return prompts.main()

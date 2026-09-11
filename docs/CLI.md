@@ -66,6 +66,12 @@ spendguard promote --intent X --model M [--input chunk.jsonl] [--batch] [--run] 
 spendguard cache-audit | cache-test --script f.py [--run]   # prompt-caching: find + prove savings
 spendguard cascade --ladder cheap,…,strong --intent X [--prompt …] --run           # cheap→verify→escalate
 spendguard cache-stats | dedup --input f.jsonl --out u.jsonl | dedup-populate      # response cache + batch dedup
+spendguard bakeoff X --candidates v:m,v:m [--efforts minimal,low,medium,high] [--sample N] [--run]  # measure a SLATE per (model[,effort]); records for advise; estimate unless --run
+spendguard effort-titrate X [--model v:m] [--efforts …] [--sample N] [--run]        # learn the CHEAPEST reasoning effort that HOLDS quality, per (intent,model); estimate unless --run
+spendguard savings [--json]                   # the THIRD axis: what spendguard SAVED (measured + counterfactual, by source) — kept SEPARATE from real-$/est-value, never summed
+spendguard reliability [--run] [--json]       # sweep every $0 lane + metered provider for reachability; each probe wall-clock-bounded so a hung endpoint fails fast (--run = tiny pings)
+# Make spendguard PICK the model+effort for you on a REAL call (not just advise): the API takes reasoning="best-value" —
+#   spendguard.adapters.call(prompt, reasoning="best-value", intent="X")  → cheapest (model,effort) whose quality holds for X; books the saving vs the counterfactual.
 
 # work-done attribution (org → team × project), all sources
 spendguard claude-code [show|sync|ingest|overflow|invoices|attribute|overage|context|conversations|compact|classify|work|story]   # mine ~/.claude (alias: cc)

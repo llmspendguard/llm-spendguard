@@ -44,3 +44,7 @@ scripts/reconstruct/realtime_find_batch_state.*
 # Timestamped backups written by config.update_json before it rewrites a tracked JSON file.
 # They are a safety net for the working copy, not history — git already keeps the old version.
 *.save.json
+
+# Paid-run artifacts from the reasoning-stress matrix (scripts/integration): each is a local checkpoint of a
+# real spend run — the durable copy of those facts is the gate ledger, not repo history.
+scripts/integration/reasoning_stress_*.jsonl

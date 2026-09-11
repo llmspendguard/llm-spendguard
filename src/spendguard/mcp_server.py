@@ -406,6 +406,19 @@ def _tool_health(args):
                         "metered_up": met_up, "metered_total": len(res["metered"]), "down": down}}
 
 
+def _tool_savings(args):
+    from . import guard
+    s = guard.saved_since()
+    ds = guard.decisions_summary()
+    return {"note": ("what spendguard SAVED — a THIRD axis, kept SEPARATE from real-$ spend and est-value and NEVER "
+                     "summed into either. 'certain' is measured (cache / cascade / gate-block avoided-spend); "
+                     "'counterfactual' is the est saving from best-value / advisor model swaps, each priced vs what "
+                     "the caller WOULD have run. $0, read-only."),
+            "certain_usd": s.get("certain"), "counterfactual_usd": s.get("counterfactual"),
+            "total_guarded_usd": s.get("total"), "by_source": s.get("by_source"),
+            "decisions": ds.get("decisions"), "saved_by_intent": ds.get("by_intent")}
+
+
 _TOOLS = {
     "spendguard_health": (
         "Live reachability of every $0 subscription LANE + every metered PROVIDER — a fast, BOUNDED health check. "
@@ -417,6 +430,13 @@ _TOOLS = {
             "timeout_s": {"type": "integer", "description": "per-probe bound in seconds (default 20) — a dead endpoint fails this fast"}},
          "additionalProperties": False},
         _tool_health),
+    "spendguard_savings": (
+        "What spendguard SAVED — the THIRD axis, kept SEPARATE from real-$ spend and est-value (never summed into "
+        "either). Returns certain (measured: cache / cascade / gate-block avoided-spend) + counterfactual (est: "
+        "best-value / advisor model swaps priced vs the counterfactual), broken out by source, plus the count of "
+        "decisions booked and the saving per intent. This is the value-proof for the routing spendguard did. $0.",
+        {"type": "object", "properties": {}, "additionalProperties": False},
+        _tool_savings),
     "spendguard_advise": (
         "Rank the models you have ALREADY used for a job-type ('intent') by cost-effectiveness at the quality it "
         "held: $/good-result where quality is labeled, else $/M output. Returns the ranked models, the pick, and "
@@ -561,6 +581,17 @@ def handle(req):
                              "SLATE of untried models on a sample of the intent's tasks; records the result so "
                              "advise/recommend include them after. Makes REAL metered calls — returns an estimate "
                              "unless you pass budget_usd.\n"
+                             "• spendguard_savings() — the THIRD axis: what spendguard SAVED (certain measured + "
+                             "counterfactual from best-value/advisor swaps), by source. Kept SEPARATE from real-$ and "
+                             "est-value, never summed. $0.\n"
+                             "• spendguard_health(run?, timeout_s?) — BOUNDED reachability of every $0 subscription "
+                             "lane + every metered provider; one hung endpoint fails fast (timeout_s), never wedges. "
+                             "Lanes $0, metered pings ~pennies.\n"
+                             "TO MAKE SPENDGUARD PICK FOR YOU on a real call (not just advise): the programmatic API "
+                             "(adapters.call / vendor_call) takes reasoning='best-value' with an intent — it resolves "
+                             "the cheapest (model, effort) whose measured quality holds for that intent, and books the "
+                             "saving vs the counterfactual. Learn the per-intent effort with `spendguard effort-titrate "
+                             "<intent>` (CLI, estimate-first).\n"
                              "An 'intent' is a job-type label (e.g. 'loinc-typing', 'code-review') — the same tag "
                              "your calls are recorded under. Every result carries its own `note`/`caveats` "
                              "explaining coverage and what to run next.\n"

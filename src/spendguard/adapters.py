@@ -364,8 +364,8 @@ def _book_substitution(r):
 
 
 def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,
-         sig=None, retries=2, files=None, _no_guard=False, no_metered_fallback=False, images=None,
-         no_substitution=False, _probe=False):
+         sig=None, intent=None, retries=2, files=None, _no_guard=False, no_metered_fallback=False, images=None,
+         no_substitution=False, _probe=False, **aliases):
     """Run one prompt against one model. Returns a result dict (never raises).
 
     `files=[path, …]` is the INPUT twin of the output guard below: each path is assembled into the prompt as a
@@ -394,7 +394,9 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
               text=None and truncated=True, so a truncated body can never be read as a short answer.
 
     `sig` names the call-class so the OUTPUT budget comes from its measured p99 (never a literal nobody picked),
-    and so each reply feeds that measurement. `reasoning` (minimal|low|medium|high) sets reasoning effort for
+    and so each reply feeds that measurement. `intent` is the caller-facing ALIAS for it (the job-type label
+    advise/best-value/attribution key on): pass either — most callers pass one; if both, `sig` is the finer
+    call-class and `intent` the job-type. `reasoning` (minimal|low|medium|high) sets reasoning effort for
     gpt-5/o-series models; defaults to 'minimal' for them (default-medium reasoning eats the token budget →
     empty output, and costs more — wrong for simple classify/extract calls).
     `reasoning="best-value"` DELEGATES the choice: spendguard resolves the cheapest (model, effort) whose MEASURED
@@ -429,6 +431,38 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                     status_code (HTTP status if any), provider_error (the real response BODY, not the one-line
                     str), cause (the underlying error behind a generic wrapper — 'Connection error.' ←
                     'ConnectTimeout'), retry_after (seconds, if the provider sent one)."""
+    # ENSURE-SUCCESS INPUT NORMALISATION — accept the kwargs a caller NATURALLY reaches for and translate them to the
+    # canonical parameter, instead of a cryptic TypeError (the "users try to use it and fail" class, caught by a live
+    # run: a caller wrote reasoning="best-value", intent=… and got `unexpected keyword argument 'intent'`). Aliases are
+    # unambiguous RENAMES; the canonical param wins if BOTH are given; a genuinely unknown kwarg fails LOUDLY with
+    # guidance — never silently swallowed, because a dropped generation param is a silent wrong-result.
+    if aliases:
+        _ALIASES = {"effort": "reasoning", "reasoning_effort": "reasoning",
+                    "max_output_tokens": "max_tokens", "max_completion_tokens": "max_tokens"}
+        _canon = {}
+        for _k in list(aliases):
+            _c = _ALIASES.get(_k)
+            if not _c:
+                raise TypeError(
+                    "call() got an unexpected keyword %r. Pass: model, prompt, max_tokens (alias "
+                    "max_output_tokens/max_completion_tokens), reasoning=minimal|low|medium|high|best-value (alias "
+                    "effort/reasoning_effort), intent (alias sig), system, schema, timeout_s, files, images, "
+                    "no_metered_fallback, no_substitution, retries. Generation knobs like temperature/top_p/stop are "
+                    "not surfaced by the governance layer." % _k)
+            _canon[_c] = aliases[_k]
+        if "reasoning" in _canon and reasoning is None:
+            reasoning = _canon["reasoning"]
+        if "max_tokens" in _canon and max_tokens is None:
+            max_tokens = _canon["max_tokens"]
+
+    # `intent` is the caller-facing ALIAS for `sig` (the job-type label advise/best-value/attribution key on). A
+    # caller who reaches for intent= — the natural thing to pass for reasoning="best-value" — gets it honoured, not a
+    # TypeError, and the same tag fixes the "PAID call with NO intent → (none)" attribution gap. When both are given,
+    # sig names the finer call-class (its measured p99 sizes the output budget) and intent the job-type (best-value
+    # below prefers it explicitly); when only intent is given it becomes the sig too, so one tag drives everything.
+    if intent is not None and not sig:
+        sig = intent
+
     # INPUT-COMPLETENESS: fold whole, stamped, self-verified files into the prompt BEFORE the guards, so the
     # full payload is what _input_fits measures and a size overflow is refused here rather than clipped by the
     # vendor. Consumed here (not forwarded), so the _call_guarded → call(_no_guard=True) recursion below never
@@ -476,7 +510,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
         if not _probe and not getattr(_resolve_guard, "on", False):
             try:
                 from . import best_value as _bv, calls as _bvc
-                _bv_intent = (_bvc.current() or {}).get("intent") or sig
+                _bv_intent = intent or (_bvc.current() or {}).get("intent") or sig
                 _pick = _bv.select_model_effort(_bv_intent, model, pin_model=no_substitution)
             except Exception:
                 _pick = None

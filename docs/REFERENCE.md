@@ -240,6 +240,26 @@ import spendguard
 r = spendguard.adapters.call("claude-opus-4-8", "Find the bug in these:", files=["a.py", "b.py"])
 ```
 
+### Let spendguard choose the model + effort — `reasoning="best-value"`
+Pass `reasoning="best-value"` with an `intent`, and spendguard resolves the cheapest `(model, effort)` whose
+**measured** quality holds for that intent (from `advise.ranked` — $0, no LLM), swaps to it, **pins** it (the
+utilisation bandit can't re-swap), and **books the saving** against the counterfactual (what the named model would
+have cost). With no measured evidence for the intent it keeps your model — honestly. Learn the per-intent effort
+first with `spendguard effort-titrate <intent>` (estimate-first); apply it fleet-wide via the same call path.
+```python
+import spendguard
+r = spendguard.adapters.call("claude-opus-4-8", "Adjudicate this edge case …",
+                             reasoning="best-value", intent="edge-adjudicate")
+# r["substituted_from"] / r["best_value"] record what it WOULD have run vs what best-value chose.
+```
+**Ensure-success input** — `call()` accepts the kwargs you naturally reach for and translates them, instead of a
+cryptic `TypeError`: `intent=` (alias for `sig`, the job-type tag advise/best-value/attribution key on),
+`effort=` / `reasoning_effort=` (alias `reasoning=`), `max_output_tokens=` / `max_completion_tokens=` (alias
+`max_tokens=`). The canonical param wins if both are passed; a genuinely unknown kwarg fails **loudly with
+guidance** (it names the accepted params) rather than being silently dropped. Every provider call is also bounded at
+wall-clock by `timeout_s` — a client-side cancel that stops the request and its billing, so a slow high-reasoning
+model (kimi-k3, glm) can never wedge the caller.
+
 ## Call context & cost-per-good-result (opt-in)
 Beyond *cost*, spendguard can record per-call **context** to build a cost+**quality** corpus. Off by default
 (it can store prompts/outputs — privacy). Enable `calls.enabled` (+ `calls.store_prompts` for snippets and the
