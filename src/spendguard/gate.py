@@ -991,12 +991,15 @@ def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, 
                        f"(NOT $0, and excluded from totals so it cannot read as free). Fix it with:\n"
                        f"  spendguard price {model} --in <$/1M> --out <$/1M> --source '<url or invoice>'")
             return
+    # THE EFFORT TIER ACTUALLY SENT — read off the request body (a fixed field, not a judgement), so the calls
+    # corpus can slice cost×quality per (intent, model, effort). None when no reasoning_effort rode the request.
+    _effort = kw.get("reasoning_effort") if isinstance(kw, dict) else None
     if _meta_intent():                            # meta call → meta ledger only (not workload realtime)
         from . import budget
         budget.record_meta(prov, model, cost)
         if _calls.enabled():
             _calls.record_call(prov, model, "realtime", cost, in_tok=in_tok, out_tok=out_tok, latency=latency,
-                          prompt=_prompt_text(kw), output=output, finish=finish)
+                          prompt=_prompt_text(kw), output=output, finish=finish, effort=_effort)
         return
     _calls.check_output(output)      # realtime output CONTRACT (no-op unless the flow declared one)
     _rt_record(prov, model, cost, in_tok=in_tok, out_tok=out_tok, cached=cached, basis=basis, per_item_max=per_item_max)
@@ -1010,7 +1013,7 @@ def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, 
         pass
     if _calls.enabled():
         _calls.record_call(prov, model, "realtime", cost, in_tok=in_tok, out_tok=out_tok, latency=latency,
-                      prompt=_prompt_text(kw), output=output, finish=finish)
+                      prompt=_prompt_text(kw), output=output, finish=finish, effort=_effort)
 
 
 def _stream_out_estimate(model, kw, est_fn):

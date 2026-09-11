@@ -13,9 +13,12 @@ import math
 from . import budget
 
 # per-source confidence → coefficient of variation (lower confidence ⇒ wider spread). certain ⟂ counterfactual.
+# best-value = the auto-selector chose a cheaper (model, effort) that held the intent's MEASURED quality bar; it is a
+# counterfactual (the baseline call was never made), a little more grounded than a blind advisor swap since the pick
+# is backed by recorded good_rate — hence a touch above 'advisor', still well below the CERTAIN (measured) sources.
 CONFIDENCE = {"cache": 0.95, "block": 0.70, "cascade": 0.90, "advisor": 0.50, "compaction": 0.65,
-              "realized": 0.90}           # realized = MEASURED before/after per-call delta (realized.py), not a counterfactual
-CERTAIN = ("cache", "block", "cascade", "realized")   # vs counterfactual: advisor, compaction
+              "realized": 0.90, "best-value": 0.55}   # realized = MEASURED before/after (realized.py), not a counterfactual
+CERTAIN = ("cache", "block", "cascade", "realized")   # vs counterfactual: advisor, compaction, best-value
 
 # EST-VALUE is the plan-served saving (work run $0 on a subscription plan instead of the metered API). It is ALREADY
 # its own axis (est_chat_usd / lane_value / the receipt's est-value line), so it must NEVER also be booked here as a
@@ -129,3 +132,78 @@ def savings_crosscheck(baseline_usd, since=None):
     return {"saved": s["total"], "baseline": round(base, 4),
             "ratio": (round(ratio, 2) if ratio is not None else None),
             "by_source": s["by_source"], "certain": s["certain"], "counterfactual": s["counterfactual"]}
+
+
+# ── per-DECISION ledger (the value proof, and the learner's evidence, from one record) ──────────────────────
+# The `savings` table above is the aggregate money axis (Σ avoided $ as a distribution). This table is its
+# per-decision twin: one row per SUBSTITUTION — what the caller WOULD have run vs what spendguard chose, and the $
+# delta at the tokens actually used. It makes the value PROVABLE (every saved dollar traces to intent +
+# requested→chosen model+effort) rather than an anonymous aggregate; it is also exactly the record the learner reads.
+_DECISION_COLS = ("ts", "day", "project", "intent", "basis", "requested_model", "requested_effort",
+                  "chosen_model", "chosen_effort", "counterfactual_usd", "actual_usd", "saved_usd")
+
+
+def _decisions_db():
+    db = budget._ledger_db()                       # same SQLite file as charges + savings
+    with budget._lock:
+        db.execute("CREATE TABLE IF NOT EXISTS decisions "
+                   "(ts TEXT, day TEXT, project TEXT, intent TEXT, basis TEXT, "
+                   "requested_model TEXT, requested_effort TEXT, chosen_model TEXT, chosen_effort TEXT, "
+                   "counterfactual_usd REAL, actual_usd REAL, saved_usd REAL)")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_decisions_day ON decisions(day)")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_decisions_intent ON decisions(intent)")
+        db.commit()
+    return db
+
+
+def record_decision(intent, requested_model, chosen_model, counterfactual_usd, actual_usd, saved_usd,
+                    requested_effort=None, chosen_effort=None, basis="advisor", project=None):
+    """Record ONE substitution decision (the value proof + the learner's evidence). Never raises — booking value
+    must not break the call path — but never SILENT: a failed write warns once rather than losing the row."""
+    try:
+        proj = project if project is not None else budget._project()
+        now = datetime.datetime.now(datetime.timezone.utc)
+        db = _decisions_db()
+        with budget._lock:
+            db.execute("INSERT INTO decisions (ts,day,project,intent,basis,requested_model,requested_effort,"
+                       "chosen_model,chosen_effort,counterfactual_usd,actual_usd,saved_usd) "
+                       "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                       (now.isoformat(timespec="seconds"), now.strftime("%Y-%m-%d"), proj, intent, basis,
+                        requested_model, requested_effort, chosen_model, chosen_effort,
+                        float(counterfactual_usd or 0), float(actual_usd or 0), float(saved_usd or 0)))
+            db.commit()
+    except Exception:
+        try:
+            from . import config
+            config.warn_once("[spendguard] record_decision write failed — a decision row was not recorded")
+        except Exception:
+            pass
+
+
+def decisions_since(since=None):
+    """Per-decision rows since `since` (day, YYYY-MM-DD), newest first — the forensic detail behind the tally."""
+    db = _decisions_db()
+    cond, args = [], []
+    if since:
+        cond.append("day >= ?"); args.append(since)
+    where = ("WHERE " + " AND ".join(cond)) if cond else ""
+    with budget._lock:
+        rows = db.execute(f"SELECT {','.join(_DECISION_COLS)} FROM decisions {where} ORDER BY ts DESC", args).fetchall()
+    return [dict(zip(_DECISION_COLS, r)) for r in rows]
+
+
+def decisions_summary(since=None):
+    """Aggregate the decision rows → {decisions, saved_usd, by_intent:[{intent, decisions, saved_usd}]} — the value
+    proof, per intent. Σ(by_intent saved) == saved_usd is the un-regressable check that nothing is dropped."""
+    rows = decisions_since(since)
+    by_intent, total = {}, 0.0
+    for d in rows:
+        total += float(d.get("saved_usd") or 0)
+        k = d.get("intent") or "(none)"
+        b = by_intent.setdefault(k, {"intent": k, "decisions": 0, "saved_usd": 0.0})
+        b["decisions"] += 1
+        b["saved_usd"] += float(d.get("saved_usd") or 0)
+    for b in by_intent.values():
+        b["saved_usd"] = round(b["saved_usd"], 4)
+    return {"decisions": len(rows), "saved_usd": round(total, 4),
+            "by_intent": sorted(by_intent.values(), key=lambda x: x["saved_usd"], reverse=True)}

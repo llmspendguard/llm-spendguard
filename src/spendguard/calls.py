@@ -188,7 +188,7 @@ def _calls_db():
                     in_tok INTEGER, out_tok INTEGER, cost REAL, latency REAL,
                     prompt_hash TEXT, prompt_snip TEXT, output_snip TEXT, finish TEXT,
                     quality TEXT, quality_src TEXT, quality_conf REAL,
-                    executor TEXT, project TEXT)""")
+                    executor TEXT, project TEXT, effort TEXT)""")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_calls_chain ON calls(chain)")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_calls_intent ON calls(intent)")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_calls_ts ON calls(ts)")  # as_of/since range reads (calibrate, advise)
@@ -197,7 +197,11 @@ def _calls_db():
                 # so the f-string is the only way and carries no injection surface. `executor` = which subscription
                 # lane served the call; `project` = the repo it belongs to (so lane plan-value attributes like spend).
                 _have = {r[1] for r in c.execute("PRAGMA table_info(calls)").fetchall()}
-                for _col, _decl in (("quality_conf", "REAL"), ("executor", "TEXT"), ("project", "TEXT")):
+                # `effort` = the reasoning-effort TIER actually sent (none|minimal|low|medium|high|… or the wire
+                # value a model accepts), so cost×quality can be sliced per (intent, model, EFFORT) — the axis the
+                # best-value selector titrates. NULL on a non-reasoning call, a call that sent no effort, or a legacy row.
+                for _col, _decl in (("quality_conf", "REAL"), ("executor", "TEXT"), ("project", "TEXT"),
+                                    ("effort", "TEXT")):
                     if _col not in _have:
                         c.execute(f"ALTER TABLE calls ADD COLUMN {_col} {_decl}")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_calls_executor ON calls(executor)")  # per-lane rollups
@@ -213,7 +217,7 @@ def _uuid():
 
 def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
            prompt=None, output=None, finish=None, intent=None, chain=None, who=None,
-           executor=None, project=None):
+           executor=None, project=None, effort=None):
     """Record one call. Returns call_id (or None if logging is off). Never raises.
 
     `executor` names the SUBSCRIPTION LANE that served the call (claude-code / codex / gemini / zai-coding) when it
@@ -259,11 +263,11 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
         with _lock:
             _calls_db().execute(
                 "INSERT INTO calls (id,ts,chain,intent,caller,provider,model,kind,in_tok,out_tok,"
-                "cost,latency,prompt_hash,prompt_snip,output_snip,finish,executor,project) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "cost,latency,prompt_hash,prompt_snip,output_snip,finish,executor,project,effort) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (cid, ts, chain, intent, who or caller(), provider, model, kind,
                  int(in_tok or 0), int(out_tok or 0), float(cost or 0), latency, ph, psnip, osnip, finish,
-                 executor, proj))
+                 executor, proj, (effort or None)))
             _calls_db().commit()
         # deferred implicit feedback: did THIS call reuse an earlier output in the same chain?
         if chain and prompt:
@@ -293,16 +297,18 @@ def feedback(call_id: Optional[str], ok: bool = True, source: str = "explicit",
 
 
 def insert(provider, model, kind, cost, in_tok=0, out_tok=0, ts=None, intent=None, chain=None,
-           quality=None, quality_src=None, quality_conf=None, who="backfill"):
-    """Low-level insert used by backfill (ungated). Returns call_id."""
+           quality=None, quality_src=None, quality_conf=None, who="backfill", effort=None):
+    """Low-level insert used by backfill (ungated) and the bakeoff (which records per-EFFORT arms). Returns call_id.
+    `effort` = the reasoning tier this row was produced at, so a bakeoff's per-(model,effort) evidence is sliceable."""
     cid = _uuid()
     ts = ts or datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     with _lock:
         _calls_db().execute(
             "INSERT INTO calls (id,ts,chain,intent,caller,provider,model,kind,in_tok,out_tok,"
-            "cost,quality,quality_src,quality_conf) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "cost,quality,quality_src,quality_conf,effort) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (cid, ts, chain, intent, who, provider, model, kind,
-             int(in_tok or 0), int(out_tok or 0), float(cost or 0), quality, quality_src, quality_conf))
+             int(in_tok or 0), int(out_tok or 0), float(cost or 0), quality, quality_src, quality_conf,
+             (effort or None)))
         _calls_db().commit()
     return cid
 

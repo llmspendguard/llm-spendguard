@@ -211,6 +211,9 @@ def _dispatch(argv=None):
     if cmd == "bakeoff":                              # measure cost×quality for a slate on a sample (fills untried models)
         from . import bakeoff
         return bakeoff.main(rest)
+    if cmd == "effort-titrate":                       # learn the cheapest reasoning effort that holds quality per (intent,model)
+        from . import effort_titration
+        return effort_titration.main(rest)
     if cmd == "metadata":                             # model-metadata backbone health + measured-cap drift audit
         from . import metadata_audit
         return metadata_audit.main(rest)

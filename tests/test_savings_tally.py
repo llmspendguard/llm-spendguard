@@ -56,13 +56,14 @@ ck("item2 wiring: record_sessionstart calls the compaction credit",
 # ── item 1: a metered substitution to a CHEAPER model is credited 'advisor'; a $0 plan substitution is NOT ──
 _orig_rt = pricing.realtime_cost
 pricing.realtime_cost = lambda model, i, o: 0.10 if model == "expensive:m" else 0.02   # baseline (requested) = $0.10
-adapters._maybe_credit_advisor("expensive:m", {"substituted_from": "expensive:m", "cost": 0.02, "in_tok": 100, "out_tok": 50})
+# _book_substitution reads the baseline off r['substituted_from'] and books a saving only for a metered→cheaper swap.
+adapters._book_substitution({"substituted_from": "expensive:m", "cost": 0.02, "in_tok": 100, "out_tok": 50})
 ck("item1: metered cheaper substitution credited 'advisor' (0.10 baseline − 0.02 actual = 0.08)", _saved("advisor") == 0.08)
 _before = _saved("advisor")
-adapters._maybe_credit_advisor("expensive:m", {"substituted_from": "expensive:m", "cost": 0.0, "in_tok": 100, "out_tok": 50})
+adapters._book_substitution({"substituted_from": "expensive:m", "cost": 0.0, "in_tok": 100, "out_tok": 50})
 ck("item1: a $0 plan substitution is NOT booked as advisor (that is the est-value axis)", _saved("advisor") == _before)
 pricing.realtime_cost = _orig_rt
-ck("item1 wiring: adapters.call calls the advisor credit", "_maybe_credit_advisor" in inspect.getsource(adapters.call))
+ck("item1 wiring: adapters.call books the substitution decision + saving", "_book_substitution" in inspect.getsource(adapters.call))
 
 # ── item 3: saved_since splits CERTAIN (measured) from COUNTERFACTUAL, total = sum, never blurred ──
 s = guard.saved_since()

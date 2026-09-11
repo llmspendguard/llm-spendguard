@@ -126,8 +126,13 @@ def _tool_bakeoff(args):
     import spendguard
     spendguard.require()                    # real spend → fail closed if the gate is not enforcing here
     from . import bakeoff as _bk
+    # `efforts` sweeps the reasoning ladder PER model (finds the cheapest (model, effort) that holds quality);
+    # a list or a comma string, both accepted. Omitted → one arm per model at its default effort.
+    _eff = args.get("efforts")
+    if isinstance(_eff, str):
+        _eff = [e for e in _eff.split(",") if e.strip()]
     kw = dict(intent=args.get("intent"), candidates=args.get("candidates"),
-              prompts=args.get("prompts"), sample_n=int(args.get("sample_n") or 5))
+              prompts=args.get("prompts"), sample_n=int(args.get("sample_n") or 5), efforts=(_eff or None))
     budget = args.get("budget_usd")
     if budget is None:                       # no budget → NEVER auto-spends; a bakeoff bills real workload $
         est = _bk.bakeoff(run=False, **kw)
@@ -273,16 +278,34 @@ def _cc_label(conv, titles):
 def _tool_spend_overview(_args):
     con = _cc_db()
     try:
-        est = con.execute("SELECT COALESCE(SUM(CAST(est_chat_usd AS REAL)),0) FROM spend_events WHERE source='claude-code'").fetchone()[0]
-        over = con.execute("SELECT COALESCE(SUM(CAST(realtime_usd AS REAL)),0) FROM spend_events WHERE source='anthropic-invoice' AND intent LIKE 'anthropic-invoice:cc-overage%'").fetchone()[0]
-        sub = con.execute("SELECT COALESCE(SUM(CAST(subscription_usd AS REAL)),0) FROM spend_events WHERE source='anthropic-invoice'").fetchone()[0]
-        api = con.execute("SELECT COALESCE(SUM(CAST(realtime_usd AS REAL)),0) FROM spend_events WHERE source='anthropic-invoice-api'").fetchone()[0]
+        # A fresh install has no spend_events table yet — the real-$ axis is then legitimately 0. Detect ONLY that
+        # one case from the schema; any OTHER failure (corrupt db, schema drift) must still propagate, never be
+        # masked as a valid-looking $0 (which would hide real spend). This is not a broad except-and-zero.
+        _has = con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='spend_events'").fetchone()
+        if not _has:
+            est = over = sub = api = 0
+        else:
+            est = con.execute("SELECT COALESCE(SUM(CAST(est_chat_usd AS REAL)),0) FROM spend_events WHERE source='claude-code'").fetchone()[0]
+            over = con.execute("SELECT COALESCE(SUM(CAST(realtime_usd AS REAL)),0) FROM spend_events WHERE source='anthropic-invoice' AND intent LIKE 'anthropic-invoice:cc-overage%'").fetchone()[0]
+            sub = con.execute("SELECT COALESCE(SUM(CAST(subscription_usd AS REAL)),0) FROM spend_events WHERE source='anthropic-invoice'").fetchone()[0]
+            api = con.execute("SELECT COALESCE(SUM(CAST(realtime_usd AS REAL)),0) FROM spend_events WHERE source='anthropic-invoice-api'").fetchone()[0]
     finally:
         con.close()
-    return {"note": "Real $ (money out the door) and est-value (plan-covered usage worth) are SEPARATE axes — never summed.",
+    # THIRD AXIS: guarded savings (avoided $) + the per-decision value proof. Kept separate — NEVER summed into
+    # real-$ or est-value. `counterfactual` (best-value/advisor/compaction) is held apart from `certain` (measured).
+    # No except-and-zero here: both readers create their tables if absent, so a fresh install returns real zeros;
+    # a genuine failure (a corrupt savings/decisions db) must SURFACE, never be masked as "$0 saved, 0 decisions".
+    from . import guard as _guard
+    _sv = _guard.saved_since()
+    _dec = _guard.decisions_summary()
+    return {"note": "THREE separate axes, NEVER summed: real $ (money out the door), est-value (plan-covered usage "
+                    "worth), and guarded savings (avoided $, with a per-decision proof).",
             "real_usd": {"subscription_base": round(sub, 2), "claude_code_overage": round(over, 2),
                          "api_credits": round(api, 2), "total_real": round(sub + over + api, 2)},
-            "est_value_usd": {"claude_code_plan_covered": round(est, 2)}}
+            "est_value_usd": {"claude_code_plan_covered": round(est, 2)},
+            "saved_usd": {"total": _sv["total"], "certain": _sv["certain"], "counterfactual": _sv["counterfactual"],
+                          "by_source": _sv["by_source"], "decisions": _dec["decisions"],
+                          "top_intents_by_saving": _dec["by_intent"][:5]}}
 
 
 def _tool_overage_status(_args):

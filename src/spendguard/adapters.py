@@ -326,22 +326,39 @@ def _openai_strict(schema):
 # instead truncates the answer — and a truncated JSON body reads downstream as "no findings" rather than
 # "no answer". That is the whole recurring failure. The number now comes from measurement or from the
 # caller, never from a literal nobody chose.
-def _maybe_credit_advisor(requested, r):
-    """When a call was SUBSTITUTED onto a CHEAPER, METERED model than the one requested, book the difference as a
-    guarded 'advisor' saving (counterfactual — the requested model is the honest baseline). SKIPPED for a $0
-    plan-lane substitution: that avoided-API value is the EST-VALUE axis, so booking it here too would double-count.
-    The dominant routing saving (plan-served) therefore stays on est-value; this credits ONLY the genuinely-
-    uncaptured metered→cheaper swap. Best-effort; never raises into the call path."""
+def _book_substitution(r):
+    """Book a SUBSTITUTION as ONE record that serves BOTH pillars — the value proof AND the learner's evidence.
+
+    The baseline is r['substituted_from'] (the model the caller WOULD have run), priced at the tokens ACTUALLY
+    used; the chosen model is what ran. A per-decision row (intent, requested→chosen model+effort, counterfactual $,
+    actual $, saved $) is recorded for EVERY substitution — best-value OR the utilisation bandit. A metered→cheaper
+    swap also books a guarded saving on the THIRD axis; a $0 plan-lane swap books NO saving and saved_usd stays 0
+    (that avoided $ is the EST-VALUE axis — guard.record_saving refuses 'plan'/double-counting), but the decision
+    is still recorded with counterfactual_usd so the plan-served value is visible. Best-effort; never raises."""
     try:
         if not isinstance(r, dict) or not r.get("substituted_from"):
             return
+        requested = r.get("substituted_from")            # the model the caller would have run (the honest baseline)
         cost = r.get("cost")
-        if not cost or float(cost) <= 0:          # $0 → plan-served = est-value axis, not a savings-ledger row
+        if cost is None:                                 # errored/refused → nothing ran, nothing to book
             return
-        from . import pricing, guard
-        base = pricing.realtime_cost(requested, int(r.get("in_tok") or 0), int(r.get("out_tok") or 0))
-        if base and float(base) > float(cost):
-            guard.record_saving("advisor", float(base) - float(cost))
+        from . import pricing, guard, calls as _cbk
+        actual = float(cost or 0.0)
+        try:
+            base = float(pricing.realtime_cost(requested, int(r.get("in_tok") or 0), int(r.get("out_tok") or 0)) or 0.0)
+        except Exception:
+            base = 0.0                                   # unpriced baseline → no counterfactual $ to credit
+        # saved_usd counts ONLY a metered→cheaper-metered swap — the same amount that goes to the savings ledger,
+        # so Σ decisions.saved_usd == the savings tally. A $0 plan swap's avoided $ is est-value, not a saving here.
+        saved = (base - actual) if (actual > 0 and base > actual) else 0.0
+        _basis = "best-value" if r.get("best_value") else "advisor"
+        chosen = f"{r.get('provider')}:{r.get('model')}" if r.get("provider") else r.get("model")
+        guard.record_decision(intent=(_cbk.current() or {}).get("intent"),
+                              requested_model=requested, requested_effort=r.get("requested_effort"),
+                              chosen_model=chosen, chosen_effort=r.get("chosen_effort"),
+                              counterfactual_usd=base, actual_usd=actual, saved_usd=saved, basis=_basis)
+        if saved > 0:                                    # metered → cheaper metered: a real counterfactual saving
+            guard.record_saving(_basis, saved)
     except Exception:
         pass
 
@@ -380,6 +397,11 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     and so each reply feeds that measurement. `reasoning` (minimal|low|medium|high) sets reasoning effort for
     gpt-5/o-series models; defaults to 'minimal' for them (default-medium reasoning eats the token budget →
     empty output, and costs more — wrong for simple classify/extract calls).
+    `reasoning="best-value"` DELEGATES the choice: spendguard resolves the cheapest (model, effort) whose MEASURED
+    good_rate for this intent clears the bar (from advise.ranked — $0, no LLM), swaps `model` to it, and PINS it so
+    the bandit cannot re-swap. With no measured evidence for the intent it keeps the named model (honest); with
+    no_substitution it titrates EFFORT for the named model only. The chosen arm is stamped substituted_from/best_value
+    so the saving+decision are booked against the counterfactual (what the named model would have cost).
 
     PARAMS a consumer commonly passes (all optional): `timeout_s` bounds the request — a client-side cancel that
     actually STOPS the call (and its billing), not merely the wait; it applies to BOTH the lane and the API path.
@@ -441,6 +463,30 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
             if isinstance(_rex, _rgate.deliberate_stop_types()):
                 raise                                  # a spend/budget refusal or deadline HALTS — never a silent guess
             # unknown provider / resolver hiccup → leave the id UNCHANGED and proceed (the honest unresolved path)
+    # BEST-VALUE RESOLUTION — reasoning="best-value" delegates the (model, effort) choice to the MEASURED frontier:
+    # the cheapest (model, effort) whose recorded good_rate for this intent clears the bar (best_value.resolve). It is
+    # $0 and makes NO LLM call — the quality was already judged+recorded, so picking the cheapest arm that holds is
+    # arithmetic on that evidence, not a fresh meaning call. Skipped for a probe or inside the resolver's own call.
+    # Degrades HONESTLY: no measured evidence → keep the caller's model. The sentinel is CONSUMED here either way — it
+    # must never reach the wire as a literal reasoning_effort (that would 400). A resolved choice is PINNED
+    # (no_substitution) so the utilisation bandit cannot re-swap the model best-value deliberately chose.
+    _bv_from = _bv_why = _bv_effort = None
+    if isinstance(reasoning, str) and reasoning.strip().lower() == "best-value":
+        reasoning = None                               # consume the sentinel regardless of the outcome below
+        if not _probe and not getattr(_resolve_guard, "on", False):
+            try:
+                from . import best_value as _bv, calls as _bvc
+                _bv_intent = (_bvc.current() or {}).get("intent") or sig
+                _pick = _bv.select_model_effort(_bv_intent, model, pin_model=no_substitution)
+            except Exception:
+                _pick = None
+            import sys as _sbv
+            if _pick and _pick.get("model"):
+                _bv_from, _bv_why, _bv_effort = model, _pick.get("why"), _pick.get("effort")
+                model, reasoning, no_substitution = _pick["model"], _pick.get("effort"), True
+                print(f"[spendguard] {_bv_why} (was {_bv_from})", file=_sbv.stderr)
+            elif _pick is not None and _pick.get("why"):
+                print(f"[spendguard] {_pick['why']}", file=_sbv.stderr)   # honest no-pick: keep the named model
     if not _no_guard:
         r = _call_guarded(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
                           schema=schema, timeout_s=timeout_s, sig=sig, retries=retries,
@@ -450,7 +496,15 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
         r = _call_once(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
                        schema=schema, timeout_s=timeout_s, no_metered_fallback=no_metered_fallback, images=images,
                        _no_sub=no_substitution)
-    _maybe_credit_advisor(model, r)   # metered substitution to a CHEAPER model → guarded 'advisor' saving (savings tally)
+    # BEST-VALUE PROVENANCE — record what the caller WOULD have run (the baseline) vs what best-value chose, so the
+    # saving/decision booking downstream can price the counterfactual. Stamped only when best-value actually changed
+    # the target; never overwrites a lane/bandit substituted_from already present. requested_effort is None (the
+    # sentinel baseline is the named model at its DEFAULT effort); chosen_effort is the titrated pick.
+    if _bv_from and isinstance(r, dict):
+        r = {**r, "substituted_from": r.get("substituted_from") or _bv_from,
+             "substitution": r.get("substitution") or _bv_why, "best_value": True,
+             "requested_effort": None, "chosen_effort": _bv_effort}
+    _book_substitution(r)   # book the DECISION (value proof + learner evidence) + any metered→cheaper saving
     # `billed` (cost>0) is NOT "served by the metered API": a per-token key LANE (e.g. zai-coding) costs while still
     # being lane-served, so a caller proving refuse_billed/$0 via `billed` gets false positives. This is the field to
     # reach for instead — the metered provider API served it (a lane miss fell through, or there was no lane): executor
@@ -1077,7 +1131,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 from . import calls
                 calls.record_call(prov, raw, "subscription", 0.0,
                              in_tok=s.get("in_tok", 0), out_tok=s.get("out_tok", 0), latency=s.get("latency"),
-                             executor=lane_name)     # WHICH plan served it — a stored fact, not a provider-guess
+                             executor=lane_name, effort=reasoning)  # plan that served it + the effort tier requested
             except Exception:
                 pass
             return {**base, "text": s["text"], "in_tok": s.get("in_tok", 0), "out_tok": s.get("out_tok", 0),
@@ -1585,6 +1639,20 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
     _probe = kw.pop("_probe", False)                       # a reachability/connectivity probe: keep it tiny + fast,
     #                                                        never floored to reasoning headroom or grown on an empty
     from . import bulkgate
+    # AUTO-APPLY the learned reasoning EFFORT for this (intent, model) — the effort twin of the reasoning-budget floor
+    # below. ONLY when the caller set no explicit effort (an explicit reasoning always wins) and this is not a probe or
+    # an internal resolver/heal call. A None fact leaves reasoning unset → the model's FAMILY FLOOR stands downstream
+    # (models.apply_call_params), never a forced effort. The tier the effort bake-off measured cheapest-that-holds.
+    if kw.get("reasoning") is None and not _probe and not getattr(_resolve_guard, "on", False) \
+            and not getattr(_heal_guard, "on", False):
+        try:
+            from . import models as _mte, calls as _cte
+            _eff_intent = (_cte.current() or {}).get("intent") or sig
+            _learned_eff = _mte.effort_for(model, _eff_intent) if _eff_intent else None
+            if _learned_eff:
+                kw["reasoning"] = _learned_eff
+        except Exception:
+            pass                                           # a missing/broken fact store must never block the call
     # PROACTIVE LANE LOAD-BALANCING (Part 2): if this call's INTENT has a CONFIRMED substitute and the primary plan is
     # HOT while an acceptable substitute's plan is IDLE, run the substitute model instead — resolved through THIS same
     # guarded path (recursion), so the substitute gets its OWN output budget and input check, not the primary's. The

@@ -226,7 +226,7 @@ def _run_arm(arm, task, system, reasoning, timeout_s):
             return ""
         try:
             calls.record_call(prov, model, "subscription", 0.0, in_tok=r.get("in_tok", 0), out_tok=r.get("out_tok", 0),
-                         latency=r.get("latency"), executor=lane)
+                         latency=r.get("latency"), executor=lane, effort=(level or reasoning))
         except Exception:
             pass
         return r.get("text") or ""

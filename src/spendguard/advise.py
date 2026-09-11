@@ -12,7 +12,7 @@ from . import calls
 
 
 def _rows(as_of=None, intent=None):
-    q = "SELECT provider, model, intent, cost, in_tok, out_tok, quality, quality_conf FROM calls"
+    q = "SELECT provider, model, intent, cost, in_tok, out_tok, quality, quality_conf, effort FROM calls"
     cond, args = ["(intent IS NULL OR intent NOT LIKE 'spendguard:%')"], []  # never analyze our own meta calls
     if as_of:
         cond.append("substr(ts,1,10) <= ?"); args.append(as_of)
@@ -48,14 +48,21 @@ def _resolve_plan(plan, agg):
     return None
 
 
-def evidence(as_of=None, intent=None):
+def evidence(as_of=None, intent=None, by_effort=False):
+    """Aggregate the calls corpus into cost×quality per model. `by_effort=True` splits each model by the reasoning
+    EFFORT it ran at — the extra axis the best-value selector titrates — keying per (vendor:model, effort) instead of
+    per (vendor:model). The default (per-model, effort summed) is unchanged, so the advise CLI + recommend keep their
+    shape; only a caller that asks for the effort split gets the finer rows."""
     agg = {}
-    for prov, model, _intent, cost, intok, outtok, qual, qconf in _rows(as_of, intent):
+    for prov, model, _intent, cost, intok, outtok, qual, qconf, effort in _rows(as_of, intent):
         # KEYED BY VENDOR AND MODEL. A bare model key merges two vendors' rows into one recommendation —
         # the same collision fixed in pricing.py, where 17 ids resolved to another vendor's rate. Here it
-        # would blend a cheap host's cost with an expensive one's and rank the average.
-        a = agg.setdefault(f"{prov}:{model}",
-                           dict(provider=prov, model=model, jobs=0, cost=0.0, outtok=0, good=0.0, labeled=0.0))
+        # would blend a cheap host's cost with an expensive one's and rank the average. by_effort adds effort
+        # to the key so two efforts of one model don't merge (the exact thing the effort axis exists to separate).
+        eff = (effort or None) if by_effort else None
+        key = (f"{prov}:{model}", eff) if by_effort else f"{prov}:{model}"
+        a = agg.setdefault(key,
+                           dict(provider=prov, model=model, effort=eff, jobs=0, cost=0.0, outtok=0, good=0.0, labeled=0.0))
         a["jobs"] += 1
         a["cost"] += cost or 0
         a["outtok"] += outtok or 0
@@ -70,22 +77,30 @@ def evidence(as_of=None, intent=None):
     return agg
 
 
-def ranked(intent=None, as_of=None):
+def ranked(intent=None, as_of=None, by_effort=False):
     """The structured cost×quality ranking per (vendor:model) for an intent — the ONE computation behind both
     the `advise` CLI printer and the MCP `advise`/`recommend` tools, so the ranking can never drift between the
     surfaces (the #0b duplication trap). Best-first by $/good-result where any quality is labeled, else by $/M
     output (cost only). Each row: id ('vendor:model'), model (bare), provider, jobs, cost, out_tok, per_m_out,
     good_rate (None if unlabeled), per_good (None if no good result). Returns
-    {scope, as_of, labeled, metric, pick, models:[...]}."""
-    agg = evidence(as_of, intent)
+    {scope, as_of, labeled, metric, pick, models:[...]}.
+
+    `by_effort=True` returns one row per (vendor:model, EFFORT) — each row also carries `effort` — so the
+    best-value selector can pick the cheapest effort that holds quality. `id` stays 'vendor:model' in BOTH modes
+    (so plan-matching and the CLI are unchanged); the effort rides its own field, never fused into the id."""
+    agg = evidence(as_of, intent, by_effort=by_effort)
     models = []
     for key, a in agg.items():
         permout = (a["cost"] / a["outtok"] * 1e6) if a["outtok"] else None
         good_rate = (a["good"] / a["labeled"]) if a["labeled"] else None
         per_good = (a["cost"] / a["good"]) if a["good"] else None
-        models.append(dict(id=key, model=a["model"], provider=a["provider"], jobs=a["jobs"],
-                           cost=round(a["cost"] or 0.0, 6), out_tok=a["outtok"],
-                           per_m_out=permout, good_rate=good_rate, per_good=per_good))
+        row = dict(id=f"{a['provider']}:{a['model']}", model=a["model"], provider=a["provider"], jobs=a["jobs"],
+                   cost=round(a["cost"] or 0.0, 6), out_tok=a["outtok"],
+                   per_m_out=permout, good_rate=good_rate, per_good=per_good,
+                   labeled=round(a["labeled"], 3))     # confidence-weighted # of quality labels — the EVIDENCE STRENGTH
+        if by_effort:                                  # behind good_rate/per_good, so a selector can refuse a thin arm
+            row["effort"] = a.get("effort")
+        models.append(row)
     labeled_any = any(m["good_rate"] is not None for m in models)
     _rankkey = ((lambda m: m["per_good"] if m["per_good"] is not None else 1e18) if labeled_any
                 else (lambda m: m["per_m_out"] if m["per_m_out"] is not None else 1e18))

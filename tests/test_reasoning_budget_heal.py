@@ -52,7 +52,7 @@ def _fake_call_once(model, prompt, max_tokens=None, **kw):
 # ── shared stubs (offline) ──
 adapters._call_once = _fake_call_once
 adapters._input_fits = lambda *a, **k: (True, "")
-adapters._maybe_credit_advisor = lambda *a, **k: None
+adapters._book_substitution = lambda *a, **k: None
 vendor_call.served_substitute = lambda v, m: (m, None)
 adapters.pricing.output_ceiling = lambda vendor, model, backstop: 128000     # a generous model ceiling
 _REASONS = {"on": True}

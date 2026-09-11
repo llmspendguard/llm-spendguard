@@ -91,7 +91,7 @@ def _fake_guarded(model, prompt, **kw):
 
 adapters.call = _REAL_CALL          # test the REAL dispatch entry now (Part A had stubbed it as the resolver call)
 adapters._call_guarded = _fake_guarded
-adapters._maybe_credit_advisor = lambda *a, **k: None
+adapters._book_substitution = lambda *a, **k: None
 vendor_call.served_substitute = lambda v, m: ("gpt-5.6-sol", "closest served 5.6-class model") if m == "gpt-5.6" else (m, None)
 
 _r = adapters.call("openai:gpt-5.6", "p", max_tokens=8)

@@ -60,10 +60,13 @@ def _judge_one(prompt, output, judge_model):
         return None
 
 
-def _plan(intent, candidates, prompts, judge_model):
-    """The zero-spend plan + cost estimate: every candidate runs every sample prompt, then each output is judged.
-    Coarse and slightly high on purpose (a budget guard, not the ledger): a per-prompt input count, a fixed
-    output estimate. Returns (estimate_usd, per_candidate_detail, n_runs, n_judge)."""
+def _plan(intent, candidates, prompts, judge_model, efforts):
+    """The zero-spend plan + cost estimate: every candidate runs every sample prompt AT EVERY EFFORT, then each
+    output is judged. Coarse and slightly high on purpose (a budget guard, not the ledger): a per-prompt input
+    count, a fixed output estimate, multiplied by the number of effort arms. Returns
+    (estimate_usd, per_candidate_detail, n_runs, n_judge). `efforts` is the ordinal ladder ([None] = one arm at
+    the model's default effort); the estimate scales linearly with it so a wide sweep can never surprise-spend."""
+    n_eff = max(1, len(efforts))
     in_toks = [_count_tokens(p, candidates[0] if candidates else "gpt-5.5") for p in prompts]
     total, detail = 0.0, {}
     for c in candidates:
@@ -74,26 +77,33 @@ def _plan(intent, candidates, prompts, judge_model):
             except Exception:
                 c_cost = None
                 break
-        detail[c] = c_cost
-        total += (c_cost or 0.0)
-    n_judge = len(candidates) * len(prompts)                        # one small judge call per (candidate, prompt)
+        detail[c] = (c_cost * n_eff) if c_cost is not None else None   # one run per (prompt, EFFORT)
+        total += (detail[c] or 0.0)
+    n_judge = len(candidates) * len(prompts) * n_eff                    # one small judge call per (candidate, prompt, effort)
     try:
-        judge_in = sum(_count_tokens(p, judge_model) for p in prompts) * len(candidates)
+        judge_in = sum(_count_tokens(p, judge_model) for p in prompts) * len(candidates) * n_eff
         total += pricing.realtime_cost(judge_model, judge_in, _JUDGE_OUT * n_judge)
     except Exception:
         pass
-    return total, detail, len(candidates) * len(prompts), n_judge
+    return total, detail, len(candidates) * len(prompts) * n_eff, n_judge
 
 
 def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget_usd=None,
-            judge_model=None, parent_reading=None):
+            judge_model=None, parent_reading=None, efforts=None):
     """Measure cost×quality for `candidates` on a SAMPLE of `intent`'s real tasks, judge each output, and (run=True)
     record it so advise/recommend rank the candidates. `candidates` = ['vendor:model', …] (required — the slate to
     test). `prompts` overrides the auto-sample (from the intent's recorded prompts). ESTIMATE-FIRST: run=False
     returns the plan + $ estimate and spends nothing; run=True executes (refusing if the estimate exceeds
     `budget_usd`). `judge_model` PINS a specific judge (else config.advisor_judge_model()) — this is how a
     measurement rerun keeps the SAME ruler for a comparable number; `parent_reading` links the emitted receipt to
-    the reading it re-runs (a lineage). Returns a structured dict."""
+    the reading it re-runs (a lineage).
+
+    `efforts` sweeps the REASONING axis: an ordinal ladder like ['minimal','low','medium','high'] runs each
+    candidate at each effort as a separate arm, so the bakeoff explores not just models but (model, EFFORT) points.
+    Omitted (or []) → one arm per model at its default effort (the prior behaviour). Each arm's rows land per-(intent,
+    model, effort) in the `calls` corpus (that IS the learning advise reads back — there is no second store). The
+    per-(intent, model) effort VERDICT (cheapest effort that holds, agentic) is `effort_titration`'s job, not this
+    broad explorer's. Returns a structured dict."""
     _judge_pinned = judge_model is not None
     judge_model = judge_model or config.advisor_judge_model()
     candidates = [c.strip() for c in (candidates or []) if c and c.strip()]
@@ -104,72 +114,80 @@ def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget
     if not prompts:
         return dict(intent=intent, candidates=candidates, error="no sample tasks — this intent has no recorded "
                     "prompts to replay. Pass prompts=[…] with a few representative tasks.")
+    # The effort ladder to sweep. [None] means "one arm at the model's default effort" (send no reasoning_effort).
+    efforts_list = [str(e).strip() for e in (efforts or []) if e and str(e).strip()] or [None]
 
-    est, detail, n_runs, n_judge = _plan(intent, candidates, prompts, judge_model)
+    est, detail, n_runs, n_judge = _plan(intent, candidates, prompts, judge_model, efforts_list)
     unpriced = [c for c, v in detail.items() if v is None]
     if not run:
         return dict(intent=intent, candidates=candidates, sample=len(prompts), runs=n_runs, judge_calls=n_judge,
-                    estimate_usd=round(est, 5), per_candidate=detail, unpriced=unpriced, estimate_only=True,
-                    note=f"estimate only (~${est:.4f} + judging); call with run=True to measure. "
-                         "$0 subscription lanes are used where available.")
+                    efforts=efforts_list, estimate_usd=round(est, 5), per_candidate=detail, unpriced=unpriced,
+                    estimate_only=True,
+                    note=f"estimate only (~${est:.4f} + judging) over {len(efforts_list)} effort arm(s) per model; "
+                         "call with run=True to measure. $0 subscription lanes are used where available.")
     if budget_usd is not None and est > float(budget_usd):
         return dict(intent=intent, candidates=candidates, estimate_usd=round(est, 5), refused=True,
                     note=f"estimate ~${est:.4f} exceeds budget_usd ${float(budget_usd):.4f} — not run. Raise budget_usd "
-                         "or shrink the slate/sample.")
+                         "or shrink the slate/sample/efforts.")
 
     from . import adapters
     results = {}
     for c in candidates:
-        n_good = n_lab = n_run = n_err = 0
-        spent, last_error = 0.0, None
-        for p in prompts:
-            r = adapters.call(c, p, sig=intent, timeout_s=120)      # gated; prefers a $0 lane, meters otherwise
-            if r.get("error"):
-                n_err += 1                                          # a dropped run is COUNTED + surfaced, never silent —
-                last_error = (r.get("error") or "")[:140]          # a candidate that fails every prompt must be visible,
-                continue                                           # not read as a clean zero-run bakeoff
-            n_run += 1
-            cost = float(r.get("cost") or 0.0)
-            spent += cost
-            verdict = _judge_one(p, r.get("text"), judge_model)     # LLM judge — the quality signal
-            q = None if verdict is None else ("good" if verdict else "bad")
-            if q is not None:
-                n_lab += 1
-                n_good += 1 if verdict else 0
-            # RECORD into the same corpus advise/recommend read, so the candidate now has a $/good for this intent
-            calls.insert(adapters.provider_for(c), c.split(":", 1)[-1], "realtime", cost,
-                         in_tok=int(r.get("in_tok") or 0), out_tok=int(r.get("out_tok") or 0),
-                         intent=intent, quality=q, quality_conf=(_JUDGE_CONF if q else None), who="bakeoff")
-        results[c] = dict(runs=n_run, failed=n_err, last_error=last_error, labeled=n_lab, good=n_good,
-                          good_rate=(n_good / n_lab if n_lab else None), spent=round(spent, 6),
-                          per_good=(spent / n_good if n_good else None))
+        for eff in efforts_list:                                    # the REASONING axis — one arm per (model, effort)
+            arm = c + ("@" + eff if eff else "")
+            n_good = n_lab = n_run = n_err = 0
+            spent, last_error = 0.0, None
+            for p in prompts:
+                r = adapters.call(c, p, sig=intent, timeout_s=120, reasoning=eff)   # gated; $0 lane where available
+                if r.get("error"):
+                    n_err += 1                                      # a dropped run is COUNTED + surfaced, never silent —
+                    last_error = (r.get("error") or "")[:140]      # a candidate/effort that fails every prompt is visible,
+                    continue                                       # not read as a clean zero-run bakeoff
+                n_run += 1
+                cost = float(r.get("cost") or 0.0)
+                spent += cost
+                verdict = _judge_one(p, r.get("text"), judge_model)  # LLM judge — the quality signal
+                q = None if verdict is None else ("good" if verdict else "bad")
+                if q is not None:
+                    n_lab += 1
+                    n_good += 1 if verdict else 0
+                # RECORD per (intent, model, EFFORT) into the corpus advise/best_value read — this is the learning.
+                calls.insert(adapters.provider_for(c), c.split(":", 1)[-1], "realtime", cost,
+                             in_tok=int(r.get("in_tok") or 0), out_tok=int(r.get("out_tok") or 0),
+                             intent=intent, quality=q, quality_conf=(_JUDGE_CONF if q else None),
+                             who="bakeoff", effort=eff)
+            results[arm] = dict(model=c, effort=eff, runs=n_run, failed=n_err, last_error=last_error,
+                                labeled=n_lab, good=n_good, good_rate=(n_good / n_lab if n_lab else None),
+                                spent=round(spent, 6), per_good=(spent / n_good if n_good else None))
 
     from . import advise, measurement
     import time as _time
-    ranked = advise.ranked(intent=intent)                          # re-rank now that the candidates have evidence
+    ranked = advise.ranked(intent=intent)                          # per-model re-rank (existing shape)
+    frontier = advise.ranked(intent=intent, by_effort=True)        # the (model, effort) frontier advise/titration read
     # MEASUREMENT RECEIPT: stamp WHAT produced these good_rates — judge, sample, rubric — so the number is
-    # reproducible + comparable later (docs/MEASUREMENT_RECEIPTS.md). judge_basis='configured': the judge is
-    # config.advisor_judge_model() (the bandit could swap it; the measurement_stable pin, added next, makes
-    # configured==served). A receipt-write failure is made LOUD but must NOT lose the bakeoff result.
-    _values = {c: {"good": results[c]["good"], "labeled": results[c]["labeled"],
-                   "good_rate": results[c]["good_rate"]} for c in results}
+    # reproducible + comparable later (docs/MEASUREMENT_RECEIPTS.md). Candidates are the ARM labels (model@effort)
+    # so effort is part of the instrument identity and two efforts of one model never collapse in the receipt.
+    _values = {arm: {"good": results[arm]["good"], "labeled": results[arm]["labeled"],
+                     "good_rate": results[arm]["good_rate"]} for arm in results}
     reading_id = None
     try:
         reading_id = measurement.record_reading(
             intent=intent, kind="bakeoff", judge_mix=[judge_model], judge_basis="configured",
             judge_pinned=_judge_pinned, parent_id=parent_reading,
             sample_ids=[measurement.item_id(p) for p in prompts],
-            rubric={"system": _JUDGE_SYS, "schema": _JUDGE_SCHEMA}, candidates=candidates,
+            rubric={"system": _JUDGE_SYS, "schema": _JUDGE_SCHEMA}, candidates=list(results.keys()),
             values=_values, aggregation="single",
-            spend_usd=sum((results[c]["spent"] or 0.0) for c in results), ts=_time.time())
+            spend_usd=sum((results[a]["spent"] or 0.0) for a in results), ts=_time.time())
     except Exception as _e:
         import sys as _sys
         _sys.stderr.write("[spendguard] bakeoff: measurement receipt NOT recorded (%s: %s) — the bakeoff "
                           "result stands\n" % (type(_e).__name__, str(_e)[:80]))
-    return dict(intent=intent, sample=len(prompts), judged_by=judge_model, reading_id=reading_id,
-                per_candidate=results, ranking=ranked["models"], pick=ranked["pick"], ranked_by=ranked["metric"],
-                note="recorded to the corpus + a measurement receipt — `spendguard measurement inspect %s` shows "
-                     "the judge mix / sample / rubric." % reading_id)
+    return dict(intent=intent, sample=len(prompts), efforts=efforts_list, judged_by=judge_model,
+                reading_id=reading_id, per_candidate=results,
+                ranking=ranked["models"], frontier_by_effort=frontier["models"],
+                pick=ranked["pick"], ranked_by=ranked["metric"],
+                note="recorded per (intent, model, effort) to the corpus + a measurement receipt — "
+                     "`spendguard measurement inspect %s` shows the judge mix / sample / rubric." % reading_id)
 
 
 def main(argv=None):
@@ -180,10 +198,14 @@ def main(argv=None):
     ap.add_argument("intent")
     ap.add_argument("--candidates", required=True, help="comma-separated vendor:model slate to test")
     ap.add_argument("--sample", type=int, default=5, help="how many recorded prompts to replay (default 5)")
+    ap.add_argument("--efforts", help="comma-separated reasoning ladder to sweep PER model, e.g. "
+                    "'minimal,low,medium,high' — finds the cheapest (model, effort) that holds quality. "
+                    "Omitted → one arm per model at its default effort.")
     ap.add_argument("--run", action="store_true", help="actually spend (default: estimate only)")
     ap.add_argument("--budget", type=float, help="refuse if the estimate exceeds this")
     a = ap.parse_args(argv)
     r = bakeoff(a.intent, candidates=[c for c in a.candidates.split(",") if c.strip()],
-                sample_n=a.sample, run=a.run, budget_usd=a.budget)
+                sample_n=a.sample, run=a.run, budget_usd=a.budget,
+                efforts=[e for e in (a.efforts or "").split(",") if e.strip()] or None)
     print(json.dumps(r, indent=1, default=str))
     return 0 if not r.get("error") else 1

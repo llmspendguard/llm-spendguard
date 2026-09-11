@@ -212,6 +212,26 @@ def ineffective(model, intent):
     return None
 
 
+def record_effort(model, intent, effort, confidence=0.9, source="effort-bakeoff"):
+    """Record the CHEAPEST reasoning effort that HOLDS quality for (model, intent) — the effort twin of the
+    token-budget titration. Keyed per-intent in the SAME fact store (like mark_ineffective), so one model can
+    carry a different effort per job-type. Auto-applied at the call chokepoint (adapters._call_guarded) whenever a
+    caller uses this intent WITHOUT an explicit effort — analogous to how the reasoning-budget floor is applied.
+    The verdict is produced by the effort bake-off's agentic judgement over the A/B, never a hand-picked cutoff."""
+    add_fact(model, f"effort:{intent or '*'}", effort, confidence=confidence, source=source, verified=True)
+
+
+def effort_for(model, intent):
+    """The learned cheapest-holding effort ordinal for (model, intent) — the intent-specific fact first, then a
+    global effort fact — else None. None means 'not measured yet': the caller/chokepoint then falls back to the
+    model's FAMILY FLOOR (never forces an effort), exactly the 'default to the floor until measured' rule."""
+    f = facts(model)
+    for key in ([f"effort:{intent}"] if intent else []) + ["effort:*"]:
+        if key in f:
+            return f[key][0]
+    return None
+
+
 def _rejected_param(err):
     """The request parameter a provider's error names as invalid — read from the SDK's TYPED fields, or "".
 

@@ -86,7 +86,7 @@ config.api_key = lambda env: "k"
 vendor_call.served_check = lambda v, m: "served"                 # skip the stale-id pre-flight on the metered leg
 vendor_call.served_substitute = lambda v, m: (m, None)          # no agentic id resolution in this test
 pricing.realtime_cost = lambda m, i, o, **k: 0.001
-adapters._maybe_credit_advisor = lambda *a, **k: None
+adapters._book_substitution = lambda *a, **k: None
 openai.OpenAI = _FakeOpenAI
 
 _route_calls = []
