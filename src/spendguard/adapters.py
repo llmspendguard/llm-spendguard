@@ -1080,6 +1080,21 @@ def metered_fallback_id(provider, use_name):
     return use_name, None
 
 
+def _cacheable_system(system):
+    """True when a system prompt is long enough to be worth prompt-caching. A bound on a REAL quantity (its token
+    count vs the provider's cache minimum) — a deterministic threshold, not a meaning judgement. Anthropic and OpenAI
+    both need ~1024 tokens for a cache block to form; the shared minimum lives in cacheaudit._MIN_CACHE_TOKENS."""
+    if not system:
+        return False
+    from . import cacheaudit
+    try:
+        import tiktoken
+        n = len(tiktoken.get_encoding("o200k_base").encode(system))
+    except Exception:
+        n = len(system) // 4            # a chars→tokens heuristic is adequate for a threshold when tiktoken is absent
+    return n >= cacheaudit._MIN_CACHE_TOKENS
+
+
 def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,
                _skip_lane=False, no_metered_fallback=False, images=None, _no_sub=False):
     """One raw request. Everything public goes through `call`, which adds the input and output guards.
@@ -1290,6 +1305,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             except Exception:
                 pass                                   # even the warning path must not break the dispatch
     t0 = time.time()
+    _cache_read = _cache_write = 0        # prompt-cache usage (read / write tokens), captured per provider below
     try:
         if spec["kind"] == "anthropic":
             import anthropic
@@ -1306,7 +1322,13 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             _uc = ([{"type": "text", "text": prompt}] + _image_parts(images, "anthropic")) if images else prompt
             kw = {"model": raw, "max_tokens": max_tokens, "messages": [{"role": "user", "content": _uc}]}
             if system:
-                kw["system"] = system
+                # CACHE the long, stable system prompt: it bills once (a cache WRITE) then reads at a discount on every
+                # repeat — the biggest win for a caller sending an identical *_SYSTEM on each call (honestreview's
+                # write-time judges). Only when it clears the cache minimum (a real-quantity token bound → deterministic,
+                # not a magic judgement); otherwise a plain string. Fail-open: a cached-shape rejection retries plain
+                # at the call site below, so a caching hiccup can never break the call.
+                kw["system"] = ([{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
+                                if _cacheable_system(system) else system)
             if schema is not None:
                 kw.update(json_schema_request("anthropic", schema))
             # STREAM, always. The SDK REFUSES a non-streaming request whose max_tokens implies a run over ten
@@ -1320,35 +1342,49 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             # Run the stream on a daemon worker, join at timeout_s, and on timeout CLOSE the client (tears down the
             # connection → cancels the request, stops billing) and raise _CallDeadline. In-time → the full message,
             # so usage/cost stay EXACT. No timeout_s → the plain stream (unchanged).
-            if timeout_s:
-                _abox = {}
-                def _astream():
-                    try:
-                        with c.messages.stream(**kw) as _s:
-                            _abox["m"] = _s.get_final_message()
-                    except BaseException as _be:              # capture ALL (incl. the close-induced error); main decides
-                        _abox["e"] = _be
-                _ath = threading.Thread(target=_astream, daemon=True)   # daemon: an abandoned hung stream must not hold the process
-                _ath.start()
-                _ath.join(float(timeout_s))
-                if _ath.is_alive():
-                    try:
-                        c.close()                            # cancel the in-flight request (best-effort billing stop)
-                    except Exception:
-                        pass
-                    raise _CallDeadline("deadline_exceeded: no completion within %.0fs (wall-clock)" % float(timeout_s))
-                if "e" in _abox:
-                    raise _abox["e"]
-                m = _abox["m"]
-            else:
-                with c.messages.stream(**kw) as s:
-                    m = s.get_final_message()
+            def _anth_msg(_kw):                               # one final message; timeout_s bounds it at wall-clock
+                if timeout_s:
+                    _abox = {}
+                    def _astream():
+                        try:
+                            with c.messages.stream(**_kw) as _s:
+                                _abox["m"] = _s.get_final_message()
+                        except BaseException as _be:          # capture ALL (incl. the close-induced error); caller decides
+                            _abox["e"] = _be
+                    _ath = threading.Thread(target=_astream, daemon=True)   # daemon: an abandoned hung stream must not hold the process
+                    _ath.start()
+                    _ath.join(float(timeout_s))
+                    if _ath.is_alive():
+                        try:
+                            c.close()                        # cancel the in-flight request (best-effort billing stop)
+                        except Exception:
+                            pass
+                        raise _CallDeadline("deadline_exceeded: no completion within %.0fs (wall-clock)" % float(timeout_s))
+                    if "e" in _abox:
+                        raise _abox["e"]
+                    return _abox["m"]
+                with c.messages.stream(**_kw) as s:
+                    return s.get_final_message()
+            try:
+                m = _anth_msg(kw)
+            except _CallDeadline:
+                raise                                         # a wall-clock deadline HALTS — never a caching retry
+            except Exception:
+                if isinstance(kw.get("system"), list):        # a cached system block was used → FAIL-OPEN: retry ONCE
+                    kw = {**kw, "system": system}             # with the plain string, so a caching hiccup never breaks the call
+                    m = _anth_msg(kw)
+                else:
+                    raise
             # With a forced tool the answer arrives as tool_use.input, not as text — reading only text blocks
             # would return "" and look exactly like the empty-response failure.
             tu = [b for b in m.content if getattr(b, "type", None) == "tool_use"]
             text = (json.dumps(tu[0].input) if tu
                     else "".join(b.text for b in m.content if getattr(b, "type", None) == "text"))
-            in_tok, out_tok = m.usage.input_tokens, m.usage.output_tokens
+            # Anthropic reports cache usage SEPARATELY: input_tokens is the FRESH (uncached) input; a cache READ and a
+            # cache WRITE are their own counts. Total read-side input = fresh + cache_read (the write is priced apart).
+            _cache_read = int(getattr(m.usage, "cache_read_input_tokens", 0) or 0)
+            _cache_write = int(getattr(m.usage, "cache_creation_input_tokens", 0) or 0)
+            in_tok, out_tok = int(m.usage.input_tokens) + _cache_read, int(m.usage.output_tokens)
             # THE FIELD WAS DECLARED AND NEVER SET. `base` has carried "finish_reason": None since this
             # function was written, and the comment above says callers use it to tell a complete answer from
             # a truncated one — but no provider branch ever assigned it, so it was None on every reply and
@@ -1566,13 +1602,19 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                     raise _last
             text = r.choices[0].message.content
             in_tok, out_tok = r.usage.prompt_tokens, r.usage.completion_tokens
+            try:                                              # OpenAI auto-caches identical prefixes ≥1024 tok; unlike
+                _ptd = getattr(r.usage, "prompt_tokens_details", None)   # Anthropic, prompt_tokens ALREADY INCLUDES the
+                _cache_read = int(getattr(_ptd, "cached_tokens", 0) or 0) if _ptd else 0   # cached read (no add), and there
+            except Exception:                                 # is no separate write charge (_cache_write stays 0).
+                _cache_read = 0
             _finish = getattr(r.choices[0], "finish_reason", None)     # "length" when it hit the cap
         dt = time.time() - t0
         try:
-            cost = pricing.realtime_cost(raw, in_tok, out_tok)
+            cost = pricing.realtime_cost(raw, in_tok, out_tok, cached_in_tok=_cache_read, cache_creation_tok=_cache_write)
         except Exception:
             cost = None  # model not in price table → shown as n/a
         return {**base, "text": text, "in_tok": in_tok, "out_tok": out_tok, "latency": dt, "cost": cost,
+                "cache_read_tok": _cache_read, "cache_write_tok": _cache_write,   # prompt-cache usage (feeds the receipt + reconcile)
                 "finish_reason": _finish, "executor": "api", "error": None}   # metered API path — say so, like a lane says its name
     except Exception as e:
         # error_type is the exception CLASS name — a structured signal (like an HTTP status or sqlite_errorname),

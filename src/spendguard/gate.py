@@ -971,6 +971,14 @@ def _cached_in(result):
     return getattr(u, "cache_read_input_tokens", 0) or 0  # Anthropic
 
 
+def _cache_creation(result):
+    """Cache-WRITE tokens from usage — Anthropic cache_creation_input_tokens (billed at CACHE_WRITE_5M_MULTIPLIER on
+    the call that CREATES the cache). OpenAI's auto-cache has no separate write charge → 0. Priced so the ledger
+    COUNTS the write and reconciles to the invoice (a cache-heavy call is never undercounted)."""
+    u = getattr(result, "usage", None)
+    return int(getattr(u, "cache_creation_input_tokens", 0) or 0) if u else 0
+
+
 UNKNOWN_PROVIDER = "unknown"
 
 # THE ENFORCEMENT ANSWER, AS A FORMAT — emitted here by `doctor`, read back by `remote.verify` over SSH to
@@ -1015,18 +1023,21 @@ def _provider_of(model):
 
 
 def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, finish=None, cost=None,
-               provider=None, basis=None, per_item_max=None):
+               provider=None, basis=None, per_item_max=None, cache_creation=0):
     """Record ONE realtime call's usage → cost · cross-process ledger · max_tokens truncation telemetry · call log.
     Shared by _rt_account (non-stream), the streaming proxy (ACTUAL usage as the stream is consumed), and the
     provider-breadth adapters (LiteLLM / Bedrock / Vertex). `cost` lets a caller supply an authoritative price (e.g.
-    LiteLLM's own computed cost) instead of re-pricing; `provider` overrides the inferred ledger label."""
+    LiteLLM's own computed cost) instead of re-pricing; `provider` overrides the inferred ledger label.
+    `cached` = cache-READ tokens (priced at the read discount); `cache_creation` = cache-WRITE tokens (priced at
+    CACHE_WRITE_5M_MULTIPLIER) so a cache-heavy call is counted, never undercounted."""
     prov = provider or _provider_of(model)
     if cost is None:
         # normalize to OpenAI token semantics (input INCLUDES cached) before pricing: Anthropic's input_tokens
         # EXCLUDES cache_read, so add it back or _cost double-subtracts and under-bills ~2x.
         in_for_cost = (in_tok + cached) if prov == "anthropic" else in_tok
         try:
-            cost = pricing.realtime_cost(model, in_for_cost, out_tok, cached) if model else 0.0
+            cost = pricing.realtime_cost(model, in_for_cost, out_tok, cached,
+                                         cache_creation_tok=cache_creation) if model else 0.0
         except Exception:     # unpriced model → keep the TOKENS, refuse to invent a price, and MARK the row.
             # $0 and "we cannot price this" are different claims, and only the second is true. The row is
             # recorded with the UNPRICED marker: excluded from every total (so it never reads as free) and
@@ -1102,7 +1113,7 @@ def _rt_account(model, kw, result, est_fn, act_fn, latency=None):
         # input so the impossibility rail checks per-item, not the sum (a 1000-string batch is legitimate).
         pim = _embed_per_item_max(kw) if est_fn is _est_oai_embeddings else None
         _record_rt(model, kw, in_tok, out_tok, _cached_in(result), latency, _output_text(result), _finish(result),
-                   basis=basis, per_item_max=pim)
+                   basis=basis, per_item_max=pim, cache_creation=_cache_creation(result))
         _record_tool_fees(model, kw, result)
     except Exception as e:
         print(f"[spend_gate] WARN real-time accounting failed ({e})", file=sys.stderr)
@@ -1167,6 +1178,8 @@ def _pull_usage(chunk, acc):
                     acc["cached"] = int(d.cached_tokens)
             if getattr(u, "cache_read_input_tokens", None):
                 acc["cached"] = int(u.cache_read_input_tokens)
+            if getattr(u, "cache_creation_input_tokens", None):
+                acc["cache_creation"] = int(u.cache_creation_input_tokens)
         m = getattr(chunk, "message", None)                  # Anthropic message_start carries input usage
         mu = getattr(m, "usage", None) if m is not None else None
         if mu is not None:
@@ -1174,6 +1187,10 @@ def _pull_usage(chunk, acc):
                 acc["in"] = int(mu.input_tokens)
             if getattr(mu, "output_tokens", None):
                 acc["out"] = int(mu.output_tokens)
+            if getattr(mu, "cache_read_input_tokens", None):     # Anthropic reports cache tokens on message.usage
+                acc["cached"] = int(mu.cache_read_input_tokens)
+            if getattr(mu, "cache_creation_input_tokens", None):
+                acc["cache_creation"] = int(mu.cache_creation_input_tokens)
         resp = getattr(chunk, "response", None)              # OpenAI Responses API: final event .response.usage
         ru = getattr(resp, "usage", None) if resp is not None else None
         if ru is not None:
@@ -1202,7 +1219,8 @@ def _observe_stream(stream, model, kw, est_fn, t0, is_async):
         try:
             if acc.get("in") or acc.get("out"):
                 _record_rt(model, kw, acc.get("in", 0), acc.get("out", 0), acc.get("cached", 0),
-                           time.time() - t0, finish=acc.get("finish"), basis=budget_basis_billed())
+                           time.time() - t0, finish=acc.get("finish"), basis=budget_basis_billed(),
+                           cache_creation=acc.get("cache_creation", 0))
             else:                                            # usage not emitted (e.g. include_usage off) → estimate
                 in_tok, out_tok = _stream_out_estimate(model, kw, est_fn)
                 _record_rt(model, kw, in_tok, out_tok, 0, time.time() - t0, basis=budget_basis_estimate())
