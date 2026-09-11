@@ -878,6 +878,12 @@ def _http_timeout(timeout_s):
         return float(timeout_s)
 
 
+class _CallDeadline(TimeoutError):
+    """The WALL-CLOCK deadline fired on an OpenAI-compat generation. A distinct type so the retry ladder re-raises
+    it (a timeout is not a bad parameter to drop) and the caller reads it as a deadline, not a transport fault.
+    Subclasses TimeoutError so vendor_call's deadline classification recognises it."""
+
+
 def _exc_detail(e):
     """(http_status, provider_error, retry_after) from a provider SDK exception. STRUCTURED signals only — an HTTP
     status code, the response BODY, and the Retry-After header — never message prose. All best-effort → None when
@@ -1362,8 +1368,37 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 _mf.apply_call_params(raw, okw, dialect="openai")
             except Exception:
                 pass                                        # a missing fact store must not break the call
+            # WALL-CLOCK BOUND for this OpenAI-compat generation. The SDK's httpx timeout is PER-READ, so a long or
+            # slow high-reasoning body (kimi-k3 on moonshot, glm on z.ai) trickles under the read window while total
+            # elapsed sails past the deadline — wedging the caller's queue with a call `timeout_s` never bounded. Run
+            # each completion on a daemon worker, join at timeout_s, and on timeout CLOSE the client (tears down the
+            # connection → cancels the request, stops further billing) and raise _CallDeadline. Finishes in time →
+            # the full completion, so usage/cost stay EXACT (no streaming, no token-count guess). Every create() in
+            # the ladder below goes through this, so no provider call on this path can outlive the caller's deadline.
+            _raw_create = c.chat.completions.create
+            def _bounded_create(**cw):
+                if not timeout_s:
+                    return _raw_create(**cw)
+                _box = {}
+                def _worker():
+                    try:
+                        _box["r"] = _raw_create(**cw)
+                    except BaseException as _be:              # capture ALL (incl. a close-induced error); main thread decides
+                        _box["e"] = _be
+                _th = threading.Thread(target=_worker, daemon=True)   # daemon: an abandoned hung call must not hold the process
+                _th.start()
+                _th.join(float(timeout_s))
+                if _th.is_alive():
+                    try:
+                        c.close()                            # cancel the in-flight request (best-effort billing stop)
+                    except Exception:
+                        pass
+                    raise _CallDeadline("deadline_exceeded: no completion within %.0fs (wall-clock)" % float(timeout_s))
+                if "e" in _box:
+                    raise _box["e"]                          # a real error (e.g. a param 400) → the ladder handles it
+                return _box["r"]
             try:                                              # gpt-5+ require max_completion_tokens; older models take max_tokens
-                r = c.chat.completions.create(max_completion_tokens=max_tokens, **okw)
+                r = _bounded_create(max_completion_tokens=max_tokens, **okw)
             except Exception as e:
                 # WHICH PARAMETER, FROM THE TYPED FIELD — not from the message text. These branches matched
                 # `"response_format" in str(e)` and `"reasoning_effort" in str(e)`, so an error that merely
@@ -1371,6 +1406,8 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 # body back) took the retry path and silently dropped a parameter the caller asked for —
                 # and the schema being dropped is precisely how "required" fields come back as zeros.
                 from . import models as _mp, gate as _og
+                if isinstance(e, _CallDeadline):
+                    raise                                   # a WALL-CLOCK deadline HALTS — it is a timeout, not a param to drop
                 if isinstance(e, _og.deliberate_stop_types()):
                     raise                                   # a spend refusal / deadline must NOT enter the retry ladder
                 _bad = _mp._rejected_param(e)
@@ -1406,7 +1443,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                         # provider accepts, then record what it accepted as a learned fact so the next call
                         # starts there. The provider is the source of truth about its own limits.
                         r = _heal_token_budget(
-                            lambda b: c.chat.completions.create(max_completion_tokens=b, **okw), max_tokens, raw)
+                            lambda b: _bounded_create(max_completion_tokens=b, **okw), max_tokens, raw)
                         if r is not None:
                             break                          # accepted at a plausible budget → learned + done
                         continue                           # nothing above the floor worked → try the next rung
@@ -1414,9 +1451,11 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                         # Older endpoints take max_tokens, gpt-5+ take max_completion_tokens. A dialect
                         # difference, not a capability one — nothing is dropped, the other spelling is used.
                         try:
-                            r = c.chat.completions.create(max_tokens=max_tokens, **okw)
+                            r = _bounded_create(max_tokens=max_tokens, **okw)
                             break
                         except Exception as e2:
+                            if isinstance(e2, _CallDeadline):
+                                raise                        # a wall-clock deadline HALTS — do not walk to the next rung
                             _last = e2
                             continue
                     if _rung == "reasoning_effort" and "reasoning_effort" in okw and not getattr(_heal_guard, "on", False):
@@ -1430,22 +1469,22 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                         _pre = okw.get("reasoning_effort")
                         if _mh.heal_reasoning(raw, okw, e):
                             try:
-                                r = c.chat.completions.create(max_completion_tokens=max_tokens, **okw)
+                                r = _bounded_create(max_completion_tokens=max_tokens, **okw)
                                 _mh.confirm_reasoning(raw, okw)      # the healed value WORKED → promote it to verified
                                 import sys as _sh
                                 print(f"[spendguard] {prov}/{raw} rejected reasoning_effort={_pre!r} → healed to "
                                       f"{okw.get('reasoning_effort')!r} (learned; kept the requested tier).", file=_sh.stderr)
                                 break
                             except Exception as e2:
-                                if isinstance(e2, _hg.deliberate_stop_types()):
-                                    raise                    # a spend refusal / deadline HALTS — never downgraded to a drop
+                                if isinstance(e2, _CallDeadline) or isinstance(e2, _hg.deliberate_stop_types()):
+                                    raise                    # a wall-clock deadline / spend refusal HALTS — never a drop
                                 okw["reasoning_effort"] = _pre   # heal's value also failed → restore, fall to the drop
                                 _last = e2
                     if _rung not in okw:
                         continue                          # not sent, so it cannot be what was refused
                     _saved = okw.pop(_rung)
                     try:
-                        r = c.chat.completions.create(max_completion_tokens=max_tokens, **okw)
+                        r = _bounded_create(max_completion_tokens=max_tokens, **okw)
                         # SAY SO. A silently-dropped parameter makes the call succeed and makes any probe
                         # of "does this endpoint support X" answer yes — the fallback that keeps the system
                         # robust is exactly what blinds discovery. Recorded on the result so a caller can
@@ -1457,6 +1496,8 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                                   f"sending unenforced; output_contract still validates.", file=_s.stderr)
                         break
                     except Exception as e2:
+                        if isinstance(e2, _CallDeadline):
+                            raise                        # a wall-clock deadline HALTS — do not try the next rung
                         okw[_rung] = _saved               # that rung was not the problem — put it back
                         _last = e2
                 if r is None:
