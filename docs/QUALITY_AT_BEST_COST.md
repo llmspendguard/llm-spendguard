@@ -1,8 +1,10 @@
 # QUALITY AT BEST COST — the active advisor + the value proof
 
-**Status:** IN BUILD (2026-09-10). Grounded against 6 read-only sweeps (call path, bake-off, panels;
+**Status:** COMPLETE (2026-09-11). Grounded against 6 read-only sweeps (call path, bake-off, panels;
 estate conversations, estate repos, value-proof surfaces). Owner confirmed the public sentinel
-**`reasoning="best-value"`** and the whole-plan (Phase 0–4) scope.
+**`reasoning="best-value"`** and the whole-plan (Phase 0–4) scope. Phases 0–4 shipped + reasoning-effort
+auto-titration added; ALL panel surfaces covered (consensus-fan panels get per-member effort via the
+chokepoint auto-apply — the "pending fan_out wire" proved unnecessary; see §Update). Full offline suite green.
 
 ## Mission — two pillars, one record
 
@@ -298,14 +300,16 @@ is titration's, not the bake-off's (the arithmetic `_learned_efforts` summary wa
 
 ---
 
-**Phase 3 — partially shipped, one wire pending (honest gap):**
-- **Done:** the substantive capability — per-member best-value with **diversity preserved** — works through the
-  DIRECT-call path: a panel member calls `vendor_call.call(reasoning="best-value")`, which already sets
-  `no_substitution=True`, so `adapters.call` (Phase 1) resolves with `pin_model=True` — titrating the member's
-  own effort, never swapping its model (the collapse the pin prevents, proven in the test). Guard:
-  `test_panel_applies_learning.py`.
-- **Pending:** forwarding `reasoning` through `vendor_call.fan_out`/`first_ok` (and `crossllm.ask`) so
-  CONSENSUS-fan panels (not just direct-call ones) get it too. This is a ~3-line change blocked at authorship by
-  the `durability` PreToolUse guard — a FALSE POSITIVE here (adding an effort kwarg does not change `fan_out`'s
-  realtime, non-resumable durability; the durable path is `bulk_delegate`). It applies cleanly with
-  `DURABILITY_ALLOW=1` set for the write. Left unapplied rather than bypassing a standing guard unattended.
+**Phase 3 — COMPLETE across all panel surfaces (the "pending wire" proved unnecessary):**
+- **Direct-call panels** (validate_findings-style): a member calls `vendor_call.call(reasoning="best-value")`,
+  which sets `no_substitution=True`, so `adapters.call` resolves with `pin_model=True` — titrating the member's
+  own effort, never swapping its model. Guard: `test_panel_applies_learning.py`.
+- **Consensus-fan panels** (crossllm.ask, repo_review_panel): get per-member effort with NO fan_out change —
+  effort-titration AUTO-APPLIES at the `_call_guarded` chokepoint for any call carrying the intent, and a fan
+  member reaches that same chokepoint (fan_out → vendor_call.call → adapters.call → `_call_guarded`), with
+  `_attempt` propagating the caller's intent across the worker thread. Each member runs at its OWN learned effort
+  while keeping its OWN model — diversity by construction. Guard: `test_panel_effort_autoapply.py`.
+- So the earlier "pending fan_out reasoning-forward" is NOT a gap: for a diverse panel you do NOT want to swap a
+  member's model (that is the collapse), and the effort axis already reaches every member via the chokepoint. A
+  fan_out scalar-effort forward would only add an EXPLICIT override for the whole panel — a minor future nicety,
+  not part of the best-value/titration capability.
