@@ -115,11 +115,21 @@ def _save_one(intent, model, effort, a):
         db.commit()
 
 
-def _score_output(prompt, output, judge_model):
+def _score_output(prompt, output, judge_model, requirement_aware=False, adjudicator_model=None):
     """Grade ONE (prompt, output) 1-10 with a usable flag — the graded quality signal (decided by the LLM judge,
     returned as typed fields, never parsed from prose). The FULL prompt+output are judged: a quality verdict on a
     truncated answer is a verdict on a different answer (sample prompts are already short from call_io, and the
-    call's input guard bounds a pathological output). Deadline-bounded. None if the judge failed / gave no verdict."""
+    call's input guard bounds a pathological output). Deadline-bounded. None if the judge failed / gave no verdict.
+    `requirement_aware` swaps in the two-tier REQUIREMENT judge (requirement_judge) — it rules against the prompt's
+    OWN extracted criteria with an opus adjudicator on the calls the screen is unsure of, and maps to the SAME
+    {score, usable} this folds in."""
+    if requirement_aware:
+        from . import requirement_judge
+        v = requirement_judge.judge_requirements(prompt, output, screen_model=judge_model,
+                                                 adjudicator_model=adjudicator_model)
+        if v.get("score") is None:                              # judge unavailable → UNLABELED (same as the generic path)
+            return None
+        return {"score": int(v.get("score") or 0), "usable": bool(v.get("usable"))}
     r = adapters.call(judge_model, advisor._judge_prompt(prompt, output or ""), max_tokens=_SCORE_OUT,
                       system=_SCORE_SYS, schema=_SCORE_SCHEMA, sig="spendguard:effort-score", timeout_s=_JUDGE_TIMEOUT_S)
     if r.get("error") or not r.get("text"):
@@ -170,11 +180,12 @@ def _effort_verdict(intent, model, per_effort, judge_model):
     return None
 
 
-def _measure_one(model, effort, prompt, idx, intent, judge_model, acc):
+def _measure_one(model, effort, prompt, idx, intent, judge_model, acc, requirement_aware=False, adjudicator_model=None):
     """Measure ONE prompt (index `idx`) at ONE effort: advance the resume cursor FIRST (so a failed/hung prompt is
     not re-run on resume), size-guard it, run the effort, score it, fold into `acc`, and record the measured row. An
     OVERSIZED, FAILED, or unscoreable prompt is recorded BY IDENTITY in acc['failed'] (its index) — never silently
-    dropped, so a fragile effort with fewer usable samples can't masquerade as the cheaper winner. Caller checkpoints."""
+    dropped, so a fragile effort with fewer usable samples can't masquerade as the cheaper winner. Caller checkpoints.
+    `requirement_aware` routes scoring through the two-tier requirement judge (screen→opus adjudicator)."""
     acc["consumed"] += 1
     if len(prompt or "") > _MAX_PROMPT_CHARS:                    # per-unit size guard: never OOM/spend on a pathological
         acc["failed"].append(idx)                               # input — record by identity and move on (loud, bounded)
@@ -185,7 +196,8 @@ def _measure_one(model, effort, prompt, idx, intent, judge_model, acc):
         return
     cost = float(r.get("cost") or 0.0)
     acc["cost"] += cost
-    sc = _score_output(prompt, r.get("text"), judge_model)
+    sc = _score_output(prompt, r.get("text"), judge_model,
+                       requirement_aware=requirement_aware, adjudicator_model=adjudicator_model)
     q = None
     if sc:
         acc["sum_score"] += sc["score"]
@@ -199,10 +211,12 @@ def _measure_one(model, effort, prompt, idx, intent, judge_model, acc):
                  quality=q, quality_conf=(_JUDGE_CONF if q else None), who="effort-titration", effort=effort)
 
 
-def _pilot_estimate(intent, model, efforts, prompts, judge_model):
+def _pilot_estimate(intent, model, efforts, prompts, judge_model, requirement_aware=False, adjudicator_model=None):
     """Zero-spend estimate: a PILOT chunk per effort, each output scored, plus one verdict call. Coarse-high (a
     budget guard). A deliberate stop (a spend refusal / bad bound) PROPAGATES — only an unpriced-model miss is
-    swallowed (the estimate then excludes that model, surfaced elsewhere), never a refusal."""
+    swallowed (the estimate then excludes that model, surfaced elsewhere), never a refusal. `requirement_aware` adds
+    the two-tier judge's ceiling on top of the screen: extraction once per pilot prompt + a worst-case opus
+    adjudication per score."""
     def _price(*a):
         try:
             return pricing.realtime_cost(*a)
@@ -218,7 +232,14 @@ def _pilot_estimate(intent, model, efforts, prompts, judge_model):
             total += _price(model, it, 500)                            # ~output for a real answer
     n_score = len(efforts) * len(pilot)
     total += _price(judge_model, sum(_count_tokens(p, judge_model) for p in pilot) * len(efforts),
-                    _SCORE_OUT * n_score)                              # scoring judge
+                    _SCORE_OUT * n_score)                              # scoring judge (the screen — always runs)
+    if requirement_aware:                                              # + extraction (once/pilot prompt) + opus ceiling/score
+        from . import requirement_judge, config as _cfg
+        ex = _cfg.advisor_model()
+        adj = adjudicator_model or _cfg.advisor_adjudicator_model()
+        total += _price(ex, sum(_count_tokens(p, ex) for p in pilot), requirement_judge._EXTRACT_OUT * len(pilot))
+        total += _price(adj, sum(_count_tokens(p, adj) for p in pilot) * len(efforts),
+                        requirement_judge._JUDGE_OUT * n_score)
     total += _price(judge_model, 400, _VERDICT_OUT)                    # one verdict call
     return round(total, 5), n_score
 
@@ -235,13 +256,17 @@ def _most_used_model(intent):
     return m if ":" in m else "%s:%s" % (adapters.provider_for(m), m)
 
 
-def titrate(intent, model=None, efforts=None, sample_n=_MAX_SAMPLE, run=False, budget_usd=None, judge_model=None):
+def titrate(intent, model=None, efforts=None, sample_n=_MAX_SAMPLE, run=False, budget_usd=None, judge_model=None,
+            requirement_aware=False, adjudicator_model=None):
     """A/B the effort ladder for (intent, model), score each output, and (run=True) record the cheapest holding
     effort as the effort:<intent> fact. `model` defaults to the intent's most-used model (its de-facto default —
     the cheapest one to make honest); pass one to titrate a specific model. `efforts` overrides the ladder.
     ESTIMATE-FIRST: run=False returns the plan + $ estimate and spends nothing; run=True executes (refusing if the
     pilot estimate exceeds `budget_usd`). Incremental + RESUMABLE: expand a chunk at a time, agentic verdict after
-    each, stop when confident, up to `sample_n`, checkpointing after EVERY measured prompt. Returns a dict."""
+    each, stop when confident, up to `sample_n`, checkpointing after EVERY measured prompt.
+    `requirement_aware=True` scores each output with the two-tier REQUIREMENT judge (requirement_judge: screen model →
+    opus `adjudicator_model` on the unsure calls), against the prompt's own extracted criteria, instead of the generic
+    quality judge. Returns a dict."""
     _judge_pinned = judge_model is not None
     judge_model = judge_model or config.advisor_judge_model()
     model = model or _most_used_model(intent)
@@ -253,7 +278,8 @@ def titrate(intent, model=None, efforts=None, sample_n=_MAX_SAMPLE, run=False, b
         return dict(intent=intent, model=model, error="no sample tasks — this intent has no recorded prompts to "
                     "replay. Run `spendguard fetch-io` or seed via the bakeoff first.")
 
-    est, n_score = _pilot_estimate(intent, model, efforts, prompts, judge_model)
+    est, n_score = _pilot_estimate(intent, model, efforts, prompts, judge_model,
+                                   requirement_aware=requirement_aware, adjudicator_model=adjudicator_model)
     if not run:
         return dict(intent=intent, model=model, efforts=efforts, sample_available=len(prompts), pilot=_PILOT,
                     estimate_usd=est, estimate_only=True,
@@ -279,7 +305,8 @@ def titrate(intent, model=None, efforts=None, sample_n=_MAX_SAMPLE, run=False, b
             for e in efforts:
                 while acc[e]["consumed"] < min(target, cap):
                     idx = acc[e]["consumed"]
-                    _measure_one(model, e, prompts[idx], idx, intent, judge_model, acc[e])
+                    _measure_one(model, e, prompts[idx], idx, intent, judge_model, acc[e],
+                                 requirement_aware=requirement_aware, adjudicator_model=adjudicator_model)
                     _save_one(intent, model, e, acc[e])         # CHECKPOINT after every prompt — exact resume
             per_effort = {e: _stats(acc[e]) for e in efforts}
             verdict = _effort_verdict(intent, model, per_effort, judge_model)   # agentic, over the graded scores
@@ -349,8 +376,12 @@ def main(argv=None):
     ap.add_argument("--sample", type=int, default=_MAX_SAMPLE, help="max prompts per effort (default %d)" % _MAX_SAMPLE)
     ap.add_argument("--run", action="store_true", help="actually spend (default: estimate only)")
     ap.add_argument("--budget", type=float, help="refuse if the pilot estimate exceeds this")
+    ap.add_argument("--requirement-aware", action="store_true",
+                    help="score with the two-tier REQUIREMENT judge (screen -> opus adjudicator) vs the prompt's own criteria")
+    ap.add_argument("--adjudicator", help="opus-tier adjudicator model for --requirement-aware (default config.advisor_adjudicator_model)")
     a = ap.parse_args(argv)
     r = titrate(a.intent, model=a.model, sample_n=a.sample, run=a.run, budget_usd=a.budget,
-                efforts=[e for e in (a.efforts or "").split(",") if e.strip()] or None)
+                efforts=[e for e in (a.efforts or "").split(",") if e.strip()] or None,
+                requirement_aware=a.requirement_aware, adjudicator_model=a.adjudicator)
     print(json.dumps(r, indent=1, default=str))
     return 0 if not r.get("error") else 1

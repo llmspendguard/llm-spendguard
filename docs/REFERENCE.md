@@ -252,6 +252,10 @@ r = spendguard.adapters.call("claude-opus-4-8", "Adjudicate this edge case …",
                              reasoning="best-value", intent="edge-adjudicate")
 # r["substituted_from"] / r["best_value"] record what it WOULD have run vs what best-value chose.
 ```
+No `intent` (or `sig`) at all? best-value INFERS one agentically from the prompt — it classifies the prompt against
+your known recorded intents (never a fresh invented label, since only a known intent has evidence to rank on) and
+proceeds on that; a genuinely novel prompt honestly keeps your named model. The choice records `intent_inferred` in
+its `considered` provenance.
 **Ensure-success input** — `call()` accepts the kwargs you naturally reach for and translates them, instead of a
 cryptic `TypeError`: `intent=` (alias for `sig`, the job-type tag advise/best-value/attribution key on),
 `effort=` / `reasoning_effort=` (alias `reasoning=`), `max_output_tokens=` / `max_completion_tokens=` (alias
@@ -259,6 +263,15 @@ cryptic `TypeError`: `intent=` (alias for `sig`, the job-type tag advise/best-va
 guidance** (it names the accepted params) rather than being silently dropped. Every provider call is also bounded at
 wall-clock by `timeout_s` — a client-side cancel that stops the request and its billing, so a slow high-reasoning
 model (kimi-k3, glm) can never wedge the caller.
+
+### Requirement-aware judging (`bakeoff`/`effort-titrate --requirement-aware`)
+When you bake off models or titrate effort, `requirement_aware=True` swaps the generic good/bad judge for the
+two-tier **requirement judge** (`requirement_judge`): a reasoner first extracts each prompt's own success
+REQUIREMENTS (the testable criteria a correct answer must meet), a cheap SCREEN model rules each output against them,
+and an OPUS **adjudicator** rules only the calls the screen flags as not-confident (an agentic self-assessment, not a
+score cutoff). The extracted criteria are stamped into the measurement receipt's rubric — reusable context for future
+runs. The estimate accounts for the extra cost as a ceiling; `adjudicator_model` overrides the opus tier
+(`config.advisor_adjudicator_model()`, default Opus 4.8).
 
 ## Call context & cost-per-good-result (opt-in)
 Beyond *cost*, spendguard can record per-call **context** to build a cost+**quality** corpus. Off by default

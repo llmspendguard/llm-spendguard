@@ -511,7 +511,9 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
             try:
                 from . import best_value as _bv, calls as _bvc
                 _bv_intent = intent or (_bvc.current() or {}).get("intent") or sig
-                _pick = _bv.select_model_effort(_bv_intent, model, pin_model=no_substitution)
+                # no intent/sig/context → best_value infers one from the prompt (agentic, vs known intents) so
+                # best-value still applies instead of silently keeping the named model.
+                _pick = _bv.select_model_effort(_bv_intent, model, pin_model=no_substitution, prompt=prompt)
             except Exception:
                 _pick = None
             import sys as _sbv

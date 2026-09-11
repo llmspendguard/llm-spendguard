@@ -60,13 +60,18 @@ def _judge_one(prompt, output, judge_model):
         return None
 
 
-def _plan(intent, candidates, prompts, judge_model, efforts):
+def _plan(intent, candidates, prompts, judge_model, efforts, requirement_aware=False, adjudicator_model=None):
     """The zero-spend plan + cost estimate: every candidate runs every sample prompt AT EVERY EFFORT, then each
     output is judged. Coarse and slightly high on purpose (a budget guard, not the ledger): a per-prompt input
     count, a fixed output estimate, multiplied by the number of effort arms. Returns
     (estimate_usd, per_candidate_detail, n_runs, n_judge). `efforts` is the ordinal ladder ([None] = one arm at
-    the model's default effort); the estimate scales linearly with it so a wide sweep can never surprise-spend."""
-    n_eff = max(1, len(efforts))
+    the model's default effort); the estimate scales linearly with it so a wide sweep can never surprise-spend.
+    `requirement_aware` adds the two-tier judge's extra cost as a CEILING: requirement extraction once per prompt +
+    a worst-case one opus adjudication per judge call (real runs escalate only when the screen is unsure, so actual
+    lands under this — a budget guard is meant to be high, never low)."""
+    from . import gate
+    _stop = gate.deliberate_stop_types()               # SpendGateRefused / DispatchTimeout must PROPAGATE — never be
+    n_eff = max(1, len(efforts))                        # swallowed into a false-low estimate by the broad guards below
     in_toks = [_count_tokens(p, candidates[0] if candidates else "gpt-5.5") for p in prompts]
     total, detail = 0.0, {}
     for c in candidates:
@@ -74,6 +79,8 @@ def _plan(intent, candidates, prompts, judge_model, efforts):
         for it in in_toks:
             try:
                 c_cost += pricing.realtime_cost(c, it, _BAKEOFF_OUT_EST)
+            except _stop:
+                raise
             except Exception:
                 c_cost = None
                 break
@@ -83,13 +90,27 @@ def _plan(intent, candidates, prompts, judge_model, efforts):
     try:
         judge_in = sum(_count_tokens(p, judge_model) for p in prompts) * len(candidates) * n_eff
         total += pricing.realtime_cost(judge_model, judge_in, _JUDGE_OUT * n_judge)
+    except _stop:
+        raise
     except Exception:
         pass
+    if requirement_aware:                                              # extraction (once/prompt) + opus-adjudication CEILING
+        from . import requirement_judge
+        ex, adj = config.advisor_model(), (adjudicator_model or config.advisor_adjudicator_model())
+        try:
+            total += pricing.realtime_cost(ex, sum(_count_tokens(p, ex) for p in prompts),
+                                           requirement_judge._EXTRACT_OUT * len(prompts))
+            adj_in = sum(_count_tokens(p, adj) for p in prompts) * len(candidates) * n_eff
+            total += pricing.realtime_cost(adj, adj_in, requirement_judge._JUDGE_OUT * n_judge)
+        except _stop:
+            raise
+        except Exception:
+            pass
     return total, detail, len(candidates) * len(prompts) * n_eff, n_judge
 
 
 def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget_usd=None,
-            judge_model=None, parent_reading=None, efforts=None):
+            judge_model=None, parent_reading=None, efforts=None, requirement_aware=False, adjudicator_model=None):
     """Measure cost×quality for `candidates` on a SAMPLE of `intent`'s real tasks, judge each output, and (run=True)
     record it so advise/recommend rank the candidates. `candidates` = ['vendor:model', …] (required — the slate to
     test). `prompts` overrides the auto-sample (from the intent's recorded prompts). ESTIMATE-FIRST: run=False
@@ -103,7 +124,13 @@ def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget
     Omitted (or []) → one arm per model at its default effort (the prior behaviour). Each arm's rows land per-(intent,
     model, effort) in the `calls` corpus (that IS the learning advise reads back — there is no second store). The
     per-(intent, model) effort VERDICT (cheapest effort that holds, agentic) is `effort_titration`'s job, not this
-    broad explorer's. Returns a structured dict."""
+    broad explorer's.
+
+    `requirement_aware=True` swaps the generic good/bad judge for the two-tier REQUIREMENT judge (requirement_judge):
+    it extracts each prompt's own success criteria, a cheap screen model rules met/not, and an OPUS `adjudicator_model`
+    (default config.advisor_adjudicator_model()) rules the calls the screen flags as not-confident. The applied
+    criteria are stamped into the measurement receipt's rubric (reusable context). The estimate accounts for it as a
+    ceiling. Returns a structured dict."""
     _judge_pinned = judge_model is not None
     judge_model = judge_model or config.advisor_judge_model()
     candidates = [c.strip() for c in (candidates or []) if c and c.strip()]
@@ -117,7 +144,8 @@ def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget
     # The effort ladder to sweep. [None] means "one arm at the model's default effort" (send no reasoning_effort).
     efforts_list = [str(e).strip() for e in (efforts or []) if e and str(e).strip()] or [None]
 
-    est, detail, n_runs, n_judge = _plan(intent, candidates, prompts, judge_model, efforts_list)
+    est, detail, n_runs, n_judge = _plan(intent, candidates, prompts, judge_model, efforts_list,
+                                         requirement_aware=requirement_aware, adjudicator_model=adjudicator_model)
     unpriced = [c for c, v in detail.items() if v is None]
     if not run:
         return dict(intent=intent, candidates=candidates, sample=len(prompts), runs=n_runs, judge_calls=n_judge,
@@ -132,6 +160,7 @@ def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget
 
     from . import adapters
     results = {}
+    req_seen = []                                                   # requirement-aware: the union of criteria the judge applied (for the receipt rubric)
     for c in candidates:
         for eff in efforts_list:                                    # the REASONING axis — one arm per (model, effort)
             arm = c + ("@" + eff if eff else "")
@@ -146,7 +175,17 @@ def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget
                 n_run += 1
                 cost = float(r.get("cost") or 0.0)
                 spent += cost
-                verdict = _judge_one(p, r.get("text"), judge_model)  # LLM judge — the quality signal
+                if requirement_aware:                               # judge by the PROMPT'S OWN requirements, two-tier (screen→opus)
+                    from . import requirement_judge
+                    _v = requirement_judge.judge_requirements(p, r.get("text"), screen_model=judge_model,
+                                                              adjudicator_model=adjudicator_model)
+                    verdict = _v.get("good")                        # same True/False/None contract as _judge_one
+                    spent += float(_v.get("cost") or 0.0)          # the judge's own meta-cost, folded into the arm's spend
+                    for _rq in (_v.get("requirements") or []):     # collect the applied rubric (deduped) for the receipt
+                        if _rq not in req_seen:
+                            req_seen.append(_rq)
+                else:
+                    verdict = _judge_one(p, r.get("text"), judge_model)  # generic LLM judge — the quality signal
                 q = None if verdict is None else ("good" if verdict else "bad")
                 if q is not None:
                     n_lab += 1
@@ -175,7 +214,10 @@ def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget
             intent=intent, kind="bakeoff", judge_mix=[judge_model], judge_basis="configured",
             judge_pinned=_judge_pinned, parent_id=parent_reading,
             sample_ids=[measurement.item_id(p) for p in prompts],
-            rubric={"system": _JUDGE_SYS, "schema": _JUDGE_SCHEMA}, candidates=list(results.keys()),
+            rubric=({"mode": "requirement-aware", "screen": judge_model,
+                     "adjudicator": adjudicator_model or config.advisor_adjudicator_model(), "requirements": req_seen}
+                    if requirement_aware else {"system": _JUDGE_SYS, "schema": _JUDGE_SCHEMA}),
+            candidates=list(results.keys()),
             values=_values, aggregation="single",
             spend_usd=sum((results[a]["spent"] or 0.0) for a in results), ts=_time.time())
     except Exception as _e:
@@ -203,9 +245,13 @@ def main(argv=None):
                     "Omitted → one arm per model at its default effort.")
     ap.add_argument("--run", action="store_true", help="actually spend (default: estimate only)")
     ap.add_argument("--budget", type=float, help="refuse if the estimate exceeds this")
+    ap.add_argument("--requirement-aware", action="store_true",
+                    help="judge each output against the PROMPT'S OWN requirements, two-tier (screen -> opus adjudicator)")
+    ap.add_argument("--adjudicator", help="opus-tier adjudicator model for --requirement-aware (default config.advisor_adjudicator_model)")
     a = ap.parse_args(argv)
     r = bakeoff(a.intent, candidates=[c for c in a.candidates.split(",") if c.strip()],
                 sample_n=a.sample, run=a.run, budget_usd=a.budget,
-                efforts=[e for e in (a.efforts or "").split(",") if e.strip()] or None)
+                efforts=[e for e in (a.efforts or "").split(",") if e.strip()] or None,
+                requirement_aware=a.requirement_aware, adjudicator_model=a.adjudicator)
     print(json.dumps(r, indent=1, default=str))
     return 0 if not r.get("error") else 1

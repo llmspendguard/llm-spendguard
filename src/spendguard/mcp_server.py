@@ -132,7 +132,8 @@ def _tool_bakeoff(args):
     if isinstance(_eff, str):
         _eff = [e for e in _eff.split(",") if e.strip()]
     kw = dict(intent=args.get("intent"), candidates=args.get("candidates"),
-              prompts=args.get("prompts"), sample_n=int(args.get("sample_n") or 5), efforts=(_eff or None))
+              prompts=args.get("prompts"), sample_n=int(args.get("sample_n") or 5), efforts=(_eff or None),
+              requirement_aware=bool(args.get("requirement_aware")), adjudicator_model=args.get("adjudicator_model"))
     budget = args.get("budget_usd")
     if budget is None:                       # no budget → NEVER auto-spends; a bakeoff bills real workload $
         est = _bk.bakeoff(run=False, **kw)
@@ -468,7 +469,8 @@ _TOOLS = {
         "Measure cost×quality for a SLATE of candidate models on a sample of a job-type's ('intent') real tasks "
         "— judges each output and RECORDS the result, so untried models earn a $/good and appear in "
         "spendguard_advise / spendguard_recommend afterwards. Makes REAL metered calls (preferring $0 lanes): "
-        "with NO budget_usd it returns the ESTIMATE only; pass budget_usd to actually run (it refuses over it).",
+        "with NO budget_usd it returns the ESTIMATE only; pass budget_usd to actually run (it refuses over it). "
+        "requirement_aware=true judges against the PROMPT'S OWN extracted criteria, two-tier (screen → opus).",
         {"type": "object", "properties": {
             "intent": {"type": "string", "description": "the job-type to bake off for"},
             "candidates": {"type": "array", "items": {"type": "string"},
@@ -476,6 +478,12 @@ _TOOLS = {
             "prompts": {"type": "array", "items": {"type": "string"},
                         "description": "optional: representative tasks to replay; omit to auto-sample the intent's recorded prompts"},
             "sample_n": {"type": "integer", "description": "how many recorded prompts to replay when auto-sampling (default 5)"},
+            "efforts": {"type": "array", "items": {"type": "string"},
+                        "description": "optional reasoning ladder to sweep PER model (['minimal','low','medium','high']) — the cheapest (model,effort) that holds"},
+            "requirement_aware": {"type": "boolean",
+                                  "description": "judge against the PROMPT'S OWN requirements, two-tier (screen → opus adjudicator)"},
+            "adjudicator_model": {"type": "string",
+                                  "description": "opus-tier adjudicator for requirement_aware (default config.advisor_adjudicator_model)"},
             "budget_usd": {"type": "number", "description": "run only if the estimate fits this; OMIT to get just the estimate"}},
          "additionalProperties": False},
         _tool_bakeoff),

@@ -506,6 +506,14 @@ def advisor_judge_model():
     return os.getenv("SPENDGUARD_ADVISOR_JUDGE_MODEL") or _cfg_get("advisor", "judge_model", "claude-haiku-4-5")
 
 
+def advisor_adjudicator_model():
+    """Model for the OPUS-tier ADJUDICATOR in the two-tier requirement judge: the screen (advisor_judge_model, Haiku)
+    rules the CLEAR calls, and this stronger model rules only the ones the screen flags as NOT confident. Realtime,
+    capped by caps.meta. Configurable: env SPENDGUARD_ADVISOR_ADJUDICATOR_MODEL > config.json advisor.adjudicator_model
+    > default (Opus 4.8)."""
+    return os.getenv("SPENDGUARD_ADVISOR_ADJUDICATOR_MODEL") or _cfg_get("advisor", "adjudicator_model", "claude-opus-4-8")
+
+
 def recall_model():
     """Model for the AGENTIC RECALL pass (conv.classify_evidence — "is this chunk spend evidence / a cost lesson?").
     A high-volume, simple yes/no classification over the whole corpus, so default to the CHEAPEST capable model

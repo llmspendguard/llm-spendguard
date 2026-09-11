@@ -66,8 +66,9 @@ spendguard promote --intent X --model M [--input chunk.jsonl] [--batch] [--run] 
 spendguard cache-audit | cache-test --script f.py [--run]   # prompt-caching: find + prove savings
 spendguard cascade --ladder cheap,…,strong --intent X [--prompt …] --run           # cheap→verify→escalate
 spendguard cache-stats | dedup --input f.jsonl --out u.jsonl | dedup-populate      # response cache + batch dedup
-spendguard bakeoff X --candidates v:m,v:m [--efforts minimal,low,medium,high] [--sample N] [--run]  # measure a SLATE per (model[,effort]); records for advise; estimate unless --run
-spendguard effort-titrate X [--model v:m] [--efforts …] [--sample N] [--run]        # learn the CHEAPEST reasoning effort that HOLDS quality, per (intent,model); estimate unless --run
+spendguard bakeoff X --candidates v:m,v:m [--efforts minimal,low,medium,high] [--sample N] [--requirement-aware [--adjudicator v:m]] [--run]  # measure a SLATE per (model[,effort]); records for advise; estimate unless --run
+spendguard effort-titrate X [--model v:m] [--efforts …] [--sample N] [--requirement-aware [--adjudicator v:m]] [--run]   # learn the CHEAPEST reasoning effort that HOLDS quality, per (intent,model); estimate unless --run
+#   --requirement-aware: judge each output against the PROMPT'S OWN extracted requirements, two-tier (cheap screen → opus adjudicator on the unsure calls) — the sharpest "did it meet the spec" ruler.
 spendguard savings [--json]                   # the THIRD axis: what spendguard SAVED (measured + counterfactual, by source) — kept SEPARATE from real-$/est-value, never summed
 spendguard reliability [--run] [--json]       # sweep every $0 lane + metered provider for reachability; each probe wall-clock-bounded so a hung endpoint fails fast (--run = tiny pings)
 # Make spendguard PICK the model+effort for you on a REAL call (not just advise): the API takes reasoning="best-value" —

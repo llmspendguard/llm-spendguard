@@ -56,6 +56,20 @@ def set_context(intent: Optional[str] = None, chain: Optional[str] = None) -> No
     _local.ctx = c
 
 
+def recorded_intents(min_calls=1, limit=200):
+    """Distinct job-type intents in the ledger with >= min_calls recorded calls, most-used first — the known label
+    set an untagged prompt can be classified against (best_value's intent inference). $0, read-only; [] on any error."""
+    try:
+        con = sqlite3.connect(config.db_path())
+        rows = con.execute(
+            "SELECT intent, COUNT(*) c FROM calls WHERE intent IS NOT NULL AND intent != '' "
+            "GROUP BY intent HAVING c >= ? ORDER BY c DESC LIMIT ?", (int(min_calls), int(limit))).fetchall()
+        con.close()
+        return [r[0] for r in rows]
+    except Exception:
+        return []
+
+
 @contextlib.contextmanager
 def context(intent: Optional[str] = None, chain: Optional[str] = None, contract=None):
     """`with spendguard.context(intent='loinc-typing', chain='run-42'): ...` tags the calls inside.
