@@ -101,6 +101,52 @@ class SpendGateRefused(RuntimeError):
     tests/test_deliberate_refusal_is_never_failopen.py)."""
 
 
+class MeteredCallRefused(SpendGateRefused):
+    """A metered (paid-API) call was refused because refuse-metered is active — a hard, fail-closed 'no metered spend
+    here' switch for tests, CI, and any run that must be provably $0. As a SpendGateRefused subclass it PROPAGATES like
+    every deliberate stop and is caught by the same refusal machinery. $0 SUBSCRIPTION LANES are unaffected — they
+    bypass the gate's SDK path (subprocess/urllib), so a lane-served call still runs; refuse_metered blocks the metered
+    provider API, not the plan lanes. Turn on with env SPENDGUARD_REFUSE_METERED=1 (whole process) or refuse_metered()."""
+
+
+import threading as _threading
+_rm_local = _threading.local()           # per-thread nesting depth of refuse_metered() blocks — a CM's natural scope is
+#                                          its own thread's dynamic extent (no shared global to race); env covers process
+
+
+def _refuse_metered_active():
+    """True when metered API calls must be refused — inside a refuse_metered() block ON THIS THREAD, OR (process-wide,
+    all threads) via env SPENDGUARD_REFUSE_METERED. A SAFETY switch, so it FAILS CLOSED on an ambiguous env value:
+    unset/empty → off; an EXPLICIT off-value ('0'/'false'/'no'/'off') → off; ANY OTHER set value ('1','true','yes',
+    'on','enabled','True', …) → ON (a refuse-switch that fell open on an unrecognised value would allow the very spend
+    it exists to prevent). GATE_ALLOW=1 does NOT override it — a deliberate 'prove $0' guarantee, not a cap."""
+    import os as _os
+    if getattr(_rm_local, "depth", 0) > 0:          # this thread is inside a refuse_metered() block
+        return True
+    v = (_os.getenv("SPENDGUARD_REFUSE_METERED") or "").strip().lower()
+    return bool(v) and v not in ("0", "false", "no", "off")
+
+
+class _RefuseMetered:
+    """Context manager for refuse_metered(): a per-thread DEPTH COUNTER (thread-local, so no cross-thread race and no
+    shared global), correct under nesting — refuse is active while this thread's depth>0. Whole-process coverage
+    (including worker threads, e.g. a fan-out pool) is the env's job, documented on refuse_metered()."""
+    def __enter__(self):
+        _rm_local.depth = getattr(_rm_local, "depth", 0) + 1
+        return self
+
+    def __exit__(self, *a):
+        _rm_local.depth = max(0, getattr(_rm_local, "depth", 0) - 1)
+        return False
+
+
+def refuse_metered():
+    """`with spendguard.gate.refuse_metered(): ...` — every metered API call ON THIS THREAD inside the block raises
+    MeteredCallRefused, while $0 subscription lanes still run. For whole-process coverage (all threads / worker pools),
+    set env SPENDGUARD_REFUSE_METERED=1 instead. Either way, guarantees no metered spend without a cap."""
+    return _RefuseMetered()
+
+
 def deliberate_stop_types():
     """The exception types that are a DELIBERATE stop — a spend refusal (SpendGateRefused and its subclasses, which
     now include crossllm.BudgetRefused) OR a drawn-on-purpose dispatch deadline (dispatch.DispatchTimeout) — and so
@@ -383,6 +429,9 @@ def _decide(est):
     """Proceed (return) if under cap or allowed; raise SpendGateRefused to block. The CAP compares the CEILING on
     purpose — a cap is fail-safe, it must bound what COULD be spent — but every printed number leads with the
     learned expectation so the warning is a usable budget signal (see _calibrate_est)."""
+    if _refuse_metered_active():                       # 'prove $0' switch → refuse the metered batch submission
+        raise MeteredCallRefused("metered submission refused (refuse_metered active): %s %s"
+                                 % (est.get("provider"), est.get("model")))
     cap = _cap()
     est.setdefault("_cal", _calibrate_est(est))
     line = (f"[spend_gate] {est['provider']} {est.get('model')} · {est['requests']} req · "
@@ -759,6 +808,8 @@ def _rt_precheck_usd(provider, model, est):
     """The $-denominated core of the realtime precheck — token surfaces price first (_rt_precheck);
     unit surfaces (images/audio/TTS) arrive here with dollars directly."""
     global _rt_warned, _rt_bypass
+    if _refuse_metered_active():                       # 'prove $0' switch → NO metered call proceeds (lanes bypass this)
+        raise MeteredCallRefused("metered call refused (refuse_metered active): %s %s" % (provider, model))
     if _meta_intent():                                # spendguard's own use → separate meta cap, skip workload
         if not _allow():
             from . import budget, config

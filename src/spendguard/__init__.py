@@ -15,7 +15,7 @@ one canonical, verifiable price table.
 # function is the one that moves, since the module's name says exactly what it is.
 from .pricing import (batch_cost, realtime_cost, estimate as estimate_cost, price, normalize,
                       PRICING, PRICING_VERIFIED, PRICING_SOURCE)
-from .gate import install, require, register, SpendGateRefused, gate_external
+from .gate import install, require, register, SpendGateRefused, gate_external, refuse_metered, MeteredCallRefused
 from .emit import on_event
 from .calls import context, set_context, feedback
 from .bulkgate import (estimate_job, test_job, gated_batch, check_bulk, check_realtime, check_compute,
@@ -46,7 +46,8 @@ def install_vertex() -> bool:
 
 
 __all__ = ["install", "require", "register", "install_litellm", "install_bedrock", "install_vertex",
-           "SpendGateRefused", "gate_external", "on_event", "context", "set_context", "feedback",
+           "SpendGateRefused", "gate_external", "refuse_metered", "MeteredCallRefused",
+           "on_event", "context", "set_context", "feedback",
            "batch_cost", "realtime_cost", "estimate_cost", "price", "normalize",
            "PRICING", "PRICING_VERIFIED", "PRICING_SOURCE",
            "estimate_job", "test_job", "gated_batch", "check_bulk", "check_realtime", "check_compute",
