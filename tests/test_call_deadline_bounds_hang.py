@@ -81,5 +81,48 @@ _DELAY["v"] = 0.0
 r3 = adapters._call_once("openai:gpt-5.5", "hi", max_tokens=100)
 check("no-timeout call still works", r3.get("error") is None and r3.get("text") == "ok")
 
+print("-- the ANTHROPIC streamed path is bounded the same way (every provider call is capped) --")
+import anthropic
+
+
+class _FakeAnthStream:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def get_final_message(self):
+        time.sleep(_DELAY["v"])
+        return types.SimpleNamespace(
+            content=[types.SimpleNamespace(type="text", text="ok")],
+            usage=types.SimpleNamespace(input_tokens=5, output_tokens=3), stop_reason="end_turn")
+
+
+class _FakeAnthropic:
+    def __init__(self, **_kw):
+        pass
+
+    @property
+    def messages(self):
+        return types.SimpleNamespace(stream=lambda **kw: _FakeAnthStream())
+
+    def close(self):
+        _CLOSED["v"] = True
+
+
+anthropic.Anthropic = lambda **kw: _FakeAnthropic()
+_DELAY["v"] = 10.0
+_CLOSED["v"] = False
+t0 = time.time()
+ra = adapters._call_once("anthropic:claude-opus-4-8", "hi", max_tokens=100, timeout_s=1)
+check("anthropic hang bounded within ~timeout_s", (time.time() - t0) < 4.0 and bool(ra.get("error")))
+check("anthropic client closed on the deadline", _CLOSED["v"] is True)
+_DELAY["v"] = 0.0
+_CLOSED["v"] = False
+ra2 = adapters._call_once("anthropic:claude-opus-4-8", "hi", max_tokens=100, timeout_s=30)
+check("fast anthropic call succeeds with exact usage", ra2.get("error") is None and ra2.get("text") == "ok"
+      and ra2.get("in_tok") == 5 and ra2.get("out_tok") == 3)
+
 print(f"\n{'[FAIL]' if _fails else 'OK'} test_call_deadline_bounds_hang: {len(_fails)} failure(s)")
 sys.exit(1 if _fails else 0)

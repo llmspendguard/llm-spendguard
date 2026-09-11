@@ -1279,8 +1279,34 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             # they change it. Streaming has no such bound, returns the identical final message and usage, and
             # measured 20/20 with no latency penalty. So the cap can be sized from measured need, which is the
             # whole point of a termination bound, without the transport vetoing it.
-            with c.messages.stream(**kw) as s:
-                m = s.get_final_message()
+            # WALL-CLOCK BOUND (same rationale as the OpenAI-compat path below): the SDK's httpx timeout is
+            # PER-READ, so a slow/long streamed body can outlive timeout_s while each chunk arrives in the window.
+            # Run the stream on a daemon worker, join at timeout_s, and on timeout CLOSE the client (tears down the
+            # connection → cancels the request, stops billing) and raise _CallDeadline. In-time → the full message,
+            # so usage/cost stay EXACT. No timeout_s → the plain stream (unchanged).
+            if timeout_s:
+                _abox = {}
+                def _astream():
+                    try:
+                        with c.messages.stream(**kw) as _s:
+                            _abox["m"] = _s.get_final_message()
+                    except BaseException as _be:              # capture ALL (incl. the close-induced error); main decides
+                        _abox["e"] = _be
+                _ath = threading.Thread(target=_astream, daemon=True)   # daemon: an abandoned hung stream must not hold the process
+                _ath.start()
+                _ath.join(float(timeout_s))
+                if _ath.is_alive():
+                    try:
+                        c.close()                            # cancel the in-flight request (best-effort billing stop)
+                    except Exception:
+                        pass
+                    raise _CallDeadline("deadline_exceeded: no completion within %.0fs (wall-clock)" % float(timeout_s))
+                if "e" in _abox:
+                    raise _abox["e"]
+                m = _abox["m"]
+            else:
+                with c.messages.stream(**kw) as s:
+                    m = s.get_final_message()
             # With a forced tool the answer arrives as tool_use.input, not as text — reading only text blocks
             # would return "" and look exactly like the empty-response failure.
             tu = [b for b in m.content if getattr(b, "type", None) == "tool_use"]
