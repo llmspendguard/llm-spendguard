@@ -346,7 +346,8 @@ def _bulk_notify(msg):
 def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, deadline_s=120.0,
                   checkpoint=None, chunk_size=100, refuse_billed=False, stats=None, force=False, tier=None,
                   schema=None, expect_ids=None, gate_sig=None, lanes=None, images_for=None, vision_model=None,
-                  model_for=None, prompt_for=None, task_key=None, return_keyed=False):
+                  model_for=None, prompt_for=None, task_key=None, return_keyed=False,
+                  on_miss=None, batch_submit=None):
     """Fan a LIST of similar tasks across ALL viable idle lanes CONCURRENTLY — the right shape for a BULK job (e.g.
     symgrep's ~6k one-sentence symbol descriptions) that the per-call bandit would trickle one at a time. Each task
     runs on a lane (round-robin across the lanes the bandit rates GOOD for this intent), each admission BOUNDED by
@@ -405,6 +406,19 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
     never drift. Keys MUST be unique per task — a duplicate raises (a colliding key would silently DROP a result,
     the very failure this closes), fail-loud not fail-quiet. `task_key=None` keys by index (always unique).
 
+    `on_miss` names what happens to a task the LANES do not serve — the degradation DIRECTION, made explicit
+    instead of discovered on an invoice (the default per-task realtime fallback is the MOST expensive shape):
+      · "api"   — the current default: a lane miss falls to that model's per-task REALTIME metered API.
+      · "error" — a lane miss is a free error row, never billed ($0 by construction). == refuse_billed=True.
+      · "batch" — run lanes with NO realtime fallback, then take the MISS SET (no text) as one group. Callers with
+                  a batch path want this: lanes first, batch the remainder (~50% cheaper). If `batch_submit` (a
+                  callable: the miss tasks → a batch handle/id, e.g. via bulkgate.gated_batch) is given, it is
+                  invoked ONCE on the misses and those rows become reason="queued_batch" carrying `batch`=<handle>
+                  (async: bulk_delegate never blocks on the 24h batch window); without it, the misses become
+                  reason="batch_eligible" (a STRUCTURED signal to route them to your own batch path). Pairs with
+                  return_keyed so the caller re-associates queued rows by key, never by position.
+    `on_miss` takes precedence over `refuse_billed` when both are set; None keeps the `refuse_billed` behaviour.
+
     Returns a task-ordered LIST [{text, lane, use_name, model, billed, error}], or {key: row} when return_keyed."""
     import os as _os
     import json as _json
@@ -413,6 +427,12 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
     from . import adapters, calls, dispatch, lane_catalog
 
     tasks = list(tasks)
+    # MISS POLICY: on_miss (if given) wins over refuse_billed. "error"/"batch" run WITHOUT a realtime fallback (a
+    # lane miss stays a textless row); "batch" then groups the misses AFTER the fan (below). Validated at the door.
+    if on_miss is not None:
+        if on_miss not in ("api", "error", "batch"):
+            raise ValueError("bulk_delegate(on_miss=…): expected 'api' | 'error' | 'batch', got %r" % (on_miss,))
+        refuse_billed = on_miss in ("error", "batch")
     # CALLER KEYS (return_keyed): resolve BEFORE any fan work so a mis-shaped task_key fails at the door, not after
     # spending. A non-callable task_key is a per-task sequence — it MUST be exactly one key per task (a short list
     # would IndexError mid-fan or, worse, silently truncate the mapping). A callable is resolved per task at finalize.
@@ -773,6 +793,32 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
                 i, res = fut.result()
                 results[i] = res
                 _checkpoint(i, res)
+
+    # on_miss="batch": the lanes ran with NO realtime fallback; take the MISS SET (rows with no text) as ONE group
+    # and degrade it toward BATCH, not per-task realtime. With batch_submit, submit the whole remainder ONCE and
+    # mark those rows queued_batch (async — never block on the 24h window); without it, mark them batch_eligible so
+    # the caller routes them to its own batch path. A DELIBERATE stop from the submit HALTS (never hidden); any other
+    # submit failure leaves the misses batch_eligible with a loud notice (never silently "queued" when it wasn't).
+    if on_miss == "batch":
+        miss_idx = [i for i in range(len(tasks)) if not (results[i] or {}).get("text")]
+        if miss_idx:
+            handle, _submitted = None, False
+            if callable(batch_submit):
+                try:
+                    handle = batch_submit([tasks[i] for i in miss_idx])   # ONE batch for the whole remainder
+                    _submitted = True
+                except _STOP_TYPES:
+                    raise
+                except Exception as _e:
+                    _bulk_notify(f"on_miss=batch: batch_submit raised ({type(_e).__name__}: {str(_e)[:60]}) — "
+                                 f"{len(miss_idx)} miss(es) left batch_eligible, not queued")
+            for i in miss_idx:
+                row = dict(results[i] or {})
+                if _submitted:
+                    row["reason"], row["batch"] = "queued_batch", handle
+                else:
+                    row["reason"] = "batch_eligible"
+                results[i] = row
     return _finalize(results)
 
 

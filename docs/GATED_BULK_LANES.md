@@ -50,32 +50,31 @@ Answers to the four seam questions:
 
 ## 2. Degrade a lane miss to BATCH, not per-task realtime
 
-`bulk_delegate`'s built-in miss fallback (`refuse_billed=False`, the default) is a **per-task realtime metered
-call** — the most expensive shape, and the one a caller gets without thinking about it. A consumer with a batch path
-wants the cheap direction: **lanes first, batch the remainder** (~50% cheaper). The composition is short and the
-same for anyone:
+`bulk_delegate`'s default miss fallback (`on_miss="api"`, the old `refuse_billed=False`) is a **per-task realtime
+metered call** — the most expensive shape, and the one a caller gets without thinking about it. A consumer with a
+batch path wants the cheap direction: **lanes first, batch the remainder** (~50% cheaper). Pass `on_miss="batch"`
+with a `batch_submit` and it is built in — one call:
 
 ```python
-# 1) refuse_billed=True → a lane miss is a FREE error row (no text), never a metered realtime call. Ask for the
-#    result KEYED (return_keyed + task_key) so the split below pairs by MEANING, never by list position — a caller
-#    that deduped/reordered before fanning would otherwise cross rows onto the wrong task.
-rows = lane_balance.bulk_delegate(tasks, intent, schema=SCHEMA, tier="cheap",
-                                  checkpoint="run.jsonl", chunk_size=100, refuse_billed=True,
-                                  task_key=lambda t: t["id"], return_keyed=True)   # {id: row}
+# on_miss="batch": run lanes with NO realtime fallback, then submit the WHOLE miss set ONCE through your gated
+# batch path. Async by construction — bulk_delegate never blocks on the 24h window; the missed rows come back
+# reason="queued_batch" carrying the handle your submit returned. return_keyed re-associates them by MEANING, so a
+# caller that deduped/reordered can never cross a queued row onto the wrong task.
+rows = lane_balance.bulk_delegate(
+    tasks, intent, schema=SCHEMA, tier="cheap", checkpoint="run.jsonl", chunk_size=100,
+    on_miss="batch", batch_submit=lambda misses: submit_batch(misses),   # returns a batch id/handle
+    task_key=lambda t: t["id"], return_keyed=True)                       # {id: row}
 
-# 2) split — "the lane did not deliver this" is refused / arity-miss / undecodable, all the same to the batch pass.
-served   = [t for t in tasks if rows[t["id"]].get("text")]
-unserved = [t for t in tasks if not rows[t["id"]].get("text")]
-
-# 3) batch ONLY the remainder through the gated batch path (§1 gate applies to the batch sig too).
-submit_batch(unserved)     # ~50% cheaper than the realtime per-task fallback
+queued = {k: r["batch"] for k, r in rows.items() if r.get("reason") == "queued_batch"}   # poll these later
+served = {k: r for k, r in rows.items() if r.get("text")}
 ```
 
-Before fanning, `estimate_fan(tasks, intent, tier="cheap")` previews the whole thing for **$0** — distinct-call
-count, the lanes it would use, and the worst-case metered $ ceiling if every task fell to the API — so the batch-vs-
-lane decision is made against a number, not discovered on an invoice. The point is the **direction** of the
-degradation: the default fallback is the expensive path, so a caller who has a batch path should drive the miss set
-into it explicitly.
+Omit `batch_submit` and the misses come back `reason="batch_eligible"` instead — a structured signal to route them
+into your own batch path (the split, done for you). A **deliberate** stop from `batch_submit` (a spend refusal)
+HALTS the fan; any other submit failure leaves the misses `batch_eligible` with a loud notice, never a false
+"queued". Before fanning, `estimate_fan(tasks, intent, tier="cheap")` previews the whole thing for **$0** —
+distinct-call count, the lanes it would use, and the worst-case metered $ ceiling if every task fell to the API —
+so the batch-vs-lane decision is made against a number, not discovered on an invoice.
 
 ## Why `parsed` exists now
 
