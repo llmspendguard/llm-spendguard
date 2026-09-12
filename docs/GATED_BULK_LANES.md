@@ -56,20 +56,26 @@ wants the cheap direction: **lanes first, batch the remainder** (~50% cheaper). 
 same for anyone:
 
 ```python
-# 1) refuse_billed=True → a lane miss is a FREE error row (no text), never a metered realtime call.
+# 1) refuse_billed=True → a lane miss is a FREE error row (no text), never a metered realtime call. Ask for the
+#    result KEYED (return_keyed + task_key) so the split below pairs by MEANING, never by list position — a caller
+#    that deduped/reordered before fanning would otherwise cross rows onto the wrong task.
 rows = lane_balance.bulk_delegate(tasks, intent, schema=SCHEMA, tier="cheap",
-                                  checkpoint="run.jsonl", chunk_size=100, refuse_billed=True)
+                                  checkpoint="run.jsonl", chunk_size=100, refuse_billed=True,
+                                  task_key=lambda t: t["id"], return_keyed=True)   # {id: row}
 
 # 2) split — "the lane did not deliver this" is refused / arity-miss / undecodable, all the same to the batch pass.
-served   = [t for t, r in zip(tasks, rows) if r.get("text")]
-unserved = [t for t, r in zip(tasks, rows) if not r.get("text")]
+served   = [t for t in tasks if rows[t["id"]].get("text")]
+unserved = [t for t in tasks if not rows[t["id"]].get("text")]
 
 # 3) batch ONLY the remainder through the gated batch path (§1 gate applies to the batch sig too).
 submit_batch(unserved)     # ~50% cheaper than the realtime per-task fallback
 ```
 
-The point is the **direction** of the degradation: the default fallback is the expensive path, so a caller who has a
-batch path should drive the miss set into it explicitly rather than discover the realtime cost on an invoice.
+Before fanning, `estimate_fan(tasks, intent, tier="cheap")` previews the whole thing for **$0** — distinct-call
+count, the lanes it would use, and the worst-case metered $ ceiling if every task fell to the API — so the batch-vs-
+lane decision is made against a number, not discovered on an invoice. The point is the **direction** of the
+degradation: the default fallback is the expensive path, so a caller who has a batch path should drive the miss set
+into it explicitly.
 
 ## Why `parsed` exists now
 

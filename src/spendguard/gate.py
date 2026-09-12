@@ -165,6 +165,17 @@ def deliberate_stop_types():
     return tuple(types)
 
 
+def is_deliberate_stop(e):
+    """True iff `e` IS a deliberate stop (isinstance against deliberate_stop_types) — the canonical predicate a
+    fail-open handler uses to decide 'propagate, don't swallow'. One helper, so every handler tests the CONCEPT
+    the same way and a new refusal subclass is covered without editing each call site. False on any hiccup (a
+    genuine malfunction is not a deliberate stop)."""
+    try:
+        return isinstance(e, deliberate_stop_types())
+    except Exception:
+        return False
+
+
 def _ct(text):
     try:
         import tiktoken

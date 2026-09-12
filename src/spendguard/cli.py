@@ -45,6 +45,7 @@ _GROUPS = [
         ("prompts", "lint the call corpus for prompt waste"),
         ("experiment", "A/B a cheaper config with graded output-equivalence"),
         ("maxtokens", "measured p99 bound for a call class (autotune's input)"),
+        ("tokens", "per-provider token factors: `tokens calibrate` measures o200k→native from call_io ($0)"),
         ("realized", "what the changes actually saved"),
         ("savings", "what spendguard SAVED — measured + counterfactual, by source (the 3rd axis, never summed)"),
         ("measurement", "receipts for a judged number: `measurement inspect|list|reconstruct` — the judge/sample/rubric behind it"),
@@ -514,6 +515,9 @@ def _dispatch(argv=None):
         for row in (ds.get("by_intent") or [])[:8]:
             print(f"    {str(row.get('intent', '?'))[:44]:44} {row.get('decisions', 0):>5} dec  ${row.get('saved_usd', 0):.2f}")
         return 0
+    if cmd == "tokens":                               # per-provider token factors: `tokens show` / `tokens calibrate` ($0)
+        from . import provider_tokens
+        return provider_tokens.cmd(rest)
     if cmd == "prompts":                              # prompt-efficiency lint over the call corpus (zero spend)
         from . import prompts
         return prompts.main()

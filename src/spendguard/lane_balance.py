@@ -792,7 +792,7 @@ def estimate_fan(tasks, intent, system=None, lanes=None, tier=None, out_est=None
         else `out_est`, else a config nominal — `out_basis` says which so the estimate is auditable.
     Mirrors crossllm's "budget_usd is None → estimate only, never spends" pattern for the lane fan."""
     import hashlib as _hl
-    from . import adapters, lane_catalog, lane_economics, bulkgate, pricing, config
+    from . import adapters, lane_catalog, lane_economics, bulkgate, pricing, config, provider_tokens
 
     tasks = list(tasks)
     n_tasks = len(tasks)
@@ -846,12 +846,13 @@ def estimate_fan(tasks, intent, system=None, lanes=None, tier=None, out_est=None
         k = _hl.sha256((str(system) + "\x00" + str(t) + "\x00" + str(intent)).encode("utf-8", "replace")).hexdigest()[:24]
         if k not in seen2:
             seen2.add(k); distinct_tasks.append(t)
-    est, n_unpriced, sys_len = 0.0, 0, len(str(system or ""))
+    est, n_unpriced, _sys = 0.0, 0, str(system or "")
     for j, t in enumerate(distinct_tasks):
         ln, use_name = arms[j % len(arms)]
         prov = lane_catalog.lane_provider(ln)
         model = f"{prov}:{use_name}"
-        in_tok = (len(str(t)) + sys_len) // 4
+        _txt = (_sys + "\n" + str(t)) if _sys else str(t)
+        in_tok = provider_tokens.count_text(_txt, provider=prov, model=model)   # PROVIDER-AWARE (real BPE × factor)
         try:                                             # REALTIME price (not batch) — the worst-case ceiling is the
             est += float(pricing.realtime_cost(model, in_tok, out_tok, provider=prov) or 0.0)   # metered fallback price
         except (KeyError, TypeError, ValueError):        # no price card → count it, exclude from the ceiling (never $0-hide)

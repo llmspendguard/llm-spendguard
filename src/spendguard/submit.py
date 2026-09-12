@@ -25,15 +25,16 @@ AUDIT_DIR = str(_HOME)
 
 
 def _count_tokens(text, model):
+    """Provider-aware INPUT token estimate: a REAL BPE base (exact tiktoken encoding for OpenAI models) × the
+    MEASURED per-provider o200k→native factor (provider_tokens). This is what makes an anthropic/gemini/glm
+    estimate honest instead of an OpenAI-tokenizer proxy. Signature is unchanged (text, model) so every caller —
+    bakeoff, effort_titration, experiment — improves at once. Fail-open all the way down (never raises)."""
+    from . import provider_tokens, adapters
     try:
-        import tiktoken
-        try:
-            enc = tiktoken.encoding_for_model(model)
-        except Exception:
-            enc = tiktoken.get_encoding("o200k_base")
-        return len(enc.encode(text))
+        prov = adapters.provider_for(model)
     except Exception:
-        return max(1, len(text) // 4)  # heuristic fallback; flagged in result
+        prov = None                                   # unknown id → provider_tokens uses the o200k proxy (still real BPE)
+    return provider_tokens.count_text(text, provider=prov, model=model)
 
 
 # How far a projection may exceed the caller's OWN stated expectation before this refuses. Not a judgement
