@@ -114,13 +114,24 @@ Status: `DONE` fully traced · `PARTIAL` some paths traced · `UNAUDITED` not ye
   cap's `countable_charges` / $0.65 spend_events / $591.79 receipt). Same month, four numbers, because the
   category split lives in filters, not in the schema that was built to hold it.
 
-### Next actions (logged, not done)
+> **UPDATE 2026-09-12 — RESOLVED.** The cutover the audit called for has happened. All writes now land in
+> `spend_events` (`ledger.record_event`); no live code writes `charges` (the `INSERT INTO charges` in
+> `record_reconciled`/`record_true_down` was removed); `charges` is read only by `migrate_charges.py`. The
+> five categories are now STRUCTURAL — `ledger._cat_dec` gives each its own accessor (`spent_dec` = countable
+> LLM, `est_value_dec`, `remote_dec`, `subscription_dec`) — so the "$21k raw Σ" is a legacy artefact of
+> summing across categories in the old flat table and cannot recur. `spend_events` is the single source of
+> truth; the only remaining step is the owner cosmetically DROPping the dead `charges` table (F2/F3/F4 above).
 
-- [ ] Enumerate every READER of `charges` and of `spend_events` — confirm which totals come from which
-      table (DISPLAY + RECONCILE + PUSH passes).
-- [ ] Decide the ONE money table. Either finish the migration (cut readers to `spend_events`, the typed
-      schema) or formally retire `spend_events` and make `charges`+view the sanctioned single source. This
-      is a design decision for the owner, not an audit call — but the two-table state must not persist.
+### Next actions
+
+- [x] Enumerate every READER of `charges` and of `spend_events` (2026-09-12). Writers: `charges` has NO live
+      writer (both `record_reconciled` and `record_true_down` had their `INSERT INTO charges` removed;
+      `ledger.record_event` writes `spend_events`). Readers: the ONLY reader of `charges` is
+      `migrate_charges.py` (the one-way rebuild tool); every spend total — cap, reports, reconcile, push —
+      comes from the `spend_events` categorized accessors.
+- [x] Decide the ONE money table (2026-09-12). Done in practice: `spend_events` (the typed schema) is the
+      single source of truth; `charges` is legacy read-only. The only step left is cosmetic and the owner's:
+      DROP the `charges` table once satisfied `migrate_charges` has run everywhere it needs to.
 
 ---
 
@@ -140,9 +151,9 @@ Status: `DONE` fully traced · `PARTIAL` some paths traced · `UNAUDITED` not ye
 | id | severity | finding | status |
 |---|---|---|---|
 | F1 | high | capture leak: SDK streaming helpers ungated (anthropic + openai, sync+async) | **FIXED** `6228638` |
-| F2 | high | two money tables; `spend_events` migration built, never cut over | OPEN (§1) |
-| F3 | med | multiple conflicting monthly totals — root is F2 (filter-derived categories) | OPEN |
-| F4 | med | PID 2636 computes $21k monthly live while `spent_month()`=$113.08 — cause not established | OPEN |
+| F2 | high | two money tables; `spend_events` migration built, never cut over | **CUT OVER** (verified 2026-09-12): all writes go to `spend_events` (`ledger.record_event` → INSERT INTO spend_events); NO live `INSERT INTO charges` remains (`budget.record_reconciled`/`record_true_down` removed theirs); `charges` is read ONLY by `migrate_charges.py`. Owner may now DROP `charges`. |
+| F3 | med | multiple conflicting monthly totals — root is F2 (filter-derived categories) | **RESOLVED** (verified 2026-09-12): the five categories are STRUCTURAL on `spend_events` (per-category accessors `spent_dec`/`est_value_dec`/`remote_dec`/`subscription_dec` in `ledger._cat_dec`); no reader sums raw `charges` across categories any more. |
+| F4 | med | $21k-vs-$113 divergence | **CAUSE ESTABLISHED / cannot recur** (2026-09-12): the $21k was a RAW cross-category Σ of the legacy `charges` table (est-value + reconstructed + meta + reconciled all mixed in); `spent_month()`=$113 is `spent_dec` — countable **LLM** spend only (excludes those four + est-value/remote/subscription). Since the F2 cutover the raw-Σ path is gone: `charges` is read-only (migration), every spend reader uses a categorized accessor. |
 | F5 | low | `estimate` fn shadowed the `estimate` module (import-order dependent) | FIXED `776caa1` |
 
 ---
