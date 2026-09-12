@@ -67,37 +67,65 @@ def _output_budget(mdl):
     return int(pricing.output_ceiling("zai", mdl, _FALLBACK_MAX_TOKENS, learned_floor=_FALLBACK_MAX_TOKENS))
 
 
-def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=None):   # reasoning: protocol-uniform; accepted, not yet applied on this lane
+def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=None):
     """→ {text, in_tok, out_tok, latency, error} from ONE plan-billed GLM completion over the Anthropic-
     compatible coding endpoint, via RAW HTTP so the spend gate never meters it. `model` = the glm id the caller
-    asked for (glm-5.3 etc.), passed through. Same typed contract as the CLI lanes."""
+    asked for (glm-5.3 etc.), passed through. Same typed contract as the CLI lanes.
+
+    `reasoning` engages GLM's extended THINKING via the endpoint's Anthropic-shape `thinking` block, sized by a
+    MEASURED budget (models.thinking_budget — never a guessed fraction; no measured fact → no thinking). Fail-safe:
+    if the enriched call fails, it retries ONCE WITHOUT thinking (thinking is the one optional enrichment here) —
+    so a lane whose endpoint/model does not accept the param never breaks, it degrades to a plain completion. The
+    text extraction keeps only text blocks, so any returned `thinking` blocks are naturally ignored."""
     key = _key()
     if not key:
         return {"error": f"no z.ai key ({KEY_ENV} or ZAI_API_KEY) — add it to keys.env"}
     mdl = (model or "").split(":", 1)[-1] or "glm-5.3"    # newest flagship on the plan; caller may override
     try:
         mt = _output_budget(mdl)
-    except Exception:
+    except Exception as e:
+        from . import gate as _g
+        if _g.is_deliberate_stop(e):
+            raise                                         # a deliberate stop (refusal/deadline) must PROPAGATE, not be masked
         mt = _FALLBACK_MAX_TOKENS
     body = {"model": mdl, "max_tokens": mt, "messages": [{"role": "user", "content": prompt}]}
     if system:
         body["system"] = system
-    from . import config
-    req = urllib.request.Request(
-        _base_url().rstrip("/") + "/v1/messages", data=json.dumps(body).encode("utf-8"),
-        headers={"x-api-key": key, "anthropic-version": _ANTHROPIC_VERSION, "content-type": "application/json"})
-    t0 = time.time()
-    try:
+    from . import config, models as _mdl
+    _tb = _mdl.thinking_budget(mdl, reasoning, mt) if reasoning else None
+    if _tb:
+        body["thinking"] = {"type": "enabled", "budget_tokens": _tb}
+
+    def _post(b):
+        req = urllib.request.Request(
+            _base_url().rstrip("/") + "/v1/messages", data=json.dumps(b).encode("utf-8"),
+            headers={"x-api-key": key, "anthropic-version": _ANTHROPIC_VERSION, "content-type": "application/json"})
         resp = urllib.request.urlopen(req, context=config.ssl_context(), timeout=timeout)
-        d = json.loads(resp.read())
-    except Exception as e:
+        return json.loads(resp.read())
+
+    def _errdict(exc):
         detail = ""
         try:
-            detail = e.read().decode("utf-8", "ignore")[:200]      # HTTPError carries the provider's 4xx body
+            detail = exc.read().decode("utf-8", "ignore")[:200]    # HTTPError carries the provider's 4xx body
         except Exception:
             pass
-        return {"error": (f"{type(e).__name__}: {str(e)[:100]}" + (f" — {detail}" if detail else "")),
+        return {"error": (f"{type(exc).__name__}: {str(exc)[:100]}" + (f" — {detail}" if detail else "")),
                 "latency": time.time() - t0}
+
+    t0 = time.time()
+    try:
+        d = _post(body)
+    except Exception as e:
+        # FAIL-SAFE: the enriched request failed. thinking is the one OPTIONAL enrichment, so retry ONCE without it
+        # (no error-prose classification — an anthropic-shape 4xx names the reason only in free text, and reading
+        # prose to DECIDE is a meaning-judgement we don't make on a hot lane path). If the plain retry also fails,
+        # the failure was not the thinking param → return it. Nothing to relax (no thinking) → return the error.
+        if "thinking" not in body:
+            return _errdict(e)
+        try:
+            d = _post({k: v for k, v in body.items() if k != "thinking"})
+        except Exception as e2:
+            return _errdict(e2)
     text = "".join(b.get("text", "") for b in (d.get("content") or []) if b.get("type") == "text")
     u = d.get("usage") or {}
     return {"text": text, "in_tok": int(u.get("input_tokens") or 0),

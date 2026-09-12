@@ -232,6 +232,49 @@ def effort_for(model, intent):
     return None
 
 
+# Anthropic extended thinking is a token BUDGET, not an effort ordinal. Two API constraints bound it (a request
+# violating either 400s), so they are floors, not tunables: budget_tokens must be >= _THINK_API_MIN, and max_tokens
+# must EXCEED the budget — so a slice of visible-output room is always reserved.
+_THINK_API_MIN = 1024
+_THINK_OUTPUT_FLOOR = 512
+
+
+def thinking_budget(model, reasoning, max_tokens):
+    """Extended-thinking budget_tokens for an Anthropic-shape model (claude-*, or z.ai GLM's Anthropic-compatible
+    endpoint) at ordinal `reasoning` — from a MEASURED fact, NEVER a guessed fraction. This is the models.py rule
+    stated in normalize_reasoning's docstring: "Anthropic (extended thinking = a token BUDGET) ... normalised once
+    MEASURED — never guessed." The budget comes from a `thinking:<ordinal>` fact (then `thinking:*`) written by a
+    measured run (add_fact(model, 'thinking:high', 8000, source='experiment')); until one exists there is NO
+    thinking (the honest 'default until measured' behaviour, same as effort_for).
+
+    Returns None when: reasoning is falsy / 'minimal' / 'none'; there is no measured fact for the model; the fact
+    is non-numeric or <= 0; or max_tokens cannot fit the API minimum plus the output floor. A fact larger than a
+    small max_tokens is TRIMMED to fit (reserving output room); one that cannot reach the API minimum yields no
+    thinking. The clamps are API constraints, not choices."""
+    lv = (reasoning or "").strip().lower()
+    if lv in ("", "minimal", "none"):
+        return None
+    f = facts(model)
+    val = None
+    for key in (f"thinking:{lv}", "thinking:*"):
+        if key in f:
+            val = f[key][0]
+            break
+    if val is None:
+        return None
+    try:
+        budget = int(val)
+    except (TypeError, ValueError):
+        return None
+    if budget <= 0:
+        return None
+    if max_tokens:                                    # the API requires max_tokens > budget — reserve output room
+        budget = min(budget, int(max_tokens) - _THINK_OUTPUT_FLOOR)
+    if budget < _THINK_API_MIN:
+        return None                                   # cannot satisfy the API minimum → no thinking (honest default)
+    return budget
+
+
 def _rejected_param(err):
     """The request parameter a provider's error names as invalid — read from the SDK's TYPED fields, or "".
 

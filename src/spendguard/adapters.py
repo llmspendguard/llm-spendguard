@@ -1329,8 +1329,19 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 # at the call site below, so a caching hiccup can never break the call.
                 kw["system"] = ([{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
                                 if _cacheable_system(system) else system)
+            # EXTENDED THINKING (a token BUDGET) from a MEASURED fact — models.thinking_budget, never a guess.
+            # It CONFLICTS with a forced-tool schema on anthropic, so it is applied ONLY when schema is None; when
+            # both are asked for, thinking is suppressed with a one-time notice (never a silent 400). No fact → no
+            # thinking (the honest 'default until measured' behaviour). Fail-open below strips it on any rejection.
+            from . import models as _mdl
+            _tb = _mdl.thinking_budget(raw, reasoning, max_tokens) if reasoning else None
             if schema is not None:
                 kw.update(json_schema_request("anthropic", schema))
+                if _tb:
+                    config.warn_once("[spendguard] anthropic extended thinking is suppressed under a forced-tool "
+                                     "schema (they conflict) — call %r WITHOUT schema to use thinking" % raw)
+            elif _tb:
+                kw["thinking"] = {"type": "enabled", "budget_tokens": _tb}
             # STREAM, always. The SDK REFUSES a non-streaming request whose max_tokens implies a run over ten
             # minutes ("Streaming is required for operations that may take longer than 10 minutes"), and the
             # threshold is the SDK's, not ours — guessing it would be a magic number that silently rots when
@@ -1370,9 +1381,16 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             except _CallDeadline:
                 raise                                         # a wall-clock deadline HALTS — never a caching retry
             except Exception:
-                if isinstance(kw.get("system"), list):        # a cached system block was used → FAIL-OPEN: retry ONCE
-                    kw = {**kw, "system": system}             # with the plain string, so a caching hiccup never breaks the call
-                    m = _anth_msg(kw)
+                # FAIL-OPEN once: strip the two OPTIONAL enrichments a model/endpoint might reject — a cached system
+                # BLOCK (→ plain string) and the THINKING budget (→ drop it) — so a caching or thinking hiccup can
+                # never break the call. If neither was set, there is nothing to relax → re-raise the real error.
+                _retry, _relaxed = dict(kw), False
+                if isinstance(_retry.get("system"), list):
+                    _retry["system"] = system; _relaxed = True
+                if "thinking" in _retry:
+                    _retry.pop("thinking"); _relaxed = True
+                if _relaxed:
+                    m = _anth_msg(_retry)
                 else:
                     raise
             # With a forced tool the answer arrives as tool_use.input, not as text — reading only text blocks
