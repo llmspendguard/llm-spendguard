@@ -442,7 +442,9 @@ def main(argv=None):
         intent = pos[0] if pos else None
         if not intent:
             print('usage: spendguard lanes --bulk <intent> [--file tasks.txt] [--jsonl] [--system TEXT | --system-file P] '
-                  '[--tier <group>] [--lanes a,b,c] [--refuse-billed] [--checkpoint ck.jsonl] [--out results.jsonl] [--force]')
+                  '[--tier <group>] [--lanes a,b,c] [--estimate] [--refuse-billed] [--checkpoint ck.jsonl] [--out results.jsonl] [--force]')
+            print('       --estimate: ZERO-SPEND preview — how many distinct calls, which lanes, and the worst-case '
+                  'metered $ ceiling if every task fell to the API. Run it before a large fan (estimate-first).')
             print('       --lanes a,b,c: CONFINE the fan to this lane subset (fail-closed) — e.g. keep an '
                   'instruction-following job on completion lanes and off an agent-CLI lane whose output does not suit it.')
             print('       tasks: one per line from --file/stdin (or --jsonl = one JSON-encoded task per line, for '
@@ -480,6 +482,14 @@ def main(argv=None):
                 if not ck_p:
                     print("  note: no --checkpoint — a crash won't resume; pass --checkpoint <path> for a durable run.")
                 _lanes = [ln.strip() for ln in lanes_p.split(",") if ln.strip()] if lanes_p else None
+                if any(a == "--estimate" for a in rest):     # ZERO-SPEND preview: where it lands + the worst-case ceiling
+                    e = lane_balance.estimate_fan(tasks, intent, system=system, lanes=_lanes, tier=tier_p)
+                    if not e.get("viable"):
+                        print(f"[bulk {intent}] estimate: NOT runnable as asked — {e.get('reason')} · {e.get('note')}")
+                    else:
+                        print(f"[bulk {intent}] estimate (ZERO SPEND): {e['n_tasks']} tasks · {e['n_distinct']} distinct "
+                              f"call(s) · arms {', '.join(e['arms'])}\n  {e['note']}")
+                    return
                 _stats = {}
                 try:
                     res = lane_balance.bulk_delegate(tasks, intent, system=system, checkpoint=ck_p,

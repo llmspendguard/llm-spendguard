@@ -346,7 +346,7 @@ def _bulk_notify(msg):
 def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, deadline_s=120.0,
                   checkpoint=None, chunk_size=100, refuse_billed=False, stats=None, force=False, tier=None,
                   schema=None, expect_ids=None, gate_sig=None, lanes=None, images_for=None, vision_model=None,
-                  model_for=None, prompt_for=None):
+                  model_for=None, prompt_for=None, task_key=None, return_keyed=False):
     """Fan a LIST of similar tasks across ALL viable idle lanes CONCURRENTLY — the right shape for a BULK job (e.g.
     symgrep's ~6k one-sentence symbol descriptions) that the per-call bandit would trickle one at a time. Each task
     runs on a lane (round-robin across the lanes the bandit rates GOOD for this intent), each admission BOUNDED by
@@ -395,7 +395,17 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
     the sig you gated as `gate_sig`; an ungated fan is refused under `block`, logged 'would-block' under `warn`
     (the default), allowed under `off`. force=True overrides. ($0 lanes have no spend to cap — this gate is the
     test/eval discipline, which is about whether the job was proven before N thousand items ran, not about dollars.)
-    Returns [{text, lane, use_name, model, billed, error}] in task order."""
+
+    `task_key` + `return_keyed` pair results back to tasks by MEANING, never position — the same "never by
+    position" rule the checkpoint/resume already enforces (`_content_key`), extended to the RETURN so a caller
+    can't mis-pair either. The default return is a task-ordered LIST (unchanged), but zipping it with anything but
+    the exact `tasks` list — a caller that deduped, filtered, or reordered before fanning — silently crosses rows
+    onto the wrong item (the mis-paired-card bug). Pass `task_key` = a callable (task → a hashable key) or a list
+    of keys (one per task) and `return_keyed=True` to get back a DICT {key: row}: pairing is explicit and can
+    never drift. Keys MUST be unique per task — a duplicate raises (a colliding key would silently DROP a result,
+    the very failure this closes), fail-loud not fail-quiet. `task_key=None` keys by index (always unique).
+
+    Returns a task-ordered LIST [{text, lane, use_name, model, billed, error}], or {key: row} when return_keyed."""
     import os as _os
     import json as _json
     import threading as _th
@@ -403,8 +413,38 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
     from . import adapters, calls, dispatch, lane_catalog
 
     tasks = list(tasks)
+    # CALLER KEYS (return_keyed): resolve BEFORE any fan work so a mis-shaped task_key fails at the door, not after
+    # spending. A non-callable task_key is a per-task sequence — it MUST be exactly one key per task (a short list
+    # would IndexError mid-fan or, worse, silently truncate the mapping). A callable is resolved per task at finalize.
+    if task_key is not None and not callable(task_key):
+        task_key = list(task_key)
+        if len(task_key) != len(tasks):
+            raise ValueError(f"bulk_delegate(task_key=…): {len(task_key)} keys for {len(tasks)} tasks — pass exactly "
+                             f"one key per task, a callable(task)->key, or None to key by index.")
+
+    def _caller_key(i):
+        if callable(task_key):
+            return task_key(tasks[i])
+        return task_key[i] if task_key is not None else i
+
+    def _finalize(rows):
+        """Every return path builds a task-ORDERED list (one row per task, by index). This is the single seam that
+        turns it into {caller_key: row} when return_keyed — so no return site has to know about keying, and the
+        list default is byte-for-byte unchanged. A duplicate caller key is FATAL (a silent overwrite would drop a
+        real result — the mis-pairing class this feature exists to kill), never a quiet last-writer-wins."""
+        if not return_keyed:
+            return rows
+        out, first_idx = {}, {}
+        for i, row in enumerate(rows):
+            k = _caller_key(i)
+            if k in out:
+                raise ValueError(f"bulk_delegate(return_keyed=True): duplicate task_key {k!r} (tasks {first_idx[k]} and {i}) "
+                                 f"— keys must be UNIQUE per task; a collision would drop a result. Fix the task_key.")
+            out[k] = row
+            first_idx[k] = i
+        return out
     if not tasks:
-        return []
+        return _finalize([])
     # RESILIENCE GATE (the durable half of chunk-never-single-shot). A large run submitted as ONE shot with no
     # checkpoint (a crash or a transient no-progress pass loses everything) or not actually chunked (chunk_size >=
     # the unit count, so one bad unit / a momentary full-lane pass can wedge the whole batch) is REFUSED before any
@@ -460,10 +500,10 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
     # arms stay None (no lane picked) and the lane-only tier/reserved machinery is skipped.
     _vision = images_for is not None
     if _vision and not (vision_model or model_for):
-        return [{"text": None, "lane": None, "use_name": None, "billed": False, "reason": "no_vision_model",
+        return _finalize([{"text": None, "lane": None, "use_name": None, "billed": False, "reason": "no_vision_model",
                  "error": "bulk_delegate(images_for=…) needs vision_model=… or model_for=… (a vision-capable API "
                           "model); the subscription lanes are text-only, so bulk vision fans across the metered API"}
-                for _ in tasks]
+                for _ in tasks])
     if _vision:
         arms = None
     elif tier:
@@ -486,13 +526,13 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
                     f"--tier {tier!r}: every lane serving this group is cooling right now "
                     f"({', '.join(ln for ln, _m in _declared)}) — refusing rather than widening off-tier. TRANSIENT "
                     f"(capacity), NOT a config gap; retry when a lane frees, or add another lane to the group.")
-            return [{"text": None, "lane": None, "use_name": None, "billed": False, "reason": _reason, "error": _msg}
-                    for _ in tasks]
+            return _finalize([{"text": None, "lane": None, "use_name": None, "billed": False, "reason": _reason, "error": _msg}
+                    for _ in tasks])
     else:
         arms = _bulk_arms(intent, lanes=lanes)
         if not arms:
-            return [{"text": None, "lane": None, "use_name": None, "billed": False, "reason": "no_viable_lane",
-                     "error": "no viable lane (set advisor.lane_models; check `spendguard lanes`)"} for _ in tasks]
+            return _finalize([{"text": None, "lane": None, "use_name": None, "billed": False, "reason": "no_viable_lane",
+                     "error": "no viable lane (set advisor.lane_models; check `spendguard lanes`)"} for _ in tasks])
 
     if not _vision:
         # RESERVED-LANE GUARD — the SAME reservation idle_lanes() and route_decision() already honor, applied here
@@ -505,10 +545,10 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
         if _reserved:
             arms = [a for a in arms if a[0] not in _reserved]
             if not arms:
-                return [{"text": None, "lane": None, "use_name": None, "billed": False, "reason": "all_lanes_reserved",
+                return _finalize([{"text": None, "lane": None, "use_name": None, "billed": False, "reason": "all_lanes_reserved",
                          "error": f"every viable lane is reserved ({', '.join(_reserved)}: self-use cap reached — "
                                   f"its prompt budget is held for real coding, not discretionary bulk). Re-run when "
-                                  f"a lane frees up, or widen advisor.delegate_lanes."} for _ in tasks]
+                                  f"a lane frees up, or widen advisor.delegate_lanes."} for _ in tasks])
 
     import hashlib as _hl
 
@@ -560,7 +600,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
         stats["resumed"] = len(tasks) - len(todo)     # successes carried over from the checkpoint
         stats["dispatched"] = len(todo)               # run THIS invocation (includes retried error rows)
     if not todo:
-        return results                                # fully resumed from the checkpoint — nothing left to run
+        return _finalize(results)                     # fully resumed from the checkpoint — nothing left to run
 
     _cklock = _th.Lock()
 
@@ -733,7 +773,95 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
                 i, res = fut.result()
                 results[i] = res
                 _checkpoint(i, res)
-    return results
+    return _finalize(results)
+
+
+def estimate_fan(tasks, intent, system=None, lanes=None, tier=None, out_est=None):
+    """ZERO-SPEND preview of a bulk_delegate fan — the estimate-first discipline for the LANE path. bulk_delegate
+    itself just runs; this answers "what would it cost / where would it land" BEFORE a single call is made. Returns
+    a plan dict, never touches a lane or an API:
+      · n_tasks / n_distinct — total vs DISTINCT calls (identical tasks share one content key → one real call), so
+        the dedup win is visible before running;
+      · arms — the (lane, model) set the fan WOULD spread across, resolved the SAME way bulk_delegate resolves it
+        (tier= → each lane's right-sized model; else the bandit's GOOD lanes for this intent), reserved lanes
+        filtered out identically; or `viable=False` + a reason when none is available (no spend either way);
+      · est_metered_usd_worst — the CEILING: every DISTINCT task falls off its lane to that model's METERED API
+        (the refuse_billed=False worst case). On plan-served lanes the real spend is $0; this is the number to
+        approve a fan against, never the expected cost. Priced from `pricing` (never a literal); INPUT tokens are
+        exact from the task+system text, OUTPUT from the intent's MEASURED p99 (bulkgate.maxtokens) when known,
+        else `out_est`, else a config nominal — `out_basis` says which so the estimate is auditable.
+    Mirrors crossllm's "budget_usd is None → estimate only, never spends" pattern for the lane fan."""
+    import hashlib as _hl
+    from . import adapters, lane_catalog, lane_economics, bulkgate, pricing, config
+
+    tasks = list(tasks)
+    n_tasks = len(tasks)
+    # DISTINCT calls: identical (system+task+intent) collapse to one content key — the same identity bulk_delegate's
+    # resume uses — so the preview counts the calls that will actually run, not the raw list length.
+    seen = set()
+    for t in tasks:
+        h = _hl.sha256((str(system) + "\x00" + str(t) + "\x00" + str(intent)).encode("utf-8", "replace"))
+        seen.add(h.hexdigest()[:24])
+    n_distinct = len(seen)
+
+    # ARMS — resolved identically to bulk_delegate (tier group models, else the intent's good lanes), then the SAME
+    # reserved-lane filter. A refusal here is a $0 "this fan can't run as asked" answer, not an error.
+    if tier:
+        _pool = lanes or lane_catalog.lanes()
+        _declared = [(ln, m) for ln in _pool if (m := lane_catalog.lane_model_for_tier(ln, tier))]
+        arms = [(ln, m) for ln, m in _declared if not adapters._lane_cooling(ln)]
+        if not arms:
+            reason = "tier_undeclared" if not _declared else "all_lanes_cooling"
+            return {"viable": False, "reason": reason, "n_tasks": n_tasks, "n_distinct": n_distinct, "arms": [],
+                    "est_metered_usd_worst": 0.0, "note": f"--tier {tier!r}: no runnable lane ({reason}) — nothing to estimate."}
+    else:
+        arms = _bulk_arms(intent, lanes=lanes)
+        if not arms:
+            return {"viable": False, "reason": "no_viable_lane", "n_tasks": n_tasks, "n_distinct": n_distinct,
+                    "arms": [], "est_metered_usd_worst": 0.0,
+                    "note": "no viable lane (set advisor.lane_models; check `spendguard lanes`) — nothing to estimate."}
+    _reserved = sorted({a[0] for a in arms if lane_economics.prompt_lane_reserved(a[0])})
+    if _reserved:
+        arms = [a for a in arms if a[0] not in _reserved]
+    if not arms:
+        return {"viable": False, "reason": "all_lanes_reserved", "n_tasks": n_tasks, "n_distinct": n_distinct,
+                "arms": [], "est_metered_usd_worst": 0.0,
+                "note": f"every viable lane is reserved ({', '.join(_reserved)}) — nothing to estimate."}
+
+    # OUTPUT tokens — the intent's MEASURED p99 (never a literal nobody picked); fall back to a caller value, then a
+    # config nominal, recording which basis was used so the ceiling is auditable.
+    mt = bulkgate.maxtokens(intent)
+    if mt.get("p99"):
+        out_tok, out_basis = int(mt["p99"]), f"measured p99 (n={mt.get('n')})"
+    elif out_est:
+        out_tok, out_basis = int(out_est), "caller out_est"
+    else:
+        out_tok = int(config._cfg_get("advisor", "route_est_out", None) or ROUTE_EST_OUT_DEFAULT)
+        out_basis = "config nominal (no measured p99 yet)"
+
+    # WORST-CASE metered ceiling: each DISTINCT task priced at its round-robin arm's model on the paid API. Input
+    # tokens are exact from the actual task+system text; unpriced models contribute $0 and are surfaced, never hidden.
+    distinct_tasks, seen2 = [], set()
+    for t in tasks:
+        k = _hl.sha256((str(system) + "\x00" + str(t) + "\x00" + str(intent)).encode("utf-8", "replace")).hexdigest()[:24]
+        if k not in seen2:
+            seen2.add(k); distinct_tasks.append(t)
+    est, n_unpriced, sys_len = 0.0, 0, len(str(system or ""))
+    for j, t in enumerate(distinct_tasks):
+        ln, use_name = arms[j % len(arms)]
+        prov = lane_catalog.lane_provider(ln)
+        model = f"{prov}:{use_name}"
+        in_tok = (len(str(t)) + sys_len) // 4
+        try:                                             # REALTIME price (not batch) — the worst-case ceiling is the
+            est += float(pricing.realtime_cost(model, in_tok, out_tok, provider=prov) or 0.0)   # metered fallback price
+        except (KeyError, TypeError, ValueError):        # no price card → count it, exclude from the ceiling (never $0-hide)
+            n_unpriced += 1
+    return {"viable": True, "reason": None, "intent": intent, "n_tasks": n_tasks, "n_distinct": n_distinct,
+            "arms": [f"{lane_catalog.lane_provider(ln)}:{m}" for ln, m in arms],
+            "est_metered_usd_worst": round(est, 6), "n_unpriced": n_unpriced, "out_tok": out_tok, "out_basis": out_basis,
+            "note": f"$0 on the {len(arms)} plan lane(s); worst case ${round(est, 4)} if all {n_distinct} distinct "
+                    f"tasks fell to the metered API (out={out_tok} tok, {out_basis})"
+                    + (f"; {n_unpriced} model(s) unpriced (excluded from the ceiling)" if n_unpriced else "")}
 
 
 def _metered_substitute(subs, primary_spec):
