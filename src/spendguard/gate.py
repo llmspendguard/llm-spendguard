@@ -1053,6 +1053,26 @@ def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, 
                        f"(NOT $0, and excluded from totals so it cannot read as free). Fix it with:\n"
                        f"  spendguard price {model} --in <$/1M> --out <$/1M> --source '<url or invoice>'")
             return
+    # BOOK the prompt-cache SAVING — a MEASURED counterfactual: the cache-READ tokens billed at the discount instead
+    # of full input, NET of the one-time cache-WRITE premium — into the guarded-savings ledger under a DISTINCT
+    # 'prompt_cache' source, so `spendguard receipt` / `savings` / the MCP surface it (reconciled to real usage).
+    # NOT semcache's 'cache' (which avoids the whole call; this discounts a call that still happens). Rates from
+    # pricing.py only (read `cached_in`, write CACHE_WRITE_5M_MULTIPLIER) — never a hardcoded discount.
+    if model and (cached or cache_creation):
+        try:
+            _pp = pricing.price(model)
+            _pin = _pp.get("in_") or 0.0
+            _prd = _pp.get("cached_in")
+            _saved = 0.0
+            if cached and _prd is not None:
+                _saved += cached * (_pin - _prd)                                     # reads at the discount, not full
+            if cache_creation:
+                _saved -= cache_creation * _pin * (pricing.CACHE_WRITE_5M_MULTIPLIER - 1)   # the write premium (offset)
+            if _saved > 0:
+                from . import guard
+                guard.record_saving("prompt_cache", _saved / 1_000_000)
+        except Exception:
+            pass
     # THE EFFORT TIER ACTUALLY SENT — read off the request body (a fixed field, not a judgement), so the calls
     # corpus can slice cost×quality per (intent, model, effort). None when no reasoning_effort rode the request.
     _effort = kw.get("reasoning_effort") if isinstance(kw, dict) else None

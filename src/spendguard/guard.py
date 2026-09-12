@@ -18,7 +18,7 @@ from . import budget
 # is backed by recorded good_rate — hence a touch above 'advisor', still well below the CERTAIN (measured) sources.
 CONFIDENCE = {"cache": 0.95, "block": 0.70, "cascade": 0.90, "advisor": 0.50, "compaction": 0.65,
               "realized": 0.90, "best-value": 0.55}   # realized = MEASURED before/after (realized.py), not a counterfactual
-CERTAIN = ("cache", "block", "cascade", "realized")   # vs counterfactual: advisor, compaction, best-value
+CERTAIN = ("cache", "block", "cascade", "realized", "prompt_cache")   # vs counterfactual: advisor, compaction, best-value
 
 # EST-VALUE is the plan-served saving (work run $0 on a subscription plan instead of the metered API). It is ALREADY
 # its own axis (est_chat_usd / lane_value / the receipt's est-value line), so it must NEVER also be booked here as a

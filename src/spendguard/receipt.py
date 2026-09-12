@@ -916,7 +916,10 @@ def _saved_lines(t: dict) -> list:
         cx = {}
     out = ["guarded savings this month (avoided $ — a 3rd axis, NEVER added to Actual or Est value):"]
     if s.get("certain"):
-        out.append(f"   measured (cache·block·cascade·realized)   {_money(s['certain'])}")
+        out.append(f"   measured (cache·prompt-cache·block·cascade·realized)   {_money(s['certain'])}")
+        _pc = (s.get("by_source") or {}).get("prompt_cache")
+        if _pc:                                    # name the prompt-cache slice when present (system-prompt cache reads)
+            out.append(f"     └ prompt-cache (system read at the cache discount)   {_money(_pc)}")
     if s.get("counterfactual"):
         out.append(f"   counterfactual (advisor·compaction)       {_money(s['counterfactual'])}  (estimated)")
     # ratio vs the (real + est-value) baseline is shown as a FACT, not judged by a threshold — the reader decides

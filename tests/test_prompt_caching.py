@@ -114,5 +114,15 @@ ck("cached_tokens captured as cache_read", ro.get("cache_read_tok") == 1200)
 ck("no separate write charge on openai", ro.get("cache_write_tok") == 0)
 ck("in_tok stays prompt_tokens (already includes cached — not re-added)", ro.get("in_tok") == 1500)
 
+print("-- the gate BOOKS the prompt-cache saving into the guarded-savings ledger (visible in receipt/savings/MCP) --")
+from spendguard import gate, guard, receipt
+gate._record_rt("gpt-5.5", {}, 1000, 10, cached=900, cache_creation=0)     # 900 cache-read tok on a priced model
+_by = (guard.saved_since().get("by_source") or {})
+ck("a cached call books a 'prompt_cache' saving (read discount, measured)", (_by.get("prompt_cache") or 0) > 0)
+ck("'prompt_cache' is CERTAIN (measured), not counterfactual", "prompt_cache" in guard.CERTAIN)
+ck("it counts in the certain total, never in real-$ or est-value", guard.saved_since().get("certain", 0) >= (_by.get("prompt_cache") or 0))
+_lines = receipt._saved_lines({"est_value": {"month": 0}, "real_month": 0, "api": {"month": 0}})
+ck("the receipt NAMES the prompt-cache saving", any("prompt-cache" in ln for ln in _lines))
+
 print(f"\n{'[FAIL]' if _fails else 'OK'} test_prompt_caching: {len(_fails)} failure(s)")
 sys.exit(1 if _fails else 0)
