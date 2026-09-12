@@ -431,12 +431,20 @@ def main(argv=None):
         file_p, ck_p, out_p = _optval("--file"), _optval("--checkpoint"), _optval("--out")
         sys_p, sysfile_p = _optval("--system"), _optval("--system-file")
         tier_p = _optval("--tier")                        # capability GROUP (advisor.tiers) → confine the fan-out to it
-        opt_vals = {v for v in (file_p, ck_p, out_p, sys_p, sysfile_p, tier_p) if v}  # tier value is NOT the positional intent
+        lanes_p = _optval("--lanes") or os.environ.get("SPENDGUARD_BULK_LANES")  # CSV lane subset → CONFINE the fan
+                                                          # (bulk_delegate lanes=), fail-closed: a caller picks e.g.
+                                                          # "zai-coding,codex,gemini" to keep a job off a lane its
+                                                          # output does not suit. --lanes wins; else the env default
+                                                          # (a caller that cannot add the flag, e.g. symgrep's
+                                                          # hardened describe spawn, sets SPENDGUARD_BULK_LANES).
+        opt_vals = {v for v in (file_p, ck_p, out_p, sys_p, sysfile_p, tier_p, lanes_p) if v}  # opt values are NOT the positional intent
         pos = [a for a in rest if not a.startswith("--") and a not in opt_vals]
         intent = pos[0] if pos else None
         if not intent:
             print('usage: spendguard lanes --bulk <intent> [--file tasks.txt] [--jsonl] [--system TEXT | --system-file P] '
-                  '[--tier <group>] [--refuse-billed] [--checkpoint ck.jsonl] [--out results.jsonl] [--force]')
+                  '[--tier <group>] [--lanes a,b,c] [--refuse-billed] [--checkpoint ck.jsonl] [--out results.jsonl] [--force]')
+            print('       --lanes a,b,c: CONFINE the fan to this lane subset (fail-closed) — e.g. keep an '
+                  'instruction-following job on completion lanes and off an agent-CLI lane whose output does not suit it.')
             print('       tasks: one per line from --file/stdin (or --jsonl = one JSON-encoded task per line, for '
                   'MULTI-LINE bodies). --system = the shared instruction, sent ONCE not per task; --refuse-billed '
                   'never bills (a lane miss errors); --checkpoint resumes by CONTENT; --out writes {i,task,text,lane,model,...}.')
@@ -471,10 +479,12 @@ def main(argv=None):
                 _force = any(a == "--force" for a in rest)
                 if not ck_p:
                     print("  note: no --checkpoint — a crash won't resume; pass --checkpoint <path> for a durable run.")
+                _lanes = [ln.strip() for ln in lanes_p.split(",") if ln.strip()] if lanes_p else None
                 _stats = {}
                 try:
                     res = lane_balance.bulk_delegate(tasks, intent, system=system, checkpoint=ck_p,
-                                                     refuse_billed=refuse, stats=_stats, force=_force, tier=tier_p)
+                                                     refuse_billed=refuse, stats=_stats, force=_force, tier=tier_p,
+                                                     lanes=_lanes)
                 except lane_balance.BulkResilienceRefused as _e:
                     print(f"\n  ⛔ {_e}\n  → add --checkpoint <path> and/or split into a durable run, or re-run with "
                           f"--force to override.", file=sys.stderr)

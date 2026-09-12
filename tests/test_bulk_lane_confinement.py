@@ -81,5 +81,54 @@ served3 = {row["lane"] for row in r3 if row.get("text")}
 ck("a reserved lane named in lanes= is still excluded (fail-closed)", "gemini" not in served3 and served3 == {"codex"})
 lane_economics.prompt_lane_reserved = lambda lane: False
 
+# ── the `spendguard lanes --bulk` CLI surface reaches lanes= two ways: the --lanes flag AND the
+#    SPENDGUARD_BULK_LANES env fallback. The env path is the wiring symgrep's describe uses — it cannot add a
+#    --lanes arg to its hardened describe spawn, so it exports SPENDGUARD_BULK_LANES and the CLI reads it. Guard
+#    both, plus precedence (flag wins) and the unconfined default (neither → lanes=None). ──
+import contextlib                                                                       # noqa: E402
+import io                                                                               # noqa: E402
+from spendguard import lanes as _lanes_cli                                              # noqa: E402
+
+_captured = {}
+
+
+def _spy_bulk(tasks, intent, **kw):
+    _captured["lanes"] = kw.get("lanes")
+    return [{"text": "ok", "lane": "codex", "use_name": "x", "model": "m", "billed": False, "error": None}
+            for _ in tasks]
+
+
+lane_balance.bulk_delegate = _spy_bulk                     # after the real-bulk_delegate cases above
+_tf = tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False)
+_tf.write("task one\ntask two\n")
+_tf.close()
+
+
+def _run_bulk(extra_argv, env=None):
+    _captured.clear()
+    prev = os.environ.get("SPENDGUARD_BULK_LANES")
+    if env is None:
+        os.environ.pop("SPENDGUARD_BULK_LANES", None)
+    else:
+        os.environ["SPENDGUARD_BULK_LANES"] = env
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            _lanes_cli.main(["--bulk", "cli:test", "--file", _tf.name] + extra_argv)
+    finally:
+        if prev is None:
+            os.environ.pop("SPENDGUARD_BULK_LANES", None)
+        else:
+            os.environ["SPENDGUARD_BULK_LANES"] = prev
+    return _captured.get("lanes")
+
+
+ck("--lanes a,b reaches bulk_delegate(lanes=[a,b])",
+   _run_bulk(["--lanes", "gemini,zai-coding"]) == ["gemini", "zai-coding"])
+ck("SPENDGUARD_BULK_LANES env (no --lanes flag) reaches lanes= — the symgrep describe wiring",
+   _run_bulk([], env="codex,gemini") == ["codex", "gemini"])
+ck("--lanes flag WINS over the env fallback",
+   _run_bulk(["--lanes", "zai-coding"], env="codex,gemini") == ["zai-coding"])
+ck("neither flag nor env → lanes=None (unconfined default)", _run_bulk([]) is None)
+
 print(("[OK]" if not fails else "[FAIL]") + " bulk lane confinement: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)
