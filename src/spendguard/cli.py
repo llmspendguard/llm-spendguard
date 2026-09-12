@@ -45,7 +45,7 @@ _GROUPS = [
         ("prompts", "lint the call corpus for prompt waste"),
         ("experiment", "A/B a cheaper config with graded output-equivalence"),
         ("maxtokens", "measured p99 bound for a call class (autotune's input)"),
-        ("tokens", "per-provider token factors: `tokens calibrate` measures o200k→native from call_io ($0)"),
+        ("tokens", "per-provider token factors: `tokens calibrate` picks o200k→native AGENTICALLY from call_io stats (--dry-run=$0)"),
         ("realized", "what the changes actually saved"),
         ("savings", "what spendguard SAVED — measured + counterfactual, by source (the 3rd axis, never summed)"),
         ("measurement", "receipts for a judged number: `measurement inspect|list|reconstruct` — the judge/sample/rubric behind it"),

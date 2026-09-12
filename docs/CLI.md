@@ -44,8 +44,9 @@ spendguard calibrate predict --label X --n N --model M [--transport batch] [--in
                                              # LEARNED estimator: your captured history corrects the naive $
 spendguard calibrate show | pair | backtest  # what's learned + confidence · join predictions↔actuals · MAPE vs naive
 spendguard maxtokens <sig> [current_max]     # data-driven max_tokens bound for a call-class (p99×1.5 — measured, not guessed)
-spendguard tokens show | calibrate [--dry-run] [--json]   # per-provider TEXT token factors: real o200k BPE base × a MEASURED
-                                             # o200k→native multiplier from call_io ($0; fixes chars/4 anthropic/gemini/glm estimates)
+spendguard tokens show | calibrate [--dry-run] [--json]   # per-provider TEXT token factors: real o200k BPE base × an o200k→native
+                                             # multiplier CHOSEN AGENTICALLY from call_io stats (one small meta call; --dry-run = $0
+                                             # stats + estimate). Fixes chars/4 anthropic/gemini/glm estimates; per-call use is $0.
 spendguard pricing | providers               # canonical price table · configured providers→models
 spendguard cross-check | check-prices | sync-prices | refresh-prices   # OpenRouter drift · freshness · LiteLLM sync · refresh
 spendguard audit [--ci]                       # fail if a script hardcodes a price ≠ the table

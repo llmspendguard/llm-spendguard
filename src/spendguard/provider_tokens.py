@@ -1,4 +1,4 @@
-"""provider_tokens — per-provider TEXT token estimation with a REAL tokenizer base + a MEASURED correction.
+"""provider_tokens — per-provider TEXT token estimation with a REAL tokenizer base + an AGENTICALLY-chosen factor.
 
 WHY THIS EXISTS. Every non-OpenAI token estimate in the repo used tiktoken-for-an-OpenAI-model or a flat
 `len(s)//4` char guess. chars/4 is a crude heuristic — wrong for code (~3 chars/tok), non-latin scripts (1–2),
@@ -6,26 +6,29 @@ whitespace-heavy text — and every provider (Claude, Gemini, GLM, Kimi, Qwen, D
 from GPT, so an OpenAI count is a biased proxy for them. That bias flows straight into pre-spend estimates,
 bake-off/titration cost forecasts, and estimate_fan's ceiling.
 
-THE ESTIMATOR (a pure measurement, no hand-picked constant, no trust decision):
+THE ESTIMATOR:
   base   = a REAL BPE tokenization — tiktoken's o200k_base for every provider (structurally correct where
            chars/4 is not); the model's OWN exact encoding for OpenAI models, which needs no correction;
-  × factor(provider) = the MEASURED o200k→native multiplier from the call_io ground-truth: the MEDIAN of
-           (recorded in_tok ÷ an o200k count of the same system+prompt) over the provider's real calls. It is
-           applied as measured — there is no sample-count cutoff and no "is this factor trustworthy?" judgement
-           (both would be hand-picked thresholds this repo forbids). A provider with no measurement is 1.0 (the
-           raw o200k proxy). The sample count `n` and the ratios' relative spread are recorded and surfaced in
-           `spendguard tokens show` purely for AUDIT — so thin/noisy evidence is VISIBLE — but they gate nothing;
-           the median self-sharpens as real calls accumulate (the risk window is only a provider's first calls).
+  × factor(provider) = an o200k→native multiplier CHOSEN AGENTICALLY from the measured statistics. calibrate()
+           computes, per provider from the call_io ground-truth, the full panel — n, the MEDIAN per-call ratio,
+           the token-weighted AGGREGATE (Σin_tok/Σo200k, the least-biased estimator for TOTAL cost), the mean,
+           the p10/p90, and the relative spread — then hands the whole panel to ONE gated meta LLM call that
+           picks each provider's factor with a confidence and a one-line rationale. "Which central estimate, and
+           how far to trust it at this n and spread" is a JUDGEMENT (two reasonable people would weigh median vs
+           aggregate differently), so it is decided by the model, not a hand-picked cutoff or shrinkage constant.
+           It is decided ONCE per `spendguard tokens calibrate` (user-invoked, periodic) — a tiny cost — and the
+           per-call count_text path stays $0 (it applies the stored number). The model's rationale is stored, so
+           every factor is auditable. A provider with no chosen factor is 1.0 (the raw o200k proxy).
 
 There is no offline tokenizer shipped for Claude/Gemini/GLM/etc. (the vendor count-tokens endpoints are network
-calls that cost latency/quota); a real-BPE base plus a measured per-provider median is the honest best available
-WITHOUT a per-call network round-trip. It is EXACT for OpenAI, a measured proxy elsewhere.
+calls that cost latency/quota); a real-BPE base plus an agentically-chosen measured correction is the honest best
+available WITHOUT a per-call network round-trip. It is EXACT for OpenAI, a judged proxy elsewhere.
 
 FAIL-OPEN: token estimation must never break a call. tiktoken absent → a per-provider MEASURED chars/token ratio
-(from the same call_io data), then a documented CHARS_PER_TOKEN_DEFAULT. Every path returns an int. A DELIBERATE
-stop (spend refusal / dispatch deadline / a locked accounting period) is the one thing NOT swallowed — it
-propagates, per the deliberate-refusal doctrine.
+(median, the last-resort fallback), then CHARS_PER_TOKEN_DEFAULT. Every path returns an int. A DELIBERATE stop
+(spend refusal / dispatch deadline / a locked accounting period) is the one thing NOT swallowed — it propagates.
 """
+import json
 import statistics
 import threading
 
@@ -33,18 +36,19 @@ import threading
 # the provider. Documented, not silent: ~4 chars/token is the classic English-prose rule of thumb this replaces.
 CHARS_PER_TOKEN_DEFAULT = 4.0
 _O200K = "o200k_base"
+_FACTOR_OUT = 900          # output cap for the one factor-choice meta call (a small JSON list, few providers)
 
 # IDEMPOTENT memoization of IMMUTABLE encoders (name -> encoder). A concurrent cache-miss race is SAFE: an
 # encoding for a fixed name never changes at runtime, so two threads compute the SAME encoder and the last write
 # stores an equal value. Only SUCCESSES are cached — a transient failure (e.g. tiktoken's first-use vocab
 # download) is NOT stored, so a later call retries instead of being poisoned to a permanent None. No staleness.
 _enc_cache = {}
-# provider -> {"factor","char_ratio","rel_spread","n","ts"} | None (None = not yet loaded). PROCESS-LOCAL,
-# published under _factor_lock as ONE atomic dict assignment (a reader sees the old or the new map, never a
-# half-built one). STALENESS CONTRACT: factors change only on an explicit `calibrate`; an in-process calibrate()
-# calls reload_factors() itself after committing, and a calibrate in ANOTHER process is picked up on this process's
-# next start or an explicit reload_factors(). A bounded-stale CORRECTION FACTOR is acceptable for a token ESTIMATE
-# (already a proxy) — it is never a spend of record, so this cache deliberately does not poll the DB per call.
+# provider -> {"factor","confidence","why","char_ratio","n","stats","ts"} | None (None = not yet loaded).
+# PROCESS-LOCAL, published under _factor_lock as ONE atomic dict assignment (a reader sees the old or the new map,
+# never a half-built one). STALENESS CONTRACT: factors change only on an explicit `calibrate`; an in-process
+# calibrate() calls reload_factors() itself after committing, and a calibrate in ANOTHER process is picked up on
+# this process's next start or an explicit reload_factors(). A bounded-stale CORRECTION FACTOR is acceptable for a
+# token ESTIMATE (already a proxy) — never a spend of record — so this cache deliberately does not poll per call.
 _factor_cache = None
 _factor_lock = threading.Lock()    # guards the _factor_cache publish/reset so a reader never sees a partial dict
 
@@ -68,7 +72,7 @@ def _o200k_encoder():
 def _encoder_for(provider, model):
     """(encoder, is_exact). is_exact=True ONLY for an OpenAI model whose OWN tiktoken encoding we resolved — that
     IS the truth, so no factor correction is applied to it. Every other provider uses the o200k PROXY (is_exact
-    False) and gets the measured factor. A bare 'provider:model' is split; a missing encoder returns the proxy."""
+    False) and gets the chosen factor. A bare 'provider:model' is split; a missing encoder returns the proxy."""
     raw = model.split(":", 1)[1] if (model and ":" in model) else model
     if provider == "openai" and raw:
         key = f"model:{raw}"
@@ -90,10 +94,13 @@ def _factors_db():
     db = budget._ledger_db()                 # same SQLite file as charges/savings/decisions
     with budget._lock:
         db.execute("CREATE TABLE IF NOT EXISTS token_factors "
-                   "(provider TEXT PRIMARY KEY, factor REAL, char_ratio REAL, rel_spread REAL, n INTEGER, ts TEXT)")
+                   "(provider TEXT PRIMARY KEY, factor REAL, confidence REAL, why TEXT, char_ratio REAL, "
+                   "n INTEGER, stats TEXT, ts TEXT)")
         cols = [r[1] for r in db.execute("PRAGMA table_info(token_factors)")]
-        if "rel_spread" not in cols:          # migrate a table created before the audit spread column existed
-            db.execute("ALTER TABLE token_factors ADD COLUMN rel_spread REAL")
+        for c, decl in (("confidence", "REAL"), ("why", "TEXT"), ("char_ratio", "REAL"),
+                        ("n", "INTEGER"), ("stats", "TEXT")):    # migrate a table created before these columns
+            if c not in cols:
+                db.execute(f"ALTER TABLE token_factors ADD COLUMN {c} {decl}")
         db.commit()
     return db
 
@@ -111,8 +118,8 @@ def _stop_or_locked(e):
 
 
 def _load_factors():
-    """(Re)load the measured factors into the process cache. Fail-OPEN on a transient read failure (no table yet,
-    a busy db) → empty factors (everyone uncalibrated = 1.0), never a broken estimate; but a DELIBERATE stop
+    """(Re)load the chosen factors into the process cache. Fail-OPEN on a transient read failure (no table yet, a
+    busy db) → empty factors (everyone uncalibrated = 1.0), never a broken estimate; but a DELIBERATE stop
     propagates. The publish is a single locked assignment of a fully-built dict, so a concurrent reader sees the
     old or the new map, never a half-built one."""
     global _factor_cache
@@ -121,10 +128,11 @@ def _load_factors():
         from . import budget
         db = _factors_db()
         with budget._lock:
-            rows = db.execute("SELECT provider,factor,char_ratio,rel_spread,n,ts FROM token_factors").fetchall()
-        for prov, fac, cr, rs, n, ts in rows:
-            loaded[prov] = {"factor": float(fac or 1.0), "char_ratio": float(cr or CHARS_PER_TOKEN_DEFAULT),
-                            "rel_spread": (float(rs) if rs is not None else None), "n": int(n or 0), "ts": ts}
+            rows = db.execute("SELECT provider,factor,confidence,why,char_ratio,n,stats,ts FROM token_factors").fetchall()
+        for prov, fac, conf, why, cr, n, stats, ts in rows:
+            loaded[prov] = {"factor": float(fac or 1.0), "confidence": (float(conf) if conf is not None else None),
+                            "why": why, "char_ratio": float(cr or CHARS_PER_TOKEN_DEFAULT),
+                            "n": int(n or 0), "stats": stats, "ts": ts}
     except Exception as e:
         if _stop_or_locked(e):
             raise                            # refusal / deadline / locked period → never masked by fail-open
@@ -143,20 +151,21 @@ def reload_factors():
 
 
 def factor(provider):
-    """(multiplier, meta) for a provider's o200k→native token correction — the MEASURED median, applied as-is.
-    meta carries n + rel_spread (AUDIT ONLY — the evidence strength, surfaced so thin data is visible; they gate
-    nothing) and the basis. No stored factor (or unknown provider) → (1.0, uncalibrated), the raw o200k proxy."""
+    """(multiplier, meta) for a provider's o200k→native token correction — the AGENTICALLY-chosen factor, applied
+    as-is (the model already weighed which central estimate and how far to trust it). meta carries the model's
+    confidence + rationale + n for audit. No stored factor (or unknown provider) → (1.0, uncalibrated proxy)."""
     if _factor_cache is None:
         _load_factors()
     row = (_factor_cache or {}).get(provider)
     if not row:
         return 1.0, {"basis": "uncalibrated (o200k proxy)", "n": 0}
-    return row["factor"], {"basis": "measured", "n": row.get("n"), "rel_spread": row.get("rel_spread"),
-                           "ts": row.get("ts")}
+    return row["factor"], {"basis": "agentic", "n": row.get("n"), "confidence": row.get("confidence"),
+                           "why": row.get("why"), "ts": row.get("ts")}
 
 
 def _char_ratio(provider):
-    """Measured chars/token for a provider (the tiktoken-absent fallback), applied as-is, else CHARS_PER_TOKEN_DEFAULT."""
+    """Measured chars/token for a provider (the tiktoken-absent fallback), applied as-is, else CHARS_PER_TOKEN_DEFAULT.
+    A last-resort measurement (fires only when the whole o200k base is unavailable), not the primary judged path."""
     if _factor_cache is None:
         _load_factors()
     row = (_factor_cache or {}).get(provider)
@@ -166,9 +175,9 @@ def _char_ratio(provider):
 
 
 def count_text(text, provider=None, model=None):
-    """Estimated INPUT tokens for a TEXT string, provider-aware. Real BPE base × the measured provider factor;
-    exact for OpenAI models. Fail-open: a tokenizer hiccup degrades to the measured char ratio (never returns 0
-    for non-empty text); a DELIBERATE stop from factor-loading still propagates. This is the counter to pass as
+    """Estimated INPUT tokens for a TEXT string, provider-aware. Real BPE base × the chosen provider factor; exact
+    for OpenAI models. Fail-open: a tokenizer hiccup degrades to the measured char ratio (never returns 0 for
+    non-empty text); a DELIBERATE stop from factor-loading still propagates. This is the counter to pass as
     content_tokens' `text_tokens=`."""
     text = text or ""
     if not text:
@@ -187,33 +196,128 @@ def count_text(text, provider=None, model=None):
     return max(1, int(round(len(text) / _char_ratio(provider))))
 
 
-def _rel_spread(vals):
-    """Robust RELATIVE dispersion of the ratios (relative inter-quartile range = IQR/median) — recorded purely for
-    AUDIT so a reader can see how noisy a provider's factor is. None when there are too few points (n<2) or the
-    median is non-positive (undefined)."""
-    if len(vals) < 2:
-        return None
-    med = statistics.median(vals)
-    if med <= 0:
-        return None
-    if len(vals) < 4:                        # too few for quartiles → relative RANGE (a conservative wider spread)
-        return (max(vals) - min(vals)) / med
-    q1, _q2, q3 = statistics.quantiles(vals, n=4)
-    return (q3 - q1) / med
+def _provider_stats(ratios, char_ratios, in_sum, o_sum):
+    """The full statistic panel the model chooses a factor FROM — median / token-weighted aggregate / mean / p10 /
+    p90 / relative-IQR spread / n. The aggregate (Σin_tok÷Σo200k) is the least-biased central estimate for TOTAL
+    cost; the others describe the distribution's shape so the model can judge which to trust and how far."""
+    n = len(ratios)
+    med = round(statistics.median(ratios), 4)
+    agg = round(in_sum / o_sum, 4) if o_sum > 0 else None
+    mean = round(statistics.fmean(ratios), 4)
+    _s = sorted(ratios)                                        # nearest-rank percentile, inline (no module-level helper)
+    _q = lambda qq: _s[min(len(_s) - 1, max(0, int(round(qq * (len(_s) - 1)))))] if _s else None
+    p10, p90 = _q(0.10), _q(0.90)
+    spread = None
+    if n >= 2 and med > 0:
+        if n >= 4:
+            q1, _q2, q3 = statistics.quantiles(ratios, n=4)
+            spread = round((q3 - q1) / med, 4)
+        else:
+            spread = round((max(ratios) - min(ratios)) / med, 4)
+    return {"n": n, "median": med, "aggregate": agg, "mean": mean,
+            "p10": (round(p10, 4) if p10 is not None else None),
+            "p90": (round(p90, 4) if p90 is not None else None), "rel_spread": spread,
+            "char_ratio_median": round(statistics.median(char_ratios), 3)}
 
 
-def calibrate(store=True):
-    """Measure each provider's o200k→native factor from the call_io ground-truth and (optionally) store it. $0 —
-    reads the local replay corpus and counts with the local tokenizer; makes NO API calls.
+_FACTOR_SYS = (
+    "You calibrate per-provider TOKEN-COUNT correction factors used for COST estimation. Base counts come from "
+    "OpenAI's o200k tokenizer; a provider's TRUE input-token count is estimated as o200k_count × factor. You are "
+    "given measured statistics per provider from real calls, where each call's ratio = provider_reported_in_tok / "
+    "o200k_count(system+prompt). Choose ONE factor per provider. Guidance: the token-weighted AGGREGATE "
+    "(sum_in_tok / sum_o200k) is the least-biased central estimate for total cost; the MEDIAN is robust to "
+    "outliers; weigh them using n and the spread. When evidence is THIN (small n) or NOISY (wide rel_spread / "
+    "p10-p90 gap), pull the factor TOWARD 1.0 (the neutral o200k proxy) — an overconfident correction from little "
+    "data is worse than none. A factor must be > 0. Return, per provider, ONLY the providers you were given: "
+    "factor, confidence in [0,1], and a one-line why naming which statistic you leaned on and why.")
+
+_FACTOR_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "providers": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "provider": {"type": "string"},
+                    "factor": {"type": "number"},
+                    "confidence": {"type": "number"},
+                    "why": {"type": "string"},
+                },
+                "required": ["provider", "factor", "confidence", "why"],
+            },
+        }
+    },
+    "required": ["providers"],
+}
+
+
+def _choose_factors_agentically(stats_by_provider, model):
+    """ONE gated meta call: hand the model the full per-provider statistic panel and let it choose each factor +
+    confidence + rationale. Returns ({provider: {factor, confidence, why}}, cost). A DELIBERATE stop propagates; any
+    other failure returns (None, cost) so the caller can leave those providers on the neutral proxy (never a
+    mechanical substitute dressed as the judged choice). The WHOLE panel is sent (never truncated)."""
+    from . import adapters, calls, config
+    model = model or config.advisor_model()
+    prompt = "Per-provider token-ratio statistics (ratio = provider_in_tok / o200k_count):\n" + json.dumps(
+        stats_by_provider, indent=2, sort_keys=True) + "\n\nChoose a factor for each provider listed."
+    try:
+        with calls.context(intent="spendguard:token-calibrate"):
+            r = adapters.call(model, prompt, max_tokens=_FACTOR_OUT, system=_FACTOR_SYS,
+                              schema=_FACTOR_SCHEMA, sig="spendguard:token-calibrate")
+    except Exception as e:
+        if _stop_or_locked(e):
+            raise
+        return None, 0.0
+    cost = r.get("cost") or 0.0
+    if r.get("error"):
+        return None, cost
+    j = r.get("json")
+    if not isinstance(j, dict):
+        try:
+            j = json.loads(r.get("text") or "")
+        except Exception:
+            j = None
+    if not isinstance(j, dict) or not isinstance(j.get("providers"), list):
+        return None, cost
+    out = {}
+    for it in j["providers"]:
+        if isinstance(it, dict) and it.get("provider") and isinstance(it.get("factor"), (int, float)) and it["factor"] > 0:
+            out[str(it["provider"])] = {"factor": float(it["factor"]),
+                                        "confidence": float(it.get("confidence") or 0.0),
+                                        "why": str(it.get("why") or "")}
+    return (out or None), cost
+
+
+def _estimate_choice_cost(stats_by_provider, model=None):
+    """$0 estimate of the ONE factor-choice meta call, for --dry-run (the estimate-first discipline). A DELIBERATE
+    stop from pricing (EstimateNotGrounded / a refusal) PROPAGATES — it is not masked into a None estimate."""
+    from . import config, pricing, adapters
+    model = model or config.advisor_model()
+    prompt = _FACTOR_SYS + "\n" + json.dumps(stats_by_provider, sort_keys=True)
+    in_tok = count_text(prompt, provider=adapters.provider_for(model), model=model)
+    try:
+        return round(float(pricing.realtime_cost(model, in_tok, _FACTOR_OUT) or 0.0), 6)
+    except Exception as e:
+        if _stop_or_locked(e):
+            raise                            # EstimateNotGrounded / a refusal must PROPAGATE, never masked as None
+        return None
+
+
+def calibrate(store=True, model=None):
+    """Measure each provider's ratio statistics from the call_io ground-truth, then AGENTICALLY choose each factor.
+    Reading + counting is $0; the factor CHOICE is one small gated meta call (like `recommend`/`bakeoff`, the user
+    invoking this is the approval). `store=False` (--dry-run) computes + returns the stats AND a $0 estimate of the
+    choice call, and makes NO call.
 
     METHOD. For every non-truncated call_io row with a positive recorded in_tok and NO structured-output schema
     (schema framing inflates in_tok in a way the text base can't see — excluded so the ratio measures TEXT), take
-    the row's own text = system+prompt, count it with o200k, and form ratio = in_tok / o200k_count. A provider's
-    factor is the MEDIAN of its ratios; its rel_spread (relative IQR) and n are stored ALONGSIDE for audit. EVERY
-    provider with ≥1 usable row is stored — no sample-count cutoff; the median IS the estimate. Requires tiktoken
-    (the base); without it, returns an explicit note.
-
-    Every fetched row is accounted for: `used` + Σ`skipped` == `n_rows`, so nothing is silently discarded."""
+    the row's own text = system+prompt, count it with o200k, and accumulate ratio = in_tok/o200k plus Σin_tok and
+    Σo200k. The full panel (n, median, aggregate, mean, p10, p90, spread) goes to _choose_factors_agentically,
+    whose per-provider factor + confidence + rationale are stored. char_ratio (the tiktoken-absent fallback) is the
+    measured median. If the meta choice is unavailable, providers are LEFT on the neutral proxy (1.0) with a note —
+    never a mechanical factor dressed as the judged one. Every fetched row is accounted for (used + Σskipped ==
+    n_rows); every returned choice is accounted for (stored + Σignored == choices). Requires tiktoken (the base)."""
     enc = _o200k_encoder()
     if enc is None:
         return {"ok": False, "note": "tiktoken unavailable — cannot compute an o200k base to calibrate against; "
@@ -232,8 +336,8 @@ def calibrate(store=True):
         return {"ok": False, "note": f"could not read call_io ({type(e).__name__}: {str(e)[:60]})"}
 
     # Every fetched row is a unit; a discarded one is COUNTED by reason, never silently dropped (so the report's
-    # denominator is honest: used + Σskipped == n_rows). A row is unusable for a factor when it has no provider,
-    # no text to tokenize, or an empty o200k encoding — each a distinct, named rejection.
+    # denominator is honest: used + Σskipped == n_rows). A row is unusable when it has no provider, no text to
+    # tokenize, or an empty o200k encoding — each a distinct, named rejection.
     per, skipped, used = {}, {"no_provider": 0, "no_text": 0, "empty_encoding": 0}, 0
     for prov, system, prompt, in_tok in rows:
         if not prov:
@@ -247,56 +351,84 @@ def calibrate(store=True):
         if base <= 0:
             skipped["empty_encoding"] += 1
             continue
-        d = per.setdefault(prov, {"ratios": [], "char_ratios": []})
+        d = per.setdefault(prov, {"ratios": [], "char_ratios": [], "in_sum": 0, "o_sum": 0})
         d["ratios"].append(float(in_tok) / base)
         d["char_ratios"].append(float(len(text)) / float(in_tok))
+        d["in_sum"] += float(in_tok)
+        d["o_sum"] += float(base)
         used += 1
+
+    stats_by_provider = {prov: _provider_stats(d["ratios"], d["char_ratios"], d["in_sum"], d["o_sum"])
+                         for prov, d in sorted(per.items())}
+    base_report = {"ok": True, "n_rows": len(rows), "used": used, "skipped": skipped, "stats": stats_by_provider}
+    if not store:
+        return {**base_report, "est_choice_cost": _estimate_choice_cost(stats_by_provider, model),
+                "note": "dry run — statistics + a $0 estimate of the choice call; the factor CHOICE is skipped."}
+    if not stats_by_provider:
+        return {**base_report, "chosen": {}, "note": "no usable call_io rows yet — nothing to calibrate ($0)."}
+
+    choices, cost = _choose_factors_agentically(stats_by_provider, model)   # raises on a deliberate stop
+    if not choices:
+        return {**base_report, "chosen": {}, "meta_cost": round(cost, 6),
+                "note": "the agentic factor choice was unavailable (no meta budget / a transient failure) — every "
+                        "provider stays on the neutral o200k proxy (1.0). Re-run when the meta path is available."}
 
     import datetime
     ts = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
-    report = []
-    for prov, d in sorted(per.items()):
-        n = len(d["ratios"])
-        fac = round(statistics.median(d["ratios"]), 4)
-        cr = round(statistics.median(d["char_ratios"]), 3)
-        rs = _rel_spread(d["ratios"])
-        report.append({"provider": prov, "factor": fac, "char_ratio": cr,
-                       "rel_spread": (round(rs, 4) if rs is not None else None), "n": n})
-        if store:                             # store EVERY measured provider — the median is the estimate, no cutoff
-            db = _factors_db()
-            with budget._lock:
-                db.execute("INSERT INTO token_factors (provider,factor,char_ratio,rel_spread,n,ts) "
-                           "VALUES (?,?,?,?,?,?) ON CONFLICT(provider) DO UPDATE SET factor=excluded.factor, "
-                           "char_ratio=excluded.char_ratio, rel_spread=excluded.rel_spread, n=excluded.n, ts=excluded.ts",
-                           (prov, fac, cr, rs, n, ts))
-                db.commit()
-    if store:
-        reload_factors()                     # after the commit, so the next load sees the new rows
-    return {"ok": True, "providers": report, "n_rows": len(rows), "used": used, "skipped": skipped,
-            "note": ("stored the measured median factor for every provider (applied as-is; n + spread shown for "
-                     "audit).") if store else "dry run — nothing stored."}
+    # Every RETURNED choice is accounted for: a choice for a provider we did NOT measure (a model hallucination /
+    # stale name) has no statistical basis and is REFUSED — but recorded in `ignored`, never silently dropped, so
+    # stored + Σignored == len(choices).
+    stored, ignored = {}, []
+    for prov, ch in choices.items():
+        st = stats_by_provider.get(prov)
+        if st is None:
+            ignored.append(prov)
+            continue
+        db = _factors_db()
+        with budget._lock:
+            db.execute("INSERT INTO token_factors (provider,factor,confidence,why,char_ratio,n,stats,ts) "
+                       "VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(provider) DO UPDATE SET factor=excluded.factor, "
+                       "confidence=excluded.confidence, why=excluded.why, char_ratio=excluded.char_ratio, "
+                       "n=excluded.n, stats=excluded.stats, ts=excluded.ts",
+                       (prov, ch["factor"], ch["confidence"], ch["why"], st["char_ratio_median"], st["n"],
+                        json.dumps(st), ts))
+            db.commit()
+        stored[prov] = {**ch, "n": st["n"]}
+    reload_factors()                          # after the commit, so the next load sees the new rows
+    note = ("factors CHOSEN agentically from the statistics (one meta call) and stored; count_text applies them at "
+            "$0. n + rationale are surfaced in `tokens show` for audit.")
+    if ignored:
+        note += " Ignored %d model-named provider(s) with no measured basis: %s." % (len(ignored), ", ".join(ignored))
+    return {**base_report, "chosen": stored, "ignored": ignored, "meta_cost": round(cost, 6), "note": note}
 
 
 def cmd(argv=None):
-    """`spendguard tokens [show|calibrate]` — inspect or refresh the per-provider token factors ($0)."""
+    """`spendguard tokens [show|calibrate]` — inspect or refresh the per-provider token factors."""
     import json as _json
     argv = list(argv or [])
     do_json = "--json" in argv
     sub = next((a for a in argv if not a.startswith("-")), "show")
     if sub == "calibrate":
         dry = "--dry-run" in argv
-        r = calibrate(store=not dry)
+        r = calibrate(store=not dry, model=None)
         if do_json:
             print(_json.dumps(r, indent=2)); return 0
         if not r.get("ok"):
             print(f"tokens calibrate: {r.get('note')}"); return 0
         _sk = r.get("skipped", {})
+        tail = (f"  (DRY RUN — statistics only; est choice call ${r.get('est_choice_cost')})" if dry
+                else f"  · meta cost ${r.get('meta_cost', 0)}")
         print(f"[tokens calibrate] {r['n_rows']} call_io rows · used {r.get('used')} · "
-              f"skipped {sum(_sk.values())} ({', '.join('%s=%d' % (k, v) for k, v in _sk.items() if v) or 'none'})"
-              + ("  (DRY RUN — nothing stored)" if dry else ""))
-        for p in r["providers"]:
-            print(f"  {p['provider']:<10} factor {p['factor']:<7} char/tok {p['char_ratio']:<6} "
-                  f"spread {p['rel_spread']}  n={p['n']}")
+              f"skipped {sum(_sk.values())} ({', '.join('%s=%d' % (k, v) for k, v in _sk.items() if v) or 'none'})" + tail)
+        for prov, st in sorted((r.get("stats") or {}).items()):
+            ch = (r.get("chosen") or {}).get(prov)
+            picked = (f"→ factor {ch['factor']} (conf {ch['confidence']})" if ch else "→ (proxy 1.0)")
+            print(f"  {prov:<10} n={st['n']:<4} median {st['median']} agg {st['aggregate']} "
+                  f"spread {st['rel_spread']}  {picked}")
+            if ch and ch.get("why"):
+                print(f"             why: {ch['why']}")
+        if r.get("ignored"):
+            print(f"  ignored (no measured basis): {', '.join(r['ignored'])}")
         print("  " + r["note"])
         return 0
     # show
@@ -304,11 +436,12 @@ def cmd(argv=None):
     if do_json:
         print(_json.dumps(_factor_cache or {}, indent=2)); return 0
     if not _factor_cache:
-        print("tokens: no measured factors yet — every provider uses the o200k proxy (factor 1.0). "
+        print("tokens: no chosen factors yet — every provider uses the o200k proxy (factor 1.0). "
               "Run `spendguard tokens calibrate` after some call_io has accumulated.")
         return 0
-    print("[tokens] measured o200k→native factors (median; n + spread are audit-only):")
+    print("[tokens] agentically-chosen o200k→native factors (with the model's rationale, for audit):")
     for prov, row in sorted(_factor_cache.items()):
-        print(f"  {prov:<10} factor {row['factor']:<7} char/tok {row.get('char_ratio')} "
-              f"spread {row.get('rel_spread')} n={row.get('n')} @ {row.get('ts')}")
+        print(f"  {prov:<10} factor {row['factor']:<7} conf {row.get('confidence')} n={row.get('n')} @ {row.get('ts')}")
+        if row.get("why"):
+            print(f"             why: {row['why']}")
     return 0
