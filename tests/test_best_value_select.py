@@ -60,6 +60,11 @@ finally:
     advisor.recommend_models = _orig_rec
 
 print("-- a deliberate stop from the advisor PROPAGATES (never swallowed) --")
+# A3 caching: the cross-model section above cached a verdict for INTENT, which would now be served for $0 WITHOUT
+# calling the advisor — that is CORRECT (no advisor call → no spend → nothing to refuse; a real refusal still
+# fires on the actual metered call the caller makes downstream). The deliberate-stop doctrine governs the
+# ADVISOR-INVOKED path, so clear the cache to exercise it (a cold/uncached intent would do the same).
+best_value._verdict_cache.clear()
 _Stop = gate.deliberate_stop_types()[0]
 def _raise_stop(*a, **k):
     raise _Stop("planted spend refusal")

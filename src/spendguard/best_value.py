@@ -12,18 +12,61 @@ the learnings, each decided the right way:
     reasoner makes them.)
 
 WHY IT MAY SPEND. Choosing the model is a judgement, so it uses a small meta-caged advisor call (estimate-first,
-refused over its cap) — the caller opted into best-value; the effort lookup is $0. [Follow-up: cache the per-intent
-model verdict, invalidated by an evidence fingerprint, to amortize this to ~one pick per intent rather than per call.]
+refused over its cap) — the caller opted into best-value; the effort lookup is $0. That model pick is CACHED per
+(intent, quality_target), invalidated by an EVIDENCE FINGERPRINT (a $0 hash of the intent's measured cost/quality
+rows): while the evidence is unchanged the pick is reused with NO LLM call, so a caller running the same intent
+many times pays ~one pick, not one per call; the moment a bakeoff/judgement changes the evidence the fingerprint
+moves and the pick is re-derived. The EFFORT is always re-applied live (a $0 titration lookup), so a titration
+change lands immediately without waiting on the fingerprint. A transient advisor failure is NEVER cached.
 
 DIVERSITY / PINNING. pin_model=True (a caller that also set no_substitution — e.g. a cross-vendor panel member)
 keeps the named model and only supplies its learned effort, so a member is titrated, never swapped — the collapse
 a global "pick the best model" would cause is impossible. No measured basis → model=None and the caller keeps its
 named model (the honest unresolved path). Never raises except to PROPAGATE a deliberate stop (a spend refusal).
 """
-from . import advisor, gate, models
+import hashlib
+
+from . import advisor, gate, models, calls
 
 _INFER_OUT = 80          # the intent classifier returns one tiny JSON label ({"intent": "<known-label>"|null}); a small,
 #                          named output cap (not a call-site magic number) — and adapters.call self-heals a truncation anyway
+
+# (intent, quality_target, evidence_fingerprint) -> {"model","considered","why"} — the recommend_models-derived model
+# pick ONLY (effort is re-applied live, never cached). IN-PROCESS + IDEMPOTENT: two threads that miss compute the same
+# verdict for the same fingerprint and the last write stores an equal value. It NEVER poisons — only a RETURNED advisor
+# verdict is cached (a transient advisor failure returns without writing), and it is fingerprint-INVALIDATED, so a new
+# measurement/bakeoff moves the key and the stale entry is simply never read again (no explicit eviction needed).
+_verdict_cache = {}
+
+
+def _evidence_fingerprint(intent):
+    """A $0 hash of the exact evidence the model-picker consumes for this intent — calls.cost_summary(intent), i.e.
+    the per-model (jobs, $total, good, bad) rows. It MOVES iff that evidence changes (a new bakeoff, a new judged
+    sample, a newly-measured model), which is precisely when the best-value pick should be re-derived. Returns None
+    when the evidence CANNOT be read (a transient cost_summary failure): the caller then bypasses the cache entirely
+    — no read, no write — and re-derives fresh, so a fixed 'unknown' sentinel can NEVER collide two different
+    evidence states onto one key and serve a stale verdict. Never raises (a deliberate stop propagates from the pick
+    path itself, which reads the same source)."""
+    try:
+        rows = calls.cost_summary(intent) or []
+        # EXACT values, never rounded: the fingerprint must move iff the evidence moves. Rounding cost to N decimals
+        # would collapse a sub-threshold change onto the same key and serve a stale pick. repr(float) round-trips,
+        # and cost_summary sums the same rows deterministically, so identical evidence still yields one fingerprint.
+        norm = sorted((str(m), int(j or 0), repr(float(c or 0)), int(g or 0), int(b or 0))
+                      for (_it, m, j, c, g, b) in rows)
+        return hashlib.sha256(repr(norm).encode("utf-8", "replace")).hexdigest()[:16]
+    except Exception as e:
+        if gate.is_deliberate_stop(e):
+            raise                                     # a refusal reading the evidence propagates, never masked
+        # NOT silent: a persistent fingerprint-read failure means the pick cache is bypassed every call (re-derived
+        # fresh) — correct, but worth surfacing once so a broken cost_summary is visible, not a mystery slowdown.
+        try:
+            from . import config
+            config.warn_once("[spendguard] best-value: evidence fingerprint unreadable (%s) — the model-pick cache "
+                             "is bypassed (each call re-derives fresh; nothing stale is served)" % type(e).__name__)
+        except Exception:
+            pass
+        return None
 
 
 def select_model_effort(intent, requested_model, pin_model=False, quality_target=None, prompt=None):
@@ -57,23 +100,41 @@ def select_model_effort(intent, requested_model, pin_model=False, quality_target
     # CROSS-MODEL: the MODEL is an AGENTIC judgement over the measured frontier (recommend_models — meta-caged,
     # estimate-first). A deliberate stop (a spend refusal / deadline) PROPAGATES; any other advisor hiccup degrades
     # honestly to the named model. The reasoner ranks only models with evidence, so a cold intent yields no pick.
+    def _render(v, from_cache):
+        # Turn a cached verdict {model, considered, why_base} into the return dict. EFFORT is looked up LIVE here (a
+        # $0 titration fact), never cached — so a re-titration lands immediately, independent of the model-pick cache.
+        cons = dict(v["considered"]); cons["cached"] = bool(from_cache)
+        if not v["model"]:
+            return dict(model=None, effort=None, why=v["why_base"], considered=cons)
+        e = models.effort_for(v["model"], intent)
+        return dict(model=v["model"], effort=e, considered=cons,
+                    why="best-value: %s%s — %s" % (v["model"], ("@" + e) if e else "", v["why_base"]))
+
+    fp = _evidence_fingerprint(intent)
+    ckey = (intent, quality_target, fp) if fp is not None else None   # fp None (evidence unreadable) → BYPASS the cache
+    if ckey is not None:                                       # entirely (no read, no write), so a fixed 'unknown' key
+        hit = _verdict_cache.get(ckey)                         # can never collide two evidence states and serve stale
+        if hit is not None:                                   # evidence unchanged → reuse the pick, NO advisor LLM call
+            return _render(hit, from_cache=True)
     try:
         rec = advisor.recommend_models(intent, k=1, quality_bar=quality_target, run=True)
     except Exception as e:
         if isinstance(e, gate.deliberate_stop_types()):
-            raise
+            raise                                             # a refusal is NOT cached and NOT downgraded
         return _none("best-value: advisor unavailable (%s) — keep the named model" % type(e).__name__)
     top = (rec or {}).get("top") or []
     considered["source"] = "advisor.recommend_models"
     considered["model_candidates"] = (rec or {}).get("ranked_from") or len(top)
     considered["note"] = (rec or {}).get("note")
-    if not top or not top[0].get("id"):
-        return _none("best-value: %s" % ((rec or {}).get("note") or "advisor produced no pick — run a bakeoff first"))
-    chosen = top[0]["id"]
-    eff = models.effort_for(chosen, intent)                    # effort from the titration fact (None → family floor)
-    return dict(model=chosen, effort=eff, considered=considered,
-                why="best-value: %s%s — %s" % (chosen, ("@" + eff) if eff else "",
-                    top[0].get("why") or "advisor's cheapest that meets the intent's measured quality"))
+    if not top or not top[0].get("id"):                       # a RETURNED "no pick" (cold intent) is cached too — a later
+        verdict = {"model": None, "considered": considered,   # bakeoff moves the fingerprint and this key is re-derived
+                   "why_base": "best-value: %s" % ((rec or {}).get("note") or "advisor produced no pick — run a bakeoff first")}
+    else:
+        verdict = {"model": top[0]["id"], "considered": considered,
+                   "why_base": top[0].get("why") or "advisor's cheapest that meets the intent's measured quality"}
+    if ckey is not None:                                      # cache only a RETURNED advisor verdict under a REAL
+        _verdict_cache[ckey] = verdict                        # fingerprint (never a transient failure, never fp=None)
+    return _render(verdict, from_cache=False)
 
 
 _intent_cache = {}                                             # prompt-hash -> inferred intent (or None); in-process
