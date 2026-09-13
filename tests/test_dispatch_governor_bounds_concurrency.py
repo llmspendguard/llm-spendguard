@@ -94,5 +94,18 @@ dispatch.release("offvendor", "m")
 dispatch.release("offvendor", "m")
 del os.environ["SPENDGUARD_DISPATCH_OFF"]
 
+# ── 4. per-lane concurrency cap: default EXPLOITS the plan; a per-lane override wins (the fan-throttle fix) ─────
+# The old default (3) throttled the cross-lane fan below every plan's real concurrency (measured ~12). It is now 8
+# with a per-lane override (dispatch.lane_concurrency_<lane>) so codex/zai run near their ceiling while a
+# process-bound lane can be set lower. This mirrors dispatch._key_and_limit's resolution: per-lane → global → default.
+ck("default lane cap raised from the throttling 3 toward the measured plan ceiling", dispatch.DEFAULT_LANE_CONCURRENCY >= 8)
+_glob = dispatch._limit("lane_concurrency", dispatch.DEFAULT_LANE_CONCURRENCY)
+os.environ["SPENDGUARD_DISPATCH_LANE_CONCURRENCY_CODEX"] = "10"
+_codex = dispatch._limit("lane_concurrency_codex", _glob)
+_zai = dispatch._limit("lane_concurrency_zai", _glob)
+ck("a per-lane override (lane_concurrency_codex=10) wins for that lane", _codex == 10, f"got {_codex}")
+ck("a lane with NO override falls back to the global/default cap", _zai == _glob, f"got {_zai} vs {_glob}")
+del os.environ["SPENDGUARD_DISPATCH_LANE_CONCURRENCY_CODEX"]
+
 print(f"\n{'[FAIL]' if fails else 'OK'} test_dispatch_governor_bounds_concurrency: {fails} failure(s)")
 sys.exit(1 if fails else 0)

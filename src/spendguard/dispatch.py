@@ -39,7 +39,11 @@ import time
 # A subscription lane is a heavy subprocess (CLI cold-start + context injection); a handful in flight beats a
 # swarm. A metered vendor is a plain HTTPS call and tolerates more. Neither number is keyed to a model — they
 # are the admission budget for a whole lane / a whole vendor, and a 4-vendor panel touches neither.
-DEFAULT_LANE_CONCURRENCY = 3       # max concurrent calls sharing one subscription lane (claude-code/codex/zai)
+DEFAULT_LANE_CONCURRENCY = 8       # max concurrent calls sharing one subscription lane (claude-code/codex/zai).
+# MEASURED plan ceilings are ~12 concurrent (codex ≥12 with 0 errors; zai Max ~12, hard 429 at 16), so 8 exploits
+# the plan with headroom; a 429/quota still trips the per-lane cooldown (and zai retries 429 with backoff), so
+# overshoot self-corrects. Per-lane override: dispatch.lane_concurrency_<lane> (below). Was 3 — a pre-measurement
+# floor that throttled the whole cross-lane fan below every plan's real concurrency (the "governor throttle").
 DEFAULT_VENDOR_CONCURRENCY = 8     # max concurrent metered calls to one vendor
 DEFAULT_RPM = 0                    # requests/minute per key; 0 = pacing OFF (only concurrency governs). Opt-in.
 DEFAULT_GLOBAL_CONCURRENCY = 24    # a machine-wide ceiling across ALL keys — the last backstop against a swarm
@@ -260,7 +264,10 @@ class Governor:
             lane = None
         if lane:
             key = f"lane:{lane}"
-            limit = _limit("lane_concurrency", DEFAULT_LANE_CONCURRENCY)
+            # PER-LANE override → the global lane cap → the default: dispatch.lane_concurrency_<lane> (e.g.
+            # lane_concurrency_codex=10) lets a lane that parallelises well run near its own plan ceiling, while a
+            # process-bound lane (a cold CLI) can be set lower — one cap no longer forces every plan to the minimum.
+            limit = _limit(f"lane_concurrency_{lane}", _limit("lane_concurrency", DEFAULT_LANE_CONCURRENCY))
         else:
             key = f"vendor:{vendor}"
             limit = _limit("vendor_concurrency", DEFAULT_VENDOR_CONCURRENCY)
