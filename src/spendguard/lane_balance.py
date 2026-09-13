@@ -368,7 +368,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
                   checkpoint=None, chunk_size=100, refuse_billed=False, stats=None, force=False, tier=None,
                   schema=None, expect_ids=None, gate_sig=None, lanes=None, images_for=None, vision_model=None,
                   model_for=None, prompt_for=None, task_key=None, return_keyed=False,
-                  on_miss=None, batch_submit=None, hedge_ms=None):
+                  on_miss=None, batch_submit=None, hedge_ms=None, strategy=None):
     """Fan a LIST of similar tasks across ALL viable idle lanes CONCURRENTLY — the right shape for a BULK job (e.g.
     symgrep's ~6k one-sentence symbol descriptions) that the per-call bandit would trickle one at a time. Each task
     runs on a lane (round-robin across the lanes the bandit rates GOOD for this intent), each admission BOUNDED by
@@ -447,6 +447,17 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
                   return_keyed so the caller re-associates queued rows by key, never by position.
     `on_miss` takes precedence over `refuse_billed` when both are set; None keeps the `refuse_billed` behaviour.
 
+    `strategy="auto"` is the QUOTA-AWARE split (the economic model as one flag): spendguard picks WHICH plan lanes to
+    fan and BATCHES the overflow, from the MEASURED lane economics, so the caller sets no lanes/on_miss. It fans only
+    the UNDER-USED, non-reserved plans (idle/warm by est-value — a HOT plan's quota is scarce and would cost more than
+    a batch, so it is spared) and defaults on_miss="batch" (pass batch_submit for the overflow). Reuses
+    lane_utilization's idle/warm/HOT state + prompt_lane_reserved — no new threshold. Text lane fan only (a
+    pinned/vision matrix is metered by construction); economics-unavailable → the normal fan (still batches overflow).
+
+    `hedge_ms` overrides the config tail-hedge window for THIS call (a small-fan caller opts in without a global that
+    would also arm bulk); None → `dispatch.lane_hedge_ms`. Only fires on the lane path with spare capacity (never a
+    pinned matrix). See dispatch.lane_hedge_ms.
+
     Returns a task-ordered LIST [{text, lane, use_name, model, billed, error}], or {key: row} when return_keyed."""
     import os as _os
     import json as _json
@@ -455,6 +466,31 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
     from . import adapters, calls, dispatch, lane_catalog
 
     tasks = list(tasks)
+    # QUOTA-AWARE strategy="auto" (the economic model): fan the plan lanes whose quota is LOW-OPPORTUNITY — idle/warm
+    # by MEASURED est-value, and not reserved for real coding — and BATCH the overflow (~half price), so cheap bulk
+    # never burns a HOT plan's scarce quota on work a batch could do for pennies. It only COMPOSES existing knobs: it
+    # derives `lanes=` from the measured lane_utilization state (idle/warm/HOT — reused, NOT a new threshold) plus the
+    # reserved-lane economics, and sets on_miss="batch" (the caller supplies batch_submit for the overflow). Applies to
+    # the TEXT LANE fan only — a pinned/vision matrix is already metered-pinned, not lane-routed. Economics unavailable,
+    # or every plan hot/reserved → it falls through to the normal fan (still batching the overflow).
+    if strategy is not None and strategy != "auto":
+        raise ValueError("bulk_delegate(strategy=…): expected 'auto' or None, got %r" % (strategy,))
+    if strategy == "auto" and images_for is None and not callable(model_for):
+        from . import gate as _g0
+        _auto_stops = tuple(_g0.deliberate_stop_types())
+        if lanes is None and not tier:
+            try:
+                from . import lane_economics as _le
+                _fill = [x["lane"] for x in lane_utilization().get("lanes", [])
+                         if x.get("state") != "hot" and not _le.prompt_lane_reserved(x["lane"])]
+                if _fill:
+                    lanes = _fill                        # fan only the under-used, non-reserved plans; batch the rest
+            except _auto_stops:
+                raise                                    # a spend refusal / deadline HALTS — never downgraded to 'keep going'
+            except Exception:
+                pass                                     # no measured economics → normal lane selection (overflow still batches)
+        if on_miss is None:
+            on_miss = "batch"
     # MISS POLICY: on_miss (if given) wins over refuse_billed. "error"/"batch" run WITHOUT a realtime fallback (a
     # lane miss stays a textless row); "batch" then groups the misses AFTER the fan (below). Validated at the door.
     if on_miss is not None:
