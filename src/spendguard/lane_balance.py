@@ -403,13 +403,20 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
     say "fan across codex+gemini+zai, never claude-code" without mutating advisor.delegate_lanes. None = every
     delegate lane. A lane named here that is reserved/cooling still drops out (fail-closed), never widened past.
 
-    `images_for` + `vision_model` fan a BULK VISION job across the metered API instead of lanes — the lane executors
-    are text-only CLIs with no image channel (the exact trap behind a labeler that cold-400'd). Pass `images_for` =
-    a callable (task → the image path(s)/data-URL(s) that task labels) or a single image list (all tasks), and
-    `vision_model` = a vision-capable API model (e.g. 'openai:gpt-5-nano', 'gemini:gemini-3-flash'). Every task then
-    rides adapters.call(images=…) on that model — governed, checkpointed/resumed, refuse-billed and arity-checked by
-    the SAME durable core as the lane fan, just a different per-task runner. lanes/tier/arms do not apply (vision
-    never rides a lane); vision_model is REQUIRED when images_for is set (else every task errors, re-runnable).
+    `model_for` PINS each task to its EXACT vendor:model, NEVER substituted — the sanctioned governed MATRIX fan for a
+    cross-vendor CONSENSUS panel (N files × M named vendors, e.g. honestreview's repo review: submit the WHOLE matrix,
+    set no concurrency number, and the governor bounds per-vendor in-flight, queues the rest, keys the results). It
+    rides the metered API directly (a lane can't pin a named vendor), governed + checkpointed/resumed + arity-checked
+    by the SAME durable core as the lane fan; `served_by_metered_api` on each row proves the cross-vendor diversity.
+    This is the TEXT case of the pinned runner — `model_for(task)` selects the model whether or not there are images.
+
+    `images_for` + `vision_model` are the IMAGE case of that same runner — the lane executors are text-only CLIs with
+    no image channel (the trap behind a labeler that cold-400'd). Pass `images_for` = a callable (task → the image
+    path(s)/data-URL(s)) or a single image list, and `vision_model` = a vision-capable API model (e.g.
+    'openai:gpt-5-nano'), or `model_for` for a per-task VISION panel. Every task rides adapters.call(images=…) —
+    governed, checkpointed/resumed, refuse-billed and arity-checked, just a different per-task runner. lanes/tier/arms
+    do not apply to either pinned shape; vision_model (or model_for) is REQUIRED when images_for is set (else every
+    task errors, re-runnable). Hedging/bandit are lane-only — a pinned task must not race onto another vendor.
 
     `gate_sig` carries the bulk gate onto the LANE path (a lane runs a CLI subprocess, so the SDK-patch gate never
     fires — lane bulk was otherwise ungoverned). A genuinely-bulk fan (>= bulkgate.preview_max) is subject to the
@@ -536,16 +543,21 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
     # gpt-5.6-luna + claude-code's haiku + zai's glm), never a premium model for cheap work. FAIL-CLOSED: no lane
     # serves the group (undeclared, its models on no lane), or all serving it are cooling → EVERY task errors
     # (undescribed, re-runnable); we never widen off-tier and never fall onto a strong/Opus lane.
-    # VISION fans across the metered API, not lanes (the lane executors are text-only CLIs). When images_for is set,
-    # each task's image(s) ride adapters.call(images=…) on vision_model via a different per-task runner (below);
-    # arms stay None (no lane picked) and the lane-only tier/reserved machinery is skipped.
+    # The GOVERNED PINNED-MODEL runner (below) rides the metered API directly, NOT a lane, for two shapes that both
+    # want "each task to its EXACT named model, never substituted, concurrency bounded by the governor":
+    #   · VISION (images_for set) — the lane CLIs are text-only, so an image task must ride adapters.call(images=…).
+    #   · a per-task PINNED-VENDOR MATRIX (model_for set) — a cross-vendor CONSENSUS panel (N files × M named vendors,
+    #     e.g. honestreview's repo review): each task pinned to its vendor, no bandit substitution. This is the TEXT
+    #     case of the same runner — model_for selects the model whether or not there are images.
+    # For either, arms stay None (no lane picked) and the lane-only tier/reserved/bandit machinery is skipped.
     _vision = images_for is not None
+    _pinned = callable(model_for)                        # a per-task pinned vendor:model matrix (text or vision)
     if _vision and not (vision_model or model_for):
         return _finalize([{"text": None, "lane": None, "use_name": None, "billed": False, "reason": "no_vision_model",
                  "error": "bulk_delegate(images_for=…) needs vision_model=… or model_for=… (a vision-capable API "
                           "model); the subscription lanes are text-only, so bulk vision fans across the metered API"}
                 for _ in tasks])
-    if _vision:
+    if _vision or _pinned:
         arms = None
     elif tier:
         # Split the model-DECLARED lanes from the AVAILABLE ones so a PERMANENT config gap (no lane serves this group
@@ -575,7 +587,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
             return _finalize([{"text": None, "lane": None, "use_name": None, "billed": False, "reason": "no_viable_lane",
                      "error": "no viable lane (set advisor.lane_models; check `spendguard lanes`)"} for _ in tasks])
 
-    if not _vision:
+    if not _vision and not _pinned:                      # arms is None for both — the reserved/tier guard is lane-only
         # RESERVED-LANE GUARD — the SAME reservation idle_lanes() and route_decision() already honor, applied here
         # too (bulk_delegate was the one router that skipped it). A prompt-metered lane whose SELF-USE cap is reached
         # keeps its stops-dead budget for real coding, so it must not take DISCRETIONARY bulk overflow — and the
@@ -702,25 +714,29 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
         return None
 
     def _run_task_on_api(i, task):
-        # VISION (images_for) task: ride the metered API — the lanes have no image channel — governed like a lane
-        # slot, with the SAME arity/shape handling. model_for(task) gives a PER-TASK model (durable cross-vendor
-        # PANEL), else the single vision_model; prompt_for(task) lets the task be an opaque identity (e.g. a vendor
-        # id, so each vendor is keyed separately) while every task shares the same prompt. images_for(task) → images.
+        # The GOVERNED PINNED-MODEL runner — one core for a TEXT pinned-vendor matrix AND a VISION task. It rides the
+        # metered API directly (a lane can't pin a named vendor, and has no image channel), governed like a lane slot
+        # (dispatch.acquire bounds per-vendor in-flight), with the SAME arity/shape/durability handling. model_for(task)
+        # gives the PER-TASK named model (the cross-vendor CONSENSUS panel), else the single vision_model; prompt_for(task)
+        # lets the task be an opaque identity (e.g. a vendor id, so each vendor is keyed separately) while every task
+        # shares one prompt. images_for(task) → images when present (vision); absent → a plain text call. NEVER
+        # substituted (no_substitution=True) — a pinned task lands on its exact vendor or errors, never another model.
         _vm = (model_for(task) if callable(model_for) else None) or vision_model
         _p = prompt_for(task) if callable(prompt_for) else task
         _raw = _vm.split(":", 1)[1] if (_vm and ":" in _vm) else (_vm or "?")
         _b = {"text": None, "lane": "api", "use_name": _raw, "model": _vm, "billed": False}
         if not _vm:
-            return i, {**_b, "reason": "no_vision_model", "error": "model_for returned no model for this task"}
+            return i, {**_b, "reason": "no_model", "error": "model_for returned no model for this task"}
         _imgs = list(images_for(task) if callable(images_for) else (images_for or []))
-        if not _imgs:
+        if _vision and not _imgs:                        # a VISION task genuinely needs an image; a TEXT pinned task does not
             return i, {**_b, "reason": "no_image", "error": "images_for returned empty — a vision task needs an image"}
-        _big = _image_too_big(_imgs)
-        if _big:
-            return i, {**_b, "reason": _big[0], "error": _big[1]}
+        if _imgs:
+            _big = _image_too_big(_imgs)
+            if _big:
+                return i, {**_b, "reason": _big[0], "error": _big[1]}
         _prov = adapters.provider_for(_vm)
         try:
-            dispatch.acquire(_prov, _raw, deadline_s)   # governor: bound in-flight vision calls, like the lane path
+            dispatch.acquire(_prov, _raw, deadline_s)   # governor: bound in-flight PER-VENDOR metered calls, like the lane path
         except _STOP_TYPES:
             raise                                       # a DELIBERATE stop (deadline/refusal) halts — never a per-task row
         except Exception as e:
@@ -729,7 +745,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
             calls.set_context(intent=intent)            # tag this worker's calls with the intent (attribution)
             r = adapters.call(_vm, _p, system=system, reasoning=reasoning, sig=intent,
                               timeout_s=deadline_s, no_metered_fallback=refuse_billed, schema=schema,
-                              images=_imgs, no_substitution=True)   # NAMED vision model — never swap it
+                              images=(_imgs or None), no_substitution=True)   # NAMED model — never swap it (pinned)
         except _STOP_TYPES:
             raise
         except Exception as e:
@@ -739,7 +755,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
         r = r if isinstance(r, dict) else {}
         _sp, _sm = r.get("provider") or _prov, r.get("model") or _raw
         # Same structured-reason contract as the lane row: adapters' code, else 'api_error' on a failed metered call
-        # (vision always rides the metered API), else None when served. No error row is ever reason-less.
+        # (a pinned/vision matrix always rides the metered API), else None when served. No error row is ever reason-less.
         _row_reason = r.get("reason") or ("api_error" if r.get("error") else None)
         row = {"text": (r.get("text") or None), "lane": r.get("executor") or "api", "use_name": _sm,
                "model": f"{_sp}:{_sm}", "billed": bool(r.get("cost")),
@@ -895,8 +911,8 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
             pool.shutdown(wait=False)                         # NON-BLOCKING — never join the loser (that re-adds the tail)
 
     def _run_task_on_lane(i, task):
-        if _vision:                                    # vision fans across the API (lanes are text-only) — same core
-            return _run_task_on_api(i, task)
+        if _vision or _pinned:                         # VISION or a PINNED per-task-model matrix (text) → the governed,
+            return _run_task_on_api(i, task)           # no-substitution metered runner; hedging/bandit are lane-only
         lane, use_name = _pick_arm(i)                  # DYNAMIC least-loaded (or static under SPENDGUARD_LANE_STATIC_DISPATCH)
         if _hedge_ms <= 0 or len(arms) < 2:            # hedging off, or only one lane → the plain single attempt (unchanged path)
             return _attempt_on_lane(i, task, lane, use_name, refuse_billed)
