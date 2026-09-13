@@ -796,6 +796,10 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
         row = {"text": (r.get("text") or None), "lane": r.get("executor") or "api", "use_name": _sm,
                "model": f"{_sp}:{_sm}", "billed": bool(r.get("cost")),
                "served_by_metered_api": (r.get("executor") or "api") in ("api", "api-fallback"),
+               # PARITY AUDIT: the reasoning tier REQUESTED and the effort the call reports it APPLIED. On this
+               # metered pinned runner they match the serial adapters.call exactly (same model, same reasoning) — so a
+               # consistency-sensitive fan (a refuter, a verdict-cached classifier) reproduces its serial distribution.
+               "reasoning": reasoning, "effort": r.get("effort"),
                "parsed": (r.get("parsed") if schema is not None else None),
                "reason": _row_reason, "error": r.get("error")}
         return i, _arity_checked(row, task, expect_ids)
@@ -884,6 +888,11 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
                # `billed`=cost>0 (true for a costing key-lane too); THIS is the field to prove metered-API service —
                # a lane miss fell through to the paid provider. A $0 or costing LANE is served_by_metered_api=False.
                "served_by_metered_api": served_lane in ("api", "api-fallback"),
+               # PARITY AUDIT: the reasoning tier REQUESTED + the effort the executor reports it APPLIED. On a LANE this
+               # is the CLI's own scale (codex 'minimal'→'none', zai→thinking, gemini→id-suffix), which need NOT equal
+               # the metered API's reasoning — so a served_by_metered_api=False row may diverge from the serial call.
+               # A consistency-sensitive fan should PIN the model (model_for) to force the faithful metered runner.
+               "reasoning": reasoning, "effort": r.get("effort"),
                # DECODED object when a schema was requested (adapters already parsed it) — so the demux scatters the
                # object, never a re-parse of `text`. None if it did not decode; cleared to None on an arity miss.
                "parsed": (r.get("parsed") if schema is not None else None),
