@@ -1,12 +1,12 @@
 {
   "_meta": {
-    "anthropic_source": "https://platform.claude.com/docs/en/docs/about-claude/pricing (verified 2026-07-14; claude-sonnet-5 on introductory $2/$10 through 2026-08-31, then $3/$15)",
+    "anthropic_source": "https://claude.com/pricing (re-verified 2026-09-12 against the vendor page: opus 5/25, sonnet-5 2/10, haiku-4.5 1/5 \u2014 all exact). NOTE: the predicted claude-sonnet-5 reversion to $3/$15 on 2026-09-01 did NOT occur; the vendor still shows the introductory $2/$10, so 2/10 stands.",
     "note": "USD per 1M tokens. batch = 50% of realtime. Edit here (or ~/.spendguard/prices.json) \u2014 do not hardcode prices in code.",
-    "openai_source": "https://developers.openai.com/api/docs/pricing (verified 2026-06-13) \u2014 the same provenance pricing.PRICING_SOURCE carries; recorded here so the shipped table is self-describing",
-    "qwen_source": "https://www.eesel.ai/blog/qwen-pricing (Alibaba Model Studio list prices, 2026-06-14)",
+    "openai_source": "https://developers.openai.com/api/docs/pricing (re-verified 2026-09-12 against the vendor page, 7/7 exact: gpt-5 1.25/10, gpt-5-mini 0.25/2, gpt-5-nano 0.05/0.40, gpt-5.4 2.50/15, gpt-5.5 5/30, gpt-4o 2.50/10, gpt-4o-mini 0.15/0.60) \u2014 the same provenance pricing.PRICING_SOURCE carries",
+    "qwen_source": "https://www.eesel.ai/blog/qwen-pricing (Alibaba Model Studio list prices, 2026-06-14) \u2014 qwen-plus flagged 2026-09-12 for a DashScope-console recheck (agentic price-gap judge)",
     "source": "https://developers.openai.com/api/docs/pricing",
     "stale_after_days": 45,
-    "verified": "2026-06-13"
+    "verified": "2026-09-12"
   },
   "providers": {
     "anthropic": {

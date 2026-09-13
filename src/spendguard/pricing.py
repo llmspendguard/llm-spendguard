@@ -79,7 +79,14 @@ CACHE_READ_MULTIPLIER = 0.1
 
 ONE_MILLION = 1_000_000          # rates are quoted per this many tokens; a UNIT, never a workload
 PRICING_SOURCE = "https://developers.openai.com/api/docs/pricing"
-PRICING_VERIFIED = "2026-06-13"
+# Re-verified 2026-09-12 against the VENDOR pages (not just OpenRouter): OpenAI 7/7 exact (gpt-5 1.25/10,
+# gpt-5-mini 0.25/2, gpt-5-nano 0.05/0.40, gpt-5.4 2.50/15, gpt-5.5 5/30, gpt-4o 2.50/10, gpt-4o-mini 0.15/0.60)
+# and Anthropic 3/3 exact (opus 5/25, sonnet-5 2/10, haiku-4.5 1/5). The claude-sonnet-5 "reverts to 3/15 on
+# 2026-09-01" note did NOT come true — the vendor page still shows 2/10, so the introductory rate held (the synced
+# table keeps the correct 2/10; sync-prices owns that note). The 14 SECONDARY synced-layer gaps were agentically
+# judged ($0 on-lane): 10 ok, deepseek-v4-pro correct (our 1.32/3.96 = the vendor PEAK rate), deepseek-v4-flash
+# RETIRED upstream (→ deepseek-flash; sync-prices will refresh it), qwen-plus pending a DashScope-console check.
+PRICING_VERIFIED = "2026-09-12"
 STALE_AFTER_DAYS = 45
 PROVIDERS = {}  # model -> provider, populated by _load (absent when two vendors disagree — see below)
 
