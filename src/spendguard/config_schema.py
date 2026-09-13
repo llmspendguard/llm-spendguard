@@ -301,9 +301,12 @@ SETTINGS = [
               "governor (dispatch.py) queues overflow instead of firing it; a 4-vendor panel touches no limit."),
     dict(section="dispatch", key="vendor_concurrency", store="config.json:dispatch.vendor_concurrency",
          env="SPENDGUARD_DISPATCH_VENDOR_CONCURRENCY", default=8, kind="int", secret=False,
-         desc="Max concurrent metered calls to ONE vendor, so a large cross-LLM fan-out queues instead of "
-              "429-storming the provider. Per-vendor requests/minute pacing is also available and OFF by default "
-              "— set env SPENDGUARD_DISPATCH_RPM_<VENDOR> (e.g. _MOONSHOT=60) to enable it for a vendor."),
+         desc="Max concurrent metered calls to ONE vendor, so a large cross-LLM fan-out (or a pinned-vendor matrix) "
+              "queues instead of 429-storming the provider. Enforced BOTH in-process AND ACROSS processes (flock "
+              "slot-files, like lanes) — so N concurrent runs share ONE cap per vendor, not N×8. PER-VENDOR override: "
+              "dispatch.vendor_concurrency_<vendor> (e.g. vendor_concurrency_openai=12) tunes each provider to its real "
+              "rate limit. Per-vendor requests/minute pacing is also available and OFF by default — set env "
+              "SPENDGUARD_DISPATCH_RPM_<VENDOR> (e.g. _MOONSHOT=60). SPENDGUARD_DISPATCH_XP_OFF=1 drops cross-process."),
     dict(section="dispatch", key="global_concurrency", store="config.json:dispatch.global_concurrency",
          env="SPENDGUARD_DISPATCH_GLOBAL_CONCURRENCY", default=24, kind="int", secret=False,
          desc="Machine-wide ceiling on in-flight LLM calls across ALL vendors/lanes — the last backstop against a "

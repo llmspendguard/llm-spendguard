@@ -80,14 +80,16 @@ class DispatchTimeout(RuntimeError):
     failure, not an empty success."""
 
 
-# ── Cross-process lane admission (flock slot-files) ─────────────────────────────────────────────────────────
+# ── Cross-process admission (flock slot-files) ──────────────────────────────────────────────────────────────
 # The in-process semaphores bound ONE interpreter. But two separate runs on the same machine — a `spendguard ask`
 # and a honestreview panel, or two panels — still share ONE subscription plan per lane (one Max, one Codex, one
-# GLM), and nothing above co-governs them, so both could blast the plan at once. flock slot-files close that:
-# `limit` lock files per lane key, one flock held for each call's duration. flock is advisory, tied to the fd,
-# and the OS drops it when the process dies — so a crash never leaves a stale slot to reap. Only LANE keys are
-# cross-gated (the shared subprocess plans are the scarce cross-process resource); metered vendors are left to
-# the provider's own rate limits. Fail-open where fcntl is absent (non-POSIX) — the in-process bound still holds.
+# GLM) AND one rate-limited metered account per vendor (one OpenAI org, one Anthropic key), and nothing above
+# co-governs them, so both could blast the shared resource at once. flock slot-files close that: `limit` lock files
+# per key, one flock held for each call's duration. flock is advisory, tied to the fd, and the OS drops it when the
+# process dies — so a crash never leaves a stale slot to reap. BOTH lane keys (the shared subprocess plans) AND
+# metered vendor keys (per-provider, so N runs share one cap and don't 429-storm the account) are cross-gated. The
+# slot count is that key's `limit` (per-lane / per-vendor tunable). Fail-open where fcntl is absent (non-POSIX) —
+# the in-process bound still holds. SPENDGUARD_DISPATCH_XP_OFF=1 disables this whole cross-process layer.
 try:
     import fcntl as _fcntl
 except ImportError:                              # pragma: no cover - non-POSIX (Windows): in-process bound only
@@ -270,7 +272,10 @@ class Governor:
             limit = _limit(f"lane_concurrency_{lane}", _limit("lane_concurrency", DEFAULT_LANE_CONCURRENCY))
         else:
             key = f"vendor:{vendor}"
-            limit = _limit("vendor_concurrency", DEFAULT_VENDOR_CONCURRENCY)
+            # PER-VENDOR override → the global metered cap → the default: dispatch.vendor_concurrency_<vendor> (e.g.
+            # vendor_concurrency_openai=12) tunes each provider to ITS real rate limit — never one hardcoded number for
+            # every vendor. Mirrors the per-lane override; this cap is now also enforced ACROSS processes (acquire()).
+            limit = _limit(f"vendor_concurrency_{vendor}", _limit("vendor_concurrency", DEFAULT_VENDOR_CONCURRENCY))
         rpm = _limit(f"rpm_{vendor}", DEFAULT_RPM)     # per-vendor RPM, e.g. SPENDGUARD_DISPATCH_RPM_MOONSHOT=60
         return key, limit, rpm, bool(lane)
 
@@ -288,9 +293,9 @@ class Governor:
 
     def acquire(self, vendor, model, deadline_s):
         """Admit one call. Returns seconds waited (0 when uncontended). Raises DispatchTimeout on deadline.
-        Order: global slot → per-key in-process slot → (lane vendors only) cross-process slot. release() unwinds
-        all three; the held cross-process slot rides a per-thread stack that release() pops (acquire and release
-        run on the same fan_out worker thread)."""
+        Order: global slot → per-key in-process slot → cross-process slot (lane keys AND metered vendor keys — a
+        per-provider cap shared across processes). release() unwinds all three; the held cross-process slot rides a
+        per-thread stack that release() pops (acquire and release run on the same fan_out worker thread)."""
         if _off() or not deadline_s or float(deadline_s) <= 0:
             _held().append(None)                     # keep the acquire/release stack balanced even as a no-op
             return 0.0
@@ -301,10 +306,14 @@ class Governor:
                                   f"full — deadline {float(deadline_s):.0f}s exhausted")
         got_bucket, xp = False, None
         try:
-            key, limit, _rpm, is_lane = self._key_and_limit(vendor, model)
+            key, limit, _rpm, _is_lane = self._key_and_limit(vendor, model)
             self._bucket(vendor, model).acquire(float(deadline_s) - (time.monotonic() - t0))
             got_bucket = True
-            if is_lane and not _xp_off():            # co-govern the shared subscription plan across processes
+            if not _xp_off():                        # co-govern ACROSS processes: a lane's shared subscription plan AND
+                # a metered vendor's per-provider cap. Previously lane-only — so N concurrent runs each ran up to
+                # vendor_concurrency to ONE metered provider (8 in-process × N procs) and 429-STORMED it. Now they share
+                # ONE cross-process cap (`limit` slots, per-vendor tunable) and self-throttle instead. _acquire_xp is
+                # key-generic (lane:/vendor: alike). SPENDGUARD_DISPATCH_XP_OFF=1 disables this whole cross-process layer.
                 xp = _acquire_xp(key, limit, float(deadline_s) - (time.monotonic() - t0))
         except BaseException:                        # unwind anything already taken, in reverse, then re-raise
             if xp is not None:
