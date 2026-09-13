@@ -18,8 +18,18 @@ lane is the coding PLAN: a different endpoint (api/anthropic) drawing on the fla
 Setup (docs.z.ai/devpack/tool/claude): keys.env ZAI_CODING_API_KEY, else the account's ZAI_API_KEY is used.
 """
 import json
+import random
 import time
+import urllib.error
 import urllib.request
+
+# 429 BACKOFF (the z.ai plan's concurrency is DYNAMIC + burst-sensitive — measured Max ~12 concurrent, 429 beyond).
+# A burst 429 is transient: retry the SAME request with exponential backoff + jitter and it clears, instead of a
+# hard lane miss spilling every over-cap call to the metered API. Operational tunables (like the timeouts), named
+# here — never a magic literal at the call site.
+_ZAI_MAX_429_RETRIES = 3
+_ZAI_BACKOFF_BASE_S = 0.6
+_ZAI_BACKOFF_JITTER_S = 0.4
 
 # The coding-plan Anthropic-compatible endpoint (docs.z.ai/devpack/tool/claude). A named default with
 # provenance, overridable via config for a future region/endpoint change — never a literal scattered through
@@ -106,6 +116,20 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
         with urllib.request.urlopen(req, context=config.ssl_context(), timeout=timeout) as resp:
             return json.loads(resp.read())
 
+    def _post_ratelimited(b):
+        """POST with exponential backoff + jitter on HTTP 429 (the plan's dynamic burst/concurrency cap). Retries
+        the SAME request so an over-cap burst clears instead of spilling to the metered API. 429 is read from the
+        STRUCTURED HTTPError.code (a status field), NEVER from error prose. Any non-429 error propagates at once
+        for the caller's fail-safe (thinking-strip) to handle."""
+        for attempt in range(_ZAI_MAX_429_RETRIES + 1):
+            try:
+                return _post(b)
+            except urllib.error.HTTPError as he:
+                if he.code == 429 and attempt < _ZAI_MAX_429_RETRIES:
+                    time.sleep(_ZAI_BACKOFF_BASE_S * (2 ** attempt) + random.uniform(0, _ZAI_BACKOFF_JITTER_S))
+                    continue
+                raise
+
     def _errdict(exc):
         detail = ""
         try:
@@ -117,7 +141,7 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
 
     t0 = time.time()
     try:
-        d = _post(body)
+        d = _post_ratelimited(body)
     except Exception as e:
         # FAIL-SAFE: the enriched request failed. thinking is the one OPTIONAL enrichment, so retry ONCE without it
         # (no error-prose classification — an anthropic-shape 4xx names the reason only in free text, and reading
@@ -126,7 +150,7 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
         if "thinking" not in body:
             return _errdict(e)
         try:
-            d = _post({k: v for k, v in body.items() if k != "thinking"})
+            d = _post_ratelimited({k: v for k, v in body.items() if k != "thinking"})
         except Exception as e2:
             return _errdict(e2)
     text = "".join(b.get("text", "") for b in (d.get("content") or []) if b.get("type") == "text")
