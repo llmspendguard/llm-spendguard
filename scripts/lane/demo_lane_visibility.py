@@ -6,7 +6,6 @@ run anywhere and produces the same output every time. NOT a test (no asserts) â€
 """
 import os
 import sys
-import json
 import tempfile
 
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-lanedemo-")   # ISOLATED â€” never touches ~/.spendguard

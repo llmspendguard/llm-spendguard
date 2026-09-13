@@ -23,7 +23,6 @@ spendguard.require()                       # fail closed: refuse to run if the g
 
 from spendguard import config, pricing, budget
 from spendguard.gate import _ct
-from spendguard.ledger import to_dec
 
 
 def load_encoder(path):

@@ -35,25 +35,27 @@ def build():
         # walk each function, collect calls
         cur = [None]
         class V(ast.NodeVisitor):
+            def __init__(self, mod, imp, cur):   # bind the per-iteration loop vars (B023) — not closure-captured
+                self.mod, self.imp, self.cur = mod, imp, cur
             def visit_FunctionDef(self, node):
-                prev = cur[0]; cur[0] = f"{mod}.{node.name}"; self.generic_visit(node); cur[0] = prev
+                prev = self.cur[0]; self.cur[0] = f"{self.mod}.{node.name}"; self.generic_visit(node); self.cur[0] = prev
             visit_AsyncFunctionDef = visit_FunctionDef
             def visit_Call(self, node):
                 f = node.func
                 callee = None
                 if isinstance(f, ast.Attribute):
                     base = f.value.id if isinstance(f.value, ast.Name) else None
-                    if base in imp:              # module.fn  (e.g. budget.record)
+                    if base in self.imp:         # module.fn  (e.g. budget.record)
                         callee = f"{base}.{f.attr}"
                     elif base == "self":
-                        callee = f"{mod}.{f.attr}"
+                        callee = f"{self.mod}.{f.attr}"
                 elif isinstance(f, ast.Name):
-                    if f.id in owner:            # bare fn defined somewhere in the pkg
+                    if f.id in owner:            # bare fn defined somewhere in the pkg (loop-invariant → closure ok)
                         callee = f"{owner[f.id]}.{f.id}"
-                if callee and cur[0]:
-                    edges[cur[0]].add(callee)
+                if callee and self.cur[0]:
+                    edges[self.cur[0]].add(callee)
                 self.generic_visit(node)
-        V().visit(t)
+        V(mod, imp, cur).visit(t)
     return owner, edges
 
 def main():

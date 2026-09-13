@@ -71,7 +71,7 @@ def _collisions():
         except SyntaxError:
             continue
 
-        def walk(node, scope):
+        def walk(node, scope, f=f, text=text):             # bind loop vars (B023); recursion re-passes via defaults
             for ch in ast.iter_child_nodes(node):
                 if isinstance(ch, ast.ClassDef):
                     walk(ch, scope + [ch.name])

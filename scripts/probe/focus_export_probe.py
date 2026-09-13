@@ -19,7 +19,6 @@ import os
 import sqlite3
 
 from spendguard import config
-from spendguard import ledger as _ledger
 
 # ── FOCUS 1.2 columns an LLM charge needs → the spendguard source column (or a constant/derivation). This is the
 #    mapping table; a value of None means "constant/derived", a string means "this spend_events column". ──────────

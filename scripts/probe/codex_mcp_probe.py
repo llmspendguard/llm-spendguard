@@ -4,7 +4,6 @@ spendguard codex-daemon lane would speak. Throwaway diagnostic — prints findin
 """
 import json
 import subprocess
-import sys
 import time
 import select
 

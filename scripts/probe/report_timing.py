@@ -12,7 +12,7 @@ import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "src"))
 
-from spendguard import report, reconcile_anthropic as anth, gate, budget, ledger_sync, learn, realized, config  # noqa: E402
+from spendguard import report, reconcile_anthropic as anth, gate, budget, ledger_sync, learn, realized  # noqa: E402
 
 
 def timed(label, fn):

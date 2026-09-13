@@ -53,7 +53,7 @@ for label, mod, model in LANES:
     print(f"  -- {CONCURRENCY}x concurrent (the panel's actual stress) --")
     t0 = time.time()
     with cf.ThreadPoolExecutor(max_workers=CONCURRENCY) as pool:
-        rs = list(pool.map(lambda _: one_call(mod, model, timeout=120), range(CONCURRENCY)))
+        rs = list(pool.map(lambda _, mod=mod, model=model: one_call(mod, model, timeout=120), range(CONCURRENCY)))
     ok = [x for x in rs if not x.get("error")]
     wall = round(time.time() - t0, 1)
     print(f"    {len(ok)}/{CONCURRENCY} succeeded in {wall}s wall  "
