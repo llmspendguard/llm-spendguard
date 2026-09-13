@@ -654,7 +654,21 @@ def _tally_lines(t: dict) -> list:
     gb = _gate_blocks_line()
     if gb:
         lines.append(gb)
+    ha = _lane_health_alert()                          # a lane/API down (from the last check) surfaces in EVERY receipt
+    if ha:
+        lines.append(ha)
     return lines
+
+
+def _lane_health_alert():
+    """The lane-health alert line (a lane/API is UNREACHABLE per the last reliability check), or None. $0 — reads
+    the cached health state, so a red lane surfaces in every conversation's receipt without a new sweep. NEVER
+    raises: a receipt must not break over a health read."""
+    try:
+        from . import reliability
+        return reliability.health_alert()
+    except Exception:
+        return None
 
 
 def render_tally(t: Optional[dict] = None) -> str:

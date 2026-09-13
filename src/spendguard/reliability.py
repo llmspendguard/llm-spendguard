@@ -130,7 +130,9 @@ _REMEDIATE_SYS = (
     "PROVIDER is unreachable, and tell the USER the exact fix. Given the resource and its error string, return: "
     "issue (one line — what is actually wrong), fix (one line — what the user must do), command (the exact shell "
     "command or console action, or '' if none). Known patterns: OAuth/session expired or 'could not be refreshed' "
-    "→ re-login (claude-code: `claude setup-token`; codex: `codex login`; gemini/agy: re-auth the agy CLI); "
+    "or not logged in → re-login (claude-code: `claude auth login` then verify `claude auth status` shows "
+    "loggedIn:true — NOT setup-token, which does not persist for the headless lane; codex: `codex login`; "
+    "gemini/agy: re-auth the agy CLI); "
     "credits/prepayment depleted or a billing 402/429-credit → top up that provider's billing console; an API "
     "'not enabled'/'has not been used in project' → enable it (e.g. `gcloud services enable aiplatform.googleapis"
     ".com --project=<id>`); a plain rate limit (429 no-credit) → transient, it retries with backoff, no user "
@@ -219,7 +221,82 @@ def remediate(sweep_result, model=None):
             for kind, name, reason in down]
 
 
+def _health_db():
+    from . import budget
+    db = budget._ledger_db()
+    with budget._lock:
+        db.execute("CREATE TABLE IF NOT EXISTS lane_health "
+                   "(resource TEXT PRIMARY KEY, kind TEXT, reachable INTEGER, reason TEXT, fix TEXT, command TEXT, ts TEXT)")
+        db.commit()
+    return db
+
+
+def _persist_health(sweep_result, acts=None):
+    """Record the last check's reachability (+ any remediation fixes) so the RECEIPT and the notifier can read it
+    with NO new sweep — that is what lets a red lane surface in every conversation for $0. One row per resource."""
+    import datetime
+    from . import budget
+    fixes = {(a["kind"], a["resource"]): a for a in (acts or [])}
+    ts = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+    rows = []
+    for lane, d in (sweep_result.get("lanes") or {}).items():
+        f = fixes.get(("lane", lane), {})
+        rows.append((lane, "lane", 1 if d.get("reachable") else 0, d.get("reason"), f.get("fix"), f.get("command"), ts))
+    for prov, d in (sweep_result.get("metered") or {}).items():
+        f = fixes.get(("metered", prov), {})
+        rows.append((prov, "metered", 1 if d.get("reachable") else 0, d.get("reason"), f.get("fix"), f.get("command"), ts))
+    db = _health_db()
+    with budget._lock:
+        db.executemany("INSERT OR REPLACE INTO lane_health VALUES (?,?,?,?,?,?,?)", rows)
+        db.commit()
+
+
+def health_reds(since_hours=48):
+    """The resources recorded UNREACHABLE by the last check (fresh within since_hours) → [{resource,kind,fix,command}].
+    $0 — a cached read, safe to call from the receipt on every turn. [] when all healthy or no recent check."""
+    import datetime
+    from . import budget
+    cutoff = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=since_hours)).isoformat(timespec="seconds")
+    try:
+        db = _health_db()
+        with budget._lock:
+            rows = db.execute("SELECT resource,kind,fix,command FROM lane_health WHERE reachable=0 AND ts>=?",
+                              (cutoff,)).fetchall()
+        return [{"resource": r[0], "kind": r[1], "fix": r[2], "command": r[3]} for r in rows]
+    except Exception:
+        return []                                        # a health read must NEVER break the receipt
+
+
+def health_alert():
+    """A ONE-LINE receipt alert when a lane/provider is down (from the last check), or None. Rides the receipt that
+    already prints every turn, so 'which login do I fix' reaches every conversation without a new sweep. $0."""
+    reds = health_reds()
+    if not reds:
+        return None
+    tip = next((r for r in reds if r.get("fix")), None)
+    head = "⚠ spendguard: %d resource(s) unreachable (%s)" % (
+        len(reds), ", ".join(r["resource"] for r in reds[:4]) + ("…" if len(reds) > 4 else ""))
+    if tip and tip.get("fix"):
+        head += " — %s: %s" % (tip["resource"], tip["fix"]) + (" [%s]" % tip["command"] if tip.get("command") else "")
+    else:
+        head += " — run `spendguard reliability --run --remediate` for the fix"
+    return head
+
+
+def _notify_macos(title, message):
+    """Best-effort macOS notification (osascript). Silent no-op off macOS or if osascript is absent — a notifier
+    must never break the check."""
+    try:
+        import subprocess
+        subprocess.run(["osascript", "-e",
+                        'display notification %s with title %s' % (json.dumps(message), json.dumps(title))],
+                       capture_output=True, timeout=10)
+    except Exception:
+        pass
+
+
 def main(argv=None):
+    import json                                          # for the notifier's osascript-safe quoting
     argv = list(argv or [])
     run = "--run" in argv
     if "--json" in argv:                                 # machine-readable status of every lane + metered provider
@@ -248,6 +325,7 @@ def main(argv=None):
                  else f"reason={str(d.get('reason'))[:50]}"))
     print(f"\n  {sum(1 for d in res['lanes'].values() if d['reachable'])}/{len(res['lanes'])} lanes + "
           f"{n_ok}/{len(res['metered'])} metered providers reachable.")
+    acts = None
     if "--remediate" in argv:                            # tell the user EXACTLY what to fix for each down resource
         acts = remediate(res)                            # agentic + cached — $0 when all healthy, only pays for NEW failures
         if not acts:
@@ -257,4 +335,11 @@ def main(argv=None):
             for a in acts:
                 print(f"    [{a['kind']}] {a['resource']}: {a.get('issue')}")
                 print(f"        → {a.get('fix')}" + (f"    ·    run: {a['command']}" if a.get("command") else ""))
+    _persist_health(res, acts)                           # cache the result so the RECEIPT + notifier read it for $0 later
+    if "--notify" in argv:                               # macOS push on any red (for the SCHEDULED, headless run)
+        reds = health_reds()
+        if reds:
+            _notify_macos("spendguard: %d lane/API down" % len(reds),
+                          (reds[0].get("fix") or "run: spendguard reliability --run --remediate")
+                          + " — " + ", ".join(r["resource"] for r in reds[:5]))
     return 0
