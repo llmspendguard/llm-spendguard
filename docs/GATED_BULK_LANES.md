@@ -88,6 +88,11 @@ run-to-run. Least-loaded still **preserves the cross-vendor spread** — an empt
 gets seeded first; only then do fast lanes pull the overflow (it never collapses the panel to one lane). Set
 `SPENDGUARD_LANE_STATIC_DISPATCH=1` to revert to round-robin (A/B or a safety fallback).
 
+**Measured, and the win GROWS with scale** (dispatch_ab.py, 3 live lanes, bandit pinned off): at N=96 static median
+**47.9s → dynamic 28.7s (~1.67×)**, dynamic correctly shifting load off the slow lane (claude-code 32→14) onto the
+fast ones. (At small N — 16 — the lanes aren't saturated, so it's a wash, 8.9s → 8.5s: dispatch policy matters most
+exactly when the fan is big enough to saturate, which is when it matters.)
+
 **Tail-hedging (opt-in — off by default).** Dynamic dispatch balances *lanes*; it can't rescue a single *call* that
 stalls while its lane is otherwise fine. With `dispatch.lane_hedge_ms` set (config, or env
 `SPENDGUARD_DISPATCH_LANE_HEDGE_MS`), a task that hasn't returned a served row within that many ms fires a
@@ -96,8 +101,17 @@ stretches a batch's wall-clock.
 
 - **Always $0.** The hedge runs `no_metered_fallback=True` regardless of the caller's `refuse_billed`, so it can
   only ever cost a free lane miss; the primary keeps the caller's billing semantics.
-- **Set it to the intent's measured p90–p95 latency, never lower.** A too-low value hedges *every* task (2× lane
-  load for no tail win). `0` (the default) is off — no extra lane load.
+- **It needs SPARE lane capacity — do NOT enable it on a saturated bulk fan.** Hedging works by running the
+  duplicate on an *idle* lane. When the fan already saturates every lane (N ≫ total concurrency — the bulk case),
+  the duplicate only competes for the same busy slots, so it strictly *adds* load. MEASURED (dispatch_ab.py, N=96,
+  3 lanes): `hedge_ms=3000` hedged **92–94 of 96** tasks and made the batch **65.7s vs 28.7s for plain dynamic —
+  2.3× SLOWER**. This is why it is off by default; on a large bulk job leave it off and let dynamic dispatch do the
+  work.
+- **Set it WELL ABOVE loaded p95, never near the median.** Its niche is a small/medium fan (spare capacity) where a
+  stray straggler would otherwise dominate the wall. Tuned high it stays inert on clean runs — MEASURED (N=16,
+  `hedge_ms=12000`): **0 tasks hedged**, wall ≈ plain dynamic (8.7s vs 8.5s) — and only a genuine straggler (a call
+  exceeding the threshold) actually fires a hedge (unit-proven in test_lane_hedging.py: a slow primary loses the
+  race to the fast hedge). A too-low value is the trap above. `0` (the default) is off — no extra lane load.
 - **Diversity stays visible.** A hedge lands on a different vendor and only on the tail; a raced row carries
   `hedged=True` + `hedge_peer=<the lane it raced>`, so any skew toward fast vendors is measurable, never silent.
 - **Measure it:** `scripts/probe/dispatch_ab.py` (env `N`, `ROUNDS`, `HEDGE_MS`) reports wall-clock + per-lane
