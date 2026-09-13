@@ -100,10 +100,12 @@ _posts = []
 _fail_first_on_thinking = {"v": False}
 
 
-class _FakeResp:
+class _FakeResp:                                   # a context manager — zai_exec now closes the response via `with`
     def read(self): return json.dumps(
         {"content": [{"type": "thinking", "text": "…"}, {"type": "text", "text": "answer"}],
          "usage": {"input_tokens": 12, "output_tokens": 7}}).encode("utf-8")
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
 
 
 def _fake_urlopen(req, *a, **k):
