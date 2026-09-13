@@ -221,14 +221,66 @@ def remediate(sweep_result, model=None):
             for kind, name, reason in down]
 
 
+_EVENT_NOTIFY_THROTTLE_S = 1800          # per-lane: notify on a mid-use failure at most once per 30 min (no spam)
+
+
 def _health_db():
     from . import budget
     db = budget._ledger_db()
     with budget._lock:
         db.execute("CREATE TABLE IF NOT EXISTS lane_health "
-                   "(resource TEXT PRIMARY KEY, kind TEXT, reachable INTEGER, reason TEXT, fix TEXT, command TEXT, ts TEXT)")
+                   "(resource TEXT PRIMARY KEY, kind TEXT, reachable INTEGER, reason TEXT, fix TEXT, command TEXT, "
+                   "ts TEXT, source TEXT, notified_ts TEXT)")
+        cols = [r[1] for r in db.execute("PRAGMA table_info(lane_health)")]
+        for c in ("source", "notified_ts"):              # migrate a table created before event-driven health
+            if c not in cols:
+                db.execute(f"ALTER TABLE lane_health ADD COLUMN {c} TEXT")
         db.commit()
     return db
+
+
+def note_lane_down(lane, reason):
+    """EVENT-driven health: a lane FAILED mid-use (cooled 'down'/'failover' — a real failure, not a transient
+    quota). Record it so the receipt surfaces it THIS turn, and fire a THROTTLED macOS notify (once per lane per
+    window). $0, no LLM (points at --remediate for the fix, or a cached fix if the same failure was classified
+    before). An event-sourced down auto-clears once the lane stops cooling (health_reds). NEVER raises — this is on
+    the call path and must not break a call."""
+    try:
+        import datetime
+        from . import budget
+        now = datetime.datetime.now(datetime.timezone.utc)
+        db = _health_db()
+        fix = cmd = None
+        try:                                             # a cached remediation for THIS exact failure, if any ($0)
+            with budget._lock:
+                rr = db.execute("SELECT fix,command FROM lane_remediation WHERE signature=?",
+                                (_remediation_signature("lane", lane, reason),)).fetchone()
+            if rr:
+                fix, cmd = rr[0], rr[1]
+        except Exception:
+            pass
+        with budget._lock:
+            prev = db.execute("SELECT notified_ts FROM lane_health WHERE resource=?", (lane,)).fetchone()
+            db.execute("INSERT OR REPLACE INTO lane_health "
+                       "(resource,kind,reachable,reason,fix,command,ts,source,notified_ts) VALUES (?,?,?,?,?,?,?,?,?)",
+                       (lane, "lane", 0, reason, fix, cmd, now.isoformat(timespec="seconds"), "event",
+                        prev[0] if prev else None))
+            db.commit()
+        last = None
+        if prev and prev[0]:
+            try:
+                last = datetime.datetime.fromisoformat(prev[0])
+            except Exception:
+                last = None
+        if last is None or (now - last).total_seconds() >= _EVENT_NOTIFY_THROTTLE_S:
+            _notify_macos("spendguard: lane %s failing" % lane,
+                          (fix or "run: spendguard reliability --run --remediate"))
+            with budget._lock:
+                db.execute("UPDATE lane_health SET notified_ts=? WHERE resource=?",
+                           (now.isoformat(timespec="seconds"), lane))
+                db.commit()
+    except Exception:
+        pass
 
 
 def _persist_health(sweep_result, acts=None):
@@ -241,13 +293,14 @@ def _persist_health(sweep_result, acts=None):
     rows = []
     for lane, d in (sweep_result.get("lanes") or {}).items():
         f = fixes.get(("lane", lane), {})
-        rows.append((lane, "lane", 1 if d.get("reachable") else 0, d.get("reason"), f.get("fix"), f.get("command"), ts))
+        rows.append((lane, "lane", 1 if d.get("reachable") else 0, d.get("reason"), f.get("fix"), f.get("command"), ts, "sweep", None))
     for prov, d in (sweep_result.get("metered") or {}).items():
         f = fixes.get(("metered", prov), {})
-        rows.append((prov, "metered", 1 if d.get("reachable") else 0, d.get("reason"), f.get("fix"), f.get("command"), ts))
+        rows.append((prov, "metered", 1 if d.get("reachable") else 0, d.get("reason"), f.get("fix"), f.get("command"), ts, "sweep", None))
     db = _health_db()
-    with budget._lock:
-        db.executemany("INSERT OR REPLACE INTO lane_health VALUES (?,?,?,?,?,?,?)", rows)
+    with budget._lock:                                   # a sweep is AUTHORITATIVE (source=sweep) — it clears an event row too
+        db.executemany("INSERT OR REPLACE INTO lane_health "
+                       "(resource,kind,reachable,reason,fix,command,ts,source,notified_ts) VALUES (?,?,?,?,?,?,?,?,?)", rows)
         db.commit()
 
 
@@ -260,9 +313,25 @@ def health_reds(since_hours=48):
     try:
         db = _health_db()
         with budget._lock:
-            rows = db.execute("SELECT resource,kind,fix,command FROM lane_health WHERE reachable=0 AND ts>=?",
+            rows = db.execute("SELECT resource,kind,fix,command,source FROM lane_health WHERE reachable=0 AND ts>=?",
                               (cutoff,)).fetchall()
-        return [{"resource": r[0], "kind": r[1], "fix": r[2], "command": r[3]} for r in rows]
+        out, recovered = [], []
+        for resource, kind, fix, command, source in rows:
+            if source == "event" and kind == "lane":     # an EVENT down is stale once the lane stops cooling: it
+                try:                                      # RECOVERED. Resolve it (below) rather than silently drop it.
+                    from . import adapters
+                    if not adapters._lane_cooling(resource):
+                        recovered.append(resource)
+                        continue
+                except Exception:
+                    pass
+            out.append({"resource": resource, "kind": kind, "fix": fix, "command": command})
+        if recovered:                                    # SELF-HEAL, traced (a DB write, not a silent skip): a recovered
+            with budget._lock:                            # event-lane is marked reachable so it clears everywhere at once
+                db.executemany("UPDATE lane_health SET reachable=1 WHERE resource=? AND source='event'",
+                               [(r,) for r in recovered])
+                db.commit()
+        return out
     except Exception:
         return []                                        # a health read must NEVER break the receipt
 

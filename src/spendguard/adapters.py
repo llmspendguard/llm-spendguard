@@ -120,6 +120,15 @@ def _lane_cool(lane, seconds=None, reason=""):
     retried every 900s only to re-fail. Delegates to the unified resource_state store — which persists it so a
     FRESH bulk process honours a still-active cool (a quota exhaustion must outlive the process that hit it)."""
     resource_state.cool(resource_state.lane_key(lane), float(seconds) if seconds else _pool_cooldown_s(), reason)
+    # EVENT-DRIVEN health: a lane cooled for a real FAILURE ('down'/'failover') — not a transient 'quota'/model-miss —
+    # is a "this lane just went down" event. Record it (so it hits the receipt this turn) + throttled-notify. The
+    # reason codes are the ones THIS function was passed (mechanical), never a judgement about an error. Fail-safe.
+    if reason in ("down", "failover"):
+        try:
+            from . import reliability
+            reliability.note_lane_down(lane, reason)
+        except Exception:
+            pass
 
 
 def _lane_model_cooling(lane, model):

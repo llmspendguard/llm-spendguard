@@ -60,11 +60,22 @@ from spendguard import budget as _budget
 _old = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=100)).isoformat(timespec="seconds")
 _db = reliability._health_db()
 with _budget._lock:
-    _db.execute("INSERT OR REPLACE INTO lane_health VALUES (?,?,?,?,?,?,?)",
-                ("stalelane", "lane", 0, "an old failure", None, None, _old))
+    _db.execute("INSERT OR REPLACE INTO lane_health "
+                "(resource,kind,reachable,reason,fix,command,ts,source,notified_ts) VALUES (?,?,?,?,?,?,?,?,?)",
+                ("stalelane", "lane", 0, "an old failure", None, None, _old, "sweep", None))
     _db.commit()
 ck("a row older than the window is EXCLUDED (no phantom alert from a days-old check)",
    not any(r["resource"] == "stalelane" for r in reliability.health_reds(since_hours=48)))
+
+print("-- EVENT-driven: a lane that fails mid-use surfaces immediately, then AUTO-CLEARS on recovery --")
+from spendguard import adapters
+reliability._notify_macos = lambda *a, **k: None       # never fire a real macOS notification in a test
+adapters._lane_cooling = lambda _l: True               # simulate: the lane is currently cooling (just failed)
+reliability.note_lane_down("codex", "down")
+ck("a mid-use failure surfaces while the lane is cooling", any(r["resource"] == "codex" for r in reliability.health_reds()))
+adapters._lane_cooling = lambda _l: False              # simulate: recovered — no longer cooling
+ck("the event down AUTO-CLEARS once the lane recovers (no re-sweep needed)",
+   not any(r["resource"] == "codex" for r in reliability.health_reds()))
 
 print(f"\n{'[FAIL]' if _fails else 'OK'} test_lane_health_receipt: {len(_fails)} failure(s)")
 sys.exit(1 if _fails else 0)
