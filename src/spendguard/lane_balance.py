@@ -645,16 +645,41 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
 
     _cklock = _th.Lock()
 
+    _ck_failures = [0]                                       # checkpoint-write failures this run (LOUD, surfaced in stats)
+
     def _checkpoint(i, res):
+        # DURABLE by construction, not single-copy: `res` is ALSO returned to the caller in-memory (results[i]) and the
+        # task is DETERMINISTICALLY RE-RUNNABLE from `tasks` at $0 on a lane — so a lost checkpoint line is a re-run,
+        # never lost work. The checkpoint is the caller's chosen RESUME log (an append journal replayed by CONTENT key),
+        # whose path the caller guarantees. This function's ONLY job is to keep that resume guarantee, and to make its
+        # FAILURE loud rather than silent.
         if not checkpoint:
             return
         try:
             with _cklock, open(checkpoint, "a") as f:        # one durable line per finished task, keyed by CONTENT
                 f.write(_json.dumps({"k": _keys[i], "r": res}) + "\n")
-        except Exception:
-            pass                                             # a checkpoint-write failure must not lose the in-hand result
+        except Exception as e:
+            # The in-hand result is STILL returned (results[i]) — a checkpoint-write failure loses nothing in THIS run.
+            # But it must be LOUD, never swallowed: a silently-unwritable checkpoint (disk full / path gone) means the
+            # run FINISHES yet a later RESUME re-runs from the last good line — re-doing work (or re-paying on a billed
+            # lane). Count every failure and announce the FIRST once (never per-row spam); the count rides `stats` so
+            # the caller sees the resume guarantee degraded, not a clean run.
+            with _cklock:
+                _ck_failures[0] += 1
+                _first = _ck_failures[0] == 1
+            if _first:
+                _bulk_notify(f"checkpoint write FAILED ({type(e).__name__}: {str(e)[:80]}) to {checkpoint} — results "
+                             f"still returned, but a RESUME will re-run from the last good line. Fix the path/disk.")
 
     n = int(max_workers or dispatch._limit("global_concurrency", 24))
+    # TAIL-HEDGING (opt-in, default OFF): if a task's PRIMARY lane hasn't returned a SERVED row within this many ms,
+    # fire a DUPLICATE on the most-free OTHER lane and take whichever yields text first. Dynamic dispatch (above)
+    # fixes the per-LANE tail (a slow lane no longer head-of-line-blocks); hedging fixes the per-CALL tail (one
+    # request that stalls while its lane is otherwise fine). 0 = off (no extra lane load); set it to the intent's
+    # measured p90–p95 latency, never lower (a too-low value hedges EVERY task = 2x lane load for no tail win).
+    # Read via dispatch._limit so it shares the dispatch config surface: `dispatch.lane_hedge_ms` or env
+    # SPENDGUARD_DISPATCH_LANE_HEDGE_MS. The hedge itself NEVER bills (below), so worst case is one free lane miss.
+    _hedge_ms = int(dispatch._limit("lane_hedge_ms", 0))
 
     _MAX_IMAGE_BYTES = 32 * 1024 * 1024               # bound raw image bytes so a giant file is a LOUD row, not an OOM
     from . import gate as _gate
@@ -720,9 +745,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
                "reason": _row_reason, "error": r.get("error")}
         return i, _arity_checked(row, task, expect_ids)
 
-    def _run_task_on_lane(i, task):
-        if _vision:                                    # vision fans across the API (lanes are text-only) — same core
-            return _run_task_on_api(i, task)
+    def _pick_arm(i):
         # DYNAMIC LEAST-LOADED dispatch (replaces static round-robin arms[i % n], which HEAD-OF-LINE-BLOCKS: a task
         # was bound to lane i%n before the run, so one momentarily-slow lane queued its whole share while the fast
         # lanes finished theirs and IDLED — the wall-clock became the slowest lane's chain). Instead, pick the arm
@@ -741,8 +764,13 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
                     if not adapters._lane_cooling(_al):
                         lane, use_name = _al, _au
                         break
-        else:
-            lane, use_name = _least_loaded_arm(arms, i, dispatch.lane_free, adapters._lane_cooling)
+            return lane, use_name
+        return _least_loaded_arm(arms, i, dispatch.lane_free, adapters._lane_cooling)
+
+    def _attempt_on_lane(i, task, lane, use_name, no_fallback):
+        # ONE attempt on ONE named lane — the body shared by the plain path AND each side of a hedge race. `no_fallback`
+        # is the caller's refuse_billed for the PRIMARY, but ALWAYS True for a HEDGE (a hedge can never bill — at worst
+        # a free lane miss). Returns (i, row); a DELIBERATE stop RAISES (halts the fan), never a textless row.
         prov = lane_catalog.lane_provider(lane)
         model = f"{prov}:{use_name}"
         try:
@@ -758,17 +786,16 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
         try:
             calls.set_context(intent=intent)          # tag this worker thread's calls with the intent (attribution)
             r = adapters.call(model, task, system=system, reasoning=reasoning,   # sig=intent → the OUTPUT budget is this
-                              sig=intent, timeout_s=deadline_s,                  # call-class's measured p99; refuse_billed
-                              no_metered_fallback=refuse_billed,                 # → a lane miss errors, never a paid retry
+                              sig=intent, timeout_s=deadline_s,                  # call-class's measured p99; no_fallback
+                              no_metered_fallback=no_fallback,                   # → a lane miss errors, never a paid retry
                               schema=schema,                                     # STRUCTURED output: adapters folds the shape
                               #                                                    into the lane's prompt + validates locally,
                               #                                                    falling back to the API (strict) if off-shape
                               no_substitution=bool(tier or lanes))               # CONFINEMENT: tier= OR lanes= pins the
             #                                                                      arm — the bandit can NEVER swap it for a
-            #                                                                      model OUTSIDE the requested set (lanes=
-            #                                                                      was a suggestion, not a confinement, until
-            #                                                                      this); the only fallback is THIS model's metered
-            #                                                                      API, which is in-tier by construction
+            #                                                                      model OUTSIDE the requested set; the only
+            #                                                                      fallback is THIS model's metered API,
+            #                                                                      in-tier by construction
             # (receipt suppressed via set_context above, not the context manager)  each reply feeds that measurement
         except _STOP_TYPES:
             raise                                            # a deliberate stop (refusal / deadline) propagates — it is
@@ -810,11 +837,61 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
                # `error`. None only when the row was SERVED (has text). See _row_reason above.
                "reason": _row_reason, "error": r.get("error")}
         if r.get("substituted_from") and f"{served_prov}:{served_model}" != f"{prov}:{use_name}":
-            row["intended"] = f"{prov}:{use_name}"           # what the round-robin picked, before the substitution
+            row["intended"] = f"{prov}:{use_name}"           # what the pick chose, before the substitution
             row["substituted_from"] = r["substituted_from"]
         # ITEM COMPLETENESS (arity): a shape-perfect packed envelope that silently DROPPED ids becomes a retried MISS,
         # never a $0 success with items lost. One shared contract with the vision runner (_arity_checked).
         return i, _arity_checked(row, task, expect_ids)
+
+    def _hedged_attempt(i, task, lane, use_name):
+        # TAIL-HEDGING (opt-in via _hedge_ms): run the PRIMARY; if it hasn't returned a SERVED row within _hedge_ms,
+        # fire a DUPLICATE on the most-free OTHER lane and take whichever yields text FIRST. Kills the per-CALL tail
+        # (one stalled request stretching the whole batch wall) that dynamic dispatch alone can't — dispatch balances
+        # LANES, hedging rescues a single slow CALL. CONTAINED to the per-task runner: the chunk loop, its per-chunk
+        # pool, and _checkpoint are UNTOUCHED (the durability rule — branch inside the runner, never the chunk loop).
+        # $0: the hedge always runs no_fallback=True, so it can only ever cost a free lane miss. DIVERSITY: the hedge
+        # lands on a DIFFERENT vendor and ONLY on the tail; the winner records hedged=True + the peer lane, so any
+        # skew toward fast vendors is VISIBLE/measurable, never silent. The loser is NOT joined (that would re-add the
+        # tail) — pool.shutdown(wait=False); its dispatch slot releases in _attempt_on_lane's own finally when it ends.
+        pool = _cf.ThreadPoolExecutor(max_workers=2)
+        try:
+            primary = pool.submit(_attempt_on_lane, i, task, lane, use_name, refuse_billed)
+            try:
+                res = primary.result(timeout=_hedge_ms / 1000.0)   # a deliberate stop re-raises here → halts the fan
+            except _cf.TimeoutError:
+                res = None
+            if res is not None and (res[1] or {}).get("text"):
+                return res                                    # primary SERVED within the window — the common case, no hedge
+            # primary is SLOW (still running) or MISSED — hedge on the most-free OTHER non-cooling lane. The lambda
+            # forces the primary's own free to -1 so _least_loaded_arm can never re-pick it (it prefers strictly-more).
+            hlane, hname = _least_loaded_arm(
+                arms, i, lambda l: -1.0 if l == lane else float(dispatch.lane_free(l)), adapters._lane_cooling)
+            if hlane == lane or adapters._lane_cooling(hlane):   # no DISTINCT, non-cooling lane to hedge onto — wait it out
+                return res if res is not None else primary.result()
+            hedge = pool.submit(_attempt_on_lane, i, task, hlane, hname, True)   # hedge is ALWAYS $0 (no_fallback=True)
+            pending = {hedge} if res is not None else {primary, hedge}
+            fallback = res                                    # a primary miss we already hold; returned iff the hedge misses too
+            while pending:
+                done, pending = _cf.wait(pending, return_when=_cf.FIRST_COMPLETED)
+                for f in done:
+                    fr = f.result()                           # a deliberate stop from either side re-raises → halts the fan
+                    if (fr[1] or {}).get("text"):
+                        row = dict(fr[1])
+                        row["hedged"] = True                  # this row was RACED; row["lane"] already names who actually served
+                        row["hedge_peer"] = lane if f is hedge else hlane
+                        return fr[0], row
+                    fallback = fallback or fr                 # keep the first miss as the fallback if BOTH sides miss
+            return fallback if fallback is not None else res
+        finally:
+            pool.shutdown(wait=False)                         # NON-BLOCKING — never join the loser (that re-adds the tail)
+
+    def _run_task_on_lane(i, task):
+        if _vision:                                    # vision fans across the API (lanes are text-only) — same core
+            return _run_task_on_api(i, task)
+        lane, use_name = _pick_arm(i)                  # DYNAMIC least-loaded (or static under SPENDGUARD_LANE_STATIC_DISPATCH)
+        if _hedge_ms <= 0 or len(arms) < 2:            # hedging off, or only one lane → the plain single attempt (unchanged path)
+            return _attempt_on_lane(i, task, lane, use_name, refuse_billed)
+        return _hedged_attempt(i, task, lane, use_name)
 
     # CHUNKED: bound how many futures are in flight at once, and make each chunk's results durable before the next.
     for c0 in range(0, len(todo), max(1, int(chunk_size))):
@@ -850,6 +927,8 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
                 else:
                     row["reason"] = "batch_eligible"
                 results[i] = row
+    if stats is not None and _ck_failures[0]:                # a degraded RESUME guarantee rides stats, not just a notice
+        stats["checkpoint_failures"] = _ck_failures[0]
     return _finalize(results)
 
 

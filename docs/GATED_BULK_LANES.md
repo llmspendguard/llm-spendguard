@@ -76,6 +76,33 @@ HALTS the fan; any other submit failure leaves the misses `batch_eligible` with 
 distinct-call count, the lanes it would use, and the worst-case metered $ ceiling if every task fell to the API —
 so the batch-vs-lane decision is made against a number, not discovered on an invoice.
 
+## 3. Dispatch tuning — dynamic least-loaded (default) + optional tail-hedging
+
+The fan spreads tasks across lanes in two independent ways; the first is on always, the second is opt-in.
+
+**Dynamic least-loaded (the default, nothing to set).** Each task is assigned to the lane with the **most free
+dispatch capacity right now** (`dispatch.lane_free = limit − in_flight − waiting`), not by a static `arms[i % n]`
+round-robin. Static binding head-of-line-blocked: a task bound to a momentarily-slow lane queued its whole share
+while the fast lanes finished and idled, so the wall-clock became the *slowest* lane's chain and the speedup swung
+run-to-run. Least-loaded still **preserves the cross-vendor spread** — an empty lane is fully free, so every vendor
+gets seeded first; only then do fast lanes pull the overflow (it never collapses the panel to one lane). Set
+`SPENDGUARD_LANE_STATIC_DISPATCH=1` to revert to round-robin (A/B or a safety fallback).
+
+**Tail-hedging (opt-in — off by default).** Dynamic dispatch balances *lanes*; it can't rescue a single *call* that
+stalls while its lane is otherwise fine. With `dispatch.lane_hedge_ms` set (config, or env
+`SPENDGUARD_DISPATCH_LANE_HEDGE_MS`), a task that hasn't returned a served row within that many ms fires a
+**duplicate on the most-free *other* lane** and takes whichever returns first — killing the per-call long tail that
+stretches a batch's wall-clock.
+
+- **Always $0.** The hedge runs `no_metered_fallback=True` regardless of the caller's `refuse_billed`, so it can
+  only ever cost a free lane miss; the primary keeps the caller's billing semantics.
+- **Set it to the intent's measured p90–p95 latency, never lower.** A too-low value hedges *every* task (2× lane
+  load for no tail win). `0` (the default) is off — no extra lane load.
+- **Diversity stays visible.** A hedge lands on a different vendor and only on the tail; a raced row carries
+  `hedged=True` + `hedge_peer=<the lane it raced>`, so any skew toward fast vendors is measurable, never silent.
+- **Measure it:** `scripts/probe/dispatch_ab.py` (env `N`, `ROUNDS`, `HEDGE_MS`) reports wall-clock + per-lane
+  spread + hedged-count for STATIC vs DYNAMIC vs DYNAMIC+hedge, so before/after is a number, not a guess.
+
 ## Why `parsed` exists now
 
 When you pass `schema=`, each row (and `adapters.call`'s result) carries `parsed` — the decoded object, or `None` if
