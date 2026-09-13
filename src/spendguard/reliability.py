@@ -10,6 +10,8 @@ the live catalog at dispatch, so a rotated id is caught, not sent blind.
 ESTIMATE-FIRST (the spend protocol): sweep(run=False) returns the plan + a $ estimate and spends NOTHING;
 sweep(run=True) executes and returns the reachability matrix — per resource {reachable, executor, cost, reason}.
 """
+import hashlib
+
 from . import adapters, config
 
 # A cheap CHAT model per provider for the probe — a config DEFAULT (reliability.probe_models overrides), not a
@@ -112,10 +114,109 @@ def sweep(run=False, timeout_s=20):
         t0 = _t.time()
         r = adapters.call(f"{prov}:{mid}", "Reply with one word: ok.", sig="spendguard:reliability-sweep",
                           max_tokens=_PROBE_OUT_TOKENS, timeout_s=timeout_s, _probe=True)
-        out["metered"][prov] = {"model": mid, "reachable": not r.get("error"), "cost": r.get("cost"),
+        # A reachability probe answers "is the endpoint up + authed?". adapters' TYPED `truncated` flag means the
+        # model produced MORE than the tiny probe cap — i.e. it ANSWERED (a verbose model overruns "ok") — so the
+        # endpoint is REACHABLE. Reading that structured boolean is parsing a known field, not judging the reply.
+        _err = r.get("error")
+        _truncated = r.get("truncated") is True
+        out["metered"][prov] = {"model": mid, "reachable": (not _err) or _truncated, "cost": r.get("cost"),
                                 "executor": r.get("executor"), "latency": round(_t.time() - t0, 2),
-                                "reason": r.get("error_type") or r.get("error")}
+                                "reason": None if _truncated else (r.get("error_type") or _err)}
     return out
+
+
+_REMEDIATE_SYS = (
+    "You diagnose why a spendguard LLM LANE (a subscription CLI: codex/claude-code/gemini/zai) or a metered "
+    "PROVIDER is unreachable, and tell the USER the exact fix. Given the resource and its error string, return: "
+    "issue (one line — what is actually wrong), fix (one line — what the user must do), command (the exact shell "
+    "command or console action, or '' if none). Known patterns: OAuth/session expired or 'could not be refreshed' "
+    "→ re-login (claude-code: `claude setup-token`; codex: `codex login`; gemini/agy: re-auth the agy CLI); "
+    "credits/prepayment depleted or a billing 402/429-credit → top up that provider's billing console; an API "
+    "'not enabled'/'has not been used in project' → enable it (e.g. `gcloud services enable aiplatform.googleapis"
+    ".com --project=<id>`); a plain rate limit (429 no-credit) → transient, it retries with backoff, no user "
+    "action; an 'invalid/unknown model' → the configured model name is STALE, fix advisor.lane_models to a real "
+    "id. Be specific to THIS error; do not invent a project id or account you were not given.")
+
+_REMEDIATE_SCHEMA = {"type": "object", "properties": {
+    "issue": {"type": "string"}, "fix": {"type": "string"}, "command": {"type": "string"}},
+    "required": ["issue", "fix"]}
+
+
+def _remediation_db():
+    from . import budget
+    db = budget._ledger_db()
+    with budget._lock:
+        db.execute("CREATE TABLE IF NOT EXISTS lane_remediation "
+                   "(signature TEXT PRIMARY KEY, kind TEXT, resource TEXT, issue TEXT, fix TEXT, command TEXT, ts TEXT)")
+        db.commit()
+    return db
+
+
+def _remediation_signature(kind, resource, reason):
+    """Cache key = the EXACT (kind, resource, error) hashed — mechanical IDENTITY, never a 'same failure class'
+    judgement (deciding two different error strings mean the same thing is the LLM's call, not a regex's — and
+    guessing wrong would serve a rate-limit fix for a billing failure). Two errors share a cached remediation ONLY
+    when byte-identical; any change re-classifies (safe). The core lane failures (OAuth expired, credits depleted,
+    API not enabled) are STABLE strings, so a routine check still avoids re-paying for a persistent problem."""
+    return hashlib.sha256(f"{kind}|{resource}|{reason}".encode("utf-8", "replace")).hexdigest()[:24]
+
+
+def _classify_remediation(kind, resource, reason, model=None):
+    """The fix for ONE unreachable resource — CACHED by signature (no re-pay for a known failure class), decided
+    AGENTICALLY (what an error means + how to fix it is a judgement). The WHOLE error is sent (never truncated).
+    Fail-open: on any non-deliberate failure, a generic remediation (never breaks the health check); a DELIBERATE
+    stop propagates."""
+    from . import budget, adapters, calls, config, gate
+    sig = _remediation_signature(kind, resource, reason)
+    db = _remediation_db()
+    with budget._lock:
+        row = db.execute("SELECT issue,fix,command FROM lane_remediation WHERE signature=?", (sig,)).fetchone()
+    if row:
+        return {"issue": row[0], "fix": row[1], "command": row[2] or "", "cached": True}
+    model = model or config.advisor_model()
+    prompt = f"resource: {kind} {resource}\nerror: {reason}\n\nGive the user the fix."   # WHOLE error, never cut
+    try:
+        with calls.context(intent="spendguard:lane-remediation"):
+            # No max_tokens literal — the sig sizes the OUTPUT budget from this call-class's MEASURED p99 (the small
+            # issue/fix/command JSON sits well under the floor), so there is no hand-picked cap to justify.
+            r = adapters.call(model, prompt, system=_REMEDIATE_SYS,
+                              schema=_REMEDIATE_SCHEMA, sig="spendguard:lane-remediation")
+    except Exception as e:
+        if gate.is_deliberate_stop(e):
+            raise
+        return {"issue": str(reason)[:120], "fix": "inspect the lane's auth/quota/model config", "command": "", "cached": False}
+    j = r.get("json")
+    if not isinstance(j, dict):
+        import json as _json
+        try:
+            j = _json.loads(r.get("text") or "")
+        except Exception:
+            j = None
+    if not isinstance(j, dict) or not j.get("issue"):
+        return {"issue": str(reason)[:120], "fix": "inspect the lane's auth/quota/model config", "command": "", "cached": False}
+    out = {"issue": str(j.get("issue"))[:200], "fix": str(j.get("fix"))[:200], "command": str(j.get("command") or "")[:200]}
+    import datetime
+    with budget._lock:                                    # cache a REAL verdict so the next routine check is $0 for it
+        db.execute("INSERT OR REPLACE INTO lane_remediation VALUES (?,?,?,?,?,?,?)",
+                   (sig, kind, resource, out["issue"], out["fix"], out["command"],
+                    datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")))
+        db.commit()
+    return {**out, "cached": False}
+
+
+def remediate(sweep_result, model=None):
+    """Per UNREACHABLE lane/provider in a sweep result, the agentic remediation (cached). [] when all healthy —
+    so a routine check is $0 when nothing is wrong, and only classifies NEW failures. This is the 'tell me which
+    lane needs a login' layer: schedule `spendguard reliability --run --remediate` and act on its ACTION lines."""
+    down = []
+    for lane, d in (sweep_result.get("lanes") or {}).items():
+        if not d.get("reachable"):
+            down.append(("lane", lane, d.get("reason")))
+    for prov, d in (sweep_result.get("metered") or {}).items():
+        if not d.get("reachable"):
+            down.append(("metered", prov, d.get("reason")))
+    return [{"kind": kind, "resource": name, "reason": reason, **_classify_remediation(kind, name, reason, model)}
+            for kind, name, reason in down]
 
 
 def main(argv=None):
@@ -147,4 +248,13 @@ def main(argv=None):
                  else f"reason={str(d.get('reason'))[:50]}"))
     print(f"\n  {sum(1 for d in res['lanes'].values() if d['reachable'])}/{len(res['lanes'])} lanes + "
           f"{n_ok}/{len(res['metered'])} metered providers reachable.")
+    if "--remediate" in argv:                            # tell the user EXACTLY what to fix for each down resource
+        acts = remediate(res)                            # agentic + cached — $0 when all healthy, only pays for NEW failures
+        if not acts:
+            print("\n  ✅ ALL HEALTHY — no action needed.")
+        else:
+            print(f"\n  🔧 ACTION NEEDED ({len(acts)}):")
+            for a in acts:
+                print(f"    [{a['kind']}] {a['resource']}: {a.get('issue')}")
+                print(f"        → {a.get('fix')}" + (f"    ·    run: {a['command']}" if a.get("command") else ""))
     return 0
