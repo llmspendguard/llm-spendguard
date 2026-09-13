@@ -357,6 +357,21 @@ def queue_state():
                 for k, b in _GOV._buckets.items()}
 
 
+def lane_free(lane):
+    """Free concurrency slots on a subscription LANE right now = limit − in_flight − waiting. The signal a fan uses
+    for LEAST-LOADED dispatch: pick the arm with the MOST free slots so no lane idles while a slow one bottlenecks,
+    and a momentarily-slow lane stops attracting new work within the run. A pure READ — never creates a bucket; a
+    lane with no bucket yet is FULLY free (its whole cap), so the first tasks fill every empty lane first, which is
+    exactly what seeds the cross-vendor SPREAD before the fast lanes start pulling the overflow."""
+    key = f"lane:{lane}"
+    limit = _limit(f"lane_concurrency_{lane}", _limit("lane_concurrency", DEFAULT_LANE_CONCURRENCY))
+    with _GOV._lock:
+        b = _GOV._buckets.get(key)
+        if b is None:
+            return max(1, int(limit))
+        return max(0, b.limit - b.in_flight - b.waiting)
+
+
 # ── ADMISSION CONTROL (the non-blocking axis acquire() lacks) ────────────────────────────────────────────────────
 # acquire() BLOCKS up to a deadline, so a saturated machine leaves callers spawned-and-WAITING — hundreds of hook
 # processes each holding RAM while queued. try_admit() is the missing primitive: a caller checks for a slot and, if

@@ -343,6 +343,27 @@ def _bulk_notify(msg):
     print(f"[spendguard] bulk_delegate: {msg}", file=_s.stderr)
 
 
+def _least_loaded_arm(arms, start, free_of, cooling_of):
+    """Pick the (lane, use_name) arm with the MOST free dispatch capacity right now — DYNAMIC least-loaded dispatch,
+    the fix for static round-robin's head-of-line blocking (one slow lane queued its whole share while fast lanes
+    idled). Scans arms in round-robin order FROM `start` so equal-load ties (the start of a run, every lane empty)
+    fall to the round-robin arm — which SEEDS the cross-vendor spread before the fast lanes pull the overflow.
+    Skips cooling arms (subsumes the old rotation); every arm cooling → arms[start] (the round-robin pick). Pure:
+    free_of(lane)->free_slots and cooling_of(lane)->bool are injected, so the policy is unit-testable offline.
+    MEASURED (A/B, bandit pinned off): faster AND tighter wall-clock than static, spectrum preserved (weighted to
+    the fast lanes, never collapsed to one) — scripts/probe/dispatch_ab.py."""
+    n = len(arms)
+    pick, best_free = arms[start % n], -1
+    for off in range(n):
+        a = arms[(start + off) % n]
+        if cooling_of(a[0]):
+            continue
+        f = free_of(a[0])
+        if f > best_free:                             # strictly-greater keeps the FIRST (round-robin-ordered) tie → spread
+            best_free, pick = f, a
+    return pick
+
+
 def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, deadline_s=120.0,
                   checkpoint=None, chunk_size=100, refuse_billed=False, stats=None, force=False, tier=None,
                   schema=None, expect_ids=None, gate_sig=None, lanes=None, images_for=None, vision_model=None,
@@ -702,16 +723,26 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
     def _run_task_on_lane(i, task):
         if _vision:                                    # vision fans across the API (lanes are text-only) — same core
             return _run_task_on_api(i, task)
-        lane, use_name = arms[i % len(arms)]          # round-robin — spread across the good lanes for parallelism
-        # A lane can start COOLING mid-run (an earlier task hit its quota → persisted reset window). `arms` was
-        # fixed at the start, so round-robin would keep landing work here; rotate to the next arm that is not
-        # cooling so a demoted lane stops receiving work within this run too. If every arm is cooling, keep the pick.
-        if adapters._lane_cooling(lane) and len(arms) > 1:
-            for j in range(1, len(arms)):
-                alt_lane, alt_use = arms[(i + j) % len(arms)]
-                if not adapters._lane_cooling(alt_lane):
-                    lane, use_name = alt_lane, alt_use
-                    break
+        # DYNAMIC LEAST-LOADED dispatch (replaces static round-robin arms[i % n], which HEAD-OF-LINE-BLOCKS: a task
+        # was bound to lane i%n before the run, so one momentarily-slow lane queued its whole share while the fast
+        # lanes finished theirs and IDLED — the wall-clock became the slowest lane's chain). Instead, pick the arm
+        # with the MOST FREE dispatch capacity RIGHT NOW (dispatch.lane_free), scanning in round-robin order FROM
+        # i%n so ties (all equally free — the start of a run) still fall to the round-robin arm. This PRESERVES the
+        # cross-vendor SPREAD (an empty lane is fully free → filled first, so every vendor gets work — the diversity
+        # the fan exists for) AND removes the idle/bottleneck (a fast lane pulls the overflow; a slow/busy lane stops
+        # attracting work). Cooling arms are skipped here (subsuming the old rotation). All cooling → round-robin pick.
+        _n_arms = len(arms)
+        _start = i % _n_arms
+        if _os.environ.get("SPENDGUARD_LANE_STATIC_DISPATCH"):   # opt-out to the OLD static round-robin (A/B + safety)
+            lane, use_name = arms[_start]
+            if adapters._lane_cooling(lane) and _n_arms > 1:
+                for _j in range(1, _n_arms):
+                    _al, _au = arms[(i + _j) % _n_arms]
+                    if not adapters._lane_cooling(_al):
+                        lane, use_name = _al, _au
+                        break
+        else:
+            lane, use_name = _least_loaded_arm(arms, i, dispatch.lane_free, adapters._lane_cooling)
         prov = lane_catalog.lane_provider(lane)
         model = f"{prov}:{use_name}"
         try:
