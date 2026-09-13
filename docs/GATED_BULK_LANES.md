@@ -94,24 +94,26 @@ fast ones. (At small N — 16 — the lanes aren't saturated, so it's a wash, 8.
 exactly when the fan is big enough to saturate, which is when it matters.)
 
 **Tail-hedging (opt-in — off by default).** Dynamic dispatch balances *lanes*; it can't rescue a single *call* that
-stalls while its lane is otherwise fine. With `dispatch.lane_hedge_ms` set (config, or env
-`SPENDGUARD_DISPATCH_LANE_HEDGE_MS`), a task that hasn't returned a served row within that many ms fires a
-**duplicate on the most-free *other* lane** and takes whichever returns first — killing the per-call long tail that
-stretches a batch's wall-clock.
+stalls while its lane is otherwise fine. With `dispatch.lane_hedge_ms` set (config, env
+`SPENDGUARD_DISPATCH_LANE_HEDGE_MS`, or per-call `bulk_delegate(hedge_ms=…)`), a task that hasn't returned a served
+row within that many ms fires a **duplicate on the most-free *other* lane** and takes whichever returns first —
+killing the per-call long tail that stretches a batch's wall-clock.
 
+- **The SPARE-CAPACITY GATE makes it safe on any fan size — this is the key property.** A hedge fires only when the
+  chosen other lane has a genuinely free slot right now (`dispatch.lane_free(hlane) > 0`). So on a saturated bulk fan
+  (N ≫ total concurrency) every lane is full → **no hedge fires**, and the duplicate can never pile onto busy slots.
+  MEASURED, same catastrophic config before/after the gate (dispatch_ab.py, N=96, `hedge_ms=3000`): **92–94 of 96
+  hedged → 0–8**, and the wall went from **65.7s (2.3× slower than dynamic) back to ≈ dynamic**. The gate self-limits
+  hedging to small fans with idle capacity, so the same setting is safe for a small per-edit fan and a wide repo wave.
 - **Always $0.** The hedge runs `no_metered_fallback=True` regardless of the caller's `refuse_billed`, so it can
   only ever cost a free lane miss; the primary keeps the caller's billing semantics.
-- **It needs SPARE lane capacity — do NOT enable it on a saturated bulk fan.** Hedging works by running the
-  duplicate on an *idle* lane. When the fan already saturates every lane (N ≫ total concurrency — the bulk case),
-  the duplicate only competes for the same busy slots, so it strictly *adds* load. MEASURED (dispatch_ab.py, N=96,
-  3 lanes): `hedge_ms=3000` hedged **92–94 of 96** tasks and made the batch **65.7s vs 28.7s for plain dynamic —
-  2.3× SLOWER**. This is why it is off by default; on a large bulk job leave it off and let dynamic dispatch do the
-  work.
-- **Set it WELL ABOVE loaded p95, never near the median.** Its niche is a small/medium fan (spare capacity) where a
-  stray straggler would otherwise dominate the wall. Tuned high it stays inert on clean runs — MEASURED (N=16,
-  `hedge_ms=12000`): **0 tasks hedged**, wall ≈ plain dynamic (8.7s vs 8.5s) — and only a genuine straggler (a call
-  exceeding the threshold) actually fires a hedge (unit-proven in test_lane_hedging.py: a slow primary loses the
-  race to the fast hedge). A too-low value is the trap above. `0` (the default) is off — no extra lane load.
+- **Set it near the intent's measured p90–p95** so only the slowest tail (the calls dominating the wall) is raced;
+  the gate makes over-hedging harmless, but a value near the median wastes $0 plan calls hedging non-stragglers.
+  MEASURED here (this account, ~20k honestreview calls/mo): per-call p50 **4.5s** · p90 **11.4s** · p95 **15.7s** ·
+  p99 **33.5s** · max **366s** — a real long tail. `dispatch.lane_hedge_ms=12000` (≈ p90–p95) is enabled by default
+  on this deployment: it races honestreview's slowest ~10% (the tail that dominates a per-edit fan) onto a free lane
+  and leaves the other 90% untouched. (Shipped code default is `0` = off, since a hedge spends an extra plan call;
+  enable per deployment with `spendguard config set dispatch.lane_hedge_ms <ms>`.)
 - **Diversity stays visible.** A hedge lands on a different vendor and only on the tail; a raced row carries
   `hedged=True` + `hedge_peer=<the lane it raced>`, so any skew toward fast vendors is measurable, never silent.
 - **Measure it:** `scripts/probe/dispatch_ab.py` (env `N`, `ROUNDS`, `HEDGE_MS`) reports wall-clock + per-lane

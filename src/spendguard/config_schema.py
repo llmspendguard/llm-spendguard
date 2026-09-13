@@ -310,6 +310,18 @@ SETTINGS = [
               "runaway fan-out. SPENDGUARD_DISPATCH_OFF=1 disables the governor entirely (every acquire a no-op). "
               "Lane concurrency is also co-governed ACROSS processes via flock slot-files (two separate runs share "
               "one subscription plan's budget); SPENDGUARD_DISPATCH_XP_OFF=1 disables just that cross-process layer."),
+    dict(section="dispatch", key="lane_hedge_ms", store="config.json:dispatch.lane_hedge_ms",
+         env="SPENDGUARD_DISPATCH_LANE_HEDGE_MS", default=0, kind="int", secret=False,
+         desc="TAIL-HEDGING window in ms; 0 = OFF (the shipped default — hedging spends an extra $0 plan call, so it "
+              "is opt-in). When set, a bulk_delegate task that has not returned a served row within this many ms "
+              "fires a DUPLICATE on the most-free OTHER lane and takes whichever answers first — rescuing a single "
+              "stalled CALL (dynamic dispatch balances LANES; this rescues one slow call). SPARE-CAPACITY-GATED: it "
+              "only fires when another lane has a genuinely free slot, so on a saturated bulk fan NO hedge fires (never "
+              "a pile-on) and it self-limits to small fans with idle capacity. The hedge is always $0 (no_metered_"
+              "fallback). Set it WELL ABOVE the intent's measured p90 (too low wastes plan calls hedging non-"
+              "stragglers); a caller may override per-call via bulk_delegate(hedge_ms=…). MEASURED here: honestreview "
+              "per-call p90≈11s / p95≈16s / p99≈34s, so 12000 races its slowest ~10% (the tail that dominates a "
+              "per-edit fan) while leaving the rest untouched."),
     dict(section="ask", key="default_vendors", store="config.json:ask.default_vendors",
          env="SPENDGUARD_ASK_DEFAULT_VENDORS", default=None, kind="string|null", secret=False,
          desc="Default cross-LLM panel for `spendguard.ask` / `spendguard ask` when the caller names none — a "

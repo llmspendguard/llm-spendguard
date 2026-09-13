@@ -368,7 +368,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
                   checkpoint=None, chunk_size=100, refuse_billed=False, stats=None, force=False, tier=None,
                   schema=None, expect_ids=None, gate_sig=None, lanes=None, images_for=None, vision_model=None,
                   model_for=None, prompt_for=None, task_key=None, return_keyed=False,
-                  on_miss=None, batch_submit=None):
+                  on_miss=None, batch_submit=None, hedge_ms=None):
     """Fan a LIST of similar tasks across ALL viable idle lanes CONCURRENTLY — the right shape for a BULK job (e.g.
     symgrep's ~6k one-sentence symbol descriptions) that the per-call bandit would trickle one at a time. Each task
     runs on a lane (round-robin across the lanes the bandit rates GOOD for this intent), each admission BOUNDED by
@@ -677,9 +677,12 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
     # fixes the per-LANE tail (a slow lane no longer head-of-line-blocks); hedging fixes the per-CALL tail (one
     # request that stalls while its lane is otherwise fine). 0 = off (no extra lane load); set it to the intent's
     # measured p90–p95 latency, never lower (a too-low value hedges EVERY task = 2x lane load for no tail win).
-    # Read via dispatch._limit so it shares the dispatch config surface: `dispatch.lane_hedge_ms` or env
-    # SPENDGUARD_DISPATCH_LANE_HEDGE_MS. The hedge itself NEVER bills (below), so worst case is one free lane miss.
-    _hedge_ms = int(dispatch._limit("lane_hedge_ms", 0))
+    # The `hedge_ms` PARAM wins (a caller that knows its fan is small + latency profile — e.g. honestreview's
+    # per-edit judge fans — opts in per-call), else the config surface `dispatch.lane_hedge_ms` / env
+    # SPENDGUARD_DISPATCH_LANE_HEDGE_MS. So a small-fan caller enables hedging WITHOUT a global that would also arm
+    # it on bulk. The hedge itself NEVER bills (below) and is spare-capacity-gated (below), so it can neither bill
+    # nor pile onto a saturated fan — worst case one free lane miss.
+    _hedge_ms = int(hedge_ms if hedge_ms is not None else dispatch._limit("lane_hedge_ms", 0))
 
     _MAX_IMAGE_BYTES = 32 * 1024 * 1024               # bound raw image bytes so a giant file is a LOUD row, not an OOM
     from . import gate as _gate
@@ -866,7 +869,13 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
             # forces the primary's own free to -1 so _least_loaded_arm can never re-pick it (it prefers strictly-more).
             hlane, hname = _least_loaded_arm(
                 arms, i, lambda l: -1.0 if l == lane else float(dispatch.lane_free(l)), adapters._lane_cooling)
-            if hlane == lane or adapters._lane_cooling(hlane):   # no DISTINCT, non-cooling lane to hedge onto — wait it out
+            # SPARE-CAPACITY GATE — this is what makes hedging SAFE on any fan size. Only hedge if the chosen OTHER
+            # lane has a genuinely free dispatch slot RIGHT NOW (lane_free>0, a pure read of the governor). On a
+            # SATURATED bulk fan every lane's free is 0, so no hedge fires and the duplicate never piles onto busy
+            # slots — auto-avoiding the measured N=96/hedge_ms=3000 → 2.3x-SLOWER trap without the caller tuning
+            # anything. On a small fan with spare capacity a free lane exists, so a straggler still gets raced.
+            # (A bound on a real quantity — free slots — not a meaning-judgement; deliberately arithmetic.)
+            if hlane == lane or adapters._lane_cooling(hlane) or dispatch.lane_free(hlane) <= 0:
                 return res if res is not None else primary.result()
             hedge = pool.submit(_attempt_on_lane, i, task, hlane, hname, True)   # hedge is ALWAYS $0 (no_fallback=True)
             pending = {hedge} if res is not None else {primary, hedge}
