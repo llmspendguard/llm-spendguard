@@ -65,7 +65,7 @@ _GROUPS = [
         ("sync-prices", "refresh the price breadth layer now"),
         ("sync-catalog", "refresh the live model-catalog (validates model ids at dispatch)"),
         ("balances", "per-vendor metered prepay balance (sunk-pool vs on-demand), for routing"),
-        ("reliability", "sweep every lane ($0) + metered provider (--run) for reachability; --remediate = agentic per-lane FIX (which login/quota/API to fix), cached"),
+        ("reliability", "sweep every lane ($0) + metered provider (--run) for reachability; --remediate = agentic per-lane FIX (which login/quota/API to fix), cached; --notify = macOS notification on any red"),
         ("preflight", "resolve model ids (served + priced; stale→fix) BEFORE a batch — catches a bad id for $0"),
         ("verify", "self-check every money path: model ids · failover map · keys · economics (--probe = live)"),
         ("pricing", "print the canonical price table"),

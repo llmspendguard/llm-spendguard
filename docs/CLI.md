@@ -73,7 +73,10 @@ spendguard bakeoff X --candidates v:m,v:m [--efforts minimal,low,medium,high] [-
 spendguard effort-titrate X [--model v:m] [--efforts …] [--sample N] [--requirement-aware [--adjudicator v:m]] [--run]   # learn the CHEAPEST reasoning effort that HOLDS quality, per (intent,model); estimate unless --run
 #   --requirement-aware: judge each output against the PROMPT'S OWN extracted requirements, two-tier (cheap screen → opus adjudicator on the unsure calls) — the sharpest "did it meet the spec" ruler.
 spendguard savings [--json]                   # the THIRD axis: what spendguard SAVED (measured + counterfactual, by source) — kept SEPARATE from real-$/est-value, never summed
-spendguard reliability [--run] [--json]       # sweep every $0 lane + metered provider for reachability; each probe wall-clock-bounded so a hung endpoint fails fast (--run = tiny pings)
+spendguard reliability [--run] [--remediate] [--notify] [--json]   # sweep every $0 lane + metered provider for reachability; each probe wall-clock-bounded so a hung endpoint fails fast (--run = tiny pings)
+#   --remediate: for each DOWN resource, the exact FIX (issue/fix/command — which login/quota/API) decided AGENTICALLY + cached (only a NEW failure costs). e.g. claude-code down → `claude auth login`.
+#   --notify: fire a macOS notification on any red (for a scheduled/headless run). The result is CACHED, so a down lane also surfaces in the receipt EVERY turn — and a lane that fails mid-use surfaces INSTANTLY (event-driven) + auto-clears on recovery.
+#   Schedule it: a launchd agent running `reliability --run --remediate --notify` daily = a standing lane-health watch (see docs/SUBSCRIPTION_VALUE.md).
 # Make spendguard PICK the model+effort for you on a REAL call (not just advise): the API takes reasoning="best-value" —
 #   spendguard.adapters.call(prompt, reasoning="best-value", intent="X")  → cheapest (model,effort) whose quality holds for X; books the saving vs the counterfactual.
 

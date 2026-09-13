@@ -399,10 +399,18 @@ def _tool_health(args):
     met_up = sum(1 for d in res["metered"].values() if d.get("reachable"))
     down = ([f"lane:{k}" for k, d in res["lanes"].items() if not d.get("reachable")]
             + [f"metered:{k}" for k, d in res["metered"].items() if not d.get("reachable")])
-    return {"note": ("live reachability — lanes are $0, the metered pings cost ~a few $0.0001 total; each probe is "
-                     "bounded by timeout_s so a dead endpoint (e.g. the flaky agy lane) fails fast" if run
+    actions = None
+    if run and down and args.get("remediate", True):
+        actions = reliability.remediate(res)              # agentic FIX per down resource (cached — $0 for a known failure)
+    if run:
+        reliability._persist_health(res, actions)         # a health check from ANY surface feeds the receipt alert + notifier
+    return {"note": ("live reachability + the FIX for each down resource (agentic, cached) — lanes $0, the metered "
+                     "pings cost ~a few $0.0001; each probe is bounded by timeout_s so a dead endpoint fails fast. "
+                     "The result is also cached so a down lane surfaces in the receipt" if run
                      else "estimate only (run=false) — $0, no probe"),
             "lanes": res["lanes"], "metered": res["metered"],
+            "actions": [{"resource": a["resource"], "kind": a["kind"], "issue": a.get("issue"),
+                         "fix": a.get("fix"), "command": a.get("command")} for a in (actions or [])],
             "summary": {"lanes_up": lanes_up, "lanes_total": len(res["lanes"]),
                         "metered_up": met_up, "metered_total": len(res["metered"]), "down": down}}
 
@@ -422,12 +430,15 @@ def _tool_savings(args):
 
 _TOOLS = {
     "spendguard_health": (
-        "Live reachability of every $0 subscription LANE + every metered PROVIDER — a fast, BOUNDED health check. "
-        "Each probe is time-bounded (timeout_s) so ONE hung endpoint (e.g. the flaky agy/gemini lane) cannot wedge "
-        "the sweep. Lanes are $0; the metered pings cost ~a few $0.0001 total. Returns per-resource {reachable, "
-        "executor, cost, latency, reason} + a summary of what is DOWN. run=false → estimate only ($0).",
+        "Live reachability of every $0 subscription LANE + every metered PROVIDER, PLUS the exact FIX for anything "
+        "down (which login/quota/API to fix) — a fast, BOUNDED health check. Each probe is time-bounded (timeout_s) "
+        "so ONE hung endpoint cannot wedge the sweep. Lanes are $0; the metered pings cost ~a few $0.0001; the "
+        "remediation is agentic + CACHED (only a NEW failure costs). Returns per-resource {reachable, executor, "
+        "cost, latency, reason}, an `actions` list (issue/fix/command per down resource), and a summary. The result "
+        "is cached so a down lane also surfaces in the receipt/notifier. run=false → estimate only ($0).",
         {"type": "object", "properties": {
             "run": {"type": "boolean", "description": "actually probe (default true); false = $0 estimate only"},
+            "remediate": {"type": "boolean", "description": "include the agentic FIX for each down resource (default true; cached)"},
             "timeout_s": {"type": "integer", "description": "per-probe bound in seconds (default 20) — a dead endpoint fails this fast"}},
          "additionalProperties": False},
         _tool_health),

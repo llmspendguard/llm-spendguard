@@ -137,3 +137,44 @@ Now a `strong` fungible call ranks: **Codex ($0) → [claude shed: "protected + 
 → metered**. Background work flows to Codex, and the Claude weekly's last 15% is preserved for interactive coding
 that can't run anywhere else — used to ~100% by reset, not over. When the week rolls over and Claude is *behind*
 pace again, it starts absorbing fungible work once more, automatically.
+
+## Keeping lanes healthy (model names + the standing watch)
+
+Each lane serves its plan's OWN model ids — verify against the live CLI, never assume (a stale name is the most
+common lane breakage). `advisor.lane_models` in `~/.spendguard/config.json`:
+
+| lane | how it runs | model ids (verify with) | reasoning |
+|---|---|---|---|
+| **codex** | `codex mcp-server` (warm, concurrent) | `gpt-5.6-luna` (cheap) / `gpt-5.6-sol` (strong) | `reasoning_effort` |
+| **zai-coding** | HTTP `api.z.ai/api/anthropic`, `ZAI_CODING_API_KEY` | `glm-5.3` | 429 auto-backoff |
+| **gemini** | `agy` CLI | `gemini-3.8-flash-{low,medium,high}`, `gemini-3.1-pro-*` — run **`agy models`** | effort is the **id SUFFIX** |
+| **claude-code** | `claude` CLI on your Max login | `claude-opus-4-8` / `claude-haiku-4-5` | (no one-shot effort flag) |
+
+**A lane needs its own login/quota, separate from any IDE session:** codex → `codex login`; claude-code →
+`claude auth login` (verify `claude auth status` shows `loggedIn:true` — **not** `setup-token`, which does not
+persist for a headless spawn); gemini/agy → its GCP project needs the Vertex/Agent-Platform API enabled
+(`gcloud services enable aiplatform.googleapis.com --project=<id>`) + `roles/aiplatform.user`.
+
+**The standing watch — `spendguard reliability --run --remediate --notify`:**
+- **`--remediate`** — for every unreachable lane/provider, the exact FIX (issue / fix / command), decided
+  agentically and **cached** (only a genuinely new failure costs a meta call).
+- **`--notify`** — a macOS notification on any red (for a headless/scheduled run).
+- The result is **cached**, so a down lane also surfaces as a one-line ⚠ in the **spendguard receipt every turn**,
+  in any conversation — and a lane that fails **mid-use** surfaces INSTANTLY (event-driven, off the cooldown path)
+  and **auto-clears** when it recovers. The same MCP tool is `spendguard_health` (with `remediate`).
+- **Schedule it** (a daily launchd agent + the instant event notification = a complete watch):
+
+```bash
+cat > ~/Library/LaunchAgents/com.spendguard.lanehealth.plist <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.spendguard.lanehealth</string>
+  <key>ProgramArguments</key><array><string>/bin/sh</string><string>-lc</string>
+    <string>exec /path/to/.venv.nosync/bin/spendguard reliability --run --remediate --notify</string></array>
+  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
+  <key>StandardOutPath</key><string>/Users/you/.spendguard/lane_health.log</string>
+</dict></plist>
+PLIST
+launchctl load ~/Library/LaunchAgents/com.spendguard.lanehealth.plist
+```
