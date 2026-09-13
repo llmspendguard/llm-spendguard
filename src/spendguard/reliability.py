@@ -328,7 +328,7 @@ def _persist_health(sweep_result, acts=None):
     with budget._lock:
         prior = {r[0]: (r[1], r[2]) for r in db.execute("SELECT resource, fix, command FROM lane_health").fetchall()}
 
-    def _row(res, kind, d):
+    def _health_row(res, kind, d):
         reachable = bool(d.get("reachable"))
         if reachable:
             fix = cmd = None                             # healthy → clear any stale fix (a reachable lane needs none)
@@ -339,8 +339,8 @@ def _persist_health(sweep_result, acts=None):
             cmd = f.get("command") if f.get("command") is not None else _pc
         return (res, kind, 1 if reachable else 0, d.get("reason"), fix, cmd, ts, "sweep", None)
 
-    rows = [_row(lane, "lane", d) for lane, d in (sweep_result.get("lanes") or {}).items()]
-    rows += [_row(prov, "metered", d) for prov, d in (sweep_result.get("metered") or {}).items()]
+    rows = [_health_row(lane, "lane", d) for lane, d in (sweep_result.get("lanes") or {}).items()]
+    rows += [_health_row(prov, "metered", d) for prov, d in (sweep_result.get("metered") or {}).items()]
     with budget._lock:
         db.executemany("INSERT OR REPLACE INTO lane_health "
                        "(resource,kind,reachable,reason,fix,command,ts,source,notified_ts) VALUES (?,?,?,?,?,?,?,?,?)", rows)
