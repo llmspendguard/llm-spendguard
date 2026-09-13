@@ -100,8 +100,11 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
         req = urllib.request.Request(
             _base_url().rstrip("/") + "/v1/messages", data=json.dumps(b).encode("utf-8"),
             headers={"x-api-key": key, "anthropic-version": _ANTHROPIC_VERSION, "content-type": "application/json"})
-        resp = urllib.request.urlopen(req, context=config.ssl_context(), timeout=timeout)
-        return json.loads(resp.read())
+        # CLOSE the response — `with` releases the socket/fd back to the pool on EVERY call. Leaving it open
+        # (the prior `resp = urlopen(...); resp.read()`) leaked a connection per call, so a burst of concurrent
+        # lane calls exhausted fds and hung. urllib gives no pooling, so an unclosed handle is a hard leak.
+        with urllib.request.urlopen(req, context=config.ssl_context(), timeout=timeout) as resp:
+            return json.loads(resp.read())
 
     def _errdict(exc):
         detail = ""
