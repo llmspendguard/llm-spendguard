@@ -67,15 +67,39 @@ with _budget._lock:
 ck("a row older than the window is EXCLUDED (no phantom alert from a days-old check)",
    not any(r["resource"] == "stalelane" for r in reliability.health_reds(since_hours=48)))
 
-print("-- EVENT-driven: a lane that fails mid-use surfaces immediately, then AUTO-CLEARS on recovery --")
-from spendguard import adapters
-reliability._notify_macos = lambda *a, **k: None       # never fire a real macOS notification in a test
-adapters._lane_cooling = lambda _l: True               # simulate: the lane is currently cooling (just failed)
-reliability.note_lane_down("codex", "down")
-ck("a mid-use failure surfaces while the lane is cooling", any(r["resource"] == "codex" for r in reliability.health_reds()))
-adapters._lane_cooling = lambda _l: False              # simulate: recovered — no longer cooling
-ck("the event down AUTO-CLEARS once the lane recovers (no re-sweep needed)",
+print("-- EVENT-driven, CONFIRM-GATED: a mid-use blip is CONFIRMED by a probe before it surfaces/alarms --")
+from spendguard import adapters, lanes as _lanes
+_notes = []
+reliability._notify_macos = lambda title, msg=None: _notes.append(title)   # capture toasts instead of firing them
+adapters._lane_cooling = lambda _l: True               # the lane is currently cooling (it just failed a call)
+
+# CONFIRM says STILL down → a real outage → it surfaces in the receipt + toasts (once). Probe stubbed (no real CLI).
+_lanes.probe = lambda timeout_s=None, only=None: [{"lane": only, "ok": False, "error": "OAuth session expired"}]
+reliability._confirm_then_notify("codex", "down", None)
+ck("a CONFIRMED-down lane surfaces while cooling", any(r["resource"] == "codex" for r in reliability.health_reds()))
+ck("a CONFIRMED-down lane toasts once", any("codex" in t for t in _notes))
+adapters._lane_cooling = lambda _l: False              # recovered — no longer cooling
+ck("the confirmed event down AUTO-CLEARS once the lane recovers (no re-sweep needed)",
    not any(r["resource"] == "codex" for r in reliability.health_reds()))
+
+# CONFIRM says RECOVERED → a transient blip under load → NEVER surfaces, NEVER toasts (THE flapping fix).
+adapters._lane_cooling = lambda _l: True
+_notes.clear()
+_lanes.probe = lambda timeout_s=None, only=None: [{"lane": only, "ok": True}]   # the probe finds the lane healthy
+reliability._confirm_then_notify("zai-coding", "down", None)
+ck("a transient blip that RECOVERS on confirm never surfaces (no false red)",
+   not any(r["resource"] == "zai-coding" for r in reliability.health_reds()))
+ck("a transient blip that RECOVERS on confirm never toasts (no false alarm)", not _notes)
+
+print("-- 'failover' (a substitute lane carried the work) NEVER alarms; only 'down' reaches the alert path --")
+_called = []
+reliability.note_lane_down = lambda lane, reason: _called.append((lane, reason))
+adapters._lane_cool("codex", reason="failover")        # substitute carried the work → graceful success, not an outage
+ck("a 'failover' cool does NOT reach the lane-down alert path (no false toast)", not _called)
+adapters._lane_cool("codex", reason="quota")           # a transient quota/rate cool is also not an outage
+ck("a 'quota' cool does NOT reach the alert path either", not _called)
+adapters._lane_cool("codex", reason="down")            # lane + API BOTH missed → the only alert candidate
+ck("only a 'down' cool reaches the (confirm-gated) alert path", _called == [("codex", "down")])
 
 print(f"\n{'[FAIL]' if _fails else 'OK'} test_lane_health_receipt: {len(_fails)} failure(s)")
 sys.exit(1 if _fails else 0)

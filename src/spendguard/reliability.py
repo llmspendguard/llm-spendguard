@@ -241,16 +241,76 @@ def _health_db():
 
 
 def note_lane_down(lane, reason):
-    """EVENT-driven health: a lane FAILED mid-use (cooled 'down'/'failover' — a real failure, not a transient
-    quota). Record it so the receipt surfaces it THIS turn, and fire a THROTTLED macOS notify (once per lane per
-    window). $0, no LLM (points at --remediate for the fix, or a cached fix if the same failure was classified
-    before). An event-sourced down auto-clears once the lane stops cooling (health_reds). NEVER raises — this is on
-    the call path and must not break a call."""
+    """EVENT-driven health: a lane's call AND its metered-API fallback BOTH missed ONE call ('down'). That is a
+    SUSPECTED outage, NOT a proven one — under load a lane misses a call and recovers on the next, so alarming on the
+    raw event is a false toast (the flapping seen under heavy fans). So: record NOTHING red yet, CLAIM the throttle
+    window (optimistic, so a burst spawns ONE confirm not many), then CONFIRM with a bounded probe in a CONTAINED
+    daemon thread — OFF the call path (the call was already served via the fallback). Only a lane that STILL fails the
+    probe is marked down + toasted (throttled, once per lane per window); a lane that RECOVERED stays silent, with no
+    red in the receipt either. $0, no LLM. NEVER raises — this is on the call path and must not break a call."""
     try:
         import datetime
+        import threading
         from . import budget
         now = datetime.datetime.now(datetime.timezone.utc)
         db = _health_db()
+        with budget._lock:
+            prev = db.execute("SELECT notified_ts FROM lane_health WHERE resource=?", (lane,)).fetchone()
+        last = None
+        if prev and prev[0]:
+            try:
+                last = datetime.datetime.fromisoformat(prev[0])
+            except Exception:
+                last = None
+        if last is not None and (now - last).total_seconds() < _EVENT_NOTIFY_THROTTLE_S:
+            return                                       # already alarmed for this lane inside the window — no re-probe, no spam
+        with budget._lock:                               # CLAIM the window so concurrent down-events spawn ONE confirm, not many
+            db.execute("UPDATE lane_health SET notified_ts=? WHERE resource=?", (now.isoformat(timespec="seconds"), lane))
+            db.commit()
+        threading.Thread(target=_confirm_then_notify, args=(lane, reason, prev[0] if prev else None),
+                         name="lane-confirm-%s" % lane, daemon=True).start()   # daemon: an abandoned probe must never hold the process
+    except Exception:
+        pass
+
+
+def _release_claim(lane, prev_notified):
+    """Restore a lane's prior notify mark — called when a confirm did NOT alarm (recovered, or could-not-confirm), so
+    the optimistic window-claim doesn't suppress a genuine FUTURE down. Best-effort; never raises."""
+    try:
+        from . import budget
+        db = _health_db()
+        with budget._lock:
+            db.execute("UPDATE lane_health SET notified_ts=? WHERE resource=?", (prev_notified, lane))
+            db.commit()
+    except Exception:
+        pass
+
+
+def _confirm_then_notify(lane, reason, prev_notified):
+    """Background confirm for note_lane_down (OFF the call path): probe THIS lane once (bounded, $0). STILL
+    unreachable → a real outage that needs the user → mark it down (so the receipt surfaces it) + toast, with a cached
+    remediation fix if we have one. RECOVERED → the event was a transient blip under load → record nothing red and
+    RESTORE the prior notify mark, so a genuine future down still alarms. NEVER raises (daemon thread)."""
+    import datetime
+    from . import budget, lanes as _lanes, gate as _gate
+    try:
+        rows = _lanes.probe(timeout_s=15, only=lane)     # targeted, bounded — at most one per lane per throttle window
+    except _gate.deliberate_stop_types():
+        # A spend refusal / DispatchTimeout means we cannot even confirm now (budget stop / saturated governor). HONOR
+        # the stop: abort the confirm and DO NOT alarm — release the claim so a later event re-confirms. The deliberate
+        # stop is acted on (we stop), never downgraded to keep-going-and-toast.
+        _release_claim(lane, prev_notified)
+        return
+    except Exception:
+        _release_claim(lane, prev_notified)              # a non-deliberate probe error: cannot confirm → silent, no alarm
+        return
+    try:
+        still_down = any((not r.get("ok") and not r.get("skipped")) for r in rows)   # only=lane → 0/1 real rows
+        now = datetime.datetime.now(datetime.timezone.utc)
+        db = _health_db()
+        if not still_down:
+            _release_claim(lane, prev_notified)          # recovered → transient blip, not an outage
+            return
         fix = cmd = None
         try:                                             # a cached remediation for THIS exact failure, if any ($0)
             with budget._lock:
@@ -260,26 +320,16 @@ def note_lane_down(lane, reason):
                 fix, cmd = rr[0], rr[1]
         except Exception:
             pass
-        with budget._lock:
-            prev = db.execute("SELECT notified_ts FROM lane_health WHERE resource=?", (lane,)).fetchone()
+        with budget._lock:                               # CONFIRMED down → surface it (receipt) + keep the claimed notified_ts
+            _ex = db.execute("SELECT fix, command FROM lane_health WHERE resource=?", (lane,)).fetchone()
+            fix = fix if fix is not None else (_ex[0] if _ex else None)   # NEVER clobber a known remediation fix/command
+            cmd = cmd if cmd is not None else (_ex[1] if _ex else None)   # with an empty fresh lookup — preserve it
             db.execute("INSERT OR REPLACE INTO lane_health "
                        "(resource,kind,reachable,reason,fix,command,ts,source,notified_ts) VALUES (?,?,?,?,?,?,?,?,?)",
                        (lane, "lane", 0, reason, fix, cmd, now.isoformat(timespec="seconds"), "event",
-                        prev[0] if prev else None))
+                        now.isoformat(timespec="seconds")))
             db.commit()
-        last = None
-        if prev and prev[0]:
-            try:
-                last = datetime.datetime.fromisoformat(prev[0])
-            except Exception:
-                last = None
-        if last is None or (now - last).total_seconds() >= _EVENT_NOTIFY_THROTTLE_S:
-            _notify_macos("spendguard: lane %s failing" % lane,
-                          (fix or "run: spendguard reliability --run --remediate"))
-            with budget._lock:
-                db.execute("UPDATE lane_health SET notified_ts=? WHERE resource=?",
-                           (now.isoformat(timespec="seconds"), lane))
-                db.commit()
+        _notify_macos("spendguard: lane %s down" % lane, (fix or "run: spendguard reliability --run --remediate"))
     except Exception:
         pass
 
