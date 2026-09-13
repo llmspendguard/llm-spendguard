@@ -163,6 +163,11 @@ def _lane_note_ok(lane, prompt):
     failure is content-specific, not a size limit, so a small anomaly can never disable a lane that demonstrably
     handles that size. Lives in the resource_state store's size_ceiling axis (persistent, survives processes)."""
     resource_state.note_proven_good(resource_state.lane_key(lane), len(prompt or ""))
+    try:                                             # a SERVED call RESOLVES any event-down for this lane — the recovery
+        from . import reliability                     # signal that clears the health row + makes the next down a fresh
+        reliability.note_lane_ok(lane)               # blip (not read as a sustained outage). Best-effort; never blocks a call.
+    except Exception:
+        pass
 
 
 def _lane_too_big(lane, prompt):

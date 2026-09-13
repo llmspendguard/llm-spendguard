@@ -241,115 +241,107 @@ def _health_db():
 
 
 def note_lane_down(lane, reason):
-    """EVENT-driven health: a lane's call AND its metered-API fallback BOTH missed ONE call ('down'). That is a
-    SUSPECTED outage, NOT a proven one — under load a lane misses a call and recovers on the next, so alarming on the
-    raw event is a false toast (the flapping seen under heavy fans). So: record NOTHING red yet, CLAIM the throttle
-    window (optimistic, so a burst spawns ONE confirm not many), then CONFIRM with a bounded probe in a CONTAINED
-    daemon thread — OFF the call path (the call was already served via the fallback). Only a lane that STILL fails the
-    probe is marked down + toasted (throttled, once per lane per window); a lane that RECOVERED stays silent, with no
-    red in the receipt either. $0, no LLM. NEVER raises — this is on the call path and must not break a call."""
+    """EVENT-driven health: a lane's call AND its metered-API fallback both missed ONE call ('down'). A LONE down is a
+    SUSPECTED blip — under load a lane misses a call, COOLS, is SKIPPED for its cooldown, and recovers on the next
+    retry — so alarming on it is a false toast (the flapping seen under heavy fans). We RECORD it (the receipt
+    surfaces it), but ALARM only on a SUSTAINED down: a 'down' while the lane is ALREADY an UNRESOLVED event-down
+    (reachable=0, source 'event'), i.e. it failed AGAIN before ever serving successfully. Resolution is a real SUCCESS
+    (note_lane_ok, called from adapters on a served call) or an authoritative sweep — never a clock, so no time
+    threshold decides 'sustained'; the state lives in the SHARED lane_health row, so it is correct ACROSS processes.
+    Throttled. $0, no LLM. NEVER raises — on the call path."""
     try:
         import datetime
-        import threading
         from . import budget
         now = datetime.datetime.now(datetime.timezone.utc)
         db = _health_db()
         with budget._lock:
-            prev = db.execute("SELECT notified_ts FROM lane_health WHERE resource=?", (lane,)).fetchone()
-        last = None
-        if prev and prev[0]:
-            try:
-                last = datetime.datetime.fromisoformat(prev[0])
-            except Exception:
-                last = None
-        if last is not None and (now - last).total_seconds() < _EVENT_NOTIFY_THROTTLE_S:
-            return                                       # already alarmed for this lane inside the window — no re-probe, no spam
-        with budget._lock:                               # CLAIM the window so concurrent down-events spawn ONE confirm, not many
-            db.execute("UPDATE lane_health SET notified_ts=? WHERE resource=?", (now.isoformat(timespec="seconds"), lane))
-            db.commit()
-        threading.Thread(target=_confirm_then_notify, args=(lane, reason, prev[0] if prev else None),
-                         name="lane-confirm-%s" % lane, daemon=True).start()   # daemon: an abandoned probe must never hold the process
-    except Exception:
-        pass
-
-
-def _release_claim(lane, prev_notified):
-    """Restore a lane's prior notify mark — called when a confirm did NOT alarm (recovered, or could-not-confirm), so
-    the optimistic window-claim doesn't suppress a genuine FUTURE down. Best-effort; never raises."""
-    try:
-        from . import budget
-        db = _health_db()
-        with budget._lock:
-            db.execute("UPDATE lane_health SET notified_ts=? WHERE resource=?", (prev_notified, lane))
-            db.commit()
-    except Exception:
-        pass
-
-
-def _confirm_then_notify(lane, reason, prev_notified):
-    """Background confirm for note_lane_down (OFF the call path): probe THIS lane once (bounded, $0). STILL
-    unreachable → a real outage that needs the user → mark it down (so the receipt surfaces it) + toast, with a cached
-    remediation fix if we have one. RECOVERED → the event was a transient blip under load → record nothing red and
-    RESTORE the prior notify mark, so a genuine future down still alarms. NEVER raises (daemon thread)."""
-    import datetime
-    from . import budget, lanes as _lanes, gate as _gate
-    try:
-        rows = _lanes.probe(timeout_s=15, only=lane)     # targeted, bounded — at most one per lane per throttle window
-    except _gate.deliberate_stop_types():
-        # A spend refusal / DispatchTimeout means we cannot even confirm now (budget stop / saturated governor). HONOR
-        # the stop: abort the confirm and DO NOT alarm — release the claim so a later event re-confirms. The deliberate
-        # stop is acted on (we stop), never downgraded to keep-going-and-toast.
-        _release_claim(lane, prev_notified)
-        return
-    except Exception:
-        _release_claim(lane, prev_notified)              # a non-deliberate probe error: cannot confirm → silent, no alarm
-        return
-    try:
-        still_down = any((not r.get("ok") and not r.get("skipped")) for r in rows)   # only=lane → 0/1 real rows
-        now = datetime.datetime.now(datetime.timezone.utc)
-        db = _health_db()
-        if not still_down:
-            _release_claim(lane, prev_notified)          # recovered → transient blip, not an outage
-            return
-        fix = cmd = None
-        try:                                             # a cached remediation for THIS exact failure, if any ($0)
-            with budget._lock:
+            prev = db.execute("SELECT reachable, source, notified_ts, fix, command FROM lane_health WHERE resource=?",
+                              (lane,)).fetchone()
+        # SUSTAINED = the row is ALREADY an unresolved event-down (a real success or a sweep would have cleared it) →
+        # the lane failed again without recovering. A pure STATE read of the shared row, not a magnitude/time cutoff.
+        sustained = bool(prev and prev[0] == 0 and (prev[1] or "").startswith("event"))
+        fix, cmd = (prev[3], prev[4]) if prev else (None, None)
+        try:                                             # refresh a cached remediation for THIS exact failure ($0); never
+            with budget._lock:                           # clobber a known fix/command with an empty lookup — preserve it
                 rr = db.execute("SELECT fix,command FROM lane_remediation WHERE signature=?",
                                 (_remediation_signature("lane", lane, reason),)).fetchone()
-            if rr:
+            if rr and rr[0] is not None:
                 fix, cmd = rr[0], rr[1]
         except Exception:
             pass
-        with budget._lock:                               # CONFIRMED down → surface it (receipt) + keep the claimed notified_ts
-            _ex = db.execute("SELECT fix, command FROM lane_health WHERE resource=?", (lane,)).fetchone()
-            fix = fix if fix is not None else (_ex[0] if _ex else None)   # NEVER clobber a known remediation fix/command
-            cmd = cmd if cmd is not None else (_ex[1] if _ex else None)   # with an empty fresh lookup — preserve it
+        with budget._lock:                               # record the down: the receipt surfaces it; note_lane_ok/sweep clears it
             db.execute("INSERT OR REPLACE INTO lane_health "
                        "(resource,kind,reachable,reason,fix,command,ts,source,notified_ts) VALUES (?,?,?,?,?,?,?,?,?)",
                        (lane, "lane", 0, reason, fix, cmd, now.isoformat(timespec="seconds"), "event",
-                        now.isoformat(timespec="seconds")))
+                        prev[2] if prev else None))
             db.commit()
-        _notify_macos("spendguard: lane %s down" % lane, (fix or "run: spendguard reliability --run --remediate"))
+        if not sustained:
+            return                                       # a LONE down = a suspected blip → recorded, NOT alarmed
+        last = None
+        if prev and prev[2]:
+            try:
+                last = datetime.datetime.fromisoformat(prev[2])
+            except Exception:
+                last = None
+        if last is None or (now - last).total_seconds() >= _EVENT_NOTIFY_THROTTLE_S:
+            _notify_macos("spendguard: lane %s down" % lane,
+                          (fix or "run: spendguard reliability --run --remediate"))
+            with budget._lock:
+                db.execute("UPDATE lane_health SET notified_ts=? WHERE resource=?",
+                           (now.isoformat(timespec="seconds"), lane))
+                db.commit()
+    except Exception:
+        pass
+
+
+def note_lane_ok(lane):
+    """RECOVERY signal: a lane just SERVED a call successfully (adapters._lane_note_ok) → any outage is over. Clear an
+    UNRESOLVED event-down row (reachable=1) so the receipt stops surfacing it AND the NEXT down is read as a fresh
+    blip, not 'sustained'. A single conditional UPDATE keyed on the shared row — cross-process correct, and a no-op
+    for a healthy lane (the WHERE matches nothing). Never touches a sweep's authoritative row. NEVER raises."""
+    try:
+        import datetime
+        from . import budget
+        db = _health_db()
+        with budget._lock:
+            db.execute("UPDATE lane_health SET reachable=1, reason=NULL, source='event-recovered', ts=? "
+                       "WHERE resource=? AND reachable=0 AND source LIKE 'event%'",
+                       (datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"), lane))
+            db.commit()
     except Exception:
         pass
 
 
 def _persist_health(sweep_result, acts=None):
     """Record the last check's reachability (+ any remediation fixes) so the RECEIPT and the notifier can read it
-    with NO new sweep — that is what lets a red lane surface in every conversation for $0. One row per resource."""
+    with NO new sweep — that is what lets a red lane surface in every conversation for $0. One row per resource.
+
+    A sweep is AUTHORITATIVE for REACHABILITY (source=sweep, clears an event row too), but it must NOT clobber a
+    cached remediation fix/command (paid, from a prior --remediate) with NULL just because THIS plain sweep carried
+    no acts: a resource that is STILL unreachable keeps its known fix until a fresh remediation replaces it; a
+    resource that RECOVERED clears its fix (a healthy lane has no fix). So fix loss is impossible from a bare sweep."""
     import datetime
     from . import budget
     fixes = {(a["kind"], a["resource"]): a for a in (acts or [])}
     ts = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
-    rows = []
-    for lane, d in (sweep_result.get("lanes") or {}).items():
-        f = fixes.get(("lane", lane), {})
-        rows.append((lane, "lane", 1 if d.get("reachable") else 0, d.get("reason"), f.get("fix"), f.get("command"), ts, "sweep", None))
-    for prov, d in (sweep_result.get("metered") or {}).items():
-        f = fixes.get(("metered", prov), {})
-        rows.append((prov, "metered", 1 if d.get("reachable") else 0, d.get("reason"), f.get("fix"), f.get("command"), ts, "sweep", None))
     db = _health_db()
-    with budget._lock:                                   # a sweep is AUTHORITATIVE (source=sweep) — it clears an event row too
+    with budget._lock:
+        prior = {r[0]: (r[1], r[2]) for r in db.execute("SELECT resource, fix, command FROM lane_health").fetchall()}
+
+    def _row(res, kind, d):
+        reachable = bool(d.get("reachable"))
+        if reachable:
+            fix = cmd = None                             # healthy → clear any stale fix (a reachable lane needs none)
+        else:
+            f = fixes.get((kind, res), {})
+            _pf, _pc = prior.get(res, (None, None))
+            fix = f.get("fix") if f.get("fix") is not None else _pf      # still-down → keep a KNOWN fix, never NULL it
+            cmd = f.get("command") if f.get("command") is not None else _pc
+        return (res, kind, 1 if reachable else 0, d.get("reason"), fix, cmd, ts, "sweep", None)
+
+    rows = [_row(lane, "lane", d) for lane, d in (sweep_result.get("lanes") or {}).items()]
+    rows += [_row(prov, "metered", d) for prov, d in (sweep_result.get("metered") or {}).items()]
+    with budget._lock:
         db.executemany("INSERT OR REPLACE INTO lane_health "
                        "(resource,kind,reachable,reason,fix,command,ts,source,notified_ts) VALUES (?,?,?,?,?,?,?,?,?)", rows)
         db.commit()

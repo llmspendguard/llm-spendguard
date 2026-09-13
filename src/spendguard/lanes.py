@@ -155,20 +155,16 @@ def _lane_mods():
     return {"claude-code": subscription_exec, "codex": codex_exec, "gemini": antigravity_exec, "zai-coding": zai_exec}
 
 
-def probe(timeout_s=None, only=None):
+def probe(timeout_s=None):
     """Definitive activation check: ONE tiny prompt per enabled lane, straight through its CLI ($0 billed —
     plan-covered; the only spend is a few plan tokens). Each probe is bounded by `timeout_s` when given — a
     reachability ping must NOT wait a lane's full work-timeout (agy's is 300s), so a dead lane fails FAST (in
-    timeout_s) instead of wedging the whole sweep. None → each lane's own default. `only` (a lane name) probes JUST
-    that lane — a TARGETED confirm (e.g. before alarming that a lane went down, to tell a transient blip that
-    recovered from a real outage); None probes every enabled lane. Returns per-lane live results; a fresh probe each
-    call (a point-in-time reachability, not a resumable job — nothing to checkpoint)."""
+    timeout_s) instead of wedging the whole sweep. None → each lane's own default. Returns per-lane live results;
+    a fresh probe each call (a point-in-time reachability, not a resumable job — nothing to checkpoint)."""
     from . import gate as _gate
     mods = _lane_mods()
     res = []
     for ln in lanes_status()["lanes"]:
-        if only is not None and ln["lane"] != only:
-            continue                                    # targeted confirm — skip every lane but the one asked for
         if not ln["enabled"]:
             res.append(dict(lane=ln["lane"], skipped="not enabled by advisor.executor"))
             continue

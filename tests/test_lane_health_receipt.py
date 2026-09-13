@@ -67,29 +67,32 @@ with _budget._lock:
 ck("a row older than the window is EXCLUDED (no phantom alert from a days-old check)",
    not any(r["resource"] == "stalelane" for r in reliability.health_reds(since_hours=48)))
 
-print("-- EVENT-driven, CONFIRM-GATED: a mid-use blip is CONFIRMED by a probe before it surfaces/alarms --")
-from spendguard import adapters, lanes as _lanes
+print("-- EVENT-driven, RESOLUTION-STATE: a LONE 'down' records+surfaces but does NOT toast; a SUSTAINED one does --")
+from spendguard import adapters
 _notes = []
 reliability._notify_macos = lambda title, msg=None: _notes.append(title)   # capture toasts instead of firing them
 adapters._lane_cooling = lambda _l: True               # the lane is currently cooling (it just failed a call)
 
-# CONFIRM says STILL down → a real outage → it surfaces in the receipt + toasts (once). Probe stubbed (no real CLI).
-_lanes.probe = lambda timeout_s=None, only=None: [{"lane": only, "ok": False, "error": "OAuth session expired"}]
-reliability._confirm_then_notify("codex", "down", None)
-ck("a CONFIRMED-down lane surfaces while cooling", any(r["resource"] == "codex" for r in reliability.health_reds()))
-ck("a CONFIRMED-down lane toasts once", any("codex" in t for t in _notes))
-adapters._lane_cooling = lambda _l: False              # recovered — no longer cooling
-ck("the confirmed event down AUTO-CLEARS once the lane recovers (no re-sweep needed)",
-   not any(r["resource"] == "codex" for r in reliability.health_reds()))
+reliability.note_lane_down("codex", "down")            # 1st down (prev row healthy) = a suspected blip
+ck("a LONE down SURFACES while cooling (receipt visibility)", any(r["resource"] == "codex" for r in reliability.health_reds()))
+ck("a LONE down does NOT toast (no false alarm on a blip)", not _notes)
+reliability.note_lane_down("codex", "down")            # 2nd down while STILL unresolved = SUSTAINED (failed again, no success between)
+ck("a SUSTAINED down (row already an unresolved event-down) TOASTS once", any("codex" in t for t in _notes))
 
-# CONFIRM says RECOVERED → a transient blip under load → NEVER surfaces, NEVER toasts (THE flapping fix).
-adapters._lane_cooling = lambda _l: True
+# RECOVERY: a successful serve (note_lane_ok) RESOLVES the down → the row clears and the NEXT down is a fresh blip.
 _notes.clear()
-_lanes.probe = lambda timeout_s=None, only=None: [{"lane": only, "ok": True}]   # the probe finds the lane healthy
-reliability._confirm_then_notify("zai-coding", "down", None)
-ck("a transient blip that RECOVERS on confirm never surfaces (no false red)",
-   not any(r["resource"] == "zai-coding" for r in reliability.health_reds()))
-ck("a transient blip that RECOVERS on confirm never toasts (no false alarm)", not _notes)
+reliability.note_lane_ok("codex")
+ck("note_lane_ok clears the event-down (receipt stops surfacing it)", not any(r["resource"] == "codex" for r in reliability.health_reds()))
+reliability.note_lane_down("codex", "down")            # after a real success, this is a FRESH 1st down again
+ck("a down AFTER a recovery is a fresh blip → does NOT toast", not _notes)
+
+# a fresh LONE down on a DIFFERENT lane (no prior) is a blip → surfaces, never toasts.
+_notes.clear()
+reliability.note_lane_down("zai-coding", "down")
+ck("a fresh lone down on another lane never toasts (only an unresolved-repeat does)", not _notes)
+adapters._lane_cooling = lambda _l: False              # recovered — no longer cooling
+ck("event downs AUTO-CLEAR from the receipt once the lane stops cooling",
+   not any(r["resource"] in ("codex", "zai-coding") for r in reliability.health_reds()))
 
 print("-- 'failover' (a substitute lane carried the work) NEVER alarms; only 'down' reaches the alert path --")
 _called = []
@@ -99,7 +102,7 @@ ck("a 'failover' cool does NOT reach the lane-down alert path (no false toast)",
 adapters._lane_cool("codex", reason="quota")           # a transient quota/rate cool is also not an outage
 ck("a 'quota' cool does NOT reach the alert path either", not _called)
 adapters._lane_cool("codex", reason="down")            # lane + API BOTH missed → the only alert candidate
-ck("only a 'down' cool reaches the (confirm-gated) alert path", _called == [("codex", "down")])
+ck("only a 'down' cool reaches the (debounced) alert path", _called == [("codex", "down")])
 
 print(f"\n{'[FAIL]' if _fails else 'OK'} test_lane_health_receipt: {len(_fails)} failure(s)")
 sys.exit(1 if _fails else 0)
