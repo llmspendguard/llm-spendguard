@@ -17,7 +17,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
         raise SystemExit("refusing to re-exec a path outside the test directory: %s" % _self)
     os.execv(sys.executable, [sys.executable, _self])
 
-from spendguard import models, adapters, calls, callio, effort_titration
+from spendguard import models, adapters, callio, effort_titration
 
 failures = 0
 def check(label, cond):

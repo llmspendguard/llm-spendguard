@@ -4,7 +4,7 @@ The routine health check ('which lane needs a login?') must: classify each UNREA
 an error means + how to fix it is a judgement), send the WHOLE error (never truncated), CACHE by failure signature
 (so a scheduled check is $0 for a known failure, paying only for a NEW one), and return [] when all healthy.
 Offline: the meta LLM call is stubbed — no network, no spend."""
-import os, sys, tempfile, json
+import os, sys, tempfile
 
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"

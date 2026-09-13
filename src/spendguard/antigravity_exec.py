@@ -22,7 +22,6 @@ namespace differs from the metered Gemini API's, so to route real advisor calls 
 model to an `agy` id; a plain probe (model=None) runs on agy's default and needs no mapping.
 """
 import json
-import os
 import re
 import subprocess
 import time

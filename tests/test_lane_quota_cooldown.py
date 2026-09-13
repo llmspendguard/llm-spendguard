@@ -11,7 +11,6 @@ Offline: the lane executor is stubbed; no network, no subprocess.
 import os
 import sys
 import tempfile
-import time
 
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-quota-")
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")

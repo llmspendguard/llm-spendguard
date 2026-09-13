@@ -19,7 +19,6 @@ Doctrine note: prompt-mode ONLY. The meta tasks keep meaningâ†’LLM / mechanicsâ†
 code reads the corpus and writes the sqlite; this executor never gets tool access to do so itself.
 """
 import json
-import os
 import shutil
 import subprocess
 import time

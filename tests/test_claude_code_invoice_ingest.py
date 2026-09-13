@@ -13,7 +13,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = home
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
-from spendguard import claudecode, budget, config
+from spendguard import claudecode, config
 
 fails = []
 def ck(name, cond):

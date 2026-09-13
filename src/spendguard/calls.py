@@ -403,7 +403,7 @@ def cmd_summary(argv=None):
     if not enabled():
         print("call logging is OFF — enable with `spendguard init` (calls.enabled) or SPENDGUARD_CALLS=1.")
         return 0
-    rows = summary(a.intent)
+    rows = cost_summary(a.intent)
     if not rows:
         print("no calls recorded yet.")
         return 0

@@ -10,7 +10,6 @@ Offline: pricing / balances / cooling stubbed; no network, no LLM.
 """
 import os
 import sys
-import time
 import tempfile
 
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-routil-")

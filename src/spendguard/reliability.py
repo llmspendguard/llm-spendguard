@@ -11,6 +11,7 @@ ESTIMATE-FIRST (the spend protocol): sweep(run=False) returns the plan + a $ est
 sweep(run=True) executes and returns the reachability matrix — per resource {reachable, executor, cost, reason}.
 """
 import hashlib
+import json
 
 from . import adapters, config
 
@@ -365,7 +366,6 @@ def _notify_macos(title, message):
 
 
 def main(argv=None):
-    import json                                          # for the notifier's osascript-safe quoting
     argv = list(argv or [])
     run = "--run" in argv
     if "--json" in argv:                                 # machine-readable status of every lane + metered provider

@@ -10,7 +10,7 @@ once and reads it at a discount forever after. Pins:
     breaks the call, and a deadline still HALTS (no retry);
   · OPENAI: cached_tokens (prompt_tokens_details) is captured; prompt_tokens already INCLUDES it (no double add).
 Offline: the SDK clients are stubbed — no network, no spend."""
-import os, sys, tempfile, types, json
+import os, sys, tempfile, types
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-cache-")

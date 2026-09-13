@@ -418,7 +418,7 @@ def reconcile_billing_state(dry=False):
         con.close()
     booked = {}                                             # (conv, model, B_iso) -> overage_usd (upper bound)
     gross_est = 0.0
-    for occ, conv, model, val in rows:
+    for occ, conv_id, model, val in rows:                  # conv_id: don't shadow the module-level `conv` import
         dt = _parse_iso(occ)
         try:
             v = float(val)
@@ -430,7 +430,7 @@ def reconcile_billing_state(dry=False):
         tu = dt.timestamp()
         for (b, r) in windows:                             # a turn inside an overage window [B, R) = real paid
             if b <= tu < r:
-                key = (conv or "", model or "?", _dt.datetime.fromtimestamp(b, tz=_dt.timezone.utc).isoformat())
+                key = (conv_id or "", model or "?", _dt.datetime.fromtimestamp(b, tz=_dt.timezone.utc).isoformat())
                 booked[key] = booked.get(key, 0.0) + v
                 break
     total_over = sum(booked.values())
@@ -441,13 +441,13 @@ def reconcile_billing_state(dry=False):
                                     actor="claude-code:billing-state", reason="observable window reclassify")
         except Exception as e:
             print(f"claude-code billing_state: clearing prior rows failed ({type(e).__name__}: {str(e)[:60]}) — continuing")
-        for (conv, model, biso), over in booked.items():
+        for (conv_id, model, biso), over in booked.items():
             if over > 0:
                 budget._record_spend_event("anthropic", model, "realtime", float(round(over, 6)),
-                                           conv_id=conv, project="claude-code", occurred_at=biso,
+                                           conv_id=conv_id, project="claude-code", occurred_at=biso,
                                            source="claude-code-overflow", basis="reconstructed",
                                            intent="claude-code:overage", actor="claudecode.reconcile_billing_state",
-                                           dedup_key=f"cc-of:{biso}:{conv}:{model}")
+                                           dedup_key=f"cc-of:{biso}:{conv_id}:{model}")
     blocked_reason = Counter()
     for r in ev["blocked"]:
         if r.get("reason"):
@@ -673,7 +673,7 @@ def ingest_invoices(csv_path=None, dry=False):
     print(f"  subscription (base $200/mo Max):  ${by_stream['subscription']:>10,.2f}  ({by_stream_n['subscription']})")
     print(f"  cc-overage   (REAL Claude Code overage): ${by_stream['cc-overage']:>10,.2f}  ({by_stream_n['cc-overage']})")
     print(f"  api-credit   (Console/API grants):  ${by_stream['api-credit']:>10,.2f}  ({by_stream_n['api-credit']})")
-    print(f"  ── REAL Claude Code OVERAGE by month (the ground truth) ──")
+    print("  ── REAL Claude Code OVERAGE by month (the ground truth) ──")
     for m in sorted(over_month):
         print(f"     {m}  ${over_month[m]:,.2f}")
     if not dry:
@@ -706,7 +706,7 @@ def attribute_overage(top=12):
     windows, _anchor = _overage_windows(_overage_events())
     obs = {}                                                # (month, conv) -> observable overage est-value
     obs_month = {}                                          # month -> total observable overage
-    for occ, conv, val in rows:
+    for occ, conv_id, val in rows:                          # conv_id: don't shadow the module-level `conv` import
         dt = _parse_iso(occ)
         try:
             v = float(val)
@@ -717,13 +717,13 @@ def attribute_overage(top=12):
         tu = dt.timestamp()
         if any(b <= tu < r for (b, r) in windows):
             mo = occ[:7]
-            obs[(mo, conv or "")] = obs.get((mo, conv or ""), 0.0) + v
+            obs[(mo, conv_id or "")] = obs.get((mo, conv_id or ""), 0.0) + v
             obs_month[mo] = obs_month.get(mo, 0.0) + v
     real_by_conv = {}
-    for (mo, conv), v in obs.items():
+    for (mo, conv_id), v in obs.items():
         tot, realm = obs_month.get(mo, 0.0), real_by_month.get(mo, 0.0)
         if tot > 0 and realm > 0:
-            real_by_conv[conv] = real_by_conv.get(conv, 0.0) + realm * (v / tot)
+            real_by_conv[conv_id] = real_by_conv.get(conv_id, 0.0) + realm * (v / tot)
     # FALLBACK: a month with real overage but NO observed overage window → distribute by that month's TOTAL claude-code
     # est-value share (the conversations active that month, weighted by usage). Labeled, never hidden.
     fb_months = [mo for mo in real_by_month if real_by_month[mo] > 0 and obs_month.get(mo, 0.0) <= 0]
@@ -737,24 +737,24 @@ def attribute_overage(top=12):
         finally:
             con2.close()
         by_mo = {}
-        for mo, conv, v in allrows:
+        for mo, conv_id, v in allrows:
             if mo in fb_months:
-                by_mo.setdefault(mo, {})[conv or ""] = float(v or 0.0)
+                by_mo.setdefault(mo, {})[conv_id or ""] = float(v or 0.0)
         for mo in fb_months:
             realm, convs = real_by_month[mo], by_mo.get(mo, {})
             tot = sum(convs.values())
             if tot > 0:
                 fb_total += realm
-                for conv, v in convs.items():
-                    real_by_conv[conv] = real_by_conv.get(conv, 0.0) + realm * (v / tot)
+                for conv_id, v in convs.items():
+                    real_by_conv[conv_id] = real_by_conv.get(conv_id, 0.0) + realm * (v / tot)
     unattr = sum(real_by_month.values()) - sum(real_by_conv.values())
     titles = _sidebar_titles()
     print("claude-code overage ATTRIBUTION — real invoice overage distributed to conversations")
     print(f"  real overage ${sum(real_by_month.values()):,.2f} (invoices) → attributed ${sum(real_by_conv.values()):,.2f}"
           + (f"  ·  ${fb_total:,.2f} via est-value share (months with no cap-hit window)" if fb_total > 0.005 else "")
           + (f"  ·  ${unattr:,.2f} unattributable" if unattr > 0.5 else ""))
-    for conv, v in sorted(real_by_conv.items(), key=lambda x: -x[1])[:top]:
-        print(f"    ${v:8.2f}  {_conv_label(conv, titles)}")
+    for conv_id, v in sorted(real_by_conv.items(), key=lambda x: -x[1])[:top]:
+        print(f"    ${v:8.2f}  {_conv_label(conv_id, titles)}")
     return real_by_conv
 
 
@@ -774,8 +774,8 @@ def _cc_conv_rows(min_day=None):
     finally:
         con.close()
     out = {}
-    for conv, occ, model, i, cr, cw in rows:
-        out.setdefault(conv or "", []).append((occ, model or "?", int(i or 0), int(cr or 0), int(cw or 0)))
+    for conv_id, occ, model, i, cr, cw in rows:            # conv_id: don't shadow the module-level `conv` import
+        out.setdefault(conv_id or "", []).append((occ, model or "?", int(i or 0), int(cr or 0), int(cw or 0)))
     return out
 
 
@@ -798,7 +798,7 @@ def measured_compaction_ratio(min_drop=2.0):
     (a real reset, not turn-to-turn wobble). Returns (k, n_events); (None, 0) when none is observed — so 'compacting
     cuts it ~k×' is only ever shown from measured evidence."""
     ks = []
-    for conv, seq in _cc_conv_rows().items():
+    for _conv_id, seq in _cc_conv_rows().items():          # key unused here (only the seq) — named to not shadow `conv`
         prev = None
         for _occ, _model, i, cr, cw in seq:
             ctx = i + cr + cw
@@ -844,7 +844,7 @@ def compaction_candidates(min_context=None, min_turns=None, min_day=None):
     k, k_n = measured_compaction_ratio()
     out = []
     examined = short = below = 0                             # every conversation NOT flagged is COUNTED — the scan is
-    for conv, seq in _cc_conv_rows(min_day=min_day).items():  # transparent (no silent truncation of the candidate set)
+    for conv_id, seq in _cc_conv_rows(min_day=min_day).items():  # transparent (no silent truncation of the candidate set)
         examined += 1
         if len(seq) < min_turns:
             short += 1
@@ -852,10 +852,10 @@ def compaction_candidates(min_context=None, min_turns=None, min_day=None):
         if any((i + cr + cw) < min_context for _o, _m, i, cr, cw in seq[-min_turns:]):
             below += 1                                      # not SUSTAINED above the threshold (one big turn ≠ bloat)
             continue
-        traj = context_trajectory(conv)
+        traj = context_trajectory(conv_id)
         recur = traj["recurring_read_usd_per_turn"]
         saved = (recur * (1.0 - 1.0 / k)) if (recur is not None and k) else None
-        out.append({"conv_id": conv, "turns": traj["turns"], "current": traj["current"], "mean": traj["mean"],
+        out.append({"conv_id": conv_id, "turns": traj["turns"], "current": traj["current"], "mean": traj["mean"],
                     "recurring_read_usd_per_turn": recur, "compact_k": k, "saved_usd_per_turn": saved})
     out.sort(key=lambda r: (r["recurring_read_usd_per_turn"] or 0.0), reverse=True)
     return out, (k, k_n), {"examined": examined, "flagged": len(out), "too_few_turns": short, "below_threshold": below}

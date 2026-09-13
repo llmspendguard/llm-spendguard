@@ -88,13 +88,13 @@ for is_async in (False, True):
     tag = "async" if is_async else "sync"
     orig = orig_async if is_async else orig_sync
 
-    def run(w):
+    def run(w, is_async=is_async):                          # bind the loop var (B023): run() is called this iteration
         return asyncio.new_event_loop().run_until_complete(w(None)) if is_async else w(None)
 
     # a GateBlocked from the gate_fn must propagate THROUGH the wrapper (mirrors warden:describe running anyway)
     w_blk = G._gate_wrap(orig, _blk, is_async)
     ck(f"[{tag}] _gate_wrap PROPAGATES GateBlocked out of the wrapped SDK call (batch is stopped)",
-       raises_out(lambda: run(w_blk), bulkgate.GateBlocked))
+       raises_out(lambda w_blk=w_blk: run(w_blk), bulkgate.GateBlocked))
 
     # a bug in the gate_fn must fail open: the wrapped call still returns its real result
     def _bug(kw, a):
