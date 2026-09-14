@@ -162,5 +162,19 @@ fails += report_check("the learning persists with its verdict (load_learnings ca
                       (RE.load_learnings().get("codex|gpt-5.6-luna|minimal", {}).get("verdict") or {})
                       .get("judged_equal") is True)
 
+print("\n-- the map is BIDIRECTIONAL: resolve_lane (metered→lane) is the inverse of metered_fallback_id (lane→metered) --")
+# agy/Gemini is where the names DIFFER (suffix on the lane ↔ bare id + reasoning param on metered) — the round-trip
+# must be exact, so a caller who holds EITHER form resolves the other.
+_mid, _tier = adapters.metered_fallback_id("gemini", "gemini-3.8-flash-low")
+_back = RE.resolve_lane("gemini", _mid, _tier)
+fails += report_check("lane→metered→lane round-trips for agy/Gemini (gemini-3.8-flash-low ↔ bare+low)",
+                      bool(_back) and _back["lane_use_name"] == "gemini-3.8-flash-low" and _back["lane"] == "gemini")
+# openai: the lane use-name IS the metered id → resolves to the codex lane unchanged
+_oa = RE.resolve_lane("openai", "gpt-5.6-luna")
+fails += report_check("metered→lane for openai → codex lane, same use-name",
+                      bool(_oa) and _oa["lane"] == "codex" and _oa["lane_use_name"] == "gpt-5.6-luna")
+# a metered-only vendor (no subscription lane) has no lane form → None (never a wrong guess)
+fails += report_check("a metered-only provider (no lane) → None", RE.resolve_lane("moonshot", "kimi-k3") is None)
+
 print(f"\n{'[FAIL]' if fails else 'OK'} test_reasoning_equivalence: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

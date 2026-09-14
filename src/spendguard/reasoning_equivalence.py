@@ -268,6 +268,30 @@ def resolve_metered(lane, model, level):
             "status": status, "provider_locked": True, "provenance": provenance}
 
 
+def resolve_lane(provider, metered_model, reasoning=None):
+    """The REVERSE direction of the map (metered → lane) — so the mapping is BIDIRECTIONAL. Given a SAME-provider
+    METERED (model, reasoning) — e.g. a name a USER requested in metered form — return the subscription LANE that
+    serves it and the exact lane USE-NAME (how the lane is CALLED for that reasoning), or None if the provider has
+    NO lane (a metered-only vendor). This is the inverse of adapters.metered_fallback_id (lane use-name → metered
+    id + reasoning): the lane and the metered API can NAME the same model differently and pass reasoning
+    differently, so both directions are needed to route a pin regardless of which form the caller holds.
+
+    agy/Gemini is the case where the names DIFFER: the effort rides the id SUFFIX on the lane
+    (gemini-3.8-flash + 'low' → gemini-3.8-flash-low) while the metered API takes the bare id + a reasoning param —
+    so this composes the suffix (adapters._compose_gemini_reasoning). Every other lane passes reasoning out-of-band
+    (codex param / claude thinking / zai none), so the lane use-name IS the metered id. Round-trips with
+    metered_fallback_id: split(compose(x)) == x and compose(split(x)) == x for a valid tier."""
+    lane = adapters._LANES.get(provider, (None,))[0]
+    if not lane:
+        return None                                      # metered-only vendor — no subscription-lane form exists
+    q = lane_catalog.quirk(lane)
+    if q["style"] == "suffix" and reasoning in q["levels"]:
+        use_name = adapters._compose_gemini_reasoning(metered_model, reasoning)   # bare id + tier → the suffixed lane id
+    else:
+        use_name = metered_model                         # param/thinking/none lanes: the use-name IS the metered id
+    return {"lane": lane, "provider": provider, "lane_use_name": use_name, "reasoning": reasoning}
+
+
 def derive_map():
     """The whole clear map: {lane: {provider, models: {model: {level: <resolve cell>}}}}, derived from the current
     config + execs and overlaid with any persisted bake-off learnings. This is the JSON Ash asked for — inspectable,
