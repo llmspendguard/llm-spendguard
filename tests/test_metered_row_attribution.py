@@ -103,5 +103,37 @@ fails += report_check("NESTING: the caller's intent is restored inside its own b
 fails += report_check("NESTING: the whole stack unwinds back to the baseline after the caller's block exits",
                       outer_after == before)
 
+print("\n-- GAP 3: adapters.call(sig=X) TAGS the ledger row — sig sets the thread-local intent for the dispatch --")
+# gate._record_rt reads the THREAD-LOCAL intent; sig= alone used NOT to set it, so a metered call passing only sig=
+# landed in '(none)' despite the tag. adapters.call now sets it for the dispatch (and restores it), so the row is
+# attributed. Stub the dispatch to CAPTURE the ambient intent at call time (no network).
+seen_dispatch = {}
+_orig_guarded = adapters._call_guarded
+
+
+def _capture_guarded(*a, **kw):
+    seen_dispatch["intent"] = (calls.current() or {}).get("intent")
+    return {"text": "ok", "cost": 0.0, "executor": "api", "error": None, "in_tok": 1, "out_tok": 1}
+
+
+base_intent = (calls.current() or {}).get("intent")           # no ambient context here
+adapters._call_guarded = _capture_guarded
+try:
+    adapters.call("gpt-5.6-luna", "hi", sig="loinc-typing")
+    sig_seen = seen_dispatch.get("intent")                    # what the dispatch saw for a bare sig= (no context)
+    after_call = (calls.current() or {}).get("intent")
+    with calls.context(intent="ambient-intent"):              # an EXPLICIT ambient context must WIN over sig
+        adapters.call("gpt-5.6-luna", "hi", sig="a-different-sig")
+        ambient_seen = seen_dispatch.get("intent")
+finally:
+    adapters._call_guarded = _orig_guarded
+
+fails += report_check("the dispatch saw sig as the thread-local intent (so gate._record_rt tags the row, not '(none)')",
+                      sig_seen == "loinc-typing")
+fails += report_check("the context is RESTORED to baseline after the call (no leak past the dispatch)",
+                      after_call == base_intent)
+fails += report_check("an explicit ambient calls.context intent WINS over sig (never overridden)",
+                      ambient_seen == "ambient-intent")
+
 print(f"\n{'[FAIL]' if fails else 'OK'} test_metered_row_attribution: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

@@ -548,15 +548,28 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                 print(f"[spendguard] {_bv_why} (was {_bv_from})", file=_sbv.stderr)
             elif _pick is not None and _pick.get("why"):
                 print(f"[spendguard] {_pick['why']}", file=_sbv.stderr)   # honest no-pick: keep the named model
-    if not _no_guard:
-        r = _call_guarded(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
-                          schema=schema, timeout_s=timeout_s, sig=sig, retries=retries,
-                          no_metered_fallback=no_metered_fallback, images=images, _no_sub=no_substitution,
-                          metered_only=metered_only, _probe=_probe)
-    else:
-        r = _call_once(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
-                       schema=schema, timeout_s=timeout_s, no_metered_fallback=no_metered_fallback, images=images,
-                       _no_sub=no_substitution, _skip_lane=metered_only)   # metered_only=True → skip the lane (metered API only)
+    # ATTRIBUTION: a caller that passed a sig/intent but is NOT inside a `with calls.context(...)` must still have
+    # THIS call's ledger row tagged. gate._record_rt reads the THREAD-LOCAL intent, and sig= alone never set it — so a
+    # metered call passing only sig= landed in '(none)' despite the tag, the exact gap the sig/intent alias claims to
+    # close (a PAID call with no intent is invisible to advise/denylists/rollups). Set it for the dispatch and restore
+    # the prior context EXACTLY afterwards, so it never leaks past this call. An ambient context intent WINS — the
+    # caller's explicit `with calls.context(...)` is never overridden — and a $0/lane call is tagged the same way.
+    from . import calls as _sig_ctx
+    _ctx_before = dict(_sig_ctx.current() or {})
+    if sig and not _ctx_before.get("intent"):
+        _sig_ctx.set_context(intent=sig)
+    try:
+        if not _no_guard:
+            r = _call_guarded(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
+                              schema=schema, timeout_s=timeout_s, sig=sig, retries=retries,
+                              no_metered_fallback=no_metered_fallback, images=images, _no_sub=no_substitution,
+                              metered_only=metered_only, _probe=_probe)
+        else:
+            r = _call_once(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
+                           schema=schema, timeout_s=timeout_s, no_metered_fallback=no_metered_fallback, images=images,
+                           _no_sub=no_substitution, _skip_lane=metered_only)   # metered_only=True → skip the lane (metered API only)
+    finally:
+        _sig_ctx._local.ctx = _ctx_before   # restore the caller's context exactly (nested calls keep their own tag)
     # BEST-VALUE PROVENANCE — record what the caller WOULD have run (the baseline) vs what best-value chose, so the
     # saving/decision booking downstream can price the counterfactual. Stamped only when best-value actually changed
     # the target; never overwrites a lane/bandit substituted_from already present. requested_effort is None (the
