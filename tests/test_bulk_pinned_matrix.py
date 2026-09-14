@@ -42,8 +42,9 @@ class _Recorder:
 
     def __call__(self, model, prompt, max_tokens=None, system=None, reasoning=None, schema=None,
                  timeout_s=None, sig=None, retries=2, files=None, _no_guard=False, no_metered_fallback=False,
-                 images=None, no_substitution=False):
-        self.calls.append({"model": model, "no_substitution": no_substitution, "images": images})
+                 images=None, no_substitution=False, metered_only=False):
+        self.calls.append({"model": model, "no_substitution": no_substitution, "images": images,
+                           "metered_only": metered_only})
         if model == "moonshot:kimi-k3" and "b.py" in prompt:                # one cell errors — must NOT wedge the matrix
             return {"text": None, "error": "vendor 500", "cost": None}
         prov, raw = model.split(":", 1)
@@ -76,6 +77,18 @@ fails += ck("the erroring cell is an error row (reason set, no text), not a cras
             _err.get("text") is None and _err.get("reason") and _err.get("error"))
 fails += ck("every OTHER cell still succeeded (the matrix did not wedge)",
             sum(1 for r in res.values() if r.get("text")) == len(TASKS) - 1)
+
+print("\n-- metered_only: default rides the atomic pair (lane-first); metered_only=True forces the METERED half --")
+fails += ck("default fan → metered_only=False on every call (atomic pair — $0 lane first, then metered fallback)",
+            bool(_rec.calls) and all(c["metered_only"] is False for c in _rec.calls))
+_rec.calls.clear()
+res_mo = lane_balance.bulk_delegate(
+    TASKS, "panel:review", model_for=lambda t: t["model"], prompt_for=lambda t: t["prompt"],
+    task_key=lambda t: f"{t['file']}|{t['model']}", return_keyed=True, metered_only=True, force=True)
+fails += ck("metered_only=True → metered_only=True reached EVERY underlying call (forces the metered half of the pin)",
+            bool(_rec.calls) and all(c["metered_only"] is True for c in _rec.calls))
+fails += ck("metered_only fan still keyed + no_substitution on every call (pin intact)",
+            isinstance(res_mo, dict) and len(res_mo) == len(TASKS) and all(c["no_substitution"] is True for c in _rec.calls))
 
 print("\n-- no model_for → still the LANE path (unchanged); model_for alone → the pinned metered path --")
 # a task whose model_for returns None → a clean per-task 'no_model' row, never a crash

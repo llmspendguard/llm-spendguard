@@ -383,8 +383,15 @@ def _book_substitution(r):
 
 def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,
          sig=None, intent=None, retries=2, files=None, _no_guard=False, no_metered_fallback=False, images=None,
-         no_substitution=False, _probe=False, **aliases):
+         no_substitution=False, metered_only=False, _probe=False, **aliases):
     """Run one prompt against one model. Returns a result dict (never raises).
+
+    `metered_only=True` FORCES the paid metered API and SKIPS the subscription lane entirely (the opt-in metered
+    HALF of the atomic lane→metered pair). Use it for a consistency-sensitive fan (a verdict-cached refuter) that
+    needs the concurrency-invariant metered path serial-equivalently — where riding the $0 lane CLI (its own
+    reasoning scale + warm-daemon concurrency) would drift the verdict. Default False = the lane serves first and a
+    miss falls back to the metered API (the cheap, faithful-for-capability default). A vision call (`images=`) is
+    metered by construction regardless.
 
     `files=[path, …]` is the INPUT twin of the output guard below: each path is assembled into the prompt as a
     WHOLE, stamped, self-verified block by llm_files.attach_many (raises rather than send a partial file). The
@@ -545,11 +552,11 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
         r = _call_guarded(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
                           schema=schema, timeout_s=timeout_s, sig=sig, retries=retries,
                           no_metered_fallback=no_metered_fallback, images=images, _no_sub=no_substitution,
-                          _probe=_probe)
+                          metered_only=metered_only, _probe=_probe)
     else:
         r = _call_once(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
                        schema=schema, timeout_s=timeout_s, no_metered_fallback=no_metered_fallback, images=images,
-                       _no_sub=no_substitution)
+                       _no_sub=no_substitution, _skip_lane=metered_only)   # metered_only=True → skip the lane (metered API only)
     # BEST-VALUE PROVENANCE — record what the caller WOULD have run (the baseline) vs what best-value chose, so the
     # saving/decision booking downstream can price the counterfactual. Stamped only when best-value actually changed
     # the target; never overwrites a lane/bandit substituted_from already present. requested_effort is None (the
@@ -1233,15 +1240,21 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 import sys as _syse
                 print(f"[spendguard] 🛣  {lane_name} plan is serving {raw} prompts this run ($0 billed, not the metered API)",
                       file=_syse.stderr)
+            # RECORD THE APPLIED EFFORT, NOT THE REQUESTED TIER. A lane CLI may map the request to its own scale
+            # (codex 'minimal'→'none'); recording the request would mislabel what RAN and make a lane call look like
+            # it under- or over-reasoned vs its metered twin when it did not. The executor reports the effort it
+            # actually applied (`s['effort']`); fall back to the requested tier only for a lane that reports none.
+            _applied_eff = s.get("effort") if s.get("effort") is not None else reasoning
             try:
                 from . import calls
                 calls.record_call(prov, raw, "subscription", 0.0,
                              in_tok=s.get("in_tok", 0), out_tok=s.get("out_tok", 0), latency=s.get("latency"),
-                             executor=lane_name, effort=reasoning)  # plan that served it + the effort tier requested
+                             executor=lane_name, effort=_applied_eff)  # the plan that served it + the effort it APPLIED
             except Exception:
                 pass
             return {**base, "text": s["text"], "in_tok": s.get("in_tok", 0), "out_tok": s.get("out_tok", 0),
-                    "latency": s.get("latency", 0.0), "cost": 0.0, "executor": lane_name, "error": None}
+                    "latency": s.get("latency", 0.0), "cost": 0.0, "executor": lane_name,
+                    "effort": _applied_eff, "error": None}
         # STRUCTURED miss reason — a CODE, not the free-form error string — so a consumer splits shed vs shape vs
         # empty vs quota without parsing prose (the lane twin of the vision runner's reason codes). The branch below
         # ALREADY knows the category; this only names it.

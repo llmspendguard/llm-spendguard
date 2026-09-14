@@ -214,6 +214,9 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     lane degrades, it never silently answers on a different model than the caller asked for.
     `--skip-git-repo-check` because a headless one-shot is not an interactive session that needs the
     working-tree guard, and honestreview may run it from any directory (measured: /tmp tripped the guard)."""
+    _eff = _codex_effort(reasoning)   # the effort ACTUALLY applied on this lane (Codex's own scale: 'minimal'→'none').
+    #                                   Reported on the result so the ledger records what RAN, not the requested tier —
+    #                                   letting a caller VERIFY the lane matched its metered fallback's applied reasoning.
     # WARM DAEMON PATH (opt-in): reuse a persistent codex mcp-server instead of cold-starting `codex exec` each call
     # (>75s → ~5s, reliable). Falls THROUGH to the exec path on any daemon failure — degrade, never break. Stateless
     # here (the lane carries no thread); persistent context is a higher-level feature (codex_daemon.run(thread=…)).
@@ -228,7 +231,7 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
         if _r.get("text") and not _r.get("error"):
             _txt = _r["text"]
             return {"text": _txt, "in_tok": len(_full) // 4, "out_tok": len(_txt) // 4,   # est: the tool returns no usage
-                    "latency": round(time.time() - _t0, 2), "error": None}
+                    "latency": round(time.time() - _t0, 2), "effort": _eff, "error": None}
         if _r.get("tool_error"):
             # HARD request rejection (model not served on the plan, etc.). A cold `codex exec` would fail the same
             # way, so return the error NOW and let the adapter fall back to the metered API + back off this
@@ -252,9 +255,8 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
         cmd += _plugin_disable_flags()                     # the TWO per-call cold-start costs a headless completion needs
         #                                                    NEITHER: the writable-workspace sandbox (-s read-only above)
         #                                                    AND loading enabled plugins/MCP servers. Both off: >75s → ~5s.
-        _eff = _codex_effort(reasoning)
         if _eff:
-            cmd += ["-c", f"model_reasoning_effort={_eff}"]   # Codex's OWN scale (none|low|…); 'minimal'→'none' upstream
+            cmd += ["-c", f"model_reasoning_effort={_eff}"]   # Codex's OWN scale (none|low|…); 'minimal'→'none' (computed above)
         if model:
             cmd += ["-m", model.split(":", 1)[-1]]     # forward the requested id; a bad one fails → API fallback
         cmd += ["--", full]      # `--` end-of-options: a prompt/system beginning with '-' is a positional, not a flag
@@ -274,7 +276,7 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
             return {"error": "codex produced no final message"}
         in_tok, out_tok = _usage_from_events(r.stdout)
         return {"text": text, "in_tok": in_tok, "out_tok": out_tok,
-                "latency": time.time() - t0, "error": None}
+                "latency": time.time() - t0, "effort": _eff, "error": None}
     finally:
         if out_file:
             try:

@@ -29,27 +29,35 @@ dispatch.release = lambda *a, **k: None
 adapters.provider_for = lambda m: m.split(":", 1)[0]
 
 MODEL = "openai:gpt-5.6-sol"
-_seen = []
 
 
-def _rec(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None, sig=None,
-         retries=2, files=None, _no_guard=False, no_metered_fallback=False, images=None, no_substitution=False):
-    _seen.append({"model": model, "reasoning": reasoning})
-    prov, raw = model.split(":", 1)
-    return {"text": "verdict", "cost": 0.001, "provider": prov, "model": raw, "executor": "api", "effort": reasoning}
+class _RecordingCall:
+    """Stand-in for adapters.call that records each call into self.calls (INSTANCE state, not a module-level
+    container) and returns a metered ('api') verdict, so the pinned rows read served_by_metered_api=True."""
+
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,
+                 sig=None, retries=2, files=None, _no_guard=False, no_metered_fallback=False, images=None,
+                 no_substitution=False, metered_only=False):
+        self.calls.append({"model": model, "reasoning": reasoning, "metered_only": metered_only})
+        prov, raw = model.split(":", 1)
+        return {"text": "verdict", "cost": 0.001, "provider": prov, "model": raw, "executor": "api", "effort": reasoning}
 
 
+_rec = _RecordingCall()
 adapters.call = _rec
 
 print("-- the SERIAL call and the FANNED pinned call reach adapters.call with the SAME (model, reasoning) --")
-_seen.clear()
+_rec.calls.clear()
 adapters.call(MODEL, "refute claim X", reasoning="minimal")           # the serial reference call
-_serial = dict(_seen[-1])
-_seen.clear()                                                         # isolate the fanned calls from the reference
+_serial = dict(_rec.calls[-1])
+_rec.calls.clear()                                                    # isolate the fanned calls from the reference
 res = lane_balance.bulk_delegate(["refute A", "refute B", "refute C"], "refute:panel",
                                  model_for=lambda t: MODEL, reasoning="minimal", task_key=lambda t: t,
                                  return_keyed=True, force=True)
-_fanned = list(_seen)
+_fanned = list(_rec.calls)
 fails += ck("the serial call used reasoning='minimal'", _serial["reasoning"] == "minimal")
 fails += ck("EVERY fanned call reached adapters.call with the IDENTICAL reasoning (parity, not a different tier)",
             len(_fanned) == 3 and all(c["reasoning"] == "minimal" and c["model"] == MODEL for c in _fanned))

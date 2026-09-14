@@ -368,7 +368,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
                   checkpoint=None, chunk_size=100, refuse_billed=False, stats=None, force=False, tier=None,
                   schema=None, expect_ids=None, gate_sig=None, lanes=None, images_for=None, vision_model=None,
                   model_for=None, prompt_for=None, task_key=None, return_keyed=False,
-                  on_miss=None, batch_submit=None, hedge_ms=None, strategy=None):
+                  on_miss=None, batch_submit=None, hedge_ms=None, strategy=None, metered_only=False):
     """Fan a LIST of similar tasks across ALL viable idle lanes CONCURRENTLY — the right shape for a BULK job (e.g.
     symgrep's ~6k one-sentence symbol descriptions) that the per-call bandit would trickle one at a time. Each task
     runs on a lane (round-robin across the lanes the bandit rates GOOD for this intent), each admission BOUNDED by
@@ -376,6 +376,13 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
     FAST (parallel across lanes), $0 (plan-served; a lane failure falls back to that provider's API, flagged
     `billed` — unless `refuse_billed`, which makes a lane miss an error row and NEVER bills, $0 by construction), and
     spread across EVERY good lane, not one.
+
+    `metered_only=True` forces a PINNED (`model_for`) matrix onto the METERED half of its atomic pair — every vote
+    skips the $0 lane and rides the paid API (adapters.call(metered_only=True)). The opt-in for a consistency-
+    sensitive fan (a verdict-cached refuter) that needs the concurrency-invariant metered path serial-equivalently,
+    where the lane CLI's own reasoning scale + warm-daemon concurrency would drift the verdict. It BILLS — the
+    deliberate trade for a fan where the verdict distribution is the product. Default False = the faithful-for-
+    capability atomic pair (lane first, same-provider metered fallback). Applies to the pinned/vision runner only.
 
     DURABLE (the CHUNK-never-single-shot rule): tasks run in chunks of `chunk_size`; when `checkpoint` (a jsonl path)
     is given, EACH completed result is appended before the next chunk, so a crash RESUMES instead of losing the run.
@@ -786,7 +793,8 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
             calls.set_context(intent=intent)            # tag this worker's calls with the intent (attribution)
             r = adapters.call(_vm, _p, system=system, reasoning=reasoning, sig=intent,
                               timeout_s=deadline_s, no_metered_fallback=refuse_billed, schema=schema,
-                              images=(_imgs or None), no_substitution=True)   # NAMED model — never swap it (pinned)
+                              images=(_imgs or None), no_substitution=True,   # NAMED model — never swap it (pinned)
+                              metered_only=metered_only)   # opt-in: force the METERED half of the pin (skip the $0 lane)
         except _STOP_TYPES:
             raise
         except Exception as e:
