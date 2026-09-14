@@ -43,7 +43,16 @@ def _output_text(result):
             return ch[0].message.content or ""
         cont = getattr(result, "content", None)
         if cont:
-            return "".join(getattr(b, "text", "") for b in cont if getattr(b, "type", None) == "text")
+            # A forced-tool / `schema` answer arrives in a tool_use block's `input`, NOT a text block. Reading only
+            # text (the prior behavior) returned "" and recorded a clean structured success as an EMPTY output_snip —
+            # the SAME trap adapters._call_once guards at the caller (L~1477). Prefer text; else the tool_use input.
+            txt = "".join(getattr(b, "text", "") for b in cont if getattr(b, "type", None) == "text")
+            if txt:
+                return txt
+            _tu = [b for b in cont if getattr(b, "type", None) == "tool_use"]
+            if _tu:
+                import json as _json
+                return _json.dumps(getattr(_tu[0], "input", {}))
     except Exception:
         pass
     return ""
