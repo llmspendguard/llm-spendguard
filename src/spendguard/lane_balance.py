@@ -403,12 +403,17 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
     say "fan across codex+gemini+zai, never claude-code" without mutating advisor.delegate_lanes. None = every
     delegate lane. A lane named here that is reserved/cooling still drops out (fail-closed), never widened past.
 
-    `model_for` PINS each task to its EXACT vendor:model, NEVER substituted — the sanctioned governed MATRIX fan for a
-    cross-vendor CONSENSUS panel (N files × M named vendors, e.g. honestreview's repo review: submit the WHOLE matrix,
-    set no concurrency number, and the governor bounds per-vendor in-flight, queues the rest, keys the results). It
-    rides the metered API directly (a lane can't pin a named vendor), governed + checkpointed/resumed + arity-checked
-    by the SAME durable core as the lane fan; `served_by_metered_api` on each row proves the cross-vendor diversity.
-    This is the TEXT case of the pinned runner — `model_for(task)` selects the model whether or not there are images.
+    `model_for` PINS each task to its EXACT vendor:model, NEVER bandit-substituted — the sanctioned governed MATRIX fan
+    for a cross-vendor CONSENSUS panel (N files × M named vendors, e.g. honestreview's repo review: submit the WHOLE
+    matrix, set no concurrency number, and the governor bounds per-vendor in-flight, queues the rest, keys results).
+    Each task rides its PROVIDER-LOCKED atomic pair: the $0 subscription LANE first (an openai pin → the codex lane, an
+    anthropic pin → claude-code, an agy/Gemini pin → the gemini lane), falling back to that SAME provider's metered API
+    at EQUAL-OR-GREATER reasoning (reasoning_equivalence.resolve_metered — never a different vendor, never less
+    reasoning), governed + checkpointed/resumed + arity-checked by the SAME durable core as the lane fan. WHICH VENDOR
+    answered is the measurement and never changes; `served_by_metered_api` on each row shows WHICH HALF of the pair
+    served (a $0 lane vs the paid API), and `reasoning`/`effort` show the tier applied — so a caller can see exactly how
+    each vote ran. This is the TEXT case of the pinned runner; `model_for(task)` selects the model whether or not there
+    are images (the VISION case rides the metered API by construction — the lanes are text-only).
 
     `images_for` + `vision_model` are the IMAGE case of that same runner — the lane executors are text-only CLIs with
     no image channel (the trap behind a labeler that cold-400'd). Pass `images_for` = a callable (task → the image

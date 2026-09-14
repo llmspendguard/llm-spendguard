@@ -119,6 +119,56 @@ killing the per-call long tail that stretches a batch's wall-clock.
 - **Measure it:** `scripts/probe/dispatch_ab.py` (env `N`, `ROUNDS`, `HEDGE_MS`) reports wall-clock + per-lane
   spread + hedged-count for STATIC vs DYNAMIC vs DYNAMIC+hedge, so before/after is a number, not a guess.
 
+## 4. Pinned-vendor matrix — the provider-locked atomic pair
+
+For a cross-vendor CONSENSUS panel (N files × M *named* vendors — e.g. honestreview's repo review, where WHICH
+vendor answered is the measurement), pass `model_for` (a callable `task → "vendor:model"`) instead of a tier. Each
+task is **pinned** to its exact vendor and never bandit-substituted. Submit the whole matrix, set no concurrency
+number; the governor bounds per-vendor in-flight and queues the rest, and `return_keyed` gives back `{key: row}`.
+
+```python
+rows = lane_balance.bulk_delegate(
+    tasks, "review:panel", model_for=lambda t: t["vendor_model"],   # e.g. "openai:gpt-5.6-sol", "anthropic:claude-opus-4-8"
+    task_key=lambda t: t["id"], return_keyed=True, checkpoint="panel.jsonl", chunk_size=100)
+```
+
+**A pin is a PROVIDER + a reasoning FLOOR, realized as an atomic (lane, metered) pair.** Each task rides its $0
+subscription **lane first** (an `openai:` pin → the codex lane, `anthropic:` → claude-code, `gemini:` → the agy/Gemini
+subscription lane), and a lane miss falls back to **that same provider's metered API** — never a different vendor.
+The fallback reasoning is **EQUAL-OR-GREATER**, resolved by the canonical map (`reasoning_equivalence.resolve_metered`):
+equal → a bake-off-proven-equal *lesser* → else round *up*; it never under-reasons. So the pair is faithful for
+capability ("vendor X judged this at ≥ the requested reasoning") while staying $0 when the plan can serve it.
+
+Each row shows exactly **how that vote ran**, so a consistency-sensitive caller can verify it:
+- `served_by_metered_api` — `True` if the paid API served it, `False` if the $0 lane did (which half of the pair).
+- `model` — the vendor:model that actually answered (a within-vendor served-id resolution, e.g. a dated Anthropic
+  id, is still the same vendor).
+- `reasoning` (requested) and `effort` (applied) — the tier.
+
+The VISION case (`images_for`) rides the metered API by construction — the lanes are text-only CLIs.
+
+### The reasoning-equivalence map (the one place the pair is proven)
+
+`src/spendguard/reasoning_equivalence.py` is the single, derived, persisted source of truth for how every
+`(lane, model, reasoning)` maps to its same-provider metered call. It unifies what used to be scattered across
+`models.normalize_reasoning`, `codex_exec._codex_effort`, `lane_catalog.REASONING_QUIRK` and
+`adapters.metered_fallback_id`, and it **verifies the equal-model metered call is actually priced + served** (an
+`availability` of `yes` / `unverified` / `no` per cell), so a stale alias can't silently strand a fallback. Inspect it:
+
+```
+spendguard lanes --reasoning-map      # every lane × model × level → the same-provider metered call (equal model,
+                                      #   equal-or-greater reasoning), availability ✓/?/✗, and status
+spendguard lanes --fallback           # the lane→metered id equivalence (a down plan degrades, never strands)
+```
+
+- **Provider-locked.** `metered_fallback_id` only re-spells the id *within* the same vendor (and resolves a stale
+  bare alias to its served dated id, e.g. `claude-haiku-4-5` → `claude-haiku-4-5-20251001`, $0 from the served-list
+  cache). A pinned agy/Gemini call can never fall back to codex.
+- **`proven_lesser` needs an AGENTIC verdict.** Recording that a cheaper reasoning tier is "equally good" is a
+  MEANING judgement, so `record_equivalence(...)` accepts it ONLY with an affirmative LLM-judge verdict
+  (`{judged_equal: True, judge_model, sample_n>0, …}` from a bake-off) and refuses free-text. Learnings persist and
+  overlay the derived map.
+
 ## Why `parsed` exists now
 
 When you pass `schema=`, each row (and `adapters.call`'s result) carries `parsed` — the decoded object, or `None` if

@@ -80,6 +80,21 @@ spendguard reliability [--run] [--remediate] [--notify] [--json]   # sweep every
 # Make spendguard PICK the model+effort for you on a REAL call (not just advise): the API takes reasoning="best-value" —
 #   spendguard.adapters.call(prompt, reasoning="best-value", intent="X")  → cheapest (model,effort) whose quality holds for X; books the saving vs the counterfactual.
 
+# subscription lanes  (run heavy work $0 on flat-fee plans — the atomic lane→metered pair)
+spendguard lanes                              # lane status (which plans are ready) — add --usage for per-plan quota bars
+spendguard lanes --balance                    # per-plan UTILISATION this month (🔥 hot vs 💤 idle) = est-value ÷ plan fee
+spendguard lanes --catalog                    # each lane's provider · reasoning quirk · use-names · $/1M (the source of truth)
+spendguard lanes --economics                  # measured token caps · $/token · plan-fee-at-risk this window
+spendguard lanes --fallback                   # lane→metered ID equivalence: a down/exhausted plan degrades to the paid API, never strands
+spendguard lanes --reasoning-map              # lane→metered REASONING map: SAME model, EQUAL-or-GREATER effort, availability ✓/?/✗, per (lane,model,level)
+spendguard lanes --delegate "<task>"          # offload ONE task to the cheapest viable idle lane ($0; billed fallback flagged)
+spendguard lanes --bulk <intent> [--file t.txt|--jsonl] [--tier G] [--lanes a,b,c] [--estimate] [--checkpoint c.jsonl] [--out r.jsonl]   # fan a LIST across all idle lanes (durable, chunked); --estimate = $0 preview
+spendguard lanes --bakeoff X "<task>" | --estimate   # seed the learned cross-lane router (--estimate = $0 judge-cost preview)
+spendguard lanes --propose X <primary> | --confirm X <sub>   # a judge PROPOSES acceptable substitutes (PENDING) → you confirm once
+#   PIN semantics: a pin is a PROVIDER + a reasoning FLOOR. Work rides the $0 lane; a miss falls to that SAME provider's metered
+#   API at EQUAL-or-GREATER reasoning (src/spendguard/reasoning_equivalence.py) — never a different vendor, never less reasoning.
+#   Programmatic fan: lane_balance.bulk_delegate(tasks, intent, model_for=…|tier=…, on_miss="batch"|"error"|"api", hedge_ms=…, strategy="auto") — see docs/GATED_BULK_LANES.md
+
 # work-done attribution (org → team × project), all sources
 spendguard claude-code [show|sync|ingest|overflow|invoices|attribute|overage|context|conversations|compact|classify|work|story]   # mine ~/.claude (alias: cc)
 #   ingest → per-turn rows into spend_events (source=claude-code, kind=est_chat, billed=0 = est-value) · overflow|billing-state → calc overage windows from observable signals

@@ -4,7 +4,31 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+### Added
+- **Canonical lane↔metered REASONING-EQUIVALENCE map — the atomic (lane, metered) pair is now PROVABLE, not hoped.**
+  New `src/spendguard/reasoning_equivalence.py`: for every lane (Claude/codex/agy-Gemini/zai) × model × reasoning
+  level, it derives the SAME-provider metered call at the **equal model + equal-or-greater reasoning**, verifies it
+  is priced+served (`availability` = yes/unverified/no), and carries a status + provenance. It unifies what was
+  scattered across `models.normalize_reasoning`, `codex_exec._codex_effort`, `lane_catalog.REASONING_QUIRK` and
+  `adapters.metered_fallback_id`, so "is the lane→metered fallback faithful?" can finally be READ and PROVEN. A pin
+  is a **provider + a reasoning FLOOR**: fallback stays same-provider (a pinned agy/Gemini call can never fall to
+  codex) at equal → bake-off-proven-lesser → round-up-to-greater; never under-reasons, never crosses vendor. A
+  cheaper `proven_lesser` is trusted ONLY on an affirmative agentic verdict (`record_equivalence` refuses free-text —
+  "equally good" is a MEANING judgement). Persisted (`~/.spendguard/reasoning_equivalence.json`, learnings maintained
+  across re-derivations). Surfaced by `spendguard lanes --reasoning-map`. `docs/GATED_BULK_LANES.md` §4,
+  `tests/test_reasoning_equivalence.py`.
+
 ### Fixed
+- **A pinned claude-haiku fallback would STRAND (the equal model wasn't callable on the metered API).** The Claude
+  CLI accepts the bare alias `claude-haiku-4-5`, but the metered API serves only the dated id
+  `claude-haiku-4-5-20251001` — so a lane miss had no equal-model to fall back to. `adapters.metered_fallback_id` now
+  resolves a stale bare alias to its served dated variant ($0, from the served-list cache; the `-YYYYMMDD` date
+  suffix is a fixed-format parse). The old `lane_catalog.audit_lane_fallback` missed this because it only checked each
+  lane's single default (strong) model; the new map checks every model × level.
+- **A pinned agy/Gemini call at `reasoning="minimal"` UNDER-reasoned on fallback.** The agy lane runs its default
+  tier (medium) for a value it has no suffix for, but the metered fallback normalized `minimal`→`none` — less
+  reasoning than the lane. `adapters._call_once`'s lane→metered fallback now routes through
+  `reasoning_equivalence.resolve_metered`, guaranteeing the same-provider metered call at equal-or-greater reasoning.
 - **Vision/reasoning calls truncated at ~7–28 tokens — the auto-heal had POISONED a model's learned max_output.**
   The output-budget auto-heal halves `max_completion_tokens` on a 400 and records the accepted value as the model's
   max_output. A 400 from a NON-budget cause (a malformed vision request, a transient error) ALSO drove the halving,
