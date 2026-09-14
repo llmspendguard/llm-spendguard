@@ -131,17 +131,32 @@ def test_an_unmeasured_model_gets_NO_effort_rather_than_an_invented_one():
 
 
 def test_discovery_forces_the_API_path():
-    """A subscription lane serves the prompt WITHOUT sending the provider's parameters, so every probe comes
-    back clean and discovery concludes the endpoint supports everything. Measured: gpt-5.5 was reported as
-    accepting `minimal` because the codex lane answered it; the API rejects `minimal` with a 400, exactly as
+    """A subscription lane serves the prompt WITHOUT sending the provider's parameters, so a probe routed through
+    a lane comes back clean and discovery concludes the endpoint supports everything. Measured: gpt-5.5 was reported
+    as accepting `minimal` because the codex lane answered it; the API rejects `minimal` with a 400, exactly as
     models.py's verified note has said all along. Third time in this project a lane silently invalidated a
-    measurement — a capability probe belongs on the path whose capability is in question."""
-    src = inspect.getsource(vc.discover_efforts)
-    check("discovery pins the executor to the API before probing",
-          'SPENDGUARD_ADVISOR_EXECUTOR"] = "api"' in src)
-    check("...and restores the caller's setting afterwards",
-          "finally:" in src and "_prev" in src,
-          "a probe must not leave the process routing differently than it found it")
+    measurement — a capability probe belongs on the path whose capability is in question.
+
+    DRIVE IT, DON'T GREP IT (the lesson this very file was rewritten around): the forcing is now a per-call
+    `metered_only=True` — a THREAD-SAFE flag that skips the lane for THIS call only — replacing a process-global
+    SPENDGUARD_ADVISOR_EXECUTOR mutation two concurrent probes would race on (one's finally-restore clobbering the
+    other's set). Stub adapters.call and confirm EVERY probe carries metered_only=True, rather than grepping for
+    whatever string the mechanism happens to be spelled with today."""
+    seen = []
+    _orig_call, _orig_write = adapters.call, vc._write_efforts
+
+    def _capture(*a, **kw):
+        seen.append(kw.get("metered_only"))
+        return {"error": None, "dropped": [], "text": "OK"}     # a clean 'accepted' probe result — no network
+
+    adapters.call = _capture
+    vc._write_efforts = lambda *a, **kw: None                    # don't persist the fake-model probe result
+    try:
+        vc.discover_efforts("openai", "probe-force-api-model", refresh=True)
+    finally:
+        adapters.call, vc._write_efforts = _orig_call, _orig_write
+    check("discovery forces the metered API path on EVERY probe (metered_only=True, never a lane that masks it)",
+          bool(seen) and all(m is True for m in seen), f"metered_only per probe = {seen}")
 
 
 def test_discovery_agrees_with_the_independently_verified_registry():

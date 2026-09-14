@@ -80,6 +80,16 @@ spendguard reliability [--run] [--remediate] [--notify] [--json]   # sweep every
 # Make spendguard PICK the model+effort for you on a REAL call (not just advise): the API takes reasoning="best-value" —
 #   spendguard.adapters.call(prompt, reasoning="best-value", intent="X")  → cheapest (model,effort) whose quality holds for X; books the saving vs the counterfactual.
 
+# OpenAI Batch-API job  (the gated, human-run halves — you supply TASKS, spendguard builds each request; Batch = 50% of realtime)
+spendguard batch-submit --tasks t.jsonl --model M [--system … | --system-file f] [--max-out N] [--cap $] [--avg-out T] [--dry-run]
+#   tasks .jsonl = one {"custom_id","content"} per line; spendguard builds the per-model envelope (max_tokens vs
+#   max_completion_tokens + a verifiably-accepted reasoning_effort, output floored so reasoning can't empty the reply)
+#   from models.py — you NEVER hand-roll a body, so a model-wrong param can't reach the API (the 250/250 HTTP-400 bug).
+#   custom_id is preserved VERBATIM on each result line (your mapping key). --dry-run = $0 estimate + cap check (keeps the
+#   built envelope to inspect). --cap refuses if the projected $ exceeds it. (legacy: --jsonl reqs.jsonl submits a
+#   PRE-BUILT request file — then you own each body's per-model params.)
+spendguard batch-fetch --batch-id ID --out out.jsonl [--force]   # poll; on completion download output (+ any .errors so failures stay visible) — never clobbers a prior --out (renames it .bak_<ts>)
+
 # subscription lanes  (run heavy work $0 on flat-fee plans — the atomic lane→metered pair)
 spendguard lanes                              # lane status (which plans are ready) — add --usage for per-plan quota bars
 spendguard lanes --balance                    # per-plan UTILISATION this month (🔥 hot vs 💤 idle) = est-value ÷ plan fee

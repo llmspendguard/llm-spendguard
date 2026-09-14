@@ -857,45 +857,49 @@ def discover_efforts(vendor, model, refresh=False):
     rec = caps().get(f"{vendor}/{model}") or {}
     if not refresh and rec.get("efforts"):
         return rec["efforts"]
-    # FORCE THE API PATH. A subscription lane (claude-code / codex) serves the prompt without ever sending
-    # the provider's parameters, so every probe comes back clean and discovery concludes the endpoint
-    # supports everything. Measured: gpt-5.5 was reported as accepting `minimal` when the codex lane had
-    # answered it; the API rejects `minimal` with a 400. Third time in this project a lane has silently
-    # invalidated a measurement — capability probes belong on the path whose capability is in question.
-    import os as _os
-    _prev = _os.environ.get("SPENDGUARD_ADVISOR_EXECUTOR")
-    _os.environ["SPENDGUARD_ADVISOR_EXECUTOR"] = "api"
+    # FORCE THE API PATH — per-call and THREAD-SAFE. A subscription lane (claude-code / codex) serves the prompt
+    # without ever sending the provider's parameters, so a probe routed through a lane comes back clean and discovery
+    # concludes the endpoint supports everything. Measured: gpt-5.5 was reported as accepting `minimal` when the codex
+    # lane had answered it; the API rejects `minimal` with a 400. Third time in this project a lane has silently
+    # invalidated a measurement — capability probes belong on the path whose capability is in question. The probe call
+    # below passes metered_only=True (skip the lane, hit the metered API) INSTEAD of mutating the process-global
+    # SPENDGUARD_ADVISOR_EXECUTOR env var: that global forced the API path for the WHOLE process, and two concurrent
+    # probes raced on it (one's finally-restore clobbering the other's set). metered_only scopes it to this leaf call.
     adapters._heal_guard.on = True     # while probing, the rung must DROP a rejected effort (so we SEE the rejection),
     #                                    never heal it — else the probe self-heals and discovery learns the opposite.
     ok, rejected, unknown = [], [], []
     try:
-        for eff in CANDIDATE_EFFORTS:
-            r = adapters.call(model if ":" in model else f"{vendor}:{model}", "Reply: OK",
-                              max_tokens=16, reasoning=eff, timeout_s=45, no_substitution=True)  # probe THIS vendor
-            err = str(r.get("error") or "")
-            # THE PARAMETER MAY HAVE BEEN DROPPED AND THE CALL RETRIED. That returns no error and looks exactly
-            # like acceptance — it is how the first version of this probe reported that every vendor supported
-            # every tier, including one that had rejected `auto` minutes earlier in a direct test.
-            if "reasoning_effort" in (r.get("dropped") or []):
-                rejected.append(eff)
-            elif not err:
-                ok.append(eff)
-            else:
-                # NO PROSE MATCH. This had `elif "effort" in err.lower(): rejected.append(eff)`, deciding
-                # from the wording of an error message that the vendor had rejected this tier. Two ways that
-                # is wrong, both silent: a rejection worded without the word "effort" ("invalid parameter:
-                # reasoning") got filed as unknown, and any unrelated error that happened to mention effort
-                # got filed as a REJECTION — which is a claim about vendor capability, recorded as fact.
-                # The structured signal already exists: adapters records `dropped` when it identifies the
-                # rejected parameter from the provider's typed `param` field, and that is the branch above.
-                # Everything else is genuinely unknown, and unknown is the honest answer.
-                unknown.append(eff)                    # transport/other/unattributable: evidence of nothing
+        from . import calls                            # imported at use (this file tags every internal call locally)
+        # spendguard's OWN capability probe — tag it META so the tiny accepted-effort call it makes lands in the meta
+        # ledger (gate._meta_intent routes spendguard:* there), never workload '(none)'. Without this the probe fired a
+        # PAID call with NO intent — the "NO intent → (none)" attribution gap seen on the metered / effort-discovery
+        # path (e.g. inside a metered_only run learning luna's accepted effort). The context RESTORES the caller's
+        # intent on exit, so the pinned-matrix / metered_only run around it keeps its own tag.
+        with calls.context(intent="spendguard:effort-probe"):
+            for eff in CANDIDATE_EFFORTS:
+                r = adapters.call(model if ":" in model else f"{vendor}:{model}", "Reply: OK",
+                                  max_tokens=16, reasoning=eff, timeout_s=45, no_substitution=True,
+                                  metered_only=True)   # SKIP THE LANE → probe the metered API's real capability (see above)
+                err = str(r.get("error") or "")
+                # THE PARAMETER MAY HAVE BEEN DROPPED AND THE CALL RETRIED. That returns no error and looks exactly
+                # like acceptance — it is how the first version of this probe reported that every vendor supported
+                # every tier, including one that had rejected `auto` minutes earlier in a direct test.
+                if "reasoning_effort" in (r.get("dropped") or []):
+                    rejected.append(eff)
+                elif not err:
+                    ok.append(eff)
+                else:
+                    # NO PROSE MATCH. This had `elif "effort" in err.lower(): rejected.append(eff)`, deciding
+                    # from the wording of an error message that the vendor had rejected this tier. Two ways that
+                    # is wrong, both silent: a rejection worded without the word "effort" ("invalid parameter:
+                    # reasoning") got filed as unknown, and any unrelated error that happened to mention effort
+                    # got filed as a REJECTION — which is a claim about vendor capability, recorded as fact.
+                    # The structured signal already exists: adapters records `dropped` when it identifies the
+                    # rejected parameter from the provider's typed `param` field, and that is the branch above.
+                    # Everything else is genuinely unknown, and unknown is the honest answer.
+                    unknown.append(eff)                # transport/other/unattributable: evidence of nothing
     finally:
         adapters._heal_guard.on = False
-        if _prev is None:
-            _os.environ.pop("SPENDGUARD_ADVISOR_EXECUTOR", None)
-        else:
-            _os.environ["SPENDGUARD_ADVISOR_EXECUTOR"] = _prev
     if not ok and not rejected:
         return {}                                  # discovery itself failed: we know nothing, and say so
     out = {"accepted": ok, "rejected": rejected, "unknown": unknown, "method": "probe",

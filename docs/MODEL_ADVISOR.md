@@ -73,9 +73,16 @@ The advisor (and any tool that calls an LLM through spendguard) uses `adapters.c
 documented so a consumer never has to reverse-engineer it — **it never raises; it always returns a dict**:
 
 - **Request:** `call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,
-  sig=None, files=None, no_metered_fallback=False)`. `timeout_s` is a client-side cancel that actually stops the
-  call **and** its billing (lane AND api). `schema` forces structured output. `no_metered_fallback` makes a lane
-  miss an error, never a paid retry ($0 by construction).
+  sig=None, intent=None, files=None, images=None, no_metered_fallback=False, no_substitution=False,
+  metered_only=False)`. `timeout_s` is a client-side cancel that actually stops the call **and** its billing (lane
+  AND api). `schema` forces structured output. `intent` (alias for `sig`) tags the call's job-type for attribution —
+  **a paid call with NO intent lands in `(none)`, so always pass one.** `no_metered_fallback` makes a lane miss an
+  error, never a paid retry ($0 by construction). `no_substitution=True` PINS the named model (the utilisation bandit
+  can't swap it). `metered_only=True` forces the **faithful metered half** of the atomic (lane, metered) pair — it
+  SKIPS the $0 lane and rides the provider API at equal-or-greater reasoning (`reasoning_equivalence`); use it for a
+  distribution-sensitive / verdict-cached fan (a refuter, a cached classifier) that must reproduce its serial
+  distribution regardless of which host served it. `reasoning="best-value"` lets spendguard pick the cheapest
+  (model, effort) whose measured quality holds for `intent`.
 - **Response keys** (same on success and failure):
   - `text` — the answer, or None on failure / truncated-past-retry.
   - `cost` — $ for this call: **0.0 = a $0 subscription lane**, positive = metered API, None = refused/errored.
