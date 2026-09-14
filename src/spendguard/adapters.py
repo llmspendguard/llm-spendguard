@@ -1383,6 +1383,8 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 pass                                   # even the warning path must not break the dispatch
     t0 = time.time()
     _cache_read = _cache_write = 0        # prompt-cache usage (read / write tokens), captured per provider below
+    _effort_sent = None                   # the reasoning_effort ACTUALLY sent — OpenAI-compat only (set in that branch);
+    #                                       anthropic uses a thinking BUDGET, not this param, so it stays None here.
     try:
         if spec["kind"] == "anthropic":
             import anthropic
@@ -1696,6 +1698,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 if r is None:
                     raise _last
             text = r.choices[0].message.content
+            _effort_sent = okw.get("reasoning_effort")   # okw is final here (post heal/drop) — the effort truly sent
             in_tok, out_tok = r.usage.prompt_tokens, r.usage.completion_tokens
             try:                                              # OpenAI auto-caches identical prefixes ≥1024 tok; unlike
                 _ptd = getattr(r.usage, "prompt_tokens_details", None)   # Anthropic, prompt_tokens ALREADY INCLUDES the
@@ -1710,6 +1713,8 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             cost = None  # model not in price table → shown as n/a
         return {**base, "text": text, "in_tok": in_tok, "out_tok": out_tok, "latency": dt, "cost": cost,
                 "cache_read_tok": _cache_read, "cache_write_tok": _cache_write,   # prompt-cache usage (feeds the receipt + reconcile)
+                "effort": _effort_sent,   # the reasoning_effort ACTUALLY sent (post heal/drop) — the metered twin of the
+                #                           lane's applied-effort, so a pinned/metered_only row is verifiable (None for anthropic)
                 "finish_reason": _finish, "executor": "api", "error": None}   # metered API path — say so, like a lane says its name
     except Exception as e:
         # error_type is the exception CLASS name — a structured signal (like an HTTP status or sqlite_errorname),
