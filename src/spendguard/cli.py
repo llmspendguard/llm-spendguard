@@ -203,6 +203,12 @@ def _dispatch(argv=None):
     if cmd == "token-caps":
         from . import token_caps
         return token_caps.cmd(rest)
+    if cmd == "batch-submit":                         # GATED OpenAI Batch-API submit (estimate/submit) for a prepared .jsonl
+        from . import openai_batch_cli
+        return openai_batch_cli.submit_batch_jsonl(rest)
+    if cmd == "batch-fetch":                          # poll a batch; download its output .jsonl when completed
+        from . import openai_batch_cli
+        return openai_batch_cli.fetch_batch_output(rest)
     if cmd == "ask":                                  # cross-LLM query surface — one prompt across models, honestly
         from . import crossllm
         return crossllm.cmd(rest)
