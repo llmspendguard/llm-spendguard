@@ -129,23 +129,24 @@ def estimate_jsonl_cost(jsonl_path, model, batch=True, avg_out_tokens=None, prov
                 mode=("batch" if batch else "realtime"))
 
 
-def build_chat_batch_jsonl(tasks_path, model, system=None, max_out=None):
+def build_chat_batch_jsonl(tasks_path, model, system=None, max_out=None, reasoning="minimal"):
     """Build an OpenAI /v1/chat/completions Batch-API request .jsonl FROM TASKS, so a caller supplies only
     {custom_id, content} lines + one shared `system` + a `model` and NEVER hand-rolls the per-model request
     envelope. spendguard builds each line's `body` through models.apply_call_params — the ONE authority for
-    tokens_param (max_tokens vs max_completion_tokens) and reasoning — so a caller can never send a model-wrong
-    param again (the failure that returned 250/250 HTTP 400 "'max_tokens' is not supported ... use
-    'max_completion_tokens'"). Batch and realtime therefore cannot drift: both build via the same models.py path.
+    tokens_param (max_tokens vs max_completion_tokens) — so a caller can never send a model-wrong param again (the
+    failure that returned 250/250 HTTP 400 "'max_tokens' is not supported ... use 'max_completion_tokens'"). Batch
+    and realtime therefore cannot drift: both build through the same models.py path.
 
     `custom_id` is preserved VERBATIM — it is the caller's mapping key and comes back on each result line; spendguard
     never invents an index/hash the caller can't reconstruct. `system` is sent as a system message (once per request).
 
-    REASONING MODELS GO EMPTY, NOT JUST 400 (the max_output_poisoning trap): gpt-5/o-series spend hidden reasoning
-    tokens against the output budget, so a tiny cap comes back EMPTY. models.apply_call_params sets the right reasoning
-    param, and when the caller names no `max_out` the output ceiling is floored to adapters.TOKEN_FLOOR — the SAME
-    "nobody named a number → start high" floor the realtime path applies to EVERY model, so batch and realtime don't
-    drift. A cap is billed by ACTUAL tokens, so this over-provisions harmlessly rather than risk emptying a reply.
-    `max_out` overrides.
+    REASONING is resolved by models.resolve_effort(model, reasoning), NOT the raw family value — because a batch
+    CANNOT heal per row the way adapters.call does, so the reasoning_effort must be VERIFIABLY accepted up front.
+    resolve_effort discovers + records the accepted set (gpt-5.6-luna REJECTS the family default 'minimal' → a 400
+    the batch cannot recover from) and returns the accepted value, or None to OMIT the param. The output ceiling
+    floors to adapters.TOKEN_FLOOR when the caller names no `max_out` — the SAME "nobody named a number → start high"
+    floor the realtime path applies to EVERY model — so reasoning can't empty the reply (the max_output_poisoning
+    trap). A cap is billed by ACTUAL tokens, so over-provisioning is harmless. `max_out` / `reasoning` override.
 
     Writes to a FRESH temp .jsonl (never a caller-supplied path — so the task input can never be clobbered) and
     returns (built_path, n_tasks); the caller submits/inspects that path and removes it when done. Refuses a
@@ -161,6 +162,9 @@ def build_chat_batch_jsonl(tasks_path, model, system=None, max_out=None):
     #   the realtime path applies when max_tokens is unset (max(TOKEN_FLOOR, predicted)). A cap is billed by ACTUAL
     #   tokens, so over-provisioning costs nothing while under-provisioning EMPTIES a reasoning reply — batch and
     #   realtime must not drift. `max_out` (or --avg-out on the estimate) tightens it deliberately.
+    _eff = models.resolve_effort(model, reasoning)   # the VERIFIABLY-ACCEPTED reasoning_effort — a batch can't heal
+    #   per row, so this resolves up front (discovers + records the accepted set); a family default the endpoint
+    #   rejects (gpt-5.6-luna: 'minimal') never reaches a batch. None → OMIT the param (model default).
     fd, out_path = tempfile.mkstemp(prefix="spendguard-batch-req-", suffix=".jsonl")
     n = 0
     try:
@@ -182,7 +186,11 @@ def build_chat_batch_jsonl(tasks_path, model, system=None, max_out=None):
                 msgs = ([{"role": "system", "content": system}] if system else []) + \
                        [{"role": "user", "content": content}]
                 body = {"model": model, "max_tokens": out_cap, "messages": msgs}
-                models.apply_call_params(model, body, dialect="openai")   # tokens_param + reasoning from models.py; NO hardcode
+                models.apply_call_params(model, body, dialect="openai")   # tokens_param (max_tokens vs max_completion_tokens)
+                if _eff is None:
+                    body.pop("reasoning_effort", None)   # endpoint takes no accepted effort → OMIT (model default)
+                else:
+                    body["reasoning_effort"] = _eff      # the resolve_effort accepted value (overrides the family guess)
                 fout.write(json.dumps({"custom_id": cid, "method": "POST", "url": "/v1/chat/completions",
                                        "body": body}) + "\n")
                 n += 1

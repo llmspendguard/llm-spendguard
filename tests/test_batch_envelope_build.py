@@ -18,7 +18,7 @@ os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 os.environ.setdefault("SPENDGUARD_HOME", tempfile.mkdtemp(prefix="sg-batch-"))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from spendguard import submit, adapters   # noqa: E402
+from spendguard import submit, adapters, models   # noqa: E402
 
 
 def report_check(name, cond):
@@ -91,6 +91,26 @@ except ValueError:
     _refused_task = True
 os.unlink(bad_p)
 fails += report_check("a task missing custom_id/content is refused (never silently dropped)", _refused_task)
+
+print("\n-- reasoning is resolved via models.resolve_effort (the batch-safe ACCEPTED value), not the raw family --")
+# A batch can't heal per row, so the builder must send a VERIFIABLY-accepted reasoning_effort. gpt-5.6-luna rejects
+# the family 'minimal' and accepts 'none'; the builder must use resolve_effort's value, and OMIT when it returns None.
+_orig_resolve = models.resolve_effort
+try:
+    models.resolve_effort = lambda _m, _lvl: "none"     # simulate: endpoint accepts 'none', not the family 'minimal'
+    _bp, _ = submit.build_chat_batch_jsonl(tasks_p, "gpt-5.6-luna", system="t")
+    _rows = _read_built(_bp)
+    os.unlink(_bp)
+    fails += report_check("body reasoning_effort == resolve_effort's accepted value ('none'), NOT the family 'minimal'",
+                          all(r["body"].get("reasoning_effort") == "none" for r in _rows))
+    models.resolve_effort = lambda _m, _lvl: None        # simulate: no accepted effort → OMIT the param
+    _bp2, _ = submit.build_chat_batch_jsonl(tasks_p, "gpt-5.6-luna", system="t")
+    _rows2 = _read_built(_bp2)
+    os.unlink(_bp2)
+    fails += report_check("resolve_effort None → reasoning_effort OMITTED (model default, not a rejected value)",
+                          all("reasoning_effort" not in r["body"] for r in _rows2))
+finally:
+    models.resolve_effort = _orig_resolve
 
 os.unlink(tasks_p)
 print(f"\n{'[FAIL]' if fails else 'OK'} test_batch_envelope_build: {len(fails)} failure(s)")
