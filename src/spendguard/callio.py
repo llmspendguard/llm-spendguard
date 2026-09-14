@@ -560,6 +560,55 @@ def guarded_collect(batch_ids, intent, model, client=None, record_io=False):
                 yield (cid, text, usage)
 
 
+def status_rows(intents=None):
+    """Per (intent, model): total samples, REPLAYABLE (truncated=0 — the rows bakeoff/effort-titrate actually
+    sample), LIVE (source='live_io'), and JUDGED. Optionally kept to intents whose name CONTAINS any of `intents`
+    (substring, mechanical — same filter shape as the matrices). $0, read-only: the corpus-fill view to consult
+    BEFORE estimating a sweep, so you can see which intents have enough replay bodies yet."""
+    with _lock:
+        rows = _callio_db().execute(
+            "SELECT COALESCE(intent,'(none)'), model, COUNT(*), "
+            "SUM(CASE WHEN COALESCE(truncated,0)=0 THEN 1 ELSE 0 END), "
+            "SUM(CASE WHEN source='live_io' THEN 1 ELSE 0 END), "
+            "SUM(quality IS NOT NULL) "
+            "FROM call_io GROUP BY COALESCE(intent,'(none)'), model ORDER BY COUNT(*) DESC").fetchall()
+    out = [{"intent": r[0], "model": r[1], "sampled": r[2], "replayable": r[3] or 0,
+            "live": r[4] or 0, "judged": r[5] or 0} for r in rows]
+    if intents:
+        want = [s.strip() for s in intents if s.strip()]
+        out = [d for d in out if any(w in d["intent"] for w in want)]
+    return out
+
+
+def status_main(argv=None):
+    """`spendguard callio-status` — how full is the replay corpus, per (intent, model)? Shows sampled · replayable
+    (truncated=0, what a sweep samples) · live (captured from realtime/lane traffic) · judged, and whether live
+    capture is even ON. $0. Use it before `effort-titrate`/`bakeoff` to see which intents have replay bodies yet."""
+    import argparse
+    ap = argparse.ArgumentParser(prog="spendguard callio-status")
+    ap.add_argument("--intent", default=None, help="comma-separated intent substrings to filter to "
+                    "(e.g. 'warden,7thsense,refute,icd'); default = every intent")
+    ap.add_argument("--json", action="store_true", help="machine-readable rows")
+    a = ap.parse_args(argv)
+    rows = status_rows(a.intent.split(",") if a.intent else None)
+    if a.json:
+        print(json.dumps(rows, indent=2))
+        return 0
+    on = capture_live_on()
+    print(f"call_io corpus — replay samples per (intent, model)   [live capture: {'ON' if on else 'OFF'}"
+          f"{'' if on else ' — set SPENDGUARD_CAPTURE_LIVE=1 to capture realtime/lane work'}]")
+    if not rows:
+        print("  (empty) — nothing captured yet. Turn capture on and run the work, or `spendguard fetch-io` for batches.")
+        return 0
+    print(f"  {'intent':<28}{'model':<22}{'sampled':>8}{'replay':>8}{'live':>7}{'judged':>8}")
+    for d in rows[:50]:
+        print(f"  {d['intent'][:27]:<28}{d['model'][:21]:<22}{d['sampled']:>8}{d['replayable']:>8}"
+              f"{d['live']:>7}{d['judged']:>8}")
+    print("  replay = truncated=0 rows a sweep SAMPLES (an intent needs replay>0 before effort-titrate/bakeoff can run).")
+    print("  Next: spendguard effort-titrate <intent> --estimate   |   spendguard bakeoff <intent> --candidates … --estimate")
+    return 0
+
+
 def main(argv=None):
     import argparse
     ap = argparse.ArgumentParser(prog="spendguard fetch-io")

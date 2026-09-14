@@ -124,6 +124,8 @@ spendguard tag                               # re-assign a project tag (fix cwd-
 # cold start / corpus
 spendguard bootstrap [--repo] [--transcripts]   # mine ALL history → corpus + insights (free, then estimate)
 spendguard fetch-io [--cap 50]                  # recover real prompt+output from providers (free)
+spendguard callio-status [--intent a,b] [--json]  # replay corpus fill per (intent, model): sampled · replay(=truncated0, what a sweep samples) · live · judged, + is live-capture ON — consult BEFORE effort-titrate/bakeoff (free)
+#   Build the corpus for realtime/lane-only intents: SPENDGUARD_CAPTURE_LIVE=1 (callio.capture_live) → adapters.call records each served workload call WHOLE into call_io as it runs (opt-in, bounded, privacy-gated).
 spendguard backfill [--intent-map …]            # seed corpus + graph from the batch ledgers (free)
 spendguard mine-history {intents,graph,git} [--apply]   # reconstruct intents/edges from the repo (free; alias: history)
 spendguard mine-conv {index,synth} [--run]      # mine session transcripts for the cost playbook (alias: conv)
