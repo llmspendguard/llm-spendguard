@@ -1,15 +1,21 @@
 """`spendguard batch-submit` / `batch-fetch` — the GATED human-run halves of an OpenAI Batch-API job.
 
-A caller (e.g. symgrep's bulk describe bootstrap) prepares a request .jsonl out-of-band; the SPEND and the
-result download run HERE, under the enforcing gate, one deliberate command each:
+A caller supplies TASKS ({custom_id, content} per line) + a shared --system + --model; spendguard BUILDS the
+per-model request envelope (via models.apply_call_params — the ONE authority for max_tokens-vs-max_completion_tokens
+and reasoning), so a caller never hand-rolls a body and can't send a model-wrong param (the failure that returned
+250/250 HTTP 400 "use max_completion_tokens"). The SPEND and the result download run HERE, under the enforcing
+gate, one deliberate command each:
 
-  spendguard batch-submit --jsonl reqs.jsonl --model gpt-5.6-luna --cap 5 --dry-run   # $0 estimate (no API call)
-  spendguard batch-submit --jsonl reqs.jsonl --model gpt-5.6-luna --cap 5             # SUBMIT (metered, capped)
-  spendguard batch-fetch  --batch-id batch_abc --out out.jsonl                        # poll; download when done
+  spendguard batch-submit --tasks tasks.jsonl --system-file sys.txt --model gpt-5.6-luna --cap 5 --dry-run  # $0 estimate
+  spendguard batch-submit --tasks tasks.jsonl --system-file sys.txt --model gpt-5.6-luna --cap 5            # SUBMIT (metered, capped)
+  spendguard batch-fetch  --batch-id batch_abc --out out.jsonl                                              # poll; download when done
 
-submit reuses submit.guarded_submit (estimate -> enforce cap -> submit); fetch polls batches.retrieve and, on
-completion, downloads the output (and any error file) so the caller can ingest it. Nothing hardcoded: jsonl,
-model, cap, avg-out, batch id, and out path are all arguments.
+  (legacy: --jsonl reqs.jsonl accepts a PRE-BUILT request .jsonl — you then own each body's per-model params.)
+
+custom_id is the caller's mapping key, preserved verbatim and returned on each result line. submit reuses
+submit.build_chat_batch_jsonl (task → per-model envelope) + submit.guarded_submit (estimate → enforce cap →
+submit); fetch polls batches.retrieve and, on completion, downloads the output (and any error file) so failures
+stay visible. Nothing hardcoded: tasks/jsonl, system, model, cap, avg-out, max-out, batch id, out path are args.
 """
 import argparse
 import os
@@ -19,18 +25,49 @@ import time
 
 def submit_batch_jsonl(rest):
     ap = argparse.ArgumentParser(prog="spendguard batch-submit")
-    ap.add_argument("--jsonl", required=True, help="request .jsonl (each line a /v1/chat/completions batch item)")
+    src = ap.add_mutually_exclusive_group(required=True)
+    src.add_argument("--tasks", help='tasks .jsonl — each line {"custom_id": <id>, "content": <user text>}; '
+                     "spendguard builds the per-model request envelope (RECOMMENDED — the caller never hand-rolls a body, "
+                     "so a model-wrong param like max_tokens-vs-max_completion_tokens can't reach the API)")
+    src.add_argument("--jsonl", help="a PRE-BUILT request .jsonl (legacy — you own each body's per-model params)")
     ap.add_argument("--model", required=True)
+    ap.add_argument("--system", help="shared system instruction, sent once per request (--tasks mode)")
+    ap.add_argument("--system-file", help="read the shared system instruction from this file (--tasks mode; wins over --system)")
+    ap.add_argument("--max-out", type=int, default=None,
+                    help="output-token ceiling per request (--tasks mode); default = a reasoning-safe floor so reasoning "
+                         "can't empty the reply")
     ap.add_argument("--cap", type=float, default=None, help="refuse if projected $ exceeds this (0 = no spend)")
     ap.add_argument("--avg-out", type=float, default=None,
-                    help="measured avg output tokens/item for the estimate (else the max_tokens ceiling is used)")
+                    help="measured avg output tokens/item for the estimate (else the per-request ceiling is used)")
     ap.add_argument("--endpoint", default="/v1/chat/completions")
     ap.add_argument("--dry-run", action="store_true", help="estimate + cap check only, no submit ($0, no API call)")
     a = ap.parse_args(rest)
     from . import submit
-    bid = submit.guarded_submit(a.jsonl, a.model, a.cap, batch=True, avg_out_tokens=a.avg_out,
-                                submit=not a.dry_run, endpoint=a.endpoint)
+    _built = None
+    try:
+        if a.tasks:
+            if a.system_file:
+                with open(a.system_file) as _sf:
+                    system = _sf.read()
+            else:
+                system = a.system
+            _built, n = submit.build_chat_batch_jsonl(a.tasks, a.model, system=system, max_out=a.max_out)
+            print(f"[batch-submit] built {n:,} request(s) from tasks via spendguard/models.py "
+                  f"(per-model envelope — no hand-rolled params) → {_built}", file=sys.stderr)
+            jsonl_path = _built
+        else:
+            jsonl_path = a.jsonl
+        bid = submit.guarded_submit(jsonl_path, a.model, a.cap, batch=True, avg_out_tokens=a.avg_out,
+                                    submit=not a.dry_run, endpoint=a.endpoint)
+    finally:
+        if _built and not a.dry_run:          # keep the built envelope on --dry-run (inspectable); else clean the temp
+            try:
+                os.unlink(_built)
+            except OSError:
+                pass
     if a.dry_run:
+        if _built:
+            print(f"[batch-submit] (dry-run) built envelope kept for inspection: {_built}", file=sys.stderr)
         return 0
     if not bid:
         print("batch-submit: no batch id returned (see gate output above).", file=sys.stderr)
