@@ -390,6 +390,10 @@ def main(argv=None):
         from . import lane_catalog
         print()
         print(lane_catalog.format_lane_fallback())
+    if "--reasoning-map" in argv:                         # lane→metered REASONING equivalence: same model, equal-or-greater effort
+        from . import reasoning_equivalence
+        print()
+        print(reasoning_equivalence.format_map())
     if "--propose" in argv:                               # model PROPOSES acceptable substitutes for an intent (PENDING)
         rest = [a for a in argv[argv.index("--propose") + 1:] if not a.startswith("--")]
         if len(rest) < 2:

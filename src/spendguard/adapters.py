@@ -1086,16 +1086,47 @@ def _compose_gemini_reasoning(model_id, reasoning):
     return _base + "-" + tier
 
 
+def _is_dated_variant(bare, candidate):
+    """True iff `candidate` is exactly `bare` + a DATE suffix `-YYYYMMDD` (8 trailing digits). A FIXED orthographic
+    convention (Anthropic dates its ids), so this is PARSING a known shape, never a meaning judgement — an inner
+    '-mini-'/'-preview-' segment fails the check, so it can only match the pure dated form of the SAME id."""
+    if not candidate.startswith(bare + "-"):
+        return False
+    suffix = candidate[len(bare) + 1:]
+    return len(suffix) == 8 and suffix.isdigit()
+
+
+def _served_dated_id(provider, model_id):
+    """`model_id`, or its SERVED dated variant (`<model_id>-YYYYMMDD`) when the bare id is NOT itself served but a
+    dated form IS. The lane's CLI accepts a bare alias (claude-haiku-4-5) that the metered API does not serve — it
+    serves only the dated id (claude-haiku-4-5-20251001) — so without this the atomic pair would STRAND a pinned
+    claude-haiku call. $0, cache-only: reads catalog.live_model_ids (the synced served list) and matches the fixed
+    date-suffix format (_is_dated_variant) — never the agentic closest_served, which is the runtime's confirmed-stale
+    hop. Unchanged when the list is absent, the bare id is already served, or no dated variant exists (then
+    served_check still flags it 'stale' and the runtime resolver takes over)."""
+    try:
+        from . import catalog
+        ids = catalog.live_model_ids(provider)             # cached metered served ids (dispatch form), or None
+        if not ids or model_id in ids:
+            return model_id                                # no list, or already served → nothing to resolve
+        variants = sorted(m for m in ids if _is_dated_variant(model_id, m))
+        return variants[-1] if variants else model_id      # newest dated variant, else unchanged (stays flagged stale)
+    except Exception:
+        return model_id                                    # best-effort — a catalog hiccup never breaks the mapping
+
+
 def metered_fallback_id(provider, use_name):
     """The metered-API model id equivalent to a lane's USE-NAME — the mapping that lets a lane call fall BACK to the
     provider's paid API when the lane is down/exhausted, WITHOUT the lane's own naming breaking the call. This is the
     ONE place that equivalence lives, so the live fallback (_call_once) and the lane-fallback audit can never drift.
     For gemini/agy the reasoning level rides the id as a SUFFIX (gemini-3.7-flash-medium) while the metered API wants
-    the BARE id + a reasoning PARAMETER, so the suffix is split off; every other provider's lane id already IS its
-    metered id. Returns (metered_id, reasoning_level_or_None)."""
+    the BARE id + a reasoning PARAMETER, so the suffix is split off. Every other provider's lane id IS its metered id,
+    EXCEPT a bare alias the metered API dates: claude-haiku-4-5 (the CLI's alias) → claude-haiku-4-5-20251001 (the
+    served id), resolved $0 from the served-list cache so a pinned claude-haiku call never strands its own fallback.
+    Returns (metered_id, reasoning_level_or_None)."""
     if provider == "gemini":
         return _split_gemini_reasoning(use_name)
-    return use_name, None
+    return _served_dated_id(provider, use_name), None
 
 
 def _cacheable_system(system):
@@ -1261,7 +1292,22 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         # No substitute (or it also failed) → fall back to the API on the SAME prompt (this recurses with the lane
         # disabled, so the existing API path runs once, unchanged) and let its OUTCOME settle whether the lane was
         # unsuitable for this prompt (keep it) or genuinely down (cool it).
-        out = _call_once(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
+        # ATOMIC-PAIR FIDELITY (the reasoning-equivalence map): the lane just tried its realization of `reasoning`; its
+        # SAME-provider metered twin must fall back at EQUAL-OR-GREATER reasoning and on the SERVED equal-model id —
+        # never UNDER-reason (an agy/Gemini 'minimal' runs the lane's default tier, so its metered fallback must match,
+        # not drop to 'none') and never strand on a stale alias (claude-haiku-4-5 → the served dated id). resolve() is
+        # $0 (cached) and wrapped so a map hiccup degrades to the prior behaviour, never breaks the fallback.
+        _fb_model, _fb_reasoning = model, reasoning
+        try:
+            from . import reasoning_equivalence as _re, lane_catalog as _lc
+            _base_m, _suf_lv = _lc.parse_use_name(raw, lane_name)      # split any agy reasoning suffix off the id
+            _cell = _re.resolve_metered(lane_name, _base_m, reasoning or _suf_lv)
+            _fb_reasoning = _cell["metered_effort"]                    # EQUAL, proven-lesser, or rounded-up (never less)
+            if _cell.get("metered_model"):
+                _fb_model = f"{prov}:{_cell['metered_model']}"         # the SERVED equal-model id (resolves stale alias)
+        except Exception:
+            _fb_model, _fb_reasoning = model, reasoning                # map unavailable → prior behaviour, never break
+        out = _call_once(_fb_model, prompt, max_tokens=max_tokens, system=system, reasoning=_fb_reasoning,
                          schema=schema, timeout_s=timeout_s, _skip_lane=True, _no_sub=_no_sub)
         _kind = _learn_from_fallback(lane_name, prompt, bool(out.get("error")), model=raw, transient=bool(_ra))
         import sys as _sys
