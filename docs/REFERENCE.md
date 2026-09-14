@@ -348,6 +348,15 @@ with calls.context(intent="stage:describe", chain=job_id):                      
   conversation) for free, then estimate the caged reasoning. One command, history → corpus → insights.
 - **`spendguard fetch-io`** — recover the **real prompts+outputs** from the providers (OpenAI batch input/output files,
   streamed with early-stop; Anthropic results within 29 days) into a bounded `call_io` sample. **Zero token cost.**
+- **Live capture (opt-in) — `callio.capture_live=on` / `SPENDGUARD_CAPTURE_LIVE=1`.** `fetch-io` only recovers work
+  that ran as a provider **batch**; a **realtime/lane-only** intent (a $0-lane fan, a `metered_only` refuter) never
+  becomes a batch, so it left **no bodies** to recover and `bakeoff`/`effort-titrate`/`advise good%` refused it. With
+  this on, `adapters.call` records each **served workload** call's prompt+output into `call_io` **as it runs** —
+  full-fidelity (replayable, not the judge's 800-char snip), **workload-only** (`spendguard:*` meta + untagged skipped),
+  **bounded** per (intent, model), and **contained not cut** (a prompt too large to keep whole is skipped + named, never
+  stored as a replay-poisoning partial). OFF by default because full bodies are privacy-sensitive; turn it on, run the
+  estate's real work for a while, then `bakeoff`/`effort-titrate` can sample those intents. (`callio.live_snip_chars`
+  sets the whole-fidelity bound; the calls are also tagged by `intent`/`sig` — see the attribution note above.)
 - **`spendguard validate`** — **living insights**: re-checks each learning against the current corpus and moves it through
   its lifecycle (corroborated → `active` + confidence up; cited model gone / gap inverted → `refuted`/`superseded`). The
   advisor weights by *current* confidence + status, so stale advice sinks as data grows.

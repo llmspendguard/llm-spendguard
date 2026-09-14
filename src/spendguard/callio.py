@@ -34,6 +34,32 @@ def snip_chars():
 
 IO_SNIP = snip_chars()
 DEFAULT_CAP = 50         # samples per (intent, model)
+_LIVE_SNIP_DEFAULT = 100000    # LIVE capture keeps far more than the 800-char judge snip: a workload prompt must stay
+#                                REPLAYABLE (bakeoff/titration re-run it), so capture it whole up to this bound.
+
+
+def live_snip_chars():
+    """Per-body char cap for LIVE (realtime/lane) capture — replay fidelity, not the judge's 800. Never below
+    snip_chars(). Config override: callio.live_snip_chars."""
+    try:
+        return max(snip_chars(), int(config._cfg_get("callio", "live_snip_chars", _LIVE_SNIP_DEFAULT)))
+    except Exception:
+        return _LIVE_SNIP_DEFAULT
+
+
+def capture_live_on():
+    """Is capture-as-you-go ENABLED? OFF by default — full-fidelity live bodies are privacy-sensitive, so building the
+    replay corpus from live traffic is a DELIBERATE opt-in (env SPENDGUARD_CAPTURE_LIVE, else config callio.capture_live).
+    When on, a workload call's prompt+output is recorded so bakeoff/effort-titrate/advise have real tasks WITHOUT a
+    batch to fetch — the path that unblocks measuring realtime/lane-only intents."""
+    import os as _os
+    v = _os.getenv("SPENDGUARD_CAPTURE_LIVE")
+    if v is not None and v.strip() != "":
+        return v.strip().lower() in ("1", "true", "yes", "on")
+    try:
+        return str(config._cfg_get("callio", "capture_live", "off")).strip().lower() in ("1", "true", "yes", "on")
+    except Exception:
+        return False
 
 
 def _callio_db():
@@ -97,11 +123,15 @@ def counts():
 
 
 def record_io_sample(intent, provider, model, batch, custom_id, prompt, output, in_tok=0, out_tok=0, source="batch_io",
-           system=None, req_schema=None, req_max_tokens=0):
-    """Insert one sample (idempotent on batch+custom_id). Returns id or None if duplicate."""
+           system=None, req_schema=None, req_max_tokens=0, cap_chars=None):
+    """Insert one sample (idempotent on batch+custom_id). Returns id or None if duplicate.
+
+    `cap_chars` overrides the per-body character cap for THIS write (default: snip_chars(), the judge-sized 800). The
+    LIVE capture path passes a large replay-fidelity cap so a captured prompt is REPLAYABLE (not a partial task); the
+    truncated flag and the grow-only refill both key on whatever cap is in force here, so fidelity is per-write."""
     cid = _uid()
     ts = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
-    cap = snip_chars()
+    cap = int(cap_chars) if cap_chars else snip_chars()
     # The replay guard keys on PROMPT truncation ONLY: bakeoff/titration REPLAY the prompt, so a cut prompt is a
     # different task and must be excluded — but a full prompt with a cut OUTPUT stays perfectly replayable (the output
     # is regenerated). Conflating the two would wrongly exclude a usable prompt. The warning still fires on either cut.
@@ -159,6 +189,50 @@ def record_io_sample(intent, provider, model, batch, custom_id, prompt, output, 
         # inflate `added` / mis-trigger the added>=sample_n early stop. Return None when nothing was inserted.
         return cid if inserted else None
     except Exception:
+        return None
+
+
+def capture_live(intent, provider, model, prompt, output, in_tok=0, out_tok=0,
+                 system=None, req_schema=None, req_max_tokens=0):
+    """Capture ONE realtime/lane WORKLOAD call into the call_io replay corpus so bakeoff / effort-titrate / advise
+    good% have REAL tasks to sample WITHOUT a batch to fetch. THIS is the path that unblocks measuring realtime/lane-
+    only intents: an estate whose work never became an OpenAI/Anthropic batch leaves no provider file for fetch-io to
+    recover, so its bodies were previously uncapturable. Bounded and safe, and LOUD where it stops:
+      · OPT-IN — a no-op unless capture_live_on() (default off; full bodies are privacy-sensitive).
+      · WORKLOAD only — spendguard:* meta intents and untagged '(none)' calls are skipped (the corpus is the user's
+        real work, not our own probes).
+      · BOUND BY CONTAINMENT, NOT A CUT (the evidence-truncation doctrine): a prompt too large to keep WHOLE is
+        SKIPPED and NAMED (warn-once), never stored as a partial the replay judge would read as the whole task.
+      · CORPUS CAP is announced — reaching DEFAULT_CAP samples for an (intent, model) pauses capture with a one-time
+        warning (never a silent stop), so a full corpus is visible, not invisible.
+      · A capture FAILURE is announced (warn-once) and swallowed — capture is best-effort and must never break the
+        caller's already-completed call.
+      · IDEMPOTENT — keyed by a prompt hash under a synthetic 'live' batch, so the same task captured twice is one row.
+    Returns the row id, or None (skipped / capped / duplicate / failed)."""
+    try:
+        intent = (intent or "").strip()
+        if not prompt or not intent or intent.startswith("spendguard:"):
+            return None
+        if not capture_live_on():
+            return None
+        _max = live_snip_chars()
+        if len(prompt) > _max:                              # too big to keep WHOLE → SKIP + NAME it (never store a partial)
+            config.warn_once("[spendguard] call_io live-capture SKIPPED an oversized prompt for intent %r (%d chars > "
+                             "callio.live_snip_chars %d) — raise that cap to capture this task whole." % (intent, len(prompt), _max))
+            return None
+        if count_rows(intent, model) >= DEFAULT_CAP:        # corpus full for this pair → pause LOUDLY, not silently
+            config.warn_once("[spendguard] call_io live-capture corpus FULL for (%r, %s) at %d samples — capture paused "
+                             "for it; that intent now has enough to bakeoff/effort-titrate." % (intent, model, DEFAULT_CAP))
+            return None
+        import hashlib
+        cid = hashlib.sha256(prompt.encode("utf-8", "ignore")).hexdigest()[:16]
+        # prompt is <= _max (checked above), so it is stored WHOLE — cap_chars is a ceiling that never cuts it here.
+        return record_io_sample(intent, provider, model, "live", cid, prompt, output,
+                                in_tok=in_tok, out_tok=out_tok, source="live_io",
+                                system=system, req_schema=req_schema, req_max_tokens=req_max_tokens, cap_chars=_max)
+    except Exception as e:
+        config.warn_once("[spendguard] call_io live-capture FAILED for intent %r (%s) — sample not recorded; capture "
+                         "is best-effort and never blocks the call." % (intent, type(e).__name__))
         return None
 
 

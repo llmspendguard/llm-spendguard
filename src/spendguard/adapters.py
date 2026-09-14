@@ -600,6 +600,18 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                 r["parsed"] = _obj if isinstance(_obj, (dict, list)) else None
             except Exception:
                 r["parsed"] = None
+        # CORPUS CAPTURE (opt-in, callio.capture_live): record this WORKLOAD call's prompt+output into the call_io
+        # replay corpus, so bakeoff / effort-titrate / advise good% have real tasks to sample WITHOUT a batch to
+        # fetch — the path that unblocks measuring realtime/lane-only intents (an estate whose work never became a
+        # provider batch had no bodies for fetch-io to recover). OUTER call only (not the _no_guard recursion, so one
+        # capture per call), never a probe, only a SERVED (no-error) call. capture_live is opt-in, workload-only,
+        # bounded, LOUD where it stops, and NEVER raises into the call.
+        if not _no_guard and not _probe and not r.get("error"):
+            from . import callio, calls as _cap_ctx
+            callio.capture_live(sig or (_cap_ctx.current() or {}).get("intent"), r.get("provider") or "",
+                                r.get("model") or model, prompt, r.get("text"),
+                                in_tok=r.get("in_tok") or 0, out_tok=r.get("out_tok") or 0,
+                                system=system, req_schema=schema, req_max_tokens=max_tokens)
     return r
 
 
