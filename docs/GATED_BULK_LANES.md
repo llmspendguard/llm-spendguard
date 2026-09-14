@@ -139,6 +139,14 @@ The fallback reasoning is **EQUAL-OR-GREATER**, resolved by the canonical map (`
 equal → a bake-off-proven-equal *lesser* → else round *up*; it never under-reasons. So the pair is faithful for
 capability ("vendor X judged this at ≥ the requested reasoning") while staying $0 when the plan can serve it.
 
+**Force the metered half when reproducibility demands it — `metered_only=True`.** The atomic pair is faithful for
+*capability*, but a *verdict-cached* fan (a refuter that caches and compares verdicts) needs the stricter property
+that a parallel fan reproduces the serial verdict *distribution*. There, the $0 lane's warm-daemon concurrency can
+drift a borderline verdict even at equal reasoning. `bulk_delegate(..., metered_only=True)` (→ `adapters.call(metered_only=True)`)
+runs every pinned vote on the concurrency-invariant **metered API**, skipping the lane. It BILLS — the deliberate
+trade for a fan where the verdict distribution is the product. Default is the $0 atomic pair; this is the opt-in for
+the narrow reproducibility case (e.g. honestreview's refute fans).
+
 Each row shows exactly **how that vote ran**, so a consistency-sensitive caller can verify it:
 - `served_by_metered_api` — `True` if the paid API served it, `False` if the $0 lane did (which half of the pair).
 - `model` — the vendor:model that actually answered (a within-vendor served-id resolution, e.g. a dated Anthropic
