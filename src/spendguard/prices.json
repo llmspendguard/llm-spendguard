@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "anthropic_source": "https://claude.com/pricing (re-verified 2026-09-12 against the vendor page: opus 5/25, sonnet-5 2/10, haiku-4.5 1/5 \u2014 all exact). NOTE: the predicted claude-sonnet-5 reversion to $3/$15 on 2026-09-01 did NOT occur; the vendor still shows the introductory $2/$10, so 2/10 stands.",
+    "anthropic_source": "https://claude.com/pricing (re-verified 2026-09-12 against the vendor page: opus 5/25, sonnet-5 2/10, haiku-4.5 1/5 \u2014 all exact). NOTE: the predicted claude-sonnet-5 reversion to $3/$15 on 2026-09-01 did NOT occur; the vendor still shows the introductory $2/$10, so 2/10 stands. 2026-09-14: added claude-opus-5 (5/25), claude-fable-5 and claude-fable-5-1 (both 10/50) from https://platform.claude.com/docs/en/about-claude/pricing; fable-5-1 cache-read is 0.025x base ($0.25), NOT the standard 0.1x -- see each entry's _source.",
     "note": "USD per 1M tokens. batch = 50% of realtime. Edit here (or ~/.spendguard/prices.json) \u2014 do not hardcode prices in code.",
     "openai_source": "https://developers.openai.com/api/docs/pricing (re-verified 2026-09-12 against the vendor page, 7/7 exact: gpt-5 1.25/10, gpt-5-mini 0.25/2, gpt-5-nano 0.05/0.40, gpt-5.4 2.50/15, gpt-5.5 5/30, gpt-4o 2.50/10, gpt-4o-mini 0.15/0.60) \u2014 the same provenance pricing.PRICING_SOURCE carries",
     "qwen_source": "https://www.eesel.ai/blog/qwen-pricing (Alibaba Model Studio list prices, 2026-06-14) \u2014 qwen-plus flagged 2026-09-12 for a DashScope-console recheck (agentic price-gap judge)",
@@ -11,6 +11,24 @@
   "providers": {
     "anthropic": {
       "models": {
+        "claude-fable-5": {
+          "_source": "https://platform.claude.com/docs/en/about-claude/pricing (fetched 2026-09-14): $10/$50 per 1M in/out, cache-read $1 (0.1x base), batch $5/$25. batch_cached_in = cached_in x 0.5 (caching multipliers stack with the Batch API discount, per the page).",
+          "batch_cached_in": 0.5,
+          "batch_in": 5.0,
+          "batch_out": 25.0,
+          "cached_in": 1.0,
+          "in_": 10.0,
+          "out": 50.0
+        },
+        "claude-fable-5-1": {
+          "_source": "https://platform.claude.com/docs/en/about-claude/pricing (fetched 2026-09-14): $10/$50 per 1M in/out. Cache-read $0.25 = 0.025x base (Fable 5.1 & Mythos 5.1 ONLY; every other model is the standard 0.1x, per the page footnote), NOT the $1 a default in_ x 0.1 would give. Batch $5/$25; batch_cached_in = 0.025x x 0.5 = 0.125.",
+          "batch_cached_in": 0.125,
+          "batch_in": 5.0,
+          "batch_out": 25.0,
+          "cached_in": 0.25,
+          "in_": 10.0,
+          "out": 50.0
+        },
         "claude-haiku-4-5": {
           "batch_in": 0.5,
           "batch_out": 2.5,
@@ -54,6 +72,15 @@
           "out": 25.0
         },
         "claude-opus-4-8": {
+          "batch_in": 2.5,
+          "batch_out": 12.5,
+          "cached_in": 0.5,
+          "in_": 5.0,
+          "out": 25.0
+        },
+        "claude-opus-5": {
+          "_source": "https://platform.claude.com/docs/en/about-claude/pricing (fetched 2026-09-14): $5/$25 per 1M in/out, cache-read $0.50 (0.1x base), batch $2.50/$12.50 — identical to Claude Opus 4.5-4.8. batch_cached_in = cached_in x 0.5 (stacking documented on the page). Corroborates the 2026-09-12 vendor-page note (opus 5/25).",
+          "batch_cached_in": 0.25,
           "batch_in": 2.5,
           "batch_out": 12.5,
           "cached_in": 0.5,

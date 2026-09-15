@@ -81,6 +81,15 @@ cm = rpc("tools/call", {"name": "spendguard_models", "arguments": {}})["result"]
 ck("catalogue has models with per-1M rates + provider",
    cm["count"] > 0 and all("in_usd_per_m" in m and m.get("provider") for m in cm["models"][:5]))
 ck("a curated model (gpt-5.5) is in the catalogue", any(m["model"] == "gpt-5.5" for m in cm["models"]))
+# The SHIPPED curated layer must surface on a FRESH install (this test's home is an empty temp dir: no
+# litellm cache, no user prices.json), so the highest-volume Claude Code models are listed and priceable
+# without waiting for `sync-prices`. Before the _catalogue() fix these were priced by price() yet invisible.
+_by_id = {m["id"]: m for m in cm["models"]}
+for _mid, _in, _out in (("anthropic:claude-opus-5", 5.0, 25.0),
+                        ("anthropic:claude-fable-5", 10.0, 50.0),
+                        ("anthropic:claude-fable-5-1", 10.0, 50.0)):
+    ck(f"catalogue lists {_mid} at {_in}/{_out} from the shipped curated layer",
+       _mid in _by_id and _by_id[_mid]["in_usd_per_m"] == _in and _by_id[_mid]["out_usd_per_m"] == _out)
 
 print("-- errors: unknown tool + unknown method are reported without breaking the frame --")
 ck("unknown tool name → JSON-RPC error -32602 (invalid params, not a silent empty result)",

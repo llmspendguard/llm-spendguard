@@ -82,6 +82,21 @@ def _catalogue():
 
     for m, r in getattr(pricing, "_FALLBACK", {}).items():
         add_priced_model(m, r, "curated")
+    # The SHIPPED curated layer (src/spendguard/prices.json). _FALLBACK is only its in-source mirror and does
+    # NOT carry the vendor-hosted / newest ids that live solely in this data file (claude-opus-5,
+    # claude-fable-5-1, glm-5.3, ...). Without reading it, those were priced by pricing.price() yet INVISIBLE
+    # here on any fresh install — the exact gap that hid claude-fable-5-1 / claude-opus-5 despite their being
+    # the majority of Sept-2026 Claude Code turns. Tagged "curated" (ships with the package); the user's own
+    # prices.json below stays "verified". seen-dedup keeps _FALLBACK's copy of a shared id.
+    try:
+        shipped = os.path.join(os.path.dirname(pricing.__file__), "prices.json")
+        if os.path.exists(shipped):
+            sd = json.loads(open(shipped).read())
+            for prov, pv in (sd.get("providers") or {}).items():
+                for m, r in (pv.get("models") or {}).items():
+                    add_priced_model(m, {**(r or {}), "provider": prov}, "curated")
+    except Exception:
+        pass
     try:
         path = pricing.user_prices_path()
         if os.path.exists(path):

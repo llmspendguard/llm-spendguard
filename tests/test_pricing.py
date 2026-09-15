@@ -16,6 +16,23 @@ o = P.price("claude-opus-4-8")
 check("opus-4-8 realtime 5/25", o["in_"] == 5.0 and o["out"] == 25.0)
 check("opus-4-8 batch 2.5/12.5", o["batch_in"] == 2.5 and o["batch_out"] == 12.5)
 
+print("-- Fable 5.x + Opus 5: majority of Sept-2026 Claude Code turns, priced from the shipped curated layer --")
+# Before this they were UNPRICED on any install lacking a fresh `sync-prices` (no _FALLBACK entry), so their
+# overage/est-value could not be computed. Rates: platform.claude.com/docs/en/about-claude/pricing (2026-09-14).
+o5 = P.price("claude-opus-5")
+check("opus-5 realtime 5/25", o5["in_"] == 5.0 and o5["out"] == 25.0)
+check("opus-5 batch 2.5/12.5", o5["batch_in"] == 2.5 and o5["batch_out"] == 12.5)
+check("opus-5 attributed to anthropic", P.PROVIDERS.get("claude-opus-5") == "anthropic")
+f5 = P.price("claude-fable-5")
+check("fable-5 realtime 10/50", f5["in_"] == 10.0 and f5["out"] == 50.0)
+check("fable-5 cache-read is the standard 0.1x ($1)", f5["cached_in"] == 1.0)
+f51 = P.price("claude-fable-5-1")
+check("fable-5-1 realtime 10/50", f51["in_"] == 10.0 and f51["out"] == 50.0)
+# THE NUANCE: Fable 5.1 cache-read is 0.025x base ($0.25), NOT the standard 0.1x ($1). A default
+# cached_in = in_ x 0.1 would over-price every cache hit 4x; this asserts the curated value survived.
+check("fable-5-1 cache-read is the 0.025x rate ($0.25), not the 0.1x default ($1)", f51["cached_in"] == 0.25)
+check("fable-5-1 attributed to anthropic", P.PROVIDERS.get("claude-fable-5-1") == "anthropic")
+
 print("-- cost math --")
 check("realtime 1M in = $5", abs(P.realtime_cost("gpt-5.5", 1_000_000, 0) - 5.0) < 1e-9)
 check("batch 1M in = $2.50 (50% off)", abs(P.batch_cost("gpt-5.5", 1_000_000, 0) - 2.5) < 1e-9)
