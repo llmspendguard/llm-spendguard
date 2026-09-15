@@ -2243,6 +2243,13 @@ def _cli(cmd="status", live=False):
                     print("  " + _ln)
             except Exception:
                 pass
+            try:                                          # OVERAGE NUDGE: when a plan lane is at/below its warn
+                from . import lanes as _lanes_nudge       # level, steer batchable comprehension onto the OTHER
+                _nudge = _lanes_nudge.overage_nudge_line(do_fetch=False)   # $0 lanes (cached read — no CLI here)
+                if _nudge:
+                    print("  " + _nudge)
+            except Exception:
+                pass
             try:                                          # BULK-LANE SURFACE: an estate can migrate its bulk onto
                 from . import tier_config                 # bulk_delegate, pass every check, and STILL route 100% to
                 _tc = tier_config.tier_config_report()    # the metered API if advisor.tiers is unset — inert while the

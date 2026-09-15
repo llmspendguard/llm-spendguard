@@ -22,6 +22,7 @@ _GROUPS = [
         ("sources", "where can this machine spend? providers · agent tools · ungated venvs"),
         ("doctor", "is the gate enforcing HERE? keys, lanes, ledger status"),
         ("ask", "run ONE prompt across many LLMs — honest per-vendor coverage, $0 lanes"),
+        ("comprehend", "fan a CORPUS across the $0 lanes (doc-mining/gap-analysis) — NOT Claude sub-agents; estimate-first"),
         ("serve", "the ask surface over localhost HTTP — POST /ask from any tool/language"),
         ("mcp", "spendguard's tools over MCP (stdio): model-advisor + spend/compaction queries"),
         ("install-mcp", "register `spendguard mcp` in Claude Code (~/.claude.json); --remove to undo"),
@@ -212,6 +213,9 @@ def _dispatch(argv=None):
     if cmd == "ask":                                  # cross-LLM query surface — one prompt across models, honestly
         from . import crossllm
         return crossllm.cmd(rest)
+    if cmd == "comprehend":                           # fan a CORPUS across the $0 lanes (doc-mining / gap-analysis)
+        from . import comprehend as _comprehend       # instead of Claude-only sub-agents; estimate-first + gated
+        return _comprehend.cmd(rest)
     if cmd == "serve":                                # the same cross-LLM ask surface over localhost HTTP
         from . import serve as _serve
         return _serve.cmd(rest)

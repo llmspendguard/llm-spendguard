@@ -31,6 +31,36 @@ body3 = open(md).read()
 check("appends below existing content (not clobbered)", body3.startswith("# My Project\nExisting rules.")
       and setup._RULE_BEGIN in body3)
 
+
+def _block(text):
+    """The BEGIN..END managed region of a rule file, extracted mechanically (index of the fixed markers) — a
+    structural slice, not a judgement about the content's meaning."""
+    b = text.index(setup._RULE_BEGIN)
+    return text[b:text.index(setup._RULE_END, b) + len(setup._RULE_END)]
+
+
+print("-- install_rule writes ALL THREE assistant-rule files, block == canonical _RULE verbatim --")
+d2 = tempfile.mkdtemp(prefix="sg-rule3-")
+setup.install_rule(d2)
+canonical = _block(setup._RULE)
+for name in setup._RULE_TARGETS:                        # CLAUDE.md (Claude Code) · AGENTS.md (Codex/standard) · .cursorrules (Cursor)
+    p = os.path.join(d2, name)
+    body = open(p).read() if os.path.exists(p) else ""
+    check(f"{name} written and its managed block is the canonical _RULE verbatim",
+          setup._RULE_BEGIN in body and _block(body) == canonical)
+
+print("-- overwriting a rule file PRESERVES user content outside the block + backs up the prior file --")
+agents = os.path.join(d2, "AGENTS.md")
+open(agents, "w").write("# Team AGENTS\nHand-written rule: always run tests.\n")   # no managed block → must append
+setup.install_rule(d2)
+ab = open(agents).read()
+check("user's own AGENTS.md content survives verbatim (appended, not clobbered)",
+      ab.startswith("# Team AGENTS\nHand-written rule: always run tests.") and _block(ab) == canonical)
+from spendguard import config as _cfg
+bdir = _cfg.HOME / "rule_backups"
+check("a recoverable backup of the prior AGENTS.md was written before the overwrite",
+      bdir.exists() and any(x.name.startswith("AGENTS.md.") for x in bdir.iterdir()))
+
 print("-- cross-interpreter hook body is PATH-INJECTING (works with no pip / PEP668) --")
 # The same .replace() install_hook() applies for the --user/--python path:
 src = setup._pkg_src()

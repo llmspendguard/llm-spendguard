@@ -52,6 +52,24 @@ When you WRITE or RUN code that calls an LLM:
    `spendguard receipt` (scoped to THIS repo + its proportional plan share; `--all` expands to every repo). In the
    desktop/web app there is no auto status line, so this is how the running tally stays visible each turn; in a
    terminal the status line does it automatically.
+7. **ALWAYS split billed $ from est-value — NEVER sum them (hard rule, for spendguard AND for me in chat).** A single
+   summed cost number causes huge confusion. Whenever cost is shown, display the REAL dollars broken into named
+   components, then the est-value as a SEPARATE axis after a `::`:
+   `Total $X = $A API + $S Subscription (plan name) + $R Remote (provider)  ::  Est sub value $V`
+   where **REAL $ = API (per-token billing) + Subscription (flat plan fee: Anthropic Max, OpenAI Pro, …) + Remote
+   compute (Vast.ai, …)** — the actual money out the door — and **Est sub value** = the value of subscription-covered
+   usage (Claude Code / claude.ai / Codex plan usage), which is NOT billed and is never added into the real total.
+   The subscription is BOTH a real cost (its flat fee) AND the source of the est-value (what it delivered) — show both.
+   Example: `$3,376 = $2,189 API + $200 Subscription (Anthropic Max) + $987 Remote (Vast.ai)  ::  Est sub value $21K`.
+   Per org, the Subscription line is that org's proportional share (by plan-usage). Never collapse to one mixed total.
+8. **Prefer lane-routed comprehension over Claude sub-agents (biggest cost lever when the plan is capped).** For
+   batchable comprehension / doc-mining / gap-analysis, run a spendguard-gated script that fans the work across your
+   $0 subscription lanes — `spendguard comprehend <globs> --intent <job>` (or `spendguard ask`, or a script calling
+   `adapters.call(..., reasoning="best-value", intent=...)`) — NOT the coding agent's own sub-agents. A sub-agent runs
+   ONLY on the Claude/Anthropic plan: it bills the Max plan (hitting weekly overage) and cannot use the codex / gemini
+   / zai plans, whereas a lane-routed script does the same work at $0 on another subscription. Matters most when the
+   Claude plan is near its weekly cap (check `spendguard lanes --usage`): spendguard's router already sheds eligible
+   tagged intents off an exhausted lane onto the others, but sub-agents never reach that routing.
 
 Setup (one-time): `spendguard install-hook --venv <venv>` (or `--user --python <interp>` for system python),
 then `spendguard doctor`. Surface the tally: `spendguard install-receipts` (terminal status line) and this rule
@@ -59,15 +77,47 @@ then `spendguard doctor`. Surface the tally: `spendguard install-receipts` (term
 """ + _RULE_END + "\n"
 
 
-def install_rule(target=None, glob_=False):
-    """Write the spendguard usage rule into a CLAUDE.md so EVERY AI-assistant conversation in that project
-     auto-wires spendguard into whatever it builds. `--project <dir>` (default: cwd) or `--global` (~/.claude).
-     Idempotent: replaces the marked block if present, else appends. Re-run after `spendguard` upgrades."""
+# The assistant-rule files install-rule maintains, one per tool convention: Claude Code reads CLAUDE.md, Codex
+# and the emerging cross-tool standard read AGENTS.md, Cursor reads .cursorrules. All are markdown/plaintext, so
+# the SAME marked block is valid in each — one rule, every assistant in the project.
+_RULE_TARGETS = ("CLAUDE.md", "AGENTS.md", ".cursorrules")
+
+
+def _content_outside_block(text):
+    """The file's content with any managed spendguard block (between the BEGIN/END markers) removed — i.e. the
+    USER's own content. Used to assert install-rule changes ONLY its own block and never the user's rules."""
+    if _RULE_BEGIN in text and _RULE_END in text:
+        pre, rest = text.split(_RULE_BEGIN, 1)
+        _, post = rest.split(_RULE_END, 1)
+        return pre + post
+    return text
+
+
+def _backup_rule_file(path):
+    """Copy an existing rule file into ~/.spendguard/rule_backups/ (keyed by name + timestamp) BEFORE it is
+    rewritten, so any accidental loss is RECOVERABLE — the trash+count durability pattern for a text file that
+    may hold the user's own hand-written rules. Returns the backup path, or None when there was nothing to save."""
+    import shutil
+    import time as _t
+    if not path.exists():
+        return None
+    bdir = config.HOME / "rule_backups"
+    bdir.mkdir(parents=True, exist_ok=True)
+    b = bdir / f"{path.name}.{int(_t.time())}.bak"
+    shutil.copy2(path, b)
+    return b
+
+
+def _write_rule_block(path):
+    """Idempotently write the marked rule block into ONE file: replace an existing block in place, else append
+    below whatever is already there, else create. Returns (action, backup_path).
+
+    NON-DESTRUCTIVE, THREE WAYS. (1) The BEGIN/END markers bound the only region ever rewritten; everything
+    outside them is the user's own content, carried verbatim. (2) Before any overwrite the prior file is backed
+    up under ~/.spendguard/rule_backups (recoverable). (3) The invariant is ASSERTED before the write: if the
+    content outside the managed block would change at all, refuse LOUDLY rather than risk dropping a user's rules."""
     from pathlib import Path
-    if glob_:
-        path = Path.home() / ".claude" / "CLAUDE.md"
-    else:
-        path = Path(target or ".").expanduser().resolve() / "CLAUDE.md"
+    path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     old = path.read_text() if path.exists() else ""
     if _RULE_BEGIN in old and _RULE_END in old:                       # replace the existing block in place
@@ -78,9 +128,33 @@ def install_rule(target=None, glob_=False):
     else:
         new = (old.rstrip() + "\n\n" if old.strip() else "") + _RULE
         action = "appended to" if old.strip() else "created"
+    if _content_outside_block(new).strip() != _content_outside_block(old).strip():
+        raise RuntimeError(f"install_rule: refusing to write {path} — it would change content OUTSIDE the "
+                           f"managed spendguard block (the user's own rules). Not writing; this is a bug.")
+    backup = _backup_rule_file(path) if new != old else None          # only back up when we are actually changing it
     path.write_text(new)
-    print(f"  ✓ {action} {path}")
-    print("  every AI-assistant conversation in this project will now be told to route LLM code through spendguard.")
+    return action, backup
+
+
+def install_rule(target=None, glob_=False):
+    """Write the spendguard usage rule into the AI-assistant rule files so EVERY assistant conversation in that
+     project auto-wires spendguard into whatever it builds — CLAUDE.md (Claude Code), AGENTS.md (Codex + the
+     cross-tool standard), and .cursorrules (Cursor). `--project <dir>` (default: cwd) writes all three; `--global`
+     (~/.claude) writes the one file with a standard global home, CLAUDE.md. Idempotent: replaces the marked block
+     if present, else appends (never clobbering the user's own content; the prior file is backed up first). Re-run
+     after `spendguard` upgrades."""
+    from pathlib import Path
+    if glob_:
+        # Only CLAUDE.md has a standard GLOBAL home (~/.claude); AGENTS.md / .cursorrules are per-project.
+        targets = [Path.home() / ".claude" / "CLAUDE.md"]
+    else:
+        base = Path(target or ".").expanduser().resolve()
+        targets = [base / name for name in _RULE_TARGETS]
+    for path in targets:
+        action, backup = _write_rule_block(path)
+        print(f"  ✓ {action} {path}" + (f"  (backed up prior → {backup})" if backup else ""))
+    print("  every AI-assistant conversation in this project will now be told to route LLM code through spendguard "
+          "(and to prefer $0 lanes over Claude sub-agents for batchable comprehension).")
     return 0
 
 

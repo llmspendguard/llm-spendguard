@@ -105,6 +105,27 @@ os.environ["SPENDGUARD_ADVISOR_EXECUTOR"] = "claude-code"
 res = {r["lane"]: r for r in lanes.probe()}
 ck("single-lane executor probes only its lane", res["codex"].get("skipped") and res["claude-code"]["ok"])
 
+print("-- overage_nudge_line: fires ONLY when a KNOWN lane is at/below the display-warn level --")
+from spendguard import config as _cfg
+
+
+def _snap(rows):
+    _cfg.save_state(lanes._HEADROOM_SNAPSHOT, {"asof": 1.0, "rows": rows}, loud=False)
+
+
+# a provider that exposes NO quota surface is 'unknown' (known=False) — never counted as 'low', no false nudge
+_snap([{"lane": "codex", "provider": "openai", "remaining_pct": None, "buckets": None, "known": False}])
+ck("unknown-quota lane never nudges", lanes.overage_nudge_line(do_fetch=False) is None)
+# a KNOWN lane comfortably above the warn level → silent
+_snap([{"lane": "claude-code", "provider": "anthropic", "remaining_pct": lanes._QUOTA_WARN_PCT + 50,
+        "buckets": [{}], "known": True}])
+ck("a lane above the warn level is silent", lanes.overage_nudge_line(do_fetch=False) is None)
+# a KNOWN lane at 0% (exhausted → overage) → a non-empty nudge string, and the low lane is named in it
+_snap([{"lane": "claude-code", "provider": "anthropic", "remaining_pct": 0, "buckets": [{}], "known": True}])
+_n = lanes.overage_nudge_line(do_fetch=False)
+ck("an exhausted KNOWN lane produces a nudge string", isinstance(_n, str) and bool(_n.strip()))
+ck("the nudge surfaces the low lane row it was given", _n is not None and "claude-code" in _n)
+
 del os.environ["SPENDGUARD_ADVISOR_EXECUTOR"]
 print(f"\n{'[FAIL]' if fails else 'OK'} test_lanes: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

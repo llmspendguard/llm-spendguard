@@ -281,6 +281,30 @@ def lane_summary_lines():
     return lines
 
 
+def overage_nudge_line(do_fetch=False):
+    """A one-line nudge when a subscription lane's quota sits at/below the DISPLAY-warn level (_QUOTA_WARN_PCT,
+    the same level the headroom bar flags yellow) — steering batchable comprehension onto whichever $0 lanes
+    still have headroom rather than paying overage or burning Claude sub-agents (which are Claude-only and bill
+    the Max plan). This is DISPLAY advice, not a routing decision — routing has its own quota-aware exclusion.
+    None when every KNOWN lane is above the warn level (a lane whose provider exposes no quota surface is
+    'unknown', never counted as 'low').
+
+    Cheap by default: reads the persisted headroom snapshot (do_fetch=False) — no status CLI — so it is safe to
+    call from `doctor`, the receipt, or a session-start hook."""
+    low = [(r["lane"], int(r["remaining_pct"])) for r in lane_headroom(do_fetch=do_fetch)
+           if r.get("known") and r.get("remaining_pct") is not None and int(r["remaining_pct"]) <= _QUOTA_WARN_PCT]
+    if not low:
+        return None
+    low.sort(key=lambda lr: lr[1])
+    names = ", ".join(f"{ln} {rp}% left" for ln, rp in low)
+    # The guidance is the same whichever lane is low, so it needs no per-lane branch: sub-agents are Claude-only
+    # regardless, and the fix is always "fan the batchable work across whichever $0 lanes still have headroom".
+    return (f"⚠ plan quota low ({names}) — route batchable comprehension / doc-mining to a $0 lane that still has "
+            f"headroom (Claude sub-agents are Claude-only and bill the Max plan): `spendguard comprehend <globs> "
+            f"--intent <job>`, `spendguard ask`, or a script calling adapters.call(reasoning='best-value'). "
+            f"`spendguard lanes --usage` for detail.")
+
+
 def main(argv=None):
     argv = list(argv or [])
     if argv and argv[0] == "set-model":
