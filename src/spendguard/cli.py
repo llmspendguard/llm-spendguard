@@ -443,6 +443,29 @@ def _dispatch(argv=None):
     if cmd in ("callio-status", "corpus-status"):     # how full is the replay corpus per intent (before a sweep) — $0
         from . import callio
         return callio.status_main(rest)
+    if cmd in ("codex-gc", "codex-prune"):            # prune codex CLI's shell-snapshot residue (dry-run default) — $0
+        from . import codex_exec
+        import argparse as _agc
+        _p = _agc.ArgumentParser(prog="spendguard codex-gc")
+        _p.add_argument("--max-age-days", type=float, default=7.0, help="prune shell snapshots older than this (default 7)")
+        _p.add_argument("--apply", action="store_true", help="actually delete (default: dry-run report)")
+        _a = _p.parse_args(rest)
+        r = codex_exec.gc_shell_snapshots(max_age_days=_a.max_age_days, apply=_a.apply)
+        _mb = r["bytes"] / 1e6
+        print(f"codex shell-snapshot gc — {r['dir']}")
+        if r["error"]:
+            print(f"  🔴 could not scan: {r['error']}")
+            return 2
+        print(f"  examined {r['examined']}, stale (>{r['cutoff_days']:g}d) {r['stale']} = {_mb:.1f} MB"
+              + (f", skipped {r['skipped']}" if r["skipped"] else ""))
+        if _a.apply:
+            print(f"  DELETED {r['deleted']} file(s), freed ~{_mb:.1f} MB"
+                  + (f" ({r['skipped']} could not be removed — see perms)" if r["skipped"] else ""))
+        else:
+            print(f"  DRY-RUN — re-run with --apply to delete the {r['stale']} stale file(s) (~{_mb:.1f} MB). "
+                  f"Recent snapshots are never touched.")
+            print("  Opt-in periodic cleanup: schedule `spendguard codex-gc --apply` (launchd/cron or `spendguard schedule`).")
+        return 0
     if cmd == "review":                               # practice audit (smart-vs-wasteful) — caged, estimate-first
         from . import review
         return review.main(rest)

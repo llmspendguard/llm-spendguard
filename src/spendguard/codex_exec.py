@@ -139,6 +139,53 @@ def _codex_home():
     return os.environ.get("CODEX_HOME") or os.path.expanduser("~/.codex")
 
 
+def gc_shell_snapshots(max_age_days=7, apply=False):
+    """Prune codex CLI's shell-snapshot residue. codex writes ONE .sh per `codex exec` into
+    <codex_home>/shell_snapshots, and spendguard's codex lane drives that heavily — measured 2026-09-15, 7.2GB /
+    38,739 files. A snapshot restores an interactive shell's environment; spendguard's one-shot `codex exec` calls
+    never reuse theirs, and no active session touches one older than a day, so pruning by AGE is safe. DRY-RUN by
+    default (reports what it WOULD remove); deletes only with apply=True; NEVER touches a recent (possibly in-use)
+    snapshot. It deletes in codex's OWN dir, so it is opt-in: the caller (the CLI `spendguard codex-gc`, dry-run
+    first) or a scheduled job runs it — spendguard never prunes it silently on the hot path.
+
+    Honest reporting (never masks a failure as a clean sweep): a directory listing that fails sets `error`; a
+    per-file stat/unlink failure is COUNTED in `skipped`, so `deleted` vs `skipped` is truthful. Returns a summary
+    dict {dir, examined, stale, bytes, deleted, skipped, apply, cutoff_days, error}."""
+    out = {"dir": None, "examined": 0, "stale": 0, "bytes": 0, "deleted": 0, "skipped": 0, "apply": bool(apply),
+           "cutoff_days": max_age_days, "error": None}
+    d = os.path.join(_codex_home(), "shell_snapshots")
+    out["dir"] = d
+    if not os.path.isdir(d):
+        return out                                        # no dir → genuinely nothing to do (error stays None)
+    try:
+        names = os.listdir(d)
+    except OSError as e:                                  # a real scan failure is surfaced, not a false 'empty, clean'
+        out["error"] = f"{type(e).__name__}: {str(e)[:80]}"
+        return out
+    cutoff = time.time() - max(0.0, float(max_age_days)) * 86400.0
+    for name in names:
+        p = os.path.join(d, name)
+        try:
+            if not os.path.isfile(p):
+                continue
+            st = os.stat(p)
+        except OSError:
+            out["skipped"] += 1                           # could not stat → COUNTED, never silently ignored
+            continue
+        out["examined"] += 1
+        if st.st_mtime >= cutoff:
+            continue                                      # recent — an active session may still hold it; leave it
+        out["stale"] += 1
+        out["bytes"] += int(st.st_size)
+        if apply:
+            try:
+                os.unlink(p)
+                out["deleted"] += 1
+            except OSError:
+                out["skipped"] += 1                       # stale but could not delete (perms/locked) → COUNTED
+    return out
+
+
 def _parse_rate_limits(obj):
     """A codex.rate_limits payload → buckets [{bucket, remaining_pct, reset_ts}]. primary/secondary each carry
     used_percent (remaining = 100 - used) and reset_at (absolute unix ts; reset_after_seconds is the relative
