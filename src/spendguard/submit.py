@@ -129,7 +129,8 @@ def estimate_jsonl_cost(jsonl_path, model, batch=True, avg_out_tokens=None, prov
                 mode=("batch" if batch else "realtime"))
 
 
-def build_chat_batch_jsonl(tasks_path, model, system=None, max_out=None, reasoning="minimal"):
+def build_chat_batch_jsonl(tasks_path, model, system=None, max_out=None, reasoning="minimal",
+                           schema=None, schema_name="result"):
     """Build an OpenAI /v1/chat/completions Batch-API request .jsonl FROM TASKS, so a caller supplies only
     {custom_id, content} lines + one shared `system` + a `model` and NEVER hand-rolls the per-model request
     envelope. spendguard builds each line's `body` through models.apply_call_params — the ONE authority for
@@ -139,6 +140,20 @@ def build_chat_batch_jsonl(tasks_path, model, system=None, max_out=None, reasoni
 
     `custom_id` is preserved VERBATIM — it is the caller's mapping key and comes back on each result line; spendguard
     never invents an index/hash the caller can't reconstruct. `system` is sent as a system message (once per request).
+
+    STRUCTURED OUTPUT RIDES THE SAME BINDING AS REALTIME. `schema` (a JSON Schema) makes every line carry the vendor's
+    strict `response_format` through adapters.json_schema_request — the one function the realtime path also uses —
+    so a batch can never be built with a hand-rolled strict adaptation that disagrees with the realtime one. That
+    function REFUSES a schema strict mode cannot serve (a dynamic-key map, or more than the provider's total-enum
+    limit) with a typed SchemaNotStrictExpressible BEFORE anything is written: on a batch there is no per-row heal
+    for a rejected response_format, so an unservable schema fails EVERY line, and a consumer measured exactly that —
+    twelve batches, zero completions — read downstream as empty results rather than as the one refusal it was.
+
+    A TASK MAY OVERRIDE THE SHARED DEFAULTS. A pool that coalesces several activities into one submission (the
+    DataLoader pattern: same model, different prompts) has requests with different system messages and different
+    shapes, and OpenAI requires one MODEL per batch, not one prompt. So a task line may carry its own `system`,
+    `schema` and `schema_name`; absent keys fall back to the shared arguments. The contract stays one line = one
+    request = one custom_id.
 
     REASONING is resolved by models.resolve_effort(model, reasoning), NOT the raw family value — because a batch
     CANNOT heal per row the way adapters.call does, so the reasoning_effort must be VERIFIABLY accepted up front.
@@ -183,7 +198,10 @@ def build_chat_batch_jsonl(tasks_path, model, system=None, max_out=None, reasoni
                 if cid is None or content is None:
                     raise ValueError('each batch task line must be a JSON object with "custom_id" (your mapping key, '
                                      'preserved verbatim) and "content" (the user text)')
-                msgs = ([{"role": "system", "content": system}] if system else []) + \
+                t_system = task.get("system", system)             # per-task overrides; absent → the shared default
+                t_schema = task.get("schema", schema)
+                t_name = task.get("schema_name", schema_name)
+                msgs = ([{"role": "system", "content": t_system}] if t_system else []) + \
                        [{"role": "user", "content": content}]
                 body = {"model": model, "max_tokens": out_cap, "messages": msgs}
                 models.apply_call_params(model, body, dialect="openai")   # tokens_param (max_tokens vs max_completion_tokens)
@@ -191,6 +209,10 @@ def build_chat_batch_jsonl(tasks_path, model, system=None, max_out=None, reasoni
                     body.pop("reasoning_effort", None)   # endpoint takes no accepted effort → OMIT (model default)
                 else:
                     body["reasoning_effort"] = _eff      # the resolve_effort accepted value (overrides the family guess)
+                if t_schema is not None:
+                    # raises SchemaNotStrictExpressible for a schema strict mode cannot serve — caught by the
+                    # enclosing handler, which unlinks the partial temp: nothing unservable ever reaches an upload
+                    body.update(adapters.json_schema_request("openai", t_schema, name=t_name))
                 fout.write(json.dumps({"custom_id": cid, "method": "POST", "url": "/v1/chat/completions",
                                        "body": body}) + "\n")
                 n += 1

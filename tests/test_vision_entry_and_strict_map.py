@@ -89,5 +89,30 @@ ck("vision forwards images= to call (non-empty)", _seen.get("images") == ["/tmp/
 ck("vision forwards the schema and sig through", _seen.get("schema") == LIST and _seen.get("sig") == "label")
 ck("vision returns call's result dict", r.get("text") == "ok" and r.get("executor") == "api")
 
+# ── the TOTAL-ENUM limit: counted the way the provider counts (every occurrence), refused before any request ──
+print("-- strict enum total --")
+_E = lambda n: {"type": "string", "enum": ["v%d" % j for j in range(n)]}   # noqa: E731
+FOUR_SHARED = {"type": "object", "properties": {"a": _E(256), "b": _E(256), "c": _E(256), "d": _E(256)},
+               "required": ["a", "b", "c", "d"]}                                  # the real consumer case: 4 × 256
+ck("four fields sharing a 256-value enum count as 1024, not 256 (each occurrence counts — that is what the 400 said)",
+   adapters.strict_enum_total(FOUR_SHARED) == 1024)
+NESTED = {"type": "object", "properties": {"results": {"type": "array", "items": {"type": "object", "properties": {
+    "k": _E(10), "opt": {"anyOf": [_E(5), {"type": "null"}]}}, "required": ["k", "opt"]}}}, "required": ["results"]}
+ck("enums nested in items / anyOf are counted", adapters.strict_enum_total(NESTED) == 15)
+ck("a schema with no enum counts 0", adapters.strict_enum_total(LIST) == 0)
+_raised = None
+try:
+    json_schema_request("openai", FOUR_SHARED)
+except SchemaNotStrictExpressible as e:
+    _raised = str(e)
+ck("openai + over-limit enum → raises SchemaNotStrictExpressible naming the count and the limit",
+   _raised is not None and "1024" in _raised and str(adapters.OPENAI_STRICT_MAX_ENUM_VALUES) in _raised)
+AT_LIMIT = {"type": "object", "properties": {"a": _E(250), "b": _E(250), "c": _E(250), "d": _E(250)},
+            "required": ["a", "b", "c", "d"]}
+ck("exactly AT the limit is accepted ('at most' is inclusive)",
+   "response_format" in json_schema_request("openai", AT_LIMIT))
+ck("the limit is OpenAI's — the anthropic binding of the same schema is not refused",
+   "tools" in json_schema_request("anthropic", FOUR_SHARED))
+
 print(("[OK]" if not fails else "[FAIL]") + " vision entry + strict-map guard: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)

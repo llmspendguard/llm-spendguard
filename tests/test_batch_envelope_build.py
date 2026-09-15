@@ -112,6 +112,56 @@ try:
 finally:
     models.resolve_effort = _orig_resolve
 
+print("\n-- structured output: `schema` binds the vendor's STRICT response_format on every line (the realtime binding) --")
+SCHEMA = {"type": "object", "properties": {"results": {"type": "array", "items": {"type": "object", "properties": {
+    "id": {"type": "string"}, "label": {"type": "string", "enum": ["a", "b"]}}, "required": ["id"]}}},
+    "required": ["results"]}
+_bs, _ = submit.build_chat_batch_jsonl(tasks_p, "gpt-5.6-luna", system="t", schema=SCHEMA, schema_name="cards")
+_rs = _read_built(_bs)
+os.unlink(_bs)
+fails += report_check("every body carries response_format.json_schema with strict=True and the caller's name",
+                      all(r["body"].get("response_format", {}).get("type") == "json_schema"
+                          and r["body"]["response_format"]["json_schema"]["strict"] is True
+                          and r["body"]["response_format"]["json_schema"]["name"] == "cards" for r in _rs))
+fails += report_check("the strict ADAPTER ran (additionalProperties=false, every property required) — same as realtime",
+                      all(r["body"]["response_format"]["json_schema"]["schema"]["additionalProperties"] is False
+                          and set(r["body"]["response_format"]["json_schema"]["schema"]["required"]) == {"results"}
+                          for r in _rs))
+_no, _ = submit.build_chat_batch_jsonl(tasks_p, "gpt-5.6-luna", system="t")
+_rn = _read_built(_no)
+os.unlink(_no)
+fails += report_check("no schema → no response_format (a caller that wants free text gets free text)",
+                      all("response_format" not in r["body"] for r in _rn))
+
+print("\n-- a schema strict mode cannot serve is REFUSED at build, before any upload; no partial temp survives --")
+OVER = {"type": "object", "properties": {f"f{i}": {"type": "string", "enum": [f"v{j}" for j in range(300)]}
+                                          for i in range(4)}, "required": [f"f{i}" for i in range(4)]}   # 1200 > 1000
+_before = set(os.listdir(tempfile.gettempdir()))
+_refused = None
+try:
+    submit.build_chat_batch_jsonl(tasks_p, "gpt-5.6-luna", schema=OVER)
+except adapters.SchemaNotStrictExpressible as e:
+    _refused = str(e)
+fails += report_check("an over-limit enum schema raises SchemaNotStrictExpressible (typed, not a 400 per row later)",
+                      _refused is not None and "1200" in _refused and str(adapters.OPENAI_STRICT_MAX_ENUM_VALUES) in _refused)
+_leaked = [p for p in set(os.listdir(tempfile.gettempdir())) - _before if p.startswith("spendguard-batch-req-")]
+fails += report_check("the refusal leaves NO partial envelope behind", not _leaked)
+
+print("\n-- per-task overrides: a line's own system / schema win; lines without them use the shared defaults --")
+MIX = [{"custom_id": "shared", "content": "x"},
+       {"custom_id": "own", "content": "y", "system": "OWN SYSTEM", "schema": SCHEMA, "schema_name": "own_shape"}]
+mix_p = _write_tasks(MIX)
+_bm, nm = submit.build_chat_batch_jsonl(mix_p, "gpt-5.6-luna", system="SHARED")
+_rm = {r["custom_id"]: r["body"] for r in _read_built(_bm)}
+os.unlink(_bm)
+os.unlink(mix_p)
+fails += report_check("both lines built, custom_ids verbatim", nm == 2 and set(_rm) == {"shared", "own"})
+fails += report_check("the shared line uses the shared system and carries no response_format",
+                      _rm["shared"]["messages"][0]["content"] == "SHARED" and "response_format" not in _rm["shared"])
+fails += report_check("the overriding line uses ITS system and ITS schema under ITS name",
+                      _rm["own"]["messages"][0]["content"] == "OWN SYSTEM"
+                      and _rm["own"]["response_format"]["json_schema"]["name"] == "own_shape")
+
 os.unlink(tasks_p)
 print(f"\n{'[FAIL]' if fails else 'OK'} test_batch_envelope_build: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)
