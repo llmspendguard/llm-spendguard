@@ -47,12 +47,17 @@ def current():
     return getattr(_local, "ctx", {})
 
 
-def set_context(intent: Optional[str] = None, chain: Optional[str] = None) -> None:
+def set_context(intent: Optional[str] = None, chain: Optional[str] = None, who: Optional[str] = None) -> None:
     c = dict(current())
     if intent is not None:
         c["intent"] = intent
     if chain is not None:
         c["chain"] = chain
+    if who is not None:
+        # the CALLER frame, carried across a thread boundary: a call recorded on a spawned worker/daemon walks the
+        # WRONG stack (threading.py:run), so a producer that runs the real call off-thread captures caller() on the
+        # calling thread and sets it here — record_call prefers it over its own (wrong-thread) stack walk.
+        c["who"] = who
     _local.ctx = c
 
 
@@ -279,7 +284,7 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
                 "INSERT INTO calls (id,ts,chain,intent,caller,provider,model,kind,in_tok,out_tok,"
                 "cost,latency,prompt_hash,prompt_snip,output_snip,finish,executor,project,effort) "
                 "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (cid, ts, chain, intent, who or caller(), provider, model, kind,
+                (cid, ts, chain, intent, who or ctx.get("who") or caller(), provider, model, kind,
                  int(in_tok or 0), int(out_tok or 0), float(cost or 0), latency, ph, psnip, osnip, finish,
                  executor, proj, (effort or None)))
             _calls_db().commit()

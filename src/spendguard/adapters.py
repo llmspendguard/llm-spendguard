@@ -233,6 +233,32 @@ class SchemaNotStrictExpressible(ValueError):
         self.path = path
 
 
+# OpenAI structured-outputs (strict) limit on the TOTAL number of enum values across one schema. Not a preference:
+# it is the provider's own contract, quoted from its 400 — "Expected at most 1000 enum values in total within a
+# single schema when using structured outputs". Named here because it is checked BEFORE a request is built (see
+# json_schema_request): the realtime path can heal a rejected response_format by re-sending unenforced, but a BATCH
+# cannot heal per row, so a schema over this limit fails EVERY row of every batch built from it — measured on a
+# consumer: 12 of 12 batches, 0 completed, 100% `invalid_request_error`, for weeks, read downstream as "empty".
+OPENAI_STRICT_MAX_ENUM_VALUES = 1000
+
+
+def strict_enum_total(schema):
+    """The number of enum values OpenAI strict mode counts for `schema` — every `enum` OCCURRENCE summed, because
+    that is how the provider counts (four fields sharing one 256-value list were billed as 1024, not 256). A
+    mechanical walk over a fixed structure (properties / items / anyOf / oneOf / allOf), never a judgement."""
+    if not isinstance(schema, dict):
+        return 0
+    n = len(schema["enum"]) if isinstance(schema.get("enum"), list) else 0
+    for v in (schema.get("properties") or {}).values():
+        n += strict_enum_total(v)
+    if isinstance(schema.get("items"), dict):
+        n += strict_enum_total(schema["items"])
+    for comb in ("anyOf", "oneOf", "allOf"):
+        for v in (schema.get(comb) or []):
+            n += strict_enum_total(v)
+    return n
+
+
 def strict_map_violation(schema, _path="$"):
     """The first path where an object uses a DYNAMIC-KEY MAP (`additionalProperties` set to a sub-SCHEMA, i.e. a
     dict) — or None if the schema is strict-expressible. OpenAI strict mode forces additionalProperties=false and
@@ -289,6 +315,17 @@ def json_schema_request(kind, schema, name="result"):
                 "additionalProperties=false + required=every declared property, so a map has no allowed keys and "
                 "the model returns {} with NO error. Restructure it as an ARRAY of {key,value} objects "
                 "(e.g. results:[{id,label}], not labels:{<id>:<label>}) — reliable on every vendor." % _v, path=_v)
+        # THE ENUM LIMIT IS CHECKED HERE, ONCE, FOR EVERY PATH. A map schema is refused above because strict mode
+        # would silently EMPTY it; an over-limit enum is refused because strict mode REJECTS it outright — and on
+        # a batch there is no per-row heal, so every request in the file 400s and the caller reads a file of
+        # failures as a file of empties. Refusing at build costs nothing; the alternative cost a consumer weeks.
+        _n_enum = strict_enum_total(schema)
+        if _n_enum > OPENAI_STRICT_MAX_ENUM_VALUES:
+            raise SchemaNotStrictExpressible(
+                "schema declares %d enum values in total; OpenAI strict mode accepts at most %d per schema and "
+                "returns 400 for the whole request otherwise (a batch cannot heal this per row — every line fails). "
+                "Shrink the enum (an id space sized to what is actually shown), share one smaller list, or use a "
+                "plain string validated after the call." % (_n_enum, OPENAI_STRICT_MAX_ENUM_VALUES))
         return {"response_format": {"type": "json_schema",
                                     "json_schema": {"name": name, "schema": _openai_strict(schema),
                                                     "strict": True}}}
@@ -1460,7 +1497,18 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             def _anth_msg(_kw):                               # one final message; timeout_s bounds it at wall-clock
                 if timeout_s:
                     _abox = {}
+                    from . import calls as _actx
+                    _apctx = dict(_actx.current() or {})      # CARRY the thread-local intent/chain + caller across the
+                    _acaller = _actx.caller()                 #   daemon boundary: the gated SDK records this call FROM
+                    #   the daemon below, whose context is EMPTY and whose stack is threading.py:run — so without this
+                    #   the metered row lands intent=None + caller=threading.py:run (the failure vendor_call._attempt
+                    #   documents). caller() is resolved HERE, on the worker's real stack, then set inside the daemon.
                     def _astream():
+                        try:
+                            _actx.set_context(intent=_apctx.get("intent"), chain=_apctx.get("chain"),
+                                              who=_apctx.get("who") or _acaller)
+                        except Exception:
+                            pass
                         try:
                             with c.messages.stream(**_kw) as _s:
                                 _abox["m"] = _s.get_final_message()
@@ -1600,7 +1648,17 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 if not timeout_s:
                     return _raw_create(**cw)
                 _box = {}
+                from . import calls as _octx
+                _opctx = dict(_octx.current() or {})          # CARRY intent/chain + caller across the daemon boundary
+                _ocaller = _octx.caller()                     #   (see the anthropic branch): the gated SDK / http_capture
+                #   records this call FROM the daemon, whose context is EMPTY and whose stack is threading.py:run —
+                #   without this the metered row lands intent=None + caller=threading.py:run. caller() resolved HERE.
                 def _worker():
+                    try:
+                        _octx.set_context(intent=_opctx.get("intent"), chain=_opctx.get("chain"),
+                                          who=_opctx.get("who") or _ocaller)
+                    except Exception:
+                        pass
                     try:
                         _box["r"] = _raw_create(**cw)
                     except BaseException as _be:              # capture ALL (incl. a close-induced error); main thread decides
@@ -1710,10 +1768,17 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                         # robust is exactly what blinds discovery. Recorded on the result so a caller can
                         # tell "it worked" from "it worked WITHOUT what you asked for".
                         base.setdefault("dropped", []).append(_rung)
+                        # KEEP THE PROVIDER'S REASON ON THE RESULT, WHOLE. The stderr line below clips it to 70
+                        # chars, which was exactly enough to read "Invalid schema for response_f…" and not the
+                        # sentence after it that named the limit and the count. A caller diagnosing why its
+                        # strict schema keeps being dropped needs the text the provider actually sent, not a
+                        # prefix that stops before the diagnosis.
+                        base.setdefault("dropped_why", {})[_rung] = str(e)
                         if _rung == "response_format":
                             import sys as _s
                             print(f"[spendguard] {prov}/{raw} rejected response_format ({str(e)[:70]}) — "
-                                  f"sending unenforced; output_contract still validates.", file=_s.stderr)
+                                  f"sending unenforced; output_contract still validates (full reason on the "
+                                  f"result under dropped_why).", file=_s.stderr)
                         break
                     except Exception as e2:
                         if isinstance(e2, _CallDeadline):
