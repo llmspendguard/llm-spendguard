@@ -275,7 +275,7 @@ def record_charge(provider, model, kind, cost, project=None, conv_id=None, basis
                         occurred_at=now, source="gate")
 
 
-def snapshot(reason="", keep=20):
+def snapshot(reason="", keep=None):
     """Copy the ledger database aside BEFORE anything mutates it. Returns the path, or None.
 
     WHY THIS EXISTS. On 2026-08-10 a guard test overwrote ~/.spendguard/config.json — 9KB of settings
@@ -285,8 +285,19 @@ def snapshot(reason="", keep=20):
 
     A mutation without a recovery path is not a change, it is a gamble. sqlite's own backup API is used so
     a snapshot taken while another process is mid-write is still consistent — a torn copy would be a backup
-    that only fails when you need it."""
+    that only fails when you need it.
+
+    `keep` bounds the LOCAL copies. These are RECOVERY snapshots, and the DEEP history lives off-machine in B2
+    (spendguard-full, pushed daily), so a large local keep is pure disk bloat: measured 2026-09-15, keep=20 × a
+    ~650MB ledger = 12GB of full-db copies in ~/.spendguard/snapshots. Local only needs the window since the last
+    daily B2 push, so the default is small and configurable (safety.snapshot_keep, default 4 ≈ 2 days of the
+    reconcile pair). None → read that config; an explicit keep still wins."""
     import datetime as _dt
+    if keep is None:
+        try:
+            keep = max(1, int(config._cfg_get("safety", "snapshot_keep", 4)))
+        except Exception:
+            keep = 4
     import sqlite3 as _sq
     try:
         src = config.db_path()
@@ -298,13 +309,15 @@ def snapshot(reason="", keep=20):
         with _sq.connect(src) as _s, _sq.connect(str(dst)) as _t:
             _s.backup(_t)                        # consistent even under a concurrent writer
         # Keep the most recent `keep`; a snapshot directory that grows without bound gets deleted by hand
-        # one day, which is the same as having none.
+        # one day, which is the same as having none. The pruned copies are the deep history B2 already holds.
+        # Remove each snapshot's WAL/SHM companions too — globbing only spend-*.db left those orphaned.
         old = sorted(d.glob("spend-*.db"))[:-keep] if keep else []
         for f in old:
-            try:
-                f.unlink()
-            except OSError:
-                pass
+            for g in (f, f.parent / (f.name + "-wal"), f.parent / (f.name + "-shm")):
+                try:
+                    g.unlink()
+                except OSError:
+                    pass
         return str(dst)
     except Exception as e:
         import sys as _sys

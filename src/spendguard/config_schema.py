@@ -346,6 +346,13 @@ SETTINGS = [
               "used to be 0 and almost every caller left it there, which is how ~/.spendguard/config.json "
               "went from 9KB of settings to a 26-byte probe value with no copy of it anywhere. Set 0 to keep "
               "only `<file>~`; raise it if you edit settings often and want deeper history."),
+    dict(section="safety", key="snapshot_keep", store="config.json", env="SPENDGUARD_SNAPSHOT_KEEP",
+         default="4", kind="int", secret=False,
+         desc="How many LOCAL full-ledger recovery snapshots (budget.snapshot, taken before a destructive "
+              "reconcile/clear) to retain in ~/.spendguard/snapshots. These are copies of the WHOLE spend.db "
+              "(~650MB each), so a large keep is pure disk bloat — measured 2026-09-15, keep=20 = 12GB. The DEEP "
+              "history lives off-machine in B2 (spendguard-full, daily), so local only needs the window since the "
+              "last daily push; default 4 ≈ 2 days of the reconcile pair. Raise it only if B2 is not running."),
     dict(section="calibrate", key="pair_horizon_hours", store="(env only)", env="SPENDGUARD_PAIR_HORIZON_H",
          default="24", kind="int", secret=False,        # "number" was a one-off; every other numeric is int/float
          desc="Learned-estimator pairing window: a logged job prediction (`calibrate.record_estimate`) collects "

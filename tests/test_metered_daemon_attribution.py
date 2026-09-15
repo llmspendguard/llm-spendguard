@@ -20,7 +20,11 @@ import types
 import sqlite3
 import tempfile
 
-os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-daemon-")
+import atexit as _atexit   # noqa: E402
+import shutil as _shutil   # noqa: E402
+_SG_HOME = tempfile.mkdtemp(prefix="sg-daemon-")
+os.environ["SPENDGUARD_HOME"] = _SG_HOME
+_atexit.register(_shutil.rmtree, _SG_HOME, ignore_errors=True)   # clean up the temp HOME — don't leak it into $TMPDIR
 os.environ["SPENDGUARD_CALLS"] = "1"                       # ledger on (fails closed otherwise)
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
