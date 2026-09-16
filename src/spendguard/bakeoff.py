@@ -53,8 +53,12 @@ def _judge_one(prompt, output, judge_model):
     (the judge failed or gave no clean boolean → UNLABELED, never guessed)."""
     from . import adapters, advisor
     import json as _json
-    r = adapters.call(judge_model, advisor._judge_prompt(prompt[:4000], (output or "")[:4000]),
-                      max_tokens=_JUDGE_OUT, system=_JUDGE_SYS, schema=_JUDGE_SCHEMA, sig="spendguard:bakeoff-judge")
+    # WHOLE evidence: the judge scores the candidate's FULL output — a [:4000] slice would rate only its head,
+    # evidence-truncating the very thing being judged. no_substitution PINS the judge so every candidate is rated
+    # by the SAME ruler, never a lane-swapped one (a judge that varies per candidate is not a comparable number).
+    r = adapters.call(judge_model, advisor._judge_prompt(prompt, output or ""),
+                      max_tokens=_JUDGE_OUT, system=_JUDGE_SYS, schema=_JUDGE_SCHEMA,
+                      sig="spendguard:bakeoff-judge", no_substitution=True)
     if r.get("error") or not r.get("text"):
         return None
     try:
@@ -171,7 +175,11 @@ def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget
             n_good = n_lab = n_run = n_err = 0
             spent, last_error = 0.0, None
             for p in prompts:
-                r = adapters.call(c, p, sig=intent, timeout_s=120, reasoning=eff)   # gated; $0 lane where available
+                # no_substitution PINS the candidate: a bakeoff MEASURES this exact model, so the lane/bandit must
+                # never swap it — else the arm records ANOTHER model's cost×quality under c's name (the corruption
+                # that feeds advise/recommend). Still $0 on c's OWN lane where available (pinning suppresses
+                # cross-model substitution, not same-provider lane use).
+                r = adapters.call(c, p, sig=intent, timeout_s=120, reasoning=eff, no_substitution=True)
                 if r.get("error"):
                     n_err += 1                                      # a dropped run is COUNTED + surfaced, never silent —
                     last_error = (r.get("error") or "")[:140]      # a candidate/effort that fails every prompt is visible,

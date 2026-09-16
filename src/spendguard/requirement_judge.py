@@ -66,8 +66,11 @@ def _meta_call(model, prompt, *, system, schema, out, sig):
     """One meta-caged, deadline-bounded, schema-forced call over WHOLE evidence. Oversize is contained by
     adapters.call's input guard (it refuses rather than clips). Returns (parsed dict or None, cost); never raises."""
     with calls.context(intent="spendguard:%s" % sig):
+        # PIN the judge/adjudicator: this is a META RULER call where WHICH MODEL ANSWERED is the measurement, so
+        # the lane/bandit must never swap it (a ruler that varies per call is not a comparable verdict) — the same
+        # discipline as the bakeoff judge. Pinning still uses the model's OWN $0 lane where available.
         r = adapters.call(model, prompt, max_tokens=out, system=system, schema=schema,
-                          sig="spendguard:%s" % sig, timeout_s=_JUDGE_TIMEOUT_S)
+                          sig="spendguard:%s" % sig, timeout_s=_JUDGE_TIMEOUT_S, no_substitution=True)
     cost = r.get("cost") or 0.0
     if r.get("error"):
         return None, cost

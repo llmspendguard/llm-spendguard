@@ -418,6 +418,45 @@ def _book_substitution(r):
         pass
 
 
+# THE IN-PROCESS WARN-ONCE LEDGER for silent model swaps — the deliberate twin of pricing.UNPRICED_SEEN (a
+# per-process notice registry, not a cache). MONOTONIC BY DESIGN: a (requested → served) pair, once announced,
+# stays announced for the life of the process, so a bulk loop that swaps the same pair 1,000× prints ONE line,
+# not a thousand. There is no staleness to handle — an entry never goes out of date (the pair either has been
+# announced this process or has not) and is never cleared; it is bounded by the tiny number of DISTINCT swap
+# pairs seen (a handful of models). `_warn_once_if_substituted` is its only writer.
+_SUBST_WARN_LEDGER = set()
+
+
+def _warn_once_if_substituted(r):
+    """Announce — LOUD, and exactly ONCE per (requested → served) pair — that an EXPLICITLY-NAMED model was
+    silently swapped by a lane/bandit substitution. A best-value delegation is intentional and prints its own
+    notice, so it is exempted below.
+
+    A caller who NAMED a model and gets a different one recorded (`substituted_from`) is fine for ordinary
+    utilisation routing, but SILENTLY WRONG for a MEASUREMENT — a bakeoff, a cross-vendor panel, any call where
+    WHICH MODEL ANSWERED is the result (the 2026-08-29 'consensus panel was one model' class). The swap was
+    already recorded in `substituted_from`, but a measurement caller does not read that field; this makes it
+    VISIBLE and names the fix.
+
+    Returning None on a REPEAT of the same pair is the intended once-only contract (see the ledger note above),
+    not a dropped warning. Returns the message on the FIRST announcement (for tests), else None. Pin the vendor
+    with no_substitution=True."""
+    if not isinstance(r, dict):
+        return None
+    sub_from, served = r.get("substituted_from"), r.get("model")
+    if not sub_from or r.get("best_value") or sub_from == served:
+        return None                                      # no swap · best-value (intentional, already noted) · self
+    pair = (sub_from, served)
+    if pair in _SUBST_WARN_LEDGER:                        # already announced this process → once-only, by contract
+        return None
+    _SUBST_WARN_LEDGER.add(pair)
+    msg = (f"[spendguard] you named {sub_from!r} but it was served by {served!r} (lane/bandit substitution). If "
+           f"the MODEL is the measurement (bakeoff / cross-vendor panel), pass no_substitution=True to pin it.")
+    import sys as _syssub
+    print(msg, file=_syssub.stderr)
+    return msg
+
+
 def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,
          sig=None, intent=None, retries=2, files=None, _no_guard=False, no_metered_fallback=False, images=None,
          no_substitution=False, metered_only=False, _probe=False, **aliases):
@@ -626,6 +665,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
             r["resolution"] = _resolution
         _ex = r.get("executor")
         r["served_by_metered_api"] = _ex in ("api", "api-fallback") or (not _ex and bool(r.get("cost")))
+        _warn_once_if_substituted(r)                   # a NAMED model silently swapped → loud once (measurement footgun)
         # STRUCTURED OUTPUT: when a schema was requested, surface the DECODED object alongside `text` (provenance
         # kept — purely additive), so N consumers don't each re-json.loads + reinvent a salvage; the shape gate
         # already parsed this body. `parsed` is the object, or None if it did not decode (undecodable → the caller
