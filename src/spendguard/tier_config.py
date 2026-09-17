@@ -9,6 +9,8 @@ model in a group), turning a silent misconfiguration into an error when someone 
 
 route_utility owns the ROUTING (rank_for_tier); this module owns the DECLARATION + validation + CLI.
 """
+import time
+
 from . import config, lane_catalog, route_utility
 
 
@@ -79,10 +81,70 @@ def tier_config_report():
             "issues": issues, "warnings": warns, "idle": idle}
 
 
+_REACH_PROMPT = "Reply with exactly: OK"     # a trivial served-check; only accept/serve matters, not the content
+_REACH_TIMEOUT_S = 45                        # a lane's real latency is seconds; a hung CLI fails fast, never stalls
+_REACH_SNAPSHOT = "tier_reachability"        # persisted so doctor/tiers render the last probe without re-hitting CLIs
+
+
+def reachability_probe(save=True):
+    """The check tier_config_report CANNOT make: does each ENABLED lane's DECLARED tier model actually SERVE $0 on
+    its lane, or does the lane CLI REJECT it and silently fall back to the METERED API (the 'green report, inert
+    lane' class, one level below tier_config_report)? Dispatches through adapters.call — the SAME production path,
+    so the lane-boundary resolution (e.g. the Gemini composer that turns a base id into a served tier suffix) is
+    applied exactly as a real fungible call would be. PINNED (no_substitution) + no_metered_fallback => $0 BY
+    CONSTRUCTION: a lane miss is an error, never a metered call. served = the lane answered (text, no error).
+    Persists a snapshot (save) so doctor/tiers render it without re-probing. Returns
+    {asof, rows:[{lane, model, tiers, served, error}]}."""
+    from . import adapters, gate, lanes
+    groups = route_utility.tiers()
+    enabled = {ln["lane"] for ln in lanes.lanes_status()["lanes"] if ln["enabled"]}
+    targets = {}                                         # (lane, model) -> the tiers that declare it (probe each once)
+    for ln in lane_catalog.lanes():
+        if ln not in enabled:
+            continue
+        for g in groups:
+            model = lane_catalog.lane_model_for_tier(ln, g)
+            if model:
+                targets.setdefault((ln, model), []).append(g)
+    rows = []
+    for (ln, model), tiers in targets.items():
+        prov = lane_catalog.lane_provider(ln)            # the provider namespace whose atomic pair IS this lane
+        pinned = f"{prov}:{model}" if prov and ":" not in str(model) else model
+        try:
+            r = adapters.call(pinned, _REACH_PROMPT, no_substitution=True, no_metered_fallback=True,
+                              sig="spendguard:reachability-probe", timeout_s=_REACH_TIMEOUT_S)
+        except Exception as e:
+            if gate.is_deliberate_stop(e):               # a deadline/refusal (DispatchTimeout, SpendGateRefused) HALTS
+                raise                                    # the probe — never downgraded to a 'not served' row
+            r = {"error": f"{type(e).__name__}: {str(e)[:80]}"}
+        rows.append({"lane": ln, "model": model, "tiers": sorted(tiers),
+                     "served": bool(r.get("text")) and not r.get("error"), "error": (r.get("error") or "")[:140]})
+    snap = {"asof": time.time(), "rows": rows}
+    if save:
+        config.save_state(_REACH_SNAPSHOT, snap, loud=False)
+    return snap
+
+
+def cached_reachability():
+    """The last reachability_probe snapshot as (rows, age_seconds), or (None, None) if never probed — so doctor and
+    `tiers` render the DECLARED models' real serving with its age, and say 'unprobed' honestly instead of implying
+    green. Read-only, $0."""
+    snap = config.load_state(_REACH_SNAPSHOT, {}) or {}
+    rows = snap.get("rows")
+    if not rows:
+        return None, None
+    return rows, max(0.0, time.time() - float(snap.get("asof") or 0))
+
+
 def main(argv=None):
     """`spendguard tiers` — show + VALIDATE the bulk-lane routing groups; `tiers set <group> <model…>` declares one,
     refusing an unpriced model at the moment of declaration (the only moment anyone is watching)."""
     argv = list(argv or [])
+    probe = "--probe" in argv
+    argv = [a for a in argv if a != "--probe"]
+    if probe:
+        print("probing each enabled lane's CLI for its declared model ($0: a miss is an error row, never metered)…")
+        reachability_probe(save=True)
     if argv and argv[0] == "set":
         if len(argv) < 3:
             print("usage: spendguard tiers set <group> <model> [<model> …]   (the models a `--tier <group>` fan may use)")
@@ -126,5 +188,20 @@ def main(argv=None):
         print(f"  🔴 {i}")
     for w in rep["warnings"]:
         print(f"  🟡 {w}")
-    print("  change: `spendguard tiers set <group> <model…>` · `spendguard lanes set-model <lane> <model>`")
-    return 0 if not rep["issues"] else 1
+    # REACHABILITY: declared+priced+mapped 🟢 above is NOT proof a lane CLI accepts the id — a rejected model
+    # silently meters. Render the last `--probe` verdict (the CLI's own accept/reject ground truth) so the green
+    # config report can never hide an inert lane.
+    _rrows, _rage = cached_reachability()
+    _bad = [r for r in (_rrows or []) if not r["served"]]
+    if _rrows is None:
+        print("  reachability: ⚪ unprobed — `spendguard tiers --probe` verifies each lane CLI ACCEPTS its declared model ($0)")
+    elif _bad:
+        _ago = f"{_rage / 3600:.1f}h" if _rage >= 3600 else f"{_rage / 60:.0f}m"
+        print(f"  reachability: 🔴 {len(_bad)} declared model(s) REJECTED by their lane CLI → silently meter (probed {_ago} ago):")
+        for r in _bad:
+            print(f"                {r['lane']} → {r['model']} [{','.join(r['tiers'])}]: {r['error'] or 'not served'}")
+    else:
+        _ago = f"{_rage / 3600:.1f}h" if _rage >= 3600 else f"{_rage / 60:.0f}m"
+        print(f"  reachability: 🟢 every declared model served on its lane CLI (probed {_ago} ago, $0)")
+    print("  change: `spendguard tiers set <group> <model…>` · `spendguard lanes set-model <lane> <model>`  ·  `--probe` re-checks serving")
+    return 0 if (not rep["issues"] and not _bad) else 1

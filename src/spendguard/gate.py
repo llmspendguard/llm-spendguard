@@ -2265,6 +2265,16 @@ def _cli(cmd="status", live=False):
                     if _tc["issues"]:
                         _more = f" (+{len(_tc['issues']) - 1} more; `spendguard tiers`)" if len(_tc["issues"]) > 1 else ""
                         print(f"              ⚠ {_tc['issues'][0]}{_more}")
+                    # REACHABILITY: 🟢-configured is NOT proof a lane CLI accepts the declared id — a rejected model
+                    # silently meters (the inertness one level below the config report). Surface the last probe.
+                    _rrows, _ = tier_config.cached_reachability()
+                    _unreached = [r for r in (_rrows or []) if not r["served"]]
+                    if _rrows is None:
+                        print("              reachability UNPROBED — `spendguard tiers --probe` checks each lane CLI ACCEPTS its declared model ($0)")
+                    elif _unreached:
+                        print(f"              🔴 {len(_unreached)} declared model(s) REJECTED by their lane CLI → SILENTLY METER: "
+                              + ", ".join(f"{r['lane']}→{r['model']}" for r in _unreached[:3])
+                              + "  (`spendguard tiers --probe` for detail)")
             except Exception:
                 pass
             try:                                          # MODEL-METADATA BACKBONE: the LiteLLM limits cache that

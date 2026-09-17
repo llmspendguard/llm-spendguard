@@ -1183,16 +1183,19 @@ def _split_gemini_reasoning(model_id):
 
 def _compose_gemini_reasoning(model_id, reasoning):
     """The agy-style id that carries `reasoning` as a suffix, for the AGY LANE (which reads effort off the id, not
-    a parameter, and ignores the reasoning kwarg). No reasoning, or a value with no agy spelling (e.g. 'minimal'),
-    returns the id unchanged — the lane then runs its default tier, never an invented one. Any existing tier on
-    the id is REPLACED, so an explicit reasoning argument wins over a stale suffix."""
-    if not reasoning:
+    a parameter, and ignores the reasoning kwarg). A valid explicit tier (low|medium|high) wins and REPLACES any
+    existing suffix; an id that already carries a tier is kept. A BASE id with no requestable tier gets the lane's
+    DEFAULT tier — because agy serves ONLY the tier-suffixed forms and REJECTS a bare base id (MEASURED 2026-09-16:
+    `--model gemini-3.8-flash` → "invalid model selection"), so returning the bare id (as this once did) MISSES the
+    $0 lane and silently falls back to the metered API. The default is the lane's OWN (lane_catalog quirk)."""
+    base, existing = _split_gemini_reasoning(model_id)
+    tier = str(reasoning or "").strip().lower()
+    if tier in _GEMINI_REASONING_TIERS:                  # explicit valid tier wins (replaces any existing suffix)
+        return base + "-" + tier
+    if existing:                                         # already tier-suffixed → agy serves it, keep it
         return model_id
-    tier = str(reasoning).strip().lower()
-    if tier not in _GEMINI_REASONING_TIERS:
-        return model_id
-    _base, _existing = _split_gemini_reasoning(model_id)
-    return _base + "-" + tier
+    from . import lane_catalog                           # a BARE base id → the lane's default served tier, never
+    return base + "-" + (lane_catalog.quirk("gemini").get("default") or "medium")   # the bare id agy rejects
 
 
 def _is_dated_variant(bare, candidate):

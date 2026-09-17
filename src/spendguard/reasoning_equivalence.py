@@ -100,9 +100,10 @@ def _lane_effort(lane, model, level):
         if level in levels:
             return level, "suffix"
         # a requested level with NO agy suffix spelling (e.g. 'minimal') → the agy lane runs its DEFAULT tier. This
-        # MATCHES adapters._compose_gemini_reasoning, which returns the id UNCHANGED for such a value, so the bare id
-        # runs the lane's default (REASONING_QUIRK['gemini']['default'] = 'medium'). It does NOT silently floor to 'low'
-        # — to get 'low' on agy you must request 'low' explicitly (→ the -low suffix).
+        # MATCHES adapters._compose_gemini_reasoning, which APPENDS this default tier suffix to a bare base id
+        # (REASONING_QUIRK['gemini']['default'] = 'medium'): agy serves ONLY the tier-suffixed forms and REJECTS a
+        # bare id, so the composer cannot rely on 'return unchanged → lane runs its default'; it must spell the
+        # default. It does NOT silently floor to 'low' — to get 'low' on agy you must request 'low' explicitly.
         return (q.get("default"), "suffix")
     if style == "thinking":                           # claude-code: the Claude CLI has no one-shot effort flag
         return None, "thinking"

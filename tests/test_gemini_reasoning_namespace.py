@@ -6,7 +6,8 @@ reasoning PARAMETER. Sending the wrong spelling breaks silently in opposite ways
 metered API 404s ("models/gemini-3.7-flash-medium is not found"), and a bare id + reasoning=medium handed to the
 lane drops the tier and runs agy's default. This pins BOTH conversions so neither regresses:
 
-  (a) split/compose respell agy's fixed suffix vocabulary (low/medium/high) — and leave non-suffixed ids alone;
+  (a) split un-spells and compose re-spells agy's suffix vocabulary (low/medium/high); split leaves a non-suffix
+      id alone — but compose RESOLVES a bare id to the lane's DEFAULT served tier, because agy REJECTS a bare id;
   (b) an agy id on the METERED path reaches the SDK as the BARE model + a reasoning_effort (never the 404 id);
   (c) a bare id + reasoning on the AGY LANE reaches run_prompt as the SUFFIXED id (never a dropped tier).
 
@@ -24,7 +25,9 @@ os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 os.environ["GEMINI_API_KEY"] = "test-key-not-real"
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from spendguard import adapters                                                        # noqa: E402
+from spendguard import adapters, lane_catalog                                          # noqa: E402
+
+_gem_default = lane_catalog.quirk("gemini").get("default") or "medium"   # the served tier a bare id resolves to
 
 fails = []
 
@@ -36,14 +39,16 @@ def ck(name, cond):
         fails.append(name)
 
 
-print("-- (a) split/compose respell agy's fixed suffix vocabulary, and leave other ids alone --")
+print("-- (a) split/compose respell agy's suffix vocab; split leaves non-suffix ids alone, compose resolves a bare id to the default served tier --")
 ck("split: agy suffix id -> (bare, tier)", adapters._split_gemini_reasoning("gemini-3.7-flash-medium") == ("gemini-3.7-flash", "medium"))
 ck("split: -latest alias is NOT a tier suffix", adapters._split_gemini_reasoning("gemini-flash-latest") == ("gemini-flash-latest", None))
 ck("split: -lite is NOT a tier suffix", adapters._split_gemini_reasoning("gemini-3.5-flash-lite") == ("gemini-3.5-flash-lite", None))
 ck("compose: bare id + tier -> suffixed id", adapters._compose_gemini_reasoning("gemini-3.7-flash", "high") == "gemini-3.7-flash-high")
 ck("compose: an existing tier is REPLACED (explicit arg wins)", adapters._compose_gemini_reasoning("gemini-3.7-flash-medium", "high") == "gemini-3.7-flash-high")
-ck("compose: a non-agy effort (minimal) has no suffix — id unchanged, tier never invented", adapters._compose_gemini_reasoning("gemini-3.7-flash", "minimal") == "gemini-3.7-flash")
-ck("compose: no reasoning -> id unchanged", adapters._compose_gemini_reasoning("gemini-3.7-flash", None) == "gemini-3.7-flash")
+ck("compose: an effort agy cannot spell ('minimal') falls to the lane DEFAULT tier, never the bare id agy rejects",
+   adapters._compose_gemini_reasoning("gemini-3.7-flash", "minimal") == f"gemini-3.7-flash-{_gem_default}")
+ck("compose: no reasoning -> the lane DEFAULT tier (a bare id is unservable on agy), not the bare id unchanged",
+   adapters._compose_gemini_reasoning("gemini-3.7-flash", None) == f"gemini-3.7-flash-{_gem_default}")
 
 
 print("\n-- (b) METERED path: an agy id reaches the SDK as the BARE model + reasoning_effort (was a 404 id) --")
