@@ -103,14 +103,17 @@ finally:
     sys.argv = _argv
 
 print("-- fetch_batches(): a provider HTTP error -> typed BatchFetchError, never a raw urllib traceback --")
+import io
 import urllib.error as _ue
 check("BatchFetchError subclasses RuntimeError (so the CLI's `except RuntimeError` gives a clean one-line exit)",
       issubclass(ro.BatchFetchError, RuntimeError))
 
 
 def _raise_401(*a, **k):
-    # the exact failure seen live: `spendguard reconcile` dumped a full urllib stack on an unauthorized key
-    raise _ue.HTTPError("https://api.openai.com/v1/batches", 401, "Unauthorized", {}, None)
+    # the exact failure seen live: `spendguard reconcile` dumped a full urllib stack on an unauthorized key.
+    # give it OpenAI's real JSON error body so the surfaced [OpenAI: …] detail is asserted too.
+    _body = io.BytesIO(b'{"error": {"message": "Incorrect API key provided: sk-proj-***", "code": "invalid_api_key"}}')
+    raise _ue.HTTPError("https://api.openai.com/v1/batches", 401, "Unauthorized", {}, _body)
 
 
 _orig_urlopen = ro.urllib.request.urlopen
@@ -122,6 +125,8 @@ except ro.BatchFetchError as e:
     check("HTTP 401 -> BatchFetchError (a clean RuntimeError the CLI catches)", True)
     check("the message carries the HTTP status", "401" in str(e))
     check("the message carries the actionable auth hint", "authorized" in str(e).lower())
+    check("the message surfaces OpenAI's own body reason (invalid-key vs missing-scopes)",
+          "Incorrect API key provided" in str(e))
 except _ue.HTTPError:
     check("a raw HTTPError escaped fetch_batches — the reported crash is back", False)
 except Exception as e:

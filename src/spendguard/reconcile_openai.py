@@ -57,6 +57,28 @@ def _batch_http_hint(code):
     return "verify the key and endpoint"
 
 
+def _http_error_detail(e):
+    """OpenAI's OWN reason from an HTTPError body ({"error":{"message":…}}), truncated — the line that distinguishes
+    an INVALID key ("Incorrect API key provided") from a SCOPE gap ("Missing scopes: …"), the two 401s that need
+    opposite fixes (replace the key vs re-scope it). Best-effort: an unreadable / non-JSON body yields '' (the status
+    + hint still stand). Narrow excepts on purpose — a body-parse must never swallow a real error."""
+    import json as _json
+    try:
+        raw = e.read().decode("utf-8", "replace")
+    except (OSError, AttributeError):                         # no readable body attached to the HTTPError
+        return ""
+    try:
+        obj = _json.loads(raw)
+    except ValueError:                                       # JSONDecodeError ⊂ ValueError — a non-JSON body (proxy HTML…)
+        return raw.strip()[:200]
+    err = obj.get("error") if isinstance(obj, dict) else None
+    if isinstance(err, dict):
+        return str(err.get("message") or err.get("code") or "")[:200]
+    if isinstance(err, str):
+        return err[:200]
+    return raw.strip()[:200]
+
+
 def load_key():
     from .config import api_key
     k = api_key("OPENAI_API_KEY")
@@ -85,8 +107,10 @@ def fetch_batches(key, since=None, max_pages=BATCH_MAX_PAGES, timeout_s=BATCH_HT
             with urllib.request.urlopen(req, context=ssl_context(), timeout=timeout_s) as _r:
                 d = json.load(_r)
         except urllib.error.HTTPError as e:                   # 401/403/429/5xx — a resolved-but-unauthorized key,
-            raise BatchFetchError(                            # throttling, or a server error (was a raw traceback)
-                f"OpenAI /v1/batches returned HTTP {e.code} {e.reason} — {_batch_http_hint(e.code)}") from e
+            _detail = _http_error_detail(e)                   # throttling, or a server error (was a raw traceback).
+            raise BatchFetchError(                            # OpenAI's body says WHICH: invalid key vs missing scopes
+                f"OpenAI /v1/batches returned HTTP {e.code} {e.reason} — {_batch_http_hint(e.code)}"
+                + (f"  [OpenAI: {_detail}]" if _detail else "")) from e
         except (urllib.error.URLError, TimeoutError) as e:    # DNS/SSL/connection/socket-timeout — no HTTP status
             raise BatchFetchError(
                 f"OpenAI /v1/batches request failed: {getattr(e, 'reason', e)} — check connectivity, or retry") from e
