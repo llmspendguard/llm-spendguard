@@ -1179,8 +1179,38 @@ def bandit_list_coverage():
         if not entries:
             continue
         out[key] = {"entries": entries, "seen_n": len(seen), "read_ok": read_ok,
+                    "sources": config._cfg_get("advisor", f"{key}_sources", None) or {},  # who REGISTERED each (register_critical)
                     "unmatched": ([e for e in entries if not any(_intent_listed(it, [e]) for it in seen)] if read_ok else None)}
     return out
+
+
+def register_critical(patterns, source=None):
+    """Register no-substitution VENDOR-CRITICAL intent patterns into advisor.bandit_denylist — the SANCTIONED way for a
+    CONSUMER (e.g. warden) to keep its cross-vendor-panel pins in spendguard's config so they can't DRIFT from the
+    consumer's own declaration. The REAL guarantee stays the per-call `no_substitution=True`; this belt-and-suspenders
+    layer is now drift-proof AND attributable: `source` is recorded per pattern in advisor.bandit_denylist_sources, so
+    `doctor` reads a not-yet-run REGISTERED pin as "registered by <source>" rather than flagging it as a possible typo.
+    Idempotent — merge + sort + dedup; re-registering the same pattern is a no-op. Returns the merged denylist."""
+    pats = sorted({p.strip() for p in (patterns or []) if p and p.strip()})
+    cur = list(config._cfg_get("advisor", "bandit_denylist", None) or [])
+    if not pats:
+        return cur
+    merged = sorted(set(cur) | set(pats))
+
+    def _merge_pins(d):
+        d = dict(d or {})
+        adv = dict(d.get("advisor") or {})
+        adv["bandit_denylist"] = merged
+        if source:
+            src = dict(adv.get("bandit_denylist_sources") or {})
+            for p in pats:
+                src[p] = source                          # last writer wins per pattern; a re-register just re-stamps it
+            adv["bandit_denylist_sources"] = src
+        d["advisor"] = adv
+        return d
+    config.update_json(config.CONFIG_JSON, _merge_pins, reason="register-critical")
+    config.cfg_invalidate()                              # so the very next read (this process) sees the merged list
+    return merged
 
 
 def route_decision(intent, model, reactive=False):

@@ -2145,11 +2145,21 @@ def _cli(cmd="status", live=False):
                     print(f"  ? advisor.{_lk}: could not check entries (calls ledger unreadable) — not 'all fine'")
                     continue
                 _un = _cov.get("unmatched") or []
-                if _un:
-                    print(f"  🟡 advisor.{_lk}: {len(_un)} entr{'y' if len(_un) == 1 else 'ies'} match NO recorded "
-                          f"intent — {', '.join(_un)}  (a typo, a stale name, or an intent not yet run — verify)")
-                else:
+                if not _un:
                     print(f"  🟢 advisor.{_lk}: all {len(_cov.get('entries') or [])} entries match a recorded intent")
+                    continue
+                _src = _cov.get("sources") or {}          # who REGISTERED each pin (register_critical) — attributed, not a typo
+                _suspect = [e for e in _un if e not in _src]      # no owner → the real 'typo / stale / verify' case
+                _registered = [e for e in _un if e in _src]       # a consumer PINNED it — benign, just not run here yet
+                if _suspect:
+                    print(f"  🟡 advisor.{_lk}: {len(_suspect)} UNREGISTERED entr{'y' if len(_suspect) == 1 else 'ies'} "
+                          f"match NO recorded intent — {', '.join(_suspect)}  (a typo, a stale name, or an intent not yet run — verify)")
+                if _registered:
+                    _by = {}
+                    for _e in _registered:
+                        _by.setdefault(_src[_e], []).append(_e)
+                    _who = '; '.join(f"{len(_v)} by {_k}" for _k, _v in sorted(_by.items()))
+                    print(f"  🟢 advisor.{_lk}: {len(_registered)} registered pin(s) not run here yet ({_who}) — expected, protected on first use")
         except Exception:
             pass
         # AN UNPRICED ADVISOR MODEL IS A BROKEN CAP, and config.validate_advisor() has said so since it was

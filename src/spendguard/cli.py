@@ -578,6 +578,27 @@ def _dispatch(argv=None):
     if cmd == "tiers":                                # bulk-lane routing GROUPS: show/validate + `tiers set …`
         from . import tier_config
         return tier_config.main(rest)
+    if cmd == "register-critical":                    # a CONSUMER (e.g. warden) pins its no-substitution vendor-critical intents
+        import argparse
+        from . import lane_balance
+        ap = argparse.ArgumentParser(prog="spendguard register-critical")
+        ap.add_argument("patterns", nargs="*", help="intent patterns to pin (no-substitution), e.g. warden:card_faithful*")
+        ap.add_argument("--source", help="who is registering these (e.g. warden) — recorded so doctor attributes them")
+        ap.add_argument("--list", action="store_true", help="show the current pins + who registered each")
+        a = ap.parse_args(rest)
+        cov = (lane_balance.bandit_list_coverage() or {}).get("bandit_denylist", {})
+        if a.list or not a.patterns:
+            src = cov.get("sources") or {}
+            print("advisor.bandit_denylist — no-substitution pins (a cross-vendor panel is never collapsed to one vendor):")
+            for e in (cov.get("entries") or []):
+                print(f"  {e:<42} {('← ' + src[e]) if e in src else ''}")
+            if not cov.get("entries"):
+                print("  (none) — register with: spendguard register-critical <intent-pattern…> --source <name>")
+            return 0
+        merged = lane_balance.register_critical(a.patterns, source=a.source)
+        print(f"registered {len(a.patterns)} pin(s){(' from ' + a.source) if a.source else ''} → "
+              f"advisor.bandit_denylist ({len(merged)} total, deduped)")
+        return 0
     if cmd == "keys":                                 # per-KEY spend (which workspace/project key) — local-only
         from . import budget, config as _c
         since = None
