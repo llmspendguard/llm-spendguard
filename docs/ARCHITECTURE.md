@@ -368,7 +368,7 @@ secrets are `email.json` / `saas.json` (gitignored). Nothing is written into the
 
 ### Module map
 See [`src/spendguard/README.md`](https://github.com/llmspendguard/llm-spendguard/blob/main/src/spendguard/README.md) for a one-line description of every module,
-grouped by the four roles (enforce / see / plan-prove / learn).
+grouped by role (enforcement & pricing · subscription lanes & executors · reconcile, realtime & attribution · learning advisor · client surfaces).
 
 ---
 
@@ -377,8 +377,12 @@ grouped by the four roles (enforce / see / plan-prove / learn).
 - **Caps are check-then-record, not transactional.** Under heavy concurrency, N processes can each pass the
   daily/monthly check before any of them records — so cross-process caps are **near-hard, not
   transactional-hard.** A small overshoot is possible at high fan-out.
-- **Real-time has no provider cross-check without an Admin key.** `reconcile-ledger` reconciles **batch**
-  spend against provider billing; real-time spend is recorded from the SDK's `usage` field and trusted.
+- **Real-time has no *verified-provider* cross-check without an Admin key** (Admin is a dev-only cross-check, never
+  the main path) — but it is NOT unknown. spendguard reconstructs real-time spend AGENTICALLY from conversation token
+  records, **admin-free**, and `reconcile all` surfaces it as a clearly-labelled reconstructed **estimate**
+  (`ESTIMATED (reconstructed)`), refreshed by the periodic find (`scripts/reconstruct/realtime_find_batch.py`); a stale
+  cache reads an accurate "run the find" note. `reconcile-ledger` reconciles **batch** spend against provider billing;
+  the gate's inline true-up records real-time `usage` at call time as the exact floor. See `docs/AGENTIC.md` §1c.
 - **The in-process gate is interpreter-scoped.** It cannot gate a different python, a different machine, or
   raw HTTP that skips the SDK. The layered defenses (§3) mitigate this; only the roadmap proxy *guarantees*
   it.

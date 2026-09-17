@@ -17,8 +17,29 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
   "equally good" is a MEANING judgement). Persisted (`~/.spendguard/reasoning_equivalence.json`, learnings maintained
   across re-derivations). Surfaced by `spendguard lanes --reasoning-map`. `docs/GATED_BULK_LANES.md` §4,
   `tests/test_reasoning_equivalence.py`.
+- **Lane REACHABILITY probe — a declared lane model reads 🟢 only if its CLI actually ACCEPTS + SERVES it.**
+  `tier_config.reachability_probe` / `cached_reachability` dispatch a tiny pinned $0 probe (`no_substitution` +
+  `no_metered_fallback`, so a miss is an error row, never a metered call) through the PRODUCTION path for each enabled
+  lane's declared tier model; a mapped-but-CLI-rejected id reads 🔴 (silently meters). Surfaced by
+  `spendguard tiers --probe` and in `spendguard doctor`. Closes the "declared + priced + mapped, but the lane CLI
+  rejects the id → silent metered fallback" gap. `tests/test_lane_model_reachability.py`.
+- **Realtime surfaces the ADMIN-FREE reconstruction as an ESTIMATE in `reconcile all`, never a false "UNKNOWN".**
+  `RealtimeSource` + `ledger_sync.realtime_reconstruction_estimate` present spendguard's reconstructed realtime $
+  (from conversation token records, no admin key) as a clearly-labelled reconstructed **estimate**; a stale/absent
+  cache reads an accurate "reconstruction stale — run the find" note instead of the misleading "bill could not be read
+  (key/network)"; the completeness verdict reads `ESTIMATED (reconstructed, admin-free)`. A corrupt cache is a surfaced
+  failure, not silent absence. `tests/test_realtime_reconstruction_surface.py`.
 
 ### Fixed
+- **A pinned `gemini:gemini-3.8-flash` SILENTLY METERED — agy rejects the bare base id.** agy (the Gemini lane CLI)
+  serves ONLY tier-suffixed ids and rejects the bare base, so a pinned base id fell through to the metered API.
+  `adapters._compose_gemini_reasoning` now resolves a bare base id to the lane's DEFAULT served tier (`…-flash-medium`,
+  from `lane_catalog.quirk`). `tests/test_lane_model_reachability.py`, `tests/test_gemini_reasoning_namespace.py`.
+- **`spendguard reconcile` dumped a raw urllib traceback on a provider HTTP error (e.g. a 401).** The CLI caught
+  `RuntimeError`, but `urllib.error.HTTPError` (an `OSError`) slipped past. `reconcile_openai.fetch_batches` now raises a
+  typed `BatchFetchError(RuntimeError)` carrying the status + OpenAI's own body reason — so a 401 self-diagnoses
+  (`[OpenAI: Incorrect API key provided]` = replace the key, vs `Missing scopes` = re-scope it) and the command exits
+  cleanly instead of crashing. `tests/test_reconcile_openai.py`.
 - **A pinned claude-haiku fallback would STRAND (the equal model wasn't callable on the metered API).** The Claude
   CLI accepts the bare alias `claude-haiku-4-5`, but the metered API serves only the dated id
   `claude-haiku-4-5-20251001` — so a lane miss had no equal-model to fall back to. `adapters.metered_fallback_id` now

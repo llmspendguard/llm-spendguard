@@ -7,7 +7,7 @@ Every command `spendguard` exposes. New here? Start with the
 ```
 # enforce / control
 spendguard status | on | off                 # kill switch (persistent flag)
-spendguard doctor [--live]                   # is the gate ENFORCING here? + CACHED leak verdict w/ age (--live = full pull)
+spendguard doctor [--live]                   # is the gate ENFORCING here? + keys · subscription lanes · bulk-lane REACHABILITY · cached leak verdict w/ age (--live = full pull)
 spendguard install-hook --venv <path>        # gate every process in ANOTHER venv/repo (--uninstall to remove; alias: gate-venv)
 spendguard install-hook --user [--python P]  # gate a python's per-USER site (system-python bypass; PEP668-safe, no pip)
 spendguard install-rule [--global|--project DIR]  # drop the spendguard rule into CLAUDE.md → every AI chat wires it in
@@ -97,6 +97,8 @@ spendguard lanes --catalog                    # each lane's provider · reasonin
 spendguard lanes --economics                  # measured token caps · $/token · plan-fee-at-risk this window
 spendguard lanes --fallback                   # lane→metered ID equivalence: a down/exhausted plan degrades to the paid API, never strands
 spendguard lanes --reasoning-map              # lane→metered REASONING map: SAME model, EQUAL-or-GREATER effort, availability ✓/?/✗, per (lane,model,level)
+spendguard tiers [--probe]                    # bulk-lane routing GROUPS (advisor.tiers): is each group's models priced + does a lane serve it; --probe = live $0 REACHABILITY check that each lane CLI ACCEPTS its declared model (a rejected id reads 🔴 = silently meters)
+spendguard tiers set <group> <model…>         # declare a capability group (refuses an unpriced model at declaration); then `lanes set-model <lane> <model>` maps a lane to one of them
 spendguard lanes --delegate "<task>"          # offload ONE task to the cheapest viable idle lane ($0; billed fallback flagged)
 spendguard lanes --bulk <intent> [--file t.txt|--jsonl] [--tier G] [--lanes a,b,c] [--estimate] [--checkpoint c.jsonl] [--out r.jsonl]   # fan a LIST across all idle lanes (durable, chunked); --estimate = $0 preview
 spendguard lanes --bakeoff X "<task>" | --estimate   # seed the learned cross-lane router (--estimate = $0 judge-cost preview)
