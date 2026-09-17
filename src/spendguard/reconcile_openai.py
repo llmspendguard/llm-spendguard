@@ -14,7 +14,7 @@ KEY ACCOUNTING RULES baked in:
   * billed = COMPLETED + CANCELLED batches (cancelled bills for completed requests!)
   * failed = $0 ; in_progress/finalizing = not yet metered (reported separately)
 """
-import json, argparse, urllib.request, datetime
+import json, argparse, urllib.request, urllib.error, datetime
 from collections import defaultdict
 
 from .pricing import cost_or_unpriced, normalize, PRICING_SOURCE, PRICING_VERIFIED
@@ -32,6 +32,29 @@ class KeyMissing(RuntimeError):
     signal.cancellation_rows — can swallow it via `except Exception` and degrade gracefully; the CLI catches it for
     a clean one-line exit. (sys.exit raised SystemExit, a BaseException that slipped past those `except Exception`
     guards and aborted `spendguard doctor` on a machine with no OPENAI_API_KEY.)"""
+
+
+class BatchFetchError(RuntimeError):
+    """The /v1/batches GET failed at the TRANSPORT (HTTP 401/403/429/5xx, DNS/SSL, or a socket timeout) — distinct
+    from a paging bound (those degrade + warn) and from a missing key (KeyMissing). A RAISE, and a RuntimeError like
+    KeyMissing so the SAME two catchers handle it uniformly: the CLI's `except RuntimeError` prints ONE clean line
+    (the observed 401 dumped a full urllib traceback out of `spendguard reconcile` instead), and a multi-provider /
+    degradable caller's `except Exception` records it as that provider's `errors[...]` entry and reconciles the
+    OTHER providers rather than aborting. Carries an operator-actionable hint — a 401 here means the key RESOLVED
+    but is not authorized for the Batch API, which `doctor`'s key-resolved check cannot see."""
+
+
+def _batch_http_hint(code):
+    """The operator-actionable next step for a /v1/batches HTTP status — a mechanical status→guidance mapping
+    (a fixed protocol fact, not a meaning decision), so a raised error tells the user what to actually DO."""
+    if code in (401, 403):
+        return ("the OPENAI_API_KEY resolved but is NOT authorized for the Batch API — it may be rotated/expired "
+                "or a project key without batch scope; re-check the key in the environment or keys.env")
+    if code == 429:
+        return "OpenAI rate-limited the listing — retry later"
+    if 500 <= code < 600:
+        return "OpenAI server error — transient, retry"
+    return "verify the key and endpoint"
 
 
 def load_key():
@@ -58,8 +81,15 @@ def fetch_batches(key, since=None, max_pages=BATCH_MAX_PAGES, timeout_s=BATCH_HT
     for _page in range(max_pages):
         url = f"https://api.openai.com/v1/batches?limit={BATCH_PAGE_LIMIT}" + (f"&after={after}" if after else "")
         req = urllib.request.Request(url, headers={"Authorization": f"Bearer {key}"})
-        with urllib.request.urlopen(req, context=ssl_context(), timeout=timeout_s) as _r:
-            d = json.load(_r)
+        try:
+            with urllib.request.urlopen(req, context=ssl_context(), timeout=timeout_s) as _r:
+                d = json.load(_r)
+        except urllib.error.HTTPError as e:                   # 401/403/429/5xx — a resolved-but-unauthorized key,
+            raise BatchFetchError(                            # throttling, or a server error (was a raw traceback)
+                f"OpenAI /v1/batches returned HTTP {e.code} {e.reason} — {_batch_http_hint(e.code)}") from e
+        except (urllib.error.URLError, TimeoutError) as e:    # DNS/SSL/connection/socket-timeout — no HTTP status
+            raise BatchFetchError(
+                f"OpenAI /v1/batches request failed: {getattr(e, 'reason', e)} — check connectivity, or retry") from e
         data = d.get("data") or []
         rows.extend(data)
         # newest-first: once the OLDEST batch on this page is before the window, stop — every later page is older.

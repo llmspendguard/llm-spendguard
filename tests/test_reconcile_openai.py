@@ -1,5 +1,6 @@
-"""Offline tests for reconcile_openai PARSERS — day() date extraction + load_key().
-NO network: fetch_batches/main are never called. Maximizes line coverage of the pure bits.
+"""Offline tests for reconcile_openai PARSERS — day() date extraction + load_key() + the fetch transport guard.
+NO network: main() is stubbed, and fetch_batches is exercised only with urllib.request.urlopen stubbed to RAISE
+(no real socket) — proving a provider HTTP error surfaces as a typed BatchFetchError, not a raw urllib traceback.
 """
 import os, sys, tempfile
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
@@ -8,6 +9,8 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 from spendguard import reconcile_openai as ro, pricing
+
+_REAL_FETCH = ro.fetch_batches   # capture BEFORE the main()-smoke section replaces ro.fetch_batches with a stub
 
 failures = 0
 def check(label, cond):
@@ -98,6 +101,33 @@ except Exception as e:
     check(f"main() raised: {e}", False)
 finally:
     sys.argv = _argv
+
+print("-- fetch_batches(): a provider HTTP error -> typed BatchFetchError, never a raw urllib traceback --")
+import urllib.error as _ue
+check("BatchFetchError subclasses RuntimeError (so the CLI's `except RuntimeError` gives a clean one-line exit)",
+      issubclass(ro.BatchFetchError, RuntimeError))
+
+
+def _raise_401(*a, **k):
+    # the exact failure seen live: `spendguard reconcile` dumped a full urllib stack on an unauthorized key
+    raise _ue.HTTPError("https://api.openai.com/v1/batches", 401, "Unauthorized", {}, None)
+
+
+_orig_urlopen = ro.urllib.request.urlopen
+ro.urllib.request.urlopen = _raise_401                       # stub at the module's urllib ref: no socket is opened
+try:
+    _REAL_FETCH("sk-test-OFFLINE")                           # the REAL fetch_batches (main()-smoke stubbed ro.fetch_batches)
+    check("fetch_batches must raise on HTTP 401", False)
+except ro.BatchFetchError as e:
+    check("HTTP 401 -> BatchFetchError (a clean RuntimeError the CLI catches)", True)
+    check("the message carries the HTTP status", "401" in str(e))
+    check("the message carries the actionable auth hint", "authorized" in str(e).lower())
+except _ue.HTTPError:
+    check("a raw HTTPError escaped fetch_batches — the reported crash is back", False)
+except Exception as e:
+    check(f"unexpected error type from fetch_batches: {type(e).__name__}", False)
+finally:
+    ro.urllib.request.urlopen = _orig_urlopen
 
 print(f"\n{'[FAIL]' if failures else 'OK'} test_reconcile_openai: {failures} failure(s)")
 sys.exit(1 if failures else 0)
