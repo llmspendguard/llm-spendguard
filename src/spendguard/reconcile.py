@@ -162,14 +162,18 @@ def all_sources(ptmap=None, since=None):
 def completeness(results):
     """Cross-source completeness verdict — the SYSTEM (not a human) surfaces an UNDER-reconstructed source, so a
     missing source (e.g. realtime remote calls run on vast.ai boxes that were never reconstructed) can't hide. Per
-    source: reconciled | under (unrecovered spend floats) | over (stale, attributes more than billed) | unknown
-    (truth unreadable — NEVER read as complete). Returns {complete, sources:{name:{status,gap}}, msg}. PURE."""
+    source: reconciled | under (unrecovered spend floats) | over (stale, attributes more than billed) | estimated
+    (no verified bill, but spendguard's admin-free RECONSTRUCTION is its estimate — working as designed, NOT incomplete)
+    | unknown (truth unreadable AND no reconstruction — NEVER read as complete). Returns {complete, sources, msg}. PURE."""
     src, complete = {}, True
     for name, r in (results or {}).items():
         if r.get("error"):
             src[name] = {"status": "error", "gap": None}; complete = False; continue
         truth, resid = r.get("truth_total"), r.get("residual")
         if truth is None:
+            if r.get("estimate"):                            # admin-free reconstruction IS spendguard's realtime estimate —
+                src[name] = {"status": "estimated", "gap": r["estimate"].get("total")}   # working as designed, NOT incomplete
+                continue
             src[name] = {"status": "unknown", "gap": None}; complete = False; continue
         thresh = max(25.0, 0.10 * truth)
         if truth <= 0 and resid is not None and round(resid, 2) != 0.0:
@@ -183,8 +187,10 @@ def completeness(results):
             src[name] = {"status": "over", "gap": round(resid, 2)}; complete = False
         else:
             src[name] = {"status": "reconciled", "gap": round(resid or 0.0, 2)}
+    est = [n for n, s in src.items() if s["status"] == "estimated"]
+    _tail = (" · " + ", ".join(f"{n}: ESTIMATED (reconstructed, admin-free)" for n in est)) if est else ""
     if complete:
-        msg = "all sources reconciled"
+        msg = "all sources reconciled" + _tail
     else:
         bits = []
         for n, s in src.items():
@@ -192,7 +198,7 @@ def completeness(results):
                 bits.append(f"{n}: UNDER (${s['gap']} unreconstructed — recover/attribute it)")
             elif s["status"] in ("over", "unknown", "error"):
                 bits.append(f"{n}: {s['status'].upper()}")
-        msg = "INCOMPLETE — " + "; ".join(bits)
+        msg = "INCOMPLETE — " + "; ".join(bits) + _tail
     return {"complete": complete, "sources": src, "msg": msg}
 
 
@@ -206,9 +212,13 @@ def report(ptmap=None, since=None):
             print(f"  {name:6} ERROR: {r['error']}")
             continue
         fmt = lambda v: "  unknown" if v is None else f"${v:9.2f}"   # None truth/residual = fetch failed, not $0
-        print(f"  {name:6} truth {fmt(r['truth_total'])}  captured {fmt(r['captured'])}  "
+        _est = r.get("estimate")
+        _truth = f"~${_est['total']:8.2f}" if (r['truth_total'] is None and _est) else fmt(r['truth_total'])  # ~ = reconstructed est.
+        print(f"  {name:6} truth {_truth}  captured {fmt(r['captured'])}  "
               f"attributed {fmt(r['attributed'])}  residual {fmt(r['residual'])}  by_org={r['by_org']}")
-        if r.get("warning"):
+        if r.get("note"):                                    # source-specific status (realtime reconstructed / stale / absent)
+            print(f"         ℹ  {r['note']}")
+        elif r.get("warning"):
             print(f"         ⚠  {r['warning']}")
     comp = completeness(res)
     print(f"  {'✅' if comp['complete'] else '❌'} COMPLETENESS: {comp['msg']}")
@@ -222,10 +232,11 @@ def run(source, ptmap, since=None, warn_frac=0.10):
     cap = list(source.captured(since) or [])
     truth = source.truth_total(since)                      # None = UNKNOWN (fetch failed); 0.0 = genuinely zero
     cap_sum = round(sum(r.get("cost") or 0.0 for r in cap), 2)
-    if truth is None:                                      # can't reconcile against an unread bill — surface it, don't fake it
+    if truth is None:                                      # no verified bill — surface the reconstructed ESTIMATE if any, don't fake it
         return {"source": source.name, "owner_ok": ok, "owner_reason": why, "truth_total": None,
                 "captured": cap_sum, "attributed": 0.0, "residual": None,
-                "by_org": rollup_by_org(cap, ptmap), "warning": residual_warning(None, None), "rows": cap}
+                "by_org": rollup_by_org(cap, ptmap), "warning": residual_warning(None, None), "rows": cap,
+                "estimate": getattr(source, "estimate", None), "note": getattr(source, "note", None)}
     gap = round(truth - cap_sum, 2)
     attr = list(source.attribute_gap(gap, since) or []) if (ok and gap > 0.5) else []
     attr_sum = round(sum(r.get("cost") or 0.0 for r in attr), 2)
@@ -233,4 +244,4 @@ def run(source, ptmap, since=None, warn_frac=0.10):
     return {"source": source.name, "owner_ok": ok, "owner_reason": why, "truth_total": round(truth, 2),
             "captured": cap_sum, "attributed": attr_sum, "residual": resid,
             "by_org": rollup_by_org(cap + attr, ptmap), "warning": residual_warning(truth, resid, warn_frac),
-            "rows": cap + attr}
+            "rows": cap + attr, "estimate": getattr(source, "estimate", None), "note": getattr(source, "note", None)}

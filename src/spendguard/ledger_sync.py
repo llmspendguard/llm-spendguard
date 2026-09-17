@@ -347,6 +347,53 @@ def reconcile_into_ledger(since=None):
 _RT_MARKER = "(realtime-history)"   # marker model for realtime backfilled from the gate's realtime_log
 _RT_ORACLE_MARKER = "(realtime-oracle)"   # marker for realtime reconciled to the provider ADMIN-usage truth (timing-matched)
 _RT_RECON_MARKER = "(realtime-reconstructed)"   # realtime reconstructed AGENTICALLY from conversations (admin-free, production)
+_RT_ORG_PROJECT = {"healiom": "lmm", "ensight": "llm-spendguard", "personal": "personal-admin"}   # org → representative project
+
+
+def realtime_reconstruction_estimate(since=None):
+    """READ-ONLY twin of record_realtime_reconstruction: spendguard's admin-free realtime $ ESTIMATE for a window,
+    straight from the cache the periodic find writes (~/.spendguard/realtime_reconstruction.json — reconstructed from
+    each session's recorded token records, priced by pricing.py, soft estimates already halved). This is the whole
+    'know realtime WITHOUT an admin key' capability, read for display. Three DISTINCT outcomes (a corrupt cache is a
+    DEPENDENCY FAILURE, never masked as absence): None = the find has NEVER run (no file); {"error": …} = the file
+    exists but is unreadable/truncated; else {total, by_project, last_day, age_days, covers_window, dropped}. Every
+    skipped input row is COUNTED in `dropped` (out_of_window / nonpositive), never dropped silently. covers_window=False
+    means the find is STALE for this window (its newest row predates `since`) — a lower bound, shown as stale not
+    current. Pure, $0; RECORDING it into the ledger is record_realtime_reconstruction's job."""
+    import json
+    import os
+    import time
+    since = since or config.month_start_utc()
+    cache = str(config.HOME / "realtime_reconstruction.json")
+    if not os.path.exists(cache):
+        return None                                       # the find has never run — genuine absence, distinct from corrupt
+    try:
+        with open(cache) as _fh:                          # closed deterministically
+            data = json.load(_fh)
+    except (OSError, ValueError) as e:                    # unreadable / truncated / malformed JSON is a FAILURE, not absence
+        return {"error": f"{type(e).__name__}: {str(e)[:120]}"}
+    by_proj, total, last_day = {}, 0.0, ""
+    out_of_window = nonpositive = 0                        # every discarded row is counted, never lost silently (I1)
+    for r in data.get("rows", []):
+        rday = str(r.get("day") or data.get("since") or since)[:10]
+        if rday > last_day:
+            last_day = rday                               # newest reconstructed day across ALL rows (drives staleness)
+        if rday < since:
+            out_of_window += 1
+            continue                                      # outside the reconcile window (still counted toward last_day)
+        usd = float(r.get("usd") or 0)
+        if usd <= 0:
+            nonpositive += 1                              # a non-positive reconstruction row is anomalous — surfaced, not lost
+            continue
+        proj = _RT_ORG_PROJECT.get((r.get("org") or "").lower(), "unattributed")
+        by_proj[proj] = by_proj.get(proj, 0.0) + usd
+        total += usd
+    age_days = round(max(0.0, (time.time() - os.path.getmtime(cache)) / 86400.0), 1)
+    return {"total": round(total, 2),
+            "by_project": [{"project": p, "cost": round(v, 2)} for p, v in sorted(by_proj.items())],
+            "last_day": last_day, "age_days": age_days,
+            "covers_window": bool(last_day) and last_day >= since,
+            "dropped": {"out_of_window": out_of_window, "nonpositive": nonpositive}}
 
 
 def record_realtime_reconstruction(since=None):
@@ -370,7 +417,7 @@ def record_realtime_reconstruction(since=None):
         return dict(recorded=0.0, rows=0, note="cache unreadable")
     fallback_day = since or data.get("since") or config.month_start_utc()
     budget.clear_reconciled(model=_RT_RECON_MARKER)              # idempotent rebuild
-    org_project = {"healiom": "lmm", "ensight": "llm-spendguard", "personal": "personal-admin"}   # org → representative project
+    org_project = _RT_ORG_PROJECT                               # org → representative project (shared with the read-only estimate twin)
     agg = {}
     for r in data.get("rows", []):
         proj = org_project.get((r.get("org") or "").lower(), "unattributed")
@@ -762,14 +809,31 @@ class RealtimeSource:
         return self._conn
 
     def truth_total(self, since=None):
-        # The admin usage oracle is DEV-ONLY + a network call, so it's OPT-IN (SPENDGUARD_ADMIN_ORACLE=1) — the
-        # default reconcile stays offline + the shipped client (no admin key) never calls it. None = no provider
-        # check; realtime correctness then rests on gate COVERAGE, which the completeness verdict surfaces.
+        """Realtime has NO independently-verified bill without an admin key (dev-only, opt-in via SPENDGUARD_ADMIN_ORACLE)
+        — so `truth` stays None. But None is NOT 'unknown': spendguard's admin-free RECONSTRUCTION is its estimate of
+        realtime, surfaced via self.estimate (+ a freshness note) so the cross-source view reads ESTIMATED, not a failed
+        fetch (the misleading 'bill could not be read (key/network)'). Recording it into the ledger is reconcile_realtime's
+        job; this only READS it for display. Admin stays a DEV cross-check that never gates the shipped-client path."""
         import os
-        if not os.environ.get("SPENDGUARD_ADMIN_ORACLE"):
-            return None
-        from .report import admin_realtime_total
-        return admin_realtime_total(since or self._since)     # None unless an admin key is also set
+        since = since or self._since
+        self.estimate = None
+        self.note = None
+        if os.environ.get("SPENDGUARD_ADMIN_ORACLE"):         # DEV cross-check only — never the shipped-client path
+            from .report import admin_realtime_total
+            return admin_realtime_total(since)                # None unless an admin key is also set
+        est = realtime_reconstruction_estimate(since)
+        if est is None:
+            self.note = "no realtime reconstruction yet — run scripts/reconstruct/realtime_find_batch.py (admin-free)"
+        elif est.get("error"):
+            self.note = f"realtime reconstruction cache UNREADABLE ({est['error']}) — re-run the find"
+        elif not est["covers_window"]:
+            self.estimate = est
+            self.note = (f"realtime reconstruction STALE for this window (newest {est['last_day'] or 'n/a'}, cache "
+                         f"{est['age_days']}d old) — run scripts/reconstruct/realtime_find_batch.py to refresh")
+        else:
+            self.estimate = est
+            self.note = f"realtime is a RECONSTRUCTED estimate (admin-free), cache {est['age_days']}d old"
+        return None
 
     def captured(self, since=None):
         from . import budget
