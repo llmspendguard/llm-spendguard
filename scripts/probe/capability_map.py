@@ -30,7 +30,7 @@ import sys
 
 import spendguard
 spendguard.require()
-from spendguard import lane_balance, adapters, pricing, config, calls
+from spendguard import lane_balance, adapters, config, calls
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _SRC = os.path.normpath(os.path.join(_HERE, "..", "..", "src", "spendguard"))
@@ -184,26 +184,24 @@ def _load_verdicts(vck_path):
     return verdicts
 
 
-def _phase_b(candidates, src_by_qn, budget_usd):
-    """OPUS adjudicates each candidate capability (owner vs DRIFT vs protocol), FULL bodies. Estimate-first; RESUMES
-    from an append-only checkpoint (never re-spends or wipes a prior verdict). A group that yields no clean verdict is
-    recorded UNADJUDICATED (named), not lost."""
+def _phase_b(candidates, src_by_qn, max_groups):
+    """OPUS adjudicates each candidate capability (owner vs DRIFT vs protocol), FULL bodies. Spend is gate-owned;
+    a mechanical group-count cap (max_groups) is the only pre-check. RESUMES from an append-only checkpoint (never
+    re-spends or wipes a prior verdict). A group that yields no clean verdict is recorded UNADJUDICATED (named), not lost."""
     adj_model = _adjudicator()
     vck_path = os.path.join(_OUT, "verdicts.checkpoint.jsonl")
     verdicts = _load_verdicts(vck_path)
     todo = [(cap, qns) for cap, qns in sorted(candidates.items())
             if cap not in verdicts or verdicts[cap].get("kind") == "UNADJUDICATED"]
     print(f"  {len(verdicts)} verdict(s) resumed from checkpoint; {len(todo)} group(s) to adjudicate")
-    est = 0.0
-    for cap, qns in todo:
-        try:
-            est += pricing.realtime_cost(adj_model, sum(len(src_by_qn.get(q, "")) for q in qns) // 4, 400)
-        except Exception:
-            pass
-    print(f"Phase B: adjudicate {len(todo)} groups on {adj_model} — estimate ~${est:.3f}")
-    if budget_usd is not None and est > float(budget_usd):
-        print(f"  REFUSED: estimate ${est:.3f} exceeds --budget ${float(budget_usd):.3f}. Raise it or narrow --files.")
+    # SPEND is owned by the GATE: each adjudication is a gated adapters.call (estimate-first, capped). The only
+    # pre-check here is a MECHANICAL group-COUNT bound — a $ estimate would have to INVENT an output length, exactly
+    # the invented-token quote the estimate-literals guard forbids. So cap by count and let the gate enforce the $.
+    if len(todo) > max_groups:
+        print(f"  REFUSED: {len(todo)} groups to adjudicate exceeds --max-groups {max_groups}. Narrow --files or "
+              f"raise --max-groups. (The gate enforces the actual per-call $; this is a mechanical count guard.)")
         return None
+    print(f"Phase B: adjudicate {len(todo)} groups on {adj_model} (gate-enforced spend) ...")
     with open(vck_path, "a") as vck, calls.context(intent="capability-map:adjudicate"):   # APPEND only — never truncate
         for i, (cap, qns) in enumerate(todo, 1):
             blob = "\n\n".join(f"### {q}\n```python\n{src_by_qn.get(q, '')}\n```" for q in qns)
@@ -255,7 +253,7 @@ def _dump(labels, verdicts, unlabeled):
     print(f"{len(unadj)} UNADJUDICATED (re-run to resolve): {', '.join(sorted(unadj)) or 'none'}")
 
 
-def _run(funcs, budget_usd):
+def _run(funcs, max_groups):
     os.makedirs(_OUT, exist_ok=True)
     labels, unlabeled = _phase_a(funcs)
     src_by_qn = {qn: src for (qn, _f, _ln, src) in funcs}
@@ -271,8 +269,8 @@ def _run(funcs, budget_usd):
     candidates = {cap: qns for cap, qns in groups.items()
                   if _multi(qns) or any(labels[q]["role"] == "inlines" for q in qns)}
     print(f"  {len(groups)} capabilities; {len(candidates)} have >1 substantive implementation (drift candidates)")
-    verdicts = _phase_b(candidates, src_by_qn, budget_usd)
-    if verdicts is None:                                       # budget refusal — still write the labels + coverage
+    verdicts = _phase_b(candidates, src_by_qn, max_groups)
+    if verdicts is None:                                       # count-cap refusal — still write the labels + coverage
         _dump(labels, _load_verdicts(os.path.join(_OUT, "verdicts.checkpoint.jsonl")), unlabeled)
         return 2
     _dump(labels, verdicts, unlabeled)
@@ -285,7 +283,8 @@ def main():
     ap.add_argument("--all", action="store_true", help="every module in src/spendguard (default: the core surface)")
     ap.add_argument("--files", nargs="*", help="explicit file basenames to scan (overrides --all/core)")
     ap.add_argument("--limit", type=int, help="scan only the first N functions (validate the pipeline before scaling)")
-    ap.add_argument("--budget", type=float, default=5.0, help="refuse Phase B if its opus estimate exceeds this (USD)")
+    ap.add_argument("--max-groups", type=int, default=80, help="refuse Phase B if more than N capability groups need "
+                    "adjudication (a mechanical count guard; the GATE enforces the actual per-call spend)")
     a = ap.parse_args()
     files = a.files or (sorted(f for f in os.listdir(_SRC) if f.endswith(".py")) if a.all else _CORE)
     funcs = _collect(files)
@@ -295,9 +294,9 @@ def main():
     if not a.run:
         chars = sum(len(src) for _q, _f, _l, src in funcs)
         print(f"ESTIMATE ONLY. Phase A = {len(funcs)} label calls on $0 lanes (~{chars // 4} tok in, $0 plan-served; "
-              f"a lane miss falls back to metered). Phase B opus est shown after labels. Re-run with --run.")
+              f"a lane miss falls back to metered). Phase B = opus adjudication, gate-enforced spend. Re-run with --run.")
         return 0
-    return _run(funcs, a.budget)
+    return _run(funcs, a.max_groups)
 
 
 if __name__ == "__main__":
