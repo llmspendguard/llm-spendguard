@@ -19,7 +19,6 @@ Doctrine note: prompt-mode ONLY. The meta tasks keep meaning→LLM / mechanics�
 code reads the corpus and writes the sqlite; this executor never gets tool access to do so itself.
 """
 import json
-import shutil
 import subprocess
 import time
 
@@ -33,8 +32,11 @@ def _bin():
     dirs) — daemons (launchd/cron) run with a minimal PATH that misses nvm/~/.local installs. NOTE: the
     desktop app's embedded claude-code-vm binary is a Linux VM executable, NOT host-runnable — only real
     host installs resolve."""
-    if shutil.which("claude"):                    # fast path (also what the offline tests stub)
-        return shutil.which("claude")
+    # NO shutil.which FAST PATH (removed to match codex_exec/antigravity_exec — the resolve-cli-binary DRIFT the
+    # capability map found). A fast path ran BEFORE the pin, so $SPENDGUARD_CLAUDE_BIN was silently ignored whenever a
+    # `claude` existed on PATH — an explicit pin overridden by whatever was lying around, in a tool whose premise is
+    # never silently substituting one thing for another. resolve_cli already does pin → PATH → well-known dirs, so a
+    # pin at a missing binary now fails LOUD instead of falling through to a different binary.
     from . import config
     return config.resolve_cli("claude", "SPENDGUARD_CLAUDE_BIN")
 

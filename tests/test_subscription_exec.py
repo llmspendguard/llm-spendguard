@@ -12,6 +12,8 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 import json
+import shutil     # patch shutil.which directly — the shared config.resolve_cli() uses it (subscription_exec no
+#                  longer imports shutil; it delegates the PATH lookup to config.resolve_cli, like codex/antigravity)
 import types
 from spendguard import subscription_exec as se
 from spendguard import adapters, calls
@@ -36,7 +38,7 @@ def fake_run(cmd, capture_output=None, text=None, timeout=None, env=None):
     return types.SimpleNamespace(returncode=0, stdout=out, stderr="")
 
 
-se.shutil.which = lambda name: "/usr/local/bin/claude"
+shutil.which = lambda name: "/usr/local/bin/claude"
 se.subprocess.run = fake_run
 os.environ[KEY_ENV] = "sk-test-not-real"
 
@@ -65,11 +67,20 @@ se.subprocess.run = lambda *a, **k: types.SimpleNamespace(returncode=1, stdout="
 ck("non-zero exit → error (caller falls back)", "rate limited" in se.run_prompt("x")["error"])
 se.subprocess.run = lambda *a, **k: types.SimpleNamespace(returncode=0, stdout="not json", stderr="")
 ck("unparseable output → error", se.run_prompt("x")["error"] is not None)
-se.shutil.which = lambda name: None
+shutil.which = lambda name: None
 os.environ["SPENDGUARD_CLAUDE_BIN"] = "/nonexistent/claude"   # explicit pin that's missing = fail LOUD, no
 ck("CLI absent → error", "not found" in se.run_prompt("x")["error"])  # well-known-dir substitution (dev machines
 del os.environ["SPENDGUARD_CLAUDE_BIN"]                        # have a real claude the resolver would find)
-se.shutil.which = lambda name: "/usr/local/bin/claude"
+shutil.which = lambda name: "/usr/local/bin/claude"
+
+print("-- resolver: an explicit env pin WINS over PATH (the resolve-cli-binary DRIFT fix — no shutil.which fast-path) --")
+_pin = os.path.join(tempfile.mkdtemp(prefix="sg-claudepin-"), "claude")
+open(_pin, "w").write("#!/bin/sh\n")
+os.chmod(_pin, 0o755)
+os.environ["SPENDGUARD_CLAUDE_BIN"] = _pin                     # a real pinned binary, while PATH also has a 'claude'
+ck("subscription_exec._bin honors the pin over PATH (never silently overridden by a stray claude on PATH)",
+   se._bin() == _pin)
+del os.environ["SPENDGUARD_CLAUDE_BIN"]
 
 # ── adapters.call routing: plan first, corpus row at $0 billed, API fallback on error ──
 os.environ["SPENDGUARD_ADVISOR_EXECUTOR"] = "claude-code"
