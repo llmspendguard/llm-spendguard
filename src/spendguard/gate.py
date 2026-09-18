@@ -1279,6 +1279,16 @@ def _observe_stream(stream, model, kw, est_fn, t0, is_async):
     return (_AsyncStreamProxy if is_async else _StreamProxy)(stream, acc, _done)
 
 
+def _fire_once(sg):
+    """Fire a stream proxy's done-callback EXACTLY once. `sg` is the shared [stream, acc, done, fired] cell; the
+    fired-guard makes it idempotent, so stream exhaustion AND context-manager exit can both call it without the
+    spend being recorded twice. The ONE fire-once brain both proxies share (sync + async) — it cannot drift between
+    them because there is only one copy. Pinned by tests/test_gate_consolidation.py."""
+    if not sg[3]:
+        sg[3] = True
+        sg[2]()
+
+
 class _StreamProxy:
     """Sync transparent proxy over a streaming response: observe iteration (capture usage), delegate everything else
     (.response/.close/...) so the consumer sees a normal stream. Records on exhaustion OR context-manager exit."""
@@ -1286,10 +1296,7 @@ class _StreamProxy:
         object.__setattr__(self, "_sg", [stream, acc, done, False])
 
     def _fire(self):
-        sg = object.__getattribute__(self, "_sg")
-        if not sg[3]:
-            sg[3] = True
-            sg[2]()
+        _fire_once(object.__getattribute__(self, "_sg"))
 
     def __iter__(self):
         sg = object.__getattribute__(self, "_sg")
@@ -1322,10 +1329,7 @@ class _AsyncStreamProxy:
         object.__setattr__(self, "_sg", [stream, acc, done, False])
 
     def _fire(self):
-        sg = object.__getattribute__(self, "_sg")
-        if not sg[3]:
-            sg[3] = True
-            sg[2]()
+        _fire_once(object.__getattribute__(self, "_sg"))
 
     async def __aiter__(self):
         sg = object.__getattribute__(self, "_sg")
@@ -1532,32 +1536,48 @@ def _account_failopen(r, model, kw, est_fn, act_fn, t0, is_async):
         return r
 
 
-def _wrap_rt(orig, est_fn, act_fn, is_async):
-    # Two fail-open halves around the real call: pre-check (only deliberate enforcement may block) and post-account
-    # (never raises, never alters the result). The user's LLM call must be untouched by any gate bug. See
-    # tests/test_gate_properties.py for the invariants this upholds.
+def _wrap_gated(orig, is_async, pre=None, post=None):
+    """The ONE spend-gate method wrapper — the shared structure every gated SDK method uses: check the kill-switch,
+    run the real call (sync or async), and time it. Each surface supplies only its own two hooks, so _gate_wrap /
+    _wrap_rt / _wrap_rt_units cannot drift on that structure (there is one copy of it):
+      pre(self, a, kw)       — pre-call. Only a DELIBERATE SpendGateRefused may propagate to block the call; each
+                               hook owns its OWN fail-open for every other error, so a gate bug never breaks the call.
+      post(kw, r, t0) -> r   — post-call accounting; returns the (possibly-adjusted) result and never raises.
+    Either hook may be None. _disabled() (the kill-switch) is re-checked before each hook, exactly as the three
+    hand-written wrappers did. Invariants pinned by tests/test_gate_properties.py + tests/test_gate_consolidation.py."""
     if is_async:
         @functools.wraps(orig)
         async def w(self, *a, **kw):
-            if not _disabled():
-                _rt_precheck_guard(est_fn, kw)
+            if pre is not None and not _disabled():
+                pre(self, a, kw)
             t0 = time.time()
             r = await _call_orig_async(orig, self, a, kw)
-            if not _disabled():
-                r = _account_failopen(r, kw.get("model"), kw, est_fn, act_fn, t0, True)
+            if post is not None and not _disabled():
+                r = post(kw, r, t0)
             return r
     else:
         @functools.wraps(orig)
         def w(self, *a, **kw):
-            if not _disabled():
-                _rt_precheck_guard(est_fn, kw)
+            if pre is not None and not _disabled():
+                pre(self, a, kw)
             t0 = time.time()
             r = _call_orig(orig, self, a, kw)
-            if not _disabled():
-                r = _account_failopen(r, kw.get("model"), kw, est_fn, act_fn, t0, False)
+            if post is not None and not _disabled():
+                r = post(kw, r, t0)
             return r
     w._spend_gated = True
     return w
+
+
+def _wrap_rt(orig, est_fn, act_fn, is_async):
+    # Two fail-open halves around the real call: pre-check (only deliberate enforcement may block) and post-account
+    # (never raises, never alters the result). The user's LLM call must be untouched by any gate bug. See
+    # tests/test_gate_properties.py for the invariants this upholds. Structure shared via _wrap_gated.
+    return _wrap_gated(
+        orig, is_async,
+        pre=lambda self, a, kw: _rt_precheck_guard(est_fn, kw),
+        post=lambda kw, r, t0: _account_failopen(r, kw.get("model"), kw, est_fn, act_fn, t0, is_async),
+    )
 
 
 def realtime_by_day(since=None):
@@ -1756,16 +1776,26 @@ STREAM_INTERCEPTORS = [
 ]
 
 
-def _apply_stream(module_path, class_name, method, final_attr, est_fn, act_fn, is_async=False):
-    """Patch an SDK streaming helper. Separate from _apply_rt because these return a context manager
-    rather than a result, so usage is not available at return time."""
+def _patch_method(module_path, class_name, method, make_wrapped, *, optional=False):
+    """The ONE 'gate one SDK method' primitive: resolve module.Class.method, skip it when it is already gated
+    (idempotent) or — for an optional surface — absent, else replace it with make_wrapped(current). Every _apply*
+    is a thin caller that supplies only HOW to build the wrapper, so the resolve + idempotency + patch mechanics
+    cannot drift across the four surfaces (batch / realtime / unit-priced / streaming). Pinned by
+    tests/test_gate_consolidation.py."""
     import importlib
     cls = getattr(importlib.import_module(module_path), class_name)
-    cur = getattr(cls, method, None)
+    cur = getattr(cls, method, None) if optional else getattr(cls, method)
     if cur is None or getattr(cur, "_spend_gated", False):
         return
+    setattr(cls, method, make_wrapped(cur))
+
+
+def _apply_stream(module_path, class_name, method, final_attr, est_fn, act_fn, is_async=False):
+    """Patch an SDK streaming helper (optional=True: the surface may be absent on older SDKs). Builds a stream
+    wrapper — separate from _apply_rt because these return a context manager, so usage is not available at return."""
     wrap = _wrap_async_stream if is_async else _wrap_stream
-    setattr(cls, method, wrap(cur, final_attr, est_fn, act_fn))
+    _patch_method(module_path, class_name, method,
+                  lambda cur: wrap(cur, final_attr, est_fn, act_fn), optional=True)
 
 
 RT_INTERCEPTORS = [
@@ -1884,53 +1914,32 @@ def _act_finetune(kw, result):
 
 
 def _wrap_rt_units(orig, est_usd_fn, act_fn, is_async):
-    if is_async:
-        @functools.wraps(orig)
-        async def w(self, *a, **kw):
-            if not _disabled():
-                try:
-                    m, usd = est_usd_fn(kw)
-                    _rt_precheck_usd(None, m, usd)
-                except SpendGateRefused:
-                    raise
-                except Exception as e:
-                    print(f"[spend_gate] WARN unit precheck error ({e}); allowing (fail-open)", file=sys.stderr)
-            r = await _call_orig_async(orig, self, a, kw)
-            if not _disabled():
-                try:
-                    act_fn(kw, r)
-                except Exception as e:
-                    print(f"[spend_gate] WARN unit accounting failed ({e}); call unaffected", file=sys.stderr)
-            return r
-    else:
-        @functools.wraps(orig)
-        def w(self, *a, **kw):
-            if not _disabled():
-                try:
-                    m, usd = est_usd_fn(kw)
-                    _rt_precheck_usd(None, m, usd)
-                except SpendGateRefused:
-                    raise
-                except Exception as e:
-                    print(f"[spend_gate] WARN unit precheck error ({e}); allowing (fail-open)", file=sys.stderr)
-            r = _call_orig(orig, self, a, kw)
-            if not _disabled():
-                try:
-                    act_fn(kw, r)
-                except Exception as e:
-                    print(f"[spend_gate] WARN unit accounting failed ({e}); call unaffected", file=sys.stderr)
-            return r
-    w._spend_gated = True
-    return w
+    # Unit-priced surfaces (images / audio): a $-estimate precheck and a per-call accounting hook, each fail-open
+    # for everything but a deliberate SpendGateRefused. Same shared structure as _wrap_rt, via _wrap_gated.
+    def _unit_pre(self, a, kw):
+        try:
+            m, usd = est_usd_fn(kw)
+            _rt_precheck_usd(None, m, usd)
+        except SpendGateRefused:                        # a DELIBERATE refusal blocks the spend — never fail-open
+            raise
+        except Exception as e:
+            print(f"[spend_gate] WARN unit precheck error ({e}); allowing (fail-open)", file=sys.stderr)
+
+    def _unit_post(kw, r, t0):
+        try:
+            act_fn(kw, r)
+        except SpendGateRefused:                        # doctrine: a deliberate stop is NEVER swallowed, even here —
+            raise                                       # a recorder act_fn does not raise one, but a bare except must
+            #                                             not be the thing that would downgrade it if it ever did.
+        except Exception as e:
+            print(f"[spend_gate] WARN unit accounting failed ({e}); call unaffected", file=sys.stderr)
+        return r
+    return _wrap_gated(orig, is_async, pre=_unit_pre, post=_unit_post)
 
 
 def _apply_units(module_path, class_name, method, est_usd_fn, act_fn, is_async):
-    import importlib
-    cls = getattr(importlib.import_module(module_path), class_name)
-    cur = getattr(cls, method)
-    if getattr(cur, "_spend_gated", False):
-        return
-    setattr(cls, method, _wrap_rt_units(cur, est_usd_fn, act_fn, is_async))
+    _patch_method(module_path, class_name, method,
+                  lambda cur: _wrap_rt_units(cur, est_usd_fn, act_fn, is_async))
 
 
 UNIT_INTERCEPTORS = [
@@ -1981,38 +1990,17 @@ def _guard(gate_fn, kw, a):
 
 
 def _gate_wrap(orig, gate_fn, is_async):
-    if is_async:
-        @functools.wraps(orig)
-        async def w(self, *a, **kw):
-            if not _disabled():
-                _guard(gate_fn, kw, a)   # only SpendGateRefused propagates; all else fails open
-            return await _call_orig_async(orig, self, a, kw)
-    else:
-        @functools.wraps(orig)
-        def w(self, *a, **kw):
-            if not _disabled():
-                _guard(gate_fn, kw, a)
-            return _call_orig(orig, self, a, kw)
-    w._spend_gated = True
-    return w
+    # Batch surfaces: a single pre-call guard (only SpendGateRefused propagates; all else fails open), no accounting.
+    # Structure shared via _wrap_gated.
+    return _wrap_gated(orig, is_async, pre=lambda self, a, kw: _guard(gate_fn, kw, a))
 
 
 def _apply(module_path, class_name, method, gate_fn, is_async):
-    import importlib
-    cls = getattr(importlib.import_module(module_path), class_name)
-    cur = getattr(cls, method)
-    if getattr(cur, "_spend_gated", False):
-        return
-    setattr(cls, method, _gate_wrap(cur, gate_fn, is_async))
+    _patch_method(module_path, class_name, method, lambda cur: _gate_wrap(cur, gate_fn, is_async))
 
 
 def _apply_rt(module_path, class_name, method, est_fn, act_fn, is_async):
-    import importlib
-    cls = getattr(importlib.import_module(module_path), class_name)
-    cur = getattr(cls, method)
-    if getattr(cur, "_spend_gated", False):
-        return
-    setattr(cls, method, _wrap_rt(cur, est_fn, act_fn, is_async))
+    _patch_method(module_path, class_name, method, lambda cur: _wrap_rt(cur, est_fn, act_fn, is_async))
 
 
 def install(cap: "float | None" = None) -> None:
