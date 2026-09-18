@@ -1320,7 +1320,9 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             # + reasoning=medium must be respelled gemini-…-flash-medium here, or the tier is silently dropped and
             # the lane runs its default. Non-gemini lanes take the id unchanged.
             _lane_model = _compose_gemini_reasoning(raw, reasoning) if prov == "gemini" else raw
-            s = lane_mod.run_prompt(prompt, system=_lane_sys, model=_lane_model, timeout=_lane_timeout, reasoning=reasoning)
+            s = lane_mod.run_prompt(prompt, system=_lane_sys, model=_lane_model, timeout=_lane_timeout,
+                                    reasoning=reasoning, max_tokens=max_tokens)   # hand the lane the guarded budget so the
+            #                                                                       escalation ladder can RAISE its cap on a truncation
         except Exception as _le:                       # a lane MUST return an {error} dict, never raise — but a lane
             s = {"error": f"{lane_name} lane raised: {str(_le)[:120]}"}   # bug that throws must degrade, not crash call()
         if not isinstance(s, dict):                    # a non-dict is also a broken contract → treat it as an error
@@ -2066,7 +2068,13 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
                 "latency": 0.0, "cost": None, "finish_reason": None, "truncated": None,
                 "error": f"payload too large: {detail} — split it rather than letting the vendor clip it"}
     _explicit = max_tokens is not None
-    if not _explicit and not sig:
+    # A STRUCTURED reply (a schema was requested) is JSON a caller PARSES: cut at a low cap it is unparseable and
+    # reads as 'no findings' — the exact absence-as-success failure this module exists to prevent. So a schema call
+    # is FLOORED to real room (TOKEN_FLOOR) like a no-cap call, NEVER left at a small cap — even one passed
+    # explicitly (honored for prose, but for JSON a low cap only destroys the answer). Still clamped to the model's
+    # real ceiling below, exactly like every other budget, so this can never send an over-ceiling request.
+    _structured = kw.get("schema") is not None
+    if not _explicit and not sig and not _structured:
         raise ValueError(
             "call needs either an explicit max_tokens or a `sig` naming the call-class, so the budget is "
             "either something you chose deliberately or something measured — never a literal nobody picked.")
@@ -2082,7 +2090,12 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
     _is_sig = isinstance(sig, str) and len(sig) == 16 and all(c in "0123456789abcdef" for c in sig)
     _sig_key = (sig if _is_sig else bulkgate.sig(model, template_id=sig)) if sig else None
     _predicted = int((bulkgate.maxtokens(_sig_key) or {}).get("recommend") or 0) if _sig_key else 0
-    if _explicit:
+    if _structured:
+        # JSON must have room to close its braces. Floor to real room WHATEVER the caller passed — a schema reply
+        # cut low is corrupt, not short (see _structured above). A prose caller's small explicit cap is honored
+        # below; a structured one is not, because it only destroys the answer. Clamped to the ceiling like the rest.
+        max_tokens = max(int(max_tokens or 0), _predicted, TOKEN_FLOOR)
+    elif _explicit:
         # The caller named a number, so they meant it — a 16-token connectivity probe is a legitimate,
         # deliberate choice, and token_caps has a recorded verdict for every such literal in this tree.
         # A measurement may still RAISE it; nothing may lower it.
@@ -2146,7 +2159,10 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
         if not trunc and (r.get("out_tok") or 0) > 0 and not (r.get("text") or "").strip():
             trunc = True
             r = {**r, "empty_answer": True}
-        if _sig_key:
+        # A PROBE uses a DELIBERATELY-tiny cap; recording its truncation poisons the class recommend (a probe whose
+        # visible out_tok is 1 makes recommend = 1*2 = 2) and fires a misleading "hit max_tokens=64" warning. It is
+        # not a measurement of the class's real output need → do not record it at all.
+        if _sig_key and not _probe:
             try:
                 # An EMPTY reasoning reply (out_tok>0, no visible text) is NOT a real short output — record it as
                 # TRUNCATED so bulkgate.maxtokens CENSORS it (it measured a too-small cap, not the work). Recorded as a
@@ -2174,8 +2190,14 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
             _why = "empty (reasoning consumed the budget)" if _empty else "truncated"
             _sys.stderr.write(f"[spendguard] reply STILL {_why} at {budget} tokens after {attempt} attempt(s) — "
                               f"returning text=None so it cannot be read as a short answer.\n")
+            _terr = f"{_why} at {budget} tokens"
+            if _structured:
+                _terr = (f"STRUCTURED (JSON) reply {_terr} — the object is INCOMPLETE, not empty; a caller must read "
+                         f"this as 'truncated, retry larger', NEVER as 'no findings'")
+            # finish_reason='length' + truncated=True make this a TYPED truncation (vendor_call classifies it TRUNCATED,
+            # whose .text RAISES) so a cut structured body can never be read as a short/empty answer.
             return {**r, "text": None, "truncated": True, "max_tokens_used": budget,
-                    "error": f"{_why} at {budget} tokens"}
+                    "finish_reason": (r.get("finish_reason") or "length"), "error": _terr}
         budget = min(max(budget * 2, TOKEN_FLOOR if _empty else 0), int(_cap))
 
 

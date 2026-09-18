@@ -77,10 +77,15 @@ def _output_budget(mdl):
     return int(pricing.output_ceiling("zai", mdl, _FALLBACK_MAX_TOKENS, learned_floor=_FALLBACK_MAX_TOKENS))
 
 
-def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=None):
+def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=None, max_tokens=None):
     """→ {text, in_tok, out_tok, latency, error} from ONE plan-billed GLM completion over the Anthropic-
     compatible coding endpoint, via RAW HTTP so the spend gate never meters it. `model` = the glm id the caller
     asked for (glm-5.3 etc.), passed through. Same typed contract as the CLI lanes.
+
+    `max_tokens` (when the guarded caller supplies it) is used AS the output cap, so _call_guarded's escalation
+    ladder can RAISE this lane's cap on a truncation instead of the lane being pinned to its own budget forever —
+    the lane twin of the metered retry. Omitted → the lane's OWN measured budget (_output_budget), floored so a
+    poisoned-low fact can never truncate it.
 
     `reasoning` engages GLM's extended THINKING via the endpoint's Anthropic-shape `thinking` block, sized by a
     MEASURED budget (models.thinking_budget — never a guessed fraction; no measured fact → no thinking). Fail-safe:
@@ -91,13 +96,16 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     if not key:
         return {"error": f"no z.ai key ({KEY_ENV} or ZAI_API_KEY) — add it to keys.env"}
     mdl = (model or "").split(":", 1)[-1] or "glm-5.3"    # newest flagship on the plan; caller may override
-    try:
-        mt = _output_budget(mdl)
-    except Exception as e:
-        from . import gate as _g
-        if _g.is_deliberate_stop(e):
-            raise                                         # a deliberate stop (refusal/deadline) must PROPAGATE, not be masked
-        mt = _FALLBACK_MAX_TOKENS
+    if max_tokens:
+        mt = int(max_tokens)                              # the caller's (escalating) guarded budget wins — lets the ladder grow this lane's cap
+    else:
+        try:
+            mt = _output_budget(mdl)
+        except Exception as e:
+            from . import gate as _g
+            if _g.is_deliberate_stop(e):
+                raise                                     # a deliberate stop (refusal/deadline) must PROPAGATE, not be masked
+            mt = _FALLBACK_MAX_TOKENS
     body = {"model": mdl, "max_tokens": mt, "messages": [{"role": "user", "content": prompt}]}
     if system:
         body["system"] = system

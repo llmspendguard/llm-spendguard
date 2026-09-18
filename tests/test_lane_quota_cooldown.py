@@ -62,7 +62,7 @@ class _QuotaLane:
     TIMEOUT_S = 300
 
     @staticmethod
-    def run_prompt(prompt, system=None, model=None, timeout=None, reasoning=None):
+    def run_prompt(prompt, system=None, model=None, timeout=None, reasoning=None, max_tokens=None):
         return antigravity_exec._error_result("RESOURCE_EXHAUSTED: quota. Resets in 162h")   # the real envelope shape
 
 

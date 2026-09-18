@@ -126,7 +126,7 @@ def usage():
     return lane_quota.cached_usage(_usage_cache, _USAGE_TTL_S, _fetch_usage)
 
 
-def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=None):   # reasoning: protocol-uniform; the Claude CLI has no one-shot effort flag → ignored for now
+def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=None, max_tokens=None):   # reasoning + max_tokens: protocol-uniform; the Claude CLI has no one-shot effort/output-cap flag → accepted, not enforced
     """→ {text, in_tok, out_tok, latency, error} from one headless plan-billed completion. `model` = the
     API model id the caller would have used — mapped to the matching plan tier so subscription execution
     never upgrades a haiku-class meta prompt to the default (top) tier."""

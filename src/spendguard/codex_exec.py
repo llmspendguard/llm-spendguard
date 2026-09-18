@@ -252,7 +252,7 @@ def usage():
     return lane_quota.cached_usage(_usage_cache, _USAGE_TTL_S, _fetch_usage)
 
 
-def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=None):
+def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=None, max_tokens=None):   # max_tokens: protocol-uniform; codex exec has no one-shot output-cap flag → accepted, not enforced
     """→ {text, in_tok, out_tok, latency, error} from one headless plan-billed Codex run. `system` is
     prepended to the prompt (codex exec has no separate system slot for one-shot prompt mode). `model` IS
     forwarded to `codex -m` when given (e.g. gpt-5.5), so the recorded model is the one that actually ran —

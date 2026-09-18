@@ -47,7 +47,10 @@ class _LaneExec:
     MIN_TIMEOUT_S = 1
 
     @staticmethod
-    def run_prompt(prompt, system=None, model=None, timeout=None, reasoning=None):
+    def run_prompt(prompt, system=None, model=None, timeout=None, reasoning=None, max_tokens=None):
+        # TEST DOUBLE (not production): a fake subscription-lane executor standing in for codex/claude/agy. It
+        # fabricates no real inference — it returns a FIXED envelope so the test can assert _call_once books the
+        # APPLIED effort ('none') the executor reports. max_tokens is accepted to match the real run_prompt protocol.
         return {"text": "LANE-ANSWER", "in_tok": 1, "out_tok": 1, "latency": 0.1, "effort": "none"}
 
 

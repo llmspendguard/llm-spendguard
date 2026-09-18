@@ -109,7 +109,7 @@ print("\n-- (c) AGY LANE: a bare id + reasoning reaches run_prompt as the SUFFIX
 _lane_seen = {}
 
 
-def _fake_run_prompt(prompt, system=None, model=None, timeout=None, reasoning=None):
+def _fake_run_prompt(prompt, system=None, model=None, timeout=None, reasoning=None, max_tokens=None):
     _lane_seen["model"] = model
     _lane_seen["reasoning"] = reasoning
     return {"text": "ok", "in_tok": 5, "out_tok": 1, "latency": 0.01, "error": None}
