@@ -2203,9 +2203,16 @@ def _cli(cmd="status", live=False):
         # silently lost the keys, so reconcile/report saw no provider data). Show found + where from.
         try:
             from . import config
-            for prov, name in (("openai", "OPENAI_API_KEY"), ("anthropic", "ANTHROPIC_API_KEY")):
-                k = config.api_key(name)
-                print(f"  key {prov:<9}: {'🟢 resolved' if k else '🔴 MISSING — reconcile/report will see NO ' + prov + f' spend (add it to {config.KEYS_ENV})'}")
+            for _st in config.provider_key_status():       # ALL determination is in config (validated); this only renders
+                _prov = _st["prov"]
+                if _st["state"] == "missing":
+                    print(f"  key {_prov:<9}: 🔴 MISSING — reconcile/report will see NO {_prov} spend (add it to {config.KEYS_ENV})")
+                elif _st["state"] == "shadowed":
+                    print(f"  key {_prov:<9}: 🟡 resolved …{_st['resolved4']} — SHADOWED: an external env/.env value overrides "
+                          f"keys.env (…{_st['declared4']}). A stale shadow is how a ROTATED key keeps 401ing. Remove it, or "
+                          f"declare a per-repo key as {_st['name']}__<profile> in keys.env (+ key_profile in .spendguard.json).")
+                else:
+                    print(f"  key {_prov:<9}: 🟢 resolved …{_st['resolved4']} (from {_st['source']})")
         except Exception:
             pass
         if cmd == "doctor":

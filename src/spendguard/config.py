@@ -97,6 +97,82 @@ def load_key_files():
             _KEYS_SET_BY_SPENDGUARD.add(base)
 
 
+def key_shadow_report():
+    """Provider keys whose ACTIVE value (os.environ) DIFFERS from what keys.env declares — i.e. an EXTERNAL source
+    (the process env, or a repo's OWN .env loaded into it) is SHADOWING keys.env. A shadow is not always wrong (a real
+    shell export, or an active key PROFILE — both EXCLUDED here), but a STALE shadow is invisible and is exactly how a
+    rotated key keeps 401ing: a repo's .env held the dead key after keys.env was updated, and a real env var always wins
+    in api_key(). Read-only, $0, LAST-4 only (never the secret). Returns [{name, active4, declared4}] — the override in
+    effect vs what keys.env says. The intended way to run a repo on a DIFFERENT key is a declared profile
+    (`<VAR>__<profile>` in keys.env + `key_profile` in the repo's .spendguard.json), which this never flags."""
+    declared = {}
+    for k, v in _iter_env_file(KEYS_ENV):
+        if k and v and "__" not in k:
+            declared.setdefault(k, v)                     # first wins, matching load_key_files order
+    prof = _key_profile()
+    prof_declared = {}
+    if prof:
+        _suf = "__" + prof
+        for k, v in _iter_env_file(KEYS_ENV):
+            if k.endswith(_suf):
+                prof_declared[k[: -len(_suf)]] = v
+    out = []
+    for name, dval in declared.items():
+        if not name.endswith(("_API_KEY", "_KEY", "_TOKEN")):
+            continue                                      # provider/compute keys only, never arbitrary config
+        active = os.environ.get(name)
+        if not active or active == dval:
+            continue                                      # no override in effect, or it matches the keys.env default
+        if name in _KEYS_SET_BY_SPENDGUARD:
+            continue                                      # spendguard set it (from a declared profile) — not an external shadow
+        if name in prof_declared and active == prof_declared[name]:
+            continue                                      # a DECLARED active-profile override — intentional + visible
+        out.append({"name": name, "active4": active[-4:], "declared4": dval[-4:]})
+    return out
+
+
+def key_source(name):
+    """Where the ACTIVE value of provider key `name` actually comes from — 'keys.env', 'profile:<p>', 'external'
+    (a shadow), or 'missing'. Determined by COMPARING the resolved value to the declared default and the active
+    profile's entry — NOT by set-membership (_KEYS_SET_BY_SPENDGUARD holds BOTH default-set and profile-set vars, so
+    membership can't tell them apart). Read-only, $0."""
+    active = os.environ.get(name) or api_key(name)
+    if not active:
+        return "missing"
+    default = prof_val = None
+    prof = _key_profile()
+    for k, v in _iter_env_file(KEYS_ENV):
+        if k == name and default is None:
+            default = v
+        elif prof and k == name + "__" + prof:
+            prof_val = v
+    if prof and prof_val is not None and active == prof_val:
+        return "profile:" + prof
+    if default is not None and active != default:
+        return "external"                                # differs from keys.env's default AND not a profile match
+    return "keys.env"
+
+
+def provider_key_status():
+    """Per provider key (openai/anthropic) for `doctor`: ALL determination happens HERE (validated) so the display
+    just renders a returned state — no inference in the print loop. Returns [{prov, name, resolved4, state, ...}],
+    state ∈ {'missing','shadowed','ok'}: 'shadowed' = an external env/.env value overrides keys.env (a stale one is
+    how a rotated key keeps 401ing) and carries `declared4`; 'ok' carries `source` ∈ {'keys.env','profile:<p>'}.
+    Read-only, $0, last-4 only (never the secret)."""
+    shadows = {s["name"]: s for s in (key_shadow_report() or [])}
+    out = []
+    for prov, name in (("openai", "OPENAI_API_KEY"), ("anthropic", "ANTHROPIC_API_KEY")):
+        k = api_key(name)
+        if not k:
+            out.append({"prov": prov, "name": name, "resolved4": "", "state": "missing"})
+        elif name in shadows:
+            out.append({"prov": prov, "name": name, "resolved4": k[-4:], "state": "shadowed",
+                        "declared4": shadows[name]["declared4"]})
+        else:
+            out.append({"prov": prov, "name": name, "resolved4": k[-4:], "state": "ok", "source": key_source(name)})
+    return out
+
+
 # Well-known user-local CLI install dirs, for hosts where PATH doesn't carry them (launchd/cron daemons run
 # with a minimal PATH that misses ~/.local/bin and nvm's versioned bins — the subscription lanes must still
 # find the plan CLIs there). Globs allowed; newest executable wins.
