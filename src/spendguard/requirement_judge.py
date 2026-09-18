@@ -25,7 +25,6 @@ drop-in for effort_titration._score_output. `None`-safe: an unavailable judge re
 guess.
 """
 import hashlib
-import json
 
 from . import adapters, calls, config
 
@@ -74,13 +73,9 @@ def _meta_call(model, prompt, *, system, schema, out, sig):
     cost = r.get("cost") or 0.0
     if r.get("error"):
         return None, cost
-    j = r.get("json")                                          # a schema call returns the PARSED object; prefer it —
-    if not isinstance(j, dict):                                # only fall back to parsing `text` when json is absent, so a
-        try:                                                   # structured response that carries json-but-no-text still works
-            j = json.loads(r.get("text") or "")
-        except Exception:
-            j = None
-    return (j if isinstance(j, dict) else None), cost
+    # Read the adapter's OWN fence-tolerant decode (r['parsed']) — never a bare json.loads, which chokes on the
+    # ```json fence a $0 lane wraps its verdict in and made the screen "unavailable" on every soft task.
+    return adapters.structured_reply(r), cost
 
 
 def requirements_for(prompt, *, model=None):
@@ -131,25 +126,27 @@ def judge_requirements(prompt, output, *, requirements=None, screen_model=None, 
     jp = _requirement_prompt(prompt, output, requirements)
     screen, c_screen = _meta_call(screen_model, jp, system=_JUDGE_SYS, schema=_JUDGE_SCHEMA,
                                   out=_JUDGE_OUT, sig="requirement-screen")
-    if not isinstance(screen, dict):
-        return {"good": None, "usable": None, "score": None, "confident": None, "requirements": list(requirements),
-                "met": [], "failed": [], "tier": "screen", "why": "screen judge unavailable", "cost": round(c_screen, 6)}
+    # A CONFIDENT, PARSED screen rules directly — the cheap path. ANYTHING ELSE escalates to the OPUS adjudicator:
+    # the screen self-reported not-confident (its own agentic ask for a stronger judge), OR it produced no parseable
+    # verdict at all (unavailable / off-shape). "Cannot tell" is NOT "no label" — an unparsed screen that returned
+    # UNLABELED here without escalating was the bug that let a lane's fenced reply silently label nothing while the
+    # opus tier was never asked (docs/AGENTIC.md 'cannot tell is not clean'). The escalation trigger is the screen's
+    # OWN confidence flag OR its failure to rule, never a hand-picked score cutoff.
+    if isinstance(screen, dict) and bool(screen.get("confident")):
+        return _verdict(screen, requirements, "screen", c_screen)
 
-    # ESCALATE only when the SCREEN itself says it is not confident (an agentic self-assessment, not a code threshold).
-    if not bool(screen.get("confident")):
-        adj, c_adj = _meta_call(adjudicator_model, jp, system=_JUDGE_SYS, schema=_JUDGE_SCHEMA,
-                                out=_JUDGE_OUT, sig="requirement-adjudicate")
-        if isinstance(adj, dict):
-            # the opus adjudicator is the authority — its verdict (good/score/confident) stands AS-IS; `tier` records
-            # that it ruled. We do NOT force confident=True: if opus is itself unsure, that honest signal is preserved.
-            return _verdict(adj, requirements, "adjudicated", c_screen + c_adj)
-        # Reached only from the not-confident branch above (the screen asked for a stronger judge) with the
-        # adjudicator now unavailable → the call is UNRESOLVED. Return UNLABELED (good/score/usable = None), exactly
-        # like an absent judge, so neither bakeoff (good) nor titration (score) records the screen's OWN uncertain
-        # guess as a verdict — the screen already told us it wasn't sure.
-        return {"good": None, "usable": None, "score": None, "confident": False,
-                "requirements": list(requirements), "met": [], "failed": [], "tier": "screen",
-                "why": "screen not confident and adjudicator unavailable — unresolved (UNLABELED)",
-                "cost": round(c_screen + c_adj, 6)}
+    adj, c_adj = _meta_call(adjudicator_model, jp, system=_JUDGE_SYS, schema=_JUDGE_SCHEMA,
+                            out=_JUDGE_OUT, sig="requirement-adjudicate")
+    if isinstance(adj, dict):
+        # the opus adjudicator is the authority — its verdict (good/score/confident) stands AS-IS; `tier` records
+        # that it ruled. We do NOT force confident=True: if opus is itself unsure, that honest signal is preserved.
+        return _verdict(adj, requirements, "adjudicated", c_screen + c_adj)
 
-    return _verdict(screen, requirements, "screen", c_screen)
+    # BOTH tiers failed to produce a parseable verdict → genuinely UNRESOLVED. Return UNLABELED (good/score/usable =
+    # None) so neither bakeoff (good) nor titration (score) records a guess — but name WHICH tier failed and that the
+    # escalation WAS attempted, never a silent good=None that reads downstream as 'no findings'.
+    _why = ("screen did not parse AND adjudicator unavailable" if not isinstance(screen, dict)
+            else "screen not confident AND adjudicator unavailable")
+    return {"good": None, "usable": None, "score": None, "confident": False,
+            "requirements": list(requirements), "met": [], "failed": [], "tier": "unresolved",
+            "why": _why + " — UNLABELED (both tiers unavailable)", "cost": round(c_screen + c_adj, 6)}

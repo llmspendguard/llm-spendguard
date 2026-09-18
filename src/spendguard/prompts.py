@@ -28,7 +28,6 @@ def _batchable_verdict(intent, model, n, med_in):
     Returns {batchable: bool, why: str}, or None when the judge is unavailable (→ the candidate is not emitted).
     A deliberate spend refusal (caps.meta) PROPAGATES — it halts the analysis, never degrades to a silent skip."""
     from . import adapters, calls, config, gate
-    import json as _json
     q = (f"A job-type '{intent}' made {n} separate REALTIME LLM calls on {model}, each with a small (~{med_in}-token) "
          f"prompt. Are these INDEPENDENT items of one job that could be PACKED many-per-call or sent via the async "
          f"Batch API — or LATENCY-SENSITIVE interactive turns (a user waiting) that must stay realtime? "
@@ -39,7 +38,7 @@ def _batchable_verdict(intent, model, n, med_in):
                               max_tokens=_BATCH_JUDGE_OUT,
                               schema={"type": "object", "additionalProperties": False, "required": ["batchable"],
                                       "properties": {"batchable": {"type": "boolean"}, "why": {"type": "string"}}})
-        j = r.get("json") if isinstance(r.get("json"), dict) else _json.loads(r.get("text") or "")
+        j = adapters.structured_reply(r)
         return j if isinstance(j, dict) and isinstance(j.get("batchable"), bool) else None
     except gate.deliberate_stop_types():                                   # a spend refusal must HALT, not skip silently
         raise

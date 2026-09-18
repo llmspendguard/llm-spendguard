@@ -311,10 +311,8 @@ def recommend_models(intent=None, k=5, quality_bar=None, run=False):
         r = adapters.call(model, prompt, max_tokens=_REC_OUT, system=_REC_SYS, schema=_REC_SCHEMA)
     if r.get("error"):
         return dict(intent=intent, error=r["error"], model=model, cost=r.get("cost"))
-    import json as _json
-    try:
-        parsed = r.get("json") if isinstance(r.get("json"), dict) else _json.loads(r["text"])
-    except Exception:
+    parsed = adapters.structured_reply(r)
+    if not isinstance(parsed, dict):
         return dict(intent=intent, model=model, cost=r.get("cost"), quality_bar=None, top=[],
                     note="the reasoner's output did not parse as the expected shape.", raw=r.get("text"))
     by_id = {m["id"]: m for m in ev["models"]}

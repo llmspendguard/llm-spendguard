@@ -188,13 +188,7 @@ def _classify_remediation(kind, resource, reason, model=None):
         if gate.is_deliberate_stop(e):
             raise
         return {"issue": str(reason)[:120], "fix": "inspect the lane's auth/quota/model config", "command": "", "cached": False}
-    j = r.get("json")
-    if not isinstance(j, dict):
-        import json as _json
-        try:
-            j = _json.loads(r.get("text") or "")
-        except Exception:
-            j = None
+    j = adapters.structured_reply(r)
     if not isinstance(j, dict) or not j.get("issue"):
         return {"issue": str(reason)[:120], "fix": "inspect the lane's auth/quota/model config", "command": "", "cached": False}
     out = {"issue": str(j.get("issue"))[:200], "fix": str(j.get("fix"))[:200], "command": str(j.get("command") or "")[:200]}

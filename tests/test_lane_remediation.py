@@ -28,8 +28,8 @@ _seen = {"n": 0, "prompt": None}
 def _fake_call(model, prompt, **kw):
     _seen["n"] += 1
     _seen["prompt"] = prompt
-    return {"json": {"issue": "OAuth session expired", "fix": "re-login the claude CLI", "command": "claude setup-token"},
-            "cost": 0.0, "error": None}
+    return {"parsed": {"issue": "OAuth session expired", "fix": "re-login the claude CLI", "command": "claude setup-token"},
+            "cost": 0.0, "error": None}   # 'parsed' is the field the adapter surfaces its fence-tolerant decode under
 adapters.call = _fake_call
 calls.context = lambda **k: __import__("contextlib").nullcontext()
 config.advisor_model = lambda: "stub-model"

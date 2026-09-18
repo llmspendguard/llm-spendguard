@@ -722,6 +722,27 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     return r
 
 
+def structured_reply(r):
+    """The decoded structured object from a call result `r`, as a dict, or None — the ONE way a consumer reads a
+    schema/structured reply. `call()` already decodes the reply FENCE-TOLERANTLY (via output_contract._as_obj) and
+    surfaces it as r['parsed']; a consumer must read THAT, not re-json.loads the raw text. Nine judge/parse sites
+    used to read a NONEXISTENT r['json'] (the adapter never sets that key → always None) and fall back to a
+    fence-BLIND json.loads(text), so a $0 lane whose reply is wrapped in a ```json … ``` fence never parsed and the
+    judge SILENTLY LABELED NOTHING (the absence-as-success failure this repo exists to prevent). Reading the
+    adapter's own decode fixes every one. The _as_obj branch is a belt-and-suspenders fallback for a result that
+    reached a non-schema path (no 'parsed'); it is still fence-tolerant, never a bare json.loads."""
+    obj = r.get("parsed")
+    if isinstance(obj, dict):
+        return obj
+    if obj is None and r.get("text"):
+        try:
+            from . import output_contract as _oc
+            obj, _ = _oc._as_obj(r["text"])
+        except Exception:
+            obj = None
+    return obj if isinstance(obj, dict) else None
+
+
 def vision(model, prompt, images, *, schema=None, system=None, sig=None, reasoning=None,
            max_tokens=None, timeout_s=None, retries=2, no_metered_fallback=False, no_substitution=False):
     """Run one VISION prompt (image(s) + text) against a vision-capable model — the explicit, discoverable entry

@@ -272,12 +272,7 @@ def _choose_factors_agentically(stats_by_provider, model):
     cost = r.get("cost") or 0.0
     if r.get("error"):
         return None, cost
-    j = r.get("json")
-    if not isinstance(j, dict):
-        try:
-            j = json.loads(r.get("text") or "")
-        except Exception:
-            j = None
+    j = adapters.structured_reply(r)
     if not isinstance(j, dict) or not isinstance(j.get("providers"), list):
         return None, cost
     out = {}

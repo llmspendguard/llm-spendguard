@@ -52,7 +52,6 @@ def _judge_one(prompt, output, judge_model):
     boolean — not a free-text verdict a string rule then interprets. Returns True (good) / False (bad) / None
     (the judge failed or gave no clean boolean → UNLABELED, never guessed)."""
     from . import adapters, advisor
-    import json as _json
     # WHOLE evidence: the judge scores the candidate's FULL output — a [:4000] slice would rate only its head,
     # evidence-truncating the very thing being judged. no_substitution PINS the judge so every candidate is rated
     # by the SAME ruler, never a lane-swapped one (a judge that varies per candidate is not a comparable number).
@@ -61,11 +60,10 @@ def _judge_one(prompt, output, judge_model):
                       sig="spendguard:bakeoff-judge", no_substitution=True)
     if r.get("error") or not r.get("text"):
         return None
-    try:
-        j = r.get("json") if isinstance(r.get("json"), dict) else _json.loads(r["text"])
-        return bool(j["good"]) if isinstance(j, dict) and isinstance(j.get("good"), bool) else None
-    except Exception:
-        return None
+    # The adapter's OWN fence-tolerant decode (r['parsed']) — a bare json.loads here choked on a $0 lane's
+    # ```json fence, so the generic judge silently labeled 0/N on lane-served candidates.
+    j = adapters.structured_reply(r)
+    return bool(j["good"]) if isinstance(j, dict) and isinstance(j.get("good"), bool) else None
 
 
 def _plan(intent, candidates, prompts, judge_model, efforts, requirement_aware=False, adjudicator_model=None):
@@ -211,6 +209,21 @@ def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget
                                 labeled=n_lab, good=n_good, good_rate=(n_good / n_lab if n_lab else None),
                                 spent=round(spent, 6), per_good=(spent / n_good if n_good else None))
 
+    # LOUD ON ZERO LABELS: a bakeoff whose runs produced NO quality labels measured nothing — good_rate=null across
+    # every arm reads downstream as 'no findings', not 'the judge failed'. runs>0 with labeled==0 means the JUDGE
+    # could not rule on a single output (unreachable / unparseable verdict), NOT that the candidates failed (those
+    # are counted in `failed`). Surface it as a first-class `warning` (and on stderr) so it can never pass as clean.
+    _tot_run = sum(results[a]["runs"] for a in results)
+    _tot_lab = sum(results[a]["labeled"] for a in results)
+    _zero_label_warn = None
+    if _tot_run > 0 and _tot_lab == 0:
+        _zero_label_warn = (
+            "ZERO quality labels across %d run(s) in %d arm(s): the judge (%s) ruled on NOTHING, so every good_rate "
+            "is null — this bakeoff measured no quality. Verify the judge is reachable and returns a parseable "
+            "verdict (`spendguard health --run`)." % (_tot_run, len(results), judge_model))
+        import sys as _sys
+        _sys.stderr.write("[spendguard] bakeoff WARNING: %s\n" % _zero_label_warn)
+
     from . import advise, measurement
     import time as _time
     ranked = advise.ranked(intent=intent)                          # per-model re-rank (existing shape)
@@ -237,7 +250,7 @@ def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget
         _sys.stderr.write("[spendguard] bakeoff: measurement receipt NOT recorded (%s: %s) — the bakeoff "
                           "result stands\n" % (type(_e).__name__, str(_e)[:80]))
     return dict(intent=intent, sample=len(prompts), efforts=efforts_list, judged_by=judge_model,
-                reading_id=reading_id, per_candidate=results,
+                reading_id=reading_id, per_candidate=results, warning=_zero_label_warn,
                 ranking=ranked["models"], frontier_by_effort=frontier["models"],
                 pick=ranked["pick"], ranked_by=ranked["metric"],
                 note="recorded per (intent, model, effort) to the corpus + a measurement receipt — "

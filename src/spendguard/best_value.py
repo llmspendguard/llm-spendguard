@@ -166,8 +166,7 @@ def _infer_intent(prompt):
                 r = adapters.call(config.advisor_judge_model(),
                                   "Known intents:\n%s\n\nTASK PROMPT:\n%s" % ("\n".join("- " + k for k in known), prompt),
                                   system=_sys, schema=_schema, sig="spendguard:infer-intent", max_tokens=_INFER_OUT, timeout_s=60)
-            import json as _json
-            j = r.get("json") if isinstance(r.get("json"), dict) else (_json.loads(r["text"]) if r.get("text") else None)
+            j = adapters.structured_reply(r)
             cand = (j or {}).get("intent") if isinstance(j, dict) else None
             if cand in known:                                  # accept ONLY a label from the list — never a hallucinated one
                 result = cand

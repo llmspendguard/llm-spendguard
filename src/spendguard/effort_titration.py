@@ -135,7 +135,7 @@ def _score_output(prompt, output, judge_model, requirement_aware=False, adjudica
     if r.get("error") or not r.get("text"):
         return None
     try:
-        j = r.get("json") if isinstance(r.get("json"), dict) else json.loads(r["text"])
+        j = adapters.structured_reply(r)
         if isinstance(j, dict) and isinstance(j.get("score"), int) and isinstance(j.get("usable"), bool):
             return {"score": j["score"], "usable": j["usable"]}
     except Exception:
@@ -171,7 +171,7 @@ def _effort_verdict(intent, model, per_effort, judge_model):
     if r.get("error") or not r.get("text"):
         return None
     try:
-        j = r.get("json") if isinstance(r.get("json"), dict) else json.loads(r["text"])
+        j = adapters.structured_reply(r)
         if isinstance(j, dict) and j.get("effort") in per_effort:
             return {"effort": j["effort"], "quality_score": int(j.get("quality_score") or 0),
                     "confident": bool(j.get("confident")), "why": str(j.get("why") or "")[:200]}

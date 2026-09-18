@@ -124,9 +124,9 @@ ck("estimate returns a positive cost, the candidate set, and no spend",
 
 print("-- (P2) advisor.recommend: run path (stubbed reasoner) → structured, enriched with MEASURED $/good --")
 _orig_call = _ad.call
-_ad.call = lambda model, prompt, **kw: {
-    "json": {"quality_bar": {"level": "balanced", "why": "typing tolerates minor error"},
-             "top": [{"id": "openai:gpt-5.5", "why": "cheapest per good result", "meets_bar": True}]},
+_ad.call = lambda model, prompt, **kw: {                        # 'parsed' = the adapter's decoded structured object
+    "parsed": {"quality_bar": {"level": "balanced", "why": "typing tolerates minor error"},
+               "top": [{"id": "openai:gpt-5.5", "why": "cheapest per good result", "meets_bar": True}]},
     "text": "{}", "cost": 0.001, "error": None}
 try:
     rec = advisor.recommend_models(intent="loinc-typing", k=3, run=True)
