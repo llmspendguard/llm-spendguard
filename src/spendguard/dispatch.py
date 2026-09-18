@@ -366,6 +366,72 @@ def release(vendor, model, skip_lane=False):
     _GOV.release(vendor, model, skip_lane=skip_lane)
 
 
+# ── GOVERNED ADMISSION WITH SHED-TO-METERED — the ONE owner of that policy ────────────────────────────────────────
+# So vendor_call.call and adapters.call(governed=True) SHARE it and can never drift (the exact 'one brain, two
+# entries' the capability map is about). A lane vendor SPLITS its deadline (LANE_QUEUE_SHARE): the lane may queue for
+# up to this share, and the rest is RESERVED so a saturated-lane shed to the metered twin can still complete.
+LANE_QUEUE_SHARE = 0.5
+
+
+class _Admission:
+    """The outcome of admit(): `.ok` (proceed) · `.shed` (run the call metered_only — a saturated $0 lane shed to
+    its metered twin) · `.held` (a governor slot is held; release() frees it) · `.error` (the deadline reason when
+    not .ok). .release() is idempotent and a no-op when nothing is held (governor OFF / unavailable)."""
+    __slots__ = ("ok", "shed", "held", "error", "_vendor", "_model", "_skip_lane", "_released")
+
+    def __init__(self, ok, shed, held, vendor, model, skip_lane, error=None):
+        self.ok, self.shed, self.held, self.error = ok, shed, held, error
+        self._vendor, self._model, self._skip_lane, self._released = vendor, model, skip_lane, False
+
+    def release(self):
+        if self.held and not self._released:
+            self._released = True
+            try:
+                release(self._vendor, self._model, skip_lane=self._skip_lane)
+            except Exception:
+                pass
+
+
+def admit(vendor, model, deadline_s, no_metered_fallback=False):
+    """Governed admission for (vendor, model) with the SHED-TO-METERED policy. For a $0 LANE vendor the deadline is
+    SPLIT (LANE_QUEUE_SHARE) so a saturated lane's queue wait can't starve the shed; on a lane queue-timeout it
+    re-acquires under the metered VENDOR key and returns .shed=True (the caller runs metered_only) — lane-first,
+    never a hard fail. A saturated METERED vendor (no cheaper twin) or no_metered_fallback → .ok=False (the caller
+    returns a DEADLINE result). Governor OFF/unavailable → proceed UNGOVERNED (.ok, not held), LOUDLY — the gate is
+    the real $ backstop and dispatch's kill-switch philosophy is that spend discipline must not depend on the
+    scheduler being correct. Returns an _Admission (.ok/.shed/.held/.release())."""
+    if not deadline_s or float(deadline_s) <= 0:
+        return _Admission(True, False, False, vendor, model, False)
+    try:
+        from . import adapters
+        rode_lane = bool(adapters._lane_for(vendor))
+    except Exception:
+        rode_lane = False
+    t0 = time.monotonic()
+    lane_deadline = (float(deadline_s) * LANE_QUEUE_SHARE) if rode_lane else float(deadline_s)
+    try:
+        acquire(vendor, model, lane_deadline)
+        return _Admission(True, False, True, vendor, model, skip_lane=False)
+    except DispatchTimeout as dt:
+        left = float(deadline_s) - (time.monotonic() - t0)
+        if rode_lane and not no_metered_fallback and left > 0:
+            try:
+                acquire(vendor, model, left, skip_lane=True)   # gate on the metered vendor cap, not the saturated lane
+                return _Admission(True, True, True, vendor, model, skip_lane=True)
+            except DispatchTimeout as dt2:
+                return _Admission(False, False, False, vendor, model, False, error=str(dt2))
+        return _Admission(False, False, False, vendor, model, False, error=str(dt))
+    except Exception as _ge:
+        # The GOVERNOR ITSELF is unavailable (import/infra/config), NOT a queue timeout. Degrade LOUDLY to an
+        # ungoverned admission rather than block real work: the spend GATE is the real $ backstop, and this module's
+        # own kill-switch (SPENDGUARD_DISPATCH_OFF) exists precisely because spend discipline must never depend on the
+        # scheduler being correct. Loud (not silent) so a broken governor is visible and can be fixed.
+        import sys as _sys
+        print(f"[spendguard] dispatch governor unavailable ({type(_ge).__name__}: {str(_ge)[:80]}) — admitting "
+              f"{vendor}/{model} UNGOVERNED this call; the spend gate still enforces the cap", file=_sys.stderr)
+        return _Admission(True, False, False, vendor, model, False)
+
+
 def queue_state():
     """Current per-key admission state — {key: {limit, rpm, in_flight, waiting}}. Named uniquely (not `stats`)
     so it never collides with semcache.stats, an unrelated job (NAME_REGISTRY). What a receipt/doctor shows to

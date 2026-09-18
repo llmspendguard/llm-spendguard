@@ -462,6 +462,13 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
          no_substitution=False, metered_only=False, _probe=False, **aliases):
     """Run one prompt against one model. Returns a result dict (never raises).
 
+    `governed=True` (a kwarg carried via **aliases) runs THIS call inside the dispatch GOVERNOR — for a caller
+    fanning many concurrent calls (a bakeoff / review panel). It bounds per-lane/vendor in-flight, and on a
+    saturated $0 lane SHEDS to that lane's metered twin instead of a per-call metered spill (the shared
+    dispatch.admit brain, identical to vendor_call.call); a saturated metered vendor (or no_metered_fallback)
+    returns a TYPED deadline dict. `timeout_s` is the queue-wait bound (derived from measured latency if omitted).
+    Same dict return, same no_substitution/intent/metered_only semantics. A SINGLE call omits governed (no overhead).
+
     `metered_only=True` FORCES the paid metered API and SKIPS the subscription lane entirely (the opt-in metered
     HALF of the atomic lane→metered pair). Use it for a consistency-sensitive fan (a verdict-cached refuter) that
     needs the concurrency-invariant metered path serial-equivalently — where riding the $0 lane CLI (its own
@@ -634,6 +641,27 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     _ctx_before = dict(_sig_ctx.current() or {})
     if sig and not _ctx_before.get("intent"):
         _sig_ctx.set_context(intent=sig)
+    # GOVERNED (opt-in `governed=True`, for a CONCURRENT fan) — enter the dispatch governor with the SAME
+    # shed-to-metered + deadline-split policy vendor_call uses, via the shared dispatch.admit brain, so the two
+    # entries can never drift. A saturated $0 lane SHEDS to its metered twin (lane-first, not a per-call metered
+    # spill); a saturated METERED vendor (or no_metered_fallback) returns a TYPED deadline dict. Single calls omit
+    # governed (no governor overhead). Never governs the internal _no_guard recursion — one slot per logical call.
+    _governed = bool(aliases.pop("governed", False))
+    _adm = None
+    if _governed and not _no_guard:
+        from . import dispatch
+        _gprov = provider_for(model)
+        _gov_dl = float(timeout_s) if timeout_s else (deadline_for(
+            model, intent=intent or sig, in_chars=len(prompt or ""), default_s=LANE_MIN_TIMEOUT_S)[0] or LANE_MIN_TIMEOUT_S)
+        _adm = dispatch.admit(_gprov, model, _gov_dl, no_metered_fallback=no_metered_fallback)
+        if not _adm.ok:
+            _sig_ctx._local.ctx = _ctx_before
+            return {"provider": _gprov, "model": model, "text": None, "parsed": None, "in_tok": 0, "out_tok": 0,
+                    "cost": None, "latency": 0.0, "finish_reason": None, "truncated": None, "executor": None,
+                    "max_tokens_used": None, "substituted_from": None,
+                    "error": f"dispatch deadline_exceeded (governed): {_adm.error}"}
+        if _adm.shed:                                    # saturated $0 lane shed to its metered twin → run metered_only
+            metered_only = True
     try:
         if not _no_guard:
             r = _call_guarded(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
@@ -646,6 +674,8 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                            _no_sub=no_substitution, _skip_lane=metered_only)   # metered_only=True → skip the lane (metered API only)
     finally:
         _sig_ctx._local.ctx = _ctx_before   # restore the caller's context exactly (nested calls keep their own tag)
+        if _adm is not None:
+            _adm.release()                  # free the governor slot (idempotent; no-op when ungoverned)
     # BEST-VALUE PROVENANCE — record what the caller WOULD have run (the baseline) vs what best-value chose, so the
     # saving/decision booking downstream can price the counterfactual. Stamped only when best-value actually changed
     # the target; never overwrites a lane/bandit substituted_from already present. requested_effort is None (the

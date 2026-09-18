@@ -53,10 +53,8 @@ RETRYABLE = (TRANSPORT_ERROR, OVERLOADED)
 
 _RUN_ID = None
 _lock = threading.RLock()
-# When a lane vendor's $0 lane is saturated, SPLIT the caller's deadline: the lane may queue for up to this SHARE
-# of it, and the remainder is RESERVED so the metered twin can still COMPLETE within the same deadline. A lane wait
-# that consumed the WHOLE deadline is exactly what turned a saturated lane into a hard DEADLINE with no room to shed.
-LANE_QUEUE_SHARE = 0.5
+# The shed-to-metered + deadline-split policy for a saturated $0 lane lives in ONE place — dispatch.admit (shared by
+# this module's call() and adapters.call(governed=True)). LANE_QUEUE_SHARE moved there with it.
 
 
 class BadBound(ValueError):
@@ -402,50 +400,22 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
         except Exception:
             _ctx = None
     started = time.time()
-    # DISPATCH ADMISSION — bound in-flight calls per vendor/lane (and optional RPM), so a caller fanning out
-    # over many items QUEUES instead of thrashing the subprocess lanes or 429-storming a metered vendor. The
-    # queue wait counts against THIS deadline; timing out in the queue is an honest DEADLINE_EXCEEDED, never a
-    # silent success. It sits at the same chokepoint as attribution, so it covers every caller at once. dispatch.py.
-    # WAS this call gated on a $0 subscription lane? (the same signal dispatch keys on — captured BEFORE the
-    # acquire so a mid-wait lane cooldown cannot confuse the shed decision.) A saturated $0 lane is a busy
-    # cost-optimisation, not a dead end: its metered twin is a DIFFERENT governor key with its OWN cap serving the
-    # SAME model. So a lane queue-timeout SHEDS to metered — the SAME destination a lane ERROR already falls back
-    # to in adapters._call_once — which makes a burst behave like isolation ("work consistently"). A saturated
-    # METERED vendor, by contrast, is real 429-protection with no cheaper twin to shed to → it stays DEADLINE.
-    _rode_lane = False
-    try:
-        from . import adapters as _adl
-        _rode_lane = bool(_adl._lane_for(vendor))
-    except Exception:
-        _rode_lane = False
-    _dispatched = False
-    _shed_metered = False
-    # A lane vendor SPLITS its deadline (LANE_QUEUE_SHARE) so a saturated lane's queue wait cannot eat the whole
-    # budget and leave no room for the metered shed below; a metered vendor keeps the full deadline (it never sheds).
-    _lane_deadline = (deadline_s * LANE_QUEUE_SHARE) if _rode_lane else deadline_s
-    try:
-        from . import dispatch
-        dispatch.acquire(vendor, model, _lane_deadline)
-        _dispatched = True
-    except dispatch.DispatchTimeout as _dt:
-        _left = deadline_s - (time.time() - started)
-        if _rode_lane and not no_metered_fallback and _left > 0:      # shed a busy $0 lane to its metered twin
+    # DISPATCH ADMISSION via the shared brain dispatch.admit — the ONE owner of the shed-to-metered + deadline-split
+    # policy (also used by adapters.call(governed=True), so the two entries can never drift). Bounds in-flight calls
+    # per vendor/lane so a fan QUEUES instead of thrashing; a saturated $0 lane SHEDS to its metered twin (the same
+    # destination a lane ERROR reaches in _call_once — burst behaves like isolation); a saturated METERED vendor, or
+    # no_metered_fallback, is an honest DEADLINE, never a silent success. It sits at the attribution chokepoint.
+    from . import dispatch
+    _adm = dispatch.admit(vendor, model, deadline_s, no_metered_fallback=no_metered_fallback)
+    if not _adm.ok:
+        if _ctx is not None:
             try:
-                dispatch.acquire(vendor, model, _left, skip_lane=True)   # gate on the metered vendor cap, not the lane
-                _dispatched = True
-                _shed_metered = True                 # the metered spend is recorded in the ledger via the attempt below
-            except dispatch.DispatchTimeout as _dt2:
-                _dt = _dt2                            # even the metered vendor is saturated → an honest deadline
-        if not _shed_metered:
-            if _ctx is not None:
-                try:
-                    _ctx.__exit__(None, None, None)
-                except Exception:
-                    pass
-            return Result(DEADLINE_EXCEEDED, vendor, model, prompt_sha=_sha(prompt), purpose=purpose,
-                          latency=time.time() - started, error=str(_dt))
-    except Exception:
-        _dispatched = False                          # governor unavailable → proceed ungoverned, never block a call
+                _ctx.__exit__(None, None, None)
+            except Exception:
+                pass
+        return Result(DEADLINE_EXCEEDED, vendor, model, prompt_sha=_sha(prompt), purpose=purpose,
+                      latency=time.time() - started, error=_adm.error)
+    _shed_metered = _adm.shed                          # a saturated $0 lane shed to metered → run this attempt metered_only
     sha = _sha(prompt)
     last = None
     # EVERY ATTEMPT BILLS. Returning only the final attempt's cost made retries invisible to the caller's
@@ -487,12 +457,7 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
             if wait > 0:
                 time.sleep(wait)
     finally:
-        if _dispatched:
-            try:
-                from . import dispatch as _drel
-                _drel.release(vendor, model, skip_lane=_shed_metered)   # free the SAME bucket the acquire took
-            except Exception:
-                pass
+        _adm.release()                               # free the governor slot (idempotent; a no-op when ungoverned)
     # Feed the TIME measurement on every outcome, the way note_response feeds the token one. A budget that is
     # only ever guessed can never improve; recorded, the next caller's deadline comes from what this vendor
     # actually does. Deadline hits are flagged so they are censored from the percentiles they would otherwise
@@ -1036,8 +1001,9 @@ def output_cap(vendor, model, sig=None):
     nothing and only prevents truncation. Measured: kimi-k3's registry cap was a stale 26,128 (below the 32K the
     model finishes long reviews in), and because output_cap returned it as an explicit cap it bypassed the
     adapters TOKEN_FLOOR and starved the review. The RAISE precedence is recorded registry → this class's
-    observed need; the result is then floored to 32K and clamped to the model's published max so it can never
-    exceed what the endpoint will accept. There is no longer an 'unknown' return: the floor IS the default."""
+    observed need; the result is then floored to 32K and clamped to the model's ceiling — resolved by the ONE shared
+    authority (pricing.output_ceiling), so it can never exceed what the endpoint accepts and never DRIFTS from the
+    other budget resolvers. There is no longer an 'unknown' return: the floor IS the default."""
     from . import adapters
     resolved, basis = 0, "floor"
     rec = caps().get(f"{vendor}/{model}")
@@ -1051,16 +1017,18 @@ def output_cap(vendor, model, sig=None):
                 resolved, basis = int(b["recommend"]), "observed"
         except Exception:
             pass
-    published = None
+    # THE MODEL'S CEILING comes from the ONE shared authority (pricing.output_ceiling: published cache → live catalog
+    # → learned fact → backstop), NOT a private published-only lookup — so this resolver can't DRIFT from _autotune /
+    # zai_exec._output_budget / _call_guarded (the resolve-output-budget DRIFT the capability map found; they already
+    # route through it). Backstop = MAX_TOKEN_CEILING so an unknown model still gets the 32K floor, never an
+    # over-ceiling number the endpoint would 400.
     try:
         from . import pricing
-        published = pricing.max_output_tokens(model)
+        ceiling = int(pricing.output_ceiling(vendor, model, adapters.MAX_TOKEN_CEILING))
     except Exception:
-        pass
-    floor = min(adapters.TOKEN_FLOOR, int(published)) if published else adapters.TOKEN_FLOOR
-    cap = max(resolved, floor)
-    if published:
-        cap = min(cap, int(published))
+        ceiling = adapters.MAX_TOKEN_CEILING
+    floor = min(adapters.TOKEN_FLOOR, ceiling)          # never floor ABOVE the model's real max
+    cap = min(max(resolved, floor), ceiling)            # RAISE-only to the floor, then clamp to the ceiling
     return cap, basis
 
 
