@@ -234,6 +234,37 @@ def _uuid():
     return uuid.uuid4().hex[:16]
 
 
+def _resolve_attribution(model, cost, intent, chain, project):
+    """The SHARED attribution brain for EVERY writer into the `calls` table (record_call AND insert), so no INSERT
+    path can drift un-attributed — the record-call-outcome DRIFT the capability map found (insert was a second,
+    ungated, un-attributed INSERT). Two things, one place:
+      1. ENFORCE that a PAID call carries an intent — an un-intented paid row lands in '(none)', invisible to
+         advise/denylists/rollups (judge-class denylist entries matched zero rows for weeks). Raise under
+         SPENDGUARD_REQUIRE_INTENT=1, else a warn via the stdlib registry. Runs BEFORE any enabled()/try, so the
+         raise cannot be swallowed. The SAFETY half (un-intented → refuse substitution) already holds elsewhere.
+      2. RESOLVE intent/chain from the live context and the project from the repo (same as the money ledger).
+    Returns (intent, chain, project_lc)."""
+    if not (intent or (current() or {}).get("intent")) and float(cost or 0) > 0:
+        import os as _osw
+        _msg = ("a PAID call (%s, $%.4f) with NO intent → would attribute to '(none)'. Tag it via "
+                "calls.set_context(intent=…) or adapters.call(sig=…) so spend/advise/denylists can see it."
+                % (model, float(cost or 0)))
+        if _osw.getenv("SPENDGUARD_REQUIRE_INTENT") == "1":
+            raise ValueError("[spendguard] " + _msg + " (SPENDGUARD_REQUIRE_INTENT=1)")
+        import warnings as _warnings
+        _warnings.warn("[spendguard] " + _msg + " (SPENDGUARD_REQUIRE_INTENT=1 to enforce)", stacklevel=2)
+    ctx = current()
+    intent = intent or ctx.get("intent")
+    chain = chain or ctx.get("chain")
+    if project is None:                                  # attribute to the repo the same way the money ledger does
+        try:
+            from . import budget
+            project = budget._project()
+        except Exception:
+            project = None
+    return intent, chain, ((project or "").strip().lower() or None)   # lowercased project_primary for clean joins
+
+
 def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
            prompt=None, output=None, finish=None, intent=None, chain=None, who=None,
            executor=None, project=None, effort=None):
@@ -244,35 +275,13 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
     can show and the lane est-value stamper can price — rather than a guess inferred from the provider. `project` is
     the repo the call belongs to (derived from the live gate context when not passed), so a lane's plan VALUE
     attributes to a project exactly like billed spend does."""
-    # ATTRIBUTION SIGNAL — checked BEFORE `enabled()` and BEFORE the never-raise try below. Before enabled() because a
-    # PAID call with no intent is a problem whether or not the ledger is on (enforcement must still fire); before the
-    # try because a raise inside it is swallowed by its `except Exception: return None`, so SPENDGUARD_REQUIRE_INTENT
-    # would silently not propagate. An un-intented paid call lands in '(none)' — invisible to advise/denylists/rollups
-    # (judge-class denylist entries matched zero rows for weeks). The SAFETY half (un-intented → refuse substitution)
-    # already holds; this is the ATTRIBUTION half. Enforcement raises on EVERY such call; else a once-per-SITE warn
-    # via the stdlib warnings registry (no module flag to race on).
-    if not (intent or (current() or {}).get("intent")) and float(cost or 0) > 0:
-        import os as _osw
-        _msg = ("a PAID call (%s, $%.4f) with NO intent → would attribute to '(none)'. Tag it via "
-                "calls.set_context(intent=…) or adapters.call(sig=…) so spend/advise/denylists can see it."
-                % (model, float(cost or 0)))
-        if _osw.getenv("SPENDGUARD_REQUIRE_INTENT") == "1":
-            raise ValueError("[spendguard] " + _msg + " (SPENDGUARD_REQUIRE_INTENT=1)")
-        import warnings as _warnings
-        _warnings.warn("[spendguard] " + _msg + " (SPENDGUARD_REQUIRE_INTENT=1 to enforce)", stacklevel=2)
+    # ATTRIBUTION is resolved by the SHARED brain _attribute (enforce a paid un-intented call + resolve intent/chain/
+    # project) BEFORE enabled()/try, so record_call and insert can never drift on it (the record-call-outcome DRIFT).
+    intent, chain, proj = _resolve_attribution(model, cost, intent, chain, project)
     if not enabled():
         return None
     try:
-        ctx = current()
-        intent = intent or ctx.get("intent")
-        chain = chain or ctx.get("chain")
-        if project is None:                              # attribute to the repo the same way the money ledger does
-            try:
-                from . import budget
-                project = budget._project()
-            except Exception:
-                project = None
-        proj = ((project or "").strip().lower() or None)  # match budget's lowercased project_primary for clean joins
+        ctx = current()                                  # for the `who` fallback below (caller frame / context)
         cid = _uuid()
         sp = _snip()
         ph = hashlib.sha256((prompt or "").encode("utf-8", "ignore")).hexdigest()[:16] if prompt else None
@@ -316,18 +325,21 @@ def feedback(call_id: Optional[str], ok: bool = True, source: str = "explicit",
 
 
 def insert(provider, model, kind, cost, in_tok=0, out_tok=0, ts=None, intent=None, chain=None,
-           quality=None, quality_src=None, quality_conf=None, who="backfill", effort=None):
-    """Low-level insert used by backfill (ungated) and the bakeoff (which records per-EFFORT arms). Returns call_id.
-    `effort` = the reasoning tier this row was produced at, so a bakeoff's per-(model,effort) evidence is sliceable."""
+           quality=None, quality_src=None, quality_conf=None, who="backfill", effort=None, project=None):
+    """Low-level insert used by backfill (ungated) and the bakeoff/titration (per-EFFORT arms, with an inline quality
+    label). Returns call_id. Shares the ATTRIBUTION brain (_attribute) with record_call — so a paid row here enforces
+    intent + records the project exactly like a live call, never a second un-attributed INSERT (the
+    record-call-outcome DRIFT). `effort` = the reasoning tier this row was produced at (sliceable evidence)."""
+    intent, chain, proj = _resolve_attribution(model, cost, intent, chain, project)
     cid = _uuid()
     ts = ts or datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     with _lock:
         _calls_db().execute(
             "INSERT INTO calls (id,ts,chain,intent,caller,provider,model,kind,in_tok,out_tok,"
-            "cost,quality,quality_src,quality_conf,effort) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "cost,quality,quality_src,quality_conf,effort,project) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (cid, ts, chain, intent, who, provider, model, kind,
              int(in_tok or 0), int(out_tok or 0), float(cost or 0), quality, quality_src, quality_conf,
-             (effort or None)))
+             (effort or None), proj))
         _calls_db().commit()
     return cid
 
