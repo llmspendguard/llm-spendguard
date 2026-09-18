@@ -48,3 +48,6 @@ scripts/reconstruct/realtime_find_batch_state.*
 # Paid-run artifacts from the reasoning-stress matrix (scripts/integration): each is a local checkpoint of a
 # real spend run — the durable copy of those facts is the gate ledger, not repo history.
 scripts/integration/reasoning_stress_*.jsonl
+
+# capability_map.py generated outputs (regenerate with the tool)
+scripts/probe/capability_map_out/
