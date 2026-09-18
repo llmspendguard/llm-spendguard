@@ -1051,6 +1051,9 @@ LANE_MIN_TIMEOUT_S = 150.0   # a subscription LANE (CLI cold-start + ~14K contex
                              # metered call's tight 30s floor just times it out and churns it to the paid API it
                              # exists to avoid. Floor lane deadlines here; a hung lane is still bounded by its own
                              # TIMEOUT_S. MEASURED: codex timed out at exactly 30s on a real panel file and fell back.
+_LANE_RETRY_BACKOFF_S = 1.2  # ON-LANE TRANSIENT RETRY wait: a lane that PROVED it can answer a prompt this size but
+#                              failed THIS time is likely a momentary blip (plan throttle / at-capacity) — pause this
+#                              long and retry the $0 lane ONCE before spilling to PAID metered. Named, not a literal.
 
 
 def _http_timeout(timeout_s):
@@ -1345,18 +1348,37 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         _lane_cap = int(getattr(lane_mod, "TIMEOUT_S", 300))
         _lane_floor = int(getattr(lane_mod, "MIN_TIMEOUT_S", LANE_MIN_TIMEOUT_S))
         _lane_timeout = min(_lane_cap, max(int(timeout_s or 0), _lane_floor))
-        try:
-            # AGY namespace: effort rides the MODEL-ID SUFFIX, and agy ignores the reasoning kwarg. So a bare id
-            # + reasoning=medium must be respelled gemini-…-flash-medium here, or the tier is silently dropped and
-            # the lane runs its default. Non-gemini lanes take the id unchanged.
-            _lane_model = _compose_gemini_reasoning(raw, reasoning) if prov == "gemini" else raw
-            s = lane_mod.run_prompt(prompt, system=_lane_sys, model=_lane_model, timeout=_lane_timeout,
-                                    reasoning=reasoning, max_tokens=max_tokens)   # hand the lane the guarded budget so the
-            #                                                                       escalation ladder can RAISE its cap on a truncation
-        except Exception as _le:                       # a lane MUST return an {error} dict, never raise — but a lane
-            s = {"error": f"{lane_name} lane raised: {str(_le)[:120]}"}   # bug that throws must degrade, not crash call()
-        if not isinstance(s, dict):                    # a non-dict is also a broken contract → treat it as an error
-            s = {"error": f"{lane_name} lane returned {type(s).__name__}, not a result dict"}
+        # AGY namespace: effort rides the MODEL-ID SUFFIX, and agy ignores the reasoning kwarg. So a bare id +
+        # reasoning=medium must be respelled gemini-…-flash-medium here, or the tier is silently dropped and the lane
+        # runs its default. Non-gemini lanes take the id unchanged.
+        _lane_model = _compose_gemini_reasoning(raw, reasoning) if prov == "gemini" else raw
+
+        def _call_lane():
+            try:
+                _s = lane_mod.run_prompt(prompt, system=_lane_sys, model=_lane_model, timeout=_lane_timeout,
+                                         reasoning=reasoning, max_tokens=max_tokens)   # hand the lane the guarded budget
+                #                                                                        so the escalation ladder can RAISE its cap
+            except Exception as _le:                   # a lane MUST return an {error} dict, never raise — but a lane
+                from . import gate as _glane
+                if _glane.is_deliberate_stop(_le):     # a DELIBERATE stop (deadline / refusal / containment) HALTS —
+                    raise                              # never swallowed into an error dict and then retried below
+                _s = {"error": f"{lane_name} lane raised: {str(_le)[:120]}"}   # a genuine lane bug degrades, not crash
+            if not isinstance(_s, dict):               # a non-dict is also a broken contract → treat it as an error
+                _s = {"error": f"{lane_name} lane returned {type(_s).__name__}, not a result dict"}
+            return _s
+        s = _call_lane()
+        # ON-LANE TRANSIENT RETRY before spilling to PAID metered: a lane that has PROVEN it can answer a prompt this
+        # SIZE (a watermark FACT, never the error string) but failed THIS time is likely a momentary blip (plan
+        # throttle / at-capacity) — retry the $0 lane ONCE after a short backoff, keeping the work FREE. Skipped for a
+        # lane with no proven-good history (an ambiguous first miss → fast degrade to API) or one already cooling.
+        # FACT-based, so no error-prose parsing (the doctrine); a genuine miss simply fails the retry and falls back.
+        if (s.get("error") or not (s.get("text") or "").strip()) \
+                and resource_state.proven_good(resource_state.lane_key(lane_name)) >= len(prompt or "") \
+                and not _lane_cooling(lane_name):
+            time.sleep(_LANE_RETRY_BACKOFF_S)
+            _s2 = _call_lane()
+            if not _s2.get("error") and (_s2.get("text") or "").strip():
+                s = _s2                                # the retry answered — stay on the $0 lane, no metered spill
         # A "$0 plan reply" is only a real answer if it has CONTENT and — when a shape was requested — SATISFIES it.
         # WHITESPACE-only counts as empty; a non-empty reply that fails the requested schema is a lane MISS, not a
         # success. Either way, name it an error so the call FALLS BACK to the metered API instead of handing the
