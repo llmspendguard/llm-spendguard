@@ -81,7 +81,7 @@ _seen = {"n": 0}
 
 
 def _mk_attempt(err, status):
-    def _fake(vendor, model, prompt, system, max_tokens, budget_s, schema=None, reasoning=None):
+    def _fake(vendor, model, prompt, system, max_tokens, budget_s, schema=None, reasoning=None, **kwargs):
         _seen["n"] += 1
         return {"provider": vendor, "model": model, "text": None, "error": err, "status_code": status,
                 "in_tok": 0, "out_tok": 0, "latency": 0.01, "cost": 0.0, "finish_reason": None}

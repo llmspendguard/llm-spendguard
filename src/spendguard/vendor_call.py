@@ -53,6 +53,10 @@ RETRYABLE = (TRANSPORT_ERROR, OVERLOADED)
 
 _RUN_ID = None
 _lock = threading.RLock()
+# When a lane vendor's $0 lane is saturated, SPLIT the caller's deadline: the lane may queue for up to this SHARE
+# of it, and the remainder is RESERVED so the metered twin can still COMPLETE within the same deadline. A lane wait
+# that consumed the WHOLE deadline is exactly what turned a saturated lane into a hard DEADLINE with no room to shed.
+LANE_QUEUE_SHARE = 0.5
 
 
 class BadBound(ValueError):
@@ -277,8 +281,12 @@ def _classify(r, want_text=True):
 
 
 def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_tokens=None, schema=None,
-         attempts=3, backoff_s=2.0, reasoning=None):
+         attempts=3, backoff_s=2.0, reasoning=None, no_metered_fallback=False):
     """Call ONE model, bounded by a TOTAL deadline, returning a typed Result. Never raises for a call failure.
+
+    `no_metered_fallback=True` is the $0-ONLY contract: a lane miss (error OR a saturated-lane shed) is an honest
+    failure, never a surprise metered charge. Default False = a $0 lane that errors or is too busy sheds to its
+    metered twin so the call completes — burst behaves like isolation (see the dispatch shed below).
 
     INPUT invariant:  deadline_s > 0 and bounds the WHOLE call including every retry.
     OUTPUT invariant: a Result whose `.text` is readable ONLY when kind == 'ok'.
@@ -398,19 +406,44 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
     # over many items QUEUES instead of thrashing the subprocess lanes or 429-storming a metered vendor. The
     # queue wait counts against THIS deadline; timing out in the queue is an honest DEADLINE_EXCEEDED, never a
     # silent success. It sits at the same chokepoint as attribution, so it covers every caller at once. dispatch.py.
+    # WAS this call gated on a $0 subscription lane? (the same signal dispatch keys on — captured BEFORE the
+    # acquire so a mid-wait lane cooldown cannot confuse the shed decision.) A saturated $0 lane is a busy
+    # cost-optimisation, not a dead end: its metered twin is a DIFFERENT governor key with its OWN cap serving the
+    # SAME model. So a lane queue-timeout SHEDS to metered — the SAME destination a lane ERROR already falls back
+    # to in adapters._call_once — which makes a burst behave like isolation ("work consistently"). A saturated
+    # METERED vendor, by contrast, is real 429-protection with no cheaper twin to shed to → it stays DEADLINE.
+    _rode_lane = False
+    try:
+        from . import adapters as _adl
+        _rode_lane = bool(_adl._lane_for(vendor))
+    except Exception:
+        _rode_lane = False
     _dispatched = False
+    _shed_metered = False
+    # A lane vendor SPLITS its deadline (LANE_QUEUE_SHARE) so a saturated lane's queue wait cannot eat the whole
+    # budget and leave no room for the metered shed below; a metered vendor keeps the full deadline (it never sheds).
+    _lane_deadline = (deadline_s * LANE_QUEUE_SHARE) if _rode_lane else deadline_s
     try:
         from . import dispatch
-        dispatch.acquire(vendor, model, deadline_s)
+        dispatch.acquire(vendor, model, _lane_deadline)
         _dispatched = True
     except dispatch.DispatchTimeout as _dt:
-        if _ctx is not None:
+        _left = deadline_s - (time.time() - started)
+        if _rode_lane and not no_metered_fallback and _left > 0:      # shed a busy $0 lane to its metered twin
             try:
-                _ctx.__exit__(None, None, None)
-            except Exception:
-                pass
-        return Result(DEADLINE_EXCEEDED, vendor, model, prompt_sha=_sha(prompt), purpose=purpose,
-                      latency=time.time() - started, error=str(_dt))
+                dispatch.acquire(vendor, model, _left, skip_lane=True)   # gate on the metered vendor cap, not the lane
+                _dispatched = True
+                _shed_metered = True                 # the metered spend is recorded in the ledger via the attempt below
+            except dispatch.DispatchTimeout as _dt2:
+                _dt = _dt2                            # even the metered vendor is saturated → an honest deadline
+        if not _shed_metered:
+            if _ctx is not None:
+                try:
+                    _ctx.__exit__(None, None, None)
+                except Exception:
+                    pass
+            return Result(DEADLINE_EXCEEDED, vendor, model, prompt_sha=_sha(prompt), purpose=purpose,
+                          latency=time.time() - started, error=str(_dt))
     except Exception:
         _dispatched = False                          # governor unavailable → proceed ungoverned, never block a call
     sha = _sha(prompt)
@@ -428,7 +461,7 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
                               latency=time.time() - started,
                               error=f"total deadline {deadline_s}s exhausted after {attempt - 1} attempt(s)")
             r = _attempt(vendor, model, prompt, system, max_tokens, remaining, schema=schema,
-                         reasoning=reasoning)
+                         reasoning=reasoning, metered_only=_shed_metered, no_metered_fallback=no_metered_fallback)
             billed += float(r.get("cost") or 0.0)
             kind, stop = _classify(r)
             last = Result(kind, vendor, model, text=r.get("text"), stop_reason=stop,
@@ -457,7 +490,7 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
         if _dispatched:
             try:
                 from . import dispatch as _drel
-                _drel.release(vendor, model)
+                _drel.release(vendor, model, skip_lane=_shed_metered)   # free the SAME bucket the acquire took
             except Exception:
                 pass
     # Feed the TIME measurement on every outcome, the way note_response feeds the token one. A budget that is
@@ -489,10 +522,14 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
     return last
 
 
-def _attempt(vendor, model, prompt, system, max_tokens, budget_s, schema=None, reasoning=None):
+def _attempt(vendor, model, prompt, system, max_tokens, budget_s, schema=None, reasoning=None,
+             metered_only=False, no_metered_fallback=False):
     """One attempt, hard-bounded at `budget_s`. adapters.call has no timeout of its own, so the bound is
     enforced HERE by running it on a worker and abandoning it — a deadline checked only between attempts
-    cannot bound a call that never returns, which is exactly what produced the 3h30m run."""
+    cannot bound a call that never returns, which is exactly what produced the 3h30m run.
+
+    `metered_only` forces the metered API (a lane→metered shed already took the metered governor slot, so the
+    lane must be skipped here too); `no_metered_fallback` is the $0-only opt-out (a lane miss stays a miss)."""
     from . import adapters
     box = {}
     # CARRY THE CONTEXT ACROSS THE THREAD BOUNDARY. calls.record_call() reads intent/chain from a THREAD-LOCAL
@@ -519,6 +556,7 @@ def _attempt(vendor, model, prompt, system, max_tokens, budget_s, schema=None, r
                                      max_tokens=int(max_tokens), system=system,
                                      schema=schema if isinstance(schema, dict) else None,
                                      timeout_s=budget_s, reasoning=reasoning,
+                                     metered_only=metered_only, no_metered_fallback=no_metered_fallback,
                                      no_substitution=True)   # vendor_call NAMES a vendor — the lane bandit must
                                      #                         never swap it (a panel/adjudication would collapse)
         except Exception as e:                      # adapters says it never raises; believe it, verify anyway

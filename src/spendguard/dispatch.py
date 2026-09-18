@@ -251,19 +251,24 @@ class Governor:
                                                                           DEFAULT_GLOBAL_CONCURRENCY)))
         return self._global
 
-    def _key_and_limit(self, vendor, model):
+    def _key_and_limit(self, vendor, model, skip_lane=False):
         """(key, concurrency_limit, rpm, is_lane) for this call. Lane vendors collapse to one key + the lane
         budget; metered vendors key by vendor with the vendor budget. `is_lane` is the AUTHORITATIVE signal
         from adapters._lane_for (whether this vendor rides an active subscription lane) — returned as data so
-        no caller has to re-derive lane-ness by parsing the key string. Config can override either limit."""
+        no caller has to re-derive lane-ness by parsing the key string. Config can override either limit.
+
+        `skip_lane=True` forces the VENDOR key even for a vendor that rides a lane: the caller is deliberately
+        taking the METERED path (a lane→metered shed after the lane's own bucket saturated), so it must be gated
+        on the metered vendor cap — never re-queued behind the very lane bucket it just timed out of."""
         vendor = (vendor or "").strip().lower()
         lane = None
-        try:
-            from . import adapters
-            got = adapters._lane_for(vendor)
-            lane = got[0] if got else None
-        except Exception:
-            lane = None
+        if not skip_lane:
+            try:
+                from . import adapters
+                got = adapters._lane_for(vendor)
+                lane = got[0] if got else None
+            except Exception:
+                lane = None
         if lane:
             key = f"lane:{lane}"
             # PER-LANE override → the global lane cap → the default: dispatch.lane_concurrency_<lane> (e.g.
@@ -279,8 +284,8 @@ class Governor:
         rpm = _limit(f"rpm_{vendor}", DEFAULT_RPM)     # per-vendor RPM, e.g. SPENDGUARD_DISPATCH_RPM_MOONSHOT=60
         return key, limit, rpm, bool(lane)
 
-    def _bucket(self, vendor, model):
-        key, limit, rpm, _is_lane = self._key_and_limit(vendor, model)
+    def _bucket(self, vendor, model, skip_lane=False):
+        key, limit, rpm, _is_lane = self._key_and_limit(vendor, model, skip_lane=skip_lane)
         with self._lock:
             b = self._buckets.get(key)
             # Re-key if the configured limit/rpm changed since the bucket was made (config edited at runtime):
@@ -291,11 +296,13 @@ class Governor:
                 self._buckets[key] = b
             return b
 
-    def acquire(self, vendor, model, deadline_s):
+    def acquire(self, vendor, model, deadline_s, skip_lane=False):
         """Admit one call. Returns seconds waited (0 when uncontended). Raises DispatchTimeout on deadline.
         Order: global slot → per-key in-process slot → cross-process slot (lane keys AND metered vendor keys — a
         per-provider cap shared across processes). release() unwinds all three; the held cross-process slot rides a
-        per-thread stack that release() pops (acquire and release run on the same fan_out worker thread)."""
+        per-thread stack that release() pops (acquire and release run on the same fan_out worker thread).
+        `skip_lane=True` gates on the metered VENDOR key even for a lane vendor (a lane→metered shed); the paired
+        release() MUST pass the same skip_lane so it frees the same bucket."""
         if _off() or not deadline_s or float(deadline_s) <= 0:
             _held().append(None)                     # keep the acquire/release stack balanced even as a no-op
             return 0.0
@@ -306,8 +313,8 @@ class Governor:
                                   f"full — deadline {float(deadline_s):.0f}s exhausted")
         got_bucket, xp = False, None
         try:
-            key, limit, _rpm, _is_lane = self._key_and_limit(vendor, model)
-            self._bucket(vendor, model).acquire(float(deadline_s) - (time.monotonic() - t0))
+            key, limit, _rpm, _is_lane = self._key_and_limit(vendor, model, skip_lane=skip_lane)
+            self._bucket(vendor, model, skip_lane=skip_lane).acquire(float(deadline_s) - (time.monotonic() - t0))
             got_bucket = True
             if not _xp_off():                        # co-govern ACROSS processes: a lane's shared subscription plan AND
                 # a metered vendor's per-provider cap. Previously lane-only — so N concurrent runs each ran up to
@@ -319,13 +326,13 @@ class Governor:
             if xp is not None:
                 xp.release()
             if got_bucket:
-                self._bucket(vendor, model).release()
+                self._bucket(vendor, model, skip_lane=skip_lane).release()
             g.release()
             raise
         _held().append(xp)
         return time.monotonic() - t0
 
-    def release(self, vendor, model):
+    def release(self, vendor, model, skip_lane=False):
         xp = _pop_held()                             # cross-process slot first (or None), always
         if xp is not None:
             try:
@@ -335,7 +342,7 @@ class Governor:
         if _off():
             return
         try:
-            self._bucket(vendor, model).release()
+            self._bucket(vendor, model, skip_lane=skip_lane).release()
         finally:
             try:
                 if self._global is not None:
@@ -346,15 +353,17 @@ class Governor:
 _GOV = Governor()
 
 
-def acquire(vendor, model, deadline_s):
+def acquire(vendor, model, deadline_s, skip_lane=False):
     """Admit one dispatch to (vendor, model), blocking up to deadline_s. Returns seconds waited. Raises
-    DispatchTimeout if no slot frees in time. Pair with release() in a finally."""
-    return _GOV.acquire(vendor, model, deadline_s)
+    DispatchTimeout if no slot frees in time. Pair with release() in a finally. `skip_lane=True` gates on the
+    metered VENDOR cap even for a lane vendor (the lane→metered shed); release() must be given the same flag."""
+    return _GOV.acquire(vendor, model, deadline_s, skip_lane=skip_lane)
 
 
-def release(vendor, model):
-    """Return the dispatch slot acquired for (vendor, model). Safe to call once per successful acquire."""
-    _GOV.release(vendor, model)
+def release(vendor, model, skip_lane=False):
+    """Return the dispatch slot acquired for (vendor, model). Safe to call once per successful acquire. Pass the
+    SAME skip_lane the paired acquire() used, so the freed bucket is the one that was taken."""
+    _GOV.release(vendor, model, skip_lane=skip_lane)
 
 
 def queue_state():
