@@ -14,6 +14,7 @@ visible; the process exits non-zero if ANY file failed. Grouping is by sorted fi
 import argparse
 import glob
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -44,15 +45,29 @@ def _child_env():
     return env
 
 
+SCRATCH_HOME_PREFIX = "sg-chunk-"           # per-file SPENDGUARD_HOME in $TMPDIR; removed when the file finishes
+
+
 def _run_one(path):
+    # Only files under tests/ are ever spawned (symlink-resolved), so a stray path can never escape the repo.
+    real = os.path.realpath(path)
+    tests_root = os.path.realpath(TESTS) + os.sep
+    if not real.startswith(tests_root):
+        return 2, "", f"refused: {path} is not under {TESTS}"
     env = _child_env()
-    env["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-chunk-")
+    scratch_home = tempfile.mkdtemp(prefix=SCRATCH_HOME_PREFIX)
+    env["SPENDGUARD_HOME"] = scratch_home
     try:
-        p = subprocess.run([sys.executable, path], env=env, timeout=FILE_BUDGET_S,
+        p = subprocess.run([sys.executable, real], env=env, timeout=FILE_BUDGET_S,
                            capture_output=True, text=True)
         return p.returncode, p.stdout, p.stderr
     except subprocess.TimeoutExpired:
         return 124, "", f"TIMEOUT after {FILE_BUDGET_S}s"
+    finally:
+        # The scratch home is per-file and disposable. Without this, every suite run left ~90 dirs behind
+        # (some 0.5GB each — the codex/claudecode state tests write a ~110MB json plus its rotated backups);
+        # measured 2026-09-14: 7,794 dirs / 29.9GB in $TMPDIR with the disk at 100%.
+        shutil.rmtree(scratch_home, ignore_errors=True)
 
 
 def main(argv=None):
