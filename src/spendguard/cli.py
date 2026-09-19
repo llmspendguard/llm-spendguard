@@ -375,7 +375,41 @@ def _dispatch(argv=None):
             return 2
         print(f"priced {model}: ${entry['in_']}/1M in · ${entry['out']}/1M out  (source: {entry['_source']})")
         print(f"  written to {path} — it now outranks the synced table, and past UNPRICED rows for this model")
-        print("  can be re-costed with `spendguard reconcile all`.")
+        print("  can be re-costed with `spendguard reprice --model %s`." % model)
+        return 0
+
+    if cmd == "reprice":
+        # Retroactively price ledger rows recorded 'unpriced' that a rate NOW resolves for (a model priced after the
+        # fact, or a provider ambiguity since corrected). DRY-RUN by default; --apply commits through the ledger's
+        # OWN audited update()/adjust() (never raw SQL), and snapshots the ledger first. --model scopes to one model.
+        from . import budget as _bud, config as _cfg
+        r = list(rest)
+
+        def _ropt(flag, default=None):
+            return r[r.index(flag) + 1] if flag in r and r.index(flag) + 1 < len(r) else default
+        _model, _apply = _ropt("--model"), ("--apply" in r)
+        if _apply:                                         # consistent snapshot BEFORE any write (integrity first)
+            import sqlite3 as _sq
+            import time as _t
+            _db = _cfg.db_path()
+            _bak = f"{_db}.bak_reprice_{int(_t.time())}"
+            _src = _sq.connect(_db)
+            _dst = _sq.connect(_bak)
+            with _dst:
+                _src.backup(_dst)
+            _dst.close()
+            _src.close()
+            print(f"snapshot: {_bak}")
+        plan = _bud.reprice_unpriced(model=_model, apply=_apply)
+        from collections import Counter as _Counter
+        methods = _Counter(p["method"] for p in plan)
+        total = sum((p["cost"] or 0.0) for p in plan if p["method"] != "skip")
+        scope = f" for {_model}" if _model else ""
+        print(f"reprice{scope}: {len(plan)} unpriced row(s) — {methods.get('update', 0)} repriced in place, "
+              f"{methods.get('adjust', 0)} adjusted (locked period), {methods.get('skip', 0)} left unpriced "
+              f"(still unresolvable).")
+        print(f"  ${total:.4f} of previously-unpriced usage {'FOLDED INTO' if _apply else 'would fold into'} the total"
+              + ("." if _apply else " — pass --apply to commit (audited; a closed period gets a delta)."))
         return 0
 
     if cmd == "quarantine":
