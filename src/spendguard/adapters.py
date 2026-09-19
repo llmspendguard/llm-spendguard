@@ -73,9 +73,9 @@ def _executor():
 # cooldown so a burst of meta prompts doesn't hammer a dead lane — during cooldown calls go straight
 # to the caged API. Provider-respecting on purpose: a claude-model prompt never silently runs on the
 # ChatGPT plan (or vice versa) — the recorded model must be the model that answered.
-_LANES = {"anthropic": ("claude-code", "subscription_exec"), "openai": ("codex", "codex_exec"),
-          "zai": ("zai-coding", "zai_exec"),                    # z.ai GLM Coding Plan — Anthropic-compatible flat-fee endpoint
-          "gemini": ("gemini", "antigravity_exec")}             # Google Antigravity CLI (`agy`) — Gemini plan lane
+from . import lane_registry
+_LANES = lane_registry.provider_lane_map()   # {provider: (lane, exec_module_name)} — DERIVED from the ONE lane
+#                                              registry (add a lane THERE, not here); the name is imported in _lane_for.
 from . import resource_state   # AXIS-1 of the resource_state migration: cooldowns now live in the unified store
 _sub_guard = threading.local()   # one-hop lane-substitution guard: while a substitute call is in flight (proactive OR
                                  # reactive), no nested substitution — a substitute failing does not chain to a third.

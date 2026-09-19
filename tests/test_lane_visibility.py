@@ -21,7 +21,7 @@ os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 os.environ["SPENDGUARD_CALLS"] = "1"                    # the rich call log is opt-in; the lane fact lives on its rows
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from spendguard import calls, lane_value, receipt, pricing, config                     # noqa: E402
+from spendguard import calls, lane_value, receipt, pricing, config, lane_catalog        # noqa: E402
 
 
 def ck(name, cond):
@@ -52,8 +52,8 @@ print("\n-- (B) lane_value stamps est-value for lanes with NO session miner (gem
 for ex, prov, model in (("zai-coding", "zai", "glm-4.6"), ("claude-code", "anthropic", "claude-3-5-sonnet")):
     calls.record_call(prov, model, "subscription", 0.0, in_tok=120_000, out_tok=20_000, executor=ex, project="demo-repo")
 
-fails += ck("ledger_valued_lanes = lanes with no session miner (derived, not hardcoded)",
-            lane_value.ledger_valued_lanes() == {"gemini", "zai-coding"})
+fails += ck("ledger_valued_lanes = every registered lane MINUS the session-mined ones (derived, not hardcoded)",
+            lane_value.ledger_valued_lanes() == set(lane_catalog.lanes()) - {"claude-code", "codex"})
 
 _orig_price = pricing.realtime_cost
 try:

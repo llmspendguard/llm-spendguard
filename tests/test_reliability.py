@@ -14,7 +14,7 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from spendguard import reliability, adapters, config, catalog, pricing, lanes           # noqa: E402
+from spendguard import reliability, adapters, config, catalog, pricing, lanes, lane_catalog   # noqa: E402
 
 fails = []
 
@@ -55,7 +55,8 @@ check("deepseek default ('deepseek-chat') absent → derived cheapest-served (de
 
 print("\n-- (b) plan enumerates every lane + every KEYED metered provider --")
 pl = reliability.plan()
-check("all 4 lanes are in the plan", {l for l, _m in pl["lanes"]} == {"claude-code", "codex", "zai-coding", "gemini"})
+check("every registered lane is in the plan (derived, not a hardcoded set)",
+      {l for l, _m in pl["lanes"]} == set(lane_catalog.lanes()))
 check("only the keyed metered providers (openai, deepseek), unkeyed excluded", {p for p, _m in pl["metered"]} == _KEYED)
 
 print("\n-- (a) ESTIMATE-FIRST: sweep(run=False) spends NOTHING --")

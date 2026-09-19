@@ -25,7 +25,7 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from spendguard import lanes                                                           # noqa: E402
+from spendguard import lanes, lane_registry                                            # noqa: E402
 
 fails = []
 
@@ -41,8 +41,10 @@ def ck(name, cond):
 _root = Path(os.environ["SPENDGUARD_HOME"])
 _token = _root / "gemini" / "antigravity-cli" / "antigravity-oauth-token"   # current agy layout
 _legacy = _root / "gemini" / "oauth_creds.json"                             # legacy layout
-lanes.GEMINI_OAUTH_TOKEN = _token
-lanes.GEMINI_CREDS = _legacy
+# Repoint the gemini lane's login artifacts (both agy layouts) in the ONE registry — the generic _lane_auth reads
+# them. This pins the SAME dual-artifact + probe behavior the old _gemini_auth had, now via the shared auth path.
+lane_registry.lane_spec("gemini")["creds"] = (_token, _legacy)
+_gspec = lane_registry.lane_spec("gemini")
 
 
 def _reset():
@@ -58,23 +60,23 @@ print("-- (a) CURRENT agy layout: token present, legacy creds ABSENT → 'ok' (t
 _reset()
 _token.parent.mkdir(parents=True, exist_ok=True)
 _token.write_text("oauth-token-bytes")
-ck("agy's real token artifact is accepted as logged-in", lanes._gemini_auth() == "ok")
+ck("agy's real token artifact is accepted as logged-in", lanes._lane_auth(_gspec) == "ok")
 
 print("\n-- (b) a successful probe is definitive even with no artifact file --")
 _reset()
 lanes._record_probe("gemini", True)
-ck("a recorded successful probe → 'ok' (matches _claude_auth)", lanes._gemini_auth() == "ok")
+ck("a recorded successful probe → 'ok' (matches _claude_auth)", lanes._lane_auth(_gspec) == "ok")
 
 print("\n-- (c) a FAILED probe does NOT downgrade a logged-in lane (quota != login failure) --")
 _reset()
 _token.parent.mkdir(parents=True, exist_ok=True)
 _token.write_text("oauth-token-bytes")
 lanes._record_probe("gemini", False)                    # e.g. 'Individual quota reached — resets in 97h'
-ck("quota-failed probe + present login artifact still reads 'ok'", lanes._gemini_auth() == "ok")
+ck("quota-failed probe + present login artifact still reads 'ok'", lanes._lane_auth(_gspec) == "ok")
 
 print("\n-- (d) genuinely absent login still reads 'missing' --")
 _reset()
-ck("no artifact and no ok probe → 'missing'", lanes._gemini_auth() == "missing")
+ck("no artifact and no ok probe → 'missing'", lanes._lane_auth(_gspec) == "missing")
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_gemini_lane_auth: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

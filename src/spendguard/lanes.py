@@ -15,20 +15,15 @@ import sys
 import time
 from pathlib import Path
 
-from . import config           # _record_probe writes the probe cache through config.update_json (atomic + backed up)
+from . import config, lane_registry   # config: probe cache via update_json; lane_registry: the ONE lane data table
 
-# Auth artifacts per lane (named constants; tests point these at temp paths).
-CLAUDE_CREDS = Path.home() / ".claude" / ".credentials.json"      # claude CLI's own login file
-CODEX_AUTH = Path.home() / ".codex" / "auth.json"                 # codex CLI login (verified live)
-GEMINI_OAUTH_TOKEN = Path.home() / ".gemini" / "antigravity-cli" / "antigravity-oauth-token"   # current agy layout
-GEMINI_CREDS = Path.home() / ".gemini" / "oauth_creds.json"       # legacy agy layout (older CLI versions)
-_CLAUDE_KEYCHAIN_SERVICE = "Claude Code-credentials"              # may be the desktop app's → 'unknown' only
-
+# Per-lane auth artifacts, keychain services, probe tiers and login steps ALL live in lane_registry now (one place).
+# A test isolates a lane's artifacts by repointing its row's `creds` (lane_registry.lane_spec(x)["creds"] = (tmp,)).
 _PROBE_PROMPT = "Reply with exactly: OK"
 # Probe with an EXPLICIT cheap tier: a probe with no --model runs on the CLI's default-model setting, which
 # can be stale (live 2026-07-16: a 404 on an old sonnet snapshot) — real lane calls always pass the advisor's
 # tier, so the probe must too or it reports a failure the lane would never hit.
-_PROBE_TIER = {"claude-code": "haiku", "codex": None, "gemini": None, "zai-coding": None}   # None → each lane's own default model
+_PROBE_TIER = lane_registry.probe_tiers()   # {lane: probe tier} — derived from the ONE registry (None = lane default)
 _QUOTA_WARN_PCT = 25          # DISPLAY-ONLY: the headroom bar flags yellow below this. NOT a routing threshold (that is
 #                               config-driven + evidence-based, Phase 2) — this only colours a human-facing gauge.
 
@@ -60,16 +55,31 @@ def _record_probe(lane, ok):
         reason="lane-probe")
 
 
-def _claude_auth():
-    ok, day = _last_probe_ok("claude-code")
+def _exec_mod(spec):
+    """The `<name>_exec` module that drives a lane, imported lazily by its registry `exec` name (never at load)."""
+    import importlib
+    return importlib.import_module("." + spec["exec"], __package__)
+
+
+def _lane_auth(spec):
+    """Readiness of ONE lane, DATA-DRIVEN from its lane_registry row — the single auth path every lane shares,
+    replacing the five per-lane auth fns that drifted:
+      • KEY lane → 'ok' iff its plan key resolves (the exec's available()), else 'missing';
+      • CLI lane → 'ok' iff a live probe succeeded (definitive) OR any login artifact in the row exists; else a bare
+                   macOS keychain item (ONLY if the row names one) is INCONCLUSIVE → 'unknown' (it may be the desktop
+                   app's, not the CLI's login — the honesty rule from 2026-07-16); else 'missing'.
+    A new lane needs no auth code — just its row (kind + creds + optional keychain)."""
+    if spec["kind"] == "key":
+        return "ok" if _exec_mod(spec).available() else "missing"
+    ok, _ = _last_probe_ok(spec["lane"])
     if ok:
         return "ok"                       # a successful live probe is the definitive evidence
-    if CLAUDE_CREDS.exists():
-        return "ok"
-    if sys.platform == "darwin":
+    if any(c.exists() for c in (spec.get("creds") or ())):
+        return "ok"                       # the CLI's own login artifact proves the lane
+    ks = spec.get("keychain")
+    if ks and sys.platform == "darwin":
         try:
-            r = subprocess.run(["security", "find-generic-password", "-s", _CLAUDE_KEYCHAIN_SERVICE],
-                               capture_output=True, timeout=5)
+            r = subprocess.run(["security", "find-generic-password", "-s", ks], capture_output=True, timeout=5)
             if r.returncode == 0:
                 return "unknown"          # an item exists but may be the desktop app's, not the CLI's login
         except Exception:
@@ -77,63 +87,26 @@ def _claude_auth():
     return "missing"
 
 
-def _codex_auth():
-    return "ok" if CODEX_AUTH.exists() else "missing"
-
-
-def _gemini_auth():
-    """'ok' when agy is logged in. A successful probe is definitive (matches _claude_auth); otherwise the OAuth
-    token file proves login. Its path DRIFTS across agy versions (now antigravity-cli/antigravity-oauth-token,
-    older layouts oauth_creds.json), so accept ANY known artifact — pinning one that a new agy renamed is exactly
-    why this reported a logged-in, working lane as '🔴 inactive — install the CLI'. Quota exhaustion is a separate
-    runtime state (agy prints a reset window; `--probe` shows it), NOT a login failure — and gemini work still
-    flows via the metered API either way, so a capped lane is never 'unavailable'."""
-    ok, _ = _last_probe_ok("gemini")
-    if ok:
-        return "ok"
-    return "ok" if (GEMINI_OAUTH_TOKEN.exists() or GEMINI_CREDS.exists()) else "missing"
-
-
-def _zai_auth():
-    """The z.ai GLM Coding Plan lane is KEY-based, not CLI-based: 'ok' iff a plan-capable key resolves. This is
-    optimistic like the CLI lanes' artifact check (a key with no active plan gets an auth error at call time and
-    the lane falls back to the metered API); `spendguard lanes --probe` is the definitive check."""
-    from . import zai_exec
-    return "ok" if zai_exec._key() else "missing"
-
-
 def lanes_status():
-    """One dict per lane: is it enabled by advisor.executor, is its CLI on this host, does a login artifact
-    exist, and the exact activation step if not. Free — no network, no model calls."""
-    from . import subscription_exec, codex_exec, antigravity_exec, zai_exec
+    """One dict per lane: is it enabled by advisor.executor, is its CLI on this host, does a login artifact exist,
+    and the exact activation step if not. DATA-DRIVEN — one row per lane in lane_registry, NO per-lane code here
+    (add a lane's row and it appears). Free — no network, no model calls. No static login URL exists to print: each
+    CLI generates a ONE-TIME OAuth link when you start its login; the row's `login` is the link-generator step."""
     from .adapters import _executor
     ex = _executor()
     out = []
-    for lane, provider, mod, auth_fn, login in (
-        # No static login URL exists to print: each CLI generates a ONE-TIME OAuth link when you start its
-        # login (and prints it if the browser doesn't open) — the command below is the link-generator.
-        ("claude-code", "anthropic", subscription_exec, _claude_auth,
-         "run `claude` then `/login`, sign in with your SUBSCRIPTION account — and if it offers to use a "
-         "detected ANTHROPIC_API_KEY, choose No: Yes meters every call to the API instead of your plan"),
-        ("codex", "openai", codex_exec, _codex_auth,
-         "run `codex` and sign in with your ChatGPT account (not an API key)"),
-        ("gemini", "google", antigravity_exec, _gemini_auth,
-         "install the Antigravity CLI (`curl -fsSL https://antigravity.google/cli/install.sh | bash`), then run "
-         "`agy` and sign in with your Google account — decline any API-key option (a key meters every call to the "
-         "Gemini API instead of your Antigravity plan)"),
-        ("zai-coding", "zai", zai_exec, _zai_auth,
-         "add a z.ai GLM Coding Plan key to keys.env — `ZAI_CODING_API_KEY` (or your account's `ZAI_API_KEY` on "
-         "an active plan); this lane is a key + endpoint, not a CLI login"),
-    ):
-        # A lane is CLI-based (exposes _bin → a host binary to find + a login artifact) or KEY-based (z.ai coding
-        # plan: an HTTP endpoint + key, no binary). The module DECLARES which by whether it defines _bin; readiness
-        # for both is auth_fn (login artifact / probe for CLI lanes, key presence for key lanes).
+    for lane in lane_registry.all_lanes():
+        spec = lane_registry.lane_spec(lane)
+        # A lane is CLI-based (its exec exposes _bin → a host binary to find + a login artifact) or KEY-based (an
+        # HTTP endpoint + key, no binary). The module DECLARES which by whether it defines _bin; readiness for both
+        # is _lane_auth (login artifact / probe for CLI lanes, key presence for key lanes).
+        mod = _exec_mod(spec)
         has_bin = hasattr(mod, "_bin")
         cli = mod._bin() if has_bin else None
         try:
             # CLI lane: auth is only meaningful once the binary exists (no CLI ⇒ nothing to be logged into).
             # Key lane: auth IS the key check, so always run it.
-            auth = auth_fn() if (cli or not has_bin) else "missing"
+            auth = _lane_auth(spec) if (cli or not has_bin) else "missing"
         except Exception as e:
             # One lane's auth probe (a login-artifact read / keychain lookup) must not abort the status of the
             # OTHER lanes. Report this lane's auth as an error and keep going — the activation step still shows.
@@ -142,17 +115,17 @@ def lanes_status():
         if has_bin and not cli:
             steps.append(f"install the {lane} CLI (then `spendguard lanes` to re-check)")
         if auth != "ok":
-            steps.append(login)
-        out.append(dict(lane=lane, provider=provider, enabled=ex in ("pool", lane), cli=cli, auth=auth,
+            steps.append(spec["login"])
+        out.append(dict(lane=lane, provider=spec["provider"], enabled=ex in ("pool", lane), cli=cli, auth=auth,
                         activate=("; ".join(steps) or None)))
     return {"executor": ex, "lanes": out}
 
 
 def _lane_mods():
-    """lane name → its executor module. The SINGLE source for 'which module runs and reports this lane', shared by
-    probe() (run_prompt) and lane_headroom() (usage()), so the mapping is defined once, not copied per consumer."""
-    from . import subscription_exec, codex_exec, antigravity_exec, zai_exec
-    return {"claude-code": subscription_exec, "codex": codex_exec, "gemini": antigravity_exec, "zai-coding": zai_exec}
+    """lane name → its executor module, DERIVED from the ONE lane registry (add a lane's row and it appears here).
+    The single source for 'which module runs and reports this lane', shared by probe() (run_prompt) and
+    lane_headroom() (usage())."""
+    return {ln: _exec_mod(lane_registry.lane_spec(ln)) for ln in lane_registry.all_lanes()}
 
 
 def probe(timeout_s=None):

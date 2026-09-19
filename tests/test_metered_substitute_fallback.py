@@ -28,13 +28,14 @@ def ck(name, cond):
 
 PRIMARY = "anthropic:claude-opus-4-8"          # the model the caller asked for; its lane (claude-code) just failed
 CHEAP   = "deepseek:deepseek-chat"             # metered (deepseek has no subscription lane), cheapest
-DEAR    = "moonshot:kimi-k3"                   # metered (moonshot has no lane), dearer
+DEAR    = "qwen:qwen-max"                      # metered (qwen has no lane), dearer — moonshot now has the Kimi lane
 LANE    = "gemini:gemini-3-flash"              # a FREE substitute LANE (gemini maps to a lane)
 
-# sanity: our fixtures match the lane/provider facts route_decision reads
-ck("deepseek/moonshot are LANE-less callable providers (so they count as metered)",
-   not adapters._LANES.get("deepseek") and not adapters._LANES.get("moonshot")
-   and "deepseek" in adapters.PROVIDERS and "moonshot" in adapters.PROVIDERS)
+# sanity: our fixtures match the lane/provider facts route_decision reads — and if a future lane ever covers one of
+# these providers this assertion fails LOUD (pick another still-lane-less metered provider), never silently wrong.
+ck("deepseek/qwen are LANE-less callable providers (so they count as metered)",
+   not adapters._LANES.get("deepseek") and not adapters._LANES.get("qwen")
+   and "deepseek" in adapters.PROVIDERS and "qwen" in adapters.PROVIDERS)
 ck("gemini DOES map to a subscription lane (so it is preferred as free, never metered)",
    bool(adapters._LANES.get("gemini")))
 
@@ -60,7 +61,7 @@ ck("free substitute LANE is chosen over cheaper metered targets", sub == LANE)
 # ── 2. NO FREE LANE → cheapest AFFORDABLE metered substitute (reactive) ──
 LB.confirm_substitute("metered-only", CHEAP); LB.confirm_substitute("metered-only", DEAR)
 sub2, why2 = LB.route_decision("metered-only", PRIMARY, reactive=True)
-ck("no substitute lane → cheapest metered substitute (deepseek < moonshot)", sub2 == CHEAP)
+ck("no substitute lane → cheapest metered substitute (deepseek < qwen)", sub2 == CHEAP)
 ck("...and the reason names it a metered substitute after the failed lane", "metered substitute" in (why2 or ""))
 
 # ── 3. PROACTIVE never pays to fill idle plans ──
@@ -76,10 +77,10 @@ adapters._lane_cooling = lambda ln: False
 # ── 5. cheapest metered EXHAUSTED (sunk pool can't cover it) → next affordable ──
 _AVAIL["deepseek"] = {"kind": "sunk_pool", "available": 0.0}    # deepseek prepay can't cover the call
 sub5, why5 = LB.route_decision("metered-only", PRIMARY, reactive=True)
-ck("exhausted cheapest is SKIPPED, next affordable metered chosen (moonshot)", sub5 == DEAR)
+ck("exhausted cheapest is SKIPPED, next affordable metered chosen (qwen)", sub5 == DEAR)
 
 # ── 6. ALL metered exhausted → None (caller then pays full price on the ORIGINAL model, unchanged) ──
-_AVAIL["moonshot"] = {"kind": "sunk_pool", "available": 0.0}
+_AVAIL["qwen"] = {"kind": "sunk_pool", "available": 0.0}
 sub6, _ = LB.route_decision("metered-only", PRIMARY, reactive=True)
 ck("every metered substitute exhausted → None (original model's API is the final fallback)", sub6 is None)
 _AVAIL.clear()

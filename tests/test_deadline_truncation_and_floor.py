@@ -123,7 +123,7 @@ try:
     b2, _ = vc.time_budget("anthropic", "claude-opus-4-8", default_s=30)
     ck("a tight caller default is floored up to the lane minimum for a lane vendor",
        b2 >= adapters.LANE_MIN_TIMEOUT_S, str(b2))
-    b3, _ = vc.time_budget("moonshot", "kimi-k3", default_s=30)          # moonshot has NO lane
+    b3, _ = vc.time_budget("deepseek", "deepseek-chat", default_s=30)    # deepseek has NO lane (moonshot now does)
     ck("a non-lane vendor is NOT floored — its metered budget stands", b3 == 30.0, str(b3))
 finally:
     if _prev is None:

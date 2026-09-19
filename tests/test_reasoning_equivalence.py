@@ -173,8 +173,9 @@ fails += report_check("lane→metered→lane round-trips for agy/Gemini (gemini-
 _oa = RE.resolve_lane("openai", "gpt-5.6-luna")
 fails += report_check("metered→lane for openai → codex lane, same use-name",
                       bool(_oa) and _oa["lane"] == "codex" and _oa["lane_use_name"] == "gpt-5.6-luna")
-# a metered-only vendor (no subscription lane) has no lane form → None (never a wrong guess)
-fails += report_check("a metered-only provider (no lane) → None", RE.resolve_lane("moonshot", "kimi-k3") is None)
+# a metered-only vendor (no subscription lane) has no lane form → None (never a wrong guess). deepseek is used
+# because it stays LANE-LESS (moonshot now has the Kimi Code lane) — a metered provider with no plan lane.
+fails += report_check("a metered-only provider (no lane) → None", RE.resolve_lane("deepseek", "deepseek-chat") is None)
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_reasoning_equivalence: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

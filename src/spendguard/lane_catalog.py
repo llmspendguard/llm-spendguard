@@ -14,21 +14,11 @@ lane's CLI/API, grounded in the lane execs (codex none…max, Gemini `-low/-high
 Add a lane in `adapters._LANES` + a `lane_models` entry and it shows up here automatically; a new reasoning style
 is one edit to REASONING_QUIRK.
 """
-from . import adapters, config
+from . import adapters, config, lane_registry
 
-# HOW EACH LANE EXPRESSES REASONING EFFORT — the per-lane protocol quirk (NOT user config). Grounded in the execs:
-#   • gemini (antigravity_exec): effort rides the MODEL SUFFIX  `<base>-<level>`  — the use-name carries it.
-#   • codex  (codex_exec._codex_effort): a `model_reasoning_effort` param on its OWN scale — 'minimal' is rejected.
-#   • claude-code (subscription_exec): the Claude CLI has no one-shot effort flag (thinking budget is separate).
-#   • zai (zai_exec): none applied on this lane.
-# `style="suffix"` is the only one that changes the USE-NAME; the others pass effort out-of-band, so the use-name is
-# just the base. `default=None` means "leave the lane's own default".
-REASONING_QUIRK = {
-    "gemini":      {"style": "suffix",   "levels": ("low", "medium", "high"),                 "default": "medium"},
-    "codex":       {"style": "param",    "levels": ("none", "low", "medium", "high", "xhigh", "max"), "default": None},
-    "claude-code": {"style": "thinking", "levels": (),                                        "default": None},
-    "zai-coding":  {"style": "none",     "levels": (),                                        "default": None},
-}
+# HOW EACH LANE EXPRESSES REASONING EFFORT is a field on each lane's row in lane_registry (one place per lane):
+# `style="suffix"` (gemini) rides the USE-NAME `<base>-<level>`; the others (`param` codex, `thinking` claude-code,
+# `none` zai/kimi) pass effort out-of-band, so the use-name is just the base. `default=None` = "leave the lane's own".
 _DEFAULT_QUIRK = {"style": "none", "levels": (), "default": None}
 
 
@@ -47,7 +37,9 @@ def lane_provider(lane):
 
 
 def quirk(lane):
-    return REASONING_QUIRK.get(lane, _DEFAULT_QUIRK)
+    """A lane's reasoning-effort protocol (style / levels / default) — from the ONE lane registry (each lane's row
+    carries its quirk), so a new lane's reasoning style is defined WITH the lane, not in a second table here."""
+    return lane_registry.reasoning_quirk(lane) or dict(_DEFAULT_QUIRK)
 
 
 def parse_use_name(use_name, lane):

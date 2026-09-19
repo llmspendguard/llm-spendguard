@@ -29,7 +29,7 @@ SRC = os.path.abspath(os.path.join(_HERE, "..", "..", "src", "spendguard"))
 # Complete evidence for the judgement: every module that DEFINES one of the three names, plus lanes.py — the
 # caller that dispatches `mod._bin()` / `mod.run_prompt(...)` polymorphically across the lane modules.
 CONTEXT = [os.path.join(SRC, m) for m in
-           ("subscription_exec.py", "codex_exec.py", "zai_exec.py", "antigravity_exec.py", "lanes.py")]
+           ("subscription_exec.py", "codex_exec.py", "zai_exec.py", "antigravity_exec.py", "kimi_exec.py", "lanes.py")]
 NAMES = ["_bin", "available", "run_prompt"]
 
 VERDICT_SCHEMA = {
