@@ -2101,6 +2101,42 @@ def require(cap: "float | None" = None) -> None:
             "a gated venv, or `pip install llm-spendguard` and `import spendguard` before the SDK is used.")
 
 
+def _render_key_status_lines(statuses, down):
+    """The doctor's per-provider KEY + LIVENESS lines, as strings — PURE, so it is testable without running the CLI
+    (the render loop used to inline this, mixing liveness inference into printing). `statuses` =
+    config.provider_key_status(); `down` = {provider: {reason,fix,...}} of METERED providers the last health check
+    found UNREACHABLE (reliability.health_reds, kind=metered). A resolved key whose provider is DOWN renders 🟡
+    'resolved but NOT verified' — 'resolved' (the key STRING is present) is NOT 'valid' (it authenticates), the split
+    that let a rotated, 401ing key read all-green. Any OTHER down metered provider (gemini / zai / kimi …) gets its
+    own liveness line, so a down provider is visible per-provider, not only in the footer."""
+    from . import config
+    lines, shown = [], set()
+    for st in statuses:
+        prov = st["prov"]
+        shown.add(prov)
+        if st["state"] == "missing":
+            lines.append(f"  key {prov:<9}: 🔴 MISSING — reconcile/report will see NO {prov} spend (add it to {config.KEYS_ENV})")
+        elif st["state"] == "shadowed":
+            lines.append(f"  key {prov:<9}: 🟡 resolved …{st['resolved4']} — SHADOWED: an external env/.env value overrides "
+                         f"keys.env (…{st['declared4']}). A stale shadow is how a ROTATED key keeps 401ing. Remove it, or "
+                         f"declare a per-repo key as {st['name']}__<profile> in keys.env (+ key_profile in .spendguard.json).")
+        elif prov in down:                             # RESOLVED (string present) is not VALID (authenticates)
+            d = down[prov]
+            r = str(d.get("reason") or "").strip()
+            note = (f": {r[:90]}" if r else "") + (("; " + d["fix"]) if d.get("fix") else "")
+            lines.append(f"  key {prov:<9}: 🟡 resolved …{st['resolved4']} (from {st['source']}) but NOT verified — last "
+                         f"health check found {prov} UNREACHABLE{note}. `spendguard health --run` re-checks it.")
+        else:
+            lines.append(f"  key {prov:<9}: 🟢 resolved …{st['resolved4']} (from {st['source']})")
+    for prov, d in down.items():                       # gemini / zai / kimi etc. the cache saw DOWN, surfaced per-provider
+        if prov in shown:
+            continue
+        r = str(d.get("reason") or "").strip()
+        note = (f": {r[:90]}" if r else "") + (("; " + d["fix"]) if d.get("fix") else "")
+        lines.append(f"  key {prov:<9}: 🟡 metered provider last seen UNREACHABLE{note}. `spendguard health --run` re-checks it.")
+    return lines
+
+
 def _cli(cmd="status", live=False):
     if cmd == "off":
         open(FLAG, "w").write("disabled\n")
@@ -2191,16 +2227,13 @@ def _cli(cmd="status", live=False):
         # silently lost the keys, so reconcile/report saw no provider data). Show found + where from.
         try:
             from . import config
-            for _st in config.provider_key_status():       # ALL determination is in config (validated); this only renders
-                _prov = _st["prov"]
-                if _st["state"] == "missing":
-                    print(f"  key {_prov:<9}: 🔴 MISSING — reconcile/report will see NO {_prov} spend (add it to {config.KEYS_ENV})")
-                elif _st["state"] == "shadowed":
-                    print(f"  key {_prov:<9}: 🟡 resolved …{_st['resolved4']} — SHADOWED: an external env/.env value overrides "
-                          f"keys.env (…{_st['declared4']}). A stale shadow is how a ROTATED key keeps 401ing. Remove it, or "
-                          f"declare a per-repo key as {_st['name']}__<profile> in keys.env (+ key_profile in .spendguard.json).")
-                else:
-                    print(f"  key {_prov:<9}: 🟢 resolved …{_st['resolved4']} (from {_st['source']})")
+            try:                                           # CACHED liveness ($0): a resolved key that last FAILED to reach
+                from . import reliability as _rel          # its provider is NOT 'valid' — cross-reference so the key line
+                _down = {d["resource"]: d for d in _rel.health_reds() if d.get("kind") == "metered"}  # never reads green
+            except Exception:
+                _down = {}
+            for _line in _render_key_status_lines(config.provider_key_status(), _down):
+                print(_line)
         except Exception:
             pass
         if cmd == "doctor":

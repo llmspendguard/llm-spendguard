@@ -342,18 +342,20 @@ def _persist_health(sweep_result, acts=None):
 
 
 def health_reds(since_hours=48):
-    """The resources recorded UNREACHABLE by the last check (fresh within since_hours) → [{resource,kind,fix,command}].
-    $0 — a cached read, safe to call from the receipt on every turn. [] when all healthy or no recent check."""
+    """The resources recorded UNREACHABLE by the last check (fresh within since_hours) →
+    [{resource,kind,reason,fix,command}]. `reason` is the raw error class (e.g. AuthenticationError vs 'at capacity')
+    so a caller can tell a STALE KEY apart from a transient outage. $0 — a cached read, safe to call from the receipt
+    on every turn. [] when all healthy or no recent check."""
     import datetime
     from . import budget
     cutoff = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=since_hours)).isoformat(timespec="seconds")
     try:
         db = _health_db()
         with budget._lock:
-            rows = db.execute("SELECT resource,kind,fix,command,source FROM lane_health WHERE reachable=0 AND ts>=?",
+            rows = db.execute("SELECT resource,kind,reason,fix,command,source FROM lane_health WHERE reachable=0 AND ts>=?",
                               (cutoff,)).fetchall()
         out, recovered = [], []
-        for resource, kind, fix, command, source in rows:
+        for resource, kind, reason, fix, command, source in rows:
             if source == "event" and kind == "lane":     # an EVENT down is stale once the lane stops cooling: it
                 try:                                      # RECOVERED. Resolve it (below) rather than silently drop it.
                     from . import adapters
@@ -362,7 +364,7 @@ def health_reds(since_hours=48):
                         continue
                 except Exception:
                     pass
-            out.append({"resource": resource, "kind": kind, "fix": fix, "command": command})
+            out.append({"resource": resource, "kind": kind, "reason": reason, "fix": fix, "command": command})
         if recovered:                                    # SELF-HEAL, traced (a DB write, not a silent skip): a recovered
             with budget._lock:                            # event-lane is marked reachable so it clears everywhere at once
                 db.executemany("UPDATE lane_health SET reachable=1 WHERE resource=? AND source='event'",
