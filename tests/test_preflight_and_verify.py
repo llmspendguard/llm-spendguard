@@ -90,5 +90,28 @@ finally:
     lc.audit_lane_fallback = _savers["fb"]; lc.lanes = _savers["lanes"]; lc.lane_provider = _savers["prov"]
     le.economics = _savers["econ"]; verify._key_present = _savers["kp"]
 
+# ── 4. configured_specs FLATTENS a nested {cheap,strong} lane_models map (was: a raw dict went into a set →
+#       `unhashable type: 'dict'` crashed `spendguard verify`). Both shapes (per-tier dict + bare id) coexist. ──────
+from spendguard import config as _cfg
+_orig_cfg = _cfg._cfg_get
+_fake_advisor = {"model": "m-top", "judge_model": None,
+                 "lane_models": {"claude-code": {"cheap": "m-cc-cheap", "strong": "m-cc-strong"},  # per-tier dict
+                                 "zai-coding": "m-zai"},                                            # bare id
+                 "tiers": {"cheap": ["m-cc-cheap", "m-tier"]}}                                      # dup + a new id
+def _fake_cfg(section, key, default=None):
+    if section == "advisor" and key in _fake_advisor:
+        return _fake_advisor[key]
+    return _orig_cfg(section, key, default)
+_cfg._cfg_get = _fake_cfg
+try:
+    specs = mp.configured_specs()                              # MUST NOT raise on the nested dict
+    ck("configured_specs flattens a nested {cheap,strong} lane_models dict (no unhashable crash)",
+       "m-cc-cheap" in specs and "m-cc-strong" in specs)
+    ck("configured_specs still accepts a BARE lane-model id", "m-zai" in specs)
+    ck("configured_specs dedupes across sources (a repeated id appears once)", specs.count("m-cc-cheap") == 1)
+    ck("configured_specs still gathers advisor.model + tier ids", "m-top" in specs and "m-tier" in specs)
+finally:
+    _cfg._cfg_get = _orig_cfg
+
 print(("\n[OK] " if not fails else "\n[FAIL] ") + "preflight_and_verify: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)

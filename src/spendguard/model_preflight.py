@@ -121,8 +121,11 @@ def configured_specs():
             specs.append(m)
     _add(config._cfg_get("advisor", "model", None))
     _add(config._cfg_get("advisor", "judge_model", None))
-    for _lane, m in (config._cfg_get("advisor", "lane_models", {}) or {}).items():
-        _add(m)
+    for _lane, mv in (config._cfg_get("advisor", "lane_models", {}) or {}).items():
+        # a lane's models are EITHER a bare id or a per-tier {cheap, strong} map — flatten
+        # to ids (a raw dict is unhashable and crashed the `seen` set: `spendguard verify`).
+        for m in (mv.values() if isinstance(mv, dict) else [mv]):
+            _add(m)
     tiers = config._cfg_get("advisor", "tiers", None) or {}
     if isinstance(tiers, dict):
         for _g, models in tiers.items():
