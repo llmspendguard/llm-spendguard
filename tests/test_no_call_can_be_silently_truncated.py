@@ -20,8 +20,19 @@ TWO LAYERS, because the defect came back at a different layer each time:
 """
 import ast
 import json
+import os
 import pathlib
 import sys
+import tempfile
+
+# ISOLATE the home BEFORE importing spendguard: the BEHAVIOUR checks call the named model expecting ITS budget/clamp,
+# but _call_guarded's proactive lane-balance reads confirmed-substitutes + lane state from ~/.spendguard and would
+# SWAP the model (measured: claude-haiku-4-5 → codex/gpt-5.6-sol when shared bandit state favours codex), breaking
+# every model-specific budget assertion. A fresh home has no confirmed substitutes, so the named model runs. (The
+# spendguard test-isolation gotcha — a suite that reads real state is non-deterministic.)
+os.environ.setdefault("SPENDGUARD_HOME", tempfile.mkdtemp(prefix="spendguard-notrunc-"))
+os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
+os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 

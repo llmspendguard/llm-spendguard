@@ -186,11 +186,19 @@ def reasons_by_default(model):
 
     Used by adapters._call_guarded to FLOOR a reasoning model's output budget (a ceiling is billed on ACTUAL tokens,
     so over-provisioning costs nothing while under-provisioning destroys the call). See adapters.TOKEN_FLOOR."""
-    p = profile(model)
-    fl = p.get("reasoning")
-    if fl and fl != "?":
-        return True                                  # a mandatory reasoning floor ⇒ it always reasons
-    return bool(p.get("_facts", {}).get("reasoning"))  # a measured reasoning fact (kimi-k3, glm) ⇒ it reasons
+    # A model's reasoning nature is the SAME whether the id is bare (kimi-k3) or provider-qualified
+    # (moonshot:kimi-k3), but family rules + measured facts are keyed by the BARE id — so a prefixed id must fall
+    # back to its bare form, else a reasoning model called as 'provider:model' never gets the output FLOOR and
+    # TRUNCATES (measured: moonshot:kimi-k3 burned $7.10 in cut-off calls while bare kimi-k3 was correctly floored).
+    cands = [model]
+    if isinstance(model, str) and ":" in model:
+        cands.append(model.split(":", 1)[-1])
+    for mid in cands:
+        p = profile(mid)
+        fl = p.get("reasoning")
+        if (fl and fl != "?") or p.get("_facts", {}).get("reasoning"):   # a mandatory floor OR a measured fact ⇒ reasons
+            return True
+    return False
 
 
 def mark_ineffective(model, intent, reason, confidence=0.85):
