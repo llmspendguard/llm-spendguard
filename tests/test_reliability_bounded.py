@@ -65,13 +65,17 @@ _seen_call = {}
 
 def _fake_call(model, prompt, **kw):
     _seen_call.update(kw)
-    return {"error": None, "cost": 0.01, "executor": "api"}
+    # mirror adapters.call's real contract: an api-served probe carries served_by_metered_api=True (set at
+    # adapters.call L697 from executor='api'). sweep now VERIFIES the raw key on that field, so a stub that omits
+    # it would read as key-unverified — the stub must model the same shape the real path returns.
+    return {"error": None, "cost": 0.01, "executor": "api", "served_by_metered_api": True}
 
 
 adapters.call = _fake_call
 s = reliability.sweep(run=True, timeout_s=9)
 ck("sweep bounds the metered ping with timeout_s", _seen_call.get("timeout_s") == 9)
-ck("sweep reports the metered provider reachable, with latency", s["metered"]["openai"]["reachable"] is True and "latency" in s["metered"]["openai"])
+ck("sweep forces metered_only=True (the raw key, never a lane)", _seen_call.get("metered_only") is True)
+ck("sweep VERIFIES the raw key (api-served) reachable, with latency", s["metered"]["openai"]["reachable"] is True and "latency" in s["metered"]["openai"])
 
 # ── run=False is a $0 estimate (no probe) ──
 _seen_call.clear()

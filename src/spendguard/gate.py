@@ -2104,11 +2104,13 @@ def require(cap: "float | None" = None) -> None:
 def _render_key_status_lines(statuses, down):
     """The doctor's per-provider KEY + LIVENESS lines, as strings — PURE, so it is testable without running the CLI
     (the render loop used to inline this, mixing liveness inference into printing). `statuses` =
-    config.provider_key_status(); `down` = {provider: {reason,fix,...}} of METERED providers the last health check
-    found UNREACHABLE (reliability.health_reds, kind=metered). A resolved key whose provider is DOWN renders 🟡
-    'resolved but NOT verified' — 'resolved' (the key STRING is present) is NOT 'valid' (it authenticates), the split
-    that let a rotated, 401ing key read all-green. Any OTHER down metered provider (gemini / zai / kimi …) gets its
-    own liveness line, so a down provider is visible per-provider, not only in the footer."""
+    config.provider_key_status(); `down` = {provider: {reason,fix,...}} of METERED providers whose RAW KEY the last
+    health check could NOT verify (reliability.health_reds, kind=metered — sweep pings the raw metered API with
+    metered_only, so a 'down' metered row means the KEY failed to authenticate, never merely 'the provider was
+    unreachable via some lane route'). A resolved key that is in `down` renders 🟡 'resolved but NOT verified' —
+    'resolved' (the key STRING is present) is NOT 'valid' (it authenticates), the split that let a rotated, 401ing key
+    read all-green. Any OTHER down metered provider (gemini / zai / kimi …) gets its own liveness line, so a failed
+    key is visible per-provider, not only in the footer."""
     from . import config
     lines, shown = [], set()
     for st in statuses:
@@ -2124,8 +2126,8 @@ def _render_key_status_lines(statuses, down):
             d = down[prov]
             r = str(d.get("reason") or "").strip()
             note = (f": {r[:90]}" if r else "") + (("; " + d["fix"]) if d.get("fix") else "")
-            lines.append(f"  key {prov:<9}: 🟡 resolved …{st['resolved4']} (from {st['source']}) but NOT verified — last "
-                         f"health check found {prov} UNREACHABLE{note}. `spendguard health --run` re-checks it.")
+            lines.append(f"  key {prov:<9}: 🟡 resolved …{st['resolved4']} (from {st['source']}) but NOT verified — the "
+                         f"raw metered key FAILED the last health check{note}. `spendguard health --run` re-checks it.")
         else:
             lines.append(f"  key {prov:<9}: 🟢 resolved …{st['resolved4']} (from {st['source']})")
     for prov, d in down.items():                       # gemini / zai / kimi etc. the cache saw DOWN, surfaced per-provider
@@ -2133,7 +2135,7 @@ def _render_key_status_lines(statuses, down):
             continue
         r = str(d.get("reason") or "").strip()
         note = (f": {r[:90]}" if r else "") + (("; " + d["fix"]) if d.get("fix") else "")
-        lines.append(f"  key {prov:<9}: 🟡 metered provider last seen UNREACHABLE{note}. `spendguard health --run` re-checks it.")
+        lines.append(f"  key {prov:<9}: 🟡 raw metered key NOT verified by the last health check{note}. `spendguard health --run` re-checks it.")
     return lines
 
 

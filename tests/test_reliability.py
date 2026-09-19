@@ -40,7 +40,9 @@ _calls = {"n": 0}
 
 def _stub_call(model, prompt, **kw):
     _calls["n"] += 1
-    return {"text": "ok", "error": None, "cost": 0.00001, "executor": "api"}
+    # mirror adapters.call's contract for an api-served call: served_by_metered_api=True (set at adapters.call L697
+    # from executor='api'). sweep now VERIFIES the raw metered key on this field, so the stub must carry it.
+    return {"text": "ok", "error": None, "cost": 0.00001, "executor": "api", "served_by_metered_api": True}
 
 
 adapters.call = _stub_call

@@ -33,8 +33,8 @@ _down = {"openai": {"resource": "openai", "kind": "metered", "reason": "Authenti
 lines = _render(_OK, _down)
 oai = next(ln for ln in lines if "openai" in ln)
 ant = next(ln for ln in lines if "anthropic" in ln)
-ck("a resolved-but-UNREACHABLE openai key is 🟡, never 🟢", "🟡" in oai and "🟢" not in oai)
-ck("... it says NOT verified / UNREACHABLE (resolved ≠ valid)", "UNREACHABLE" in oai and "NOT verified" in oai)
+ck("a resolved-but-key-FAILED openai key is 🟡, never 🟢", "🟡" in oai and "🟢" not in oai)
+ck("... it says NOT verified (resolved ≠ valid — the raw metered key failed)", "NOT verified" in oai)
 ck("... it carries the REASON (a stale key is distinguishable from a transient outage)", "AuthenticationError" in oai)
 ck("a reachable provider (not in the down cache) still reads 🟢", "🟢" in ant and "🟡" not in ant)
 
@@ -44,7 +44,7 @@ _down2 = {"gemini": {"resource": "gemini", "kind": "metered", "reason": "model n
           "kimi": {"resource": "kimi", "kind": "metered", "reason": "at capacity", "fix": "", "command": ""}}
 lines2 = _render(_OK, _down2)   # statuses cover only openai/anthropic; gemini/kimi are metered-only
 ck("a down gemini (no keys.env line) is surfaced per-provider, not only in the footer",
-   any("gemini" in ln and "🟡" in ln and "UNREACHABLE" in ln for ln in lines2))
+   any("gemini" in ln and "🟡" in ln and "NOT verified" in ln for ln in lines2))
 ck("a down kimi (metered, lane or not) is surfaced too", any("kimi" in ln and "🟡" in ln for ln in lines2))
 ck("openai/anthropic (healthy this run) stay 🟢 — down-only surfacing adds no noise",
    all("🟢" in ln for ln in lines2 if ("openai" in ln or "anthropic" in ln)))

@@ -92,7 +92,10 @@ _PROBE_OUT_TOKENS = 64          # a reachability ping only needs room for "ok" �
 
 def sweep(run=False, timeout_s=20):
     """The reachability matrix. run=False → estimate only ($0). run=True → probe every lane ($0) + every metered
-    provider (a tiny gated ping) → {resource: {reachable, executor, cost, reason, latency}}. Each probe is BOUNDED
+    provider (a tiny gated ping) → {resource: {reachable, executor, cost, reason, latency}}. For a LANE, `reachable`
+    is "the subscription CLI answered"; for a METERED provider it is stricter — "the RAW METERED KEY authenticated"
+    (the ping forces metered_only, so a provider whose key is stale reads NOT reachable even when its lane works, and
+    `reason` says which). That is the field metered_key_ok/health_reds/the doctor key line trust. Each probe is BOUNDED
     by `timeout_s`, so ONE hung endpoint fails in ~timeout_s instead of its full work-timeout (the agy lane's 300s
     was exactly that wedge). The lane probes run concurrently + persisted inside lanes.probe; the metered pings are a
     short sequential pass (a handful of providers, pennies total — cheap to re-run, so no checkpoint is warranted)."""
@@ -107,22 +110,34 @@ def sweep(run=False, timeout_s=20):
             continue                                     # a lane the executor did not enable is not a reachability row
         out["lanes"][r["lane"]] = {"reachable": bool(r.get("ok")), "cost": 0.0,
                                    "reason": r.get("error"), "latency": r.get("latency")}
-    for prov, mid in pl["metered"]:                      # a tiny metered call per provider, through the gate.
-        # A REACHABILITY ping reads only `error` (the reply is discarded), so it is a PROBE: _probe=True keeps it a
-        # single tiny shot — it is NOT floored to reasoning headroom and does NOT grow on an empty reply, so a heavy
-        # REASONING model (kimi-k3 at high effort) answers the probe in seconds instead of reasoning through a 32k
-        # budget. An empty-but-error-free reply still reads as reachable. timeout_s bounds a dead provider.
+    for prov, mid in pl["metered"]:                      # a tiny RAW-METERED-KEY call per provider, through the gate.
+        # METERED liveness must exercise the RAW METERED KEY, so force metered_only=True: a provider with a
+        # subscription lane (openai→codex, anthropic→claude-code, …) would otherwise route this ping through the
+        # LANE (executor='codex', $0), leaving a STALE raw key UN-exercised — and a metered_only consumer that
+        # preflights on this would then 401 on every call at runtime (observed 2026-09-18/19: the openai probe's
+        # executor flipped api→codex while the key stayed stale). _probe=True keeps it one tiny shot (not floored to
+        # reasoning headroom, does not grow on an empty reply); timeout_s bounds a dead provider.
         t0 = _t.time()
         r = adapters.call(f"{prov}:{mid}", "Reply with one word: ok.", sig="spendguard:reliability-sweep",
-                          max_tokens=_PROBE_OUT_TOKENS, timeout_s=timeout_s, _probe=True)
+                          max_tokens=_PROBE_OUT_TOKENS, timeout_s=timeout_s, _probe=True, metered_only=True)
         # A reachability probe answers "is the endpoint up + authed?". adapters' TYPED `truncated` flag means the
         # model produced MORE than the tiny probe cap — i.e. it ANSWERED (a verbose model overruns "ok") — so the
         # endpoint is REACHABLE. Reading that structured boolean is parsing a known field, not judging the reply.
         _err = r.get("error")
         _truncated = r.get("truncated") is True
-        out["metered"][prov] = {"model": mid, "reachable": (not _err) or _truncated, "cost": r.get("cost"),
-                                "executor": r.get("executor"), "latency": round(_t.time() - t0, 2),
-                                "reason": None if _truncated else (r.get("error_type") or _err)}
+        _executor = r.get("executor")
+        _reached = (not _err) or _truncated
+        # The RAW KEY is VERIFIED only if the metered API actually served the probe — never a lane. metered_only=True
+        # should guarantee that (served_by_metered_api), and the AND is the belt: a probe that somehow rode a lane
+        # does NOT verify the key. This is the exact bug this guards — a lane-routed success marking a stale key green.
+        _key_ok = _reached and bool(r.get("served_by_metered_api"))
+        _reason = None
+        if not _key_ok:
+            _reason = ("probe routed via lane %r — raw metered key NOT verified" % _executor
+                       if _reached and not r.get("served_by_metered_api")
+                       else (r.get("error_type") or _err))
+        out["metered"][prov] = {"model": mid, "reachable": _key_ok, "cost": r.get("cost"),
+                                "executor": _executor, "latency": round(_t.time() - t0, 2), "reason": _reason}
     return out
 
 
@@ -375,6 +390,27 @@ def health_reds(since_hours=48):
         return []                                        # a health read must NEVER break the receipt
 
 
+def metered_key_ok(provider, since_hours=48):
+    """Cached ($0) RAW-METERED-KEY liveness for a provider: True (a recent `health --run` verified the raw key by
+    reaching the METERED API itself — not a subscription lane), False (it failed — e.g. AuthenticationError on a
+    stale/rotated key), or None (no recent check → UNKNOWN; never assume valid). DISTINCT from 'reachable by some
+    route': sweep records a metered row's `reachable` as KEY-verified (reached AND served_by_metered_api), so a
+    lane-routed probe can never green-light a stale key. A metered_only consumer (e.g. honestreview's validate/refute
+    validators, which must ride the raw metered API for a concurrency-invariant verdict) preflights THIS before
+    spending on validators that would otherwise all 401 at runtime."""
+    import datetime
+    from . import budget
+    cutoff = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=since_hours)).isoformat(timespec="seconds")
+    try:
+        db = _health_db()
+        with budget._lock:
+            row = db.execute("SELECT reachable FROM lane_health WHERE resource=? AND kind='metered' AND ts>=? "
+                             "ORDER BY ts DESC LIMIT 1", (provider, cutoff)).fetchone()
+        return bool(row[0]) if row else None
+    except Exception:
+        return None                                        # a health read must NEVER break a caller (fail to UNKNOWN)
+
+
 def health_alert():
     """A ONE-LINE receipt alert when a lane/provider is down (from the last check), or None. Rides the receipt that
     already prints every turn, so 'which login do I fix' reaches every conversation without a new sweep. $0."""
@@ -423,15 +459,15 @@ def main(argv=None):
     for lane, d in sorted(res["lanes"].items()):
         print(f"    {lane:12} " + ("🟢 LIVE" if d["reachable"] else "🔴 " + str(d.get("reason"))[:60])
               + (f"  ({d.get('latency')}s)" if d.get("latency") else ""))
-    print("\n  METERED reachability:")
+    print("\n  METERED raw-key liveness (metered_only — the KEY authenticates, never a lane):")
     n_ok = 0
     for prov, d in sorted(res["metered"].items()):
         n_ok += 1 if d["reachable"] else 0
         print(f"    {prov:10} " + ("🟢" if d["reachable"] else "🔴") + f" {d['model']:26} "
               + (f"cost=${(d.get('cost') or 0):.6f} exec={d.get('executor')}" if d["reachable"]
                  else f"reason={str(d.get('reason'))[:50]}"))
-    print(f"\n  {sum(1 for d in res['lanes'].values() if d['reachable'])}/{len(res['lanes'])} lanes + "
-          f"{n_ok}/{len(res['metered'])} metered providers reachable.")
+    print(f"\n  {sum(1 for d in res['lanes'].values() if d['reachable'])}/{len(res['lanes'])} lanes reachable + "
+          f"{n_ok}/{len(res['metered'])} metered raw keys verified.")
     acts = None
     if "--remediate" in argv:                            # tell the user EXACTLY what to fix for each down resource
         acts = remediate(res)                            # agentic + cached — $0 when all healthy, only pays for NEW failures
