@@ -69,6 +69,8 @@ _GROUPS = [
         ("reliability", "sweep every lane ($0) + metered provider (--run) for reachability; --remediate = agentic per-lane FIX (which login/quota/API to fix), cached; --notify = macOS notification on any red"),
         ("preflight", "resolve model ids (served + priced; stale→fix) BEFORE a batch — catches a bad id for $0"),
         ("verify", "self-check every money path: model ids · failover map · keys · economics (--probe = live)"),
+        ("deploy", "run the full gate, then promote committed HEAD → green pointer (running MCP servers roll onto latest+best)"),
+        ("release", "what THIS process serves vs the green pointer — are the MCP servers on the latest? (--json)"),
         ("pricing", "print the canonical price table"),
         ("audit", "fail CI if any code hardcodes a disagreeing price"),
         ("token-caps", "list every hardcoded output-token cap; --judge rules on the unjudged ones"),
@@ -222,6 +224,49 @@ def _dispatch(argv=None):
     if cmd == "mcp":                                  # the model-advisor over MCP (stdio) — for any MCP client
         from . import mcp_server
         return mcp_server.cmd(rest)
+    if cmd == "deploy":
+        # Promote the current HEAD to the GREEN POINTER so already-running MCP servers roll onto the latest code —
+        # but ONLY when it is COMMITTED and the full gate passes, so "green" (blue/green) == "green" (suite + ruff
+        # + name gate). Running servers hand off at a safe point (between requests). --no-gate trusts a just-run
+        # gate; --allow-dirty promotes an uncommitted tree deliberately (discouraged — the pointer then names code
+        # no commit captures). This is the write path; `spendguard release` is the read-only status.
+        import pathlib as _pl
+        import subprocess as _sp
+        from . import release as _rel
+        r = list(rest)
+        _no_gate, _allow_dirty = ("--no-gate" in r), ("--allow-dirty" in r)
+        if _rel._tracked_dirty() and not _allow_dirty:
+            print("deploy: the working tree has uncommitted changes to tracked files — commit first (the green "
+                  "pointer must name committed code), or pass --allow-dirty deliberately.", file=sys.stderr)
+            return 2
+        gate_desc = "skipped (--no-gate)"
+        if not _no_gate:
+            suite = _pl.Path(__file__).resolve().parents[2] / "scripts" / "test" / "chunked_suite.py"
+            print(f"deploy: running the full gate ({suite.name}) — a few minutes; the pointer only advances if it passes…")
+            if _sp.run([sys.executable, str(suite)]).returncode != 0:
+                print("deploy: 🔴 the gate FAILED — NOT promoting. Fix the suite, then re-run `spendguard deploy`.",
+                      file=sys.stderr)
+                return 1
+            gate_desc = "chunked_suite green"
+        rec = _rel.promote_release(gate=gate_desc, allow_dirty=_allow_dirty)
+        print(f"deploy: 🟢 promoted {rec['short']} ({rec['describe']}) → green pointer  [{rec['gate']}]")
+        print("        already-running MCP servers serve it on their next request (they hand off between requests).")
+        return 0
+    if cmd == "release":                              # read-only: what THIS process serves vs the green pointer
+        import json as _json
+        from . import release as _rel
+        st = _rel.release_status()
+        if "--json" in rest:
+            print(_json.dumps(st, indent=2, default=str))
+            return 0
+        s, g = st.get("served") or {}, st.get("green") or {}
+        print(f"served : {s.get('describe') or s.get('short') or '(unknown — not a git checkout)'}"
+              + ("  [dirty: serving uncommitted edits]" if st.get("served_dirty") else ""))
+        print(f"green  : {(g.get('describe') or g.get('short')) if g else '(none promoted — run `spendguard deploy`)'}")
+        print(f"status : {'🔴 STALE' if st.get('stale') else ('🟢 up to date' if g else '⚪ no pointer yet')}")
+        print(f"         {st.get('note')}")
+        print(f"pointer: {st.get('pointer_path')}")
+        return 0
     if cmd == "bakeoff":                              # measure cost×quality for a slate on a sample (fills untried models)
         from . import bakeoff
         return bakeoff.main(rest)
@@ -689,8 +734,14 @@ def _dispatch(argv=None):
         print(help_text())
         return 0
     if cmd in ("--version", "-V", "version"):
-        from . import __version__
-        print(f"llm-spendguard {__version__}")
+        from . import __version__, release as _rel
+        _s = _rel.served_sha()
+        _tag = (f" ({_s['describe']})" + ("  [dirty]" if _s.get("dirty") else "")) if _s else ""
+        print(f"llm-spendguard {__version__}{_tag}")
+        if _rel.stale_vs_green():                      # this process is behind the deployed green commit
+            _g = _rel.green_pointer() or {}
+            print(f"  ⚠ STALE vs green pointer {_g.get('short')} — `spendguard deploy` promotes; "
+                  "MCP servers roll onto it on their next request. `spendguard release` for detail.")
         return 0
     import difflib
     near = difflib.get_close_matches(cmd, _all_commands(), n=3, cutoff=0.55)
