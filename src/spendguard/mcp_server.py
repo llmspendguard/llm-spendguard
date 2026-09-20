@@ -443,7 +443,21 @@ def _tool_savings(args):
             "decisions": ds.get("decisions"), "saved_by_intent": ds.get("by_intent")}
 
 
+def _tool_version(args):
+    """Which spendguard COMMIT this server process is running, the green pointer it should be on, and whether it
+    is STALE — the $0 signal behind 'always serve the latest with the best'. A git-SHA compare + a small file
+    read; a stale server hands off to a fresh process on its next request (auto-respawn)."""
+    from . import release
+    return release.release_status()
+
+
 _TOOLS = {
+    "spendguard_version": (
+        "Which spendguard COMMIT this MCP server is running, the green pointer it should be on, and whether it is "
+        "STALE (a newer gate-green commit was deployed). $0 — a git-SHA compare. If stale, the server hands off to "
+        "a fresh process on its next request, so the tools self-heal to the latest code (see `spendguard deploy`).",
+        {"type": "object", "properties": {}, "additionalProperties": False},
+        _tool_version),
     "spendguard_health": (
         "Live reachability of every $0 subscription LANE + every metered PROVIDER, PLUS the exact FIX for anything "
         "down (which login/quota/API to fix) — a fast, BOUNDED health check. Each probe is time-bounded (timeout_s) "
@@ -597,10 +611,13 @@ def handle(req):
     is_notification = "id" not in req
     if method == "initialize":
         import spendguard
+        from . import release as _rel
         client_ver = (req.get("params") or {}).get("protocolVersion")
+        _sv = _rel.served_sha() or {}
+        _ver = getattr(spendguard, "__version__", "0") + (f"+{_sv['short']}" if _sv.get("short") else "")
         return _ok(rid, {"protocolVersion": client_ver or PROTOCOL_VERSION,
                          "capabilities": {"tools": {}},
-                         "serverInfo": {"name": "spendguard", "version": getattr(spendguard, "__version__", "0")},
+                         "serverInfo": {"name": "spendguard", "version": _ver},
                          # `instructions` is the MCP-standard way a server tells the client how to use it — so the
                          # surface is self-documenting, not something a caller has to reverse-engineer.
                          "instructions": (
@@ -664,12 +681,33 @@ def handle(req):
     return _err(rid, -32601, f"method not found: {method}")
 
 
+def _auto_respawn_enabled():
+    """Should a STALE server exit between requests so the client respawns it on the latest gate-green code? Env
+    SPENDGUARD_MCP_AUTO_RESPAWN wins, else config advisor.mcp_auto_respawn. Default ON — this is the whole point
+    of 'always serve the latest with the best'. Turn it OFF to pin a process to its current version (e.g. to
+    reproduce a bug against a known commit)."""
+    import os
+    from . import config
+    v = os.getenv("SPENDGUARD_MCP_AUTO_RESPAWN")
+    if v is not None:
+        return v.strip().lower() not in ("0", "false", "no", "off")
+    return bool(config._cfg_get("advisor", "mcp_auto_respawn", True))
+
+
 def serve_stdio(inp=None, outp=None):
     """Read newline-delimited JSON-RPC from stdin, write responses to stdout — the MCP stdio transport. Blocking;
     ends on EOF. A malformed line gets a parse-error reply and the loop continues (one bad frame never kills the
-    server)."""
+    server).
+
+    DRAIN-AND-CUTOVER (auto-respawn): after each response is flushed — so we are BETWEEN requests with nothing in
+    flight — if a newer gate-green commit has been deployed AND a fresh process would actually serve it
+    (release.should_respawn, which is loop-safe), the server EXITS. The MCP client respawns it on its next request,
+    now running the latest code. Exiting here (never mid-request) means no request is dropped. This is what makes
+    'always serve the latest' true for a long-running stdio server; disable with SPENDGUARD_MCP_AUTO_RESPAWN=0."""
+    from . import release
     inp = inp or sys.stdin
     outp = outp or sys.stdout
+    respawn_on_deploy = _auto_respawn_enabled()
     for line in inp:
         line = line.strip()
         if not line:
@@ -682,6 +720,13 @@ def serve_stdio(inp=None, outp=None):
         resp = handle(req)
         if resp is not None:
             outp.write(json.dumps(resp, default=str) + "\n"); outp.flush()
+        if respawn_on_deploy and release.should_respawn():
+            st = release.release_status()
+            sys.stderr.write("[spendguard] mcp: a newer green commit was deployed (%s vs served %s) — exiting to "
+                             "hand off to a fresh process on the latest code.\n"
+                             % ((st.get("green") or {}).get("short"), (st.get("served") or {}).get("short")))
+            sys.stderr.flush()
+            return
 
 
 def register_client(remove=False):
