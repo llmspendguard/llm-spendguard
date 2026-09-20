@@ -108,11 +108,15 @@ inp = io.StringIO("\n".join([
 ]) + "\n")
 outp = io.StringIO()
 mcp_server.serve_stdio(inp, outp)
-lines = [ln for ln in outp.getvalue().splitlines() if ln.strip()]
-ck("two requests produced two responses; the notification produced none", len(lines) == 2)
-ck("response ids match the request ids (1, 2)", [json.loads(x)["id"] for x in lines] == [1, 2])
+msgs = [json.loads(ln) for ln in outp.getvalue().splitlines() if ln.strip()]
+responses = [m for m in msgs if "id" in m]
+notifs = [m for m in msgs if m.get("method") == "notifications/tools/list_changed"]
+ck("two requests produced two responses; the initialized notification produced none", len(responses) == 2)
+ck("response ids match the request ids (1, 2)", [m["id"] for m in responses] == [1, 2])
 ck("the second response carries the advise pick",
-   json.loads(lines[1])["result"]["structuredContent"]["pick"] == "openai:gpt-5.5")
+   responses[1]["result"]["structuredContent"]["pick"] == "openai:gpt-5.5")
+ck("the server nudged the client to re-list tools once, after the first substantive request (tools/list_changed)",
+   len(notifs) == 1)
 
 print("-- (P2) advisor.recommend: estimate-first (zero spend) → cost + candidate set --")
 os.environ["SPENDGUARD_ADVISOR_MODEL"] = "gpt-5-mini"      # a priced model so the estimate is deterministic

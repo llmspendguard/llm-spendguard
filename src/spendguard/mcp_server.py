@@ -616,7 +616,10 @@ def handle(req):
         _sv = _rel.served_sha() or {}
         _ver = getattr(spendguard, "__version__", "0") + (f"+{_sv['short']}" if _sv.get("short") else "")
         return _ok(rid, {"protocolVersion": client_ver or PROTOCOL_VERSION,
-                         "capabilities": {"tools": {}},
+                         # listChanged: this server may send notifications/tools/list_changed (serve_stdio does,
+                         # after its first substantive request) so a client re-fetches tools/list — the path by
+                         # which a tool ADDED in an auto-respawn becomes visible without a manual reconnect.
+                         "capabilities": {"tools": {"listChanged": True}},
                          "serverInfo": {"name": "spendguard", "version": _ver},
                          # `instructions` is the MCP-standard way a server tells the client how to use it — so the
                          # surface is self-documenting, not something a caller has to reverse-engineer.
@@ -708,6 +711,7 @@ def serve_stdio(inp=None, outp=None):
     inp = inp or sys.stdin
     outp = outp or sys.stdout
     respawn_on_deploy = _auto_respawn_enabled()
+    announced = False
     for line in inp:
         line = line.strip()
         if not line:
@@ -727,6 +731,16 @@ def serve_stdio(inp=None, outp=None):
                              % ((st.get("green") or {}).get("short"), (st.get("served") or {}).get("short")))
             sys.stderr.flush()
             return
+        # NUDGE THE CLIENT TO RE-LIST TOOLS ONCE — so a tool ADDED since it cached tools/list (e.g. because this
+        # process just auto-respawned onto newer code) appears WITHOUT a manual reconnect. Sent only after the
+        # first SUBSTANTIVE request, never during the initialize/initialized handshake, as an MCP
+        # notifications/tools/list_changed (we advertised capabilities.tools.listChanged). Harmless if the client
+        # re-lists on its own or ignores it. Skipped above when we are handing off — the fresh process announces.
+        _method = req.get("method") if isinstance(req, dict) else None
+        if not announced and _method not in (None, "initialize", "initialized", "notifications/initialized"):
+            outp.write(json.dumps({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"}) + "\n")
+            outp.flush()
+            announced = True
 
 
 def register_client(remove=False):

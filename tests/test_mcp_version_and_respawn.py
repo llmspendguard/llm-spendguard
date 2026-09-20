@@ -55,6 +55,8 @@ release.served_sha = lambda: {"short": "abc1234", "sha": "abc1234" + "0" * 33}
 init = mcp_server.handle({"jsonrpc": "2.0", "id": 3, "method": "initialize", "params": {"protocolVersion": "2024-11-05"}})
 ver = init["result"]["serverInfo"]["version"]
 ck("serverInfo.version includes the served short sha (e.g. 0.10.0+abc1234)", ver.endswith("+abc1234"))
+ck("initialize advertises tools.listChanged (so the client tracks re-list nudges)",
+   init["result"]["capabilities"]["tools"].get("listChanged") is True)
 
 print("\n-- serve_stdio DRAINS then exits after a response when should_respawn() is True (no dropped/looped request) --")
 os.environ["SPENDGUARD_MCP_AUTO_RESPAWN"] = "1"
@@ -66,13 +68,18 @@ out = _lines(outp)
 ck("exactly ONE response was written before the handoff (the served request was NOT dropped)", len(out) == 1)
 ck("it was the FIRST request (id=10); the 2nd/3rd were left for the fresh process", json.loads(out[0])["id"] == 10)
 
-print("\n-- with auto-respawn OFF, the server keeps serving every request --")
+print("\n-- with auto-respawn OFF, the server keeps serving; and it nudges the client to re-list tools once --")
 os.environ["SPENDGUARD_MCP_AUTO_RESPAWN"] = "0"
 release.should_respawn = lambda: True            # would respawn, but the toggle is off
 inp2 = io.StringIO("\n".join([PING % 20, PING % 21, PING % 22]) + "\n")
 outp2 = io.StringIO()
 mcp_server.serve_stdio(inp2, outp2)
-ck("all three requests are served when auto-respawn is disabled", len(_lines(outp2)) == 3)
+msgs = [json.loads(ln) for ln in _lines(outp2)]
+responses = [m for m in msgs if "id" in m]
+notifs = [m for m in msgs if m.get("method") == "notifications/tools/list_changed"]
+ck("all three requests are served when auto-respawn is disabled", len(responses) == 3)
+ck("the server emits tools/list_changed exactly ONCE (so a newly-added tool appears without a manual reconnect)",
+   len(notifs) == 1)
 
 print("\n-- the env toggle parses truthy/falsey --")
 for val, want in [("1", True), ("true", True), ("on", True), ("0", False), ("false", False), ("off", False)]:
