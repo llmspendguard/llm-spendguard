@@ -90,6 +90,40 @@ def sweep_estimate(pl=None):
 _PROBE_OUT_TOKENS = 64          # a reachability ping only needs room for "ok" — deliberately tiny so a reasoning model's probe stays fast
 
 
+def _probe_metered_one(prov, mid, timeout_s):
+    """One raw-metered-key liveness probe (metered_only) → (prov, {model, reachable, cost, executor, latency,
+    reason}). `reachable` is the RAW KEY authenticated — reached AND served_by_metered_api, never a lane route
+    (see sweep's docstring). Isolated from the loop so the metered sweep runs all providers CONCURRENTLY: the
+    serial version took up to len(metered)*timeout_s and overran the spendguard_health(run=true) MCP call window,
+    while one hung provider is already bounded to timeout_s. Never raises — a probe error is recorded as down."""
+    import time as _t
+    t0 = _t.time()
+    try:
+        r = adapters.call(f"{prov}:{mid}", "Reply with one word: ok.", sig="spendguard:reliability-sweep",
+                          max_tokens=_PROBE_OUT_TOKENS, timeout_s=timeout_s, _probe=True, metered_only=True)
+    except Exception as e:                               # a probe must never break the sweep — record it as down
+        return prov, {"model": mid, "reachable": False, "cost": None, "executor": None,
+                      "latency": round(_t.time() - t0, 2), "reason": f"{type(e).__name__}: {str(e)[:80]}"}
+    # adapters' TYPED `truncated` flag means the model produced MORE than the tiny probe cap — it ANSWERED (a
+    # verbose model overruns "ok") — so the endpoint is REACHABLE. Reading that structured boolean is parsing a
+    # known field, not judging the reply. The RAW KEY is VERIFIED only if the metered API actually served it —
+    # never a lane. metered_only=True should guarantee that (served_by_metered_api); the AND is the belt: a probe
+    # that somehow rode a lane does NOT verify the key (the exact bug this guards — a lane-routed success marking a
+    # stale key green).
+    _err = r.get("error")
+    _truncated = r.get("truncated") is True
+    _executor = r.get("executor")
+    _reached = (not _err) or _truncated
+    _key_ok = _reached and bool(r.get("served_by_metered_api"))
+    _reason = None
+    if not _key_ok:
+        _reason = ("probe routed via lane %r — raw metered key NOT verified" % _executor
+                   if _reached and not r.get("served_by_metered_api")
+                   else (r.get("error_type") or _err))
+    return prov, {"model": mid, "reachable": _key_ok, "cost": r.get("cost"),
+                  "executor": _executor, "latency": round(_t.time() - t0, 2), "reason": _reason}
+
+
 def sweep(run=False, timeout_s=20):
     """The reachability matrix. run=False → estimate only ($0). run=True → probe every lane ($0) + every metered
     provider (a tiny gated ping) → {resource: {reachable, executor, cost, reason, latency}}. For a LANE, `reachable`
@@ -97,9 +131,9 @@ def sweep(run=False, timeout_s=20):
     (the ping forces metered_only, so a provider whose key is stale reads NOT reachable even when its lane works, and
     `reason` says which). That is the field metered_key_ok/health_reds/the doctor key line trust. Each probe is BOUNDED
     by `timeout_s`, so ONE hung endpoint fails in ~timeout_s instead of its full work-timeout (the agy lane's 300s
-    was exactly that wedge). The lane probes run concurrently + persisted inside lanes.probe; the metered pings are a
-    short sequential pass (a handful of providers, pennies total — cheap to re-run, so no checkpoint is warranted)."""
-    import time as _t
+    was exactly that wedge). BOTH the lane probes (inside lanes.probe) and the metered pings run CONCURRENTLY, so
+    the whole sweep is bounded by the slowest single probe — N providers fit the window one does (a serial metered
+    pass overran the spendguard_health MCP call window)."""
     pl = plan()
     out = {"estimate": sweep_estimate(pl), "lanes": {}, "metered": {}}
     if not run:
@@ -110,34 +144,17 @@ def sweep(run=False, timeout_s=20):
             continue                                     # a lane the executor did not enable is not a reachability row
         out["lanes"][r["lane"]] = {"reachable": bool(r.get("ok")), "cost": 0.0,
                                    "reason": r.get("error"), "latency": r.get("latency")}
-    for prov, mid in pl["metered"]:                      # a tiny RAW-METERED-KEY call per provider, through the gate.
-        # METERED liveness must exercise the RAW METERED KEY, so force metered_only=True: a provider with a
-        # subscription lane (openai→codex, anthropic→claude-code, …) would otherwise route this ping through the
-        # LANE (executor='codex', $0), leaving a STALE raw key UN-exercised — and a metered_only consumer that
-        # preflights on this would then 401 on every call at runtime (observed 2026-09-18/19: the openai probe's
-        # executor flipped api→codex while the key stayed stale). _probe=True keeps it one tiny shot (not floored to
-        # reasoning headroom, does not grow on an empty reply); timeout_s bounds a dead provider.
-        t0 = _t.time()
-        r = adapters.call(f"{prov}:{mid}", "Reply with one word: ok.", sig="spendguard:reliability-sweep",
-                          max_tokens=_PROBE_OUT_TOKENS, timeout_s=timeout_s, _probe=True, metered_only=True)
-        # A reachability probe answers "is the endpoint up + authed?". adapters' TYPED `truncated` flag means the
-        # model produced MORE than the tiny probe cap — i.e. it ANSWERED (a verbose model overruns "ok") — so the
-        # endpoint is REACHABLE. Reading that structured boolean is parsing a known field, not judging the reply.
-        _err = r.get("error")
-        _truncated = r.get("truncated") is True
-        _executor = r.get("executor")
-        _reached = (not _err) or _truncated
-        # The RAW KEY is VERIFIED only if the metered API actually served the probe — never a lane. metered_only=True
-        # should guarantee that (served_by_metered_api), and the AND is the belt: a probe that somehow rode a lane
-        # does NOT verify the key. This is the exact bug this guards — a lane-routed success marking a stale key green.
-        _key_ok = _reached and bool(r.get("served_by_metered_api"))
-        _reason = None
-        if not _key_ok:
-            _reason = ("probe routed via lane %r — raw metered key NOT verified" % _executor
-                       if _reached and not r.get("served_by_metered_api")
-                       else (r.get("error_type") or _err))
-        out["metered"][prov] = {"model": mid, "reachable": _key_ok, "cost": r.get("cost"),
-                                "executor": _executor, "latency": round(_t.time() - t0, 2), "reason": _reason}
+    # METERED liveness exercises the RAW METERED KEY (metered_only=True in _probe_metered_one), and the probes run
+    # CONCURRENTLY, each bounded by timeout_s. The serial loop took up to len(metered)*timeout_s and OVERRAN the
+    # spendguard_health(run=true) MCP call window (one hung/slow provider stalled the whole sweep); concurrent, the
+    # sweep is bounded by the SLOWEST single probe, so N providers fit the same window one does — mirroring
+    # lanes.probe, which is already concurrent.
+    metered = pl["metered"]
+    if metered:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=min(len(metered), 8)) as _ex:
+            for prov, res in _ex.map(lambda _pm: _probe_metered_one(_pm[0], _pm[1], timeout_s), metered):
+                out["metered"][prov] = res
     return out
 
 
