@@ -61,15 +61,18 @@ def _prompt_key(prompt):
     return hashlib.sha256((prompt or "").encode("utf-8", "replace")).hexdigest()
 
 
-def _meta_call(model, prompt, *, system, schema, out, sig):
+def _meta_call(model, prompt, *, system, schema, out, sig, images=None):
     """One meta-caged, deadline-bounded, schema-forced call over WHOLE evidence. Oversize is contained by
-    adapters.call's input guard (it refuses rather than clips). Returns (parsed dict or None, cost); never raises."""
+    adapters.call's input guard (it refuses rather than clips). Returns (parsed dict or None, cost); never raises.
+    `images` (a vision task's image refs) is passed to adapters.call ONLY when present, so a text judgement is
+    byte-for-byte the prior call — a caption's faithfulness cannot be ruled without seeing the image."""
     with calls.context(intent="spendguard:%s" % sig):
         # PIN the judge/adjudicator: this is a META RULER call where WHICH MODEL ANSWERED is the measurement, so
         # the lane/bandit must never swap it (a ruler that varies per call is not a comparable verdict) — the same
         # discipline as the bakeoff judge. Pinning still uses the model's OWN $0 lane where available.
         r = adapters.call(model, prompt, max_tokens=out, system=system, schema=schema,
-                          sig="spendguard:%s" % sig, timeout_s=_JUDGE_TIMEOUT_S, no_substitution=True)
+                          sig="spendguard:%s" % sig, timeout_s=_JUDGE_TIMEOUT_S, no_substitution=True,
+                          **({"images": images} if images else {}))
     cost = r.get("cost") or 0.0
     if r.get("error"):
         return None, cost
@@ -114,18 +117,20 @@ def _verdict(j, requirements, tier, cost):
 
 
 def judge_requirements(prompt, output, *, requirements=None, screen_model=None, adjudicator_model=None,
-                       extract_model=None):
+                       extract_model=None, images=None):
     """Two-tier requirement-aware verdict. Screen with a cheap model; when the screen is NOT confident, an
     OPUS-tier adjudicator rules. Returns the verdict dict (see module docstring), or a good=None UNLABELED verdict
-    when the judge is unavailable — never a guessed label."""
+    when the judge is unavailable — never a guessed label. For a VISION task, `images` (the image refs) is given to
+    the SCREEN and the ADJUDICATOR — they must SEE the image to rule on a caption's faithfulness — but NOT to
+    extraction: the success criteria come from the prompt TEXT, so requirements_for stays text-only."""
     screen_model = screen_model or config.advisor_judge_model()
     adjudicator_model = adjudicator_model or config.advisor_adjudicator_model()
     if requirements is None:
         requirements = requirements_for(prompt, model=extract_model)
 
     jp = _requirement_prompt(prompt, output, requirements)
-    screen, c_screen = _meta_call(screen_model, jp, system=_JUDGE_SYS, schema=_JUDGE_SCHEMA,
-                                  out=_JUDGE_OUT, sig="requirement-screen")
+    screen, c_screen = _meta_call(screen_model, jp, system=_JUDGE_SYS, schema=_JUDGE_SCHEMA, out=_JUDGE_OUT,
+                                  sig="requirement-screen", **({"images": images} if images else {}))
     # A CONFIDENT, PARSED screen rules directly — the cheap path. ANYTHING ELSE escalates to the OPUS adjudicator:
     # the screen self-reported not-confident (its own agentic ask for a stronger judge), OR it produced no parseable
     # verdict at all (unavailable / off-shape). "Cannot tell" is NOT "no label" — an unparsed screen that returned
@@ -135,8 +140,8 @@ def judge_requirements(prompt, output, *, requirements=None, screen_model=None, 
     if isinstance(screen, dict) and bool(screen.get("confident")):
         return _verdict(screen, requirements, "screen", c_screen)
 
-    adj, c_adj = _meta_call(adjudicator_model, jp, system=_JUDGE_SYS, schema=_JUDGE_SCHEMA,
-                            out=_JUDGE_OUT, sig="requirement-adjudicate")
+    adj, c_adj = _meta_call(adjudicator_model, jp, system=_JUDGE_SYS, schema=_JUDGE_SCHEMA, out=_JUDGE_OUT,
+                            sig="requirement-adjudicate", **({"images": images} if images else {}))
     if isinstance(adj, dict):
         # the opus adjudicator is the authority — its verdict (good/score/confident) stands AS-IS; `tier` records
         # that it ruled. We do NOT force confident=True: if opus is itself unsure, that honest signal is preserved.

@@ -29,6 +29,27 @@ _JUDGE_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["
                  "properties": {"good": {"type": "boolean"}}}
 
 
+def _task_parts(task):
+    """A bakeoff task is EITHER a plain prompt STRING (the text-only surface, unchanged) OR a dict
+    {"prompt": str, "images": [path | data-url, …]} for a VISION task. Returns (prompt_text, images) where
+    `images` is None for a text task or the list of image refs for a vision task — the SAME shape
+    adapters.call(images=…) accepts. Backward-compatible: a string yields (string, None), so every text path is
+    untouched."""
+    if isinstance(task, dict):
+        imgs = task.get("images") or None
+        return str(task.get("prompt") or ""), imgs
+    return str(task), None
+
+
+def _task_sample_key(task):
+    """The stable content KEY hashed into measurement.item_id — incorporates the image reference(s) so two captions
+    of DIFFERENT images are distinct samples (a text-only task keys exactly as before: the bare prompt string)."""
+    txt, imgs = _task_parts(task)
+    if not imgs:
+        return txt
+    return txt + "\n\x00images\x00\n" + "\n".join(str(i) for i in imgs)
+
+
 def _sample_prompts(intent, n):
     """Up to `n` DISTINCT real prompts recorded for this intent (the tasks to replay on the candidates). Returns
     [] ONLY when the intent genuinely has no recorded prompts — the caller must then pass prompts explicitly (a
@@ -47,17 +68,21 @@ def _sample_prompts(intent, n):
     return [r[0] for r in rows]
 
 
-def _judge_one(prompt, output, judge_model):
+def _judge_one(prompt, output, judge_model, images=None):
     """Is this (prompt, output) a good result? Decided by an LLM (the quality signal), returned as a STRUCTURED
     boolean — not a free-text verdict a string rule then interprets. Returns True (good) / False (bad) / None
-    (the judge failed or gave no clean boolean → UNLABELED, never guessed)."""
+    (the judge failed or gave no clean boolean → UNLABELED, never guessed). For a VISION task the judge RECEIVES
+    the image (images=…): a caption's faithfulness CANNOT be judged from text alone, so a judge that scored it
+    without seeing the image would be measuring nothing. images is passed ONLY when present — a text task is
+    byte-for-byte the prior call."""
     from . import adapters, advisor
     # WHOLE evidence: the judge scores the candidate's FULL output — a [:4000] slice would rate only its head,
     # evidence-truncating the very thing being judged. no_substitution PINS the judge so every candidate is rated
     # by the SAME ruler, never a lane-swapped one (a judge that varies per candidate is not a comparable number).
     r = adapters.call(judge_model, advisor._judge_prompt(prompt, output or ""),
                       max_tokens=_JUDGE_OUT, system=_JUDGE_SYS, schema=_JUDGE_SCHEMA,
-                      sig="spendguard:bakeoff-judge", no_substitution=True)
+                      sig="spendguard:bakeoff-judge", no_substitution=True,
+                      **({"images": images} if images else {}))
     if r.get("error") or not r.get("text"):
         return None
     # The adapter's OWN fence-tolerant decode (r['parsed']) — a bare json.loads here choked on a $0 lane's
@@ -74,17 +99,27 @@ def _plan(intent, candidates, prompts, judge_model, efforts, requirement_aware=F
     the model's default effort); the estimate scales linearly with it so a wide sweep can never surprise-spend.
     `requirement_aware` adds the two-tier judge's extra cost as a CEILING: requirement extraction once per prompt +
     a worst-case one opus adjudication per judge call (real runs escalate only when the screen is unsure, so actual
-    lands under this — a budget guard is meant to be high, never low)."""
-    from . import gate
+    lands under this — a budget guard is meant to be high, never low). A VISION task (dict with images) adds the
+    IMAGE input tokens — via adapters._image_input_tokens, the provider-aware corrected estimator, never a hardcoded
+    per-image number — to EVERY call that sees the image: the candidate run, the screen/generic judge, and the
+    adjudicator (extraction reads the prompt TEXT only). A text-only slate is priced exactly as before."""
+    from . import gate, adapters
     _stop = gate.deliberate_stop_types()               # SpendGateRefused / DispatchTimeout must PROPAGATE — never be
     n_eff = max(1, len(efforts))                        # swallowed into a false-low estimate by the broad guards below
-    in_toks = [_count_tokens(p, candidates[0] if candidates else "gpt-5.5") for p in prompts]
+    tasks = [_task_parts(p) for p in prompts]           # (prompt_text, images_or_None) — a string yields (string, None)
+    loaded = [([adapters._load_image(i) for i in imgs] if imgs else None) for _txt, imgs in tasks]  # dims for the token est ($0 read)
+    in_text = [_count_tokens(txt, candidates[0] if candidates else "gpt-5.5") for txt, _im in tasks]  # text tokens (unchanged)
+
+    def _img_tok(model, i):                             # provider-aware IMAGE input tokens for task i on `model` (0 = text task)
+        return (adapters._image_input_tokens(loaded[i], adapters.provider_for(model), model.split(":", 1)[-1])
+                if loaded[i] else 0)
+
     total, detail = 0.0, {}
     for c in candidates:
         c_cost = 0.0
-        for it in in_toks:
+        for i in range(len(tasks)):
             try:
-                c_cost += pricing.realtime_cost(c, it, _BAKEOFF_OUT_EST)
+                c_cost += pricing.realtime_cost(c, in_text[i] + _img_tok(c, i), _BAKEOFF_OUT_EST)
             except _stop:
                 raise
             except Exception:
@@ -93,20 +128,22 @@ def _plan(intent, candidates, prompts, judge_model, efforts, requirement_aware=F
         detail[c] = (c_cost * n_eff) if c_cost is not None else None   # one run per (prompt, EFFORT)
         total += (detail[c] or 0.0)
     n_judge = len(candidates) * len(prompts) * n_eff                    # one small judge call per (candidate, prompt, effort)
-    try:
-        judge_in = sum(_count_tokens(p, judge_model) for p in prompts) * len(candidates) * n_eff
+    try:                                                               # the generic/screen judge SEES the image on a vision task
+        judge_in = sum(_count_tokens(txt, judge_model) + _img_tok(judge_model, i)
+                       for i, (txt, _im) in enumerate(tasks)) * len(candidates) * n_eff
         total += pricing.realtime_cost(judge_model, judge_in, _JUDGE_OUT * n_judge)
     except _stop:
         raise
     except Exception:
         pass
-    if requirement_aware:                                              # extraction (once/prompt) + opus-adjudication CEILING
+    if requirement_aware:                                              # extraction (once/prompt, TEXT) + opus-adjudication CEILING
         from . import requirement_judge
         ex, adj = config.advisor_model(), (adjudicator_model or config.advisor_adjudicator_model())
         try:
-            total += pricing.realtime_cost(ex, sum(_count_tokens(p, ex) for p in prompts),
+            total += pricing.realtime_cost(ex, sum(_count_tokens(txt, ex) for txt, _im in tasks),
                                            requirement_judge._EXTRACT_OUT * len(prompts))
-            adj_in = sum(_count_tokens(p, adj) for p in prompts) * len(candidates) * n_eff
+            adj_in = sum(_count_tokens(txt, adj) + _img_tok(adj, i)     # the adjudicator SEES the image too
+                         for i, (txt, _im) in enumerate(tasks)) * len(candidates) * n_eff
             total += pricing.realtime_cost(adj, adj_in, requirement_judge._JUDGE_OUT * n_judge)
         except _stop:
             raise
@@ -173,11 +210,14 @@ def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget
             n_good = n_lab = n_run = n_err = 0
             spent, last_error = 0.0, None
             for p in prompts:
+                txt, imgs = _task_parts(p)              # (prompt_text, images_or_None) — a vision task sends images= through
                 # no_substitution PINS the candidate: a bakeoff MEASURES this exact model, so the lane/bandit must
                 # never swap it — else the arm records ANOTHER model's cost×quality under c's name (the corruption
                 # that feeds advise/recommend). Still $0 on c's OWN lane where available (pinning suppresses
-                # cross-model substitution, not same-provider lane use).
-                r = adapters.call(c, p, sig=intent, timeout_s=120, reasoning=eff, no_substitution=True)
+                # cross-model substitution, not same-provider lane use). images= is passed ONLY for a vision task,
+                # so a text run is byte-for-byte the prior call (a vision call skips the lane by construction).
+                r = adapters.call(c, txt, sig=intent, timeout_s=120, reasoning=eff, no_substitution=True,
+                                  **({"images": imgs} if imgs else {}))
                 if r.get("error"):
                     n_err += 1                                      # a dropped run is COUNTED + surfaced, never silent —
                     last_error = (r.get("error") or "")[:140]      # a candidate/effort that fails every prompt is visible,
@@ -187,15 +227,17 @@ def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget
                 spent += cost
                 if requirement_aware:                               # judge by the PROMPT'S OWN requirements, two-tier (screen→opus)
                     from . import requirement_judge
-                    _v = requirement_judge.judge_requirements(p, r.get("text"), screen_model=judge_model,
-                                                              adjudicator_model=adjudicator_model)
+                    _v = requirement_judge.judge_requirements(txt, r.get("text"), screen_model=judge_model,
+                                                              adjudicator_model=adjudicator_model,
+                                                              **({"images": imgs} if imgs else {}))
                     verdict = _v.get("good")                        # same True/False/None contract as _judge_one
                     spent += float(_v.get("cost") or 0.0)          # the judge's own meta-cost, folded into the arm's spend
                     for _rq in (_v.get("requirements") or []):     # collect the applied rubric (deduped) for the receipt
                         if _rq not in req_seen:
                             req_seen.append(_rq)
                 else:
-                    verdict = _judge_one(p, r.get("text"), judge_model)  # generic LLM judge — the quality signal
+                    verdict = _judge_one(txt, r.get("text"), judge_model,
+                                         **({"images": imgs} if imgs else {}))  # generic LLM judge — the quality signal
                 q = None if verdict is None else ("good" if verdict else "bad")
                 if q is not None:
                     n_lab += 1
@@ -238,7 +280,7 @@ def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget
         reading_id = measurement.record_reading(
             intent=intent, kind="bakeoff", judge_mix=[judge_model], judge_basis="configured",
             judge_pinned=_judge_pinned, parent_id=parent_reading,
-            sample_ids=[measurement.item_id(p) for p in prompts],
+            sample_ids=[measurement.item_id(_task_sample_key(p)) for p in prompts],   # image ref folded in → distinct vision samples
             rubric=({"mode": "requirement-aware", "screen": judge_model,
                      "adjudicator": adjudicator_model or config.advisor_adjudicator_model(), "requirements": req_seen}
                     if requirement_aware else {"system": _JUDGE_SYS, "schema": _JUDGE_SCHEMA}),
