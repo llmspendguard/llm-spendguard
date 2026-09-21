@@ -84,21 +84,21 @@ r_ar = lane_balance.bulk_delegate(["a1|a2|a3"], "vis:arity", images_for=lambda t
 ck("a vision envelope dropping an id → retried MISS (arity_miss), not a silent success",
    r_ar[0].get("text") is None and r_ar[0].get("arity_miss", {}).get("missing") == ["a3"])
 
-# ── a DELIBERATE stop (DispatchTimeout) from dispatch.acquire PROPAGATES (halts) — never swallowed to a row ──
+# ── a queue-slot TIMEOUT (DispatchTimeout) is NOT a fan-halt: each task becomes a 'dispatch_saturated' MISS row
+#    (contained → batched/queued/retried), so a saturated vision fan never aborts or crashes the caller. The runner
+#    admits via dispatch.acquire_or_none(), which converts the timeout; only a genuine SPEND REFUSAL still halts
+#    (asserted in test_bulk_delegate_never_crashes.py).
 adapters.call = _good_call
 
 
-def _shed(*a, **k):
-    raise dispatch.DispatchTimeout("admission shed")
+def _saturated(*a, **k):
+    raise dispatch.DispatchTimeout("no slot within deadline")
 
 
-dispatch.acquire = _shed
-raised = None
-try:
-    lane_balance.bulk_delegate(["x", "y"], "vis:shed", images_for=lambda t: [DATA_URL], vision_model=VMODEL)
-except dispatch.DispatchTimeout as e:
-    raised = e
-ck("DispatchTimeout HALTS the vision fan (propagates by exception TYPE), not downgraded to error rows", raised is not None)
+dispatch.acquire = _saturated
+r_sat = lane_balance.bulk_delegate(["x", "y"], "vis:sat", images_for=lambda t: [DATA_URL], vision_model=VMODEL)
+ck("a saturated vision fan → every task a 'dispatch_saturated' MISS row (not halted, not crashed)",
+   len(r_sat) == 2 and all(row.get("text") is None and row.get("reason") == "dispatch_saturated" for row in r_sat))
 dispatch.acquire = lambda *a, **k: 0.0
 
 print(("[OK]" if not fails else "[FAIL]") + " bulk vision fan: %d failure(s)" % len(fails))

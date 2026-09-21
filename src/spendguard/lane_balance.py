@@ -784,11 +784,14 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
                 return i, {**_b, "reason": _big[0], "error": _big[1]}
         _prov = adapters.provider_for(_vm)
         try:
-            dispatch.acquire(_prov, _raw, deadline_s)   # governor: bound in-flight PER-VENDOR metered calls, like the lane path
+            _waited = dispatch.acquire_or_none(_prov, _raw, deadline_s)   # governor: bound in-flight PER-VENDOR metered calls
         except _STOP_TYPES:
-            raise                                       # a DELIBERATE stop (deadline/refusal) halts — never a per-task row
+            raise                                       # a genuine SPEND REFUSAL halts the fan (refusal-containment)
         except Exception as e:
-            return i, {**_b, "reason": "dispatch", "error": f"dispatch: {str(e)[:60]}"}
+            return i, {**_b, "reason": "dispatch", "error": f"dispatch: {str(e)[:60]}"}   # a NON-deliberate governor error
+        if _waited is None:                             # queue-slot TIMEOUT → THIS task's MISS (batched/queued/retried),
+            return i, {**_b, "reason": "dispatch_saturated",   # never a raise that aborts the fan or crashes the caller
+                       "error": f"queue full: no slot within {deadline_s:.0f}s"}
         try:
             calls.set_context(intent=intent)            # tag this worker's calls with the intent (attribution)
             r = adapters.call(_vm, _p, system=system, reasoning=reasoning, sig=intent,
@@ -846,15 +849,16 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
         prov = lane_catalog.lane_provider(lane)
         model = f"{prov}:{use_name}"
         try:
-            dispatch.acquire(prov, use_name, deadline_s)     # governor: bounds per-lane in-flight (fills, never swarms)
+            _waited = dispatch.acquire_or_none(prov, use_name, deadline_s)     # governor: bounds per-lane in-flight (fills, never swarms)
         except _STOP_TYPES:
-            raise                                            # a DELIBERATE stop (DispatchTimeout admission shed / a
-            #                                                  refusal) HALTS the fan — NOT buried as an unserved row;
-            #                                                  the caller sees the raise and decides (retry lanes, or batch)
+            raise                                            # a genuine SPEND REFUSAL halts the fan (refusal-containment)
         except Exception as e:
-            # reason='dispatch' — a NON-deliberate dispatch error, structurally separable from a shape/empty/quota miss.
+            # reason='dispatch' — a NON-deliberate governor error, structurally separable from a shape/empty/quota miss.
             return i, {"text": None, "lane": lane, "use_name": use_name, "model": model, "billed": False,
                        "reason": "dispatch", "error": f"dispatch: {str(e)[:60]}"}
+        if _waited is None:                                  # queue-slot TIMEOUT → THIS task's MISS (batched/queued/retried),
+            return i, {"text": None, "lane": lane, "use_name": use_name, "model": model, "billed": False,
+                       "reason": "dispatch_saturated", "error": f"queue full: no lane slot within {deadline_s:.0f}s"}
         try:
             calls.set_context(intent=intent)          # tag this worker thread's calls with the intent (attribution)
             r = adapters.call(model, task, system=system, reasoning=reasoning,   # sig=intent → the OUTPUT budget is this
@@ -980,8 +984,19 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
     for c0 in range(0, len(todo), max(1, int(chunk_size))):
         chunk = todo[c0:c0 + max(1, int(chunk_size))]
         with _cf.ThreadPoolExecutor(max_workers=max(1, n)) as ex:
-            for fut in _cf.as_completed([ex.submit(_run_task_on_lane, i, tasks[i]) for i in chunk]):
-                i, res = fut.result()
+            _fut_idx = {ex.submit(_run_task_on_lane, i, tasks[i]): i for i in chunk}
+            for fut in _cf.as_completed(_fut_idx):
+                try:
+                    i, res = fut.result()
+                except _STOP_TYPES:
+                    raise                                    # a deliberate stop (spend refusal) HALTS the whole fan — never buried
+                except Exception as _e:
+                    # BELT-AND-SUSPENDERS ("no crashes EVER"): the per-task runners RETURN rows (a queue timeout is a
+                    # dispatch_saturated row, not a raise). If anything UNEXPECTED still escapes one task, it becomes
+                    # THAT task's miss row here, never an abort of the chunk/fan or a crash of the caller. Only a
+                    # deliberate stop (caught just above) may stop the fan.
+                    i, res = _fut_idx[fut], {"text": None, "lane": "?", "use_name": "?", "model": "?", "billed": False,
+                                             "reason": "task_crashed", "error": f"{type(_e).__name__}: {str(_e)[:70]}"}
                 results[i] = res
                 _checkpoint(i, res)
 

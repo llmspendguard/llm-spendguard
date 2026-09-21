@@ -8,8 +8,9 @@ row-builder (lane machinery + adapters.call stubbed; no network, no spend):
   • each miss path sets the RIGHT reason from the closed vocabulary,
   • a SERVED row (has text) has reason=None — a reason is a miss signal, never noise on a success,
   • NO error row (text is None) is ever reason-less,
-  • a DELIBERATE stop (DispatchTimeout admission shed / a refusal) from the governor HALTS the fan — it is NOT
-    downgraded to a 'dispatch' row (the refusal-containment doctrine; mirrors the vision runner).
+  • a queue-slot TIMEOUT (DispatchTimeout) is NOT a fan-halt: it becomes THIS task's 'dispatch_saturated' MISS row
+    (contained, then batched/queued/retried), so one saturated task never aborts the fan or crashes the caller —
+    only a genuine SPEND REFUSAL still halts (asserted in test_bulk_delegate_never_crashes.py).
 Vision-specific reason codes (no_image/image_too_big/…) are asserted in test_bulk_vision_fan.py.
 """
 import os
@@ -44,7 +45,7 @@ adapters._lane_cooling = lambda ln: False
 _dispatch.release = lambda *a, **k: None
 
 # The closed vocabulary a caller may switch on. A reason OUTSIDE this set is a silent contract break.
-ALLOWED = {None, "dispatch", "call_raised", "empty", "shape_miss", "lane_error", "quota",
+ALLOWED = {None, "dispatch", "dispatch_saturated", "call_raised", "empty", "shape_miss", "lane_error", "quota",
            "arity_miss", "arity_check_error", "api_error",
            "no_vision_model", "no_image", "image_too_big", "image_unreadable"}
 
@@ -112,17 +113,17 @@ r = row_for({**_SERVED, "text": '{"results":[{"id":"id1"}]}'}, expect_ids=_boom_
 ck("completeness check error → row.reason == 'arity_check_error' (fail closed)",
    r.get("reason") == "arity_check_error" and r.get("text") is None)
 
-# ── DELIBERATE STOP: a governor shed (DispatchTimeout) HALTS the fan — it is NOT downgraded to a 'dispatch' row ──
-def _acquire_shed(*a, **k):
+# ── QUEUE-SLOT TIMEOUT: a saturated slot (DispatchTimeout) is NOT a fan-halt — it becomes THIS task's
+#    'dispatch_saturated' MISS row (contained → batched/queued/retried), so one saturated task can never abort the
+#    fan or crash the caller. dispatch.acquire_or_none() converts the timeout; only a genuine SPEND REFUSAL still
+#    halts (asserted in test_bulk_delegate_never_crashes.py).
+def _acquire_saturated(*a, **k):
     raise DispatchTimeout("no slot within deadline")
 
 
-halted = False
-try:
-    row_for(_SERVED, acquire=_acquire_shed)
-except DispatchTimeout:
-    halted = True
-ck("a DispatchTimeout (deliberate stop) PROPAGATES out of bulk_delegate — never a swallowed row", halted)
+r = row_for(_SERVED, acquire=_acquire_saturated)
+ck("a DispatchTimeout (queue-slot timeout) → a 'dispatch_saturated' MISS row, the fan is NOT halted",
+   r.get("reason") == "dispatch_saturated" and r.get("text") is None)
 
 # ── the whole vocabulary is closed: every reason produced above is a known code (no silent contract break) ──
 _seen = set()

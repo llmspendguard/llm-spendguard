@@ -360,6 +360,21 @@ def acquire(vendor, model, deadline_s, skip_lane=False):
     return _GOV.acquire(vendor, model, deadline_s, skip_lane=skip_lane)
 
 
+def acquire_or_none(vendor, model, deadline_s, skip_lane=False):
+    """acquire(), except a queue-slot TIMEOUT returns None instead of raising DispatchTimeout — everything else about
+    it (full deadline, same key, the paired release()) is identical. This is the admission primitive a BULK FAN-OUT
+    needs: with hundreds of tasks sharing one lane's slots, a saturated slot on ONE task must become THAT task's
+    per-task MISS (contained, then batched/queued/retried), and MUST NOT raise out of its worker to abort the batch
+    or crash the caller — the measured failure was a saturated kimi-code lane raising DispatchTimeout out of a
+    532-task review fan and killing the whole honestreview process. Only the deadline TIMEOUT is converted; a genuine
+    SPEND REFUSAL is a different type and is not caught here (acquire does not raise one anyway). Callers pair it with
+    release() in a finally exactly as acquire(); None means 'no slot — do not release, this task did not run'."""
+    try:
+        return acquire(vendor, model, deadline_s, skip_lane=skip_lane)
+    except DispatchTimeout:
+        return None
+
+
 def release(vendor, model, skip_lane=False):
     """Return the dispatch slot acquired for (vendor, model). Safe to call once per successful acquire. Pass the
     SAME skip_lane the paired acquire() used, so the freed bucket is the one that was taken."""
