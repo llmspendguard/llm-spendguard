@@ -631,6 +631,21 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
                     for _ in tasks])
     else:
         arms = _bulk_arms(intent, lanes=lanes)
+        if not arms and lanes:
+            # CONFINED-LANE DEAD-END GUARD: the caller confined to lanes= that yield NO viable arm right now — a fresh
+            # intent the bandit has not rated yet, or confined lanes with no advisor.lane_models entry — which would
+            # otherwise return ONE EMPTY ROW PER TASK and do no work (measured: 766 tasks came back empty, no
+            # checkpoint written). Do NOT dead-end: WIDEN to the default delegate lanes (the lanes=None a caller
+            # reaches for by hand) so the fan EXPLORES rather than refuses — untried lanes are optimistic, and each
+            # task still rides its own lane->metered fallback. Loud once per fan, never silent: the confinement was
+            # un-runnable, so the fan states what it fell back to.
+            _wide = _bulk_arms(intent, lanes=None)
+            if _wide:
+                _bulk_notify(f"intent {intent!r}: the confined lane(s) ({', '.join(lanes)}) have no viable arm yet "
+                             f"(fresh intent / no advisor.lane_models) -> running UNCONFINED on the default delegate "
+                             f"lane(s) ({', '.join(a[0] for a in _wide)}) so the {len(tasks)} task(s) RUN rather than "
+                             f"returning empty. Declare models on the confined lanes to keep the confinement.")
+                arms = _wide
         if not arms:
             return _finalize([{"text": None, "lane": None, "use_name": None, "billed": False, "reason": "no_viable_lane",
                      "error": "no viable lane (set advisor.lane_models; check `spendguard lanes`)"} for _ in tasks])
