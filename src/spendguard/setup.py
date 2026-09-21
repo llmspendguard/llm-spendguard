@@ -70,6 +70,12 @@ When you WRITE or RUN code that calls an LLM:
    / zai plans, whereas a lane-routed script does the same work at $0 on another subscription. Matters most when the
    Claude plan is near its weekly cap (check `spendguard lanes --usage`): spendguard's router already sheds eligible
    tagged intents off an exhausted lane onto the others, but sub-agents never reach that routing.
+   **The boundary:** BATCHABLE COMPREHENSION — classify / extract / summarize / gap-find across many files, each an
+   INDEPENDENT one-shot prompt — lane-routes; INTERACTIVE code-editing, multi-step tool use, or worktrees do NOT
+   (they are not one-shot and can't ride a lane), so a Claude subagent is the right tool THERE. Don't force lane
+   routing onto work that needs a real agent. **Auto-route the batchable kind:** set `advisor.default_reasoning`
+   to `best-value` (or `SPENDGUARD_DEFAULT_REASONING=best-value`) so a LABELLED `adapters.call(intent=…)` that
+   didn't pin a model picks the cheapest (model, effort) whose MEASURED quality held — no per-call opt-in.
 
 Setup (one-time): `spendguard install-hook --venv <venv>` (or `--user --python <interp>` for system python),
 then `spendguard doctor`. Surface the tally: `spendguard install-receipts` (terminal status line) and this rule
