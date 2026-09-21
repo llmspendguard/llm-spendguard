@@ -909,6 +909,21 @@ def _act_oai_resp(result):
     return None if not u else (getattr(u, "input_tokens", 0) or 0, getattr(u, "output_tokens", 0) or 0)
 
 
+def _est_oai_legacy(kw):
+    """LEGACY OpenAI text completions (client.completions.create) — the pre-chat endpoint. `prompt` is a string
+    OR a list of strings/token-arrays; usage returns prompt_tokens/completion_tokens, so _act_oai_chat reads the
+    actuals. Distinct from _est_oai_chat only because the input field is `prompt`, not `messages`."""
+    _m = kw.get("model")
+    p = kw.get("prompt")
+    if isinstance(p, str):
+        n = _content_tokens(p, provider="openai", model=_m)
+    elif isinstance(p, list):
+        n = sum(_content_tokens(x if isinstance(x, str) else str(x), provider="openai", model=_m) for x in p)
+    else:
+        n = 0
+    return _m, n, _expected_out(_m, kw=kw)[0]
+
+
 def _est_oai_embeddings(kw):
     """OpenAI embeddings (client.embeddings.create) — input is a string, a list of strings, or
     pre-tokenized int arrays; output tokens are always 0 (the table prices embedding out at $0)."""
@@ -1734,14 +1749,30 @@ class _GatedAsyncStreamManager:
         return await self._inner.__aexit__(*exc)
 
 
+# OpenAI's `.stream()` helpers build `partial(self.create, ...)` — they call the ALREADY-GATED create(stream=True)
+# internally, and create(stream=True) records the call (measured: exactly one ledger row, via _observe_stream on
+# its Stream result). So the `.stream()` surface is COVERED by create; adding a recorder here double-counts
+# (measured: Responses.stream wrote two identical rows). Anthropic's `.stream()` instead hits self._post directly
+# (the 2,921-call leak), bypassing create, so it genuinely needs its own recorder (get_final_message).
+# _STREAM_PASSTHROUGH marks the create-delegating kind: set _spend_gated (so the SDK-surface sweep is satisfied)
+# and return the SDK manager UNCHANGED — the inner gated create does the accounting, exactly once.
+_STREAM_PASSTHROUGH = "passthrough:inner-create-records"
+
+
 def _wrap_async_stream(orig, final_attr, est_fn, act_fn):
     def stream(self, *a, **kw):
-        t0 = time.time()
         mgr = orig(self, *a, **kw)                    # NOT awaited: .stream() returns the manager directly
+        if final_attr == _STREAM_PASSTHROUGH:
+            return mgr                                # inner gated create records; a recorder here would double-count
+        t0 = time.time()
         try:
             return _GatedAsyncStreamManager(mgr, kw.get("model") or (a[0] if a else "?"), kw, t0,
                                             final_attr, est_fn, act_fn)
-        except Exception:
+        except SpendGateRefused:
+            raise                                     # never fail-open on a deliberate stop
+        except Exception as e:                        # LOUD fail-open: a wrapper bug must not break the caller's
+            print(f"[spend_gate] WARN could not gate a streamed async call ({type(e).__name__}: {e}) — this "
+                  f"stream is UNRECORDED", file=sys.stderr)   # call, but the dropped accounting must be VISIBLE
             return mgr
     stream._spend_gated = True
     return stream
@@ -1749,30 +1780,41 @@ def _wrap_async_stream(orig, final_attr, est_fn, act_fn):
 
 def _wrap_stream(orig, final_attr, est_fn, act_fn):
     def stream(self, *a, **kw):
-        t0 = time.time()
         mgr = orig(self, *a, **kw)
+        if final_attr == _STREAM_PASSTHROUGH:
+            return mgr                                # inner gated create records; a recorder here would double-count
+        t0 = time.time()
         try:
             return _GatedStreamManager(mgr, kw.get("model") or (a[0] if a else "?"), kw, t0,
                                        final_attr, est_fn, act_fn)
-        except Exception:
-            return mgr                                # fail OPEN: an un-proxied stream beats a broken call
+        except SpendGateRefused:
+            raise                                     # never fail-open on a deliberate stop
+        except Exception as e:                        # LOUD fail-open: an un-proxied stream beats a broken call,
+            print(f"[spend_gate] WARN could not gate a streamed call ({type(e).__name__}: {e}) — this stream is "
+                  f"UNRECORDED", file=sys.stderr)      # but the dropped accounting must be VISIBLE, never silent
+            return mgr
     stream._spend_gated = True
     return stream
 
 
-# The SDK streaming HELPERS — separate methods from `create`, and therefore invisible to a table that
-# patches `create`. anthropic's is the one adapters uses for every call; openai's is not used by this
-# package but is exactly the same hole for anyone who calls it.
+# The SDK streaming HELPERS — separate methods from `create`. Two kinds, and the distinction is load-bearing:
+#   • ANTHROPIC `.stream()` hits self._post DIRECTLY, bypassing create — the 2,921-call leak. The manager
+#     (records on get_final_message) is the SOLE recorder. Regular + beta, sync + async.
+#   • OPENAI `.stream()` builds partial(self.create, …) → it calls the ALREADY-GATED create(stream=True), which
+#     records the call. So it is COVERED by create; a recorder here would DOUBLE-COUNT (measured). Mark it
+#     _STREAM_PASSTHROUGH: gated for the surface sweep, manager delegated unchanged, accounting via the inner create.
 STREAM_INTERCEPTORS = [
     ("anthropic.resources.messages", "Messages", "stream", "get_final_message", _est_anth_msg, _act_anth_msg),
-    ("openai.resources.chat.completions", "Completions", "stream", "get_final_completion",
-     _est_oai_chat, _act_oai_chat),
-    # ASYNC TWINS. Found by the surface-coverage guard the moment the sync hole closed — the sync fix
-    # looked complete and was half the surface.
     ("anthropic.resources.messages", "AsyncMessages", "stream", "get_final_message",
      _est_anth_msg, _act_anth_msg, True),
-    ("openai.resources.chat.completions", "AsyncCompletions", "stream", "get_final_completion",
-     _est_oai_chat, _act_oai_chat, True),
+    ("anthropic.resources.beta.messages", "Messages", "stream", "get_final_message", _est_anth_msg, _act_anth_msg),
+    ("anthropic.resources.beta.messages", "AsyncMessages", "stream", "get_final_message",
+     _est_anth_msg, _act_anth_msg, True),
+    # OpenAI: create-delegating → PASSTHROUGH (inner gated create records; est/act unused on this path).
+    ("openai.resources.chat.completions", "Completions", "stream", _STREAM_PASSTHROUGH, None, None),
+    ("openai.resources.chat.completions", "AsyncCompletions", "stream", _STREAM_PASSTHROUGH, None, None, True),
+    ("openai.resources.responses", "Responses", "stream", _STREAM_PASSTHROUGH, None, None),
+    ("openai.resources.responses", "AsyncResponses", "stream", _STREAM_PASSTHROUGH, None, None, True),
 ]
 
 
@@ -1808,6 +1850,28 @@ RT_INTERCEPTORS = [
     ("anthropic.resources.messages", "AsyncMessages", "create", _est_anth_msg, _act_anth_msg, True),
     ("openai.resources.embeddings", "Embeddings", "create", _est_oai_embeddings, _act_oai_embeddings, False),
     ("openai.resources.embeddings", "AsyncEmbeddings", "create", _est_oai_embeddings, _act_oai_embeddings, True),
+    # STRUCTURED-OUTPUT helpers (`.parse`) — a SEPARATE self._post spend path beside `create`, one no table
+    # named (found by the SDK-surface seam sweep). Chat parse carries chat usage; Responses parse carries
+    # Responses usage — so each mirrors its own `create` entry's est/act.
+    ("openai.resources.chat.completions", "Completions", "parse", _est_oai_chat, _act_oai_chat, False),
+    ("openai.resources.chat.completions", "AsyncCompletions", "parse", _est_oai_chat, _act_oai_chat, True),
+    ("openai.resources.responses", "Responses", "parse", _est_oai_resp, _act_oai_resp, False),
+    ("openai.resources.responses", "AsyncResponses", "parse", _est_oai_resp, _act_oai_resp, True),
+    # Anthropic ALSO has a structured-output `.parse` (self._post, takes messages+max_tokens) — surfaced by the
+    # dynamic sweep, not the original spec; same usage shape as Messages.create, so same est/act.
+    ("anthropic.resources.messages", "Messages", "parse", _est_anth_msg, _act_anth_msg, False),
+    ("anthropic.resources.messages", "AsyncMessages", "parse", _est_anth_msg, _act_anth_msg, True),
+    # Anthropic BETA messages (anthropic.resources.beta.messages) — the beta twin of the entire Messages surface,
+    # a separate self._post spend path the dynamic sweep flagged (create + parse; stream is in STREAM_INTERCEPTORS).
+    # Same usage shape as non-beta → same est/act.
+    ("anthropic.resources.beta.messages", "Messages", "create", _est_anth_msg, _act_anth_msg, False),
+    ("anthropic.resources.beta.messages", "AsyncMessages", "create", _est_anth_msg, _act_anth_msg, True),
+    ("anthropic.resources.beta.messages", "Messages", "parse", _est_anth_msg, _act_anth_msg, False),
+    ("anthropic.resources.beta.messages", "AsyncMessages", "parse", _est_anth_msg, _act_anth_msg, True),
+    # LEGACY text completions (`client.completions.create`) — the pre-chat endpoint, still a live self._post
+    # spend path; usage is prompt/completion tokens (→ _act_oai_chat), input is `prompt` (→ _est_oai_legacy).
+    ("openai.resources.completions", "Completions", "create", _est_oai_legacy, _act_oai_chat, False),
+    ("openai.resources.completions", "AsyncCompletions", "create", _est_oai_legacy, _act_oai_chat, True),
 ]
 
 

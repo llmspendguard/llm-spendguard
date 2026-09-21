@@ -62,25 +62,40 @@ for tname, table, _n in TABLES:
               f"{mod}.{cls_name}.{method} is in the table but NOT wrapped — calls on it spend money that "
               f"never reaches the ledger.")
 
-print("\n-- no STREAMING HELPER on an installed SDK is left unclaimed --")
-# The original defect in general form: a spending surface that no table names. Streaming helpers are the
-# known family (they sit beside `create` on the same class and are trivially missed), so they are
-# enumerated from the SDK itself rather than from our tables.
+print("\n-- no SPEND SURFACE on an installed SDK is left unclaimed (create / parse / stream families) --")
+# The original defect in general form: a spending surface that no table names. A hand-written list of specific
+# (class, method) pairs is exactly how `.parse`, Responses `.stream`, and legacy `completions.create` hid — the
+# list said `.stream` on four classes and nothing else. Instead, enumerate the TOKEN-SPEND resource classes ×
+# the spend-family method NAMES, and check EVERY method that actually EXISTS on the installed SDK. Adding a
+# method to the family (a future spend helper) or a class here then covers it across the board — a class of
+# defect closed, not one instance. Residual, stated honestly: a brand-NEW token-spend RESOURCE-CLASS type must
+# be added to RESOURCE_CLASSES; unit-billed surfaces (images / audio / …) are covered by UNIT_INTERCEPTORS and
+# their own tests, and genuinely-free surfaces (e.g. moderations) are deliberately not token-spend.
 _claimed = {(s[0], s[1], s[2]) for _t, tbl, _n in TABLES for s in tbl}
-SURFACES = [("anthropic.resources.messages", "Messages"),
-            ("anthropic.resources.messages", "AsyncMessages"),
-            ("openai.resources.chat.completions", "Completions"),
-            ("openai.resources.chat.completions", "AsyncCompletions")]
-for mod, cls_name in SURFACES:
-    fn = _resolve(mod, cls_name, "stream")
-    if fn in (None, "sdk-absent"):
-        continue
-    claimed = (mod, cls_name, "stream") in _claimed
-    check(f"{cls_name}.stream is claimed by a table and gated",
-          claimed and getattr(fn, "_spend_gated", False),
-          f"{mod}.{cls_name}.stream EXISTS on the installed SDK but is "
-          f"{'not in any interceptor table' if not claimed else 'not wrapped'}. This is precisely how "
-          f"~2,921 Anthropic calls went unbilled: a streaming helper beside `create` that no table named.")
+RESOURCE_CLASSES = [
+    ("openai.resources.chat.completions", "Completions"), ("openai.resources.chat.completions", "AsyncCompletions"),
+    ("openai.resources.responses", "Responses"), ("openai.resources.responses", "AsyncResponses"),
+    ("openai.resources.completions", "Completions"), ("openai.resources.completions", "AsyncCompletions"),
+    ("openai.resources.embeddings", "Embeddings"), ("openai.resources.embeddings", "AsyncEmbeddings"),
+    ("anthropic.resources.messages", "Messages"), ("anthropic.resources.messages", "AsyncMessages"),
+    ("anthropic.resources.beta.messages", "Messages"), ("anthropic.resources.beta.messages", "AsyncMessages"),
+]
+SPEND_METHODS = ("create", "parse", "stream")         # the token-spend families a helper hides beside
+_checked = 0
+for mod, cls_name in RESOURCE_CLASSES:
+    for method in SPEND_METHODS:
+        fn = _resolve(mod, cls_name, method)
+        if fn in (None, "sdk-absent"):
+            continue                                  # that method / SDK is not present in this env → nothing to gate
+        _checked += 1
+        claimed = (mod, cls_name, method) in _claimed
+        check(f"{cls_name}.{method} is claimed by a table and gated",
+              claimed and getattr(fn, "_spend_gated", False),
+              f"{mod}.{cls_name}.{method} EXISTS on the installed SDK but is "
+              f"{'in NO interceptor table' if not claimed else 'not wrapped'}. A spend surface no table names is "
+              f"exactly how ~2,921 Anthropic calls went unbilled: a helper beside `create` that no table claimed.")
+check("the surface sweep actually examined installed spend methods (not a no-op)", _checked >= 8,
+      f"only {_checked} spend methods were found on the installed SDKs — the enumeration may be resolving nothing.")
 
 print("\nPASS — 0 failure(s)" if not _fails else f"\nFAIL — {len(_fails)} failure(s): " + "; ".join(_fails))
 sys.exit(1 if _fails else 0)
