@@ -457,6 +457,30 @@ def _warn_once_if_substituted(r):
     return msg
 
 
+def _default_reasoning_is_best_value():
+    """Is the config-scoped best-value DEFAULT armed? Env SPENDGUARD_DEFAULT_REASONING wins, else config
+    advisor.default_reasoning. Default OFF (unset). Mirrors the env-then-config pattern used across the package."""
+    import os
+    v = os.getenv("SPENDGUARD_DEFAULT_REASONING")
+    if v is not None:
+        return v.strip().lower() == "best-value"
+    from . import config
+    return str(config._cfg_get("advisor", "default_reasoning", "") or "").strip().lower() == "best-value"
+
+
+def _apply_best_value_default(reasoning, intent, sig, no_substitution, probe):
+    """Config-scoped default (opt-in; OFF unless advisor.default_reasoning='best-value'): turn reasoning=None into
+    'best-value' for a LABELLED (intent/sig), UNPINNED, non-probe call — so delegated work routes to the cheapest
+    (model, effort) whose MEASURED quality holds, without every caller opting in. Returns reasoning UNCHANGED in
+    every other case: an explicit reasoning (the caller always wins), a pinned (no_substitution) call, a probe, an
+    UNLABELLED call (no intent/sig — the default never triggers prompt-inference), or the default disabled. Pure +
+    side-effect-free so the policy is unit-tested without a live call; best_value still degrades to the caller's own
+    model when there is no measured evidence, so this can only ever pick a measured-equal-or-better arm."""
+    if reasoning is not None or no_substitution or probe or not (intent or sig):
+        return reasoning
+    return "best-value" if _default_reasoning_is_best_value() else reasoning
+
+
 def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,
          sig=None, intent=None, retries=2, files=None, _no_guard=False, no_metered_fallback=False, images=None,
          no_substitution=False, metered_only=False, _probe=False, **aliases):
@@ -612,6 +636,11 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     # Degrades HONESTLY: no measured evidence → keep the caller's model. The sentinel is CONSUMED here either way — it
     # must never reach the wire as a literal reasoning_effort (that would 400). A resolved choice is PINNED
     # (no_substitution) so the utilisation bandit cannot re-swap the model best-value deliberately chose.
+    # CONFIG-SCOPED BEST-VALUE DEFAULT (opt-in; OFF unless advisor.default_reasoning='best-value'). A labelled,
+    # unpinned, non-probe call that set no reasoning is defaulted to best-value here — so DELEGATED work auto-routes
+    # to the measured cost×quality frontier without every caller opting in. No-op in every other case; the sentinel
+    # it may set is consumed just below exactly like an explicit reasoning="best-value".
+    reasoning = _apply_best_value_default(reasoning, intent, sig, no_substitution, _probe)
     _bv_from = _bv_why = _bv_effort = None
     if isinstance(reasoning, str) and reasoning.strip().lower() == "best-value":
         reasoning = None                               # consume the sentinel regardless of the outcome below

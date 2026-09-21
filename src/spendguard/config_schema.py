@@ -146,6 +146,15 @@ SETTINGS = [
     dict(section="advisor", key="model", store="config.json:advisor.model", env="SPENDGUARD_ADVISOR_MODEL",
          default="claude-opus-4-8", kind="string", secret=False,
          desc="Model for the advisor's REASONING (insight synthesis + `optimize`). Realtime; must exist in pricing.py."),
+    dict(section="advisor", key="default_reasoning", store="config.json:advisor.default_reasoning",
+         env="SPENDGUARD_DEFAULT_REASONING", default=None, kind="string", secret=False,
+         desc="Set to 'best-value' to make DELEGATED calls opt into best-value routing automatically: a LABELLED "
+              "call (carries intent/sig) that did NOT pin a model or set an explicit reasoning is routed to the "
+              "cheapest (model, effort) whose MEASURED quality holds for the intent — lanes-first, metered fallback. "
+              "OFF by default (unset). Never overrides an explicit reasoning, a pinned (no_substitution) call, a "
+              "probe, or an UNLABELLED call; degrades to the caller's own model when there is no measured evidence, "
+              "so it can only ever pick a measured-equal-or-better arm — never a blind swap. Opt-in per repo/agent, "
+              "reversible; watch `spendguard savings` (did it save?) and `spendguard advise` good% (did quality hold?)."),
     dict(section="advisor", key="auto_fresh", store="config.json:advisor.auto_fresh", env="SPENDGUARD_AUTO_FRESH",
          default="weekly", kind="enum:off,weekly,daily", secret=False,
          desc="Auto-refresh Learnings from RECENT activity (caged review of the top intents, caps.meta-bounded) "
