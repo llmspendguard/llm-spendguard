@@ -653,19 +653,35 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     # unpinned, non-probe call that set no reasoning is defaulted to best-value here — so DELEGATED work auto-routes
     # to the measured cost×quality frontier without every caller opting in. No-op in every other case; the sentinel
     # it may set is consumed just below exactly like an explicit reasoning="best-value".
+    # Capture whether best-value was EXPLICIT (the caller passed reasoning="best-value", delegating the model choice)
+    # vs about to be INHERITED from advisor.default_reasoning — read BEFORE the default is applied, while `reasoning`
+    # still says which. Drives the floor-preserving pin below.
+    _bv_explicit = isinstance(reasoning, str) and reasoning.strip().lower() == "best-value"
     reasoning = _apply_best_value_default(reasoning, intent, sig, no_substitution, _probe)
     _bv_from = _bv_why = _bv_effort = None
     if isinstance(reasoning, str) and reasoning.strip().lower() == "best-value":
         reasoning = None                               # consume the sentinel regardless of the outcome below
         if not _probe and not getattr(_resolve_guard, "on", False):
+            from . import gate as _bvg                 # imported OUTSIDE the try so the deliberate-stop except below
+            #                                            can ALWAYS be evaluated (never a NameError on an import hiccup)
             try:
                 from . import best_value as _bv, calls as _bvc
                 _bv_intent = intent or (_bvc.current() or {}).get("intent") or sig
-                # no intent/sig/context → best_value infers one from the prompt (agentic, vs known intents) so
-                # best-value still applies instead of silently keeping the named model.
-                _pick = _bv.select_model_effort(_bv_intent, model, pin_model=no_substitution, prompt=prompt)
+                # FLOOR-PRESERVING PIN — best-value must be floor-IMPROVING, never floor-LOWERING. The global DEFAULT
+                # (advisor.default_reasoning=best-value, INHERITED by a call that pinned model= and never asked for a
+                # swap) titrates EFFORT for the pinned model ONLY (pin_model=True) — it NEVER re-picks the model, and
+                # never spends an extra recommend_models call to return a cold-intent "no pick" for that caller. Only
+                # an EXPLICIT reasoning="best-value" delegates the model choice (pin_model=no_substitution). Either way
+                # "no data yet" degrades to the caller's OWN model at a sane effort (a normal result), never to
+                # "no pick -> no answer". (An explicit, UNPINNED best-value still infers an intent from the prompt.)
+                _pick = _bv.select_model_effort(_bv_intent, model, pin_model=(no_substitution or not _bv_explicit),
+                                                prompt=prompt)
+            except _bvg.deliberate_stop_types():
+                raise                                  # a spend refusal / deadline from the advisor PROPAGATES as a
+                #                                        TYPED stop (a consumer can distinguish it) — NEVER swallowed to
+                #                                        _pick=None and an empty result the gate intended to stop
             except Exception:
-                _pick = None
+                _pick = None                           # any OTHER advisor hiccup -> degrade to the named model (floor-preserving)
             import sys as _sbv
             if _pick and _pick.get("model"):
                 _bv_from, _bv_why, _bv_effort = model, _pick.get("why"), _pick.get("effort")
