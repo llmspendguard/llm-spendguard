@@ -167,6 +167,14 @@ SETTINGS = [
          desc="{lane: model} — the representative model each subscription plan offers, e.g. "
               "{\"codex\":\"gpt-5.5\",\"gemini\":\"gemini-3.7-flash-high\",\"zai-coding\":\"glm-4.6\"}. The "
               "load-balancer's substitute CANDIDATES (lane_balance.candidate_models); unset → nothing to propose."),
+    dict(section="advisor", key="provider_base_model", store="config.json:advisor.provider_base_model", default=None,
+         kind="json|null", secret=False,
+         desc="{provider: model} — each provider's RELIABLE BASE model: the LAST-RESORT tier-3 fallback when a "
+              "chosen model's $0 lane AND its metered API both fail, so a vendor slot still yields SOME answer "
+              "(LABELLED base_fallback) rather than an error. Opt-in per call (adapters.call base_fallback=True) and "
+              "per provider (a provider left unset -> no tier-3 for it, the chain ends at metered). YOU pick each "
+              "base (a capability+reliability judgement, made once here); the code never guesses or hardcodes a "
+              "model id. Same-provider only, so a consensus panel keeps its vendor identity."),
     dict(section="advisor", key="tiers", store="config.json:advisor.tiers", default=None,
          kind="json|null", secret=False,
          desc="{group: [models YOU declare interchangeable for it]} — named ROUTING GROUPS a fungible caller can "

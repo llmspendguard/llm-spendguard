@@ -58,6 +58,19 @@ def provider_for(model):
     raise ValueError(f"unknown provider for model {model!r} — use 'provider:model' or register_provider()")
 
 
+def provider_base_model(provider):
+    """The RELIABLE BASE model configured for `provider` (advisor.provider_base_model[provider]) — the tier-3
+    last-resort fallback when a chosen model's $0 lane AND its metered API both fail. None if unset for this provider
+    (tier-3 is then a no-op for it, and the chain ends at metered). PURELY config, never a hardcoded id, so a stale
+    model id can't be baked in; same-provider by construction, so a consensus panel keeps its vendor identity."""
+    try:
+        from . import config as _cfg
+        m = (_cfg._cfg_get("advisor", "provider_base_model", {}) or {}).get((provider or "").strip().lower())
+        return m or None
+    except Exception:
+        return None
+
+
 def _executor():
     v = __import__("os").environ.get("SPENDGUARD_ADVISOR_EXECUTOR")
     if v:
@@ -483,7 +496,7 @@ def _apply_best_value_default(reasoning, intent, sig, no_substitution, probe):
 
 def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,
          sig=None, intent=None, retries=2, files=None, _no_guard=False, no_metered_fallback=False, images=None,
-         no_substitution=False, metered_only=False, _probe=False, **aliases):
+         no_substitution=False, metered_only=False, base_fallback=False, _probe=False, **aliases):
     """Run one prompt against one model. Returns a result dict (never raises).
 
     `governed=True` (a kwarg carried via **aliases) runs THIS call inside the dispatch GOVERNOR — for a caller
@@ -705,6 +718,22 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
         _sig_ctx._local.ctx = _ctx_before   # restore the caller's context exactly (nested calls keep their own tag)
         if _adm is not None:
             _adm.release()                  # free the governor slot (idempotent; no-op when ungoverned)
+    # TIER-3 — PROVIDER BASE-MODEL FALLBACK (the last hop of lane->metered->base). When the chosen model's whole
+    # lane->metered attempt STILL errored and the caller opted in (base_fallback=True) and billing is allowed, retry
+    # the SAME provider's configured RELIABLE BASE model so the call yields SOME answer instead of an error — clearly
+    # LABELLED (a caller needing the exact model, e.g. a consensus panel, leaves base_fallback off). Config-gated (no
+    # provider_base_model entry -> no-op), billing-gated (no_metered_fallback -> skip), recursion-guarded (the base
+    # retry passes base_fallback=False), and only on the NORMAL path (never the internal _no_guard recursion).
+    if base_fallback and not _no_guard and isinstance(r, dict) and r.get("error") and not no_metered_fallback:
+        _bprov = provider_for(model)
+        _base = provider_base_model(_bprov)
+        if _base and _base != model and f"{_bprov}:{_base}" != model:
+            _rb = call(f"{_bprov}:{_base}", prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
+                       schema=schema, timeout_s=timeout_s, sig=sig, no_substitution=True, base_fallback=False,
+                       no_metered_fallback=no_metered_fallback)
+            if isinstance(_rb, dict) and _rb.get("text") and not _rb.get("error"):
+                r = {**_rb, "substituted_from": model, "substitution": f"tier-3 base fallback: {model} unavailable",
+                     "base_fallback": True}
     # BEST-VALUE PROVENANCE — record what the caller WOULD have run (the baseline) vs what best-value chose, so the
     # saving/decision booking downstream can price the counterfactual. Stamped only when best-value actually changed
     # the target; never overwrites a lane/bandit substituted_from already present. requested_effort is None (the
