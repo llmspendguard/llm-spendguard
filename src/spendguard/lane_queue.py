@@ -67,6 +67,17 @@ def _iso(dt):
     return dt.isoformat(timespec="seconds")
 
 
+def _deadline_iso(sla_s):
+    """An absolute SLA deadline (ISO ts) `sla_s` seconds from now, or None when no SLA is given — same ISO format as
+    every other timestamp here, so the scheduler compares deadlines with a plain string ordering."""
+    if sla_s is None:
+        return None
+    try:
+        return _iso(_utcnow() + datetime.timedelta(seconds=float(sla_s)))
+    except (TypeError, ValueError):
+        return None
+
+
 def _queue_db():
     """The durable queue table. Named `_queue_db` (not `_db`) so it does not join the repo's 8-way `_db` collision —
     same reason lane_bandit uses `_bandit_db`. Forward-only additive migration (CREATE TABLE IF NOT EXISTS)."""
@@ -81,21 +92,34 @@ def _queue_db():
         lease_until TEXT, attempts INTEGER DEFAULT 0, max_attempts INTEGER DEFAULT 3,
         worker TEXT, result TEXT, lane TEXT, billed INTEGER DEFAULT 0,
         created_ts TEXT, updated_ts TEXT)""")
+    # FORWARD-ONLY additive migration for tables created before sla_class/deadline_ts existed: a queue item carries
+    # its SERVICE CLASS ('realtime' | 'batch') and an absolute SLA DEADLINE (ISO ts), so the scheduler can do what is
+    # needed in the time that is available — realtime/tight-deadline first within capacity, batch on the spare. SQLite
+    # has no ADD COLUMN IF NOT EXISTS, so the live columns are checked first (idempotent; runs once per new column).
+    _cols = {r[1] for r in c.execute("PRAGMA table_info(lane_queue)").fetchall()}
+    if "sla_class" not in _cols:
+        c.execute("ALTER TABLE lane_queue ADD COLUMN sla_class TEXT DEFAULT 'batch'")
+    if "deadline_ts" not in _cols:
+        c.execute("ALTER TABLE lane_queue ADD COLUMN deadline_ts TEXT")
     # index the lease hot-path (pick highest-priority oldest pending) so a deep backlog stays cheap to poll.
     c.execute("CREATE INDEX IF NOT EXISTS lane_queue_pick ON lane_queue(state, priority DESC, id)")
     return c
 
 
-def enqueue(intent, task, system=None, reasoning=None, priority=0, max_attempts=None):
+def enqueue(intent, task, system=None, reasoning=None, priority=0, max_attempts=None,
+            sla_class="batch", deadline_ts=None):
     """Append ONE task. NEVER blocks and never runs it — that is the point: work is accepted at any utilization and
     sits `pending` until a drainer has lane capacity. Returns the row id, or None on error."""
-    return (enqueue_many(intent, [task], system=system, reasoning=reasoning,
-                         priority=priority, max_attempts=max_attempts) or [None])[0]
+    return (enqueue_many(intent, [task], system=system, reasoning=reasoning, priority=priority,
+                         max_attempts=max_attempts, sla_class=sla_class, deadline_ts=deadline_ts) or [None])[0]
 
 
-def enqueue_many(intent, tasks, system=None, reasoning=None, priority=0, max_attempts=None):
-    """Append many tasks of ONE intent in a single transaction (a 6k-item backfill is one commit). Returns the new
-    row ids in order; [] on error or empty input."""
+def enqueue_many(intent, tasks, system=None, reasoning=None, priority=0, max_attempts=None,
+                 sla_class="batch", deadline_ts=None):
+    """Append many tasks of ONE intent in a single transaction (a 6k-item backfill is one commit). `sla_class`
+    ('realtime' | 'batch') and `deadline_ts` (absolute ISO SLA deadline, or None) are stamped on every row so the
+    scheduler/drain can serve tight-deadline realtime work first within capacity. Returns the new row ids in order;
+    [] on error or empty input."""
     tasks = [t for t in (tasks or []) if t is not None]
     if not intent or not tasks:
         return []
@@ -107,8 +131,9 @@ def enqueue_many(intent, tasks, system=None, reasoning=None, priority=0, max_att
             ids = []
             for t in tasks:
                 cur.execute("INSERT INTO lane_queue(intent,task,system,reasoning,priority,state,attempts,"
-                            "max_attempts,created_ts,updated_ts) VALUES(?,?,?,?,?, 'pending', 0, ?,?,?)",
-                            (intent, t, system, reasoning, int(priority), maxa, now, now))
+                            "max_attempts,sla_class,deadline_ts,created_ts,updated_ts) "
+                            "VALUES(?,?,?,?,?, 'pending', 0, ?,?,?,?,?)",
+                            (intent, t, system, reasoning, int(priority), maxa, sla_class, deadline_ts, now, now))
                 ids.append(cur.lastrowid)
             c.commit()
             return ids
@@ -179,6 +204,89 @@ def settle(row_id, result):
             c.commit()
     except Exception:
         pass
+
+
+def _enqueue_leased(intent, tasks, *, system=None, reasoning=None, priority=PRIORITY_INTERACTIVE,
+                    sla_class="realtime", deadline_ts=None, lease_s=None):
+    """Enqueue rows ALREADY OWNED by this worker (state='leased', attempts=1, a fresh lease_until) — the atomic
+    enqueue the SYNC submit() fast-path needs so the drain daemon never races it for the just-added rows. Returns the
+    ids in task order. A DELIBERATE stop (spend refusal / ledger LOCK) PROPAGATES — never swallowed to a [] that reads
+    as 'nothing queued'; any OTHER hiccup returns [] LOUDLY (stderr) so the caller sees < len(tasks) rows and degrades
+    honestly. If this worker dies before settle, the lease expires and the daemon reclaims the rows to 'pending'."""
+    tasks = [t for t in (tasks or []) if t is not None]
+    if not intent or not tasks:
+        return []
+    maxa = int(_qcfg("queue_max_attempts", MAX_ATTEMPTS_DEFAULT))
+    lease_s = float(lease_s if lease_s is not None else _qcfg("queue_lease_s", LEASE_S_DEFAULT))
+    worker = "submit-%d" % os.getpid()
+    now_dt = _utcnow()
+    now, until = _iso(now_dt), _iso(now_dt + datetime.timedelta(seconds=lease_s))
+    try:
+        with contextlib.closing(_queue_db()) as c:
+            cur = c.cursor()
+            ids = []
+            for t in tasks:
+                cur.execute("INSERT INTO lane_queue(intent,task,system,reasoning,priority,state,attempts,"
+                            "max_attempts,sla_class,deadline_ts,lease_until,worker,created_ts,updated_ts) "
+                            "VALUES(?,?,?,?,?, 'leased', 1, ?,?,?,?,?,?,?)",
+                            (intent, t, system, reasoning, int(priority), maxa, sla_class, deadline_ts,
+                             until, worker, now, now))
+                ids.append(cur.lastrowid)
+            c.commit()
+            return ids
+    except Exception as _e:
+        from . import provider_tokens as _pt          # reuse the CANONICAL stop-or-locked predicate (no duplicate name)
+        if _pt._stop_or_locked(_e):
+            raise                                      # spend refusal / ledger LOCK PROPAGATES — never a silent []
+        import sys as _sys
+        print("[spendguard] lane_queue._enqueue_leased: durable enqueue FAILED (%s: %s) — returning [] so the caller "
+              "degrades HONESTLY (never a silent 'queued')." % (type(_e).__name__, str(_e)[:60]), file=_sys.stderr)
+        return []
+
+
+def submit(intent, tasks, *, priority=PRIORITY_INTERACTIVE, sla_class="realtime", sla_s=None, wait=True,
+           system=None, reasoning=None, deadline_s=None, **bulk_kwargs):
+    """THE FRONT DOOR — every request enters the durable queue here (priority + service class + SLA), so it is
+    recorded, prioritisable and crash-recoverable. Two modes:
+      • wait=True (the SYNC FAST-PATH, default for an interactive/realtime caller): enqueue the rows ALREADY LEASED to
+        us (so the daemon never races them), run them INLINE through the now-bulletproof lane_balance.bulk_delegate
+        (never crash, never empty), settle each, and RETURN {results: [...] in task order, ids, durable}. No
+        drain-daemon loop latency — the row is durable (a dead worker's rows reclaim to pending), but the caller gets
+        its answer NOW.
+      • wait=False (async / batch backfill): enqueue 'pending' and RETURN {queued: ids, durable}; the lane-drain
+        daemon runs them on spare capacity. A 6k-item backfill enqueues in one commit and never blocks.
+    HONEST DEGRADATION: the queue is an ENHANCEMENT, never a GATE on the caller's result — if the durable store is
+    (non-deliberately) unwritable the work STILL runs and its results are returned, but `durable` is False and a loud
+    stderr line says so; submit NEVER claims a durability it did not get. A DELIBERATE stop (a spend refusal / ledger
+    LOCK from the durable store, or a spend refusal from the run) PROPAGATES as a typed signal, never swallowed. The
+    SLA (`sla_s` seconds) becomes an absolute deadline_ts on every row AND bounds the inline run's deadline. Extra
+    bulk_delegate kwargs (schema, on_miss, base_fallback, lanes, …) pass through."""
+    tasks = list(tasks)
+    if not intent or not tasks:
+        return {"queued": [], "results": ([] if wait else None), "durable": True}
+    _dl = _deadline_iso(sla_s)
+    if not wait:
+        ids = enqueue_many(intent, tasks, system=system, reasoning=reasoning, priority=priority,
+                           sla_class=sla_class, deadline_ts=_dl)
+        return {"queued": ids, "results": None, "durable": len(ids) == len(tasks)}
+    # SYNC FAST-PATH — own the rows from the start (no daemon race), run inline via the bulletproof engine, settle.
+    ids = _enqueue_leased(intent, tasks, system=system, reasoning=reasoning, priority=priority,
+                          sla_class=sla_class, deadline_ts=_dl)
+    from . import lane_balance
+    _run_dl = float(deadline_s if deadline_s is not None else (sla_s if sla_s else LEASE_S_DEFAULT))
+    results = lane_balance.bulk_delegate(tasks, intent, system=system, reasoning=reasoning,
+                                         deadline_s=_run_dl, **bulk_kwargs)
+    for rid, res in zip(ids, results):                 # settle every row we DID durably record
+        settle(rid, res if isinstance(res, dict) else {"error": "no result"})
+    _durable = len(ids) == len(tasks)
+    if not _durable:
+        # the durable enqueue was (non-deliberately) unavailable: the work ran and results are returned, but we do
+        # NOT claim it was recorded/crash-recoverable — never a plausible-success that was never queued.
+        import sys as _sys
+        print("[spendguard] lane_queue.submit: durable enqueue UNAVAILABLE for intent %r — ran %d task(s) DIRECTLY "
+              "and return results, but they were NOT durably recorded this run (durable=False)." % (intent, len(tasks)),
+              file=_sys.stderr)
+    return {"queued": ids, "results": results, "durable": _durable}
 
 
 def queue_depth():
