@@ -18,7 +18,7 @@ def _insights_db():
         with _lock:
             if _conn is None:
                 c = sqlite3.connect(config.db_path(), timeout=10, check_same_thread=False)
-                c.execute("PRAGMA journal_mode=WAL")
+                config.tune_ledger_connection(c)     # WAL + synchronous=NORMAL + the shared ledger PRAGMA posture
                 c.execute("""CREATE TABLE IF NOT EXISTS insights(
                     id TEXT PRIMARY KEY, ts TEXT, intent TEXT, lesson TEXT,
                     evidence TEXT, source TEXT, confidence REAL)""")

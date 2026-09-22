@@ -303,6 +303,7 @@ class SpendLedger:
     def __init__(self, db_path=None):
         self.db_path = db_path or config.db_path()
         self._conn = sqlite3.connect(self.db_path, timeout=10, check_same_thread=False)
+        config.tune_ledger_connection(self._conn)    # WAL + synchronous=NORMAL + the shared ledger PRAGMA posture (the money-of-record writes)
         self._conn.row_factory = sqlite3.Row
         self._conn.create_aggregate("dec_sum", 1, _DecSum)   # exact decimal SUM for the TEXT money columns
         self._defer = False                              # bulk(): defer per-row commits (still audits every row)

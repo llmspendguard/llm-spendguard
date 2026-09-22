@@ -26,7 +26,7 @@ def _semcache_db():
         with _lock:
             if _conn is None:
                 c = sqlite3.connect(config.db_path(), timeout=10, check_same_thread=False)
-                c.execute("PRAGMA journal_mode=WAL")
+                config.tune_ledger_connection(c)     # WAL + synchronous=NORMAL + the shared ledger PRAGMA posture
                 c.execute("""CREATE TABLE IF NOT EXISTS semcache(
                     id TEXT PRIMARY KEY, ts TEXT, model TEXT, prompt_hash TEXT, prompt TEXT,
                     output TEXT, emb BLOB)""")
