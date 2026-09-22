@@ -451,6 +451,14 @@ def _tool_version(args):
     return release.release_status()
 
 
+def _tool_route_cost(args):
+    """TRUE-cost batch-vs-lane-vs-combo routing split for an intent at volume N — wraps route_economics.report (the
+    same computation the `route-cost` CLI prints), so the MCP answer and the CLI can never disagree. $0."""
+    from . import route_economics
+    return route_economics.route_report(args["intent"], int(args["n"]), in_tok=args.get("in_tok"), out_tok=args.get("out_tok"),
+                                        lane=args.get("lane"), batch_model=args.get("batch_model"))
+
+
 _TOOLS = {
     "spendguard_version": (
         "Which spendguard COMMIT this MCP server is running, the green pointer it should be on, and whether it is "
@@ -478,6 +486,21 @@ _TOOLS = {
         "decisions booked and the saving per intent. This is the value-proof for the routing spendguard did. $0.",
         {"type": "object", "properties": {}, "additionalProperties": False},
         _tool_savings),
+    "spendguard_route_cost": (
+        "TRUE-cost routing for a BULK job: for an intent at volume N, the $ of running it on a subscription LANE "
+        "(priced at its true MARGINAL cost, never $0), the metered BATCH API, or a min-cost COMBO — plus the "
+        "recommendation and a plain 'why'. Prices a $0 lane at its real amortized rate + reclaims capacity that would "
+        "expire unused; the batch leg is ~half realtime, cap-free. $0, arithmetic on measured economics "
+        "(lane_economics + pricing); degrades honestly when a lane cap is still estimating.",
+        {"type": "object", "properties": {
+            "intent": {"type": "string", "description": "the job-type label the calls are tagged under"},
+            "n": {"type": "integer", "description": "number of calls (tasks) in the job"},
+            "in_tok": {"type": "integer", "description": "input tokens per call (default: = out_tok)"},
+            "out_tok": {"type": "integer", "description": "output tokens per call (default: measured p90)"},
+            "lane": {"type": "string", "description": "force a lane (default: the first converged one)"},
+            "batch_model": {"type": "string", "description": "metered model for the batch leg (default: config advisor.batch_model)"}},
+         "required": ["intent", "n"], "additionalProperties": False},
+        _tool_route_cost),
     "spendguard_advise": (
         "Rank the models you have ALREADY used for a job-type ('intent') by cost-effectiveness at the quality it "
         "held: $/good-result where quality is labeled, else $/M output. Returns the ranked models, the pick, and "

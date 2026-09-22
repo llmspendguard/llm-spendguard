@@ -143,6 +143,9 @@ def _dispatch(argv=None):
         from . import report
         sys.argv = ["report"] + rest
         return report.main()
+    if cmd in ("route-cost", "route_cost"):           # $0: TRUE-cost batch-vs-lane-vs-combo split for an intent at volume N
+        from . import route_economics
+        return route_economics.cmd(rest)
     if cmd == "focus-export":                         # ledger → FinOps FOCUS 1.2 rows (json|csv), read-only, $0
         from . import focus_export
         return focus_export.main(rest)

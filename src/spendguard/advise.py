@@ -89,13 +89,24 @@ def ranked(intent=None, as_of=None, by_effort=False):
     best-value selector can pick the cheapest effort that holds quality. `id` stays 'vendor:model' in BOTH modes
     (so plan-matching and the CLI are unchanged); the effort rides its own field, never fused into the id."""
     agg = evidence(as_of, intent, by_effort=by_effort)
+    # TRUE LANE COST — a model that rode a $0 subscription lane recorded ~$0, but its tokens have a REAL amortized cost
+    # (lane_economics: plan fee ÷ measured cap). Floor each arm's cost at out_tok × its lane's eff so best-value / the
+    # bandit STOP ranking a plan lane as free (measured live: claude-code ≈ $15/Mtok, not $0). Read ONCE; a metered arm
+    # (no lane for its provider) is unchanged, and the map is empty when no lane has converged economics — fail-open to
+    # the prior $0-lane behaviour, never a crash. The WASTE reclaim stays a per-job route_economics call, not here.
+    from . import route_economics as _re
+    _lane_eff = _re.lane_eff_by_provider()
     models = []
     for key, a in agg.items():
-        permout = (a["cost"] / a["outtok"] * 1e6) if a["outtok"] else None
+        cost = a["cost"] or 0.0
+        _lane_true = float(a["outtok"] or 0) * _lane_eff.get(a["provider"], 0.0)   # true cost when it rode a $0 lane
+        if _lane_true > cost:
+            cost = _lane_true                          # price the lane arm at its TRUE marginal cost, never a flat $0
+        permout = (cost / a["outtok"] * 1e6) if a["outtok"] else None
         good_rate = (a["good"] / a["labeled"]) if a["labeled"] else None
-        per_good = (a["cost"] / a["good"]) if a["good"] else None
+        per_good = (cost / a["good"]) if a["good"] else None
         row = dict(id=f"{a['provider']}:{a['model']}", model=a["model"], provider=a["provider"], jobs=a["jobs"],
-                   cost=round(a["cost"] or 0.0, 6), out_tok=a["outtok"],
+                   cost=round(cost, 6), out_tok=a["outtok"],
                    per_m_out=permout, good_rate=good_rate, per_good=per_good,
                    labeled=round(a["labeled"], 3))     # confidence-weighted # of quality labels — the EVIDENCE STRENGTH
         if by_effort:                                  # behind good_rate/per_good, so a selector can refuse a thin arm
