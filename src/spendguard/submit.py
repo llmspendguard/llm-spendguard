@@ -274,6 +274,57 @@ def guarded_submit(jsonl_path, model, cap_dollars, batch=True, avg_out_tokens=No
     return b.id
 
 
+def submit_chat_tasks(tasks, model, *, system=None, schema=None, reasoning="minimal", max_out=None,
+                      cap_dollars=None, submit=True, intent=None):
+    """Submit a list of CHAT tasks to the OpenAI /v1/chat/completions Batch API (~half realtime, 24h window) — the
+    first-class chat BATCH submitter (the chat analogue of adapters.embed_batch), and the callable that wires
+    route_economics' / bulk_delegate's BATCH leg to a real submission. Each task is a prompt STRING (custom_id auto
+    = 'task-<i>') OR a {custom_id, content[, system, schema, schema_name]} dict. Builds the request .jsonl through the
+    ONE models.apply_call_params authority (build_chat_batch_jsonl — so it can never send a model-wrong param), then
+    ESTIMATE→cap→submit through guarded_submit (the SAME chokepoint every batch passes; cap_dollars enforced). Returns
+    {batch_id, jsonl, requests, error}; submit=False estimates + writes only ($0). Collect later with
+    callio.guarded_collect(batch_id) — results map by custom_id. OpenAI-only (the OpenAI Batch API serves only OpenAI
+    ids); a non-OpenAI model returns a clear error (the lane fan runs it instead), never a silent metered fallback."""
+    import json as _json
+    import os as _os
+    import tempfile as _tf
+    from . import adapters
+    items = list(tasks or [])
+    base = {"batch_id": None, "jsonl": None, "requests": len(items), "error": None}
+    if not items:
+        return base
+    prov = adapters.provider_for(model)
+    if prov != "openai":
+        return {**base, "error": "chat batch is OpenAI-only (the /v1/chat/completions Batch API serves only OpenAI "
+                "ids); got %r (provider %r) — run it on the lane fan / realtime instead." % (model, prov)}
+    fd, tasks_path = _tf.mkstemp(prefix="spendguard-batch-tasks-", suffix=".jsonl")   # FRESH temp — never a caller path
+    try:
+        with _os.fdopen(fd, "w") as fh:
+            for i, t in enumerate(items):
+                if isinstance(t, dict):
+                    row = {"custom_id": str(t.get("custom_id", "task-%d" % i)), "content": str(t.get("content", ""))}
+                    for k in ("system", "schema", "schema_name"):
+                        if t.get(k) is not None:
+                            row[k] = t[k]
+                else:
+                    row = {"custom_id": "task-%d" % i, "content": str(t)}
+                fh.write(_json.dumps(row) + "\n")
+        req_path, n = build_chat_batch_jsonl(tasks_path, model, system=system, max_out=max_out,
+                                             reasoning=reasoning, schema=schema)
+        bid = guarded_submit(req_path, model, cap_dollars, batch=True, submit=submit, endpoint="/v1/chat/completions")
+        return {**base, "batch_id": bid, "jsonl": req_path, "requests": n}
+    except Exception as e:
+        from . import gate as _g
+        if isinstance(e, _g.deliberate_stop_types()):
+            raise                                    # a cap refusal HALTS — never a silent partial submission
+        return {**base, "error": str(e)[:200]}
+    finally:
+        try:
+            _os.unlink(tasks_path)                   # the request envelope (req_path) is the durable artefact, not this
+        except OSError:
+            pass
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--jsonl", required=True)

@@ -368,7 +368,8 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
                   checkpoint=None, chunk_size=100, refuse_billed=False, stats=None, force=False, tier=None,
                   schema=None, expect_ids=None, gate_sig=None, lanes=None, images_for=None, vision_model=None,
                   model_for=None, prompt_for=None, task_key=None, return_keyed=False,
-                  on_miss=None, batch_submit=None, hedge_ms=None, strategy=None, metered_only=False):
+                  on_miss=None, batch_submit=None, batch_model=None, batch_cap=None,
+                  hedge_ms=None, strategy=None, metered_only=False):
     """Fan a LIST of similar tasks across ALL viable idle lanes CONCURRENTLY — the right shape for a BULK job (e.g.
     symgrep's ~6k one-sentence symbol descriptions) that the per-call bandit would trickle one at a time. Each task
     runs on a lane (round-robin across the lanes the bandit rates GOOD for this intent), each admission BOUNDED by
@@ -457,6 +458,11 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
                   (async: bulk_delegate never blocks on the 24h batch window); without it, the misses become
                   reason="batch_eligible" (a STRUCTURED signal to route them to your own batch path). Pairs with
                   return_keyed so the caller re-associates queued rows by key, never by position.
+                  With NO batch_submit but a resolvable batch model (`batch_model=` or config advisor.batch_model),
+                  submit_chat_tasks becomes the DEFAULT overflow submitter — estimate-first + request-capped inside
+                  guarded_submit, `batch_cap=` / advisor.batch_cap_usd the optional $ ceiling — so strategy="auto"
+                  submits the overflow to the REAL OpenAI Batch API with no caller wiring. No batch model resolvable
+                  → the misses stay batch_eligible (an uncapped auto-submit never happens by omission).
     `on_miss` takes precedence over `refuse_billed` when both are set; None keeps the `refuse_billed` behaviour.
 
     `strategy="auto"` is the QUOTA-AWARE split (the economic model as one flag): spendguard picks WHICH plan lanes to
@@ -1021,6 +1027,26 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
     # the caller routes them to its own batch path. A DELIBERATE stop from the submit HALTS (never hidden); any other
     # submit failure leaves the misses batch_eligible with a loud notice (never silently "queued" when it wasn't).
     if on_miss == "batch":
+        if batch_submit is None:
+            # DEFAULT batch leg (the "wire the batch decision to a real submission" path): if a batch model is
+            # resolvable — this call's `batch_model=` or config advisor.batch_model — submit the overflow to the
+            # OpenAI /v1/chat/completions Batch API (~half realtime) via submit_chat_tasks, which estimate-firsts and
+            # request-caps inside guarded_submit (`batch_cap=` / advisor.batch_cap_usd = the optional $ ceiling). No
+            # batch model → batch_submit stays None → misses fall through to batch_eligible below: an uncapped
+            # auto-submit never happens by omission. A submit ERROR (incl. a non-OpenAI model) RAISES here so the
+            # existing handler leaves those misses batch_eligible with a loud notice — never falsely "queued".
+            from . import config as _config
+            _bm = batch_model or _config._cfg_get("advisor", "batch_model", None)
+            if _bm:
+                _bcap = batch_cap if batch_cap is not None else _config._cfg_get("advisor", "batch_cap_usd", None)
+                from . import submit as _submit_mod
+
+                def batch_submit(_miss, _m=_bm, _cap=_bcap, _sm=_submit_mod):
+                    _r = _sm.submit_chat_tasks(_miss, _m, system=system, schema=schema,
+                                               intent=intent, cap_dollars=_cap)
+                    if _r.get("error"):
+                        raise RuntimeError(_r["error"])   # → misses left batch_eligible + loud notice, never falsely queued
+                    return _r.get("batch_id")
         miss_idx = [i for i in range(len(tasks)) if not (results[i] or {}).get("text")]
         if miss_idx:
             handle, _submitted = None, False
