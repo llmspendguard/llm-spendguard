@@ -5,8 +5,10 @@ flag, reconcile cache) lives under SPENDGUARD_HOME (default ~/.spendguard). API 
 resolve from the environment first, then SPENDGUARD_ENV or ./.env.
 """
 import pathlib as _pathlib
+import contextlib
 import datetime
 import os
+import threading
 from pathlib import Path
 
 HOME = Path(os.getenv("SPENDGUARD_HOME") or (Path.home() / ".spendguard"))
@@ -619,6 +621,110 @@ def budget_backend():
 def db_path():
     p = _cfg_get("budget", "db_path", None)
     return p if p else str(HOME / "spend.db")
+
+
+def tune_ledger_connection(c):
+    """Apply spendguard's shared SQLite tuning to a base-ledger connection. config.db_path() is ONE file opened by
+    ~8 subsystems (budget/calls/callio/bulkgate/learn/semcache/lane_queue …); every `_X_db()` opener calls this right
+    after connect(), replacing a bare `PRAGMA journal_mode=WAL`, so the whole shared ledger takes one tuned posture:
+      · journal_mode=WAL   — concurrent readers + one writer (persistent; asserted so a first-ever open sets it).
+      · synchronous=NORMAL — under WAL, DON'T fsync on every commit (the dominant per-write cost). Durable vs an APP
+        crash; only an OS/power crash can lose commits since the last WAL checkpoint, and spendguard's reconcile
+        (provider billing = ground truth) is the backstop for the spend ledger.
+      · busy_timeout=5000  — wait up to 5s for the single shared-file writer lock, then fail; callers degrade a busy
+        write, never crash.
+      · temp_store=MEMORY  — sorts / temp b-trees in RAM.
+      · cache_size=-64000  — up to 64MB page cache (per connection; pays off most on a REUSED connection).
+      · mmap_size=256MB    — memory-mapped reads (per connection).
+    All per-CONNECTION except WAL (which is file-persistent), so tuning one subsystem's connection never disturbs
+    another's on the same file. Best-effort: a PRAGMA a given SQLite build rejects is skipped, never fatal."""
+    for pragma in ("busy_timeout=5000", "journal_mode=WAL", "synchronous=NORMAL", "temp_store=MEMORY",
+                   "cache_size=-64000", "mmap_size=268435456"):
+        try:
+            c.execute("PRAGMA " + pragma)
+        except Exception:
+            pass
+    return c
+
+
+# ── shared ledger connection POOL — ONE implementation for every subsystem that opens the base sqlite ───────────────
+# config.db_path() is a SINGLE file opened by ~8 subsystems (budget/calls/callio/bulkgate/learn/semcache/lane_queue…).
+# Each used to reopen + re-tune + re-check its schema on EVERY op — and the connect() alone (~400us) DOMINATED the
+# per-op cost (measured ~60x on a write hot path; PRAGMAs per-op are neutral, reuse is the lever). This is the ONE
+# reuse+tuning implementation they all share: a THREAD-LOCAL connection per (thread, subsystem `key`), tuned once,
+# schema ensured once, self-healing on error. KEYED per subsystem (NOT one globally shared connection) so a nested op
+# across subsystems can never commit/rollback another's in-flight transaction — the spend ledger must not be coupled
+# to the queue's transaction. This replaces the copy-pasted per-op `_X_db()` open in every subsystem.
+_LEDGER_POOL = threading.local()
+
+
+def pooled_ledger_conn(key, ensure_schema):
+    """The thread-local pooled connection for subsystem `key` (tuned via tune_ledger_connection, schema ensured once
+    at creation by ensure_schema(c)). Reused across that subsystem's ops on this thread; reopened when db_path()
+    changed under us (a test) or the connection was dropped by reset_ledger_conn after an error, so a stale connection
+    never lingers. `key` namespaces one subsystem's connection from another's (same file, different tables)."""
+    conns = getattr(_LEDGER_POOL, "conns", None)
+    if conns is None:
+        conns = _LEDGER_POOL.conns = {}
+    path = db_path()
+    got = conns.get(key)
+    if got is not None and got[1] == path:
+        return got[0]
+    if got is not None:                                  # db path changed under us → close the stale connection first
+        try:
+            got[0].close()
+        except Exception:
+            pass
+    import sqlite3
+    c = sqlite3.connect(path, timeout=5, check_same_thread=False)
+    tune_ledger_connection(c)
+    ensure_schema(c)
+    conns[key] = (c, path)
+    return c
+
+
+def reset_ledger_conn(key):
+    """Drop subsystem `key`'s pooled connection so the next op reopens a clean one — called after an op error, so a
+    broken or replaced-file connection can never linger (this is how the pool's staleness is handled)."""
+    conns = getattr(_LEDGER_POOL, "conns", None)
+    if not conns:
+        return
+    got = conns.pop(key, None)
+    if got is not None:
+        try:
+            got[0].close()
+        except Exception:
+            pass
+
+
+@contextlib.contextmanager
+def ledger_op(key, ensure_schema):
+    """One operation on subsystem `key`'s pooled connection. On success COMMITs (never leaves an open transaction on a
+    reused connection); on ANY error ROLLS BACK + drops the pooled connection (reopened next call) and RE-RAISES — so a
+    mid-op failure can't strand the write lock on a reused connection, a broken/replaced file self-heals, and the call
+    site's own except still runs. Replaces the per-op `contextlib.closing(_X_db())`."""
+    c = pooled_ledger_conn(key, ensure_schema)
+    try:
+        yield c
+        c.commit()
+    except Exception:
+        try:
+            c.rollback()
+        except Exception:
+            pass
+        reset_ledger_conn(key)
+        raise
+
+
+def fresh_ledger_conn(ensure_schema):
+    """A FRESH, closeable connection to the ledger — for occasional EXTERNAL/one-off use (a test's manual setup, a CLI
+    inspection) opened `with contextlib.closing(...)` and CLOSED. Deliberately NOT the pooled connection, so closing it
+    can never corrupt the pool."""
+    import sqlite3
+    c = sqlite3.connect(db_path(), timeout=5, check_same_thread=False)
+    tune_ledger_connection(c)
+    ensure_schema(c)
+    return c
 
 
 def ssl_context():

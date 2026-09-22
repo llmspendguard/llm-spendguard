@@ -26,7 +26,6 @@ PURE STATE persisted in the `lane_queue` table (the base sqlite, like lane_bandi
 Every function is guarded to never raise into a caller. Knobs are named constants + advisor.* config — never a
 literal at a call site.
 """
-import contextlib
 import datetime
 import json
 import os
@@ -78,12 +77,17 @@ def _deadline_iso(sla_s):
         return None
 
 
-def _queue_db():
-    """The durable queue table. Named `_queue_db` (not `_db`) so it does not join the repo's 8-way `_db` collision —
-    same reason lane_bandit uses `_bandit_db`. Forward-only additive migration (CREATE TABLE IF NOT EXISTS)."""
-    import sqlite3
-    c = sqlite3.connect(config.db_path(), timeout=15, check_same_thread=False)
-    c.execute("PRAGMA journal_mode=WAL")
+# The queue's connections are POOLED + tuned by the ONE shared implementation in config (pooled_ledger_conn /
+# ledger_op / fresh_ledger_conn), keyed "lane_queue" — the per-op sqlite3.connect() dominated this write hot path
+# (route_through_queue records every labelled call) and reuse is ~60x. These are thin, named delegations so the call
+# sites + tests read `_queue_op` / `_queue_conn` / `_queue_db` locally while the pooling lives in ONE place.
+_QUEUE_KEY = "lane_queue"
+
+
+def _ensure_queue_schema(c):
+    """Create the lane_queue table + its forward-only additive columns + the lease index (idempotent, cross-process
+    safe). Run ONCE per pooled connection — at connection creation, and again whenever the pool reopens — so schema
+    setup is tied to the connection's lifetime, not a module flag that could go stale against a replaced file."""
     c.execute("""CREATE TABLE IF NOT EXISTS lane_queue(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         intent TEXT NOT NULL, task TEXT NOT NULL, system TEXT, reasoning TEXT,
@@ -92,10 +96,9 @@ def _queue_db():
         lease_until TEXT, attempts INTEGER DEFAULT 0, max_attempts INTEGER DEFAULT 3,
         worker TEXT, result TEXT, lane TEXT, billed INTEGER DEFAULT 0,
         created_ts TEXT, updated_ts TEXT)""")
-    # FORWARD-ONLY additive migration for tables created before sla_class/deadline_ts existed: a queue item carries
-    # its SERVICE CLASS ('realtime' | 'batch') and an absolute SLA DEADLINE (ISO ts), so the scheduler can do what is
-    # needed in the time that is available — realtime/tight-deadline first within capacity, batch on the spare. SQLite
-    # has no ADD COLUMN IF NOT EXISTS, so the live columns are checked first (idempotent; runs once per new column).
+    # FORWARD-ONLY additive migration for tables created before sla_class/deadline_ts existed: a queue item carries its
+    # SERVICE CLASS ('realtime' | 'batch') and an absolute SLA DEADLINE. SQLite has no ADD COLUMN IF NOT EXISTS, so the
+    # live columns are checked first (idempotent; runs once per new column).
     _cols = {r[1] for r in c.execute("PRAGMA table_info(lane_queue)").fetchall()}
     if "sla_class" not in _cols:
         c.execute("ALTER TABLE lane_queue ADD COLUMN sla_class TEXT DEFAULT 'batch'")
@@ -103,7 +106,40 @@ def _queue_db():
         c.execute("ALTER TABLE lane_queue ADD COLUMN deadline_ts TEXT")
     # index the lease hot-path (pick highest-priority oldest pending) so a deep backlog stays cheap to poll.
     c.execute("CREATE INDEX IF NOT EXISTS lane_queue_pick ON lane_queue(state, priority DESC, id)")
-    return c
+
+
+def _queue_conn():
+    """This thread's pooled, tuned, schema-ensured queue connection (reused; see config.pooled_ledger_conn)."""
+    return config.pooled_ledger_conn(_QUEUE_KEY, _ensure_queue_schema)
+
+
+def _reset_queue_conn():
+    """Drop this thread's pooled queue connection (self-heal after an error); see config.reset_ledger_conn."""
+    config.reset_ledger_conn(_QUEUE_KEY)
+
+
+def _queue_op():
+    """One queue op on the pooled connection — commit on success, rollback + drop the connection on error, re-raise
+    (so each call site's own except still runs, e.g. _enqueue_leased's deliberate-stop propagation). See
+    config.ledger_op. Use as `with _queue_op() as c:`."""
+    return config.ledger_op(_QUEUE_KEY, _ensure_queue_schema)
+
+
+def _queue_db():
+    """A FRESH, closeable queue connection for EXTERNAL/one-off use (a test's manual setup, a CLI) — never the pooled
+    connection, so closing it can't corrupt the pool. The hot internal path uses `_queue_op()` / `_queue_conn()`. See
+    config.fresh_ledger_conn."""
+    return config.fresh_ledger_conn(_ensure_queue_schema)
+
+
+def optimize_queue_db():
+    """Run `PRAGMA optimize` (refresh the query planner's stats) on the pooled connection. Called PERIODICALLY — at the
+    end of a foreground drain — NOT per op: optimize can run ANALYZE, so on a per-op connection it would ADD cost, the
+    opposite of the tuning goal. $0, best-effort, never raises."""
+    try:
+        _queue_conn().execute("PRAGMA optimize")
+    except Exception:
+        pass
 
 
 def enqueue(intent, task, system=None, reasoning=None, priority=0, max_attempts=None,
@@ -126,7 +162,7 @@ def enqueue_many(intent, tasks, system=None, reasoning=None, priority=0, max_att
     maxa = int(max_attempts if max_attempts is not None else _qcfg("queue_max_attempts", MAX_ATTEMPTS_DEFAULT))
     now = _iso(_utcnow())
     try:
-        with contextlib.closing(_queue_db()) as c:
+        with _queue_op() as c:
             cur = c.cursor()
             ids = []
             for t in tasks:
@@ -156,7 +192,7 @@ def lease(n, worker=None, lease_s=None):
     now_dt = _utcnow()
     now, until = _iso(now_dt), _iso(now_dt + datetime.timedelta(seconds=lease_s))
     try:
-        with contextlib.closing(_queue_db()) as c:
+        with _queue_op() as c:
             c.execute("BEGIN IMMEDIATE")                       # take the write lock BEFORE selecting → cross-process safe
             try:
                 # reclaim expired leases: exhausted → failed, else → pending (retryable). attempts was already
@@ -200,7 +236,7 @@ def settle(row_id, result):
     result = result if isinstance(result, dict) else {}
     ok = bool(result.get("text")) and not result.get("error")
     try:
-        with contextlib.closing(_queue_db()) as c:
+        with _queue_op() as c:
             row = c.execute("SELECT attempts, max_attempts FROM lane_queue WHERE id=?", (row_id,)).fetchone()
             if not row:
                 return
@@ -230,7 +266,7 @@ def _enqueue_leased(intent, tasks, *, system=None, reasoning=None, priority=PRIO
     now_dt = _utcnow()
     now, until = _iso(now_dt), _iso(now_dt + datetime.timedelta(seconds=lease_s))
     try:
-        with contextlib.closing(_queue_db()) as c:
+        with _queue_op() as c:
             cur = c.cursor()
             ids = []
             for t in tasks:
@@ -318,7 +354,7 @@ def queue_depth():
     """{pending, leased, done, failed} counts — the 'is anything queued' view (parallel to dispatch.queue_state).
     Empty dict on error."""
     try:
-        with contextlib.closing(_queue_db()) as c:
+        with _queue_op() as c:
             rows = c.execute("SELECT state, COUNT(*) FROM lane_queue GROUP BY state").fetchall()
         out = {"pending": 0, "leased": 0, "done": 0, "failed": 0}
         for st, n in rows:
@@ -339,7 +375,7 @@ def purge(retain_days=None, archive_path=None):
     archive_path = archive_path or str(config.HOME / "lane_queue_archive.jsonl")
     cols = ("id", "intent", "task", "state", "attempts", "lane", "billed", "result", "created_ts", "updated_ts")
     try:
-        with contextlib.closing(_queue_db()) as c:
+        with _queue_op() as c:
             c.execute("BEGIN IMMEDIATE")                       # lock before select→delete so a concurrent drainer can't race
             try:
                 rows = c.execute(f"SELECT {','.join(cols)} FROM lane_queue "
@@ -433,4 +469,5 @@ def drain(worker=None, batch=None, lease_s=None, idle_rounds=None, idle_sleep=No
                     s["failed"] += 1
                 if res.get("billed"):
                     s["billed"] += 1
+    optimize_queue_db()          # refresh planner stats ONCE at drain completion (periodic, never per-op)
     return s
