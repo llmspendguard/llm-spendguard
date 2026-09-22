@@ -97,6 +97,9 @@ _resolve_guard = threading.local()  # while the agentic model-RESOLVER's own adv
 _heal_guard = threading.local()     # while discover_efforts is PROBING which reasoning tiers an endpoint accepts, the
                                     # rung must DROP a rejected effort (so discovery sees it as rejected), NOT heal it —
                                     # else the probe self-heals, looks accepted, and discovery learns the opposite.
+_route_guard = threading.local()    # while a call is inside a routed durable RECORD (advisor.route_through_queue), a
+                                    # nested call (a substitution / fallback) is NOT re-recorded — one durable row per
+                                    # logical call, no double-record and no loop.
 _lane_echoed = set()             # lanes already announced this run — echo "a plan is serving these prompts" ONCE per
                                  # lane so the user KNOWS their work rode a subscription (not once per call = spam).
 
@@ -481,6 +484,18 @@ def _default_reasoning_is_best_value():
     return str(config._cfg_get("advisor", "default_reasoning", "") or "").strip().lower() == "best-value"
 
 
+def _route_through_queue_enabled():
+    """Is 'route every labelled synchronous call through the durable lane_queue' armed? Env
+    SPENDGUARD_ROUTE_THROUGH_QUEUE wins, else config advisor.route_through_queue. OFF by default -- dormant, so this
+    is a zero-behaviour-change flag until a repo/agent opts in."""
+    import os
+    v = os.getenv("SPENDGUARD_ROUTE_THROUGH_QUEUE")
+    if v is not None:
+        return v.strip().lower() in ("1", "true", "yes", "on")
+    from . import config
+    return bool(config._cfg_get("advisor", "route_through_queue", False))
+
+
 def _apply_best_value_default(reasoning, intent, sig, no_substitution, probe):
     """Config-scoped default (opt-in; OFF unless advisor.default_reasoning='best-value'): turn reasoning=None into
     'best-value' for a LABELLED (intent/sig), UNPINNED, non-probe call — so delegated work routes to the cheapest
@@ -720,20 +735,42 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                     "error": f"dispatch deadline_exceeded (governed): {_adm.error}"}
         if _adm.shed:                                    # saturated $0 lane shed to its metered twin → run metered_only
             metered_only = True
+    # ROUTE-THROUGH-QUEUE (advisor.route_through_queue, default OFF, DORMANT): record every LABELLED synchronous call
+    # durably (a leased row = observability + crash-recovery + priority/SLA metadata) and run it via its NORMAL path —
+    # model + lane preference UNCHANGED (this RECORDS + manages the call, it does not re-execute it). Not for the
+    # internal _no_guard recursion, a probe, an UNLABELLED call, or a call already inside a routed record (_route_guard
+    # → one row per logical call, no double-record and no loop). A deliberate stop from the durable write (ledger lock /
+    # refusal) PROPAGATES; a non-deliberate open failure → run UNRECORDED (the queue never gates a caller's result).
+    _routed = ((intent or sig) and not _no_guard and not _probe
+               and not getattr(_route_guard, "on", False) and _route_through_queue_enabled())
+    _qrid = None
+    r = None
+    if _routed:
+        _route_guard.on = True
     try:
-        if not _no_guard:
-            r = _call_guarded(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
-                              schema=schema, timeout_s=timeout_s, sig=sig, retries=retries,
-                              no_metered_fallback=no_metered_fallback, images=images, _no_sub=no_substitution,
-                              metered_only=metered_only, _probe=_probe)
-        else:
-            r = _call_once(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
-                           schema=schema, timeout_s=timeout_s, no_metered_fallback=no_metered_fallback, images=images,
-                           _no_sub=no_substitution, _skip_lane=metered_only)   # metered_only=True → skip the lane (metered API only)
+        if _routed:
+            from . import lane_queue as _route_lq
+            _qrid = _route_lq.record_open(intent or sig, prompt)
+        try:
+            if not _no_guard:
+                r = _call_guarded(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
+                                  schema=schema, timeout_s=timeout_s, sig=sig, retries=retries,
+                                  no_metered_fallback=no_metered_fallback, images=images, _no_sub=no_substitution,
+                                  metered_only=metered_only, _probe=_probe)
+            else:
+                r = _call_once(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
+                               schema=schema, timeout_s=timeout_s, no_metered_fallback=no_metered_fallback, images=images,
+                               _no_sub=no_substitution, _skip_lane=metered_only)   # metered_only=True → skip the lane
+        finally:
+            _sig_ctx._local.ctx = _ctx_before   # restore the caller's context exactly (nested calls keep their own tag)
+            if _adm is not None:
+                _adm.release()                  # free the governor slot (idempotent; no-op when ungoverned)
     finally:
-        _sig_ctx._local.ctx = _ctx_before   # restore the caller's context exactly (nested calls keep their own tag)
-        if _adm is not None:
-            _adm.release()                  # free the governor slot (idempotent; no-op when ungoverned)
+        if _routed:
+            _route_guard.on = False             # always clear the re-entry guard (even if record_open raised a stop)
+            if _qrid is not None:
+                from . import lane_queue as _route_lq2
+                _route_lq2.record_close(_qrid, r if isinstance(r, dict) else {"error": "call produced no result"})
     # TIER-3 — PROVIDER BASE-MODEL FALLBACK (the last hop of lane->metered->base). When the chosen model's whole
     # lane->metered attempt STILL errored and the caller opted in (base_fallback=True) and billing is allowed, retry
     # the SAME provider's configured RELIABLE BASE model so the call yields SOME answer instead of an error — clearly

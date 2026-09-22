@@ -155,6 +155,14 @@ SETTINGS = [
               "probe, or an UNLABELLED call; degrades to the caller's own model when there is no measured evidence, "
               "so it can only ever pick a measured-equal-or-better arm — never a blind swap. Opt-in per repo/agent, "
               "reversible; watch `spendguard savings` (did it save?) and `spendguard advise` good% (did quality hold?)."),
+    dict(section="advisor", key="route_through_queue", store="config.json:advisor.route_through_queue",
+         env="SPENDGUARD_ROUTE_THROUGH_QUEUE", default=False, kind="bool", secret=False,
+         desc="Route EVERY labelled synchronous adapters.call through the durable lane_queue: each call gets a leased "
+              "queue row (observability + crash-recovery + priority/SLA metadata) settled when it returns, run via its "
+              "NORMAL path (model + lane preference UNCHANGED -- this RECORDS + manages the call, it does not "
+              "re-execute it). OFF by default: dormant, zero behaviour change. Never routes the internal _no_guard "
+              "recursion, a probe, an UNLABELLED call, or a call already inside a routed record (no double-record, no "
+              "loop). Opt-in per repo/agent, reversible."),
     dict(section="advisor", key="auto_fresh", store="config.json:advisor.auto_fresh", env="SPENDGUARD_AUTO_FRESH",
          default="weekly", kind="enum:off,weekly,daily", secret=False,
          desc="Auto-refresh Learnings from RECENT activity (caged review of the top intents, caps.meta-bounded) "

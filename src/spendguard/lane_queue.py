@@ -296,6 +296,23 @@ def submit(intent, tasks, *, priority=PRIORITY_INTERACTIVE, sla_class="realtime"
     return {"queued": ids, "results": results, "durable": _durable}
 
 
+def record_open(intent, task, *, priority=PRIORITY_INTERACTIVE, sla_class="realtime", sla_s=None):
+    """Open a durable record for ONE synchronous call about to run via its NORMAL path (the adapters
+    route_through_queue front door): a leased row = observability + crash-recovery + priority/SLA metadata. Returns
+    the row id, or None when the durable store is (non-deliberately) unavailable — the caller then runs UNRECORDED
+    rather than blocked (the queue is an ENHANCEMENT, never a gate on the caller's result). A DELIBERATE stop (ledger
+    lock / spend refusal) from the durable write PROPAGATES (never a silent None). Pair with record_close(rid, res)."""
+    ids = _enqueue_leased(intent, [task], priority=priority, sla_class=sla_class, deadline_ts=_deadline_iso(sla_s))
+    return ids[0] if ids else None
+
+
+def record_close(rid, result):
+    """Settle a record_open() row with the call's outcome (done / failed / retryable, via settle's own contract).
+    No-op when rid is None (the open was unavailable). Never raises."""
+    if rid is not None:
+        settle(rid, result if isinstance(result, dict) else {"error": "no result"})
+
+
 def queue_depth():
     """{pending, leased, done, failed} counts — the 'is anything queued' view (parallel to dispatch.queue_state).
     Empty dict on error."""
