@@ -560,6 +560,49 @@ def guarded_collect(batch_ids, intent, model, client=None, record_io=False):
                 yield (cid, text, usage)
 
 
+def collect_chat_tasks(batch_ids, intent, model, require_ready=True, record_io=False):
+    """The SETTLE twin of submit.submit_chat_tasks — pull the FULL result set of chat batches back and key it by
+    custom_id, closing the loop (submit → wait → collect) so submitted results never sit uncollected. A THIN wrapper
+    over batch_status (readiness) + guarded_collect (the streaming, $0, custom_id-paired full pull) — it never
+    re-implements the download; it materialises the generator into a settled dict the caller can join to its tasks.
+
+    Returns {results, failed, anomalies, not_ready, collected, batches}:
+      · results   {custom_id: text}   — every succeeded row, keyed by the custom_id submit_chat_tasks assigned
+                                          (a dict task's own id, or 'task-<i>' positional WITHIN the submitted set);
+      · failed    {custom_id: error}  — a per-request failure, surfaced by id (never a silent drop);
+      · anomalies [ {error, raw} ]    — an output row with a missing/unparseable custom_id (nothing to key it by);
+      · not_ready [batch_id]          — with require_ready, a batch whose output file isn't ready yet is SKIPPED
+                                          here (poll again later): the async 24h window is never blocked on;
+      · collected int, batches int.
+    $0 (a finished batch already billed at submit; this only STREAMS the output file). OpenAI-only (the chat Batch API
+    is). record_io=True also captures each row into the (intent, model) quality corpus (idempotent on batch+custom_id).
+    For a very large pull where even the results dict is too big to hold, use guarded_collect directly (it streams)."""
+    if isinstance(batch_ids, str):
+        batch_ids = [batch_ids]
+    ids = [b for b in (batch_ids or []) if b]
+    out = {"results": {}, "failed": {}, "anomalies": [], "not_ready": [], "collected": 0, "batches": len(ids)}
+    if not ids:
+        return out
+    ready = ids
+    if require_ready:
+        st = batch_status(ids)
+        ready = []
+        for b in ids:
+            if (st.get(b) or {}).get("output_ready"):
+                ready.append(b)
+            else:
+                out["not_ready"].append(b)          # output file not ready → poll again later, never a silent empty
+    for cid, text, usage in guarded_collect(ready, intent, model, record_io=record_io):
+        if cid is None:                             # an anomaly row (no/unparseable custom_id — nothing to key it by)
+            out["anomalies"].append(usage if isinstance(usage, dict) else {"error": str(usage)})
+        elif text is None:                          # a per-request FAILURE — surface it by id, never lose it
+            out["failed"][cid] = (usage or {}).get("error") if isinstance(usage, dict) else str(usage)
+        else:
+            out["results"][cid] = text
+            out["collected"] += 1
+    return out
+
+
 def status_rows(intents=None):
     """Per (intent, model): total samples, REPLAYABLE (truncated=0 — the rows bakeoff/effort-titrate actually
     sample), LIVE (source='live_io'), and JUDGED. Optionally kept to intents whose name CONTAINS any of `intents`

@@ -282,9 +282,10 @@ def submit_chat_tasks(tasks, model, *, system=None, schema=None, reasoning="mini
     = 'task-<i>') OR a {custom_id, content[, system, schema, schema_name]} dict. Builds the request .jsonl through the
     ONE models.apply_call_params authority (build_chat_batch_jsonl — so it can never send a model-wrong param), then
     ESTIMATE→cap→submit through guarded_submit (the SAME chokepoint every batch passes; cap_dollars enforced). Returns
-    {batch_id, jsonl, requests, error}; submit=False estimates + writes only ($0). Collect later with
-    callio.guarded_collect(batch_id) — results map by custom_id. OpenAI-only (the OpenAI Batch API serves only OpenAI
-    ids); a non-OpenAI model returns a clear error (the lane fan runs it instead), never a silent metered fallback."""
+    {batch_id, jsonl, requests, error}; submit=False estimates + writes only ($0). Collect later with its SETTLE twin
+    callio.collect_chat_tasks(batch_id, intent, model) — results keyed by custom_id (or stream callio.guarded_collect
+    directly). OpenAI-only (the OpenAI Batch API serves only OpenAI ids); a non-OpenAI model returns a clear error
+    (the lane fan runs it instead), never a silent metered fallback."""
     import json as _json
     import os as _os
     import tempfile as _tf
