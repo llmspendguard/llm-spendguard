@@ -83,6 +83,17 @@ try:
     adapters.call("openai:gpt-5.5", "hi", max_completion_tokens=777)
     check("max_completion_tokens= aliased to max_tokens=", _seen.get("max_tokens") == 777)
 
+    print("-- governed= is a FEATURE kwarg (dispatch governor), carried via **aliases — NOT alias-rejected --")
+    # REGRESSION: the unknown-kwarg reject loop ran BEFORE the `aliases.pop('governed')` at the governor step, so a
+    # documented governed= call (warden's concurrent fan, and every governed=False single call) died with a spurious
+    # `call() got an unexpected keyword 'governed'` TypeError. Skipping it in the reject loop is the fix.
+    raised_g = None
+    try:
+        adapters.call("openai:gpt-5.5", "hi", max_tokens=50, governed=False)   # single-call path: pop→False, no governor
+    except TypeError as e:
+        raised_g = str(e)
+    check("call(governed=False) did NOT raise the alias-reject TypeError", raised_g is None)
+
     print("-- an unknown kwarg fails LOUDLY with guidance (never silently swallowed) --")
     msg = None
     try:

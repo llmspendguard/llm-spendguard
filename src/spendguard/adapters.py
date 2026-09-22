@@ -599,8 +599,15 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     if aliases:
         _ALIASES = {"effort": "reasoning", "reasoning_effort": "reasoning",
                     "max_output_tokens": "max_tokens", "max_completion_tokens": "max_tokens"}
+        # `governed` is a REAL feature kwarg carried via **aliases (the docstring documents it; it is popped at the
+        # dispatch-governor step below), NOT a rename and NOT an unknown. It must be skipped here or the documented
+        # governed=True concurrent-fan path — and every governed=False single call — dies with a spurious
+        # 'unexpected keyword' TypeError before the pop ever runs (the reject loop preceded the pop).
+        _FEATURE_KW = {"governed"}
         _canon = {}
         for _k in list(aliases):
+            if _k in _FEATURE_KW:
+                continue
             _c = _ALIASES.get(_k)
             if not _c:
                 raise TypeError(

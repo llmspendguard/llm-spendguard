@@ -4,6 +4,16 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+### Fixed
+- **`adapters.call(governed=…)` was reject-flagged BEFORE it was popped — the documented governor kwarg was
+  unreachable.** The ensure-success unknown-kwarg reject loop ran before the `aliases.pop("governed")` at the
+  dispatch-governor step, so `call(..., governed=True)` (the concurrent-fan path) AND every `call(..., governed=False)`
+  single call raised `TypeError: got an unexpected keyword 'governed'`. That broke every consumer forwarding
+  `governed=` — e.g. warden's `spendrails.call`, i.e. ALL its describe/classify/preflight/doctrine-review calls — a
+  break the hermetic mocked tests never exercised. Fix: skip `governed` (a real feature kwarg carried via `**aliases`,
+  honored at the governor step) in the reject loop. Guard: `test_call_normalises_caller_kwargs.py` now asserts
+  `call(governed=False)` does not raise while an unknown kwarg (e.g. `temperature=`) still fails loudly.
+
 ### Added
 - **Canonical lane↔metered REASONING-EQUIVALENCE map — the atomic (lane, metered) pair is now PROVABLE, not hoped.**
   New `src/spendguard/reasoning_equivalence.py`: for every lane (Claude/codex/agy-Gemini/zai) × model × reasoning
