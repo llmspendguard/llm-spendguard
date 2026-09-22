@@ -369,7 +369,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
                   schema=None, expect_ids=None, gate_sig=None, lanes=None, images_for=None, vision_model=None,
                   model_for=None, prompt_for=None, task_key=None, return_keyed=False,
                   on_miss=None, batch_submit=None, batch_model=None, batch_cap=None,
-                  hedge_ms=None, strategy=None, metered_only=False):
+                  hedge_ms=None, strategy=None, metered_only=False, sla_class=None):
     """Fan a LIST of similar tasks across ALL viable idle lanes CONCURRENTLY — the right shape for a BULK job (e.g.
     symgrep's ~6k one-sentence symbol descriptions) that the per-call bandit would trickle one at a time. Each task
     runs on a lane (round-robin across the lanes the bandit rates GOOD for this intent), each admission BOUNDED by
@@ -475,6 +475,11 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
     `hedge_ms` overrides the config tail-hedge window for THIS call (a small-fan caller opts in without a global that
     would also arm bulk); None → `dispatch.lane_hedge_ms`. Only fires on the lane path with spare capacity (never a
     pinned matrix). See dispatch.lane_hedge_ms.
+
+    `sla_class="batch"` admits every task of this fan against the governor's BATCH sub-limit, so a big low-priority fan
+    can't starve a concurrent realtime call of a slot (only bites where dispatch.realtime_reserve[_<key>] is set for
+    that lane/vendor; off by default → no change). The queue drain passes the leased item's sla_class here; None (the
+    default) is realtime and uses the full limit.
 
     Returns a task-ordered LIST [{text, lane, use_name, model, billed, error}], or {key: row} when return_keyed."""
     import os as _os
@@ -805,7 +810,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
                 return i, {**_b, "reason": _big[0], "error": _big[1]}
         _prov = adapters.provider_for(_vm)
         try:
-            _waited = dispatch.acquire_or_none(_prov, _raw, deadline_s)   # governor: bound in-flight PER-VENDOR metered calls
+            _waited = dispatch.acquire_or_none(_prov, _raw, deadline_s, sla_class=sla_class)   # governor: bound in-flight PER-VENDOR metered calls (sla_class="batch" respects the realtime reserve)
         except _STOP_TYPES:
             raise                                       # a genuine SPEND REFUSAL halts the fan (refusal-containment)
         except Exception as e:
@@ -824,7 +829,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
         except Exception as e:
             return i, {**_b, "reason": "call_raised", "error": str(e)[:80]}
         finally:
-            dispatch.release(_prov, _raw)
+            dispatch.release(_prov, _raw, sla_class=sla_class)
         r = r if isinstance(r, dict) else {}
         _sp, _sm = r.get("provider") or _prov, r.get("model") or _raw
         # Same structured-reason contract as the lane row: adapters' code, else 'api_error' on a failed metered call
@@ -870,7 +875,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
         prov = lane_catalog.lane_provider(lane)
         model = f"{prov}:{use_name}"
         try:
-            _waited = dispatch.acquire_or_none(prov, use_name, deadline_s)     # governor: bounds per-lane in-flight (fills, never swarms)
+            _waited = dispatch.acquire_or_none(prov, use_name, deadline_s, sla_class=sla_class)     # governor: bounds per-lane in-flight (fills, never swarms; sla_class="batch" respects the realtime reserve)
         except _STOP_TYPES:
             raise                                            # a genuine SPEND REFUSAL halts the fan (refusal-containment)
         except Exception as e:
@@ -904,7 +909,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
             return i, {"text": None, "lane": lane, "use_name": use_name, "model": model, "billed": False,
                        "reason": "call_raised", "error": str(e)[:80]}
         finally:
-            dispatch.release(prov, use_name)
+            dispatch.release(prov, use_name, sla_class=sla_class)
         r = r if isinstance(r, dict) else {}
         # lane / use_name / model must all describe the SAME (actual) dispatch record. The result r carries the
         # provider + model + executor that ACTUALLY served — substitution and API fallback route through call(),

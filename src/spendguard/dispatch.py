@@ -165,13 +165,22 @@ class _Bucket:
     """One key's admission state: a bounded-concurrency semaphore + an optional requests/minute token bucket.
     Thread-safe. The bucket refills continuously from monotonic time — no background thread, no cron."""
 
-    __slots__ = ("key", "limit", "rpm", "_sem", "_lock", "_tokens", "_last", "in_flight", "waiting")
+    __slots__ = ("key", "limit", "rpm", "reserve", "_sem", "_sem_batch", "_lock", "_tokens", "_last",
+                 "in_flight", "waiting")
 
-    def __init__(self, key, limit, rpm):
+    def __init__(self, key, limit, rpm, reserve=0):
         self.key = key
         self.limit = max(1, int(limit))
+        # REALTIME RESERVE: hold back `reserve` of this key's slots for interactive/realtime work so a batch fan can
+        # never starve a realtime call of a governor slot (the admission twin of the interactive lane reserve). Capped
+        # at limit-1 so batch always keeps ≥1 slot (a reserve == limit would deadlock batch forever). 0 (the default)
+        # means NO reservation and the batch path is byte-identical to the realtime path — zero behaviour change.
+        self.reserve = max(0, min(int(reserve or 0), self.limit - 1))
         self.rpm = max(0, int(rpm))
-        self._sem = threading.BoundedSemaphore(self.limit)
+        self._sem = threading.BoundedSemaphore(self.limit)                # total concurrency — EVERY caller takes this
+        # the batch SUB-limit: a batch caller must take this BEFORE _sem, so at most (limit-reserve) batch calls ever
+        # hold _sem and ≥ reserve of _sem's permits stay reachable by realtime. None when reserve==0 (no gate at all).
+        self._sem_batch = threading.BoundedSemaphore(self.limit - self.reserve) if self.reserve > 0 else None
         self._lock = threading.Lock()
         self._tokens = float(self.rpm)     # start full so the first burst up to rpm is not paced
         self._last = time.monotonic()
@@ -193,21 +202,41 @@ class _Bucket:
             deficit = 1.0 - self._tokens
             return deficit / (self.rpm / 60.0)
 
-    def acquire(self, deadline_s):
+    def acquire(self, deadline_s, sla_class=None):
         """Block until a concurrency slot is free AND (if paced) an RPM token is available, within deadline_s.
-        Returns seconds waited. Raises DispatchTimeout if the deadline passes first."""
+        Returns seconds waited. Raises DispatchTimeout if the deadline passes first. sla_class="batch" (with a reserve
+        configured) first takes the batch SUB-limit, so it can never consume a realtime-reserved slot; any other value
+        (the default) is realtime and uses the full limit. Lock order is fixed (batch: _sem_batch → _sem; realtime:
+        _sem only), so the two paths cannot deadlock."""
         t0 = time.monotonic()
+        _batch = (sla_class == "batch" and self._sem_batch is not None)
         with self._lock:
             self.waiting += 1
+        _got_batch = False
         try:
-            if not self._sem.acquire(timeout=max(0.0, float(deadline_s))):
+            if _batch:
+                if not self._sem_batch.acquire(timeout=max(0.0, float(deadline_s))):
+                    raise DispatchTimeout(
+                        f"waited {time.monotonic() - t0:.0f}s for a '{self.key}' BATCH sub-slot "
+                        f"(batch limit {self.limit - self.reserve} of {self.limit}; {self.reserve} reserved for "
+                        f"realtime) — deadline {float(deadline_s):.0f}s exhausted")
+                _got_batch = True
+            remaining = float(deadline_s) - (time.monotonic() - t0)
+            if not self._sem.acquire(timeout=max(0.0, remaining)):
                 raise DispatchTimeout(
                     f"waited {time.monotonic() - t0:.0f}s for a '{self.key}' dispatch slot "
                     f"(limit {self.limit}, all in flight) — deadline {float(deadline_s):.0f}s exhausted")
+        except BaseException:
+            if _got_batch:                              # took the batch sub-slot but not the main slot → hand it back
+                try:
+                    self._sem_batch.release()
+                except ValueError:
+                    pass
+            raise
         finally:
             with self._lock:
                 self.waiting -= 1
-        # Concurrency slot held. Now pace by RPM, still inside the deadline; on timeout, hand the slot back.
+        # Concurrency slot held. Now pace by RPM, still inside the deadline; on timeout, hand BOTH slots back.
         while True:
             wait = self._rpm_wait_s()
             if wait <= 0:
@@ -215,6 +244,11 @@ class _Bucket:
             remaining = float(deadline_s) - (time.monotonic() - t0)
             if remaining <= 0:
                 self._sem.release()
+                if _batch:
+                    try:
+                        self._sem_batch.release()
+                    except ValueError:
+                        pass
                 raise DispatchTimeout(
                     f"'{self.key}' rate limit ({self.rpm}/min): no token within deadline "
                     f"{float(deadline_s):.0f}s")
@@ -223,7 +257,7 @@ class _Bucket:
             self.in_flight += 1
         return time.monotonic() - t0
 
-    def release(self):
+    def release(self, sla_class=None):
         with self._lock:
             if self.in_flight > 0:
                 self.in_flight -= 1
@@ -233,6 +267,11 @@ class _Bucket:
             # BoundedSemaphore over-release: means release() was called without a matching acquire (a caller
             # bug). Swallowing keeps the governor from crashing a call path, and in_flight already stayed sane.
             pass
+        if sla_class == "batch" and self._sem_batch is not None:
+            try:
+                self._sem_batch.release()               # free the batch sub-slot too (pair the sla_class the acquire used)
+            except ValueError:
+                pass
 
 
 class Governor:
@@ -284,25 +323,38 @@ class Governor:
         rpm = _limit(f"rpm_{vendor}", DEFAULT_RPM)     # per-vendor RPM, e.g. SPENDGUARD_DISPATCH_RPM_MOONSHOT=60
         return key, limit, rpm, bool(lane)
 
+    def _reserve_for(self, key, limit):
+        """Realtime-reserved slots for this key: dispatch.realtime_reserve_<lane|vendor> → dispatch.realtime_reserve
+        → 0 (off). Capped to the _Bucket invariant (≤ limit-1) HERE too, so the re-key comparison below matches the
+        value __init__ actually stores and never re-creates the bucket on every call."""
+        short = key.split(":", 1)[-1]
+        raw = _limit(f"realtime_reserve_{short}", _limit("realtime_reserve", 0))
+        return max(0, min(int(raw or 0), max(1, int(limit)) - 1))
+
     def _bucket(self, vendor, model, skip_lane=False):
         key, limit, rpm, _is_lane = self._key_and_limit(vendor, model, skip_lane=skip_lane)
+        reserve = self._reserve_for(key, limit)
         with self._lock:
             b = self._buckets.get(key)
-            # Re-key if the configured limit/rpm changed since the bucket was made (config edited at runtime):
+            # Re-key if the configured limit/rpm/reserve changed since the bucket was made (config edited at runtime):
             # a stale semaphore size would silently ignore the new limit, the exact "measurement looked up under
             # the wrong key" failure this project keeps hitting.
-            if b is None or b.limit != max(1, int(limit)) or b.rpm != max(0, int(rpm)):
-                b = _Bucket(key, limit, rpm)
+            if (b is None or b.limit != max(1, int(limit)) or b.rpm != max(0, int(rpm))
+                    or b.reserve != reserve):
+                b = _Bucket(key, limit, rpm, reserve)
                 self._buckets[key] = b
             return b
 
-    def acquire(self, vendor, model, deadline_s, skip_lane=False):
+    def acquire(self, vendor, model, deadline_s, skip_lane=False, sla_class=None):
         """Admit one call. Returns seconds waited (0 when uncontended). Raises DispatchTimeout on deadline.
         Order: global slot → per-key in-process slot → cross-process slot (lane keys AND metered vendor keys — a
         per-provider cap shared across processes). release() unwinds all three; the held cross-process slot rides a
         per-thread stack that release() pops (acquire and release run on the same fan_out worker thread).
         `skip_lane=True` gates on the metered VENDOR key even for a lane vendor (a lane→metered shed); the paired
-        release() MUST pass the same skip_lane so it frees the same bucket."""
+        release() MUST pass the same skip_lane so it frees the same bucket. `sla_class="batch"` gates on the batch
+        SUB-limit of the per-key bucket (when a realtime reserve is configured for that key), so a batch fan can't
+        starve realtime of a slot; the paired release() MUST pass the same sla_class. The reserve is IN-PROCESS
+        (per-key bucket) only — the global ceiling and the cross-process cap are coarse backstops, not reserved."""
         if _off() or not deadline_s or float(deadline_s) <= 0:
             _held().append(None)                     # keep the acquire/release stack balanced even as a no-op
             return 0.0
@@ -314,7 +366,8 @@ class Governor:
         got_bucket, xp = False, None
         try:
             key, limit, _rpm, _is_lane = self._key_and_limit(vendor, model, skip_lane=skip_lane)
-            self._bucket(vendor, model, skip_lane=skip_lane).acquire(float(deadline_s) - (time.monotonic() - t0))
+            self._bucket(vendor, model, skip_lane=skip_lane).acquire(
+                float(deadline_s) - (time.monotonic() - t0), sla_class=sla_class)
             got_bucket = True
             if not _xp_off():                        # co-govern ACROSS processes: a lane's shared subscription plan AND
                 # a metered vendor's per-provider cap. Previously lane-only — so N concurrent runs each ran up to
@@ -326,13 +379,13 @@ class Governor:
             if xp is not None:
                 xp.release()
             if got_bucket:
-                self._bucket(vendor, model, skip_lane=skip_lane).release()
+                self._bucket(vendor, model, skip_lane=skip_lane).release(sla_class=sla_class)
             g.release()
             raise
         _held().append(xp)
         return time.monotonic() - t0
 
-    def release(self, vendor, model, skip_lane=False):
+    def release(self, vendor, model, skip_lane=False, sla_class=None):
         xp = _pop_held()                             # cross-process slot first (or None), always
         if xp is not None:
             try:
@@ -342,7 +395,7 @@ class Governor:
         if _off():
             return
         try:
-            self._bucket(vendor, model, skip_lane=skip_lane).release()
+            self._bucket(vendor, model, skip_lane=skip_lane).release(sla_class=sla_class)
         finally:
             try:
                 if self._global is not None:
@@ -353,14 +406,16 @@ class Governor:
 _GOV = Governor()
 
 
-def acquire(vendor, model, deadline_s, skip_lane=False):
+def acquire(vendor, model, deadline_s, skip_lane=False, sla_class=None):
     """Admit one dispatch to (vendor, model), blocking up to deadline_s. Returns seconds waited. Raises
     DispatchTimeout if no slot frees in time. Pair with release() in a finally. `skip_lane=True` gates on the
-    metered VENDOR cap even for a lane vendor (the lane→metered shed); release() must be given the same flag."""
-    return _GOV.acquire(vendor, model, deadline_s, skip_lane=skip_lane)
+    metered VENDOR cap even for a lane vendor (the lane→metered shed); release() must be given the same flag.
+    `sla_class="batch"` admits against the batch SUB-limit so a batch fan can't take a realtime-reserved slot (only
+    when dispatch.realtime_reserve[_<key>] is set for that key; off by default); release() must pass the same value."""
+    return _GOV.acquire(vendor, model, deadline_s, skip_lane=skip_lane, sla_class=sla_class)
 
 
-def acquire_or_none(vendor, model, deadline_s, skip_lane=False):
+def acquire_or_none(vendor, model, deadline_s, skip_lane=False, sla_class=None):
     """acquire(), except a queue-slot TIMEOUT returns None instead of raising DispatchTimeout — everything else about
     it (full deadline, same key, the paired release()) is identical. This is the admission primitive a BULK FAN-OUT
     needs: with hundreds of tasks sharing one lane's slots, a saturated slot on ONE task must become THAT task's
@@ -370,15 +425,15 @@ def acquire_or_none(vendor, model, deadline_s, skip_lane=False):
     SPEND REFUSAL is a different type and is not caught here (acquire does not raise one anyway). Callers pair it with
     release() in a finally exactly as acquire(); None means 'no slot — do not release, this task did not run'."""
     try:
-        return acquire(vendor, model, deadline_s, skip_lane=skip_lane)
+        return acquire(vendor, model, deadline_s, skip_lane=skip_lane, sla_class=sla_class)
     except DispatchTimeout:
         return None
 
 
-def release(vendor, model, skip_lane=False):
+def release(vendor, model, skip_lane=False, sla_class=None):
     """Return the dispatch slot acquired for (vendor, model). Safe to call once per successful acquire. Pass the
-    SAME skip_lane the paired acquire() used, so the freed bucket is the one that was taken."""
-    _GOV.release(vendor, model, skip_lane=skip_lane)
+    SAME skip_lane AND sla_class the paired acquire() used, so the freed bucket/sub-slot is the one that was taken."""
+    _GOV.release(vendor, model, skip_lane=skip_lane, sla_class=sla_class)
 
 
 # ── GOVERNED ADMISSION WITH SHED-TO-METERED — the ONE owner of that policy ────────────────────────────────────────

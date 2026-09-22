@@ -146,7 +146,7 @@ def lease(n, worker=None, lease_s=None):
     priority, then REALTIME before batch, then the tightest SLA deadline (deadline_ts asc, nulls last), then oldest —
     marking them `leased` with a fresh lease_until and attempts+1. First, within the SAME write lock, RECLAIMS
     expired leases (worker died): those under max_attempts return to `pending`, those at/over it become `failed`.
-    Returns a list of {id,intent,task,system,reasoning} dicts (empty if nothing is pending). Never raises.
+    Returns a list of {id,intent,task,system,reasoning,sla_class} dicts (empty if nothing is pending). Never raises.
 
     Intent-UNIFORM by design: a batch shares one intent so bulk_delegate routes it with that intent's bandit arms;
     a higher-priority row of a DIFFERENT intent is simply picked up on the next round."""
@@ -177,14 +177,15 @@ def lease(n, worker=None, lease_s=None):
                     c.execute("COMMIT")
                     return []
                 intent = top[0]
-                rows = c.execute("SELECT id,intent,task,system,reasoning FROM lane_queue "
+                rows = c.execute("SELECT id,intent,task,system,reasoning,sla_class FROM lane_queue "
                                  "WHERE state='pending' AND intent=? ORDER BY " + _ORDER + " LIMIT ?",
                                  (intent, n)).fetchall()
                 for r in rows:
                     c.execute("UPDATE lane_queue SET state='leased', lease_until=?, attempts=attempts+1, "
                               "worker=?, updated_ts=? WHERE id=?", (until, worker, now, r[0]))
                 c.execute("COMMIT")
-                return [{"id": r[0], "intent": r[1], "task": r[2], "system": r[3], "reasoning": r[4]} for r in rows]
+                return [{"id": r[0], "intent": r[1], "task": r[2], "system": r[3], "reasoning": r[4],
+                         "sla_class": r[5]} for r in rows]
             except Exception:
                 c.execute("ROLLBACK")
                 raise
@@ -410,14 +411,15 @@ def drain(worker=None, batch=None, lease_s=None, idle_rounds=None, idle_sleep=No
         idle = 0
         s["rounds"] += 1
         intent = rows[0]["intent"]
-        # a leased batch is intent-uniform but may mix system/reasoning — GROUP so bulk_delegate gets a faithful
-        # (system, reasoning) per sub-batch rather than silently applying the first row's to all (no shortcut).
+        # a leased batch is intent-uniform but may mix system/reasoning/sla_class — GROUP so bulk_delegate gets a
+        # faithful (system, reasoning) per sub-batch AND a uniform sla_class, rather than silently applying the first
+        # row's to all (no shortcut). sla_class flows to the governor so a 'batch' drain yields the realtime reserve.
         groups = {}
         for r in rows:
-            groups.setdefault((r.get("system"), r.get("reasoning")), []).append(r)
-        for (sys_, rea), grp in groups.items():
+            groups.setdefault((r.get("system"), r.get("reasoning"), r.get("sla_class")), []).append(r)
+        for (sys_, rea, sla_), grp in groups.items():
             results = lane_balance.bulk_delegate([g["task"] for g in grp], intent, system=sys_, reasoning=rea,
-                                                 deadline_s=lease_s)
+                                                 deadline_s=lease_s, sla_class=sla_)
             for g, res in zip(grp, results):
                 res = res if isinstance(res, dict) else {"error": "no result"}
                 settle(g["id"], res)
