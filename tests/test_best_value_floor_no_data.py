@@ -83,6 +83,21 @@ try:
         propagated = True                                          # the ONLY catch: the exact type req#3 asserts propagates
     ck("(req#3) a SpendGateRefused from the advisor PROPAGATES (never swallowed to _pick=None -> an empty result)",
        propagated)
+
+    # ── (e) req#4 — LANE DOWN: best-value keeps the pinned model, the run errors (lane down + metered failed), and
+    #        the result is a TYPED error dict (error + reason set), NEVER a bare empty a fail-closed consumer can
+    #        only read as NOT REVIEWED. Proves the no-data best-value path does not turn a lane outage into an empty. ──
+    print("\n-- (e) lane down: best-value keeps the model and returns a TYPED error, not an empty --")
+    best_value.select_model_effort = _sel_nopick          # no data -> keep the pinned model (as in a/b)
+    adapters._call_guarded = lambda model, prompt, **kw: {
+        "text": None, "provider": "acme", "model": "pinned", "cost": 0.0, "in_tok": 0, "out_tok": 0,
+        "executor": None, "error": "lane down AND metered fallback failed", "reason": "api_error"}
+    seen.clear()
+    r_down = adapters.call(PINNED, "p", intent="cold-intent")   # inherits default best-value, pinned, lane down
+    ck("(req#4) lane down -> a TYPED error result (error + reason set), never a bare empty/None",
+       isinstance(r_down, dict) and bool(r_down.get("error")) and r_down.get("text") is None)
+    ck("(req#4) the pinned model was kept even on a lane-down best-value call (pin_model=True)",
+       seen.get("pin_model") is True)
 finally:
     adapters._call_guarded, best_value.select_model_effort = _saved
 
