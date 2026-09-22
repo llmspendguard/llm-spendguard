@@ -142,7 +142,8 @@ def enqueue_many(intent, tasks, system=None, reasoning=None, priority=0, max_att
 
 
 def lease(n, worker=None, lease_s=None):
-    """Atomically claim up to `n` pending tasks of the HIGHEST-priority pending intent (priority desc, then oldest),
+    """Atomically claim up to `n` pending tasks of the MOST URGENT pending intent — SLA/priority order: highest
+    priority, then REALTIME before batch, then the tightest SLA deadline (deadline_ts asc, nulls last), then oldest —
     marking them `leased` with a fresh lease_until and attempts+1. First, within the SAME write lock, RECLAIMS
     expired leases (worker died): those under max_attempts return to `pending`, those at/over it become `failed`.
     Returns a list of {id,intent,task,system,reasoning} dicts (empty if nothing is pending). Never raises.
@@ -164,14 +165,20 @@ def lease(n, worker=None, lease_s=None):
                           "WHERE state='leased' AND lease_until<? AND attempts>=max_attempts", (now, now))
                 c.execute("UPDATE lane_queue SET state='pending', worker=NULL, updated_ts=? "
                           "WHERE state='leased' AND lease_until<? AND attempts<max_attempts", (now, now))
-                top = c.execute("SELECT intent FROM lane_queue WHERE state='pending' "
-                                "ORDER BY priority DESC, id ASC LIMIT 1").fetchone()
+                # SLA/PRIORITY SCHEDULER (2b): pick the MOST URGENT pending intent — highest priority, then REALTIME
+                # before batch, then the TIGHTEST deadline (deadline_ts ASC, nulls last), then oldest. So a realtime
+                # item with a near SLA deadline preempts a batch backfill within the same capacity — 'what is needed
+                # in the time that is available'. The order is TOTAL (id ASC breaks every tie), so leasing is stable.
+                _ORDER = ("priority DESC, (sla_class='realtime') DESC, (deadline_ts IS NULL) ASC, deadline_ts ASC, "
+                          "id ASC")
+                top = c.execute("SELECT intent FROM lane_queue WHERE state='pending' ORDER BY " + _ORDER
+                                + " LIMIT 1").fetchone()
                 if not top:
                     c.execute("COMMIT")
                     return []
                 intent = top[0]
                 rows = c.execute("SELECT id,intent,task,system,reasoning FROM lane_queue "
-                                 "WHERE state='pending' AND intent=? ORDER BY priority DESC, id ASC LIMIT ?",
+                                 "WHERE state='pending' AND intent=? ORDER BY " + _ORDER + " LIMIT ?",
                                  (intent, n)).fetchall()
                 for r in rows:
                     c.execute("UPDATE lane_queue SET state='leased', lease_until=?, attempts=attempts+1, "
