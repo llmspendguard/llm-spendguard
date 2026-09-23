@@ -351,6 +351,16 @@ SETTINGS = [
               "stragglers); a caller may override per-call via bulk_delegate(hedge_ms=…). MEASURED here: honestreview "
               "per-call p90≈11s / p95≈16s / p99≈34s, so 12000 races its slowest ~10% (the tail that dominates a "
               "per-edit fan) while leaving the rest untouched."),
+    dict(section="dispatch", key="manage_all", store="config.json:dispatch.manage_all",
+         env="SPENDGUARD_DISPATCH_MANAGE_ALL", default=True, kind="bool", secret=False,
+         desc="UNIVERSAL ADMISSION: pace EVERY labelled adapters.call through the governor (concurrency + RPM + TPM), "
+              "not just governed=True / bulk_delegate fans. This is what makes 'with a managed queue, no user ever "
+              "sees a 429' real — otherwise a serial caller (or a consumer's own thread pool) blows a provider's "
+              "tokens/minute ceiling because nothing gated it. ON by default and cheap when uncontended: it only "
+              "WAITS once a real per-vendor rate is set — RPM via dispatch.rpm_<vendor>, TPM (the tokens/minute axis "
+              "that actually 429s) via dispatch.tpm_<vendor> (e.g. SPENDGUARD_DISPATCH_TPM_OPENAI=2000000); both 0 = "
+              "concurrency-only. A managed serial call NEVER sheds a $0 lane to the paid API (shed=False — no surprise "
+              "spend); it queues within its deadline. SPENDGUARD_DISPATCH_OFF=1 disables all admission underneath."),
     dict(section="ask", key="default_vendors", store="config.json:ask.default_vendors",
          env="SPENDGUARD_ASK_DEFAULT_VENDORS", default=None, kind="string|null", secret=False,
          desc="Default cross-LLM panel for `spendguard.ask` / `spendguard ask` when the caller names none — a "

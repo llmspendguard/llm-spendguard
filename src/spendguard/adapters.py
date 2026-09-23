@@ -520,6 +520,21 @@ def _route_through_queue_enabled():
     return bool(config._cfg_get("advisor", "route_through_queue", True))
 
 
+def _manage_all_enabled():
+    """Is UNIVERSAL ADMISSION armed — should a plain labelled adapters.call be PACED through the dispatch governor
+    (concurrency + RPM + TPM), not just recorded? This is what makes 'with a managed queue, no user ever sees a 429'
+    real: without it, only governed=True / bulk_delegate fans are paced, so a serial caller (or a consumer's own thread
+    pool) blows a provider's tokens/minute ceiling. ON by default (the governor is cheap when uncontended, and TPM/RPM
+    pace only once a real per-vendor limit is configured or learned). Env SPENDGUARD_DISPATCH_MANAGE_ALL wins, else
+    config dispatch.manage_all. Kill switch SPENDGUARD_DISPATCH_OFF=1 disables ALL admission underneath this."""
+    import os
+    v = os.getenv("SPENDGUARD_DISPATCH_MANAGE_ALL")
+    if v is not None:
+        return v.strip().lower() in ("1", "true", "yes", "on")
+    from . import config
+    return bool(config._cfg_get("dispatch", "manage_all", True))
+
+
 def _apply_best_value_default(reasoning, intent, sig, no_substitution, probe):
     """Config-scoped default (opt-in; OFF unless advisor.default_reasoning='best-value'): turn reasoning=None into
     'best-value' for a LABELLED (intent/sig), UNPINNED, non-probe call — so delegated work routes to the cheapest
@@ -768,20 +783,36 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     # entries can never drift. A saturated $0 lane SHEDS to its metered twin (lane-first, not a per-call metered
     # spill); a saturated METERED vendor (or no_metered_fallback) returns a TYPED deadline dict. Single calls omit
     # governed (no governor overhead). Never governs the internal _no_guard recursion — one slot per logical call.
+    # ADMISSION — enter the dispatch governor (concurrency + RPM + TPM pacing) so this call cannot 429, via the ONE
+    # shed-to-metered brain (dispatch.admit) that vendor_call and the governed fan share, so the entrances never drift.
+    # TWO ways in:
+    #   · governed=True — the explicit opt-in for a CONCURRENT fan: shed=True (a saturated $0 lane sheds to its paid
+    #     twin for throughput).
+    #   · MANAGED SERIAL (dispatch.manage_all, default ON) — a plain LABELLED call that is NOT already inside an outer
+    #     dispatch slot (a bulk_delegate runner already acquired → dispatch.holding() → one admission per logical call,
+    #     no double-take) and is not the _no_guard recursion / a probe. This is what closes the gap that let a serial
+    #     caller — or a consumer's own thread pool — blow a provider's tokens/minute ceiling and 429. shed=False here:
+    #     a lone call must NEVER be silently moved to the paid API to escape a busy lane (surprise spend) — it queues
+    #     within its deadline, else returns a typed deadline dict. (_manage_all_enabled() is checked LAST — a config
+    #     read — so unlabelled / held / probe / _no_guard calls short-circuit before paying for it.)
+    from . import dispatch
     _governed = bool(aliases.pop("governed", False))
     _adm = None
-    if _governed and not _no_guard:
-        from . import dispatch
+    _managed = (not _governed and not _no_guard and not _probe and bool(intent or sig)
+                and not dispatch.holding() and _manage_all_enabled())
+    if (_governed or _managed) and not _no_guard:
         _gprov = provider_for(model)
         _gov_dl = float(timeout_s) if timeout_s else (deadline_for(
             model, intent=intent or sig, in_chars=len(prompt or ""), default_s=LANE_MIN_TIMEOUT_S)[0] or LANE_MIN_TIMEOUT_S)
-        _adm = dispatch.admit(_gprov, model, _gov_dl, no_metered_fallback=no_metered_fallback)
+        _adm = dispatch.admit(_gprov, model, _gov_dl, no_metered_fallback=no_metered_fallback,
+                              est_tokens=_est_call_tokens(prompt, system, max_tokens), shed=_governed,
+                              skip_lane=bool(metered_only))   # metered_only hits the paid vendor → pace on its RPM/TPM
         if not _adm.ok:
             _sig_ctx._local.ctx = _ctx_before
             return {"provider": _gprov, "model": model, "text": None, "parsed": None, "in_tok": 0, "out_tok": 0,
                     "cost": None, "latency": 0.0, "finish_reason": None, "truncated": None, "executor": None,
                     "max_tokens_used": None, "substituted_from": None,
-                    "error": f"dispatch deadline_exceeded (governed): {_adm.error}"}
+                    "error": f"dispatch deadline_exceeded ({'governed' if _governed else 'managed'}): {_adm.error}"}
         if _adm.shed:                                    # saturated $0 lane shed to its metered twin → run metered_only
             metered_only = True
     # ROUTE-THROUGH-QUEUE (advisor.route_through_queue, default OFF, DORMANT): record every LABELLED synchronous call
@@ -1473,6 +1504,22 @@ def _cacheable_system(system):
     except Exception:
         n = len(system) // 4            # a chars→tokens heuristic is adequate for a threshold when tiktoken is absent
     return n >= cacheaudit._MIN_CACHE_TOKENS
+
+
+_NOMINAL_OUT_TOKENS = 2000   # output allowance for a call that did not pin max_tokens, for TPM pacing ONLY (input
+# dominates TPM for the classification/extraction fans that actually 429; a soft rate bucket needs a ballpark, and
+# Step-3 self-calibration from real 429 headers corrects the aggregate). NOT a billing figure and NOT the ceiling.
+
+
+def _est_call_tokens(prompt, system, out_tokens):
+    """Estimated INPUT+OUTPUT tokens for one call — the amount the dispatch TPM bucket debits so a fan can't blow a
+    provider's tokens/minute limit (the real 429 axis). INPUT via a cheap chars→tokens heuristic (no tokenizer on the
+    hot path — a soft rate bucket wants a ballpark, not a billing count); OUTPUT = the caller's max_tokens when pinned,
+    else a nominal allowance. Deliberately arithmetic (a bound on a real quantity), never a meaning judgement."""
+    n_in = (len(prompt) if isinstance(prompt, str) else len(str(prompt or ""))) // 4
+    n_sys = (len(system) // 4) if system else 0
+    n_out = int(out_tokens) if out_tokens else _NOMINAL_OUT_TOKENS
+    return n_in + n_sys + max(0, n_out)
 
 
 def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,

@@ -825,7 +825,8 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
                 return i, {**_b, "reason": _big[0], "error": _big[1]}
         _prov = adapters.provider_for(_vm)
         try:
-            _waited = dispatch.acquire_or_none(_prov, _raw, deadline_s, sla_class=sla_class)   # governor: bound in-flight PER-VENDOR metered calls (sla_class="batch" respects the realtime reserve)
+            _waited = dispatch.acquire_or_none(_prov, _raw, deadline_s, sla_class=sla_class,   # governor: bound in-flight PER-VENDOR metered calls (sla_class="batch" respects the realtime reserve)
+                                               est_tokens=adapters._est_call_tokens(_p, system, None))   # + TPM pacing: the metered fan is the 429 source, so debit its tokens/minute (0 unless dispatch.tpm_<vendor> is set)
         except _STOP_TYPES:
             raise                                       # a genuine SPEND REFUSAL halts the fan (refusal-containment)
         except Exception as e:
