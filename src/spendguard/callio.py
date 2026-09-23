@@ -188,6 +188,7 @@ def record_io_sample(intent, provider, model, batch, custom_id, prompt, output, 
         # inflate `added` / mis-trigger the added>=sample_n early stop. Return None when nothing was inserted.
         return cid if inserted else None
     except Exception:
+        config.rollback_ledger_conn("callio")   # clear a dangling txn from the failed write on the reused pooled conn
         return None
 
 
@@ -265,7 +266,7 @@ def set_quality(io_id, ok, src="judge", conf=None):
                           ("good" if ok else "bad", src, c, io_id))
             _callio_db().commit()
     except Exception:
-        pass
+        config.rollback_ledger_conn("callio")   # clear a dangling txn from the failed write on the reused pooled conn
 
 
 def good_rates():

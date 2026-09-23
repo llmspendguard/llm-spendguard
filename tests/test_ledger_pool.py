@@ -72,6 +72,19 @@ ck("fresh_ledger_conn is a separate connection", fr is not ca)
 fr.close()
 ck("closing the fresh conn leaves the pool intact", config.pooled_ledger_conn("subA", _noschema) is ca)
 
+print("-- rollback_ledger_conn clears a DANGLING transaction (the swallowed-write-error fix) --")
+def _ens_dtx(c):
+    c.execute("CREATE TABLE IF NOT EXISTS t_dtx(x INTEGER PRIMARY KEY)")
+    c.commit()
+d = config.pooled_ledger_conn("dtx", _ens_dtx)
+d.execute("INSERT INTO t_dtx VALUES (1)")          # opens a transaction (isolation_level='') and does NOT commit
+ck("an uncommitted write opened a dangling transaction", d.in_transaction)
+config.rollback_ledger_conn("dtx")
+ck("rollback_ledger_conn cleared the dangling transaction (write lock released)", not d.in_transaction)
+ck("the uncommitted row was rolled back, not persisted",
+   d.execute("SELECT COUNT(*) FROM t_dtx WHERE x=1").fetchone()[0] == 0)
+ck("rollback_ledger_conn on an unknown key is a harmless no-op", config.rollback_ledger_conn("no-such-key") is None)
+
 print("-- the after-fork handler clears the whole pool --")
 config._reset_ledger_pool_after_fork()
 ck("after-fork clears the pool (subA reopens fresh)", config.pooled_ledger_conn("subA", _noschema) is not ca)

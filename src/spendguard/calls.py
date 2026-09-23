@@ -301,7 +301,9 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
             _link_used(chain, prompt)
         return cid
     except Exception:
-        return None
+        config.rollback_ledger_conn("calls")   # a failed write left a txn open on the REUSED pooled conn holding the
+        return None                            # shared WAL write lock — clear it so it can't stall other writers
+
 
 
 _CONF = {"explicit": 1.0, "judge": 0.95, "used": 0.6, "mined": 0.5}
@@ -320,7 +322,7 @@ def feedback(call_id: Optional[str], ok: bool = True, source: str = "explicit",
                           ("good" if ok else "bad", source, conf, call_id))
             _calls_db().commit()
     except Exception:
-        pass
+        config.rollback_ledger_conn("calls")   # clear a dangling txn from the failed write on the reused pooled conn
 
 
 def insert(provider, model, kind, cost, in_tok=0, out_tok=0, ts=None, intent=None, chain=None,
@@ -361,7 +363,7 @@ def _link_used(chain, current_prompt):
                     _calls_db().execute("UPDATE calls SET quality='good', quality_src='used', quality_conf=0.6 WHERE id=?", (cid,))
             _calls_db().commit()
     except Exception:
-        pass
+        config.rollback_ledger_conn("calls")   # clear a dangling txn from the failed write on the reused pooled conn
 
 
 def cost_summary(intent=None):

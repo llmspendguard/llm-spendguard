@@ -683,6 +683,23 @@ def pooled_ledger_conn(key, ensure_schema):
     return c
 
 
+def rollback_ledger_conn(key):
+    """Roll back a DANGLING transaction on subsystem `key`'s pooled connection — call it from a write's error path so a
+    failed DML whose exception the caller SWALLOWS can't leave an open transaction holding the WAL write lock on the
+    reused connection until this thread's next write. Best-effort + never raises; a no-op when there's nothing open or
+    no connection yet. (Unlike reset_ledger_conn it KEEPS the connection — the connection is fine, only its aborted
+    transaction needs clearing.)"""
+    conns = getattr(_LEDGER_POOL, "conns", None)
+    if not conns:
+        return
+    got = conns.get(key)
+    if got is not None:
+        try:
+            got[0].rollback()
+        except Exception:
+            pass
+
+
 def reset_ledger_conn(key):
     """Drop subsystem `key`'s pooled connection so the next op reopens a clean one — called after an op error, so a
     broken or replaced-file connection can never linger (this is how the pool's staleness is handled)."""
