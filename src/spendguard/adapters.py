@@ -486,14 +486,17 @@ def _default_reasoning_is_best_value():
 
 def _route_through_queue_enabled():
     """Is 'route every labelled synchronous call through the durable lane_queue' armed? Env
-    SPENDGUARD_ROUTE_THROUGH_QUEUE wins, else config advisor.route_through_queue. OFF by default -- dormant, so this
-    is a zero-behaviour-change flag until a repo/agent opts in."""
+    SPENDGUARD_ROUTE_THROUGH_QUEUE wins, else config advisor.route_through_queue. ON by default now that the queue
+    write is POOLED (~46us/call, measured — was ~950us/op per-op) so recording every labelled call is cheap: a leased
+    row gives observability + crash-recovery + priority/SLA metadata, and a non-deliberate record failure runs the
+    call UNRECORDED (never gates the result). Opt OUT with advisor.route_through_queue=false or
+    SPENDGUARD_ROUTE_THROUGH_QUEUE=0."""
     import os
     v = os.getenv("SPENDGUARD_ROUTE_THROUGH_QUEUE")
     if v is not None:
         return v.strip().lower() in ("1", "true", "yes", "on")
     from . import config
-    return bool(config._cfg_get("advisor", "route_through_queue", False))
+    return bool(config._cfg_get("advisor", "route_through_queue", True))
 
 
 def _apply_best_value_default(reasoning, intent, sig, no_substitution, probe):

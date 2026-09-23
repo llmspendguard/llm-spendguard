@@ -1,9 +1,10 @@
 """GUARD — advisor.route_through_queue (Layer 2c): every LABELLED synchronous call is durably RECORDED, flag-gated.
 
 When the flag is ON, a labelled adapters.call is recorded as a leased lane_queue row (observability + crash-recovery
-+ priority/SLA metadata) and run via its NORMAL path (model + lane unchanged), then settled. When OFF (the default)
-it is completely dormant — zero behaviour change, no row. Pins:
-  (a) flag OFF (default) → the call runs normally and NO durable row is recorded;
++ priority/SLA metadata) and run via its NORMAL path (model + lane unchanged), then settled. ON by default now the
+queue write is POOLED (~46us/call); explicitly OFF it is completely dormant — zero behaviour change, no row. Pins:
+  (a) flag EXPLICITLY OFF → the call runs normally and NO durable row is recorded (dormant);
+  (a2) flag UNSET → routed (ON is the new default);
   (b) flag ON → a labelled call still runs normally (served) AND exactly ONE durable row is recorded + settled;
   (c) flag ON but UNLABELLED (no intent/sig) → NOT routed (best-value's own rule: never route an unlabelled call);
   (d) flag ON but a _probe call → NOT routed (internal probes stay direct);
@@ -44,14 +45,22 @@ _saved = adapters._call_guarded
 adapters._call_guarded = _served
 
 try:
-    # ── (a) flag OFF (default) → runs normally, NO durable row (dormant) ──
-    print("-- (a) flag OFF: dormant, zero behaviour change --")
-    os.environ.pop("SPENDGUARD_ROUTE_THROUGH_QUEUE", None)
+    # ── (a) flag EXPLICITLY OFF → runs normally, NO durable row (dormant) ──
+    print("-- (a) flag explicitly OFF: dormant, zero behaviour change --")
+    os.environ["SPENDGUARD_ROUTE_THROUGH_QUEUE"] = "0"
     before = lane_queue.queue_depth()
     r = adapters.call("acme:m", "p", intent="cold-intent")
     after = lane_queue.queue_depth()
     ck("flag OFF: the call runs normally (served)", r.get("text") == "served:acme:m")
     ck("flag OFF: NO durable row recorded (dormant)", _total(after) == _total(before))
+
+    # ── (a2) flag UNSET → routed (ON is the new default now the queue write is pooled) ──
+    print("\n-- (a2) flag UNSET: routed by default (default is now ON) --")
+    os.environ.pop("SPENDGUARD_ROUTE_THROUGH_QUEUE", None)
+    b1 = lane_queue.queue_depth()
+    adapters.call("acme:m", "p", intent="default-on-intent")
+    a1 = lane_queue.queue_depth()
+    ck("flag UNSET → routed by default (exactly one durable row)", (a1.get("done", 0) - b1.get("done", 0)) == 1)
 
     # ── (b) flag ON → a labelled call runs normally AND is recorded once ──
     print("\n-- (b) flag ON: labelled call runs normally + exactly one durable row --")
