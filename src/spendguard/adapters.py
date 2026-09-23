@@ -441,6 +441,27 @@ def _book_substitution(r):
 # announced this process or has not) and is never cleared; it is bounded by the tiny number of DISTINCT swap
 # pairs seen (a handful of models). `_warn_once_if_substituted` is its only writer.
 _SUBST_WARN_LEDGER = set()
+# Same once-only, process-lifetime contract + bound (a handful of distinct call-classes) as _SUBST_WARN_LEDGER:
+# `_warn_once_caller_maxtokens` is its only writer. Staleness is harmless (worst case a duplicate advisory line).
+_MAXTOK_WARN_LEDGER = set()
+
+
+def _warn_once_caller_maxtokens(key, passed, floored):
+    """Announce — LOUD, once per call-class — that a caller passed a small explicit max_tokens on a STRUCTURED call,
+    which spendguard FLOORED to real room. Setting max_tokens is the #1 cause of silent reasoning-model JSON
+    truncation (the model burns the cap on thinking before it writes), so the fix is to STOP passing it: spendguard
+    owns the output ceiling (measured p99, floored to TOKEN_FLOOR, billed on ACTUAL tokens — a high floor is free).
+    Returns the message on the first announcement (for tests), else None."""
+    if key in _MAXTOK_WARN_LEDGER:
+        return None
+    _MAXTOK_WARN_LEDGER.add(key)
+    msg = ("[spendguard] max_tokens=%d passed on a STRUCTURED call (%s) — floored to %d so the JSON can't silently "
+           "truncate. OMIT max_tokens on schema calls: spendguard owns the output ceiling (measured p99, billed on "
+           "ACTUAL tokens, so a high floor is free). A small max_tokens is the #1 cause of reasoning-model JSON "
+           "truncation." % (passed, key, floored))
+    import sys as _sysmt
+    print(msg, file=_sysmt.stderr)
+    return msg
 
 
 def _warn_once_if_substituted(r):
@@ -594,6 +615,13 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                     status_code (HTTP status if any), provider_error (the real response BODY, not the one-line
                     str), cause (the underlying error behind a generic wrapper — 'Connection error.' ←
                     'ConnectTimeout'), retry_after (seconds, if the provider sent one)."""
+    # metered_only FORCES the exact model on the metered API, so it must ALSO pin the model: a substitution (best-value,
+    # or a lane-bandit swap) would silently route to a DIFFERENT vendor's $0 lane, defeating BOTH the model choice and
+    # the metered intent. That is the measured warden:tag_provenance_xcheck bypass — metered_only=True still yielded
+    # gpt-5-nano → claude-opus-4-8 via the claude-code lane. metered_only ⟹ no_substitution closes it; there is no
+    # legitimate metered_only-WITH-substitution case (every metered_only caller wants that exact model, metered).
+    if metered_only:
+        no_substitution = True
     # ENSURE-SUCCESS INPUT NORMALISATION — accept the kwargs a caller NATURALLY reaches for and translate them to the
     # canonical parameter, instead of a cryptic TypeError (the "users try to use it and fail" class, caught by a live
     # run: a caller wrote reasoning="best-value", intent=… and got `unexpected keyword argument 'intent'`). Aliases are
@@ -632,6 +660,17 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     # below prefers it explicitly); when only intent is given it becomes the sig too, so one tag drives everything.
     if intent is not None and not sig:
         sig = intent
+
+    # METERED_ONLY ⟹ NO_SUBSTITUTION. A metered_only caller is a JUDGE whose verdict must be REPRODUCIBLE on the model
+    # it named — a cross-vendor panel where the MODEL is the measurement. Skipping the $0 lane (metered_only's own job,
+    # applied at dispatch) is NOT enough on its own: the best-value / utilisation bandit picks the model EARLIER than
+    # lane routing, so an un-pinned metered_only call gets its model swapped anyway (measured: a warden cross-check named
+    # gpt-5-nano and was served claude-opus-4-8 via the claude-code lane), collapsing the cross-vendor panel to one
+    # vendor — and the swapped model's reply then failed to scatter, so every verdict came back empty. Pinning the vendor
+    # for a reproducibility-critical caller cannot harm it and closes the 2026-08-29 "cross-vendor panel was one model"
+    # gap at its structural root, not per-intent in a denylist.
+    if metered_only:
+        no_substitution = True
 
     # INPUT-COMPLETENESS: fold whole, stamped, self-verified files into the prompt BEFORE the guards, so the
     # full payload is what _input_fits measures and a size overflow is refused here rather than clipped by the
@@ -2288,7 +2327,10 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
         # JSON must have room to close its braces. Floor to real room WHATEVER the caller passed — a schema reply
         # cut low is corrupt, not short (see _structured above). A prose caller's small explicit cap is honored
         # below; a structured one is not, because it only destroys the answer. Clamped to the ceiling like the rest.
-        max_tokens = max(int(max_tokens or 0), _predicted, TOKEN_FLOOR)
+        _floored = max(int(max_tokens or 0), _predicted, TOKEN_FLOOR)
+        if _explicit and int(max_tokens or 0) < _floored:   # the caller passed a small cap → floored + teach them to stop
+            _warn_once_caller_maxtokens(sig or model, int(max_tokens or 0), _floored)
+        max_tokens = _floored
     elif _explicit:
         # The caller named a number, so they meant it — a 16-token connectivity probe is a legitimate,
         # deliberate choice, and token_caps has a recorded verdict for every such literal in this tree.

@@ -611,6 +611,15 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
     # For either, arms stay None (no lane picked) and the lane-only tier/reserved/bandit machinery is skipped.
     _vision = images_for is not None
     _pinned = callable(model_for)                        # a per-task pinned vendor:model matrix (text or vision)
+    if metered_only and not (_pinned or _vision):
+        # metered_only is ONLY honored on the no-substitution metered runner (_run_task_on_api), which the dispatcher
+        # picks only for a PINNED (model_for) or vision fan. On a plain lane fan it would be SILENTLY IGNORED and the
+        # bandit could substitute the model onto a $0 lane — the measured metered_only bypass. Fail LOUD, never ignore.
+        raise ValueError(
+            "bulk_delegate(metered_only=True) requires a PINNED model (model_for=) or vision (images_for=): it is only "
+            "honored on the no-substitution metered runner. On a non-pinned lane fan it would be silently ignored and "
+            "the bandit could substitute the model onto a $0 lane. Pass model_for=lambda t: '<provider:model>' to pin + "
+            "meter the exact model, or drop metered_only.")
     if _vision and not (vision_model or model_for):
         return _finalize([{"text": None, "lane": None, "use_name": None, "billed": False, "reason": "no_vision_model",
                  "error": "bulk_delegate(images_for=…) needs vision_model=… or model_for=… (a vision-capable API "
