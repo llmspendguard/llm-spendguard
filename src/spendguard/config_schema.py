@@ -373,6 +373,13 @@ SETTINGS = [
               "that actually 429s) via dispatch.tpm_<vendor> (e.g. SPENDGUARD_DISPATCH_TPM_OPENAI=2000000); both 0 = "
               "concurrency-only. A managed serial call NEVER sheds a $0 lane to the paid API (shed=False — no surprise "
               "spend); it queues within its deadline. SPENDGUARD_DISPATCH_OFF=1 disables all admission underneath."),
+    dict(section="dispatch", key="cooldown_cap_s", store="config.json:dispatch.cooldown_cap_s",
+         env="SPENDGUARD_DISPATCH_COOLDOWN_CAP_S", default=300, kind="int", secret=False,
+         desc="Ceiling (seconds) on any single vendor cooldown set from a 429's Retry-After (self-calibration). The "
+              "provider's Retry-After is honored but capped here so a bad/huge value (a misbehaving provider sending "
+              "Retry-After: 86400) can never wedge a vendor in an endless cooldown. The learned tokens/minute LIMIT "
+              "itself self-heals differently — every success re-observes the real limit and overwrites a transient "
+              "reading (latest-wins), so an intermittent bad limit is corrected by the next normal call."),
     dict(section="ask", key="default_vendors", store="config.json:ask.default_vendors",
          env="SPENDGUARD_ASK_DEFAULT_VENDORS", default=None, kind="string|null", secret=False,
          desc="Default cross-LLM panel for `spendguard.ask` / `spendguard ask` when the caller names none — a "

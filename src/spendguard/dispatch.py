@@ -86,6 +86,13 @@ def _limit(key, default):
 # for the per-call hot path AND a JSON file, so it survives restarts and one process's lesson reaches the others.
 # Learning a LIMIT is parsing a fixed-format header into an int — never a meaning judgement.
 _LEARN_RELOAD_S = 30.0
+# ANTI-TRAP (a learned rate must NEVER trap us on a wrong/intermittent reading — two defenses):
+#   A. LATEST-WINS: every observation OVERWRITES the prior (learn() SETS, never min-latches), and success headers
+#      re-observe the real limit on EVERY call — so a transient/one-off low reading is corrected by the very next
+#      normal call. This is what makes an INTERMITTENT bad limit self-heal instead of latching.
+#   C. COOLDOWN CAP: a provider's Retry-After is honored but CAPPED (_cool_cap_s below), so a bad/huge value (a
+#      misbehaving provider sending Retry-After: 86400) can never wedge a vendor in an endless cooldown.
+_COOL_CAP_S_DEFAULT = 300          # 5m ceiling on any single Retry-After cooldown; override dispatch.cooldown_cap_s.
 
 
 def _warn_learned_io(what, e):
@@ -159,7 +166,14 @@ class _LearnedLimits:
             return data
         with self._lock:
             self._maybe_reload()
-            _stamp_vendor_limits(self._d)                # MEMORY holds the lesson even if the persist below fails
+            _prev = self._d.get(v) or {}
+            _prev_tpm, _prev_rpm = _prev.get("tpm"), _prev.get("rpm")
+            _stamp_vendor_limits(self._d)                # MEMORY holds the freshest lesson (always)
+            _now = self._d.get(v) or {}
+            if _now.get("tpm") == _prev_tpm and _now.get("rpm") == _prev_rpm:
+                return                                   # the LIMIT is unchanged → memory is enough; skip the durable
+                #                                          write. success headers repeat the same limit on EVERY call, so
+                #                                          this persists ONCE per (vendor, limit), never a per-call backup.
             try:                                         # persist through the ONE backed-up, atomic JSON writer
                 from . import config
                 out = config.update_json(self._path(), _stamp_vendor_limits, reason="learn-rate-limit")
@@ -202,7 +216,19 @@ def learn_rate_limit(vendor, tpm=None, rpm=None, retry_after_s=None, source="429
     metered 429; safe with partial data (missing fields ignored), and never raises into the caller."""
     _LEARNED.learn(vendor, tpm=tpm, rpm=rpm, source=source)
     if retry_after_s:
-        _cool_vendor(vendor, retry_after_s)
+        # defense C: honor the provider's Retry-After but CAP it (dispatch.cooldown_cap_s) so a bad/huge value can't
+        # wedge this vendor in an endless cooldown. NOT silent: when it caps, say so — a GENUINELY long cool is not
+        # lost, it simply re-cools on the NEXT 429 (each cycle capped), and an operator who sees this can raise
+        # dispatch.cooldown_cap_s to honor a real long window fully. So a bad value can't trap us AND a real one isn't
+        # silently discarded — it degrades to 'poll every cap seconds' with a visible reason.
+        _cap = float(_limit("cooldown_cap_s", _COOL_CAP_S_DEFAULT))
+        _ra = float(retry_after_s)
+        if _ra > _cap:
+            import sys as _sys
+            print(f"[spendguard] dispatch: {vendor} asked for a {_ra:.0f}s cooldown (Retry-After) — CAPPING at "
+                  f"{_cap:.0f}s (dispatch.cooldown_cap_s); a real long window then re-cools on the next 429, raise "
+                  f"the cap to honor it in one shot", file=_sys.stderr)
+        _cool_vendor(vendor, min(_ra, _cap))
 
 
 def learned_limits(vendor=None):

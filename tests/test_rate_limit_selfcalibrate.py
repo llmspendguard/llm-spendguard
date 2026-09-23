@@ -83,5 +83,32 @@ b = dispatch._GOV._bucket(V3, V3 + ":m")                     # builds/re-keys th
 ck("explicit config tpm (999999) wins over learned (6000)", b.tpm == 999999)
 os.environ.pop("SPENDGUARD_DISPATCH_TPM_PRECVENDOR", None)
 
+# ── (5) SUCCESS-HEADER learning: the limit rides every SUCCESSFUL response → paced BEFORE the first 429 ──
+print("-- (5) _learn_success_limits: a successful response's headers teach the limit (no 429 needed) --")
+class _FakeResp2:
+    def __init__(self, headers):
+        self.headers = headers
+adapters._learn_success_limits("succvendor", _FakeResp2({"x-ratelimit-limit-tokens": "1200000",
+                                                         "x-ratelimit-limit-requests": "5000"}))
+ll5 = dispatch.learned_limits("succvendor")
+ck("a success response teaches tpm/rpm with source='success-header'",
+   ll5.get("tpm") == 1200000 and ll5.get("rpm") == 5000 and ll5.get("source") == "success-header")
+
+# ── (6) ANTI-TRAP A (latest-wins): a new observation OVERWRITES a transient reading, never min-latches ──
+print("-- (6) latest-wins: a fresh observation overwrites a prior (transient) learned limit --")
+Vw = "flapvendor"
+dispatch.learn_rate_limit(Vw, tpm=500, source="429-header")       # a transient LOW reading
+dispatch.learn_rate_limit(Vw, tpm=2000000, source="success-header")  # the next normal call sees the real limit
+ck("a later observation overwrites the earlier (self-heals an intermittent low reading)",
+   dispatch.learned_limits(Vw).get("tpm") == 2000000)
+
+# ── (7) ANTI-TRAP C (cooldown cap): a bad/huge Retry-After can't wedge us in an endless cooldown ──
+print("-- (7) cooldown cap: a huge Retry-After is honored but CAPPED (dispatch.cooldown_cap_s) --")
+os.environ["SPENDGUARD_DISPATCH_COOLDOWN_CAP_S"] = "300"
+dispatch.learn_rate_limit("wedgevendor", retry_after_s=86400)     # a misbehaving 'Retry-After: 1 day'
+left = dispatch._cooldown_left("wedgevendor")
+ck("a 86400s Retry-After is capped to <= cooldown_cap_s (300s), not honored whole", 0 < left <= 300)
+os.environ.pop("SPENDGUARD_DISPATCH_COOLDOWN_CAP_S", None)
+
 print(f"\n{'[FAIL]' if _fails else 'OK'} test_rate_limit_selfcalibrate: {len(_fails)} failure(s)")
 sys.exit(1 if _fails else 0)

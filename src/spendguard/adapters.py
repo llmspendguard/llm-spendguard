@@ -1353,6 +1353,24 @@ def _ratelimit_from_resp(resp):
     return tpm, rpm
 
 
+def _learn_success_limits(provider, resp):
+    """Teach the governor a vendor's limit from a SUCCESSFUL response's rate-limit headers — the limit rides
+    x-ratelimit-limit-* / anthropic-ratelimit-*-limit on EVERY response, not only the 429, so a vendor is paced BEFORE
+    it ever 429s (dispatch.learn persists once per (vendor, limit) — see its change-guard — so this is memory-cheap on
+    repeat calls). NEVER loses a paid response to a learning hiccup: a deliberate stop still propagates (it cannot
+    arise from the learned-limits JSON writer), any other error is swallowed."""
+    try:
+        _tpm, _rpm = _ratelimit_from_resp(resp)
+        if _tpm or _rpm:
+            from . import dispatch as _d
+            _d.learn_rate_limit(provider, tpm=_tpm, rpm=_rpm, source="success-header")
+    except Exception as _e:
+        from . import gate as _g
+        if _g.is_deliberate_stop(_e):
+            raise
+        # else: a successful, PAID response is never discarded for a best-effort side-effect
+
+
 def _exc_cause(e):
     """The underlying CAUSE chain behind a wrapped SDK exception (`__cause__` / `__context__`), as
     'Type: msg ← Type: msg'. The SDKs wrap a transport failure in a generic APIConnectionError whose str() is
@@ -1996,10 +2014,20 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             # connection → cancels the request, stops further billing) and raise _CallDeadline. Finishes in time →
             # the full completion, so usage/cost stay EXACT (no streaming, no token-count guess). Every create() in
             # the ladder below goes through this, so no provider call on this path can outlive the caller's deadline.
-            _raw_create = c.chat.completions.create
+            # SUCCESS-HEADER LEARNING: read the vendor's rate-limit headers off the SUCCESSFUL response (they ride
+            # x-ratelimit-limit-* on every response, not only the 429) so the governor paces it BEFORE it ever 429s.
+            # with_raw_response gives the headers + a .parse() to the same completion; a client without it (or a compat
+            # endpoint that omits the headers) transparently falls back to the plain create, and learning is a no-op.
+            _wraw = getattr(c.chat.completions, "with_raw_response", None)
+            _raw_create = _wraw.create if _wraw is not None else c.chat.completions.create
+            def _finish_create(_res):
+                if _wraw is None:
+                    return _res                          # plain create already returns the PARSED completion
+                _learn_success_limits(prov, _res)        # _res is the RAW wrapper → learn its headers, then parse
+                return _res.parse()
             def _bounded_create(**cw):
                 if not timeout_s:
-                    return _raw_create(**cw)
+                    return _finish_create(_raw_create(**cw))
                 _box = {}
                 from . import calls as _octx
                 _opctx = dict(_octx.current() or {})          # CARRY intent/chain + caller across the daemon boundary
@@ -2027,7 +2055,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                     raise _CallDeadline("deadline_exceeded: no completion within %.0fs (wall-clock)" % float(timeout_s))
                 if "e" in _box:
                     raise _box["e"]                          # a real error (e.g. a param 400) → the ladder handles it
-                return _box["r"]
+                return _finish_create(_box["r"])
             try:                                              # gpt-5+ require max_completion_tokens; older models take max_tokens
                 r = _bounded_create(max_completion_tokens=max_tokens, **okw)
             except Exception as e:
