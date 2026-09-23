@@ -42,7 +42,7 @@ class _Recorder:
 
     def __call__(self, model, prompt, max_tokens=None, system=None, reasoning=None, schema=None,
                  timeout_s=None, sig=None, retries=2, files=None, _no_guard=False, no_metered_fallback=False,
-                 images=None, no_substitution=False, metered_only=False):
+                 images=None, no_substitution=False, metered_only=False, **kw):   # **kw mirrors real **aliases (absorbs _route etc.)
         self.calls.append({"model": model, "no_substitution": no_substitution, "images": images,
                            "metered_only": metered_only})
         if model == "moonshot:kimi-k3" and "b.py" in prompt:                # one cell errors — must NOT wedge the matrix

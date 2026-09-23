@@ -535,7 +535,7 @@ def _apply_best_value_default(reasoning, intent, sig, no_substitution, probe):
 
 def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,
          sig=None, intent=None, retries=2, files=None, _no_guard=False, no_metered_fallback=False, images=None,
-         no_substitution=False, metered_only=False, base_fallback=False, _probe=False, **aliases):
+         no_substitution=False, metered_only=False, base_fallback=False, _probe=False, _route=True, **aliases):
     """Run one prompt against one model. Returns a result dict (never raises).
 
     `governed=True` (a kwarg carried via **aliases) runs THIS call inside the dispatch GOVERNOR — for a caller
@@ -790,7 +790,12 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     # internal _no_guard recursion, a probe, an UNLABELLED call, or a call already inside a routed record (_route_guard
     # → one row per logical call, no double-record and no loop). A deliberate stop from the durable write (ledger lock /
     # refusal) PROPAGATES; a non-deliberate open failure → run UNRECORDED (the queue never gates a caller's result).
-    _routed = ((intent or sig) and not _no_guard and not _probe
+    # `_route=False` (an EXPLICIT opt-out) also suppresses the durable record — the caller is ALREADY a governed
+    # queue row (lane_queue.drain/submit run the leased rows through bulk_delegate, whose per-task adapters.call
+    # would otherwise open a SECOND row for work that is already queued). Same one-row-per-logical-call guarantee as
+    # the _route_guard re-entry check, but explicit + thread-safe across bulk_delegate's nested hedge threads (a
+    # thread-local set in the worker never reaches the hedge's sub-threads; an explicit flag does).
+    _routed = (_route and (intent or sig) and not _no_guard and not _probe
                and not getattr(_route_guard, "on", False) and _route_through_queue_enabled())
     _qrid = None
     r = None

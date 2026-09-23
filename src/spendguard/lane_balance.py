@@ -369,7 +369,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
                   schema=None, expect_ids=None, gate_sig=None, lanes=None, images_for=None, vision_model=None,
                   model_for=None, prompt_for=None, task_key=None, return_keyed=False,
                   on_miss=None, batch_submit=None, batch_model=None, batch_cap=None,
-                  hedge_ms=None, strategy=None, metered_only=False, sla_class=None):
+                  hedge_ms=None, strategy=None, metered_only=False, sla_class=None, record_route=True):
     """Fan a LIST of similar tasks across ALL viable idle lanes CONCURRENTLY — the right shape for a BULK job (e.g.
     symgrep's ~6k one-sentence symbol descriptions) that the per-call bandit would trickle one at a time. Each task
     runs on a lane (round-robin across the lanes the bandit rates GOOD for this intent), each admission BOUNDED by
@@ -384,6 +384,12 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
     where the lane CLI's own reasoning scale + warm-daemon concurrency would drift the verdict. It BILLS — the
     deliberate trade for a fan where the verdict distribution is the product. Default False = the faithful-for-
     capability atomic pair (lane first, same-provider metered fallback). Applies to the pinned/vision runner only.
+
+    `record_route=True` (default): with advisor.route_through_queue ON, each per-task adapters.call records its OWN
+    durable queue row (observability + crash-recovery) as usual. `record_route=False` SUPPRESSES that per-task record
+    — set ONLY by lane_queue.drain / lane_queue.submit, because those tasks ARE already leased queue rows and a
+    per-task record would open a SECOND row for the same logical work (a double-record). It threads to adapters.call
+    as `_route=`, so it holds across the plain runner AND the hedge's nested threads (a thread-local guard would not).
 
     DURABLE (the CHUNK-never-single-shot rule): tasks run in chunks of `chunk_size`; when `checkpoint` (a jsonl path)
     is given, EACH completed result is appended before the next chunk, so a crash RESUMES instead of losing the run.
@@ -832,7 +838,8 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
             r = adapters.call(_vm, _p, system=system, reasoning=reasoning, sig=intent,
                               timeout_s=deadline_s, no_metered_fallback=refuse_billed, schema=schema,
                               images=(_imgs or None), no_substitution=True,   # NAMED model — never swap it (pinned)
-                              metered_only=metered_only)   # opt-in: force the METERED half of the pin (skip the $0 lane)
+                              metered_only=metered_only,   # opt-in: force the METERED half of the pin (skip the $0 lane)
+                              _route=record_route)   # already a governed queue row when drain/submit set record_route=False
         except _STOP_TYPES:
             raise
         except Exception as e:
@@ -902,11 +909,13 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
                               schema=schema,                                     # STRUCTURED output: adapters folds the shape
                               #                                                    into the lane's prompt + validates locally,
                               #                                                    falling back to the API (strict) if off-shape
-                              no_substitution=bool(tier or lanes))               # CONFINEMENT: tier= OR lanes= pins the
+                              no_substitution=bool(tier or lanes),               # CONFINEMENT: tier= OR lanes= pins the
             #                                                                      arm — the bandit can NEVER swap it for a
             #                                                                      model OUTSIDE the requested set; the only
             #                                                                      fallback is THIS model's metered API,
             #                                                                      in-tier by construction
+                              _route=record_route)                               # this fan IS a queue row when drain/submit
+            #                                                                      set record_route=False → don't re-record
             # (receipt suppressed via set_context above, not the context manager)  each reply feeds that measurement
         except _STOP_TYPES:
             raise                                            # a deliberate stop (refusal / deadline) propagates — it is

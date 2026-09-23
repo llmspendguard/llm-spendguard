@@ -318,8 +318,9 @@ def submit(intent, tasks, *, priority=PRIORITY_INTERACTIVE, sla_class="realtime"
                           sla_class=sla_class, deadline_ts=_dl)
     from . import lane_balance
     _run_dl = float(deadline_s if deadline_s is not None else (sla_s if sla_s else LEASE_S_DEFAULT))
-    results = lane_balance.bulk_delegate(tasks, intent, system=system, reasoning=reasoning,
-                                         deadline_s=_run_dl, **bulk_kwargs)
+    bulk_kwargs.pop("record_route", None)               # these rows ARE the queue — force record_route=False so each
+    results = lane_balance.bulk_delegate(tasks, intent, system=system, reasoning=reasoning,  # per-task adapters.call
+                                         deadline_s=_run_dl, record_route=False, **bulk_kwargs)  # doesn't open a 2nd row
     for rid, res in zip(ids, results):                 # settle every row we DID durably record
         settle(rid, res if isinstance(res, dict) else {"error": "no result"})
     _durable = len(ids) == len(tasks)
@@ -455,7 +456,8 @@ def drain(worker=None, batch=None, lease_s=None, idle_rounds=None, idle_sleep=No
             groups.setdefault((r.get("system"), r.get("reasoning"), r.get("sla_class")), []).append(r)
         for (sys_, rea, sla_), grp in groups.items():
             results = lane_balance.bulk_delegate([g["task"] for g in grp], intent, system=sys_, reasoning=rea,
-                                                 deadline_s=lease_s, sla_class=sla_)
+                                                 deadline_s=lease_s, sla_class=sla_, record_route=False)  # these ARE
+            #                                       the queue rows — don't let each per-task adapters.call open a 2nd row
             for g, res in zip(grp, results):
                 res = res if isinstance(res, dict) else {"error": "no result"}
                 settle(g["id"], res)

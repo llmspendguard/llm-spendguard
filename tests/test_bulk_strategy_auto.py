@@ -44,7 +44,7 @@ _served = []
 
 
 def _call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None, sig=None,
-          retries=2, files=None, _no_guard=False, no_metered_fallback=False, images=None, no_substitution=False):
+          retries=2, files=None, _no_guard=False, no_metered_fallback=False, images=None, no_substitution=False, **kw):
     prov, raw = model.split(":", 1)
     lane = {v: k for k, v in _PROV.items()}.get(prov)
     _served.append(lane)
