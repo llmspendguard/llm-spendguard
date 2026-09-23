@@ -1893,6 +1893,11 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                             c.close()                        # cancel the in-flight request (best-effort billing stop)
                         except Exception:
                             pass
+                        try:
+                            from . import bulkgate as _bg_dc   # #3: cut mid-generation → invisible waste (see OpenAI path)
+                            _bg_dc.note_deadline_cancel(model, timeout_s)
+                        except (ImportError, AttributeError):
+                            pass                             # note_deadline_cancel itself never raises; guard only the import
                         raise _CallDeadline("deadline_exceeded: no completion within %.0fs (wall-clock)" % float(timeout_s))
                     if "e" in _abox:
                         raise _abox["e"]
@@ -2051,6 +2056,11 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                     try:
                         c.close()                            # cancel the in-flight request (best-effort billing stop)
                     except Exception:
+                        pass
+                    try:
+                        from . import bulkgate as _bg_dc     # #3: cut MID-generation → provider bills what it generated
+                        _bg_dc.note_deadline_cancel(model, timeout_s)   # (reasoning tokens → nothing), invisible to the
+                    except (ImportError, AttributeError):     # local ledger. Surface it; note_deadline_cancel never raises.
                         pass
                     raise _CallDeadline("deadline_exceeded: no completion within %.0fs (wall-clock)" % float(timeout_s))
                 if "e" in _box:

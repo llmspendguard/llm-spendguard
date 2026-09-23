@@ -489,6 +489,33 @@ def _warn_truncated(sig, model, out_tok, max_tokens):
           % (sig, model, max_tokens, rate, fix), file=sys.stderr)
 
 
+_cancel_warned = {}          # model -> count of wall-clock deadline cancels seen this process
+_cancel_lock = threading.Lock()   # the fan calls note_deadline_cancel CONCURRENTLY — the count must not lose a cancel
+
+
+def note_deadline_cancel(model, timeout_s=None):
+    """Record + SURFACE a call torn down at its wall-clock deadline MID-GENERATION (the request was cancelled with
+    c.close()). This is the INVISIBLE waste behind a 'reasoning burned money for nothing' overrun: because the request
+    was cancelled, no usage comes back, so the LOCAL result is out_tok=0 / cost=0 and the ledger records $0 — but the
+    provider BILLS whatever it generated before the cut, and for a REASONING model that is reasoning tokens that
+    produced NO output. A fan that keeps hitting the deadline (concurrency drives latency past it) thus burns real
+    money the per-call ledger cannot see (only a provider-truth reconcile catches it). Counted per model and announced
+    at decade boundaries (like a truncation), carrying the actionable fix. Never raises. Returns the running count."""
+    import sys
+    with _cancel_lock:                       # atomic read-modify-write so a concurrent fan can't lose a cancel
+        n = _cancel_warned.get(model, 0) + 1
+        _cancel_warned[model] = n
+    if n not in _TRUNC_ANNOUNCE:              # print OUTSIDE the lock (never hold it across I/O)
+        return n
+    print("[bulkgate] DEADLINE-CANCELLED %s x%d: torn down at its %ss wall-clock deadline MID-generation. No usage "
+          "returned → the LOCAL ledger records $0, but the provider BILLS what it generated (for a reasoning model, "
+          "reasoning tokens that produced NO output — the worst spend there is: paid, invisible, and useless). Fix: "
+          "give this class MORE deadline (it is being cut mid-thought), or lower concurrency so latency drops below "
+          "the deadline. Reconcile against provider truth to see the real $." % (model, n,
+          ("%.0f" % timeout_s) if timeout_s else "?"), file=sys.stderr)
+    return n
+
+
 def _pctl(vals, p):
     """Interpolated percentile of token counts, as an int. None for an empty sample.
 
