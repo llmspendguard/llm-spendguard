@@ -78,6 +78,142 @@ def _limit(key, default):
         return int(default)
 
 
+# ── SELF-CALIBRATION — learn a vendor's REAL rate limit from provider 429 headers ─────────────────────────────────
+# Admission's whole point is 'no user ever sees a 429', but TPM/RPM pacing only bites once a per-vendor limit EXISTS.
+# This closes that gap with zero manual config: when a metered call returns 429, adapters reads the provider's own
+# rate-limit headers (x-ratelimit-limit-tokens / anthropic-ratelimit-tokens-limit, and Retry-After) and teaches them
+# here — dispatch then PACES to the learned limit, so the first limit-unknown 429 is the LAST. The store is in-memory
+# for the per-call hot path AND a JSON file, so it survives restarts and one process's lesson reaches the others.
+# Learning a LIMIT is parsing a fixed-format header into an int — never a meaning judgement.
+_LEARN_RELOAD_S = 30.0
+
+
+def _warn_learned_io(what, e):
+    """Say ONCE (per process, per direction) that learned-rate-limit persistence hit an error. The store is fail-open
+    by design — a corrupt/racing file must NEVER break admission (spend discipline cannot depend on the scheduler) —
+    but the doctrine here is degrade LOUDLY, not silently: a persistently bad file has to be visible, not a stale limit
+    quietly in force. Once, not per-call, so a broken disk never spams the log."""
+    flag = f"_warned_{what}"
+    if getattr(_LearnedLimits, flag, False):
+        return
+    setattr(_LearnedLimits, flag, True)
+    import sys as _sys
+    print(f"[spendguard] dispatch: learned rate-limit {what} failed ({type(e).__name__}: {str(e)[:80]}) — keeping "
+          f"the in-memory limits and continuing; fix the file under $SPENDGUARD_HOME/dispatch/", file=_sys.stderr)
+
+
+class _LearnedLimits:
+    """Durable per-vendor {tpm, rpm} learned from provider rate-limit headers. get() serves the hot path from memory
+    (reloading the JSON only when its mtime changed, and at most every _LEARN_RELOAD_S); learn() merges + ATOMICALLY
+    rewrites the file (temp + os.replace) so a concurrent reader never sees a torn write. Fail-OPEN but LOUD-ONCE: an
+    I/O or parse error keeps the in-memory limits and warns once (_warn_learned_io), never breaks admission."""
+    __slots__ = ("_d", "_checked", "_lock")
+    _warned_read = False        # class flags for the loud-once warnings (not instance slots)
+    _warned_write = False
+
+    def __init__(self):
+        self._d = {}
+        self._checked = 0.0     # monotonic time of the last file read; 0.0 = never loaded (see _maybe_reload)
+        self._lock = threading.Lock()
+
+    def _path(self):
+        from . import config
+        d = config.HOME / "dispatch"
+        d.mkdir(parents=True, exist_ok=True)
+        return d / "learned_limits.json"
+
+    def _maybe_reload(self):
+        # Re-read the (small) file at most every _LEARN_RELOAD_S — NOT per call, and NOT gated on mtime: a restore/sync
+        # can reset an mtime BACKWARD to a value already seen, so 'mtime unchanged' is not 'content unchanged' (the
+        # classic staleness trap). Reading the whole small map on the TTL tick is cheap and cannot be fooled that way.
+        # `_checked` doubles as the 'loaded at least once' flag (0.0 = never), so no separate state is needed.
+        now = time.monotonic()
+        if self._checked and (now - self._checked) < _LEARN_RELOAD_S:
+            return
+        self._checked = now
+        try:
+            import json as _json
+            self._d = _json.loads(self._path().read_text() or "{}") or {}
+        except FileNotFoundError:
+            pass                                         # absent == empty; _checked is set so we won't re-read until TTL
+        except Exception as e:
+            _warn_learned_io("read", e)                  # corrupt/racing file → keep memory, say so ONCE (fail-open+loud)
+
+    def for_vendor(self, vendor):
+        self._maybe_reload()
+        return self._d.get((vendor or "").strip().lower()) or {}
+
+    def learn(self, vendor, tpm=None, rpm=None, source=""):
+        v = (vendor or "").strip().lower()
+        if not v or (not tpm and not rpm):
+            return
+
+        def _stamp_vendor_limits(data):                  # edits the on-disk map in place — preserves OTHER vendors'
+            cur = dict((data.get(v) if isinstance(data, dict) else None) or {})   # entries a concurrent process wrote
+            if tpm and int(tpm) > 0:
+                cur["tpm"] = int(tpm)
+            if rpm and int(rpm) > 0:
+                cur["rpm"] = int(rpm)
+            cur["source"], cur["ts"] = source, time.time()
+            data[v] = cur
+            return data
+        with self._lock:
+            self._maybe_reload()
+            _stamp_vendor_limits(self._d)                # MEMORY holds the lesson even if the persist below fails
+            try:                                         # persist through the ONE backed-up, atomic JSON writer
+                from . import config
+                out = config.update_json(self._path(), _stamp_vendor_limits, reason="learn-rate-limit")
+                if isinstance(out, dict):
+                    self._d = out                        # adopt the merged on-disk state (incl. other processes' vendors)
+            except Exception as e:
+                from . import gate as _gate
+                if _gate.is_deliberate_stop(e):
+                    raise                                # a spend refusal / ledger LOCK is a DELIBERATE stop — PROPAGATE,
+                _warn_learned_io("write", e)             # never downgrade. A transient IO/lock: memory holds the lesson.
+
+
+_LEARNED = _LearnedLimits()
+
+# Reactive back-off: a 429's Retry-After cools THAT vendor's new admissions for that long. Process-local (in-memory) —
+# the durable, cross-process half is the learned LIMIT above; this is the immediate 'we are over RIGHT NOW' window.
+_COOL_UNTIL = {}
+_COOL_LOCK = threading.Lock()
+
+
+def _cool_vendor(vendor, seconds):
+    if not seconds or float(seconds) <= 0:
+        return
+    v = (vendor or "").strip().lower()
+    with _COOL_LOCK:
+        _COOL_UNTIL[v] = max(_COOL_UNTIL.get(v, 0.0), time.monotonic() + float(seconds))
+
+
+def _cooldown_left(vendor):
+    v = (vendor or "").strip().lower()
+    with _COOL_LOCK:
+        return max(0.0, _COOL_UNTIL.get(v, 0.0) - time.monotonic())
+
+
+def learn_rate_limit(vendor, tpm=None, rpm=None, retry_after_s=None, source="429-header"):
+    """Teach the governor a vendor's REAL rate limit, learned from a provider 429. `tpm`/`rpm` (from the provider's
+    x-ratelimit-limit-* headers) become that vendor's paced ceiling whenever no explicit dispatch.tpm_/rpm_ is set —
+    so the first limit-unknown 429 is the LAST. `retry_after_s` (the 429's Retry-After) cools this vendor's new
+    admissions for that long — the immediate back-off while the learned limit takes over. Called by adapters on every
+    metered 429; safe with partial data (missing fields ignored), and never raises into the caller."""
+    _LEARNED.learn(vendor, tpm=tpm, rpm=rpm, source=source)
+    if retry_after_s:
+        _cool_vendor(vendor, retry_after_s)
+
+
+def learned_limits(vendor=None):
+    """The learned per-vendor limits, for observability / a receipt / a test: one vendor's {tpm,rpm,source,ts}, or the
+    whole map when vendor is None."""
+    if vendor is not None:
+        return dict(_LEARNED.for_vendor(vendor))
+    _LEARNED._maybe_reload()
+    return {k: dict(v) for k, v in _LEARNED._d.items()}
+
+
 class DispatchTimeout(RuntimeError):
     """No dispatch slot for this key became free within the caller's deadline. Raised, never swallowed — the
     caller (vendor_call.call) turns it into a DEADLINE_EXCEEDED Result so a queued-out call is an honest
@@ -365,6 +501,8 @@ class Governor:
             # every vendor. Mirrors the per-lane override; this cap is now also enforced ACROSS processes (acquire()).
             limit = _limit(f"vendor_concurrency_{vendor}", _limit("vendor_concurrency", DEFAULT_VENDOR_CONCURRENCY))
         rpm = _limit(f"rpm_{vendor}", DEFAULT_RPM)     # per-vendor RPM, e.g. SPENDGUARD_DISPATCH_RPM_MOONSHOT=60
+        if not rpm and not lane:                       # no explicit rpm on a METERED vendor → use the SELF-LEARNED limit
+            rpm = int((_LEARNED.for_vendor(vendor) or {}).get("rpm") or 0)   # from a 429 header (learn_rate_limit); 0 until learned
         return key, limit, rpm, bool(lane)
 
     def _reserve_for(self, key, limit):
@@ -381,7 +519,9 @@ class Governor:
         # TPM pacing is a METERED-vendor ceiling — a $0 subscription LANE (CLI) has no tokens/minute 429, and its key
         # is shared across vendors, so a per-vendor tpm would thrash one lane bucket. So: 0 for a lane key, else the
         # per-vendor `tpm_<vendor>` (keyed on the already-normalised vendor in the key, matching _reserve_for).
-        tpm = 0 if _is_lane else _limit(f"tpm_{key.split(':', 1)[-1]}", DEFAULT_TPM)
+        _vk = key.split(":", 1)[-1]                     # the normalised vendor for a vendor: key
+        tpm = 0 if _is_lane else (_limit(f"tpm_{_vk}", DEFAULT_TPM)                 # explicit config >
+                                  or int((_LEARNED.for_vendor(_vk) or {}).get("tpm") or 0))   # SELF-LEARNED (429 header) > 0
         with self._lock:
             b = self._buckets.get(key)
             # Re-key if the configured limit/rpm/tpm/reserve changed since the bucket was made (config edited at
@@ -407,8 +547,18 @@ class Governor:
             _held().append(None)                     # keep the acquire/release stack balanced even as a no-op
             return 0.0
         t0 = time.monotonic()
+        # REACTIVE COOL: a recent 429 on this vendor (its Retry-After, via learn_rate_limit) holds new admissions off
+        # until it clears — bounded by the caller's deadline (a cool longer than the deadline is an honest DispatchTimeout,
+        # 'could not run in time', not a silent 429 retry). Held BEFORE any slot, so a cooling vendor's calls wait idle,
+        # not holding the global/bucket slots. No _held append yet, so nothing to unwind on this raise.
+        _cl = _cooldown_left(vendor)
+        if _cl > 0:
+            if _cl >= float(deadline_s):
+                raise DispatchTimeout(f"'{vendor}' cooling {_cl:.0f}s after a 429 (Retry-After) — deadline "
+                                      f"{float(deadline_s):.0f}s exhausted")
+            time.sleep(_cl)
         g = self._global_sem()
-        if not g.acquire(timeout=max(0.0, float(deadline_s))):
+        if not g.acquire(timeout=max(0.0, float(deadline_s) - (time.monotonic() - t0))):
             raise DispatchTimeout(f"machine-wide dispatch ceiling ({_limit('global_concurrency', DEFAULT_GLOBAL_CONCURRENCY)}) "
                                   f"full — deadline {float(deadline_s):.0f}s exhausted")
         got_bucket, xp = False, None

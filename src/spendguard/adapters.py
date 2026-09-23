@@ -1330,6 +1330,29 @@ def _exc_detail(e):
     return status, (body[:500] if isinstance(body, str) else None), retry_after
 
 
+def _ratelimit_from_resp(resp):
+    """(tpm, rpm) — the vendor's REAL per-minute ceilings, parsed from a provider response's rate-limit headers:
+    OpenAI `x-ratelimit-limit-tokens` / `x-ratelimit-limit-requests`, Anthropic `anthropic-ratelimit-tokens-limit` /
+    `anthropic-ratelimit-requests-limit` (both are per-minute). Present on a 429, so a single rate-limited call TEACHES
+    the governor its limit (dispatch.learn_rate_limit) and the first 429 is the last. Parsing a fixed-format header
+    into an int — NOT a meaning judgement. None for a field the provider did not send (or no headers at all)."""
+    try:
+        h = resp.headers
+    except Exception:
+        return None, None
+
+    def _i(name):
+        try:
+            v = h.get(name)
+            return int(str(v).strip()) if v not in (None, "") else None
+        except (TypeError, ValueError):
+            return None
+
+    tpm = _i("x-ratelimit-limit-tokens") or _i("anthropic-ratelimit-tokens-limit")
+    rpm = _i("x-ratelimit-limit-requests") or _i("anthropic-ratelimit-requests-limit")
+    return tpm, rpm
+
+
 def _exc_cause(e):
     """The underlying CAUSE chain behind a wrapped SDK exception (`__cause__` / `__context__`), as
     'Type: msg ← Type: msg'. The SDKs wrap a transport failure in a generic APIConnectionError whose str() is
@@ -2142,6 +2165,21 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         # APITimeoutError / ReadTimeout) from a transport fault (the connection broke / was refused), so the
         # coverage report can say WHY a vendor didn't answer instead of lumping both under transport_error.
         _status, _perr, _retry = _exc_detail(e)
+        if _status in (429, 529):                       # a provider rate limit / overload → SELF-CALIBRATE the governor:
+            try:                                        # read the vendor's OWN limit headers + Retry-After and TEACH it,
+                from . import dispatch as _dispatch     # so the governor paces to the real ceiling and the first 429 is
+                _tpm_seen, _rpm_seen = _ratelimit_from_resp(getattr(e, "response", None))   # the last. Best-effort: a
+                try:                                    # learn failure must never turn a 429 result into a crash.
+                    _ra_s = float(_retry) if _retry else None
+                except (TypeError, ValueError):
+                    _ra_s = None
+                _dispatch.learn_rate_limit(prov, tpm=_tpm_seen, rpm=_rpm_seen, retry_after_s=_ra_s,
+                                           source=f"{_status}-header")
+            except Exception as _le:
+                from . import gate as _lg
+                if _lg.is_deliberate_stop(_le):         # a propagated spend refusal / deadline is NEVER swallowed
+                    raise
+                # else best-effort: a transient learn failure never turns the 429 result into a crash
         # TRANSPARENT TO THE CONSUMER: this is the metered API path (a lane miss/error is returned earlier with
         # executor=<lane>), so say `executor="api"` — a caller can now tell lane-vs-API from the result alone.
         # `cause` surfaces the real reason behind a generic wrapper (e.g. 'Connection error.' ← 'ConnectTimeout').
