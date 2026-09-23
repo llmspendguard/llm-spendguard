@@ -15,7 +15,6 @@ from typing import Optional
 
 from . import config
 
-_conn = None
 _lock = threading.RLock()
 _local = threading.local()
 _PKG = os.path.dirname(os.path.abspath(__file__))
@@ -194,39 +193,39 @@ def caller():
 
 
 # ── storage ──
+def _ensure_calls_schema(c):
+    """Create the calls table + its indexes + forward-only additive columns. Idempotent; run once per pooled
+    connection by config.pooled_ledger_conn."""
+    c.execute("""CREATE TABLE IF NOT EXISTS calls(
+        id TEXT PRIMARY KEY, ts TEXT, chain TEXT, intent TEXT, caller TEXT,
+        provider TEXT, model TEXT, kind TEXT,
+        in_tok INTEGER, out_tok INTEGER, cost REAL, latency REAL,
+        prompt_hash TEXT, prompt_snip TEXT, output_snip TEXT, finish TEXT,
+        quality TEXT, quality_src TEXT, quality_conf REAL,
+        executor TEXT, project TEXT, effort TEXT)""")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_calls_chain ON calls(chain)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_calls_intent ON calls(intent)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_calls_ts ON calls(ts)")  # as_of/since range reads (calibrate, advise)
+    # Migrate older dbs: add every column the schema gained after they were created. Column names are
+    # fixed literals from this tuple (never caller input) — SQLite cannot parameterize a DDL identifier,
+    # so the f-string is the only way and carries no injection surface. `executor` = which subscription
+    # lane served the call; `project` = the repo it belongs to (so lane plan-value attributes like spend).
+    _have = {r[1] for r in c.execute("PRAGMA table_info(calls)").fetchall()}
+    # `effort` = the reasoning-effort TIER actually sent (none|minimal|low|medium|high|… or the wire
+    # value a model accepts), so cost×quality can be sliced per (intent, model, EFFORT) — the axis the
+    # best-value selector titrates. NULL on a non-reasoning call, a call that sent no effort, or a legacy row.
+    for _col, _decl in (("quality_conf", "REAL"), ("executor", "TEXT"), ("project", "TEXT"),
+                        ("effort", "TEXT")):
+        if _col not in _have:
+            c.execute(f"ALTER TABLE calls ADD COLUMN {_col} {_decl}")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_calls_executor ON calls(executor)")  # per-lane rollups
+    c.commit()
+
+
 def _calls_db():
-    global _conn
-    if _conn is None:
-        with _lock:
-            if _conn is None:
-                c = sqlite3.connect(config.db_path(), timeout=10, check_same_thread=False)
-                config.tune_ledger_connection(c)     # WAL + synchronous=NORMAL + the shared ledger PRAGMA posture
-                c.execute("""CREATE TABLE IF NOT EXISTS calls(
-                    id TEXT PRIMARY KEY, ts TEXT, chain TEXT, intent TEXT, caller TEXT,
-                    provider TEXT, model TEXT, kind TEXT,
-                    in_tok INTEGER, out_tok INTEGER, cost REAL, latency REAL,
-                    prompt_hash TEXT, prompt_snip TEXT, output_snip TEXT, finish TEXT,
-                    quality TEXT, quality_src TEXT, quality_conf REAL,
-                    executor TEXT, project TEXT, effort TEXT)""")
-                c.execute("CREATE INDEX IF NOT EXISTS idx_calls_chain ON calls(chain)")
-                c.execute("CREATE INDEX IF NOT EXISTS idx_calls_intent ON calls(intent)")
-                c.execute("CREATE INDEX IF NOT EXISTS idx_calls_ts ON calls(ts)")  # as_of/since range reads (calibrate, advise)
-                # Migrate older dbs: add every column the schema gained after they were created. Column names are
-                # fixed literals from this tuple (never caller input) — SQLite cannot parameterize a DDL identifier,
-                # so the f-string is the only way and carries no injection surface. `executor` = which subscription
-                # lane served the call; `project` = the repo it belongs to (so lane plan-value attributes like spend).
-                _have = {r[1] for r in c.execute("PRAGMA table_info(calls)").fetchall()}
-                # `effort` = the reasoning-effort TIER actually sent (none|minimal|low|medium|high|… or the wire
-                # value a model accepts), so cost×quality can be sliced per (intent, model, EFFORT) — the axis the
-                # best-value selector titrates. NULL on a non-reasoning call, a call that sent no effort, or a legacy row.
-                for _col, _decl in (("quality_conf", "REAL"), ("executor", "TEXT"), ("project", "TEXT"),
-                                    ("effort", "TEXT")):
-                    if _col not in _have:
-                        c.execute(f"ALTER TABLE calls ADD COLUMN {_col} {_decl}")
-                c.execute("CREATE INDEX IF NOT EXISTS idx_calls_executor ON calls(executor)")  # per-lane rollups
-                c.commit()
-                _conn = c
-    return _conn
+    """The calls table, on the shared pooled ledger connection (config.pooled_ledger_conn, keyed 'calls') — reused,
+    tuned, fork-safe. `_lock` still serializes the module's read-modify-write sites."""
+    return config.pooled_ledger_conn("calls", _ensure_calls_schema)
 
 
 def _uuid():

@@ -12,10 +12,9 @@ Storage is BOUNDED: we keep at most `cap` samples per (intent, model) — enough
 confidence interval, not every request. Shares the spendguard db. Quality is written back by the caged
 judge (advisor.reconstruct). RLock — reentrant.
 """
-import json, sqlite3, threading, datetime
+import json, threading, datetime
 from . import config
 
-_conn = None
 _lock = threading.RLock()
 # Chars kept per prompt / per output. 800 is enough for the caged JUDGE to rate an answer, and that is what
 # this cap was sized for. It is NOT enough to REPLAY a call: a prompt cut at 800 chars is a different task, so
@@ -62,47 +61,47 @@ def capture_live_on():
         return False
 
 
+def _ensure_callio_schema(c):
+    """Create the call_io table (+ its forward-only additive columns and the one-time truncated-backfill + indexes).
+    Idempotent; run once per pooled connection by config.pooled_ledger_conn."""
+    c.execute("""CREATE TABLE IF NOT EXISTS call_io(
+        id TEXT PRIMARY KEY, ts TEXT, intent TEXT, provider TEXT, model TEXT,
+        batch TEXT, custom_id TEXT, prompt TEXT, output TEXT,
+        in_tok INTEGER, out_tok INTEGER,
+        quality TEXT, quality_src TEXT, quality_conf REAL, source TEXT,
+        conv_id TEXT DEFAULT '', context TEXT DEFAULT '')""")
+    cols = [r[1] for r in c.execute("PRAGMA table_info(call_io)").fetchall()]
+    if "conv_id" not in cols:                  # link a recovered call back to its conversation
+        c.execute("ALTER TABLE call_io ADD COLUMN conv_id TEXT DEFAULT ''")
+    if "context" not in cols:                  # the pre/post chat context (why / outcome)
+        c.execute("ALTER TABLE call_io ADD COLUMN context TEXT DEFAULT ''")
+    # THE REQUEST SHAPE. A prompt alone does not describe a call. The same prompt under a forced
+    # JSON schema answers in 4 tokens and under no schema writes prose: measured on a replay of
+    # these very rows, the constrained intents came back 10-32x larger while the free-text ones
+    # landed within 10-31%. Without these fields a "replay" is a different call wearing the same
+    # name, and its predicted-vs-actual is a fabricated finding.
+    for col in ("system", "req_schema"):
+        if col not in cols:
+            c.execute(f"ALTER TABLE call_io ADD COLUMN {col} TEXT DEFAULT ''")
+    if "req_max_tokens" not in cols:
+        c.execute("ALTER TABLE call_io ADD COLUMN req_max_tokens INTEGER DEFAULT 0")
+    if "truncated" not in cols:                # 1 = the stored body was CUT at the cap → INCOMPLETE, unfit
+        c.execute("ALTER TABLE call_io ADD COLUMN truncated INTEGER DEFAULT 0")   # to REPLAY (a partial task)
+        # ONE-TIME backfill (runs only when the column is first added): a row whose body is EXACTLY the
+        # legacy judge-sized default (_IO_SNIP_DEFAULT chars) was CUT at that old cap — flag it so the
+        # replay guard excludes it until a full re-fetch grows it. A genuine exactly-that-length prompt is
+        # conservatively excluded from replay (safe), never silently replayed as a partial task.
+        c.execute("UPDATE call_io SET truncated=1 WHERE length(prompt)=? OR length(output)=?",
+                  (_IO_SNIP_DEFAULT, _IO_SNIP_DEFAULT))
+    c.execute("CREATE INDEX IF NOT EXISTS idx_io_im ON call_io(intent, model)")
+    c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_io_key ON call_io(batch, custom_id)")
+    c.commit()
+
+
 def _callio_db():
-    global _conn
-    if _conn is None:
-        with _lock:
-            if _conn is None:
-                c = sqlite3.connect(config.db_path(), timeout=10, check_same_thread=False)
-                config.tune_ledger_connection(c)     # WAL + synchronous=NORMAL + the shared ledger PRAGMA posture
-                c.execute("""CREATE TABLE IF NOT EXISTS call_io(
-                    id TEXT PRIMARY KEY, ts TEXT, intent TEXT, provider TEXT, model TEXT,
-                    batch TEXT, custom_id TEXT, prompt TEXT, output TEXT,
-                    in_tok INTEGER, out_tok INTEGER,
-                    quality TEXT, quality_src TEXT, quality_conf REAL, source TEXT,
-                    conv_id TEXT DEFAULT '', context TEXT DEFAULT '')""")
-                cols = [r[1] for r in c.execute("PRAGMA table_info(call_io)").fetchall()]
-                if "conv_id" not in cols:                  # link a recovered call back to its conversation
-                    c.execute("ALTER TABLE call_io ADD COLUMN conv_id TEXT DEFAULT ''")
-                if "context" not in cols:                  # the pre/post chat context (why / outcome)
-                    c.execute("ALTER TABLE call_io ADD COLUMN context TEXT DEFAULT ''")
-                # THE REQUEST SHAPE. A prompt alone does not describe a call. The same prompt under a forced
-                # JSON schema answers in 4 tokens and under no schema writes prose: measured on a replay of
-                # these very rows, the constrained intents came back 10-32x larger while the free-text ones
-                # landed within 10-31%. Without these fields a "replay" is a different call wearing the same
-                # name, and its predicted-vs-actual is a fabricated finding.
-                for col in ("system", "req_schema"):
-                    if col not in cols:
-                        c.execute(f"ALTER TABLE call_io ADD COLUMN {col} TEXT DEFAULT ''")
-                if "req_max_tokens" not in cols:
-                    c.execute("ALTER TABLE call_io ADD COLUMN req_max_tokens INTEGER DEFAULT 0")
-                if "truncated" not in cols:                # 1 = the stored body was CUT at the cap → INCOMPLETE, unfit
-                    c.execute("ALTER TABLE call_io ADD COLUMN truncated INTEGER DEFAULT 0")   # to REPLAY (a partial task)
-                    # ONE-TIME backfill (runs only when the column is first added): a row whose body is EXACTLY the
-                    # legacy judge-sized default (_IO_SNIP_DEFAULT chars) was CUT at that old cap — flag it so the
-                    # replay guard excludes it until a full re-fetch grows it. A genuine exactly-that-length prompt is
-                    # conservatively excluded from replay (safe), never silently replayed as a partial task.
-                    c.execute("UPDATE call_io SET truncated=1 WHERE length(prompt)=? OR length(output)=?",
-                              (_IO_SNIP_DEFAULT, _IO_SNIP_DEFAULT))
-                c.execute("CREATE INDEX IF NOT EXISTS idx_io_im ON call_io(intent, model)")
-                c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_io_key ON call_io(batch, custom_id)")
-                c.commit()
-                _conn = c
-    return _conn
+    """The call_io table, on the shared pooled ledger connection (config.pooled_ledger_conn, keyed 'callio') —
+    reused, tuned, fork-safe. `_lock` still serializes the module's read-modify-write sites."""
+    return config.pooled_ledger_conn("callio", _ensure_callio_schema)
 
 
 def _uid():

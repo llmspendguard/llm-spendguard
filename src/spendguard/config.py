@@ -727,6 +727,24 @@ def fresh_ledger_conn(ensure_schema):
     return c
 
 
+def _reset_ledger_pool_after_fork():
+    """A forked child must NOT reuse the parent's pooled connections — the sqlite fds and their POSIX locks belong to
+    the parent, so a child that inherits them gets 'database is locked' or silent corruption. Clear this thread's pool
+    (a fork keeps only the forking thread) WITHOUT closing — closing a fd the parent still owns would break the parent;
+    the child reopens fresh on next use. Mirrors budget._reset_after_fork for the shared pool."""
+    try:
+        _LEDGER_POOL.conns = {}
+    except Exception:
+        pass
+
+
+try:
+    import os as _os_at_fork
+    _os_at_fork.register_at_fork(after_in_child=_reset_ledger_pool_after_fork)
+except (AttributeError, ValueError, ImportError):   # register_at_fork is POSIX-only — elsewhere a no-op
+    pass
+
+
 def ssl_context():
     """SSL context that works under bare venvs too (urllib otherwise can't find CA certs on macOS)."""
     import ssl

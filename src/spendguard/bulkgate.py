@@ -33,7 +33,6 @@ BULK_MIN_USD_DEFAULT = 0.25       # $-primary trigger DEFAULT (tunable: gate.bul
 FRESHNESS_HOURS_DEFAULT = 24      # flags expire — a stale test can't authorize a much-later run on changed data
 
 _lock = threading.RLock()
-_conn = None
 
 
 class GateBlocked(SpendGateRefused):
@@ -48,37 +47,39 @@ class GateBlocked(SpendGateRefused):
     enumerated `except (A, B, …)` list that someone has to remember to extend."""
 
 
+def _ensure_gate_schema(c):
+    """Create the gate_ledger table (+ its forward-only additive columns). Idempotent; run once per pooled connection
+    by config.pooled_ledger_conn. The gate_calls / gate_latency tables are ensured by _gate_calls_db() on the same
+    (now pooled) connection."""
+    c.execute(
+        "CREATE TABLE IF NOT EXISTS gate_ledger ("
+        " sig TEXT PRIMARY KEY, model TEXT,"
+        " estimated_at REAL, est_usd REAL, est_count INTEGER,"   # worst-case estimate (incl. escalation)
+        " tested_at REAL, test_n INTEGER, verified INTEGER,"     # a verified small-sample run happened
+        " updated_at REAL)")
+    # Additive, forward-only. `verified` alone said a test HAPPENED; these say what it PROVED —
+    # which contract the output was checked against, on which data, and what the sample did.
+    # The eval_* columns add the LIFECYCLE checkpoint ABOVE the shape-test: a STATED bar + an AGENTIC
+    # verdict on the sample. eval_bar is REQUIRED non-empty (an eval can't be an empty rubber-stamp);
+    # eval_verdict is the pass/fail; eval_score/eval_note carry the judge's graded reasoning; eval_model
+    # records WHICH model judged (honesty). Test = "did it parse the shape"; eval = "is it GOOD".
+    for col, decl in (("contract", "TEXT"), ("contract_hash", "TEXT"), ("data_sig", "TEXT"),
+                      ("test_parsed", "INTEGER"), ("test_salvaged", "INTEGER"),
+                      ("test_failed", "INTEGER"), ("test_failure", "TEXT"),
+                      ("eval_at", "REAL"), ("eval_bar", "TEXT"), ("eval_verdict", "INTEGER"),
+                      ("eval_score", "REAL"), ("eval_note", "TEXT"), ("eval_model", "TEXT")):
+        try:
+            c.execute(f"ALTER TABLE gate_ledger ADD COLUMN {col} {decl}")
+        except sqlite3.OperationalError:
+            pass                                  # already present
+    c.commit()
+
+
 def _gate_db():
-    global _conn
-    if _conn is None:
-        with _lock:
-            if _conn is None:
-                c = sqlite3.connect(config.db_path(), timeout=10, check_same_thread=False)
-                config.tune_ledger_connection(c)     # WAL + synchronous=NORMAL + the shared ledger PRAGMA posture
-                c.execute(
-                    "CREATE TABLE IF NOT EXISTS gate_ledger ("
-                    " sig TEXT PRIMARY KEY, model TEXT,"
-                    " estimated_at REAL, est_usd REAL, est_count INTEGER,"   # worst-case estimate (incl. escalation)
-                    " tested_at REAL, test_n INTEGER, verified INTEGER,"     # a verified small-sample run happened
-                    " updated_at REAL)")
-                # Additive, forward-only. `verified` alone said a test HAPPENED; these say what it PROVED —
-                # which contract the output was checked against, on which data, and what the sample did.
-                # The eval_* columns add the LIFECYCLE checkpoint ABOVE the shape-test: a STATED bar + an AGENTIC
-                # verdict on the sample. eval_bar is REQUIRED non-empty (an eval can't be an empty rubber-stamp);
-                # eval_verdict is the pass/fail; eval_score/eval_note carry the judge's graded reasoning; eval_model
-                # records WHICH model judged (honesty). Test = "did it parse the shape"; eval = "is it GOOD".
-                for col, decl in (("contract", "TEXT"), ("contract_hash", "TEXT"), ("data_sig", "TEXT"),
-                                  ("test_parsed", "INTEGER"), ("test_salvaged", "INTEGER"),
-                                  ("test_failed", "INTEGER"), ("test_failure", "TEXT"),
-                                  ("eval_at", "REAL"), ("eval_bar", "TEXT"), ("eval_verdict", "INTEGER"),
-                                  ("eval_score", "REAL"), ("eval_note", "TEXT"), ("eval_model", "TEXT")):
-                    try:
-                        c.execute(f"ALTER TABLE gate_ledger ADD COLUMN {col} {decl}")
-                    except sqlite3.OperationalError:
-                        pass                                  # already present
-                c.commit()
-                _conn = c
-    return _conn
+    """The gate_ledger table, on the shared pooled ledger connection (config.pooled_ledger_conn, keyed 'bulkgate') —
+    reused, tuned, fork-safe. `_lock` still serializes the module's read-modify-write sites; _gate_calls_db() ensures
+    gate_calls / gate_latency on this same connection."""
+    return config.pooled_ledger_conn("bulkgate", _ensure_gate_schema)
 
 
 # ── config (env > config.json gate.<name> > default) ──

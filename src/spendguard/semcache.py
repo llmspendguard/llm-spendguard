@@ -15,39 +15,37 @@ threshold=0.0 → exact-only (default, zero risk). >0 → also semantic. Returns
 import sqlite3, struct, hashlib, threading, datetime
 from . import config
 
-_conn = None
 _lock = threading.RLock()
 _stats = {"exact": 0, "semantic": 0, "miss": 0, "saved": 0.0}
 
 
+def _ensure_semcache_schema(c):
+    """Create the semcache table + its UNIQUE (model, prompt_hash) index (migrating a legacy dup-carrying db).
+    Idempotent; run once per pooled connection by config.pooled_ledger_conn."""
+    c.execute("""CREATE TABLE IF NOT EXISTS semcache(
+        id TEXT PRIMARY KEY, ts TEXT, model TEXT, prompt_hash TEXT, prompt TEXT,
+        output TEXT, emb BLOB)""")
+    # UNIQUE, NOT JUST INDEXED. put() deletes-then-inserts on (model, prompt_hash), which fixes the duplicate rows a
+    # random-uuid PRIMARY KEY used to allow — but only for writes through put(). The SCHEMA is what makes it
+    # impossible: without a UNIQUE constraint, any other writer can still create a second row for the same key, and
+    # get()'s `LIMIT 1` with no ORDER BY would serve an arbitrary one, so a re-cached prompt could keep returning the
+    # OLD output indefinitely. A discipline in one function is not an invariant.
+    try:
+        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_sc_hash ON semcache(model, prompt_hash)")
+    except sqlite3.IntegrityError:
+        # A legacy db (random-uuid PK, pre-unique-index) can already hold DUPLICATE (model, prompt_hash) rows; building
+        # the unique index then raises and leaves the cache UNUSABLE. Collapse duplicates (keep the newest row per key
+        # by rowid) and retry — migrate, don't brick.
+        c.execute("DELETE FROM semcache WHERE rowid NOT IN "
+                  "(SELECT MAX(rowid) FROM semcache GROUP BY model, prompt_hash)")
+        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_sc_hash ON semcache(model, prompt_hash)")
+    c.commit()
+
+
 def _semcache_db():
-    global _conn
-    if _conn is None:
-        with _lock:
-            if _conn is None:
-                c = sqlite3.connect(config.db_path(), timeout=10, check_same_thread=False)
-                config.tune_ledger_connection(c)     # WAL + synchronous=NORMAL + the shared ledger PRAGMA posture
-                c.execute("""CREATE TABLE IF NOT EXISTS semcache(
-                    id TEXT PRIMARY KEY, ts TEXT, model TEXT, prompt_hash TEXT, prompt TEXT,
-                    output TEXT, emb BLOB)""")
-                # UNIQUE, NOT JUST INDEXED. put() deletes-then-inserts on (model, prompt_hash), which fixes
-                # the duplicate rows a random-uuid PRIMARY KEY used to allow — but only for writes that go
-                # through put(). The SCHEMA is what makes it impossible: without a UNIQUE constraint, any
-                # other writer can still create a second row for the same key, and get()'s `LIMIT 1` with no
-                # ORDER BY would then serve an arbitrary one of them, so a re-cached prompt could keep
-                # returning the OLD output indefinitely. A discipline in one function is not an invariant.
-                try:
-                    c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_sc_hash ON semcache(model, prompt_hash)")
-                except sqlite3.IntegrityError:
-                    # A legacy db (random-uuid PK, pre-unique-index) can already hold DUPLICATE (model,
-                    # prompt_hash) rows; building the unique index then raises and leaves the cache UNUSABLE.
-                    # Collapse duplicates (keep the newest row per key by rowid) and retry — migrate, don't brick.
-                    c.execute("DELETE FROM semcache WHERE rowid NOT IN "
-                              "(SELECT MAX(rowid) FROM semcache GROUP BY model, prompt_hash)")
-                    c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_sc_hash ON semcache(model, prompt_hash)")
-                c.commit()
-                _conn = c
-    return _conn
+    """The semcache table, on the shared pooled ledger connection (config.pooled_ledger_conn, keyed 'semcache') —
+    reused, tuned, fork-safe. The module's `_lock` still serializes the read-modify-write sites."""
+    return config.pooled_ledger_conn("semcache", _ensure_semcache_schema)
 
 
 def _hash(s):
