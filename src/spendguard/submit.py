@@ -177,6 +177,18 @@ def build_chat_batch_jsonl(tasks_path, model, system=None, max_out=None, reasoni
     #   the realtime path applies when max_tokens is unset (max(TOKEN_FLOOR, predicted)). A cap is billed by ACTUAL
     #   tokens, so over-provisioning costs nothing while under-provisioning EMPTIES a reasoning reply — batch and
     #   realtime must not drift. `max_out` (or --avg-out on the estimate) tightens it deliberately.
+    if schema is not None and out_cap < adapters.TOKEN_FLOOR:
+        # STRUCTURED output: a low cap truncates the JSON → unparseable → reads as 'no findings' (the SILENT
+        # reasoning-model truncation that repeatedly bites consumers who set max_tokens — a reasoning model burns the
+        # cap on thinking before it writes). FLOOR it to real room, EXACTLY as the realtime path does
+        # (adapters._call_guarded: a caller's small max_out is honored for PROSE, never for JSON where a low cap only
+        # destroys the answer). Billed on ACTUAL tokens, so the floor is free. Batch and realtime must not drift here.
+        import sys as _sys
+        print("[spendguard] build_chat_batch_jsonl: max_out=%d < TOKEN_FLOOR on a STRUCTURED (schema) batch → "
+              "flooring to %d so the JSON can't silently truncate. OMIT max_out on schema calls — spendguard owns the "
+              "output ceiling (billed on ACTUAL tokens, so a high floor is free)." % (out_cap, adapters.TOKEN_FLOOR),
+              file=_sys.stderr)
+        out_cap = adapters.TOKEN_FLOOR
     _eff = models.resolve_effort(model, reasoning)   # the VERIFIABLY-ACCEPTED reasoning_effort — a batch can't heal
     #   per row, so this resolves up front (discovers + records the accepted set); a family default the endpoint
     #   rejects (gpt-5.6-luna: 'minimal') never reaches a batch. None → OMIT the param (model default).

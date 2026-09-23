@@ -140,5 +140,25 @@ try:
 except OSError:
     pass
 
+# ── a STRUCTURED batch with a SMALL max_out is FLOORED to TOKEN_FLOOR (the reasoning-model silent-truncation fix) ──
+print("-- STRUCTURED batch: a small max_out is floored to TOKEN_FLOOR so the JSON can't silently truncate --")
+_env2 = {}
+def _stub_guarded_env2(jsonl_path, model, cap_dollars, batch=True, submit=True,
+                       endpoint="/v1/chat/completions", **kw):
+    _env2["path"] = jsonl_path
+    return None
+submit.guarded_submit = _stub_guarded_env2
+SCH2 = {"type": "object", "properties": {"verdict": {"type": "string"}}}
+submit.submit_chat_tasks([{"custom_id": "s1", "content": "classify this"}], "gpt-4.1-nano",
+                         schema=SCH2, max_out=200, submit=False)
+_sbody = [json.loads(ln) for ln in open(_env2["path"]) if ln.strip()][0]["body"]
+_stok = _sbody.get("max_tokens") or _sbody.get("max_completion_tokens")
+ck("a small max_out (200) on a STRUCTURED batch is floored to TOKEN_FLOOR, not honored",
+   _stok == adapters.TOKEN_FLOOR)
+try:
+    os.unlink(_env2["path"])
+except OSError:
+    pass
+
 print(f"\n{'[FAIL]' if _fails else 'OK'} test_submit_chat_tasks: {len(_fails)} failure(s)")
 sys.exit(1 if _fails else 0)
