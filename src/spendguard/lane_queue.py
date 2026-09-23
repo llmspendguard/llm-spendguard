@@ -35,6 +35,12 @@ from . import config
 
 LEASE_S_DEFAULT = 300.0         # a leased task must settle within this window or it is reclaimed (worker presumed dead)
 MAX_ATTEMPTS_DEFAULT = 3        # retry a task up to this many times before marking it `failed`
+# PARKING (Step 4 — backpressure): a task that could not get a governor slot (reason='dispatch_saturated') NEVER RAN,
+# so it is not a failure — it is DEFERRED and retried when capacity frees, WITHOUT burning a failure-attempt. A park
+# waits PARK_BACKOFF_S (so drain does not immediately re-saturate) and is bounded by MAX_PARKS (a no-SLA task can't
+# park forever) AND by the row's own SLA deadline_ts (parking never pushes a call past the deadline it promised).
+MAX_PARKS_DEFAULT = 50         # give up (→ failed) after this many capacity deferrals — the no-SLA safety ceiling
+PARK_BACKOFF_S_DEFAULT = 10.0  # seconds a rate-blocked task waits before it can be re-leased (capacity-free backpressure)
 IDLE_ROUNDS_DEFAULT = 2         # foreground drain stops after this many consecutive EMPTY leases (queue drained)
 IDLE_SLEEP_DEFAULT = 2.0        # seconds to wait between empty leases / overload re-checks (foreground + daemon)
 RETAIN_DAYS_DEFAULT = 7.0       # terminal rows (done/failed) older than this are archived to a log + removed from the
@@ -104,6 +110,12 @@ def _ensure_queue_schema(c):
         c.execute("ALTER TABLE lane_queue ADD COLUMN sla_class TEXT DEFAULT 'batch'")
     if "deadline_ts" not in _cols:
         c.execute("ALTER TABLE lane_queue ADD COLUMN deadline_ts TEXT")
+    # PARKING (Step 4): defer_until = a pending row is NOT leasable until this ts (capacity backpressure); parks =
+    # how many times it has been deferred for saturation (bounded by MAX_PARKS, distinct from failure `attempts`).
+    if "defer_until" not in _cols:
+        c.execute("ALTER TABLE lane_queue ADD COLUMN defer_until TEXT")
+    if "parks" not in _cols:
+        c.execute("ALTER TABLE lane_queue ADD COLUMN parks INTEGER DEFAULT 0")
     # index the lease hot-path (pick highest-priority oldest pending) so a deep backlog stays cheap to poll.
     c.execute("CREATE INDEX IF NOT EXISTS lane_queue_pick ON lane_queue(state, priority DESC, id)")
 
@@ -207,15 +219,18 @@ def lease(n, worker=None, lease_s=None):
                 # in the time that is available'. The order is TOTAL (id ASC breaks every tie), so leasing is stable.
                 _ORDER = ("priority DESC, (sla_class='realtime') DESC, (deadline_ts IS NULL) ASC, deadline_ts ASC, "
                           "id ASC")
-                top = c.execute("SELECT intent FROM lane_queue WHERE state='pending' ORDER BY " + _ORDER
-                                + " LIMIT 1").fetchone()
+                # A PARKED row (defer_until in the future) is pending but NOT yet leasable — it is waiting out its
+                # capacity backpressure; only rows whose defer window has passed (or that were never parked) are picked.
+                _ready = "(defer_until IS NULL OR defer_until<=?)"
+                top = c.execute("SELECT intent FROM lane_queue WHERE state='pending' AND " + _ready
+                                + " ORDER BY " + _ORDER + " LIMIT 1", (now,)).fetchone()
                 if not top:
                     c.execute("COMMIT")
                     return []
                 intent = top[0]
                 rows = c.execute("SELECT id,intent,task,system,reasoning,sla_class FROM lane_queue "
-                                 "WHERE state='pending' AND intent=? ORDER BY " + _ORDER + " LIMIT ?",
-                                 (intent, n)).fetchall()
+                                 "WHERE state='pending' AND intent=? AND " + _ready + " ORDER BY " + _ORDER
+                                 + " LIMIT ?", (intent, now, n)).fetchall()
                 for r in rows:
                     c.execute("UPDATE lane_queue SET state='leased', lease_until=?, attempts=attempts+1, "
                               "worker=?, updated_ts=? WHERE id=?", (until, worker, now, r[0]))
@@ -230,24 +245,50 @@ def lease(n, worker=None, lease_s=None):
 
 
 def settle(row_id, result):
-    """Record the outcome of one leased task from a bulk_delegate result dict {text,lane,use_name,billed,error}.
-    Success (text and no error) → `done`. A failure retries (→ `pending`) while attempts remain, else `failed`.
-    Never raises."""
+    """Record the outcome of one leased task from a bulk_delegate result dict {text,lane,use_name,billed,error,reason}.
+    Success (text and no error) → `done`. A task that could NOT get a governor slot (reason='dispatch_saturated') never
+    RAN — it is not a failure but a capacity block, so it is PARKED (Step 4): deferred PARK_BACKOFF_S and retried when
+    capacity frees, WITHOUT burning a failure-attempt (the lease's attempt is refunded), bounded by MAX_PARKS AND by the
+    row's own SLA deadline_ts (a park never pushes a call past the deadline it promised). Any OTHER failure retries
+    (→ `pending`, counting an attempt) while attempts remain, else `failed`. A spend refusal / ledger LOCK propagates;
+    any other hiccup is best-effort (the lease reclaims the row)."""
     result = result if isinstance(result, dict) else {}
     ok = bool(result.get("text")) and not result.get("error")
+    # 'dispatch_saturated' is the STRUCTURED reason the runner emits when the governor had no slot within the deadline
+    # (a fixed status code, not a meaning judgement) — the one outcome that is retryable-LATER rather than a failure.
+    saturated = (not ok) and result.get("reason") == "dispatch_saturated"
+    now_dt = _utcnow()
+    now = _iso(now_dt)
     try:
         with _queue_op() as c:
-            row = c.execute("SELECT attempts, max_attempts FROM lane_queue WHERE id=?", (row_id,)).fetchone()
+            row = c.execute("SELECT attempts, max_attempts, parks, deadline_ts FROM lane_queue WHERE id=?",
+                            (row_id,)).fetchone()
             if not row:
                 return
-            attempts, maxa = row
-            state = "done" if ok else ("pending" if attempts < maxa else "failed")
-            c.execute("UPDATE lane_queue SET state=?, result=?, lane=?, billed=?, lease_until=NULL, updated_ts=? "
-                      "WHERE id=?", (state, json.dumps(result)[:_RESULT_CAP], result.get("lane"),
-                                     1 if result.get("billed") else 0, _iso(_utcnow()), row_id))
+            attempts, maxa, parks, deadline_ts = row[0], row[1], (row[2] or 0), row[3]
+            if ok:
+                state, defer_until, new_attempts, new_parks = "done", None, attempts, parks
+            elif saturated:
+                backoff = float(_qcfg("queue_park_backoff_s", PARK_BACKOFF_S_DEFAULT))
+                defer = _iso(now_dt + datetime.timedelta(seconds=backoff))
+                over_sla = bool(deadline_ts) and defer >= deadline_ts     # a park would miss the SLA → honest deadline fail
+                if parks >= int(_qcfg("queue_max_parks", MAX_PARKS_DEFAULT)) or over_sla:
+                    state, defer_until, new_attempts, new_parks = "failed", None, attempts, parks
+                else:                                                     # PARK: deferred, park counted, attempt REFUNDED
+                    state, defer_until, new_attempts, new_parks = "pending", defer, max(0, attempts - 1), parks + 1
+            else:
+                state = "pending" if attempts < maxa else "failed"
+                defer_until, new_attempts, new_parks = None, attempts, parks
+            c.execute("UPDATE lane_queue SET state=?, result=?, lane=?, billed=?, lease_until=NULL, defer_until=?, "
+                      "attempts=?, parks=?, updated_ts=? WHERE id=?",
+                      (state, json.dumps(result)[:_RESULT_CAP], result.get("lane"),
+                       1 if result.get("billed") else 0, defer_until, new_attempts, new_parks, now, row_id))
             c.commit()
-    except Exception:
-        pass
+    except Exception as _e:
+        from . import provider_tokens as _pt          # the CANONICAL stop-or-locked predicate (same as _enqueue_leased)
+        if _pt._stop_or_locked(_e):
+            raise                                      # spend refusal / ledger LOCK PROPAGATES — never swallowed
+        # else best-effort: a transient settle failure never crashes the drain loop (the lease reclaims the row)
 
 
 def _enqueue_leased(intent, tasks, *, system=None, reasoning=None, priority=PRIORITY_INTERACTIVE,
@@ -352,16 +393,25 @@ def record_close(rid, result):
 
 
 def queue_depth():
-    """{pending, leased, done, failed} counts — the 'is anything queued' view (parallel to dispatch.queue_state).
-    Empty dict on error."""
+    """{pending, leased, done, failed, parked} counts — the 'is anything queued' view (parallel to
+    dispatch.queue_state). `parked` is the SUBSET of pending currently DEFERRED for capacity (defer_until in the
+    future) — visible backpressure (Step 4), not a separate state. A spend refusal / ledger LOCK propagates; any
+    other hiccup returns {} (a status read never crashes a caller)."""
     try:
+        now = _iso(_utcnow())
         with _queue_op() as c:
             rows = c.execute("SELECT state, COUNT(*) FROM lane_queue GROUP BY state").fetchall()
+            parked = c.execute("SELECT COUNT(*) FROM lane_queue WHERE state='pending' AND defer_until IS NOT NULL "
+                               "AND defer_until>?", (now,)).fetchone()
         out = {"pending": 0, "leased": 0, "done": 0, "failed": 0}
         for st, n in rows:
             out[st] = n
+        out["parked"] = int(parked[0]) if parked else 0
         return out
-    except Exception:
+    except Exception as _e:
+        from . import provider_tokens as _pt          # the CANONICAL stop-or-locked predicate (same as _enqueue_leased)
+        if _pt._stop_or_locked(_e):
+            raise                                      # spend refusal / ledger LOCK PROPAGATES — never masked as empty
         return {}
 
 

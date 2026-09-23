@@ -290,7 +290,19 @@ SETTINGS = [
     dict(section="advisor", key="queue_max_attempts", store="config.json:advisor.queue_max_attempts", default=3,
          kind="int", secret=False,
          desc="How many times a queued task is retried (on lane failure or a crashed lease) before it is marked "
-              "failed — so a permanently-bad task never loops forever."),
+              "failed — so a permanently-bad task never loops forever. A capacity block (dispatch_saturated) is NOT a "
+              "failure and does not consume an attempt — it PARKS (queue_max_parks / queue_park_backoff_s)."),
+    dict(section="advisor", key="queue_park_backoff_s", store="config.json:advisor.queue_park_backoff_s", default=10.0,
+         kind="float", secret=False,
+         desc="PARKING backpressure (Step 4): a queued task that could not get a governor slot (dispatch_saturated) "
+              "never ran, so it is DEFERRED this many seconds and retried when capacity frees — NOT failed, and NOT "
+              "immediately re-leased into the same saturation. Bounded by queue_max_parks and by the task's own SLA "
+              "deadline (a park never pushes a call past the deadline it promised). This is what keeps 'no user sees a "
+              "429' true under the durable queue at high utilization."),
+    dict(section="advisor", key="queue_max_parks", store="config.json:advisor.queue_max_parks", default=50,
+         kind="int", secret=False,
+         desc="A no-SLA task gives up (→ failed) after this many capacity deferrals, the safety ceiling so a "
+              "permanently-saturated vendor can't park a task forever. An SLA task is bounded first by its deadline."),
     dict(section="advisor", key="queue_idle_rounds", store="config.json:advisor.queue_idle_rounds", default=2,
          kind="int", secret=False,
          desc="A foreground `--drain` stops after this many consecutive EMPTY leases (the backlog is drained). "
