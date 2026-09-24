@@ -390,26 +390,36 @@ def max_output_tokens(model: str):
     return None
 
 
-def output_ceiling(vendor, model, backstop, learned_floor=0):
+# THE ALWAYS-FLOOR for an output CEILING. The ceiling is NOT the cost: max_output is billed on ACTUAL tokens generated,
+# so a HIGH ceiling is free and only a LOW ceiling can hurt (it truncates a real answer). Therefore NO non-authoritative
+# source — a poison-prone learned fact, a caller's value, a per-class recommend — may EVER set the ceiling below this.
+# Only a model's genuinely PUBLISHED (or live-catalog) maximum may be lower, because there the model truly cannot do more.
+OUTPUT_FLOOR = 32_000
+
+
+def output_ceiling(vendor, model, backstop, learned_floor=OUTPUT_FLOOR):
     """The SINGLE authority for a model's OUTPUT ceiling (tokens) — the ONE resolution order every call path shares,
-    so the three that hand-rolled it (adapters._call_guarded, gate._autotune, zai_exec._output_budget) can no longer
-    DRIFT. That drift was a real hole: gate omitted tier 3, so a model known only via a healed fact was clamped to
-    the backstop and a recommend could be raised ABOVE the real ceiling → the 400 the whole system avoids.
+    so the paths that hand-rolled it (adapters._call_guarded, vendor_call.output_cap, gate._autotune, zai_exec) can no
+    longer DRIFT. That drift was a real hole BOTH ways: a model known only via a healed fact was clamped to the backstop
+    (recommend raised ABOVE the real ceiling → a 400), and — the expensive one, hit repeatedly — a POISONED-low healed
+    fact (kimi-k3 auto-healed to 2000 from a transient refusal) clamped a large answer to 2000 and TRUNCATED it.
+
+    THE CEILING IS NOT THE COST. Billing is on ACTUAL tokens, so a high ceiling costs nothing; the only failure mode is a
+    ceiling set too LOW. So the learned tier is FLOORED to `learned_floor` (default OUTPUT_FLOOR=32K) for EVERY caller —
+    a non-authoritative guess can raise the ceiling toward the real max but can NEVER pull it below the floor.
 
     Order, most authoritative first:
-      1. the PUBLISHED limits cache (max_output_tokens) — synced from provider docs, poison-free;
-      2. the vendor's LIVE /models ceiling (catalog.model_ceiling) — covers a model the synced cache lacks;
-      3. the LEARNED fact / docs table (max_output) — auto-heal's guess; NOT authoritative (poison-prone), so it is
-         FLOORED to `learned_floor` for a caller that cannot retry-heal (a lane): a poisoned-low fact then cannot
-         truncate below the floor. learned_floor=0 (default) uses the fact as-is — the retrying metered path, whose
-         downward heal recovers a genuinely-lower ceiling anyway;
-      4. `backstop` — the caller's absolute cap when NOTHING knows the model. Passed in (never a constant here) so
-         this module needs no import of the caller that owns MAX_TOKEN_CEILING.
+      1. the PUBLISHED limits cache (max_output_tokens) — synced from provider docs, poison-free; the REAL maximum, used
+         as-is even if below the floor (a genuinely-small model truly cannot produce more);
+      2. the vendor's LIVE /models ceiling (catalog.model_ceiling) — authoritative too, used as-is;
+      3. the LEARNED fact / docs table (max_output) — auto-heal's GUESS, NOT authoritative (poison-prone), so it is
+         raised to at least `learned_floor` (default OUTPUT_FLOOR): a poisoned-low fact can never truncate below the
+         floor, while a healthy fact above the floor is honoured. (Pass learned_floor=0 ONLY to read the raw fact.)
+      4. `backstop` — the caller's absolute cap when NOTHING knows the model, itself never below the floor.
 
-    The provider prefix is stripped HERE ('openai:gpt-5.5' → 'gpt-5.5') so no caller can forget it and miss the cap
-    — the bug that sent an over-cap budget before it was known that normalize() does not strip 'provider:'."""
+    The provider prefix is stripped HERE ('openai:gpt-5.5' → 'gpt-5.5') so no caller can forget it and miss the cap."""
     rid = (model or "").split(":", 1)[-1]
-    pub = max_output_tokens(rid)                       # 1. published cache — authoritative
+    pub = max_output_tokens(rid)                       # 1. published cache — authoritative, the REAL maximum
     if pub:
         return int(pub)
     try:
@@ -419,10 +429,10 @@ def output_ceiling(vendor, model, backstop, learned_floor=0):
         cat = None
     if cat:
         return int(cat)
-    learned = max_output(rid)                          # 3. learned fact / docs table — NOT authoritative
+    learned = max_output(rid)                          # 3. learned fact — NOT authoritative → floored so poison can't truncate
     if learned:
         return max(int(learned), int(learned_floor))
-    return int(backstop)                               # 4. caller's absolute backstop (nothing knows this model)
+    return max(int(backstop), int(learned_floor))      # 4. nothing knows the model → the backstop, never below the floor
 
 
 def max_input_tokens(model: str):
