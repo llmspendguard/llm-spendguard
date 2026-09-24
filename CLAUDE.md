@@ -124,6 +124,13 @@ ENFORCING). Estimate-first (a separate, zero-spend estimate) before any paid bat
 `pricing.py`). Prefer the Batch API for non-interactive work. Never cancel a running job as cost control —
 completed requests still bill.
 
+**Every spend control spendguard exposes must be REAL at the moment it matters, or fail loud — never silently absent.**
+A pinned effort dropped per-model, an estimate blind to reasoning tokens, and a `budget_usd` that gates only the
+upfront estimate are the SAME failure: the caller believed it was governed when it was not. This is spendguard's job
+to prevent, not each caller's. REQUIRED guardrails + acceptance tests: [docs/GUARDRAILS_reasoning_overspend.md](docs/GUARDRAILS_reasoning_overspend.md)
+(filed 2026-09-23 after two reasoning-model overspends, ~$93 avoidable on ~$98: `reasoning='minimal'` silently
+recorded `effort=none` for gpt-5.5 → 4,249 out tok/call, and `governed=True` bypassed the minimal default).
+
 <!-- spendguard:rule:begin -->
 ## LLM Cost Governance — MANDATORY (llm-spendguard)
 
