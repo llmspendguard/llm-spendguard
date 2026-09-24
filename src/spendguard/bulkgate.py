@@ -587,6 +587,19 @@ def _pctl(vals, p):
 # bulkgate.reasoning_out_estimate config.
 REASONING_OUT_ESTIMATE = 4000
 
+
+def _reasoning_out_estimate():
+    """The reasoning-inclusive output SEED (env → config → default), as ONE resolution so every reasoning-aware
+    estimate agrees — the maxtokens no-history seed AND expected_output.expect's cold-reasoning rung both read it, so a
+    caller who raises the knob raises both together (they used to be two inlined copies waiting to drift)."""
+    try:
+        return int(os.getenv("SPENDGUARD_BULKGATE_REASONING_OUT_ESTIMATE")
+                   or config._cfg_get("bulkgate", "reasoning_out_estimate", REASONING_OUT_ESTIMATE)
+                   or REASONING_OUT_ESTIMATE)
+    except Exception:
+        return REASONING_OUT_ESTIMATE
+
+
 # GUARDRAIL E — PER-CALL RUNAWAY BREAKER. A completed call whose out_tok is many times the MEASURED norm for its class
 # is a runaway (the gpt-5.5 incident: ~4,249 out tok where the coarse-class norm was ~121). Trip when out_tok exceeds
 # RUNAWAY_FACTOR x the measured p99 — measured, never a guessed absolute, so it cannot false-trip a class whose real
@@ -620,10 +633,8 @@ def maxtokens(sig, current_max=None, model=None):
         if _rec is None and model is not None:
             try:
                 from . import models as _m
-                if _m.reasons_by_default(model):        # a reasoning model with no history → seed reasoning-inclusive,
-                    _rec = int(os.getenv("SPENDGUARD_BULKGATE_REASONING_OUT_ESTIMATE")   # env → config → default, so the
-                               or config._cfg_get("bulkgate", "reasoning_out_estimate",  # knob is consistent across all
-                                                  REASONING_OUT_ESTIMATE) or REASONING_OUT_ESTIMATE)   # three surfaces
+                if _m.reasons_by_default(model):        # a reasoning model with no history → seed reasoning-inclusive
+                    _rec = _reasoning_out_estimate()     # env → config → default, shared with expected_output.expect
                     _warn = ("%s reasons (hidden reasoning tokens bill as OUTPUT) and this class has no measurements "
                              "yet — size the estimate at >= %d output tokens, NOT a small visible-answer figure "
                              "(that under-counts reasoning by ~10x — the measured gpt-5.5 miss)." % (model, _rec))

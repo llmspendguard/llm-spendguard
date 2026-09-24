@@ -36,7 +36,7 @@ import sys
 # Every rung expect() can answer from, measured-first. A reader must be able to tell a MEASUREMENT
 # ("learned", "model-history") from a CEILING ("caller-cap", "model-max") from an admission ("unknown"),
 # because a ceiling presented as an expectation over-states a real answer by ~100x.
-BASES = ("learned", "model-history", "caller-cap", "model-max", "unknown")
+BASES = ("learned", "model-history", "reasoning-floor", "caller-cap", "model-max", "unknown")
 
 MIN_OBS = 20                 # below this a class's distribution is noise, not a measurement
 _warned = set()
@@ -70,6 +70,20 @@ def expect(model, sig=None, max_tokens=None):
         if mo and (mo.get("n") or 0) >= MIN_OBS and mo.get("p90"):
             broad = int(mo["p90"])
             return (min(broad, int(max_tokens)) if max_tokens else broad), "model-history"
+    except Exception:
+        pass
+    # RUNG 2.5 — a REASONING model with NO measured history (class AND model cold). Its real output is reasoning+answer
+    # (thousands of tokens that bill as OUTPUT), so the ceiling rungs below both mis-estimate it: a caller-cap
+    # under-counts the reasoning — and is floored to TOKEN_FLOOR by _call_guarded anyway, so it never binds — while the
+    # published 128k ceiling over-counts ~100x. Use the DOCUMENTED reasoning-inclusive floor, the SAME seed
+    # bulkgate.maxtokens uses, so a cold reasoning class is estimated reasoning-AWARE — not naive-low (the incident:
+    # gpt-5.5 estimated at per_out=160, ~9x under) nor ceiling-high. The measured p90 (RUNG 1/2) replaces it as calls
+    # land. Returned WITHOUT min-ing the caller-cap: over-provisioning a BOUND is the safe direction, under-counting is
+    # the one that lets real overspend past unchallenged.
+    try:
+        from . import models as _mr, bulkgate as _br
+        if _mr.reasons_by_default(model):
+            return int(_br._reasoning_out_estimate()), "reasoning-floor"
     except Exception:
         pass
     if max_tokens:
