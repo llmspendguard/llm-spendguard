@@ -36,7 +36,7 @@ import sys
 # Every rung expect() can answer from, measured-first. A reader must be able to tell a MEASUREMENT
 # ("learned", "model-history") from a CEILING ("caller-cap", "model-max") from an admission ("unknown"),
 # because a ceiling presented as an expectation over-states a real answer by ~100x.
-BASES = ("learned", "model-history", "reasoning-floor", "caller-cap", "model-max", "unknown")
+BASES = ("learned", "model-history", "caller-cap", "reasoning-floor", "model-max", "unknown")
 
 MIN_OBS = 20                 # below this a class's distribution is noise, not a measurement
 _warned = set()
@@ -72,25 +72,24 @@ def expect(model, sig=None, max_tokens=None):
             return (min(broad, int(max_tokens)) if max_tokens else broad), "model-history"
     except Exception:
         pass
-    # RUNG 2.5 — a REASONING model with NO measured history (class AND model cold). Its real output is reasoning+answer
-    # (thousands of tokens that bill as OUTPUT), so the ceiling rungs below both mis-estimate it: a caller-cap
-    # under-counts the reasoning — and is floored to TOKEN_FLOOR by _call_guarded anyway, so it never binds — while the
-    # published 128k ceiling over-counts ~100x. Use the DOCUMENTED reasoning-inclusive floor, the SAME seed
-    # bulkgate.maxtokens uses, so a cold reasoning class is estimated reasoning-AWARE — not naive-low (the incident:
-    # gpt-5.5 estimated at per_out=160, ~9x under) nor ceiling-high. The measured p90 (RUNG 1/2) replaces it as calls
-    # land. Returned WITHOUT min-ing the caller-cap: over-provisioning a BOUND is the safe direction, under-counting is
-    # the one that lets real overspend past unchallenged.
+    if max_tokens:
+        try:
+            return int(max_tokens), "caller-cap"
+        except (TypeError, ValueError):
+            pass          # a non-integer caller cap ('8k', '8000.5') is unusable — fall through to the measured/published rung
+    # RUNG 3.5 — a REASONING model with NO caller cap AND NO measured history (class AND model cold). Reached only when
+    # the caller named no max_tokens (an explicit cap is a HARD bound and wins above — batch enforces it, so it is the
+    # real ceiling there). With no cap, the rungs below mis-estimate a reasoning model badly: its real output is
+    # reasoning+answer (thousands of tokens that bill as OUTPUT), so the published 128k ceiling over-counts ~100x and
+    # unknown-0 under-counts to nothing. Use the DOCUMENTED reasoning-inclusive floor — the SAME seed bulkgate.maxtokens
+    # uses — so a cold reasoning class is estimated reasoning-AWARE, not naive-low (the incident: gpt-5.5 estimated at
+    # per_out=160, ~9x under) nor ceiling-high. The measured p90 (RUNG 1/2) replaces it the moment real calls land.
     try:
         from . import models as _mr, bulkgate as _br
         if _mr.reasons_by_default(model):
             return int(_br._reasoning_out_estimate()), "reasoning-floor"
     except Exception:
         pass
-    if max_tokens:
-        try:
-            return int(max_tokens), "caller-cap"
-        except (TypeError, ValueError):
-            pass          # a non-integer caller cap ('8k', '8000.5') is unusable — fall through to the measured/published rung
     try:
         from . import pricing
         lim = pricing.max_output_tokens(model)

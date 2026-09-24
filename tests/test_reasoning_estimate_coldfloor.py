@@ -45,6 +45,13 @@ ck("and it is NOT the 128k published ceiling (a ceiling over-states ~100x)", _es
 ck("and it is NOT 0/unknown (a silent zero is the bug this module exists to end)",
    _est_cold > 0 and _basis_cold != "unknown")
 
+# ── (2b) an EXPLICIT caller cap is a HARD bound and WINS over the reasoning floor (batch enforces it) ──
+print("-- (2b) a cold reasoning model WITH an explicit max_tokens uses the CAP, not the reasoning floor --")
+_est_cap, _basis_cap = expected_output.expect("openai:gpt-5.5", sig="coldfloor_cold_capped", max_tokens=100)
+print(f"     cold reasoning + max_tokens=100 → estimate={_est_cap} basis={_basis_cap!r}")
+ck("an explicit caller cap wins (basis 'caller-cap', value = the cap) — the reasoning floor never overrides it",
+   _est_cap == 100 and _basis_cap == "caller-cap")
+
 # ── (3) the rung is REASONING-GATED: a cold NON-reasoning model never gets the reasoning floor ──
 print("-- (3) a cold NON-reasoning model does NOT get the reasoning floor (the rung is gated on reasons_by_default) --")
 _NONREASON = "openai:gpt-4o"
