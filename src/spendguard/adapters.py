@@ -2007,6 +2007,32 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                     _eff = reasoning
                 if _eff is not None:
                     okw["reasoning_effort"] = _eff         # explicit caller argument: applied, then respected
+                    # GUARDRAIL A — HONOR OR REFUSE, NEVER SILENTLY DROP AN EXPLICIT EFFORT PIN. A caller's 'minimal' is
+                    # a COST pin; on a model whose verified floor is not 'minimal' (gpt-5.x floor='none') it is remapped
+                    # to that floor, and if the model STILL reasons at the floor (reasons_by_default) the pin buys NO
+                    # saving — the model burns thousands of reasoning tokens exactly as if unpinned (measured: gpt-5.5
+                    # 'none' → ~4,249 out tok / $0.13 vs gpt-5-mini honored 'minimal' → 121 tok, the $45 warden
+                    # overspend). A control the caller set that silently does nothing reads as safe and is not, so SAY
+                    # SO loudly and record it (docs/GUARDRAILS_reasoning_overspend.md §A). Never guesses a value — only
+                    # surfaces facts models.py already holds (the floor + reasons_by_default) plus the caller's pin.
+                    try:
+                        from . import models as _mA, bulkgate as _bgeff
+                        if str(reasoning).strip().lower() == "minimal" and _eff != "minimal" \
+                                and _mA.reasons_by_default(raw):
+                            _bgeff.note_unhonored_effort(raw, "minimal", _eff)   # records first, then best-effort warns;
+                            #                                                      never raises, so the trace is reliable
+                    except Exception as _eA:
+                        # Advisory-only — the call proceeds (guardrail D's cap + the ledger's real-spend record for
+                        # reconcile are the load-bearing controls) — but NEVER silent: a guardrail that vanished without
+                        # a trace is the very anti-pattern this fixes, so say the SURFACE degraded, loudly (itself
+                        # guarded so a broken stderr can't turn a degraded surface into a broken call).
+                        try:
+                            import sys as _sA
+                            print("[spendguard] guardrail-A effort-honor check errored (%s) on %s — the call proceeds; "
+                                  "confirm the '%s' pin via the ledger" % (type(_eA).__name__, raw, reasoning),
+                                  file=_sA.stderr)
+                        except Exception:
+                            pass
             try:
                 from . import models as _mf
                 _mf.apply_call_params(raw, okw, dialect="openai")

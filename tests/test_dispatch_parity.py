@@ -23,7 +23,8 @@ def ck(label, cond):
 # ── (1) the assembler + its two renderers agree (the parity core) ──
 print("-- (1) admission_state is the ONE source; MCP + CLI render the same keys --")
 st = dispatch.admission_state()
-ck("assembler has all five sections", set(st) == {"manage_all", "governor", "learned_limits", "queue", "deadline_cancels"})
+ck("assembler has all six sections", set(st) == {"manage_all", "governor", "learned_limits", "queue",
+                                                  "deadline_cancels", "unhonored_efforts"})
 ck("queue depth includes PARKED (Step-4 backpressure is visible)", "parked" in (st.get("queue") or {}))
 
 tool = mcp_server._TOOLS["spendguard_dispatch_state"][2]({})

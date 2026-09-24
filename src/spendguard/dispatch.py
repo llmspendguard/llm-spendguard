@@ -770,8 +770,13 @@ def admission_state():
     try:
         from . import bulkgate
         out["deadline_cancels"] = bulkgate.deadline_cancels()
+        out["unhonored_efforts"] = bulkgate.unhonored_efforts()   # guardrail A: explicit effort pins NOT honored
     except Exception as e:
+        from . import gate as _g
+        if _g.is_deliberate_stop(e):
+            raise                                                 # never downgrade a deliberate stop to an error note
         out["deadline_cancels"] = {"error": "%s: %s" % (type(e).__name__, str(e)[:80])}
+        out["unhonored_efforts"] = {"error": "%s: %s" % (type(e).__name__, str(e)[:80])}
     return out
 
 

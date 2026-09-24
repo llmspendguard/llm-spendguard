@@ -367,6 +367,11 @@ def _dispatch(argv=None):
             print("deadline-cancel waste (reasoning cut mid-thought — invisible to the ledger, reconcile to see $):")
             for m, n in dc.items():
                 print("  %-26s x%s" % (m, n))
+        ue = st.get("unhonored_efforts") or {}
+        if ue:
+            print("effort pins NOT honored (guardrail A — 'minimal' remapped to a floor that still reasons; no saving):")
+            for k, n in ue.items():
+                print("  %-26s x%s" % (k, n))
         return 0
     if cmd == "config":
         from . import setup

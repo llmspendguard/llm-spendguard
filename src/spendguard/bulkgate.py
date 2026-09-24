@@ -524,6 +524,50 @@ def deadline_cancels():
         return dict(_cancel_warned)
 
 
+_unhonored_effort = {}       # "model|requested->chosen" -> count of times an explicit effort pin was NOT honored
+_unhonored_lock = threading.Lock()   # a fan resolves effort CONCURRENTLY — the count must not lose an event
+
+
+def note_unhonored_effort(model, requested, chosen):
+    """GUARDRAIL A — record + SURFACE, un-swallowably, that a caller's EXPLICIT effort pin was NOT honored on this
+    model: the standard 'minimal' COST pin was remapped to the model's verified floor (gpt-5.x floor='none') AND the
+    model STILL reasons at that floor (models.reasons_by_default), so the pin bought NO saving. A control the caller
+    set that silently does nothing reads as safe and is not — the worst kind (measured: gpt-5.5 at 'none' → ~4,249 out
+    tok / ~$0.13 vs gpt-5-mini honored 'minimal' → 121 tok / $0.0005, the $45 warden overspend). Counted per
+    (model, requested→chosen) and announced at decade boundaries, carrying the actionable fix. Never raises. Returns
+    the running count.
+
+    Never guesses a value — it only names facts models.py already holds (the floor + reasons_by_default) plus the
+    caller's own pin. The real FIX is routing a minimal-cost intent to a model whose 'minimal' IS honored (best-value's
+    job); this makes the silent non-honor VISIBLE so it can be routed, capped (guardrail D), or knowingly accepted."""
+    import sys
+    key = "%s|%s->%s" % (model, requested, chosen)
+    with _unhonored_lock:                    # atomic RMW so a concurrent fan can't lose an event
+        n = _unhonored_effort.get(key, 0) + 1
+        _unhonored_effort[key] = n           # the RECORD is committed HERE — before any I/O — so it survives a bad stderr
+    if n not in _TRUNC_ANNOUNCE:             # print OUTSIDE the lock (never hold it across I/O)
+        return n
+    try:                                     # the count is already recorded; the announce line is best-effort and must
+        print("[bulkgate] EFFORT PIN NOT HONORED on %s x%d: effort '%s' requested, but this model's verified floor is "
+              "'%s' and it STILL reasons at '%s' — the pin buys NO saving here (measured: gpt-5.x at its floor burns "
+              "thousands of reasoning tokens vs a honored 'minimal' ~121 tok; this was the $45 warden overspend). "
+              "requested_effort=%s chosen_effort=%s recorded. Fix: route a minimal-cost intent to a model that HONORS "
+              "'minimal' (best-value does this), or accept the floor cost — guardrail D's budget_usd cap is the backstop."
+              % (model, n, requested, chosen, chosen, requested, chosen), file=sys.stderr)
+    except Exception:                        # a closed/broken stderr must not lose the (already-recorded) event
+        pass
+    return n
+
+
+def unhonored_efforts():
+    """The per-(model, requested→chosen) count of explicit effort pins NOT honored this process (guardrail A's silent
+    effort-downgrade surface) — a read-only snapshot for the observability surfaces (CLI `spendguard dispatch` / MCP
+    spendguard_dispatch_state), so the counter is queryable, not just printed. Process-local (resets on restart);
+    {} when none. $0."""
+    with _unhonored_lock:
+        return dict(_unhonored_effort)
+
+
 def _pctl(vals, p):
     """Interpolated percentile of token counts, as an int. None for an empty sample.
 
