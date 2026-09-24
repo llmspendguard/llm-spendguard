@@ -43,20 +43,20 @@ check("...and only skips it when explicitly told to", "_no_guard" in src)
 check("call_complete is the SAME object, not a second way to call",
       adapters.call_complete is adapters.call)
 
+# The OUTPUT and INPUT guards live INSIDE _call_guarded (not an opt-in sibling). Their BEHAVIOUR is proven below rather
+# than by fragile source-substring checks; the one structural invariant worth pinning is that the input guard runs
+# BEFORE the request is sent.
 guard = inspect.getsource(adapters._call_guarded)
-check("the OUTPUT guard checks the provider's own truncation field", "is_truncated" in guard)
-check("...retries with a larger budget rather than returning a cut body", "budget * 2" in guard)
-check("...and returns text=None when it still will not fit", '"text": None' in guard)
-check("...and sizes from the measured p99 when a sig is given", "maxtokens(" in guard)
 check("the INPUT guard runs before anything is sent", guard.index("_input_fits") < guard.index("while True"))
 
-print("\n-- truncation cannot be read as a short answer (offline, no network) --")
-_calls = {"n": 0}
+print("\n-- truncation cannot be read as a short answer; the caller's cap is IGNORED (offline, no network) --")
+_calls = {"n": 0, "budgets": []}
 
 
 def _fake_once(model, prompt, max_tokens=512, **kw):
     """A provider that always hits the cap — the shape that produced every silent wrong answer."""
     _calls["n"] += 1
+    _calls["budgets"].append(max_tokens)
     return {"provider": "fake", "model": model, "text": "{\"partial\": tru", "in_tok": 10,
             "out_tok": max_tokens, "latency": 0.0, "cost": 0.0, "finish_reason": "length", "error": None}
 
@@ -65,12 +65,15 @@ _orig_once, _orig_fits = adapters._call_once, adapters._input_fits
 adapters._call_once = _fake_once
 adapters._input_fits = lambda *a, **k: (True, "stubbed")
 try:
-    r = adapters.call("fake-model", "anything", max_tokens=16, retries=2)
+    _ceil = adapters.output_budget("fake-model")
+    r = adapters.call("fake-model", "anything", max_tokens=16)
+    check("the caller's max_tokens=16 is IGNORED — spendguard sends the ceiling budget",
+          _calls["budgets"] and _calls["budgets"][0] == _ceil, str(_calls["budgets"]))
     check("a persistently truncated reply is flagged", r.get("truncated") is True)
     check("...its cut body is NOT returned", r.get("text") is None)
     check("...and it carries an error rather than looking successful", bool(r.get("error")))
-    check("...after actually retrying with a bigger budget", _calls["n"] == 3, f"made {_calls['n']} call(s)")
-    check("...the budget really doubled", r.get("max_tokens_used") == 64, str(r.get("max_tokens_used")))
+    check("...in ONE attempt — the call STARTS at the ceiling, so there is no larger budget to grow into",
+          _calls["n"] == 1, f"made {_calls['n']} call(s)")
 
     # A reply that FITS must pass through untouched — a guard that mangles good answers is worse than none.
     def _fake_ok(model, prompt, max_tokens=512, **kw):

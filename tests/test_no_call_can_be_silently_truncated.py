@@ -89,14 +89,34 @@ check("no cap sits on a call whose OUTPUT IS USED", not _audit["failed"],
 
 
 # ────────────────────────────────────────────────────────────────────────────
-print("-- BEHAVIOUR: a budget that was never chosen is refused, not invented --")
+print("-- BEHAVIOUR: spendguard OWNS the budget — a caller need not (and cannot) choose it --")
+# The doctrine changed (docs/CANONICAL_CONCERNS.json: output_budget): max_output is a CEILING billed on ACTUAL tokens, so
+# spendguard sends the model's ceiling and the caller's request is IGNORED. A bare call therefore SUCCEEDS at the ceiling
+# — it is never refused for "no budget", because there is always a safe one (the ceiling). The raw path still guards.
+_ceil_haiku = adapters.output_budget("claude-haiku-4-5")
+
+
+class _CaptureOnce:
+    """Stub _call_once: record the budget it was handed, return a clean short reply."""
+    def __init__(self):
+        self.budgets = []
+
+    def __call__(self, model, prompt, max_tokens=None, **kw):
+        self.budgets.append(max_tokens)
+        return {"provider": "fake", "model": model, "text": "ok", "in_tok": 10, "out_tok": 5,
+                "latency": 0.01, "cost": 0.0, "finish_reason": "stop", "truncated": False, "error": None}
+
+
+_real_once = adapters._call_once
 try:
-    adapters.call("claude-haiku-4-5", "hi")          # no sig, no max_tokens
-    check("call() with neither sig nor max_tokens raises", False, "it returned instead of refusing")
-except ValueError as e:
-    check("call() with neither sig nor max_tokens raises", "sig" in str(e))
-except Exception as e:
-    check("call() with neither sig nor max_tokens raises", False, f"raised {type(e).__name__}: {e}")
+    cap = _CaptureOnce()
+    adapters._call_once = cap
+    r0 = adapters.call("claude-haiku-4-5", "hi")     # no sig, no max_tokens — must SUCCEED at the ceiling now
+    check("a bare call (no sig, no max_tokens) succeeds — spendguard supplies the ceiling budget",
+          not r0.get("error") and cap.budgets and cap.budgets[0] == _ceil_haiku,
+          f"budgets tried: {cap.budgets} — expected the ceiling {_ceil_haiku}")
+finally:
+    adapters._call_once = _real_once
 
 try:
     adapters._call_once("claude-haiku-4-5", "hi", max_tokens=None)
@@ -106,7 +126,8 @@ except ValueError:
 
 
 # ────────────────────────────────────────────────────────────────────────────
-print("-- BEHAVIOUR: truncation is retried, then surfaced — never returned as text --")
+print("-- BEHAVIOUR: a truncation at the ceiling is SURFACED (text=None), never returned as a partial body --")
+from spendguard import bulkgate, pricing  # noqa: E402
 
 
 class FakeProvider:
@@ -119,42 +140,28 @@ class FakeProvider:
         self.budgets.append(max_tokens)
         cut = len(self.budgets) <= self.truncate_n
         return {"provider": "fake", "model": model,
-                # a truncated JSON body: parses as nothing, reads downstream as "no findings"
                 "text": (self.body[: len(self.body) // 2] if cut else self.body),
-                # out_tok MATTERS: truncation is detected from finish_reason AND from out_tok reaching the
-                # budget, so a "good" reply must come back well under it. An earlier version of this fake
-                # returned out_tok == budget every time, which made even the successful retry look
-                # truncated — the fixture, not the code, was wrong.
                 "in_tok": 10, "out_tok": ((max_tokens or 0) if cut else 12),
                 "latency": 0.01, "cost": 0.0,
                 "finish_reason": ("length" if cut else "stop"), "truncated": cut, "error": None}
 
 
-_real_once = adapters._call_once
+# spendguard sends the model's CEILING (billed on actual, so the max is free) — there is no upward doubling because the
+# call already STARTS at the max. A truncation therefore means the output genuinely exceeded the model's real maximum
+# (the jumbo case), and it MUST come back as text=None, never a partial JSON a caller parses into "no findings". The
+# caller's max_tokens is IGNORED throughout (docs/CANONICAL_CONCERNS.json: output_budget).
 try:
-    # 1. truncated once -> retried at DOUBLE, and the good body comes back
     fake = FakeProvider(truncate_n=1)
     adapters._call_once = fake
-    r = adapters.call("claude-haiku-4-5", "x", max_tokens=100, sig=None, retries=2)
-    check("a truncated reply is retried", len(fake.budgets) >= 2,
-          f"budgets tried: {fake.budgets} — only one attempt means truncation was accepted")
-    check("the retry DOUBLES the budget", len(fake.budgets) >= 2 and fake.budgets[1] == fake.budgets[0] * 2,
-          f"budgets tried: {fake.budgets}")
-    check("after a successful retry the full body is returned", (r.get("text") or "").endswith("}"),
-          f"text={r.get('text')!r}")
-
-    # 2. truncated EVERY time -> text must be None, so nothing downstream can parse a confident empty answer
-    fake2 = FakeProvider(truncate_n=99)
-    adapters._call_once = fake2
-    r2 = adapters.call("claude-haiku-4-5", "x", max_tokens=100, sig=None, retries=2)
-    check("a reply truncated on every attempt returns text=None", r2.get("text") is None,
-          f"text={r2.get('text')!r} — a partial body here is the silent wrong answer this suite exists for")
-    check("and it is flagged truncated", bool(r2.get("truncated")), f"truncated={r2.get('truncated')!r}")
-
-    # 3. THE ACTUAL HARM, stated as a test: the caller's parse must fail loudly rather than yield []
+    r = adapters.call("claude-haiku-4-5", "x", max_tokens=100, sig=None)
+    check("the caller's max_tokens=100 is IGNORED — the ceiling budget is sent",
+          fake.budgets and fake.budgets[0] == _ceil_haiku, f"budgets tried: {fake.budgets} — expected ceiling {_ceil_haiku}")
+    check("a truncated reply returns text=None (surfaced, never a partial body)", r.get("text") is None,
+          f"text={r.get('text')!r} — a partial body here is the silent wrong answer this suite exists for")
+    check("and it is flagged truncated", bool(r.get("truncated")), f"truncated={r.get('truncated')!r}")
     parsed_empty = False
     try:
-        json.loads(r2.get("text") or "")
+        json.loads(r.get("text") or "")
     except (TypeError, ValueError):
         parsed_empty = True
     check("a truncated result cannot be parsed into an empty answer", parsed_empty,
@@ -164,71 +171,54 @@ finally:
 
 
 # ────────────────────────────────────────────────────────────────────────────
-print("-- BEHAVIOUR: the FLOOR governs; a prediction may only raise it --")
-from spendguard import bulkgate  # noqa: E402
-
-# THE RULE, stated once: an unspecified budget starts at TOKEN_FLOOR and a measurement can only add to it.
-# The old rule was max(caller, predicted) with the floor used only when BOTH were zero, so a measured
-# recommend of 400 produced a 400-token budget — the calls with the most history got the least room. It is
-# also wrong in a way measurement cannot see: on reasoning models the hidden reasoning is billed against
-# max_tokens, and a p99 of VISIBLE output never observed it.
+print("-- BEHAVIOUR: the budget is the CEILING, regardless of caller value or per-class prediction --")
 _real_max = bulkgate.maxtokens
 try:
-    bulkgate.maxtokens = lambda sig: {"recommend": 7777}
+    # a per-class 'recommend' is an ESTIMATE input (expected_output.expect), NEVER the budget. A tiny recommend can
+    # no longer starve a call — the budget is the ceiling.
+    bulkgate.maxtokens = lambda sig: {"recommend": 7}
     fake3 = FakeProvider(truncate_n=0)
     adapters._call_once = fake3
     adapters.call("claude-haiku-4-5", "x", sig="probe:measured")
-    check("a prediction BELOW the floor does not lower the budget",
-          fake3.budgets and fake3.budgets[0] == adapters.TOKEN_FLOOR,
-          f"budgets tried: {fake3.budgets} — expected the {adapters.TOKEN_FLOOR} floor, not the 7777 prediction")
+    check("a tiny per-class recommend does NOT lower the budget — the ceiling is sent",
+          fake3.budgets and fake3.budgets[0] == _ceil_haiku, f"budgets tried: {fake3.budgets} — expected ceiling {_ceil_haiku}")
 
-    bulkgate.maxtokens = lambda sig: {"recommend": adapters.TOKEN_FLOOR * 2}
-    fake4 = FakeProvider(truncate_n=0)
-    adapters._call_once = fake4
-    adapters.call("claude-haiku-4-5", "x", sig="probe:measured")
-    check("a prediction ABOVE the floor raises the budget",
-          fake4.budgets and fake4.budgets[0] == adapters.TOKEN_FLOOR * 2, f"budgets tried: {fake4.budgets}")
+    # the budget IS the model's output ceiling, so it can never exceed what the endpoint accepts (no over-ceiling 400).
+    check("the budget equals the model's output ceiling (never an over-ceiling number)",
+          _ceil_haiku == pricing.output_ceiling(adapters.provider_for("claude-haiku-4-5"),
+                                                 "claude-haiku-4-5", adapters.MAX_TOKEN_CEILING))
 
-    # THE CLAMP, stated as its own case. A floor above a model's own maximum is a 400, so the budget is
-    # min(model_max, max(floor, predicted)). Proven against a model whose documented limit is BELOW what the
-    # floor+prediction would otherwise ask for — otherwise the clamp can pass without ever being exercised,
-    # which is what the assertion above does when the two numbers happen to coincide.
-    from spendguard import pricing  # noqa: E402
-    _clamped_model = next((m for m in pricing.MAX_OUT if pricing.MAX_OUT[m] < adapters.TOKEN_FLOOR * 4), None)
-    if _clamped_model:
-        _limit = pricing.MAX_OUT[_clamped_model]
-        bulkgate.maxtokens = lambda sig: {"recommend": adapters.TOKEN_FLOOR * 4}   # asks for far more
-        fake_c = FakeProvider(truncate_n=0)
-        adapters._call_once = fake_c
-        adapters.call(_clamped_model, "x", sig="probe:clamped")
-        check(f"the budget is clamped to {_clamped_model}'s documented max ({_limit:,})",
-              fake_c.budgets and fake_c.budgets[0] == _limit,
-              f"budgets tried: {fake_c.budgets} — sending more than a model accepts is a 400, not a big answer")
+    # a model whose PUBLISHED max is genuinely below the floor gets its real max — authoritative-low is honoured (the
+    # floor only applies where the ceiling is unknown/guessed, never over a published limit). Stubbed so it ALWAYS runs.
+    _real_pub = pricing.max_output_tokens
+    try:
+        pricing.max_output_tokens = lambda m: 8192 if m == "tiny-pub-model" else _real_pub(m)
+        check("a genuinely-small PUBLISHED model gets its real max (8192), not the 32K floor",
+              adapters.output_budget("openai:tiny-pub-model") == 8192)
+    finally:
+        pricing.max_output_tokens = _real_pub
 
-    # An EXPLICIT number is the caller's deliberate choice — a 16-token connectivity probe is legitimate,
-    # and token_caps holds a recorded verdict for every such literal in the tree. The floor must not
-    # silently inflate it; only a measurement may raise it.
+    # THE DOCTRINE REVERSAL: an explicit caller max_tokens is IGNORED, not honoured — it can only ever truncate, so
+    # spendguard drops it and sends the ceiling. (An INTERNAL tiny probe is the sole exception; see _internal_tiny.)
     bulkgate.maxtokens = lambda sig: {"recommend": 0}
     fake5 = FakeProvider(truncate_n=0)
     adapters._call_once = fake5
     adapters.call("claude-haiku-4-5", "x", max_tokens=16, sig="probe:deliberate")
-    check("an EXPLICIT caller budget is honoured, not inflated to the floor",
-          fake5.budgets and fake5.budgets[0] == 16, f"budgets tried: {fake5.budgets}")
+    check("an EXPLICIT caller max_tokens is IGNORED, not honoured — spendguard sends the ceiling",
+          fake5.budgets and fake5.budgets[0] == _ceil_haiku, f"budgets tried: {fake5.budgets} — expected ceiling {_ceil_haiku}")
 finally:
     bulkgate.maxtokens = _real_max
     adapters._call_once = _real_once
 
 
 # ────────────────────────────────────────────────────────────────────────────
-print("-- BEHAVIOUR: an empty visible answer is not an answer (reasoning models) --")
+print("-- BEHAVIOUR: an empty visible answer is SURFACED (text=None), not returned as '' --")
 
 
 class BurnsBudgetOnReasoning:
-    """Spends the whole budget on hidden reasoning and returns a clean, EMPTY response.
-
-    This is the shape reported in the field: gpt-5.5 is a reasoning model, the reasoning tokens are billed
-    against max_tokens, and a 4000-token budget went entirely on thinking. The response is well-formed,
-    carries no error, and its text is "" — which parses as nothing and reads as "no findings"."""
+    """Spends the whole budget on hidden reasoning and returns a clean, EMPTY response — the field shape: a reasoning
+    model whose thinking tokens bill against max_tokens and whose visible text is "" (parses as nothing, reads as
+    "no findings"). At the ceiling budget there is nothing larger to grow into, so an empty here must be SURFACED."""
 
     def __init__(self):
         self.budgets = []
@@ -237,19 +227,18 @@ class BurnsBudgetOnReasoning:
         self.budgets.append(max_tokens)
         return {"provider": "fake", "model": model, "text": "", "in_tok": 10,
                 "out_tok": max_tokens or 0, "latency": 0.01, "cost": 0.0,
-                # note: NOT "length" — the model stopped cleanly having written only reasoning
                 "finish_reason": "stop", "truncated": False, "error": None}
 
 
+_ceil_g55 = adapters.output_budget("gpt-5.5")
 try:
     burn = BurnsBudgetOnReasoning()
     adapters._call_once = burn
-    rb = adapters.call("gpt-5.5", "x", max_tokens=4000, sig=None, retries=2)
-    check("an empty answer that consumed tokens is treated as truncated, not returned as ''",
-          rb.get("text") is None,
+    rb = adapters.call("gpt-5.5", "x", sig="probe:reason")
+    check("an empty answer that consumed tokens is surfaced as text=None, not ''", rb.get("text") is None,
           f"text={rb.get('text')!r} — an empty string here is the silent 'no findings' this suite exists for")
-    check("and it is retried with MORE budget, which is what a reasoning model needs",
-          len(burn.budgets) >= 2 and burn.budgets[1] > burn.budgets[0], f"budgets tried: {burn.budgets}")
+    check("the ceiling budget was sent (huge headroom — an empty at the ceiling is the model's own behaviour)",
+          burn.budgets and burn.budgets[0] == _ceil_g55, f"budgets tried: {burn.budgets} — expected ceiling {_ceil_g55}")
 finally:
     adapters._call_once = _real_once
 

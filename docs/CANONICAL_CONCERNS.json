@@ -1,5 +1,5 @@
 {
-  "_doc": "The single-source-of-truth registry: each CAPABILITY has exactly ONE home; all callers use it. Read by the honestreview `single_source_of_truth` doctrine (write-time) and tests/test_canonical_concerns.py (suite). Adding a concern is a deliberate act: give it a home, a one-line description, and a `telltale` (what its operations look like, so a reviewer can locate candidate sites). `status`: 'enforced' = one home today, the gate checks it; 'consolidating' = home chosen, callers still being moved. See docs/SINGLE_SOURCE_OF_TRUTH.md.",
+  "_doc": "The single-source-of-truth registry: each CAPABILITY has exactly ONE home; all callers use it. Read by the honestreview `canonical_concerns` doctrine (write-time) and tests/test_canonical_concerns.py (suite). Adding a concern is a deliberate act: give it a home, a one-line description, and a `telltale` (what its operations look like, so a reviewer can locate candidate sites). `status`: 'enforced' = one home today, the gate checks it; 'consolidating' = home chosen, callers still being moved. See docs/SINGLE_SOURCE_OF_TRUTH.md.",
   "concerns": [
     {
       "concern": "output_ceiling",

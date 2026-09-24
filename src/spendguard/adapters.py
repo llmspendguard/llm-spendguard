@@ -446,19 +446,20 @@ _SUBST_WARN_LEDGER = set()
 _MAXTOK_WARN_LEDGER = set()
 
 
-def _warn_once_caller_maxtokens(key, passed, floored):
-    """Announce — LOUD, once per call-class — that a caller passed a small explicit max_tokens on a STRUCTURED call,
-    which spendguard FLOORED to real room. Setting max_tokens is the #1 cause of silent reasoning-model JSON
-    truncation (the model burns the cap on thinking before it writes), so the fix is to STOP passing it: spendguard
-    owns the output ceiling (measured p99, floored to TOKEN_FLOOR, billed on ACTUAL tokens — a high floor is free).
-    Returns the message on the first announcement (for tests), else None."""
+def _warn_once_caller_maxtokens(key, passed):
+    """Announce — LOUD, once per call-class — that a caller passed an explicit max_tokens that spendguard IGNORED.
+    spendguard OWNS the output budget (output_budget): max_tokens is a CEILING billed on ACTUAL tokens, so the budget is
+    the model's real ceiling (or the 32K floor) — a caller value can only ever set it too LOW and truncate a real answer.
+    The fix is to STOP passing it. Returns the message on the first announcement (for tests), else None.
+
+    Dedup is the module-level _MAXTOK_WARN_LEDGER memo (process-lifetime, bounded to distinct call-classes): its staleness
+    is harmless by construction — the worst case of a lost entry is one repeated advisory line, never a wrong result."""
     if key in _MAXTOK_WARN_LEDGER:
         return None
     _MAXTOK_WARN_LEDGER.add(key)
-    msg = ("[spendguard] max_tokens=%d passed on a STRUCTURED call (%s) — floored to %d so the JSON can't silently "
-           "truncate. OMIT max_tokens on schema calls: spendguard owns the output ceiling (measured p99, billed on "
-           "ACTUAL tokens, so a high floor is free). A small max_tokens is the #1 cause of reasoning-model JSON "
-           "truncation." % (passed, key, floored))
+    msg = ("[spendguard] max_tokens=%d passed (%s) — IGNORED. spendguard owns the output budget: it sends the model's "
+           "real ceiling (billed on ACTUAL tokens, so a high ceiling is free); a caller cap can only truncate. Omit it."
+           % (passed, key))
     import sys as _sysmt
     print(msg, file=_sysmt.stderr)
     return msg
@@ -2274,7 +2275,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
 # spent entirely on reasoning returns a well-formed response whose text is "".
 #
 # So: start at the floor and let a measurement raise it, never lower it. The prediction can only add.
-TOKEN_FLOOR = 32_000             # OUTPUT reply budget — never send less unless the CALLER named a number; NOT an input cap
+TOKEN_FLOOR = pricing.OUTPUT_FLOOR   # the OUTPUT floor lives in ONE home (pricing.OUTPUT_FLOOR=32K); adapters references it
 MAX_TOKEN_CEILING = 128_000      # OUTPUT: absolute stop for the doubling retry — above the floor so retries have room
 # The auto-heal LEARNS a model's output ceiling by halving until the provider accepts a budget. Below this floor a
 # "success" is NOT evidence of a real output limit — no chat model caps output in the hundreds — it is a NON-budget
@@ -2282,6 +2283,34 @@ MAX_TOKEN_CEILING = 128_000      # OUTPUT: absolute stop for the doubling retry 
 # POISONS the model's max_output for every future call (MEASURED: gpt-5-mini learned max_output=7, clamping the whole
 # class to a ~7-token budget → 51% truncation). So the halving never learns a ceiling below this floor.
 _MIN_LEARNED_MAX_OUTPUT = 1_024
+
+
+def output_budget(model, requested=None, internal_tiny=False, vendor=None):
+    """CANONICAL HOME for the OUTPUT max_tokens SENT on a call (docs/CANONICAL_CONCERNS.json: output_budget). No caller
+    decides this — spendguard does. The budget IS the model's CEILING (pricing.output_ceiling: the real published max, or
+    the 32K OUTPUT_FLOOR when unknown). Why: max_output is a CEILING billed on ACTUAL tokens generated — a high ceiling
+    costs nothing and the ONLY failure mode is one set too LOW, which truncates a real answer. So a caller's `requested`
+    max_tokens is IGNORED for a normal call; the ceiling already covers every output up to the model's real maximum, so
+    there is no reasoning-empty, no structured-JSON-cut, no poison-clamp. Sizing the EXPECTED output for a cost estimate
+    is a DIFFERENT concern (expected_output.expect) — never conflate the two: this is the ceiling, that is the guess.
+
+    The ONE exception is an INTERNAL, deliberately-tiny call (`internal_tiny`: a connectivity / resolver / heal probe that
+    wants a small bounded response) — it keeps its own `requested` value, still clamped to the ceiling so it can never
+    exceed the model max. A provider that couples input+output against one context window and refuses the full ceiling is
+    recovered by _call_guarded's downward heal — which halves the OUTPUT budget, never the INPUT (input is refused, not
+    clipped, by _input_fits). `vendor` may be passed when the caller already knows it (the catalog ceiling tier)."""
+    if vendor is None:
+        try:
+            vendor = provider_for(model)
+        except Exception:
+            vendor = None
+    ceiling = int(pricing.output_ceiling(vendor, model, MAX_TOKEN_CEILING))
+    if internal_tiny and requested is not None:
+        try:
+            return max(1, min(int(requested), ceiling))   # a deliberate tiny probe: respect it, never exceed the ceiling
+        except (TypeError, ValueError):
+            return ceiling
+    return ceiling                                          # normal call: the ceiling; the caller's request is ignored
 
 
 def _heal_token_budget(create_fn, start_budget, model):
@@ -2455,84 +2484,27 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
                 "latency": 0.0, "cost": None, "finish_reason": None, "truncated": None,
                 "error": f"payload too large: {detail} — split it rather than letting the vendor clip it"}
     _explicit = max_tokens is not None
-    # A STRUCTURED reply (a schema was requested) is JSON a caller PARSES: cut at a low cap it is unparseable and
-    # reads as 'no findings' — the exact absence-as-success failure this module exists to prevent. So a schema call
-    # is FLOORED to real room (TOKEN_FLOOR) like a no-cap call, NEVER left at a small cap — even one passed
-    # explicitly (honored for prose, but for JSON a low cap only destroys the answer). Still clamped to the model's
-    # real ceiling below, exactly like every other budget, so this can never send an over-ceiling request.
     _structured = kw.get("schema") is not None
-    if not _explicit and not sig and not _structured:
-        raise ValueError(
-            "call needs either an explicit max_tokens or a `sig` naming the call-class, so the budget is "
-            "either something you chose deliberately or something measured — never a literal nobody picked.")
-    # sig= names the call CLASS as an intent-like label; the measured p99 must be keyed PER MODEL (testing Haiku
-    # must never size Opus or nano). Derive the model-inclusive key here — bulkgate.sig(model, template_id=sig) — so a
-    # caller passing a raw intent is NOT silently pooled across models (the shape that gave gpt-5-nano and
-    # claude-opus-4-8 one shared output-length profile). Matches how register-side estimates are keyed.
-    # A caller may pass a raw INTENT (keyed per-model here) OR an already-built bulkgate.sig (its 16-hex digest) — e.g.
-    # a consumer that hand-built the key as a workaround BEFORE this derivation existed. Re-wrapping a real sig would
-    # DOUBLE-KEY it (a sig of a sig → a namespace the registered estimate never reads), silently. So a value that IS a
-    # bulkgate.sig (16 lowercase hex — a FORMAT check, not a meaning one) is used AS-IS; anything else is an intent →
-    # derive the per-model key. (Rescues the workaround that warden and any similar consumer built for the old defect.)
+    # An INTERNAL, deliberately-tiny call (a connectivity / resolver / effort-heal probe) is the ONE case that keeps its
+    # own small max_tokens; every other caller's max_tokens is IGNORED (output_budget owns it — see below).
+    _internal_tiny = bool(_probe or getattr(_resolve_guard, "on", False) or getattr(_heal_guard, "on", False))
+    # sig NAMES the call-class for TELEMETRY + the ESTIMATE (keyed PER MODEL so Haiku never sizes Opus) + the guardrail-E
+    # runaway norm — NOT for the budget, which is the model ceiling regardless. A caller may pass a raw INTENT (keyed
+    # per-model here) OR an already-built 16-hex bulkgate.sig (used AS-IS, never double-keyed into a namespace no
+    # registered estimate reads). No budget depends on sig any more, so a call without one is fine (it just isn't keyed).
     _is_sig = isinstance(sig, str) and len(sig) == 16 and all(c in "0123456789abcdef" for c in sig)
     _sig_key = (sig if _is_sig else bulkgate.sig(model, template_id=sig)) if sig else None
-    _mx0 = (bulkgate.maxtokens(_sig_key) or {}) if _sig_key else {}   # the class's PRE-call output norm — reused below
-    _predicted = int(_mx0.get("recommend") or 0)                      # by guardrail E so a runaway can't inflate its OWN
-    #                                                                   baseline (the p99 is read BEFORE this call lands)
-    # (the reasoning SEED in maxtokens(model=) is an ESTIMATE feature — the CALL budget already floors a reasoning
-    #  model to TOKEN_FLOOR via reasons_by_default below, so the seed would be dominated here; not passed on this path.)
-    if _structured:
-        # JSON must have room to close its braces. Floor to real room WHATEVER the caller passed — a schema reply
-        # cut low is corrupt, not short (see _structured above). A prose caller's small explicit cap is honored
-        # below; a structured one is not, because it only destroys the answer. Clamped to the ceiling like the rest.
-        _floored = max(int(max_tokens or 0), _predicted, TOKEN_FLOOR)
-        if _explicit and int(max_tokens or 0) < _floored:   # the caller passed a small cap → floored + teach them to stop
-            _warn_once_caller_maxtokens(sig or model, int(max_tokens or 0), _floored)
-        max_tokens = _floored
-    elif _explicit:
-        # The caller named a number, so they meant it — a 16-token connectivity probe is a legitimate,
-        # deliberate choice, and token_caps has a recorded verdict for every such literal in this tree.
-        # A measurement may still RAISE it; nothing may lower it.
-        max_tokens = max(int(max_tokens), _predicted)
-    else:
-        # NOBODY CHOSE A NUMBER, SO START HIGH. Floor first, prediction only on top. This previously read
-        # `max(caller, recommend) or CEILING`, which used the ceiling only when BOTH were zero — so a
-        # measured recommend of 400 produced a 400-token budget, and the floor never applied to the calls
-        # that most needed it. Costing nothing to over-provision and everything to under-provision, the
-        # asymmetry only points one way.
-        max_tokens = max(TOKEN_FLOOR, _predicted)
-    # REASONING MODELS NEED HEADROOM, AND A CEILING IS FREE. A model that ALWAYS reasons (gpt-5.x, o-series, or one
-    # with a measured reasoning fact — kimi-k3, glm) spends HIDDEN tokens against max_tokens before it writes a word,
-    # so an output cap sized from the VISIBLE answer (a caller's max_tokens_per=1200 from card length) is eaten by
-    # thinking → an EMPTY reply that certifies as "no card" and re-fires forever (measured: ~90% of a describe run).
-    # max_tokens is a CEILING billed on ACTUAL tokens, so flooring a reasoning model to TOKEN_FLOOR costs nothing when
-    # the answer is short and RESCUES it when thinking is heavy. RAISE-only. Skipped for a probe (_probe) or an
-    # internal resolver/effort probe (_resolve_guard/_heal_guard), which deliberately want a tiny bounded call. This
-    # is the PREEMPTIVE fix; the empty-answer heal in the ladder below is the model-agnostic backstop.
-    if not _probe and not getattr(_resolve_guard, "on", False) and not getattr(_heal_guard, "on", False):
-        try:
-            from . import models as _mrf
-            if _mrf.reasons_by_default(model):
-                max_tokens = max(int(max_tokens), TOKEN_FLOOR)
-        except Exception:
-            pass                                          # a missing fact store must never block the call
-    # CLAMP TO THE MODEL'S PUBLISHED OUTPUT CEILING — output = min(max(provided|predicted, floor), model_max).
-    # model_max must come from an AUTHORITATIVE catalog, NOT the learned per-model max_output FACT: that fact is
-    # auto-heal's guess and has POISONED the clamp BOTH ways — gpt-5-nano learned max_output=2000 and under-truncated
-    # every answer, while a model with NO fact (gpt-5.4-nano) had NO clamp at all, so a poisoned bulkgate
-    # recommend (146,576, above the max EVER observed) went out over a 128,000-token model and 400'd every call.
-    # Authority order via the SINGLE shared resolver (pricing.output_ceiling): published limits cache → live-/models
-    # catalog → the (poison-prone) learned fact → the absolute MAX_TOKEN_CEILING backstop when NOTHING knows the
-    # model. The backstop gives the Anthropic path (which has no downward heal) the same protection as OpenAI-compat:
-    # a poisoned recommend can never send an absurd budget on ANY provider. For an unknown-ceiling model on
-    # OpenAI-compat, the downward heal below still recovers a genuinely-lower real ceiling (and learns it — guarded
-    # to not overwrite a published one). The resolver strips the "provider:" prefix so the cap is never missed.
-    try:
-        _vendor = provider_for(model)           # only the (best-effort) catalog tier needs it; a provider-less,
-    except Exception:                           # unregistered model must still get clamped to the backstop, not
-        _vendor = None                          # raise here — the old chain caught this inside its try, so preserve it
-    _cap = pricing.output_ceiling(_vendor, model, MAX_TOKEN_CEILING)
-    max_tokens = min(int(max_tokens), int(_cap))
+    _mx0 = (bulkgate.maxtokens(_sig_key) or {}) if _sig_key else {}   # guardrail-E pre-call runaway norm (before this call lands)
+    # THE OUTPUT BUDGET — the ONE home (output_budget; docs/CANONICAL_CONCERNS.json). The caller's max_tokens is IGNORED
+    # for a normal call: spendguard owns the budget, which is the model's CEILING. max_output is billed on ACTUAL tokens,
+    # so a high ceiling is free and the ONLY failure is one set too LOW (it truncates). The ceiling already covers a
+    # structured JSON, a reasoning model's hidden tokens, and any prose length — so the old explicit / structured-floor /
+    # reasoning-floor / clamp branches all collapse into this one call. An internal tiny probe keeps its deliberate value.
+    if _explicit and not _internal_tiny:
+        _warn_once_caller_maxtokens(sig or model, int(max_tokens))    # caller cap IGNORED — spendguard sets the ceiling
+    max_tokens = output_budget(model, requested=max_tokens, internal_tiny=_internal_tiny)
+    _cap = output_budget(model)                     # the doubling ladder's upper bound == the ceiling; a truncation AT it
+    #                                                 means the output genuinely exceeds the model max (the jumbo case)
     attempt, budget = 0, int(max_tokens)
     while True:
         r = call(model, prompt, max_tokens=budget, _no_guard=True, no_substitution=_no_sub, **kw)

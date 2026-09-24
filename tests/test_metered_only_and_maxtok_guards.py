@@ -50,13 +50,14 @@ try:
 except ValueError as e:
     ck("metered_only without a pinned model raises ValueError", "metered_only" in str(e) and "pin" in str(e).lower())
 
-# ── (3) the caller-max_tokens warn: LOUD once per call-class, deduped ──
-print("-- (3) _warn_once_caller_maxtokens: floors + warns once per call-class --")
+# ── (3) the caller-max_tokens warn: a caller value is announced once per call-class, then deduped ──
+# The BEHAVIOUR is the contract (warn once, name the value, dedup thereafter); the exact wording is not asserted here.
+print("-- (3) _warn_once_caller_maxtokens: warns once per call-class, names the value, dedups --")
 adapters._MAXTOK_WARN_LEDGER.discard("mtok:cls")
-m1 = adapters._warn_once_caller_maxtokens("mtok:cls", 120, 32000)
-ck("first small-max_tokens on a class → a LOUD warning is returned", bool(m1) and "OMIT max_tokens" in m1)
-ck("the warning names the passed value and names the fix", "120" in m1 and "spendguard owns the output ceiling" in m1)
-m2 = adapters._warn_once_caller_maxtokens("mtok:cls", 120, 32000)
+m1 = adapters._warn_once_caller_maxtokens("mtok:cls", 120)
+ck("first caller max_tokens on a class → a non-empty warning that names the passed value (120)",
+   bool(m1) and "120" in m1)
+m2 = adapters._warn_once_caller_maxtokens("mtok:cls", 120)
 ck("same class again → deduped (no repeat warning)", m2 is None)
 
 print(f"\n{'[FAIL]' if _fails else 'OK'} test_metered_only_and_maxtok_guards: {len(_fails)} failure(s)")

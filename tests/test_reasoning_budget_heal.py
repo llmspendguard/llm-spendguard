@@ -1,18 +1,19 @@
-"""The reasoning-model BUDGET TRAP: hidden reasoning tokens consume max_tokens before a visible word is written, so
-an output cap sized from the VISIBLE answer (a caller's max_tokens_per=1200 from card length) yields an EMPTY reply
-that certifies as 'no card' and re-fires every run (measured ~90% of a describe backlog). spendguard must SELF-HEAL
-this — the caller should not have to know a model reasons.
+"""A reasoning model's OUTPUT BUDGET is the CEILING, so hidden reasoning tokens can never starve a real answer.
+
+Hidden reasoning tokens consume max_tokens before a visible word is written, so an output cap sized from the VISIBLE
+answer (a caller's max_tokens_per=1200) once yielded an EMPTY reply that certified as 'no card' and re-fired every run
+(measured ~90% of a describe backlog). The doctrine fix (docs/CANONICAL_CONCERNS.json: output_budget) is simple:
+spendguard IGNORES the caller's cap and sends the model's CEILING (max_output is billed on ACTUAL tokens, so the max is
+free). A reasoning model then has all the headroom it needs and answers on the FIRST call — no upward heal, because the
+call already starts at the max.
 
 Locked here:
-  • PREEMPTIVE FLOOR — a model that always reasons (models.reasons_by_default) is floored to TOKEN_FLOOR even when the
-    caller passed a small explicit max_tokens, so it succeeds on the FIRST call (a ceiling is billed on ACTUAL tokens);
-  • BACKSTOP HEAL — even a model we do NOT know reasons: an empty reply (out_tok>0, no text) JUMPS to the reasoning
-    floor and is NOT abandoned when `retries` runs out (retries bounds long-answer doublings, not the reasoning hump);
-  • LEARNING ends the re-fire — the empty attempt is recorded TRUNCATED (censored), the successful heal's large out_tok
-    becomes the learned recommend, so the NEXT call of the class starts high enough and never empties again;
-  • PROBES stay bounded — _probe=True skips both the floor and the growth (a reachability probe is one tiny shot);
-  • ORDINARY truncation still respects `retries` (a genuinely long answer is not grown without bound).
-Offline: the raw dispatch (_call_once), served-substitute, input-fit, output-ceiling are stubbed — no network, no spend.
+  • CEILING BUDGET — a reasoning model + a small caller cap → the cap is IGNORED, the ceiling is sent, it answers first try;
+  • JUMBO SURFACED — when the model's REAL ceiling is genuinely too small for reasoning+answer, the empty reply is
+    SURFACED as text=None (never a silent ''), in ONE attempt (there is nothing larger to grow into);
+  • LEARNING — the successful call's out_tok becomes the learned recommend (an ESTIMATE input, a separate concern);
+  • PROBES — _probe=True keeps the caller's deliberate tiny cap (one bounded shot), never the ceiling.
+Offline: raw dispatch (_call_once), served-substitute, input-fit, output-ceiling stubbed — no network, no spend.
 """
 import os
 import sys
@@ -35,7 +36,7 @@ def ck(name, cond):
 
 
 NEED = 20000          # the model needs this many completion tokens (reasoning + answer) before a visible word appears
-_budgets = []         # every max_tokens the raw leg was actually called with (proves floor + growth)
+_budgets = []         # every max_tokens the raw leg was actually called with (proves the ceiling is sent)
 
 
 def _fake_call_once(model, prompt, max_tokens=None, **kw):
@@ -49,16 +50,15 @@ def _fake_call_once(model, prompt, max_tokens=None, **kw):
     return {**base, "text": "", "out_tok": 8, "finish_reason": "stop"}     # reasoning ate it → empty visible answer
 
 
-# ── shared stubs (offline) ──
+# ── shared stubs (offline). The output ceiling is variable so we can drive both the roomy case and the jumbo case. ──
+_CEIL = {"v": 128000}
 adapters._call_once = _fake_call_once
 adapters._input_fits = lambda *a, **k: (True, "")
 adapters._book_substitution = lambda *a, **k: None
 vendor_call.served_substitute = lambda v, m: (m, None)
-adapters.pricing.output_ceiling = lambda vendor, model, backstop: 128000     # a generous model ceiling
+adapters.pricing.output_ceiling = lambda vendor, model, backstop, **kw: _CEIL["v"]   # the model's ceiling (tunable)
 _REASONS = {"on": True}
 models.reasons_by_default = lambda m: _REASONS["on"]
-
-FLOOR = adapters.TOKEN_FLOOR
 
 
 def _run(**kw):
@@ -66,50 +66,35 @@ def _run(**kw):
     return adapters.call("openai:gpt-5-nano", "describe this", **kw)
 
 
-# ── PREEMPTIVE FLOOR: a known reasoning model + a small explicit cap → floored, succeeds on the FIRST call ──
+# ── CEILING BUDGET: a reasoning model + a small caller cap → cap IGNORED, ceiling sent, answers on the first call ──
 _REASONS["on"] = True
-r = _run(max_tokens=1200, sig="describe-preempt")
-ck("a reasoning model's small explicit cap is floored to TOKEN_FLOOR up front", _budgets and _budgets[0] >= FLOOR)
-ck("...so it answers on the FIRST call (no empty, no retry)", r.get("text") == "REAL-ANSWER" and len(_budgets) == 1)
+_CEIL["v"] = 128000
+r = _run(max_tokens=1200, sig="describe-ceiling")
+ck("the small caller cap (1200) is IGNORED — the model's ceiling is sent", _budgets and _budgets[0] == 128000)
+ck("...so the reasoning model answers on the FIRST call (no empty, no retry)",
+   r.get("text") == "REAL-ANSWER" and len(_budgets) == 1)
 
-# ── BACKSTOP HEAL: a model we do NOT know reasons — the empty reply still jumps to the floor and recovers ──
-_REASONS["on"] = False
-r = _run(max_tokens=1200, sig="describe-backstop", retries=2)
-ck("an unknown-reasoning empty reply is NOT floored preemptively (first call uses the caller's cap)", _budgets[0] == 1200)
-ck("...but the empty reply JUMPS to the reasoning floor and recovers the answer", r.get("text") == "REAL-ANSWER" and max(_budgets) >= FLOOR)
+# ── JUMBO SURFACED: the model's REAL ceiling is genuinely below the reasoning need → empty at the ceiling → text=None ──
+_REASONS["on"] = True
+_CEIL["v"] = 8000            # < NEED(20000): even at the max, reasoning+answer does not fit — the jumbo case
+r = _run(max_tokens=1200, sig="describe-jumbo")
+ck("at the ceiling (8000 < need) the empty reply is SURFACED as text=None, not a silent ''", r.get("text") is None)
+ck("...in ONE attempt — there is nothing larger to grow into (the ceiling IS the max)",
+   len(_budgets) == 1 and _budgets[0] == 8000)
 
-# ── retries does NOT bound a reasoning-empty: even retries=0 grows past the hump ──
-_REASONS["on"] = False
-r = _run(max_tokens=1200, sig="describe-retries0", retries=0)
-ck("a reasoning-empty grows even with retries=0 (retries bounds long-answer doublings, not the reasoning hump)",
-   r.get("text") == "REAL-ANSWER" and len(_budgets) >= 2)
-
-# ── LEARNING ends the re-fire: the successful heal's out_tok becomes the learned recommend (empty sample censored) ──
-_sig_key = bulkgate.sig("openai:gpt-5-nano", template_id="describe-backstop")
+# ── LEARNING: a successful call's out_tok becomes the recommend (the ESTIMATE input — a different concern from the budget) ──
+_CEIL["v"] = 128000
+_run(sig="describe-learn")                                  # succeeds first call, out_tok=NEED
+_sig_key = bulkgate.sig("openai:gpt-5-nano", template_id="describe-learn")
 _rec = int((bulkgate.maxtokens(_sig_key) or {}).get("recommend") or 0)
-ck("the learned recommend reflects the REAL need (empty sample censored, not learned as an 8-token output)", _rec >= NEED)
+ck("the learned recommend reflects the real out_tok (for the estimate, not the budget)", _rec >= NEED)
 
-# ── PROBES stay bounded: _probe=True skips the floor AND the growth (one tiny shot) ──
+# ── PROBES: _probe=True keeps the caller's deliberate tiny cap (one bounded shot), never the ceiling ──
 _REASONS["on"] = True
+_CEIL["v"] = 128000
 r = _run(max_tokens=1200, sig="describe-probe", _probe=True)
-ck("a probe is NOT floored (stays at the caller's tiny cap)", _budgets[0] == 1200)
-ck("...and a probe does NOT grow on empty (one shot; returns text=None, never balloons)", r.get("text") is None and len(_budgets) == 1)
-
-# ── ORDINARY truncation (a genuinely long answer, not reasoning-empty) still respects `retries` ──
-_trunc_budgets = []
-
-
-def _always_truncates(model, prompt, max_tokens=None, **kw):
-    _trunc_budgets.append(int(max_tokens))
-    return {"provider": "openai", "model": "m", "text": "partial…", "out_tok": int(max_tokens), "cost": 0.01,
-            "executor": "api", "error": None, "latency": 0.1, "in_tok": 10, "finish_reason": "length"}
-
-
-adapters._call_once = _always_truncates
-_REASONS["on"] = False
-r = _run(max_tokens=1000, sig="describe-trunc", retries=2)
-ck("a genuine (non-empty) truncation still stops after `retries` doublings — not grown without bound",
-   r.get("text") is None and len(_trunc_budgets) == 3)      # initial + 2 retries
+ck("a probe keeps the caller's tiny cap (1200), not the ceiling", _budgets[0] == 1200)
+ck("...one shot, and an empty is surfaced as text=None (never balloons)", r.get("text") is None and len(_budgets) == 1)
 
 print(("[OK]" if not fails else "[FAIL]") + " reasoning budget heal: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)

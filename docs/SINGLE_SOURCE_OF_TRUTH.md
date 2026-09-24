@@ -31,7 +31,7 @@ style preference — it is the same standing as no-hardcoding and name-uniquenes
 
 ## The methodology (identify → resolve), standardized
 
-1. **Identify** — the `single_source_of_truth` honestreview doctrine flags a diff that (a) re-implements a REGISTERED
+1. **Identify** — the `canonical_concerns` honestreview doctrine flags a diff that (a) re-implements a REGISTERED
    concern outside its home, or (b) duplicates, *by meaning*, a capability that already exists anywhere in the repo.
 2. **Choose the home** — the owning module (placement convention above).
 3. **Consolidate** — move the logic to the home; every caller calls it. No inline copies remain.
@@ -46,7 +46,7 @@ same job" by meaning, exactly as the DECISIONS-ALWAYS-AGENTIC doctrine requires)
 
 - **Registry layer (deterministic):** for a REGISTERED concern, a cheap home-check — its telltale operations must appear
   only in its home. `test_canonical_concerns.py` runs this in the suite; a new site fails it.
-- **Agentic layer (complete):** the honestreview `single_source_of_truth` doctrine judges EVERY diff for duplication of
+- **Agentic layer (complete):** the honestreview `canonical_concerns` doctrine judges EVERY diff for duplication of
   ANY existing capability, registered or not — the layer that catches the *novel* duplication a registry can't foresee.
 
 The registry makes the known cases fast and deterministic; the agentic layer makes coverage complete.
@@ -55,11 +55,11 @@ The registry makes the known cases fast and deterministic; the agentic layer mak
 
 | Piece | Home | Role |
 |---|---|---|
-| The doctrine (LLM-judged, reusable) | **honestreview** (`single_source_of_truth`) | repo-agnostic engine, write-time block |
+| The doctrine (LLM-judged, reusable) | **honestreview** (`canonical_concerns`) | repo-agnostic engine, write-time block |
 | The registry `{concern → home}` | **this repo** `docs/CANONICAL_CONCERNS.json` | the per-repo data the doctrine reads |
 | The suite gate | **this repo** `tests/test_canonical_concerns.py` | deterministic home-check for registered concerns |
 
-## The doctrine prompt (honestreview `single_source_of_truth`)
+## The doctrine prompt (honestreview `canonical_concerns`)
 
 > You review a code diff for the single-source-of-truth invariant: every distinct CAPABILITY has exactly one home, and
 > all callers use it. Inputs: the diff, `docs/CANONICAL_CONCERNS.json` (`{concern → home, description, telltale}`), and
