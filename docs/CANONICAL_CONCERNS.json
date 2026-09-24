@@ -1,0 +1,54 @@
+{
+  "_doc": "The single-source-of-truth registry: each CAPABILITY has exactly ONE home; all callers use it. Read by the honestreview `single_source_of_truth` doctrine (write-time) and tests/test_canonical_concerns.py (suite). Adding a concern is a deliberate act: give it a home, a one-line description, and a `telltale` (what its operations look like, so a reviewer can locate candidate sites). `status`: 'enforced' = one home today, the gate checks it; 'consolidating' = home chosen, callers still being moved. See docs/SINGLE_SOURCE_OF_TRUTH.md.",
+  "concerns": [
+    {
+      "concern": "output_ceiling",
+      "home": "spendguard/pricing.py::output_ceiling",
+      "description": "A model's maximum OUTPUT tokens (published cache > live catalog > learned-fact-floored > backstop); NEVER below OUTPUT_FLOOR unless a genuinely-published max is lower. The ceiling is not the cost.",
+      "telltale": "resolving or clamping a per-model output-token ceiling / max_output for a call or estimate",
+      "status": "enforced"
+    },
+    {
+      "concern": "output_budget",
+      "home": "spendguard/adapters.py::output_budget",
+      "description": "The OUTPUT max_tokens actually SENT for a call: the ceiling (output_ceiling) as the cap, the 32K floor as the minimum, scaled to the classified output type; the CALLER'S requested max_tokens is IGNORED (spendguard owns it). Every send path calls this — none decides the budget itself.",
+      "telltale": "deciding the max_tokens value to send on a model call (floor/ceiling/caller-value/recommend math)",
+      "status": "consolidating"
+    },
+    {
+      "concern": "input_fits",
+      "home": "spendguard/adapters.py::_input_fits",
+      "description": "Whether the INPUT fits the model's input window — REFUSES an over-window input, never truncates it. Input is never silently clipped anywhere.",
+      "telltale": "checking or bounding input/prompt size against a model input window; any slice of prompt/content fed to a model",
+      "status": "enforced"
+    },
+    {
+      "concern": "effort_resolution",
+      "home": "spendguard/models.py::normalize_reasoning",
+      "description": "Mapping a requested reasoning tier (minimal|low|medium|high) to the reasoning_effort value a given model actually accepts (only the floor varies per model).",
+      "telltale": "translating a reasoning tier to a wire reasoning_effort per model",
+      "status": "enforced"
+    },
+    {
+      "concern": "pricing",
+      "home": "spendguard/pricing.py",
+      "description": "$/token and realtime/batch cost from token counts; the single price table and cost math.",
+      "telltale": "computing dollars from token counts, or reading per-token rates",
+      "status": "enforced"
+    },
+    {
+      "concern": "deliberate_stop",
+      "home": "spendguard/gate.py::is_deliberate_stop",
+      "description": "The canonical predicate for 'this exception IS a deliberate spend/budget refusal or deadline that must propagate, never be swallowed by a fail-open handler.'",
+      "telltale": "deciding whether an exception is a deliberate stop / refusal to re-raise",
+      "status": "enforced"
+    },
+    {
+      "concern": "admission_state",
+      "home": "spendguard/dispatch.py::admission_state",
+      "description": "The ONE $0 snapshot of the admission + queue + reasoning-economics picture that the CLI (`spendguard dispatch`) and the MCP tool render identically.",
+      "telltale": "assembling the governor/queue/learned-limits/counters observability snapshot",
+      "status": "enforced"
+    }
+  ]
+}
