@@ -528,10 +528,22 @@ def _pctl(vals, p):
     return None if q is None else int(q)
 
 
-def maxtokens(sig, current_max=None):
+# A REASONING model with NO measurements yet: seed its output estimate with a reasoning-INCLUSIVE floor, not a naive
+# visible-answer guess. Reasoning (thinking) tokens bill as OUTPUT, so a per_out sized from the visible answer
+# under-counts them badly — measured, a per_out=160 estimate came in ~9x low on gpt-5.5 ($51.88 vs $13.69). Conservative
+# (leans over, never the naive under) and replaced by the measured p99 the moment real calls land. Override:
+# bulkgate.reasoning_out_estimate config.
+REASONING_OUT_ESTIMATE = 4000
+
+
+def maxtokens(sig, current_max=None, model=None):
     """Data-driven max_tokens bound for a call-class from its OBSERVED output distribution — turns 'guess' into
     'measure'. Returns {n, p50, p95, p99, max, recommend=p99*1.5, truncations, warn}. warn if current_max < p95
-    (TRUNCATION RISK) or >> p99 (cost-estimate inflation → false cap trips). For packed calls, feed per-ITEM out_tok."""
+    (TRUNCATION RISK) or >> p99 (cost-estimate inflation → false cap trips). For packed calls, feed per-ITEM out_tok.
+    `model` (optional): when a class has NO measurements yet AND the model REASONS (models.reasons_by_default), the
+    recommend is seeded with the reasoning-inclusive REASONING_OUT_ESTIMATE instead of None — so a first estimate can
+    never come back naive-low for a reasoning model (the measured p95/p99, which already INCLUDE reasoning tokens,
+    replace it as soon as real calls land)."""
     with _lock:
         rows = _gate_calls_db().execute("SELECT out_tok,truncated FROM gate_calls WHERE sig=? AND out_tok>0", (sig,)).fetchall()
     # CENSORING: a truncated response was cut AT its cap, so its out_tok measures the CAP, not the work.
@@ -542,11 +554,24 @@ def maxtokens(sig, current_max=None):
     trunc_outs = [r[0] for r in rows if r[1]]
     trunc = sum(1 for r in rows if r[1])
     if not outs:
+        _rec = int(max(trunc_outs) * 2) if trunc_outs else None
+        _warn = ("every observed output was TRUNCATED — the cap is too low to measure the real size"
+                 if trunc_outs else None)
+        if _rec is None and model is not None:
+            try:
+                from . import models as _m
+                if _m.reasons_by_default(model):        # a reasoning model with no history → seed reasoning-inclusive,
+                    _rec = int(os.getenv("SPENDGUARD_BULKGATE_REASONING_OUT_ESTIMATE")   # env → config → default, so the
+                               or config._cfg_get("bulkgate", "reasoning_out_estimate",  # knob is consistent across all
+                                                  REASONING_OUT_ESTIMATE) or REASONING_OUT_ESTIMATE)   # three surfaces
+                    _warn = ("%s reasons (hidden reasoning tokens bill as OUTPUT) and this class has no measurements "
+                             "yet — size the estimate at >= %d output tokens, NOT a small visible-answer figure "
+                             "(that under-counts reasoning by ~10x — the measured gpt-5.5 miss)." % (model, _rec))
+            except Exception:
+                pass
         return {"sig": sig, "n": 0, "n_truncated": trunc, "p90": None,
                 "trunc_rate": (trunc / float(len(rows)) if rows else 0.0),
-                "recommend": (int(max(trunc_outs) * 2) if trunc_outs else None), "truncations": trunc,
-                "warn": ("every observed output was TRUNCATED — the cap is too low to measure the real size"
-                         if trunc_outs else None)}
+                "recommend": _rec, "truncations": trunc, "warn": _warn}
     p90, p95, p99 = _pctl(outs, 0.90), _pctl(outs, 0.95), _pctl(outs, 0.99)
     warn = None
     if current_max is not None:

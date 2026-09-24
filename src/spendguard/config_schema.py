@@ -380,6 +380,13 @@ SETTINGS = [
               "Retry-After: 86400) can never wedge a vendor in an endless cooldown. The learned tokens/minute LIMIT "
               "itself self-heals differently — every success re-observes the real limit and overwrites a transient "
               "reading (latest-wins), so an intermittent bad limit is corrected by the next normal call."),
+    dict(section="bulkgate", key="reasoning_out_estimate", store="config.json:bulkgate.reasoning_out_estimate",
+         env="SPENDGUARD_BULKGATE_REASONING_OUT_ESTIMATE", default=4000, kind="int", secret=False,
+         desc="Output-token estimate SEED for a REASONING model's call-class that has NO measurements yet. Reasoning "
+              "(thinking) tokens bill as OUTPUT, so an estimate sized from the visible answer under-counts them badly "
+              "(measured: a per_out=160 estimate came in ~9x low on gpt-5.5). bulkgate.maxtokens(sig, model=...) returns "
+              "this reasoning-inclusive floor instead of None until real calls land, then the measured p99 (which "
+              "already includes reasoning tokens) replaces it. Conservative by design — leans over, never naive-under."),
     dict(section="ask", key="default_vendors", store="config.json:ask.default_vendors",
          env="SPENDGUARD_ASK_DEFAULT_VENDORS", default=None, kind="string|null", secret=False,
          desc="Default cross-LLM panel for `spendguard.ask` / `spendguard ask` when the caller names none — a "

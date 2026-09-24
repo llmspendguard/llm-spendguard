@@ -319,12 +319,21 @@ def _dispatch(argv=None):
     if cmd == "maxtokens":                              # data-driven max_tokens bound for a call-class sig
         from . import bulkgate
         if not rest:
-            print("usage: spendguard maxtokens <sig> [current_max]   (sig from a TRUNCATED warning, or bulkgate.sig(...))")
+            print("usage: spendguard maxtokens <sig> [current_max] [provider:model]   (sig from a TRUNCATED warning, "
+                  "or bulkgate.sig(...); pass the model to get a reasoning-inclusive seed when the class is unmeasured)")
             return 2
-        cur = int(rest[1]) if len(rest) > 1 and str(rest[1]).isdigit() else None
-        mt = bulkgate.maxtokens(rest[0], current_max=cur)
+        cur = next((int(a) for a in rest[1:] if str(a).isdigit()), None)
+        _model = next((a for a in rest[1:] if ":" in str(a)), None)   # provider:model → reasoning-aware seed (#1)
+        mt = bulkgate.maxtokens(rest[0], current_max=cur, model=_model)
         if not mt.get("n"):
-            print(f"no observed outputs for sig {rest[0]} yet (run a few calls first; truncations seen: {mt.get('truncations',0)})")
+            if mt.get("recommend"):        # unmeasured but a reasoning model → a reasoning-INCLUSIVE seed, not a guess
+                print(f"no measured outputs for sig {rest[0]} yet — SEEDED (reasoning-inclusive): recommend "
+                      f"max_tokens = {mt['recommend']}")
+            else:
+                print(f"no observed outputs for sig {rest[0]} yet (run a few calls first; truncations seen: "
+                      f"{mt.get('truncations',0)}). Pass the provider:model to seed a reasoning-aware estimate.")
+            if mt.get("warn"):
+                print(f"  ⚠ {mt['warn']}")
             return 0
         print(f"sig {mt['sig']}  n={mt['n']}  truncations={mt['truncations']}")
         print(f"  output tokens: p50={mt['p50']}  p95={mt['p95']}  p99={mt['p99']}  max={mt['max']}")

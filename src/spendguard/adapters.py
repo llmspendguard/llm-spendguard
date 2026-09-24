@@ -2451,6 +2451,8 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
     _is_sig = isinstance(sig, str) and len(sig) == 16 and all(c in "0123456789abcdef" for c in sig)
     _sig_key = (sig if _is_sig else bulkgate.sig(model, template_id=sig)) if sig else None
     _predicted = int((bulkgate.maxtokens(_sig_key) or {}).get("recommend") or 0) if _sig_key else 0
+    # (the reasoning SEED in maxtokens(model=) is an ESTIMATE feature — the CALL budget already floors a reasoning
+    #  model to TOKEN_FLOOR via reasons_by_default below, so the seed would be dominated here; not passed on this path.)
     if _structured:
         # JSON must have room to close its braces. Floor to real room WHATEVER the caller passed — a schema reply
         # cut low is corrupt, not short (see _structured above). A prose caller's small explicit cap is honored
