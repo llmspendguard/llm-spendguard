@@ -369,7 +369,8 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
                   schema=None, expect_ids=None, gate_sig=None, lanes=None, images_for=None, vision_model=None,
                   model_for=None, prompt_for=None, task_key=None, return_keyed=False,
                   on_miss=None, batch_submit=None, batch_model=None, batch_cap=None,
-                  hedge_ms=None, strategy=None, metered_only=False, sla_class=None, record_route=True):
+                  hedge_ms=None, strategy=None, metered_only=False, sla_class=None, record_route=True,
+                  budget_usd=None):
     """Fan a LIST of similar tasks across ALL viable idle lanes CONCURRENTLY — the right shape for a BULK job (e.g.
     symgrep's ~6k one-sentence symbol descriptions) that the per-call bandit would trickle one at a time. Each task
     runs on a lane (round-robin across the lanes the bandit rates GOOD for this intent), each admission BOUNDED by
@@ -853,7 +854,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
         # (a pinned/vision matrix always rides the metered API), else None when served. No error row is ever reason-less.
         _row_reason = r.get("reason") or ("api_error" if r.get("error") else None)
         row = {"text": (r.get("text") or None), "lane": r.get("executor") or "api", "use_name": _sm,
-               "model": f"{_sp}:{_sm}", "billed": bool(r.get("cost")),
+               "model": f"{_sp}:{_sm}", "billed": bool(r.get("cost")), "cost": r.get("cost"),   # actual $ → guardrail D
                "served_by_metered_api": (r.get("executor") or "api") in ("api", "api-fallback"),
                # PARITY AUDIT: the reasoning tier REQUESTED and the effort the call reports it APPLIED. On this
                # metered pinned runner they match the serial adapters.call exactly (same model, same reasoning) — so a
@@ -946,7 +947,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
         # state — which branch produced it — not a judgement about the text).
         _row_reason = r.get("reason") or ("api_error" if r.get("error") else None)
         row = {"text": (r.get("text") or None), "lane": served_lane, "use_name": served_model,
-               "model": f"{served_prov}:{served_model}", "billed": bool(r.get("cost")),
+               "model": f"{served_prov}:{served_model}", "billed": bool(r.get("cost")), "cost": r.get("cost"),  # actual $ → D
                # `billed`=cost>0 (true for a costing key-lane too); THIS is the field to prove metered-API service —
                # a lane miss fell through to the paid provider. A $0 or costing LANE is served_by_metered_api=False.
                "served_by_metered_api": served_lane in ("api", "api-fallback"),
@@ -1025,8 +1026,19 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
             return _attempt_on_lane(i, task, lane, use_name, refuse_billed)
         return _hedged_attempt(i, task, lane, use_name)
 
+    # GUARDRAIL D — budget_usd is a REAL RUNNING CAP, not an upfront estimate-gate: accumulate the ACTUAL cost of each
+    # settled result and STOP SUBMITTING once the cap is committed, so a mis-estimated fan (the gpt-5.5 15x overspend)
+    # can't spend to N. Never cancels an in-flight call (a completed request still bills — the doctrine). The unissued
+    # remainder is returned as a NAMED budget_exhausted row (honest short, never a silent stop). Overshoot is bounded
+    # by one chunk, so a tight cap wants a small chunk_size.
+    _budget = float(budget_usd) if budget_usd else None
+    _spent = 0.0
+    _stopped_at = None
     # CHUNKED: bound how many futures are in flight at once, and make each chunk's results durable before the next.
     for c0 in range(0, len(todo), max(1, int(chunk_size))):
+        if _budget is not None and _spent >= _budget:    # cap committed → issue no more (in-flight already ran)
+            _stopped_at = c0
+            break
         chunk = todo[c0:c0 + max(1, int(chunk_size))]
         with _cf.ThreadPoolExecutor(max_workers=max(1, n)) as ex:
             _fut_idx = {ex.submit(_run_task_on_lane, i, tasks[i]): i for i in chunk}
@@ -1043,7 +1055,18 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
                     i, res = _fut_idx[fut], {"text": None, "lane": "?", "use_name": "?", "model": "?", "billed": False,
                                              "reason": "task_crashed", "error": f"{type(_e).__name__}: {str(_e)[:70]}"}
                 results[i] = res
+                _spent += float(res.get("cost") or 0.0)      # ACTUAL cost drives the cap — never an estimate
                 _checkpoint(i, res)
+    if _stopped_at is not None:                              # everything from the stop point on was NEVER issued
+        import sys as _sysbd
+        _left = todo[_stopped_at:]
+        print("[spendguard] bulk_delegate: budget cap $%.2f reached (spent $%.2f) — %d task(s) UNISSUED (not spent "
+              "to N; in-flight calls that already ran still bill)." % (_budget, _spent, len(_left)), file=_sysbd.stderr)
+        for i in _left:
+            results[i] = {"text": None, "lane": None, "use_name": None, "model": None, "billed": False,
+                          "reason": "budget_exhausted",
+                          "error": "budget cap $%.2f reached (spent $%.2f) — task unissued" % (_budget, _spent)}
+            _checkpoint(i, results[i])
 
     # on_miss="batch": the lanes ran with NO realtime fallback; take the MISS SET (rows with no text) as ONE group
     # and degrade it toward BATCH, not per-task realtime. With batch_submit, submit the whole remainder ONCE and
