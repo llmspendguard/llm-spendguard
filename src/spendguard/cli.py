@@ -372,6 +372,11 @@ def _dispatch(argv=None):
             print("effort pins NOT honored (guardrail A — 'minimal' remapped to a floor that still reasons; no saving):")
             for k, n in ue.items():
                 print("  %-26s x%s" % (k, n))
+        rw = st.get("runaways") or {}
+        if rw:
+            print("per-call RUNAWAYS (guardrail E — out_tok >> the measured p99 norm; the loose ceiling never cut it):")
+            for k, n in rw.items():
+                print("  %-26s x%s" % (k, n))
         return 0
     if cmd == "config":
         from . import setup

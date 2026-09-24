@@ -2476,7 +2476,9 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
     # derive the per-model key. (Rescues the workaround that warden and any similar consumer built for the old defect.)
     _is_sig = isinstance(sig, str) and len(sig) == 16 and all(c in "0123456789abcdef" for c in sig)
     _sig_key = (sig if _is_sig else bulkgate.sig(model, template_id=sig)) if sig else None
-    _predicted = int((bulkgate.maxtokens(_sig_key) or {}).get("recommend") or 0) if _sig_key else 0
+    _mx0 = (bulkgate.maxtokens(_sig_key) or {}) if _sig_key else {}   # the class's PRE-call output norm — reused below
+    _predicted = int(_mx0.get("recommend") or 0)                      # by guardrail E so a runaway can't inflate its OWN
+    #                                                                   baseline (the p99 is read BEFORE this call lands)
     # (the reasoning SEED in maxtokens(model=) is an ESTIMATE feature — the CALL budget already floors a reasoning
     #  model to TOKEN_FLOOR via reasons_by_default below, so the seed would be dominated here; not passed on this path.)
     if _structured:
@@ -2563,6 +2565,11 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
                 _fr = "length" if r.get("empty_answer") else r.get("finish_reason")
                 bulkgate.note_response(_sig_key, model, r.get("out_tok") or 0, max_tokens=budget,
                                        finish_reason=_fr)   # per-model key (see _sig_key above)
+                # GUARDRAIL E — PER-CALL RUNAWAY BREAKER. out_tok many times the class's MEASURED p99 (norm read
+                # PRE-call as _mx0, so the runaway can't inflate its own baseline) is a runaway the loose reasoning
+                # ceiling never truncates — record it so it is VISIBLE (never aborted: a cut reasoning call still bills
+                # for nothing; guardrail D's budget_usd cap bounds the $). No-op without a trustworthy norm.
+                bulkgate.check_runaway(_sig_key, model, r.get("out_tok") or 0, norm=_mx0)
             except Exception:
                 pass                                          # telemetry must not break the call
         if not trunc:

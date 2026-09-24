@@ -587,6 +587,14 @@ def _pctl(vals, p):
 # bulkgate.reasoning_out_estimate config.
 REASONING_OUT_ESTIMATE = 4000
 
+# GUARDRAIL E — PER-CALL RUNAWAY BREAKER. A completed call whose out_tok is many times the MEASURED norm for its class
+# is a runaway (the gpt-5.5 incident: ~4,249 out tok where the coarse-class norm was ~121). Trip when out_tok exceeds
+# RUNAWAY_FACTOR x the measured p99 — measured, never a guessed absolute, so it cannot false-trip a class whose real
+# outputs are large. RUNAWAY_MIN_SAMPLES guards against a p99 built from too few calls (an unstable norm must not
+# accuse). Both are overridable (env → config → default), consistent with every other bulkgate knob.
+RUNAWAY_FACTOR_DEFAULT = 3.0     # out_tok > 3x the class p99 ⇒ a runaway (well beyond normal variance, below noise)
+RUNAWAY_MIN_SAMPLES = 20         # need at least this many measured outputs before a p99 is trustworthy enough to accuse
+
 
 def maxtokens(sig, current_max=None, model=None):
     """Data-driven max_tokens bound for a call-class from its OBSERVED output distribution — turns 'guess' into
@@ -660,6 +668,102 @@ def model_outputs(model):
     return {"model": model, "n": len(outs), "p50": _pctl(outs, 0.50), "p90": _pctl(outs, 0.90),
             "p99": _pctl(outs, 0.99), "n_classes": len({r[0] for r in _gate_calls_db().execute(
                 "SELECT DISTINCT sig FROM gate_calls WHERE model=? AND out_tok>0", (model,)).fetchall()})}
+
+
+def _runaway_factor():
+    """The runaway trip multiple (out_tok > factor x p99), env → config → default — one knob, three surfaces."""
+    try:
+        return float(os.getenv("SPENDGUARD_BULKGATE_RUNAWAY_FACTOR")
+                     or config._cfg_get("bulkgate", "runaway_factor", RUNAWAY_FACTOR_DEFAULT) or RUNAWAY_FACTOR_DEFAULT)
+    except Exception:
+        return RUNAWAY_FACTOR_DEFAULT
+
+
+class _RunawayCounter:
+    """Process-local per-(model, sig) runaway-trip counts. self IS the container its methods receive (no free-function
+    module mutation) — the admission snapshot reads it cross-call, so the breaker is queryable, not just printed.
+    Process-local by design (resets on restart); thread-safe (a fan trips concurrently)."""
+    def __init__(self):
+        self._counts = {}
+        self._lock = threading.Lock()
+
+    def bump(self, key):
+        """Atomically record one trip for `key`, returning the running count (committed before any caller I/O)."""
+        with self._lock:
+            n = self._counts.get(key, 0) + 1
+            self._counts[key] = n
+            return n
+
+    def snapshot(self):
+        with self._lock:
+            return dict(self._counts)
+
+
+_RUNAWAYS = _RunawayCounter()
+
+
+def note_runaway(sig, model, out_tok, norm_p99, basis):
+    """GUARDRAIL E — record + SURFACE, un-swallowably, a PER-CALL RUNAWAY: a completed call whose out_tok is many times
+    the MEASURED p99 norm for its class. A reasoning model can emit thousands of tokens that bill as output while the
+    output ceiling — deliberately loose so reasoning has headroom — never truncates it (the gpt-5.5 incident: ~4,249
+    out tok vs a ~121 norm, billed in full x N). The breaker does NOT abort mid-call (a cancelled reasoning call still
+    BILLS what it generated and returns nothing — the worst spend there is, see note_deadline_cancel); it TRIPS and
+    records so the runaway is VISIBLE, while guardrail D's budget_usd cap bounds the dollars. Counted per (model, sig)
+    and announced at decade boundaries, carrying the fix. Never raises. Returns the count. Measured norm only — never a
+    guessed absolute — so it cannot accuse a class whose real outputs are large."""
+    import sys
+    n = _RUNAWAYS.bump("%s|%s" % (model, sig))   # the RECORD is committed HERE — before any I/O — survives a bad stderr
+    if n not in _TRUNC_ANNOUNCE:                  # print OUTSIDE the count update (never announce every trip)
+        return n
+    try:                                          # the count is already recorded; the announce line is best-effort
+        print("[bulkgate] RUNAWAY x%d on %s (%s): a call emitted %s output tokens — >%.1fx the measured %s p99 of %s "
+              "(reasoning bills as output; the loose ceiling never truncates it). NOT aborted (a cut reasoning call "
+              "still bills for nothing); recorded so it is visible. Fix: route this class to a model whose 'minimal' is "
+              "honored, or accept it — guardrail D's budget_usd cap bounds the $." % (
+              n, model, sig, out_tok, _runaway_factor(), basis, norm_p99), file=sys.stderr)
+    except Exception:                             # a closed/broken stderr must not lose the (already-recorded) trip
+        pass
+    return n
+
+
+def runaways():
+    """The per-(model, sig) count of per-call runaway trips this process (guardrail E — out_tok >> the measured p99) —
+    a read-only snapshot for the observability surfaces (CLI `spendguard dispatch` / MCP spendguard_dispatch_state), so
+    the breaker is queryable, not just printed. Process-local (resets on restart); {} when none. $0."""
+    return _RUNAWAYS.snapshot()
+
+
+def check_runaway(sig, model, out_tok, norm=None):
+    """GUARDRAIL E's COST-ANOMALY TEST — is this completed call's out_tok a statistical OUTLIER vs the class's MEASURED
+    token-count distribution? This is ARITHMETIC on billed tokens (tokens = dollars), NOT a semantic judgement of the
+    response: it reads NO content and renders NO verdict on the answer's quality — a 4,249-token reply costs ~35x a
+    121-token one whether its content is good or bad, and the COST is the fact being monitored. So a measured threshold
+    (out_tok > factor x p99) is the right tool, exactly as a p99-latency alert is — not an LLM meaning-call per request.
+    Trips (records via note_runaway) only when a TRUSTWORTHY norm exists: the per-class p99 (>= RUNAWAY_MIN_SAMPLES measured outputs),
+    else the per-MODEL p99 as a wider fallback (the incident's class was cold but the model was warm). No trustworthy
+    norm (a genuinely cold class AND model) ⇒ NO trip — the honest answer is 'cannot judge yet', with guardrail D as the
+    $ backstop, never a guessed absolute ceiling that would false-accuse. `norm` may pass a pre-recorded maxtokens(sig)
+    dict so the runaway can't inflate its OWN baseline. Returns (tripped, detail). Never raises."""
+    try:
+        ot = int(out_tok or 0)
+        if ot <= 0 or not sig:
+            return False, None
+        factor = _runaway_factor()
+        _mx = norm if isinstance(norm, dict) else (maxtokens(sig) or {})
+        p99 = _mx.get("p99")
+        n = int(_mx.get("n") or 0)
+        basis = "class"
+        if not (p99 and n >= RUNAWAY_MIN_SAMPLES):     # class norm not trustworthy → widen to the model's own p99
+            _mo = model_outputs(model) or {}
+            p99, n, basis = _mo.get("p99"), int(_mo.get("n") or 0), "model"
+        if not (p99 and n >= RUNAWAY_MIN_SAMPLES):     # neither is trustworthy → cannot judge (D is the $ backstop)
+            return False, None
+        if ot > factor * float(p99):
+            note_runaway(sig, model, ot, int(p99), basis)
+            return True, {"out_tok": ot, "p99": int(p99), "basis": basis, "factor": factor}
+        return False, None
+    except Exception:
+        return False, None                             # telemetry must never break the call
 
 
 def truncated_recently(sig, window_sec=None):

@@ -23,8 +23,8 @@ def ck(label, cond):
 # ── (1) the assembler + its two renderers agree (the parity core) ──
 print("-- (1) admission_state is the ONE source; MCP + CLI render the same keys --")
 st = dispatch.admission_state()
-ck("assembler has all six sections", set(st) == {"manage_all", "governor", "learned_limits", "queue",
-                                                  "deadline_cancels", "unhonored_efforts"})
+ck("assembler has all seven sections", set(st) == {"manage_all", "governor", "learned_limits", "queue",
+                                                    "deadline_cancels", "unhonored_efforts", "runaways"})
 ck("queue depth includes PARKED (Step-4 backpressure is visible)", "parked" in (st.get("queue") or {}))
 
 tool = mcp_server._TOOLS["spendguard_dispatch_state"][2]({})
@@ -42,7 +42,8 @@ print("-- (2) MCP spendguard_config exposes the new knobs (with current values) 
 cfg = mcp_server._TOOLS["spendguard_config"][2]({})
 keys = {k["key"] for k in cfg["knobs"]}
 for knob in ("dispatch.manage_all", "dispatch.cooldown_cap_s", "advisor.queue_park_backoff_s",
-             "advisor.queue_max_parks", "bulkgate.reasoning_out_estimate", "advisor.reasoning_deadline_floor_s"):
+             "advisor.queue_max_parks", "bulkgate.reasoning_out_estimate", "advisor.reasoning_deadline_floor_s",
+             "bulkgate.runaway_factor"):
     ck(f"MCP config exposes {knob}", knob in keys)
 ck("every listed knob carries a current value + a description", all("value" in k and k.get("desc") for k in cfg["knobs"]))
 _secret_keys = {"%s.%s" % (s["section"], s["key"]) for s in config_schema.SETTINGS if s.get("secret")}

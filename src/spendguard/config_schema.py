@@ -387,6 +387,15 @@ SETTINGS = [
               "(measured: a per_out=160 estimate came in ~9x low on gpt-5.5). bulkgate.maxtokens(sig, model=...) returns "
               "this reasoning-inclusive floor instead of None until real calls land, then the measured p99 (which "
               "already includes reasoning tokens) replaces it. Conservative by design — leans over, never naive-under."),
+    dict(section="bulkgate", key="runaway_factor", store="config.json:bulkgate.runaway_factor",
+         env="SPENDGUARD_BULKGATE_RUNAWAY_FACTOR", default=3.0, kind="float", secret=False,
+         desc="Guardrail E per-call RUNAWAY multiple: a completed call whose out_tok exceeds this factor x the MEASURED "
+              "p99 for its class (or its model, when the class is cold) is recorded as a runaway (bulkgate.check_runaway "
+              "→ note_runaway → runaways(), shown on `spendguard dispatch`). A reasoning model can emit thousands of "
+              "tokens that bill as output while the loose reasoning ceiling never truncates them (the gpt-5.5 incident: "
+              "~4,249 out tok vs a ~121 norm). Measured norm only — never a guessed absolute — so it can't accuse a "
+              "class whose real outputs are large; it never aborts (a cut reasoning call still bills), only surfaces, "
+              "with budget_usd (guardrail D) as the $ backstop. Needs >= 20 measured outputs before it will accuse."),
     dict(section="advisor", key="reasoning_deadline_floor_s", store="config.json:advisor.reasoning_deadline_floor_s",
          env="SPENDGUARD_ADVISOR_REASONING_DEADLINE_FLOOR_S", default=90, kind="int", secret=False,
          desc="Deadline floor (seconds) for a REASONING model's call-class that has NO latency measurement yet. A "
