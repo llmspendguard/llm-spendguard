@@ -49,7 +49,9 @@ ck("returns the internal's (seconds, basis) unchanged", (sec, basis) == (123.0, 
 
 # real integration (no monkeypatch): no measurement → a NON-measured basis, never an invented number
 su, bu = adapters.deadline_for("gpt-5.5", intent="never-seen-intent-xyz")
-ck("no measurement → basis is 'unknown' or 'lane-floor' (never a fabricated measured number)", bu in ("unknown", "lane-floor"))
+ck("no measurement → an explicit non-measured basis (unknown / lane-floor / reasoning-floor), never a measured number",
+   bu in ("unknown", "lane-floor", "reasoning-floor"))   # reasoning-floor (#2): a labeled seed so a reasoning call is
+   #                                                        not cut mid-thought before it is measured — not a guess
 ck("no measurement, no default → seconds is None or a real lane floor, not a guess", su is None or su >= 30.0)
 
 # a caller default is honored (the 'answer it yourself' path when there is no measurement)

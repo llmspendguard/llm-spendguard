@@ -1047,6 +1047,13 @@ DEADLINE_FLOOR_S = 30.0       # never propose a budget so tight that a healthy c
 # of three warden stage reviews with BadBound at deadline_s=600 vs p95=1117 — zero attempts, and it read as a
 # transport error. A ceiling below what work demonstrably takes is not bounding a hang, it is bounding the work.
 DEADLINE_CEIL_S = 1800.0
+# A REASONING model needs TIME to think before it writes. Until a class is MEASURED (>=5 obs), a tight caller default
+# would cut it MID-reasoning — the worst spend there is: the provider bills the reasoning tokens, no output comes back,
+# and the local ledger records $0 (see bulkgate.note_deadline_cancel). So for an unmeasured REASONING class, floor the
+# deadline here so the first calls can finish thinking; the measured p99 (and the deadline-hit `floor` censoring, which
+# already pushes the budget UP after a cut) take over as soon as observations land. Override: dispatch... no — this is a
+# vendor_call knob: config advisor.reasoning_deadline_floor_s. The TOKEN twin is bulkgate.reasoning_out_estimate (#1).
+REASONING_DEADLINE_FLOOR_S = 90.0
 
 
 def time_budget(vendor, model, sig=None, default_s=None, in_chars=None):
@@ -1093,10 +1100,27 @@ def time_budget(vendor, model, sig=None, default_s=None, in_chars=None):
                 # completed, so the proposal can never sit below the budget that killed them.
                 want = max(want, float(d["floor"]) * DEADLINE_SLACK)
             return max(DEADLINE_FLOOR_S, lane_floor, min(DEADLINE_CEIL_S, want)), f"measured:{scope}(n={d['n']})"
+    # #2: no measurement yet — for a REASONING model, floor the deadline so a fresh class isn't cut MID-thought by a
+    # tight caller default (the deadline-cancel waste). Only lifts UP (never shortens a generous default); clamped to
+    # the ceiling; replaced by the measured p99 as soon as observations land.
+    reason_floor = 0.0
+    try:
+        from . import models as _m
+        if _m.reasons_by_default(model):
+            import os as _os
+            from . import config as _cfg
+            reason_floor = min(DEADLINE_CEIL_S, float(
+                _os.getenv("SPENDGUARD_ADVISOR_REASONING_DEADLINE_FLOOR_S")
+                or _cfg._cfg_get("advisor", "reasoning_deadline_floor_s", REASONING_DEADLINE_FLOOR_S)
+                or REASONING_DEADLINE_FLOOR_S))
+    except Exception:
+        reason_floor = 0.0
     if default_s:
-        return max(float(default_s), lane_floor), "caller"
-    if lane_floor:
-        return lane_floor, "lane-floor"
+        want = max(float(default_s), lane_floor, reason_floor)
+        return want, ("reasoning-floor" if reason_floor and want == reason_floor and want > float(default_s) else "caller")
+    if lane_floor or reason_floor:
+        want = max(lane_floor, reason_floor)
+        return want, ("reasoning-floor" if reason_floor and want == reason_floor else "lane-floor")
     return None, "unknown"
 
 

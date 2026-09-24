@@ -387,6 +387,15 @@ SETTINGS = [
               "(measured: a per_out=160 estimate came in ~9x low on gpt-5.5). bulkgate.maxtokens(sig, model=...) returns "
               "this reasoning-inclusive floor instead of None until real calls land, then the measured p99 (which "
               "already includes reasoning tokens) replaces it. Conservative by design — leans over, never naive-under."),
+    dict(section="advisor", key="reasoning_deadline_floor_s", store="config.json:advisor.reasoning_deadline_floor_s",
+         env="SPENDGUARD_ADVISOR_REASONING_DEADLINE_FLOOR_S", default=90, kind="int", secret=False,
+         desc="Deadline floor (seconds) for a REASONING model's call-class that has NO latency measurement yet. A "
+              "reasoning model needs time to THINK before it writes; until measured, a tight caller deadline would cut "
+              "it MID-reasoning — the provider bills the reasoning tokens, no output returns, the local ledger records "
+              "$0 (bulkgate.note_deadline_cancel). vendor_call.time_budget floors the unmeasured deadline here so the "
+              "first calls finish; the measured p99 (and the deadline-hit floor, which pushes the budget UP after a "
+              "cut) replace it once observations land. Only lifts UP, clamped to the ceiling. TIME twin of "
+              "bulkgate.reasoning_out_estimate (the TOKEN seed)."),
     dict(section="ask", key="default_vendors", store="config.json:ask.default_vendors",
          env="SPENDGUARD_ASK_DEFAULT_VENDORS", default=None, kind="string|null", secret=False,
          desc="Default cross-LLM panel for `spendguard.ask` / `spendguard ask` when the caller names none — a "
