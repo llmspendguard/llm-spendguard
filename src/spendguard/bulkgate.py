@@ -516,6 +516,14 @@ def note_deadline_cancel(model, timeout_s=None):
     return n
 
 
+def deadline_cancels():
+    """The per-model count of wall-clock deadline cancels seen this process (the invisible reasoning-cut waste) — a
+    read-only snapshot for the observability surfaces (CLI `spendguard dispatch` / MCP spendguard_dispatch_state), so
+    the counter is queryable, not just printed. Process-local (resets on restart); {} when none. $0."""
+    with _cancel_lock:
+        return dict(_cancel_warned)
+
+
 def _pctl(vals, p):
     """Interpolated percentile of token counts, as an int. None for an empty sample.
 

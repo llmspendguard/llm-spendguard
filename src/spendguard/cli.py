@@ -341,6 +341,33 @@ def _dispatch(argv=None):
         if mt.get("warn"):
             print(f"  ⚠ {mt['warn']}")
         return 0
+    if cmd == "dispatch":                               # live ADMISSION + QUEUE + reasoning-cut state — the parity view
+        from . import dispatch                           # (same dispatch.admission_state() the MCP tool returns)
+        st = dispatch.admission_state()
+        if "--json" in rest:
+            import json as _json
+            print(_json.dumps(st, indent=2, default=str))
+            return 0
+        print("manage_all (universal admission): %s" % ("ON" if st.get("manage_all") else "OFF"))
+        gov = st.get("governor") or {}
+        print("governor — %d active key(s):" % len(gov))
+        for k, b in gov.items():
+            print("  %-26s limit=%s rpm=%s tpm=%s in_flight=%s waiting=%s"
+                  % (k, b.get("limit"), b.get("rpm"), b.get("tpm"), b.get("in_flight"), b.get("waiting")))
+        ll = st.get("learned_limits") or {}
+        if ll:
+            print("learned rate limits (self-calibrated from 429 + success headers):")
+            for v, d in ll.items():
+                print("  %-22s tpm=%s rpm=%s (%s)" % (v, d.get("tpm"), d.get("rpm"), d.get("source")))
+        q = st.get("queue") or {}
+        print("queue: pending=%s leased=%s parked=%s done=%s failed=%s" % (
+            q.get("pending"), q.get("leased"), q.get("parked"), q.get("done"), q.get("failed")))
+        dc = st.get("deadline_cancels") or {}
+        if dc:
+            print("deadline-cancel waste (reasoning cut mid-thought — invisible to the ledger, reconcile to see $):")
+            for m, n in dc.items():
+                print("  %-26s x%s" % (m, n))
+        return 0
     if cmd == "config":
         from . import setup
         return setup.cmd_config(rest)

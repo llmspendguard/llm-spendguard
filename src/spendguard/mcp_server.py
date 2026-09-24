@@ -404,6 +404,43 @@ def _tool_compaction_candidates(args):
             "note": "for a tailored, conversation-specific decision run `spendguard claude-code compact --tailor` (gated)"}
 
 
+def _tool_dispatch_state(_args):
+    from . import dispatch
+    st = dispatch.admission_state()
+    return {"note": ("live ADMISSION + QUEUE + reasoning-cut state (the SAME dispatch.admission_state() the CLI "
+                     "`spendguard dispatch` renders — api/MCP/cli parity): the governor's per-key concurrency/rpm/tpm, "
+                     "the SELF-CALIBRATED per-vendor limits (learned from 429 + success headers), the durable queue "
+                     "depth including PARKED (capacity backpressure), and the deadline-cancel counts (a reasoning call "
+                     "cut mid-thought — billed by the provider, invisible to the local ledger). $0, read-only."),
+            **st}
+
+
+def _tool_config(_args):
+    import os
+    from . import config, config_schema
+    knobs = []
+    for s in config_schema.SETTINGS:
+        if s.get("secret"):
+            continue                                     # NEVER expose secrets (API keys etc.) over MCP
+        section, key, store, env = s["section"], s["key"], s.get("store", ""), s.get("env")
+        try:
+            if env and os.getenv(env) is not None:
+                cur = os.getenv(env)                     # env override (highest precedence), matching the runtime
+            elif isinstance(store, str) and store.startswith("config.json:"):
+                cur = config._cfg_get(section, key, s.get("default"))
+            else:
+                cur = s.get("default")
+        except Exception:
+            cur = s.get("default")
+        knobs.append({"key": "%s.%s" % (section, key), "value": cur, "default": s.get("default"),
+                      "env": env, "kind": s.get("kind"), "desc": s.get("desc")})
+    return {"note": ("every spendguard config knob (from config_schema — the single source that also drives the CLI "
+                     "`config` command and setup), with its CURRENT value, default, env var, kind and description. "
+                     "Secrets are omitted. Read-only ($0); change one with the CLI `spendguard config set "
+                     "<section.key> <value>` (setting over MCP is deliberately not exposed)."),
+            "knobs": knobs}
+
+
 # name → (description, JSON-Schema for arguments, handler)
 def _tool_health(args):
     from . import reliability
@@ -603,6 +640,20 @@ _TOOLS = {
             "limit": {"type": "integer", "description": "how many candidates to return (default 10)"}},
          "additionalProperties": False},
         _tool_compaction_candidates),
+    "spendguard_dispatch_state": (
+        "Live ADMISSION + QUEUE + reasoning-cut state — 'is anything rate-limited / is the queue backing up / are we "
+        "burning money on reasoning cut mid-thought'. Returns the governor's per-key concurrency/rpm/tpm + in-flight/"
+        "waiting, the SELF-CALIBRATED per-vendor limits (learned from provider 429 + success headers), the durable "
+        "queue depth incl. PARKED (capacity backpressure), and the deadline-cancel counts (billed by the provider, "
+        "invisible to the local ledger). The same data the CLI `spendguard dispatch` prints (api/MCP/cli parity). $0.",
+        {"type": "object", "properties": {}, "additionalProperties": False},
+        _tool_dispatch_state),
+    "spendguard_config": (
+        "Every spendguard CONFIG knob (from config_schema — the single source that also drives the CLI `config` "
+        "command), with its CURRENT value, default, env var, kind and description. Secrets omitted. Read-only ($0) — "
+        "change one via the CLI `spendguard config set <section.key> <value>`. Closes the config-in-MCP parity gap.",
+        {"type": "object", "properties": {}, "additionalProperties": False},
+        _tool_config),
 }
 
 

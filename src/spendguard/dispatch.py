@@ -754,6 +754,43 @@ def queue_state():
                 for k, b in _GOV._buckets.items()}
 
 
+def admission_state():
+    """The ONE $0 snapshot of the whole ADMISSION + QUEUE + reasoning-cut picture, so the three surfaces render the
+    SAME data and can never drift: the CLI (`spendguard dispatch`) and the MCP tool (spendguard_dispatch_state) both
+    call this. Assembles the live governor (per-key concurrency/rpm/tpm/in-flight/waiting), the SELF-CALIBRATED
+    per-vendor limits (learned from 429 + success headers), the durable QUEUE depth (pending/leased/done/failed +
+    PARKED backpressure), and the deadline-cancel counts (the invisible reasoning-cut waste). Each subsystem is pulled
+    behind its own try so one being unavailable degrades to a named note, never breaks the snapshot."""
+    out = {"manage_all": _managed_all_on(), "governor": queue_state(), "learned_limits": learned_limits()}
+    try:
+        from . import lane_queue
+        out["queue"] = lane_queue.queue_depth()
+    except Exception as e:
+        out["queue"] = {"error": "%s: %s" % (type(e).__name__, str(e)[:80])}
+    try:
+        from . import bulkgate
+        out["deadline_cancels"] = bulkgate.deadline_cancels()
+    except Exception as e:
+        out["deadline_cancels"] = {"error": "%s: %s" % (type(e).__name__, str(e)[:80])}
+    return out
+
+
+def _managed_all_on():
+    """Whether UNIVERSAL admission is armed (advisor/dispatch.manage_all + not the master OFF) — shown in the snapshot
+    so a reader knows if plain calls are being paced at all. Mirrors adapters._manage_all_enabled without importing it
+    (avoids a cycle): env SPENDGUARD_DISPATCH_MANAGE_ALL → config dispatch.manage_all → default True, and OFF wins."""
+    if _off():
+        return False
+    v = os.environ.get(_ENV_PREFIX + "MANAGE_ALL")
+    if v is not None:
+        return v.strip().lower() in ("1", "true", "yes", "on")
+    try:
+        from . import config
+        return bool(config._cfg_get("dispatch", "manage_all", True))
+    except Exception:
+        return True
+
+
 def lane_free(lane):
     """Free concurrency slots on a subscription LANE right now = limit − in_flight − waiting. The signal a fan uses
     for LEAST-LOADED dispatch: pick the arm with the MOST free slots so no lane idles while a slow one bottlenecks,
