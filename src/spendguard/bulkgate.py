@@ -694,7 +694,8 @@ class _RunawayCounter:
             self._counts[key] = n
             return n
 
-    def snapshot(self):
+    def counts_snapshot(self):
+        """A copy of the per-key counts (name kept UNIQUE in the repo — distinct from budget.snapshot's job)."""
         with self._lock:
             return dict(self._counts)
 
@@ -730,7 +731,7 @@ def runaways():
     """The per-(model, sig) count of per-call runaway trips this process (guardrail E — out_tok >> the measured p99) —
     a read-only snapshot for the observability surfaces (CLI `spendguard dispatch` / MCP spendguard_dispatch_state), so
     the breaker is queryable, not just printed. Process-local (resets on restart); {} when none. $0."""
-    return _RUNAWAYS.snapshot()
+    return _RUNAWAYS.counts_snapshot()
 
 
 def check_runaway(sig, model, out_tok, norm=None):
