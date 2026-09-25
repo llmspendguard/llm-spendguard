@@ -62,6 +62,20 @@ try:
     r3 = adapters.call("openai:gpt-5.5", "p", metered_only=True)
     ck("metered_only: NO base fallback", bool(r3.get("error")) and not r3.get("base_fallback"))
 
+    print("-- a TRUNCATION (answer too long) does NOT base-fallback: a base can't fix output size, keep text=None --")
+    _seen.clear()
+    def _trunc_guarded(model, prompt, **kw):
+        _seen.append(model)
+        return {"provider": "openai", "model": model, "text": None, "error": "truncated at ceiling",
+                "error_type": "Truncation", "truncated": True, "cost": 0.02, "in_tok": 10, "out_tok": 128000,
+                "latency": 0.1, "finish_reason": "length"}
+    adapters._call_guarded = _trunc_guarded
+    r5 = adapters.call("openai:gpt-5.5", "p")
+    ck("a truncated reply stays text=None + truncated (NOT swapped to a base answer)",
+       r5.get("text") is None and r5.get("truncated") is True and not r5.get("base_fallback"))
+    ck("the base model was NOT run for a truncation", not any("luna" in m for m in _seen))
+    adapters._call_guarded = _fake_guarded
+
     print("-- an EXPLICIT base_fallback=True on a pinned call still wins (caller's explicit choice) --")
     _seen.clear()
     r4 = adapters.call("openai:gpt-5.5", "p", no_substitution=True, base_fallback=True)

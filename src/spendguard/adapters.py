@@ -880,12 +880,16 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                 from . import lane_queue as _route_lq2
                 _route_lq2.record_close(_qrid, r if isinstance(r, dict) else {"error": "call produced no result"})
     # TIER-3 — PROVIDER BASE-MODEL FALLBACK (the last hop of lane->metered->base). When the chosen model's whole
-    # lane->metered attempt STILL errored and the caller opted in (base_fallback=True) and billing is allowed, retry
-    # the SAME provider's configured RELIABLE BASE model so the call yields SOME answer instead of an error — clearly
-    # LABELLED (a caller needing the exact model, e.g. a consensus panel, leaves base_fallback off). Config-gated (no
-    # provider_base_model entry -> no-op), billing-gated (no_metered_fallback -> skip), recursion-guarded (the base
-    # retry passes base_fallback=False), and only on the NORMAL path (never the internal _no_guard recursion).
-    if base_fallback and not _no_guard and isinstance(r, dict) and r.get("error") and not no_metered_fallback:
+    # lane->metered attempt STILL errored on an AVAILABILITY failure, retry the SAME provider's RELIABLE BASE model so
+    # the call yields SOME answer instead of an error — clearly LABELLED. base_fallback is default-ON (resolved above),
+    # OFF for a pinned/measurement call (no_substitution / metered_only) and a probe; an explicit caller value wins.
+    # It fires ONLY on an availability error, NOT on a TRUNCATION: a truncated reply means the model WAS reached and
+    # its answer was too long — a base model cannot fix output size, and swapping would corrupt the "surfaced as
+    # text=None, in ONE attempt" contract (a jumbo reply must stay text=None, not silently become a base answer).
+    # Config/catalog-gated (no provider_base -> no-op), billing-gated (no_metered_fallback -> skip), recursion-guarded
+    # (the base retry passes base_fallback=False), and only on the NORMAL path (never the internal _no_guard recursion).
+    if base_fallback and not _no_guard and isinstance(r, dict) and r.get("error") and not r.get("truncated") \
+            and not no_metered_fallback:
         _bprov = provider_for(model)
         _base = provider_base_model(_bprov)
         if _base and _base != model and f"{_bprov}:{_base}" != model:

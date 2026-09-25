@@ -2,10 +2,11 @@
 
 When a chosen model's $0 lane AND its metered API both fail, a caller that opted in (base_fallback=True) drops to
 the SAME provider's configured RELIABLE base model (advisor.provider_base_model[provider]) and gets a usable,
-clearly-LABELLED answer instead of an error — so a vendor slot yields SOME answer. Off by default (opt-in), and a
-no-op when the provider has no configured base (config-gated), so it can never silently swap a pinned model. Pins:
+clearly-LABELLED answer instead of an error — so a vendor slot yields SOME answer. ON by default for a normal call,
+OFF for a pinned/measurement call (no_substitution/metered_only), and a no-op when the provider has no configured base
+(config/catalog-gated), so it can never silently swap a pinned model. Pins:
   (a) base_fallback=True + a chosen-model error -> returns the BASE model's answer, labelled (substituted_from + base_fallback);
-  (b) default (no base_fallback) -> the chosen error stands, no base retry (opt-in only, never silent);
+  (b) a PINNED call (no_substitution) -> base_fallback auto-OFF, the chosen error stands (the model is the measurement);
   (c) no provider_base_model entry for the provider -> tier-3 is a no-op even with base_fallback (config-gated).
 Hermetic: adapters._call_guarded (the lane->metered core) + config._cfg_get are stubbed; no network, no spend.
 """
@@ -62,9 +63,9 @@ try:
     ck("the base fallback is LABELLED (substituted_from=chosen, base_fallback=True)",
        r.get("substituted_from") == CHOSEN and r.get("base_fallback") is True)
 
-    print("\n-- (b) default (no base_fallback) -> the chosen error stands (opt-in only) --")
-    r2 = adapters.call(CHOSEN, "p", intent="t")
-    ck("without base_fallback the chosen error stands, no base retry",
+    print("\n-- (b) a PINNED call (no_substitution) -> base_fallback auto-OFF, the chosen error stands --")
+    r2 = adapters.call(CHOSEN, "p", intent="t", no_substitution=True)
+    ck("a pinned/measurement call does NOT base-fallback (the model is the measurement); the error stands",
        r2.get("text") is None and bool(r2.get("error")) and not r2.get("base_fallback"))
 
     print("\n-- (c) no provider_base_model entry -> tier-3 is a no-op even with base_fallback (config-gated) --")
