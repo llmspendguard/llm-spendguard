@@ -888,8 +888,8 @@ def session_chunks(tdir=None, max_chars=14000, max_sessions=None, sids=None, sin
 _RT_USAGE = re.compile(
     r"(\d{2,8})\s*in\s*/\s*(\d{1,8})\s*out"                       # "276 in / 154 out"
     r"|input_tokens['\"]?\s*[:=]\s*(\d+)[^\n]{0,60}?output_tokens['\"]?\s*[:=]\s*(\d+)", re.I)
-_RT_MODELS = (("opus", "claude-opus-4-8"), ("sonnet", "claude-sonnet-4-6"), ("haiku", "claude-haiku-4-5"),
-              ("gpt-5", "gpt-5.5"), ("gpt5", "gpt-5.5"), ("gpt", "gpt-5.5"))
+# (the transcript-family → canonical-model ids that used to live here are owned by resources._family_canonical —
+#  the ONE home; realtime_token_tally reads them from there.)
 
 
 def realtime_token_tally(tdir=None):
@@ -899,10 +899,10 @@ def realtime_token_tally(tdir=None):
     pricing.py, and attribute the session to its org via session_classification. Returns {total, by_org, calls}.
     NOTE: only counts usage the transcript actually PRINTED — a lower bound vs the admin oracle when runs logged only
     samples; the durable fix for full coverage is inline capture (gate) going forward."""
-    from . import pricing
+    from . import pricing, resources
     tdir = tdir or _DEFAULT_TDIR
     files = sorted(glob.glob(os.path.join(tdir, "**", "*.jsonl"), recursive=True)) if os.path.isdir(tdir) else [tdir]
-    by_org, total, calls = {}, 0.0, 0
+    by_org, total, calls, skipped_no_model = {}, 0.0, 0, 0
     for path in files:
         sid = os.path.splitext(os.path.basename(path))[0]
         try:
@@ -917,9 +917,11 @@ def realtime_token_tally(tdir=None):
             win = text[max(0, m.start() - 120):m.start() + 60].lower()
             if "msgbatch_" in win or re.search(r"batch_[0-9a-f]{6,}", win) or ".batches." in win:
                 continue                                          # batch usage display → counted in the ledger
-            model = next((c for k, c in _RT_MODELS if k in win), None)
+            # family→canonical ids owned by resources._family_canonical (the ONE home; conv used to keep a second copy)
+            model = resources._family_canonical(win)
             if not model:
-                continue
+                skipped_no_model += 1     # a usage window naming no recognizable model — COUNTED + surfaced, not
+                continue                  # silently dropped (this tally is already a documented lower bound)
             e = sess.setdefault(model, [0, 0]); e[0] += a; e[1] += b; calls += 1
         if not sess:
             continue
@@ -931,7 +933,8 @@ def realtime_token_tally(tdir=None):
                 c = 0.0
             total += c
             by_org[org] = round(by_org.get(org, 0.0) + c, 4)
-    return {"total": round(total, 2), "by_org": {k: round(v, 2) for k, v in by_org.items()}, "calls": calls}
+    return {"total": round(total, 2), "by_org": {k: round(v, 2) for k, v in by_org.items()}, "calls": calls,
+            "skipped_no_model": skipped_no_model}
 
 
 def instance_attributions(instances, tdir=None):

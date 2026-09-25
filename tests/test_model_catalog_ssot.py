@@ -91,5 +91,21 @@ _misattr = [rid for rid, r in mc.all_records().items()
             if (r.get("price") or {}).get("source") == pricing.PRICING_SOURCE and r.get("provider") != "openai"]
 ck("no non-OpenAI model carries the OpenAI seed-fallback source (LINEAGE_TO_ORIGIN)", _misattr == [])
 
+# ── (9) Phase 3: scattered per-model literals removed; the shared homes are the sole authors ──
+print("-- (9) scattered literals consolidated --")
+import spendguard.estimate as _est  # noqa: E402
+import spendguard.conv as _conv  # noqa: E402
+from spendguard import models as _m, resources as _res  # noqa: E402
+ck("estimate has no local MIN_CACHE table (cache minimums are the models SSOT)", not hasattr(_est, "MIN_CACHE"))
+ck("conv has no local _RT_MODELS table (family ids owned by resources._family_canonical)", not hasattr(_conv, "_RT_MODELS"))
+ck("models.cache_min yields the VERIFIED value, not the old drifted 4096 (opus-4-8 = 1024)",
+   _m.cache_min("claude-opus-4-8") == 1024 and _m.cache_min("claude-haiku-4-5") == 2048)
+ck("models.cache_min is None for an unknown family (caller stays conservative — no cache assumed)",
+   _m.cache_min("no-such-model-xyz") is None)
+ck("resources._family_canonical is the ONE family→canonical resolver (maps a family, else None)",
+   _res._family_canonical("an opus run") == "claude-opus-4-8" and _res._family_canonical("zzz") is None)
+ck("resources._norm_model normalises a SPECIFIC id to itself, not the family default (gpt-4o stays gpt-4o)",
+   _res._norm_model("gpt-4o") == "gpt-4o")
+
 print(f"\n{'[FAIL]' if _fails else 'OK'} test_model_catalog_ssot: {len(_fails)} failure(s)")
 sys.exit(1 if _fails else 0)

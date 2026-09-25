@@ -176,6 +176,15 @@ def apply_call_params(model, kw, *, dialect=None):
     return kw
 
 
+def cache_min(model):
+    """The minimum cacheable-prefix length (tokens) for a model, from the family rules (the ONE home for cache facts) —
+    below this, prompt caching silently does nothing. None for a model whose family is unknown (cache=='?'), so a
+    caller can stay conservative (assume no caching) rather than guess. This is the SSOT for the value estimate.py used
+    to duplicate (and had drifted on: it claimed opus=4096 where the verified Anthropic minimum is 1024)."""
+    p = _family(model)
+    return p.get("cache_min") if p.get("cache") != "?" else None
+
+
 def reasons_by_default(model):
     """True iff this model emits HIDDEN reasoning tokens on a plain call — so an output cap sized from the VISIBLE
     answer length is consumed by thinking before a word is written, and the reply comes back EMPTY (the family rules

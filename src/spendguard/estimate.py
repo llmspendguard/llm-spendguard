@@ -22,11 +22,12 @@ TWO ways to supply the token model (get these from your tiny test, see runbook):
 """
 import json, math, argparse
 
+from . import models
 from .pricing import price, normalize
 
-# minimum cacheable prefix (tokens) — below this, prompt caching silently does nothing
-MIN_CACHE = {"gpt-5.5": 1024, "gpt-5.5-pro": 1024, "gpt-5.4": 1024,
-             "claude-opus-4-8": 4096, "claude-sonnet-4-6": 2048, "claude-haiku-4-5": 4096}
+# minimum cacheable prefix (tokens) — below this, prompt caching silently does nothing — is a MODEL FACT owned by
+# models.py (the family cache rules); read it via models.cache_min rather than keep a second, drift-prone copy here
+# (the old local MIN_CACHE table had claude-opus-4-8=4096 where the verified minimum is 1024).
 
 
 def fit_from_sample(path):
@@ -95,7 +96,7 @@ def project(model, items, prefix, in_per, out_per, pack, mode, assume_cache):
     n_req = math.ceil(items / pack)
     item_in = items * in_per
     out_tok = items * out_per
-    if assume_cache and prefix >= MIN_CACHE.get(normalize(model), 1e9) and n_req > 1:
+    if assume_cache and prefix >= (models.cache_min(normalize(model)) or 1e9) and n_req > 1:
         prefix_cost = (prefix * pin + (n_req - 1) * prefix * pcache) / 1e6   # 1 full write, rest cache-read
     else:
         prefix_cost = n_req * prefix * pin / 1e6

@@ -532,19 +532,32 @@ _REMOTE_LLM_SYS = (
     "Empty runs only if there is genuinely no executed realtime usage.")
 
 
+# The transcript-family → CURRENT-canonical-model heuristic, authored in ONE place (conv.realtime_token_tally used to
+# keep a second, drift-prone copy of these same ids). A transcript names a model loosely ("opus", "gpt-5"); we don't
+# know the exact version, so realtime usage is priced at the family's current default. Order matters — first substring
+# hit wins; the specific gpt-5 keys come before nothing looser here so a plain 'gpt-4o' still normalises to itself.
+# These are current-default ids and WILL drift as new models ship (a candidate to source from the catalog/config
+# later); until then this tuple is their single home, shared by conv via _family_canonical.
+_FAMILY_CANONICAL = (("opus", "claude-opus-4-8"), ("sonnet", "claude-sonnet-4-6"),
+                     ("haiku", "claude-haiku-4-5"), ("gpt-5", "gpt-5.5"), ("gpt5", "gpt-5.5"))
+
+
+def _family_canonical(text):
+    """The current canonical model id for the FIRST model-family keyword in `text` (a loose transcript name or a text
+    window), or None if none match — the ONE home for this heuristic, shared by resources._norm_model and conv."""
+    t = (text or "").lower()
+    return next((cid for key, cid in _FAMILY_CANONICAL if key in t), None)
+
+
 def _norm_model(ms):
     """Short model name (as the LLM reads it from the transcript) → a canonical id pricing.py knows, so realtime
-    token usage can be priced. Falls back to pricing.normalize for anything else."""
+    token usage can be priced. Uses the shared family heuristic (_family_canonical), else falls back to
+    pricing.normalize (so a specific id like 'gpt-4o' prices as itself, not the family default)."""
     from . import pricing
+    fam = _family_canonical(ms)
+    if fam:
+        return fam
     ms = (ms or "").lower()
-    if "opus" in ms:
-        return "claude-opus-4-8"
-    if "sonnet" in ms:
-        return "claude-sonnet-4-6"
-    if "haiku" in ms:
-        return "claude-haiku-4-5"
-    if "gpt-5" in ms or "gpt5" in ms:
-        return "gpt-5.5"
     try:
         return pricing.normalize(ms)
     except Exception:
