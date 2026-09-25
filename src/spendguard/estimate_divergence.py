@@ -66,7 +66,9 @@ def adjudicate_grounding(pair, model=None):
     body = json.dumps({k: v for k, v in dict(pair).items() if k not in ("prompt", "output")}, default=str)
     with calls.context(intent="spendguard:estimate-divergence"):
         r = adapters.call(model,
-                          f"An estimate and the actual bill for the same job:\n\n{body[:2000]}\n\n"
+                          f"An estimate and the actual bill for the same job:\n\n{body}\n\n"   # WHOLE body — a grounding
+                          # judge truncated at 2000 chars can lose the fields the verdict turns on; over-window is
+                          # refused loudly by adapters.call, never clipped.
                           f"Was the estimate GROUNDED in measurement?\nReply JSON only: {JUDGE_SCHEMA}",
                           sig="probe:estimate-divergence", system=JUDGE_SYS, reasoning="minimal")
     if r.get("error") or not r.get("text"):

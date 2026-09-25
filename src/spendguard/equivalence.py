@@ -100,9 +100,11 @@ _RUBRIC = ("Are these two answers EQUIVALENT for the task (same meaning/result, 
 
 
 def _llm_rubric(ref, out, model):
-    """LLM judge of semantic equivalence (CAGED). Returns 0..1."""
+    """LLM judge of semantic equivalence (CAGED). Returns 0..1. Both answers are fed WHOLE — a judge truncated to
+    3000 chars could miss the tail where the two DIFFER and call them equivalent (the evidence-truncation rule); an
+    over-window pair is refused loudly by adapters.call, never silently clipped."""
     from . import adapters
-    r = adapters.call(model, _RUBRIC.format(a=ref[:3000], b=out[:3000]), sig="spendguard:equivalence")
+    r = adapters.call(model, _RUBRIC.format(a=ref, b=out), sig="spendguard:equivalence")
     if r.get("error"):
         return None                              # judge FAILED (adapter error) — not a verdict of 'not equivalent'
     m = re.search(r"[01](?:\.\d+)?", r.get("text") or "")

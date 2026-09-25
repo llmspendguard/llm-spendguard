@@ -698,8 +698,12 @@ def reconstruct_realtime_llm(run=False, sids=None, max_sessions=None, max_chars=
     if not frags:
         return {"mode": "run", "chunks": len(chunks), "dropped_batch_context": dropped_batch,
                 "fragments": 0, "runs": [], "by_org": {}, "total": 0.0}
+    # NEVER TRUNCATE the evidence a consolidation reads: json.dumps(frags)[:120000] silently DROPPED the tail → missed
+    # runs → UNDER-counted realtime spend (the evidence-truncation rule). Send it WHOLE — adapters.call bounds the input
+    # via the canonical _input_fits (the ONE input-window home): it fits and is sent whole, or it is REFUSED loudly, never
+    # clipped. If a huge estate overflows the window, narrow it with the existing since= / max_sessions= / max_chunks=.
     with calls.context(intent="spendguard:realtime_consolidate"):    # STAGE 2 — CONSOLIDATE (run-identity + estimate)
-        r = adapters.call(cm, json.dumps(frags)[:120000], sig="spendguard:realtime_consolidate", system=_RT_CONSOLIDATE_SYS)
+        r = adapters.call(cm, json.dumps(frags), sig="spendguard:realtime_consolidate", system=_RT_CONSOLIDATE_SYS)
     m = re.search(r"\{.*\}", r.get("text", "") or "", re.S)
     try:
         runs = (json.loads(m.group(0)).get("runs") if m else []) or []

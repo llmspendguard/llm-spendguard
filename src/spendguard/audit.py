@@ -92,7 +92,9 @@ def deep(paths, canonical, run=False):
         src = open(p, errors="ignore").read()
         with calls.context(intent="spendguard:audit-deep"):
             r = adapters.call(model, f"CANONICAL PRICES:\n{canonical}\n\nFILE {os.path.basename(p)}:\n"
-                                     f"```python\n{src[:12000]}\n```\n\nReply JSON only: {DEEP_SCHEMA}",
+                                     f"```python\n{src}\n```\n\nReply JSON only: {DEEP_SCHEMA}",   # WHOLE file — a
+                              # price audit truncated at 12000 chars silently misses a hardcode in the tail; an
+                              # over-window file is refused loudly by adapters.call, never clipped.
                               sig="probe:audit-deep", system=DEEP_SYS)
         if r.get("error"):
             print(f"  {os.path.basename(p)}: UNREAD ({str(r['error'])[:60]}) — not the same as clean")

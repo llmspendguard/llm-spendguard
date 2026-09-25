@@ -181,15 +181,18 @@ def bakeoff_judge(task, out_a, out_b, arm_a, arm_b):
         return None, "both empty"
     if a == b:
         return None, "identical outputs (no judge spend)"
+    # The task and BOTH answers are fed WHOLE — a judge must see all of its evidence; truncating an answer can hide the
+    # tail where the two DIFFER, flipping the verdict (the evidence-truncation rule). If the pair genuinely exceeds the
+    # model's input window, adapters.call REFUSES it loudly (never a silent clip). Output is spendguard's (a one-word
+    # reply bills ~1 token regardless of the ceiling), so no max_tokens is passed.
     prompt = ("Two assistants answered the SAME task. Which answer is better — more correct, complete, and on-format "
-              "for the task? Reply with ONLY ONE WORD, nothing else: A, or B, or TIE. (A verbose reply gets truncated "
-              "and the call is wasted — the single word is all that is read.)\n\n"
-              f"TASK:\n{task[:3000]}\n\n=== ANSWER A ===\n{a[:4000]}\n\n=== ANSWER B ===\n{b[:4000]}\n")
+              "for the task? Reply with ONLY ONE WORD, nothing else: A, or B, or TIE.\n\n"
+              f"TASK:\n{task}\n\n=== ANSWER A ===\n{a}\n\n=== ANSWER B ===\n{b}\n")
     try:
         from . import adapters, calls
         from .advisor import META                                   # ONE source of the meta-intent prefix
         with calls.context(intent=f"{META}:bandit-judge"):          # caged: attributed, never bandit-routed
-            r = adapters.call(_bandit_judge_model(), prompt, max_tokens=_JUDGE_OUT_CAP)
+            r = adapters.call(_bandit_judge_model(), prompt)
         txt = (r.get("text") or "").strip()
     except Exception:
         return None, None                              # judge CALL failed → NO verdict (reason None): the caller must

@@ -1505,7 +1505,9 @@ def adapt_system(intent, target_model, system, model=None):
         result = {"adapted_system": "", "changed": False, "note": "no system prompt to adapt"}
     else:
         from . import calls, output_contract
-        prompt = (f"TARGET model: {target_model}\nINTENT: {intent}\n\nSYSTEM PROMPT TO ADAPT:\n{system[:8000]}\n\n"
+        prompt = (f"TARGET model: {target_model}\nINTENT: {intent}\n\nSYSTEM PROMPT TO ADAPT:\n{system}\n\n"   # WHOLE
+                  # prompt — adapting a version truncated at 8000 chars drops the tail of the instructions; an
+                  # over-window prompt is refused loudly by adapters.call, never clipped.
                   f"Adapt it for the target model WITHOUT changing the task. Return {{adapted_system, changed, note}}.")
         with calls.context(intent="spendguard:adapt"):
             r = adapters.call(judge, prompt, system=_ADAPT_SYS, schema=_ADAPT_SCHEMA, max_tokens=_ADAPT_OUT)
