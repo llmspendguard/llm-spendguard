@@ -366,15 +366,32 @@ def _load_context():
 
 CONTEXT_LIMITS = _load_context()
 
+# AUTHORITATIVE OUTPUT-CEILING OVERRIDES — spendguard-owned, version-controlled, sourced from the PROVIDER's OWN docs,
+# and checked BEFORE the synced LiteLLM cache. The synced cache copies the CONTEXT window into max_output for these
+# models (the poison that made max_output_tokens return None → they floored to 32K instead of their real, much larger
+# ceiling). These are the real per-model output limits; a re-sync of the LiteLLM cache can no longer clobber them.
+# SOURCED 2026-09-25 from docs.z.ai (GLM "Maximum Supported max_tokens" table). Kimi is DELIBERATELY ABSENT: its public
+# data is context-poisoned (256K context copied into max_output; see LiteLLM #22478), so it stays at the safe 32K floor
+# until an authoritative output max is confirmed — a floor never truncates BELOW itself, and a guessed 256K would 400.
+_OUTPUT_CEILING_OVERRIDES = {
+    "glm-4.5": 98304, "glm-4.5-air": 98304,
+    "glm-4.6": 131072, "glm-4.7": 131072,
+    "glm-5": 131072, "glm-5.1": 131072, "glm-5.2": 131072, "glm-5.3": 131072,
+}
+
 
 def max_output_tokens(model: str):
     """The model's published OUTPUT ceiling (tokens), or None. This is the OUTPUT axis, INDEPENDENT of
-    max_input_tokens: it bounds the REPLY size and is never reduced by how large the input was. Used as the
-    LAST-RESORT expected-output figure when a caller sets no max_tokens and the class has no measured history —
-    and, for providers that REQUIRE the field (Anthropic), as the honest 'deliberately huge' value instead of an
-    invented constant."""
+    max_input_tokens: it bounds the REPLY size and is never reduced by how large the input was. The spendguard-owned
+    authoritative overrides win first (provider-doc-sourced, poison-free); then the synced LiteLLM cache. Used as the
+    per-model output ceiling by output_ceiling/output_budget, and (for providers that REQUIRE the field, Anthropic) as
+    the honest 'deliberately huge' value instead of an invented constant."""
     if not model:
         return None
+    for key in (model, normalize(model)):              # 0. spendguard authoritative override (provider-doc-sourced)
+        ov = _OUTPUT_CEILING_OVERRIDES.get(key)
+        if ov:
+            return int(ov)
     for key in (model, normalize(model)):
         e = CONTEXT_LIMITS.get(key) or {}
         v, ctx = e.get("max_output_tokens"), e.get("max_input_tokens")
