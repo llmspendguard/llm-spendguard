@@ -303,9 +303,10 @@ def _arm_fallback_pricey(lane, use_name):
     OUTPUT tokens) — it classifies opus/sol as pricey and gemini/glm as fine. A pricing hiccup reads as NOT pricey (the
     guard never blocks a call on its OWN failure)."""
     try:
-        from . import pricing, lane_catalog
+        from . import model_catalog as _mc, lane_catalog
         prov = lane_catalog.lane_provider(lane)
-        rate = pricing.realtime_cost(f"{prov}:{use_name}", 0, 1_000_000)     # $ for 1M OUTPUT tokens (output dominates a runaway)
+        p = _mc.model_price(f"{prov}:{use_name}") or _mc.model_price(use_name)
+        rate = (p or {}).get("out")                                          # published $/1M OUTPUT tokens (a price LOOKUP, not a cost estimate — output dominates a runaway)
         thr = float(config._cfg_get("advisor", "bulk_max_fallback_usd_per_mtok", 10.0))
         return rate is not None and float(rate) > thr
     except Exception:
