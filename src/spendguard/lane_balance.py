@@ -295,6 +295,23 @@ def _bulk_arms(intent, lanes=None):
     return [a for _wr, a in best.values()]
 
 
+def _arm_fallback_pricey(lane, use_name):
+    """True when this arm's METERED model is expensive enough that a BULK lane-miss should NOT silently bill it. The
+    $0 lane is free while it works; the runaway is the metered FALLBACK (measured 2026-09-25: warden:describe → the
+    codex / claude-code lane missed → metered gpt-5.6-sol / claude-opus-4-8 at ~$20-30 per 1M OUTPUT tokens, while a
+    describe reading needs a cheap model). The threshold is advisor.bulk_max_fallback_usd_per_mtok (default $10 per 1M
+    OUTPUT tokens) — it classifies opus/sol as pricey and gemini/glm as fine. A pricing hiccup reads as NOT pricey (the
+    guard never blocks a call on its OWN failure)."""
+    try:
+        from . import pricing, lane_catalog
+        prov = lane_catalog.lane_provider(lane)
+        rate = pricing.realtime_cost(f"{prov}:{use_name}", 0, 1_000_000)     # $ for 1M OUTPUT tokens (output dominates a runaway)
+        thr = float(config._cfg_get("advisor", "bulk_max_fallback_usd_per_mtok", 10.0))
+        return rate is not None and float(rate) > thr
+    except Exception:
+        return False
+
+
 def _row_succeeded(row):
     """The success CONTRACT for a bulk/checkpoint row: it carries TEXT and no ERROR. Structural, not a quality
     judgement — the lane path already coerces an empty/whitespace answer to an explicit ERROR upstream
@@ -496,6 +513,13 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
     from . import adapters, calls, dispatch, lane_catalog
 
     tasks = list(tasks)
+    # COST-AWARE FALLBACK PREVENTION (Warden #1, 2026-09-25): a BULK lane-miss on an EXPENSIVE arm (opus/sol) must not
+    # silently bill that model's metered API — the $0 lane is free, the runaway is the paid fallback. UNLESS the caller
+    # opted into paid — budget_usd CAPS it, metered_only WANTS it, or model_for PINS the model as the measurement (a
+    # consensus vote needs its exact metered fallback) — an expensive arm's miss becomes a $0 error row (retried on a
+    # cheaper lane / batched), exactly like refuse_billed. A cheap arm (gemini/glm) is unaffected; the caller can raise
+    # advisor.bulk_max_fallback_usd_per_mtok or set budget_usd to allow a pricey fallback.
+    _allow_paid_expensive = (budget_usd is not None) or metered_only or bool(model_for)
     # QUOTA-AWARE strategy="auto" (the economic model): fan the plan lanes whose quota is LOW-OPPORTUNITY — idle/warm
     # by MEASURED est-value, and not reserved for real coding — and BATCH the overflow (~half price), so cheap bulk
     # never burns a HOT plan's scarce quota on work a batch could do for pennies. It only COMPOSES existing knobs: it
@@ -905,9 +929,12 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
                        "reason": "dispatch_saturated", "error": f"queue full: no lane slot within {deadline_s:.0f}s"}
         try:
             calls.set_context(intent=intent)          # tag this worker thread's calls with the intent (attribution)
+            # COST-AWARE: an EXPENSIVE arm's lane miss does not bill its pricey metered model unless the caller opted
+            # into paid — the item then errors $0 and retries on a cheaper lane (see _allow_paid_expensive above).
+            _eff_no_fallback = no_fallback or (not _allow_paid_expensive and _arm_fallback_pricey(lane, use_name))
             r = adapters.call(model, task, system=system, reasoning=reasoning,   # sig=intent → the OUTPUT budget is this
                               sig=intent, timeout_s=deadline_s,                  # call-class's measured p99; no_fallback
-                              no_metered_fallback=no_fallback,                   # → a lane miss errors, never a paid retry
+                              no_metered_fallback=_eff_no_fallback,              # → a lane miss errors, never a paid retry
                               schema=schema,                                     # STRUCTURED output: adapters folds the shape
                               #                                                    into the lane's prompt + validates locally,
                               #                                                    falling back to the API (strict) if off-shape
