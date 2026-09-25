@@ -15,13 +15,23 @@ import json
 
 from . import adapters, config
 
-# A cheap CHAT model per provider for the probe — a config DEFAULT (reliability.probe_models overrides), not a
-# hardcoded truth: it is validated against the live catalog at dispatch, and falls back to a derived cheapest.
-_PROBE_DEFAULTS = {
-    "openai": "gpt-5-nano", "anthropic": "claude-haiku-4-5", "gemini": "gemini-flash-latest",
-    "deepseek": "deepseek-chat", "zai": "glm-4.6", "moonshot": "kimi-k2.6", "qwen": "qwen-flash",
-}
 _PROBE_IN, _PROBE_OUT = 12, 8          # a one-line probe prompt + a one-word reply
+
+
+def _probe_default(provider):
+    """A cheap CHAT model to probe `provider`, DERIVED from the model catalog (the SSOT — concern 'model_catalog'):
+    the provider's lowest OUTPUT-priced catalog entry. No hardcoded per-provider literal (those drift — the catalog
+    once named a stale 'gemini-flash-latest' here). None when the catalog has no priced model for the provider; the
+    caller then falls back to the cheapest LIVE-served model. reliability.probe_models config still overrides."""
+    from . import model_catalog
+    best = None
+    for rid, rec in model_catalog.all_records().items():
+        if rec.get("provider") != provider:
+            continue
+        out = (rec.get("price") or {}).get("out")
+        if out is not None and (best is None or out < best[0]):
+            best = (out, rec.get("metered_id") or rid)
+    return best[1] if best else None
 
 
 def _metered_target(provider):
@@ -43,7 +53,7 @@ def _metered_target(provider):
         pass
     from . import catalog, pricing
     live = set(catalog.live_model_ids(provider) or [])
-    default = _PROBE_DEFAULTS.get(provider)
+    default = _probe_default(provider)                    # catalog-derived cheapest (SSOT), not a hardcoded literal
     if default and (not live or default in live):        # trust the default unless the catalog positively lacks it
         return default
     best = None

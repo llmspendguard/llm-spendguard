@@ -2,9 +2,16 @@
   "_doc": "The single-source-of-truth registry: each CAPABILITY has exactly ONE home; all callers use it. Read by the honestreview `canonical_concerns` doctrine (write-time) and tests/test_canonical_concerns.py (suite). Adding a concern is a deliberate act: give it a home, a one-line description, and a `telltale` (what its operations look like, so a reviewer can locate candidate sites). `status`: 'enforced' = one home today, the gate checks it; 'consolidating' = home chosen, callers still being moved. See docs/SINGLE_SOURCE_OF_TRUTH.md.",
   "concerns": [
     {
+      "concern": "model_catalog",
+      "home": "spendguard/model_catalog.py",
+      "description": "THE one authoring home for per-model data — one typed record per model: id, aliases, retired_alias_of, provider, metered_id, lane_spellings (lane->use-name), price (in/out/cached/batch, with source+verified provenance), output_ceiling, context_window, reasoning (style/floor/default/levels/reasons_by_default), roles. Every model FACT is authored here ONCE. Derived copies are fine ONLY if generated+fresh+never hand-edited: prices.json is GENERATED from this (carries a _generated marker); the synced LiteLLM cache is a BREADTH fallback for models not in the catalog. PUBLISHED fields (price/ceiling) carry the PROVIDER as origin (provenance + a verified date); INTERNAL decisions (lane<->metered spelling, chosen reasoning floor) are authored here. A price literal, a ceiling table, a reasoning-floor, or an alias mapping authored ANYWHERE ELSE is the defect this concern blocks.",
+      "telltale": "authoring or deciding ANY model fact — a price/rate literal, an output-ceiling value, a reasoning floor/default, a lane<->metered id spelling, an alias/retired-alias mapping, or a default/probe/panel model id — for a specific model",
+      "status": "consolidating"
+    },
+    {
       "concern": "output_ceiling",
       "home": "spendguard/pricing.py::output_ceiling",
-      "description": "A model's maximum OUTPUT tokens (published cache > live catalog > learned-fact-floored > backstop); NEVER below OUTPUT_FLOOR unless a genuinely-published max is lower. The ceiling is not the cost.",
+      "description": "The RESOLVER for a model's maximum OUTPUT tokens (published catalog value > live /models > learned-fact-floored > backstop); NEVER below OUTPUT_FLOOR unless a genuinely-published max is lower. The published ceiling VALUE is owned by model_catalog (not held here); this resolver reads it. The ceiling is not the cost.",
       "telltale": "resolving or clamping a per-model output-token ceiling / max_output for a call or estimate",
       "status": "enforced"
     },
@@ -32,8 +39,8 @@
     {
       "concern": "pricing",
       "home": "spendguard/pricing.py",
-      "description": "$/token and realtime/batch cost from token counts; the single price table and cost math.",
-      "telltale": "computing dollars from token counts, or reading per-token rates",
+      "description": "The cost MATH and price-resolution engine ($/token -> realtime/batch dollars; provider disambiguation; layering). The per-token RATES themselves are owned by model_catalog (curated) — prices.json is a GENERATED projection of the catalog, and the synced LiteLLM cache is the breadth fallback; pricing.py resolves and computes, it does not author rates.",
+      "telltale": "computing dollars from token counts, or the price-resolution/layering logic (NOT authoring a per-model rate — that is model_catalog)",
       "status": "enforced"
     },
     {

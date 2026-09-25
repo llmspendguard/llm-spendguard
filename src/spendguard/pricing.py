@@ -219,6 +219,27 @@ def _load():
         except Exception as e:
             import sys
             sys.stderr.write(f"[pricing] WARN could not load LiteLLM cache ({e})\n")
+    # THE MODEL CATALOG — the curated SSOT (provider-doc-sourced, version-controlled), layered ABOVE the synced
+    # LiteLLM breadth cache so gemini/deepseek/gpt-5.6/glm etc. are priced from it in a FRESH env (no sync needed).
+    # Reads the catalog's rates (model_catalog owns them); this is pricing's LAYERING job, not authoring. Per-field
+    # merge + provider-qualified + bare, with the SAME ambiguity discipline as the curated files below.
+    try:
+        from . import model_catalog as _mc
+        for _prov, _rows in (_mc.as_price_table() or {}).items():
+            for _mid, _row in _rows.items():
+                _rates = {**prices.get(_mid, {}), **{k: v for k, v in _row.items() if not str(k).startswith("_")}}
+                prices[f"{_prov}/{_mid}"] = _rates
+                _prior = prices.get(_mid)
+                if _prior is not None and _rate_key(_prior) != _rate_key(_rates):
+                    prices.pop(_mid, None)
+                    AMBIGUOUS_BARE.add(_mid)
+                    PROVIDERS.pop(_mid, None)
+                elif _mid not in AMBIGUOUS_BARE:
+                    prices[_mid] = _rates
+                    PROVIDERS[_mid] = _prov
+    except Exception as e:
+        import sys
+        sys.stderr.write(f"[pricing] WARN could not load model_catalog ({e})\n")
     for path in _candidate_files():
         try:
             cfg = _read(path)
@@ -388,8 +409,15 @@ def max_output_tokens(model: str):
     the honest 'deliberately huge' value instead of an invented constant."""
     if not model:
         return None
-    for key in (model, normalize(model)):              # 0. spendguard authoritative override (provider-doc-sourced)
-        ov = _OUTPUT_CEILING_OVERRIDES.get(key)
+    try:
+        from . import model_catalog as _mc               # 0. the model catalog — the SSOT for published ceilings
+        cv = _mc.output_ceiling(model)                   #    (provider-doc-sourced, version-controlled)
+        if cv:
+            return int(cv)
+    except Exception:
+        pass
+    for key in (model, normalize(model)):              # 0b. legacy override table (fallback for models not yet in the
+        ov = _OUTPUT_CEILING_OVERRIDES.get(key)        #     catalog — migrating INTO model_catalog.json, then removed)
         if ov:
             return int(ov)
     for key in (model, normalize(model)):

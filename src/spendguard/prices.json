@@ -1,274 +1,438 @@
 {
   "_meta": {
-    "anthropic_source": "https://claude.com/pricing (re-verified 2026-09-12 against the vendor page: opus 5/25, sonnet-5 2/10, haiku-4.5 1/5 \u2014 all exact). NOTE: the predicted claude-sonnet-5 reversion to $3/$15 on 2026-09-01 did NOT occur; the vendor still shows the introductory $2/$10, so 2/10 stands. 2026-09-14: added claude-opus-5 (5/25), claude-fable-5 and claude-fable-5-1 (both 10/50) from https://platform.claude.com/docs/en/about-claude/pricing; fable-5-1 cache-read is 0.025x base ($0.25), NOT the standard 0.1x -- see each entry's _source.",
-    "note": "USD per 1M tokens. batch = 50% of realtime. Edit here (or ~/.spendguard/prices.json) \u2014 do not hardcode prices in code.",
-    "openai_source": "https://developers.openai.com/api/docs/pricing (re-verified 2026-09-12 against the vendor page, 7/7 exact: gpt-5 1.25/10, gpt-5-mini 0.25/2, gpt-5-nano 0.05/0.40, gpt-5.4 2.50/15, gpt-5.5 5/30, gpt-4o 2.50/10, gpt-4o-mini 0.15/0.60) \u2014 the same provenance pricing.PRICING_SOURCE carries",
-    "qwen_source": "https://www.eesel.ai/blog/qwen-pricing (Alibaba Model Studio list prices, 2026-06-14) \u2014 qwen-plus flagged 2026-09-12 for a DashScope-console recheck (agentic price-gap judge)",
-    "source": "https://developers.openai.com/api/docs/pricing",
-    "stale_after_days": 45,
-    "verified": "2026-09-12"
+    "_generated": true,
+    "_generator": "scripts/gen_prices_json.py",
+    "_source": "src/spendguard/model_catalog.json (concern 'model_catalog' \u2014 the SSOT for model data)",
+    "note": "GENERATED from the model catalog \u2014 DO NOT EDIT BY HAND. Author prices in model_catalog.json, then run `python scripts/gen_prices_json.py --write`. honestreview derived_artifact_integrity flags hand-edits.",
+    "generated_at": "2026-09-25T07:40:27Z"
   },
   "providers": {
     "anthropic": {
       "models": {
         "claude-fable-5": {
-          "_source": "https://platform.claude.com/docs/en/about-claude/pricing (fetched 2026-09-14): $10/$50 per 1M in/out, cache-read $1 (0.1x base), batch $5/$25. batch_cached_in = cached_in x 0.5 (caching multipliers stack with the Batch API discount, per the page).",
-          "batch_cached_in": 0.5,
+          "in_": 10.0,
+          "out": 50.0,
+          "cached_in": 1.0,
           "batch_in": 5.0,
           "batch_out": 25.0,
-          "cached_in": 1.0,
-          "in_": 10.0,
-          "out": 50.0
+          "batch_cached_in": 0.5,
+          "_source": "https://platform.claude.com/docs/en/about-claude/pricing (fetched 2026-09-14): $10/$50 per 1M in/out, cache-read $1 (0.1x base), batch $5/$25. batch_cached_in = cached_in x 0.5 (caching multipliers stack with the Batch API discount, per the page)."
         },
         "claude-fable-5-1": {
-          "_source": "https://platform.claude.com/docs/en/about-claude/pricing (fetched 2026-09-14): $10/$50 per 1M in/out. Cache-read $0.25 = 0.025x base (Fable 5.1 & Mythos 5.1 ONLY; every other model is the standard 0.1x, per the page footnote), NOT the $1 a default in_ x 0.1 would give. Batch $5/$25; batch_cached_in = 0.025x x 0.5 = 0.125.",
-          "batch_cached_in": 0.125,
+          "in_": 10.0,
+          "out": 50.0,
+          "cached_in": 0.25,
           "batch_in": 5.0,
           "batch_out": 25.0,
-          "cached_in": 0.25,
-          "in_": 10.0,
-          "out": 50.0
+          "batch_cached_in": 0.125,
+          "_source": "https://platform.claude.com/docs/en/about-claude/pricing (fetched 2026-09-14): $10/$50 per 1M in/out. Cache-read $0.25 = 0.025x base (Fable 5.1 & Mythos 5.1 ONLY; every other model is the standard 0.1x, per the page footnote), NOT the $1 a default in_ x 0.1 would give. Batch $5/$25; batch_cached_in = 0.025x x 0.5 = 0.125."
         },
         "claude-haiku-4-5": {
+          "in_": 1.0,
+          "out": 5.0,
+          "cached_in": 0.1,
           "batch_in": 0.5,
           "batch_out": 2.5,
-          "cached_in": 0.1,
-          "in_": 1.0,
-          "out": 5.0
+          "batch_cached_in": 0.05,
+          "_source": "https://developers.openai.com/api/docs/pricing"
         },
         "claude-opus-4-0": {
+          "in_": 15.0,
+          "out": 75.0,
+          "cached_in": 1.5,
           "batch_in": 7.5,
           "batch_out": 37.5,
-          "cached_in": 1.5,
-          "in_": 15.0,
-          "out": 75.0
+          "batch_cached_in": 0.75,
+          "_source": "https://developers.openai.com/api/docs/pricing"
         },
         "claude-opus-4-1": {
+          "in_": 15.0,
+          "out": 75.0,
+          "cached_in": 1.5,
           "batch_in": 7.5,
           "batch_out": 37.5,
-          "cached_in": 1.5,
-          "in_": 15.0,
-          "out": 75.0
+          "batch_cached_in": 0.75,
+          "_source": "https://developers.openai.com/api/docs/pricing"
         },
         "claude-opus-4-5": {
+          "in_": 5.0,
+          "out": 25.0,
+          "cached_in": 0.5,
           "batch_in": 2.5,
           "batch_out": 12.5,
-          "cached_in": 0.5,
-          "in_": 5.0,
-          "out": 25.0
+          "batch_cached_in": 0.25,
+          "_source": "https://developers.openai.com/api/docs/pricing"
         },
         "claude-opus-4-6": {
+          "in_": 5.0,
+          "out": 25.0,
+          "cached_in": 0.5,
           "batch_in": 2.5,
           "batch_out": 12.5,
-          "cached_in": 0.5,
-          "in_": 5.0,
-          "out": 25.0
+          "batch_cached_in": 0.25,
+          "_source": "https://developers.openai.com/api/docs/pricing"
         },
         "claude-opus-4-7": {
+          "in_": 5.0,
+          "out": 25.0,
+          "cached_in": 0.5,
           "batch_in": 2.5,
           "batch_out": 12.5,
-          "cached_in": 0.5,
-          "in_": 5.0,
-          "out": 25.0
+          "batch_cached_in": 0.25,
+          "_source": "https://developers.openai.com/api/docs/pricing"
         },
         "claude-opus-4-8": {
+          "in_": 5.0,
+          "out": 25.0,
+          "cached_in": 0.5,
           "batch_in": 2.5,
           "batch_out": 12.5,
-          "cached_in": 0.5,
-          "in_": 5.0,
-          "out": 25.0
+          "batch_cached_in": 0.25,
+          "_source": "https://developers.openai.com/api/docs/pricing"
         },
         "claude-opus-5": {
-          "_source": "https://platform.claude.com/docs/en/about-claude/pricing (fetched 2026-09-14): $5/$25 per 1M in/out, cache-read $0.50 (0.1x base), batch $2.50/$12.50 — identical to Claude Opus 4.5-4.8. batch_cached_in = cached_in x 0.5 (stacking documented on the page). Corroborates the 2026-09-12 vendor-page note (opus 5/25).",
-          "batch_cached_in": 0.25,
+          "in_": 5.0,
+          "out": 25.0,
+          "cached_in": 0.5,
           "batch_in": 2.5,
           "batch_out": 12.5,
-          "cached_in": 0.5,
-          "in_": 5.0,
-          "out": 25.0
+          "batch_cached_in": 0.25,
+          "_source": "https://platform.claude.com/docs/en/about-claude/pricing (fetched 2026-09-14): $5/$25 per 1M in/out, cache-read $0.50 (0.1x base), batch $2.50/$12.50 \u2014 identical to Claude Opus 4.5-4.8. batch_cached_in = cached_in x 0.5 (stacking documented on the page). Corroborates the 2026-09-12 vendor-page note (opus 5/25)."
         },
         "claude-sonnet-4-0": {
+          "in_": 3.0,
+          "out": 15.0,
+          "cached_in": 0.3,
           "batch_in": 1.5,
           "batch_out": 7.5,
-          "cached_in": 0.3,
-          "in_": 3.0,
-          "out": 15.0
+          "batch_cached_in": 0.15,
+          "_source": "https://developers.openai.com/api/docs/pricing"
         },
         "claude-sonnet-4-5": {
+          "in_": 3.0,
+          "out": 15.0,
+          "cached_in": 0.3,
           "batch_in": 1.5,
           "batch_out": 7.5,
-          "cached_in": 0.3,
-          "in_": 3.0,
-          "out": 15.0
+          "batch_cached_in": 0.15,
+          "_source": "https://developers.openai.com/api/docs/pricing"
         },
         "claude-sonnet-4-6": {
+          "in_": 3.0,
+          "out": 15.0,
+          "cached_in": 0.3,
           "batch_in": 1.5,
           "batch_out": 7.5,
-          "cached_in": 0.3,
-          "in_": 3.0,
-          "out": 15.0
+          "batch_cached_in": 0.15,
+          "_source": "https://developers.openai.com/api/docs/pricing"
         },
         "claude-sonnet-5": {
-          "_note": "INTRODUCTORY pricing through 2026-08-31; reverts to 3/15 (batch 1.5/7.5, cached 0.3) on 2026-09-01. Re-verify then.",
+          "in_": 2.0,
+          "out": 10.0,
+          "cached_in": 0.2,
           "batch_in": 1.0,
           "batch_out": 5.0,
-          "cached_in": 0.2,
+          "_source": "https://developers.openai.com/api/docs/pricing"
+        }
+      }
+    },
+    "custom": {
+      "models": {
+        "Qwen/Qwen2.5-14B-Instruct-AWQ": {
+          "in_": 0.08,
+          "out": 0.08,
+          "cached_in": 0.008,
+          "batch_in": 0.04,
+          "batch_out": 0.04,
+          "_source": "AMORTIZED GPU rental: vast.ai RTX4090 inst 45955561 @ $0.436/hr / ~1500 tok/s (14B-AWQ) \u2248 $0.08/1M; rental spread over tokens, not additional"
+        },
+        "Qwen/Qwen2.5-32B-Instruct-AWQ": {
+          "in_": 0.2,
+          "out": 0.2,
+          "cached_in": 0.02,
+          "batch_in": 0.1,
+          "batch_out": 0.1,
+          "_source": "AMORTIZED GPU rental, not a vendor rate: vast.ai RTX4090 inst 45955561 @ $0.436/hr / ~600 tok/s (32B-AWQ) = ~$0.20/1M; this IS the rental spread over tokens, not additional to it"
+        },
+        "Qwen/Qwen2.5-72B-Instruct-AWQ": {
+          "in_": 0.7,
+          "out": 0.7,
+          "cached_in": 0.07,
+          "batch_in": 0.35,
+          "batch_out": 0.35,
+          "_source": "AMORTIZED: vast H100 inst 47900312 @ $2.003/hr / ~800 tok/s (72B-AWQ) \u2248 $0.70/1M; rental spread over tokens"
+        },
+        "kimi-k2.6": {
+          "in_": 0.95,
+          "out": 4.0,
+          "cached_in": 0.095,
+          "batch_in": 0.475,
+          "batch_out": 2.0,
+          "_source": "https://pricepertoken.com/pricing-page/model/moonshotai-kimi-k2.6 \u2014 Moonshot official $0.95/$4.00 per 1M"
+        }
+      }
+    },
+    "deepseek": {
+      "models": {
+        "deepseek-v4-flash": {
+          "in_": 0.3,
+          "out": 1.2,
+          "cached_in": 0.006,
+          "batch_in": 0.15,
+          "batch_out": 0.6,
+          "_source": "https://api-docs.deepseek.com/quick_start/pricing/ (deepseek-v4-flash retired \u2192 billed at Flash: peak/standard rate)"
+        },
+        "deepseek-v4-flash-vision-exp": {
+          "in_": 0.44,
+          "out": 1.32,
+          "cached_in": 0.044,
+          "batch_in": 0.22,
+          "batch_out": 0.66,
+          "_source": "https://api-docs.deepseek.com/quick_start/pricing (V4 peak/list rate; off-peak=50%)"
+        },
+        "deepseek-v4-pro": {
+          "in_": 1.32,
+          "out": 3.96,
+          "cached_in": 0.132,
+          "batch_in": 0.66,
+          "batch_out": 1.98,
+          "_source": "https://api-docs.deepseek.com/quick_start/pricing (V4 peak/list rate; off-peak=50%)"
+        }
+      }
+    },
+    "gemini": {
+      "models": {
+        "gemini-3-flash": {
+          "in_": 0.25,
+          "out": 1.5,
+          "cached_in": 0.025,
+          "batch_in": 0.125,
+          "batch_out": 0.75,
+          "_source": "https://pricepertoken.com/pricing-page/model/google-gemini-3-flash-preview"
+        },
+        "gemini-3.1-pro": {
           "in_": 2.0,
-          "out": 10.0
+          "out": 12.0,
+          "cached_in": 0.2,
+          "batch_in": 1.0,
+          "batch_out": 6.0,
+          "_source": "https://pricepertoken.com/pricing-page/model/google-gemini-3.1-pro-preview (VentureBeat/apidog corroborate $2/$12 \u2264200K)"
+        },
+        "gemini-3.6-flash": {
+          "in_": 1.5,
+          "out": 7.5,
+          "cached_in": 0.15,
+          "batch_in": 0.75,
+          "batch_out": 3.75,
+          "_source": "https://aipricecompare.org/models/gemini-3-6-flash.html"
+        },
+        "gemini-3.7-flash": {
+          "in_": 0.75,
+          "out": 3.75,
+          "cached_in": 0.075,
+          "batch_in": 0.375,
+          "batch_out": 1.875,
+          "_source": "https://www.layer3labs.io/guides/gemini-3-7-flash-api-pricing ($0.75/$3.75 through 2026-12-31)"
+        },
+        "gemini-3.8-flash": {
+          "in_": 0.75,
+          "out": 3.75,
+          "cached_in": 0.075,
+          "batch_in": 0.375,
+          "batch_out": 1.875,
+          "_source": "https://developers.openai.com/api/docs/pricing"
         }
       }
     },
     "moonshot": {
-      "_note": "EXCEPTION (verified 2026-08-04): glm-5.2 and kimi-k3 are NOT in the synced table at all \u2014 checked against all 2,391 cached entries and every upstream id. Absent from sync AND absent here means every install records them as UNPRICED, which is a live capture leak on the two newest models. So they ARE curated, each carrying the vendor's own pricing URL in _source. That is the opposite of the hand-typed glm-5 stub this note warns about: that one was INVENTED, these are published and cited.\n  OPERATOR-PINNED (2026-09-02): these actively-used z.ai / Moonshot models stay curated so EVERY install (fresh / CI / isolated test home) prices them without waiting for `sync-prices` to have run there — even once sync carries them (e.g. glm-5.3 is in sync yet pinned here on purpose). A pinned rate OVERRIDES sync, so the standing obligation is to keep each pinned entry current with its cited source whenever the vendor revises rates.",
       "models": {
         "kimi-k3": {
-          "_source": "https://platform.kimi.ai/docs/pricing/chat-k3.md (fetched 2026-08-04); the Batch API does NOT support kimi-k3, so batch = standard \u2014 never a discount on a mode the model cannot use",
+          "in_": 3.0,
+          "out": 15.0,
+          "cached_in": 0.3,
           "batch_in": 3.0,
           "batch_out": 15.0,
-          "cached_in": 0.3,
-          "in_": 3.0,
-          "out": 15.0
+          "_source": "https://platform.kimi.ai/docs/pricing/chat-k3.md (fetched 2026-08-04): in cache-miss $3.00/1M, cache-hit $0.30/1M, out $15.00/1M. Batch API does NOT support kimi-k3 (batch.md lists only k2.7-code/k2.6/k2.5), so batch rates are set to STANDARD \u2014 never discounted for a mode the model cannot use."
         }
       }
     },
     "openai": {
       "models": {
         "gpt-4.1-mini": {
+          "in_": 0.4,
+          "out": 1.6,
+          "cached_in": 0.1,
           "batch_in": 0.2,
           "batch_out": 0.8,
-          "cached_in": 0.1,
-          "in_": 0.4,
-          "out": 1.6
+          "_source": "https://developers.openai.com/api/docs/pricing"
         },
         "gpt-4o": {
+          "in_": 2.5,
+          "out": 10.0,
+          "cached_in": 1.25,
           "batch_in": 1.25,
           "batch_out": 5.0,
-          "cached_in": 1.25,
-          "in_": 2.5,
-          "out": 10.0
+          "_source": "https://developers.openai.com/api/docs/pricing"
         },
         "gpt-4o-mini": {
+          "in_": 0.15,
+          "out": 0.6,
+          "cached_in": 0.075,
           "batch_in": 0.075,
           "batch_out": 0.3,
-          "cached_in": 0.075,
-          "in_": 0.15,
-          "out": 0.6
+          "_source": "https://developers.openai.com/api/docs/pricing"
         },
         "gpt-5": {
+          "in_": 1.25,
+          "out": 10.0,
+          "cached_in": 0.125,
           "batch_in": 0.625,
           "batch_out": 5.0,
-          "cached_in": 0.125,
-          "in_": 1.25,
-          "out": 10.0
+          "_source": "https://developers.openai.com/api/docs/pricing"
         },
         "gpt-5-mini": {
+          "in_": 0.25,
+          "out": 2.0,
+          "cached_in": 0.025,
           "batch_in": 0.125,
           "batch_out": 1.0,
-          "cached_in": 0.025,
-          "in_": 0.25,
-          "out": 2.0
+          "_source": "https://developers.openai.com/api/docs/pricing"
         },
         "gpt-5-nano": {
+          "in_": 0.05,
+          "out": 0.4,
+          "cached_in": 0.005,
           "batch_in": 0.025,
           "batch_out": 0.2,
-          "cached_in": 0.005,
-          "in_": 0.05,
-          "out": 0.4
+          "_source": "https://developers.openai.com/api/docs/pricing"
         },
         "gpt-5.4": {
+          "in_": 2.5,
+          "out": 15.0,
+          "cached_in": 0.25,
           "batch_in": 1.25,
           "batch_out": 7.5,
-          "cached_in": 0.25,
-          "in_": 2.5,
-          "out": 15.0
+          "_source": "https://developers.openai.com/api/docs/pricing"
         },
         "gpt-5.4-mini": {
+          "in_": 0.75,
+          "out": 4.5,
+          "cached_in": 0.075,
           "batch_in": 0.375,
           "batch_out": 2.25,
-          "cached_in": 0.075,
-          "in_": 0.75,
-          "out": 4.5
+          "_source": "https://developers.openai.com/api/docs/pricing"
         },
         "gpt-5.4-nano": {
+          "in_": 0.2,
+          "out": 1.25,
+          "cached_in": 0.02,
           "batch_in": 0.1,
           "batch_out": 0.625,
-          "cached_in": 0.02,
-          "in_": 0.2,
-          "out": 1.25
+          "_source": "https://developers.openai.com/api/docs/pricing"
         },
         "gpt-5.5": {
+          "in_": 5.0,
+          "out": 30.0,
+          "cached_in": 0.5,
           "batch_in": 2.5,
           "batch_out": 15.0,
-          "cached_in": 0.5,
-          "in_": 5.0,
-          "out": 30.0
+          "_source": "https://developers.openai.com/api/docs/pricing"
         },
         "gpt-5.5-pro": {
+          "in_": 30.0,
+          "out": 180.0,
+          "cached_in": 3.0,
           "batch_in": 15.0,
           "batch_out": 90.0,
-          "cached_in": 3.0,
-          "in_": 30.0,
-          "out": 180.0
+          "_source": "https://developers.openai.com/api/docs/pricing"
+        },
+        "gpt-5.6-luna": {
+          "in_": 0.2,
+          "out": 1.2,
+          "cached_in": 0.02,
+          "batch_in": 0.1,
+          "batch_out": 0.6,
+          "_source": "https://developers.openai.com/api/docs/pricing"
+        },
+        "gpt-5.6-sol": {
+          "in_": 4.0,
+          "out": 20.0,
+          "cached_in": 0.4,
+          "batch_in": 2.0,
+          "batch_out": 10.0,
+          "_source": "https://developers.openai.com/api/docs/pricing"
         },
         "text-embedding-3-large": {
+          "in_": 0.13,
+          "out": 0.0,
+          "cached_in": 0.0,
           "batch_in": 0.065,
           "batch_out": 0.0,
-          "cached_in": 0.0,
-          "in_": 0.13,
-          "out": 0.0
+          "_source": "https://developers.openai.com/api/docs/pricing"
         },
         "text-embedding-3-small": {
+          "in_": 0.02,
+          "out": 0.0,
+          "cached_in": 0.0,
           "batch_in": 0.01,
           "batch_out": 0.0,
-          "cached_in": 0.0,
-          "in_": 0.02,
-          "out": 0.0
+          "_source": "https://developers.openai.com/api/docs/pricing"
         }
       }
     },
     "qwen": {
       "models": {
         "qwen-max": {
+          "in_": 2.5,
+          "out": 7.5,
+          "cached_in": 0.25,
           "batch_in": 1.25,
           "batch_out": 3.75,
-          "cached_in": 0.25,
-          "in_": 2.5,
-          "out": 7.5
+          "_source": "https://developers.openai.com/api/docs/pricing"
         },
         "qwen-plus": {
+          "in_": 0.4,
+          "out": 1.2,
+          "cached_in": 0.04,
           "batch_in": 0.2,
           "batch_out": 0.6,
-          "cached_in": 0.04,
-          "in_": 0.4,
-          "out": 1.2
+          "_source": "https://developers.openai.com/api/docs/pricing"
         },
         "qwen-turbo": {
+          "in_": 0.05,
+          "out": 0.2,
+          "cached_in": 0.005,
           "batch_in": 0.025,
           "batch_out": 0.1,
-          "cached_in": 0.005,
-          "in_": 0.05,
-          "out": 0.2
+          "_source": "https://developers.openai.com/api/docs/pricing"
         }
       }
     },
     "zai": {
-      "_note": "z.ai / Zhipu GLM and Moonshot Kimi carry NO curated rates on purpose: the synced breadth layer (`spendguard sync-prices`, refreshed daily) publishes real per-1M rates for the whole zai/* and moonshot/* families, and pricing.price() now resolves a bare id (glm-4.6, kimi-k2.5) against them. A curated entry here would OVERRIDE that live data \u2014 which is exactly how a hand-typed glm-5.2 STUB (0.6/2.2) came to under-price the real z.ai 5-series (1.0/3.2) by ~40%. Add an entry here ONLY with a verified source URL + date; otherwise an unpriced id fails LOUD, which is the correct accounting behavior.\n  EXCEPTION (verified 2026-08-04): glm-5.2 and kimi-k3 are NOT in the synced table at all \u2014 checked against all 2,391 cached entries and every upstream id. Absent from sync AND absent here means every install records them as UNPRICED, which is a live capture leak on the two newest models. So they ARE curated, each carrying the vendor's own pricing URL in _source. That is the opposite of the hand-typed glm-5 stub this note warns about: that one was INVENTED, these are published and cited.\n  OPERATOR-PINNED (2026-09-02): these actively-used z.ai / Moonshot models stay curated so EVERY install (fresh / CI / isolated test home) prices them without waiting for `sync-prices` to have run there — even once sync carries them (e.g. glm-5.3 is in sync yet pinned here on purpose). A pinned rate OVERRIDES sync, so the standing obligation is to keep each pinned entry current with its cited source whenever the vendor revises rates.",
       "models": {
-        "glm-5.2": {
-          "_source": "https://docs.z.ai/guides/overview/pricing (fetched 2026-08-04); no batch discount is published, so batch = standard rather than an assumed 50%",
-          "batch_in": 1.4,
-          "batch_out": 4.4,
-          "cached_in": 0.26,
-          "in_": 1.4,
-          "out": 4.4
+        "glm-4.7-flashx": {
+          "in_": 0.07,
+          "out": 0.4,
+          "cached_in": 0.01,
+          "batch_in": 0.07,
+          "batch_out": 0.4,
+          "_source": "https://docs.z.ai/guides/overview/pricing (fetched 2026-08-04): in $0.07/1M, cached-in $0.01/1M, out $0.40/1M. No published batch discount \u2192 batch = standard."
         },
-        "glm-5.3": {
-          "_source": "https://venturebeat.com/technology/glm-5-3-hits-the-api-at-1-4-4-4-per-million-tokens (published 2026-08-21) corroborated against https://docs.z.ai/guides/overview/pricing; PINNED in curated so EVERY install (fresh / CI / isolated test home) prices it without waiting for `sync-prices` to run — per operator directive that this actively-used model be universally visible, not sync-dependent. Keep current if z.ai revises rates.",
+        "glm-5.2": {
+          "in_": 1.4,
+          "out": 4.4,
+          "cached_in": 0.14,
           "batch_in": 0.7,
           "batch_out": 2.2,
-          "cached_in": 0.14,
+          "_source": "https://docs.z.ai/guides/overview/pricing \u2014 Z.ai official: GLM-5.2 $1.40/$4.40 per 1M (+$0.26 cached)"
+        },
+        "glm-5.3": {
           "in_": 1.4,
-          "out": 4.4
+          "out": 4.4,
+          "cached_in": 0.14,
+          "batch_in": 0.7,
+          "batch_out": 2.2,
+          "_source": "https://venturebeat.com/technology/glm-5-3-hits-the-api-at-1-4-4-4-per-million-tokens"
         }
       }
     }

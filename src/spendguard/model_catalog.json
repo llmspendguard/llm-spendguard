@@ -1,0 +1,1532 @@
+{
+  "_doc": "SSOT for per-model data. Authored here (curated edits welcome); prices.json is GENERATED from this. See docs/CANONICAL_CONCERNS.json concern 'model_catalog'.",
+  "_seeded_from": "scripts/migrate/seed_model_catalog.py (current resolved values)",
+  "models": {
+    "Qwen/Qwen2.5-14B-Instruct-AWQ": {
+      "id": "Qwen/Qwen2.5-14B-Instruct-AWQ",
+      "provider": "custom",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "Qwen/Qwen2.5-14B-Instruct-AWQ",
+      "lane_spellings": {},
+      "price": {
+        "in_": 0.08,
+        "out": 0.08,
+        "cached_in": 0.008,
+        "batch_in": 0.04,
+        "batch_out": 0.04,
+        "source": "AMORTIZED GPU rental: vast.ai RTX4090 inst 45955561 @ $0.436/hr / ~1500 tok/s (14B-AWQ) \u2248 $0.08/1M; rental spread over tokens, not additional",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": null,
+        "source": null
+      },
+      "context_window": null,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "tokens_param": "max_tokens",
+        "style": "none"
+      }
+    },
+    "Qwen/Qwen2.5-32B-Instruct-AWQ": {
+      "id": "Qwen/Qwen2.5-32B-Instruct-AWQ",
+      "provider": "custom",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "Qwen/Qwen2.5-32B-Instruct-AWQ",
+      "lane_spellings": {},
+      "price": {
+        "in_": 0.2,
+        "out": 0.2,
+        "cached_in": 0.02,
+        "batch_in": 0.1,
+        "batch_out": 0.1,
+        "source": "AMORTIZED GPU rental, not a vendor rate: vast.ai RTX4090 inst 45955561 @ $0.436/hr / ~600 tok/s (32B-AWQ) = ~$0.20/1M; this IS the rental spread over tokens, not additional to it",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": null,
+        "source": null
+      },
+      "context_window": null,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "tokens_param": "max_tokens",
+        "style": "none"
+      }
+    },
+    "Qwen/Qwen2.5-72B-Instruct-AWQ": {
+      "id": "Qwen/Qwen2.5-72B-Instruct-AWQ",
+      "provider": "custom",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "Qwen/Qwen2.5-72B-Instruct-AWQ",
+      "lane_spellings": {},
+      "price": {
+        "in_": 0.7,
+        "out": 0.7,
+        "cached_in": 0.07,
+        "batch_in": 0.35,
+        "batch_out": 0.35,
+        "source": "AMORTIZED: vast H100 inst 47900312 @ $2.003/hr / ~800 tok/s (72B-AWQ) \u2248 $0.70/1M; rental spread over tokens",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": null,
+        "source": null
+      },
+      "context_window": null,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "tokens_param": "max_tokens",
+        "style": "none"
+      }
+    },
+    "claude-fable-5": {
+      "id": "claude-fable-5",
+      "provider": "anthropic",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "claude-fable-5",
+      "lane_spellings": {},
+      "price": {
+        "in_": 10.0,
+        "out": 50.0,
+        "cached_in": 1.0,
+        "batch_in": 5.0,
+        "batch_out": 25.0,
+        "batch_cached_in": 0.5,
+        "source": "https://platform.claude.com/docs/en/about-claude/pricing (fetched 2026-09-14): $10/$50 per 1M in/out, cache-read $1 (0.1x base), batch $5/$25. batch_cached_in = cached_in x 0.5 (caching multipliers stack with the Batch API discount, per the page).",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": 128000,
+        "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
+      },
+      "context_window": 1000000,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "tokens_param": "max_tokens",
+        "style": "none"
+      }
+    },
+    "claude-fable-5-1": {
+      "id": "claude-fable-5-1",
+      "provider": "anthropic",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "claude-fable-5-1",
+      "lane_spellings": {},
+      "price": {
+        "in_": 10.0,
+        "out": 50.0,
+        "cached_in": 0.25,
+        "batch_in": 5.0,
+        "batch_out": 25.0,
+        "batch_cached_in": 0.125,
+        "source": "https://platform.claude.com/docs/en/about-claude/pricing (fetched 2026-09-14): $10/$50 per 1M in/out. Cache-read $0.25 = 0.025x base (Fable 5.1 & Mythos 5.1 ONLY; every other model is the standard 0.1x, per the page footnote), NOT the $1 a default in_ x 0.1 would give. Batch $5/$25; batch_cached_in = 0.025x x 0.5 = 0.125.",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": 128000,
+        "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
+      },
+      "context_window": 1000000,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "tokens_param": "max_tokens",
+        "style": "none"
+      }
+    },
+    "claude-haiku-4-5": {
+      "id": "claude-haiku-4-5",
+      "provider": "anthropic",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "claude-haiku-4-5",
+      "lane_spellings": {
+        "claude-code": [
+          "claude-haiku-4-5"
+        ]
+      },
+      "price": {
+        "in_": 1.0,
+        "out": 5.0,
+        "cached_in": 0.1,
+        "batch_in": 0.5,
+        "batch_out": 2.5,
+        "batch_cached_in": 0.05,
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": 64000,
+        "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
+      },
+      "context_window": 200000,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "tokens_param": "max_tokens",
+        "style": "none"
+      }
+    },
+    "claude-opus-4-0": {
+      "id": "claude-opus-4-0",
+      "provider": "anthropic",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "claude-opus-4-0",
+      "lane_spellings": {},
+      "price": {
+        "in_": 15.0,
+        "out": 75.0,
+        "cached_in": 1.5,
+        "batch_in": 7.5,
+        "batch_out": 37.5,
+        "batch_cached_in": 0.75,
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": null,
+        "source": null
+      },
+      "context_window": null,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "tokens_param": "max_tokens",
+        "style": "none"
+      }
+    },
+    "claude-opus-4-1": {
+      "id": "claude-opus-4-1",
+      "provider": "anthropic",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "claude-opus-4-1",
+      "lane_spellings": {},
+      "price": {
+        "in_": 15.0,
+        "out": 75.0,
+        "cached_in": 1.5,
+        "batch_in": 7.5,
+        "batch_out": 37.5,
+        "batch_cached_in": 0.75,
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": null,
+        "source": null
+      },
+      "context_window": null,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "tokens_param": "max_tokens",
+        "style": "none"
+      }
+    },
+    "claude-opus-4-5": {
+      "id": "claude-opus-4-5",
+      "provider": "anthropic",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "claude-opus-4-5",
+      "lane_spellings": {},
+      "price": {
+        "in_": 5.0,
+        "out": 25.0,
+        "cached_in": 0.5,
+        "batch_in": 2.5,
+        "batch_out": 12.5,
+        "batch_cached_in": 0.25,
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": 64000,
+        "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
+      },
+      "context_window": 200000,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "tokens_param": "max_tokens",
+        "style": "none"
+      }
+    },
+    "claude-opus-4-6": {
+      "id": "claude-opus-4-6",
+      "provider": "anthropic",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "claude-opus-4-6",
+      "lane_spellings": {},
+      "price": {
+        "in_": 5.0,
+        "out": 25.0,
+        "cached_in": 0.5,
+        "batch_in": 2.5,
+        "batch_out": 12.5,
+        "batch_cached_in": 0.25,
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": 128000,
+        "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
+      },
+      "context_window": 1000000,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "tokens_param": "max_tokens",
+        "style": "none"
+      }
+    },
+    "claude-opus-4-7": {
+      "id": "claude-opus-4-7",
+      "provider": "anthropic",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "claude-opus-4-7",
+      "lane_spellings": {},
+      "price": {
+        "in_": 5.0,
+        "out": 25.0,
+        "cached_in": 0.5,
+        "batch_in": 2.5,
+        "batch_out": 12.5,
+        "batch_cached_in": 0.25,
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": 128000,
+        "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
+      },
+      "context_window": 1000000,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "tokens_param": "max_tokens",
+        "style": "none"
+      }
+    },
+    "claude-opus-4-8": {
+      "id": "claude-opus-4-8",
+      "provider": "anthropic",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "claude-opus-4-8",
+      "lane_spellings": {
+        "claude-code": [
+          "claude-opus-4-8"
+        ]
+      },
+      "price": {
+        "in_": 5.0,
+        "out": 25.0,
+        "cached_in": 0.5,
+        "batch_in": 2.5,
+        "batch_out": 12.5,
+        "batch_cached_in": 0.25,
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": 128000,
+        "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
+      },
+      "context_window": 1000000,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "tokens_param": "max_tokens",
+        "style": "none"
+      }
+    },
+    "claude-opus-5": {
+      "id": "claude-opus-5",
+      "provider": "anthropic",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "claude-opus-5",
+      "lane_spellings": {},
+      "price": {
+        "in_": 5.0,
+        "out": 25.0,
+        "cached_in": 0.5,
+        "batch_in": 2.5,
+        "batch_out": 12.5,
+        "batch_cached_in": 0.25,
+        "source": "https://platform.claude.com/docs/en/about-claude/pricing (fetched 2026-09-14): $5/$25 per 1M in/out, cache-read $0.50 (0.1x base), batch $2.50/$12.50 \u2014 identical to Claude Opus 4.5-4.8. batch_cached_in = cached_in x 0.5 (stacking documented on the page). Corroborates the 2026-09-12 vendor-page note (opus 5/25).",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": 128000,
+        "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
+      },
+      "context_window": 1000000,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "tokens_param": "max_tokens",
+        "style": "none"
+      }
+    },
+    "claude-sonnet-4-0": {
+      "id": "claude-sonnet-4-0",
+      "provider": "anthropic",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "claude-sonnet-4-0",
+      "lane_spellings": {},
+      "price": {
+        "in_": 3.0,
+        "out": 15.0,
+        "cached_in": 0.3,
+        "batch_in": 1.5,
+        "batch_out": 7.5,
+        "batch_cached_in": 0.15,
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": null,
+        "source": null
+      },
+      "context_window": null,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "tokens_param": "max_tokens",
+        "style": "none"
+      }
+    },
+    "claude-sonnet-4-5": {
+      "id": "claude-sonnet-4-5",
+      "provider": "anthropic",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "claude-sonnet-4-5",
+      "lane_spellings": {},
+      "price": {
+        "in_": 3.0,
+        "out": 15.0,
+        "cached_in": 0.3,
+        "batch_in": 1.5,
+        "batch_out": 7.5,
+        "batch_cached_in": 0.15,
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": 64000,
+        "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
+      },
+      "context_window": 1000000,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "tokens_param": "max_tokens",
+        "style": "none"
+      }
+    },
+    "claude-sonnet-4-6": {
+      "id": "claude-sonnet-4-6",
+      "provider": "anthropic",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "claude-sonnet-4-6",
+      "lane_spellings": {},
+      "price": {
+        "in_": 3.0,
+        "out": 15.0,
+        "cached_in": 0.3,
+        "batch_in": 1.5,
+        "batch_out": 7.5,
+        "batch_cached_in": 0.15,
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": 128000,
+        "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
+      },
+      "context_window": 1000000,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "tokens_param": "max_tokens",
+        "style": "none"
+      }
+    },
+    "claude-sonnet-5": {
+      "id": "claude-sonnet-5",
+      "provider": "anthropic",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "claude-sonnet-5",
+      "lane_spellings": {},
+      "price": {
+        "in_": 2.0,
+        "out": 10.0,
+        "cached_in": 0.2,
+        "batch_in": 1.0,
+        "batch_out": 5.0,
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": 128000,
+        "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
+      },
+      "context_window": 1000000,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "tokens_param": "max_tokens",
+        "style": "none"
+      }
+    },
+    "deepseek-v4-flash": {
+      "id": "deepseek-v4-flash",
+      "provider": "deepseek",
+      "aliases": [],
+      "retired_alias_of": "deepseek-flash",
+      "metered_id": "deepseek-v4-flash",
+      "lane_spellings": {},
+      "price": {
+        "in_": 0.3,
+        "out": 1.2,
+        "cached_in": 0.006,
+        "batch_in": 0.15,
+        "batch_out": 0.6,
+        "source": "https://api-docs.deepseek.com/quick_start/pricing/ (deepseek-v4-flash retired \u2192 billed at Flash: peak/standard rate)",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": 393216,
+        "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
+      },
+      "context_window": 1000000,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "tokens_param": "max_tokens",
+        "style": "none"
+      }
+    },
+    "deepseek-v4-flash-vision-exp": {
+      "id": "deepseek-v4-flash-vision-exp",
+      "provider": "deepseek",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "deepseek-v4-flash-vision-exp",
+      "lane_spellings": {},
+      "price": {
+        "in_": 0.44,
+        "out": 1.32,
+        "cached_in": 0.044,
+        "batch_in": 0.22,
+        "batch_out": 0.66,
+        "source": "https://api-docs.deepseek.com/quick_start/pricing (V4 peak/list rate; off-peak=50%)",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": 393216,
+        "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
+      },
+      "context_window": 1000000,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "tokens_param": "max_tokens",
+        "style": "none"
+      }
+    },
+    "deepseek-v4-pro": {
+      "id": "deepseek-v4-pro",
+      "provider": "deepseek",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "deepseek-v4-pro",
+      "lane_spellings": {},
+      "price": {
+        "in_": 1.32,
+        "out": 3.96,
+        "cached_in": 0.132,
+        "batch_in": 0.66,
+        "batch_out": 1.98,
+        "source": "https://api-docs.deepseek.com/quick_start/pricing (V4 peak/list rate; off-peak=50%)",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": 393216,
+        "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
+      },
+      "context_window": 1000000,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "tokens_param": "max_tokens",
+        "style": "none"
+      }
+    },
+    "gemini-3-flash": {
+      "id": "gemini-3-flash",
+      "provider": "gemini",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "gemini-3-flash",
+      "lane_spellings": {},
+      "price": {
+        "in_": 0.25,
+        "out": 1.5,
+        "cached_in": 0.025,
+        "batch_in": 0.125,
+        "batch_out": 0.75,
+        "source": "https://pricepertoken.com/pricing-page/model/google-gemini-3-flash-preview",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": null,
+        "source": null
+      },
+      "context_window": null,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": true,
+        "reasoning_floor": "none",
+        "reasons_by_default": false,
+        "tokens_param": "max_completion_tokens",
+        "style": "suffix"
+      }
+    },
+    "gemini-3.1-pro": {
+      "id": "gemini-3.1-pro",
+      "provider": "gemini",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "gemini-3.1-pro",
+      "lane_spellings": {},
+      "price": {
+        "in_": 2.0,
+        "out": 12.0,
+        "cached_in": 0.2,
+        "batch_in": 1.0,
+        "batch_out": 6.0,
+        "source": "https://pricepertoken.com/pricing-page/model/google-gemini-3.1-pro-preview (VentureBeat/apidog corroborate $2/$12 \u2264200K)",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": null,
+        "source": null
+      },
+      "context_window": null,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": true,
+        "reasoning_floor": "none",
+        "reasons_by_default": false,
+        "tokens_param": "max_completion_tokens",
+        "style": "suffix"
+      }
+    },
+    "gemini-3.6-flash": {
+      "id": "gemini-3.6-flash",
+      "provider": "gemini",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "gemini-3.6-flash",
+      "lane_spellings": {},
+      "price": {
+        "in_": 1.5,
+        "out": 7.5,
+        "cached_in": 0.15,
+        "batch_in": 0.75,
+        "batch_out": 3.75,
+        "source": "https://aipricecompare.org/models/gemini-3-6-flash.html",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": 65536,
+        "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
+      },
+      "context_window": 1048576,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": true,
+        "reasoning_floor": "none",
+        "reasons_by_default": false,
+        "tokens_param": "max_completion_tokens",
+        "style": "suffix"
+      }
+    },
+    "gemini-3.7-flash": {
+      "id": "gemini-3.7-flash",
+      "provider": "gemini",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "gemini-3.7-flash",
+      "lane_spellings": {},
+      "price": {
+        "in_": 0.75,
+        "out": 3.75,
+        "cached_in": 0.075,
+        "batch_in": 0.375,
+        "batch_out": 1.875,
+        "source": "https://www.layer3labs.io/guides/gemini-3-7-flash-api-pricing ($0.75/$3.75 through 2026-12-31)",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": 65536,
+        "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
+      },
+      "context_window": 1048576,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": true,
+        "reasoning_floor": "none",
+        "reasons_by_default": false,
+        "tokens_param": "max_completion_tokens",
+        "style": "suffix"
+      }
+    },
+    "gemini-3.8-flash": {
+      "id": "gemini-3.8-flash",
+      "provider": "gemini",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "gemini-3.8-flash",
+      "lane_spellings": {
+        "gemini": [
+          "gemini-3.8-flash-high",
+          "gemini-3.8-flash-low"
+        ]
+      },
+      "price": {
+        "in_": 0.75,
+        "out": 3.75,
+        "cached_in": 0.075,
+        "batch_in": 0.375,
+        "batch_out": 1.875,
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": 65536,
+        "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
+      },
+      "context_window": 1048576,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": true,
+        "reasoning_floor": "none",
+        "reasons_by_default": false,
+        "tokens_param": "max_completion_tokens",
+        "style": "suffix"
+      }
+    },
+    "glm-4.7-flashx": {
+      "id": "glm-4.7-flashx",
+      "provider": "zai",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "glm-4.7-flashx",
+      "lane_spellings": {},
+      "price": {
+        "in_": 0.07,
+        "out": 0.4,
+        "cached_in": 0.01,
+        "batch_in": 0.07,
+        "batch_out": 0.4,
+        "source": "https://docs.z.ai/guides/overview/pricing (fetched 2026-08-04): in $0.07/1M, cached-in $0.01/1M, out $0.40/1M. No published batch discount \u2192 batch = standard.",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": null,
+        "source": null
+      },
+      "context_window": null,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "tokens_param": "max_tokens",
+        "style": "none"
+      }
+    },
+    "glm-5.2": {
+      "id": "glm-5.2",
+      "provider": "zai",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "glm-5.2",
+      "lane_spellings": {},
+      "price": {
+        "in_": 1.4,
+        "out": 4.4,
+        "cached_in": 0.14,
+        "batch_in": 0.7,
+        "batch_out": 2.2,
+        "source": "https://docs.z.ai/guides/overview/pricing \u2014 Z.ai official: GLM-5.2 $1.40/$4.40 per 1M (+$0.26 cached)",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": 131072,
+        "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
+      },
+      "context_window": null,
+      "reasoning": {
+        "floor": "high",
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": true,
+        "tokens_param": "max_tokens",
+        "style": "none"
+      }
+    },
+    "glm-5.3": {
+      "id": "glm-5.3",
+      "provider": "zai",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "glm-5.3",
+      "lane_spellings": {
+        "zai-coding": [
+          "glm-5.3"
+        ]
+      },
+      "price": {
+        "in_": 1.4,
+        "out": 4.4,
+        "cached_in": 0.14,
+        "batch_in": 0.7,
+        "batch_out": 2.2,
+        "source": "https://venturebeat.com/technology/glm-5-3-hits-the-api-at-1-4-4-4-per-million-tokens",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": 131072,
+        "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
+      },
+      "context_window": null,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "tokens_param": "max_tokens",
+        "style": "none"
+      }
+    },
+    "gpt-4.1-mini": {
+      "id": "gpt-4.1-mini",
+      "provider": "openai",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "gpt-4.1-mini",
+      "lane_spellings": {},
+      "price": {
+        "in_": 0.4,
+        "out": 1.6,
+        "cached_in": 0.1,
+        "batch_in": 0.2,
+        "batch_out": 0.8,
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": 32768,
+        "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
+      },
+      "context_window": 1047576,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "tokens_param": "max_tokens",
+        "style": "none"
+      }
+    },
+    "gpt-4o": {
+      "id": "gpt-4o",
+      "provider": "openai",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "gpt-4o",
+      "lane_spellings": {},
+      "price": {
+        "in_": 2.5,
+        "out": 10.0,
+        "cached_in": 1.25,
+        "batch_in": 1.25,
+        "batch_out": 5.0,
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": 16384,
+        "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
+      },
+      "context_window": 128000,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "tokens_param": "max_tokens",
+        "style": "none"
+      }
+    },
+    "gpt-4o-mini": {
+      "id": "gpt-4o-mini",
+      "provider": "openai",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "gpt-4o-mini",
+      "lane_spellings": {},
+      "price": {
+        "in_": 0.15,
+        "out": 0.6,
+        "cached_in": 0.075,
+        "batch_in": 0.075,
+        "batch_out": 0.3,
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": 16384,
+        "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
+      },
+      "context_window": 128000,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "tokens_param": "max_tokens",
+        "style": "none"
+      }
+    },
+    "gpt-5": {
+      "id": "gpt-5",
+      "provider": "openai",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "gpt-5",
+      "lane_spellings": {},
+      "price": {
+        "in_": 1.25,
+        "out": 10.0,
+        "cached_in": 0.125,
+        "batch_in": 0.625,
+        "batch_out": 5.0,
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": 128000,
+        "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
+      },
+      "context_window": 272000,
+      "reasoning": {
+        "floor": "minimal",
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": true,
+        "tokens_param": "max_completion_tokens",
+        "style": "none"
+      }
+    },
+    "gpt-5-mini": {
+      "id": "gpt-5-mini",
+      "provider": "openai",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "gpt-5-mini",
+      "lane_spellings": {},
+      "price": {
+        "in_": 0.25,
+        "out": 2.0,
+        "cached_in": 0.025,
+        "batch_in": 0.125,
+        "batch_out": 1.0,
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": 128000,
+        "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
+      },
+      "context_window": 272000,
+      "reasoning": {
+        "floor": "minimal",
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": true,
+        "tokens_param": "max_completion_tokens",
+        "style": "none"
+      }
+    },
+    "gpt-5-nano": {
+      "id": "gpt-5-nano",
+      "provider": "openai",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "gpt-5-nano",
+      "lane_spellings": {},
+      "price": {
+        "in_": 0.05,
+        "out": 0.4,
+        "cached_in": 0.005,
+        "batch_in": 0.025,
+        "batch_out": 0.2,
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": 128000,
+        "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
+      },
+      "context_window": 272000,
+      "reasoning": {
+        "floor": "minimal",
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": true,
+        "tokens_param": "max_completion_tokens",
+        "style": "none"
+      }
+    },
+    "gpt-5.4": {
+      "id": "gpt-5.4",
+      "provider": "openai",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "gpt-5.4",
+      "lane_spellings": {},
+      "price": {
+        "in_": 2.5,
+        "out": 15.0,
+        "cached_in": 0.25,
+        "batch_in": 1.25,
+        "batch_out": 7.5,
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": 128000,
+        "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
+      },
+      "context_window": 1050000,
+      "reasoning": {
+        "floor": "minimal",
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": true,
+        "tokens_param": "max_completion_tokens",
+        "style": "none"
+      }
+    },
+    "gpt-5.4-mini": {
+      "id": "gpt-5.4-mini",
+      "provider": "openai",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "gpt-5.4-mini",
+      "lane_spellings": {},
+      "price": {
+        "in_": 0.75,
+        "out": 4.5,
+        "cached_in": 0.075,
+        "batch_in": 0.375,
+        "batch_out": 2.25,
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": 128000,
+        "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
+      },
+      "context_window": 272000,
+      "reasoning": {
+        "floor": "minimal",
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": true,
+        "tokens_param": "max_completion_tokens",
+        "style": "none"
+      }
+    },
+    "gpt-5.4-nano": {
+      "id": "gpt-5.4-nano",
+      "provider": "openai",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "gpt-5.4-nano",
+      "lane_spellings": {},
+      "price": {
+        "in_": 0.2,
+        "out": 1.25,
+        "cached_in": 0.02,
+        "batch_in": 0.1,
+        "batch_out": 0.625,
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": 128000,
+        "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
+      },
+      "context_window": 272000,
+      "reasoning": {
+        "floor": "none",
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": true,
+        "tokens_param": "max_completion_tokens",
+        "style": "none"
+      }
+    },
+    "gpt-5.5": {
+      "id": "gpt-5.5",
+      "provider": "openai",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "gpt-5.5",
+      "lane_spellings": {},
+      "price": {
+        "in_": 5.0,
+        "out": 30.0,
+        "cached_in": 0.5,
+        "batch_in": 2.5,
+        "batch_out": 15.0,
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": 128000,
+        "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
+      },
+      "context_window": 1050000,
+      "reasoning": {
+        "floor": "none",
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": true,
+        "tokens_param": "max_completion_tokens",
+        "style": "none"
+      }
+    },
+    "gpt-5.5-pro": {
+      "id": "gpt-5.5-pro",
+      "provider": "openai",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "gpt-5.5-pro",
+      "lane_spellings": {},
+      "price": {
+        "in_": 30.0,
+        "out": 180.0,
+        "cached_in": 3.0,
+        "batch_in": 15.0,
+        "batch_out": 90.0,
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": 128000,
+        "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
+      },
+      "context_window": 1050000,
+      "reasoning": {
+        "floor": "none",
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": true,
+        "tokens_param": "max_completion_tokens",
+        "style": "none"
+      }
+    },
+    "gpt-5.6-luna": {
+      "id": "gpt-5.6-luna",
+      "provider": "openai",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "gpt-5.6-luna",
+      "lane_spellings": {
+        "codex": [
+          "gpt-5.6-luna"
+        ]
+      },
+      "price": {
+        "in_": 0.2,
+        "out": 1.2,
+        "cached_in": 0.02,
+        "batch_in": 0.1,
+        "batch_out": 0.6,
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": 128000,
+        "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
+      },
+      "context_window": 922000,
+      "reasoning": {
+        "floor": "none",
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": true,
+        "tokens_param": "max_completion_tokens",
+        "style": "none"
+      }
+    },
+    "gpt-5.6-sol": {
+      "id": "gpt-5.6-sol",
+      "provider": "openai",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "gpt-5.6-sol",
+      "lane_spellings": {
+        "codex": [
+          "gpt-5.6-sol"
+        ]
+      },
+      "price": {
+        "in_": 4.0,
+        "out": 20.0,
+        "cached_in": 0.4,
+        "batch_in": 2.0,
+        "batch_out": 10.0,
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": 128000,
+        "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
+      },
+      "context_window": 922000,
+      "reasoning": {
+        "floor": "none",
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": true,
+        "tokens_param": "max_completion_tokens",
+        "style": "none"
+      }
+    },
+    "kimi-k2.6": {
+      "id": "kimi-k2.6",
+      "provider": "custom",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "kimi-k2.6",
+      "lane_spellings": {},
+      "price": {
+        "in_": 0.95,
+        "out": 4.0,
+        "cached_in": 0.095,
+        "batch_in": 0.475,
+        "batch_out": 2.0,
+        "source": "https://pricepertoken.com/pricing-page/model/moonshotai-kimi-k2.6 \u2014 Moonshot official $0.95/$4.00 per 1M",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": null,
+        "source": null
+      },
+      "context_window": null,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "tokens_param": "max_tokens",
+        "style": "none"
+      }
+    },
+    "kimi-k3": {
+      "id": "kimi-k3",
+      "provider": "moonshot",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "kimi-k3",
+      "lane_spellings": {},
+      "price": {
+        "in_": 3.0,
+        "out": 15.0,
+        "cached_in": 0.3,
+        "batch_in": 3.0,
+        "batch_out": 15.0,
+        "source": "https://platform.kimi.ai/docs/pricing/chat-k3.md (fetched 2026-08-04): in cache-miss $3.00/1M, cache-hit $0.30/1M, out $15.00/1M. Batch API does NOT support kimi-k3 (batch.md lists only k2.7-code/k2.6/k2.5), so batch rates are set to STANDARD \u2014 never discounted for a mode the model cannot use.",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": null,
+        "source": null
+      },
+      "context_window": null,
+      "reasoning": {
+        "floor": "high",
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": true,
+        "tokens_param": "max_tokens",
+        "style": "none"
+      }
+    },
+    "qwen-max": {
+      "id": "qwen-max",
+      "provider": "qwen",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "qwen-max",
+      "lane_spellings": {},
+      "price": {
+        "in_": 2.5,
+        "out": 7.5,
+        "cached_in": 0.25,
+        "batch_in": 1.25,
+        "batch_out": 3.75,
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": null,
+        "source": null
+      },
+      "context_window": null,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "tokens_param": "max_tokens",
+        "style": "none"
+      }
+    },
+    "qwen-plus": {
+      "id": "qwen-plus",
+      "provider": "qwen",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "qwen-plus",
+      "lane_spellings": {},
+      "price": {
+        "in_": 0.4,
+        "out": 1.2,
+        "cached_in": 0.04,
+        "batch_in": 0.2,
+        "batch_out": 0.6,
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": null,
+        "source": null
+      },
+      "context_window": null,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "tokens_param": "max_tokens",
+        "style": "none"
+      }
+    },
+    "qwen-turbo": {
+      "id": "qwen-turbo",
+      "provider": "qwen",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "qwen-turbo",
+      "lane_spellings": {},
+      "price": {
+        "in_": 0.05,
+        "out": 0.2,
+        "cached_in": 0.005,
+        "batch_in": 0.025,
+        "batch_out": 0.1,
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": null,
+        "source": null
+      },
+      "context_window": null,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "tokens_param": "max_tokens",
+        "style": "none"
+      }
+    },
+    "text-embedding-3-large": {
+      "id": "text-embedding-3-large",
+      "provider": "openai",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "text-embedding-3-large",
+      "lane_spellings": {},
+      "price": {
+        "in_": 0.13,
+        "out": 0.0,
+        "cached_in": 0.0,
+        "batch_in": 0.065,
+        "batch_out": 0.0,
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": null,
+        "source": null
+      },
+      "context_window": 8191,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "tokens_param": "max_tokens",
+        "style": "none"
+      }
+    },
+    "text-embedding-3-small": {
+      "id": "text-embedding-3-small",
+      "provider": "openai",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "text-embedding-3-small",
+      "lane_spellings": {},
+      "price": {
+        "in_": 0.02,
+        "out": 0.0,
+        "cached_in": 0.0,
+        "batch_in": 0.01,
+        "batch_out": 0.0,
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "verified": "2026-09-12"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": null,
+        "source": null
+      },
+      "context_window": 8191,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "tokens_param": "max_tokens",
+        "style": "none"
+      }
+    }
+  }
+}
