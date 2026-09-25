@@ -80,6 +80,36 @@ def _rough_tokens(text):
     return max(1, len(text) // 4)                          # ~4 chars/token — a conservative count for an estimate only
 
 
+_PANEL_DEADLINE_DEFAULT_S = 600.0   # fallback ONLY when a model has too few measurements (< 5 obs) for the latency
+#                                     advisor. Named, not a literal: a thorough reasoning review of the WHOLE suite is a
+#                                     long call, so the unmeasured default is generous — then clamped by
+#                                     adapters.deadline_for to [30s, 1800s].
+
+
+def resolve_panel_deadline(models, payload, explicit=None):
+    """The batch wall-clock deadline (seconds), SIZED FROM MEASURED per-model latency — never a hardcode. bulk_delegate
+    bounds the WHOLE batch with a single deadline, so it must fit the SLOWEST reviewer: a reasoning model on the full
+    payload lands in the slow tail (measured kimi-k3 p95 ≈ 265s vs the old hardcoded 180s), and too tight a deadline
+    tears it down MID-THOUGHT — which still BILLS (reasoning tokens, no output) while the local ledger reads $0. Sizing
+    lives in exactly ONE place, adapters.deadline_for; here we only take the MAX across the panel. Precedence: explicit
+    arg → $SPENDGUARD_CONFORMANCE_DEADLINE_S → measured advisor → the named default. Returns (seconds, basis)."""
+    if explicit is not None:
+        return float(explicit), "caller"
+    env = os.getenv("SPENDGUARD_CONFORMANCE_DEADLINE_S")
+    if env:
+        return float(env), "env"
+    from spendguard import adapters
+    in_chars = len(payload)
+    worst, worst_basis = 0.0, "default"
+    for m in models:
+        secs, basis = adapters.deadline_for(m, intent="conformance:panel-review", in_chars=in_chars,
+                                            default_s=_PANEL_DEADLINE_DEFAULT_S)
+        secs = secs or _PANEL_DEADLINE_DEFAULT_S
+        if secs > worst:
+            worst, worst_basis = secs, f"measured:{m}({basis})"
+    return (worst or _PANEL_DEADLINE_DEFAULT_S), worst_basis
+
+
 def estimate_panel(models=None, budget_usd=2.0, est_out_tok=3200):
     """Zero-spend $ projection for the panel (one whole-payload review per model). {rows, total_usd, within_budget,
     unpriced}. est_out_tok is reasoning-INCLUSIVE (a thoughtful review thinks). Same completeness contract as the suite
@@ -121,24 +151,30 @@ def render_estimate(est):
     return "\n".join(out)
 
 
-def run_panel(models=None, budget_usd=2.0):
+def run_panel(models=None, budget_usd=2.0, deadline_s=None):
     """Fan the WHOLE payload to each reviewer via the metered_only cross-vendor panel (each vendor answers as itself),
-    collect the critiques, write them durably. Returns the run dict. APPROVAL-GATED: caller confirms the estimate first."""
+    collect the critiques, write them durably. Returns the run dict. APPROVAL-GATED: caller confirms the estimate first.
+
+    The batch deadline is SIZED FROM MEASURED per-model latency (resolve_panel_deadline → adapters.deadline_for),
+    never a hardcode — one deadline bounds the whole batch, so it must fit the SLOWEST reviewer or a reasoning model is
+    cut mid-thought (billed reasoning tokens, no output). Explicit deadline_s or $SPENDGUARD_CONFORMANCE_DEADLINE_S wins."""
     from spendguard import lane_balance
     models = models or panel_models()
     payload = build_payload()
+    deadline_s, deadline_basis = resolve_panel_deadline(models, payload, deadline_s)
     tasks = [{"model": m} for m in models]                 # one task per reviewer; same payload to each
     results = lane_balance.bulk_delegate(
         tasks, "conformance:panel-review", reasoning="medium",   # a high-stakes design review — give reviewers room to think
         model_for=lambda t: t["model"], prompt_for=lambda t: payload,
         metered_only=True,                                 # each vendor answers as ITSELF — no lane collapse (dogfoods B10/B14)
         budget_usd=budget_usd,                             # guardrail D: a real cap on the review itself
-        chunk_size=len(models), force=True, deadline_s=180.0)
+        chunk_size=len(models), force=True, deadline_s=deadline_s)
     ts = time.strftime("%Y%m%d-%H%M%S")
     outdir = os.path.join(_REPO, "conformance_runs")
     os.makedirs(outdir, exist_ok=True)
     path = os.path.join(outdir, f"panel_review_{ts}.json")
     run = {"ts": ts, "models": models, "payload_chars": len(payload),
+           "deadline_s": deadline_s, "deadline_basis": deadline_basis,
            "reviews": [{"model": (r or {}).get("model"), "text": (r or {}).get("text"),
                         "error": (r or {}).get("error"), "cost": (r or {}).get("cost")} for r in results]}
     with open(path, "w") as f:
@@ -162,6 +198,8 @@ def main(argv=None):
         return 1
     run = run_panel()
     print("panel review complete → %s" % run["path"])
+    print("  batch deadline: %.0fs  (basis: %s — measured latency, not a hardcode)"
+          % (run.get("deadline_s", 0.0), run.get("deadline_basis", "?")))
     for rv in run["reviews"]:
         tag = "OK" if rv.get("text") and not rv.get("error") else ("ERROR: %s" % rv.get("error"))
         print("  %-28s %s  ($%s)" % (rv["model"], tag, rv.get("cost")))
