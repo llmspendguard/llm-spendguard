@@ -377,6 +377,16 @@ def _dispatch(argv=None):
             print("per-call RUNAWAYS (guardrail E — out_tok >> the measured p99 norm; the loose ceiling never cut it):")
             for k, n in rw.items():
                 print("  %-26s x%s" % (k, n))
+        icr = st.get("intent_cap_refusals") or {}
+        if icr:
+            print("per-intent CAP refusals (guardrail D at the door — spend would cross caps.intent_caps):")
+            for k, n in icr.items():
+                print("  %-26s x%s" % (k, n))
+        uf = st.get("ungated_fans") or {}
+        if uf:
+            print("UN-GATED fans (raw same-intent bursts NOT via bulk_delegate — route them through it):")
+            for k, n in uf.items():
+                print("  %-26s x%s" % (k, n))
         return 0
     if cmd == "config":
         from . import setup
