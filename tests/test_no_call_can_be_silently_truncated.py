@@ -176,7 +176,7 @@ _real_max = bulkgate.maxtokens
 try:
     # a per-class 'recommend' is an ESTIMATE input (expected_output.expect), NEVER the budget. A tiny recommend can
     # no longer starve a call — the budget is the ceiling.
-    bulkgate.maxtokens = lambda sig: {"recommend": 7}
+    bulkgate.maxtokens = lambda sig, **k: {"recommend": 7}   # **k: real maxtokens takes (sig, current_max, model)
     fake3 = FakeProvider(truncate_n=0)
     adapters._call_once = fake3
     adapters.call("claude-haiku-4-5", "x", sig="probe:measured")
@@ -200,7 +200,7 @@ try:
 
     # THE DOCTRINE REVERSAL: an explicit caller max_tokens is IGNORED, not honoured — it can only ever truncate, so
     # spendguard drops it and sends the ceiling. (An INTERNAL tiny probe is the sole exception; see _internal_tiny.)
-    bulkgate.maxtokens = lambda sig: {"recommend": 0}
+    bulkgate.maxtokens = lambda sig, **k: {"recommend": 0}   # **k: real maxtokens takes (sig, current_max, model)
     fake5 = FakeProvider(truncate_n=0)
     adapters._call_once = fake5
     adapters.call("claude-haiku-4-5", "x", max_tokens=16, sig="probe:deliberate")

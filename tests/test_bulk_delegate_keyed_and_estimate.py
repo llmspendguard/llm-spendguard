@@ -70,7 +70,7 @@ print("-- estimate_fan: $0 preview, DISTINCT-call dedup, worst-case metered CEIL
 lane_balance._bulk_arms = lambda intent, lanes=None: [("codex", "gpt-x"), ("gemini", "gem-y")]
 lane_catalog.lane_provider = lambda ln: ln
 lane_economics.prompt_lane_reserved = lambda ln: False
-bulkgate.maxtokens = lambda intent: {"p99": 200, "n": 50}
+bulkgate.maxtokens = lambda intent, **k: {"p99": 200, "n": 50}   # **k: real maxtokens takes (sig, current_max, model)
 pricing.realtime_cost = lambda model, i, o, provider=None: 0.001    # $0.001 per distinct task
 
 est = lane_balance.estimate_fan(["a", "a", "b"], "t-intent", system="sys")   # 3 tasks, 2 DISTINCT

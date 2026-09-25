@@ -776,10 +776,11 @@ def check_runaway(sig, model, out_tok, norm=None):
         n = int(_mx.get("n") or 0)
         if p99 and n >= RUNAWAY_MIN_SAMPLES:
             norm_val, basis = float(p99), "class"                # measured, output-class-aware
-        elif n == 0:                                             # cold class → judge vs its OWN expected size, not the
-            seed = _mx.get("recommend")                          # model-wide average (which false-accuses large classes)
-            if not seed and model:                               # a pre-call norm built without the model lacks the seed
-                seed = (maxtokens(sig, model=model) or {}).get("recommend")
+        elif n == 0:                                             # cold class → judge vs its OWN expected size (the
+            seed = _mx.get("recommend")                          # reasoning-inclusive seed), never the model-wide average.
+            #   The norm ALWAYS carries the seed: adapters builds _mx0 with maxtokens(sig, model=model) PRE-record, and
+            #   the norm=None path below computes it the same way — so there is no second maxtokens() call here (a
+            #   re-derivation would double-record AND, post-record, self-reference the very call being judged).
             if not seed:
                 return False, None                              # cold non-reasoning class, no seed ⇒ cannot judge (D backstops)
             norm_val, basis = float(seed), "class-seed(cold)"

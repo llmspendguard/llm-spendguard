@@ -38,7 +38,7 @@ def ck(name, cond):
 
 
 # The poisoned predictor: recommend far above any real output AND above the model ceiling.
-bulkgate.maxtokens = lambda sig: {"recommend": 146576}
+bulkgate.maxtokens = lambda sig, **k: {"recommend": 146576}   # **k: the real maxtokens takes (sig, current_max, model)
 
 # Capture the budget that actually reaches the raw sender (what would go to the provider).
 _captured = {}
