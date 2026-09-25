@@ -63,9 +63,12 @@ def instrument_id(intent, kind, judge_mix, aggregation, s_hash, r_hash, candidat
 
 
 def _sg_version():
+    # The version of the CODE running (SSOT: spendguard._version), so a reading is tagged with the version that
+    # produced it — NOT importlib.metadata, which under an editable install returns the frozen install-time version
+    # and would mis-tag a reading with a stale version (see _version.py / warden 2026-09-25).
     try:
-        from importlib.metadata import version
-        return version("llm-spendguard")
+        from ._version import __version__
+        return __version__
     except Exception:
         return "?"
 

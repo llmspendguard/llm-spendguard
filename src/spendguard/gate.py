@@ -2324,6 +2324,23 @@ def _cli(cmd="status", live=False):
     else:  # status / doctor
         print(f"spend gate: {'🔴 DISABLED' if _disabled() else '🟢 ENABLED'}   (cap ${_cap():.0f})")
         print(f"  python    : {sys.executable}")
+        # version of the CODE running (SSOT) vs THIS venv's install-time metadata: an editable install freezes its
+        # dist-info version at install time, so a stale one silently under-reports (it read 0.7.2 while running
+        # 0.10.0 code). Surface the drift here so a stale editable install is visible, not silent.
+        try:
+            from . import __version__ as _code_v
+            try:
+                from importlib.metadata import version as _mv
+                _meta_v = _mv("llm-spendguard")
+            except Exception:
+                _meta_v = None
+            if _meta_v and _meta_v != _code_v:
+                print(f"  version   : 🟡 {_code_v} (running code); this venv's install metadata says {_meta_v} "
+                      f"— stale editable install, refresh with `pip install -e . --no-deps` here")
+            else:
+                print(f"  version   : 🟢 {_code_v}")
+        except Exception:
+            pass
         install()
         enforcing = _any_patched()
         print(f"  {ENFORCING_MARKER}: "

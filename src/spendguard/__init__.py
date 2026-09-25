@@ -53,13 +53,11 @@ __all__ = ["install", "require", "register", "install_litellm", "install_bedrock
            "estimate_job", "test_job", "gated_batch", "check_bulk", "check_realtime", "check_compute",
            "record_estimate", "record_tested", "note_response", "maxtokens", "is_truncated", "GateBlocked",
            "ask", "AskResult", "BudgetRefused"]
-# Version comes from the INSTALLED package metadata (single source: pyproject.toml) — a hardcoded literal
-# here shipped as "0.3.0" for four releases before anyone noticed. Editable/source-tree fallback: "0.0.0.dev0".
-try:
-    from importlib.metadata import version as _pkg_version
-    __version__ = _pkg_version("llm-spendguard")
-except Exception:
-    __version__ = "0.0.0.dev0"
+# Version SSOT: src/spendguard/_version.py, read LIVE from source so `__version__` is always the version of the CODE
+# actually running — including an editable install whose frozen dist-info metadata lags source (importlib.metadata
+# reads install-time metadata, so it reported 0.7.2 while running 0.10.0 code). pyproject consumes the SAME file at
+# build time via [tool.setuptools.dynamic]. One authoring home; never a metadata read, never a second literal.
+from ._version import __version__ as __version__   # `as __version__`: explicit re-export (this IS the public attr)
 
 
 def which_package():

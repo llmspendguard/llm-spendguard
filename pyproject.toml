@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "llm-spendguard"
-version = "0.10.0"
+dynamic = ["version"]   # version SSOT is src/spendguard/_version.py (see [tool.setuptools.dynamic] below) — never a literal here
 description = "A pre-spend GATE + learning advisor for LLM API cost: caps every call, prices from a verified table, and learns the cheapest config that keeps quality."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -44,6 +44,10 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 spendguard = ["prices.json", "py.typed"]
+
+[tool.setuptools.dynamic]
+# The version comes from ONE place — the src literal — read at build time so wheel metadata matches the code.
+version = { attr = "spendguard._version.__version__" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
