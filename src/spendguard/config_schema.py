@@ -186,12 +186,20 @@ SETTINGS = [
               "load-balancer's substitute CANDIDATES (lane_balance.candidate_models); unset → nothing to propose."),
     dict(section="advisor", key="provider_base_model", store="config.json:advisor.provider_base_model", default=None,
          kind="json|null", secret=False,
-         desc="{provider: model} — each provider's RELIABLE BASE model: the LAST-RESORT tier-3 fallback when a "
-              "chosen model's $0 lane AND its metered API both fail, so a vendor slot still yields SOME answer "
-              "(LABELLED base_fallback) rather than an error. Opt-in per call (adapters.call base_fallback=True) and "
-              "per provider (a provider left unset -> no tier-3 for it, the chain ends at metered). YOU pick each "
-              "base (a capability+reliability judgement, made once here); the code never guesses or hardcodes a "
-              "model id. Same-provider only, so a consensus panel keeps its vendor identity."),
+         desc="{provider: model} — an OPERATOR OVERRIDE of each provider's RELIABLE BASE model (the SSOT default is "
+              "model_catalog.provider_base, flagged per provider in the catalog). The base is the LAST-RESORT tier-3 "
+              "fallback when a chosen model's $0 lane AND its metered API both fail, so a vendor slot still yields "
+              "SOME answer (LABELLED base_fallback) rather than an error. This map WINS over the catalog for the "
+              "providers it names; a provider named in neither -> no tier-3 for it (the chain ends at metered). The "
+              "code never guesses or hardcodes a model id. Same-provider only, so a consensus panel keeps its vendor "
+              "identity."),
+    dict(section="advisor", key="base_fallback_default", store="config.json:advisor.base_fallback_default",
+         env="SPENDGUARD_BASE_FALLBACK_DEFAULT", default=True, kind="bool", secret=False,
+         desc="Whether the tier-3 provider-base fallback is ON by default for a normal call (so a vendor slot yields "
+              "SOME answer when the chosen model's lane AND metered API both fail). Default true. It is ALWAYS off "
+              "for a pinned/measurement call (no_substitution / metered_only — where the model IS the measurement) "
+              "and for a tiny probe; those rely on transient retry + a measured deadline instead. Set false to make "
+              "every call opt IN explicitly (adapters.call base_fallback=True)."),
     dict(section="advisor", key="tiers", store="config.json:advisor.tiers", default=None,
          kind="json|null", secret=False,
          desc="{group: [models YOU declare interchangeable for it]} — named ROUTING GROUPS a fungible caller can "

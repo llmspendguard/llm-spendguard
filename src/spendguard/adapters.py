@@ -59,14 +59,22 @@ def provider_for(model):
 
 
 def provider_base_model(provider):
-    """The RELIABLE BASE model configured for `provider` (advisor.provider_base_model[provider]) — the tier-3
-    last-resort fallback when a chosen model's $0 lane AND its metered API both fail. None if unset for this provider
-    (tier-3 is then a no-op for it, and the chain ends at metered). PURELY config, never a hardcoded id, so a stale
-    model id can't be baked in; same-provider by construction, so a consensus panel keeps its vendor identity."""
+    """The RELIABLE BASE model for `provider` — the tier-3 last-resort fallback when a chosen model's $0 lane AND its
+    metered API both fail. Resolution: advisor.provider_base_model[provider] (an operator OVERRIDE) wins, else the
+    catalog's designated base (model_catalog.provider_base — the SSOT default). None if neither → tier-3 is a no-op for
+    that provider and the chain ends at metered. Never a hardcoded id here (the config/catalog own it), so a stale id
+    can't be baked in; same-provider by construction, so a consensus panel keeps its vendor identity."""
+    prov = (provider or "").strip().lower()
     try:
         from . import config as _cfg
-        m = (_cfg._cfg_get("advisor", "provider_base_model", {}) or {}).get((provider or "").strip().lower())
-        return m or None
+        m = (_cfg._cfg_get("advisor", "provider_base_model", {}) or {}).get(prov)
+        if m:
+            return m
+    except Exception:
+        pass
+    try:
+        from . import model_catalog as _mc
+        return _mc.provider_base(prov) or None
     except Exception:
         return None
 
@@ -551,7 +559,7 @@ def _apply_best_value_default(reasoning, intent, sig, no_substitution, probe):
 
 def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,
          sig=None, intent=None, retries=2, files=None, _no_guard=False, no_metered_fallback=False, images=None,
-         no_substitution=False, metered_only=False, base_fallback=False, _probe=False, _route=True, **aliases):
+         no_substitution=False, metered_only=False, base_fallback=None, _probe=False, _route=True, **aliases):
     """Run one prompt against one model. Returns a result dict (never raises).
 
     `governed=True` (a kwarg carried via **aliases) runs THIS call inside the dispatch GOVERNOR — for a caller
@@ -687,6 +695,20 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     # gap at its structural root, not per-intent in a denylist.
     if metered_only:
         no_substitution = True
+
+    # BASE-FALLBACK DEFAULT (tier-3 reliability). Auto-ON so a call yields SOME answer when a model's lane AND its
+    # metered API both fail — EXCEPT where the model IS the measurement (no_substitution / metered_only pins it) or a
+    # tiny probe, and except when the operator turns it off (advisor.base_fallback_default=false). An explicit
+    # base_fallback= from the caller always wins (None = "decide here"). Same-provider by construction
+    # (provider_base_model), so a pinned panel/judge is never silently moved to a different vendor. Read the caller's
+    # ORIGINAL pinning here (before a lane-shed may set metered_only), so a shed call still gets the safety net.
+    if base_fallback is None:
+        try:
+            _bf_default = str(config._cfg_get("advisor", "base_fallback_default", True)).strip().lower() \
+                not in ("0", "false", "no", "off")
+        except Exception:
+            _bf_default = True
+        base_fallback = _bf_default and not (no_substitution or metered_only or _probe)
 
     # INPUT-COMPLETENESS: fold whole, stamped, self-verified files into the prompt BEFORE the guards, so the
     # full payload is what _input_fits measures and a size overflow is refused here rather than clipped by the
