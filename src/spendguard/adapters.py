@@ -2486,9 +2486,32 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
             _sub_guard.on = True                   # one hop: the substitute must not itself substitute (proactive OR reactive)
             try:
                 r = _call_guarded(_sub, prompt, max_tokens=max_tokens, sig=sig, retries=retries, _no_sub=True, **_subkw)
+            except Exception as _se:               # a substitute that RAISES (transport/etc.) must not sink the call —
+                from . import gate as _gsub
+                if _gsub.is_deliberate_stop(_se):  # …but a SpendGateRefused / deadline / containment HALTS: it is NEVER
+                    raise                          # swallowed into a substitute error and continued on the original.
+                r = {"error": f"substitute {_sub} raised: {type(_se).__name__}: {str(_se)[:130]}",
+                     "error_type": type(_se).__name__}
             finally:
                 _sub_guard.on = False
-            return {**r, "substituted_from": model, "substitution": _why, "prompt_adapted": _adapt is not None}
+            if not r.get("error"):
+                return {**r, "substituted_from": model, "substitution": _why, "prompt_adapted": _adapt is not None}
+            # THE SUBSTITUTE FAILED (a non-deliberate error — a deliberate stop already re-raised above) — do NOT strand
+            # the caller (7thsense 2026-09-25). The PROACTIVE bandit moved this work OFF the model the caller named onto
+            # a substitute whose OWN metered fallback was unavailable on THIS box (no provider key / transport error),
+            # and returning the substitute's error stranded a call the ORIGINAL model would have served — while a "lane
+            # missed" outcome recovers, because THAT (reactive) path already falls back to the API. SHED the failed
+            # (lane, model) arm briefly so this call's retries + the next few calls skip it (choose_arm and route_decision
+            # both skip a cooling arm), then FALL THROUGH to run the ORIGINAL model here, guarded, with substitution OFF.
+            try:
+                _sfail_lane = _LANES.get(provider_for(_sub), (None,))[0]
+                if _sfail_lane:
+                    _lane_model_cool(_sfail_lane, _sub.split(":", 1)[1] if ":" in _sub else _sub)
+            except Exception:
+                pass
+            print(f"[spendguard] lane-balance: substitute {_sub} FAILED ({str(r.get('error'))[:70]}) — shed it, "
+                  f"running the ORIGINAL {model} so the call is not stranded", file=_sys.stderr)
+            _no_sub = True                          # run the original ONCE here (no re-substitution), then fall through
     ok, detail = _input_fits(model, prompt, kw.get("system"), images=kw.get("images"))
     if not ok:
         return {"provider": provider_for(model), "model": model, "text": None, "in_tok": 0, "out_tok": 0,
