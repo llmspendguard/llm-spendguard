@@ -79,6 +79,37 @@ def provider_base_model(provider):
         return None
 
 
+def safe_input_chars(model, intent=None, reply_tokens=8000, prompt_tokens=1500, chars_per_token=3.0):
+    """Max INPUT characters that safely FIT the context window (leaving room for the reply + the prompt scaffold) — so
+    a caller that SEGMENTS its own input (e.g. 7thsense's document comprehender) sizes to the REAL, catalog-sourced
+    window instead of a hardcoded guess. When `intent` is given, the MIN context window across the configured candidate
+    models (advisor.tiers) is used, so ANY model best-value might pick still fits. Sourced from
+    model_catalog.context_window (the METERED window); a LANE's smaller practical input capacity is a separate, LEARNED
+    axis (resource_state size_ceiling) with the tier-3 fallback behind it — so this is the upper SAFETY bound, not a
+    lane-usage target. Returns None when NO context is known (the caller keeps its own conservative default — never a
+    guessed number). chars_per_token is deliberately conservative (3.0; English prose is ~3.6+), so the estimate never
+    overshoots a real window."""
+    from . import model_catalog as _mc
+    ctxs = []
+    cw = _mc.context_window(model)
+    if cw:
+        ctxs.append(int(cw))
+    if intent:
+        try:
+            tiers = config._cfg_get("advisor", "tiers", {}) or {}
+            for _models in tiers.values():
+                for _m in ([_models] if isinstance(_models, str) else (_models or [])):
+                    c = _mc.context_window(_m)
+                    if c:
+                        ctxs.append(int(c))
+        except Exception:
+            pass
+    if not ctxs:
+        return None
+    usable = max(0, min(ctxs) - int(reply_tokens) - int(prompt_tokens))
+    return int(usable * float(chars_per_token))
+
+
 def _executor():
     v = __import__("os").environ.get("SPENDGUARD_ADVISOR_EXECUTOR")
     if v:
@@ -435,7 +466,8 @@ def _book_substitution(r):
         guard.record_decision(intent=(_cbk.current() or {}).get("intent"),
                               requested_model=requested, requested_effort=r.get("requested_effort"),
                               chosen_model=chosen, chosen_effort=r.get("chosen_effort"),
-                              counterfactual_usd=base, actual_usd=actual, saved_usd=saved, basis=_basis)
+                              counterfactual_usd=base, actual_usd=actual, saved_usd=saved, basis=_basis,
+                              why=r.get("substitution"))   # the SPECIFIC routing reason (bandit/lane/tier-3/best-value)
         if saved > 0:                                    # metered → cheaper metered: a real counterfactual saving
             guard.record_saving(_basis, saved)
     except Exception:

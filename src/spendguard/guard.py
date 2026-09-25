@@ -149,7 +149,13 @@ def _decisions_db():
         db.execute("CREATE TABLE IF NOT EXISTS decisions "
                    "(ts TEXT, day TEXT, project TEXT, intent TEXT, basis TEXT, "
                    "requested_model TEXT, requested_effort TEXT, chosen_model TEXT, chosen_effort TEXT, "
-                   "counterfactual_usd REAL, actual_usd REAL, saved_usd REAL)")
+                   "counterfactual_usd REAL, actual_usd REAL, saved_usd REAL, why TEXT)")
+        # forward-only additive column: `why` = the SPECIFIC routing reason ("bandit → codex (gpt-5.6-sol)", "tier-3
+        # base fallback", "lane-miss → metered", "best-value") so "why did X run instead of the model requested" is a
+        # queryable fact, not only the coarse `basis` (advisor/best-value, which keys the savings tally).
+        _have = {r[1] for r in db.execute("PRAGMA table_info(decisions)").fetchall()}
+        if "why" not in _have:
+            db.execute("ALTER TABLE decisions ADD COLUMN why TEXT")
         db.execute("CREATE INDEX IF NOT EXISTS idx_decisions_day ON decisions(day)")
         db.execute("CREATE INDEX IF NOT EXISTS idx_decisions_intent ON decisions(intent)")
         db.commit()
@@ -157,8 +163,10 @@ def _decisions_db():
 
 
 def record_decision(intent, requested_model, chosen_model, counterfactual_usd, actual_usd, saved_usd,
-                    requested_effort=None, chosen_effort=None, basis="advisor", project=None):
-    """Record ONE substitution decision (the value proof + the learner's evidence). Never raises — booking value
+                    requested_effort=None, chosen_effort=None, basis="advisor", project=None, why=None):
+    """Record ONE routing decision (the value proof + the learner's evidence + the ROUTING PROVENANCE). `why` is the
+    SPECIFIC reason the chosen model differs from the requested one (bandit/lane/tier-3/best-value/lane-miss → metered),
+    so a cheap-intent-ran-on-an-expensive-model event is queryable and we can improve routing. Never raises — booking
     must not break the call path — but never SILENT: a failed write warns once rather than losing the row."""
     try:
         proj = project if project is not None else budget._project()
@@ -166,11 +174,11 @@ def record_decision(intent, requested_model, chosen_model, counterfactual_usd, a
         db = _decisions_db()
         with budget._lock:
             db.execute("INSERT INTO decisions (ts,day,project,intent,basis,requested_model,requested_effort,"
-                       "chosen_model,chosen_effort,counterfactual_usd,actual_usd,saved_usd) "
-                       "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                       "chosen_model,chosen_effort,counterfactual_usd,actual_usd,saved_usd,why) "
+                       "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                        (now.isoformat(timespec="seconds"), now.strftime("%Y-%m-%d"), proj, intent, basis,
                         requested_model, requested_effort, chosen_model, chosen_effort,
-                        float(counterfactual_usd or 0), float(actual_usd or 0), float(saved_usd or 0)))
+                        float(counterfactual_usd or 0), float(actual_usd or 0), float(saved_usd or 0), why))
             db.commit()
     except Exception:
         try:
