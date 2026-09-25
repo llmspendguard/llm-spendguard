@@ -714,25 +714,26 @@ class _RunawayCounter:
 _RUNAWAYS = _RunawayCounter()
 
 
-def note_runaway(sig, model, out_tok, norm_p99, basis):
+def note_runaway(sig, model, out_tok, norm_val, basis):
     """GUARDRAIL E — record + SURFACE, un-swallowably, a PER-CALL RUNAWAY: a completed call whose out_tok is many times
-    the MEASURED p99 norm for its class. A reasoning model can emit thousands of tokens that bill as output while the
-    output ceiling — deliberately loose so reasoning has headroom — never truncates it (the gpt-5.5 incident: ~4,249
-    out tok vs a ~121 norm, billed in full x N). The breaker does NOT abort mid-call (a cancelled reasoning call still
-    BILLS what it generated and returns nothing — the worst spend there is, see note_deadline_cancel); it TRIPS and
-    records so the runaway is VISIBLE, while guardrail D's budget_usd cap bounds the dollars. Counted per (model, sig)
-    and announced at decade boundaries, carrying the fix. Never raises. Returns the count. Measured norm only — never a
-    guessed absolute — so it cannot accuse a class whose real outputs are large."""
+    its CALL-CLASS's own norm (the measured p99 for a warm class, or the class's reasoning-inclusive seed when cold —
+    `basis` names which). A reasoning model can emit thousands of tokens that bill as output while the output ceiling —
+    deliberately loose so reasoning has headroom — never truncates it (the gpt-5.5 incident: ~4,249 out tok vs a ~121
+    norm, billed in full x N). The breaker does NOT abort mid-call (a cancelled reasoning call still BILLS what it
+    generated and returns nothing — the worst spend there is, see note_deadline_cancel); it TRIPS and records so the
+    runaway is VISIBLE, while guardrail D's budget_usd cap bounds the dollars. Counted per (model, sig) and announced at
+    decade boundaries, carrying the fix. Never raises. Returns the count. CLASS-scoped norm only — never a cross-class
+    model average or a guessed absolute — so it cannot accuse a class whose real outputs are legitimately large."""
     import sys
     n = _RUNAWAYS.bump("%s|%s" % (model, sig))   # the RECORD is committed HERE — before any I/O — survives a bad stderr
     if n not in _TRUNC_ANNOUNCE:                  # print OUTSIDE the count update (never announce every trip)
         return n
     try:                                          # the count is already recorded; the announce line is best-effort
-        print("[bulkgate] RUNAWAY x%d on %s (%s): a call emitted %s output tokens — >%.1fx the measured %s p99 of %s "
+        print("[bulkgate] RUNAWAY x%d on %s (%s): a call emitted %s output tokens — >%.1fx the %s norm of %s "
               "(reasoning bills as output; the loose ceiling never truncates it). NOT aborted (a cut reasoning call "
               "still bills for nothing); recorded so it is visible. Fix: route this class to a model whose 'minimal' is "
               "honored, or accept it — guardrail D's budget_usd cap bounds the $." % (
-              n, model, sig, out_tok, _runaway_factor(), basis, norm_p99), file=sys.stderr)
+              n, model, sig, out_tok, _runaway_factor(), basis, norm_val), file=sys.stderr)
     except Exception:                             # a closed/broken stderr must not lose the (already-recorded) trip
         pass
     return n
@@ -746,33 +747,47 @@ def runaways():
 
 
 def check_runaway(sig, model, out_tok, norm=None):
-    """GUARDRAIL E's COST-ANOMALY TEST — is this completed call's out_tok a statistical OUTLIER vs the class's MEASURED
+    """GUARDRAIL E's COST-ANOMALY TEST — is this completed call's out_tok a statistical OUTLIER vs the CALL-CLASS's OWN
     token-count distribution? This is ARITHMETIC on billed tokens (tokens = dollars), NOT a semantic judgement of the
     response: it reads NO content and renders NO verdict on the answer's quality — a 4,249-token reply costs ~35x a
     121-token one whether its content is good or bad, and the COST is the fact being monitored. So a measured threshold
-    (out_tok > factor x p99) is the right tool, exactly as a p99-latency alert is — not an LLM meaning-call per request.
-    Trips (records via note_runaway) only when a TRUSTWORTHY norm exists: the per-class p99 (>= RUNAWAY_MIN_SAMPLES measured outputs),
-    else the per-MODEL p99 as a wider fallback (the incident's class was cold but the model was warm). No trustworthy
-    norm (a genuinely cold class AND model) ⇒ NO trip — the honest answer is 'cannot judge yet', with guardrail D as the
-    $ backstop, never a guessed absolute ceiling that would false-accuse. `norm` may pass a pre-recorded maxtokens(sig)
-    dict so the runaway can't inflate its OWN baseline. Returns (tripped, detail). Never raises."""
+    (out_tok > factor x norm) is the right tool, exactly as a p99-latency alert is — not an LLM meaning-call per request.
+
+    The norm is ALWAYS the call-CLASS's own, and never the model-wide average — this is the OUTPUT-CLASS/INTENT-AWARE
+    fix. `sig` == hash(model, intent), so maxtokens(sig) IS the per-(model, intent) output distribution: the right
+    yardstick for 'is THIS job's output anomalous'. Two class-scoped rungs:
+      • WARM class (>= RUNAWAY_MIN_SAMPLES complete outputs): its measured p99 (basis 'class').
+      • COLD class (no measurements yet) on a REASONING model: its reasoning-INCLUSIVE seed (maxtokens' cold
+        `recommend`, basis 'class-seed(cold)') — a first output is judged against what THIS job is expected to emit.
+    We deliberately do NOT fall back to the model-wide p99 across all call-classes. Output size is a property of the JOB,
+    not the model, so a norm built from a model's SMALL-output classes false-accuses its LARGE-output ones: MEASURED, a
+    legitimate multi-vendor panel review tripped EVERY reviewer >3x a ~268-tok model p99 while each review's own class
+    norm is thousands of tokens. When no class-scoped norm is trustworthy (a cold non-reasoning class, or 0 < n < MIN) ⇒
+    NO trip — the honest 'cannot judge yet', with guardrail D's budget_usd as the $ backstop; never a cross-class or
+    guessed absolute that would false-accuse. `norm` may pass a PRE-call maxtokens(sig, model=…) dict so the runaway
+    can't inflate its OWN baseline (the call is recorded just before this check). Returns (tripped, detail). Never raises."""
     try:
         ot = int(out_tok or 0)
         if ot <= 0 or not sig:
             return False, None
         factor = _runaway_factor()
-        _mx = norm if isinstance(norm, dict) else (maxtokens(sig) or {})
+        _mx = norm if isinstance(norm, dict) else (maxtokens(sig, model=model) or {})
         p99 = _mx.get("p99")
         n = int(_mx.get("n") or 0)
-        basis = "class"
-        if not (p99 and n >= RUNAWAY_MIN_SAMPLES):     # class norm not trustworthy → widen to the model's own p99
-            _mo = model_outputs(model) or {}
-            p99, n, basis = _mo.get("p99"), int(_mo.get("n") or 0), "model"
-        if not (p99 and n >= RUNAWAY_MIN_SAMPLES):     # neither is trustworthy → cannot judge (D is the $ backstop)
-            return False, None
-        if ot > factor * float(p99):
-            note_runaway(sig, model, ot, int(p99), basis)
-            return True, {"out_tok": ot, "p99": int(p99), "basis": basis, "factor": factor}
+        if p99 and n >= RUNAWAY_MIN_SAMPLES:
+            norm_val, basis = float(p99), "class"                # measured, output-class-aware
+        elif n == 0:                                             # cold class → judge vs its OWN expected size, not the
+            seed = _mx.get("recommend")                          # model-wide average (which false-accuses large classes)
+            if not seed and model:                               # a pre-call norm built without the model lacks the seed
+                seed = (maxtokens(sig, model=model) or {}).get("recommend")
+            if not seed:
+                return False, None                              # cold non-reasoning class, no seed ⇒ cannot judge (D backstops)
+            norm_val, basis = float(seed), "class-seed(cold)"
+        else:
+            return False, None                                  # 0 < n < MIN: too few to trust, not yet cold ⇒ cannot judge
+        if ot > factor * norm_val:
+            note_runaway(sig, model, ot, int(norm_val), basis)
+            return True, {"out_tok": ot, "norm": int(norm_val), "basis": basis, "factor": factor}
         return False, None
     except Exception:
         return False, None                             # telemetry must never break the call

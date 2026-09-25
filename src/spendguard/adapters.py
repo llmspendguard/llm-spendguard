@@ -2505,7 +2505,8 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
     # registered estimate reads). No budget depends on sig any more, so a call without one is fine (it just isn't keyed).
     _is_sig = isinstance(sig, str) and len(sig) == 16 and all(c in "0123456789abcdef" for c in sig)
     _sig_key = (sig if _is_sig else bulkgate.sig(model, template_id=sig)) if sig else None
-    _mx0 = (bulkgate.maxtokens(_sig_key) or {}) if _sig_key else {}   # guardrail-E pre-call runaway norm (before this call lands)
+    _mx0 = (bulkgate.maxtokens(_sig_key, model=model) or {}) if _sig_key else {}   # guardrail-E pre-call runaway norm
+    #        (before this call lands); pass `model` so a COLD class carries its reasoning-inclusive seed as the norm
     # THE OUTPUT BUDGET — the ONE home (output_budget; docs/CANONICAL_CONCERNS.json). The caller's max_tokens is IGNORED
     # for a normal call: spendguard owns the budget, which is the model's CEILING. max_output is billed on ACTUAL tokens,
     # so a high ceiling is free and the ONLY failure is one set too LOW (it truncates). The ceiling already covers a
