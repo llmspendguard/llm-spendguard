@@ -14,10 +14,6 @@ except ImportError:                                  # allow running as a plain 
     from behaviours import BEHAVIOURS
 
 
-def _bare(model):
-    return model.split(":", 1)[-1] if isinstance(model, str) and ":" in model else model
-
-
 def estimate(behaviours=None, budget_usd=50.0):
     """Return {rows, total_usd, lane_calls, metered_calls, budget_usd, within_budget, unpriced}. Never raises; a model
     with no price-table entry is reported in `unpriced` (its $ is None, NOT silently 0 — an unpriced call is a GAP in the
@@ -35,10 +31,13 @@ def estimate(behaviours=None, budget_usd=50.0):
                          "tier": b["tier"], "max_spend_usd": None})
             continue
         metered_calls += calls
+        # price with the PROVIDER (the manifest's full 'provider:model'): a bare name several vendors publish is
+        # AMBIGUOUS and raises → a false 'unpriced' gap. (Metered branch only; lane rows already skipped above.)
+        per_call, why = None, None
         try:
-            per_call = pricing.realtime_cost(_bare(b["model"]), b["est_in_tok"], b["est_out_tok"])
-        except Exception:
-            per_call = None
+            per_call = pricing.realtime_cost(b["model"], b["est_in_tok"], b["est_out_tok"])
+        except Exception as e:
+            why = f"{type(e).__name__}: {str(e).splitlines()[0][:160]}"   # NAME the failure + keep the behaviour id
         if per_call is None:
             unpriced.append(b["id"])
             usd = None
@@ -53,7 +52,7 @@ def estimate(behaviours=None, budget_usd=50.0):
         rows.append({"id": b["id"], "title": b["title"], "spend_class": "metered", "model": b["model"],
                      "calls": calls, "in_tok": b["est_in_tok"], "out_tok": b["est_out_tok"],
                      "per_call_usd": per_call, "usd": usd, "reasoning": b["reasoning"],
-                     "tier": b["tier"], "max_spend_usd": b.get("max_spend_usd")})
+                     "tier": b["tier"], "max_spend_usd": b.get("max_spend_usd"), "price_error": why})
     # within_budget requires a COMPLETE estimate: an unpriced row means the true total is UNKNOWN, so the gate is
     # indeterminate and must NOT read as green (this is the approval gate — a false 'within' would authorise a run
     # whose cost we could not bound).

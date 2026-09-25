@@ -119,16 +119,20 @@ def estimate_panel(models=None, budget_usd=2.0, est_out_tok=3200):
     in_tok = _rough_tokens(build_payload())
     rows, total, unpriced = [], 0.0, []
     for m in models:
-        bare = m.split(":", 1)[-1] if ":" in m else m
+        # price with the PROVIDER (the full 'provider:model'): a bare model name that several vendors publish (e.g.
+        # deepseek-v4-flash — 9 vendors) is AMBIGUOUS and raises, which silently read as a FALSE 'unpriced' gap that
+        # made the whole estimate INDETERMINATE. realtime_cost resolves the vendor from the 'provider:' prefix.
+        per, why = None, None
         try:
-            per = pricing.realtime_cost(bare, in_tok, est_out_tok)
-        except Exception:
-            per = None
+            per = pricing.realtime_cost(m, in_tok, est_out_tok)
+        except Exception as e:
+            why = f"{type(e).__name__}: {str(e).splitlines()[0][:160]}"   # NAME the failure + keep the model id —
+            #                                     an unpriced row records WHY (raised vs no-entry), never a silent None
         if per is None:
             unpriced.append(m)
         else:
             total += per
-        rows.append({"model": m, "in_tok": in_tok, "out_tok": est_out_tok, "usd": per})
+        rows.append({"model": m, "in_tok": in_tok, "out_tok": est_out_tok, "usd": per, "price_error": why})
     within = (not unpriced) and (total <= budget_usd)
     return {"rows": rows, "in_tok": in_tok, "total_usd": round(total, 3), "budget_usd": budget_usd,
             "within_budget": within, "unpriced": unpriced}
@@ -147,7 +151,10 @@ def render_estimate(est):
     out.append("  PROJECTED REAL $ (metered panel): $%.3f  vs budget $%.2f  →  %s"
                % (est["total_usd"], est["budget_usd"], verdict))
     if est["unpriced"]:
-        out.append("  ⚠ UNPRICED reviewers (resolve or drop before running): %s" % ", ".join(est["unpriced"]))
+        out.append("  ⚠ UNPRICED reviewers (resolve or drop before running):")
+        _why = {r["model"]: r.get("price_error") for r in est["rows"]}
+        for m in est["unpriced"]:
+            out.append("      %-28s %s" % (m, _why.get(m) or "no price-table entry"))
     return "\n".join(out)
 
 
