@@ -75,5 +75,21 @@ gem = reliability._probe_default("gemini")
 ck("reliability gemini probe default is a real catalog gemini id (not 'gemini-flash-latest')",
    gem is not None and gem != "gemini-flash-latest" and mc.model_record(gem) is not None)
 
+# ── (7) Phase 2: the legacy ceiling tables are GONE and the catalog covers every ceiling they held ──
+print("-- (7) ceiling consolidation: legacy tables removed, catalog covers them --")
+ck("pricing.MAX_OUT is removed (ceilings live only in the catalog)", not hasattr(pricing, "MAX_OUT"))
+ck("pricing._OUTPUT_CEILING_OVERRIDES is removed (ceilings live only in the catalog)",
+   not hasattr(pricing, "_OUTPUT_CEILING_OVERRIDES"))
+for m, exp in [("claude-opus-4-8", 128000), ("claude-haiku-4-5", 64000), ("claude-sonnet-4-5", 64000),
+               ("glm-4.6", 131072), ("glm-4.5-air", 98304), ("glm-5", 131072)]:  # former MAX_OUT + _OVERRIDES values
+    ck(f"catalog still yields {m} ceiling {exp} (no regression from removing the legacy tables)",
+       pricing.max_output_tokens(m) == exp)
+
+# ── (8) Phase 2: LINEAGE — no price.source is the seed's OpenAI fallback for a non-OpenAI vendor ──
+print("-- (8) provenance: published prices carry their real provider origin --")
+_misattr = [rid for rid, r in mc.all_records().items()
+            if (r.get("price") or {}).get("source") == pricing.PRICING_SOURCE and r.get("provider") != "openai"]
+ck("no non-OpenAI model carries the OpenAI seed-fallback source (LINEAGE_TO_ORIGIN)", _misattr == [])
+
 print(f"\n{'[FAIL]' if _fails else 'OK'} test_model_catalog_ssot: {len(_fails)} failure(s)")
 sys.exit(1 if _fails else 0)

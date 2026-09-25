@@ -286,46 +286,27 @@ PRICING = _load()
 # model's own OUTPUT limit is a 400, so the floor has to be clamped by what the model actually accepts. This is
 # the OUTPUT axis only; the INPUT axis is max_input_tokens, and the two never constrain each other.
 #
-# EVERY VALUE HERE WAS READ FROM THE PROVIDER'S OWN DOCUMENTATION, not inferred and not remembered:
-#   Anthropic — platform.claude.com/docs/en/about-claude/models/overview, "Max output" row, read 2026-08-12.
-#     (That page also notes the Batch API supports up to 300k output on Opus 5/4.8/4.7/4.6 and Sonnet 5/4.6
-#      behind the `output-300k-2026-03-24` beta header; these are the synchronous Messages API values.)
-#
-# A model ABSENT from this table is not assumed to be anything. `max_output()` returns None, the caller uses
-# the floor, and if the provider refuses it the adapter halves until accepted and records the real limit as
-# a learned fact. Unknown is unknown — the same rule as unpriced ≠ $0.
-MAX_OUT = {
-    "claude-fable-5":     128_000,
-    "claude-opus-5":      128_000,
-    "claude-sonnet-5":    128_000,
-    "claude-haiku-4-5":    64_000,
-    "claude-opus-4-8":    128_000,
-    "claude-opus-4-7":    128_000,
-    "claude-opus-4-6":    128_000,
-    "claude-sonnet-4-6":  128_000,
-    "claude-sonnet-4-5":   64_000,
-    "claude-opus-4-5":     64_000,
-}
+# The per-model published OUTPUT ceiling now lives in the MODEL CATALOG — the one version-controlled home
+# (concern 'model_catalog', model_catalog.published_ceiling), each value sourced from the provider's own docs.
+# max_output_tokens() reads it there. (A MAX_OUT dict for Anthropic + an _OUTPUT_CEILING_OVERRIDES dict for GLM
+# used to live here; both were migrated INTO model_catalog.json on 2026-09-25 so a ceiling is authored in exactly
+# ONE place.) A model ABSENT from the catalog resolves to None → the caller uses the floor and self-heals, the
+# same unknown≠guess rule as unpriced ≠ $0.
 
 
 def max_output(model):
-    """Largest output this model will accept, or None if we do not know.
-
-    Resolution order, most authoritative first:
-      1. a LEARNED fact — either recorded by the adapter after a provider refused a larger budget, or
-         pulled from the provider's models endpoint, which is the live source of truth;
-      2. this table, read from provider documentation;
-      3. None — say so rather than invent one. The caller then sends the floor and lets the provider
-         correct it, which is self-healing and needs no guess from us.
-    """
+    """A LEARNED max-output fact for this model, or None. The published/documented ceiling is NOT here any more —
+    it is in the model catalog and reached via max_output_tokens() (which output_ceiling consults FIRST). This
+    function is only the learned-fact tier: a value the adapter recorded after a provider refused a larger budget,
+    or pulled from a live /models endpoint. None → the caller uses the floor and self-heals; unknown is unknown."""
     try:
         from . import models as _m
         fact = _m.facts(normalize(model)).get("max_output_tokens")
         if fact and int(fact[0]) > 0:
             return int(fact[0])
     except Exception:
-        pass                      # no fact store / not yet learned — fall through to the table
-    return MAX_OUT.get(normalize(model))
+        pass                      # no fact store / not yet learned
+    return None
 
 
 def _load_units():
@@ -387,40 +368,22 @@ def _load_context():
 
 CONTEXT_LIMITS = _load_context()
 
-# AUTHORITATIVE OUTPUT-CEILING OVERRIDES — spendguard-owned, version-controlled, sourced from the PROVIDER's OWN docs,
-# and checked BEFORE the synced LiteLLM cache. The synced cache copies the CONTEXT window into max_output for these
-# models (the poison that made max_output_tokens return None → they floored to 32K instead of their real, much larger
-# ceiling). These are the real per-model output limits; a re-sync of the LiteLLM cache can no longer clobber them.
-# SOURCED 2026-09-25 from docs.z.ai (GLM "Maximum Supported max_tokens" table). Kimi is DELIBERATELY ABSENT: its public
-# data is context-poisoned (256K context copied into max_output; see LiteLLM #22478), so it stays at the safe 32K floor
-# until an authoritative output max is confirmed — a floor never truncates BELOW itself, and a guessed 256K would 400.
-_OUTPUT_CEILING_OVERRIDES = {
-    "glm-4.5": 98304, "glm-4.5-air": 98304,
-    "glm-4.6": 131072, "glm-4.7": 131072,
-    "glm-5": 131072, "glm-5.1": 131072, "glm-5.2": 131072, "glm-5.3": 131072,
-}
-
-
 def max_output_tokens(model: str):
     """The model's published OUTPUT ceiling (tokens), or None. This is the OUTPUT axis, INDEPENDENT of
-    max_input_tokens: it bounds the REPLY size and is never reduced by how large the input was. The spendguard-owned
-    authoritative overrides win first (provider-doc-sourced, poison-free); then the synced LiteLLM cache. Used as the
-    per-model output ceiling by output_ceiling/output_budget, and (for providers that REQUIRE the field, Anthropic) as
-    the honest 'deliberately huge' value instead of an invented constant."""
+    max_input_tokens: it bounds the REPLY size and is never reduced by how large the input was. The MODEL CATALOG
+    (the version-controlled SSOT, provider-doc-sourced + poison-free) wins first; then the synced LiteLLM cache as
+    breadth for models the catalog does not carry. Used as the per-model output ceiling by output_ceiling/output_budget,
+    and (for providers that REQUIRE the field, Anthropic) as the honest 'deliberately huge' value, never an invented one."""
     if not model:
         return None
     try:
-        from . import model_catalog as _mc               # 0. the model catalog — the SSOT for published ceilings
-        cv = _mc.published_ceiling(model)                #    (provider-doc-sourced, version-controlled)
+        from . import model_catalog as _mc               # the model catalog — the SSOT for published ceilings
+        cv = _mc.published_ceiling(model)                # (Anthropic MAX_OUT + GLM overrides were migrated in here)
         if cv:
             return int(cv)
     except Exception:
         pass
-    for key in (model, normalize(model)):              # 0b. legacy override table (fallback for models not yet in the
-        ov = _OUTPUT_CEILING_OVERRIDES.get(key)        #     catalog — migrating INTO model_catalog.json, then removed)
-        if ov:
-            return int(ov)
-    for key in (model, normalize(model)):
+    for key in (model, normalize(model)):              # synced LiteLLM breadth cache for models not in the catalog
         e = CONTEXT_LIMITS.get(key) or {}
         v, ctx = e.get("max_output_tokens"), e.get("max_input_tokens")
         if not v:

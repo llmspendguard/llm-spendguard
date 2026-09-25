@@ -177,7 +177,7 @@
         "batch_in": 0.5,
         "batch_out": 2.5,
         "batch_cached_in": 0.05,
-        "source": "https://developers.openai.com/api/docs/pricing",
+        "source": "https://claude.com/pricing (Anthropic published list price; re-verified 2026-09-12)",
         "verified": "2026-09-12"
       },
       "price_error": null,
@@ -209,7 +209,7 @@
         "batch_in": 7.5,
         "batch_out": 37.5,
         "batch_cached_in": 0.75,
-        "source": "https://developers.openai.com/api/docs/pricing",
+        "source": "https://claude.com/pricing (Anthropic published list price; re-verified 2026-09-12)",
         "verified": "2026-09-12"
       },
       "price_error": null,
@@ -241,7 +241,7 @@
         "batch_in": 7.5,
         "batch_out": 37.5,
         "batch_cached_in": 0.75,
-        "source": "https://developers.openai.com/api/docs/pricing",
+        "source": "https://claude.com/pricing (Anthropic published list price; re-verified 2026-09-12)",
         "verified": "2026-09-12"
       },
       "price_error": null,
@@ -273,7 +273,7 @@
         "batch_in": 2.5,
         "batch_out": 12.5,
         "batch_cached_in": 0.25,
-        "source": "https://developers.openai.com/api/docs/pricing",
+        "source": "https://claude.com/pricing (Anthropic published list price; re-verified 2026-09-12)",
         "verified": "2026-09-12"
       },
       "price_error": null,
@@ -305,7 +305,7 @@
         "batch_in": 2.5,
         "batch_out": 12.5,
         "batch_cached_in": 0.25,
-        "source": "https://developers.openai.com/api/docs/pricing",
+        "source": "https://claude.com/pricing (Anthropic published list price; re-verified 2026-09-12)",
         "verified": "2026-09-12"
       },
       "price_error": null,
@@ -337,7 +337,7 @@
         "batch_in": 2.5,
         "batch_out": 12.5,
         "batch_cached_in": 0.25,
-        "source": "https://developers.openai.com/api/docs/pricing",
+        "source": "https://claude.com/pricing (Anthropic published list price; re-verified 2026-09-12)",
         "verified": "2026-09-12"
       },
       "price_error": null,
@@ -373,7 +373,7 @@
         "batch_in": 2.5,
         "batch_out": 12.5,
         "batch_cached_in": 0.25,
-        "source": "https://developers.openai.com/api/docs/pricing",
+        "source": "https://claude.com/pricing (Anthropic published list price; re-verified 2026-09-12)",
         "verified": "2026-09-12"
       },
       "price_error": null,
@@ -437,7 +437,7 @@
         "batch_in": 1.5,
         "batch_out": 7.5,
         "batch_cached_in": 0.15,
-        "source": "https://developers.openai.com/api/docs/pricing",
+        "source": "https://claude.com/pricing (Anthropic published list price; re-verified 2026-09-12)",
         "verified": "2026-09-12"
       },
       "price_error": null,
@@ -469,7 +469,7 @@
         "batch_in": 1.5,
         "batch_out": 7.5,
         "batch_cached_in": 0.15,
-        "source": "https://developers.openai.com/api/docs/pricing",
+        "source": "https://claude.com/pricing (Anthropic published list price; re-verified 2026-09-12)",
         "verified": "2026-09-12"
       },
       "price_error": null,
@@ -501,7 +501,7 @@
         "batch_in": 1.5,
         "batch_out": 7.5,
         "batch_cached_in": 0.15,
-        "source": "https://developers.openai.com/api/docs/pricing",
+        "source": "https://claude.com/pricing (Anthropic published list price; re-verified 2026-09-12)",
         "verified": "2026-09-12"
       },
       "price_error": null,
@@ -532,7 +532,7 @@
         "cached_in": 0.2,
         "batch_in": 1.0,
         "batch_out": 5.0,
-        "source": "https://developers.openai.com/api/docs/pricing",
+        "source": "https://claude.com/pricing (Anthropic published list price; re-verified 2026-09-12)",
         "verified": "2026-09-12"
       },
       "price_error": null,
@@ -785,7 +785,7 @@
         "cached_in": 0.075,
         "batch_in": 0.375,
         "batch_out": 1.875,
-        "source": "https://developers.openai.com/api/docs/pricing",
+        "source": "https://ai.google.dev/gemini-api/docs/pricing (Google Gemini published pricing)",
         "verified": "2026-09-12"
       },
       "price_error": null,
@@ -801,6 +801,98 @@
         "reasons_by_default": false,
         "tokens_param": "max_completion_tokens",
         "style": "suffix"
+      }
+    },
+    "glm-4.5": {
+      "id": "glm-4.5",
+      "provider": "zai",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "glm-4.5",
+      "lane_spellings": {},
+      "price": null,
+      "price_error": "no curated price (unused legacy GLM variant); ceiling-only record",
+      "output_ceiling": {
+        "value": 98304,
+        "source": "docs.z.ai Maximum Supported max_tokens table (verified 2026-09-25)"
+      },
+      "context_window": null,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "tokens_param": "max_tokens",
+        "style": "none"
+      }
+    },
+    "glm-4.5-air": {
+      "id": "glm-4.5-air",
+      "provider": "zai",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "glm-4.5-air",
+      "lane_spellings": {},
+      "price": null,
+      "price_error": "no curated price (unused legacy GLM variant); ceiling-only record",
+      "output_ceiling": {
+        "value": 98304,
+        "source": "docs.z.ai Maximum Supported max_tokens table (verified 2026-09-25)"
+      },
+      "context_window": null,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "tokens_param": "max_tokens",
+        "style": "none"
+      }
+    },
+    "glm-4.6": {
+      "id": "glm-4.6",
+      "provider": "zai",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "glm-4.6",
+      "lane_spellings": {},
+      "price": null,
+      "price_error": "no curated price (unused legacy GLM variant); ceiling-only record",
+      "output_ceiling": {
+        "value": 131072,
+        "source": "docs.z.ai Maximum Supported max_tokens table (verified 2026-09-25)"
+      },
+      "context_window": null,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "tokens_param": "max_tokens",
+        "style": "none"
+      }
+    },
+    "glm-4.7": {
+      "id": "glm-4.7",
+      "provider": "zai",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "glm-4.7",
+      "lane_spellings": {},
+      "price": null,
+      "price_error": "no curated price (unused legacy GLM variant); ceiling-only record",
+      "output_ceiling": {
+        "value": 131072,
+        "source": "docs.z.ai Maximum Supported max_tokens table (verified 2026-09-25)"
+      },
+      "context_window": null,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "tokens_param": "max_tokens",
+        "style": "none"
       }
     },
     "glm-4.7-flashx": {
@@ -823,6 +915,52 @@
       "output_ceiling": {
         "value": null,
         "source": null
+      },
+      "context_window": null,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "tokens_param": "max_tokens",
+        "style": "none"
+      }
+    },
+    "glm-5": {
+      "id": "glm-5",
+      "provider": "zai",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "glm-5",
+      "lane_spellings": {},
+      "price": null,
+      "price_error": "no curated price (unused legacy GLM variant); ceiling-only record",
+      "output_ceiling": {
+        "value": 131072,
+        "source": "docs.z.ai Maximum Supported max_tokens table (verified 2026-09-25)"
+      },
+      "context_window": null,
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "tokens_param": "max_tokens",
+        "style": "none"
+      }
+    },
+    "glm-5.1": {
+      "id": "glm-5.1",
+      "provider": "zai",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "glm-5.1",
+      "lane_spellings": {},
+      "price": null,
+      "price_error": "no curated price (unused legacy GLM variant); ceiling-only record",
+      "output_ceiling": {
+        "value": 131072,
+        "source": "docs.z.ai Maximum Supported max_tokens table (verified 2026-09-25)"
       },
       "context_window": null,
       "reasoning": {
@@ -1386,7 +1524,7 @@
         "cached_in": 0.25,
         "batch_in": 1.25,
         "batch_out": 3.75,
-        "source": "https://developers.openai.com/api/docs/pricing",
+        "source": "https://www.eesel.ai/blog/qwen-pricing (Alibaba Model Studio list price, 2026-06-14)",
         "verified": "2026-09-12"
       },
       "price_error": null,
@@ -1417,7 +1555,7 @@
         "cached_in": 0.04,
         "batch_in": 0.2,
         "batch_out": 0.6,
-        "source": "https://developers.openai.com/api/docs/pricing",
+        "source": "https://www.eesel.ai/blog/qwen-pricing (Alibaba Model Studio list price, 2026-06-14)",
         "verified": "2026-09-12"
       },
       "price_error": null,
@@ -1448,7 +1586,7 @@
         "cached_in": 0.005,
         "batch_in": 0.025,
         "batch_out": 0.1,
-        "source": "https://developers.openai.com/api/docs/pricing",
+        "source": "https://www.eesel.ai/blog/qwen-pricing (Alibaba Model Studio list price, 2026-06-14)",
         "verified": "2026-09-12"
       },
       "price_error": null,

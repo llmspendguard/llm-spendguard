@@ -4,7 +4,7 @@
     "_generator": "scripts/gen_prices_json.py",
     "_source": "src/spendguard/model_catalog.json (concern 'model_catalog' \u2014 the SSOT for model data)",
     "note": "GENERATED from the model catalog \u2014 DO NOT EDIT BY HAND. Author prices in model_catalog.json, then run `python scripts/gen_prices_json.py --write`. honestreview derived_artifact_integrity flags hand-edits.",
-    "generated_at": "2026-09-25T07:40:27Z"
+    "generated_at": "2026-09-25T15:34:09Z"
   },
   "providers": {
     "anthropic": {
@@ -34,7 +34,7 @@
           "batch_in": 0.5,
           "batch_out": 2.5,
           "batch_cached_in": 0.05,
-          "_source": "https://developers.openai.com/api/docs/pricing"
+          "_source": "https://claude.com/pricing (Anthropic published list price; re-verified 2026-09-12)"
         },
         "claude-opus-4-0": {
           "in_": 15.0,
@@ -43,7 +43,7 @@
           "batch_in": 7.5,
           "batch_out": 37.5,
           "batch_cached_in": 0.75,
-          "_source": "https://developers.openai.com/api/docs/pricing"
+          "_source": "https://claude.com/pricing (Anthropic published list price; re-verified 2026-09-12)"
         },
         "claude-opus-4-1": {
           "in_": 15.0,
@@ -52,7 +52,7 @@
           "batch_in": 7.5,
           "batch_out": 37.5,
           "batch_cached_in": 0.75,
-          "_source": "https://developers.openai.com/api/docs/pricing"
+          "_source": "https://claude.com/pricing (Anthropic published list price; re-verified 2026-09-12)"
         },
         "claude-opus-4-5": {
           "in_": 5.0,
@@ -61,7 +61,7 @@
           "batch_in": 2.5,
           "batch_out": 12.5,
           "batch_cached_in": 0.25,
-          "_source": "https://developers.openai.com/api/docs/pricing"
+          "_source": "https://claude.com/pricing (Anthropic published list price; re-verified 2026-09-12)"
         },
         "claude-opus-4-6": {
           "in_": 5.0,
@@ -70,7 +70,7 @@
           "batch_in": 2.5,
           "batch_out": 12.5,
           "batch_cached_in": 0.25,
-          "_source": "https://developers.openai.com/api/docs/pricing"
+          "_source": "https://claude.com/pricing (Anthropic published list price; re-verified 2026-09-12)"
         },
         "claude-opus-4-7": {
           "in_": 5.0,
@@ -79,7 +79,7 @@
           "batch_in": 2.5,
           "batch_out": 12.5,
           "batch_cached_in": 0.25,
-          "_source": "https://developers.openai.com/api/docs/pricing"
+          "_source": "https://claude.com/pricing (Anthropic published list price; re-verified 2026-09-12)"
         },
         "claude-opus-4-8": {
           "in_": 5.0,
@@ -88,7 +88,7 @@
           "batch_in": 2.5,
           "batch_out": 12.5,
           "batch_cached_in": 0.25,
-          "_source": "https://developers.openai.com/api/docs/pricing"
+          "_source": "https://claude.com/pricing (Anthropic published list price; re-verified 2026-09-12)"
         },
         "claude-opus-5": {
           "in_": 5.0,
@@ -106,7 +106,7 @@
           "batch_in": 1.5,
           "batch_out": 7.5,
           "batch_cached_in": 0.15,
-          "_source": "https://developers.openai.com/api/docs/pricing"
+          "_source": "https://claude.com/pricing (Anthropic published list price; re-verified 2026-09-12)"
         },
         "claude-sonnet-4-5": {
           "in_": 3.0,
@@ -115,7 +115,7 @@
           "batch_in": 1.5,
           "batch_out": 7.5,
           "batch_cached_in": 0.15,
-          "_source": "https://developers.openai.com/api/docs/pricing"
+          "_source": "https://claude.com/pricing (Anthropic published list price; re-verified 2026-09-12)"
         },
         "claude-sonnet-4-6": {
           "in_": 3.0,
@@ -124,7 +124,7 @@
           "batch_in": 1.5,
           "batch_out": 7.5,
           "batch_cached_in": 0.15,
-          "_source": "https://developers.openai.com/api/docs/pricing"
+          "_source": "https://claude.com/pricing (Anthropic published list price; re-verified 2026-09-12)"
         },
         "claude-sonnet-5": {
           "in_": 2.0,
@@ -132,7 +132,7 @@
           "cached_in": 0.2,
           "batch_in": 1.0,
           "batch_out": 5.0,
-          "_source": "https://developers.openai.com/api/docs/pricing"
+          "_source": "https://claude.com/pricing (Anthropic published list price; re-verified 2026-09-12)"
         }
       }
     },
@@ -240,7 +240,7 @@
           "cached_in": 0.075,
           "batch_in": 0.375,
           "batch_out": 1.875,
-          "_source": "https://developers.openai.com/api/docs/pricing"
+          "_source": "https://ai.google.dev/gemini-api/docs/pricing (Google Gemini published pricing)"
         }
       }
     },
@@ -388,7 +388,7 @@
           "cached_in": 0.25,
           "batch_in": 1.25,
           "batch_out": 3.75,
-          "_source": "https://developers.openai.com/api/docs/pricing"
+          "_source": "https://www.eesel.ai/blog/qwen-pricing (Alibaba Model Studio list price, 2026-06-14)"
         },
         "qwen-plus": {
           "in_": 0.4,
@@ -396,7 +396,7 @@
           "cached_in": 0.04,
           "batch_in": 0.2,
           "batch_out": 0.6,
-          "_source": "https://developers.openai.com/api/docs/pricing"
+          "_source": "https://www.eesel.ai/blog/qwen-pricing (Alibaba Model Studio list price, 2026-06-14)"
         },
         "qwen-turbo": {
           "in_": 0.05,
@@ -404,7 +404,7 @@
           "cached_in": 0.005,
           "batch_in": 0.025,
           "batch_out": 0.1,
-          "_source": "https://developers.openai.com/api/docs/pricing"
+          "_source": "https://www.eesel.ai/blog/qwen-pricing (Alibaba Model Studio list price, 2026-06-14)"
         }
       }
     },
