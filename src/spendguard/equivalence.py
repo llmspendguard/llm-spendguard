@@ -83,12 +83,21 @@ def _text_ratio(ref, out):
 
 
 def _embed_cosine(ref, out, model="text-embedding-3-small"):
-    """Semantic similarity via embeddings (CAGED — caller wraps in spendguard:* context). 0..1."""
-    from openai import OpenAI
-    from . import config
-    c = OpenAI(api_key=config.api_key("OPENAI_API_KEY"))
-    r = c.embeddings.create(model=model, input=[ref[:8000], out[:8000]])
-    va, vb = r.data[0].embedding, r.data[1].embedding
+    """Semantic similarity via embeddings (CAGED). 0..1, or None if either text can't be embedded WHOLE. Fed via the ONE
+    embedding home (adapters.embed), which marks an oversized item FAILED (a named gap) and never truncates — a truncated
+    embedding would miss the tail where the two answers DIFFER, calling them equivalent. None → grade() degrades, never a
+    wrong 'equivalent'."""
+    from . import adapters, gate as _g
+    try:
+        r = adapters.embed([ref, out], model=model)
+    except Exception as e:
+        if _g.is_deliberate_stop(e):
+            raise                              # a spend refusal HALTS — never downgraded to a 'not equivalent'
+        return None
+    vecs = r.get("vectors") or []
+    if len(vecs) < 2 or vecs[0] is None or vecs[1] is None:
+        return None                            # an item failed/oversized → no similarity (degrade, never a wrong verdict)
+    va, vb = vecs[0], vecs[1]
     dot = sum(x * y for x, y in zip(va, vb))
     na = sum(x * x for x in va) ** 0.5
     nb = sum(y * y for y in vb) ** 0.5

@@ -67,18 +67,23 @@ def _unpack(b):
         return None
 
 
+_SEMCACHE_EMBED_MODEL = "text-embedding-3-small"   # pinned so a cache key stays STABLE across runs (changing it re-keys)
+
+
 def _embed(text):
-    """text-embedding-3-small (cheap). Runs UNDER the gate as META — wrapped in calls.context(intent="spendguard:…")
-    like every other internal spendguard LLM call, so semcache's OWN embedding spend lands on the meta ledger + the
-    meta cap (caged), never as an ungoverned call inside the cost-governance tool. Returns a vector or None on failure."""
+    """The semantic-cache key vector via the ONE embedding home (adapters.embed) — gated as META (spend on the meta
+    ledger + cap, caged), and fed the WHOLE text: adapters.embed marks an oversized item FAILED (a named gap), it never
+    truncates. text[:8000] here would have keyed two different long prompts to the SAME cache entry — a wrong-hit. Returns
+    a vector, or None (a failed/oversized item or any error) → the caller treats None as a cache MISS (graceful)."""
     try:
-        from openai import OpenAI
-        from . import calls
+        from . import adapters, calls
         with calls.context(intent="spendguard:semcache"):
-            r = OpenAI(api_key=config.api_key("OPENAI_API_KEY")).embeddings.create(
-                model="text-embedding-3-small", input=[text[:8000]])
-        return r.data[0].embedding
-    except Exception:
+            r = adapters.embed([text], model=_SEMCACHE_EMBED_MODEL)
+        return (r.get("vectors") or [None])[0]
+    except Exception as e:
+        from . import gate as _g
+        if _g.is_deliberate_stop(e):
+            raise                              # a spend refusal HALTS — never downgraded to a silent cache miss
         return None
 
 
