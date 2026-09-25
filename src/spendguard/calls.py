@@ -202,7 +202,7 @@ def _ensure_calls_schema(c):
         in_tok INTEGER, out_tok INTEGER, cost REAL, latency REAL,
         prompt_hash TEXT, prompt_snip TEXT, output_snip TEXT, finish TEXT,
         quality TEXT, quality_src TEXT, quality_conf REAL,
-        executor TEXT, project TEXT, effort TEXT)""")
+        executor TEXT, project TEXT, effort TEXT, suspect TEXT)""")
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_chain ON calls(chain)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_intent ON calls(intent)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_ts ON calls(ts)")  # as_of/since range reads (calibrate, advise)
@@ -214,8 +214,12 @@ def _ensure_calls_schema(c):
     # `effort` = the reasoning-effort TIER actually sent (none|minimal|low|medium|high|… or the wire
     # value a model accepts), so cost×quality can be sliced per (intent, model, EFFORT) — the axis the
     # best-value selector titrates. NULL on a non-reasoning call, a call that sent no effort, or a legacy row.
+    # `suspect` = a data-integrity marker: a per-call out_tok that EXCEEDS the model's real output ceiling is
+    # physically impossible for one call (measured: backfill/aggregate rows recorded 1M-68M out_tok under gpt-5-nano,
+    # whose ceiling is 128K), so it is flagged (never trusted as a per-call fact, excluded from per-call analysis) but
+    # KEPT (raw value preserved — never a silent clamp/delete). NULL on a clean row.
     for _col, _decl in (("quality_conf", "REAL"), ("executor", "TEXT"), ("project", "TEXT"),
-                        ("effort", "TEXT")):
+                        ("effort", "TEXT"), ("suspect", "TEXT")):
         if _col not in _have:
             c.execute(f"ALTER TABLE calls ADD COLUMN {_col} {_decl}")
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_executor ON calls(executor)")  # per-lane rollups
@@ -264,6 +268,12 @@ def _resolve_attribution(model, cost, intent, chain, project):
     return intent, chain, ((project or "").strip().lower() or None)   # lowercased project_primary for clean joins
 
 
+# A clean per-call out_tok is <= the model's output ceiling (the API caps completion at max_tokens <= ceiling), so
+# out_tok above ceiling x this factor is physically impossible for ONE call (an aggregate/backfill/bug). The factor is
+# > 1 only to absorb curated-ceiling / token-count slop; it never false-flags a legit at-ceiling output.
+_SUSPECT_CEILING_FACTOR = 1.5
+
+
 def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
            prompt=None, output=None, finish=None, intent=None, chain=None, who=None,
            executor=None, project=None, effort=None):
@@ -287,14 +297,33 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
         psnip = prompt[:sp] if (prompt and _store_prompts()) else None
         osnip = output[:sp] if (output and _store_prompts()) else None
         ts = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+        # DATA-INTEGRITY: a per-call out_tok above the model's real output ceiling is physically impossible for ONE
+        # call — an aggregate/backfill row or a recording bug (measured: 1M-68M out_tok under gpt-5-nano, ceiling 128K).
+        # FLAG it (the raw value is KEPT — never a silent clamp/delete) so per-call analysis can exclude it; it is not a
+        # trustworthy per-call fact. The bound is ceiling x _SUSPECT_CEILING_FACTOR: a clean call is <= the ceiling, so
+        # the factor only absorbs curation/token-count slop and never false-flags a legit at-ceiling output.
+        suspect = None
+        try:
+            from . import model_catalog as _mc
+            _ceil = _mc.published_ceiling(model)
+            if _ceil and int(out_tok or 0) > int(_ceil) * _SUSPECT_CEILING_FACTOR:
+                suspect = (f"out_tok {int(out_tok or 0)} > {_SUSPECT_CEILING_FACTOR}x ceiling {int(_ceil)} "
+                           f"(impossible per-call: aggregate/backfill/bug)")
+                config.warn_once(f"[spendguard] calls: suspect per-call out_tok {int(out_tok or 0)} for {model} "
+                                 f"(ceiling {int(_ceil)}) — flagged, not trusted as a per-call fact")
+        except Exception as _sce:
+            from . import gate as _scg
+            if _scg.is_deliberate_stop(_sce):    # a spend/deadline/containment stop HALTS — never swallowed into a flag
+                raise
+            suspect = None                       # a pure catalog-read hiccup never blocks recording the call
         with _lock:
             _calls_db().execute(
                 "INSERT INTO calls (id,ts,chain,intent,caller,provider,model,kind,in_tok,out_tok,"
-                "cost,latency,prompt_hash,prompt_snip,output_snip,finish,executor,project,effort) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "cost,latency,prompt_hash,prompt_snip,output_snip,finish,executor,project,effort,suspect) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (cid, ts, chain, intent, who or ctx.get("who") or caller(), provider, model, kind,
                  int(in_tok or 0), int(out_tok or 0), float(cost or 0), latency, ph, psnip, osnip, finish,
-                 executor, proj, (effort or None)))
+                 executor, proj, (effort or None), suspect))
             _calls_db().commit()
         # deferred implicit feedback: did THIS call reuse an earlier output in the same chain?
         if chain and prompt:
