@@ -75,14 +75,20 @@ def _judge_one(prompt, output, judge_model, images=None):
     the image (images=…): a caption's faithfulness CANNOT be judged from text alone, so a judge that scored it
     without seeing the image would be measuring nothing. images is passed ONLY when present — a text task is
     byte-for-byte the prior call."""
-    from . import adapters, advisor
+    from . import adapters, advisor, calls
     # WHOLE evidence: the judge scores the candidate's FULL output — a [:4000] slice would rate only its head,
     # evidence-truncating the very thing being judged. no_substitution PINS the judge so every candidate is rated
     # by the SAME ruler, never a lane-swapped one (a judge that varies per candidate is not a comparable number).
-    r = adapters.call(judge_model, advisor._judge_prompt(prompt, output or ""),
-                      max_tokens=_JUDGE_OUT, system=_JUDGE_SYS, schema=_JUDGE_SCHEMA,
-                      sig="spendguard:bakeoff-judge", no_substitution=True,
-                      **({"images": images} if images else {}))
+    # META CONTEXT: this is spendguard's OWN ruler call, so it must be attributed to spendguard:* and meta-capped —
+    # NOT the caller's workload intent. Passing sig="spendguard:…" is not enough: inside a caller's ambient
+    # `with calls.context(intent=…)` (a bakeoff runs under one), adapters.call does NOT override the ambient intent, so
+    # the judge's $ would land under the caller's intent (the warden 2026-09-25 attribution split). An explicit nested
+    # context forces it, exactly as requirement_judge._meta_call already does.
+    with calls.context(intent="spendguard:bakeoff-judge"):
+        r = adapters.call(judge_model, advisor._judge_prompt(prompt, output or ""),
+                          max_tokens=_JUDGE_OUT, system=_JUDGE_SYS, schema=_JUDGE_SCHEMA,
+                          sig="spendguard:bakeoff-judge", no_substitution=True,
+                          **({"images": images} if images else {}))
     if r.get("error") or not r.get("text"):
         return None
     # The adapter's OWN fence-tolerant decode (r['parsed']) — a bare json.loads here choked on a $0 lane's
