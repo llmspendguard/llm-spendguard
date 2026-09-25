@@ -411,7 +411,7 @@ def max_output_tokens(model: str):
         return None
     try:
         from . import model_catalog as _mc               # 0. the model catalog — the SSOT for published ceilings
-        cv = _mc.output_ceiling(model)                   #    (provider-doc-sourced, version-controlled)
+        cv = _mc.published_ceiling(model)                #    (provider-doc-sourced, version-controlled)
         if cv:
             return int(cv)
     except Exception:

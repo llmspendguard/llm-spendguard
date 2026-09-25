@@ -2,7 +2,7 @@
 GENERATED, fresh projection of it; published fields resolve from the version-controlled catalog in a FRESH env (not a
 host-local override or the synced breadth cache). This is the check that keeps model data from scattering again.
 
-Proves: (1) the catalog satisfies its DATA CONTRACT (model_catalog.validate); (2) the models we depend on are present;
+Proves: (1) the catalog satisfies its DATA CONTRACT (model_catalog.validate_catalog); (2) the models we depend on are present;
 (3) prices.json carries the _generated marker AND matches the catalog projection exactly (the freshness guard — a
 catalog edit without re-running the generator FAILS here); (4) in an ISOLATED home (no synced cache, no user
 prices.json) gemini/deepseek/gpt-5.6/glm price from the catalog with the right ceilings — the durable fix for the
@@ -31,15 +31,15 @@ def ck(label, cond):
 
 # ── (1) the catalog satisfies its DATA CONTRACT ──
 print("-- (1) DATA CONTRACT --")
-probs = mc.validate()
-ck(f"model_catalog.validate() is clean ({len(probs)} problems)", probs == [])
+probs = mc.validate_catalog()
+ck(f"model_catalog.validate_catalog() is clean ({len(probs)} problems)", probs == [])
 ck("the catalog is non-trivial (>= 20 curated models)", len(mc.ids()) >= 20)
 
 # ── (2) the models we depend on are present ──
 print("-- (2) coverage of the models we depend on --")
 for m in ["claude-opus-4-8", "gpt-5.5", "gpt-5-nano", "gpt-5.6-sol", "gpt-5.6-luna",
           "kimi-k3", "glm-5.3", "deepseek-v4-flash", "gemini-3.8-flash"]:
-    ck(f"catalog has a record for {m}", mc.record(m) is not None)
+    ck(f"catalog has a record for {m}", mc.model_record(m) is not None)
 
 # ── (3) prices.json is GENERATED and FRESH (matches the catalog projection) ──
 print("-- (3) prices.json is a generated, fresh projection --")
@@ -66,14 +66,14 @@ ck("glm-5.3 ceiling resolves (catalog, not the legacy override)", pricing.max_ou
 # ── (5) the retired-alias datum is authored as data, not a code comment ──
 print("-- (5) retired alias --")
 ck("deepseek-v4-flash records retired_alias_of=deepseek-flash",
-   (mc.record("deepseek-v4-flash") or {}).get("retired_alias_of") == "deepseek-flash")
+   (mc.model_record("deepseek-v4-flash") or {}).get("retired_alias_of") == "deepseek-flash")
 
 # ── (6) reliability probe default is catalog-derived, not a stale literal ──
 print("-- (6) no stale probe literal --")
 from spendguard import reliability  # noqa: E402
 gem = reliability._probe_default("gemini")
 ck("reliability gemini probe default is a real catalog gemini id (not 'gemini-flash-latest')",
-   gem is not None and gem != "gemini-flash-latest" and mc.record(gem) is not None)
+   gem is not None and gem != "gemini-flash-latest" and mc.model_record(gem) is not None)
 
 print(f"\n{'[FAIL]' if _fails else 'OK'} test_model_catalog_ssot: {len(_fails)} failure(s)")
 sys.exit(1 if _fails else 0)

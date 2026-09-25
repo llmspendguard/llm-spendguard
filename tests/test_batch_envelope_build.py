@@ -72,8 +72,10 @@ rows4 = _read_built(built4)
 os.unlink(built4)
 fails += report_check("every body uses max_tokens, NEVER max_completion_tokens (older gpt- family)",
                       all("max_tokens" in r["body"] and "max_completion_tokens" not in r["body"] for r in rows4))
-fails += report_check("older gpt- ALSO gets the TOKEN_FLOOR start-high ceiling (batch/realtime don't drift)",
-                      all(int(r["body"]["max_tokens"]) >= adapters.TOKEN_FLOOR for r in rows4))
+_ob4 = adapters.output_budget("gpt-4o-mini")   # the ONE canonical send-budget — batch must equal it (no drift)
+fails += report_check("older gpt- gets the model's real start-high ceiling, IDENTICAL batch and realtime (no drift) — "
+                      "gpt-4o-mini's is 16384, its published max, honestly BELOW the 32K floor (a published max may be lower)",
+                      all(int(r["body"]["max_tokens"]) == _ob4 for r in rows4))
 
 print("\n-- fail-closed: a non-OpenAI model and a malformed task are REFUSED, never a silent drop --")
 _refused_model = False

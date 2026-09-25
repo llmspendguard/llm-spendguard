@@ -35,7 +35,7 @@ _lock = threading.Lock()
 _MEM = {"mtime": None, "models": None}
 
 
-def _load():
+def _load_records():
     """The {id: record} map from model_catalog.json, memoised by file mtime (re-reads only when the file changes).
     Returns {} if the file is absent/unreadable — a missing catalog degrades to 'no curated record' (callers fall back
     to the synced breadth), never an exception."""
@@ -63,13 +63,13 @@ def _bare(model_id):
     return model_id.split(":", 1)[1] if ":" in model_id else model_id
 
 
-def record(model_id):
+def model_record(model_id):
     """The full catalog record for a model, or None if it has no curated record. Tries the id as given, then with the
     'provider:' prefix stripped, then each lane use-name (so 'gemini-3.8-flash-low' finds gemini-3.8-flash). Read-only.
 
     Callers that already hold a normalized base id (pricing does, before it looks up) get an exact hit; a caller
     passing a lane/suffixed/qualified id is resolved here. Never raises."""
-    models = _load()
+    models = _load_records()
     if not model_id:
         return None
     for key in (model_id, _bare(model_id)):
@@ -86,26 +86,26 @@ def record(model_id):
 
 def all_records():
     """The whole {id: record} map (a live reference to the memoised dict — treat as read-only)."""
-    return _load()
+    return _load_records()
 
 
 def ids():
     """Every curated model id, sorted."""
-    return sorted(_load().keys())
+    return sorted(_load_records().keys())
 
 
-def price(model_id):
+def model_price(model_id):
     """The price sub-record {in_, out, cached_in, batch_in, batch_out, [batch_cached_in], source, verified} for a
     model, or None when the model is not in the catalog or has no price (a curated model may carry price_error). This
     is the CURATED rate; pricing.py layers it above the synced breadth cache and does the cost math."""
-    rec = record(model_id)
+    rec = model_record(model_id)
     return (rec or {}).get("price") if rec else None
 
 
-def output_ceiling(model_id):
+def published_ceiling(model_id):
     """The curated published max-OUTPUT-tokens value (int) for a model, or None when unknown/not-curated. The
     RESOLVER (pricing.output_ceiling) reads this first, then live /models, then floors — this is just the datum."""
-    rec = record(model_id)
+    rec = model_record(model_id)
     oc = (rec or {}).get("output_ceiling") if rec else None
     v = (oc or {}).get("value")
     try:
@@ -117,13 +117,13 @@ def output_ceiling(model_id):
 def reasoning(model_id):
     """The reasoning sub-record {floor, effort_ok, reasoning_floor, reasons_by_default, tokens_param, style} for a
     model, or None when not curated. Per-model facts only; the lane<->metered effort SPELLING is reasoning_equivalence."""
-    rec = record(model_id)
+    rec = model_record(model_id)
     return (rec or {}).get("reasoning") if rec else None
 
 
 def provider_of(model_id):
     """The vendor that publishes/serves a model per the catalog, or None when not curated."""
-    rec = record(model_id)
+    rec = model_record(model_id)
     return (rec or {}).get("provider") if rec else None
 
 
@@ -134,7 +134,7 @@ def as_price_table():
     catalog's curated rates above the synced breadth. Models with no usable price (price is None or lacks in_) are
     omitted (an unpriced model is a gap, never a $0 row)."""
     out = {}
-    for rid, rec in _load().items():
+    for rid, rec in _load_records().items():
         p = rec.get("price") or {}
         if p.get("in_") is None:
             continue
@@ -147,13 +147,13 @@ def as_price_table():
     return out
 
 
-def validate(models=None):
+def validate_catalog(models=None):
     """Check the DATA CONTRACT and return a list of human-readable problems ([] = clean). Used by
     tests/test_model_catalog_ssot.py. Verifies: required top fields present; price fields (when a price exists) are
     numeric or explicitly null; output_ceiling.value is int-or-null; reasoning.style is in REASONING_STYLES; a
     retired_alias_of names a real catalog record OR the alias carries its own price (so the reference never dangles
     into nothing). Pure; no I/O beyond the load."""
-    models = models if models is not None else _load()
+    models = models if models is not None else _load_records()
     problems = []
     ids_present = set(models)
     for rid, rec in models.items():
