@@ -15,7 +15,7 @@
         "cached_in": 0.008,
         "batch_in": 0.04,
         "batch_out": 0.04,
-        "source": "AMORTIZED GPU rental: vast.ai RTX4090 inst 45955561 @ $0.436/hr / ~1500 tok/s (14B-AWQ) \u2248 $0.08/1M; rental spread over tokens, not additional",
+        "source": "AMORTIZED GPU rental: vast.ai RTX4090 inst 45955561 @ $0.436/hr / ~1500 tok/s (14B-AWQ) ≈ $0.08/1M; rental spread over tokens, not additional",
         "verified": "2026-09-12"
       },
       "price_error": null,
@@ -77,7 +77,7 @@
         "cached_in": 0.07,
         "batch_in": 0.35,
         "batch_out": 0.35,
-        "source": "AMORTIZED: vast H100 inst 47900312 @ $2.003/hr / ~800 tok/s (72B-AWQ) \u2248 $0.70/1M; rental spread over tokens",
+        "source": "AMORTIZED: vast H100 inst 47900312 @ $2.003/hr / ~800 tok/s (72B-AWQ) ≈ $0.70/1M; rental spread over tokens",
         "verified": "2026-09-12"
       },
       "price_error": null,
@@ -117,7 +117,11 @@
         "value": 128000,
         "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
       },
-      "context_window": 1000000,
+      "context_window": {
+        "value": 1000000,
+        "source": "litellm:model_prices_and_context_window.json (synced via seed; NOT provider-verified)",
+        "verified": null
+      },
       "reasoning": {
         "floor": null,
         "effort_ok": false,
@@ -149,7 +153,11 @@
         "value": 128000,
         "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
       },
-      "context_window": 1000000,
+      "context_window": {
+        "value": 1000000,
+        "source": "litellm:model_prices_and_context_window.json (synced via seed; NOT provider-verified)",
+        "verified": null
+      },
       "reasoning": {
         "floor": null,
         "effort_ok": false,
@@ -185,7 +193,11 @@
         "value": 64000,
         "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
       },
-      "context_window": 200000,
+      "context_window": {
+        "value": 200000,
+        "source": "litellm:model_prices_and_context_window.json (synced via seed; NOT provider-verified)",
+        "verified": null
+      },
       "reasoning": {
         "floor": null,
         "effort_ok": false,
@@ -193,7 +205,8 @@
         "reasons_by_default": false,
         "tokens_param": "max_tokens",
         "style": "none"
-      }
+      },
+      "provider_base": true
     },
     "claude-opus-4-0": {
       "id": "claude-opus-4-0",
@@ -281,7 +294,11 @@
         "value": 64000,
         "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
       },
-      "context_window": 200000,
+      "context_window": {
+        "value": 200000,
+        "source": "litellm:model_prices_and_context_window.json (synced via seed; NOT provider-verified)",
+        "verified": null
+      },
       "reasoning": {
         "floor": null,
         "effort_ok": false,
@@ -313,7 +330,11 @@
         "value": 128000,
         "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
       },
-      "context_window": 1000000,
+      "context_window": {
+        "value": 1000000,
+        "source": "litellm:model_prices_and_context_window.json (synced via seed; NOT provider-verified)",
+        "verified": null
+      },
       "reasoning": {
         "floor": null,
         "effort_ok": false,
@@ -345,7 +366,11 @@
         "value": 128000,
         "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
       },
-      "context_window": 1000000,
+      "context_window": {
+        "value": 1000000,
+        "source": "litellm:model_prices_and_context_window.json (synced via seed; NOT provider-verified)",
+        "verified": null
+      },
       "reasoning": {
         "floor": null,
         "effort_ok": false,
@@ -381,7 +406,11 @@
         "value": 128000,
         "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
       },
-      "context_window": 1000000,
+      "context_window": {
+        "value": 1000000,
+        "source": "litellm:model_prices_and_context_window.json (synced via seed; NOT provider-verified)",
+        "verified": null
+      },
       "reasoning": {
         "floor": null,
         "effort_ok": false,
@@ -405,7 +434,7 @@
         "batch_in": 2.5,
         "batch_out": 12.5,
         "batch_cached_in": 0.25,
-        "source": "https://platform.claude.com/docs/en/about-claude/pricing (fetched 2026-09-14): $5/$25 per 1M in/out, cache-read $0.50 (0.1x base), batch $2.50/$12.50 \u2014 identical to Claude Opus 4.5-4.8. batch_cached_in = cached_in x 0.5 (stacking documented on the page). Corroborates the 2026-09-12 vendor-page note (opus 5/25).",
+        "source": "https://platform.claude.com/docs/en/about-claude/pricing (fetched 2026-09-14): $5/$25 per 1M in/out, cache-read $0.50 (0.1x base), batch $2.50/$12.50 — identical to Claude Opus 4.5-4.8. batch_cached_in = cached_in x 0.5 (stacking documented on the page). Corroborates the 2026-09-12 vendor-page note (opus 5/25).",
         "verified": "2026-09-12"
       },
       "price_error": null,
@@ -413,7 +442,11 @@
         "value": 128000,
         "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
       },
-      "context_window": 1000000,
+      "context_window": {
+        "value": 1000000,
+        "source": "litellm:model_prices_and_context_window.json (synced via seed; NOT provider-verified)",
+        "verified": null
+      },
       "reasoning": {
         "floor": null,
         "effort_ok": false,
@@ -477,7 +510,11 @@
         "value": 64000,
         "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
       },
-      "context_window": 1000000,
+      "context_window": {
+        "value": 1000000,
+        "source": "litellm:model_prices_and_context_window.json (synced via seed; NOT provider-verified)",
+        "verified": null
+      },
       "reasoning": {
         "floor": null,
         "effort_ok": false,
@@ -509,7 +546,11 @@
         "value": 128000,
         "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
       },
-      "context_window": 1000000,
+      "context_window": {
+        "value": 1000000,
+        "source": "litellm:model_prices_and_context_window.json (synced via seed; NOT provider-verified)",
+        "verified": null
+      },
       "reasoning": {
         "floor": null,
         "effort_ok": false,
@@ -540,7 +581,11 @@
         "value": 128000,
         "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
       },
-      "context_window": 1000000,
+      "context_window": {
+        "value": 1000000,
+        "source": "litellm:model_prices_and_context_window.json (synced via seed; NOT provider-verified)",
+        "verified": null
+      },
       "reasoning": {
         "floor": null,
         "effort_ok": false,
@@ -563,7 +608,7 @@
         "cached_in": 0.006,
         "batch_in": 0.15,
         "batch_out": 0.6,
-        "source": "https://api-docs.deepseek.com/quick_start/pricing/ (deepseek-v4-flash retired \u2192 billed at Flash: peak/standard rate)",
+        "source": "https://api-docs.deepseek.com/quick_start/pricing/ (deepseek-v4-flash retired → billed at Flash: peak/standard rate)",
         "verified": "2026-09-12"
       },
       "price_error": null,
@@ -571,7 +616,11 @@
         "value": 393216,
         "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
       },
-      "context_window": 1000000,
+      "context_window": {
+        "value": 1000000,
+        "source": "litellm:model_prices_and_context_window.json (synced via seed; NOT provider-verified)",
+        "verified": null
+      },
       "reasoning": {
         "floor": null,
         "effort_ok": false,
@@ -579,7 +628,8 @@
         "reasons_by_default": false,
         "tokens_param": "max_tokens",
         "style": "none"
-      }
+      },
+      "provider_base": true
     },
     "deepseek-v4-flash-vision-exp": {
       "id": "deepseek-v4-flash-vision-exp",
@@ -602,7 +652,11 @@
         "value": 393216,
         "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
       },
-      "context_window": 1000000,
+      "context_window": {
+        "value": 1000000,
+        "source": "litellm:model_prices_and_context_window.json (synced via seed; NOT provider-verified)",
+        "verified": null
+      },
       "reasoning": {
         "floor": null,
         "effort_ok": false,
@@ -633,7 +687,11 @@
         "value": 393216,
         "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
       },
-      "context_window": 1000000,
+      "context_window": {
+        "value": 1000000,
+        "source": "litellm:model_prices_and_context_window.json (synced via seed; NOT provider-verified)",
+        "verified": null
+      },
       "reasoning": {
         "floor": null,
         "effort_ok": false,
@@ -687,7 +745,7 @@
         "cached_in": 0.2,
         "batch_in": 1.0,
         "batch_out": 6.0,
-        "source": "https://pricepertoken.com/pricing-page/model/google-gemini-3.1-pro-preview (VentureBeat/apidog corroborate $2/$12 \u2264200K)",
+        "source": "https://pricepertoken.com/pricing-page/model/google-gemini-3.1-pro-preview (VentureBeat/apidog corroborate $2/$12 ≤200K)",
         "verified": "2026-09-12"
       },
       "price_error": null,
@@ -726,7 +784,11 @@
         "value": 65536,
         "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
       },
-      "context_window": 1048576,
+      "context_window": {
+        "value": 1048576,
+        "source": "litellm:model_prices_and_context_window.json (synced via seed; NOT provider-verified)",
+        "verified": null
+      },
       "reasoning": {
         "floor": null,
         "effort_ok": true,
@@ -757,7 +819,11 @@
         "value": 65536,
         "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
       },
-      "context_window": 1048576,
+      "context_window": {
+        "value": 1048576,
+        "source": "litellm:model_prices_and_context_window.json (synced via seed; NOT provider-verified)",
+        "verified": null
+      },
       "reasoning": {
         "floor": null,
         "effort_ok": true,
@@ -793,7 +859,11 @@
         "value": 65536,
         "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
       },
-      "context_window": 1048576,
+      "context_window": {
+        "value": 1048576,
+        "source": "https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash",
+        "verified": "2026-09-25"
+      },
       "reasoning": {
         "floor": null,
         "effort_ok": true,
@@ -801,7 +871,8 @@
         "reasons_by_default": false,
         "tokens_param": "max_completion_tokens",
         "style": "suffix"
-      }
+      },
+      "provider_base": true
     },
     "glm-4.5": {
       "id": "glm-4.5",
@@ -908,7 +979,7 @@
         "cached_in": 0.01,
         "batch_in": 0.07,
         "batch_out": 0.4,
-        "source": "https://docs.z.ai/guides/overview/pricing (fetched 2026-08-04): in $0.07/1M, cached-in $0.01/1M, out $0.40/1M. No published batch discount \u2192 batch = standard.",
+        "source": "https://docs.z.ai/guides/overview/pricing (fetched 2026-08-04): in $0.07/1M, cached-in $0.01/1M, out $0.40/1M. No published batch discount → batch = standard.",
         "verified": "2026-09-12"
       },
       "price_error": null,
@@ -985,7 +1056,7 @@
         "cached_in": 0.14,
         "batch_in": 0.7,
         "batch_out": 2.2,
-        "source": "https://docs.z.ai/guides/overview/pricing \u2014 Z.ai official: GLM-5.2 $1.40/$4.40 per 1M (+$0.26 cached)",
+        "source": "https://docs.z.ai/guides/overview/pricing — Z.ai official: GLM-5.2 $1.40/$4.40 per 1M (+$0.26 cached)",
         "verified": "2026-09-12"
       },
       "price_error": null,
@@ -1028,7 +1099,11 @@
         "value": 131072,
         "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
       },
-      "context_window": null,
+      "context_window": {
+        "value": 1000000,
+        "source": "https://docs.z.ai/guides/llm/glm-5.3",
+        "verified": "2026-09-25"
+      },
       "reasoning": {
         "floor": null,
         "effort_ok": false,
@@ -1036,7 +1111,8 @@
         "reasons_by_default": false,
         "tokens_param": "max_tokens",
         "style": "none"
-      }
+      },
+      "provider_base": true
     },
     "gpt-4.1-mini": {
       "id": "gpt-4.1-mini",
@@ -1059,7 +1135,11 @@
         "value": 32768,
         "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
       },
-      "context_window": 1047576,
+      "context_window": {
+        "value": 1047576,
+        "source": "litellm:model_prices_and_context_window.json (synced via seed; NOT provider-verified)",
+        "verified": null
+      },
       "reasoning": {
         "floor": null,
         "effort_ok": false,
@@ -1090,7 +1170,11 @@
         "value": 16384,
         "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
       },
-      "context_window": 128000,
+      "context_window": {
+        "value": 128000,
+        "source": "litellm:model_prices_and_context_window.json (synced via seed; NOT provider-verified)",
+        "verified": null
+      },
       "reasoning": {
         "floor": null,
         "effort_ok": false,
@@ -1121,7 +1205,11 @@
         "value": 16384,
         "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
       },
-      "context_window": 128000,
+      "context_window": {
+        "value": 128000,
+        "source": "litellm:model_prices_and_context_window.json (synced via seed; NOT provider-verified)",
+        "verified": null
+      },
       "reasoning": {
         "floor": null,
         "effort_ok": false,
@@ -1152,7 +1240,11 @@
         "value": 128000,
         "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
       },
-      "context_window": 272000,
+      "context_window": {
+        "value": 272000,
+        "source": "litellm:model_prices_and_context_window.json (synced via seed; NOT provider-verified)",
+        "verified": null
+      },
       "reasoning": {
         "floor": "minimal",
         "effort_ok": false,
@@ -1183,7 +1275,11 @@
         "value": 128000,
         "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
       },
-      "context_window": 272000,
+      "context_window": {
+        "value": 272000,
+        "source": "litellm:model_prices_and_context_window.json (synced via seed; NOT provider-verified)",
+        "verified": null
+      },
       "reasoning": {
         "floor": "minimal",
         "effort_ok": false,
@@ -1214,7 +1310,11 @@
         "value": 128000,
         "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
       },
-      "context_window": 272000,
+      "context_window": {
+        "value": 272000,
+        "source": "litellm:model_prices_and_context_window.json (synced via seed; NOT provider-verified)",
+        "verified": null
+      },
       "reasoning": {
         "floor": "minimal",
         "effort_ok": false,
@@ -1245,7 +1345,11 @@
         "value": 128000,
         "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
       },
-      "context_window": 1050000,
+      "context_window": {
+        "value": 1050000,
+        "source": "litellm:model_prices_and_context_window.json (synced via seed; NOT provider-verified)",
+        "verified": null
+      },
       "reasoning": {
         "floor": "minimal",
         "effort_ok": false,
@@ -1276,7 +1380,11 @@
         "value": 128000,
         "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
       },
-      "context_window": 272000,
+      "context_window": {
+        "value": 272000,
+        "source": "litellm:model_prices_and_context_window.json (synced via seed; NOT provider-verified)",
+        "verified": null
+      },
       "reasoning": {
         "floor": "minimal",
         "effort_ok": false,
@@ -1307,7 +1415,11 @@
         "value": 128000,
         "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
       },
-      "context_window": 272000,
+      "context_window": {
+        "value": 272000,
+        "source": "litellm:model_prices_and_context_window.json (synced via seed; NOT provider-verified)",
+        "verified": null
+      },
       "reasoning": {
         "floor": "none",
         "effort_ok": false,
@@ -1338,7 +1450,11 @@
         "value": 128000,
         "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
       },
-      "context_window": 1050000,
+      "context_window": {
+        "value": 1050000,
+        "source": "litellm:model_prices_and_context_window.json (synced via seed; NOT provider-verified)",
+        "verified": null
+      },
       "reasoning": {
         "floor": "none",
         "effort_ok": false,
@@ -1369,7 +1485,11 @@
         "value": 128000,
         "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
       },
-      "context_window": 1050000,
+      "context_window": {
+        "value": 1050000,
+        "source": "litellm:model_prices_and_context_window.json (synced via seed; NOT provider-verified)",
+        "verified": null
+      },
       "reasoning": {
         "floor": "none",
         "effort_ok": false,
@@ -1404,7 +1524,11 @@
         "value": 128000,
         "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
       },
-      "context_window": 922000,
+      "context_window": {
+        "value": 922000,
+        "source": "litellm:model_prices_and_context_window.json (synced via seed; NOT provider-verified)",
+        "verified": null
+      },
       "reasoning": {
         "floor": "none",
         "effort_ok": false,
@@ -1412,7 +1536,8 @@
         "reasons_by_default": true,
         "tokens_param": "max_completion_tokens",
         "style": "none"
-      }
+      },
+      "provider_base": true
     },
     "gpt-5.6-sol": {
       "id": "gpt-5.6-sol",
@@ -1439,7 +1564,11 @@
         "value": 128000,
         "source": "pricing.max_output_tokens (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced context)"
       },
-      "context_window": 922000,
+      "context_window": {
+        "value": 922000,
+        "source": "litellm:model_prices_and_context_window.json (synced via seed; NOT provider-verified)",
+        "verified": null
+      },
       "reasoning": {
         "floor": "none",
         "effort_ok": false,
@@ -1451,7 +1580,7 @@
     },
     "kimi-k2.6": {
       "id": "kimi-k2.6",
-      "provider": "custom",
+      "provider": "moonshot",
       "aliases": [],
       "retired_alias_of": null,
       "metered_id": "kimi-k2.6",
@@ -1462,7 +1591,7 @@
         "cached_in": 0.095,
         "batch_in": 0.475,
         "batch_out": 2.0,
-        "source": "https://pricepertoken.com/pricing-page/model/moonshotai-kimi-k2.6 \u2014 Moonshot official $0.95/$4.00 per 1M",
+        "source": "https://pricepertoken.com/pricing-page/model/moonshotai-kimi-k2.6 — Moonshot official $0.95/$4.00 per 1M",
         "verified": "2026-09-12"
       },
       "price_error": null,
@@ -1493,7 +1622,7 @@
         "cached_in": 0.3,
         "batch_in": 3.0,
         "batch_out": 15.0,
-        "source": "https://platform.kimi.ai/docs/pricing/chat-k3.md (fetched 2026-08-04): in cache-miss $3.00/1M, cache-hit $0.30/1M, out $15.00/1M. Batch API does NOT support kimi-k3 (batch.md lists only k2.7-code/k2.6/k2.5), so batch rates are set to STANDARD \u2014 never discounted for a mode the model cannot use.",
+        "source": "https://platform.kimi.ai/docs/pricing/chat-k3.md (fetched 2026-08-04): in cache-miss $3.00/1M, cache-hit $0.30/1M, out $15.00/1M. Batch API does NOT support kimi-k3 (batch.md lists only k2.7-code/k2.6/k2.5), so batch rates are set to STANDARD — never discounted for a mode the model cannot use.",
         "verified": "2026-09-12"
       },
       "price_error": null,
@@ -1509,7 +1638,8 @@
         "reasons_by_default": true,
         "tokens_param": "max_tokens",
         "style": "none"
-      }
+      },
+      "provider_base": true
     },
     "qwen-max": {
       "id": "qwen-max",
@@ -1571,7 +1701,8 @@
         "reasons_by_default": false,
         "tokens_param": "max_tokens",
         "style": "none"
-      }
+      },
+      "provider_base": true
     },
     "qwen-turbo": {
       "id": "qwen-turbo",
@@ -1625,7 +1756,11 @@
         "value": null,
         "source": null
       },
-      "context_window": 8191,
+      "context_window": {
+        "value": 8191,
+        "source": "litellm:model_prices_and_context_window.json (synced via seed; NOT provider-verified)",
+        "verified": null
+      },
       "reasoning": {
         "floor": null,
         "effort_ok": false,
@@ -1656,7 +1791,11 @@
         "value": null,
         "source": null
       },
-      "context_window": 8191,
+      "context_window": {
+        "value": 8191,
+        "source": "litellm:model_prices_and_context_window.json (synced via seed; NOT provider-verified)",
+        "verified": null
+      },
       "reasoning": {
         "floor": null,
         "effort_ok": false,

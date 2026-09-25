@@ -4,7 +4,7 @@
     "_generator": "scripts/gen_prices_json.py",
     "_source": "src/spendguard/model_catalog.json (concern 'model_catalog' \u2014 the SSOT for model data)",
     "note": "GENERATED from the model catalog \u2014 DO NOT EDIT BY HAND. Author prices in model_catalog.json, then run `python scripts/gen_prices_json.py --write`. honestreview derived_artifact_integrity flags hand-edits.",
-    "generated_at": "2026-09-25T15:34:09Z"
+    "generated_at": "2026-09-25T20:22:57Z"
   },
   "providers": {
     "anthropic": {
@@ -161,14 +161,6 @@
           "batch_in": 0.35,
           "batch_out": 0.35,
           "_source": "AMORTIZED: vast H100 inst 47900312 @ $2.003/hr / ~800 tok/s (72B-AWQ) \u2248 $0.70/1M; rental spread over tokens"
-        },
-        "kimi-k2.6": {
-          "in_": 0.95,
-          "out": 4.0,
-          "cached_in": 0.095,
-          "batch_in": 0.475,
-          "batch_out": 2.0,
-          "_source": "https://pricepertoken.com/pricing-page/model/moonshotai-kimi-k2.6 \u2014 Moonshot official $0.95/$4.00 per 1M"
         }
       }
     },
@@ -246,6 +238,14 @@
     },
     "moonshot": {
       "models": {
+        "kimi-k2.6": {
+          "in_": 0.95,
+          "out": 4.0,
+          "cached_in": 0.095,
+          "batch_in": 0.475,
+          "batch_out": 2.0,
+          "_source": "https://pricepertoken.com/pricing-page/model/moonshotai-kimi-k2.6 \u2014 Moonshot official $0.95/$4.00 per 1M"
+        },
         "kimi-k3": {
           "in_": 3.0,
           "out": 15.0,

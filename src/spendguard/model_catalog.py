@@ -16,7 +16,8 @@ Record schema (the DATA CONTRACT — see validate()):
   aliases: [str]                            retired_alias_of: str | null
   metered_id: str                           lane_spellings: {lane: [use-name, ...]}
   price: {in_, out, cached_in, batch_in, batch_out, batch_cached_in?, source, verified} | null   price_error: str | null
-  output_ceiling: {value: int|null, source: str|null}                                            context_window: int | null
+  output_ceiling: {value: int|null, source: str|null}     context_window: {value: int|null, source, verified} | null
+  provider_base: true (ONLY on the one reliable base model per provider — the tier-3 fallback target; absent else)
   reasoning: {floor: str|null, effort_ok: bool, reasoning_floor: str|null, reasons_by_default: bool,
               tokens_param: str, style: one of REASONING_STYLES}
 
@@ -114,6 +115,32 @@ def published_ceiling(model_id):
         return None
 
 
+def context_window(model_id):
+    """The curated INPUT context-window size (int tokens) for a model, or None when unknown/not-curated. This is the
+    METERED API's window (provider-published, carried WITH source+verified provenance); a LANE's smaller practical
+    input capacity is learned separately (resource_state size_ceiling) and must never be conflated with this. The
+    datum only — a resolver may layer the synced breadth / a learned floor on top."""
+    rec = model_record(model_id)
+    cw = (rec or {}).get("context_window") if rec else None
+    v = cw.get("value") if isinstance(cw, dict) else None
+    try:
+        return int(v) if v else None
+    except (TypeError, ValueError):
+        return None
+
+
+def provider_base(provider):
+    """The catalog's designated reliable BASE model id for `provider` — the ONE record flagged provider_base:true — or
+    None. The tier-3 last-resort fallback target when a chosen model's lane AND metered API both fail
+    (adapters.provider_base_model reads this; advisor.provider_base_model config can override per provider).
+    Same-provider by construction, so a pinned/consensus call keeps its vendor identity."""
+    prov = (provider or "").strip().lower()
+    for rid, rec in _load_records().items():
+        if (rec.get("provider") or "").strip().lower() == prov and rec.get("provider_base"):
+            return rec.get("metered_id") or rid
+    return None
+
+
 def reasoning(model_id):
     """The reasoning sub-record {floor, effort_ok, reasoning_floor, reasons_by_default, tokens_param, style} for a
     model, or None when not curated. Per-model facts only; the lane<->metered effort SPELLING is reasoning_equivalence."""
@@ -169,10 +196,27 @@ def validate_catalog(models=None):
         oc = (rec.get("output_ceiling") or {}).get("value")
         if oc is not None and not isinstance(oc, int):
             problems.append(f"{rid}: output_ceiling.value is {type(oc).__name__}, expected int|null")
+        cw = rec.get("context_window")
+        if isinstance(cw, dict):
+            cwv = cw.get("value")
+            if cwv is not None and not isinstance(cwv, int):
+                problems.append(f"{rid}: context_window.value is {type(cwv).__name__}, expected int|null")
+        elif cw is not None:
+            problems.append(f"{rid}: context_window is {type(cw).__name__}, expected object|null")
         style = (rec.get("reasoning") or {}).get("style")
         if style is not None and style not in REASONING_STYLES:
             problems.append(f"{rid}: reasoning.style {style!r} not in {REASONING_STYLES}")
         tgt = rec.get("retired_alias_of")
         if tgt and tgt not in ids_present and not (p and p.get("in_") is not None):
             problems.append(f"{rid}: retired_alias_of {tgt!r} is neither a catalog record nor self-priced (dangling)")
+    # provider_base: at most ONE per provider, and a flagged base must be PRICED (a last-resort fallback must be usable)
+    bases = {}
+    for rid, rec in models.items():
+        if rec.get("provider_base"):
+            bases.setdefault(rec.get("provider"), []).append(rid)
+            if (rec.get("price") or {}).get("in_") is None:
+                problems.append(f"{rid}: flagged provider_base but is unpriced (a base must be usable)")
+    for prov, rids in bases.items():
+        if len(rids) > 1:
+            problems.append(f"provider {prov!r} has {len(rids)} provider_base records {rids}; expected exactly one")
     return problems
