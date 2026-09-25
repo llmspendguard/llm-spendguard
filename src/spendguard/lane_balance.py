@@ -1040,7 +1040,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
             _stopped_at = c0
             break
         chunk = todo[c0:c0 + max(1, int(chunk_size))]
-        with _cf.ThreadPoolExecutor(max_workers=max(1, n)) as ex:
+        with _gate.governed_bulk(), _cf.ThreadPoolExecutor(max_workers=max(1, n)) as ex:   # fan already governed (D)
             _fut_idx = {ex.submit(_run_task_on_lane, i, tasks[i]): i for i in chunk}
             for fut in _cf.as_completed(_fut_idx):
                 try:

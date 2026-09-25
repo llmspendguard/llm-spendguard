@@ -366,6 +366,27 @@ def _link_used(chain, current_prompt):
         config.rollback_ledger_conn("calls")   # clear a dangling txn from the failed write on the reused pooled conn
 
 
+def intent_spend(intent, window_s=86400):
+    """The ACTUAL metered $ recorded for `intent` in the last `window_s` seconds — what guardrail D's per-intent
+    running cap (enforced at the call door, gate._rt_precheck_usd) sums to decide whether the next call would cross the
+    ceiling. Rolling window; ts is ISO-8601 UTC so a lexical `>=` is chronological. Returns 0.0 on empty / error (a
+    cap can only ADD safety, never break a call because the ledger hiccuped). This is the path-independent twin of
+    bulk_delegate's in-fan budget_usd: every metered call reaches the door, however it was issued."""
+    if not intent:
+        return 0.0
+    import datetime
+    cut = (datetime.datetime.now(datetime.timezone.utc)
+           - datetime.timedelta(seconds=max(1, int(window_s)))).isoformat(timespec="seconds")
+    try:
+        with _lock:
+            r = _calls_db().execute("SELECT COALESCE(SUM(cost),0) FROM calls WHERE intent=? AND ts>=?",
+                                    (intent, cut)).fetchone()
+        return float(r[0] or 0.0) if r else 0.0
+    except Exception:
+        config.rollback_ledger_conn("calls")
+        return 0.0
+
+
 def cost_summary(intent=None):
     """Per (intent, model): calls, $ total, %good, and cost-per-good-result."""
     cond = ["(intent IS NULL OR intent NOT LIKE 'spendguard:%')"]   # exclude spendguard's own meta calls

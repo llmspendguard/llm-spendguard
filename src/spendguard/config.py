@@ -557,6 +557,37 @@ def meta_cap():
     return float(v) if v is not None else float(_cfg_get("caps", "meta", 2.0))
 
 
+def intent_cap(intent):
+    """The per-intent running-$ ceiling (guardrail D, enforced at the CALL DOOR so it holds on EVERY path — a single
+    call, a hand-rolled fan, or bulk_delegate), or None when none is set for this intent. Resolution: env
+    $GATE_INTENT_CAP_<INTENT> (uppercased, non-alnum→_) → caps.intent_caps[intent] (a {intent: usd} map in config).
+    None means no per-intent cap (the global daily/monthly + RT caps still apply). This is what turns 'budget_usd only
+    inside bulk_delegate' into a control every metered caller is subject to."""
+    if not intent:
+        return None
+    env = os.getenv("GATE_INTENT_CAP_" + "".join(c if c.isalnum() else "_" for c in intent).upper())
+    if env is not None:
+        try:
+            return float(env)
+        except ValueError:
+            return None
+    v = (_cfg_get("caps", "intent_caps", {}) or {}).get(intent)
+    try:
+        return float(v) if v is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def intent_cap_window_s():
+    """The rolling window (seconds) over which the per-intent running cap sums ACTUAL spend. Default 24h.
+    env $GATE_INTENT_CAP_WINDOW_S → caps.intent_cap_window_s → 86400."""
+    v = os.getenv("GATE_INTENT_CAP_WINDOW_S")
+    try:
+        return int(v) if v is not None else int(_cfg_get("caps", "intent_cap_window_s", 86400))
+    except (TypeError, ValueError):
+        return 86400
+
+
 def external_cap():
     """Separate daily $ cap for non-token EXTERNAL spend (MCP/tool calls + external paid APIs). None = NO cap
     (opt-in — external gating does nothing until a cap is set). env GATE_EXTERNAL_DAILY → config.json

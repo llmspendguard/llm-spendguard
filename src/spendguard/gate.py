@@ -732,7 +732,7 @@ def _gate_anthropic(kw, args=()):
 # actual usage AFTER each call (and logs it → closes the "real-time spend is invisible to
 # reconcile" gap), and HARD-STOPS before the next call once per-process cumulative spend
 # crosses GATE_RT_BUDGET (default $50). The runaway-loop protection (e.g. the 47,771-call balloon).
-import threading as _threading, atexit as _atexit
+import threading as _threading, atexit as _atexit, collections as _collections
 from .config import RT_LOG, rt_budget as _rt_budget
 
 _rt_lock = _threading.Lock()
@@ -741,6 +741,113 @@ _rt_agg = {}             # (day, provider, model) -> [calls, cost]  pending flus
 _rt_since_flush = 0
 _rt_warned = False
 _rt_bypass = False        # interactive "allow rest of run's real-time calls" — bypasses ONLY the RT budget
+
+# ── Guardrail D AT THE CALL DOOR (path-independent) ──────────────────────────────────────────────────────
+# guardrail D (a running $ cap) used to live ONLY inside bulk_delegate, so a HAND-ROLLED fan (a ThreadPoolExecutor over
+# adapters.call / spendrails.call) never reached it and blew past the coarse global cap — the warden 2026-09-23/24
+# ~$96 gpt-5.5 overspend. spendguard is the ONE seam EVERY metered call passes through (_rt_precheck_usd), so the
+# per-intent running cap is enforced HERE, on every path. Plus a velocity signal that flags a raw same-intent fan not
+# issued through bulk_delegate (which is already governed by bulkgate's estimate + budget_usd).
+_intent_lock = _threading.Lock()
+_intent_cap_refusals = {}          # intent -> count refused by the per-intent running cap (this process)
+_ungated_fans = {}                 # intent -> count of raw (non-bulk_delegate) high-velocity fan detections
+_intent_call_times = {}            # intent -> deque of recent RAW metered-call monotonic ts (velocity signal)
+_ungated_fan_warned = set()        # warn once per intent per process
+_bulk_depth_n = 0                  # PROCESS-WIDE: >0 while any bulk_delegate fan runs (visible across its worker pool)
+_FAN_WINDOW_S = 10.0               # a raw same-intent burst within this window, above preview_max, looks like a fan
+
+
+def in_governed_bulk():
+    """True while a bulk_delegate fan is executing (it already applies bulkgate's estimate + budget_usd), so the door
+    does not count those calls as an un-gated hand-rolled fan. Process-wide (visible to the fan's worker threads)."""
+    with _intent_lock:
+        return _bulk_depth_n > 0
+
+
+class governed_bulk:
+    """The context manager bulk_delegate wraps its fan in, marking those calls ALREADY-governed for the door's
+    hand-rolled-fan detector. Reentrant; process-wide count (a ThreadPoolExecutor's workers must see it); never
+    suppresses an exception raised inside the block."""
+    def __enter__(self):
+        global _bulk_depth_n
+        with _intent_lock:
+            _bulk_depth_n += 1
+        return self
+
+    def __exit__(self, *exc):
+        global _bulk_depth_n
+        with _intent_lock:
+            _bulk_depth_n = max(0, _bulk_depth_n - 1)
+        return False
+
+
+def intent_cap_refusals():
+    """{intent: count} — per-intent running-cap refusals this process (guardrail D at the door). For admission_state."""
+    with _intent_lock:
+        return dict(_intent_cap_refusals)
+
+
+def ungated_fans():
+    """{intent: count} — raw same-intent high-velocity fans detected (NOT routed through bulk_delegate). For
+    admission_state; a nudge to route bulk work through bulk_delegate so the estimate + running cap + sizing apply."""
+    with _intent_lock:
+        return dict(_ungated_fans)
+
+
+def _warn_ungated_fan_once(intent, n):
+    with _intent_lock:
+        first = intent not in _ungated_fan_warned
+        _ungated_fan_warned.add(intent)
+    if first:
+        try:
+            sys.stderr.write(
+                f"[spend_gate] UN-GATED FAN: {n} '{intent}' metered calls within {_FAN_WINDOW_S:.0f}s NOT via "
+                f"bulk_delegate — the estimate, the per-intent running cap, and reasoning-aware sizing do not apply to "
+                f"a hand-rolled fan. Route bulk work through lane_balance.bulk_delegate (or adapters.call with "
+                f"reasoning='best-value').\n")
+        except Exception:
+            pass
+
+
+def _intent_door_gate(intent, est, provider, model):
+    """Guardrail D at the door for a WORKLOAD intent: (1) flag a raw high-velocity same-intent fan (telemetry, never
+    raises); (2) enforce the per-intent running cap — sum this intent's ACTUAL windowed spend and REFUSE (a typed
+    deliberate stop) if this call would cross the ceiling. Only the refusal propagates; the rest fails open (a cap only
+    ever ADDS safety, never breaks a legitimate call on a ledger hiccup)."""
+    try:
+        if not in_governed_bulk():
+            from . import bulkgate
+            now = time.monotonic()
+            with _intent_lock:
+                dq = _intent_call_times.setdefault(intent, _collections.deque())
+                dq.append(now)
+                while dq and now - dq[0] > _FAN_WINDOW_S:
+                    dq.popleft()
+                n_raw = len(dq)
+            if n_raw > bulkgate.preview_max():
+                with _intent_lock:
+                    _ungated_fans[intent] = _ungated_fans.get(intent, 0) + 1
+                _warn_ungated_fan_once(intent, n_raw)
+    except Exception:
+        pass                                              # detection is telemetry — never break a call
+    from . import config
+    cap = config.intent_cap(intent)
+    if cap is None or _allow():
+        return
+    try:
+        from . import calls
+        spent = calls.intent_spend(intent, config.intent_cap_window_s())
+    except Exception:
+        return                                            # ledger hiccup → do not break the call
+    if spent + est > float(cap):
+        with _intent_lock:
+            _intent_cap_refusals[intent] = _intent_cap_refusals.get(intent, 0) + 1
+        _emit({"kind": "intent_cap", "intent": intent, "provider": provider, "model": model, "cost": est,
+               "decision": "refused_intent_cap"})
+        raise SpendGateRefused(
+            f"per-intent running cap for {intent!r}: spent ${spent:.2f} + next ~${est:.2f} would exceed "
+            f"${float(cap):.2f} in the last {max(1, config.intent_cap_window_s() // 3600)}h "
+            f"(caps.intent_caps / GATE_INTENT_CAP_*). Raise the cap or set GATE_ALLOW=1.")
 
 
 def _now_day():
@@ -839,13 +946,16 @@ def _rt_precheck_usd(provider, model, est):
                 raise SpendGateRefused(f"spendguard meta budget ${config.meta_cap():.0f}/day would be exceeded "
                                        f"(projected ${ex[2]:.2f}). Raise caps.meta or set GATE_ALLOW=1.")
         return
+    intent = ""
+    try:
+        intent = (_calls.current().get("intent") or "").strip()
+    except Exception:
+        pass
+    if intent and not intent.startswith("spendguard:"):
+        _intent_door_gate(intent, est, provider, model)   # guardrail D at the door — path-independent; its refusal
+        #                                                   MUST propagate, so it runs OUTSIDE the fail-open try below
     try:                                              # REALTIME BURST test-first gate — a loop of realtime calls is the
         from . import bulkgate                        # discouraged alternative to Batch; same estimate+test-first rule.
-        intent = ""
-        try:
-            intent = (_calls.current().get("intent") or "").strip()
-        except Exception:
-            pass
         if not intent.startswith("spendguard:"):
             bulkgate.check_realtime(bulkgate.sig(model or "", template_id=intent or None), model or "", est)
     except bulkgate.GateBlocked:

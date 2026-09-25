@@ -779,6 +779,16 @@ def admission_state():
         out["deadline_cancels"] = {"error": "%s: %s" % (type(e).__name__, str(e)[:80])}
         out["unhonored_efforts"] = {"error": "%s: %s" % (type(e).__name__, str(e)[:80])}
         out["runaways"] = {"error": "%s: %s" % (type(e).__name__, str(e)[:80])}
+    try:
+        from . import gate as _g
+        out["intent_cap_refusals"] = _g.intent_cap_refusals()     # guardrail D at the door: per-intent running-cap refusals
+        out["ungated_fans"] = _g.ungated_fans()                   # raw same-intent fans NOT via bulk_delegate
+    except Exception as e:
+        from . import gate as _g
+        if _g.is_deliberate_stop(e):
+            raise                                                 # never downgrade a deliberate stop to an error note
+        out["intent_cap_refusals"] = {"error": "%s: %s" % (type(e).__name__, str(e)[:80])}
+        out["ungated_fans"] = {"error": "%s: %s" % (type(e).__name__, str(e)[:80])}
     return out
 
 

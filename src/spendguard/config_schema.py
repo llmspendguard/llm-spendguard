@@ -25,6 +25,14 @@ SETTINGS = [
     dict(section="caps", key="realtime", store="config.json:caps.realtime", env="GATE_RT_BUDGET", default=50,
          kind="float", secret=False,
          desc="Cumulative real-time spend cap ($) before the gate refuses further calls."),
+    dict(section="caps", key="intent_caps", store="config.json:caps.intent_caps", env=None, default={},
+         kind="json", secret=False,
+         desc="Per-intent running-$ ceilings {intent: usd} — guardrail D at the CALL DOOR (holds on every path: a "
+              "single call, a hand-rolled fan, or bulk_delegate). A call whose intent's windowed spend + this call "
+              "would cross the ceiling is REFUSED (typed deliberate stop). env: GATE_INTENT_CAP_<INTENT>."),
+    dict(section="caps", key="intent_cap_window_s", store="config.json:caps.intent_cap_window_s",
+         env="GATE_INTENT_CAP_WINDOW_S", default=86400, kind="int", secret=False,
+         desc="Rolling window (seconds) the per-intent running cap sums ACTUAL spend over. Default 24h."),
     # Resource-class caps: a TOTAL ceiling + per-class sub-caps (LLM vs remote-compute), each daily & monthly.
     # null = off. Require budget.backend=sqlite. LLM caps are hard (gate-enforced); compute caps are alert/soft
     # (vast.ai launches don't hit the gate — see resources.compute_exceeded). Legacy flat caps.daily/caps.monthly
