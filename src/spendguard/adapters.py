@@ -1819,6 +1819,8 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
     _cache_read = _cache_write = 0        # prompt-cache usage (read / write tokens), captured per provider below
     _effort_sent = None                   # the reasoning_effort ACTUALLY sent — OpenAI-compat only (set in that branch);
     #                                       anthropic uses a thinking BUDGET, not this param, so it stays None here.
+    _eff_requested = None                  # the reasoning tier the CALLER asked for (for the per-call guardrail-A surface)
+    _eff_unhonored = False                 # True when that pin could not be honored (minimal→a still-reasoning floor)
     try:
         if spec["kind"] == "anthropic":
             import anthropic
@@ -2016,10 +2018,12 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                     # overspend). A control the caller set that silently does nothing reads as safe and is not, so SAY
                     # SO loudly and record it (docs/GUARDRAILS_reasoning_overspend.md §A). Never guesses a value — only
                     # surfaces facts models.py already holds (the floor + reasons_by_default) plus the caller's pin.
+                    _eff_requested = reasoning     # what the caller asked for — surfaced per-call so spendrails/warden can read it
                     try:
                         from . import models as _mA, bulkgate as _bgeff
                         if str(reasoning).strip().lower() == "minimal" and _eff != "minimal" \
                                 and _mA.reasons_by_default(raw):
+                            _eff_unhonored = True    # the pin could not be honored (per-call flag → a caller can abort on it)
                             _bgeff.note_unhonored_effort(raw, "minimal", _eff)   # records first, then best-effort warns;
                             #                                                      never raises, so the trace is reliable
                     except Exception as _eA:
@@ -2221,8 +2225,11 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             cost = None  # model not in price table → shown as n/a
         return {**base, "text": text, "in_tok": in_tok, "out_tok": out_tok, "latency": dt, "cost": cost,
                 "cache_read_tok": _cache_read, "cache_write_tok": _cache_write,   # prompt-cache usage (feeds the receipt + reconcile)
-                "effort": _effort_sent,   # the reasoning_effort ACTUALLY sent (post heal/drop) — the metered twin of the
-                #                           lane's applied-effort, so a pinned/metered_only row is verifiable (None for anthropic)
+                "effort": _effort_sent,   # the reasoning_effort ACTUALLY sent (post heal/drop) = chosen_effort — the metered
+                #                           twin of the lane's applied-effort, so a pinned/metered_only row is verifiable
+                # GUARDRAIL A per-call surface: the caller's requested tier, the effort truly chosen, and whether the pin
+                # could NOT be honored — so spendrails/warden can READ and ABORT on it per call, not just via the counter.
+                "requested_effort": _eff_requested, "chosen_effort": _effort_sent, "effort_unhonored": _eff_unhonored,
                 "finish_reason": _finish, "executor": "api", "error": None}   # metered API path — say so, like a lane says its name
     except Exception as e:
         # error_type is the exception CLASS name — a structured signal (like an HTTP status or sqlite_errorname),
@@ -2304,7 +2311,11 @@ def output_budget(model, requested=None, internal_tiny=False, vendor=None):
             vendor = provider_for(model)
         except Exception:
             vendor = None
-    ceiling = int(pricing.output_ceiling(vendor, model, MAX_TOKEN_CEILING))
+    # Backstop = the 32K FLOOR (not MAX_TOKEN_CEILING): "if it is not published, the floor is 32000". A model with a
+    # genuinely-published (or catalog) max returns THAT (even 128K); a model NOTHING knows returns the floor — the
+    # conservative, no-truncation-below-floor default that is also safe for a no-heal lane (which can't recover a 400 on
+    # an over-large budget). Publishing the real max (the price data) is how an unknown model earns a higher ceiling.
+    ceiling = int(pricing.output_ceiling(vendor, model, TOKEN_FLOOR))
     if internal_tiny and requested is not None:
         try:
             return max(1, min(int(requested), ceiling))   # a deliberate tiny probe: respect it, never exceed the ceiling

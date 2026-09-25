@@ -350,38 +350,12 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
     except Exception:
         pass
 
-    cap_basis = "caller"
-    if max_tokens is not None:
-        # A CALLER-SUPPLIED OUTPUT CAP IS VALIDATED, NEVER TRUSTED. max_tokens is the OUTPUT axis — independent of
-        # the input-window bound above: it sizes the REPLY and is never affected by how large the input was. This
-        # was the hole: `max_tokens is None` took the measured path, and anything else was passed straight
-        # through. A literal below what this class demonstrably produces buys nothing (billing is on tokens
-        # GENERATED) and destroys the answer.
-        try:
-            from . import bulkgate
-            b = bulkgate.maxtokens(class_sig(model, purpose))
-            need = int(b.get("p95") or 0) if b and (b.get("n") or 0) >= MIN_BOUND_OBS else 0
-            floor = int(b.get("recommend") or 0) if b else 0
-            if need and int(max_tokens) < need:
-                raise BadBound(
-                    f"{vendor}/{model}: max_tokens={int(max_tokens):,} is below the measured p95 of "
-                    f"{need:,} for this call-class (n={b.get('n')}, {b.get('truncations') or 0} truncation(s) "
-                    f"already). A cap never controlled cost -- you are billed on tokens GENERATED -- and a "
-                    f"low one turns a paid call into an unparseable body. Omit max_tokens and the measured "
-                    f"bound ({floor or need:,}) is used, or pass that number deliberately.")
-        except BadBound:
-            raise
-        except Exception:
-            pass
-    if max_tokens is None:
-        # NOT a default constant. A 512 fallback would be the same invented number that returned zero
-        # characters from two reasoning models — the registry answers this or nobody does.
-        max_tokens, cap_basis = output_cap(vendor, model, sig=class_sig(model, purpose))
-        if max_tokens is None:
-            return Result(TRANSPORT_ERROR, vendor, model, prompt_sha=_sha(prompt), purpose=purpose,
-                          error=f"no measured output cap for {vendor}/{model} and none supplied. Record one: "
-                                f"vendor_call.record_cap('{vendor}', '{model}', <tokens>, method='probe'). "
-                                f"Guessing it is what returned HTTP 200 with zero characters.")
+    # THE OUTPUT BUDGET — spendguard OWNS it (adapters.output_budget; docs/CANONICAL_CONCERNS.json: output_budget). The
+    # caller's max_tokens is IGNORED: max_output is a CEILING billed on ACTUAL tokens, so the budget is the model's
+    # ceiling (the real published max, or the 32K floor) — a caller value can only ever set it too low and truncate. This
+    # is the SAME home _call_guarded uses, so the vendor_call and adapters paths can never drift on the send budget.
+    from . import adapters as _ad
+    max_tokens = _ad.output_budget(model, vendor=vendor)
     # ATTRIBUTION AT THE CHOKEPOINT. `purpose` was recorded on every vendor_call result (400/400) and reached
     # the LEDGER on none of them: 533 of 535 calls in a $25.29 session had no intent, so the money could be
     # totalled and not explained. The information existed the whole time and never got to the consumer.
@@ -422,7 +396,6 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
     # budget, so a hard stop could not stop anything — the run that found this thought it had spent $1.98
     # while the ledger recorded $13.12. The Result now carries what the CALL cost, not what its last try cost.
     billed = 0.0
-    del cap_basis                       # recorded via the caps registry; not part of the result contract
     try:
         for attempt in range(1, max(1, int(attempts)) + 1):
             remaining = deadline_s - (time.time() - started)
@@ -993,43 +966,9 @@ def class_sig(model, purpose):
     return bulkgate.sig(model, template_id=purpose or None)
 
 
-def output_cap(vendor, model, sig=None):
-    """(tokens, basis) — the termination bound for this (vendor, model).
-
-    THE FLOOR IS 32K UNLESS THE MODEL'S OWN PUBLISHED MAX IS LOWER. A measured registry/observed number only
-    RAISES the cap above that floor, it never lowers it below — billing is on tokens GENERATED, so a floor costs
-    nothing and only prevents truncation. Measured: kimi-k3's registry cap was a stale 26,128 (below the 32K the
-    model finishes long reviews in), and because output_cap returned it as an explicit cap it bypassed the
-    adapters TOKEN_FLOOR and starved the review. The RAISE precedence is recorded registry → this class's
-    observed need; the result is then floored to 32K and clamped to the model's ceiling — resolved by the ONE shared
-    authority (pricing.output_ceiling), so it can never exceed what the endpoint accepts and never DRIFTS from the
-    other budget resolvers. There is no longer an 'unknown' return: the floor IS the default."""
-    from . import adapters
-    resolved, basis = 0, "floor"
-    rec = caps().get(f"{vendor}/{model}")
-    if rec and rec.get("max_output_tokens"):
-        resolved, basis = int(rec["max_output_tokens"]), "registry:" + (rec.get("method") or "?")
-    elif sig:
-        try:
-            from . import bulkgate
-            b = bulkgate.maxtokens(sig)
-            if b and b.get("recommend"):
-                resolved, basis = int(b["recommend"]), "observed"
-        except Exception:
-            pass
-    # THE MODEL'S CEILING comes from the ONE shared authority (pricing.output_ceiling: published cache → live catalog
-    # → learned fact → backstop), NOT a private published-only lookup — so this resolver can't DRIFT from _autotune /
-    # zai_exec._output_budget / _call_guarded (the resolve-output-budget DRIFT the capability map found; they already
-    # route through it). Backstop = MAX_TOKEN_CEILING so an unknown model still gets the 32K floor, never an
-    # over-ceiling number the endpoint would 400.
-    try:
-        from . import pricing
-        ceiling = int(pricing.output_ceiling(vendor, model, adapters.MAX_TOKEN_CEILING))
-    except Exception:
-        ceiling = adapters.MAX_TOKEN_CEILING
-    floor = min(adapters.TOKEN_FLOOR, ceiling)          # never floor ABOVE the model's real max
-    cap = min(max(resolved, floor), ceiling)            # RAISE-only to the floor, then clamp to the ceiling
-    return cap, basis
+# output_cap() was REMOVED — the send budget is decided in ONE home now (adapters.output_budget; docs/CANONICAL_CONCERNS.json).
+# vendor_call.call routes through it directly, so a vendor-side "size the cap from registry/observed" resolver no longer
+# exists to drift from _call_guarded. The measured caps registry (record_cap/caps()) remains for input-limit provenance.
 
 
 # A GUARD MUST NOT FIRE ON EVIDENCE TOO THIN TO BE EVIDENCE. Both bound-validators refuse a caller's number

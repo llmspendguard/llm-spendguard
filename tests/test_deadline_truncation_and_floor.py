@@ -65,22 +65,20 @@ ck("finish_reason=length with no error still -> truncated",
    vc._classify({"finish_reason": "length", "text": "{"})[0] == vc.TRUNCATED)
 ck("an empty 200 (no text) -> empty, never ok", vc._classify({"finish_reason": "stop", "text": ""})[0] == vc.EMPTY)
 
-print("\n-- C-floor: output_cap floors at 32K unless the model's published max is lower --")
-vc.record_cap("floortest", "stale-model", 26128, method="probe", source="deliberately below 32K")
-cap, basis = vc.output_cap("floortest", "stale-model")
-ck("a stale registry cap below 32K is floored UP to 32K", cap == adapters.TOKEN_FLOOR, f"got {cap}")
-ck("...and keeps its provenance (basis names the registry, not 'floor')", basis.startswith("registry"), basis)
-# a model whose OWN published max is below the floor clamps down to it — the model DID say otherwise
+print("\n-- C-floor: the send budget (adapters.output_budget) is >= 32K unless the model's published max is lower --")
+# The send budget is now the model CEILING in ONE home (adapters.output_budget; docs/CANONICAL_CONCERNS.json) — a stale
+# registry cap no longer sizes it (that was vendor_call.output_cap, removed as a duplicate concern). Billing is on ACTUAL
+# tokens, so a high budget is free; the floor invariant lives in the one home and is swept by test_output_ceiling_never_below_floor.
+ck("a model with NO published max gets at least the 32K floor (the floor IS the default, never 'unknown')",
+   adapters.output_budget("floortest:never-measured") >= adapters.TOKEN_FLOOR)
+# a model whose OWN published max is below the floor clamps DOWN to it — the model authoritatively said otherwise
 _real_max = pricing.max_output_tokens
 pricing.max_output_tokens = lambda m: 8192 if m == "small-window" else _real_max(m)
 try:
-    cap2, _ = vc.output_cap("floortest", "small-window")
-    ck("a model whose published max is 8192 caps at 8192, not 32K (the model said otherwise)", cap2 == 8192,
-       f"got {cap2}")
+    ck("a model whose published max is 8192 gets 8192, not the 32K floor (the model said otherwise)",
+       adapters.output_budget("floortest:small-window") == 8192)
 finally:
     pricing.max_output_tokens = _real_max
-ck("a model with NO measurement still gets the 32K floor (the floor IS the default, never 'unknown')",
-   vc.output_cap("floortest", "never-measured")[0] == adapters.TOKEN_FLOOR)
 
 
 print("\n-- through fan_out: a truncated vendor is a FAILED vendor; consensus refuses --")

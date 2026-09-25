@@ -173,22 +173,13 @@ def build_chat_batch_jsonl(tasks_path, model, system=None, max_out=None, reasoni
     if prov != "openai":
         raise ValueError(f"build_chat_batch_jsonl: the OpenAI /v1/chat/completions Batch API serves only OpenAI "
                          f"models; got {model!r} (provider {prov!r}). Use the lane fan / a provider batch instead.")
-    out_cap = int(max_out) if max_out else adapters.TOKEN_FLOOR   # NOBODY NAMED A NUMBER → START HIGH: the SAME floor
-    #   the realtime path applies when max_tokens is unset (max(TOKEN_FLOOR, predicted)). A cap is billed by ACTUAL
-    #   tokens, so over-provisioning costs nothing while under-provisioning EMPTIES a reasoning reply — batch and
-    #   realtime must not drift. `max_out` (or --avg-out on the estimate) tightens it deliberately.
-    if schema is not None and out_cap < adapters.TOKEN_FLOOR:
-        # STRUCTURED output: a low cap truncates the JSON → unparseable → reads as 'no findings' (the SILENT
-        # reasoning-model truncation that repeatedly bites consumers who set max_tokens — a reasoning model burns the
-        # cap on thinking before it writes). FLOOR it to real room, EXACTLY as the realtime path does
-        # (adapters._call_guarded: a caller's small max_out is honored for PROSE, never for JSON where a low cap only
-        # destroys the answer). Billed on ACTUAL tokens, so the floor is free. Batch and realtime must not drift here.
-        import sys as _sys
-        print("[spendguard] build_chat_batch_jsonl: max_out=%d < TOKEN_FLOOR on a STRUCTURED (schema) batch → "
-              "flooring to %d so the JSON can't silently truncate. OMIT max_out on schema calls — spendguard owns the "
-              "output ceiling (billed on ACTUAL tokens, so a high floor is free)." % (out_cap, adapters.TOKEN_FLOOR),
-              file=_sys.stderr)
-        out_cap = adapters.TOKEN_FLOOR
+    # spendguard OWNS the output budget (adapters.output_budget; docs/CANONICAL_CONCERNS.json) — the caller's `max_out`
+    # is IGNORED, the budget is the model CEILING. A batch can't heal per row, so starting at the ceiling is exactly
+    # right: max_output is billed on ACTUAL tokens, so the max is free and no reasoning reply or structured JSON can
+    # silently truncate. Batch and realtime share the ONE home, so they cannot drift on the send budget.
+    if max_out:
+        adapters._warn_once_caller_maxtokens("batch:" + str(model), int(max_out))   # caller max_out ignored — warned once
+    out_cap = adapters.output_budget(model)
     _eff = models.resolve_effort(model, reasoning)   # the VERIFIABLY-ACCEPTED reasoning_effort — a batch can't heal
     #   per row, so this resolves up front (discovers + records the accepted set); a family default the endpoint
     #   rejects (gpt-5.6-luna: 'minimal') never reaches a batch. None → OMIT the param (model default).

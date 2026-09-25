@@ -1,18 +1,18 @@
-"""The output budget is ALWAYS clamped to the model's published ceiling — output = min(max(provided|predicted,
-floor), model_max) — and model_max comes from the CATALOG, never the poison-prone per-model max_output fact.
+"""The output budget SENT is the model's CEILING (adapters.output_budget → pricing.output_ceiling; docs/CANONICAL_
+CONCERNS.json) — the caller's provided max_tokens AND the per-class `recommend` are BOTH IGNORED. max_output is billed on
+ACTUAL tokens, so the budget is the model's real maximum (or the 32K floor when unknown), and nothing a caller or a
+predictor supplies can lower it or inflate it past the endpoint.
 
-The incident: a bulkgate `recommend` of 146,576 (above the max output EVER observed for the class, 58,296, and
-above the model's real 128,000 ceiling) was applied as max(caller, recommend) and sent, because the clamp read
-pricing.max_output — the auto-heal FACT — which was None for gpt-5.4-nano (no clamp → 400 every call) and a
-poisoned 2000 for gpt-5-nano (clamp → under-truncate every answer). The published ceiling was in the catalog the
-whole time (pricing.max_output_tokens('gpt-5.4-nano') == 128000); the clamp just wasn't reading it.
+The incident: a bulkgate `recommend` of 146,576 (above the model's real 128,000 ceiling) was applied as
+max(caller, recommend) and sent, 400ing the call; and a poisoned learned fact of 2000 under-truncated every answer.
+The doctrine removed BOTH inputs from the budget: the caller's number and the recommend are not consulted; only the
+authoritative ceiling (published limits → live /models catalog → learned fact FLOORED to 32K → the 32K floor backstop).
 
-Pins the resolution order — pricing.max_output_tokens (synced limits catalog) → catalog.model_ceiling (live
-/models) → the learned fact only as a LAST resort — and that:
-  (a) an over-ceiling predicted/recommend is clamped DOWN to the published ceiling (the 146,576 → 128,000 case);
+Pins that resolution + that the caller/recommend are ignored:
+  (a) an over-ceiling recommend (146,576) never reaches the wire — the PUBLISHED ceiling (128,000) is sent;
   (b) a poisoned LOW fact is IGNORED when the catalog knows the ceiling (the 2000 under-truncation case);
   (c) the live-/models ceiling is used when the synced cache lacks the model;
-  (d) a truly-unknown ceiling is NOT clamped (the downward heal handles it) — a can't-know is never a wrong cap.
+  (d) a truly-unknown ceiling → the 32K FLOOR ("if it is not published, the floor is 32000"), never 128K and never poison.
 
 Offline: the ceiling sources, the predictor, and the raw sender are stubbed; no network, no model call.
 """
@@ -72,11 +72,12 @@ print("\n-- (c) the live-/models ceiling is used when the synced cache lacks the
 # a known-provider id (gpt- → openai) so provider_for resolves and the per-provider catalog ceiling is consulted
 ck("published None → catalog.model_ceiling 64000 clamps", _budget("gpt-5-experimental", 7000, None, 64000, None) == 64000)
 
-print("\n-- (d) a truly-unknown ceiling is capped at the absolute MAX_TOKEN_CEILING backstop (never the poison) --")
-# The backstop gives the Anthropic path (no downward heal) the same protection as OpenAI-compat: a poisoned
-# recommend can never send an absurd budget on ANY provider; the OpenAI heal still recovers a genuinely-lower one.
-ck("no published/catalog/fact → capped at MAX_TOKEN_CEILING, not the poisoned 146576",
-   _budget("gpt-6-unreleased", 7000, None, None, None) == adapters.MAX_TOKEN_CEILING)
+print("\n-- (d) a truly-unknown ceiling → the 32K FLOOR ('if it is not published, the floor is 32000') --")
+# Not the 128K backstop and not the poisoned 146576 recommend (which is never consulted): an unknown model gets the
+# conservative floor — no truncation below it, and safe for a no-heal lane that can't recover a 400 on an over-large
+# budget. Publishing the real max (the price data) is how an unknown model earns a higher ceiling.
+ck("no published/catalog/fact → the 32K floor, never 128K and never the poisoned 146576",
+   _budget("gpt-6-unreleased", 7000, None, None, None) == adapters.TOKEN_FLOOR)
 
 print("\n-- the fact is only a LAST resort (no catalog ceiling at all) --")
 ck("published None + catalog None → the fact is used", _budget("gpt-4-legacy", 7000, None, None, 32000) == 32000)

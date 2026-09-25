@@ -1,18 +1,15 @@
-"""A caller-supplied bound is VALIDATED against measurement, never trusted. Both directions: output and input.
+"""Caller-supplied bounds: the OUTPUT bound is IGNORED (spendguard owns it), the INPUT bound is REFUSED when impossible.
 
-WHY THIS GUARD EXISTS. The same mistake recurred all day and it was never a knowledge problem — every call
-site is a fresh chance to type a number, and a wrong one does not announce itself:
+WHY. The same mistake recurred all day and it was never a knowledge problem — every call site is a fresh chance to type
+a number, and a wrong one does not announce itself (max_tokens=2000 on kimi-k3 → HTTP 200 with ZERO characters on 19/20
+calls; a 600-cap probe written HOURS after that lesson). The first fix VALIDATED the caller's output cap against
+measurement and refused a low one. The doctrine went further (docs/CANONICAL_CONCERNS.json: output_budget): a caller's
+output max_tokens can only ever set the budget too LOW and truncate, and a high one is free (billing is on tokens
+GENERATED) — so spendguard simply IGNORES it and sends the model CEILING. A caller value is no longer validated or
+refused; it is not consulted. The way to never truncate: pass nothing — spendguard already does the right thing.
 
-    max_tokens=2000 on kimi-k3   -> HTTP 200 with ZERO characters on 19 of 20 calls (reasoning ate the budget)
-    max_tokens=600  in a probe   -> written HOURS after that lesson, by someone who knew it
-    deadline_s=180  for 4 vendors -> measured p99s were 49s and 446s; the slow ones died by construction
-
-Advice in a docstring loses to a literal at the call site, every time. `call()` had a hole exactly the shape
-of that mistake: `max_tokens is None` took the measured path, and any other value went straight through
-unchecked. Now a bound below what the class demonstrably produces is refused BEFORE anything is sent — the
-one place where refusing is free, because nothing has been paid for yet.
-
-The way to never see BadBound: do not pass a bound. Omit it and the measured one is used.
+The INPUT axis is different: an input over the model's context WINDOW cannot be sent at all, so it is REFUSED here
+(BadBound), before anything is paid for — never silently clipped. Output ignored, input refused; the two axes stay independent.
 """
 import os, sys, tempfile
 
@@ -21,7 +18,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-bounds-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
-from spendguard import adapters, bulkgate, pricing, vendor_call as vc     # noqa: E402
+from spendguard import bulkgate, pricing, vendor_call as vc     # noqa: E402
 
 failures = 0
 
@@ -43,18 +40,16 @@ _orig = vc._attempt
 try:
     vc._attempt = lambda *a, **k: sent.append(1) or {"text": "hi", "out_tok": 5, "finish_reason": "end_turn"}
 
-    try:
-        vc.call("anthropic", MODEL, "hi", deadline_s=30, purpose=PURPOSE, max_tokens=600)
-        check("a cap below the measured p95 is REFUSED", False, "the call went through")
-    except vc.BadBound as e:
-        check("a cap below the measured p95 is REFUSED", True)
-        check("...and the message carries the MEASURED number, not just a complaint", "4,000" in str(e), str(e)[:90])
-        check("...and it says a cap was never a cost control", "GENERATED" in str(e))
-    check("nothing was SENT — refusing costs nothing only if it happens first", not sent)
+    # OUTPUT SIDE: a caller's max_tokens is IGNORED (docs/CANONICAL_CONCERNS.json: output_budget), not validated/refused.
+    # spendguard sends the model CEILING regardless — a caller value can only ever set it too LOW and truncate, so it is
+    # simply not consulted. A low output cap therefore no longer RAISES; the call proceeds and the ceiling protects the answer.
+    sent.clear()
+    r = vc.call("anthropic", MODEL, "hi", deadline_s=30, purpose=PURPOSE, max_tokens=600)   # a low cap — ignored, not refused
+    check("a low caller output cap is IGNORED (not refused) — the call proceeds on the ceiling budget", r.ok and bool(sent))
 
     sent.clear()
-    r = vc.call("anthropic", MODEL, "hi", deadline_s=30, purpose=PURPOSE, max_tokens=64000)
-    check("a GENEROUS caller cap is accepted", r.ok and bool(sent))
+    r = vc.call("anthropic", MODEL, "hi", deadline_s=30, purpose=PURPOSE, max_tokens=64000)   # a high cap — likewise ignored
+    check("a high caller output cap is likewise ignored — the call proceeds", r.ok and bool(sent))
 
     sent.clear()
     r = vc.call("anthropic", MODEL, "hi", deadline_s=30, purpose=PURPOSE)
@@ -80,14 +75,12 @@ finally:
     vc._attempt = _orig
 
 # ── the lookup key must match the recording key, or "measured" silently means "guessed" ──────────────
+# (This alignment matters for the ESTIMATE now, not the budget: the send budget is the model ceiling
+# (adapters.output_budget, docs/CANONICAL_CONCERNS.json) — vendor_call no longer sizes a cap from the observed
+# recommend, so output_cap was removed. class_sig must still match bulkgate's recording key or the estimate misses.)
 probe_sig = vc.class_sig(MODEL, PURPOSE)
-check("class_sig() is what recording uses, so a lookup cannot miss it",
+check("class_sig() is what recording uses, so an ESTIMATE lookup cannot miss it",
       probe_sig == bulkgate.sig(MODEL, template_id=PURPOSE))
-cap, basis = vc.output_cap("anthropic", MODEL, sig=probe_sig)
-check("output_cap's OBSERVED rung actually fires (it never did: raw purpose vs hashed sig)",
-      basis in ("observed", "registry:probe") and cap, f"{cap} {basis}")
-check("...and the observed cap is the measured recommendation FLOORED at 32K, never a ceiling",
-      cap == max(int(bulkgate.maxtokens(probe_sig)["recommend"]), adapters.TOKEN_FLOOR), str(cap))
 
 # ── the DEADLINE is a bound too, and it went unguarded while max_tokens was guarded ──────────────────
 # The asymmetry cost a whole experiment: a probe passed deadline_s=150 against a class whose calls really

@@ -68,13 +68,13 @@ def available() -> bool:
 
 
 def _output_budget(mdl):
-    """max_tokens for a glm call, via the SAME shared resolver the metered path uses (pricing.output_ceiling), so
-    this lane cannot DRIFT from _call_guarded's authority order: published limits cache → live /models → the learned
-    max_output fact → backstop. A lane cannot retry-heal (run_prompt takes no max_tokens and there is no downward
-    halving), so it passes learned_floor=_FALLBACK_MAX_TOKENS: a poisoned-low fact (the auto-heal 2000/7 class) is
-    floored and cannot truncate this lane, and an unknown model falls to the same backstop."""
-    from . import pricing
-    return int(pricing.output_ceiling("zai", mdl, _FALLBACK_MAX_TOKENS, learned_floor=_FALLBACK_MAX_TOKENS))
+    """max_tokens for a glm call — the ONE home (adapters.output_budget; docs/CANONICAL_CONCERNS.json): the model
+    CEILING (real published max, or the 32K floor), so this lane cannot DRIFT from _call_guarded on the send budget. A
+    lane cannot retry-heal, so starting at the ceiling is exactly right — max_output is billed on ACTUAL tokens, so the
+    max is free and only too-little truncates. (This also raised the lane above its old sub-floor _FALLBACK of 16384,
+    which could itself truncate below the 32K floor.)"""
+    from . import adapters
+    return int(adapters.output_budget(mdl, vendor="zai"))
 
 
 def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=None, max_tokens=None):

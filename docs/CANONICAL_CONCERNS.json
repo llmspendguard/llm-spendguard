@@ -11,9 +11,9 @@
     {
       "concern": "output_budget",
       "home": "spendguard/adapters.py::output_budget",
-      "description": "The OUTPUT max_tokens actually SENT for a call: the ceiling (output_ceiling) as the cap, the 32K floor as the minimum, scaled to the classified output type; the CALLER'S requested max_tokens is IGNORED (spendguard owns it). Every send path calls this — none decides the budget itself.",
+      "description": "The OUTPUT max_tokens actually SENT for a call = the model CEILING (output_ceiling: real published max, or the 32K floor). The CALLER'S requested max_tokens is IGNORED (spendguard owns it); max_output is billed on ACTUAL tokens, so the max is free and only too-little truncates. All five send paths route through this — _call_guarded, vendor_call.call, submit.build_chat_batch_jsonl, zai_exec._output_budget, and crossllm (delegates) — none decides the budget itself. Sizing EXPECTED output for a cost estimate is a DIFFERENT concern (expected_output.expect).",
       "telltale": "deciding the max_tokens value to send on a model call (floor/ceiling/caller-value/recommend math)",
-      "status": "consolidating"
+      "status": "enforced"
     },
     {
       "concern": "input_fits",

@@ -140,8 +140,8 @@ try:
 except OSError:
     pass
 
-# ── a STRUCTURED batch with a SMALL max_out is FLOORED to TOKEN_FLOOR (the reasoning-model silent-truncation fix) ──
-print("-- STRUCTURED batch: a small max_out is floored to TOKEN_FLOOR so the JSON can't silently truncate --")
+# ── a batch IGNORES the caller's max_out and sends the model CEILING (output_budget) — a small cap can't truncate ──
+print("-- batch: a small caller max_out is IGNORED — the model ceiling is sent (no silent JSON truncation) --")
 _env2 = {}
 def _stub_guarded_env2(jsonl_path, model, cap_dollars, batch=True, submit=True,
                        endpoint="/v1/chat/completions", **kw):
@@ -153,8 +153,8 @@ submit.submit_chat_tasks([{"custom_id": "s1", "content": "classify this"}], "gpt
                          schema=SCH2, max_out=200, submit=False)
 _sbody = [json.loads(ln) for ln in open(_env2["path"]) if ln.strip()][0]["body"]
 _stok = _sbody.get("max_tokens") or _sbody.get("max_completion_tokens")
-ck("a small max_out (200) on a STRUCTURED batch is floored to TOKEN_FLOOR, not honored",
-   _stok == adapters.TOKEN_FLOOR)
+ck("a small max_out (200) on a batch is IGNORED — the model ceiling (output_budget) is sent, not 200",
+   _stok == adapters.output_budget("gpt-4.1-nano") and _stok != 200)
 try:
     os.unlink(_env2["path"])
 except OSError:
