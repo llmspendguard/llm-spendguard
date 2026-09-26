@@ -1029,12 +1029,15 @@ def by_dims(since=None):
     # (default 1) and drops only the explicit billed=0 est_chat rows. cols=BILLED_USD_COLS is belt-and-suspenders:
     # even a mis-labeled row contributes $0 of est_chat_usd to the actual-$ total.
     res = led.sum_by(["day", "provider", "model", "cost_type", "is_meta", "project_primary"],
-                     cols=BILLED_USD_COLS, since=since, filt=led._NOT_UNPRICED + " AND COALESCE(billed, 1) = 1")
+                     cols=BILLED_USD_COLS, since=since, filt=led._NOT_UNPRICED + " AND COALESCE(billed, 1) = 1",
+                     int_cols=["in_tok", "out_tok", "cache_read_tok"])   # tokens for the SaaS unit-econ view
     out = []
     for (day, prov, model, ctype, ismeta, proj), v in res.items():
         kind = "meta" if ismeta else (ctype or "workload")
         out.append(dict(day=day, provider=prov or "?", model=model or "?", kind=kind,
-                        project=proj or "", cost=float(v["usd"]), calls=v["n"]))
+                        project=proj or "", cost=float(v["usd"]), calls=v["n"],
+                        in_tok=v.get("in_tok", 0), out_tok=v.get("out_tok", 0),
+                        cache_read_tok=v.get("cache_read_tok", 0)))
     return out
 
 

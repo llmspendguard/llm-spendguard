@@ -195,6 +195,9 @@ BILLED_USD_COLS = ("batch_usd", "realtime_usd", "remote_compute_usd", "subscript
 #   external external              — non-token external cost: MCP/tool calls + external paid APIs (real $ out the door)
 #   est      est_chat              — est-VALUE of subscription-covered usage; NOT billed, NEVER in a real total
 LLM_USD_COLS = ("batch_usd", "realtime_usd")
+# Integer TOKEN columns sum_by may total alongside money (an allowlist — never an arbitrary caller string in the SQL).
+# These feed the SaaS roll-up so the server's unit-economics view ($/token, cache-hit rate) has the tokens it stores.
+SUMMABLE_INT_COLS = ("in_tok", "out_tok", "cache_read_tok", "cache_write_tok", "reasoning_tok")
 # Forward-only additive columns: one added after the v5 schema shipped is ALTER-ADDed to an existing table
 # (CREATE TABLE IF NOT EXISTS never adds a column to a table that already exists). Append new columns here.
 # intent/actor are the FORENSIC pair carried from charges: WHAT the money bought · WHAT RAN IT.
@@ -789,31 +792,43 @@ class SpendLedger:
     # ── grouped / distinct / min primitives — the query shapes budget's per-provider/project/key/day/basis
     #    reports need, so `budget` is a thin facade over this class and no consumer writes raw spend_events SQL.
     #    `filt` is a facade-authored predicate over spend_events COLUMNS (never user input); `where` is exact-eq. ──
-    def sum_by(self, group_cols, cols=None, filt="", since=None, until=None, where=None, include_void=False):
-        """{group → {'usd': decimal-str, 'n': rows}} — EXACT grouped money sum over `cols` (default all five
-        categories), grouped by `group_cols` (a column name or list). void/reversed excluded unless
-        include_void. Group values are returned RAW (None/'' as stored); the caller maps them (e.g. →
-        'unattributed'). The one grouped-sum primitive behind by_day / by_dims / by_key / by_*_day / by_basis."""
+    def sum_by(self, group_cols, cols=None, filt="", since=None, until=None, where=None, include_void=False,
+               int_cols=None):
+        """{group → {'usd': decimal-str, 'n': rows[, <int_col>: int …]}} — EXACT grouped money sum over `cols`
+        (default all five categories), grouped by `group_cols` (a column name or list). void/reversed excluded unless
+        include_void. `int_cols` (an allowlist subset of SUMMABLE_INT_COLS — token columns) are ALSO totalled and
+        returned per group, so a caller (by_dims → the SaaS roll-up) can carry tokens without a second query. Group
+        values are returned RAW (None/'' as stored); the caller maps them (e.g. → 'unattributed'). The one grouped-sum
+        primitive behind by_day / by_dims / by_key / by_*_day / by_basis."""
         gcols = [group_cols] if isinstance(group_cols, str) else list(group_cols)
         allcols = cols or USD_COLS
+        icols = list(int_cols or [])
         for g in gcols:
             if g not in self._cols:
                 raise ValueError(f"unknown group column {g!r}")
         for c in allcols:
             if c not in USD_COLS:
                 raise ValueError(f"{c!r} is not a money column")
+        for c in icols:
+            if c not in SUMMABLE_INT_COLS:      # allowlist — never an arbitrary column name interpolated into SQL
+                raise ValueError(f"{c!r} is not a summable integer column")
         w, args = self._where(since, until, where)
         if not include_void:
             w += " AND " + self._NOT_VOID
         if filt:
             w += " AND " + filt
         sums = ", ".join(f"dec_sum({c})" for c in allcols)
+        isum = "".join(f", COALESCE(SUM({c}),0)" for c in icols)
         sel = ", ".join(gcols)
         out = {}
-        for row in self._conn.execute(f"SELECT {sel}, {sums}, COUNT(*) FROM spend_events WHERE 1=1{w} GROUP BY {sel}", args):
+        base = len(gcols)
+        for row in self._conn.execute(f"SELECT {sel}, {sums}{isum}, COUNT(*) FROM spend_events WHERE 1=1{w} GROUP BY {sel}", args):
             key = tuple(row[i] for i in range(len(gcols))) if len(gcols) > 1 else row[0]
-            total = sum((to_dec(row[len(gcols) + i]) for i in range(len(allcols))), Decimal(0))
-            out[key] = {"usd": str(total), "n": row[-1]}
+            total = sum((to_dec(row[base + i]) for i in range(len(allcols))), Decimal(0))
+            rec = {"usd": str(total), "n": row[-1]}
+            for j, ic in enumerate(icols):
+                rec[ic] = int(row[base + len(allcols) + j] or 0)
+            out[key] = rec
         return out
 
     def distinct(self, col, where=None, since=None, filt=""):

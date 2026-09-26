@@ -73,7 +73,8 @@ ck("rollup: meta kind→meta", next(r for r in rows if r["project"] == "llm-spen
 ck("rollup: contributor stamped on workload", lmm_batch["member_ref"] == "alice@x.test")
 ck("rollup: unattributed gap carries NO contributor", next(r for r in rows if r["project"] == "unattributed")["member_ref"] == "")
 ck("rollup: every row has a uid == _row_uid(row)", all(r["uid"] == saas._row_uid(r) for r in rows))
-allowed = {"day", "provider", "model", "kind", "channel", "spend_micros", "calls", "member_ref", "project", "uid"}
+allowed = {"day", "provider", "model", "kind", "channel", "spend_micros", "calls", "member_ref", "project", "uid",
+           "in_tokens", "out_tokens", "cached_in_tokens"}   # token COUNTS (no content) — the server's unit-econ view
 ck("rollup: SCRUBBED — only contract fields leave (no prompt/content)", all(set(r) <= allowed for r in rows))
 ck("rollup: flt=None pushes everything", len(saas.build_rollup_rows(raw, "a", None)) == len(raw))
 
