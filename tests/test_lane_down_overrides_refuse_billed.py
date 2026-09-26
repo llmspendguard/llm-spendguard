@@ -46,7 +46,7 @@ def main():
 
     # ── a DOWN lane (executor error) under no_metered_fallback → applies the ladder, does NOT short-circuit to $0 ──
     resource_state._reset()
-    adapters._LANE_DOWN_SURFACED_AT.clear()
+    adapters._lane_announce._at.clear()
     down_exec = types.SimpleNamespace(
         TIMEOUT_S=60,
         run_prompt=lambda prompt, system=None, model=None, timeout=None, **_kw: {
@@ -55,13 +55,13 @@ def main():
     ck(results, "a DOWN lane under no_metered_fallback does NOT return the $0 'refused' miss (it applies the ladder)",
        not str(rA.get("error") or "").startswith("refused"), extra=str(rA.get("error"))[:80])
     ck(results, "...the outage is SURFACED once (never a silent empty)",
-       "codex-down" in adapters._LANE_DOWN_SURFACED_AT)
+       "codex-down" in adapters._lane_announce._at)
     ck(results, "...and the metered leg failed too (no key) so the lane was cooled (down)",
        adapters._lane_cooling("codex-down"))
 
     # ── a TASK miss (empty text, executor set NO error) under no_metered_fallback → stays a $0 'refused' miss ──
     resource_state._reset()
-    adapters._LANE_DOWN_SURFACED_AT.clear()
+    adapters._lane_announce._at.clear()
     empty_exec = types.SimpleNamespace(
         TIMEOUT_S=60,
         run_prompt=lambda prompt, system=None, model=None, timeout=None, **_kw: {"text": "", "error": None})
@@ -69,7 +69,7 @@ def main():
     ck(results, "a TASK miss (empty) under no_metered_fallback stays a $0 'refused' miss (no surprise charge)",
        str(rB.get("error") or "").startswith("refused"), extra=str(rB.get("error"))[:80])
     ck(results, "...a task miss is NOT surfaced as a lane-down (it is not infrastructure failure)",
-       "lane-empty" not in adapters._LANE_DOWN_SURFACED_AT)
+       "lane-empty" not in adapters._lane_announce._at)
 
     n_fail = results.count(False)
     print(f"\n{'[FAIL]' if n_fail else 'OK'} test_lane_down_overrides_refuse_billed: {n_fail} failure(s)")

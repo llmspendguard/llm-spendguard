@@ -52,6 +52,24 @@ def available() -> bool:
     return _bin() is not None
 
 
+def auth_status(timeout=20):
+    """DEFINITIVE plan-login state from the CLI's OWN status command → {"authed": True|False|None}. `codex login
+    status` EXITS 0 when signed in and non-zero when not — a STRUCTURAL signal (the process exit code), read
+    directly, never a regex on its printed prose. True/False from returncode when the CLI answers; None when it
+    can't be determined (CLI absent, timeout) so a can't-check is NEVER mistaken for a positive logout. Run on the
+    plan LOGIN env (metered keys stripped) so it reflects the auth the lane's run_prompt uses. $0. Never raises."""
+    exe = _bin()
+    if not exe:
+        return {"authed": None}
+    try:
+        from . import config
+        r = subprocess.run([exe, "login", "status"], capture_output=True, text=True,
+                           timeout=timeout, env=config.lane_plan_env())
+        return {"authed": r.returncode == 0}
+    except Exception:
+        return {"authed": None}
+
+
 def _usage_from_events(stdout):
     """Best-effort (input_tokens, output_tokens) from the --json event stream: scan every JSON line for
     the usage field names wherever they appear, keep the LARGEST seen (events report cumulative totals).

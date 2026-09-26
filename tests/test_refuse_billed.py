@@ -59,18 +59,18 @@ lane_balance.route_decision = lambda intent, model, reactive=False: (None, "no s
 
 print("-- a TASK miss (ran, empty, NO error) under refuse_billed → $0 refusal on the LANE, metered never reached --")
 adapters._lane_for = lambda prov: ("gemini", _EmptyLane)
-adapters._LANE_DOWN_SURFACED_AT.clear()
+adapters._lane_announce._at.clear()
 r = adapters._call_once("gemini:g-low", "hi", max_tokens=100, no_metered_fallback=True)
 fails += ck("task miss + refuse_billed → row attributed to the LANE (not 'api')", r.get("executor") == "gemini")
 fails += ck("...carries NO cost and NO text (a refusal, not an answer)", r.get("cost") is None and r.get("text") is None)
-fails += ck("...and a task miss is NOT surfaced as a lane-down", "gemini" not in adapters._LANE_DOWN_SURFACED_AT)
+fails += ck("...and a task miss is NOT surfaced as a lane-down", "gemini" not in adapters._lane_announce._at)
 
 print("\n-- a DOWN lane (executor error) under refuse_billed → fails over past the lane, surfaced --")
 adapters._lane_for = lambda prov: ("gemini", _DownLane)
-adapters._LANE_DOWN_SURFACED_AT.clear()
+adapters._lane_announce._at.clear()
 r = adapters._call_once("gemini:g-low", "hi", max_tokens=100, no_metered_fallback=True)
 fails += ck("down lane + refuse_billed → SURFACED (structural proof the down→ladder branch ran, not the $0 refusal)",
-            "gemini" in adapters._LANE_DOWN_SURFACED_AT)
+            "gemini" in adapters._lane_announce._at)
 fails += ck("...and the row is NOT a lane-attributed $0 refusal (it left the lane for the ladder)",
             not (r.get("executor") == "gemini" and r.get("cost") is None and r.get("text") is None))
 

@@ -122,6 +122,11 @@
       "verdict": "PROTOCOL",
       "why": "These implement a common Source contract (attribute_gap(gap, since)) with varying strategies: LLMSource returns reconciled attributions, others return empty because their gaps aren't reconstructable/r"
     },
+    "auth_status": {
+      "n": 2,
+      "verdict": "PROTOCOL",
+      "why": "Each lane executor implements the same auth-status contract: accept a timeout, query that backend's CLI on the plan-login env (subscription_exec reads the `claude auth status` JSON `loggedIn` bool; codex_exec reads the `codex login status` exit code), never raise, and return {authed: True|False|None}. Dispatched by name via lanes.lane_auth_status (getattr(mod, 'auth_status')); the differing command invocations/parsing are necessary adapter implementations, not duplicate or unrelated jobs. Adjudicated PROTOCOL by honestreview name src/spendguard --run, 2026-09-26."
+    },
     "available": {
       "n": 5,
       "verdict": "PROTOCOL",

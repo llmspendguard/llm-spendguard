@@ -308,6 +308,9 @@ def note_lane_down(lane, reason):
         with budget._lock:
             prev = db.execute("SELECT reachable, source, notified_ts, fix, command FROM lane_health WHERE resource=?",
                               (lane,)).fetchone()
+        if prev and prev[0] == 0 and (prev[1] or "") == "event-auth":
+            return                                        # a CONFIRMED logout (note_lane_auth_down) outranks a generic
+            #                                               'down' guess — keep it; note_lane_ok clears it on recovery
         # SUSTAINED = the row is ALREADY an unresolved event-down (a real success or a sweep would have cleared it) →
         # the lane failed again without recovering. A pure STATE read of the shared row, not a magnitude/time cutoff.
         sustained = bool(prev and prev[0] == 0 and (prev[1] or "").startswith("event"))
@@ -359,6 +362,44 @@ def note_lane_ok(lane):
                        "WHERE resource=? AND reachable=0 AND source LIKE 'event%'",
                        (datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"), lane))
             db.commit()
+    except Exception:
+        pass
+
+
+def note_lane_auth_down(lane, cmd=""):
+    """A lane is CONFIRMED LOGGED OUT (its OWN auth-status command said so — see lanes.lane_auth_status) → record it +
+    alarm IMMEDIATELY. Unlike note_lane_down (a generic miss, alarmed only when SUSTAINED to avoid flapping under
+    load), a positive logout is NOT a blip: the lane keeps FALLING BACK to the METERED API (silently billing) until
+    re-login, so it warrants a prompt, actionable alert the FIRST time it is seen — this is the exact 'silent empty'
+    the user hit. Writes the persistent lane_health row (source 'event-auth', so note_lane_ok CLEARS it on the lane's
+    next successful call → re-login self-heals the banner) carrying the exact re-login COMMAND, and fires a macOS
+    notification (throttled by notified_ts). $0, no LLM. NEVER raises — this rides the call path."""
+    try:
+        import datetime
+        from . import budget, lane_registry
+        now = datetime.datetime.now(datetime.timezone.utc)
+        cmd = cmd or str((lane_registry.lane_spec(lane) or {}).get("relogin_cmd") or "")
+        fix = "re-login to restore the $0 plan lane (its calls bill the metered API until you do)" + (f": {cmd}" if cmd else "")
+        db = _health_db()
+        with budget._lock:
+            prev = db.execute("SELECT notified_ts FROM lane_health WHERE resource=?", (lane,)).fetchone()
+            db.execute("INSERT OR REPLACE INTO lane_health "
+                       "(resource,kind,reachable,reason,fix,command,ts,source,notified_ts) VALUES (?,?,?,?,?,?,?,?,?)",
+                       (lane, "lane", 0, "logged out (auth/token expired)", fix, cmd,
+                        now.isoformat(timespec="seconds"), "event-auth", prev[0] if prev else None))
+            db.commit()
+        last = None
+        if prev and prev[0]:
+            try:
+                last = datetime.datetime.fromisoformat(prev[0])
+            except Exception:
+                last = None
+        if last is None or (now - last).total_seconds() >= _EVENT_NOTIFY_THROTTLE_S:
+            _notify_macos("spendguard: %s lane LOGGED OUT" % lane, fix)
+            with budget._lock:
+                db.execute("UPDATE lane_health SET notified_ts=? WHERE resource=?",
+                           (now.isoformat(timespec="seconds"), lane))
+                db.commit()
     except Exception:
         pass
 

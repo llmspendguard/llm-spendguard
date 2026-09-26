@@ -14,7 +14,11 @@ Each row (a plain dict — pure data, no imports of adapters/lanes so this stays
   keychain    — optional macOS keychain service whose mere presence is INCONCLUSIVE ('unknown', not 'ok').
   probe_tier  — the model tier `spendguard lanes --probe` pings it with; None = the lane's own default model.
   reasoning   — how the lane expresses reasoning effort (style / levels / default) — the per-lane CLI/API quirk.
-  login       — the exact activation step init / doctor / lanes print when the lane is not ready.
+  login       — the exact activation step init / doctor / lanes print when the lane is not ready (prose).
+  relogin_cmd — the ONE copy-pasteable shell command that re-authenticates a lane that was working and logged OUT
+                (e.g. 'claude auth login'), or '' when the lane has no single command (a key lane, or an
+                interactive-only CLI). Distinct from `login` (the full first-time activation prose): this is what a
+                logged-out surface shows so the user fixes it in one line. Authored here so the fix lives in ONE place.
 
 (Which lanes are SESSION-mined for plan value is NOT here — that truth lives once in the miner registry
 receipt._SOURCE_REFRESH, and lane_value derives 'ledger-valued' as this lane set minus that; duplicating it would
@@ -33,11 +37,13 @@ LANES = [
      "creds": (_home_path(".claude", ".credentials.json"),), "keychain": "Claude Code-credentials", "probe_tier": "haiku",
      "reasoning": {"style": "thinking", "levels": (), "default": None},
      "login": ("run `claude` then `/login`, sign in with your SUBSCRIPTION account — and if it offers to use a "
-               "detected ANTHROPIC_API_KEY, choose No: Yes meters every call to the API instead of your plan")},
+               "detected ANTHROPIC_API_KEY, choose No: Yes meters every call to the API instead of your plan"),
+     "relogin_cmd": "claude auth login"},
     {"lane": "codex", "provider": "openai", "exec": "codex_exec", "kind": "cli",
      "creds": (_home_path(".codex", "auth.json"),), "keychain": None, "probe_tier": None,
      "reasoning": {"style": "param", "levels": ("none", "low", "medium", "high", "xhigh", "max"), "default": None},
-     "login": "run `codex` and sign in with your ChatGPT account (not an API key)"},
+     "login": "run `codex` and sign in with your ChatGPT account (not an API key)",
+     "relogin_cmd": "codex login"},
     {"lane": "gemini", "provider": "gemini", "exec": "antigravity_exec", "kind": "cli",
      # agy's OAuth path DRIFTS across versions — accept ANY known artifact (current + legacy) so a renamed token
      # never reports a logged-in lane as inactive.
@@ -47,17 +53,20 @@ LANES = [
      "reasoning": {"style": "suffix", "levels": ("low", "medium", "high"), "default": "medium"},
      "login": ("install the Antigravity CLI (`curl -fsSL https://antigravity.google/cli/install.sh | bash`), then "
                "run `agy` and sign in with your Google account — decline any API-key option (a key meters every "
-               "call to the Gemini API instead of your Antigravity plan)")},
+               "call to the Gemini API instead of your Antigravity plan)"),
+     "relogin_cmd": "agy"},   # agy has no login subcommand — running it re-triggers the cached Antigravity OAuth
     {"lane": "zai-coding", "provider": "zai", "exec": "zai_exec", "kind": "key",
      "creds": (), "keychain": None, "probe_tier": None,
      "reasoning": {"style": "none", "levels": (), "default": None},
      "login": ("add a z.ai GLM Coding Plan key to keys.env — `ZAI_CODING_API_KEY` (or your account's `ZAI_API_KEY` "
-               "on an active plan); this lane is a key + endpoint, not a CLI login")},
+               "on an active plan); this lane is a key + endpoint, not a CLI login"),
+     "relogin_cmd": ""},   # key lane: no login command — a 401 means regenerate ZAI_CODING_API_KEY at the z.ai console
     {"lane": "kimi-code", "provider": "moonshot", "exec": "kimi_exec", "kind": "cli",
      "creds": (_home_path(".kimi-code", "credentials"),), "keychain": None, "probe_tier": None,
      "reasoning": {"style": "none", "levels": (), "default": None},
      "login": ("run `kimi` then `/login` and choose Kimi Code OAuth (your subscription) — NOT the Moonshot API "
-               "key, which meters every call to the API instead of your plan")},
+               "key, which meters every call to the API instead of your plan"),
+     "relogin_cmd": "kimi"},   # interactive: run `kimi` then `/login` — no single non-interactive re-auth command
 ]
 
 _BY_LANE = {r["lane"]: r for r in LANES}

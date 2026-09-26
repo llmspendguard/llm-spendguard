@@ -47,6 +47,26 @@ def available() -> bool:
     return _bin() is not None
 
 
+def auth_status(timeout=20):
+    """DEFINITIVE plan-login state from the CLI's OWN status command → {"authed": True|False|None}. `claude auth
+    status` prints JSON carrying a `loggedIn` BOOLEAN — a STRUCTURAL field, read directly (never a regex on error
+    prose). True/False when the CLI answers; None when it can't be determined (CLI absent, timeout, unparseable) so
+    a can't-check is NEVER mistaken for a positive logout. Run on the plan LOGIN env (metered keys stripped) so it
+    reflects exactly the auth the lane's run_prompt uses. $0 — a pure status command, no model call. Never raises."""
+    exe = _bin()
+    if not exe:
+        return {"authed": None}
+    try:
+        from . import config
+        r = subprocess.run([exe, "auth", "status"], capture_output=True, text=True,
+                           timeout=timeout, env=config.lane_plan_env())
+        d = json.loads((r.stdout or "").strip())          # `claude auth status` emits JSON; parse it (a fixed shape)
+        li = d.get("loggedIn")
+        return {"authed": bool(li)} if isinstance(li, bool) else {"authed": None}
+    except Exception:
+        return {"authed": None}
+
+
 def _model_alias(model):
     """Requested API model id → Claude Code `--model` family alias (mechanical substring extraction, not a
     meaning decision). PLAN-WINDOW SMARTNESS: the advisor already picks the cheapest adequate tier for each

@@ -87,6 +87,45 @@ def _lane_auth(spec):
     return "missing"
 
 
+# Positive AUTH check cache — a lane's OWN status command is authoritative but a subprocess, so cache it briefly: a
+# logged-out lane fails many calls in a burst, so the first pays ~one status call and the rest read this within the
+# TTL. Short TTL so a re-login is picked up promptly (the lane goes green within a minute of `claude auth login`).
+# BOUNDED BY CONSTRUCTION: only a KNOWN registry lane is ever cached (an unknown name returns without writing), so the
+# dict can hold at most one entry per lane_registry row (a fixed handful), never grows with arbitrary input.
+_AUTH_STATUS_TTL_S = 60.0
+_auth_status_cache = {}   # {lane: (monotonic_ts, {"authed": bool|None, "cmd": str})}
+
+
+def lane_auth_status(lane, ttl=_AUTH_STATUS_TTL_S):
+    """POSITIVE login state for a lane → {"authed": True|False|None, "cmd": <relogin_cmd>}. Asks the lane's exec its
+    OWN auth_status() — claude/codex read a STRUCTURAL loggedIn bool / exit code, never error prose. A lane WITHOUT a
+    cheap status command (gemini/zai/kimi have none) returns None (inconclusive), so this NEVER falsely claims a
+    logout; those lanes still surface a real failure through the ordinary error path. `cmd` is the registry's authored
+    relogin_cmd (one place). Cached briefly so a burst of failures shares one status call. Never raises — call path."""
+    try:
+        spec = lane_registry.lane_spec(lane)
+        if not spec:
+            return {"authed": None, "cmd": ""}            # unknown lane: never cached, so the cache stays registry-bounded
+        now = time.monotonic()
+        hit = _auth_status_cache.get(lane)
+        if hit and (now - hit[0]) < ttl:
+            return hit[1]
+        authed = None
+        try:
+            fn = getattr(_exec_mod(spec), "auth_status", None)
+            if fn:
+                r = fn()
+                a = r.get("authed") if isinstance(r, dict) else None
+                authed = a if isinstance(a, bool) else None
+        except Exception:
+            authed = None
+        out = {"authed": authed, "cmd": str(spec.get("relogin_cmd") or "")}
+        _auth_status_cache[lane] = (now, out)             # only KNOWN lanes reach here → bounded to the registry size
+        return out
+    except Exception:
+        return {"authed": None, "cmd": ""}
+
+
 def lanes_status():
     """One dict per lane: is it enabled by advisor.executor, is its CLI on this host, does a login artifact exist,
     and the exact activation step if not. DATA-DRIVEN — one row per lane in lane_registry, NO per-lane code here

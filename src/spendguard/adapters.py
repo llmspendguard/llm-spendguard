@@ -192,26 +192,40 @@ def _lane_cool(lane, seconds=None, reason=""):
 
 import threading as _threading
 import time as _time_surface
-# A throttle MEMO with staleness (not a permanent suppressor): {lane: monotonic ts of the last surfaced down}. A
-# $0-lane batch is told ONCE per lane per window rather than once per failed task, but a LATER outage — the lane
-# recovered then failed again after the window — DOES re-surface (the entry is stale). Window matches
-# reliability._EVENT_NOTIFY_THROTTLE_S so the inline line and the macOS notify agree on cadence.
-_LANE_DOWN_SURFACED_AT = {}
-_LANE_DOWN_LOCK = _threading.Lock()
-_LANE_DOWN_THROTTLE_S = 1800.0
+
+
+class _LaneAnnounceThrottle:
+    """Announce a lane's outage to the user ONCE per lane per window (not once per failed task), with STALENESS: a
+    later outage after the window re-surfaces. State (per-lane last-announce ts + its lock) is ENCAPSULATED here — a
+    method reaches it via `self`, so nothing mutates a hidden module global. Bounded: one entry per lane (the fixed
+    registry set). Window matches reliability._EVENT_NOTIFY_THROTTLE_S so the inline line and the macOS notify agree."""
+
+    def __init__(self, window_s=1800.0):
+        self._window_s = window_s
+        self._at = {}
+        self._lock = _threading.Lock()
+
+    def take(self, lane):
+        """True (and records `now`) if `lane` may be announced now; False if announced within the window (stale re-fires)."""
+        now = _time_surface.monotonic()
+        with self._lock:
+            last = self._at.get(lane)
+            if last is not None and (now - last) < self._window_s:
+                return False
+            self._at[lane] = now
+            return True
+
+
+_lane_announce = _LaneAnnounceThrottle()
 
 
 def _surface_lane_down(lane, err):
-    """Tell the user (once per lane per _LANE_DOWN_THROTTLE_S) that a lane could not serve — so a $0-lane batch never
-    fails SILENTLY (the empty-and-skipped the user hit). Names the exact re-login step (a lane_registry lookup) and
-    points at the agentic diagnosis for the specific cause. Best-effort, never raises — this is on the call path."""
+    """Tell the user (once per lane per window) that a lane could not serve — so a $0-lane batch never fails SILENTLY
+    (the empty-and-skipped the user hit). Names the exact re-login step (a lane_registry lookup) and points at the
+    agentic diagnosis for the specific cause. Best-effort, never raises — this is on the call path."""
     try:
-        now = _time_surface.monotonic()
-        with _LANE_DOWN_LOCK:
-            last = _LANE_DOWN_SURFACED_AT.get(lane)
-            if last is not None and (now - last) < _LANE_DOWN_THROTTLE_S:
-                return                                   # already surfaced within the window; a stale entry re-surfaces
-            _LANE_DOWN_SURFACED_AT[lane] = now
+        if not _lane_announce.take(lane):
+            return                                        # already surfaced within the window (a stale entry re-surfaces)
         import sys as _sysd
         from . import reliability
         hint = reliability.lane_login_hint(lane)
@@ -220,6 +234,30 @@ def _surface_lane_down(lane, err):
         if hint:
             msg += f" If it is a login/token expiry, re-activate: {hint}."
         msg += " Run `spendguard reliability --run --remediate` for the exact fix."
+        print(msg, file=_sysd.stderr)
+    except Exception:
+        pass
+
+
+def _surface_lane_auth(lane, cmd):
+    """A $0 lane is CONFIRMED LOGGED OUT (its OWN auth-status command said so) — tell the user UNHEDGED, naming the
+    cause and the exact one-line fix, once per lane per window. Distinct from _surface_lane_down (the GENERIC 'the
+    executor errored, and IF it is a login issue here is the step'): this fires ONLY on a positive logout, so it STATES
+    it — the clear, actionable message the user asked for. Shares the throttle so a lane is not double-announced.
+    Best-effort, never raises — this is on the call path."""
+    try:
+        if not _lane_announce.take(lane):
+            return
+        import sys as _sysd
+        msg = (f"[spendguard] ⚠ {lane} lane is LOGGED OUT — its calls now fall back to the METERED API (billed) "
+               f"until you re-login.")
+        if cmd:
+            msg += f" Restore $0: {cmd}"
+        else:
+            from . import reliability
+            hint = reliability.lane_login_hint(lane)
+            if hint:
+                msg += f" Re-activate: {hint}"
         print(msg, file=_sysd.stderr)
     except Exception:
         pass
@@ -1847,7 +1885,27 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             # CAPPED (_max_quota_cool_s), because an oscillating quota (agy) must be re-tested, not bypassed for
             # days. `transient` then tells _learn_from_fallback this was quota, so it learns NO size ceiling.
             _lane_cool(lane_name, seconds=min(float(_ra), _max_quota_cool_s()), reason="quota")
-        if no_metered_fallback and _lane_reason != "lane_error":
+        # POSITIVE AUTH CHECK — ask the lane's OWN status command whether it is logged in (a STRUCTURAL loggedIn bool /
+        # exit code, never a parse of error prose). A CONFIRMED logout is upgraded to reason 'auth': it ALWAYS surfaces
+        # + records a persistent alert (even when the metered fallback below SUCCEEDS — a logged-out $0 lane silently
+        # bills the API, the exact gap the user hit), and it fails over like a lane_error even under --refuse-billed (a
+        # DOWN lane is not a task the caller opted out of). A lane with no cheap status command answers None → behavior
+        # unchanged. Skipped for a quota miss (a known transient, not a logout). Cached, $0 for a lane already checked.
+        if _lane_reason != "quota":
+            try:
+                from . import lanes as _lanes_auth
+                _astat = _lanes_auth.lane_auth_status(lane_name)
+            except Exception:
+                _astat = None
+            if isinstance(_astat, dict) and _astat.get("authed") is False:
+                _lane_reason = "auth"
+                _surface_lane_auth(lane_name, _astat.get("cmd") or "")
+                try:
+                    from . import reliability as _rel_auth
+                    _rel_auth.note_lane_auth_down(lane_name, _astat.get("cmd") or "")
+                except Exception:
+                    pass
+        if no_metered_fallback and _lane_reason not in ("lane_error", "auth"):
             # $0-ONLY caller (--refuse-billed): it opted out of paying metered to RETRY A TASK the free lane found
             # UNSUITABLE (empty / off-shape / too big / a transient quota it will reset from) — that stays a $0 miss,
             # never a surprise charge. But a LANE_ERROR is the executor reporting the lane could NOT serve AT ALL
