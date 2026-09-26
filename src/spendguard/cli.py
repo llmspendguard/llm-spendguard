@@ -65,6 +65,7 @@ _GROUPS = [
         ("schedule", "OS-native daily sync (launchd / cron / schtasks)"),
         ("sync-prices", "refresh the price breadth layer now"),
         ("sync-catalog", "refresh the live model-catalog (validates model ids at dispatch)"),
+        ("sync-capabilities", "sync per-model capabilities (vision, response_schema, …) + upper bounds from LiteLLM"),
         ("balances", "per-vendor metered prepay balance (sunk-pool vs on-demand), for routing"),
         ("reliability", "sweep every lane ($0) + metered provider (--run) for reachability; --remediate = agentic per-lane FIX (which login/quota/API to fix), cached; --notify = macOS notification on any red"),
         ("preflight", "resolve model ids (served + priced; stale→fix) BEFORE a batch — catches a bad id for $0"),
@@ -771,6 +772,9 @@ def _dispatch(argv=None):
     if cmd == "sync-catalog":
         from . import catalog
         return catalog.main(rest)
+    if cmd == "sync-capabilities":
+        from . import sync_capabilities
+        return sync_capabilities.cmd(rest)
     if cmd == "balances":
         from . import balances
         return balances.main(rest)

@@ -154,6 +154,18 @@ def provider_of(model_id):
     return (rec or {}).get("provider") if rec else None
 
 
+def vision_capable(model_id):
+    """Whether a model accepts IMAGE input — True/False from the record's curated `vision` bool, or None when the
+    model has no record or no `vision` field (UNKNOWN; never assumed either way). Per-model TRUTH authored in
+    model_catalog.json (seed_vision_capability.py), never inferred from the id string. A caller routing a vision
+    (images=) call treats anything that is NOT True as 'not known-capable' and keeps its own model — so a best-value
+    SWAP on a vision call is allowed ONLY to a model KNOWN to see images (adapters.call). The asymmetry is deliberate:
+    a wrong True would send an image to a blind model, a wrong None only keeps the caller's (already-vision) model."""
+    rec = model_record(model_id)
+    v = (rec or {}).get("vision") if rec else None
+    return v if isinstance(v, bool) else None
+
+
 def as_price_table():
     """The catalog projected into the prices.json shape: {provider: {model_id: {in_, out, cached_in, batch_in,
     batch_out, [batch_cached_in], _source}}}. The ONE place that knows how a catalog record becomes a price row —

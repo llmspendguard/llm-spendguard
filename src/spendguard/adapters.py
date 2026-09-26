@@ -918,9 +918,25 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                 _pick = None                           # any OTHER advisor hiccup -> degrade to the named model (floor-preserving)
             import sys as _sbv
             if _pick and _pick.get("model"):
-                _bv_from, _bv_why, _bv_effort = model, _pick.get("why"), _pick.get("effort")
-                model, reasoning, no_substitution = _pick["model"], _pick.get("effort"), True
-                print(f"[spendguard] {_bv_why} (was {_bv_from})", file=_sbv.stderr)
+                _cand = _pick["model"]
+                # VISION-CAPABILITY GUARD: a best-value model SWAP on an images= call is allowed ONLY to a model the
+                # catalog CONFIRMS accepts images. The pick is ranked on measured $/good and is NOT told images are
+                # present, so on a vision intent whose measured pool ever included a text-only model it could pick one
+                # that cannot see the image (a silent wrong answer). Keep the caller's (already-vision) model unless the
+                # candidate is catalog-confirmed vision. An effort-only titration (_cand == model) is unaffected; a
+                # non-vision call skips this entirely. `is not True` → keep on False OR None (unknown), never assume.
+                _vision_block = False
+                if images and _cand != model:
+                    from . import model_catalog as _mc_v
+                    if _mc_v.vision_capable(_cand) is not True:
+                        _vision_block = True
+                if _vision_block:
+                    print(f"[spendguard] best-value: keeping {model} for a vision call — candidate {_cand} is not "
+                          f"catalog-confirmed vision-capable", file=_sbv.stderr)
+                else:
+                    _bv_from, _bv_why, _bv_effort = model, _pick.get("why"), _pick.get("effort")
+                    model, reasoning, no_substitution = _cand, _pick.get("effort"), True
+                    print(f"[spendguard] {_bv_why} (was {_bv_from})", file=_sbv.stderr)
             elif _pick is not None and _pick.get("why"):
                 print(f"[spendguard] {_pick['why']}", file=_sbv.stderr)   # honest no-pick: keep the named model
     # ATTRIBUTION: a caller that passed a sig/intent but is NOT inside a `with calls.context(...)` must still have

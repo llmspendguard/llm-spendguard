@@ -198,8 +198,15 @@ def refresh_if_stale():
         import importlib
         from . import pricing
         importlib.reload(pricing)                       # same in-place reload main() uses — existing refs stay valid
+        # NOTE: capabilities are NOT auto-synced here. sync_capabilities writes the PACKAGED model_catalog.json (the
+        # curated SSOT), not the isolated ~/.spendguard cache — auto-running it on every refresh would mutate source
+        # at runtime and pollute the tree in tests. `spendguard sync-capabilities` is a DELIBERATE command (run +
+        # commit); daily server-side/cache-based capability freshness is the follow-up (task: server /v1/models cron).
         return {"refreshed": True, "models": n, "notes": msgs[:3]}
     except Exception as e:
+        from . import gate as _g
+        if _g.is_deliberate_stop(e):
+            raise                                       # a deliberate stop (refusal/deadline) is never downgraded to a fallback
         return {"error": str(e)[:120], "note": "existing cache + curated prices.json still in effect"}
 
 
