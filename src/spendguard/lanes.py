@@ -471,22 +471,29 @@ def main(argv=None):
         file_p, ck_p, out_p = _optval("--file"), _optval("--checkpoint"), _optval("--out")
         sys_p, sysfile_p = _optval("--system"), _optval("--system-file")
         tier_p = _optval("--tier")                        # capability GROUP (advisor.tiers) → confine the fan-out to it
+        hedge_p = _optval("--hedge-ms")                   # tail-hedge window (ms): race a straggling per-unit miss onto
+        #                                                   another healthy $0 lane in the SAME fan (spare-capacity-gated
+        #                                                   inside bulk_delegate; the hedge always runs no_fallback, so it
+        #                                                   can only cost a free lane miss). Absent → the config default (off).
         lanes_p = _optval("--lanes") or os.environ.get("SPENDGUARD_BULK_LANES")  # CSV lane subset → CONFINE the fan
                                                           # (bulk_delegate lanes=), fail-closed: a caller picks e.g.
                                                           # "zai-coding,codex,gemini" to keep a job off a lane its
                                                           # output does not suit. --lanes wins; else the env default
                                                           # (a caller that cannot add the flag, e.g. symgrep's
                                                           # hardened describe spawn, sets SPENDGUARD_BULK_LANES).
-        opt_vals = {v for v in (file_p, ck_p, out_p, sys_p, sysfile_p, tier_p, lanes_p) if v}  # opt values are NOT the positional intent
+        opt_vals = {v for v in (file_p, ck_p, out_p, sys_p, sysfile_p, tier_p, hedge_p, lanes_p) if v}  # opt values are NOT the positional intent
         pos = [a for a in rest if not a.startswith("--") and a not in opt_vals]
         intent = pos[0] if pos else None
         if not intent:
             print('usage: spendguard lanes --bulk <intent> [--file tasks.txt] [--jsonl] [--system TEXT | --system-file P] '
-                  '[--tier <group>] [--lanes a,b,c] [--estimate] [--refuse-billed] [--checkpoint ck.jsonl] [--out results.jsonl] [--force]')
+                  '[--tier <group>] [--lanes a,b,c] [--hedge-ms N] [--estimate] [--refuse-billed] [--checkpoint ck.jsonl] [--out results.jsonl] [--force]')
             print('       --estimate: ZERO-SPEND preview — how many distinct calls, which lanes, and the worst-case '
                   'metered $ ceiling if every task fell to the API. Run it before a large fan (estimate-first).')
             print('       --lanes a,b,c: CONFINE the fan to this lane subset (fail-closed) — e.g. keep an '
                   'instruction-following job on completion lanes and off an agent-CLI lane whose output does not suit it.')
+            print('       --hedge-ms N: TAIL-HEDGE a straggling per-unit miss onto another healthy $0 lane in the SAME '
+                  'fan after N ms (spare-capacity-gated, always $0 — the hedge never bills). Rescues a unit stuck on one '
+                  'confined lane (e.g. an OAuth token that cannot refresh mid-run) WITHOUT waiting for the next pass. Off by default.')
             print('       tasks: one per line from --file/stdin (or --jsonl = one JSON-encoded task per line, for '
                   'MULTI-LINE bodies). --system = the shared instruction, sent ONCE not per task; --refuse-billed '
                   'never bills (a lane miss errors); --checkpoint resumes by CONTENT; --out writes {i,task,text,lane,model,...}.')
@@ -519,6 +526,15 @@ def main(argv=None):
                 system = Path(sysfile_p).read_text() if sysfile_p else sys_p   # --system-file wins; instruction sent ONCE
                 refuse = any(a == "--refuse-billed" for a in rest)
                 _force = any(a == "--force" for a in rest)
+                hedge_ms = None                              # absent → bulk_delegate falls to the config default (off)
+                if hedge_p is not None:
+                    try:
+                        hedge_ms = int(hedge_p)
+                    except (TypeError, ValueError):
+                        hedge_ms = -1
+                    if hedge_ms < 0:
+                        print(f"--hedge-ms must be a non-negative integer (milliseconds); got {hedge_p!r}", file=sys.stderr)
+                        return
                 if not ck_p:
                     print("  note: no --checkpoint — a crash won't resume; pass --checkpoint <path> for a durable run.")
                 _lanes = [ln.strip() for ln in lanes_p.split(",") if ln.strip()] if lanes_p else None
@@ -534,7 +550,7 @@ def main(argv=None):
                 try:
                     res = lane_balance.bulk_delegate(tasks, intent, system=system, checkpoint=ck_p,
                                                      refuse_billed=refuse, stats=_stats, force=_force, tier=tier_p,
-                                                     lanes=_lanes)
+                                                     lanes=_lanes, hedge_ms=hedge_ms)
                 except lane_balance.BulkResilienceRefused as _e:
                     print(f"\n  ⛔ {_e}\n  → add --checkpoint <path> and/or split into a durable run, or re-run with "
                           f"--force to override.", file=sys.stderr)
