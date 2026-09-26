@@ -121,6 +121,33 @@ def main():
         raised = True
     ck(results, "collect: a deliberate stop (SpendGateRefused) PROPAGATES, never swallowed", raised)
 
+    # 8. a FAILED durable persist of a paid batch handle is TRACKED in receipt.persist_failures (never swallowed),
+    #    and the handle is STILL returned in `pending` so it is not lost.
+    route_economics.route_report = _stub_route("batch_only", 0.01)
+    submit.submit_chat_tasks = lambda tasks, model, **kw: {"batch_id": "B777"}
+    _orig_persist = whole_job._persist_pending
+    whole_job._persist_pending = lambda path, handle: False   # simulate a durable-write failure
+    try:
+        r = whole_job.run_jobs(JOBS, {"urgency": "batch"})
+    finally:
+        whole_job._persist_pending = _orig_persist
+    ck(results, "persist failure → tracked in receipt.persist_failures (counted, not swallowed)",
+       len(r["receipt"].get("persist_failures") or []) == 1)
+    ck(results, "...and the paid handle is STILL returned in pending (not lost)",
+       len(r["pending"]) == 1 and r["pending"][0]["batch_id"] == "B777")
+
+    # 9. the CLI guard: --execute REQUIRES --budget (the estimate-first cap) — argparse refuses otherwise (SystemExit)
+    import tempfile as _tf
+    _jf = os.path.join(_tf.mkdtemp(), "jobs.jsonl")
+    with open(_jf, "w") as _fh:
+        _fh.write('{"prompt":"hi","intent":"x","id":"a"}\n')
+    _guarded = False
+    try:
+        whole_job.cmd([_jf, "--execute"])            # no --budget → must refuse before spending
+    except SystemExit:
+        _guarded = True
+    ck(results, "CLI: --execute without --budget is refused (estimate-first cap required)", _guarded)
+
     n_fail = results.count(False)
     print(f"\n{'[FAIL]' if n_fail else 'OK'} test_whole_job: {n_fail} failure(s)")
     return 1 if n_fail else 0

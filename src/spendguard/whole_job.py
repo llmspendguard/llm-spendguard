@@ -20,9 +20,11 @@ CONTRACT
     returns:
         results: {job_id: {text, error, cost, model, lane, ...}}   — the jobs that ran SYNCHRONOUSLY (realtime/lane)
         pending: [ {batch_id, intent, model, job_ids} ]            — batch groups submitted async; settle with
-                                                                      collect_jobs(pending) (~24h window, OpenAI)
+                                                                      collect_jobs(pending) (~24h window, OpenAI). Also
+                                                                      persisted durably (receipt.pending_path) — a batch
+                                                                      is PAID work, so its handle survives a crash.
         plan:    [ {intent, n, method, est_usd, why} ]             — the per-group decision, auditable
-        receipt: {est_usd, groups, ran, pending, batch_failures, refused}  — the whole-set summary
+        receipt: {est_usd, groups, ran, pending, batch_failures, persist_failures, refused_code, checkpoint, pending_path}
 
 Estimate-first, fail-closed on unknown cost, no silent loss, decisions are economics (not regex) — the doctrines apply.
 """
@@ -60,9 +62,14 @@ def _method_for(intent, n, goal, in_tok, out_tok):
         est = float(est) if est is not None else None
         rec_path = rec.get("path") or "lane_only"
     except Exception as e:
-        # UNKNOWN cost, not $0: est=None so the budget gate fails CLOSED (refuses under a budget) instead of letting
-        # an unpriced group slip through the gate. The METHOD still defaults to realtime so an ungated caller (no
-        # budget) can still run — but the cost is honestly reported as unknown, never invented as free.
+        from . import gate
+        if gate.is_deliberate_stop(e):
+            raise                                 # a DELIBERATE refusal to estimate (spend stop / EstimateNotGrounded /
+            #                                       containment) HALTS — never downgraded to "unknown cost, proceed"
+            #                                       (the refusal-containment doctrine); the caller sees the stop.
+        # A NON-deliberate failure is UNKNOWN cost, not $0: est=None so the budget gate fails CLOSED (refuses under a
+        # budget) instead of letting an unpriced group slip through. The METHOD still defaults to realtime so an
+        # ungated caller (no budget) can still run — but the cost is honestly reported as unknown, never invented free.
         return _REALTIME, None, "route_report could not price this group (%s) — cost UNKNOWN" % (str(e)[:50])
     if urgency == _REALTIME:
         return _REALTIME, est, "urgency=realtime (forced)"
@@ -100,8 +107,9 @@ def run_jobs(jobs, goal=None, checkpoint=None):
     """Plan + execute a whole job set under a goal, returning ready results + async batch handles + the plan/receipt.
     Estimate-first, fail-CLOSED: the whole set is priced BEFORE any spend and REFUSED if the estimate exceeds
     goal.budget_usd OR if any group is unpriced under a budget. `checkpoint` (a jsonl path) makes the realtime results
-    durable (crash-resume via bulk_delegate); when None a per-run checkpoint is created under the spendguard home so a
-    crash never loses a completed result (the chunk-never-single-shot rule)."""
+    durable (crash-resume via bulk_delegate); each submitted batch handle is persisted to `<checkpoint>.pending.jsonl`
+    the moment it is submitted (a batch is PAID work — its batch_id must survive a crash). When checkpoint is None a
+    per-run path is created under the spendguard home so a crash never loses a completed result or a batch handle."""
     goal = goal or {}
     planned = plan_jobs(jobs, goal)
     # Every refusal carries a STRUCTURED `refused_code` (a stable enum a consumer routes on) alongside the human
@@ -126,7 +134,8 @@ def run_jobs(jobs, goal=None, checkpoint=None):
                                 "refused": "estimate $%.4f exceeds budget_usd $%.4f (no spend)"
                                 % (planned["priced_est_usd"], float(budget)), "est_usd": planned["priced_est_usd"]}}
     checkpoint = checkpoint or _default_checkpoint()
-    results, pending, batch_failures, ran = {}, [], [], 0
+    pending_path = checkpoint + ".pending.jsonl"       # durable batch handles (see _persist_pending / load_pending)
+    results, pending, batch_failures, persist_failures, ran = {}, [], [], [], 0
     remaining = (float(budget) if budget is not None else None)
     for entry in planned["plan"]:
         intent = entry["intent"]
@@ -135,6 +144,11 @@ def run_jobs(jobs, goal=None, checkpoint=None):
         if entry["method"] == _BATCH:
             pend = _run_batch_group(intent, items, goal, remaining)
             if pend.get("batch_id"):
+                if not _persist_pending(pending_path, pend):
+                    # the DURABLE-write of this PAID handle failed. It is STILL in `pending` (returned to the caller)
+                    # and in the ledger (submit_chat_tasks recorded the batch), but the file copy did not land — TRACK
+                    # it in the receipt (counted + loud), never swallowed, so the loss is visible and recoverable.
+                    persist_failures.append(pend)
                 pending.append(pend)
             elif pend.get("eligible"):
                 # batch was ELIGIBLE but the SUBMISSION FAILED (e.g. Batch API outage) — record the failure (never
@@ -152,7 +166,8 @@ def run_jobs(jobs, goal=None, checkpoint=None):
     return {"results": results, "pending": pending, "plan": planned["plan"],
             "receipt": {"est_usd": planned["priced_est_usd"], "groups": len(planned["plan"]), "ran": ran,
                         "pending": len(pending), "batch_failures": batch_failures,
-                        "refused_code": None, "refused": None, "checkpoint": checkpoint}}
+                        "persist_failures": persist_failures, "refused_code": None, "refused": None,
+                        "checkpoint": checkpoint, "pending_path": (pending_path if pending else None)}}
 
 
 def _default_checkpoint():
@@ -164,6 +179,39 @@ def _default_checkpoint():
     d = os.path.join(getattr(config, "HOME", os.path.expanduser("~/.spendguard")), "whole_job")
     os.makedirs(d, exist_ok=True)
     return os.path.join(d, "run-%s.jsonl" % datetime.datetime.now().strftime("%Y%m%dT%H%M%S%f"))
+
+
+def _persist_pending(pending_path, handle):
+    """Append ONE batch handle to a durable jsonl the moment it is submitted — a submitted batch is PAID work and its
+    batch_id is the ONLY way to collect the (already-billed) results. Writing + fsync'ing it before anything else means
+    a crash after the submission cannot lose it. Returns True when it landed durably; on failure it LOGS the batch_id +
+    whole handle to stderr and returns False, so run_jobs TRACKS the loss in the receipt (never swallowed) — the run is
+    not aborted (it already spent, and the handle is also in the returned `pending` list + the ledger)."""
+    import json
+    import os
+    import sys
+    try:
+        with open(pending_path, "a") as fh:
+            fh.write(json.dumps(handle) + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        return True
+    except Exception as e:
+        print("[spendguard] whole_job: could NOT durably persist batch handle %s (%s) — tracked in receipt."
+              "persist_failures; it is also in the returned pending list + the ledger. Handle: %s"
+              % (handle.get("batch_id"), str(e)[:60], json.dumps(handle)), file=sys.stderr)
+        return False
+
+
+def load_pending(pending_path):
+    """Recover the durable batch handles a run persisted (for collect_jobs) — the crash-recovery twin of
+    _persist_pending. Returns [] when the file is absent. Reads the WHOLE file (every handle), never a slice."""
+    import json
+    try:
+        with open(pending_path) as fh:
+            return [json.loads(ln) for ln in fh if ln.strip()]
+    except FileNotFoundError:
+        return []
 
 
 def _run_realtime_group(intent, items, goal, budget_remaining, checkpoint):
@@ -243,3 +291,57 @@ def collect_jobs(pending):
         if res.get("anomalies"):                       # rows with a missing/unparseable custom_id — surfaced, not dropped
             out["%s-anomalies" % bid] = {"kind": "anomalies", "anomalies": res["anomalies"], "intent": intent}
     return out
+
+
+def cmd(argv):
+    """`spendguard submit-jobs <jobs.jsonl> [--budget X] [--urgency auto|realtime|batch] [--quality] [--execute]`
+    — PLAN + estimate ONLY by default ($0, estimate-first); --execute runs it and REQUIRES --budget (the estimate-first
+    cap). Or `spendguard submit-jobs --collect <run.jsonl.pending.jsonl>` to settle a prior run's durable batch
+    handles. Reads ONE job per jsonl line: {prompt, intent[, id, system, schema]}. Prints JSON. The whole file is read
+    (never a slice); only the per-result TEXT is previewed for display."""
+    import argparse
+    import json
+    ap = argparse.ArgumentParser(prog="spendguard submit-jobs")
+    ap.add_argument("jobs_file", nargs="?", help="jsonl, one job per line: {prompt, intent, id?, system?, schema?}")
+    ap.add_argument("--budget", type=float, default=None, help="budget_usd — estimate-first cap; REQUIRED to --execute")
+    ap.add_argument("--urgency", default="auto", choices=["auto", "realtime", "batch"])
+    ap.add_argument("--quality", action="store_true", help="best-value model pick per intent")
+    ap.add_argument("--execute", action="store_true", help="EXECUTE (default: plan + estimate only, $0)")
+    ap.add_argument("--collect", metavar="PENDING_JSONL", default=None,
+                    help="settle a prior run's durable batch handles (receipt.pending_path) instead of submitting")
+    a = ap.parse_args(argv)
+    if a.collect:
+        out = collect_jobs(load_pending(a.collect))
+        print(json.dumps({"mode": "collect", "settled": out}, indent=2, default=str))
+        return 0
+    if not a.jobs_file:
+        ap.error("a jobs_file is required (or --collect PENDING_JSONL)")
+    if a.execute and a.budget is None:
+        ap.error("--execute requires --budget (the estimate-first cap) — run WITHOUT --execute for a $0 plan+estimate")
+    with open(a.jobs_file) as fh:
+        jobs = [json.loads(ln) for ln in fh if ln.strip()]   # the WHOLE file (every job), never a slice
+    goal = {"urgency": a.urgency}
+    if a.budget is not None:
+        goal["budget_usd"] = a.budget
+    if a.quality:
+        goal["quality_bar"] = "best-value"
+    if not a.execute:
+        p = plan_jobs(jobs, goal)
+        print(json.dumps({"mode": "plan", "plan": p["plan"], "est_usd": p["est_usd"],
+                          "priced_est_usd": p["priced_est_usd"], "unpriced": p["unpriced"], "bad_jobs": p["bad_jobs"],
+                          "note": "PLAN only ($0). Add --execute (with --budget) to run."}, indent=2, default=str))
+        return 0
+    r = run_jobs(jobs, goal)
+    rec = r["receipt"]
+    if rec.get("refused_code"):
+        print(json.dumps({"mode": "refused", "refused_code": rec["refused_code"], "refused": rec.get("refused"),
+                          "plan": r["plan"]}, indent=2, default=str))
+        return 1
+    print(json.dumps({"mode": "executed", "ran": rec["ran"], "pending": r["pending"],
+                      "pending_path": rec.get("pending_path"), "batch_failures": rec.get("batch_failures"),
+                      "persist_failures": rec.get("persist_failures"), "est_usd": rec.get("est_usd"),
+                      "checkpoint": rec.get("checkpoint"),
+                      "results": {k: {"text": (str(v.get("text") or "")[:200]),   # DISPLAY preview only (not the evidence)
+                                      "error": v.get("error"), "cost": v.get("cost"), "lane": v.get("lane")}
+                                  for k, v in r["results"].items()}}, indent=2, default=str))
+    return 0

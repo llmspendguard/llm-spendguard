@@ -496,6 +496,23 @@ def _tool_route_cost(args):
                                         lane=args.get("lane"), batch_model=args.get("batch_model"))
 
 
+def _tool_run_jobs(args):
+    """The whole-job contract (whole_job): hand spendguard a SET of jobs + a GOAL and it plans (batch vs lane vs
+    metered, capability-matched per schema), budget-gates, executes, and returns. SPEND-SAFE for an agent surface:
+    with NO goal.budget_usd it returns the PLAN + estimate ONLY ($0, executed=False) — never an unbounded fan; pass
+    goal.budget_usd to EXECUTE (the budget is the estimate-first cap: an over-estimate or an unpriceable group is
+    refused before any spend)."""
+    from . import whole_job
+    jobs = args.get("jobs") or []
+    goal = args.get("goal") if isinstance(args.get("goal"), dict) else {}
+    if goal.get("budget_usd") is None:
+        p = whole_job.plan_jobs(jobs, goal)
+        return {"executed": False, "plan": p["plan"], "est_usd": p["est_usd"],
+                "priced_est_usd": p["priced_est_usd"], "unpriced": p["unpriced"], "bad_jobs": p["bad_jobs"],
+                "note": "estimate only ($0) — pass goal.budget_usd to EXECUTE (the budget is the cap)."}
+    return {"executed": True, **whole_job.run_jobs(jobs, goal)}
+
+
 _TOOLS = {
     "spendguard_version": (
         "Which spendguard COMMIT this MCP server is running, the green pointer it should be on, and whether it is "
@@ -538,6 +555,30 @@ _TOOLS = {
             "batch_model": {"type": "string", "description": "metered model for the batch leg (default: config advisor.batch_model)"}},
          "required": ["intent", "n"], "additionalProperties": False},
         _tool_route_cost),
+    "spendguard_run_jobs": (
+        "The WHOLE-JOB contract — hand spendguard a SET of jobs + a GOAL and it decides the plan (batch vs lane vs "
+        "metered, capability-matched to each job's schema), enforces the budget, executes, and returns; you never "
+        "hand-tune metered_only/batch/lanes/model per call. SPEND-SAFE: with NO goal.budget_usd it returns the PLAN + "
+        "estimate ONLY ($0, executed=false) — never an unbounded fan; pass goal.budget_usd to EXECUTE (the budget is "
+        "the estimate-first cap — an over-estimate, or a group whose cost is unknown, is refused BEFORE any spend). "
+        "Returns {executed, results (ready, keyed by job id), pending (async batch handles — settle later), plan, "
+        "receipt {est_usd, ran, batch_failures, refused_code}}. Batch groups are async (~half cost, ~24h).",
+        {"type": "object", "properties": {
+            "jobs": {"type": "array", "description": "the job set", "items": {
+                "type": "object", "properties": {
+                    "prompt": {"type": "string", "description": "the task prompt"},
+                    "intent": {"type": "string", "description": "job-type label — the routing + attribution key (required)"},
+                    "id": {"type": "string", "description": "stable id to key the result by (default task-<i>)"},
+                    "system": {"type": "string", "description": "optional system prompt"},
+                    "schema": {"type": "object", "description": "optional JSON schema — a strict one auto-routes to an enforcing path"}},
+                "required": ["prompt", "intent"], "additionalProperties": False}},
+            "goal": {"type": "object", "description": "budget_usd (estimate-first cap; required to EXECUTE), urgency "
+                     "(auto|realtime|batch), quality_bar (best-value model pick when set)",
+                     "properties": {"budget_usd": {"type": "number"}, "urgency": {"type": "string"},
+                                    "quality_bar": {"type": "string"}},
+                     "additionalProperties": False}},
+         "required": ["jobs"], "additionalProperties": False},
+        _tool_run_jobs),
     "spendguard_advise": (
         "Rank the models you have ALREADY used for a job-type ('intent') by cost-effectiveness at the quality it "
         "held: $/good-result where quality is labeled, else $/M output. Returns the ranked models, the pick, and "
