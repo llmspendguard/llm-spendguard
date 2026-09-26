@@ -282,9 +282,14 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
          attempts=3, backoff_s=2.0, reasoning=None, no_metered_fallback=False):
     """Call ONE model, bounded by a TOTAL deadline, returning a typed Result. Never raises for a call failure.
 
-    `no_metered_fallback=True` is the $0-ONLY contract: a lane miss (error OR a saturated-lane shed) is an honest
-    failure, never a surprise metered charge. Default False = a $0 lane that errors or is too busy sheds to its
-    metered twin so the call completes — burst behaves like isolation (see the dispatch shed below).
+    `no_metered_fallback=True` is the $0-ONLY contract, with ONE deliberate exception: it declines paying metered to
+    RETRY A TASK the free lane found UNSUITABLE (empty / off-shape / too big / a transient quota it resets from) — that
+    is an honest $0 miss, never a surprise charge. But a lane that is DOWN — the executor reports it could NOT serve at
+    all (login/token expired, CLI crash, rejected model) — is INFRASTRUCTURE failure, not an unsuitable task, and still
+    fails over through the ladder (another $0 lane first, then the metered twin) so a result is never lost, with the
+    outage surfaced (adapters._surface_lane_down). Losing work to a logged-out lane was the silent-empty this closes.
+    Default False = a $0 lane that errors or is too busy sheds to its metered twin so the call completes — burst
+    behaves like isolation (see the dispatch shed below).
 
     INPUT invariant:  deadline_s > 0 and bounds the WHOLE call including every retry.
     OUTPUT invariant: a Result whose `.text` is readable ONLY when kind == 'ok'.

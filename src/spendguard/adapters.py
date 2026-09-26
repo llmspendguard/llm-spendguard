@@ -190,6 +190,41 @@ def _lane_cool(lane, seconds=None, reason=""):
             pass
 
 
+import threading as _threading
+import time as _time_surface
+# A throttle MEMO with staleness (not a permanent suppressor): {lane: monotonic ts of the last surfaced down}. A
+# $0-lane batch is told ONCE per lane per window rather than once per failed task, but a LATER outage — the lane
+# recovered then failed again after the window — DOES re-surface (the entry is stale). Window matches
+# reliability._EVENT_NOTIFY_THROTTLE_S so the inline line and the macOS notify agree on cadence.
+_LANE_DOWN_SURFACED_AT = {}
+_LANE_DOWN_LOCK = _threading.Lock()
+_LANE_DOWN_THROTTLE_S = 1800.0
+
+
+def _surface_lane_down(lane, err):
+    """Tell the user (once per lane per _LANE_DOWN_THROTTLE_S) that a lane could not serve — so a $0-lane batch never
+    fails SILENTLY (the empty-and-skipped the user hit). Names the exact re-login step (a lane_registry lookup) and
+    points at the agentic diagnosis for the specific cause. Best-effort, never raises — this is on the call path."""
+    try:
+        now = _time_surface.monotonic()
+        with _LANE_DOWN_LOCK:
+            last = _LANE_DOWN_SURFACED_AT.get(lane)
+            if last is not None and (now - last) < _LANE_DOWN_THROTTLE_S:
+                return                                   # already surfaced within the window; a stale entry re-surfaces
+            _LANE_DOWN_SURFACED_AT[lane] = now
+        import sys as _sysd
+        from . import reliability
+        hint = reliability.lane_login_hint(lane)
+        msg = (f"[spendguard] {lane} lane could not serve (the executor errored): {str(err)[:80]} — cooled and "
+               f"rerouting (other $0 lanes first, then metered) so work is not lost.")
+        if hint:
+            msg += f" If it is a login/token expiry, re-activate: {hint}."
+        msg += " Run `spendguard reliability --run --remediate` for the exact fix."
+        print(msg, file=_sysd.stderr)
+    except Exception:
+        pass
+
+
 def _lane_model_cooling(lane, model):
     return resource_state.cooling(resource_state.lane_model_key(lane, model))
 
@@ -1766,9 +1801,19 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             # CAPPED (_max_quota_cool_s), because an oscillating quota (agy) must be re-tested, not bypassed for
             # days. `transient` then tells _learn_from_fallback this was quota, so it learns NO size ceiling.
             _lane_cool(lane_name, seconds=min(float(_ra), _max_quota_cool_s()), reason="quota")
-        if no_metered_fallback:                        # caller opted out of ALL metered spend (--refuse-billed): a lane
+        if no_metered_fallback and _lane_reason != "lane_error":
+            # $0-ONLY caller (--refuse-billed): it opted out of paying metered to RETRY A TASK the free lane found
+            # UNSUITABLE (empty / off-shape / too big / a transient quota it will reset from) — that stays a $0 miss,
+            # never a surprise charge. But a LANE_ERROR is the executor reporting the lane could NOT serve AT ALL
+            # (login/token expired, CLI crash, rejected model) — infrastructure DOWN, not an unsuitable task. Losing
+            # work to it is the silent-empty the user hit, so a down lane still applies the ladder below (reroute to
+            # another $0 lane first, then metered) — a result is never lost. This is the STRUCTURAL split (which branch
+            # set _lane_reason), never a parse of the error prose (which the agentic remediation owns). Decided with Ash
+            # 2026-09-26: "a down lane still fails over."
             return {**base, "text": None, "cost": None, "executor": lane_name, "reason": _lane_reason,   # MISS is an
                     "error": f"refused: would bill metered API ({s.get('error')})"}   # error row, NOT a paid retry — $0
+        if _lane_reason == "lane_error":                 # the lane could not serve → tell the user ONCE (never a silent
+            _surface_lane_down(lane_name, s.get("error"))  # empty); the ladder below reroutes + cools via _learn_from_fallback
         # LANE FAILED. REACTIVE FAILOVER (Part 2) FIRST: before paying the metered API, try a CONFIRMED substitute
         # PLAN for this intent — one hop, guarded against recursion. Routed through call() so the substitute resolves
         # its OWN budget and rides its OWN lane; if it answers, the primary lane is cooled (it failed) and the

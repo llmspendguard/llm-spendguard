@@ -258,6 +258,21 @@ def remediate(sweep_result, model=None):
             for kind, name, reason in down]
 
 
+def lane_login_hint(lane):
+    """The exact re-login / activation step for a lane, authored ONCE in lane_registry (a LOOKUP of authored data,
+    not a judgement about an error). '' if unknown. Used to surface the fix inline when a lane could not serve — the
+    full auth-vs-other diagnosis remains the AGENTIC _classify_remediation on the health path."""
+    try:
+        from . import lane_registry
+        spec = lane_registry.lane_spec(lane)
+        login = spec.get("login") if spec else None
+        if isinstance(login, (tuple, list)):
+            login = " ".join(str(x) for x in login)
+        return str(login or "")
+    except Exception:
+        return ""
+
+
 _EVENT_NOTIFY_THROTTLE_S = 1800          # per-lane: notify on a mid-use failure at most once per 30 min (no spam)
 
 
