@@ -789,6 +789,16 @@ def sync(if_due=False, since=None):
         out["lane_value"] = _lane_value.sync()
     except Exception as e:
         out["lane_value"] = {"skipped": f"lane_value sync: {str(e)[:80]}"}
+    try:                                                  # per (project·intent·model) EFFICIENCY SIGNAL — cost + quality
+        from . import signal as _signal                   # ($/good-result) + waste + tokens → /v1/signal → the server's
+        out["signal"] = _signal.push_signal()             # "by intent" P&L (the WHAT-KIND axis). Was only reachable via
+        #                                                   the separate `spendguard signal push`; now it rides the sync
+        #                                                   so intent-level cost+quality flows on the normal cadence.
+    except Exception as e:
+        from . import gate as _g
+        if _g.is_deliberate_stop(e):
+            raise                                         # a spend refusal / deadline HALTS the sync — never downgraded
+        out["signal"] = {"skipped": f"signal push: {str(e)[:80]}"}
     try:                                                  # AUTO-FRESH living insights vs the CURRENT corpus every
         from . import validate as _validate               # sync (cheap, deterministic, NO LLM) — re-checks each
         out["validated"] = _validate.validate(verbose=False)   # learning: corroborate / contradict / decay-if-stale,
