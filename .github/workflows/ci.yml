@@ -16,7 +16,7 @@ jobs:
       # so the real-BPE token tests run offline instead of a crude fallback (which 1-token-diverges the estimators).
       TIKTOKEN_CACHE_DIR: ${{ github.workspace }}/.tiktoken-cache
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}

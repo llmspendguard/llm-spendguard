@@ -17,7 +17,7 @@ jobs:
       # crude chars/token fallback that would 1-token-diverge the two estimators (measured: 257 vs 256).
       TIKTOKEN_CACHE_DIR: ${{ github.workspace }}/.tiktoken-cache
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -40,7 +40,7 @@ jobs:
       id-token: write          # OIDC token for trusted publishing
       contents: write          # create the GitHub Release
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
