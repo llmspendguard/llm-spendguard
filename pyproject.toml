@@ -34,7 +34,8 @@ otel = ["opentelemetry-sdk"]
 chat = ["cryptography>=3"]   # in-process AES for the claude.ai cookie decrypt (keeps the key out of argv)
 deid = ["presidio-analyzer>=2.2", "presidio-anonymizer>=2.2"]   # opt-in NER de-id; the regex floor needs no deps
 all = ["openai>=1.0", "tiktoken", "anthropic>=0.40", "opentelemetry-sdk", "cryptography>=3"]   # excl. deid (heavy spaCy)
-dev = ["pytest>=7", "pytest-xdist>=3", "build", "twine", "ruff>=0.6", "coverage[toml]>=7", "hypothesis>=6"]
+dev = ["pytest>=7", "pytest-xdist>=3", "build", "twine", "ruff>=0.6", "coverage[toml]>=7", "hypothesis>=6",
+       "httpx"]   # test_http_capture_toolfees uses httpx.MockTransport for offline raw-HTTP capture tests
 
 [project.scripts]
 spendguard = "spendguard.cli:main"

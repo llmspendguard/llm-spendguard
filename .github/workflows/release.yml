@@ -10,6 +10,12 @@ on:
 jobs:
   test:                          # GATE — a version tag must NOT publish an unverified build (forensic tool: no red build ships)
     runs-on: ubuntu-latest
+    env:
+      # The offline suite (test_runner) strips keys + points a DEAD PROXY at any real call — so tiktoken cannot
+      # DOWNLOAD its o200k vocab on first use. Pin a cache dir the warm step below populates (with network) and the
+      # test subprocess inherits (test_runner copies os.environ), so the real-BPE token tests run offline, not a
+      # crude chars/token fallback that would 1-token-diverge the two estimators (measured: 257 vs 256).
+      TIKTOKEN_CACHE_DIR: ${{ github.workspace }}/.tiktoken-cache
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -17,6 +23,8 @@ jobs:
           python-version: '3.12'
       - name: Install (same extras as CI)
         run: python -m pip install -e ".[openai,anthropic,dev]"
+      - name: Warm the tiktoken o200k cache (the offline suite can't download it)
+        run: python -c "import tiktoken; tiktoken.get_encoding('o200k_base'); print('o200k cached')"
       - name: Lint
         run: ruff check src tests
       - name: Test suite (offline, no spend)

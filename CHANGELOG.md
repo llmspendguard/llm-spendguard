@@ -22,6 +22,12 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
   OpenAI strict `response_format`; every OpenAI-compatible vendor's `json_object`) instead of churning on the lane and
   falling back reactively. Lenient schemas still ride the $0 lanes. `adapters.schema_capability` /
   `output_contract.needs_enforcement`, `tests/test_capability_auto_route.py`.
+- **The team roll-up push now carries TOKENS and the per-intent efficiency signal** — the two dimensions the org
+  dashboard could use but wasn't receiving. `saas` roll-up rows now include `in_tokens`/`out_tokens`/
+  `cached_in_tokens` (COUNTS only, no content — feeds unit economics: $/token, cache-hit rate), and `spendguard saas
+  sync` now also pushes the per (project·intent·model) signal (cost + quality $/good-result + waste), so spend
+  "by intent" (the WHAT-KIND axis) flows on the normal cadence instead of only via a separate command.
+  `ledger.sum_by` gains a token `int_cols` sum; `tests/test_saas_payload.py`.
 
 ### Changed
 - **A DOWN lane always fails over — even under `--refuse-billed` / `no_metered_fallback`.** A lane whose executor
