@@ -426,6 +426,33 @@ def json_schema_request(kind, schema, name="result"):
                               "no code fence, no explanation.\n" + json.dumps(_provider_schema(schema))}
 
 
+# THE provider → JSON-schema DIALECT, in ONE place. json_schema_request TAKES the dialect; this DECIDES it from the
+# provider, so the realtime call sites (anthropic @ _call_once and the openai/compat one) and the capability router
+# below can never disagree about which vendor enforces a shape. anthropic = forced tool, openai = strict
+# response_format (both ENFORCE the shape); every other OpenAI-compatible vendor (zai/moonshot/deepseek/gemini) =
+# json_object (parseable JSON only — the shape is validated locally by output_contract, not enforced by the vendor).
+def _schema_kind(provider):
+    if provider == "anthropic":
+        return "anthropic"
+    if provider == "openai":
+        return "openai"
+    return "compat"
+
+
+SCHEMA_STRICT = "strict"              # the vendor ENFORCES the shape (anthropic forced-tool / openai strict)
+SCHEMA_JSON_OBJECT = "json_object"    # JSON is guaranteed, the SHAPE is not — output_contract validates it
+
+
+def schema_capability(provider):
+    """How strongly `provider`'s METERED path can hold output to a JSON schema: SCHEMA_STRICT (anthropic/openai — the
+    vendor enforces the exact shape) or SCHEMA_JSON_OBJECT (every other OpenAI-compatible vendor — JSON guaranteed, the
+    shape is not). Derived from _schema_kind so it cannot disagree with the request json_schema_request actually builds.
+    A LANE is prompt-only regardless (a CLI completion carries no response_format/tool param), so a lane NEVER has
+    strict capability even for a strict-capable vendor — which is exactly why a strict schema on a prompt-only lane
+    must route to that vendor's metered path (the capability-aware auto-route)."""
+    return SCHEMA_STRICT if _schema_kind(provider) in ("anthropic", "openai") else SCHEMA_JSON_OBJECT
+
+
 def _provider_schema(schema):
     """Our contract, stripped to what a provider can actually parse. `nonempty` is a spendguard concept and
     stays local — it is checked against the RESPONSE, never sent as if it were JSON Schema."""
@@ -1689,6 +1716,25 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
     if _lane and (_lane_too_big(_lane[0], prompt) or _lane_model_cooling(_lane[0], raw)):
         _lane = None                                 # prompt too big for this lane, OR this MODEL was rejected here
         #                                              recently (the API served it) → straight to API, don't re-intercept
+    # CAPABILITY-AWARE AUTO-ROUTE (#1): a STRICT schema — one that DECLARES required/nonempty — cannot be reliably
+    # produced by a prompt-only LANE. A lane is a print-mode CLI with NO response_format/forced-tool param, so the shape
+    # only rides the prompt and the CLI wraps its JSON in prose → output_contract rejects it → the call churns to the
+    # metered API REACTIVELY (the honestreview panel's measured backoffs). The vendor's METERED path is strictly more
+    # capable for shape than its CLI lane — anthropic forced-tool / openai strict ENFORCE it; every compat vendor's
+    # metered API runs response_format=json_object, which GUARANTEES parseable JSON (the CLI cannot) with the schema in
+    # the prompt + local validate. So for a strict schema on a lane, skip the lane and use the vendor's meter: the
+    # vendor is preserved, only lane→meter changes, and churn is removed by construction (Ash 2026-09-26: "lane cannot
+    # satisfy but a meter can → straight to meter" — and the json_object meter CAN where the prose-wrapping CLI cannot).
+    # A LENIENT schema (no required/nonempty) STAYS on the lane (a lane CAN satisfy it, with the lane-down failover as
+    # the net) — so bulk $0 comprehension is untouched; only strict-schema calls pay the meter. Deterministic (no
+    # cost/quality judgement), so a once-per-vendor notice makes it auditable without a per-call ledger row.
+    if _lane and schema is not None:
+        from . import output_contract as _oc_cap
+        if _oc_cap.needs_enforcement(schema):
+            _cap = "strict" if schema_capability(prov) == SCHEMA_STRICT else "json_object"
+            config.warn_once(f"[spendguard] strict schema on {prov}: routing lane→metered {_cap} path (a prompt-only "
+                             f"CLI lane cannot reliably return required/nonempty JSON) — #1 capability-aware auto-route")
+            _lane = None                             # → the vendor's metered path below (strict, or json_object for compat)
     if _lane is None and prov == "gemini":           # METERED namespace: effort is a PARAMETER, not an id suffix.
         _bare, _tier = metered_fallback_id(prov, raw)  # an agy id (…-medium) 404s on the metered API — the ONE
         if _tier:                                    # equivalence fn splits it so the bare id rides the request and
@@ -2053,7 +2099,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             okw = {"model": raw, "messages": msgs}
             if schema is not None:
                 try:
-                    sk = json_schema_request("openai" if prov == "openai" else "compat", schema)
+                    sk = json_schema_request(_schema_kind(prov), schema)   # SSOT: openai→strict, other compat→json_object
                 except SchemaNotStrictExpressible as _se:   # a map schema strict mode would empty to {} → refuse LOUD
                     return {**base, "error": str(_se), "error_type": "SchemaNotStrictExpressible", "cost": None}
                 # `_schema_prompt` is OURS, not the provider's — it carries the shape that json_object mode

@@ -196,6 +196,26 @@ def _check_schema(obj, schema, path="$"):
             _check_schema(v, schema["items"], f"{path}[{i}]")
 
 
+def needs_enforcement(contract):
+    """True iff `contract` DECLARES a constraint a prompt-only path cannot GUARANTEE — a `required` list or a `nonempty`
+    marker, anywhere in the tree (recursing through `properties` and `items`). This reads the contract's OWN declared
+    constraints (a structural fact of the dict the caller wrote), never interprets meaning: a caller who wrote
+    `required`/`nonempty` is asking for the shape to be ENFORCED, not merely requested, so such a call belongs on a
+    schema-enforcing path (see adapters.schema_capability). A plain-JSON contract ('json'), a bare key list, a callable
+    verifier, or a schema with neither marker is LENIENT — a lane's prompt+validate can serve it — so this returns
+    False and routing is unchanged. The capability-aware auto-route reads this to decide lane-vs-enforce."""
+    if not isinstance(contract, dict):
+        return False                                   # 'json' / key-list / callable → lenient, prompt+validate is fine
+    if contract.get("required") or contract.get("nonempty"):
+        return True
+    for sub in (contract.get("properties") or {}).values():
+        if needs_enforcement(sub):
+            return True
+    if isinstance(contract.get("items"), dict) and needs_enforcement(contract["items"]):
+        return True
+    return False
+
+
 def check_item(item, contract):
     """(ok, salvaged, reason) for ONE item. Never raises — a contract that explodes on real data is itself the
     finding, and losing it inside a traceback would defeat the purpose."""
