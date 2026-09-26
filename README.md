@@ -15,9 +15,10 @@ Then, when you want the guard rails:
 ```bash
 spendguard run -- python your_job.py   # gate ONE command: cost estimate before submit + hard caps
 spendguard reconcile all               # your ledger vs the provider's actual bill, with the gap NAMED
+spendguard submit-jobs jobs.jsonl      # hand it a WHOLE job set + a goal; it plans the cheapest route and runs it
 ```
 
-Four things it does that the observability and gateway tools don't:
+Five things it does that the observability and gateway tools don't:
 
 1. **Estimates a batch before you submit it** — not after the tokens are billed.
 2. **Refuses to price a model it doesn't know**, loudly, instead of logging $0. (Elsewhere a $0 price can also
@@ -26,6 +27,11 @@ Four things it does that the observability and gateway tools don't:
    see **[ACCURACY.md](ACCURACY.md)**.
 4. **Learns the cheaper config and proves it's safe** before adopting it (measure → test for output equivalence →
    adopt only if quality holds → apply → remember what failed).
+5. **Plans a whole job set for you** — the simplest contract there is: hand it the jobs and a goal (a budget, how
+   urgent), and it picks the cheapest route *per call* — the Batch API, a subscription lane you already pay for, or
+   the metered API — capability-matched to each call's structured-output needs, runs it, and returns. It estimates
+   the whole set first and refuses before spending a cent over your budget. You never hand-tune which path each call
+   takes; that's spendguard's job. See **[the whole-job contract](docs/WHOLE-JOB.md)**.
 
 Zero required dependencies. Fail-open by design: a cost tool must never be the reason your job doesn't run.
 Learn more at https://llmspendguard.com · **[Docs & quickstart →](https://docs.llmspendguard.com/)**

@@ -9,4 +9,4 @@ Do NOT reintroduce a literal in pyproject, nor a metadata read (`importlib.metad
 returns the INSTALL-TIME (frozen) version, which under an editable install lags the source — it reported 0.7.2 while
 0.10.0 code was running (warden 2026-09-25, the "packaging version lie"). Reading this file live removes that lie.
 """
-__version__ = "0.10.0"
+__version__ = "0.11.0"

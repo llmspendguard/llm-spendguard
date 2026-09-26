@@ -35,6 +35,7 @@ extra_css:
 
 nav:
   - Home: index.md
+  - The whole-job contract: WHOLE-JOB.md
   - CLI reference: CLI.md
   - Configuration & subsystems: REFERENCE.md
   - Solution spec: SOLUTION-SPEC.md

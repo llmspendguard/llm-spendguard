@@ -4,7 +4,40 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-09-26
+
+### Added
+- **The whole-job contract — hand spendguard a SET of calls + a GOAL; it plans, budget-gates, runs, and returns.**
+  New `whole_job.run_jobs(jobs, goal)` / `plan_jobs` / `collect_jobs`, the CLI `spendguard submit-jobs`
+  (PLAN + estimate by default, $0; `--execute` runs it and REQUIRES `--budget`; `--collect` settles async batch
+  handles), and the spend-safe `spendguard_run_jobs` MCP tool (no budget → plan-only, never an unbounded fan). It
+  groups by intent, picks batch-vs-lane-vs-metered per group at TRUE marginal cost, capability-matches each call's
+  schema to a path that can deliver the shape, enforces the budget **estimate-first + fail-closed** (an over-estimate
+  OR an unpriceable group under a budget is refused, with a structured `refused_code`), and never loses paid work
+  (durable batch handles, tracked persist/submit failures). The recommended way to run any cost-sensitive batch.
+  `docs/WHOLE-JOB.md`, `tests/test_whole_job.py`.
+- **Capability-aware auto-route — a strict schema goes to a path that can ENFORCE it, automatically.** A schema that
+  declares `required`/`nonempty` cannot be guaranteed by a prompt-only subscription lane (a CLI can only ask, and
+  wraps its JSON in prose); spendguard now routes such a call to the vendor's metered path (Anthropic forced-tool /
+  OpenAI strict `response_format`; every OpenAI-compatible vendor's `json_object`) instead of churning on the lane and
+  falling back reactively. Lenient schemas still ride the $0 lanes. `adapters.schema_capability` /
+  `output_contract.needs_enforcement`, `tests/test_capability_auto_route.py`.
+
+### Changed
+- **A DOWN lane always fails over — even under `--refuse-billed` / `no_metered_fallback`.** A lane whose executor
+  errored (login/token expired, CLI crash, rejected model) is INFRASTRUCTURE failure, not a task the free lane found
+  too hard — so it now applies the ladder (reroute to another $0 lane, then the metered twin) and surfaces the exact
+  re-login step, rather than silently returning an empty. `no_metered_fallback` still suppresses metered for a genuine
+  TASK miss (empty/off-shape); `budget_usd` remains the hard $0 cap for a caller that must never bill. Closes the
+  "a logged-out lane silently dropped work" gap. `tests/test_lane_down_overrides_refuse_billed.py`.
+
 ### Fixed
+- **Ledger reconcile — real metered spend the gate recorded but never wrote to the money ledger is now booked.**
+  `reconcile_calls` fills the money-of-record from local `calls` telemetry for RECORDING_GAP cells, sized against what
+  `spent_dec` already counts (so an `estimate` row already standing in for the spend is never double-counted), booked
+  as `billed`, reversible (`source='reconcile-calls'`), idempotent. Impossible per-call output-token counts are
+  flagged `suspect` and excluded rather than trusted. `decisions.why` records the specific routing reason for
+  post-hoc analysis. `scripts/diag/reconcile_divergence_diagnose.py`, `src/spendguard/reconcile_calls.py`.
 - **`adapters.call(governed=…)` was reject-flagged BEFORE it was popped — the documented governor kwarg was
   unreachable.** The ensure-success unknown-kwarg reject loop ran before the `aliases.pop("governed")` at the
   dispatch-governor step, so `call(..., governed=True)` (the concurrent-fan path) AND every `call(..., governed=False)`

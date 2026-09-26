@@ -27,6 +27,16 @@ spendguard saas [status|ping|link|push|pull|sync|reconcile|audit|crosscheck|comm
 #   reconcile / audit / crosscheck — reconcile local ledger to provider truth, completeness audit, local↔server row diff (all free)
 #   commands — drain + run server-enqueued work (reconcile / re-tag).  Opt-in; private until you enable it.
 
+# run a WHOLE job set (the whole-job contract — hand it the set + a goal, it plans & runs) — see docs/WHOLE-JOB.md
+spendguard submit-jobs <jobs.jsonl>                 # PLAN + estimate only ($0): the per-intent method + cost, no spend
+spendguard submit-jobs <jobs.jsonl> --execute --budget 5.00 [--urgency auto|realtime|batch] [--quality]
+#   --execute REQUIRES --budget (the estimate-first cap: refuses before spending over it, or if a group can't be priced)
+#   --urgency auto (true-$ planner picks batch vs now) | realtime (sync) | batch (~half-price Batch API where eligible)
+#   --quality — run each intent at best-value (cheapest model whose measured quality holds)
+spendguard submit-jobs --collect <run….pending.jsonl>   # settle a prior run's async Batch-API handles (durable)
+#   jobs.jsonl = one job/line: {prompt, intent[, id, system, schema]}. A STRICT schema auto-routes to a path that
+#   can enforce it. Also the spendguard_run_jobs MCP tool (spend-safe: no budget → plan-only).
+
 # see the money
 spendguard receipt [--json|--line]                    # running today/7d/month tally; auto-emitted after every flow
 spendguard report [--alert-threshold 150] [--email]   # daily/weekly/monthly + ledger-leak alert + top learnings
