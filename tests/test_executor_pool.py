@@ -5,6 +5,9 @@ that lane (advisor.pool_cooldown_s) so bursts go straight to the API; single-lan
 touch their own provider. Offline: both lane modules stubbed, no CLI, no network.
 """
 import os, sys, tempfile
+os.environ.setdefault("OPENAI_API_KEY", "sk-test-offline")          # offline: key RESOLUTION must succeed (lanes + the
+os.environ.setdefault("ANTHROPIC_API_KEY", "sk-ant-test-offline")   #   metered fallback are stubbed; test_runner's dead
+#   proxy fails any real call in ms) — a fake key never bills (its "a test that needs a key sets its own fake one" rule)
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-pool-")

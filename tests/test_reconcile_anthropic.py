@@ -3,6 +3,8 @@ and cost_by_day() per-day aggregation from a SEEDED cache. NO network: _get/list
 refresh_cache are never hit (refresh_cache is monkeypatched to a no-op; _key reads env).
 """
 import os, sys, json, tempfile
+os.environ.setdefault("ANTHROPIC_API_KEY", "sk-ant-test-offline")   # offline: key RESOLUTION must succeed; network is
+#   stubbed here and test_runner's dead proxy fails any real call in ms — a fake key never bills (its own-fake convention)
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-test-")

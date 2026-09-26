@@ -20,6 +20,9 @@ Invariants pinned here:
 """
 import os, sys, tempfile, json, struct, base64, io, contextlib, inspect
 
+os.environ.setdefault("OPENAI_API_KEY", "sk-test-offline")          # offline: key RESOLUTION must succeed; the network is
+os.environ.setdefault("ANTHROPIC_API_KEY", "sk-ant-test-offline")   #   never hit here + test_runner's dead proxy fails any
+#   real call in ms, so a fake key never bills (test_runner's "a test that needs a key sets its own fake one" convention)
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-ctok-")

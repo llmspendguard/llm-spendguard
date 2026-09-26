@@ -12,6 +12,9 @@ glm forecasts were biased. Pins:
 Offline: the factor CHOICE is monkeypatched — no API calls, no spend."""
 import os, sys, tempfile, json
 
+os.environ.setdefault("OPENAI_API_KEY", "sk-test-offline")          # offline: key RESOLUTION must succeed; the factor
+os.environ.setdefault("ANTHROPIC_API_KEY", "sk-ant-test-offline")   #   choice is monkeypatched + test_runner's dead proxy
+#   fails any real call in ms — a fake key never bills (its "a test that needs a key sets its own fake one" convention)
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-ptok-")

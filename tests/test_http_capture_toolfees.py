@@ -9,6 +9,9 @@ import os
 import sys
 import tempfile
 
+os.environ.setdefault("OPENAI_API_KEY", "sk-test-offline")          # offline: key RESOLUTION must succeed; the HTTP layer
+os.environ.setdefault("ANTHROPIC_API_KEY", "sk-ant-test-offline")   #   is a MockTransport + test_runner's dead proxy fails
+#   any real call in ms — a fake key never bills (its "a test that needs a key sets its own fake one" convention)
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-http-")
