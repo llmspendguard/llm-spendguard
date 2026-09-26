@@ -6,14 +6,17 @@ The Warden #1 symptom: a metered intent's actuals appear in `calls` but the mone
 NOT one thing, and copying `calls`->`spend_events` blindly would corrupt attribution. This classifies each (intent,
 model, day) cell by CAUSE so the right fix is obvious per cell:
 
-  • RECORDING_GAP   — real SUCCESSES (cost>0, finish=stop, output present) in `calls` with NO spend_events row at all.
-                      The money ledger genuinely missed billed spend (likely a non-gated / http-capture-off context).
-  • PAID_NO_OUTPUT  — cost>0 but NO output / finish in (None, length): paid for an ERROR or an empty-reasoning reply.
-                      These are the "error in prompt or other" cells — surfaced so a prompt/again-billed bug is caught,
-                      NOT silently reconciled as if they were good output.
-  • UNRECONCILED_ESTIMATE — a spend_events cost_basis='estimate' row that never trued-down to a billed actual.
+  • RECORDING_GAP   — calls billed $ EXCEEDS what spent_dec represents for the cell (realtime+batch over EVERY basis
+                      incl estimate, meta/reconciled/void excluded). The money ledger genuinely under-reports (a
+                      non-gated / http-capture-off context). This — and ONLY this — is the reconcile target ($ = the
+                      true residual). Sizing the gap vs non-estimate rows instead would DOUBLE-COUNT estimated spend.
+  • UNRECONCILED_ESTIMATE — the spend IS represented, but ONLY by a cost_basis='estimate' projection that never
+                      trued-down to the billed actual. NOT an under-report ($0 here) — a quality gap; reconciling it
+                      would double-count the estimate. Surfaced so a stuck true-down is visible.
+  • ERRORS_ONLY     — only un-billed attempts (errors/refusals, cost 0/NULL) — the "error in prompt or other" cells,
+                      surfaced so a prompt/again-billed bug is caught; no $ to reconcile.
   • SUSPECT_EXCLUDED — `calls` rows flagged suspect (impossible per-call out_tok) are excluded from every number here.
-  • OK              — calls success $ ~matches spend_events billed $ (no material gap).
+  • OK              — calls success $ ~matches what spent_dec represents (no material gap).
 
 Usage:
   ./.venv.nosync/bin/python scripts/diag/reconcile_divergence_diagnose.py [--intent <intent-substr>] [--min-usd 0.01]
@@ -62,27 +65,41 @@ def diagnose(intent_like=None, min_usd=0.01):
     tally = {"RECORDING_GAP": [0.0, 0], "ERRORS_ONLY": [0.0, 0], "OK": [0.0, 0], "UNRECONCILED_ESTIMATE": [0.0, 0]}
     findings = []
     for r in calls_rows:
-        se = cur.execute("""SELECT SUM(CASE WHEN cost_basis='estimate' THEN realtime_usd ELSE 0 END) est,
-                            SUM(CASE WHEN cost_basis!='estimate' OR cost_basis IS NULL THEN realtime_usd ELSE 0 END) billed
-                            FROM spend_events WHERE intent=? AND model=? AND day=?""",
+        # `represented` is what spent_dec ACTUALLY sees for the cell — it MIRRORS SpendLedger._COUNTABLE: realtime+batch
+        # over billed AND estimate (spent_dec counts estimates) and any prior billed fill, but EXCLUDING meta /
+        # reconciled / void / reversed AND cost_basis='reconstructed' (plan-covered Claude Code usage — a different kind
+        # of spend, kept out of the real-$ headline). Comparing calls against `est_only`/`billed_actual` alone
+        # MISCLASSIFIES: an estimate that stands in for the spend is NOT an under-report, and calling it a RECORDING_GAP
+        # would double-count if reconciled. `billed_actual` is tracked only to name the estimate-not-trued-down case.
+        se = cur.execute("""SELECT
+              COALESCE(SUM(CASE WHEN COALESCE(is_meta,0)=0 AND COALESCE(reconciled,0)=0
+                    AND COALESCE(status,'') NOT IN ('void','reversed') AND COALESCE(cost_basis,'') != 'reconstructed'
+                    THEN COALESCE(realtime_usd,0)+COALESCE(batch_usd,0) ELSE 0 END),0) represented,
+              COALESCE(SUM(CASE WHEN cost_basis='estimate' THEN COALESCE(realtime_usd,0)+COALESCE(batch_usd,0) ELSE 0 END),0) est,
+              COALESCE(SUM(CASE WHEN COALESCE(cost_basis,'') NOT IN ('estimate','reconstructed')
+                    AND COALESCE(is_meta,0)=0 AND COALESCE(reconciled,0)=0
+                    THEN COALESCE(realtime_usd,0)+COALESCE(batch_usd,0) ELSE 0 END),0) billed_actual
+              FROM spend_events WHERE intent=? AND model=? AND day=?""",
                          (r["intent"], r["model"], r["day"])).fetchone()
-        se_billed = float(se["billed"] or 0.0)
+        represented = float(se["represented"] or 0.0)
         se_est = float(se["est"] or 0.0)
+        billed_actual = float(se["billed_actual"] or 0.0)
         billed = float(r["billed_usd"] or 0.0)
-        gap = billed - se_billed
+        gap = billed - represented                                     # TRUE under-report of spent_dec (incl estimate)
         if billed < min_usd and int(r["err_n"] or 0) > 0:
             cause = "ERRORS_ONLY"                                       # only un-billed attempts (errors/refusals) — no $ to reconcile
-        elif billed >= min_usd and se_est > 0 and se_billed <= 0.0:
-            cause = "UNRECONCILED_ESTIMATE"                            # an estimate projection that never trued-down to billed
         elif gap >= min_usd:
-            cause = "RECORDING_GAP"                                    # ANY material $ gap (absolute floor only — no hidden
-            #                                                            relative cutoff that could hide a real gap on a big cell)
+            cause = "RECORDING_GAP"                                    # spent_dec genuinely under-reports — the reconcile
+            #                                                            target (absolute floor only, no hidden relative cutoff)
+        elif se_est >= min_usd and billed_actual < min_usd:
+            cause = "UNRECONCILED_ESTIMATE"                            # COVERED by an estimate projection that never trued-down
+            #                                                            to the billed actual: NOT an under-report ($0), a quality gap
         else:
             cause = "OK"
-        tally[cause][0] += max(gap, 0.0) if cause != "ERRORS_ONLY" else 0.0
+        tally[cause][0] += max(gap, 0.0) if cause == "RECORDING_GAP" else 0.0
         tally[cause][1] += 1
         if cause in ("RECORDING_GAP", "UNRECONCILED_ESTIMATE"):
-            findings.append((cause, r["intent"], r["model"], r["day"], billed, se_billed, se_est,
+            findings.append((cause, r["intent"], r["model"], r["day"], billed, represented, se_est,
                              int(r["err_n"] or 0), int(r["trunc_n"] or 0), int(r["suspect_n"] or 0)))
     con.close()
     return tally, findings
@@ -98,13 +115,13 @@ def main(argv=None):
     print("CAUSE tally (calls-vs-spend_events divergence; $ = under-reported success $ where applicable):")
     for cause, (usd, n) in sorted(tally.items(), key=lambda kv: -kv[1][0]):
         print(f"  {cause:<22} cells={n:<5} ${usd:.2f}")
-    print(f"\nTop {a.limit} cells needing attention (cause · intent · model · day · calls_billed$ · ledger_billed$ · "
+    print(f"\nTop {a.limit} cells needing attention (cause · intent · model · day · calls_billed$ · represented$ · "
           f"est$ · err_n · trunc_n · suspect_n):")
     findings.sort(key=lambda f: -(f[4] - f[5]))
     for f in findings[:a.limit]:
-        cause, intent, model, day, billed, se_billed, se_est, err_n, trunc_n, susp = f
+        cause, intent, model, day, billed, represented, se_est, err_n, trunc_n, susp = f
         print(f"  {cause:<22} {(intent or '')[:26]:<26} {(model or '')[:16]:<16} {day} "
-              f"calls_billed=${billed:.3f} ledger_billed=${se_billed:.3f} est=${se_est:.3f} "
+              f"calls_billed=${billed:.3f} represented=${represented:.3f} est=${se_est:.3f} "
               f"err={err_n} trunc={trunc_n} suspect={susp}")
 
 
