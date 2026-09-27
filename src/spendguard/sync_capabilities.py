@@ -32,19 +32,30 @@ _CAP_FIELDS = {
 
 
 def _litellm_record(model_id, metered_id):
-    """LiteLLM's per-model dict for a catalog model — try its id then its metered_id — or None when LiteLLM (the
-    installed package's `model_cost` dataset) does not cover it. Never raises."""
-    try:
-        import litellm
+    """LiteLLM's per-model {supports_*, mode, max_input_tokens, max_output_tokens} for a catalog model — try its id
+    then its metered_id. Prefers the DAILY-REFRESHED cache (sync.CACHE: the `capabilities` + `context` sections from
+    the latest github fetch, merged into one record — the freshest source), and falls back to the INSTALLED
+    litellm.model_cost (fresh only on a pip upgrade). None when neither covers it. Never raises."""
+    cands = [x for x in (model_id, metered_id) if x]
+    try:                                               # 1) the daily-github cache — merge capabilities + limits
+        import json
+        from . import sync as _sync
+        with open(_sync.CACHE) as fh:
+            cache = json.load(fh) or {}
+        caps, ctx = cache.get("capabilities") or {}, cache.get("context") or {}
+        for c in cands:
+            if isinstance(caps.get(c), dict) or isinstance(ctx.get(c), dict):
+                return {**(ctx.get(c) or {}), **(caps.get(c) or {})}
     except Exception:
-        return None
-    for cand in [x for x in (model_id, metered_id) if x]:
-        try:
-            rec = litellm.model_cost.get(cand)
-        except Exception:
-            rec = None
-        if isinstance(rec, dict):
-            return rec
+        pass
+    try:                                               # 2) fallback: the installed litellm package (caps+limits in one record)
+        import litellm
+        for c in cands:
+            rec = litellm.model_cost.get(c)
+            if isinstance(rec, dict):
+                return rec
+    except Exception:
+        pass
     return None
 
 
@@ -88,6 +99,39 @@ def _updates_for(models):
     return updates, summary
 
 
+def audit_catalog_completeness():
+    """COMPLETENESS report — is the catalog a full, current picture vs LiteLLM's daily-fresh list? Read-only, $0.
+    Returns {catalog_n, covered, uncovered:[our models LiteLLM has no record for], no_vision:[our models with no
+    vision verdict], discover:{provider:[LiteLLM ids of a provider we ALSO use that are NOT in our catalog]}}. The
+    `discover` map surfaces newer models to consider adding (e.g. a provider shipped a successor) — matched by EXACT
+    LiteLLM provider string against the providers our catalog already carries (an honest subset: a provider whose
+    LiteLLM name differs from ours simply won't match, never a wrong guess)."""
+    import json
+    models = model_catalog.all_records()
+    our_ids = set(models)
+    our_provs = {m for r in models.values() if (m := r.get("provider"))}
+    covered, uncovered, no_vision = [], [], []
+    for mid, rec in models.items():
+        (covered if _litellm_record(mid, rec.get("metered_id")) else uncovered).append(mid)
+        if not isinstance(rec.get("vision"), bool):
+            no_vision.append(mid)
+    discover = {}
+    try:
+        from . import sync as _sync
+        with open(_sync.CACHE) as fh:
+            cache = json.load(fh) or {}
+        ll_provs = cache.get("providers") or {}                # {litellm_id: provider}
+        # a catalog id set that also covers metered_id spellings, so a match on either is not miscounted as "new"
+        known = our_ids | {r.get("metered_id") for r in models.values() if r.get("metered_id")}
+        for llid, prov in ll_provs.items():
+            if prov in our_provs and llid not in known:
+                discover.setdefault(prov, []).append(llid)
+    except Exception:
+        pass
+    return {"catalog_n": len(our_ids), "covered": len(covered), "uncovered": sorted(uncovered),
+            "no_vision": sorted(no_vision), "discover": {p: sorted(v) for p, v in discover.items()}}
+
+
 def sync_capabilities(dry_run=False):
     """Sync LiteLLM capabilities + upper bounds into model_catalog.json for every model LiteLLM covers. Returns the
     summary dict. dry_run computes the summary and writes NOTHING. The write is atomic + backed up (config.update_json)."""
@@ -114,7 +158,22 @@ def cmd(argv=None):
     (report coverage, write nothing). Returns 0. Prints a one-line summary. LiteLLM-sourced, $0, no LLM."""
     a = argparse.ArgumentParser(prog="spendguard sync-capabilities")
     a.add_argument("--dry-run", action="store_true", help="report what would change; write nothing")
+    a.add_argument("--audit", action="store_true",
+                   help="report catalog COMPLETENESS vs LiteLLM (coverage + uncovered + models to consider adding); write nothing")
     args = a.parse_args(sys.argv[1:] if argv is None else argv)
+    if args.audit:
+        r = audit_catalog_completeness()
+        print(f"catalog completeness: {r['covered']}/{r['catalog_n']} models have LiteLLM capability data · "
+              f"{len(r['uncovered'])} uncovered · {len(r['no_vision'])} with no vision verdict")
+        if r["uncovered"]:
+            print(f"  uncovered (LiteLLM has no record — custom / too new; the vision guard stays conservative): {r['uncovered']}")
+        disc = r["discover"]
+        if disc:
+            total = sum(len(v) for v in disc.values())
+            print(f"  {total} LiteLLM model(s) of providers you already use are NOT in the catalog — consider adding:")
+            for prov, ids in sorted(disc.items()):
+                print(f"    {prov}: {', '.join(ids[:12])}{'  …(+%d)' % (len(ids) - 12) if len(ids) > 12 else ''}")
+        return 0
     s = sync_capabilities(dry_run=args.dry_run)
     tag = "[DRY-RUN] " if s.get("dry_run") else ""
     print(f"sync-capabilities {tag}: LiteLLM covers {s['covered']}/{s['covered'] + s['uncovered']} catalog models · "

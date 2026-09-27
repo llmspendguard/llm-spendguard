@@ -27,6 +27,32 @@ BATCH_FRACTION_BY_PROVIDER = {"moonshot": 0.6}
 # Physical limits, not prices — used by the estimate plausibility rail.
 _CONTEXT_FIELDS = ("max_input_tokens", "max_output_tokens")
 
+# Per-model CAPABILITY flags (does it accept images / enforce a response schema / …) — a VERIFIABLE FACT that rides
+# the SAME daily github fetch as prices/limits, so the capability data is daily-fresh (the installed litellm package
+# is fresh only on a pip upgrade). sync_capabilities reads this cached section (freshest) into the catalog. `mode`
+# (chat/embedding/…) rides along as useful profile data.
+_CAPABILITY_FIELDS = ("supports_vision", "supports_response_schema", "supports_function_calling",
+                      "supports_pdf_input", "supports_prompt_caching", "supports_parallel_function_calling",
+                      "supports_tool_choice", "mode")
+
+
+def _capabilities(raw):
+    """Extract the per-model capability profile from the FETCHED LiteLLM json → {model: {field: value}} for the
+    supports_* flags (bool) + mode (str) that are present. Mechanical field extraction (a fixed schema), never a
+    judgement. Keyed by the SAME LiteLLM model name as `models`/`context`, so a caller matches an id the same way."""
+    caps = {}
+    for name, e in raw.items():
+        if not isinstance(e, dict) or name.startswith("sample_"):
+            continue
+        c = {}
+        for k in _CAPABILITY_FIELDS:
+            v = e.get(k)
+            if isinstance(v, bool) or (k == "mode" and isinstance(v, str) and v):
+                c[k] = v
+        if c:
+            caps[name] = c
+    return caps
+
 _UNIT_COST_FIELDS = ("input_cost_per_second", "output_cost_per_second",
                      "input_cost_per_character", "output_cost_per_character",
                      "input_cost_per_image", "output_cost_per_image")
@@ -153,7 +179,7 @@ def sync():
         raise RuntimeError("LiteLLM data failed validation: " + "; ".join(msgs))
     out = {"_fetched": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
            "_source": LITELLM_URL, "models": models, "providers": provs, "unit_models": unit_models,
-           "context": context}
+           "context": context, "capabilities": _capabilities(raw)}   # capabilities ride the same daily fetch
     os.makedirs(os.path.dirname(CACHE), exist_ok=True)
     config.update_json(CACHE, lambda _d: out)
     if zero_rate:
