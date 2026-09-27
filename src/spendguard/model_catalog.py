@@ -154,16 +154,67 @@ def provider_of(model_id):
     return (rec or {}).get("provider") if rec else None
 
 
+def _litellm_breadth_cache():
+    """The synced LiteLLM breadth cache ({models, context, capabilities, …} at ~/.spendguard/litellm_prices.json) —
+    the documented BREADTH fallback (see module docstring) covering ~3500 models; {} when absent. Read FRESH on each
+    call (deliberately NO in-process memo: a cached verdict-source could serve a STALE capability after a sync, and a
+    ~2MB parse is ~5ms and only on the FALLBACK path — a curated record short-circuits before this, so the hot 54
+    never reach here). config is imported LAZILY so this leaf never load-imports config/pricing (no circular import)."""
+    try:
+        from . import config
+        with open(os.path.join(str(config.HOME), "litellm_prices.json")) as f:
+            return json.load(f) or {}
+    except Exception:
+        return {}
+
+
+def _cache_keys_for(model_id, rec):
+    """The LiteLLM-cache key candidates for a model — its id, bare id, and (bare) metered_id — deduped, order-preserved.
+    The cache is keyed by LiteLLM model names; a caller matches on any of these (mirrors how model_record resolves)."""
+    out, seen = [], set()
+    for k in (model_id, _bare(model_id), (rec or {}).get("metered_id"), _bare((rec or {}).get("metered_id") or "")):
+        if k and k not in seen:
+            seen.add(k)
+            out.append(k)
+    return out
+
+
 def vision_capable(model_id):
-    """Whether a model accepts IMAGE input — True/False from the record's curated `vision` bool, or None when the
-    model has no record or no `vision` field (UNKNOWN; never assumed either way). Per-model TRUTH authored in
-    model_catalog.json (seed_vision_capability.py), never inferred from the id string. A caller routing a vision
-    (images=) call treats anything that is NOT True as 'not known-capable' and keeps its own model — so a best-value
-    SWAP on a vision call is allowed ONLY to a model KNOWN to see images (adapters.call). The asymmetry is deliberate:
-    a wrong True would send an image to a blind model, a wrong None only keeps the caller's (already-vision) model."""
+    """Whether a model accepts IMAGE input — True/False/None (None = UNKNOWN, never assumed). Reads the curated
+    catalog `vision` bool FIRST (an override), then falls back to the synced LiteLLM cache's supports_vision — so ANY
+    model LiteLLM knows (~3500, not just the curated 54) resolves here, i.e. everything we use/might use. Per-model
+    TRUTH (sync_capabilities.py sources the catalog flags from LiteLLM; the cache IS LiteLLM), never inferred from the
+    id string. A caller routing a vision (images=) call treats NOT-True as 'not known-capable' and keeps its own model
+    — so a best-value SWAP on a vision call is allowed ONLY to a model KNOWN to see images (adapters.call). The
+    asymmetry is deliberate: a wrong True would send an image to a blind model; a wrong None only keeps the caller's
+    (already-vision) model."""
     rec = model_record(model_id)
     v = (rec or {}).get("vision") if rec else None
-    return v if isinstance(v, bool) else None
+    if isinstance(v, bool):
+        return v
+    caps = _litellm_breadth_cache().get("capabilities") or {}
+    for key in _cache_keys_for(model_id, rec):
+        c = caps.get(key)
+        if isinstance(c, dict) and isinstance(c.get("supports_vision"), bool):
+            return c["supports_vision"]
+    return None
+
+
+def model_capability(model_id, name):
+    """A named boolean capability for a model → True/False/None (unknown). `name` is the SHORT key ('response_schema',
+    'function_calling', 'pdf_input', 'prompt_caching', 'tool_choice'); for images use vision_capable(). Reads the
+    curated catalog `capabilities` block FIRST, then the LiteLLM cache breadth (where the field is `supports_<name>`) —
+    the same catalog-override-then-breadth resolution as vision_capable, so everything we use/might use is covered."""
+    rec = model_record(model_id)
+    cc = (rec or {}).get("capabilities") if rec else None
+    if isinstance(cc, dict) and isinstance(cc.get(name), bool):
+        return cc[name]
+    caps = _litellm_breadth_cache().get("capabilities") or {}
+    for key in _cache_keys_for(model_id, rec):
+        c = caps.get(key)
+        if isinstance(c, dict) and isinstance(c.get("supports_" + name), bool):
+            return c["supports_" + name]
+    return None
 
 
 def as_price_table():

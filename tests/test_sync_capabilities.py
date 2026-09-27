@@ -75,5 +75,17 @@ ck("no_vision lists models with no vision verdict", "custommodel" in rep["no_vis
 ck("DISCOVER surfaces a provider model not in the catalog (gpt-6-new)", rep["discover"].get("openai") == ["gpt-6-new"])
 ck("DISCOVER ignores providers we don't use (cohere absent)", "cohere" not in rep["discover"])
 
+# ── D. model_catalog breadth fallback: a model NOT in the curated 54 still resolves via the LiteLLM cache ──
+# (this is what makes "everything we use/might use" covered — the catalog is the curated OVERRIDE, cache is breadth)
+with open(_cache, "w") as fh:
+    json.dump({"capabilities": {"cache-only-vmodel": {"supports_vision": True},
+                                "cache-only-tmodel": {"supports_vision": False}}, "context": {}, "providers": {}}, fh)
+ck("a NON-catalog model resolves vision from the cache breadth (everything we use/might use)",
+   mc.vision_capable("cache-only-vmodel") is True)
+ck("the cache breadth also carries a False verdict", mc.vision_capable("cache-only-tmodel") is False)
+ck("a model in NEITHER catalog nor cache → None (unknown, never assumed)", mc.vision_capable("nowhere-model-xyz") is None)
+ck("model_capability returns None for a capability absent from the cache record",
+   mc.model_capability("cache-only-vmodel", "response_schema") is None)
+
 print(("[OK]" if not fails else "[FAIL]") + " sync capabilities: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)
