@@ -2055,8 +2055,17 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             # timeout: fast-connect / full-read budget (see _http_timeout). max_retries=0: vendor_call owns the
             # retry loop, and the SDK's default of 2 would silently TRIPLE a down vendor's wall time inside a
             # single attempt — invisible to the caller's deadline, which is how the 3h30m run stayed hidden.
-            c = (anthropic.Anthropic(api_key=key, timeout=_http_timeout(timeout_s), max_retries=0)
-                 if timeout_s else anthropic.Anthropic(api_key=key))
+            # The httpx client timeout cancels a dead/slow connection fast — but on a VISION request (large image
+            # body) it surfaces as a spurious "Connection error." (the anthropic-vision-on-timeout_s trap: it failed
+            # a whole bakeoff slate of opus, 40/40, that were fine without it). The daemon-thread join + c.close()
+            # below is the REAL wall-clock cancel and works for vision too, so for an images= call we keep the
+            # deadline via that path and OMIT the httpx client timeout that breaks vision. max_retries=0 whenever
+            # timeout_s (vendor_call owns the retry loop; the SDK default of 2 would triple a down vendor's wall time).
+            if timeout_s:
+                c = anthropic.Anthropic(api_key=key, max_retries=0,
+                                        **({"timeout": _http_timeout(timeout_s)} if not images else {}))
+            else:
+                c = anthropic.Anthropic(api_key=key)
             _uc = ([{"type": "text", "text": prompt}] + _image_parts(images, "anthropic")) if images else prompt
             kw = {"model": raw, "max_tokens": max_tokens, "messages": [{"role": "user", "content": _uc}]}
             if system:

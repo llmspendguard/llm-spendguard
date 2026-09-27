@@ -94,3 +94,18 @@ detector is `adapters.strict_map_violation(schema)` → the offending path, or `
 
 Images are priced by **pixels** (`content_tokens`: Anthropic `(w×h)/750`, OpenAI tiles), not the text tokenizer.
 A vision call bills the metered API (`executor="api"`, `cost > 0`) — it is never `$0`-lane-served.
+
+## `timeout_s` and the vision transport
+
+An explicit `timeout_s` is **safe to pass on a vision call** — it bounds the request by wall-clock (a daemon-thread
+join + `c.close()` that actually cancels billing) WITHOUT handing the Anthropic SDK an httpx client timeout.
+
+This matters because an httpx client timeout on an Anthropic **vision** request (large image body) surfaces as a
+spurious `"Connection error."` and the call returns `None`. It bit a bakeoff on 2026-09-27: a `claude-opus-4-8`
+slate for `7thsense-vision-caption` failed **40/40** with "Connection error." while the non-Anthropic arms
+(gpt-5-nano/mini, gemini) succeeded — the httpx timeout, not opus, was the fault. `adapters._call_once` now OMITS
+the httpx client timeout for an `images=` call (keeping the wall-clock bound via the thread-join) so any caller's
+`timeout_s` works on vision. Text calls keep the httpx timeout (fast-connect cancel). Regression guard:
+`tests/test_anthropic_vision_timeout.py`. (History: production callers such as 7thsense's `vision/openai_backend.py`
+had learned to never forward `timeout` to `adapters.vision` for exactly this reason; that workaround is no longer
+required.)
