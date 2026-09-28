@@ -183,14 +183,23 @@ def true_down(since=None, billed_rows=None):
         except Exception:
             return m or "?"
     billed = {}                                          # (provider, normalized model) -> billed $ in the window
+    billed_incomplete = set()                            # (prov, model) carrying an UNPRICED batch → its billed $ is UNKNOWN
+    skipped_providers = []                               # providers whose billed truth is UNAVAILABLE (fetch failed) — NAMED
     for prov_name, rows in billed_rows.items():
         if rows is None:
-            continue                                     # billed truth UNKNOWN for this provider → never true down
+            skipped_providers.append(prov_name)          # billed truth unavailable for this provider → never true down (traced)
+            continue
         for _p, model, cost, _it, _ot, day, _bid in rows:
             if (day or "") < since:
                 continue
             k = (prov_name, _join_model(model))
-            billed[k] = billed.get(k, 0.0) + float(cost or 0)
+            if cost is None:
+                # an UNPRICED batch: its $ is UNKNOWN, NOT $0. `float(cost or 0)` would add 0, UNDERSTATING the billed
+                # total for this model → an INFLATED est−billed delta → a too-large (wrong) true-down correction. Mark
+                # the key incomplete and skip the correction for it below (surfaced, never a silent $0).
+                billed_incomplete.add(k)
+                continue
+            billed[k] = billed.get(k, 0.0) + float(cost)
     cells = budget.gate_batch_cells(since)               # (project, provider, model, day) -> gate estimate $
     est = {}                                             # (provider, normalized model) -> Σ estimates
     for (_proj, prov_name, model, _day), v in cells.items():
@@ -199,7 +208,10 @@ def true_down(since=None, billed_rows=None):
     trued, by_model = 0.0, {}
     for (prov_name, jmodel), est_total in est.items():
         if billed_rows.get(prov_name) is None:
-            continue                                     # skipped provider (fetch failed)
+            continue                                     # skipped provider (fetch failed — already in skipped_providers)
+        if (prov_name, jmodel) in billed_incomplete:
+            continue                                     # an unpriced batch made this model's billed total INCOMPLETE →
+            #                                              can't true-down safely (surfaced in unpriced_incomplete below)
         delta = est_total - billed.get((prov_name, jmodel), 0.0)
         if delta <= 0.01 or est_total <= 0:
             continue                                     # billed ≥ estimate (or nothing recorded) → nothing to true down
@@ -211,8 +223,8 @@ def true_down(since=None, billed_rows=None):
                 budget.record_true_down(day, prov_name, m2, round(share, 6), project=proj)
         trued += delta
         by_model[f"{prov_name}:{jmodel}"] = round(delta, 2)
-    return dict(since=since, trued_down=round(trued, 2), by_model=by_model,
-                skipped=[p for p, r in billed_rows.items() if r is None])
+    return dict(since=since, trued_down=round(trued, 2), by_model=by_model, skipped=skipped_providers,
+                unpriced_incomplete=sorted("%s:%s" % k for k in billed_incomplete))   # UNKNOWN billed, not $0 — never trued down
 
 
 def reconcile_into_ledger(since=None):
@@ -730,20 +742,31 @@ def sync(since=None):
 
 
 def _provider_total(since):
-    """Provider-billed LLM total (the TRUTH) since `since` — OpenAI + Anthropic, as billed. Returns None (UNKNOWN)
-    if EITHER provider fetch fails — never a silent partial/zero that would masquerade as 'fully reconciled'."""
+    """Provider-billed LLM total (the TRUTH) since `since` — OpenAI + Anthropic, as billed. Returns None (UNKNOWN) if
+    EITHER provider fetch fails OR an UNPRICED model made the sum incomplete — never a silent partial/zero that would
+    masquerade as 'fully reconciled'. (An unpriced model prices to $0 in openai_by_day, so its real $ is missing from the
+    sum; a $0-understated total presented as truth would generate a wrong reconcile residual.) A DELIBERATE spend refusal
+    / deadline from a fetch PROPAGATES — it is never downgraded to a plain 'fetch failed'."""
+    from . import pricing, gate as _g
     total, err = 0.0, False
     try:
         from .report import openai_by_day
+        _unpriced_before = sum(pricing.UNPRICED_SEEN.values())
         oai, _ = openai_by_day()
+        if sum(pricing.UNPRICED_SEEN.values()) > _unpriced_before:
+            err = True                                     # openai_by_day priced a model at $0 (unknown) → total INCOMPLETE
         total += sum(v for d, v in oai.items() if d >= since)
-    except Exception:
+    except Exception as e:
+        if _g.is_deliberate_stop(e):
+            raise                                          # a spend refusal / deadline HALTS the reconcile, never err=True
         err = True
     try:
         from . import reconcile_anthropic as anth
         an, _ = anth.cost_by_day(since=since)
         total += sum(v for d, v in an.items() if d >= since)
-    except Exception:
+    except Exception as e:
+        if _g.is_deliberate_stop(e):
+            raise
         err = True
     return None if err else round(total, 2)
 

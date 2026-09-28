@@ -241,6 +241,18 @@ def account_gpu_total(since_ts=None):
                      if not i.get("is_credit") and (i.get("timestamp") or 0) >= since_ts), 2)
 
 
+def _since_date_to_ts(since):
+    """A reconcile `since` — a 'YYYY-MM-DD' date string (the ledger/reconcile window boundary), or None — as the epoch
+    `since_ts` the GPU cost readers (account_gpu_total / gpu_rows_by_day) take. None → None so those readers apply their
+    own month-start default. This is FORMAT parsing on a fixed contract (a date the reconcile framework produces), not a
+    meaning decision. A non-date `since` is a caller-contract error, surfaced by strptime's raise rather than silently
+    ignored — which is exactly how GPUSource.truth_total/captured used to DROP the requested window and always return
+    the whole month regardless of the period asked for."""
+    if since is None:
+        return None
+    return datetime.datetime.strptime(str(since), "%Y-%m-%d").replace(tzinfo=datetime.timezone.utc).timestamp()
+
+
 def compute_exceeded():
     """Remote-compute (vast.ai) cap status — ALERT-only: launches don't pass through the gate, and we never kill a
     running billed job (your protocol). Returns (scope, cap, spent) for the first breached window, else None.
@@ -840,10 +852,15 @@ class GPUSource:
         return self._conn
 
     def truth_total(self, since=None):
-        return account_gpu_total() if self._conn.get("owns_account") else 0.0
+        # pass the requested window through (was account_gpu_total() — the `since` was DROPPED, so a reconcile for any
+        # period always returned the whole MONTH). None → account_gpu_total's own month-start default.
+        return account_gpu_total(since_ts=_since_date_to_ts(since)) if self._conn.get("owns_account") else 0.0
 
     def captured(self, since=None):
-        return [{"cost": r["cost"], "project": r.get("project") or ""} for r in gpu_rows_by_day() if r["cost"] > 0]
+        # scope the captured rows to the SAME window as truth_total (was gpu_rows_by_day() — window dropped): truth and
+        # captured must cover the same period, or the reconcile residual mixes a whole-month capture with a scoped truth.
+        _ts = _since_date_to_ts(since)
+        return [{"cost": r["cost"], "project": r.get("project") or ""} for r in gpu_rows_by_day(since_ts=_ts) if r["cost"] > 0]
 
     def attribute_gap(self, gap, since=None):
         return []                                          # recovery is explicit: discover --agentic / record_recovered

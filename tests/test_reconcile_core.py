@@ -55,7 +55,7 @@ ck("run: non-owner skips the agentic gap attribution (no cross-tenant claim)", r
 
 # ── the REAL source adapters conform to the interface + run() drives them identically (stubbed I/O, no network) ──
 from spendguard import resources, ledger_sync
-resources.account_gpu_total = lambda since=None: 1000.0
+resources.account_gpu_total = lambda since_ts=None: 1000.0   # real sig is account_gpu_total(since_ts=…); truth_total now forwards it
 resources.gpu_rows_by_day = lambda since_ts=None, now=None, label_map=None: [
     {"cost": 250.0, "project": "lmm"}, {"cost": 300.0, "project": "manga2anime"}]
 rg = reconcile.run(resources.GPUSource(conn={"owns_account": True}), ptmap)

@@ -1278,20 +1278,26 @@ def _stream_out_estimate(model, kw, est_fn):
 
 
 def _rt_account(model, kw, result, est_fn, act_fn, latency=None):
-    """Record a NON-streaming realtime call from its actual usage (act_fn), else the estimate. Streaming calls are
-    recorded by the stream proxy on exhaustion; reaching here for a stream is the wrap-FAILED fallback → estimate."""
+    """Record a realtime call's spend from the provider's ACTUAL usage (act_fn) when available — INCLUDING a completed
+    stream, whose final message the stream proxy (_GatedStreamManager.record) hands us here → billed at the real count.
+    Only a call with no usable provider usage falls back to the estimate; a stream that reported none is the projection."""
     try:
-        if kw.get("stream"):
-            # the stream wrap failed, so these are OUR projection, not the provider's count — say so.
+        act = act_fn(result) if result is not None else None
+        if act:
+            # ACTUAL provider usage. This INCLUDES a COMPLETED stream, whose final message the stream proxy
+            # (_GatedStreamManager.record) hands us here — a finished stream is BILLED at the provider's real count.
+            # The old `if kw.get("stream"): estimate` FIRST discarded the very usage the proxy passed, so EVERY streamed
+            # call recorded a projection instead of the truth (and the cached/output/finish fields below were lost too).
+            in_tok, out_tok = act
+            basis = budget_basis_billed()
+        elif kw.get("stream"):
+            # a stream with NO usable usage (the wrap FAILED, or the final message carried none) → OUR projection, said so.
             in_tok, out_tok = _stream_out_estimate(model, kw, est_fn)
             _record_rt(model, kw, in_tok, out_tok, 0, latency, basis=budget_basis_estimate())
             return
-        act = act_fn(result)
-        basis = budget_basis_billed() if act else budget_basis_estimate()   # the provider's own usage, or ours
-        if act:
-            in_tok, out_tok = act
         else:
-            _, in_tok, out_tok = est_fn(kw)
+            _, in_tok, out_tok = est_fn(kw)                                  # non-stream, no provider usage → estimate
+            basis = budget_basis_estimate()
         # EMBEDDINGS bill the SUM of a LIST input but the context window bounds each ITEM — pass the largest single
         # input so the impossibility rail checks per-item, not the sum (a 1000-string batch is legitimate).
         pim = _embed_per_item_max(kw) if est_fn is _est_oai_embeddings else None

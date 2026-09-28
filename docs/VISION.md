@@ -109,3 +109,28 @@ the httpx client timeout for an `images=` call (keeping the wall-clock bound via
 `tests/test_anthropic_vision_timeout.py`. (History: production callers such as 7thsense's `vision/openai_backend.py`
 had learned to never forward `timeout` to `adapters.vision` for exactly this reason; that workaround is no longer
 required.)
+
+**Still bounded when the transport hangs.** Dropping the httpx timeout for vision left the daemon-thread join +
+`c.close()` in `_call_once._anth_msg` as the ONLY wall-clock bound — so that bound is *proven*, not assumed.
+`tests/test_anthropic_vision_hang_bounded.py` fakes an Anthropic vision transport whose streamed read blocks far past
+the deadline and asserts the call is cut at ~`timeout_s` with a `_CallDeadline` (never a hang), that the client was
+built WITHOUT the httpx timeout, and that `c.close()` fired (the real billing-cancel). Removing the httpx timeout did
+not remove the ceiling.
+
+**Surface parity.** The fix lives in `_call_once`, and every real-time vision entry funnels through it via
+`adapters.call(images=…)`: `adapters.vision` (forwards `images=` / `timeout_s=`), `bulk_delegate(images_for=…)` (its
+`_run_task_on_api` calls `adapters.call(images=…, timeout_s=deadline_s)`), and `crossllm.ask_vision` (which *is*
+`bulk_delegate` under the hood) — so all three inherit the omit-timeout behaviour. The named-entry inheritance is
+guarded in `tests/test_anthropic_vision_hang_bounded.py` (Part 3). The Anthropic **Batch** submit path
+(`experiment._promote_batch` / `submit.guarded_submit`) constructs timeout-FREE clients — it never handed the SDK a
+per-call httpx timeout, so it was never subject to this trap (the only timeout-bearing Anthropic client construction in
+the code is the `not images`-guarded one in `_call_once`).
+
+**Live proof.** `scripts/reliability/anthropic_vision_timeout_live_proof.py` makes ONE real
+`adapters.call('anthropic:claude-opus-4-8', …, images=[<generated 16×16 PNG>], timeout_s=120)` and asserts a real
+caption returns with `error=None` — the layer the offline fakes cannot exercise. It pins the vendor
+(`no_substitution=True`) and asserts `served_by(r) == "anthropic"`, because the model IS the measurement: unpinned, the
+lane bandit swaps in another vendor (observed: `gemini-3.8-flash`) and the "proof" exercises the wrong SDK. Estimate-first:
+with no flag it prints a $0 estimate (~$0.003 worst-case at the default `--cap 0.25`); `--live` makes the one metered call.
+Confirmed live 2026-09-28: `served_by=anthropic`, `substituted=false`, `error=null`, a real caption returned (billed
+$0.00086, out 30 tok, 1.66 s) — the fix holds against the live Anthropic SDK, no `"Connection error."`.
