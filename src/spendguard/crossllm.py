@@ -365,19 +365,28 @@ def ask_vision(prompt, images, vendors, *, schema=None, system=None, budget_usd=
     # per-vendor ESTIMATE (image tokens are provider-aware; conservative output)
     loaded = [adapters._load_image(i) for i in imgs]
     out_est = int(max_out_tokens or _ASK_VISION_OUT_EST)
-    per, est = [], 0.0
+    per, est, unpriced = [], 0.0, []
     for v in vlist:
         prov = adapters.provider_for(v)
         raw = v.split(":", 1)[1] if ":" in v else v
         in_tok = adapters._image_input_tokens(loaded, prov, raw) + (len(prompt) + len(system or "")) // 4
+        # UNPRICED detection CONSISTENT with the estimate: cost_or_unpriced returns 0.0 AND records the model in
+        # UNPRICED_SEEN when it has no price card. A $0 estimate for an unpriced vendor would sail past ANY budget_usd
+        # and then spend unbounded (unpriced != free), so we refuse below. Reading the SAME call's side-effect (not a
+        # separate price() lookup) keeps this in lockstep with the estimate the caller/tests actually see.
+        _seen = pricing.UNPRICED_SEEN.get(v, 0)
         c = pricing.cost_or_unpriced(v, in_tok, out_est, batch=False, provider=prov)
-        per.append({"vendor": v, "estimate_usd": round(c, 6)})
+        if pricing.UNPRICED_SEEN.get(v, 0) > _seen:
+            unpriced.append(v)
+        per.append({"vendor": v, "estimate_usd": round(c, 6), "unpriced": v in unpriced})
         est += c
     if budget_usd is None:                       # estimate-first: no budget → never spends
         return {"estimate_usd": round(est, 6), "per_vendor": per, "n": len(vlist),
                 "note": "estimate only — pass budget_usd to actually RUN the panel (each vendor is a metered vision call)."}
-    if est > float(budget_usd):
-        raise BudgetRefused(est, float(budget_usd), {p["vendor"]: p["estimate_usd"] for p in per})   # deliberate stop, BEFORE any spend
+    if est > float(budget_usd) or unpriced:
+        # Refuse on EITHER over-budget OR an unpriced/ambiguous vendor: an unpriceable metered vision model estimates to
+        # $0, sails past any budget, then spends unbounded (unpriced != free). Mirrors ask()'s guard. Deliberate stop, BEFORE any spend.
+        raise BudgetRefused(est, float(budget_usd), {p["vendor"]: p["estimate_usd"] for p in per})
     # DURABLE panel: one task per vendor (keyed per-vendor via model_for), same prompt+images, checkpointed/resumable
     rows = lane_balance.bulk_delegate(
         list(vlist), intent, images_for=lambda t: imgs, model_for=lambda t: t, prompt_for=lambda t: prompt,

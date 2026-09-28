@@ -387,8 +387,15 @@ def _seg_get_all():
                     "SELECT seg_id, project, org, team, confidence, source, model FROM seg_attribution"):
                 out[r[0]] = {"project": r[1] or "", "org": r[2] or "", "team": r[3] or "",
                              "confidence": int(r[4] or 0), "source": r[5] or "", "model": r[6] or ""}
-    except Exception:
-        pass
+    except Exception as e:
+        # F1: the table auto-creates, so this except is a genuine locked/corrupt-DB failure, NOT an empty store. Return
+        # the partial/empty map and the caller reads it as the COMPLETE attribution — then needlessly RE-CLASSIFIES
+        # (re-paying for LLM attribution already recorded), or with run=True returns {}. Surface loud and re-raise.
+        import sys as _sys
+        print(f"[spendguard] _seg_get_all: FAILED to read the segment-attribution store ({e!r}) — refusing to return a "
+              "partial map as the complete attribution (it would trigger needless re-classification). Fix the read first.",
+              file=_sys.stderr)
+        raise
     return out
 
 
@@ -902,7 +909,7 @@ def realtime_token_tally(tdir=None):
     from . import pricing, resources
     tdir = tdir or _DEFAULT_TDIR
     files = sorted(glob.glob(os.path.join(tdir, "**", "*.jsonl"), recursive=True)) if os.path.isdir(tdir) else [tdir]
-    by_org, total, calls, skipped_no_model = {}, 0.0, 0, 0
+    by_org, total, calls, skipped_no_model, skipped_ambiguous = {}, 0.0, 0, 0, 0
     for path in files:
         sid = os.path.splitext(os.path.basename(path))[0]
         try:
@@ -917,11 +924,20 @@ def realtime_token_tally(tdir=None):
             win = text[max(0, m.start() - 120):m.start() + 60].lower()
             if "msgbatch_" in win or re.search(r"batch_[0-9a-f]{6,}", win) or ".batches." in win:
                 continue                                          # batch usage display → counted in the ledger
-            # family→canonical ids owned by resources._family_canonical (the ONE home; conv used to keep a second copy)
-            model = resources._family_canonical(win)
-            if not model:
-                skipped_no_model += 1     # a usage window naming no recognizable model — COUNTED + surfaced, not
-                continue                  # silently dropped (this tally is already a documented lower bound)
+            # Attach the model to this usage block ONLY when the window names it UNAMBIGUOUSLY. A single family keyword
+            # is a fixed-orthographic-convention PARSE (a model id is a known token shape — the doctrine's parsing
+            # carve-out); TWO+ models named near one usage block is NOT a parse but a guess, so it is REFUSED (surfaced
+            # as skipped_ambiguous), never linked first-hit-wins. Model attribution here is thus never a heuristic
+            # decision — an unambiguous parse or an honest skip. (This tally is a documented $0 LOWER BOUND; the
+            # authoritative realtime reconstruction is the AGENTIC conv path.) The family map is owned by resources.
+            _matches = resources._family_matches(win)
+            if not _matches:
+                skipped_no_model += 1     # names no recognizable model — COUNTED + surfaced, not silently dropped
+                continue
+            if len(_matches) > 1:
+                skipped_ambiguous += 1    # names 2+ models near ONE usage block — REFUSE to guess which; surfaced
+                continue
+            model = _matches[0]
             e = sess.setdefault(model, [0, 0]); e[0] += a; e[1] += b; calls += 1
         if not sess:
             continue
@@ -934,7 +950,7 @@ def realtime_token_tally(tdir=None):
             total += c
             by_org[org] = round(by_org.get(org, 0.0) + c, 4)
     return {"total": round(total, 2), "by_org": {k: round(v, 2) for k, v in by_org.items()}, "calls": calls,
-            "skipped_no_model": skipped_no_model}
+            "skipped_no_model": skipped_no_model, "skipped_ambiguous": skipped_ambiguous}
 
 
 def instance_attributions(instances, tdir=None):
@@ -1053,6 +1069,9 @@ _SYS = ("You mine a software team's chat for durable COST lessons about LLM usag
 
 
 def _dedup_top(events, k):
+    if k <= 0:
+        return []                                          # k<=0 means "none": the loop below appends BEFORE the
+        #                                                    len>=k check, so without this it returns 1 item for k=0
     seen, picked = set(), []
     for ev in sorted(events, key=_score, reverse=True):
         norm = re.sub(r"\s+", " ", ev["text"].lower())[:60]

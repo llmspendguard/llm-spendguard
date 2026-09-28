@@ -163,7 +163,10 @@ def load_summaries():
         if not p.exists():
             return {}
         with open(p) as _fh:                          # closed deterministically
-            return json.load(_fh)
+            data = json.load(_fh)
+        # a valid-but-non-object file (a list / scalar / null) is NOT a summaries map — callers immediately do
+        # `.items()` on this, which would AttributeError. Return {} so a mis-shaped file reads as "no summaries".
+        return data if isinstance(data, dict) else {}
     except Exception:
         return {}
 

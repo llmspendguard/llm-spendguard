@@ -69,9 +69,13 @@ def _num(x, default=0.0):
     hot dispatch path from a file that could be truncated or hand-edited; a stored 'until' of 'not-a-number' must
     read as an expired/absent axis, never raise ValueError and crash every call that consults it."""
     try:
-        return float(x)
+        v = float(x)
     except (TypeError, ValueError):
         return float(default)
+    # NaN and ±inf pass float() but break every comparison: `NaN <= now` and `inf <= now` are always False, so a
+    # cooldown/size-ceiling stored as 'nan'/'inf' would NEVER expire (and set_cooldown would refuse to extend it).
+    # Treat them as malformed → the default (expired/absent), matching the docstring's "must read as expired/absent".
+    return v if (v == v and v not in (float("inf"), float("-inf"))) else float(default)
 
 
 def _int_or_none(x):

@@ -341,6 +341,9 @@ def fetch_openai(client, batch_id, intent, model, cap, sample_n):
     b = client.batches.retrieve(batch_id)
     if not getattr(b, "output_file_id", None):
         return 0, "no output_file (expired/failed)"
+    if sample_n <= 0:
+        return 0, None                                # sample_n<=0 requests ZERO samples — don't stream/insert any (the
+        #                                               post-insert `len(want) >= sample_n` break would otherwise add 1)
     want = {}
     scanned = 0
     with client.files.with_streaming_response.content(b.output_file_id) as resp:

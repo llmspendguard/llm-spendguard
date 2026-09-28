@@ -62,6 +62,10 @@ def _judge_sample(per, limit=None, rows=None):
     already-fetched callio.unjudged() so it isn't queried twice."""
     from . import callio
     from collections import defaultdict
+    if limit is not None and limit <= 0:
+        return []                                         # limit=0 asks for ZERO samples. `if limit and …` below is falsy
+        #                                                   for 0 (→ judged everything); and the check is post-append, so
+        #                                                   even `is not None` would yield 1. Guard the 0/negative case here.
     if rows is None:
         rows = callio.unjudged()
     seen, out = defaultdict(int), []
@@ -137,7 +141,10 @@ def reconstruct(run=False, per=15, limit=None):
     with calls.context(intent=f"{META}:reconstruct"):
         for io_id, _intent, _model, p, o in samples:
             try:
-                r = adapters.call(judge, _judge_prompt(p, o), max_tokens=_JUDGE_OUT_CEILING, system=_JUDGE_SYS)
+                # no_substitution: the verdict is recorded via callio.set_quality(src="judge") and reported as model=judge
+                # — the bandit must not serve a different model than the judge these quality labels are attributed to
+                r = adapters.call(judge, _judge_prompt(p, o), max_tokens=_JUDGE_OUT_CEILING, system=_JUDGE_SYS,
+                                  no_substitution=True)
                 if r["error"]:
                     err += 1
                     continue
@@ -269,7 +276,9 @@ def optimize(intent=None, plan=None, run=False):
 
     from . import adapters
     with calls.context(intent=f"{META}:optimize"):
-        r = adapters.call(model, prompt, max_tokens=_OPT_OUT, system=_OPT_SYS)
+        # no_substitution: this returns model=model as the recommender of record — the bandit must not silently serve
+        # another model while we report this one produced the recommendation (measurement-identity integrity)
+        r = adapters.call(model, prompt, max_tokens=_OPT_OUT, system=_OPT_SYS, no_substitution=True)
     if r["error"]:
         print(f"  ERROR: {r['error']}")
         return dict(error=r["error"])
@@ -308,7 +317,9 @@ def recommend_models(intent=None, k=5, quality_bar=None, run=False):
                     note=f"estimate only (~${cost:.4f}); call with run=True to produce the ranking (meta-caged).")
     from . import adapters
     with calls.context(intent=f"{META}:recommend"):
-        r = adapters.call(model, prompt, max_tokens=_REC_OUT, system=_REC_SYS, schema=_REC_SCHEMA)
+        # no_substitution: the ranking is reported as produced by `model` (returned as model=model) — pin it so the
+        # bandit can't silently swap the model of record for this measurement
+        r = adapters.call(model, prompt, max_tokens=_REC_OUT, system=_REC_SYS, schema=_REC_SCHEMA, no_substitution=True)
     if r.get("error"):
         return dict(intent=intent, error=r["error"], model=model, cost=r.get("cost"))
     parsed = adapters.structured_reply(r)

@@ -181,7 +181,7 @@ def sync():
            "_source": LITELLM_URL, "models": models, "providers": provs, "unit_models": unit_models,
            "context": context, "capabilities": _capabilities(raw)}   # capabilities ride the same daily fetch
     os.makedirs(os.path.dirname(CACHE), exist_ok=True)
-    config.update_json(CACHE, lambda _d: out)
+    config.update_json(CACHE, lambda _d: out, quarantine_unparseable=True)   # rebuildable LiteLLM cache: recover, don't silently decline
     if zero_rate:
         msgs.append(f"{len(zero_rate)} upstream entries have a ZERO token rate and were NOT cached "
                     f"(a $0 price records real spend as free, silently) — e.g. {', '.join(zero_rate[:3])}")

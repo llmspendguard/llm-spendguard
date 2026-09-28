@@ -15,6 +15,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 from spendguard import sync_capabilities as sc, sync
 
+_REAL_LR = sc._litellm_record          # captured before section B monkeypatches it — section E needs the real one
+
 fails = []
 
 
@@ -37,12 +39,13 @@ ck("a model absent from the cache → None from the cache path (before any packa
    sc._litellm_record("not-in-cache-xyz", None) is None)
 
 # ── B. _updates_for maps a record → vision + capabilities, fills only MISSING limits ──
+sc._fetch_server_catalog = lambda: {}                     # OFFLINE: no server this run (server-first tier tested in E)
 _LL = {
     "vmodel": {"supports_vision": True, "supports_response_schema": True, "supports_function_calling": True,
                "mode": "chat", "max_input_tokens": 200000, "max_output_tokens": 64000},
     "tmodel": {"supports_vision": False, "mode": "chat", "max_input_tokens": 32000, "max_output_tokens": 8000},
 }
-sc._litellm_record = lambda mid, metered: _LL.get(mid) or _LL.get(metered)   # pin for the mapping tests
+sc._litellm_record = lambda mid, metered, server_cat=None: _LL.get(mid) or _LL.get(metered)   # pin (3-arg: server_cat)
 models = {
     "vmodel": {"metered_id": "vmodel"},
     "tmodel": {"metered_id": "tmodel", "output_ceiling": {"value": 4096, "source": "curated-verified"}},
@@ -86,6 +89,28 @@ ck("the cache breadth also carries a False verdict", mc.vision_capable("cache-on
 ck("a model in NEITHER catalog nor cache → None (unknown, never assumed)", mc.vision_capable("nowhere-model-xyz") is None)
 ck("model_capability returns None for a capability absent from the cache record",
    mc.model_capability("cache-only-vmodel", "response_schema") is None)
+
+# ── E. SERVER-FIRST tier: the org-authoritative /v1/models catalog is checked BEFORE the local cache, mapped to the
+#        litellm shape; a server MISS falls through to local; the server fetch is FAIL-OPEN (unreachable → local). ──
+ck("_server_row_to_litellm maps capabilities + mode + upper bounds to the litellm shape",
+   sc._server_row_to_litellm({"capabilities": {"supports_vision": True}, "mode": "chat",
+                              "max_input_tokens": 128000, "max_output_tokens": 16000})
+   == {"supports_vision": True, "mode": "chat", "max_input_tokens": 128000, "max_output_tokens": 16000})
+# server_cat carries the model → returned FIRST (its supports_vision), ahead of the local cache written above
+_srv = {"srv-model": {"capabilities": {"supports_vision": True}, "mode": "chat", "max_output_tokens": 4242}}
+_e = _REAL_LR("srv-model", None, _srv)
+ck("_litellm_record returns the SERVER record first (server-authoritative)",
+   _e is not None and _e.get("supports_vision") is True and _e.get("max_output_tokens") == 4242)
+ck("a server MISS falls through (server_cat lacks it → None here, no local/pkg match)",
+   _REAL_LR("not-on-server", None, _srv) is None)
+# _fetch_server_catalog is FAIL-OPEN: saas NOT configured (ready→False) → {} with no network call
+from spendguard import saas as _saas          # _fetch_server_catalog does `from . import saas` → patch the module
+_saas.ready = lambda: (False, "unconfigured")
+ck("_fetch_server_catalog → {} when saas is unconfigured (no server to check)", sc._fetch_server_catalog() == {})
+# saas CONFIGURED but the fetch fails → {} (loud), never a raise into the caller
+_saas.ready = lambda: (True, "ok")
+_saas.fetch_models = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("server down"))
+ck("_fetch_server_catalog → {} (fail-open) when a CONFIGURED server is unreachable", sc._fetch_server_catalog() == {})
 
 print(("[OK]" if not fails else "[FAIL]") + " sync capabilities: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)

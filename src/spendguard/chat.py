@@ -551,6 +551,11 @@ def sync(dry=False):
                            "SPENDGUARD_CHAT_ENABLED=1). On-device, opt-in, your session only."}
     from . import saas
     c = saas.saas_connection()
+    if not c.get("enabled"):
+        # contributor_ok() returns (True, "n/a") for a DISABLED saas connection — that means "don't check", not
+        # "contributor adequate". Without this, a disabled connection + non-private visibility would push an
+        # ANONYMOUS contributor. chat.enabled gates the ADAPTER; the saas connection must ALSO be enabled to push.
+        return {"skipped": "saas connection not enabled — nothing pushed"}
     if c.get("visibility", "private") == "private":
         return {"skipped": "visibility=private"}
     cok, cwhy = saas.contributor_ok()

@@ -52,3 +52,11 @@ scripts/integration/thinking_budget_*.jsonl
 
 # capability_map.py generated outputs (regenerate with the tool)
 scripts/probe/capability_map_out/
+
+# Generated ANALYSIS/REVIEW artifacts — regenerable with their tool, not history:
+#   .honestreview/  = the honestreview doctrine-graph sqlite (built by `honestreview index`)
+#   conformance_runs/ = dated panel-review JSON outputs
+#   scripts/reliability/*.json = reconstructed forensic error-logs (the durable copy is the gate ledger)
+.honestreview/
+conformance_runs/
+scripts/reliability/*.json

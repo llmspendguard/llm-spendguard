@@ -35,8 +35,11 @@ ROUTE_EST_OUT_DEFAULT = 500
 
 
 def _util_ratio_cfg(name, default):
+    # `v is None`, NOT `v or default`: a configured margin of 0 is falsy, so `... or default` silently replaced an
+    # explicit 0 with the default (0.5), ignoring the operator's deliberate setting. None means "unset" → default.
+    v = config._cfg_get("advisor", name, None)
     try:
-        return float(config._cfg_get("advisor", name, None) or default)
+        return float(default if v is None else v)
     except (TypeError, ValueError):
         return default
 
@@ -184,7 +187,8 @@ def record_proposal(intent, primary_model, proposals, proposed_by=""):
         e["primary_model"] = primary_model
         e["pending"] = list(dict.fromkeys([*(e.get("pending") or []), *proposals]))
         e["proposed_by"] = proposed_by or e.get("proposed_by", "")
-    config.update_json(_registry_path(), _add_pending, reason="lane-substitute-proposal")
+    config.update_json(_registry_path(), _add_pending, reason="lane-substitute-proposal",
+                       quarantine_unparseable=True)   # rebuildable registry: recover a corrupt file, never a silent decline
     return pending_for(intent)
 
 
@@ -194,7 +198,8 @@ def confirm_substitute(intent, substitute):
         e = d.setdefault(intent, {})
         e["confirmed"] = list(dict.fromkeys([*(e.get("confirmed") or []), substitute]))
         e["pending"] = [p for p in (e.get("pending") or []) if p != substitute]
-    config.update_json(_registry_path(), _promote_confirmed, reason="lane-substitute-confirm")
+    config.update_json(_registry_path(), _promote_confirmed, reason="lane-substitute-confirm",
+                       quarantine_unparseable=True)   # rebuildable registry: recover a corrupt file, never a silent decline
     return substitutes_for(intent)
 
 
@@ -839,16 +844,22 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
         _vm = (model_for(task) if callable(model_for) else None) or vision_model
         _p = prompt_for(task) if callable(prompt_for) else task
         _raw = _vm.split(":", 1)[1] if (_vm and ":" in _vm) else (_vm or "?")
+        from . import vendor_call as _vc                  # lazy: canonical outcome KIND for class-aware queue retry
         _b = {"text": None, "lane": "api", "use_name": _raw, "model": _vm, "billed": False}
+        # no_model / no_image / oversized-image are DETERMINISTIC preflight failures — the call was never made and a
+        # retry fails identically (these are the caller/config bugs, not transient faults). Stamp PREFLIGHT_UNMET so
+        # lane_queue.settle fails them FAST instead of burning the 10-retry budget on a hopeless re-run.
         if not _vm:
-            return i, {**_b, "reason": "no_model", "error": "model_for returned no model for this task"}
+            return i, {**_b, "reason": "no_model", "outcome": _vc.PREFLIGHT_UNMET,
+                       "error": "model_for returned no model for this task"}
         _imgs = list(images_for(task) if callable(images_for) else (images_for or []))
         if _vision and not _imgs:                        # a VISION task genuinely needs an image; a TEXT pinned task does not
-            return i, {**_b, "reason": "no_image", "error": "images_for returned empty — a vision task needs an image"}
+            return i, {**_b, "reason": "no_image", "outcome": _vc.PREFLIGHT_UNMET,
+                       "error": "images_for returned empty — a vision task needs an image"}
         if _imgs:
             _big = _image_too_big(_imgs)
             if _big:
-                return i, {**_b, "reason": _big[0], "error": _big[1]}
+                return i, {**_b, "reason": _big[0], "outcome": _vc.PREFLIGHT_UNMET, "error": _big[1]}
         _prov = adapters.provider_for(_vm)
         try:
             _waited = dispatch.acquire_or_none(_prov, _raw, deadline_s, sla_class=sla_class,   # governor: bound in-flight PER-VENDOR metered calls (sla_class="batch" respects the realtime reserve)
@@ -879,6 +890,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
         # (a pinned/vision matrix always rides the metered API), else None when served. No error row is ever reason-less.
         _row_reason = r.get("reason") or ("api_error" if r.get("error") else None)
         row = {"text": (r.get("text") or None), "lane": r.get("executor") or "api", "use_name": _sm,
+               "outcome": _vc._classify(r)[0],   # canonical vendor KIND → class-aware queue retry (transient vs deterministic)
                "model": f"{_sp}:{_sm}", "billed": bool(r.get("cost")), "cost": r.get("cost"),   # actual $ → guardrail D
                "served_by_metered_api": (r.get("executor") or "api") in ("api", "api-fallback"),
                # PARITY AUDIT: the reasoning tier REQUESTED and the effort the call reports it APPLIED. On this
@@ -974,7 +986,13 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
         # 'api_error'. A served row (text, no error) is reason=None. So NO error row is ever reason-less (from KNOWN
         # state — which branch produced it — not a judgement about the text).
         _row_reason = r.get("reason") or ("api_error" if r.get("error") else None)
-        row = {"text": (r.get("text") or None), "lane": served_lane, "use_name": served_model,
+        # Stamp the canonical vendor_call OUTCOME KIND (transport_error / overloaded / payload_rejected / refused /
+        # unfunded / deadline_exceeded / truncated / empty / schema_violation / ok) so the durable queue can retry
+        # CLASS-AWARE: lane_queue.settle re-enqueues only a TRANSIENT (RETRYABLE) outcome and fails a DETERMINISTIC one
+        # fast. Derived by the ONE classifier the realtime chokepoint also uses, so batch and realtime never drift.
+        from . import vendor_call as _vc
+        _outcome = _vc._classify(r)[0]
+        row = {"text": (r.get("text") or None), "lane": served_lane, "use_name": served_model, "outcome": _outcome,
                "model": f"{served_prov}:{served_model}", "billed": bool(r.get("cost")), "cost": r.get("cost"),  # actual $ → D
                # `billed`=cost>0 (true for a costing key-lane too); THIS is the field to prove metered-API service —
                # a lane miss fell through to the paid provider. A $0 or costing LANE is served_by_metered_api=False.
@@ -1339,7 +1357,9 @@ def register_critical(patterns, source=None):
             adv["bandit_denylist_sources"] = src
         d["advisor"] = adv
         return d
-    config.update_json(config.CONFIG_JSON, _merge_pins, reason="register-critical")
+    config.update_json(config.CONFIG_JSON, _merge_pins, reason="register-critical",
+                       required=True)   # CONFIG_JSON holds irreplaceable settings: a corrupt file RAISES (human repairs),
+    #                                     never a silent decline this caller would report as a merged pin
     config.cfg_invalidate()                              # so the very next read (this process) sees the merged list
     return merged
 
@@ -1491,9 +1511,12 @@ def propose_substitutes(intent, primary_model, candidates=None):
               f"CANDIDATE substitute models on idle plans: {cands}\n\n"
               f"Which of the candidates are acceptable substitutes for this intent? Return {{acceptable, rationale}}.")
     with calls.context(intent="spendguard:substitute"):
-        r = adapters.call(judge, prompt, system=_PROPOSE_SYS, schema=_PROPOSE_SCHEMA, max_tokens=_PROPOSE_OUT)
+        # no_substitution: the proposal is RECORDED as proposed_by=judge below — the bandit must not serve a different
+        # model than the judge we attribute the decision to (measurement-identity integrity)
+        r = adapters.call(judge, prompt, system=_PROPOSE_SYS, schema=_PROPOSE_SCHEMA, max_tokens=_PROPOSE_OUT,
+                          no_substitution=True)
     from . import output_contract
-    obj, _ = output_contract._as_obj((r or {}).get("text") or "") if (r or {}).get("text") else (None, False)
+    obj, _ = output_contract.as_obj_lenient((r or {}).get("text") or "")   # lenient: malformed judge reply → (None,False), never raises
     acceptable = [c for c in cands if isinstance(obj, dict) and c in (obj.get("acceptable") or [])]  # only real candidate ids
     rationale = (obj.get("rationale") if isinstance(obj, dict) else "") or ""
     if acceptable:
@@ -1539,7 +1562,7 @@ def adapt_system(intent, target_model, system, model=None):
                   f"Adapt it for the target model WITHOUT changing the task. Return {{adapted_system, changed, note}}.")
         with calls.context(intent="spendguard:adapt"):
             r = adapters.call(judge, prompt, system=_ADAPT_SYS, schema=_ADAPT_SCHEMA, max_tokens=_ADAPT_OUT)
-        obj, _ = output_contract._as_obj((r or {}).get("text") or "") if (r or {}).get("text") else (None, False)
+        obj, _ = output_contract.as_obj_lenient((r or {}).get("text") or "")   # lenient: malformed reply → (None,False), never raises
         result = (obj if isinstance(obj, dict) and obj.get("adapted_system")
                   else {"adapted_system": system, "changed": False, "note": "adaptation unparseable — kept original"})
 
@@ -1548,5 +1571,6 @@ def adapt_system(intent, target_model, system, model=None):
         e.setdefault("adapt", {})[target_model] = {"system": result["adapted_system"],
                                                     "changed": bool(result.get("changed")),
                                                     "note": str(result.get("note") or "")[:300], "by": judge}
-    config.update_json(_registry_path(), _store_adaptation, reason="lane-substitute-adapt")
+    config.update_json(_registry_path(), _store_adaptation, reason="lane-substitute-adapt",
+                       quarantine_unparseable=True)   # rebuildable registry: recover a corrupt file, never a silent decline
     return result

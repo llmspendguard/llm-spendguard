@@ -232,10 +232,15 @@ def build_chat_batch_jsonl(tasks_path, model, system=None, max_out=None, reasoni
 
 def guarded_submit(jsonl_path, model, cap_dollars, batch=True, avg_out_tokens=None,
                    expected_cost=None, submit=True, request_cap=25000,
-                   overrun_tolerance=DEFAULT_OVERRUN_TOLERANCE, endpoint="/v1/chat/completions"):
+                   overrun_tolerance=DEFAULT_OVERRUN_TOLERANCE, endpoint="/v1/chat/completions", intent=None):
     """Estimate -> enforce cap -> log -> submit. Raises RuntimeError if it won't pass. `endpoint` is the Batch API
     target the .jsonl lines address ('/v1/chat/completions' by default, '/v1/embeddings' for an embeddings batch) —
-    it must match the lines' `url`, so it is a parameter, not a hardcoded literal at the batches.create call."""
+    it must match the lines' `url`, so it is a parameter, not a hardcoded literal at the batches.create call.
+
+    `intent` is the caller's job-type label. It is set on the recording CONTEXT for the duration of the submit so the
+    gate's provisional batch-cost row (gate._decide_and_account → calls.record_call, fired synchronously inside the
+    gated files.create) attributes to it instead of '(none)' — a batch is attributable work, and its spend must carry
+    its intent from submission, not only when reconcile later matches it by batch_id."""
     est = estimate_jsonl_cost(jsonl_path, model, batch=batch, avg_out_tokens=avg_out_tokens)
     print(f"[submit_gate] {est['requests']:,} req · {est['mode']} · in={est['in_tok']:,} "
           f"out={est['out_tok']:,} ({est['out_basis']}; {est['token_basis']}) -> ${est['cost']:,.2f}")
@@ -260,18 +265,29 @@ def guarded_submit(jsonl_path, model, cap_dollars, batch=True, avg_out_tokens=No
     _tag = _hashlib.sha256(os.path.abspath(jsonl_path).encode()).hexdigest()[:8]
     audit_path = os.path.join(AUDIT_DIR, f"{os.path.basename(jsonl_path)}.{_tag}.gate.json")
     from . import config
-    config.update_json(audit_path, lambda _d: rec)      # a gate AUDIT record; losing it loses the trail
+    config.update_json(audit_path, lambda _d: rec,      # a gate AUDIT record; losing it loses the trail
+                       quarantine_unparseable=True)     # so a corrupt prior audit is moved aside (kept .corrupt) and the
+    #                                                     current record STILL persists before submission — never a silent decline
 
     if not submit:
         print(f"[submit_gate] PASS (estimate only, submit=False). audit: {audit_path}")
         return None
 
-    # passed the gate — submit via OpenAI
-    from openai import OpenAI
-    client = OpenAI(api_key=_api_key("OPENAI_API_KEY"))
-    with open(jsonl_path, "rb") as fh:        # the upload handle was never closed
-        f = client.files.create(file=fh, purpose="batch")
-    b = client.batches.create(input_file_id=f.id, endpoint=endpoint, completion_window="24h")
+    # passed the gate — submit via OpenAI, with the intent on the recording context so the gate's provisional batch
+    # row (recorded synchronously inside the gated files.create) attributes to it, not '(none)'. Save + restore the
+    # caller's exact context so the intent set here never leaks into a later call on this thread.
+    from . import calls as _calls
+    _prev_ctx = dict(_calls.current())
+    if intent:
+        _calls.set_context(intent=intent)
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=_api_key("OPENAI_API_KEY"))
+        with open(jsonl_path, "rb") as fh:        # the upload handle was never closed
+            f = client.files.create(file=fh, purpose="batch")
+        b = client.batches.create(input_file_id=f.id, endpoint=endpoint, completion_window="24h")
+    finally:
+        _calls._local.ctx = _prev_ctx             # restore the caller's exact context (never leak the submit intent)
     print(f"[submit_gate] SUBMITTED batch {b.id} (projected ${est['cost']:,.2f}). "
           f"Verify after: reconcile_openai_spend.py --estimate {est['cost']:.2f}")
     return b.id
@@ -301,6 +317,14 @@ def submit_chat_tasks(tasks, model, *, system=None, schema=None, reasoning="mini
     if prov != "openai":
         return {**base, "error": "chat batch is OpenAI-only (the /v1/chat/completions Batch API serves only OpenAI "
                 "ids); got %r (provider %r) — run it on the lane fan / realtime instead." % (model, prov)}
+    # Set the intent CONTEXT for the WHOLE submission, exactly as the realtime adapters.call path does — so EVERY
+    # record of this submit attributes to the caller's intent, not '(none)': the build-time models.resolve_effort
+    # discovery probes, the gate's provisional batch row, and the http_capture control-plane events. Restored in the
+    # finally so the intent never leaks into a later call on this thread.
+    from . import calls as _calls
+    _prev_ctx = dict(_calls.current())
+    if intent:
+        _calls.set_context(intent=intent)
     fd, tasks_path = _tf.mkstemp(prefix="spendguard-batch-tasks-", suffix=".jsonl")   # FRESH temp — never a caller path
     try:
         with _os.fdopen(fd, "w") as fh:
@@ -315,7 +339,8 @@ def submit_chat_tasks(tasks, model, *, system=None, schema=None, reasoning="mini
                 fh.write(_json.dumps(row) + "\n")
         req_path, n = build_chat_batch_jsonl(tasks_path, model, system=system, max_out=max_out,
                                              reasoning=reasoning, schema=schema)
-        bid = guarded_submit(req_path, model, cap_dollars, batch=True, submit=submit, endpoint="/v1/chat/completions")
+        bid = guarded_submit(req_path, model, cap_dollars, batch=True, submit=submit,
+                             endpoint="/v1/chat/completions", intent=intent)
         return {**base, "batch_id": bid, "jsonl": req_path, "requests": n}
     except Exception as e:
         from . import gate as _g
@@ -323,6 +348,7 @@ def submit_chat_tasks(tasks, model, *, system=None, schema=None, reasoning="mini
             raise                                    # a cap refusal HALTS — never a silent partial submission
         return {**base, "error": str(e)[:200]}
     finally:
+        _calls._local.ctx = _prev_ctx                # restore the caller's exact context (never leak the submit intent)
         try:
             _os.unlink(tasks_path)                   # the request envelope (req_path) is the durable artefact, not this
         except OSError:

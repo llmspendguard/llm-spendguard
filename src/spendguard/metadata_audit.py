@@ -79,12 +79,40 @@ def _cap_drift():
     return drift, unknown
 
 
+def _capability_health():
+    """CAPABILITY-catalog freshness + completeness. Capabilities (vision / response_schema / …) ride the SAME daily
+    LiteLLM cache as the price limits (sync.py writes both), so the cache age applies to both. Completeness is read
+    from the ONE home — sync_capabilities.audit_catalog_completeness — never re-implemented here, so `metadata` and
+    `sync-capabilities --audit` can never disagree. Read-only, $0. Informational (does NOT fail `ok`): an uncovered
+    bleeding-edge model is EXPECTED (LiteLLM hasn't caught up), not a fault."""
+    import json
+    from . import sync_capabilities
+    cap_models = 0
+    try:
+        with open(sync.CACHE) as fh:
+            cap_models = len(((json.load(fh) or {}).get("capabilities")) or {})
+    except Exception:
+        cap_models = 0
+    try:
+        comp = sync_capabilities.audit_catalog_completeness()
+    except Exception as e:
+        return {"cache_capability_models": cap_models, "age_days": sync.cache_age_days(),
+                "error": "completeness audit failed: %s" % type(e).__name__}
+    disc_total = sum(len(v) for v in (comp.get("discover") or {}).values())
+    return {"cache_capability_models": cap_models,
+            "age_days": (round(sync.cache_age_days(), 2) if sync.cache_age_days() is not None else None),
+            "catalog_n": comp["catalog_n"], "covered": comp["covered"], "uncovered": comp["uncovered"],
+            "no_vision": comp["no_vision"], "discover": comp["discover"], "discover_total": disc_total}
+
+
 def backbone_health():
-    """The full report: {ok, cache:{...}, drift:[...], unknown:[...]}. ok=False when the cache is unhealthy OR
-    any measured cap has drifted below its published ceiling — the two states that silently degrade output_cap."""
+    """The full report: {ok, cache:{...}, drift:[...], unknown:[...], capabilities:{...}}. ok=False when the cache is
+    unhealthy OR any measured cap has drifted below its published ceiling — the two states that silently degrade
+    output_cap. Capability completeness is INFORMATIONAL (an uncovered bleeding-edge model is expected, not a fault)."""
     cache = _cache_health()
     drift, unknown = _cap_drift()
-    return {"ok": bool(cache["ok"] and not drift), "cache": cache, "drift": drift, "unknown": unknown}
+    return {"ok": bool(cache["ok"] and not drift), "cache": cache, "drift": drift, "unknown": unknown,
+            "capabilities": _capability_health()}
 
 
 def main(argv=None):
@@ -117,6 +145,21 @@ def main(argv=None):
         print("  measured-only (no published max yet — too new for LiteLLM; 32K floor protects, not a fault):")
         for u in r["unknown"]:
             print(f"    · {u['key']}: measured {u['measured']:,} [{u['method']}]")
+    cap = r.get("capabilities") or {}
+    if cap.get("error"):
+        print(f"  capabilities: audit unavailable ({cap['error']})")
+    elif cap.get("catalog_n"):
+        print(f"  capabilities: {cap['covered']}/{cap['catalog_n']} catalog models have LiteLLM capability data "
+              f"(daily cache: {cap['cache_capability_models']:,} models, age {cap['age_days']}d)")
+        if cap.get("uncovered"):
+            _u = cap["uncovered"]
+            print(f"    uncovered — custom / too-new for LiteLLM ({len(_u)}; vision guard stays conservative): "
+                  f"{', '.join(_u[:10])}{'  …+%d' % (len(_u) - 10) if len(_u) > 10 else ''}")
+        if cap.get("no_vision"):
+            print(f"    no vision verdict yet: {len(cap['no_vision'])} model(s)")
+        if cap.get("discover_total"):
+            print(f"    {cap['discover_total']} newer LiteLLM model(s) of providers you use are NOT in the catalog "
+                  f"— consider adding (`spendguard sync-capabilities --audit` lists them per provider)")
     return 0 if r["ok"] else 1
 
 

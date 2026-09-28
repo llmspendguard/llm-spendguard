@@ -977,7 +977,9 @@ def render_flow(flow: dict, lvl: str, t: Optional[dict] = None) -> str:
         head += f" · est {_money(est)} → actual {_money(act)}{_pct(est, act)}"
     else:
         head += f" · actual {_money(act)}"
-    parts = [head] + [_INDENT + ln for ln in _tally_lines(t or tally())]
+    # `t if t is not None`, NOT `t or tally()`: emit_flow passes a PROJECT-SCOPED tally; when that scope is legitimately
+    # empty ({}), `t or tally()` discarded it and showed the UNSCOPED all-project totals instead. None = "no tally passed".
+    parts = [head] + [_INDENT + ln for ln in _tally_lines(t if t is not None else tally())]
     if lvl == "verbose":
         tip = _learned_tip(intent)
         if tip:

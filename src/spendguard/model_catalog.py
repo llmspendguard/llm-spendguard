@@ -283,3 +283,5 @@ def validate_catalog(models=None):
         if len(rids) > 1:
             problems.append(f"provider {prov!r} has {len(rids)} provider_base records {rids}; expected exactly one")
     return problems
+
+

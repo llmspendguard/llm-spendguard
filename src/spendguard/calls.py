@@ -46,7 +46,8 @@ def current():
     return getattr(_local, "ctx", {})
 
 
-def set_context(intent: Optional[str] = None, chain: Optional[str] = None, who: Optional[str] = None) -> None:
+def set_context(intent: Optional[str] = None, chain: Optional[str] = None, who: Optional[str] = None,
+                root_call: Optional[str] = None, attempt: Optional[int] = None) -> None:
     c = dict(current())
     if intent is not None:
         c["intent"] = intent
@@ -57,6 +58,19 @@ def set_context(intent: Optional[str] = None, chain: Optional[str] = None, who: 
         # WRONG stack (threading.py:run), so a producer that runs the real call off-thread captures caller() on the
         # calling thread and sets it here — record_call prefers it over its own (wrong-thread) stack walk.
         c["who"] = who
+    if root_call is not None:
+        c["root_call"] = root_call        # ROOT ledger id of this logical call — every retry's row links back (retry_of)
+    if attempt is not None:
+        c["attempt"] = attempt            # 1-based try number; record_call stamps retry_of/attempts from it
+    _local.ctx = c
+
+
+def clear_retry_context() -> None:
+    """Drop the per-attempt linkage keys so a later DIRECT call on this thread never inherits a stale root_call.
+    vendor_call sets them per try (propagated to the worker it runs on) and clears them when the logical call ends."""
+    c = dict(current())
+    c.pop("root_call", None)
+    c.pop("attempt", None)
     _local.ctx = c
 
 
@@ -218,11 +232,36 @@ def _ensure_calls_schema(c):
     # physically impossible for one call (measured: backfill/aggregate rows recorded 1M-68M out_tok under gpt-5-nano,
     # whose ceiling is 128K), so it is flagged (never trusted as a per-call fact, excluded from per-call analysis) but
     # KEPT (raw value preserved — never a silent clamp/delete). NULL on a clean row.
+    #
+    # FORENSIC OUTCOME COLUMNS (the accounting mandate: EVERY call is on the ledger, success AND failure — a spend
+    # tool that drops failures cannot answer "what failed and why", which is the whole point of the tool). These
+    # carry the FULL disposition of a call that did not simply succeed, so reliability is a queryable fact, never a
+    # grep of a flat log or a lost error. All NULL on a legacy row or a plain success:
+    #   `outcome`        = the vendor_call KIND taxonomy (ok|overloaded|transport_error|deadline_exceeded|
+    #                      payload_rejected|refused|truncated|empty|schema_violation|unfunded|preflight_unmet) —
+    #                      one shared vocabulary with vendor_call, never a second taxonomy that could drift.
+    #   `http_status`    = the provider's HTTP status (429/529 overload vs 400/413 rejection) — the axis that tells
+    #                      "pace + retry" from "never retry". Extracted structurally (_exc_detail), never from prose.
+    #   `provider_error` = the provider's real error BODY (the reason lives there, not in the one-line str(e)).
+    #   `retry_after`    = the seconds the provider told us to wait on a 429/529 (its Retry-After) — so pacing can be
+    #                      proven to honor it.
+    #   `attempts`       = how many tries the call took before this outcome (1 = first-try; N = retried N-1 times).
+    #   `disposition`    = the terminal fate a caller saw: served | served_after_retry | failed_over (to another
+    #                      path/vendor) | failed (exhausted). This is what a reliability report counts.
+    #   `retry_of`       = the ROOT call id this row is a retry of (NULL on the first attempt). EVERY retry is its OWN
+    #                      row pointing back to the original, so the entire attempt history of one logical call —
+    #                      first try + every retry, on whatever provider/lane/meter each landed — is reconstructable
+    #                      by `WHERE id=X OR retry_of=X ORDER BY ts`. Attempts are never collapsed into one row.
     for _col, _decl in (("quality_conf", "REAL"), ("executor", "TEXT"), ("project", "TEXT"),
-                        ("effort", "TEXT"), ("suspect", "TEXT")):
+                        ("effort", "TEXT"), ("suspect", "TEXT"),
+                        ("outcome", "TEXT"), ("http_status", "INTEGER"), ("provider_error", "TEXT"),
+                        ("retry_after", "REAL"), ("attempts", "INTEGER"), ("disposition", "TEXT"),
+                        ("retry_of", "TEXT")):
         if _col not in _have:
             c.execute(f"ALTER TABLE calls ADD COLUMN {_col} {_decl}")
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_executor ON calls(executor)")  # per-lane rollups
+    c.execute("CREATE INDEX IF NOT EXISTS idx_calls_outcome ON calls(outcome)")    # reliability / error-class rollups
+    c.execute("CREATE INDEX IF NOT EXISTS idx_calls_retry_of ON calls(retry_of)")  # reconstruct one call's retry chain
     c.commit()
 
 
@@ -276,8 +315,26 @@ _SUSPECT_CEILING_FACTOR = 1.5
 
 def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
            prompt=None, output=None, finish=None, intent=None, chain=None, who=None,
-           executor=None, project=None, effort=None):
-    """Record one call. Returns call_id (or None if logging is off). Never raises.
+           executor=None, project=None, effort=None, *, outcome=None, http_status=None,
+           provider_error=None, retry_after=None, attempts=None, disposition=None, retry_of=None, call_id=None):
+    """Record one call — its full OUTCOME, success OR failure. Returns call_id. Never raises.
+
+    FORENSIC MANDATE (the reason this tool exists): EVERY call is on the ledger, whatever its fate — a metered success,
+    a $0 lane hit, a 429 overload, a transport drop, a schema miss, an exhausted-after-N-retries failure. So the OUTCOME
+    METADATA is written ALWAYS, independent of the privacy opt-in; only the prompt/output CONTENT snippets stay gated by
+    the opt-in (they can carry sensitive text). A spend/accounting tool that silently dropped failures could never
+    answer "what failed, why, and how often" — which is the whole question. (`SPENDGUARD_NO_LEDGER=1` is the explicit
+    escape hatch for the rare caller that truly wants zero rows; the gate's GATE_DISABLE/`spendguard off` still applies.)
+
+    Forensic fields (all NULL on a legacy row or a plain first-try success):
+      outcome        — the shared vendor_call KIND (ok|overloaded|transport_error|deadline_exceeded|payload_rejected|
+                       refused|truncated|empty|schema_violation|unfunded|preflight_unmet). One vocabulary, no drift.
+      http_status    — provider HTTP status (429/529 vs 400/413), extracted structurally, never from prose.
+      provider_error — the provider's real error BODY (capped), the reason that does not live in str(e).
+      retry_after    — seconds the provider asked us to wait (its Retry-After) — so pacing can be proven to honor it.
+      attempts       — how many tries produced THIS row (1 = first).
+      disposition    — served | served_after_retry | failed_over | failed (exhausted). What a reliability report counts.
+      retry_of       — the ROOT call id this row is a retry of (NULL on the first try). Every retry is its own row.
 
     `executor` names the SUBSCRIPTION LANE that served the call (claude-code / codex / gemini / zai-coding) when it
     rode a flat-fee plan instead of the metered API. Storing it makes "which lane worked" a recorded fact the receipt
@@ -287,15 +344,27 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
     # ATTRIBUTION is resolved by the SHARED brain _attribute (enforce a paid un-intented call + resolve intent/chain/
     # project) BEFORE enabled()/try, so record_call and insert can never drift on it (the record-call-outcome DRIFT).
     intent, chain, proj = _resolve_attribution(model, cost, intent, chain, project)
-    if not enabled():
-        return None
+    if _truthy(os.getenv("SPENDGUARD_NO_LEDGER")):
+        return None                                      # explicit total opt-out (rare) — otherwise ALWAYS record
+    # The OUTCOME row is recorded ALWAYS (forensic mandate); `enabled()` + store_prompts now gate ONLY the private
+    # CONTENT snippets, never whether the call is on the ledger. A failure with the opt-in off MUST still land.
+    _content_ok = enabled() and _store_prompts()
     try:
-        ctx = current()                                  # for the `who` fallback below (caller frame / context)
-        cid = _uuid()
+        ctx = current()                                  # for the `who` fallback + per-attempt retry linkage below
+        # PER-ATTEMPT LINKAGE (Ash: "each retry a row pointing to the original"): vendor_call puts the logical call's
+        # root_call id + 1-based attempt into the context before each try (propagated to the worker this runs on), so the
+        # whole retry chain of ONE call reconstructs as `WHERE id=root OR retry_of=root ORDER BY ts`. An EXPLICIT arg
+        # from the caller always wins; a direct single-shot call (no root in context) is its own root, unlinked.
+        _root, _seq = ctx.get("root_call"), ctx.get("attempt")
+        if retry_of is None and _root and isinstance(_seq, int) and _seq > 1:
+            retry_of = _root
+        if attempts is None and isinstance(_seq, int):
+            attempts = _seq
+        cid = call_id or (_root if (_root and _seq == 1) else None) or _uuid()
         sp = _snip()
         ph = hashlib.sha256((prompt or "").encode("utf-8", "ignore")).hexdigest()[:16] if prompt else None
-        psnip = prompt[:sp] if (prompt and _store_prompts()) else None
-        osnip = output[:sp] if (output and _store_prompts()) else None
+        psnip = prompt[:sp] if (prompt and _content_ok) else None
+        osnip = output[:sp] if (output and _content_ok) else None
         ts = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
         # DATA-INTEGRITY: a per-call out_tok above the model's real output ceiling is physically impossible for ONE
         # call — an aggregate/backfill row or a recording bug (measured: 1M-68M out_tok under gpt-5-nano, ceiling 128K).
@@ -319,11 +388,18 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
         with _lock:
             _calls_db().execute(
                 "INSERT INTO calls (id,ts,chain,intent,caller,provider,model,kind,in_tok,out_tok,"
-                "cost,latency,prompt_hash,prompt_snip,output_snip,finish,executor,project,effort,suspect) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "cost,latency,prompt_hash,prompt_snip,output_snip,finish,executor,project,effort,suspect,"
+                "outcome,http_status,provider_error,retry_after,attempts,disposition,retry_of) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (cid, ts, chain, intent, who or ctx.get("who") or caller(), provider, model, kind,
                  int(in_tok or 0), int(out_tok or 0), float(cost or 0), latency, ph, psnip, osnip, finish,
-                 executor, proj, (effort or None), suspect))
+                 executor, proj, (effort or None), suspect,
+                 (outcome or None),
+                 (int(http_status) if str(http_status or "").strip().isdigit() else None),
+                 (provider_error[:1000] if isinstance(provider_error, str) else None),
+                 (float(retry_after) if isinstance(retry_after, (int, float)) else None),
+                 (int(attempts) if isinstance(attempts, int) else None),
+                 (disposition or None), (retry_of or None)))
             _calls_db().commit()
         # deferred implicit feedback: did THIS call reuse an earlier output in the same chain?
         if chain and prompt:

@@ -43,7 +43,8 @@ def _write_advisor_cfg(key, value):
             adv[key] = value
         d["advisor"] = adv
         return d
-    config.update_json(config.CONFIG_JSON, _mut, reason=f"set advisor.{key}")
+    config.update_json(config.CONFIG_JSON, _mut, reason=f"set advisor.{key}",
+                       required=True)   # CONFIG_JSON holds irreplaceable settings: a corrupt file RAISES (human repairs), never a silent no-op
     config.cfg_invalidate()
 
 

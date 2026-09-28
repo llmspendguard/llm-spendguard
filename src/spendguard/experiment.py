@@ -87,7 +87,7 @@ def _call(model, prompt, max_out=400, effort=None):
                 raise
         text = m.choices[0].message.content or ""
         it, ot = m.usage.prompt_tokens, m.usage.completion_tokens
-    return pricing.realtime_cost(model, it, ot), it, ot, text
+    return pricing.realtime_cost(model, it, ot, provider=prov), it, ot, text   # prov pins a bare multi-vendor id to the right price
 
 
 def _variants(intent, base_model, models, instructions, efforts=None):
@@ -145,8 +145,10 @@ def experiment(intent, models=None, instructions=None, n=20, run=False, reconsid
             it = _count_tokens(prompt + v["instr"], v["model"])
             ot = _count_tokens(ref, v["model"]) // (2 if "terse" in v["label"] else 1)
             est += pricing.realtime_cost(v["model"], it, ot)
+    _m = _meta()   # None when the ledger can't be READ — formatting None with :.4f raises TypeError (not $0 spent)
+    _spent = f"${_m:.4f}" if _m is not None else "unknown (ledger unread)"
     print(f"  {len(variants)} variant(s) × {len(samples)} samples  ESTIMATE: ~${est:.4f}  "
-          f"(meta ${config.meta_cap():.0f}/day · spent ${_meta():.4f})")
+          f"(meta ${config.meta_cap():.0f}/day · spent {_spent})")
     if not run:
         print("  variants: " + ", ".join(v["label"] for v in variants))
         from . import ui; ui.estimate_only(action="run the A/B experiment", cost=est)

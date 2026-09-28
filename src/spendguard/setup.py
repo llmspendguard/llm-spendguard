@@ -471,7 +471,9 @@ def _write_store(s, value):
         else:
             cfg[sec][key] = value
         p.parent.mkdir(parents=True, exist_ok=True)
-        config.update_json(p, lambda _d: cfg)
+        config.update_json(p, lambda _d: cfg,
+                           required=True)               # p is CONFIG_JSON (merged settings): a corrupt file RAISES rather
+        #                                                 than silently declining and dropping every other setting
         config._cfg._cache = None                       # drop the process cache so a read-back shows the new value
         return p, None
     if store in ("env", "(env only)"):
@@ -706,9 +708,9 @@ def cmd_init(argv=None):
         return cur
     config.save_config(_merge, reason="setup")
     if email:
-        config.update_json(ep, lambda _d: email)
-    if saas:
-        config.update_json(sp, lambda _d: saas)
+        config.update_json(ep, lambda _d: email, quarantine_unparseable=True)   # init writes the user's identity wholesale:
+    if saas:                                                                     # recover a corrupt prior file so the new
+        config.update_json(sp, lambda _d: saas, quarantine_unparseable=True)     # values persist, never a silent decline reported as "wrote"
     print(f"\nwrote {config.CONFIG_JSON}" + (f" and {ep}" if email else "") + (f" and {sp}" if saas else ""))
     # Contributor identity is a MUST (it's the billable/rollup user). Materialize + show the resolved id now so it's
     # never blank/unattributed; an email here also becomes the alert target.

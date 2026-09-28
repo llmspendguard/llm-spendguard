@@ -108,6 +108,28 @@ def ping():
     return _request("GET", "/v1/health")
 
 
+def fetch_models(model=None, provider=None, timeout=8):
+    """The org-authoritative, daily-fresh model catalog from the server (GET /v1/models) — the "first place to check"
+    for a model's capabilities + upper bounds + price + mode (the server's daily LiteLLM cron keeps it current). Returns
+    {model_id: row} (row: {provider, mode, max_input_tokens, max_output_tokens, price, capabilities}), or None when the
+    server is unconfigured / unreachable so the caller FALLS BACK to the local LiteLLM sync. FAIL-OPEN by design — the
+    server is an optional fresher-source, never a dependency; a deliberate spend/deadline stop still propagates. $0 (a
+    read). `model` / `provider` narrow the query server-side."""
+    import urllib.parse as _up
+    q = "&".join(k + "=" + _up.quote(v) for k, v in (("model", model), ("provider", provider)) if v)
+    try:
+        r = _request("GET", "/v1/models" + ("?" + q if q else ""), timeout=timeout)
+    except Exception as e:
+        from . import gate as _g
+        if _g.is_deliberate_stop(e):
+            raise                                    # a refusal/deadline is never downgraded to a silent fallback
+        return None                                  # unconfigured / unreachable → the caller uses its local sync
+    models = r.get("models") if isinstance(r, dict) else None
+    if not isinstance(models, list):
+        return None
+    return {m["model_id"]: m for m in models if isinstance(m, dict) and m.get("model_id")}
+
+
 def contributor():
     """Who this install attributes its spend to (member_ref) — the REAL billable/rollup user, identified by the
     email each teammate sets in their repo config (one org key is shared across teammates' repos). NEVER empty:
@@ -342,25 +364,45 @@ def build_rollup_rows(raw, ref, flt):
 
 
 def build_guarded_rows(rows, base):
-    """Guarded cumulant rows → scrubbed /v1 guarded_totals. `base` = a set of this connection's project(s) (empty =
-    push all of them; guarded sources are never meta/unattributed, so it doesn't widen like the ledger filter).
+    """Guarded cumulant rows → scrubbed /v1 guarded_totals. `base` = this connection's project scope:
+      · a non-empty set → push only those projects;
+      · an EMPTY set    → no scope configured, push ALL of this install's own guarded rows (guarded sources are never
+                          meta/unattributed, so it doesn't widen like the ledger filter);
+      · **None**        → an org WAS configured but resolved to NO projects (lookup failed / maps nothing) → push
+                          NOTHING. None is NOT "push all": that would over-share every project under an unresolved org
+                          (the fail-open leak). The empty-set and None cases must never collapse (state-collapse doctrine).
     Cumulants pass through (they add → the server recovers the distribution at any scope)."""
+    if base is None:
+        return []                                  # org configured but unresolved → refuse to push (never over-share)
     out = []
+    out_of_scope = []                              # rows dropped as not-this-connection's-project — TRACED, never a silent continue
     for r in rows:
         proj = (r.get("project") or "").lower()
         if base and proj not in base:
+            out_of_scope.append(f"{proj}/{r.get('source')}={r.get('n')}")
             continue
         out.append({"day": r["day"], "project": proj, "source": r["source"], "n": int(r["n"]),
                     "k1": r["k1"], "k2": r["k2"], "k3": r["k3"], "k4": r["k4"]})
+    if out_of_scope:                               # surface the deliberate scope filter so it is auditable, never invisible
+        import sys as _sys
+        print(f"[spendguard] build_guarded_rows: dropped {len(out_of_scope)} guarded row(s) OUTSIDE this "
+              f"connection's {len(base)}-project scope: {', '.join(out_of_scope[:8])}"
+              f"{' …' if len(out_of_scope) > 8 else ''}", file=_sys.stderr)
     return out
 
 
 def _conn_project_base(c):
-    """The connection's own project set (no meta/unattributed widening) — used for the guarded filter. ORG-BASED
-    when `org` is set (every taxonomy project under the org); else the explicit projects/project list; empty = all."""
+    """The connection's own project scope for the guarded filter (no meta/unattributed widening). Three distinct returns
+    that MUST NOT collapse (state-collapse doctrine):
+      · a non-empty set → the explicit scope (every taxonomy project under `org`, or the explicit projects/project list);
+      · **None**        → an org WAS configured but resolved to NO projects (lookup failed / maps nothing). This is NOT
+                          empty-means-all: returning an empty set here would over-share EVERY project under an unresolved
+                          org (the fail-open leak). None ⇒ the caller refuses to push (see `_guarded_rows`).
+      · an EMPTY set    → NO scope configured at all (no org, no projects, no project) → push this install's own guarded
+                          rows (guarded sources are never meta/unattributed, so it doesn't widen like the ledger filter)."""
     org = (c.get("org") or "").strip()
     if org:
-        return _org_projects(org)
+        return _org_projects(org) or None    # org set but unresolved → None (refuse), never empty=push-all
     ps = c.get("projects")
     if isinstance(ps, list) and ps:
         return set(str(x).strip().lower() for x in ps if x)
@@ -370,23 +412,46 @@ def _conn_project_base(c):
 
 
 def _rollup_rows(since=None):
-    """I/O shell: read the local ledger (DB) + resolve contributor/filter, then hand to build_rollup_rows (pure)."""
+    """I/O shell: read the local ledger (DB) + resolve contributor/filter, then hand to build_rollup_rows (pure). A DB
+    READ FAILURE is surfaced LOUD and RE-RAISED (F1) — never an empty result masquerading as an empty ledger (the twin
+    of _guarded_rows). push_rollup must not send an incomplete roll-up, and crosscheck must not misread every server
+    row as server_only, because the local read hiccuped. The ledger auto-creates, so by_dims returns [] on a fresh
+    install; only a genuine locked/corrupt-DB failure reaches the except, and that must fail loud, not push nothing."""
+    import sys as _sys
     from . import budget
     try:
         raw = budget.by_dims(since=since)
-    except Exception:
-        raw = []
+    except Exception as e:
+        print(f"[spendguard] _rollup_rows: FAILED to read the local ledger ({e!r}) — refusing to build a roll-up from "
+              "an empty read (an empty read is not an empty ledger). Fix the ledger read first.", file=_sys.stderr)
+        raise
     return build_rollup_rows(raw, contributor(), _project_filter(saas_connection()))
 
 
 def _guarded_rows(since=None):
-    """I/O shell: read guarded cumulants (DB), then hand to build_guarded_rows (pure)."""
+    """I/O shell: read guarded cumulants (DB), resolve the connection's project scope, then hand to build_guarded_rows
+    (pure). Two silent-absence traps are closed here:
+      · a DB READ FAILURE is surfaced LOUD and RE-RAISED (F1) — an empty result must never masquerade as 'no cumulants'
+        (the guarded table auto-creates, so `by_dims_guarded` returns [] on a fresh install; only a genuine
+        locked/corrupt-DB failure reaches the except, and that must fail loud, not push an empty guarded set);
+      · a None scope (org configured but resolved to NO projects) is a MISCONFIGURATION surfaced loud — the push then
+        sends nothing rather than over-sharing every project under an unresolved org (the fail-open leak)."""
+    import sys as _sys
     from . import guard
     try:
         rows = guard.by_dims_guarded(since=since)
-    except Exception:
+    except Exception as e:
+        print(f"[spendguard] _guarded_rows: FAILED to read guarded cumulants from the local ledger ({e!r}) — "
+              "refusing to push an empty guarded set (an empty push is not 'no cumulants'). Fix the ledger read first.",
+              file=_sys.stderr)
+        raise
+    base = _conn_project_base(saas_connection())
+    if base is None:                               # org set but unresolved → refuse to push (loud, not a silent empty)
+        print("[spendguard] _guarded_rows: org is configured but resolved to NO projects — NOT pushing guarded "
+              "cumulants (refusing to over-share every project under an unresolved org). Check the org↔project map.",
+              file=_sys.stderr)
         return []
-    return build_guarded_rows(rows, _conn_project_base(saas_connection()))
+    return build_guarded_rows(rows, base)
 
 
 def push_rollup(since=None, dry=False):
@@ -394,6 +459,12 @@ def push_rollup(since=None, dry=False):
     contributor so the server can roll up per user → team → org. Honors visibility: no-op note if private.
     dry=True returns the payload without sending (offline-testable)."""
     c = saas_connection()
+    if not c.get("enabled"):
+        # contributor_ok() returns (True, "n/a") when the connection is DISABLED — it means "don't check the
+        # contributor", NOT "the contributor is adequate". Without this guard, a disabled connection with a
+        # non-private visibility would read that True as consent and push an ANONYMOUS contributor. A disabled
+        # connection never pushes.
+        return {"skipped": "saas connection not enabled — nothing leaves this machine"}
     if c.get("visibility", "private") == "private":
         return {"skipped": "visibility=private — nothing leaves this machine"}
     cok, cwhy = contributor_ok()
@@ -685,7 +756,7 @@ def _state():
 def _set_state(**kw):
     s = _state(); s.update(kw)
     try:
-        config.update_json(config.saas_state_path(), lambda _d: s)
+        config.update_json(config.saas_state_path(), lambda _d: s, quarantine_unparseable=True)   # rebuildable SaaS state: recover a corrupt file, never a silent decline
     except Exception:
         pass
 

@@ -78,7 +78,8 @@ def pull_live_catalog(providers=None, timeout_s=20):
         errors["gemini/agy-lane"] = str(e)[:120]          # namespaced so it is not read as a metered-fetch error
     out = {"_fetched": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
            "models": models, "lane_models": lane_models, "errors": errors, "ceilings": ceilings}
-    config.update_json(CATALOG_CACHE, lambda _d: out)     # the one atomic writer (+~backup), like sync.CACHE
+    config.update_json(CATALOG_CACHE, lambda _d: out,     # the one atomic writer (+~backup), like sync.CACHE
+                       quarantine_unparseable=True)       # rebuildable cache: recover a corrupt file, don't silently decline
     _CACHE_MEM["mtime"] = None                             # force the memo to reload the freshly-written file
     return len(models), sum(len(v) for v in models.values()), errors
 

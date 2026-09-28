@@ -76,8 +76,11 @@ documented so a consumer never has to reverse-engineer it — **it never raises;
   sig=None, intent=None, files=None, images=None, no_metered_fallback=False, no_substitution=False,
   metered_only=False)`. `timeout_s` is a client-side cancel that actually stops the call **and** its billing (lane
   AND api). `schema` forces structured output. `intent` (alias for `sig`) tags the call's job-type for attribution —
-  **a paid call with NO intent lands in `(none)`, so always pass one.** `no_metered_fallback` makes a lane miss an
-  error, never a paid retry ($0 by construction). `no_substitution=True` PINS the named model (the utilisation bandit
+  **a paid call with NO intent lands in `(none)`, so always pass one.** `no_metered_fallback` makes a lane miss on an
+  UNSUITABLE task (empty / off-shape / oversized / transient-quota) an error, never a paid retry — $0. The ONE exception
+  is a lane that is infrastructure-DOWN (auth expired / CLI crash / rejected model): a down lane still fails over
+  (another $0 lane first, then metered) so work is never lost to a dead lane — a STRUCTURAL split on the miss reason, not
+  a parse of the error prose (decided with the maintainer 2026-09-26). `no_substitution=True` PINS the named model (the utilisation bandit
   can't swap it). `metered_only=True` forces the **faithful metered half** of the atomic (lane, metered) pair — it
   SKIPS the $0 lane and rides the provider API at equal-or-greater reasoning (`reasoning_equivalence`); use it for a
   distribution-sensitive / verdict-cached fan (a refuter, a cached classifier) that must reproduce its serial

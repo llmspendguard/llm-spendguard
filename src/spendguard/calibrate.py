@@ -520,7 +520,10 @@ def cell_stats(as_of=None):
             from . import deid
             return deid.redact(label)[:120]
         except Exception:
-            return (label or "")[:120]
+            # FAIL CLOSED toward privacy: if de-identification itself is unavailable (import error / unexpected crash),
+            # WITHHOLD the label — never return the raw text (was `(label or "")[:120]`, which leaked the un-redacted
+            # intent label to the org server on any failure). These cells are pushed off-machine via push_shared.
+            return "<redaction-unavailable: label withheld>"
 
     cells = []
 
@@ -575,7 +578,8 @@ def fetch_shared():
         config.update_json(
             config.HOME / ORG_CACHE,
             lambda _d: {"fetched_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
-                        "cells": cells})
+                        "cells": cells},
+            quarantine_unparseable=True)   # rebuildable org cache: recover a corrupt file, never a silent decline
     return {"cells": len(cells), "members": r.get("members"), **({"skipped": r["skipped"]} if "skipped" in r else {})}
 
 

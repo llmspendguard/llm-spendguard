@@ -58,10 +58,10 @@ def auth_status(timeout=20):
     directly, never a regex on its printed prose. True/False from returncode when the CLI answers; None when it
     can't be determined (CLI absent, timeout) so a can't-check is NEVER mistaken for a positive logout. Run on the
     plan LOGIN env (metered keys stripped) so it reflects the auth the lane's run_prompt uses. $0. Never raises."""
-    exe = _bin()
-    if not exe:
-        return {"authed": None}
     try:
+        exe = _bin()                               # INSIDE the try: _bin() "fails LOUD" (raises) on a pinned
+        if not exe:                                # SPENDGUARD_CODEX_BIN that points at a missing binary — that must
+            return {"authed": None}                # become an honest {"authed": None}, never propagate (docstring: Never raises)
         from . import config
         r = subprocess.run([exe, "login", "status"], capture_output=True, text=True,
                            timeout=timeout, env=config.lane_plan_env())

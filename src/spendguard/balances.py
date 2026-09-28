@@ -245,7 +245,9 @@ def refresh_balances(vendors=None):
         b = vendor_balance(v, refresh=True)
         b["as_of"] = now
         out[v] = b
-    config.update_json(BALANCE_CACHE, lambda _d: {"_fetched": now, "vendors": out})
+    config.update_json(BALANCE_CACHE, lambda _d: {"_fetched": now, "vendors": out},
+                       quarantine_unparseable=True)   # rebuildable cache: a corrupt file is moved aside + rewritten,
+    #                                                    never a silent decline the caller reports as a fresh fetch
     return list(out.values())
 
 

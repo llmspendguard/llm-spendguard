@@ -69,5 +69,14 @@ r = _run(_HEALTHY_CACHE, metadata_audit.MODEL_METADATA_STALE_DAYS + 5, {}, {})
 ck("a STALE cache (older than the alarm threshold) is reported NOT ok",
    r["ok"] is False and r["cache"]["stale"] is True, str(r["cache"]))
 
+# ── 6. the CAPABILITY section is present + INFORMATIONAL — it never flips `ok` (an uncovered bleeding-edge model is
+#        EXPECTED, LiteLLM hasn't caught up, not a fault). Reuses the ONE completeness home (sync_capabilities). ────────
+r = _run(_HEALTHY_CACHE, 1.0, {"gpt-x": 32000}, {"openai/gpt-x": {"max_output_tokens": 40000, "method": "probe"}})
+cap = r.get("capabilities") or {}
+ck("backbone_health includes a capabilities section (freshness + completeness vs LiteLLM)",
+   isinstance(cap, dict) and "catalog_n" in cap and "covered" in cap and "discover_total" in cap, str(cap)[:140])
+ck("capability completeness is INFORMATIONAL — it never flips ok (uncovered bleeding-edge is expected, not a fault)",
+   r["ok"] is True, f"ok={r['ok']} cap_covered={cap.get('covered')}/{cap.get('catalog_n')}")
+
 print(f"\n{'[FAIL]' if fails else 'OK'} test_metadata_backbone_health: {fails} failure(s)")
 sys.exit(1 if fails else 0)

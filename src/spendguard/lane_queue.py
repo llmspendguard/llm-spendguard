@@ -34,7 +34,11 @@ import time
 from . import config
 
 LEASE_S_DEFAULT = 300.0         # a leased task must settle within this window or it is reclaimed (worker presumed dead)
-MAX_ATTEMPTS_DEFAULT = 3        # retry a task up to this many times before marking it `failed`
+MAX_ATTEMPTS_DEFAULT = 10       # DURABLE retry budget: re-enqueue a RETRYABLE (transient) failure up to this many times
+#   before marking it `failed`. This is the home of the "retry up to 10 to ENSURE success" guarantee (vendor_call.py
+#   §RETRYABLE doctrine: in-process keeps a small 3 so a realtime caller isn't blocked, and the queue owns the 10 —
+#   a queued call therefore gets up to (in-process 3) × (queue 10) tries, ASYNC, without blocking anyone). settle()
+#   only spends this budget on TRANSIENT outcomes; a DETERMINISTIC failure fails FAST (see settle, class-aware retry).
 # PARKING (Step 4 — backpressure): a task that could not get a governor slot (reason='dispatch_saturated') NEVER RAN,
 # so it is not a failure — it is DEFERRED and retried when capacity frees, WITHOUT burning a failure-attempt. A park
 # waits PARK_BACKOFF_S (so drain does not immediately re-saturate) and is bounded by MAX_PARKS (a no-SLA task can't
@@ -249,14 +253,20 @@ def settle(row_id, result):
     Success (text and no error) → `done`. A task that could NOT get a governor slot (reason='dispatch_saturated') never
     RAN — it is not a failure but a capacity block, so it is PARKED (Step 4): deferred PARK_BACKOFF_S and retried when
     capacity frees, WITHOUT burning a failure-attempt (the lease's attempt is refunded), bounded by MAX_PARKS AND by the
-    row's own SLA deadline_ts (a park never pushes a call past the deadline it promised). Any OTHER failure retries
-    (→ `pending`, counting an attempt) while attempts remain, else `failed`. A spend refusal / ledger LOCK propagates;
-    any other hiccup is best-effort (the lease reclaims the row)."""
+    row's own SLA deadline_ts (a park never pushes a call past the deadline it promised). Any OTHER failure is settled
+    CLASS-AWARE: a TRANSIENT outcome (vendor_call.RETRYABLE) retries (→ `pending`, counting an attempt) while attempts
+    remain, else `failed`; a DETERMINISTIC outcome fails FAST (no wasted retries). A spend refusal / ledger LOCK
+    propagates; any other hiccup is best-effort (the lease reclaims the row)."""
     result = result if isinstance(result, dict) else {}
     ok = bool(result.get("text")) and not result.get("error")
     # 'dispatch_saturated' is the STRUCTURED reason the runner emits when the governor had no slot within the deadline
     # (a fixed status code, not a meaning judgement) — the one outcome that is retryable-LATER rather than a failure.
     saturated = (not ok) and result.get("reason") == "dispatch_saturated"
+    # 'queued_batch' is the STRUCTURED reason bulk_delegate(on_miss='batch') emits when it OFFLOADED this task to the
+    # Batch API (the planner's predictive shed): the task neither failed nor finished — it is ASYNC in a batch, so it
+    # must NOT retry realtime and must NOT count a failure-attempt. It becomes its own 'queued_batch' state holding the
+    # batch handle, settled later by collect_batched. A fixed reason code + a present handle, never prose.
+    batched = (not ok) and result.get("reason") == "queued_batch" and bool(result.get("batch"))
     now_dt = _utcnow()
     now = _iso(now_dt)
     try:
@@ -276,19 +286,228 @@ def settle(row_id, result):
                     state, defer_until, new_attempts, new_parks = "failed", None, attempts, parks
                 else:                                                     # PARK: deferred, park counted, attempt REFUNDED
                     state, defer_until, new_attempts, new_parks = "pending", defer, max(0, attempts - 1), parks + 1
+            elif batched:                                                 # OFFLOADED to the Batch API — await collection,
+                state, defer_until, new_attempts, new_parks = "queued_batch", None, attempts, parks  # never realtime-retry
             else:
-                state = "pending" if attempts < maxa else "failed"
+                # CLASS-AWARE durable retry: only a TRANSIENT outcome (vendor_call.RETRYABLE — transport_error /
+                # overloaded) is worth re-enqueuing; re-running it can genuinely get a different answer, and this is
+                # where the retry-to-10 reliability guarantee is spent. A DETERMINISTIC failure (payload_rejected,
+                # refused, unfunded, deadline, truncated, empty, schema) fails IDENTICALLY on retry — the vendor_call
+                # doctrine's "breaks on first occurrence regardless" — so it fails FAST, never burning the budget on a
+                # hopeless re-run (Ash: "reduce retry, batch off"). The outcome is the vendor_call KIND the runner
+                # stamped on the result; an ABSENT/unknown outcome is treated as retryable (conservative — matches the
+                # pre-class behavior for a row a runner didn't classify, e.g. a governor/dispatch hiccup).
+                from . import vendor_call as _vc
+                oc = result.get("outcome")
+                retryable = (oc is None) or (oc in _vc.RETRYABLE)
+                state = ("pending" if attempts < maxa else "failed") if retryable else "failed"
                 defer_until, new_attempts, new_parks = None, attempts, parks
             c.execute("UPDATE lane_queue SET state=?, result=?, lane=?, billed=?, lease_until=NULL, defer_until=?, "
                       "attempts=?, parks=?, updated_ts=? WHERE id=?",
                       (state, json.dumps(result)[:_RESULT_CAP], result.get("lane"),
                        1 if result.get("billed") else 0, defer_until, new_attempts, new_parks, now, row_id))
             c.commit()
+            return True                                # the row WAS updated + committed — a caller may count it settled
     except Exception as _e:
         from . import provider_tokens as _pt          # the CANONICAL stop-or-locked predicate (same as _enqueue_leased)
         if _pt._stop_or_locked(_e):
             raise                                      # spend refusal / ledger LOCK PROPAGATES — never swallowed
-        # else best-effort: a transient settle failure never crashes the drain loop (the lease reclaims the row)
+        # else best-effort: a transient settle failure never crashes the drain loop (the lease reclaims the row) — but it
+        # RETURNS FALSE so a caller (collect_batched) does NOT count an UN-settled row as done/failed/collected (F1).
+        return False
+
+
+def mark_batched(row_ids, batch_id, batch_model=None):
+    """Move leased rows to the 'queued_batch' state, recording the batch handle (batch_id + model) so collect_batched
+    can settle them later BY custom_id (== row id). Called by the drain OFFLOAD path right after submit_chat_tasks
+    returns a batch_id. Stores the handle in the row's `result` (JSON), clears the lease, and does NOT count a
+    failure-attempt (the work is not failing — it moved to the async path). Returns the count marked. Uses the same
+    stop-or-locked propagation as settle (a ledger LOCK on a DB write must propagate, which is_deliberate_stop alone
+    would not catch)."""
+    ids = [r for r in (row_ids or []) if r]
+    if not ids or not batch_id:
+        return 0
+    handle = json.dumps({"reason": "queued_batch", "batch": batch_id, "batch_model": batch_model})
+    now = _iso(_utcnow())
+    try:
+        marked = 0
+        with _queue_op() as c:
+            for rid in ids:
+                # state IN ('leased','queued_batch'): a leased row on FIRST submit, OR a queued_batch row being
+                # RE-POINTED to a new batch_id when the tracker resubmits an expired/failed batch. COMMIT PER ROW so a
+                # crash mid-loop leaves the already-marked rows DURABLE (never a whole-mark rollback); count the rows
+                # ACTUALLY changed (a row in any other state is skipped) — never over-report by returning len(ids).
+                cur = c.execute("UPDATE lane_queue SET state='queued_batch', result=?, lane='batch', "
+                                "lease_until=NULL, updated_ts=? WHERE id=? AND state IN ('leased','queued_batch')",
+                                (handle, now, rid))
+                c.commit()
+                marked += cur.rowcount if (cur.rowcount and cur.rowcount > 0) else 0
+        return marked
+    except Exception as _e:
+        from . import provider_tokens as _pt
+        if _pt._stop_or_locked(_e):
+            raise
+        import sys as _sysmb                           # NAMED trace (never a silent swallow): the affected rows + batch
+        print("[spendguard] lane_queue.mark_batched: transient DB error (%s) — %d row(s) %s NOT marked queued_batch "
+              "for batch %s; they stay LEASED and reclaim on lease expiry (work not lost, re-offloaded next round)"
+              % (type(_e).__name__, len(ids), ids[:5], batch_id), file=_sysmb.stderr, flush=True)
+        return 0
+
+
+def collect_batched(limit=2000, model=None):
+    """SETTLE side of the planner's batch offload: pull + settle rows in the 'queued_batch' state. Reads them, groups
+    by their batch handle (batch_id, from result), pulls each via callio.collect_chat_tasks, and settles each row BY
+    custom_id (== the row id). NOTHING is abandoned — every row is either settled or LEFT queued_batch to be retried on
+    the NEXT collection round:
+      · a result → settle done(text);
+      · a per-request failure → settle (the normal retry/failed ladder);
+      · a batch whose output is NOT ready → its rows stay queued_batch, re-collected next round (never blocks the 24h
+        window);
+      · a batch whose collect FAILS transiently → its rows stay queued_batch, re-collected next round (a NAMED entry in
+        `collect_errors`, not a drop);
+      · a row absent from BOTH results and failures (partial pull) → stays queued_batch, re-collected next round;
+      · an ORPHANED row (its stored handle is missing/corrupt so it can NEVER be collected) → settled to the retry
+        ladder so it re-runs realtime instead of sitting stuck forever, and named in `collect_errors`.
+    $0 (a finished batch was already billed at submit). `model` defaults to config advisor.batch_model. A DELIBERATE
+    spend/deadline stop from a collect propagates. Returns {rows, batches, done, failed, not_ready, collected,
+    orphaned, collect_errors}."""
+    from . import config
+    model = model or config._cfg_get("advisor", "batch_model", None)
+    try:
+        with _queue_op() as c:
+            rows = c.execute("SELECT id, intent, result FROM lane_queue WHERE state='queued_batch' LIMIT ?",
+                             (int(limit),)).fetchall()
+    except Exception as _e:
+        from . import provider_tokens as _pt
+        if _pt._stop_or_locked(_e):
+            raise
+        import sys as _syscb                           # NAMED trace: the read failed → collection skipped THIS round,
+        print("[spendguard] lane_queue.collect_batched: transient DB error reading queued_batch rows (%s) — "
+              "collection deferred to next round (queued_batch rows are durable, not lost)"
+              % type(_e).__name__, file=_syscb.stderr, flush=True)
+        return {"rows": 0, "batches": 0, "done": 0, "failed": 0, "not_ready": 0, "collected": 0, "orphaned": 0,
+                "collect_errors": [{"error": "queue read failed: %s" % type(_e).__name__}]}
+    groups, orphaned = {}, []                          # (batch_id, intent) -> [row_id]; orphaned = no usable handle
+    for rid, intent, result_json in rows:
+        try:
+            handle = (json.loads(result_json) if result_json else {}).get("batch")
+        except (ValueError, TypeError):
+            handle = None
+        if handle:
+            groups.setdefault((handle, intent), []).append(rid)
+        else:
+            orphaned.append(rid)                       # a queued_batch row with no usable batch handle — uncollectable
+    from . import callio, gate as _gate
+    out = {"rows": len(rows), "batches": len(groups), "done": 0, "failed": 0, "not_ready": 0, "collected": 0,
+           "orphaned": len(orphaned), "not_settled": 0, "collect_errors": []}
+    # UNSTICK orphaned rows: with no handle they can never be collected, so settle each to the retry ladder (re-runs
+    # realtime) rather than leave it stuck in queued_batch forever — and name them (never a silent discard).
+    _orphan_failed = []
+    for rid in orphaned:
+        if not settle(rid, {"error": "queued_batch row has no usable batch handle — re-queued for realtime retry"}):
+            _orphan_failed.append(rid)                     # settle ITSELF failed → the orphan stays queued_batch — NAMED,
+            #                                                not reported as recovered (F1: don't imply the orphan was handled)
+    if orphaned:
+        out["collect_errors"].append({"orphaned_no_handle": orphaned[:50], "count": len(orphaned)})
+    if _orphan_failed:
+        out["not_settled"] += len(_orphan_failed)
+        out["collect_errors"].append({"orphan_settle_failed": _orphan_failed[:50], "count": len(_orphan_failed)})
+    for (batch_id, intent), ids in groups.items():
+        try:
+            res = callio.collect_chat_tasks(batch_id, intent, model)
+        except Exception as e:
+            if _gate.is_deliberate_stop(e):
+                raise                                  # a spend/deadline refusal HALTS collection, never continues past it
+            # NAMED gap (never a silent skip — each batch is a unit of work): its rows stay queued_batch and are
+            # RE-COLLECTED next round; the miss is surfaced by batch_id + row count so it is visible while it retries.
+            out["collect_errors"].append({"batch_id": batch_id, "intent": intent, "rows": len(ids),
+                                          "error": "%s: %s" % (type(e).__name__, str(e)[:60])})
+            continue
+        if batch_id in (res.get("not_ready") or []):
+            out["not_ready"] += len(ids)
+            continue                                   # output not ready → rows stay queued_batch, re-collected next round
+        results, failed = (res.get("results") or {}), (res.get("failed") or {})
+        for rid in ids:
+            if rid in results:
+                # count done/collected ONLY when settle actually recorded it — a transient settle failure returns
+                # falsy, and counting it would report the row collected while it stays queued_batch (F1). An un-settled
+                # row is NAMED and stays queued_batch → re-collected next round (never lost, never over-reported).
+                if settle(rid, {"text": results[rid], "lane": "batch"}):  # → done(text)
+                    out["done"] += 1
+                    out["collected"] += 1
+                else:
+                    out["collect_errors"].append({"batch_id": batch_id, "row": rid, "error": "settle failed — stays queued_batch"})
+            elif rid in failed:
+                if settle(rid, {"error": failed[rid]}):                   # → the normal retry/failed ladder
+                    out["failed"] += 1
+                    out["collected"] += 1
+                else:
+                    out["collect_errors"].append({"batch_id": batch_id, "row": rid, "error": "settle failed — stays queued_batch"})
+            else:
+                # id absent from BOTH results and failed (a partial pull — the batch returned some rows, not this one).
+                # It stays queued_batch and is re-collected next round (never dropped) — but it is COUNTED (not_settled),
+                # so a partially-returned batch never SILENTLY skips a row (each row is a unit of work).
+                out["not_settled"] += 1
+    return out
+
+
+def batched_rows(batch_id):
+    """The queued_batch rows STILL awaiting collection for `batch_id` — [{id, task, system, reasoning}] — so the batch
+    tracker can RESUBMIT the unsettled remainder when a batch expires/fails (job-level retry). A row already settled
+    (done/pending/failed) has LEFT queued_batch and is not returned. Returns None (NOT []) on a transient read failure,
+    so the tracker treats it as 'unknown, retry next tick' and never mistakes a DB hiccup for 'all rows settled' (which
+    would prematurely close the job). A stop/lock propagates. $0 read."""
+    try:
+        with _queue_op() as c:
+            rows = c.execute("SELECT id, task, system, reasoning, result FROM lane_queue "
+                             "WHERE state='queued_batch'").fetchall()
+    except Exception as _e:
+        from . import provider_tokens as _pt
+        if _pt._stop_or_locked(_e):
+            raise
+        return None                                    # UNKNOWN (read failed) — never [] (which reads as 'all settled')
+    out = []
+    for rid, task, system, reasoning, result_json in rows:
+        try:
+            h = (json.loads(result_json) if result_json else {}).get("batch")
+        except (ValueError, TypeError):
+            h = None
+        if h == batch_id:
+            out.append({"id": rid, "task": task, "system": system, "reasoning": reasoning})
+    return out
+
+
+def requeue_from_batch(row_ids, reason):
+    """Move queued_batch rows BACK to realtime 'pending' — the batch offload was EXHAUSTED/failed, so its rows fall to
+    the realtime retry ladder. STATE-GUARDED + IDEMPOTENT (WHERE state='queued_batch'): a row already moved is left
+    untouched, so a retried poll never re-processes it (the transition is safe to repeat — the batch_tracker relies on
+    this for its non-atomic 'requeue rows then mark job failed' sequence). Commits PER ROW (durable partial progress).
+    Returns the count ACTUALLY moved. A stop/lock propagates; any other transient error is logged with the ids (never a
+    silent swallow) and returns the count moved so far (the rest stay queued_batch, retried next tick)."""
+    ids = [r for r in (row_ids or []) if r]
+    if not ids:
+        return 0
+    payload = json.dumps({"error": reason})
+    now = _iso(_utcnow())
+    moved = 0
+    try:
+        with _queue_op() as c:
+            for rid in ids:
+                cur = c.execute("UPDATE lane_queue SET state='pending', result=?, lane=NULL, worker=NULL, "
+                                "lease_until=NULL, updated_ts=? WHERE id=? AND state='queued_batch'",
+                                (payload, now, rid))
+                c.commit()
+                moved += cur.rowcount if (cur.rowcount and cur.rowcount > 0) else 0
+        return moved
+    except Exception as _e:
+        from . import provider_tokens as _pt
+        if _pt._stop_or_locked(_e):
+            raise
+        import sys as _sysrq                           # NAMED trace: the rows not yet moved stay queued_batch (retried)
+        print("[spendguard] lane_queue.requeue_from_batch: transient DB error (%s) after moving %d/%d row(s) — the "
+              "rest stay queued_batch and are retried next tick (not lost)"
+              % (type(_e).__name__, moved, len(ids)), file=_sysrq.stderr, flush=True)
+        return moved
 
 
 def _enqueue_leased(intent, tasks, *, system=None, reasoning=None, priority=PRIORITY_INTERACTIVE,
@@ -387,9 +606,20 @@ def record_open(intent, task, *, priority=PRIORITY_INTERACTIVE, sla_class="realt
 
 def record_close(rid, result):
     """Settle a record_open() row with the call's outcome (done / failed / retryable, via settle's own contract).
-    No-op when rid is None (the open was unavailable). Never raises."""
-    if rid is not None:
+    No-op when rid is None (the open was unavailable). PROPAGATES a deliberate spend-refusal / ledger-LOCK (settle
+    re-raises those, and the queue contract — see queue_depth — requires they halt), but SWALLOWS any other settle
+    hiccup: a cleanup-time settle of an already-completed call must not crash the caller on a transient DB error."""
+    if rid is None:
+        return
+    try:
         settle(rid, result if isinstance(result, dict) else {"error": "no result"})
+    except Exception as e:
+        from . import gate
+        if gate.is_deliberate_stop(e):
+            raise                                         # spend refusal / ledger lock → propagate (queue contract)
+        import sys as _sys
+        print(f"[spendguard] record_close: settle({rid}) hiccup swallowed ({type(e).__name__}: {str(e)[:60]}) — the "
+              "row stays open for a later lease, never crashing this caller.", file=_sys.stderr)
 
 
 def queue_depth():
@@ -412,6 +642,28 @@ def queue_depth():
         from . import provider_tokens as _pt          # the CANONICAL stop-or-locked predicate (same as _enqueue_leased)
         if _pt._stop_or_locked(_e):
             raise                                      # spend refusal / ledger LOCK PROPAGATES — never masked as empty
+        return {}
+
+
+def pending_counts(realtime_only=True):
+    """{intent: pending_count} — the per-INTENT durable backlog the queue planner offloads/paces (queue_planner.tick).
+    queue_depth() answers 'how much is queued'; this answers 'of WHAT', keyed by intent (the queue's routing unit), so
+    a per-vendor 429 forecast can reach intent-keyed rows. `realtime_only` skips rows already on the async batch path
+    (sla_class='batch'), since those are what an offload would MOVE work onto, not from. A spend refusal / ledger LOCK
+    propagates; any other hiccup returns {} (a status read never crashes a caller)."""
+    try:
+        with _queue_op() as c:
+            if realtime_only:
+                rows = c.execute("SELECT intent, COUNT(*) FROM lane_queue WHERE state='pending' AND "
+                                 "COALESCE(sla_class,'realtime')!='batch' GROUP BY intent").fetchall()
+            else:
+                rows = c.execute("SELECT intent, COUNT(*) FROM lane_queue WHERE state='pending' "
+                                 "GROUP BY intent").fetchall()
+        return {r[0]: int(r[1]) for r in rows if r[0]}
+    except Exception as _e:
+        from . import provider_tokens as _pt
+        if _pt._stop_or_locked(_e):
+            raise
         return {}
 
 
@@ -479,9 +731,19 @@ def drain(worker=None, batch=None, lease_s=None, idle_rounds=None, idle_sleep=No
     worker = worker or f"drain-{os.getpid()}"
     s = {"ran": 0, "done": 0, "failed": 0, "billed": 0, "by_lane": {}, "rounds": 0}
     idle = iters = 0
+    _last_poll = 0.0                                                     # throttle for the batch_tracker poll (below)
     while True:
         iters += 1
         if max_iters is not None and iters > int(max_iters):
+            # NAMED, not a silent ceiling (F2): if work REMAINS when the cap ends the drain, say so — the durable rows
+            # persist for the next drain / lease-recovery (never lost), but a caller must not read a capped stop as "all
+            # done". Quiet when nothing remains (a bounded drain that finished cleanly).
+            _qd = queue_depth()
+            if _qd.get("pending", 0) or _qd.get("queued_batch", 0):
+                import sys as _sysd
+                print("[spendguard] drain: max_iters=%d ceiling reached with work REMAINING (%d pending, %d "
+                      "queued_batch) — stopping this drain; the durable rows persist for the next drain."
+                      % (int(max_iters), _qd.get("pending", 0), _qd.get("queued_batch", 0)), file=_sysd.stderr, flush=True)
             break                                                       # hard stop (bounded drains / tests / wedged pause)
         if _overloaded(ceiling):
             if idle_sleep > 0:
@@ -497,7 +759,66 @@ def drain(worker=None, batch=None, lease_s=None, idle_rounds=None, idle_sleep=No
             continue
         idle = 0
         s["rounds"] += 1
+        # PLANNER CONSULT (C, $0, NO execution): a cheap governor read each round so a PREDICTED 429 is visible DURING
+        # the drain, pointing at `spendguard plan-queue` for the full offload plan. forecast() only reads live state; it
+        # never spends and never mutates the queue. Config-gated (queue.planner_tick, default on); a hiccup never breaks
+        # the drain. The ACTING half (auto-submit the offload) is the separate, config-gated, estimate-first C3 executor.
+        if _qcfg("queue_planner_tick", 1):
+            try:
+                from . import queue_planner
+                _fc = queue_planner.forecast()
+                if _fc.get("at_risk"):
+                    import sys as _sysqp
+                    print("[spendguard] queue planner: %d vendor(s) at 429-risk (%s) — see `spendguard plan-queue`"
+                          % (len(_fc["at_risk"]), ", ".join(_fc["at_risk"][:5])), file=_sysqp.stderr, flush=True)
+            except Exception as _ce:
+                from . import gate as _gce
+                if _gce.is_deliberate_stop(_ce):
+                    raise                                               # a refusal/deadline/containment HALTS, not pass
+        # BATCH-TRACKER POLL (C3b) — settle ready batch offloads (out-of-order) + fail over expired ones. THROTTLED
+        # (queue.planner_poll_s, default 30s) because batches take minutes→24h, so a per-round status poll would over-hit
+        # the provider. $0 + NO submit (poll never spends); a deliberate stop propagates. Default on (queue.planner_poll).
+        if _qcfg("queue_planner_poll", 1) and (time.time() - _last_poll) >= float(_qcfg("queue_planner_poll_s", 30)):
+            _last_poll = time.time()
+            try:
+                from . import batch_tracker
+                batch_tracker.poll()
+            except Exception as _pe:
+                from . import gate as _gpe
+                if _gpe.is_deliberate_stop(_pe):
+                    raise
         intent = rows[0]["intent"]
+        # PREDICTIVE BATCH OFFLOAD (C3b, DEFAULT OFF: queue.planner_autobatch) — when this leased intent is saturated or
+        # cheaper-as-batch AND batch-eligible, offload its rows to the Batch API instead of realtime (submit_offload is
+        # estimate-first + $-capped; see its exactly-once caveat). The rows become queued_batch (tracked) and are settled
+        # by the poll above. A submit that produced no batch is NAMED and falls through to realtime; any non-stop hiccup
+        # also falls through — the leased work is NEVER lost. A deliberate spend/deadline stop propagates.
+        if _qcfg("queue_planner_autobatch", 0):
+            try:
+                from . import queue_planner, batch_tracker
+                _dec = queue_planner.should_offload(intent, len(rows))
+                if _dec:
+                    _off = batch_tracker.submit_offload(intent, rows, _dec["batch_model"],
+                                                        provider=_dec.get("provider") or "openai",
+                                                        cap_dollars=_qcfg("queue_batch_cap_usd", None))
+                    if _off.get("batch_id") and _off.get("marked"):
+                        s["batched"] = s.get("batched", 0) + _off["marked"]
+                        continue                                        # rows now queued_batch (tracked) → skip realtime
+                    if _off.get("error"):
+                        import sys as _sysob                            # NAMED: offload skipped → running realtime
+                        print("[spendguard] drain: batch offload of intent %r skipped (%s) — running realtime instead"
+                              % (intent, _off["error"]), file=_sysob.stderr, flush=True)
+            except Exception as _oe:
+                from . import gate as _goe
+                if _goe.is_deliberate_stop(_oe):
+                    raise                                               # a spend refusal / deadline HALTS — never swallowed
+                # any other hiccup → fall through to realtime (the leased work is never lost) — but NAMED + COUNTED, never
+                # silent: a caller must be able to tell an offload that FAILED from one that never ran (F1). Mirrors the
+                # _off.get("error") path above, which already names a submit that returned an error dict.
+                s["offload_failed"] = s.get("offload_failed", 0) + 1
+                import sys as _sysoe
+                print("[spendguard] drain: batch offload of intent %r FAILED (%s: %s) — running realtime instead"
+                      % (intent, type(_oe).__name__, str(_oe)[:80]), file=_sysoe.stderr, flush=True)
         # a leased batch is intent-uniform but may mix system/reasoning/sla_class — GROUP so bulk_delegate gets a
         # faithful (system, reasoning) per sub-batch AND a uniform sla_class, rather than silently applying the first
         # row's to all (no shortcut). sla_class flows to the governor so a 'batch' drain yields the realtime reserve.

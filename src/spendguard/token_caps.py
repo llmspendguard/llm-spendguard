@@ -189,7 +189,9 @@ def adjudicate_cap(site, model=None):
                       schema={"type": "object", "required": ["verdict", "why"]})
     if r.get("error") or not r.get("text"):
         raise RuntimeError(f"judge failed for {cap_key(site)}: {r.get('error') or 'no text (truncated?)'}")
-    obj, _salvaged = output_contract._as_obj(r["text"])
+    obj, _salvaged = output_contract.as_obj_lenient(r["text"])   # lenient: unparseable → (None, False), never AttributeError
+    if not isinstance(obj, dict):
+        raise RuntimeError(f"judge for {cap_key(site)} returned no parseable JSON object (got {type(obj).__name__})")
     v = obj.get("verdict")
     if v not in VERDICTS:
         raise RuntimeError(f"judge returned {v!r}, not one of {VERDICTS}")

@@ -455,7 +455,10 @@ def _cfg():
                 c = _json.loads(CONFIG_JSON.read_text())
         except Exception:
             pass
-        _cfg._cache = c
+        # a valid-but-non-object config.json (a list/scalar/null) is corrupt for our purposes: every caller does
+        # `.get(section)` / `dict(_cfg())`, which raises on a non-dict. Read it as EMPTY (defaults apply), consistent
+        # with the parse-error path above — the WRITER (update_json required/quarantine) is what surfaces corruption loudly.
+        _cfg._cache = c if isinstance(c, dict) else {}
     return _cfg._cache
 
 

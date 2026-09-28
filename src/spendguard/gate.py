@@ -334,7 +334,7 @@ def _estimate_openai_jsonl(data: bytes):
                 max_req = max(max_req, pim)
         _o, out_basis = _expected_out(body.get("model") or model, body=body)
         out += _o
-    cost = pricing.batch_cost(model, in_tok, out) if model else 0.0
+    cost = pricing.batch_cost(model, in_tok, out, provider="openai") if model else 0.0   # this estimator is OpenAI-specific — pin the vendor
     return dict(provider="openai", model=model, requests=n, in_tok=in_tok, out_tok=out, cost=cost,
                 out_basis=out_basis,
                 implausible=_warn_implausible(model, in_tok, n, per_item_max=(max_req or None)))
@@ -369,7 +369,7 @@ def _estimate_anthropic_requests(requests):
     if skipped:
         _warn_once(f"[spendguard] anthropic batch estimate: {skipped} of {n} request(s) had no params and were "
                    f"counted as zero tokens — the estimate may understate this batch.")
-    cost = pricing.batch_cost(model, in_tok, out) if model else 0.0
+    cost = pricing.batch_cost(model, in_tok, out, provider="anthropic") if model else 0.0   # this estimator is Anthropic-specific — pin the vendor
     return dict(provider="anthropic", model=model, requests=n, in_tok=in_tok, out_tok=out, cost=cost,
                 out_basis=out_basis, skipped_no_params=skipped,
                 implausible=_warn_implausible(model, in_tok, n, per_item_max=(max_req or None)))
@@ -925,8 +925,20 @@ def _rt_record(provider, model, cost, in_tok=0, out_tok=0, cached=0, basis=None,
 
 def _rt_precheck(provider, model, in_tok, est_out):
     try:
-        est = pricing.realtime_cost(model, in_tok, est_out) if model else 0.0
-    except Exception:
+        # pass provider: a bare model id hosted by several vendors prices to the WRONG vendor without it (pricing._vendor_qualified)
+        est = pricing.realtime_cost(model, in_tok, est_out, provider=provider) if model else 0.0
+    except Exception as e:
+        if is_deliberate_stop(e):
+            raise                                  # a spend refusal is never downgraded to a silent $0 estimate
+        # UNPRICED / AMBIGUOUS model → the precheck cannot estimate. NEVER a silent $0: that would skip the budget
+        # precheck for exactly the model whose cost is unknown (the intent invariant this violated). Surface it LOUD
+        # via the stdlib warnings registry (dedups per message, no shared state); the call still proceeds — the precheck
+        # is ADVISORY and the ACTUAL cost is recorded after it by _record_rt — but the unpriced model is visible, not
+        # hidden as free.
+        import warnings as _w
+        _w.warn("[spend_gate] realtime precheck could NOT price %r (%s) — proceeding UNPRICED (its budget precheck is "
+                "skipped; actual cost is still recorded post-call). Add it to model_catalog / pricing."
+                % (model, type(e).__name__), stacklevel=2)
         est = 0.0
     _rt_precheck_usd(provider, model, est)
 

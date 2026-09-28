@@ -1006,28 +1006,45 @@ def show(days=None):
     return 0
 
 
-def _session_digests(days=None):
-    """Per-SESSION digests (the cwd is an umbrella, so each session is classified on its own content)."""
-    cutoff = (datetime.date.today() - datetime.timedelta(days=int(days))).isoformat() if days else None
-    out = []
-    seen = set()                                           # count each message.id ONCE across resume/branch replays
-    # AN UNREADABLE DIRECTORY IS NOT AN EMPTY ONE. glob returns [] for a path that is missing, renamed by a
-    # Claude Code upgrade, or unreadable — indistinguishable from "you did no work this period". Both callers
-    # then printed a header with no rows, so a broken source looked exactly like an honest zero and the user
-    # had nothing to act on. chat.work names the difference; this did not.
+def _read_session_digests(days=None):
+    """The ONE home for reading Claude Code session digests: guard the projects dir, glob every session jsonl, digest
+    each (counting each message.id ONCE across resume/branch replays), and keep the sessions with real work
+    (cost>0 or tools) within the `days` window. Each kept digest carries `sid` (the session file's short id).
+
+    Returns the digest LIST, or **None** when the projects dir is MISSING/unreadable — which is NOT the same as an empty
+    list (dir present, no work). AN UNREADABLE DIRECTORY IS NOT AN EMPTY ONE: glob returns [] for a path that is missing,
+    renamed by a Claude Code upgrade, or unreadable — indistinguishable from "you did no work this period" — so a broken
+    source would look exactly like an honest zero. The None signal (printed once, here) lets each caller answer it in its
+    OWN return convention: _session_digests → [] (its callers iterate), work/story → an int status. This guard+glob was
+    copy-pasted into all three and DRIFTED — one returned int 0 where the others returned [], TypeError-ing the callers."""
     if not os.path.isdir(_projects_dir()):
         print(f"no Claude Code session directory at {_projects_dir()} — nothing could be READ, which is not "
-              f"the same as no work. Set SPENDGUARD_CLAUDE_PROJECTS if your sessions live elsewhere.")
-        return 0
+              f"the same as no work. Set SPENDGUARD_CC_DIR if your sessions live elsewhere.")
+        return None
+    cutoff = (datetime.date.today() - datetime.timedelta(days=int(days))).isoformat() if days else None
+    seen = set()                                           # count each message.id ONCE across resume/branch replays
+    out, skipped_empty, skipped_window = [], 0, 0          # dropped sessions are COUNTED, not silently discarded (I1)
     for path in sorted(glob.glob(os.path.join(_projects_dir(), "**", "*.jsonl"), recursive=True)):
         d = _digest(path, seen)
         if d["cost"] <= 0 and not d["tools"]:
+            skipped_empty += 1                             # no cost + no tools = nothing happened this session
             continue
         if cutoff and d["day"] and d["day"] < cutoff:
+            skipped_window += 1                            # outside the requested `days` window
             continue
         d["sid"] = os.path.basename(path)[:48]
         out.append(d)
+    if (skipped_empty or skipped_window) and os.environ.get("SPENDGUARD_CC_DEBUG"):
+        import sys as _sys
+        print(f"[claudecode] _read_session_digests: kept {len(out)}, skipped {skipped_empty} empty + "
+              f"{skipped_window} out-of-window session(s)", file=_sys.stderr)
     return out
+
+
+def _session_digests(days=None):
+    """Per-SESSION digests (the cwd is an umbrella, so each session is classified on its own content). Returns [] on a
+    missing/unreadable projects dir — every caller iterates this (show/classify/day_totals), so a None/int would raise."""
+    return _read_session_digests(days) or []          # None (missing dir) OR [] (no work) → [] for the iterating callers
 
 
 def classify(run=False, days=None, recls=False):
@@ -1182,24 +1199,9 @@ def _digest(path, seen=None, ask_verdicts=None):
 
 def work(by="week", days=None):
     """Conversation-derived WORK DONE — per-session rows (what was asked + cost) bucketed by day/week/month/quarter."""
-    cutoff = (datetime.date.today() - datetime.timedelta(days=int(days))).isoformat() if days else None
-    digs = []
-    seen = set()                                           # count each message.id ONCE across resume/branch replays
-    # AN UNREADABLE DIRECTORY IS NOT AN EMPTY ONE. glob returns [] for a path that is missing, renamed by a
-    # Claude Code upgrade, or unreadable — indistinguishable from "you did no work this period". Both callers
-    # then printed a header with no rows, so a broken source looked exactly like an honest zero and the user
-    # had nothing to act on. chat.work names the difference; this did not.
-    if not os.path.isdir(_projects_dir()):
-        print(f"no Claude Code session directory at {_projects_dir()} — nothing could be READ, which is not "
-              f"the same as no work. Set SPENDGUARD_CLAUDE_PROJECTS if your sessions live elsewhere.")
+    digs = _read_session_digests(days)                     # ONE home for the guard + glob (see _read_session_digests)
+    if digs is None:                                       # projects dir missing/unreadable (named there) → int status
         return 0
-    for path in sorted(glob.glob(os.path.join(_projects_dir(), "**", "*.jsonl"), recursive=True)):
-        d = _digest(path, seen)
-        if d["cost"] <= 0 and not d["tools"]:
-            continue
-        if cutoff and d["day"] and d["day"] < cutoff:
-            continue
-        digs.append(d)
     buckets = {}
     for d in digs:
         p = _iso_period(d["day"], by)
@@ -1242,21 +1244,9 @@ def story(by="week", days=7, run=False):
     """Caged synth over the period's work rows → a narrative STORY + private WORK INSIGHTS (findings/decisions/
     gotchas/next — distinct from cost/LLM-usage learnings). Estimate-first; the LLM call is caged under caps.meta."""
     from . import config, adapters, calls, pricing, ui
-    cutoff = (datetime.date.today() - datetime.timedelta(days=int(days))).isoformat() if days else None
-    digs = []
-    seen = set()                                           # count each message.id ONCE across resume/branch replays
-    # AN UNREADABLE DIRECTORY IS NOT AN EMPTY ONE. glob returns [] for a path that is missing, renamed by a
-    # Claude Code upgrade, or unreadable — indistinguishable from "you did no work this period". Both callers
-    # then printed a header with no rows, so a broken source looked exactly like an honest zero and the user
-    # had nothing to act on. chat.work names the difference; this did not.
-    if not os.path.isdir(_projects_dir()):
-        print(f"no Claude Code session directory at {_projects_dir()} — nothing could be READ, which is not "
-              f"the same as no work. Set SPENDGUARD_CLAUDE_PROJECTS if your sessions live elsewhere.")
+    digs = _read_session_digests(days)                     # ONE home for the guard + glob (see _read_session_digests)
+    if digs is None:                                       # projects dir missing/unreadable (named there)
         return 0
-    for path in sorted(glob.glob(os.path.join(_projects_dir(), "**", "*.jsonl"), recursive=True)):
-        d = _digest(path, seen)
-        if (d["cost"] > 0 or d["tools"]) and (not cutoff or not d["day"] or d["day"] >= cutoff):
-            digs.append(d)
     if not digs:
         print("no sessions in range — nothing to synthesize."); return 0
     lines = []

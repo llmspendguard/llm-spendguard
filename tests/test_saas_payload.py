@@ -102,6 +102,21 @@ ck("guarded: filters to base (manga2anime dropped)", len(g) == 1 and g[0]["proje
 ck("guarded: cumulants pass through", g[0]["k1"] == 10.0 and g[0]["n"] == 5)
 ck("guarded: empty base → push all", len(saas.build_guarded_rows(grows, set())) == 2)
 
+# ── #3 OVER-SHARE FIX (2026-09-28 "get to honest"): the guarded filter must NOT collapse the three scope states.
+#    An org configured but resolved to NO projects (lookup failed / maps nothing) is None = push NOTHING — it must never
+#    read as empty-means-all and over-share every project under an unresolved org (the fail-open leak). None ≠ empty. ──
+ck("guarded: None base (org unresolved) → push NOTHING (never over-share)", saas.build_guarded_rows(grows, None) == [])
+ck("guarded: None ≠ empty — empty pushes all, None pushes nothing (states don't collapse)",
+   len(saas.build_guarded_rows(grows, set())) == 2 and saas.build_guarded_rows(grows, None) == [])
+# _conn_project_base returns None for an org that maps to nothing (was: empty set = push-all = the leak).
+# _PT (patched above) has NO project under 'Nonexistent', so _org_projects('Nonexistent') is empty → None.
+ck("_conn_project_base: org set but resolves to NO projects → None (refuse), NOT empty=push-all",
+   saas._conn_project_base({"org": "Nonexistent"}) is None)
+ck("_conn_project_base: no scope configured at all → empty set (push this install's own guarded rows)",
+   saas._conn_project_base({}) == set())
+ck("_conn_project_base: resolvable org → its non-empty project set (unchanged)",
+   saas._conn_project_base({"org": "Healiom"}) == {"lmm", "concept-model", "medical-taxonomy"})
+
 # ── crosscheck robustness: a vast.ai outage must NOT turn correctly-pushed GPU rows into false server_only ──
 # Regression guard for the flaky-fetch bug seen on 2026-06-23 (one run gave server_only=10, the re-run gave 0 /
 # in_sync=True). When the GPU source is dark, server vastai rows are UNVERIFIED (couldn't check), never 'stale'.

@@ -345,6 +345,64 @@ def _dispatch(argv=None):
         if mt.get("warn"):
             print(f"  ⚠ {mt['warn']}")
         return 0
+    if cmd == "plan-queue":                             # the $0 PREDICTIVE PLANNER view (C): forecast + offload plan.
+        from . import queue_planner                      # $0, NO execution — decides; the executor (drain) acts on it.
+        if "--watch" in rest:                            # CONTINUOUS ~1s look-ahead (Ash: "periodic say every second")
+            import time as _tw
+            _iv = next((rest[i + 1] for i, a in enumerate(rest) if a == "--interval" and i + 1 < len(rest)), None)
+            _tk = next((rest[i + 1] for i, a in enumerate(rest) if a == "--ticks" and i + 1 < len(rest)), None)
+
+            def _observe(tk):
+                fc = tk.get("forecast") or {}
+                at_risk = fc.get("at_risk") or []
+                off, pace = tk.get("offload") or [], tk.get("pace") or []
+                ts = _tw.strftime("%H:%M:%S")
+                if tk.get("error"):
+                    print("[%s] planner tick error: %s" % (ts, tk["error"])); return
+                print("[%s] 429-risk=%s  offload=%d  pace=%d" % (
+                    ts, (", ".join(at_risk) if at_risk else "none"), len(off), len(pace)))
+                if at_risk:
+                    print("  ⚠ PREDICTED 429: %s — %s" % (", ".join(at_risk),
+                          ("offload %s to Batch API" % ", ".join(o["intent"] for o in off)) if off
+                          else "PACE (governor spreading; no batch-eligible backlog)"))
+            iv = float(_iv) if _iv else None
+            print("planner watch: tick every %.1fs ($0, NO execution — the drain acts on it; Ctrl-C to stop)"
+                  % (iv or queue_planner.PLANNER_INTERVAL_S_DEFAULT))
+            res = queue_planner.plan_loop(interval_s=iv, iterations=(int(_tk) if _tk else None), on_tick=_observe)
+            print("planner watch stopped (%s) after %d tick(s)." % (res["stopped_by"], res["ticks"]))
+            return 0
+        t = queue_planner.tick()
+        try:
+            from . import batch_tracker                   # attach the async BATCH-JOB tracker state to the plan (C3b)
+            t["batch_jobs"] = batch_tracker.status()
+        except Exception:
+            t["batch_jobs"] = {}
+        if "--json" in rest:
+            import json as _json
+            print(_json.dumps(t, indent=2, default=str))
+            return 0
+        print(queue_planner.forecast_summary(t["forecast"]))
+        off = t.get("offload") or []
+        print("\noffload plan (%s):" % ("batch-eligible" if t.get("batch_eligible")
+                                        else "DISABLED — no advisor.batch_model set"))
+        if not off:
+            print("  (nothing to offload — no saturated or cheaper-as-batch intent in the realtime backlog)")
+        for o in off:
+            print("  %-22s n=%-5d vendor=%-10s → %d chunk(s) ≤%s on %s  [%s]"
+                  % (o["intent"], o["n"], o.get("vendor"), len(o["chunks"]),
+                     (max(o["chunks"]) if o["chunks"] else 0), o.get("batch_model"),
+                     "; ".join(o.get("reasons") or [])))
+        if t.get("pace"):
+            print("\npace (approaching TPM — the governor is already spreading these): %s" % ", ".join(t["pace"]))
+        if t.get("skipped"):
+            print("\nskipped (unpriceable this tick — left realtime, NOT dropped): %s"
+                  % ", ".join("%s (%s)" % (s["intent"], s["reason"]) for s in t["skipped"]))
+        bs = t.get("batch_jobs") or {}                   # BATCH-JOB tracker state — the async side of the plan (C3b)
+        if bs.get("total"):
+            print("\nbatch jobs (async, tracked): open=%d failing=%d settled=%d failed=%d  (total %d) — the drain "
+                  "polls these; expired/failed fall over to realtime" % (bs.get("open", 0), bs.get("failing", 0),
+                  bs.get("settled", 0), bs.get("failed", 0), bs.get("total", 0)))
+        return 0
     if cmd == "dispatch":                               # live ADMISSION + QUEUE + reasoning-cut state — the parity view
         from . import dispatch                           # (same dispatch.admission_state() the MCP tool returns)
         st = dispatch.admission_state()
@@ -793,6 +851,15 @@ def _dispatch(argv=None):
         print("  config : edit prices.json in the package, or ~/.spendguard/prices.json (or SPENDGUARD_PRICES)")
         for prov, models in sorted(p.providers().items()):
             print(f"  {prov}: {len(models)} models")
+        try:                                              # capability coverage/completeness pointer (full detail: `metadata`)
+            from . import metadata_audit as _ma
+            _cap = _ma._capability_health()
+            if _cap.get("catalog_n"):
+                print(f"  capabilities: {_cap['covered']}/{_cap['catalog_n']} models have LiteLLM data · "
+                      f"{len(_cap.get('uncovered') or [])} uncovered · {_cap.get('discover_total', 0)} newer LiteLLM "
+                      f"models to consider adding (`spendguard metadata` / `sync-capabilities --audit` for detail)")
+        except Exception:
+            pass                                          # a capability-audit hiccup never fails the price-freshness view
         return 2 if stale else 0
     # An explicit help request EXITS 0 and prints the real, grouped surface. Before this, `--help`, `-h`, `help`,
     # `--version` and a typo all printed the same 9-line module docstring — 10 of 60+ commands — and exited 1.

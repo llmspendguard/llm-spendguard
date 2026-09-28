@@ -303,11 +303,13 @@ SETTINGS = [
          kind="int", secret=False,
          desc="Tasks a drain round leases at once. 0 ⇒ the dispatch global-concurrency default (never a second "
               "hardcoded number). The batch fans across lanes via bulk_delegate (governor-bounded)."),
-    dict(section="advisor", key="queue_max_attempts", store="config.json:advisor.queue_max_attempts", default=3,
+    dict(section="advisor", key="queue_max_attempts", store="config.json:advisor.queue_max_attempts", default=10,
          kind="int", secret=False,
-         desc="How many times a queued task is retried (on lane failure or a crashed lease) before it is marked "
-              "failed — so a permanently-bad task never loops forever. A capacity block (dispatch_saturated) is NOT a "
-              "failure and does not consume an attempt — it PARKS (queue_max_parks / queue_park_backoff_s)."),
+         desc="Durable retry budget: how many times a queued task with a TRANSIENT failure (vendor_call.RETRYABLE — "
+              "transport/overloaded) is re-enqueued before it is marked failed — the home of the retry-to-10 "
+              "reliability guarantee, spent ONLY on transient outcomes. A DETERMINISTIC failure fails fast and does "
+              "not consume this budget; a capacity block (dispatch_saturated) is NOT a failure and PARKS instead "
+              "(queue_max_parks / queue_park_backoff_s)."),
     dict(section="advisor", key="queue_park_backoff_s", store="config.json:advisor.queue_park_backoff_s", default=10.0,
          kind="float", secret=False,
          desc="PARKING backpressure (Step 4): a queued task that could not get a governor slot (dispatch_saturated) "

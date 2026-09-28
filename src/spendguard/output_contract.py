@@ -143,6 +143,19 @@ def _as_obj(item):
     raise ValueError("not JSON (and no JSON found inside a fence or braces)")
 
 
+def as_obj_lenient(item):
+    """The non-raising twin of `_as_obj`: returns the SAME `(value, salvaged)` pair, but on unparseable text yields
+    `(None, False)` instead of RAISING `ValueError`. For callers whose intended path is 'no usable object → fall back'
+    (a judge/verdict parse), so a malformed model reply DEGRADES to their empty/fail branch instead of crashing the
+    function. `_as_obj` still raises for check_item / check_envelope, which catch it to report a specific parse failure —
+    this is the lenient variant, not a replacement. A `None` first element means to every caller what JSON `null` or a
+    non-dict value already does: 'not the object I needed'."""
+    try:
+        return _as_obj(item)
+    except ValueError:
+        return None, False
+
+
 _JSON_TYPES = {"object": dict, "array": (list, tuple), "string": str, "number": (int, float),
                "integer": int, "boolean": bool, "null": type(None)}
 

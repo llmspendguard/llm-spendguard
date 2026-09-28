@@ -770,6 +770,10 @@ def price(model: str, provider: str = None) -> dict:
             return v                              # exact_only: the named vendor answers, or nobody does
     if model in PRICING:                          # an explicit verified entry (codex/dated/o-series) wins
         return PRICING[model]
+    # NB: a NAMED provider that doesn't publish the id falls through to the cross-vendor scan below, which resolves an
+    # UNAMBIGUOUS single-vendor entry (and RAISES when vendors DISAGREE — the ambiguity guard). This lenient "a pinned
+    # vendor still resolves the unambiguous entry" is intended + tested (test_pricing_vendor_ids); the disagree-case is
+    # what protects against a wrong rate, not stripping the fallback.
     v = _vendor_qualified(model, provider)        # RAW first: `kimi-latest` is a real id, not a '-latest' alias
     if v:
         return v

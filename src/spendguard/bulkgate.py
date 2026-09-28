@@ -725,7 +725,11 @@ def note_runaway(sig, model, out_tok, norm_val, basis):
     decade boundaries, carrying the fix. Never raises. Returns the count. CLASS-scoped norm only — never a cross-class
     model average or a guessed absolute — so it cannot accuse a class whose real outputs are legitimately large."""
     import sys
-    n = _RUNAWAYS.bump("%s|%s" % (model, sig))   # the RECORD is committed HERE — before any I/O — survives a bad stderr
+    try:
+        n = _RUNAWAYS.bump("%s|%s" % (model, sig))   # the RECORD is committed HERE — before any I/O — survives a bad stderr
+    except Exception:
+        n = 1                                    # a counter hiccup must NOT un-detect a real runaway (docstring: Never
+        #                                          raises). check_runaway calls us only AFTER deciding a trip, so 1 is honest.
     if n not in _TRUNC_ANNOUNCE:                  # print OUTSIDE the count update (never announce every trip)
         return n
     try:                                          # the count is already recorded; the announce line is best-effort
@@ -900,7 +904,7 @@ def _eval_verdict_from_result(r):
     that did not clearly clear the bar cannot authorize scale, so ambiguity blocks rather than waves work through."""
     from . import output_contract
     txt = (r or {}).get("text") or ""
-    obj, _ = output_contract._as_obj(txt) if txt else (None, False)
+    obj, _ = output_contract.as_obj_lenient(txt)   # lenient: unparseable → (None, False), NEVER raises (fail-safe below)
     if not isinstance(obj, dict):
         return {"pass": False, "score": 0.0, "rationale": "judge returned no parseable verdict — treated as FAIL"}
     return {"pass": bool(obj.get("pass")), "score": float(obj.get("score") or 0.0),

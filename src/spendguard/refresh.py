@@ -94,7 +94,7 @@ def _write(looked):
     base.setdefault("_meta", {})["verified"] = datetime.date.today().isoformat()
     target = src if os.access(os.path.dirname(src), os.W_OK) else str(config.HOME / "prices.json")
     # prices.json — the $/token table every estimate and every receipt is computed from.
-    config.update_json(target, lambda _d: base)
+    config.update_json(target, lambda _d: base, quarantine_unparseable=True)   # prices.json is GENERATED (rebuildable): recover a corrupt file, don't silently decline the refresh
     return target
 
 

@@ -1090,6 +1090,26 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                                 r.get("model") or model, prompt, r.get("text"),
                                 in_tok=r.get("in_tok") or 0, out_tok=r.get("out_tok") or 0,
                                 system=system, req_schema=schema, req_max_tokens=max_tokens)
+        # FORENSIC — record EVERY FAILED outcome on the ledger. The success path already records (gate._record_rt /
+        # the subscription writer); a FAILURE reached the caller as {error} and, until now, was recorded NOWHERE — the
+        # exact hole that made a week of "what is going on" unanswerable. adapters.call is the ONE function every
+        # provider call passes through (metered, lane, fallback, direct, and vendor_call routes through here too), so a
+        # failure recorded HERE is captured no matter the path. Reuses vendor_call._classify — ONE outcome vocabulary,
+        # never a second taxonomy that could drift. OUTER call only (not the _no_guard recursion or a probe, mirroring
+        # capture_live above), metadata only (no prompt/output body), and it NEVER raises into the call.
+        if not _no_guard and not _probe and r.get("error"):
+            try:
+                from . import vendor_call as _vc, calls as _rc
+                _oc, _ = _vc._classify(r)
+                _rc.record_call(r.get("provider") or provider_for(model), r.get("model") or model, "realtime",
+                                float(r.get("cost") or 0.0), in_tok=r.get("in_tok") or 0,
+                                out_tok=r.get("out_tok") or 0, latency=r.get("latency"),
+                                finish=r.get("finish_reason"), executor=r.get("executor"),
+                                effort=r.get("chosen_effort"), outcome=_oc, http_status=r.get("status_code"),
+                                provider_error=r.get("provider_error"), retry_after=r.get("retry_after"),
+                                attempts=r.get("attempts"), disposition="failed")
+            except Exception:
+                pass
     return r
 
 
@@ -1753,6 +1773,16 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             "here is how a cap nobody picked ends up truncating a real answer.")
     prov = provider_for(model)
     raw = model.split(":", 1)[1] if ":" in model else model
+    if prov not in PROVIDERS:
+        # An unknown/unregistered provider — e.g. a caller passed 'google:…' when the registered id is 'gemini'/'agy'.
+        # A bare PROVIDERS[prov] KeyError here used to surface as transport_error and get RETRIED; it is a DETERMINISTIC
+        # preflight failure (the call can never be made), so return it MARKED → vendor_call._classify → PREFLIGHT_UNMET
+        # (non-retryable), naming the registered providers so the CALLER fixes the id instead of the queue retrying a
+        # config bug. Honest, not a silent alias (auto-mapping google→gemini would hide the mistake).
+        return {"provider": prov, "model": raw, "text": None, "in_tok": 0, "out_tok": 0, "latency": 0.0,
+                "cost": None, "finish_reason": None, "preflight_unmet": True,
+                "error": "unknown provider %r — not registered. Use one of: %s (or register_provider())."
+                         % (prov, ", ".join(sorted(PROVIDERS)))}
     spec = PROVIDERS[prov]
     # `finish_reason` is carried so callers can tell a COMPLETE answer from a TRUNCATED one.
     # Without it a caller inspecting r["text"] cannot distinguish "the model said this" from
@@ -1873,10 +1903,12 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             # actually applied (`s['effort']`); fall back to the requested tier only for a lane that reports none.
             _applied_eff = s.get("effort") if s.get("effort") is not None else reasoning
             try:
-                from . import calls
+                from . import calls, vendor_call as _vc
                 calls.record_call(prov, raw, "subscription", 0.0,
                              in_tok=s.get("in_tok", 0), out_tok=s.get("out_tok", 0), latency=s.get("latency"),
-                             executor=lane_name, effort=_applied_eff)  # the plan that served it + the effort it APPLIED
+                             executor=lane_name, effort=_applied_eff,   # the plan that served it + the effort it APPLIED
+                             outcome=_vc.OK, disposition="served")  # forensic parity: a lane SUCCESS carries its outcome,
+                             #   like the chokepoint records a failure's — every call on the ledger with its full fate
             except Exception:
                 pass
             return {**base, "text": s["text"], "in_tok": s.get("in_tok", 0), "out_tok": s.get("out_tok", 0),
@@ -2452,7 +2484,8 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             _finish = getattr(r.choices[0], "finish_reason", None)     # "length" when it hit the cap
         dt = time.time() - t0
         try:
-            cost = pricing.realtime_cost(raw, in_tok, out_tok, cached_in_tok=_cache_read, cache_creation_tok=_cache_write)
+            # provider=prov: this is the RECORDED cost — a bare id hosted by several vendors must price to THIS vendor, not a guess
+            cost = pricing.realtime_cost(raw, in_tok, out_tok, cached_in_tok=_cache_read, cache_creation_tok=_cache_write, provider=prov)
         except Exception:
             cost = None  # model not in price table → shown as n/a
         return {**base, "text": text, "in_tok": in_tok, "out_tok": out_tok, "latency": dt, "cost": cost,

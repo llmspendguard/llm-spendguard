@@ -102,10 +102,14 @@ ck("executor failure FALLS BACK to the API path (the API path's own error surfac
    out2.get("error") and "plan window" not in out2["error"] and out2.get("executor") == "api")
 
 os.environ["SPENDGUARD_ADVISOR_EXECUTOR"] = "api"
-n0 = len(recorded)
+# The api path now RECORDS its outcome — the forensic mandate: EVERY call, success or FAILURE, lands on the ledger
+# (a failed api attempt legitimately writes a kind='realtime' failure row via adapters.call's chokepoint). So the
+# check is no longer "no row at all"; it is that the PLAN path was not touched — NO new subscription-kind row.
+subs0 = sum(1 for r in recorded if r[2] == "subscription")
 out3 = adapters.call("claude-opus-4-8", "prompt", sig="test:subscription-exec")
-ck("executor=api never touches the PLAN path (no subscription row; the API path is tagged executor='api')",
-   out3.get("executor") == "api" and len(recorded) == n0)
+subs1 = sum(1 for r in recorded if r[2] == "subscription")
+ck("executor=api never touches the PLAN path (no new subscription row; the API path is tagged executor='api')",
+   out3.get("executor") == "api" and subs1 == subs0)
 
 print(("[OK]" if not fails else "[FAIL]") + " subscription executor: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)

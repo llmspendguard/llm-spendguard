@@ -38,18 +38,33 @@ TRANSPORT_ERROR = "transport_error"
 DEADLINE_EXCEEDED = "deadline_exceeded"
 SCHEMA_VIOLATION = "schema_violation"
 UNFUNDED = "unfunded"            # the account cannot pay — deterministic, actionable, and NOT retryable
+GATE_REFUSED = "gate_refused"    # spendguard's OWN gate DELIBERATELY refused (budget / meta / realtime / batch-1 /
+#                                  intent-door cap — a SpendGateRefused). A deliberate spend stop, NEVER a vendor fault:
+#                                  it must be recorded, .text must raise on it, and it must NEVER ride the transient
+#                                  retry loop (retrying just re-hits the same cap — the [deliberate-refusal never
+#                                  fail-open] doctrine as a first-class outcome, not a message mislabelled transport).
 OVERLOADED = "overloaded"        # 429/529 — the vendor is rate-limited/overloaded: TRANSIENT, retry (honor Retry-After)
 PAYLOAD_REJECTED = "payload_rejected"  # 400/413/414/401/403 — bad/oversized/unauthenticated request: PERMANENT, never retried
 PREFLIGHT_UNMET = "preflight_unmet"    # never called: the model failed preflight (stale/unpriced/unknown id). A
 #                                        HONEST coverage state — the caller sees WHICH model was skipped and why,
 #                                        instead of the whole cross-LLM batch being refused for one bad id.
 KINDS = (OK, TRUNCATED, EMPTY, REFUSED, TRANSPORT_ERROR, DEADLINE_EXCEEDED, SCHEMA_VIOLATION, UNFUNDED,
-         OVERLOADED, PAYLOAD_REJECTED, PREFLIGHT_UNMET)
+         OVERLOADED, PAYLOAD_REJECTED, PREFLIGHT_UNMET, GATE_REFUSED)
 FAILURES = tuple(k for k in KINDS if k != OK)
 # Transient classes worth retrying: a broken connection (transport) or a vendor asking us to slow down
 # (overloaded). Everything else is deterministic — a truncation, an empty body, a refusal, a bad payload, an
 # unfunded account, a blown deadline — where a retry only spends the deadline and the money to get the same answer.
 RETRYABLE = (TRANSPORT_ERROR, OVERLOADED)
+
+# IN-PROCESS transient-retry budget: how many times call() re-tries a RETRYABLE outcome (a broken connection or a
+# 429/529 overload) on the SAME vendor/model within ONE synchronous call, bounded ALWAYS by the total deadline_s.
+# Kept SMALL on purpose: with exponential backoff, more in-process tries just block a realtime caller to its full
+# deadline on a persistently-down vendor (measured — retry=10 timed the failure-matrix suite out at the 60s deadline).
+# The "retry up to 10 to ENSURE success" guarantee Ash asked for lives on the DURABLE QUEUE
+# (lane_queue.MAX_ATTEMPTS_DEFAULT=10), which re-enqueues ASYNCHRONOUSLY across executions without blocking the caller —
+# a queued call therefore gets up to (in-process 3) x (queue 10) tries. DETERMINISTIC failures (payload_rejected,
+# refused, truncated, schema, unfunded, deadline) are not in RETRYABLE and break on the first occurrence regardless.
+IN_PROCESS_RETRY_ATTEMPTS = 3
 
 _RUN_ID = None
 _lock = threading.RLock()
@@ -224,6 +239,16 @@ def _retry_after_s(v):
 
 def _classify(r, want_text=True):
     """(kind, stop_reason) from an adapters result. Parsing declared fields, not inferring intent."""
+    # A DELIBERATE SPEND-GATE REFUSAL is not a vendor outcome at all — _attempt marked it (deliberate_stop, decided by
+    # the canonical gate.is_deliberate_stop authority). Classify it GATE_REFUSED (non-retryable, .text raises) FIRST, so
+    # a budget/meta/RT cap is never talked into transport_error and retried against the very cap that refused it.
+    if r.get("deliberate_stop"):
+        return GATE_REFUSED, "spend_gate_refused"
+    # A PREFLIGHT failure the runner flagged (e.g. an unknown/unregistered provider like 'google' when the id is
+    # 'gemini') is DETERMINISTIC — the call can never be made, so it must classify PREFLIGHT_UNMET (non-retryable),
+    # never a transport_error a retry loop would re-run against the same bad config.
+    if r.get("preflight_unmet"):
+        return PREFLIGHT_UNMET, r.get("finish_reason") or "preflight_unmet"
     # AN EXPLICIT TRUNCATION IS A TRUNCATION, NOT A TRANSPORT FAULT — even though adapters attaches an `error`
     # string to it after raising the cap and re-asking (retries exhausted). Labeling it TRUNCATED rather than
     # transport_error is what keeps fan_out's coverage report honest about WHY the vendor didn't answer, and —
@@ -278,8 +303,22 @@ def _classify(r, want_text=True):
     return OK, r.get("finish_reason")
 
 
+def _emit_exhausted(res, attempts_made, deadline_s):
+    """LOUD, unmissable signal that a call is returning as a TERMINAL FAILURE — every allowed retry (or the deadline)
+    is spent and NO result was obtained. Ash's #6: '0 fails; anything that exhausts retries → state it very loudly.'
+    Goes to stderr as one line; the outcome is ALSO on the ledger (record_call stamps outcome + disposition='failed'),
+    so the failure is both seen live and queryable after. Never raises into the call."""
+    try:
+        import sys as _sys
+        print(f"[spendguard] ⛔ CALL FAILED after {attempts_made} attempt(s) within {deadline_s:.0f}s deadline: "
+              f"{res.vendor}/{res.model} — {res.kind}: {(res.error or '')[:160]}. NO result obtained.",
+              file=_sys.stderr, flush=True)
+    except Exception:
+        pass
+
+
 def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_tokens=None, schema=None,
-         attempts=3, backoff_s=2.0, reasoning=None, no_metered_fallback=False):
+         attempts=IN_PROCESS_RETRY_ATTEMPTS, backoff_s=2.0, reasoning=None, no_metered_fallback=False):
     """Call ONE model, bounded by a TOTAL deadline, returning a typed Result. Never raises for a call failure.
 
     `no_metered_fallback=True` is the $0-ONLY contract, with ONE deliberate exception: it declines paying metered to
@@ -401,13 +440,22 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
     # budget, so a hard stop could not stop anything — the run that found this thought it had spent $1.98
     # while the ledger recorded $13.12. The Result now carries what the CALL cost, not what its last try cost.
     billed = 0.0
+    from . import calls as _cl                            # per-attempt ledger linkage (root_call/attempt in context)
+    _root_id = os.urandom(8).hex()                        # ROOT ledger id for THIS logical call — every try links to it
     try:
         for attempt in range(1, max(1, int(attempts)) + 1):
             remaining = deadline_s - (time.time() - started)
             if remaining <= 0:
-                return Result(DEADLINE_EXCEEDED, vendor, model, prompt_sha=sha, purpose=purpose,
-                              latency=time.time() - started,
+                _res = Result(DEADLINE_EXCEEDED, vendor, model, prompt_sha=sha, purpose=purpose,
+                              latency=time.time() - started, attempts=attempt - 1,
                               error=f"total deadline {deadline_s}s exhausted after {attempt - 1} attempt(s)")
+                _emit_exhausted(_res, attempt - 1, deadline_s)   # LOUD: the deadline stopped the retry loop (Ash #6) —
+                _cl.clear_retry_context()                        # not a silent status return; also cleared before exit
+                return _res
+            # Stamp the retry linkage for THIS try onto the context; _attempt propagates it to the worker thread the
+            # provider call runs on, so record_call (success via the gate, failure via the adapters chokepoint) links
+            # every attempt back to _root_id — each retry its own ledger row (Ash's #2). Cleared in the finally below.
+            _cl.set_context(root_call=_root_id, attempt=attempt)
             r = _attempt(vendor, model, prompt, system, max_tokens, remaining, schema=schema,
                          reasoning=reasoning, metered_only=_shed_metered, no_metered_fallback=no_metered_fallback)
             billed += float(r.get("cost") or 0.0)
@@ -436,6 +484,7 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
                 time.sleep(wait)
     finally:
         _adm.release()                               # free the governor slot (idempotent; a no-op when ungoverned)
+        _cl.clear_retry_context()                    # drop root_call/attempt so a later DIRECT call can't inherit them
     # Feed the TIME measurement on every outcome, the way note_response feeds the token one. A budget that is
     # only ever guessed can never improve; recorded, the next caller's deadline comes from what this vendor
     # actually does. Deadline hits are flagged so they are censored from the percentiles they would otherwise
@@ -462,6 +511,8 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
     if last is not None and last.ok and schema is not None:
         last = _apply_schema(last, schema)
     _persist(last)
+    if last is not None and not last.ok:
+        _emit_exhausted(last, last.attempts, deadline_s)   # LOUD: retries exhausted / deterministic fail (Ash #6)
     return last
 
 
@@ -491,7 +542,8 @@ def _attempt(vendor, model, prompt, system, max_tokens, budget_s, schema=None, r
         if _parent_ctx:
             try:
                 from . import calls as _c2
-                _c2.set_context(intent=_parent_ctx.get("intent"), chain=_parent_ctx.get("chain"))
+                _c2.set_context(intent=_parent_ctx.get("intent"), chain=_parent_ctx.get("chain"),
+                                root_call=_parent_ctx.get("root_call"), attempt=_parent_ctx.get("attempt"))
             except Exception:
                 pass
         try:
@@ -503,7 +555,13 @@ def _attempt(vendor, model, prompt, system, max_tokens, budget_s, schema=None, r
                                      no_substitution=True)   # vendor_call NAMES a vendor — the lane bandit must
                                      #                         never swap it (a panel/adjudication would collapse)
         except Exception as e:                      # adapters says it never raises; believe it, verify anyway
-            box["r"] = {"error": f"{type(e).__name__}: {e}", "text": None}
+            # A SpendGateRefused (budget/meta/RT/batch-1 cap) is a DELIBERATE spend stop, not a vendor fault. Ask the
+            # ONE canonical authority (gate.is_deliberate_stop — the SSOT that owns which exceptions are refusals, so a
+            # new refusal subclass is covered without editing anything here) and MARK the result, so _classify →
+            # GATE_REFUSED (non-retryable, .text raises) instead of transport_error re-run against the same cap.
+            from . import gate as _g
+            box["r"] = {"error": f"{type(e).__name__}: {e}", "text": None,
+                        "error_type": type(e).__name__, "deliberate_stop": _g.is_deliberate_stop(e)}
 
     t = threading.Thread(target=_run, daemon=True)   # daemon: an abandoned call must never hold the process
     t.start()
@@ -800,7 +858,9 @@ def record_cap(vendor, model, max_output_tokens, method, source=""):
     entry = {"max_output_tokens": int(max_output_tokens), "method": method, "source": source,
              "measured_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     config.update_json(path, lambda d: d.update({f"{vendor}/{model}": entry}),
-                       reason="record-cap", keep_backups=3)
+                       reason="record-cap", keep_backups=3,
+                       quarantine_unparseable=True)   # measured-bounds registry is rebuildable (re-measured): recover a
+    #                                                   corrupt file (kept .corrupt) rather than silently dropping this cap
     return entry
 
 
@@ -897,7 +957,7 @@ def _write_efforts(vendor, model, out):
         data = {}
     data.setdefault(f"{vendor}/{model}", {})["efforts"] = out
     path.parent.mkdir(parents=True, exist_ok=True)
-    config.update_json(path, lambda _d: data)
+    config.update_json(path, lambda _d: data, quarantine_unparseable=True)   # rebuildable learned-facts registry: recover a corrupt file, never a silent decline
 
 
 # WHERE EFFORT LIVES, and why there is no record_effort()/effort_policy() here any more.
@@ -941,7 +1001,7 @@ def record_input_limit(vendor, model, max_chars, method, source="", applies_to="
         "measured": time.strftime("%Y-%m-%d")}
     data[key] = rec
     path.parent.mkdir(parents=True, exist_ok=True)
-    config.update_json(path, lambda _d: data)
+    config.update_json(path, lambda _d: data, quarantine_unparseable=True)   # rebuildable learned-facts registry: recover a corrupt file, never a silent decline
     return rec["input_limits"][applies_to]
 
 

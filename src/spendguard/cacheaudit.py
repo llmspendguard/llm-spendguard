@@ -56,7 +56,7 @@ def _intent_prefixes():
         pref = _count_tokens(_common_prefix(prompts), model)
         avg = max(1, sum(_count_tokens(p, model) for p in prompts) // len(prompts))
         try:
-            p = pricing.price(model)
+            p = pricing.price(model, provider=provider or None)   # provider (from the grouped row) pins a bare multi-vendor id's rate
             delta = p["in_"] - p.get("cached_in", p["in_"])
         except Exception:
             delta = 0

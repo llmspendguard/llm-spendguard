@@ -26,14 +26,19 @@ def _known_intents():
 
 
 def _match_intent(task):
-    """Best existing intent by word overlap with the task; else a new slug."""
+    """Best existing intent by word overlap with the task; else a new slug. An AMBIGUOUS match — 2+ existing intents
+    TIE for the top overlap — is REFUSED (returns no match → the caller mints a new slug), never resolved
+    first-hit-wins: a task→intent mapping is a clear parse or a fresh slug, never a guess between equals."""
     toks = set(re.findall(r"[a-z0-9]+", (task or "").lower()))
-    best, score = None, 0
-    for it in _known_intents():
-        s = len(toks & set(re.findall(r"[a-z0-9]+", it.lower())))
-        if s > score:
-            best, score = it, s
-    return best, (best is not None and score > 0)
+    scored = [(len(toks & set(re.findall(r"[a-z0-9]+", it.lower()))), it) for it in _known_intents()]
+    scored = [(s, it) for s, it in scored if s > 0]
+    if not scored:
+        return None, False
+    top = max(s for s, _ in scored)
+    winners = [it for s, it in scored if s == top]
+    if len(winners) > 1:
+        return None, False                  # AMBIGUOUS — 2+ intents tie for the top overlap → refuse, don't guess
+    return winners[0], True
 
 
 def _defaults(intent, task):

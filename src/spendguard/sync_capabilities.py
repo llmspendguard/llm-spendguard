@@ -31,12 +31,57 @@ _CAP_FIELDS = {
 }
 
 
-def _litellm_record(model_id, metered_id):
-    """LiteLLM's per-model {supports_*, mode, max_input_tokens, max_output_tokens} for a catalog model — try its id
-    then its metered_id. Prefers the DAILY-REFRESHED cache (sync.CACHE: the `capabilities` + `context` sections from
-    the latest github fetch, merged into one record — the freshest source), and falls back to the INSTALLED
-    litellm.model_cost (fresh only on a pip upgrade). None when neither covers it. Never raises."""
+def _fetch_server_catalog():
+    """The server's /v1/models catalog {model_id: row}, fetched ONCE by a caller (never per-model) and passed down.
+    FAIL-OPEN but VISIBLE: when saas is UNCONFIGURED there is no authoritative source to miss, so {} is silent (local
+    IS the source); when saas is CONFIGURED but the server is UNREACHABLE, that is a real miss of the org-authoritative,
+    daily-fresh catalog — announced LOUD (never a silent swap to possibly-staler local metadata), then {} so the local
+    cache still carries the run. NOT memoised (a transient outage never stales the source for the process's life); a
+    deliberate spend/deadline stop propagates."""
+    from . import saas
+    ok, _reason = saas.ready()
+    if not ok:
+        return {}                                      # no server configured → local is the source, not a fallback
+    try:
+        m = saas.fetch_models()
+    except Exception as e:
+        from . import gate as _g
+        if _g.is_deliberate_stop(e):
+            raise
+        m = None
+    if not m:                                          # CONFIGURED but unreachable/empty → LOUD, then local carries it
+        import sys as _s
+        print("[spendguard] sync-capabilities: the org-authoritative server /v1/models was UNREACHABLE this run — "
+              "falling back to the LOCAL LiteLLM cache (capabilities may be less fresh than the server's daily cron)",
+              file=_s.stderr, flush=True)
+        return {}
+    return m
+
+
+def _server_row_to_litellm(row):
+    """Map a server /v1/models row → the litellm-shape record this module consumes: the row's `capabilities` already
+    carry the supports_* keys, plus `mode` and the max_input/output upper bounds. Mechanical field mapping."""
+    out = dict(row.get("capabilities") or {})
+    if row.get("mode"):
+        out["mode"] = row["mode"]
+    for k in ("max_input_tokens", "max_output_tokens"):
+        if isinstance(row.get(k), int):
+            out[k] = row[k]
+    return out
+
+
+def _litellm_record(model_id, metered_id, server_cat=None):
+    """Per-model {supports_*, mode, max_input_tokens, max_output_tokens} for a catalog model — try its id then its
+    metered_id, across three sources in freshness order: (0) the ORG-AUTHORITATIVE server catalog `server_cat` (GET
+    /v1/models, its daily cron keeps it current — the "first place to check"; the caller fetches it ONCE and passes it
+    in); (1) the local DAILY-github cache (sync.CACHE `capabilities` + `context`, refreshed by `sync-prices`); (2) the
+    INSTALLED litellm.model_cost (fresh only on a pip upgrade). Each tier is fail-open to the next; None when none
+    covers it. Never raises."""
     cands = [x for x in (model_id, metered_id) if x]
+    srv = server_cat or {}                             # 0) the org-authoritative, daily-fresh server catalog — FIRST
+    for c in cands:
+        if isinstance(srv.get(c), dict):
+            return _server_row_to_litellm(srv[c])
     try:                                               # 1) the daily-github cache — merge capabilities + limits
         import json
         from . import sync as _sync
@@ -63,11 +108,14 @@ def _updates_for(models):
     """Compute the capability updates for every catalog model LiteLLM covers, WITHOUT mutating `models`. Returns
     (updates {mid: {field: value}}, summary). A curated limit (context_window/output_ceiling already has a value) is
     never scheduled for overwrite; capabilities/vision reflect LiteLLM ground truth."""
-    updates, covered, vis_t, vis_f, filled = {}, [], [], [], []
+    updates, covered, vis_t, vis_f, filled, uncovered = {}, [], [], [], [], []
+    server_cat = _fetch_server_catalog()               # fetch the org-authoritative catalog ONCE, reuse across models
     for mid, rec in models.items():
-        ll = _litellm_record(mid, rec.get("metered_id"))
+        ll = _litellm_record(mid, rec.get("metered_id"), server_cat)
         if not ll:
-            continue                                       # LiteLLM does not cover it → leave absent (never guess)
+            uncovered.append(mid)                          # LiteLLM does not cover it → leave absent (never guess), but
+            continue                                       # NAMED (identifier-bearing) so a dropped model is auditable
+
         covered.append(mid)
         u = {}
         sv = ll.get("supports_vision")
@@ -94,7 +142,7 @@ def _updates_for(models):
             filled.append(mid + ":out")
         if u:
             updates[mid] = u
-    summary = {"covered": len(covered), "uncovered": len(models) - len(covered),
+    summary = {"covered": len(covered), "uncovered": len(uncovered), "uncovered_ids": uncovered[:50],
                "vision_true": len(vis_t), "vision_false": len(vis_f), "filled_limits": len(filled)}
     return updates, summary
 
@@ -111,8 +159,9 @@ def audit_catalog_completeness():
     our_ids = set(models)
     our_provs = {m for r in models.values() if (m := r.get("provider"))}
     covered, uncovered, no_vision = [], [], []
+    server_cat = _fetch_server_catalog()               # org-authoritative catalog ONCE (server-first, local fallback)
     for mid, rec in models.items():
-        (covered if _litellm_record(mid, rec.get("metered_id")) else uncovered).append(mid)
+        (covered if _litellm_record(mid, rec.get("metered_id"), server_cat) else uncovered).append(mid)
         if not isinstance(rec.get("vision"), bool):
             no_vision.append(mid)
     discover = {}
@@ -148,7 +197,9 @@ def sync_capabilities(dry_run=False):
                 m[mid].update(u)                          # merge capability/vision/limit fields into the record
         return doc
 
-    config.update_json(model_catalog.DATA_PATH, _merge_capability_updates, reason="sync capabilities + upper bounds from LiteLLM")
+    config.update_json(model_catalog.DATA_PATH, _merge_capability_updates, reason="sync capabilities + upper bounds from LiteLLM",
+                       required=True)   # the model_catalog SSOT carries HAND-AUTHORED records: a corrupt file RAISES (human
+    #                                     repairs) — never quarantined-and-rebuilt (that would lose the authored fields) nor silently declined
     return summary
 
 

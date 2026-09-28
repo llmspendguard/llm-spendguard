@@ -26,7 +26,10 @@ def verdict_path(repo_root, ledger_name):
 
 def load_verdicts(repo_root, ledger_name):
     p = verdict_path(repo_root, ledger_name)
-    return json.loads(p.read_text() or "{}") if p.exists() else {}
+    data = json.loads(p.read_text() or "{}") if p.exists() else {}
+    # callers assign led[cap_key(s)] = v: a valid-but-non-object ledger (list/scalar/null) must read as an EMPTY
+    # ledger, not raise 'TypeError: <x> does not support item assignment' on the first write.
+    return data if isinstance(data, dict) else {}
 
 
 def save_verdicts(repo_root, ledger_name, verdicts):

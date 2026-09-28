@@ -74,7 +74,7 @@ def _catalogue():
             return
         seen.add(key)
         try:
-            p = pricing.price(model)
+            p = pricing.price(model, provider=prov)   # prov (resolved above) pins a bare multi-vendor id to the right rate card
         except Exception:
             p = rates or {}
         out.append(dict(id=key, model=model, provider=prov,
@@ -243,11 +243,16 @@ def _tool_vision(args):
         return {"error": f"could not load an image ({type(e).__name__}: {str(e)[:80]})"}
     in_tok = adapters._image_input_tokens(loaded, prov, raw) + (len(prompt) + len(system or "")) // 4
     out_est = int(args.get("max_out_tokens") or _VISION_OUT_EST)
-    est = pricing.cost_or_unpriced(model, in_tok, out_est, batch=False, provider=prov)
+    _seen = pricing.UNPRICED_SEEN.get(model, 0)
+    est = pricing.cost_or_unpriced(model, in_tok, out_est, batch=False, provider=prov)   # records model in UNPRICED_SEEN if no card
     budget = args.get("budget_usd")
     if budget is None:                       # no budget → NEVER auto-spends; a vision call bills the metered API
         return {"estimate_usd": round(est, 6), "in_tok_est": in_tok, "out_tok_est": out_est, "n_images": len(images),
                 "note": "estimate only — pass budget_usd to actually RUN this metered vision call (executor='api')."}
+    if pricing.UNPRICED_SEEN.get(model, 0) > _seen:   # cost_or_unpriced RECORDED it unpriced → its 0.0 is "no price", not free;
+        # a $0 estimate would sail past ANY budget and then spend unbounded (unpriced != free). Consistent with the estimate.
+        return {"error": f"refused: {model} is UNPRICED — cannot bound its cost against budget_usd (an unpriced model "
+                         f"is not a $0 model)", "estimate_usd": round(est, 6), "unpriced": True}
     if est > float(budget):
         return {"error": f"refused: estimate ${est:.4f} exceeds budget_usd ${float(budget):.4f}", "estimate_usd": round(est, 6)}
     r = adapters.vision(model, prompt, images, schema=schema, system=system, sig="mcp-vision",
@@ -496,6 +501,20 @@ def _tool_route_cost(args):
                                         lane=args.get("lane"), batch_model=args.get("batch_model"))
 
 
+def _tool_plan_queue(args):
+    """The $0 PREDICTIVE planner + async BATCH-JOB tracker state — the MCP twin of `spendguard plan-queue`, wrapping
+    the same queue_planner.tick() (forecast of which vendor is about to 429, which intents to OFFLOAD to the Batch API
+    and how to chunk them, which to PACE) plus batch_tracker.status() (open/settled/failed async batch jobs). DECIDES
+    only; the drain executes — so this is safe to call any time. $0, read-only arithmetic on live governor + queue state."""
+    from . import queue_planner, batch_tracker
+    t = queue_planner.tick()
+    try:
+        t["batch_jobs"] = batch_tracker.status()
+    except Exception:
+        t["batch_jobs"] = {}
+    return t
+
+
 def _tool_run_jobs(args):
     """The whole-job contract (whole_job): hand spendguard a SET of jobs + a GOAL and it plans (batch vs lane vs
     metered, capability-matched per schema), budget-gates, executes, and returns. SPEND-SAFE for an agent surface:
@@ -555,6 +574,13 @@ _TOOLS = {
             "batch_model": {"type": "string", "description": "metered model for the batch leg (default: config advisor.batch_model)"}},
          "required": ["intent", "n"], "additionalProperties": False},
         _tool_route_cost),
+    "spendguard_plan_queue": (
+        "The $0 PREDICTIVE queue planner + async batch-job state (the MCP twin of `spendguard plan-queue`): a forecast "
+        "of which vendor is about to breach its tokens/minute ceiling (a 429 BEFORE it happens), which intents to "
+        "OFFLOAD to the Batch API and how to chunk them, which to PACE — PLUS the tracked batch jobs (open/settled/"
+        "failed). It DECIDES; the drain executes — so it never spends and never mutates the queue. $0, read-only.",
+        {"type": "object", "properties": {}, "additionalProperties": False},
+        _tool_plan_queue),
     "spendguard_run_jobs": (
         "The WHOLE-JOB contract — hand spendguard a SET of jobs + a GOAL and it decides the plan (batch vs lane vs "
         "metered, capability-matched to each job's schema), enforces the budget, executes, and returns; you never "

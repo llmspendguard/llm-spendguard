@@ -88,6 +88,17 @@ def _usage_from_json(body):
     return None
 
 
+def _is_batch_control_path(path):
+    """True iff `path` is a batch/file CONTROL-PLANE endpoint — submission, upload, or status/results — which by
+    nature carries NO token usage (the generation it manages bills later and reconciles by batch_id). A mechanical
+    match on the FIXED provider URL shapes (parsing, not a meaning decision): any path with a `files` or `batches`
+    segment covers OpenAI /v1/files, /v1/batches[/<id>] and Anthropic /v1/messages/batches[/...]. A GENERATION
+    endpoint (/chat/completions, /responses, /messages, /embeddings) has no such segment, so a missing usage THERE
+    stays a loud leak signal — this narrows the benign case to the control plane only."""
+    segs = (path or "").rstrip("/").split("/")
+    return "files" in segs or "batches" in segs
+
+
 def _capture(host, path, status, body_bytes):
     """Record one raw provider response. Known usage shape → realtime ledger; else a loud unmetered event."""
     try:
@@ -105,8 +116,21 @@ def _capture(host, path, status, body_bytes):
             gate._record_rt(model, {"model": model, "raw_http": True}, i, o, provider=provider)
             return
         key = (host, path.split("?")[0])
+        intent = None
+        try:
+            from . import calls as _calls
+            intent = (_calls.current() or {}).get("intent")   # attribute the event to the live job when one is set
+        except Exception:
+            intent = None
+        if _is_batch_control_path(key[1]):
+            # A batch/file CONTROL-PLANE call (submission or status poll) carries no token usage BY NATURE — the
+            # generation it sets up bills later and reconciles by batch_id. Recording it as "unmetered SPEND" is a
+            # false leak signal, so log it as a benign control event (attributed), not the loud spend-invisible warning.
+            gate._log({"kind": "batch_control_http", "provider": provider, "host": host, "path": key[1],
+                       "intent": intent, "decision": "control_plane_no_usage"})
+            return
         gate._log({"kind": "raw_http_unmetered", "provider": provider, "host": host,
-                   "path": key[1], "decision": "recorded_unmetered"})
+                   "path": key[1], "intent": intent, "decision": "recorded_unmetered"})
         if key not in _warned_paths:
             _warned_paths.add(key)
             print(f"[spend_gate] WARN raw HTTP call to {host}{key[1]} carried no parseable usage — "

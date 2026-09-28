@@ -1,0 +1,16 @@
+{
+  "_provenance": "REAL outcome-class counts from ~/.spendguard/vendor_calls.jsonl (every vendor_call Result incl. failures), extracted 2026-09-27 (N=19161). This is the retry-relevant failure MIX the scale/reliability test replays through the durable queue at volume, so the test exercises the REAL proportion of transient vs deterministic faults rather than an invented mix. Regenerate by counting the `kind` field of vendor_calls.jsonl (or via scripts/reliability/reconstruct_error_log.py).",
+  "source": "vendor_calls.jsonl",
+  "extracted": "2026-09-27",
+  "total": 19161,
+  "counts": {
+    "ok": 17760,
+    "transport_error": 995,
+    "truncated": 129,
+    "deadline_exceeded": 120,
+    "schema_violation": 58,
+    "refused": 55,
+    "overloaded": 36,
+    "empty": 8
+  }
+}

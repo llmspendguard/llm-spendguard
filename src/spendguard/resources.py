@@ -85,9 +85,12 @@ def _history_path():
 
 def _load_history():
     try:
-        return json.loads(_history_path().read_text())
+        data = json.loads(_history_path().read_text())
     except Exception:
         return {}
+    # callers do hist.items() / dict(h): a valid-but-non-object file (list/scalar/null) must read as "no history", not
+    # crash with AttributeError. Also require the VALUES to be mappings where the caller expects them.
+    return data if isinstance(data, dict) else {}
 
 
 def record_instance_history():
@@ -108,7 +111,7 @@ def record_instance_history():
         rec += 1
     try:
         config.HOME.mkdir(parents=True, exist_ok=True)
-        config.update_json(_history_path(), lambda _d: hist)
+        config.update_json(_history_path(), lambda _d: hist, quarantine_unparseable=True)   # rebuildable history: recover a corrupt file, never a silent decline reported as recorded
     except Exception:
         pass
     return {"recorded": rec, "total_tracked": len(hist)}
@@ -549,6 +552,19 @@ def _family_canonical(text):
     return next((cid for key, cid in _FAMILY_CANONICAL if key in t), None)
 
 
+def _family_matches(text):
+    """DISTINCT canonical ids whose family keyword appears in `text` — so a caller can tell an UNAMBIGUOUS single-model
+    window (one id → a fixed-convention PARSE, safe to use) from an AMBIGUOUS one (two+ models named → NOT a parse, a
+    guess) and refuse to attribute rather than pick first-hit-wins. `_family_canonical` keeps the first-hit behaviour for
+    a loose single NAME; this is for a text WINDOW where more than one model may be mentioned near a usage block."""
+    t = (text or "").lower()
+    out = []
+    for _key, cid in _FAMILY_CANONICAL:
+        if _key in t and cid not in out:
+            out.append(cid)
+    return out
+
+
 def _norm_model(ms):
     """Short model name (as the LLM reads it from the transcript) → a canonical id pricing.py knows, so realtime
     token usage can be priced. Uses the shared family heuristic (_family_canonical), else falls back to
@@ -799,7 +815,7 @@ def record_recovered(box):
     persisted, why = True, None
     try:
         config.HOME.mkdir(parents=True, exist_ok=True)
-        config.update_json(_history_path(), lambda _d: hist)
+        config.update_json(_history_path(), lambda _d: hist, quarantine_unparseable=True)   # rebuildable history: recover a corrupt file, never a silent decline reported as recorded
     except Exception as e:
         persisted, why = False, f"{type(e).__name__}: {str(e)[:80]}"
         import sys as _sys
