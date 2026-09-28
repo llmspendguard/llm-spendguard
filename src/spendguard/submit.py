@@ -232,7 +232,8 @@ def build_chat_batch_jsonl(tasks_path, model, system=None, max_out=None, reasoni
 
 def guarded_submit(jsonl_path, model, cap_dollars, batch=True, avg_out_tokens=None,
                    expected_cost=None, submit=True, request_cap=25000,
-                   overrun_tolerance=DEFAULT_OVERRUN_TOLERANCE, endpoint="/v1/chat/completions", intent=None):
+                   overrun_tolerance=DEFAULT_OVERRUN_TOLERANCE, endpoint="/v1/chat/completions", intent=None,
+                   metadata=None):
     """Estimate -> enforce cap -> log -> submit. Raises RuntimeError if it won't pass. `endpoint` is the Batch API
     target the .jsonl lines address ('/v1/chat/completions' by default, '/v1/embeddings' for an embeddings batch) —
     it must match the lines' `url`, so it is a parameter, not a hardcoded literal at the batches.create call.
@@ -240,7 +241,11 @@ def guarded_submit(jsonl_path, model, cap_dollars, batch=True, avg_out_tokens=No
     `intent` is the caller's job-type label. It is set on the recording CONTEXT for the duration of the submit so the
     gate's provisional batch-cost row (gate._decide_and_account → calls.record_call, fired synchronously inside the
     gated files.create) attributes to it instead of '(none)' — a batch is attributable work, and its spend must carry
-    its intent from submission, not only when reconcile later matches it by batch_id."""
+    its intent from submission, not only when reconcile later matches it by batch_id.
+
+    `metadata` (an OpenAI batch metadata dict, keys/values ≤64/512 chars, ≤16 pairs) is attached to the created batch.
+    batch_tracker.submit_offload uses it to stamp a DETERMINISTIC offload key on the batch so a crashed-then-retried
+    offload is de-duplicated against the provider's own batch list (exactly-once) instead of double-submitting."""
     est = estimate_jsonl_cost(jsonl_path, model, batch=batch, avg_out_tokens=avg_out_tokens)
     print(f"[submit_gate] {est['requests']:,} req · {est['mode']} · in={est['in_tok']:,} "
           f"out={est['out_tok']:,} ({est['out_basis']}; {est['token_basis']}) -> ${est['cost']:,.2f}")
@@ -285,7 +290,10 @@ def guarded_submit(jsonl_path, model, cap_dollars, batch=True, avg_out_tokens=No
         client = OpenAI(api_key=_api_key("OPENAI_API_KEY"))
         with open(jsonl_path, "rb") as fh:        # the upload handle was never closed
             f = client.files.create(file=fh, purpose="batch")
-        b = client.batches.create(input_file_id=f.id, endpoint=endpoint, completion_window="24h")
+        # metadata carries batch_tracker's deterministic offload key so a crash-retried offload adopts THIS batch
+        # (found by that key in the provider's batch list) instead of creating a duplicate — the exactly-once tag.
+        _extra = {"metadata": metadata} if metadata else {}
+        b = client.batches.create(input_file_id=f.id, endpoint=endpoint, completion_window="24h", **_extra)
     finally:
         _calls._local.ctx = _prev_ctx             # restore the caller's exact context (never leak the submit intent)
     print(f"[submit_gate] SUBMITTED batch {b.id} (projected ${est['cost']:,.2f}). "
@@ -294,7 +302,7 @@ def guarded_submit(jsonl_path, model, cap_dollars, batch=True, avg_out_tokens=No
 
 
 def submit_chat_tasks(tasks, model, *, system=None, schema=None, reasoning="minimal", max_out=None,
-                      cap_dollars=None, submit=True, intent=None):
+                      cap_dollars=None, submit=True, intent=None, metadata=None):
     """Submit a list of CHAT tasks to the OpenAI /v1/chat/completions Batch API (~half realtime, 24h window) — the
     first-class chat BATCH submitter (the chat analogue of adapters.embed_batch), and the callable that wires
     route_economics' / bulk_delegate's BATCH leg to a real submission. Each task is a prompt STRING (custom_id auto
@@ -304,7 +312,8 @@ def submit_chat_tasks(tasks, model, *, system=None, schema=None, reasoning="mini
     {batch_id, jsonl, requests, error}; submit=False estimates + writes only ($0). Collect later with its SETTLE twin
     callio.collect_chat_tasks(batch_id, intent, model) — results keyed by custom_id (or stream callio.guarded_collect
     directly). OpenAI-only (the OpenAI Batch API serves only OpenAI ids); a non-OpenAI model returns a clear error
-    (the lane fan runs it instead), never a silent metered fallback."""
+    (the lane fan runs it instead), never a silent metered fallback. `metadata` is forwarded to the created batch —
+    batch_tracker.submit_offload stamps its deterministic offload key there for exactly-once de-duplication."""
     import json as _json
     import os as _os
     import tempfile as _tf
@@ -340,7 +349,7 @@ def submit_chat_tasks(tasks, model, *, system=None, schema=None, reasoning="mini
         req_path, n = build_chat_batch_jsonl(tasks_path, model, system=system, max_out=max_out,
                                              reasoning=reasoning, schema=schema)
         bid = guarded_submit(req_path, model, cap_dollars, batch=True, submit=submit,
-                             endpoint="/v1/chat/completions", intent=intent)
+                             endpoint="/v1/chat/completions", intent=intent, metadata=metadata)
         return {**base, "batch_id": bid, "jsonl": req_path, "requests": n}
     except Exception as e:
         from . import gate as _g

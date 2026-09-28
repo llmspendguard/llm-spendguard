@@ -15,7 +15,9 @@ WHY poll() NEVER SUBMITS (the batch-level "retry" is a RE-DECISION, not a blind 
 inside poll would be a non-atomic paid write across two stores (submit → record) with no provider idempotency key — a
 crash between them risks a DUPLICATE paid batch. So instead, an expired/failed batch's rows fall to the realtime retry
 ladder (idempotent, crash-safe), and the drain planner re-offers them to a FRESH batch if still warranted — re-priced
-and re-forecast, which is better than a blind resubmit AND removes the exactly-once hazard entirely. The row-level
+and re-forecast, which is better than a blind resubmit. And that re-offer is itself exactly-once: submit_offload stamps
+a deterministic offload key on every batch and reconciles against the provider's batch list before paying, so a
+crash-retried offload ADOPTS its already-created batch instead of duplicating (see submit_offload). The row-level
 realtime attempts (lane_queue max_attempts) bound the total, so nothing loops forever.
 
 CRASH-SAFETY: a job's terminal fail moves rows (queue db) AND updates the job (batch_jobs db) — two resources, not one
@@ -36,6 +38,14 @@ _DEFAULT_WINDOW_S = 24 * 3600
 # deliver and must be failed over. 'completed' + the in-progress states (validating/in_progress/finalizing) are handled
 # by readiness (batched_rows/collect), never here.
 _TERMINAL_BAD = ("expired", "cancelled", "canceled", "failed")
+# The batch-metadata field carrying submit_offload's DETERMINISTIC offload key (see submit_offload's exactly-once
+# reconcile). Stamped on the batch at create so a crash-retried offload finds its ALREADY-created batch in the provider's
+# list and ADOPTS it, instead of paying for a duplicate. Its value is a 32-char hash — within OpenAI's metadata limits.
+_OFFLOAD_KEY_FIELD = "sg_offload_key"
+# Statuses that make a keyed batch UN-adoptable on reconcile: the terminal-bad set PLUS 'cancelling' (on its way to
+# cancelled). A keyed batch in one of these is a DEAD prior-cycle job whose rows already fell back to realtime, so a
+# re-offer of the SAME rows must submit FRESH — never re-adopt a dead batch (which would strand its rows).
+_DEAD_FOR_ADOPT = _TERMINAL_BAD + ("cancelling",)
 
 _lock = threading.RLock()
 
@@ -84,28 +94,85 @@ def register_batch(batch_id, provider, model, intent, n_rows, *, expires_at=None
         return None
 
 
+def _offload_key(row_ids, intent, model, provider):
+    """A DETERMINISTIC key for THIS offload: hash(sorted row ids ⋮ intent ⋮ model ⋮ provider). The SAME row-set + intent
+    + model + provider always yields the SAME key (so a crash-retry of the same offload finds its batch), and any
+    different row-set / intent / model / provider yields a DIFFERENT key (so unrelated offloads never collide). Sorted,
+    so row ORDER can't change the key. 32 hex chars — well within OpenAI's 512-char metadata-value limit. Pure
+    derivation from fixed inputs (parsing, never a judgement)."""
+    import hashlib
+    ids = "\x1f".join(sorted(str(r) for r in (row_ids or [])))
+    payload = "%s\x1e%s\x1e%s\x1e%s" % (ids, intent or "", model or "", provider or "")
+    return hashlib.sha256(payload.encode("utf-8", "ignore")).hexdigest()[:32]
+
+
+def _existing_offload_batch(offload_key, provider):
+    """Exactly-once RECONCILE: is there already a LIVE batch carrying this offload_key (a prior attempt that submitted,
+    perhaps crashing before it could mark/register)? Returns that batch_id to ADOPT, or None to submit fresh.
+
+    The provider's OWN batch list — tagged at create with the deterministic key — is the durable record of 'did this
+    offload already submit', so no local outbox is needed and the answer survives any crash. OpenAI-only: it is the only
+    provider submit_chat_tasks can offload to (a non-OpenAI model is REFUSED there → no batch is created → nothing to
+    reconcile → None is correct). A list failure PROPAGATES (submit_offload turns it into an offload error so the drain
+    retries) — never swallowed into a blind submit, which is the duplicate hazard this removes."""
+    if provider != "openai":
+        return None
+    from . import callio
+    # No age boundary: lane_queue row ids are AUTOINCREMENT (never reused), so the offload key is globally unique to this
+    # row-set — a batch carrying it is THIS offload's batch at any age, and adopting it (rather than capping by time and
+    # re-submitting a completed-but-stale batch after a long outage) is what keeps it exactly-once. The scan is
+    # recent-first (a crash-orphan is found early) and ceiling-bounded (raises rather than a truncated 'none').
+    return callio.find_live_batch_by_metadata(_OFFLOAD_KEY_FIELD, offload_key, dead_statuses=_DEAD_FOR_ADOPT)
+
+
 def submit_offload(intent, rows, batch_model, provider="openai", *, cap_dollars=None, expires_at=None):
     """Offload a set of task rows to the Batch API and TRACK the job — the ONE place the submit→record sequence lives
-    (used by the drain autobatch path and any explicit offload op). Ordered: submit_chat_tasks (ESTIMATE-FIRST +
-    $-capped, through the one guarded chokepoint) → lane_queue.mark_batched (PER-ROW durable, custom_id = row id) →
-    register_batch (durable job record). Returns {batch_id, marked, error}.
+    (used by the drain autobatch path and any explicit offload op). EXACTLY-ONCE: reconcile → (adopt | submit) → mark →
+    register. Returns {batch_id, marked, error[, adopted]}.
 
-    CRASH-SAFETY + the exactly-once caveat (why autobatch is DEFAULT OFF): submit is a PAID external call and the durable
-    record (mark + register) follows it. A crash in the small window between submit returning and the first mark
-    committing can leave a PAID batch whose rows are not yet marked; on lease reclaim they may be re-offloaded — a rare
-    DUPLICATE. This is the known limit of exactly-once against a Batch API with NO idempotency key. The COMMON path is
-    fully recovered: a marked+registered batch is settled by collect_batched and failed-over by poll. mark comes BEFORE
-    register so that even if register crashes, the rows already carry the handle and collect_batched settles them
-    row-level. TRUE exactly-once needs a provider idempotency key on submit — a named follow-up. A deliberate
+    THE EXACTLY-ONCE GUARANTEE (this used to be a caveat — why autobatch was default-off). submit is a PAID external
+    call, and a crash in the window between submit returning a batch_id and the first mark committing used to leave a
+    PAID batch whose rows were not yet marked; on lease reclaim those rows were re-offloaded → a DUPLICATE paid batch.
+    Closed WITHOUT a local outbox and WITHOUT trusting a provider idempotency key, by using the provider's OWN batch
+    list as the record: every batch is stamped at create with a DETERMINISTIC offload key (metadata sg_offload_key =
+    _offload_key(rows, intent, model, provider)), and BEFORE paying we reconcile — is there already a LIVE batch
+    carrying this key? If yes, ADOPT it (idempotent mark + register, no second submit); if no, submit fresh. So a
+    crash-retry of the SAME rows finds its own batch (even if the crash lost the submit response entirely — the batch
+    still exists on the provider with the key) and never double-pays. A TERMINAL-BAD keyed batch is a dead prior-cycle
+    job (its rows already fell back), so it is IGNORED and a legitimate re-offer submits fresh. Concurrency is precluded
+    upstream: the drain LEASES the rows, so two offloads of the same rows cannot run at once.
+
+    mark comes BEFORE register so that even if register fails, the rows already carry the handle and collect_batched
+    settles them row-level; and reconcile makes even that recoverable (the keyed batch is re-findable). A reconcile
+    failure is NOT swallowed into a blind submit — it returns an offload error so the drain retries. A deliberate
     spend/deadline stop propagates."""
     from . import submit as _submit, lane_queue, gate
     rows = list(rows or [])
     if not rows:
         return {"batch_id": None, "marked": 0, "error": "no rows"}
+    row_ids = [r["id"] for r in rows]
+    key = _offload_key(row_ids, intent, batch_model, provider)
+
+    # EXACTLY-ONCE step 1 — reconcile BEFORE paying: adopt an already-created batch for this exact row-set if one exists.
+    try:
+        existing = _existing_offload_batch(key, provider)
+    except Exception as e:
+        if gate.is_deliberate_stop(e):
+            raise
+        # a FAILED reconcile must NOT fall through to submit (that risks the duplicate) — name it and let the drain retry
+        # this offload later (the leased rows stay put, work never lost). Loud, never a silent blind submit.
+        return {"batch_id": None, "marked": 0, "error": "reconcile: %s" % (type(e).__name__)}
+    if existing:
+        marked = lane_queue.mark_batched(row_ids, existing, batch_model)   # idempotent (re-points queued_batch rows too)
+        register_batch(existing, provider, batch_model, intent, marked, expires_at=expires_at)   # INSERT OR IGNORE
+        return {"batch_id": existing, "marked": marked, "error": None, "adopted": True}
+
+    # step 2 — first attempt: submit (estimate-first + $-capped) STAMPED with the offload key, then mark + register.
     tasks = [{"custom_id": r["id"], "content": r["task"], **({"system": r["system"]} if r.get("system") else {})}
              for r in rows]
     try:
-        res = _submit.submit_chat_tasks(tasks, batch_model, intent=intent, cap_dollars=cap_dollars)
+        res = _submit.submit_chat_tasks(tasks, batch_model, intent=intent, cap_dollars=cap_dollars,
+                                        metadata={_OFFLOAD_KEY_FIELD: key})   # the exactly-once tag on the created batch
     except Exception as e:
         if gate.is_deliberate_stop(e):
             raise                                      # a cap refusal / deadline HALTS — never a silent partial offload
@@ -113,7 +180,7 @@ def submit_offload(intent, rows, batch_model, provider="openai", *, cap_dollars=
     bid = res.get("batch_id") if isinstance(res, dict) else None
     if not bid:
         return {"batch_id": None, "marked": 0, "error": (res.get("error") if isinstance(res, dict) else "no batch_id")}
-    marked = lane_queue.mark_batched([r["id"] for r in rows], bid, batch_model)   # per-row durable; custom_id = row id
+    marked = lane_queue.mark_batched(row_ids, bid, batch_model)   # per-row durable; custom_id = row id
     register_batch(bid, provider, batch_model, intent, marked, expires_at=expires_at)
     return {"batch_id": bid, "marked": marked, "error": None}
 

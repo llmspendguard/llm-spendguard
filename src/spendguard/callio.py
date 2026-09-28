@@ -504,6 +504,63 @@ def batch_status(batch_ids, client=None):
     return out
 
 
+# A hard ceiling on the reconcile scan: reaching it means the scan could NOT reach the end of the batch list within this
+# many batches, so the function RAISES rather than concluding 'none' — a None from a truncated scan would be read as 'no
+# existing batch, submit fresh' and duplicate a paid batch. Sized far above any sane account's total batches; a real
+# overflow is a loud, retryable error, never a silent duplicate.
+_RECONCILE_SCAN_CEILING = 20000
+
+
+def find_live_batch_by_metadata(key_field, key_value, dead_statuses=(), client=None):
+    """Scan recent OpenAI batches (most-recent first) for a LIVE one carrying metadata[key_field]==key_value, and return
+    its id — else None. The exactly-once RECONCILIATION read behind batch_tracker.submit_offload: the provider's own
+    batch list, tagged at create with a deterministic offload key, IS the durable record of "did this offload already
+    submit", so a crash-retried offload adopts the existing batch instead of paying for a second.
+
+    'LIVE' = status NOT in `dead_statuses`: a terminal-bad batch (expired/failed/cancelled) carrying the key is a DEAD
+    prior-cycle job whose rows already fell back, so it is SKIPPED — a legitimate re-offer of the same rows then submits
+    fresh rather than re-adopting a dead batch.
+
+    AGE-INDEPENDENT by design — no time cap. The offload key is derived from lane_queue row ids, which are INTEGER
+    PRIMARY KEY AUTOINCREMENT (never reused, even after purge), so the key is GLOBALLY UNIQUE to one set of rows: a batch
+    carrying it is THIS offload's batch whatever its age. An earlier fixed 24h cap was a duplicate path — a completed
+    batch whose rows are re-offered after a long drain outage would fall outside the cap, read as 'none', and be
+    duplicated — so there is deliberately no age boundary here.
+
+    None means DEFINITIVELY no such live batch — never 'I stopped looking'. The scan runs recent-first to the END of the
+    list (a crash-orphan is recent, so it is found early; a genuine first-submit scans to list-end and returns None). If
+    it would pass `_RECONCILE_SCAN_CEILING` batches before the list end it RAISES (loud, retryable) rather than returning
+    None from a truncated scan (the evidence-truncation hazard: an orphan just past a cap read as 'none' would DUPLICATE);
+    a matched batch with no id RAISES too (never read as 'none'). $0 (a control-plane list). A deliberate spend/deadline
+    stop propagates; any other list error RAISES (the caller must NOT silently proceed to submit on a failed reconcile)."""
+    client = client or _oai_client()
+    seen, after = 0, None
+    while True:
+        page = client.batches.list(limit=100, **({"after": after} if after else {}))
+        data = list(getattr(page, "data", None) or [])
+        if not data:
+            return None                                        # list exhausted with no match → DEFINITIVELY none
+        for b in data:
+            if seen >= _RECONCILE_SCAN_CEILING:                # checked PER BATCH so a single huge page is bounded too
+                raise RuntimeError(
+                    "batch reconcile scan passed %d batches without reaching the end of the list — cannot confirm no "
+                    "live keyed batch exists, so refusing to conclude 'none' (that would risk a DUPLICATE paid batch). "
+                    "An extreme batch volume; raise the ceiling if an account legitimately holds this many batches."
+                    % _RECONCILE_SCAN_CEILING)
+            seen += 1
+            md = getattr(b, "metadata", None) or {}
+            if md.get(key_field) == key_value and getattr(b, "status", None) not in dead_statuses:
+                bid = getattr(b, "id", None)
+                if not bid:                                    # a MATCHED live batch with no id: an integrity anomaly. Do NOT
+                    raise RuntimeError(                        # return None — that reads as 'no match' and DUPLICATES. Fail loud.
+                        "a live batch matched offload key %r=%r but carries no id — cannot adopt it, and refusing to "
+                        "conclude 'none' (that would risk a DUPLICATE paid batch)." % (key_field, key_value))
+                return bid
+        after = getattr(data[-1], "id", None)
+        if not after or not getattr(page, "has_more", False):   # end of the list, no match → DEFINITIVELY none
+            return None
+
+
 def guarded_collect(batch_ids, intent, model, client=None, record_io=False):
     """Consumer-facing: pull the FULL result set of one or more finished OpenAI batches back THROUGH spendguard
     (the OpenAI client stays inside) as an UNBOUNDED generator of (custom_id, text, usage) — the collect twin of
