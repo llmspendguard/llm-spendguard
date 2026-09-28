@@ -9,7 +9,6 @@ Zero spend: `record_reading` STAMPS what a run already produced; `reconstruct` r
 PAST run from the `calls` corpus — and marks the judge `unknown` (it was never stamped before receipts existed),
 never a guess. "Cannot tell" is not "clean."
 """
-import hashlib
 import json
 import sqlite3
 import time
@@ -31,17 +30,23 @@ def _measurements_db():
     return con
 
 
+def _meas_bytes(*parts):
+    """The ONE input encoding for every measurement id: each part \\x00-prefixed (domain separation, so a multi-part
+    join is unambiguous) then UTF-8 with errors='replace'. Both _meas_sha (instrument/sample/reading ids) and item_id
+    build from this, so they cannot drift."""
+    return b"".join(("\x00" + str(p)).encode("utf-8", "replace") for p in parts)
+
+
 def _meas_sha(*parts):
-    h = hashlib.sha256()
-    for p in parts:
-        h.update(("\x00" + str(p)).encode("utf-8", "replace"))
-    return h.hexdigest()
+    # full 64-char SHA-256 hex of the domain-separated parts — unchanged output, now via the shared primitive.
+    return config.content_hash(_meas_bytes(*parts), 64)
 
 
 def item_id(text):
     """The canonical content id for ONE sample item (a prompt) — a stable hash, so the sample is pinned compactly and
-    a rerun can re-match the SAME items from the corpus by id rather than by fragile position."""
-    return _meas_sha(text)[:16]
+    a rerun can re-match the SAME items from the corpus by id rather than by fragile position. 16 hex chars; a length
+    change re-keys stored sample_ids, so it stays fixed (see config.content_hash)."""
+    return config.content_hash(_meas_bytes(text), 16)
 
 
 def sample_hash(sample_ids):

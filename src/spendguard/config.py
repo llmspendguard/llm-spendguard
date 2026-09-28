@@ -1070,6 +1070,19 @@ def uid(n=16):
     return uuid.uuid4().hex[:n]
 
 
+def content_hash(data, length):
+    """The ONE content-hash primitive: a stable, truncated SHA-256 hex id of `data` (already-encoded bytes).
+
+    Callers pass BYTES so each keeps its OWN normalization (conv._chash: raw UTF-8 of the text; measurement._meas_sha/
+    item_id: \\x00-domain-separated, str()-coerced, errors='replace') — those byte encodings are NOT interchangeable, so
+    the shared part is only the sha256+truncate, not the encoding. `length` = hex chars kept, and it is the caller's
+    EXPLICIT, fixed choice: changing it RE-KEYS every id built at that length (conv segment hashes, measurement sample/
+    reading ids), so check every reader before changing a length. Replaces the two independent truncated-sha256
+    implementations conv._chash (20) and measurement.item_id (16) once shared."""
+    import hashlib
+    return hashlib.sha256(data).hexdigest()[:length]
+
+
 _WARNED_ONCE = set()
 
 

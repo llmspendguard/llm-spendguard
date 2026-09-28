@@ -272,37 +272,54 @@ def _read_inputs(path):
 
 
 def _promote_batch(intent, model, instr, items, run):
-    """Promote at SCALE via the Batch API (50% off, async) — the real 25K-chunk path. Per-model params
-    auto-applied; estimate+cap+submit reuse the guarded submit / gate. WORKLOAD spend (real intent)."""
+    """Promote at SCALE via the Batch API (50% off, async) — the real 25K-per-batch path. WORKLOAD spend (real intent).
+
+    The OpenAI path reuses the shared batch primitives (submit.build_chat_batch_jsonl + guarded_submit) rather than
+    hand-writing the /v1/chat/completions envelope — so per-model params, the model OUTPUT BUDGET (not a hand-picked
+    max_tokens), and a verifiably-accepted reasoning effort are applied the ONE canonical way. The Anthropic path keeps
+    its own request build (the OpenAI Batch API serves only OpenAI ids). Returns {ok, provider, jsonl?, batch?, est?}."""
     from . import adapters, models as M
     import tempfile, os
     prov = adapters.provider_for(model)
     if len(items) > 25000:
-        print(f"  ⚠ {len(items):,} requests > 25K batch limit — chunk it (submitting first 25K).")
-        items = items[:25000]
-    reqs_body = [(cid or f"i{idx}",
-                  M.apply_call_params(model, {"model": model, "max_tokens": 1500,
-                                              "messages": [{"role": "user", "content": p + instr}]}))
-                 for idx, (cid, p) in enumerate(items)]
-    print(f"promote (BATCH) — winner {model} ({prov}) on {len(reqs_body):,} requests for '{intent}', "
+        # REFUSE rather than silently drop the requests past 25K (one Batch API job caps at 25K): a promote KEEPS
+        # production output, so a dropped request is LOST WORK, not a sampling cut. The caller splits the input into
+        # ≤25K-request chunks and promotes each. (Was: warn, then submit only the first 25K and drop the remainder.)
+        print(f"  ⚠ {len(items):,} requests exceed the 25,000/batch limit — NOT submitting; split the input into "
+              f"≤25K-request chunks and promote each (the remainder is never silently dropped).")
+        return dict(ok=False, error="exceeds the 25,000/batch limit — chunk the input", requests=len(items))
+    print(f"promote (BATCH) — winner {model} ({prov}) on {len(items):,} requests for '{intent}', "
           f"KEEP output as production")
     if prov == "openai":
-        fd, path = tempfile.mkstemp(suffix=".jsonl", prefix=f"promote_{intent.replace('/', '_')}_")
-        with os.fdopen(fd, "w") as f:
-            for cid, body in reqs_body:
-                f.write(json.dumps({"custom_id": cid, "method": "POST",
-                                    "url": "/v1/chat/completions", "body": body}) + "\n")
-        from .submit import guarded_submit
+        # tasks = {custom_id, content} with the promote instruction folded into the prompt (as before); the shared
+        # builder writes the /v1/chat/completions envelope (per-model params + the model output budget + resolve_effort).
+        # reasoning=None preserves promote's no-reasoning-effort behavior (and makes no discovery probe).
+        from .submit import build_chat_batch_jsonl, guarded_submit
+        fd, tasks_path = tempfile.mkstemp(suffix=".jsonl", prefix=f"promote_tasks_{intent.replace('/', '_')}_")
+        try:
+            with os.fdopen(fd, "w") as f:
+                for idx, (cid, p) in enumerate(items):
+                    f.write(json.dumps({"custom_id": cid or f"i{idx}", "content": p + instr}) + "\n")
+            req_path, _ = build_chat_batch_jsonl(tasks_path, model, reasoning=None)
+        finally:
+            try:
+                os.unlink(tasks_path)                 # the built envelope (req_path) is the durable artefact, not the tasks temp
+            except OSError:
+                pass
         with calls.context(intent=intent):            # WORKLOAD spend (real intent → your caps)
-            bid = guarded_submit(path, model=model, cap_dollars=config.cap(), submit=run)
+            bid = guarded_submit(req_path, model=model, cap_dollars=config.cap(), submit=run)
         if run:
-            print(f"  jsonl: {path}\n  submitted batch {bid}; retrieve results with `spendguard fetch-io` "
+            print(f"  jsonl: {req_path}\n  submitted batch {bid}; retrieve results with `spendguard fetch-io` "
                   f"or the batch output file when complete.")
         else:
-            print(f"  jsonl: {path}")
+            print(f"  jsonl: {req_path}")
             from . import ui; ui.estimate_only(action="submit the batch", note="WORKLOAD caps apply")
-        return dict(ok=True, provider=prov, jsonl=path, batch=bid if run else None)
-    else:  # anthropic — gate estimates + caps on create; submit under workload context
+        return dict(ok=True, provider=prov, jsonl=req_path, batch=bid if run else None)
+    else:  # anthropic — gate estimates + caps on create; submit under workload context (OpenAI Batch API is OpenAI-only)
+        reqs_body = [(cid or f"i{idx}",
+                      M.apply_call_params(model, {"model": model, "max_tokens": 1500,
+                                                  "messages": [{"role": "user", "content": p + instr}]}))
+                     for idx, (cid, p) in enumerate(items)]
         reqs = [{"custom_id": cid, "params": body} for cid, body in reqs_body]
         if not run:
             from . import gate

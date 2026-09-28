@@ -695,7 +695,10 @@ _NONE_EV = {"spend_evidence": False, "kind": "none", "cost_lesson": False}
 
 
 def _chash(text):
-    return hashlib.sha256((text or "").encode()).hexdigest()[:20]
+    # a conversation-segment content id: raw UTF-8 of the text, 20 hex chars. Routes through the shared primitive
+    # (config.content_hash) so there is ONE truncated-sha256 home; the byte-encoding + length stay conv's own (a length
+    # change re-keys the evidence cache + verdict lookups — see config.content_hash).
+    return config.content_hash((text or "").encode(), 20)
 
 
 def _evidence_db():
