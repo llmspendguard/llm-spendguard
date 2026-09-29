@@ -2777,6 +2777,20 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
             print(f"[spendguard] lane-balance: substitute {_sub} FAILED ({str(r.get('error'))[:70]}) — shed it, "
                   f"running the ORIGINAL {model} so the call is not stranded", file=_sys.stderr)
             _no_sub = True                          # run the original ONCE here (no re-substitution), then fall through
+    # MALFORMED-CONTRACT PREFLIGHT — refuse a broken `schema` BEFORE spending, the shape-side twin of the input-fits
+    # bound below. A schema whose `required`/`nonempty` holds a non-string entry cannot be validated (the validator
+    # would try to hash the entry as a dict key), so the model's reply — however good — is discarded as a
+    # schema_violation AFTER it is billed (measured: healiom-investor-score, a complete $0.10 gpt-5.5 answer thrown
+    # away). The malformation is knowable from the schema ALONE, with no call, so catch it here at $0 and attribute it
+    # to the CONTRACT (a caller bug), never to the model. Deterministic FORMAT check, not a cost/quality judgement.
+    _schema_kw = kw.get("schema")
+    if _schema_kw is not None:
+        from . import output_contract as _oc_wf
+        _wf = _oc_wf.wellformed_contract(_schema_kw)
+        if _wf:
+            return {"provider": provider_for(model), "model": model, "text": None, "in_tok": 0, "out_tok": 0,
+                    "latency": 0.0, "cost": None, "finish_reason": None, "truncated": None,
+                    "error": f"malformed contract (schema): {_wf} — fix the schema; not sent (no spend)"}
     ok, detail = _input_fits(model, prompt, kw.get("system"), images=kw.get("images"))
     if not ok:
         return {"provider": provider_for(model), "model": model, "text": None, "in_tok": 0, "out_tok": 0,

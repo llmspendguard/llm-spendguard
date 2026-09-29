@@ -92,6 +92,33 @@ calls = []
 oc.check_items_against_contract([1, 2, 3], lambda i: calls.append(i) or True)
 check("a callable verifier runs ONCE per item (may be expensive/stateful)", len(calls) == 3, str(len(calls)))
 
+print("-- a MALFORMED contract fails CLEAN, never an opaque hashing crash (guards the healiom-investor-score $0.10 loss) --")
+# A `required`/`nonempty` entry must be a JSON object KEY, i.e. a string. A caller that passed a non-string (a nested
+# list — required:[["patient_id"]]) made _check_schema hash it as a dict key and raised the opaque
+# 'TypeError: cannot use list as a dict key', which check_item caught and filed as a schema_violation — discarding a
+# COMPLETE, already-billed model answer (measured: healiom-investor-score, a $0.10 gpt-5.5 reply thrown away).
+BADREQ = {"type": "object", "required": [["patient_id"]]}                 # a list where a key STRING belongs
+BADNE = {"type": "object", "required": ["patient_id"], "nonempty": [["findings"]]}
+rbad = oc.check_items_against_contract([GOOD], BADREQ)
+check("a malformed 'required' fails as a CONTRACT error, named as such", rbad.failed == 1
+      and "malformed contract" in rbad.first_failure, rbad.first_failure)
+check("…and the reason NEVER leaks the raw hashing TypeError (no 'unhashable' / 'dict key')",
+      "unhashable" not in rbad.first_failure and "dict key" not in rbad.first_failure, rbad.first_failure)
+check("a malformed 'nonempty' is caught the same clean way",
+      "malformed contract" in oc.check_items_against_contract([GOOD], BADNE).first_failure)
+# wellformed_contract: the $0 pre-call detector the adapters preflight uses to refuse a bad schema BEFORE billing.
+_nested = {"type": "object", "properties": {"issues": {"type": "array",
+           "items": {"type": "object", "required": [["id"]]}}}}
+check("wellformed_contract flags a non-string 'required' entry, with the path",
+      "required" in (oc.wellformed_contract(BADREQ) or "") and (oc.wellformed_contract(BADREQ) or "").startswith("$:"))
+check("wellformed_contract flags it nested under properties/items", "issues[]" in (oc.wellformed_contract(_nested) or ""))
+check("wellformed_contract flags a non-LIST 'required' (a bare str, not a list of keys)",
+      "must be a list" in (oc.wellformed_contract({"required": "patient_id"}) or ""))
+check("a WELL-FORMED schema passes wellformed_contract (returns None)", oc.wellformed_contract(schema) is None)
+check("non-dict contracts ('json' / key-list / callable) are well-formed by construction",
+      oc.wellformed_contract("json") is None and oc.wellformed_contract(KEYS) is None
+      and oc.wellformed_contract(lambda i: True) is None)
+
 print("-- identity: a changed contract must expire the authorization --")
 check("the same contract hashes the same", oc.contract_hash(KEYS) == oc.contract_hash(list(reversed(KEYS))))
 check("a different contract hashes differently", oc.contract_hash(KEYS) != oc.contract_hash(KEYS + ["extra"]))

@@ -193,11 +193,23 @@ def _check_schema(obj, schema, path="$"):
         if not isinstance(obj, want):
             raise ValueError(f"{path}: expected {t}, got {type(obj).__name__}")
     for k in schema.get("required") or ():
+        # A required/nonempty ENTRY is a JSON object KEY, so it must be a string. A caller that passed a non-string
+        # (e.g. a nested list — `required: [["a"]]`) would make `k in obj` / `obj.get(k)` below try to HASH that value
+        # and raise an opaque `TypeError: cannot use 'list' as a dict key`, which check_item catches and files as a
+        # schema_violation — throwing away a complete, already-billed model answer because OUR contract was malformed,
+        # not because the model missed. Name the real fault (a bad contract) with a clear ValueError instead of a
+        # cryptic hashing crash. FORMAT check (an entry IS or is not a str), never a judgement about meaning.
+        if not isinstance(k, str):
+            raise ValueError(f"{path}: malformed contract — 'required' entry must be a string key, got "
+                             f"{type(k).__name__} ({k!r})")
         if not isinstance(obj, dict) or k not in obj:
             raise ValueError(f"{path}: missing required key {k!r}")
     # `nonempty` is the answer to required-and-present-but-meaningless. Declared per field, checked mechanically
     # (a value IS or is not 0/""/[]), never a judgement about whether the content is any good.
     for k in schema.get("nonempty") or ():
+        if not isinstance(k, str):                       # same malformed-contract guard as `required` above
+            raise ValueError(f"{path}: malformed contract — 'nonempty' entry must be a string key, got "
+                             f"{type(k).__name__} ({k!r})")
         if isinstance(obj, dict) and _is_empty(obj.get(k)):
             raise ValueError(f"{path}.{k}: present but EMPTY ({obj.get(k)!r}) — a required field returned as "
                              f"0/\"\"/[] is absence, not an answer")
@@ -227,6 +239,37 @@ def needs_enforcement(contract):
     if isinstance(contract.get("items"), dict) and needs_enforcement(contract["items"]):
         return True
     return False
+
+
+def wellformed_contract(contract, path="$"):
+    """None if the contract is well-formed, else a STRING naming the first malformation — so a caller can be refused
+    BEFORE a paid call instead of after (a malformed contract billed the model, then discarded its complete answer as a
+    schema_violation: measured on healiom-investor-score, $0.10/row for a `required` list that held a nested list). The
+    one malformation this catches is the one that CRASHES the validator: a `required`/`nonempty` entry that is not a
+    string, so `_check_schema` would try to use it as a dict key. Recurses `properties`/`items`, mirroring
+    needs_enforcement. A structural FORMAT check on the dict the caller wrote (is each entry a str), never a judgement
+    about meaning. Non-dict contracts ('json' / key-list / callable) have no such list to malform → well-formed."""
+    if not isinstance(contract, dict):
+        return None
+    for marker in ("required", "nonempty"):
+        entries = contract.get(marker)
+        if entries is None:
+            continue
+        if not isinstance(entries, (list, tuple)):
+            return f"{path}: '{marker}' must be a list of string keys, got {type(entries).__name__}"
+        for k in entries:
+            if not isinstance(k, str):
+                return f"{path}: '{marker}' entry must be a string key, got {type(k).__name__} ({k!r})"
+    for name, sub in (contract.get("properties") or {}).items():
+        if isinstance(sub, dict):
+            why = wellformed_contract(sub, f"{path}.{name}")
+            if why:
+                return why
+    if isinstance(contract.get("items"), dict):
+        why = wellformed_contract(contract["items"], f"{path}[]")
+        if why:
+            return why
+    return None
 
 
 def check_item(item, contract):
