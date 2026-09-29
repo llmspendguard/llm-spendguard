@@ -1131,7 +1131,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                                 finish=r.get("finish_reason"), executor=r.get("executor"),
                                 effort=r.get("chosen_effort"), outcome=_oc, http_status=r.get("status_code"),
                                 provider_error=r.get("provider_error"), retry_after=r.get("retry_after"),
-                                attempts=r.get("attempts"), disposition="failed")
+                                attempts=r.get("attempts"), disposition="failed", fell_from=r.get("fell_from"))
             except Exception:
                 pass
     return r
@@ -2029,9 +2029,18 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 _fb_model = f"{prov}:{_cell['metered_model']}"         # the SERVED equal-model id (resolves stale alias)
         except Exception:
             _fb_model, _fb_reasoning = model, reasoning                # map unavailable → prior behaviour, never break
-        out = _call_once(_fb_model, prompt, max_tokens=max_tokens, system=system, reasoning=_fb_reasoning,
-                         schema=schema, timeout_s=timeout_s, _skip_lane=True, _no_sub=_no_sub)
-        _kind = _learn_from_fallback(lane_name, prompt, bool(out.get("error")), model=raw, transient=bool(_ra))
+        # ITEM 4 — the metered twin is about to serve BECAUSE this $0 lane went down: stamp the lane it fell FROM on the
+        # ledger, so `SUM(cost) WHERE fell_from=lane` is the metered $ spent (the $0 savings lost) while that lane was
+        # down. The SUCCESS row is written by gate._record_rt DURING this dispatch (on this thread), so scope it via the
+        # thread-local context; ALSO stamp the returned dict so a FAILED fallback (recorded later in the outer call) and
+        # any consumer reading the result carry the same fact. A plain fact (the lane name), never a judgement about why.
+        from . import calls as _calls_ff
+        with _calls_ff.fell_from_context(lane_name):
+            out = _call_once(_fb_model, prompt, max_tokens=max_tokens, system=system, reasoning=_fb_reasoning,
+                             schema=schema, timeout_s=timeout_s, _skip_lane=True, _no_sub=_no_sub)
+        out = out if isinstance(out, dict) else {"error": "metered fallback returned no result dict", "cost": None}
+        out["fell_from"] = lane_name
+        _kind = _learn_from_fallback(lane_name, prompt, bool(out.get("error", False)), model=raw, transient=bool(_ra))
         # OPERATOR-only (opt-in) commentary on WHY the lane missed + that the API served — off by default so a CONSUMER
         # never sees a lane on the call path. The call already SUCCEEDED on the metered fallback (`out`, returned below);
         # the operator's durable record is reliability.note_lane_* (via _learn_from_fallback / _lane_cool) + `doctor`.

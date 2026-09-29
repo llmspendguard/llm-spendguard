@@ -273,6 +273,30 @@ def lane_login_hint(lane):
         return ""
 
 
+def lane_fallback_spend(since=None):
+    """The metered $ this install spent FALLING OVER from each $0 lane — the "$0 savings lost while a lane was down"
+    view, read straight from the durable calls ledger (the `fell_from` column adapters stamps at the failover site).
+    Mechanical aggregation only — `SUM(cost) GROUP BY fell_from`, most-costly lane first — no judgement: WHY the lane
+    was down lives in each row's outcome/provider_error and in lane_health; this answers only "how much did it cost."
+    `since` is an inclusive ISO-timestamp lower bound on ts (e.g. the week's start). Returns
+    [{lane, n_calls, metered_usd}]; [] on any error or a ledger not yet carrying the column. $0, read-only."""
+    import sqlite3
+    try:
+        con = sqlite3.connect(config.db_path())
+        q = ("SELECT fell_from, COUNT(*), COALESCE(SUM(cost), 0) FROM calls "
+             "WHERE fell_from IS NOT NULL AND fell_from != ''")
+        args = []
+        if since:
+            q += " AND ts >= ?"
+            args.append(str(since))
+        q += " GROUP BY fell_from ORDER BY 3 DESC"
+        rows = con.execute(q, args).fetchall()
+        con.close()
+        return [{"lane": r[0], "n_calls": int(r[1]), "metered_usd": round(float(r[2] or 0.0), 4)} for r in rows]
+    except Exception:
+        return []
+
+
 _EVENT_NOTIFY_THROTTLE_S = 1800          # per-lane: notify on a mid-use failure at most once per 30 min (no spam)
 
 

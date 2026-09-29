@@ -47,7 +47,8 @@ def current():
 
 
 def set_context(intent: Optional[str] = None, chain: Optional[str] = None, who: Optional[str] = None,
-                root_call: Optional[str] = None, attempt: Optional[int] = None) -> None:
+                root_call: Optional[str] = None, attempt: Optional[int] = None,
+                fell_from: Optional[str] = None) -> None:
     c = dict(current())
     if intent is not None:
         c["intent"] = intent
@@ -62,7 +63,9 @@ def set_context(intent: Optional[str] = None, chain: Optional[str] = None, who: 
         c["root_call"] = root_call        # ROOT ledger id of this logical call — every retry's row links back (retry_of)
     if attempt is not None:
         c["attempt"] = attempt            # 1-based try number; record_call stamps retry_of/attempts from it
-    _local.ctx = c
+    if fell_from is not None:
+        c["fell_from"] = fell_from        # the $0 lane a METERED fallback fell over FROM — read by the success recorder
+    _local.ctx = c                        #   (gate._record_rt fires DURING the SDK call, on this thread, so it reads ctx)
 
 
 def clear_retry_context() -> None:
@@ -72,6 +75,26 @@ def clear_retry_context() -> None:
     c.pop("root_call", None)
     c.pop("attempt", None)
     _local.ctx = c
+
+
+@contextlib.contextmanager
+def fell_from_context(lane_name: str):
+    """Scope `fell_from=lane_name` on the thread-local context to exactly one metered-fallback dispatch, then restore
+    the prior value. The SUCCESS recorder for a metered call is gate._record_rt (the SDK-patch), which fires
+    SYNCHRONOUSLY DURING the .create() call on THIS thread and reads the context via record_call — so a lane's metered
+    twin, dispatched inside this block after the $0 lane went down, lands on the ledger stamped with the lane it fell
+    from. Save/restore (not a bare pop) so a nested fallback never erases an outer one."""
+    prev = current().get("fell_from")
+    set_context(fell_from=lane_name)
+    try:
+        yield
+    finally:
+        c = dict(current())
+        if prev is None:
+            c.pop("fell_from", None)
+        else:
+            c["fell_from"] = prev
+        _local.ctx = c
 
 
 def recorded_intents(min_calls=1, limit=200):
@@ -252,16 +275,23 @@ def _ensure_calls_schema(c):
     #                      row pointing back to the original, so the entire attempt history of one logical call —
     #                      first try + every retry, on whatever provider/lane/meter each landed — is reconstructable
     #                      by `WHERE id=X OR retry_of=X ORDER BY ts`. Attempts are never collapsed into one row.
+    #   `fell_from`      = the $0 SUBSCRIPTION LANE this METERED call fell over FROM, when a down/unsuitable lane forced
+    #                      the paid twin (the mirror of `executor`, which names the lane that SERVED a $0 hit). It records
+    #                      the plain FACT — the lane name — never a judgement about WHY (the reason is the row's own
+    #                      outcome/provider_error and the lane_health record). `SUM(cost) WHERE fell_from='codex'` is then
+    #                      the metered $ this install spent BECAUSE codex was down — the "$0 savings lost while a lane was
+    #                      down" an operator restores by re-logging that lane in. NULL on a $0-lane hit or a direct call.
     for _col, _decl in (("quality_conf", "REAL"), ("executor", "TEXT"), ("project", "TEXT"),
                         ("effort", "TEXT"), ("suspect", "TEXT"),
                         ("outcome", "TEXT"), ("http_status", "INTEGER"), ("provider_error", "TEXT"),
                         ("retry_after", "REAL"), ("attempts", "INTEGER"), ("disposition", "TEXT"),
-                        ("retry_of", "TEXT")):
+                        ("retry_of", "TEXT"), ("fell_from", "TEXT")):
         if _col not in _have:
             c.execute(f"ALTER TABLE calls ADD COLUMN {_col} {_decl}")
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_executor ON calls(executor)")  # per-lane rollups
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_outcome ON calls(outcome)")    # reliability / error-class rollups
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_retry_of ON calls(retry_of)")  # reconstruct one call's retry chain
+    c.execute("CREATE INDEX IF NOT EXISTS idx_calls_fell_from ON calls(fell_from)")  # per-lane fallback-spend rollups
     c.commit()
 
 
@@ -316,7 +346,8 @@ _SUSPECT_CEILING_FACTOR = 1.5
 def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
            prompt=None, output=None, finish=None, intent=None, chain=None, who=None,
            executor=None, project=None, effort=None, *, outcome=None, http_status=None,
-           provider_error=None, retry_after=None, attempts=None, disposition=None, retry_of=None, call_id=None):
+           provider_error=None, retry_after=None, attempts=None, disposition=None, retry_of=None,
+           fell_from=None, call_id=None):
     """Record one call — its full OUTCOME, success OR failure. Returns call_id. Never raises.
 
     FORENSIC MANDATE (the reason this tool exists): EVERY call is on the ledger, whatever its fate — a metered success,
@@ -335,6 +366,9 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
       attempts       — how many tries produced THIS row (1 = first).
       disposition    — served | served_after_retry | failed_over | failed (exhausted). What a reliability report counts.
       retry_of       — the ROOT call id this row is a retry of (NULL on the first try). Every retry is its own row.
+      fell_from      — the $0 lane this METERED call fell over FROM (a down/unsuitable lane forced the paid twin); the
+                       mirror of `executor`. A plain fact, never a why. Passed explicitly by the failure recorder, or
+                       read from the thread-local context (set by calls.fell_from_context) for the success recorder.
 
     `executor` names the SUBSCRIPTION LANE that served the call (claude-code / codex / gemini / zai-coding) when it
     rode a flat-fee plan instead of the metered API. Storing it makes "which lane worked" a recorded fact the receipt
@@ -360,6 +394,10 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
             retry_of = _root
         if attempts is None and isinstance(_seq, int):
             attempts = _seq
+        # The metered-fallback SUCCESS recorder (gate._record_rt) passes no fell_from arg — it fires during the SDK
+        # call on this thread, so read the lane from the context calls.fell_from_context scoped around that dispatch.
+        if fell_from is None:
+            fell_from = ctx.get("fell_from")
         cid = call_id or (_root if (_root and _seq == 1) else None) or _uuid()
         sp = _snip()
         ph = hashlib.sha256((prompt or "").encode("utf-8", "ignore")).hexdigest()[:16] if prompt else None
@@ -389,8 +427,8 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
             _calls_db().execute(
                 "INSERT INTO calls (id,ts,chain,intent,caller,provider,model,kind,in_tok,out_tok,"
                 "cost,latency,prompt_hash,prompt_snip,output_snip,finish,executor,project,effort,suspect,"
-                "outcome,http_status,provider_error,retry_after,attempts,disposition,retry_of) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "outcome,http_status,provider_error,retry_after,attempts,disposition,retry_of,fell_from) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (cid, ts, chain, intent, who or ctx.get("who") or caller(), provider, model, kind,
                  int(in_tok or 0), int(out_tok or 0), float(cost or 0), latency, ph, psnip, osnip, finish,
                  executor, proj, (effort or None), suspect,
@@ -399,7 +437,7 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
                  (provider_error[:1000] if isinstance(provider_error, str) else None),
                  (float(retry_after) if isinstance(retry_after, (int, float)) else None),
                  (int(attempts) if isinstance(attempts, int) else None),
-                 (disposition or None), (retry_of or None)))
+                 (disposition or None), (retry_of or None), (fell_from or None)))
             _calls_db().commit()
         # deferred implicit feedback: did THIS call reuse an earlier output in the same chain?
         if chain and prompt:

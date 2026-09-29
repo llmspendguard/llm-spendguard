@@ -361,6 +361,19 @@ def main(argv=None):
                                      "advisor.executor to claude-code / codex / zai-coding / gemini / pool "
                                      "to use your plans"]):
         print(line)
+    # OPERATOR alert (not a consumer concern): metered $ spent THIS MONTH because a $0 lane was DOWN and its call fell
+    # over to the paid API — the "$0 savings lost" recovered by re-logging that lane in. Shown here, where an operator
+    # looks at lane state, only when it is material; the full per-lane rollup is `spendguard lanes --fallback-spend`.
+    try:
+        from . import reliability as _rel_fb, config as _cfg_fb
+        _fb_rows = _rel_fb.lane_fallback_spend(since=_cfg_fb.month_start_utc())
+        _fb_total = round(sum(r["metered_usd"] for r in _fb_rows), 2)
+        if _fb_total >= 0.01:
+            _top = ", ".join(f"{r['lane']} ${r['metered_usd']:.2f}" for r in _fb_rows[:4])
+            print(f"⚠ ${_fb_total:.2f} metered spent this month FALLING OVER from down lanes ({_top}) — re-login those "
+                  f"lanes to restore $0. Full: spendguard lanes --fallback-spend")
+    except Exception:
+        pass
     if "--probe" in argv:
         print("probe (one tiny plan-billed prompt per enabled lane, $0):")
         for r in probe():
@@ -426,6 +439,23 @@ def main(argv=None):
         from . import lane_catalog
         print()
         print(lane_catalog.format_lane_fallback())
+    if "--fallback-spend" in argv:                        # $ actually spent falling over from down lanes (savings lost)
+        from . import reliability as _rel_fbs, config as _cfg_fbs
+        _since = None
+        for _i, _a in enumerate(argv):
+            if _a == "--since" and _i + 1 < len(argv):
+                _since = argv[_i + 1]
+        _since = _since or _cfg_fbs.month_start_utc()
+        _rows = _rel_fbs.lane_fallback_spend(since=_since)
+        print(f"\nmetered $ spent FALLING OVER from a down $0 lane since {_since} (the $0 savings lost — re-login to restore):")
+        if not _rows:
+            print("  (none) — every $0 lane served its own work, or the ledger predates fell_from tracking")
+        for _r in _rows:
+            print(f"  {_r['lane']:<14} ${_r['metered_usd']:>9.4f}  across {_r['n_calls']:>5} call(s)  "
+                  f"→ fix: {_rel_fbs.lane_login_hint(_r['lane']) or 're-login this lane'}")
+        _tot = round(sum(_r['metered_usd'] for _r in _rows), 4)
+        if _rows:
+            print(f"  {'TOTAL':<14} ${_tot:>9.4f}  — metered spend that a logged-in lane would have served at $0")
     if "--reasoning-map" in argv:                         # lane→metered REASONING equivalence: same model, equal-or-greater effort
         from . import reasoning_equivalence
         print()
