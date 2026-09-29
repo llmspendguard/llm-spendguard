@@ -40,6 +40,10 @@ MODES = {
                       "finish_reason": None}, vc.UNFUNDED),
     "schema_bad":   ({"text": '{"not_findings": 1}', "finish_reason": "stop", "in_tok": 10, "out_tok": 8,
                       "cost": 0.01, "error": None}, vc.SCHEMA_VIOLATION),
+    # a plain 429/529 rate-limit/overload — the ONE RETRYABLE class (distinct from the unfunded 429 above): it is
+    # RETRIED (honoring Retry-After / backoff) and, if it persists, ends as an honest OVERLOADED whose .text refuses.
+    "overloaded":   ({"text": None, "error": "Error code: 429 - rate limit reached for this model, slow down",
+                      "status_code": 429, "finish_reason": None}, vc.OVERLOADED),
 }
 
 fails = 0
@@ -64,7 +68,8 @@ for vendor, model in VENDORS:
         schema = SCHEMA if name == "schema_bad" else None
         adapters.call = _mock(result)
         try:
-            r = vc.call(vendor, model, "review this", deadline_s=60, max_tokens=32000, schema=schema)
+            r = vc.call(vendor, model, "review this", deadline_s=60, max_tokens=32000, schema=schema, backoff_s=0)
+            #                                    backoff_s=0 → the RETRYABLE 'overloaded' mode retries instantly (no sleep)
         finally:
             adapters.call = _real
         ck(f"{name:12} -> {expected}", r.kind == expected, f"got {r.kind} (err={r.error!r})")
