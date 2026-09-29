@@ -219,5 +219,30 @@ lane_balance.delegate("t", intent="myintent")                         # no schem
 fails += ck("Part2: delegate WITHOUT schema uses the bandit", bool(_bandit_hits))
 lane_bandit.bandit_call, lane_balance.lane_utilization, lane_balance.config._cfg_get = _orig_bandit, _orig_util, _orig_cfg
 
+print("\n-- (prompt_for) the LANE path delivers prompt_for(KEY) to adapters.call, never the raw task KEY (guards lane_balance.py:953) --")
+# whole_job hands bulk_delegate a list of task KEYS (job ids) + prompt_for(key)->the real prompt + task_key(key)->key,
+# so it can pair results back by meaning. The LANE runner (_attempt_on_lane) MUST resolve prompt_for(key) before
+# adapters.call, exactly as the pinned-API runner (_run_task_on_api) already does. The regression this guards: the lane
+# path sent the raw KEY as the prompt, so a job id "rev-2" reached the model verbatim and it answered "clarify rev-2"
+# instead of doing the task. Reset to a clean two-good-lane world (earlier blocks mutated lanes/reserved/cooling).
+lane_catalog.arms = lambda flt=None: [("gemini", "g-high"), ("codex", "gpt-5.5")]
+lane_catalog.lane_provider = lambda l: {"gemini": "gemini", "codex": "openai"}.get(l)
+lane_bandit.arm_stats = lambda intent: {("gemini", "g-high"): {"winrate": 1.0, "trials": 2},
+                                        ("codex", "gpt-5.5"): {"winrate": 1.0, "trials": 2}}
+lane_economics.prompt_lane_reserved = lambda lane: False
+adapters._lane_cooling = lambda ln: False
+_KEYS = ["k-alpha", "k-beta", "k-gamma"]                              # the caller's task KEYS (stand in for whole_job's job ids)
+_P4K = {"k-alpha": "PROMPT-ALPHA", "k-beta": "PROMPT-BETA", "k-gamma": "PROMPT-GAMMA"}   # key -> the REAL prompt
+_rec.calls.clear()
+res_pf = lane_balance.bulk_delegate(_KEYS, "myintent", prompt_for=lambda k: _P4K[k],
+                                    task_key=lambda k: k, return_keyed=True)
+_sent = {c["prompt"] for c in _rec.calls}
+fails += ck("(prompt_for) every prompt reaching adapters.call is a RESOLVED prompt, and no raw KEY leaks through",
+            _sent == set(_P4K.values()) and not (_sent & set(_KEYS)))     # exact set-equality — the delivered strings ARE the resolved prompts
+# and the RIGHT prompt reached the RIGHT key: the recorder echoes 'ans::<model>::<prompt>', so the last ::-field is the
+# exact prompt that served this key. Exact equality (parsed field), not a substring/meaning check.
+fails += ck("(prompt_for) return_keyed pairs each key's row to ITS OWN resolved prompt (no cross-pairing)",
+            all((res_pf[k].get("text") or "").split("::")[-1] == _P4K[k] for k in _KEYS))
+
 print(f"\n{'[FAIL]' if fails else 'OK'} test_bulk_delegate: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)
