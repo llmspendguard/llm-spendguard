@@ -9,6 +9,8 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 
 from spendguard import resources
 
+_REAL_GPU_EXCERPTS = resources._gpu_session_excerpts   # keep a handle: a later test stubs the module attribute
+
 fails = []
 def ck(name, cond):
     print(("  [OK] " if cond else "  [FAIL] ") + name)
@@ -163,6 +165,32 @@ _conv.instance_attributions = lambda insts: {"901": {"project": "lmm", "org": "H
 _pr = {r["project"] for r in resources.gpu_rows_by_day(since_ts=_nn - 5 * 86400, now=_nn)}
 ck("GPU LABEL wins over timing-match: m2a-labeled box → manga2anime (NOT the lmm it timing-matched)", "manga2anime" in _pr)
 ck("GPU timing-match is the FALLBACK: an UNLABELED box still uses it → lmm", "lmm" in _pr)
+
+# ── _gpu_session_excerpts is now REGEX-FREE: it delegates to conv.session_chunks (the whole transcript, chunked, no ──
+# ── keyword gate). GPU relevance is the LLM's decision in discover_agentic, not a regex. Here: nothing is truncated ──
+# ── and a large session is CHUNKED (every event seen) — a late teardown past a small chunk size still lands. ──
+import json as _json2, tempfile as _tf2, shutil as _sh2                                   # noqa: E402
+from spendguard import conv as _conv2                                                     # noqa: E402
+_gtd = _tf2.mkdtemp(prefix="gpu-excerpt-")
+with open(os.path.join(_gtd, "gsess.jsonl"), "w") as _fh2:
+    for _i in range(60):                                     # a long session whose content far exceeds a small max_chars
+        _fh2.write(_json2.dumps({"message": {"role": "assistant",
+                   "content": f"new_contract id={100000 + _i} gpu_name=H100 dph_total={2.0 + _i}/hr start_date=x"}}) + "\n")
+    _fh2.write(_json2.dumps({"message": {"role": "assistant",
+               "content": "LATE_TEARDOWN destroy id=199999 stopped"}}) + "\n")   # a LATE event, past any small cap
+_orig_td = _conv2._DEFAULT_TDIR
+_conv2._DEFAULT_TDIR = _gtd                                   # session_chunks reads this (the delegate)
+try:
+    _ex = _REAL_GPU_EXCERPTS(max_chars=500)                  # the REAL fn (a later test stubbed the module attribute); tiny chunk → force chunking
+finally:
+    _conv2._DEFAULT_TDIR = _orig_td
+_joined = "\n".join(e for _s, e in _ex)
+ck("_gpu_session_excerpts: the LATE event survives — nothing truncated (whole transcript, chunked)", "LATE_TEARDOWN" in _joined)
+ck("_gpu_session_excerpts: a large session is CHUNKED into pieces bounded by max_chars (split, never dropped)",
+   len(_ex) >= 2 and all(len(e) <= 500 for _s, e in _ex))
+ck("_gpu_session_excerpts: every chunk carries the same session id (merge-by-id across chunks works)",
+   {s for s, _e in _ex} == {"gsess"})
+_sh2.rmtree(_gtd, ignore_errors=True)
 
 print(("\n[FAIL] " if fails else "\n[OK] ") + f"resources_gpu: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

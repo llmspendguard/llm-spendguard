@@ -440,38 +440,21 @@ def _gpu_project_hints():
 
 
 def _gpu_session_excerpts(max_sessions=None, max_chars=12000):
-    """Cheap deterministic PRE-FILTER for the agentic pass: per transcript, gather the HIGH-SIGNAL vast.ai instance
-    lines — launches (new_contract), instance objects (dph_total/gpu_name/start_date), formatted prints
-    (id=… $/hr), and teardowns (destroy/stopped) — into a bounded excerpt. (Generic 'gpu'/'instance' prose is
-    skipped; it's noise that buried the real data in the first cut.) Returns [(session_id, excerpt)] for sessions
-    that actually rented GPUs, so the LLM reads the lifecycle, not chatter."""
-    from . import claudecode
-    sig = re.compile(r"dph_total|new_contract|gpu_name|id=\d{6,10}|\$\s*[0-9.]+\s*/\s*hr|"
-                     r"status\s*[:=]\s*(?:running|exited)|destroy|stopped|--label\s|start_date", re.I)
-    gate = re.compile(r"dph_total|new_contract", re.I)        # session must carry REAL instance data
-    out = []
-    for path in sorted(glob.glob(os.path.join(claudecode._projects_dir(), "**", "*.jsonl"), recursive=True)):
-        sid = os.path.basename(path).replace(".jsonl", "")
-        buf, n, has = [], 0, False
-        try:
-            # A CONTEXT MANAGER, NOT A BARE open() IN THE LOOP HEADER. This scans every transcript on the
-            # machine, and an un-closed handle per file leaks a descriptor per scan — on a long-lived
-            # process that ends as "Too many open files" somewhere unrelated, hours later, with nothing
-            # pointing back here. CPython's refcounting hides it until it doesn't.
-            with open(path, errors="ignore") as _fh:
-                for ln in _fh:
-                    if gate.search(ln):
-                        has = True
-                    if n < max_chars and sig.search(ln):
-                        seg = re.sub(r"\x1b\[[0-9;]*m", "", ln)[:800]
-                        buf.append(seg)
-                        n += len(seg)
-        except Exception:
-            continue
-        if has and buf:
-            out.append((sid, "\n".join(buf)[:max_chars]))
-    out.sort(key=lambda x: -len(x[1]))
-    return out[:max_sessions] if max_sessions else out
+    """The transcript CHUNKS the agentic GPU discovery reads — the WHOLE substantive session content (assistant text +
+    tool commands + tool outputs), chunked, NEVER pre-filtered by a regex.
+
+    GPU RELEVANCE IS THE LLM'S DECISION, never a keyword match. The old regex GATE ('dph_total'/'new_contract' → "this
+    session rented a GPU") is a MEANING judgement done by regex, and it was wrong twice over: it FALSE-matched prose
+    like "do not call new_contract" (a session that rented nothing), and — worse — it could MISS a real rental logged
+    in a shape the keywords didn't foresee (a silent under-selection of the evidence). Deciding a real rental from mere
+    discussion / planning / offer-browsing is exactly what _GPU_DISCOVER_SYS tells the model to do, with a confidence
+    filter behind it — so the selection belongs to the model, and this function does only the mechanical, meaning-free
+    step: gather the whole transcript and CHUNK it. Delegates to conv.session_chunks (the same transcripts, the same
+    whole-content chunking that feeds the realtime reconstruction; no truncation — input is bounded only at the
+    provider window in the consumer). `max_sessions` caps the SESSIONS scanned (a named sampling bound). Yields
+    [(session_id, chunk)]."""
+    from . import conv
+    return list(conv.session_chunks(max_sessions=max_sessions, max_chars=max_chars))
 
 
 def discover_agentic(run=False, record=False, max_sessions=None, now=None):
@@ -484,13 +467,18 @@ def discover_agentic(run=False, record=False, max_sessions=None, now=None):
     from . import adapters, calls, ui, pricing, conv
     sessions = _gpu_session_excerpts(max_sessions)
     hints = _gpu_project_hints()                           # the USER'S projects/label_map — never hardcoded
-    model = config.advisor_model()
+    # CHEAP find model: relevance is now the LLM's decision over the WHOLE transcript (no regex pre-gate), so it reads
+    # every session's chunks — most carry no GPU rental and return {"instances":[]}. A cheap high-recall model + the
+    # confidence filter below is the right shape for that scan (the realtime reconstruction reads the same chunks the
+    # same way); estimate-first surfaces the cost before any spend.
+    model = config.advisor_judge_model()
     from . import expected_output as _eo
     _out, _ = _eo.expect(model, sig="spendguard:gpu_discover")   # measured, not a literal 800
     est = sum(pricing.realtime_cost(model, max(1, len(_GPU_DISCOVER_SYS + (_GPU_DISCOVER_PROMPT % (hints, ex))) // 4), _out)
               for _, ex in sessions)
     if not run:
-        ui.estimate_only(action=f"agentic GPU discovery: LLM reads {len(sessions)} GPU-active sessions", cost=est)
+        ui.estimate_only(action=f"agentic GPU discovery: the model reads {len(sessions)} transcript chunks and decides "
+                                f"which describe a real vast.ai rental", cost=est)
         return {"sessions": len(sessions), "est_cost": round(est, 4), "instances": []}
     merged = {}
     for sid, ex in sessions:
