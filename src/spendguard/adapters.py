@@ -2779,10 +2779,11 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
             _no_sub = True                          # run the original ONCE here (no re-substitution), then fall through
     # MALFORMED-CONTRACT PREFLIGHT — refuse a broken `schema` BEFORE spending, the shape-side twin of the input-fits
     # bound below. A schema whose `required`/`nonempty` holds a non-string entry cannot be validated (the validator
-    # would try to hash the entry as a dict key), so the model's reply — however good — is discarded as a
-    # schema_violation AFTER it is billed (measured: healiom-investor-score, a complete $0.10 gpt-5.5 answer thrown
-    # away). The malformation is knowable from the schema ALONE, with no call, so catch it here at $0 and attribute it
-    # to the CONTRACT (a caller bug), never to the model. Deterministic FORMAT check, not a cost/quality judgement.
+    # would try to hash the entry as a dict key), so the model's reply — however good — would be discarded as a
+    # schema_violation AFTER it is billed. The malformation is knowable from the schema ALONE, with no call, so catch it
+    # here at $0 and attribute it to the CONTRACT (a caller bug), never to the model. (This guards a RARE caller-authored
+    # bug; it does NOT fire on a valid UNION type like ["number","null"] — that was the healiom-investor-score loss and
+    # is fixed in output_contract._check_schema, which now validates unions.) Deterministic FORMAT check, not a judgement.
     _schema_kw = kw.get("schema")
     if _schema_kw is not None:
         from . import output_contract as _oc_wf

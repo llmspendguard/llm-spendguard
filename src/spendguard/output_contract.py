@@ -182,15 +182,24 @@ def _check_schema(obj, schema, path="$"):
     Raises ValueError naming the exact path that failed."""
     t = schema.get("type")
     if t:
-        want = _JSON_TYPES.get(t)
-        if want is None:
-            raise ValueError(f"{path}: unknown type {t!r} in contract")
-        # BOTH numeric types, not just one. This guard existed for "number" and never for "integer", so
-        # the author had already met the bool-is-an-int gotcha and covered half of it — and `integer` is
-        # the half a COUNT is declared as.
-        if t in _BOOL_EXCLUDED and isinstance(obj, bool):
+        # `type` is EITHER a single JSON type name OR a UNION — a LIST of names, the value matching ANY of them
+        # (e.g. ["number","null"] is an optional number, the commonest JSON-Schema idiom for a nullable field). The
+        # single-name path did `_JSON_TYPES.get(t)`, which HASHES t as a dict key — so a union (a list) raised the
+        # opaque `TypeError: cannot use 'list' as a dict key` and check_item filed a COMPLETE, already-billed answer
+        # as a schema_violation (measured live on healiom-investor-score: a $0.10 gpt-5.5 reply discarded, whose
+        # schema had `"type": ["number","null"]`). Normalise to the tuple of names and accept a value matching ANY.
+        names = tuple(t) if isinstance(t, (list, tuple)) else (t,)
+        want = []
+        for _n in names:
+            _w = _JSON_TYPES.get(_n)
+            if _w is None:
+                raise ValueError(f"{path}: unknown type {_n!r} in contract")
+            want.extend(_w if isinstance(_w, tuple) else (_w,))
+        # BOTH numeric types, not just one (bool IS an int subclass in Python). Exclude bool only when the type
+        # allows a number/integer AND does NOT also allow boolean — a union that explicitly lists 'boolean' accepts it.
+        if "boolean" not in names and any(_n in _BOOL_EXCLUDED for _n in names) and isinstance(obj, bool):
             raise ValueError(f"{path}: expected {t}, got boolean")
-        if not isinstance(obj, want):
+        if not isinstance(obj, tuple(want)):
             raise ValueError(f"{path}: expected {t}, got {type(obj).__name__}")
     for k in schema.get("required") or ():
         # A required/nonempty ENTRY is a JSON object KEY, so it must be a string. A caller that passed a non-string
@@ -243,12 +252,14 @@ def needs_enforcement(contract):
 
 def wellformed_contract(contract, path="$"):
     """None if the contract is well-formed, else a STRING naming the first malformation — so a caller can be refused
-    BEFORE a paid call instead of after (a malformed contract billed the model, then discarded its complete answer as a
-    schema_violation: measured on healiom-investor-score, $0.10/row for a `required` list that held a nested list). The
-    one malformation this catches is the one that CRASHES the validator: a `required`/`nonempty` entry that is not a
-    string, so `_check_schema` would try to use it as a dict key. Recurses `properties`/`items`, mirroring
-    needs_enforcement. A structural FORMAT check on the dict the caller wrote (is each entry a str), never a judgement
-    about meaning. Non-dict contracts ('json' / key-list / callable) have no such list to malform → well-formed."""
+    BEFORE a paid call instead of after (a genuinely-malformed contract bills the model, then discards its complete
+    answer as a schema_violation). The one malformation this catches is the one that would CRASH the validator: a
+    `required`/`nonempty` entry that is not a string, so `_check_schema` would try to use it as a dict key. (This is a
+    RARE, caller-authored bug; it is NOT the healiom-investor-score $0.10 loss — that was a WELL-FORMED union type
+    `["number","null"]` the validator failed to support, now fixed in _check_schema. A union type is valid, so this
+    returns None for it — it must validate, not be refused.) Recurses `properties`/`items`, mirroring needs_enforcement.
+    A structural FORMAT check on the dict the caller wrote (is each entry a str), never a judgement about meaning.
+    Non-dict contracts ('json' / key-list / callable) have no such list to malform → well-formed."""
     if not isinstance(contract, dict):
         return None
     for marker in ("required", "nonempty"):

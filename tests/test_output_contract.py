@@ -92,11 +92,12 @@ calls = []
 oc.check_items_against_contract([1, 2, 3], lambda i: calls.append(i) or True)
 check("a callable verifier runs ONCE per item (may be expensive/stateful)", len(calls) == 3, str(len(calls)))
 
-print("-- a MALFORMED contract fails CLEAN, never an opaque hashing crash (guards the healiom-investor-score $0.10 loss) --")
+print("-- a MALFORMED contract fails CLEAN, never an opaque hashing crash (a rare caller-authored bug) --")
 # A `required`/`nonempty` entry must be a JSON object KEY, i.e. a string. A caller that passed a non-string (a nested
 # list — required:[["patient_id"]]) made _check_schema hash it as a dict key and raised the opaque
 # 'TypeError: cannot use list as a dict key', which check_item caught and filed as a schema_violation — discarding a
-# COMPLETE, already-billed model answer (measured: healiom-investor-score, a $0.10 gpt-5.5 reply thrown away).
+# COMPLETE, already-billed model answer. (This is a rare, separate trigger of that error message; the ACTUAL
+# healiom-investor-score $0.10 loss was a valid UNION type — see the union block below, the real root.)
 BADREQ = {"type": "object", "required": [["patient_id"]]}                 # a list where a key STRING belongs
 BADNE = {"type": "object", "required": ["patient_id"], "nonempty": [["findings"]]}
 rbad = oc.check_items_against_contract([GOOD], BADREQ)
@@ -118,6 +119,28 @@ check("a WELL-FORMED schema passes wellformed_contract (returns None)", oc.wellf
 check("non-dict contracts ('json' / key-list / callable) are well-formed by construction",
       oc.wellformed_contract("json") is None and oc.wellformed_contract(KEYS) is None
       and oc.wellformed_contract(lambda i: True) is None)
+
+print("-- a UNION type ('type': [..]) is VALID JSON Schema and must VALIDATE, not crash (the real healiom-investor-score bug) --")
+# The LIVE crash: a schema field `"type": ["number", "null"]` (an optional number — the commonest nullable idiom) made
+# _check_schema do _JSON_TYPES.get(<list>), hashing a list as a dict key → 'TypeError: cannot use list as a dict key',
+# so a COMPLETE, already-billed $0.10 model answer was discarded as a schema_violation. A union is well-formed and must
+# be ACCEPTED when the value matches ANY member. (This is the actual root; the malformed-required case above is a
+# separate, rarer trigger of the same error message — do not confuse them.)
+UNION = {"type": "object", "properties": {"n": {"type": ["number", "null"]}}}
+check("a null in a number|null union PASSES", oc.check_items_against_contract(['{"n": null}'], UNION).clean)
+check("a number in a number|null union PASSES", oc.check_items_against_contract(['{"n": 7}'], UNION).clean)
+runion = oc.check_items_against_contract(['{"n": "seven"}'], UNION)
+check("a WRONG type in a union fails CLEAN (names the union), never a hashing crash",
+      runion.failed == 1 and "expected ['number', 'null']" in runion.first_failure
+      and "dict key" not in runion.first_failure and "unhashable" not in runion.first_failure, runion.first_failure)
+check("bool is NOT a number even inside a numeric union (the bool-is-int gotcha holds)",
+      oc.check_items_against_contract(['{"n": true}'], UNION).failed == 1)
+check("a union that explicitly lists 'boolean' DOES accept true",
+      oc.check_items_against_contract(['{"n": true}'],
+          {"type": "object", "properties": {"n": {"type": ["boolean", "null"]}}}).clean)
+check("an unknown type name INSIDE a union still raises a clear 'unknown type'",
+      "unknown type" in oc.check_items_against_contract(['{"n": 1}'],
+          {"type": "object", "properties": {"n": {"type": ["number", "bogus"]}}}).first_failure)
 
 print("-- identity: a changed contract must expire the authorization --")
 check("the same contract hashes the same", oc.contract_hash(KEYS) == oc.contract_hash(list(reversed(KEYS))))

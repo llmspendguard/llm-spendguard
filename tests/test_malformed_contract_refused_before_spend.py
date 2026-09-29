@@ -1,11 +1,16 @@
-"""A MALFORMED schema is refused BEFORE any provider call — $0, attributed to the CONTRACT, never billed then discarded.
+"""A genuinely-MALFORMED schema is refused BEFORE any provider call — $0, attributed to the CONTRACT, never billed then
+discarded.
 
-THE BUG THIS GUARDS. healiom-investor-score passed a schema whose `required` held a non-string entry (a nested list).
-output_contract._check_schema then tried to use that list as a dict key, raising the opaque
-'TypeError: cannot use list as a dict key', which check_item caught and filed as a schema_violation — AFTER a complete
-gpt-5.5 answer was billed ($0.10/row on the ledger). The malformation is knowable from the schema ALONE, with no call,
-so adapters._call_guarded now runs a wellformed-contract preflight (the shape twin of the input-fits preflight) and
-returns a clean error with NO dispatch.
+THE BUG CLASS THIS GUARDS. A schema whose `required`/`nonempty` holds a non-string entry (e.g. a nested list) cannot be
+validated: output_contract._check_schema would try to use that entry as a dict key, raising the opaque
+'TypeError: cannot use list as a dict key', which check_item catches and files as a schema_violation — AFTER the answer
+is billed. It is knowable from the schema ALONE, so adapters._call_guarded runs a wellformed-contract preflight (the
+shape twin of the input-fits preflight) and returns a clean error with NO dispatch.
+
+NOT the same as the healiom-investor-score $0.10 loss: that was a WELL-FORMED union type ("type": ["number","null"]) the
+validator failed to support (fixed in output_contract._check_schema; guarded in test_output_contract.py). A union type
+is valid and MUST validate, so this preflight correctly does NOT refuse it — this file guards only the rarer,
+caller-authored malformed-contract case.
 
 Offline + isolated: adapters._call_once (the dispatch seam _call_guarded recurses into via call(_no_guard=True)) is
 replaced by a recorder. A malformed-schema call must NEVER reach it; a well-formed one must.
