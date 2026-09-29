@@ -837,8 +837,9 @@ def session_chunks(tdir=None, max_chars=14000, max_sessions=None, sids=None, sin
     realtime reconstruction: the caged LLM READS the conversation and decides what's a realtime run + its tokens.
     Regex pre-selection (remote_llm_excerpts) is too naive — it hides the lmm classification / co-occurrence / stats
     sessions that did the BULK of the realtime work (Opus + GPT-5.5 too, not just haiku/sonnet). Mechanical content
-    selection (tool outputs + text, capped) only BOUNDS the input; the model still does all the finding. Yields
-    (sid, chunk)."""
+    selection (tool outputs + text) only SELECTS the input; nothing is truncated — the transcript is CHUNKED into
+    max_chars pieces (every part seen across chunks), and INPUT is bounded only at the provider's max input by
+    adapters._input_fits in the consumer. The model still does all the finding. Yields (sid, chunk)."""
     tdir = tdir or _DEFAULT_TDIR
     files = sorted(glob.glob(os.path.join(tdir, "**", "*.jsonl"), recursive=True)) if os.path.isdir(tdir) else [tdir]
     n = 0
@@ -876,13 +877,22 @@ def session_chunks(tdir=None, max_chars=14000, max_sessions=None, sids=None, sin
                             parts.append(b["text"])
                         elif ty == "tool_use":
                             inp = b.get("input") or {}
-                            parts.append((inp.get("command") or inp.get("code") or inp.get("content") or json.dumps(inp))[:6000])
+                            # WHOLE — never a [:N] cut. This is the tool_use command (the python/curl that MADE the API
+                            # calls, carrying the loop scale + per-item prompts); a silent tail-cut drops exactly the
+                            # attribution evidence the caged LLM needs.
+                            parts.append(inp.get("command") or inp.get("code") or inp.get("content") or json.dumps(inp))
                         elif ty == "tool_result":
                             tc = b.get("content")
                             parts.append(tc if isinstance(tc, str) else (" ".join(x.get("text", "") for x in tc if isinstance(x, dict)) if isinstance(tc, list) else ""))
                 t = "\n".join(p for p in parts if p)
                 if t and len(t) > 30:
-                    buf.append(" ".join(t.split())[:6000])       # cap any single huge paste so one read can't dominate
+                    # Whitespace-normalized WHOLE — no [:N] cut. INPUT is bounded ONLY at the PROVIDER's max input, and
+                    # only there: adapters._input_fits guards each chunk before the call and REFUSES an overflow rather
+                    # than silently clipping. Here we merely CHUNK the blob into max_chars pieces at the split below, so
+                    # every message — assistant text, the API-call scripts, the printed usage/results — is SEEN whole
+                    # across chunks, never truncated. (spendguard's core mission is attribution; truncating its evidence
+                    # is how attribution goes silently wrong.)
+                    buf.append(" ".join(t.split()))
         except Exception:
             continue
         blob = "\n".join(buf)
