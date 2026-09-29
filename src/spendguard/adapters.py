@@ -1110,7 +1110,14 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
         # bounded, LOUD where it stops, and NEVER raises into the call.
         if not _no_guard and not _probe and not r.get("error"):
             from . import callio, calls as _cap_ctx
-            callio.capture_live(sig or (_cap_ctx.current() or {}).get("intent"), r.get("provider") or "",
+            # INTENT resolution MUST match the cost-attribution intent that advise / bakeoff / effort-titrate key
+            # on: the calls.context intent FIRST, `sig` only as a fallback — identical to `_eff_intent` in
+            # _call_guarded. The reverse (sig-first) recorded a caller that sets BOTH — e.g. honestreview's judge
+            # (sig='probe:mutation-router' inside calls.context(intent='honestreview:mutation-router')) — under the
+            # sig, so its captured prompts were invisible to a bakeoff/titration on the real intent. That is the
+            # "realtime intent never becomes seedable" bug: capture landed under a name nothing queries.
+            _cap_intent = (_cap_ctx.current() or {}).get("intent") or sig
+            callio.capture_live(_cap_intent, r.get("provider") or "",
                                 r.get("model") or model, prompt, r.get("text"),
                                 in_tok=r.get("in_tok") or 0, out_tok=r.get("out_tok") or 0,
                                 system=system, req_schema=schema, req_max_tokens=max_tokens)
@@ -1300,7 +1307,12 @@ def embed(texts, model=None, *, dimensions=None, max_batch=None, timeout_s=None,
                 raise                                                 # a spend refusal / cap HALTS — never isolated
             failed.extend({"i": i, "reason": str(e)[:120]} for i in grp)  # ISOLATE: mark the chunk, keep going
             continue
-        vecs = {int(d.index): list(d.embedding) for d in r.data}      # index is CHUNK-relative → map to the group
+        # OpenAI-compat /embeddings returns `data` in INPUT ORDER (a documented guarantee), and OpenAI stamps a
+        # chunk-relative `index` while gemini/voyage return index=None — so key by the stamped index when present, else
+        # the enumeration position (equal to the index by that ordering guarantee). `int(d.index)` alone raised
+        # TypeError: int(None) on gemini/voyage, crashing every embedding call to those providers.
+        vecs = {(int(d.index) if getattr(d, "index", None) is not None else j): list(d.embedding)
+                for j, d in enumerate(r.data)}                         # index is CHUNK-relative → map to the group
         _fh = open(checkpoint, "a") if checkpoint else None           # append this chunk BEFORE the next → durable
         try:
             for j, i in enumerate(grp):

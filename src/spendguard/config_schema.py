@@ -345,6 +345,16 @@ SETTINGS = [
               "a prompt cut at 800 chars is a different task, so a replay built on truncated rows measures "
               "something other than the work it names. Raise it and re-run `spendguard callio fetch` for a "
               "full-fidelity refill — the provider input/output files are downloadable, so it costs no tokens."),
+    dict(section="callio", key="capture_live", store="config.json:callio.capture_live", env="SPENDGUARD_CAPTURE_LIVE",
+         default=False, kind="bool", secret=False,
+         desc="Record each SERVED realtime/lane workload call's prompt+output into the call_io replay corpus, so "
+              "bakeoff / effort-titrate / advise have real tasks to sample for realtime/lane-only intents (no "
+              "provider batch to fetch). OPT-IN — full bodies are privacy-sensitive. `callio.store_prompts` is an "
+              "accepted synonym for this."),
+    dict(section="callio", key="store_prompts", store="config.json:callio.store_prompts", env=None,
+         default=False, kind="bool", secret=False,
+         desc="Synonym for callio.capture_live — enables storing call_io prompts for replay. NOTE: distinct from "
+              "calls.store_prompts, which gates the SEPARATE calls-table snippet corpus, not the call_io replay corpus."),
     dict(section="advisor", key="pool_cooldown_s", store="config.json:advisor.pool_cooldown_s", env="SPENDGUARD_POOL_COOLDOWN_S",
          default=900, kind="float", secret=False,
          desc="After a subscription lane fails (plan window exhausted, CLI missing), skip that lane for this many "

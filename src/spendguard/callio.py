@@ -48,15 +48,24 @@ def live_snip_chars():
 
 def capture_live_on():
     """Is capture-as-you-go ENABLED? OFF by default — full-fidelity live bodies are privacy-sensitive, so building the
-    replay corpus from live traffic is a DELIBERATE opt-in (env SPENDGUARD_CAPTURE_LIVE, else config callio.capture_live).
+    replay corpus from live traffic is a DELIBERATE opt-in. Enabled by env SPENDGUARD_CAPTURE_LIVE, else config
+    `callio.capture_live` (canonical) OR `callio.store_prompts` (an accepted SYNONYM). The synonym exists because
+    `store_prompts` is the name a user reaches for to mean 'store the call_io prompts', and set under [callio] it was
+    previously read by NOTHING (the real key was callio.capture_live, and calls.store_prompts is a DIFFERENT corpus) —
+    a silent trap that left realtime intents unseedable despite an explicit opt-in. Honor both; register both in
+    config_schema so the toggle is discoverable.
     When on, a workload call's prompt+output is recorded so bakeoff/effort-titrate/advise have real tasks WITHOUT a
     batch to fetch — the path that unblocks measuring realtime/lane-only intents."""
     import os as _os
     v = _os.getenv("SPENDGUARD_CAPTURE_LIVE")
     if v is not None and v.strip() != "":
         return v.strip().lower() in ("1", "true", "yes", "on")
+
+    def _on(x):
+        return str(x).strip().lower() in ("1", "true", "yes", "on")
     try:
-        return str(config._cfg_get("callio", "capture_live", "off")).strip().lower() in ("1", "true", "yes", "on")
+        return (_on(config._cfg_get("callio", "capture_live", "off"))
+                or _on(config._cfg_get("callio", "store_prompts", "off")))
     except Exception:
         return False
 

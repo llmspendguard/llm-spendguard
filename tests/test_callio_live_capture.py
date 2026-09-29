@@ -97,5 +97,56 @@ fails += report_check("adapters.call(sig=X) on a served call captured a call_io 
 fails += report_check("...and it is the real prompt, sample-able for the sweep",
                       bakeoff._sample_prompts("ticket-triage", 5) == ["classify this ticket: refund please"])
 
+print("\n-- capture uses the calls.context INTENT over sig (honestreview shape: sig=probe, context=real intent) --")
+# The realtime-unseedable bug: capture recorded under `sig` first, so a caller that sets BOTH a sig and a
+# calls.context intent (honestreview's judge: sig='probe:mutation-router' inside
+# calls.context(intent='honestreview:mutation-router')) landed its prompts under the sig — invisible to a
+# bakeoff/titration on the real intent. Capture must use the SAME resolution as cost attribution: context intent
+# first, sig only as fallback.
+from spendguard import calls as _calls   # noqa: E402
+adapters._call_guarded = _stub_guarded
+try:
+    with _calls.context(intent="honestreview:mutation-router"):
+        adapters.call("gpt-5.6-luna", "does this reconcile destroy paid data?", sig="probe:mutation-router")
+finally:
+    adapters._call_guarded = _orig_guarded
+fails += report_check("captured under the calls.context intent, not the sig",
+                      callio.count_rows("honestreview:mutation-router", "gpt-x") == 1)
+fails += report_check("NOT captured under the sig (would be invisible to a bakeoff on the real intent)",
+                      callio.count_rows("probe:mutation-router", "gpt-x") == 0)
+fails += report_check("...and the real prompt is sample-able under the REAL intent (effort-titrate can seed it)",
+                      bakeoff._sample_prompts("honestreview:mutation-router", 5) == ["does this reconcile destroy paid data?"])
+
+print("\n-- capture_live_on() honors callio.store_prompts (the synonym), closing the silent-config trap --")
+# A user reaches for `store_prompts` under [callio] to mean 'store the call_io prompts'; it used to be read by
+# NOTHING (canonical key is callio.capture_live; calls.store_prompts is a DIFFERENT corpus), so an explicit opt-in
+# silently did nothing. capture_live_on() now honors either key.
+from spendguard import config as _config   # noqa: E402
+_saved_env = os.environ.pop("SPENDGUARD_CAPTURE_LIVE", None)   # env short-circuits capture_live_on() — drop it so config is consulted
+_orig_cfg = _config._cfg_get
+
+
+def _cfg_stub(capture_live_val, store_prompts_val):
+    def _f(section, key, default=None):
+        if section == "callio" and key == "capture_live":
+            return capture_live_val
+        if section == "callio" and key == "store_prompts":
+            return store_prompts_val
+        return _orig_cfg(section, key, default)
+    return _f
+
+
+try:
+    _config._cfg_get = _cfg_stub("off", "off")
+    fails += report_check("both off → capture disabled", callio.capture_live_on() is False)
+    _config._cfg_get = _cfg_stub("off", "on")
+    fails += report_check("callio.store_prompts=on (capture_live off) → ENABLED (trap closed)", callio.capture_live_on() is True)
+    _config._cfg_get = _cfg_stub("on", "off")
+    fails += report_check("callio.capture_live=on (canonical) → ENABLED", callio.capture_live_on() is True)
+finally:
+    _config._cfg_get = _orig_cfg
+    if _saved_env is not None:
+        os.environ["SPENDGUARD_CAPTURE_LIVE"] = _saved_env
+
 print(f"\n{'[FAIL]' if fails else 'OK'} test_callio_live_capture: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)
