@@ -271,68 +271,80 @@ def _read_inputs(path):
     return items
 
 
+_BATCH_MAX = 25000        # requests per Batch-API job — the OpenAI hard cap (Anthropic's is higher, so this is safe for
+#                           both). A promote larger than this is CHUNKED into ceil(N/_BATCH_MAX) batches, never truncated.
+
+
 def _promote_batch(intent, model, instr, items, run):
-    """Promote at SCALE via the Batch API (50% off, async) — the real 25K-per-batch path. WORKLOAD spend (real intent).
+    """Promote at SCALE via the Batch API (50% off, async), CHUNKED into <=_BATCH_MAX-request batches so EVERY request is
+    submitted (never truncated/dropped). WORKLOAD spend (real intent). Returns {ok, provider, chunks, batches[, jsonls, est]}.
 
     The OpenAI path reuses the shared batch primitives (submit.build_chat_batch_jsonl + guarded_submit) rather than
     hand-writing the /v1/chat/completions envelope — so per-model params, the model OUTPUT BUDGET (not a hand-picked
     max_tokens), and a verifiably-accepted reasoning effort are applied the ONE canonical way. The Anthropic path keeps
-    its own request build (the OpenAI Batch API serves only OpenAI ids). Returns {ok, provider, jsonl?, batch?, est?}."""
+    its own request build (the OpenAI Batch API serves only OpenAI ids). custom_id defaults to a GLOBAL 'i<index>' so ids
+    stay unique across chunks; a per-chunk cap refusal from guarded_submit propagates (HALTS) after earlier chunks —
+    which are real, kept production work — have already submitted."""
     from . import adapters, models as M
     import tempfile, os
     prov = adapters.provider_for(model)
-    if len(items) > 25000:
-        # REFUSE rather than silently drop the requests past 25K (one Batch API job caps at 25K): a promote KEEPS
-        # production output, so a dropped request is LOST WORK, not a sampling cut. The caller splits the input into
-        # ≤25K-request chunks and promotes each. (Was: warn, then submit only the first 25K and drop the remainder.)
-        print(f"  ⚠ {len(items):,} requests exceed the 25,000/batch limit — NOT submitting; split the input into "
-              f"≤25K-request chunks and promote each (the remainder is never silently dropped).")
-        return dict(ok=False, error="exceeds the 25,000/batch limit — chunk the input", requests=len(items))
-    print(f"promote (BATCH) — winner {model} ({prov}) on {len(items):,} requests for '{intent}', "
-          f"KEEP output as production")
+    chunks = [items[i:i + _BATCH_MAX] for i in range(0, len(items), _BATCH_MAX)]
+    print(f"promote (BATCH) — winner {model} ({prov}) on {len(items):,} requests for '{intent}' in {len(chunks)} "
+          f"batch(es) of <= {_BATCH_MAX:,}, KEEP output as production")
     if prov == "openai":
-        # tasks = {custom_id, content} with the promote instruction folded into the prompt (as before); the shared
-        # builder writes the /v1/chat/completions envelope (per-model params + the model output budget + resolve_effort).
-        # reasoning=None preserves promote's no-reasoning-effort behavior (and makes no discovery probe).
+        # tasks = {custom_id, content} with the promote instruction folded into the prompt; the shared builder writes the
+        # /v1/chat/completions envelope (per-model params + the model output budget + resolve_effort). reasoning=None
+        # preserves promote's no-reasoning-effort behavior (and makes no discovery probe).
         from .submit import build_chat_batch_jsonl, guarded_submit
-        fd, tasks_path = tempfile.mkstemp(suffix=".jsonl", prefix=f"promote_tasks_{intent.replace('/', '_')}_")
-        try:
-            with os.fdopen(fd, "w") as f:
-                for idx, (cid, p) in enumerate(items):
-                    f.write(json.dumps({"custom_id": cid or f"i{idx}", "content": p + instr}) + "\n")
-            req_path, _ = build_chat_batch_jsonl(tasks_path, model, reasoning=None)
-        finally:
+        batches = []
+        for ci, chunk in enumerate(chunks):
+            fd, tasks_path = tempfile.mkstemp(suffix=".jsonl", prefix=f"promote_tasks_{intent.replace('/', '_')}_{ci}_")
             try:
-                os.unlink(tasks_path)                 # the built envelope (req_path) is the durable artefact, not the tasks temp
-            except OSError:
-                pass
-        with calls.context(intent=intent):            # WORKLOAD spend (real intent → your caps)
-            bid = guarded_submit(req_path, model=model, cap_dollars=config.cap(), submit=run)
+                with os.fdopen(fd, "w") as f:
+                    for idx, (cid, p) in enumerate(chunk):
+                        f.write(json.dumps({"custom_id": cid or f"i{ci * _BATCH_MAX + idx}",
+                                            "content": p + instr}) + "\n")
+                req_path, _ = build_chat_batch_jsonl(tasks_path, model, reasoning=None)
+            finally:
+                try:
+                    os.unlink(tasks_path)             # the built envelope (req_path) is the durable artefact, not the tasks temp
+                except OSError:
+                    pass
+            with calls.context(intent=intent):        # WORKLOAD spend (real intent → your caps)
+                bid = guarded_submit(req_path, model=model, cap_dollars=config.cap(), submit=run)
+            batches.append({"jsonl": req_path, "batch": bid if run else None})
+            print(f"  [batch {ci + 1}/{len(chunks)}] jsonl: {req_path}" + (f" — submitted {bid}" if run else ""))
         if run:
-            print(f"  jsonl: {req_path}\n  submitted batch {bid}; retrieve results with `spendguard fetch-io` "
-                  f"or the batch output file when complete.")
+            print("  retrieve results with `spendguard fetch-io` or the batch output files when complete.")
         else:
-            print(f"  jsonl: {req_path}")
-            from . import ui; ui.estimate_only(action="submit the batch", note="WORKLOAD caps apply")
-        return dict(ok=True, provider=prov, jsonl=req_path, batch=bid if run else None)
+            from . import ui; ui.estimate_only(action=f"submit {len(chunks)} batch(es)", note="WORKLOAD caps apply")
+        return dict(ok=True, provider=prov, chunks=len(chunks), batches=batches,
+                    jsonls=[b["jsonl"] for b in batches], submitted=[b["batch"] for b in batches if b["batch"]])
     else:  # anthropic — gate estimates + caps on create; submit under workload context (OpenAI Batch API is OpenAI-only)
-        reqs_body = [(cid or f"i{idx}",
-                      M.apply_call_params(model, {"model": model, "max_tokens": 1500,
-                                                  "messages": [{"role": "user", "content": p + instr}]}))
-                     for idx, (cid, p) in enumerate(items)]
-        reqs = [{"custom_id": cid, "params": body} for cid, body in reqs_body]
+        from . import gate
+        batches, total_est = [], 0.0
+        for ci, chunk in enumerate(chunks):
+            reqs_body = [(cid or f"i{ci * _BATCH_MAX + idx}",
+                          M.apply_call_params(model, {"model": model, "max_tokens": 1500,
+                                                      "messages": [{"role": "user", "content": p + instr}]}))
+                         for idx, (cid, p) in enumerate(chunk)]
+            reqs = [{"custom_id": cid, "params": body} for cid, body in reqs_body]
+            if not run:
+                est = gate._estimate_anthropic_requests(reqs)
+                total_est += est["cost"]
+                print(f"  [batch {ci + 1}/{len(chunks)}] ESTIMATE: {est['requests']:,} req · in~{est['in_tok']:,} "
+                      f"out≤{est['out_tok']:,} -> ~${est['cost']:.2f} (batch).")
+                continue
+            import anthropic
+            with calls.context(intent=intent):        # WORKLOAD; gate meters + caps on create
+                b = anthropic.Anthropic(api_key=config.api_key("ANTHROPIC_API_KEY")).messages.batches.create(requests=reqs)
+            batches.append({"batch": b.id})
+            print(f"  [batch {ci + 1}/{len(chunks)}] submitted Anthropic batch {b.id}; retrieve results when complete.")
         if not run:
-            from . import gate
-            est = gate._estimate_anthropic_requests(reqs)
-            print(f"  ESTIMATE: {est['requests']:,} req · in~{est['in_tok']:,} out≤{est['out_tok']:,} "
-                  f"-> ~${est['cost']:.2f} (batch).")
-            from . import ui; ui.estimate_only(action="submit the batch", cost=est["cost"], note="WORKLOAD caps apply")
-            return dict(ok=True, provider=prov, est=est["cost"])
-        import anthropic
-        with calls.context(intent=intent):            # WORKLOAD; gate meters + caps on create
-            b = anthropic.Anthropic(api_key=config.api_key("ANTHROPIC_API_KEY")).messages.batches.create(requests=reqs)
-        print(f"  submitted Anthropic batch {b.id}; retrieve results when complete.")
-        return dict(ok=True, provider=prov, batch=b.id)
+            from . import ui
+            ui.estimate_only(action=f"submit {len(chunks)} batch(es)", cost=total_est, note="WORKLOAD caps apply")
+            return dict(ok=True, provider=prov, chunks=len(chunks), est=total_est)
+        return dict(ok=True, provider=prov, chunks=len(chunks), batches=batches, submitted=[b["batch"] for b in batches])
 
 
 def promote(intent, model, instruction="", input=None, out=None, n=None, run=False, batch=False):
