@@ -56,6 +56,11 @@ adapters._lane_too_big = lambda lane, prompt: False
 adapters._lane_model_cooling = lambda lane, model: False
 config.api_key = lambda env: None                          # metered leg fails fast (no key) — offline, no spend
 lane_balance.route_decision = lambda intent, model, reactive=False: (None, "no sub (test)")  # isolate: no reactive sub
+# The lane-down SURFACE is now OPERATOR-opt-in (advisor.lane_call_alerts) — a consumer never sees it on the call path
+# (guarded by test_lane_alerts_default_off). This test probes that surface AS the structural proof of the down→ladder
+# branch, so it runs as an OPERATOR would: alerts ON. (A task miss still does not surface — that is the point below.)
+_orig_cfg = config._cfg_get
+config._cfg_get = lambda s, k, d=None: ("on" if (s, k) == ("advisor", "lane_call_alerts") else _orig_cfg(s, k, d))
 
 print("-- a TASK miss (ran, empty, NO error) under refuse_billed → $0 refusal on the LANE, metered never reached --")
 adapters._lane_for = lambda prov: ("gemini", _EmptyLane)

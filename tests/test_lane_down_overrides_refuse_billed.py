@@ -20,6 +20,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 from spendguard import adapters, resource_state   # noqa: E402
 
+# The lane-down/logged-out SURFACE is now OPERATOR-opt-in (advisor.lane_call_alerts) — a consumer never sees it on the
+# call path (guarded by test_lane_alerts_default_off). This test uses that surface as the structural proof that the
+# down→ladder branch ran, so it runs as an OPERATOR would: alerts ON. (A TASK miss still does not surface — see below.)
+_orig_cfg = adapters.config._cfg_get
+adapters.config._cfg_get = lambda s, k, d=None: ("on" if (s, k) == ("advisor", "lane_call_alerts") else _orig_cfg(s, k, d))
+
 
 def ck(results, label, cond, extra=""):
     """Record + print one check. `results` is passed IN (the accumulator is the caller's, not module-global state)."""

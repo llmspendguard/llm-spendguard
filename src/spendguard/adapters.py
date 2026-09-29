@@ -220,10 +220,15 @@ _lane_announce = _LaneAnnounceThrottle()
 
 
 def _surface_lane_down(lane, err):
-    """Tell the user (once per lane per window) that a lane could not serve — so a $0-lane batch never fails SILENTLY
-    (the empty-and-skipped the user hit). Names the exact re-login step (a lane_registry lookup) and points at the
-    agentic diagnosis for the specific cause. Best-effort, never raises — this is on the call path."""
+    """OPERATOR-only, opt-in: a lane could not serve. A lane is spendguard's INTERNAL $0-routing detail — a CONSUMER of
+    the library must never see it on the call path (the call fails over to metered and SUCCEEDS; which route served is
+    not the consumer's concern). So this is OFF by default and prints nothing; the down lane is still recorded for the
+    OPERATOR by _lane_cool → reliability.note_lane_down (surfaced by `spendguard doctor` / `lanes`), and work is never
+    lost. An operator watching a live batch can opt in with advisor.lane_call_alerts=on. Best-effort, never raises."""
     try:
+        from . import config as _cfg
+        if str(_cfg._cfg_get("advisor", "lane_call_alerts", "off")).lower() not in ("on", "1", "true", "yes", "warn"):
+            return                                        # DEFAULT OFF — the consumer never sees a lane on the call path
         if not _lane_announce.take(lane):
             return                                        # already surfaced within the window (a stale entry re-surfaces)
         import sys as _sysd
@@ -239,13 +244,32 @@ def _surface_lane_down(lane, err):
         pass
 
 
-def _surface_lane_auth(lane, cmd):
-    """A $0 lane is CONFIRMED LOGGED OUT (its OWN auth-status command said so) — tell the user UNHEDGED, naming the
-    cause and the exact one-line fix, once per lane per window. Distinct from _surface_lane_down (the GENERIC 'the
-    executor errored, and IF it is a login issue here is the step'): this fires ONLY on a positive logout, so it STATES
-    it — the clear, actionable message the user asked for. Shares the throttle so a lane is not double-announced.
-    Best-effort, never raises — this is on the call path."""
+def _lane_chatter(msg):
+    """OPERATOR-only, opt-in call-path lane commentary — which $0 plan served a call, a fallback to the metered API, a
+    lane cooled/rerouted. A lane is spendguard's INTERNAL routing detail: a CONSUMER of the library never needs to see
+    it (the call SUCCEEDS regardless of which route served, and cost is reported separately), so this is OFF by default.
+    The operator's durable view of lane health is `spendguard doctor` / `lanes` + the recorded lane_health rows
+    (reliability.note_lane_*). An operator watching a live batch opts in with advisor.lane_call_alerts=on. Never raises."""
     try:
+        from . import config as _cfg
+        if str(_cfg._cfg_get("advisor", "lane_call_alerts", "off")).lower() not in ("on", "1", "true", "yes", "warn"):
+            return
+        import sys as _sysc
+        print(msg, file=_sysc.stderr)
+    except Exception:
+        pass
+
+
+def _surface_lane_auth(lane, cmd):
+    """OPERATOR-only, opt-in: a $0 lane is CONFIRMED LOGGED OUT. Like _surface_lane_down, a logged-out lane is an
+    internal $0-routing detail, not a CONSUMER concern — the call falls back to the metered API and SUCCEEDS. So this is
+    OFF by default; the logout is recorded for the OPERATOR by reliability.note_lane_auth_down (a persistent lane_health
+    row + a throttled one-time macOS alert that SELF-HEALS on the lane's next success) and shown by `spendguard doctor`.
+    An operator can opt into live call-path alerts with advisor.lane_call_alerts=on. Best-effort, never raises."""
+    try:
+        from . import config as _cfg
+        if str(_cfg._cfg_get("advisor", "lane_call_alerts", "off")).lower() not in ("on", "1", "true", "yes", "warn"):
+            return                                        # DEFAULT OFF — the consumer never sees a lane on the call path
         if not _lane_announce.take(lane):
             return
         import sys as _sysd
@@ -1892,11 +1916,9 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 _shape_ok = True                       # a validator that ITSELF errors is not the lane's fault → keep
         if not s.get("error") and _txt and _shape_ok:  # SUCCESS: no error, real content, AND (if asked) the shape
             _lane_note_ok(lane_name, prompt)         # proven-good watermark: this lane answered a prompt this big
-            if lane_name not in _lane_echoed:        # tell the user ONCE per lane per run that a plan is serving their work
+            if lane_name not in _lane_echoed:        # operator-only (opt-in): which $0 plan served — once per lane per run
                 _lane_echoed.add(lane_name)
-                import sys as _syse
-                print(f"[spendguard] 🛣  {lane_name} plan is serving {raw} prompts this run ($0 billed, not the metered API)",
-                      file=_syse.stderr)
+                _lane_chatter(f"[spendguard] 🛣  {lane_name} plan is serving {raw} prompts this run ($0 billed, not the metered API)")
             # RECORD THE APPLIED EFFORT, NOT THE REQUESTED TIER. A lane CLI may map the request to its own scale
             # (codex 'minimal'→'none'); recording the request would mislabel what RAN and make a lane call look like
             # it under- or over-reasoned vs its metered twin when it did not. The executor reports the effort it
@@ -1979,9 +2001,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             except Exception:
                 _rsub, _rwhy = None, ""
             if _rsub and _rsub != model:
-                import sys as _sysr
-                print(f"[spendguard] lane-balance REACTIVE: {lane_name} lane failed → {_rsub} ({_rwhy})",
-                      file=_sysr.stderr)
+                _lane_chatter(f"[spendguard] lane-balance REACTIVE: {lane_name} lane failed → {_rsub} ({_rwhy})")
                 _sub_guard.on = True
                 try:
                     _rr = call(_rsub, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
@@ -2012,21 +2032,23 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         out = _call_once(_fb_model, prompt, max_tokens=max_tokens, system=system, reasoning=_fb_reasoning,
                          schema=schema, timeout_s=timeout_s, _skip_lane=True, _no_sub=_no_sub)
         _kind = _learn_from_fallback(lane_name, prompt, bool(out.get("error")), model=raw, transient=bool(_ra))
-        import sys as _sys
+        # OPERATOR-only (opt-in) commentary on WHY the lane missed + that the API served — off by default so a CONSUMER
+        # never sees a lane on the call path. The call already SUCCEEDED on the metered fallback (`out`, returned below);
+        # the operator's durable record is reliability.note_lane_* (via _learn_from_fallback / _lane_cool) + `doctor`.
         if _kind == "transient":                       # quota/rate — cooled until reset (capped), re-tested; NOT size
             _cool = int(min(float(_ra), _max_quota_cool_s()))
-            print(f"[spendguard] {lane_name} lane hit a quota/rate limit — cooled {_cool}s then re-tested (NOT a "
-                  f"size limit); the API served this call ({str(s['error'])[:60]})", file=_sys.stderr)
+            _lane_chatter(f"[spendguard] {lane_name} lane hit a quota/rate limit — cooled {_cool}s then re-tested (NOT a "
+                          f"size limit); the API served this call ({str(s['error'])[:60]})")
         elif _kind == "unsuitable":                    # a genuine size limit ABOVE the lane's proven-good size
             _ceil = resource_state.size_ceiling(resource_state.lane_key(lane_name))
-            print(f"[spendguard] {lane_name} lane unsuitable above its proven-good size — prompts >= {_ceil} chars "
-                  f"now route to API ({str(s['error'])[:60]})", file=_sys.stderr)
+            _lane_chatter(f"[spendguard] {lane_name} lane unsuitable above its proven-good size — prompts >= {_ceil} "
+                          f"chars now route to API ({str(s['error'])[:60]})")
         elif _kind == "model-cooled":                  # ambiguous miss (schema/content) — back off THIS model briefly
-            print(f"[spendguard] {lane_name} lane missed this prompt ({raw}, within its handled size) — backing "
-                  f"off that model briefly; the API answered it ({str(s['error'])[:60]})", file=_sys.stderr)
-        else:                                          # "down" — API also failed
-            print(f"[spendguard] {lane_name} lane unavailable — cooling {int(_pool_cooldown_s())}s; the API "
-                  f"fallback also failed ({str(s['error'])[:60]})", file=_sys.stderr)
+            _lane_chatter(f"[spendguard] {lane_name} lane missed this prompt ({raw}, within its handled size) — backing "
+                          f"off that model briefly; the API answered it ({str(s['error'])[:60]})")
+        else:                                          # "down" — API also failed (the FAILURE reaches the caller via `out`)
+            _lane_chatter(f"[spendguard] {lane_name} lane unavailable — cooling {int(_pool_cooldown_s())}s; the API "
+                          f"fallback also failed ({str(s['error'])[:60]})")
         return out
     key = config.api_key(spec["key_env"])
     if not key:
