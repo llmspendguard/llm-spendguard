@@ -52,19 +52,26 @@ def _equiv(ref, out, mode="auto", model=None):
     return equivalence.grade(ref, out, mode=mode, model=model)[0]
 
 
-def _call(model, prompt, max_out=400, effort=None):
-    """One realtime call; returns (cost, in_tok, out_tok, text). models.apply_call_params handles each
-    model's quirks (gpt-5 → reasoning='minimal' + max_completion_tokens) so we can't forget them."""
+def _call(model, prompt, effort=None):
+    """One realtime measurement call; returns (cost, in_tok, out_tok, text). models.apply_call_params handles each
+    model's quirks (tokens param, etc.). The wire OUTPUT BUDGET is the canonical adapters.output_budget(model) — NOT a
+    hand-picked cap: it is billed on ACTUAL tokens, so the ceiling is free and never truncates a measured answer. An
+    explicit `effort` is resolved through the ONE reasoning home (models.normalize_reasoning) and DROPPED when that
+    returns None (a non-reasoning model), never sent as a raw unaccepted literal."""
     from . import adapters, models
     prov = adapters.provider_for(model)
     key = config.api_key(adapters.PROVIDERS[prov]["key_env"])
-    kw = models.apply_call_params(model, {"model": model, "max_tokens": max_out,
+    kw = models.apply_call_params(model, {"model": model, "max_tokens": adapters.output_budget(model, vendor=prov),
                                           "messages": [{"role": "user", "content": prompt}]})
-    # EFFORT IS A VARIANT AXIS. It is the third bound (with max_tokens and the deadline) and was the only
-    # one still chosen by hand — measured, reasoning is 91% of an output bill and 92-98% of it is never seen.
-    # An explicit effort overrides the family default so an arm tests what it says it tests.
+    # EFFORT IS A VARIANT AXIS (the third bound, with the output budget + deadline). An explicit effort overrides the
+    # family default so an arm tests what it says — resolved through normalize_reasoning (the reasoning home), and
+    # DROPPED when that returns None (a non-reasoning model). Measured: reasoning is 91% of an output bill, 92-98% unseen.
     if effort:
-        kw["reasoning_effort"] = effort
+        _eff = models.normalize_reasoning(model, effort)
+        if _eff is None:
+            kw.pop("reasoning_effort", None)
+        else:
+            kw["reasoning_effort"] = _eff
     if prov == "anthropic":
         import anthropic
         m = anthropic.Anthropic(api_key=key).messages.create(**kw)
@@ -110,6 +117,20 @@ def _variants(intent, base_model, models, instructions, efforts=None):
 
 
 def experiment(intent, models=None, instructions=None, n=20, run=False, reconsider=False, mode="auto"):
+    """A/B/n-test cheaper (model, instruction, effort) VARIANTS for `intent` against its stored call_io samples, and
+    record which hold quality — the programmatic experiment API.
+
+    intent: the job-type label whose sample corpus is tested. models / instructions: the variant axes (lists; None = a
+    default terse-output + cheaper-model set from _variants). n: samples per variant. mode: the equivalence tier
+    ('auto' | 'embed' | 'rubric' | 'custom:<module.fn>'). reconsider=True also retests models previously marked
+    ineffective.
+
+    ESTIMATE-FIRST: run=False (the default) only estimates and prints — no workload spend (meta-capped effort/discovery
+    probes only). run=True makes REAL metered calls under the META cage (caps.meta), grades each output via
+    equivalence.grade, and KILLS a variant whose pilot fails the quality bar before the full sample (a losing arm is
+    never paid in full). SIDE EFFECTS when run: metered spend, console progress, and the ineffective-model denylist is
+    updated. Returns a summary of the per-variant results (cost / score / verdict). A per-call failure is COUNTED, never
+    silently swallowed; a deliberate spend stop or cap refusal propagates."""
     from . import models as M
     base_model = _base_model(intent)
     samples = _samples(intent, base_model, n) if base_model else []
@@ -168,8 +189,7 @@ def experiment(intent, models=None, instructions=None, n=20, run=False, reconsid
         costs, scores, tiers, struct, fails = [], [], [], [], []
         for prompt, ref, _m in subset:
             try:
-                mo = max(1500, int(_count_tokens(ref, v["model"]) * 2) + 800)
-                cost, _it, _ot, text = _call(v["model"], prompt + v["instr"], max_out=mo)
+                cost, _it, _ot, text = _call(v["model"], prompt + v["instr"])   # wire budget = canonical output_budget (in _call)
                 sc, tier = equivalence.grade(ref, text, mode=mode, model=v["model"])
                 st = equivalence.structural(ref, text)
                 costs.append(cost); scores.append(sc); tiers.append(tier)
@@ -325,7 +345,8 @@ def _promote_batch(intent, model, instr, items, run):
         batches, total_est = [], 0.0
         for ci, chunk in enumerate(chunks):
             reqs_body = [(cid or f"i{ci * _BATCH_MAX + idx}",
-                          M.apply_call_params(model, {"model": model, "max_tokens": 1500,
+                          M.apply_call_params(model, {"model": model,
+                                                      "max_tokens": adapters.output_budget(model, vendor=prov),
                                                       "messages": [{"role": "user", "content": p + instr}]}))
                          for idx, (cid, p) in enumerate(chunk)]
             reqs = [{"custom_id": cid, "params": body} for cid, body in reqs_body]
@@ -377,7 +398,7 @@ def promote(intent, model, instruction="", input=None, out=None, n=None, run=Fal
         with open(out, "w") as f:
             for cid, p in items:
                 try:
-                    cost, _it, _ot, text = _call(model, p + instr, max_out=1500)
+                    cost, _it, _ot, text = _call(model, p + instr)   # wire budget = canonical output_budget (in _call)
                     f.write(json.dumps({"custom_id": cid, "output": text}) + "\n")
                     kept += 1; tot += cost
                 except Exception:
@@ -388,6 +409,9 @@ def promote(intent, model, instruction="", input=None, out=None, n=None, run=Fal
 
 
 def main(argv=None):
+    """CLI entry for `spendguard experiment` — parse argv (None → sys.argv) and run experiment() in ESTIMATE-only mode
+    unless --run is given (then real metered calls under caps.meta). Returns 0 on completion; argparse raises SystemExit
+    on --help / a usage error, and an experiment() exception (config/pricing/provider/equivalence) propagates."""
     import argparse
     ap = argparse.ArgumentParser(prog="spendguard experiment")
     ap.add_argument("--intent", required=True)
@@ -406,6 +430,10 @@ def main(argv=None):
 
 
 def promote_main(argv=None):
+    """CLI entry for `spendguard promote` — parse argv (None → sys.argv) and run promote() in ESTIMATE-only mode unless
+    --run is given. --batch uses the Batch API (chunked into <=25K jobs), else realtime. Returns 0 on completion. Can
+    trigger WORKLOAD spend / batch submission / output-file writes when --run; argparse raises SystemExit on --help /
+    usage error, and a promote()/provider/file/config exception propagates."""
     import argparse
     ap = argparse.ArgumentParser(prog="spendguard promote")
     ap.add_argument("--intent", required=True)
