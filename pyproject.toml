@@ -19,7 +19,11 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: System :: Monitoring",
 ]
-dependencies = []   # openai / anthropic / tiktoken are optional — the gate fails open if a SDK is absent
+dependencies = []   # openai / anthropic / tiktoken are OPTIONAL extras ([openai]/[anthropic]/[all]). With no SDK present
+#                     the PASSIVE auto-gate simply no-ops (there is nothing to patch), but spendguard.require() FAILS
+#                     CLOSED (raises SpendGateRefused) — a require()-guarded script never spends ungated. A consumer that
+#                     needs the gate to actually enforce must install a provider SDK: depend on llm-spendguard[openai]
+#                     (or [anthropic] / [all]), not bare llm-spendguard.
 
 [project.urls]
 Homepage = "https://llmspendguard.com"
