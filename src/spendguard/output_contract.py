@@ -177,9 +177,14 @@ def _is_empty(v):
 
 
 def _check_schema(obj, schema, path="$"):
-    """JSON-Schema-lite: type / required / properties / items. Deliberately small — a full validator is a
-    dependency, and this exists to answer 'will my parser cope', not to be a spec-complete implementation.
-    Raises ValueError naming the exact path that failed."""
+    """JSON-Schema-lite validator: enforces type (incl. unions) / required / nonempty / enum / const / numeric bounds
+    (minimum·maximum·exclusive·multipleOf) / string bounds (minLength·maxLength·pattern) / array bounds
+    (minItems·maxItems·uniqueItems) / object bounds (minProperties·maxProperties·additionalProperties) / properties /
+    items. It holds a $0-LANE reply to the SAME declared limits its metered twin gets from the provider's strict mode,
+    so a DECLARED constraint (an enum, a range, a forbidden extra key) is never silently passed as 'shape ok'. It is
+    deliberately not spec-complete: the structural COMBINATORS it cannot faithfully validate locally
+    (oneOf/anyOf/allOf/not/if-then-else/$ref) are routed to the metered strict path by needs_enforcement rather than
+    silently ignored here. Raises ValueError naming the exact path that failed."""
     t = schema.get("type")
     if t:
         # `type` is EITHER a single JSON type name OR a UNION — a LIST of names, the value matching ANY of them
@@ -201,6 +206,55 @@ def _check_schema(obj, schema, path="$"):
             raise ValueError(f"{path}: expected {t}, got boolean")
         if not isinstance(obj, tuple(want)):
             raise ValueError(f"{path}: expected {t}, got {type(obj).__name__}")
+    # VALUE CONSTRAINTS — the declared LIMITS a prompt-only lane cannot GUARANTEE and the metered provider enforces via
+    # strict mode. output_contract validates the SAME limits locally so a $0-lane reply is held to the SAME contract as
+    # its metered twin — otherwise a lane could return tier:"T9" or seed_fit:150 (a DECLARED enum/range violation) and
+    # pass as "shape ok" (the silent under-validation the union-type crash was one face of). All are mechanical FORMAT
+    # checks (a value IS or is not in the set / within the bound), never a judgement about meaning. Safe on BOTH paths:
+    # a valid (provider-enforced) metered reply satisfies them, so re-validation never rejects a good answer.
+    if "enum" in schema and isinstance(schema["enum"], (list, tuple)) and obj not in schema["enum"]:
+        raise ValueError(f"{path}: {obj!r} is not one of the {len(schema['enum'])} allowed enum values")
+    if "const" in schema and obj != schema["const"]:
+        raise ValueError(f"{path}: expected the constant {schema['const']!r}, got {obj!r}")
+    if isinstance(obj, (int, float)) and not isinstance(obj, bool):      # numeric bounds (bool is NOT a number here)
+        if "minimum" in schema and obj < schema["minimum"]:
+            raise ValueError(f"{path}: {obj} is below minimum {schema['minimum']}")
+        if "maximum" in schema and obj > schema["maximum"]:
+            raise ValueError(f"{path}: {obj} is above maximum {schema['maximum']}")
+        if "exclusiveMinimum" in schema and obj <= schema["exclusiveMinimum"]:
+            raise ValueError(f"{path}: {obj} is not > exclusiveMinimum {schema['exclusiveMinimum']}")
+        if "exclusiveMaximum" in schema and obj >= schema["exclusiveMaximum"]:
+            raise ValueError(f"{path}: {obj} is not < exclusiveMaximum {schema['exclusiveMaximum']}")
+        if schema.get("multipleOf") and (obj % schema["multipleOf"]) != 0:
+            raise ValueError(f"{path}: {obj} is not a multiple of {schema['multipleOf']}")
+    if isinstance(obj, str):                                             # string bounds
+        if "minLength" in schema and len(obj) < schema["minLength"]:
+            raise ValueError(f"{path}: string length {len(obj)} < minLength {schema['minLength']}")
+        if "maxLength" in schema and len(obj) > schema["maxLength"]:
+            raise ValueError(f"{path}: string length {len(obj)} > maxLength {schema['maxLength']}")
+        if schema.get("pattern") and re.search(schema["pattern"], obj) is None:   # a FIXED regex from the contract → PARSING, not a meaning call
+            raise ValueError(f"{path}: does not match pattern {schema['pattern']!r}")
+    if isinstance(obj, (list, tuple)):                                   # array bounds
+        if "minItems" in schema and len(obj) < schema["minItems"]:
+            raise ValueError(f"{path}: {len(obj)} items < minItems {schema['minItems']}")
+        if "maxItems" in schema and len(obj) > schema["maxItems"]:
+            raise ValueError(f"{path}: {len(obj)} items > maxItems {schema['maxItems']}")
+        if schema.get("uniqueItems") and len(obj) != len({json.dumps(x, sort_keys=True, default=str) for x in obj}):
+            raise ValueError(f"{path}: items are not unique (uniqueItems)")
+    if isinstance(obj, dict):                                            # object bounds + additionalProperties
+        if "minProperties" in schema and len(obj) < schema["minProperties"]:
+            raise ValueError(f"{path}: {len(obj)} properties < minProperties {schema['minProperties']}")
+        if "maxProperties" in schema and len(obj) > schema["maxProperties"]:
+            raise ValueError(f"{path}: {len(obj)} properties > maxProperties {schema['maxProperties']}")
+        _ap = schema.get("additionalProperties", True)                   # absent/True = allow; False = forbid; dict = validate each extra
+        if _ap is not True:
+            _extra = [k for k in obj if k not in (schema.get("properties") or {})]
+            if _ap is False and _extra:
+                raise ValueError(f"{path}: unexpected propert{'y' if len(_extra) == 1 else 'ies'} "
+                                 f"{sorted(_extra)} (additionalProperties is false)")
+            if isinstance(_ap, dict):
+                for k in _extra:
+                    _check_schema(obj[k], _ap, f"{path}.{k}")
     for k in schema.get("required") or ():
         # A required/nonempty ENTRY is a JSON object KEY, so it must be a string. A caller that passed a non-string
         # (e.g. a nested list — `required: [["a"]]`) would make `k in obj` / `obj.get(k)` below try to HASH that value
@@ -241,6 +295,12 @@ def needs_enforcement(contract):
     if not isinstance(contract, dict):
         return False                                   # 'json' / key-list / callable → lenient, prompt+validate is fine
     if contract.get("required") or contract.get("nonempty"):
+        return True
+    # Structural COMBINATORS output_contract cannot faithfully validate LOCALLY (oneOf/anyOf/allOf/not/if-then-else, or a
+    # $ref that would need resolving) belong on the metered strict path too: a lane's prompt+validate would SILENTLY
+    # under-enforce them (pass a reply that violates the combinator, since _check_schema does not evaluate them). Route
+    # to enforce so the provider's strict mode holds the shape.
+    if any(k in contract for k in ("oneOf", "anyOf", "allOf", "not", "if", "$ref")):
         return True
     for sub in (contract.get("properties") or {}).values():
         if needs_enforcement(sub):

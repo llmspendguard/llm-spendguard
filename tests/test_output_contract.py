@@ -142,6 +142,32 @@ check("an unknown type name INSIDE a union still raises a clear 'unknown type'",
       "unknown type" in oc.check_items_against_contract(['{"n": 1}'],
           {"type": "object", "properties": {"n": {"type": ["number", "bogus"]}}}).first_failure)
 
+print("-- VALUE CONSTRAINTS are enforced LOCALLY (a $0-lane reply held to the SAME declared limits its metered twin gets) --")
+# The gap this closes: _check_schema validated type/required/nonempty but SILENTLY passed enum / range / extra-key
+# violations — so a lane could return tier:"T9" or seed_fit:150 (a DECLARED violation) as "shape ok". Each check below
+# is a mechanical FORMAT test (in the set / within the bound / no undeclared key), never a judgement about meaning.
+ENUM = {"type": "string", "enum": ["T1", "T2", "T3", "T4"]}
+check("enum: a valid value passes", oc.check_items_against_contract(['"T2"'], ENUM).clean)
+check("enum: a value OUTSIDE the set now FAILS (was silently ok)",
+      "not one of" in oc.check_items_against_contract(['"T9"'], ENUM).first_failure)
+BND = {"type": "object", "properties": {"n": {"type": "integer", "minimum": 0, "maximum": 100}}}
+check("numeric: in-range passes", oc.check_items_against_contract(['{"n": 50}'], BND).clean)
+check("numeric: above the maximum FAILS", "above maximum" in oc.check_items_against_contract(['{"n": 150}'], BND).first_failure)
+check("numeric: below the minimum FAILS", "below minimum" in oc.check_items_against_contract(['{"n": -1}'], BND).first_failure)
+AP = {"type": "object", "additionalProperties": False, "properties": {"a": {"type": "integer"}}}
+check("additionalProperties:false: declared-only keys pass", oc.check_items_against_contract(['{"a": 1}'], AP).clean)
+check("additionalProperties:false: an undeclared key now FAILS",
+      "unexpected" in oc.check_items_against_contract(['{"a": 1, "b": 2}'], AP).first_failure)
+ARR = {"type": "object", "properties": {"m": {"type": "array", "items": {"type": "integer"}, "minItems": 2}}}
+check("array minItems: too few items FAILS", "minItems" in oc.check_items_against_contract(['{"m": [1]}'], ARR).first_failure)
+check("const: the wrong value FAILS and the right value passes",
+      "constant" in oc.check_items_against_contract(['"x"'], {"const": "y"}).first_failure
+      and oc.check_items_against_contract(['"y"'], {"const": "y"}).clean)
+check("needs_enforcement routes a COMBINATOR (anyOf) the lane can't validate to the metered strict path",
+      oc.needs_enforcement({"anyOf": [{"type": "string"}, {"type": "null"}]}))
+check("needs_enforcement keeps a plain enum LENIENT (the lane CAN validate enum locally now)",
+      not oc.needs_enforcement({"type": "string", "enum": ["a", "b"]}))
+
 print("-- identity: a changed contract must expire the authorization --")
 check("the same contract hashes the same", oc.contract_hash(KEYS) == oc.contract_hash(list(reversed(KEYS))))
 check("a different contract hashes differently", oc.contract_hash(KEYS) != oc.contract_hash(KEYS + ["extra"]))
