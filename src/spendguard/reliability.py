@@ -28,6 +28,11 @@ def _probe_default(provider):
     for rid, rec in model_catalog.all_records().items():
         if rec.get("provider") != provider:
             continue
+        caps = rec.get("capabilities")
+        if isinstance(caps, dict) and caps.get("mode") == "embedding":
+            continue          # a CHAT reachability probe needs a CHAT model — an embedding model is priced out=0.0, so it
+            #                   would always win "cheapest output" and then 404 on /chat/completions (voyage is embed-ONLY
+            #                   → this returns None → plan() correctly drops it from the metered CHAT slate).
         out = (rec.get("price") or {}).get("out")
         if out is not None and (best is None or out < best[0]):
             best = (out, rec.get("metered_id") or rid)

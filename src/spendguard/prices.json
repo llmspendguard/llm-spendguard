@@ -4,7 +4,7 @@
     "_generator": "scripts/gen_prices_json.py",
     "_source": "src/spendguard/model_catalog.json (concern 'model_catalog' \u2014 the SSOT for model data)",
     "note": "GENERATED from the model catalog \u2014 DO NOT EDIT BY HAND. Author prices in model_catalog.json, then run `python scripts/gen_prices_json.py --write`. honestreview derived_artifact_integrity flags hand-edits.",
-    "generated_at": "2026-09-25T20:22:57Z"
+    "generated_at": "2026-09-29T23:55:32Z"
   },
   "providers": {
     "anthropic": {
@@ -233,6 +233,14 @@
           "batch_in": 0.375,
           "batch_out": 1.875,
           "_source": "https://ai.google.dev/gemini-api/docs/pricing (Google Gemini published pricing)"
+        },
+        "gemini-embedding-001": {
+          "in_": 0.15,
+          "out": 0.0,
+          "cached_in": 0.015,
+          "batch_in": 0.075,
+          "batch_out": 0.0,
+          "_source": "litellm:model_prices_and_context_window.json (synced via seed; NOT provider-verified)"
         }
       }
     },
@@ -405,6 +413,18 @@
           "batch_in": 0.025,
           "batch_out": 0.1,
           "_source": "https://www.eesel.ai/blog/qwen-pricing (Alibaba Model Studio list price, 2026-06-14)"
+        }
+      }
+    },
+    "voyage": {
+      "models": {
+        "voyage-3.5": {
+          "in_": 0.06,
+          "out": 0.0,
+          "cached_in": 0.006,
+          "batch_in": 0.03,
+          "batch_out": 0.0,
+          "_source": "litellm:model_prices_and_context_window.json (synced via seed; NOT provider-verified)"
         }
       }
     },

@@ -2096,6 +2096,82 @@
       "capabilities": {
         "mode": "embedding"
       }
+    },
+    "gemini-embedding-001": {
+      "id": "gemini-embedding-001",
+      "provider": "gemini",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "gemini-embedding-001",
+      "lane_spellings": {},
+      "price": {
+        "in_": 0.15,
+        "out": 0.0,
+        "cached_in": 0.015,
+        "batch_in": 0.075,
+        "batch_out": 0.0,
+        "source": "litellm:model_prices_and_context_window.json (synced via seed; NOT provider-verified)",
+        "verified": null
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": null,
+        "source": null
+      },
+      "context_window": {
+        "value": 2048,
+        "source": "litellm:model_prices_and_context_window.json (synced via seed; NOT provider-verified)",
+        "verified": null
+      },
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "tokens_param": "max_tokens",
+        "style": "none"
+      },
+      "capabilities": {
+        "mode": "embedding"
+      }
+    },
+    "voyage-3.5": {
+      "id": "voyage-3.5",
+      "provider": "voyage",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "voyage-3.5",
+      "lane_spellings": {},
+      "price": {
+        "in_": 0.06,
+        "out": 0.0,
+        "cached_in": 0.006,
+        "batch_in": 0.03,
+        "batch_out": 0.0,
+        "source": "litellm:model_prices_and_context_window.json (synced via seed; NOT provider-verified)",
+        "verified": null
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": null,
+        "source": null
+      },
+      "context_window": {
+        "value": 32000,
+        "source": "litellm:model_prices_and_context_window.json (synced via seed; NOT provider-verified)",
+        "verified": null
+      },
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "tokens_param": "max_tokens",
+        "style": "none"
+      },
+      "capabilities": {
+        "mode": "embedding"
+      }
     }
   }
 }

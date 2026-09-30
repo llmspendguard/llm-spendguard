@@ -129,6 +129,28 @@ def context_window(model_id):
         return None
 
 
+def embedding_models(provider=None):
+    """Every curated EMBEDDING model (capabilities.mode == 'embedding'), optionally filtered to one provider — the SSOT
+    for "which models embed", so NO caller hardcodes an embedding model id. Returns [(provider, metered_id)] sorted by
+    input price ascending (cheapest first), so a caller wanting one default embedding model per provider takes the first
+    for that provider. The `mode` marker is authored in the catalog exactly like a chat model's 'chat' mode; adding a
+    provider's embedding model is a catalog ROW (data), never a code literal. Empty when the catalog curates none for the
+    filter — an honest absence a caller surfaces, never a silent hardcoded fallback."""
+    prov = (provider or "").strip().lower() or None
+    rows = []
+    for rid, rec in _load_records().items():
+        caps = rec.get("capabilities")
+        if not isinstance(caps, dict) or caps.get("mode") != "embedding":
+            continue
+        rp = (rec.get("provider") or "").strip().lower()
+        if prov and rp != prov:
+            continue
+        price_in = (rec.get("price") or {}).get("in_")
+        rows.append(((price_in if price_in is not None else 1e9), rec.get("provider"), rec.get("metered_id") or rid))
+    rows.sort(key=lambda t: (t[0], str(t[2])))
+    return [(p, m) for _in, p, m in rows]
+
+
 def provider_base(provider):
     """The catalog's designated reliable BASE model id for `provider` — the ONE record flagged provider_base:true — or
     None. The tier-3 last-resort fallback target when a chosen model's lane AND metered API both fail

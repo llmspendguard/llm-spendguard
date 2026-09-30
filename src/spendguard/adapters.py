@@ -1202,15 +1202,22 @@ _EMBED_MAX_BATCH = 128            # inputs per /embeddings request — conservat
 _EMBED_TIMEOUT_S = 60             # per-request wall bound so a hung embeddings call can't wedge a whole corpus run.
 _EMBED_MAX_INPUT_CHARS = 32000    # ~8k-token per-input ceiling (OpenAI) as a conservative CHAR guard — an oversized
 #                                   text is marked failed for THAT item, never sent to 400 the whole chunk it rides in.
-_DEFAULT_EMBED_MODEL = "text-embedding-3-small"   # the fallback embed model (cheap OpenAI) when none is given and
-#                                                   config advisor.embed_model is unset — OpenAI is the default we use.
+_DEFAULT_EMBED_MODEL = "text-embedding-3-small"   # LAST-RESORT fail-safe ONLY if the catalog curates no OpenAI embedding
+#                                                   model (a broken catalog) — never the normal path (see below).
 
 
 def _embed_default_model():
-    """The embed model to use when a caller passes none: config `advisor.embed_model` if set, else the named OpenAI
-    default — resolved, never a bare literal at the call site (change the default in ONE place / via config)."""
+    """The embed model to use when a caller passes none: config `advisor.embed_model` if set, else the CATALOG's cheapest
+    OpenAI embedding model (model_catalog.embedding_models — the SSOT for "which models embed"). No embedding-model id is
+    hardcoded at a call site; adding/retiring one is a catalog ROW. The bare literal is a fail-safe used ONLY when the
+    catalog curates no OpenAI embedding model, never the normal path."""
     try:
-        return config._cfg_get("advisor", "embed_model", None) or _DEFAULT_EMBED_MODEL
+        ov = config._cfg_get("advisor", "embed_model", None)
+        if ov:
+            return ov
+        from . import model_catalog
+        oai = model_catalog.embedding_models("openai")
+        return oai[0][1] if oai else _DEFAULT_EMBED_MODEL     # (provider, model_id), cheapest input first
     except Exception:
         return _DEFAULT_EMBED_MODEL
 
@@ -1412,7 +1419,19 @@ def embed_compare(texts, models=None, *, sample=None):
         vy = sum((y - my) ** 2 for y in ys) ** 0.5
         return (cov / (vx * vy)) if vx and vy else None
 
-    models = list(models) if models else [_embed_default_model(), "gemini-embedding-001"]
+    if models:
+        models = list(models)
+    else:
+        # DEFAULT A/B slate from the catalog SSOT (no hardcoded embedding ids): the OpenAI default + the cheapest
+        # embedding model of every OTHER embedding-capable provider (gemini, voyage, …). Adding a provider's embedder to
+        # the catalog auto-joins this comparison; it is never a literal here.
+        from . import model_catalog as _mc
+        _default = _embed_default_model()
+        models, _seen = [_default], {(_mc.provider_of(_default) or "openai")}
+        for _prov, _mid in _mc.embedding_models():
+            if _prov not in _seen:
+                _seen.add(_prov)
+                models.append(f"{_prov}:{_mid}")
     items = list(texts or [])
     _s = int(sample or _EMBED_COMPARE_SAMPLE)
     items = items[:_s] if len(items) > _s else items
