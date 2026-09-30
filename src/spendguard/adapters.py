@@ -1274,6 +1274,11 @@ def embed(texts, model=None, *, dimensions=None, max_batch=None, timeout_s=None,
         return base
     keys = [_hl.sha256(t.encode("utf-8", "replace")).hexdigest() for t in items]
     _n = max(1, int(max_batch or _EMBED_MAX_BATCH))
+    from . import model_catalog as _mc
+    _ceiling = _mc.embed_batch_ceiling(raw)                        # provider-enforced cap from the catalog SSOT (None if uncurated)
+    if _ceiling and _n > _ceiling:
+        _n = _ceiling                                             # a caller CANNOT exceed it by accident — over the cap 400s the
+        #                                                           WHOLE chunk (every input in it fails), so clamp, never trust max_batch
     if checkpoint is None and len(items) > _n:
         _ck = _hl.sha256(f"{raw}|{len(items)}|{keys[0]}|{keys[-1]}".encode()).hexdigest()[:10]
         checkpoint = str(config.HOME / f"embed_{raw}_{_ck}.jsonl")    # durable by default for a multi-request run
@@ -1305,15 +1310,25 @@ def embed(texts, model=None, *, dimensions=None, max_batch=None, timeout_s=None,
             failed.append({"i": i, "reason": f"input {len(items[i])} chars > {_EMBED_MAX_INPUT_CHARS} cap — split it"})
         else:
             todo.append(i)
-    for c0 in range(0, len(todo), _n):
-        grp = todo[c0:c0 + _n]
+    def _embed_one(grp):
+        """Embed one group, writing vectors to `done`/checkpoint and failures to `failed`. On a (non-stop) REJECTION,
+        BISECT and recurse — the PROVIDER's accept/reject is the oracle for the workable batch size, so NO error text
+        is parsed (a 400 may state a token limit AND a batch limit in one message; picking the right number would be
+        a judgement, not a parse). When a group is already a single input and STILL fails, it is recorded as failed
+        WITH THE PROVIDER'S OWN REASON — we have bisected as far as we can, so the reason itself (not an inference of
+        ours about why) tells the caller what is wrong, and re-running retries only the failed items. Never
+        double-pays: a rejected request billed nothing. Returns the largest sub-group size that SUCCEEDED (0 if
+        none), so the outer loop can shrink _n for the rest of the run."""
         try:
-            r = c.embeddings.create(model=raw, input=[items[i] for i in grp], **_extra)  # gate meters this
+            r = c.embeddings.create(model=raw, input=[items[i] for i in grp], **_extra)   # gate meters this
         except Exception as e:
             if isinstance(e, _stop):
                 raise                                                 # a spend refusal / cap HALTS — never isolated
-            failed.extend({"i": i, "reason": str(e)[:120]} for i in grp)  # ISOLATE: mark the chunk, keep going
-            continue
+            if len(grp) <= 1:
+                failed.append({"i": grp[0], "reason": str(e)[:160]})  # bisected to one input, still refused → record its reason
+                return 0
+            mid = len(grp) // 2
+            return max(_embed_one(grp[:mid]), _embed_one(grp[mid:]))  # BISECT: the provider decides the workable size
         # OpenAI-compat /embeddings returns `data` in INPUT ORDER (a documented guarantee), and OpenAI stamps a
         # chunk-relative `index` while gemini/voyage return index=None — so key by the stamped index when present, else
         # the enumeration position (equal to the index by that ordering guarantee). `int(d.index)` alone raised
@@ -1335,6 +1350,17 @@ def embed(texts, model=None, *, dimensions=None, max_batch=None, timeout_s=None,
         finally:
             if _fh:
                 _fh.close()
+        return len(grp)
+    i0 = 0                                                            # chunk at _n; a group that only succeeds SMALLER
+    while i0 < len(todo):                                             # shrinks _n for the rest (adapts to a real cap)
+        grp = todo[i0:i0 + _n]
+        w = _embed_one(grp)
+        i0 += len(grp)
+        if 0 < w < _n:                                               # the clamp missed this cap (uncurated/stale) →
+            config.warn_once(f"[spendguard] embed {raw}: batches of {_n} were rejected; the workable size here was "
+                             f"{w} — running the rest at {w}/request. Add capabilities.embed_max_batch for {raw} to "
+                             f"model_catalog.json to size it right up front.")
+            _n = w
     out = [done.get(k) for k in keys]
     n_missing = sum(1 for v in out if v is None)
     dims = next((len(v) for v in out if v is not None), dimensions)

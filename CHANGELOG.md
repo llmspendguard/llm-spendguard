@@ -4,6 +4,23 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.11.3] — 2026-09-30
+
+Correctness fix — per-provider embedding batch ceilings (a provider-enforced limit is now the catalog SSOT, not one
+global literal shared across vendors).
+
+### Fixed
+- **`adapters.embed()` applied ONE global batch size to every OpenAI-compatible embedding provider.** Gemini's
+  `batchEmbedContents` caps at 100 inputs/request, and because a too-large batch 400s the WHOLE chunk, a 5,768-text
+  run on `gemini-embedding-001` returned **5,760/5,768 unembedded**. The ceiling is now a catalog SSOT
+  (`capabilities.embed_max_batch`, MEASURED by live bisection 2026-09-30 — gemini=100, OpenAI text-embedding-3-*=2048,
+  voyage-3.5=1000) read via `model_catalog.embed_batch_ceiling()`, and `embed()` CLAMPS every chunk to
+  `min(requested, ceiling)` so a caller cannot exceed it. For an UNCURATED provider, a still-rejected batch is
+  BISECTED empirically (the provider's accept/reject is the oracle — no error text is parsed) until the inputs fit,
+  so all inputs embed instead of all failing — no double-pay (the rejected request billed nothing). Guard:
+  `tests/test_embed_batch_ceiling.py`; the
+  measurement tool: `scripts/reliability/embed_ceiling_probe.py`; the postmortem: `docs/INCIDENTS.md`.
+
 ## [0.11.2] — 2026-09-30
 
 Onboarding release — make `spendguard init` a true one-command setup: a new user is wired into their whole stack in

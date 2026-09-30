@@ -151,6 +151,25 @@ def embedding_models(provider=None):
     return [(p, m) for _in, p, m in rows]
 
 
+def embed_batch_ceiling(model_id):
+    """The PROVIDER-ENFORCED maximum number of inputs per /embeddings request for an embedding model, or None when the
+    catalog doesn't record one (caller then uses its own default, no clamp). Reads `capabilities.embed_max_batch.value`
+    — a per-model fact authored in the catalog (the SSOT), measured not assumed: exceeding it 400s the WHOLE chunk, so
+    every input in it fails (a 5,768-text gemini run left 5,760 unembedded under one global default larger than 100).
+    Gemini=100, OpenAI=2048, Voyage=1000 (each measured by live bisection). A plain int is also accepted for the field
+    (value-only form). None on a missing/malformed entry — never a guessed number."""
+    rec = model_record(model_id)
+    caps = (rec or {}).get("capabilities") if rec else None
+    if not isinstance(caps, dict):
+        return None
+    emb = caps.get("embed_max_batch")
+    v = emb.get("value") if isinstance(emb, dict) else emb          # {value, source} (provenance) or a bare int
+    try:
+        return int(v) if v is not None and int(v) > 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
 def provider_base(provider):
     """The catalog's designated reliable BASE model id for `provider` — the ONE record flagged provider_base:true — or
     None. The tier-3 last-resort fallback target when a chosen model's lane AND metered API both fail
@@ -291,6 +310,12 @@ def validate_catalog(models=None):
         style = (rec.get("reasoning") or {}).get("style")
         if style is not None and style not in REASONING_STYLES:
             problems.append(f"{rid}: reasoning.style {style!r} not in {REASONING_STYLES}")
+        caps = rec.get("capabilities")
+        if isinstance(caps, dict) and "embed_max_batch" in caps:
+            emb = caps["embed_max_batch"]
+            emv = emb.get("value") if isinstance(emb, dict) else emb
+            if not (isinstance(emv, int) and not isinstance(emv, bool) and emv > 0):
+                problems.append(f"{rid}: capabilities.embed_max_batch value is {emv!r}, expected a positive int")
         tgt = rec.get("retired_alias_of")
         if tgt and tgt not in ids_present and not (p and p.get("in_") is not None):
             problems.append(f"{rid}: retired_alias_of {tgt!r} is neither a catalog record nor self-priced (dangling)")

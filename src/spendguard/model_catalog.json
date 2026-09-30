@@ -2056,7 +2056,11 @@
         "style": "none"
       },
       "capabilities": {
-        "mode": "embedding"
+        "mode": "embedding",
+        "embed_max_batch": {
+          "value": 2048,
+          "source": "measured: live bisection 2026-09-30 on text-embedding-3-small (2048 ok, 2049 -> HTTP 400); OpenAI /embeddings per-request input cap, API-level (same for text-embedding-3-large)"
+        }
       }
     },
     "text-embedding-3-small": {
@@ -2094,7 +2098,11 @@
         "style": "none"
       },
       "capabilities": {
-        "mode": "embedding"
+        "mode": "embedding",
+        "embed_max_batch": {
+          "value": 2048,
+          "source": "measured: live bisection 2026-09-30 (2048 ok, 2049 -> HTTP 400); OpenAI /embeddings per-request input cap"
+        }
       }
     },
     "gemini-embedding-001": {
@@ -2132,7 +2140,11 @@
         "style": "none"
       },
       "capabilities": {
-        "mode": "embedding"
+        "mode": "embedding",
+        "embed_max_batch": {
+          "value": 100,
+          "source": "measured: live bisection 2026-09-30 (100 ok, 101 -> HTTP 400 'BatchEmbedContentsRequest.requests: at most 100 requests')"
+        }
       }
     },
     "voyage-3.5": {
@@ -2170,7 +2182,11 @@
         "style": "none"
       },
       "capabilities": {
-        "mode": "embedding"
+        "mode": "embedding",
+        "embed_max_batch": {
+          "value": 1000,
+          "source": "measured: live bisection 2026-09-30 (1000 ok, 1001 -> HTTP 400)"
+        }
       }
     }
   }
