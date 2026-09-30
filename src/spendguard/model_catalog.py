@@ -22,9 +22,9 @@ Record schema (the DATA CONTRACT — see validate()):
               tokens_param: str, style: one of REASONING_STYLES}
 
 No dependency on pricing/models (avoids a circular import — pricing reads THIS at load). $0, read-only."""
+import functools
 import json
 import os
-import threading
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 DATA_PATH = os.path.join(_HERE, "model_catalog.json")
@@ -32,27 +32,64 @@ DATA_PATH = os.path.join(_HERE, "model_catalog.json")
 REASONING_STYLES = ("param", "suffix", "thinking", "none")   # enum domain for reasoning.style (DATA_CONTRACT)
 _REQUIRED_TOP = ("id", "provider")                            # a record must at least identify itself + its vendor
 
-_lock = threading.Lock()
-_MEM = {"mtime": None, "models": None}
+
+def _overlay_path():
+    """The SERVER-SYNCED / local-override curated catalog overlay — a {"models": {id: record}} file in SPENDGUARD_HOME,
+    the SAME shape as the shipped floor (DATA_PATH). Written by `spendguard sync-catalog` from the server's curated
+    catalog (the data-plane T2 layer); a user may also drop it by hand to OVERRIDE the shipped floor locally. Distinct
+    filename from catalog.py's live served-list cache (HOME/model_catalog.json), a different store. None on any error
+    → floor only (config is imported lazily, as elsewhere in this leaf, to avoid a load-time cycle)."""
+    try:
+        from . import config
+        return os.path.join(str(config.HOME), "catalog_synced.json")
+    except Exception:
+        return None
+
+
+def _read_bytes(path):
+    """The file's raw bytes, or None if absent/unreadable (a missing/unreadable layer degrades to None; the merge
+    treats it as empty, never raises)."""
+    if not path:
+        return None
+    try:
+        with open(path, "rb") as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def _parse_models(raw):
+    """The {id: record} map from catalog BYTES, or {} for empty/corrupt input — a corrupt layer degrades to empty and
+    never wipes the other in the merge. Mechanical parse of a fixed {"models": {...}} shape."""
+    if not raw:
+        return {}
+    try:
+        return (json.loads(raw) or {}).get("models") or {}
+    except Exception:
+        return {}
+
+
+@functools.lru_cache(maxsize=8)
+def _merged_records(floor_b, ov_b):
+    """Parse + LAYER the two catalog byte-blobs: the shipped curated floor (T1) OVERLAID by the synced/override layer
+    (T2), synced records winning by model id. Keyed by the raw BYTES, so the parse+merge is memoised per exact CONTENT
+    — a restore / rsync / iCloud sync / touch that installs DIFFERENT content (even same-size, even with a reset
+    mtime) still re-parses, because the bytes (the cache key) differ. There is no mtime/size reliance to go stale.
+    ≤8 blobs held; the hot accessor path re-parses only on a genuine content change."""
+    return {**_parse_models(floor_b), **_parse_models(ov_b)}
 
 
 def _load_records():
-    """The {id: record} map from model_catalog.json, memoised by file mtime (re-reads only when the file changes).
-    Returns {} if the file is absent/unreadable — a missing catalog degrades to 'no curated record' (callers fall back
-    to the synced breadth), never an exception."""
-    try:
-        st = os.stat(DATA_PATH)
-    except OSError:
+    """The {id: record} map, LAYERED per the data plane: the shipped curated floor (T1) OVERLAID by the server-synced
+    / local-override catalog (SPENDGUARD_HOME/catalog_synced.json, T2) where present — synced records override/add by
+    model id. CONTENT-keyed cache (see _merged_records) so a change is NEVER missed. Returns {} when NEITHER layer is
+    present/readable — a missing catalog degrades to 'no curated record' (callers fall back to the synced breadth),
+    never an exception."""
+    floor_b = _read_bytes(DATA_PATH)
+    ov_b = _read_bytes(_overlay_path())
+    if floor_b is None and ov_b is None:
         return {}
-    with _lock:
-        if _MEM["mtime"] != st.st_mtime:
-            try:
-                with open(DATA_PATH) as f:
-                    _MEM["models"] = (json.load(f) or {}).get("models") or {}
-                _MEM["mtime"] = st.st_mtime
-            except Exception:
-                return _MEM["models"] or {}
-        return _MEM["models"] or {}
+    return _merged_records(floor_b, ov_b)
 
 
 def _bare(model_id):
