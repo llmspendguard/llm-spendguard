@@ -130,6 +130,30 @@ def fetch_models(model=None, provider=None, timeout=8):
     return {m["model_id"]: m for m in models if isinstance(m, dict) and m.get("model_id")}
 
 
+def sync_catalog_overlay(timeout=8):
+    """Pull the server's spendguard-CURATED catalog overlay (GET /v1/models?curated=1) into the local
+    catalog_synced.json that model_catalog._load_records layers ABOVE the shipped floor (the data-plane T2 client
+    half). A curated fact the server carries — a new embed batch ceiling, a verified price — then reaches THIS install
+    with no package release. FAIL-OPEN: server unconfigured / unreachable → returns 0 and LEAVES the existing overlay
+    untouched (never wipes a good overlay with nothing); a deliberate spend/deadline stop propagates. Returns the
+    number of curated models written. $0 (a read)."""
+    from . import config, model_catalog, gate as _g
+    try:
+        r = _request("GET", "/v1/models?curated=1", timeout=timeout)
+    except Exception as e:
+        if _g.is_deliberate_stop(e):
+            raise                                    # a refusal/deadline is never downgraded to a silent skip
+        return 0                                     # unconfigured / unreachable → keep the existing overlay
+    models = r.get("models") if isinstance(r, dict) else None
+    if not isinstance(models, dict) or not models:
+        return 0                                     # nothing curated served yet → do NOT overwrite a good overlay with empty
+    path = model_catalog._overlay_path()
+    if not path:
+        return 0
+    config.update_json(path, lambda _d: {"models": models}, quarantine_unparseable=True)  # atomic + ~backup, like the other caches
+    return len(models)
+
+
 def contributor():
     """Who this install attributes its spend to (member_ref) — the REAL billable/rollup user, identified by the
     email each teammate sets in their repo config (one org key is shared across teammates' repos). NEVER empty:

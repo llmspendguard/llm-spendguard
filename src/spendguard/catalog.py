@@ -212,4 +212,13 @@ def main(argv=None):
     for prov, msg in sorted((data.get("errors") or {}).items()):
         print(f"  {prov:12} not cataloged: {msg}", file=sys.stderr)
     print(f"\n  {n_prov} providers, {n_ids} live model ids cached → {CATALOG_CACHE}")
+    # Also pull the server's spendguard-CURATED overlay (embed batch ceilings, verified prices, reasoning floors, …)
+    # into catalog_synced.json, which model_catalog layers ABOVE the shipped floor — so a curated fact the server
+    # carries reaches THIS install with no package release (the data-plane T2 client half). sync_catalog_overlay is
+    # FAIL-OPEN internally (no server / unreachable → 0, the existing overlay kept; a deliberate spend/deadline stop
+    # propagates), so it needs no wrapper here.
+    from . import saas, model_catalog
+    n_cur = saas.sync_catalog_overlay()
+    if n_cur:
+        print(f"  curated overlay: {n_cur} models synced from the server → {model_catalog._overlay_path()}")
     return 0
