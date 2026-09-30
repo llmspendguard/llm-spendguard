@@ -671,7 +671,7 @@ def _autowire_lanes():
     except Exception as e:
         _reraise_if_governance_stop(e)
         print(f"\n  (subscription-lane auto-detect unavailable: {e})")
-        return
+        return None
     ready = [ln for ln in st["lanes"] if ln.get("auth") == "ok"]
     print("\nSubscription lanes ($0 plan-covered execution for realtime meta prompts + best-value calls):")
     env_exec = os.environ.get("SPENDGUARD_ADVISOR_EXECUTOR")
@@ -706,6 +706,12 @@ def _autowire_lanes():
         print("  none active yet — realtime runs on the metered API. Activate a plan lane to route at $0"
               + (f":\n    {hint}" if hint else " (`spendguard lanes` shows each lane's step)."))
         print("  then re-run `spendguard init` (or `spendguard config set advisor.executor pool`).")
+    # re-read so the RETURNED status reflects any executor we just wrote (the closing card must not show the pre-write
+    # value) — cheap: lanes_status reads host state + the cached auth artifacts, no model calls.
+    try:
+        return _lanes.lanes_status()
+    except Exception:
+        return st
 
 
 def _run_integration_installers(quick=False, do_all=False):
@@ -717,18 +723,20 @@ def _run_integration_installers(quick=False, do_all=False):
 
     Flag semantics (backward-compatible): plain `--quick` stays CONFIG-ONLY and returns here untouched; `--all`
     opts into the wiring (per-step prompts); `--all --quick` runs every step at its default with NO prompts (the
-    one-command full setup); plain interactive asks a single gateway question first, then per-step."""
+    one-command full setup); plain interactive asks a single gateway question first, then per-step. Returns the list
+    of step labels that were wired (for the closing setup card), or None when the flow was skipped entirely."""
     import sys
     if quick and not do_all:
-        return                                             # preserve the original --quick: config defaults only
+        return None                                        # preserve the original --quick: config defaults only
     if not do_all:                                         # plain interactive: one gateway question gates the flow
         if not _prompt_yn("Wire spendguard into your dev tools now — gate this Python, MCP tools, in-chat receipt, "
                           "global assistant rule, slash-commands?", default=True, eof=False):
             print("  skipped — wire any later: `spendguard install-hook`, `spendguard mcp --register`, "
                   "`spendguard install-receipts`, `spendguard install-rule --global`, `spendguard install-skills` "
                   "(or `spendguard init --all` for all of them).")
-            return
+            return None
     print("\nWiring spendguard into your tools (each step optional, idempotent, reversible):")
+    wired = []                                             # step labels that actually ran → the closing card
     # 1) gate THIS interpreter so every LLM script it runs is spend-checked
     if _prompt_yn("Gate this Python so LLM scripts here are always spend-checked (recommended)?",
                   default=True, assume=quick):
@@ -737,6 +745,7 @@ def _run_integration_installers(quick=False, do_all=False):
                 install_hook(venv=sys.prefix, install_pkg=False)
             else:                                          # base/system python: PEP668-safe path-injecting usercustomize
                 install_hook(user=True, python=sys.executable)
+            wired.append("gate")
         except Exception as e:
             _reraise_if_governance_stop(e)
             print(f"  (gate step skipped: {e})")
@@ -746,6 +755,7 @@ def _run_integration_installers(quick=False, do_all=False):
         try:
             from . import mcp_server
             mcp_server.register_client()
+            wired.append("MCP")
         except Exception as e:
             _reraise_if_governance_stop(e)
             print(f"  (MCP step skipped: {e})")
@@ -754,6 +764,7 @@ def _run_integration_installers(quick=False, do_all=False):
         try:
             from . import receipt
             receipt.install_cli([])
+            wired.append("receipt")
         except Exception as e:
             _reraise_if_governance_stop(e)
             print(f"  (receipt step skipped: {e})")
@@ -762,6 +773,7 @@ def _run_integration_installers(quick=False, do_all=False):
                   default=True, assume=quick):
         try:
             install_rule(glob_=True)
+            wired.append("rule")
         except Exception as e:
             _reraise_if_governance_stop(e)
             print(f"  (rule step skipped: {e})")
@@ -770,10 +782,81 @@ def _run_integration_installers(quick=False, do_all=False):
                   default=True, assume=quick):
         try:
             install_skills()
+            wired.append("skills")
         except Exception as e:
             _reraise_if_governance_stop(e)
             print(f"  (skills step skipped: {e})")
     print("\n  ✓ tool wiring complete — `spendguard doctor` confirms the gate is ENFORCING here.")
+    return wired
+
+
+def _preflight_keys():
+    """Report, for EVERY declared provider/compute key (config_schema SETTINGS section=='keys' — the SSOT, not a
+    hand-picked openai/anthropic pair), whether it RESOLVES in this interpreter, and for each one NOT set print where
+    to GET it (config_schema.KEY_HELP_URLS) so a first-timer isn't left guessing. This is the silent gap that broke
+    reconcile/report after a repo move (a cwd-relative .env lost the keys). Data-driven: a new provider key added to
+    SETTINGS appears here automatically. Returns (resolved, missing) counts for a caller's summary card."""
+    print(f"  key pre-flight — reconcile/report + metered fallback are blind without these (put the ones you use in "
+          f"{config.KEYS_ENV}, which is cwd-independent):")
+    resolved = missing = 0
+    for s in config_schema.SETTINGS:
+        # section=='keys' also carries the key_profile SELECTOR (not a credential); only s['secret'] rows are actual
+        # provider/compute keys to resolve — filtering on that keeps a non-secret selector out of the pre-flight.
+        if s["section"] != "keys" or not s.get("secret") or not s.get("env"):
+            continue
+        env = s["env"]
+        try:
+            k = config.api_key(env)
+        except Exception:
+            k = None
+        if k:
+            resolved += 1
+            print(f"    🟢 {env:<20} resolved")
+        else:
+            missing += 1
+            url = config_schema.KEY_HELP_URLS.get(env)
+            print(f"    🔴 {env:<20} not set" + (f"  → get one: {url}" if url else ""))
+    print(f"  ({resolved} resolved · {missing} not set — set only the providers you use; blank = that provider is off.)")
+    return resolved, missing
+
+
+def _setup_summary_card(keys_counts, lanes_st, wired):
+    """The closing 'you're set up' card: the few facts that answer 'is spendguard actually working HERE', assembled
+    from state cmd_init ALREADY computed (no re-probe) — the gate's own enforcing check (gate._any_patched), the key
+    pre-flight counts, the ready $0 lanes from lanes_status, and what the installer flow wired — then the ONE command
+    that proves the path end-to-end. The proof is OFFERED, never auto-run: a probe bills plan tokens, and setup must
+    not spend on the user's behalf."""
+    from . import gate as _gate
+    try:
+        enforcing = _gate._any_patched()
+    except Exception:
+        enforcing = None
+    resolved, missing = keys_counts if keys_counts else (0, 0)
+    ready = [ln["lane"] for ln in (lanes_st or {}).get("lanes", []) if ln.get("auth") == "ok"]
+    executor = (lanes_st or {}).get("executor", "api")
+    bar = "─" * 64
+    print("\n" + bar)
+    print("spendguard is set up — status here:")
+    if enforcing:
+        print("  gate       🟢 ENFORCING in this interpreter")
+    else:
+        print("  gate       🟡 not enforcing in THIS shell — put `import spendguard; spendguard.require()` at the top "
+              "of a script (fails closed), or `spendguard install-hook` to gate the interpreter")
+    print(f"  keys       {resolved} resolved"
+          + (f" · {missing} not set (get-a-key links above)" if missing else "  (all declared keys set)"))
+    if ready:
+        print(f"  $0 lanes   🟢 {', '.join(ready)}   (advisor.executor = {executor})")
+    else:
+        print(f"  $0 lanes   none active — realtime runs metered (advisor.executor = {executor})")
+    if wired:
+        print(f"  wired      {', '.join(wired)}")
+    print(bar)
+    if ready:
+        print("Prove the $0-lane path end-to-end →  spendguard lanes --probe   (one tiny plan-billed prompt per lane, $0)")
+    elif resolved:
+        print("Prove it end-to-end →  spendguard doctor   (verifies the gate + keys + ledger for this repo)")
+    else:
+        print("Add a key (links above), then →  spendguard doctor   (verifies everything is wired)")
 
 
 def cmd_init(argv=None):
@@ -890,26 +973,22 @@ def cmd_init(argv=None):
                                  else "  (already present)"))
     print(f"  holds: {keys}, SPENDGUARD_SAAS_KEY — loaded into the env on `import spendguard`; a real env var wins.")
     # Pre-flight: do the keys actually RESOLVE here? This is exactly the silent gap that broke reconcile/report
-    # after a repo move (cwd-relative .env lost the keys). Same check as `spendguard doctor`, surfaced at setup.
-    print("  key pre-flight (reconcile/report are blind without these — put missing ones in keys.env, "
-          "which is cwd-independent):")
-    for prov, name in (("openai", "OPENAI_API_KEY"), ("anthropic", "ANTHROPIC_API_KEY")):
-        try:
-            k = config.api_key(name)
-        except Exception:
-            k = None
-        print(f"    {prov:<9}: {'🟢 resolved' if k else '🔴 MISSING — ' + prov + ' spend will be INVISIBLE to reconcile/report'}")
+    # after a repo move (cwd-relative .env lost the keys). Now data-driven over EVERY declared key, with a get-a-key
+    # link for anything not set — same check as `spendguard doctor`, surfaced at setup.
+    _keys = _preflight_keys()
     if (cfgjson.get("budget") or {}).get("backend") == "sqlite":
         print(f"SQLite budget ledger will be created at {config.db_path()} on first charge.")
     # Subscription lanes: DETECT the ready ones and auto-route realtime calls through them at $0 (executor='pool'),
     # then show each lane's state + exactly what activates the inactive ones. Supersedes the old print-only block —
     # at call time a dead lane degrades silently to the metered API, so setup is where the routing must be wired.
-    _autowire_lanes()
+    _lanes_st = _autowire_lanes()
     # Fold the modular installers into this one command (gate / MCP / receipt / rule / skills). Plain `--quick` stays
     # config-only; `--all` (optionally with --quick) wires the tools; plain interactive asks a single gateway first.
-    _run_integration_installers(quick=quick, do_all=do_all)
+    _wired = _run_integration_installers(quick=quick, do_all=do_all)
     # Cold-start the cost advisor from your OWN history (so day-one recommendations aren't empty).
     print("\nSeed the advisor: `spendguard bootstrap` mines your past provider batches (free retrieval) into a "
           "starter cost+quality corpus — the paid reasoning step is caged by caps.meta + estimate-first (opt-in --run).")
     print("  In Claude Code, the /spendguard-learn skill runs this for you.")
+    # Close on the 'you're set up' card + the one command that proves it (assembled from the state above, no re-probe).
+    _setup_summary_card(_keys, _lanes_st, _wired)
     return 0

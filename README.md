@@ -10,13 +10,18 @@ That reads the coding-agent transcripts already on your disk and tells you what 
 Nothing is installed into your interpreter and nothing is uploaded — see [what leaves your
 machine](#what-leaves-your-machine).
 
-Then, when you want the guard rails:
+Then, when you want the guard rails, set up once:
 
 ```bash
+pip install 'llm-spendguard[all]' && spendguard init --all   # ONE command: caps + identity, auto-detect your $0 subscription lanes, and wire the gate, MCP tools, in-chat receipt & slash-commands
 spendguard run -- python your_job.py   # gate ONE command: cost estimate before submit + hard caps
 spendguard reconcile all               # your ledger vs the provider's actual bill, with the gap NAMED
 spendguard submit-jobs jobs.jsonl      # hand it a WHOLE job set + a goal; it plans the cheapest route and runs it
 ```
+
+`spendguard init` is safe to re-run and works fully standalone (no account). `init` alone writes config and auto-detects
+your $0 lanes; `init --all` also wires the gate, MCP tools, receipt, assistant rule and slash-commands (add `--quick`
+for zero prompts). It ends on a status card + the one command that proves the path end-to-end.
 
 Five things it does that the observability and gateway tools don't:
 

@@ -13,9 +13,19 @@
   PART 3 — helpers: _prompt_yn (assume / EOF→eof / empty→default) and _reraise_if_governance_stop (re-raises a stop or
   a lock, passes an ordinary exception through).
 
+  PART 4 — KEY PRE-FLIGHT (setup._preflight_keys, item 3). Data-driven over EVERY declared secret key (not a
+  hand-picked openai/anthropic pair); the non-secret key_profile SELECTOR is excluded; every secret key has a
+  get-a-key link in config_schema.KEY_HELP_URLS (a new key added without one fails this test); a missing key prints
+  its URL.
+
+  PART 5 — CLOSING CARD (setup._setup_summary_card, item 4). Reflects the effective executor + the ready lanes + what
+  was wired, offers the $0 end-to-end proof, and survives None/empty inputs.
+
 Offline, no network, no spend, isolated SPENDGUARD_HOME. Lane detection AND the installers are monkeypatched, so the
 test asserts the WIRING DECISIONS — never a live host lane state or a real ~/.claude / venv write.
 """
+import contextlib
+import io
 import os
 import sys
 import tempfile
@@ -31,7 +41,7 @@ os.environ.setdefault("ANTHROPIC_API_KEY", "sk-ant-test-offline")
 os.environ.pop("SPENDGUARD_ADVISOR_EXECUTOR", None)
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from spendguard import setup, config, tier_config, gate, ledger      # noqa: E402
+from spendguard import setup, config, config_schema, tier_config, gate, ledger   # noqa: E402
 from spendguard import lanes as _lanes                                # noqa: E402
 
 
@@ -171,6 +181,41 @@ def main():
     except ledger.LockedError:
         locked = True
     ck("_reraise_if_governance_stop re-raises ledger.LockedError", locked)
+
+    # ── PART 4: key pre-flight (item 3) — data-driven over ALL secret keys, each with a get-a-key link ──
+    print("\n-- PART 4: _preflight_keys covers EVERY declared secret key + a link for each; excludes the selector --")
+    secret_keys = [s["env"] for s in config_schema.SETTINGS
+                   if s["section"] == "keys" and s.get("secret") and s.get("env")]
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        resolved, missing = setup._preflight_keys()
+    out = buf.getvalue()
+    ck("_preflight_keys returns counts covering EVERY declared secret key (data-driven, not a hand-picked pair)",
+       resolved + missing == len(secret_keys) and len(secret_keys) >= 8)
+    ck("openai + anthropic (our fake keys) resolve", resolved >= 2)
+    ck("the non-secret key_profile SELECTOR is excluded (not a credential)", "SPENDGUARD_KEY_PROFILE" not in out)
+    ck("EVERY declared secret key has a get-a-key link (a new key without one fails here)",
+       all(env in config_schema.KEY_HELP_URLS for env in secret_keys))
+    ck("a missing key prints its get-a-key URL", "get one: http" in out)
+
+    # ── PART 5: the closing setup card (item 4) — reflects executor + ready lanes, offers the $0 proof ──
+    print("\n-- PART 5: _setup_summary_card reflects the executor + ready lanes and offers the $0 proof --")
+    card = io.StringIO()
+    with contextlib.redirect_stdout(card):
+        setup._setup_summary_card((2, 10),
+                                  {"executor": "pool", "lanes": [_row("codex", "openai", "ok")]},
+                                  ["gate", "MCP"])
+    ctext = card.getvalue()
+    ck("card shows the effective executor (pool)", "advisor.executor = pool" in ctext)
+    ck("card lists the ready lane + what was wired", "codex" in ctext and "gate" in ctext and "MCP" in ctext)
+    ck("card offers the $0 end-to-end proof (lanes --probe)", "lanes --probe" in ctext)
+    ok_none = True
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            setup._setup_summary_card(None, None, None)   # nothing ready / nothing wired — must not crash
+    except Exception:
+        ok_none = False
+    ck("card handles None/empty inputs without crashing", ok_none)
 
     print(f"\n{'[FAIL]' if fails else 'OK'} test_init_autowire_and_installers: {len(fails)} failure(s)")
     return 1 if fails else 0

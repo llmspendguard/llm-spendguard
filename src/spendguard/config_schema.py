@@ -581,6 +581,26 @@ SETTINGS = [
 ]
 
 
+# Where to GET each provider / compute key — public console URLs. STABLE REFERENCE DATA (the same for every user, not
+# a per-environment value), kept as a named table next to the key SETTINGS above rather than inline in setup logic —
+# `spendguard init`'s key pre-flight reads it to point a first-timer straight at the key page for anything not yet set.
+# Keyed by the env var in SETTINGS; a key with no entry simply prints no URL. SSOT for "where do I get this key".
+KEY_HELP_URLS = {
+    "OPENAI_API_KEY": "https://platform.openai.com/api-keys",
+    "ANTHROPIC_API_KEY": "https://console.anthropic.com/settings/keys",
+    "GEMINI_API_KEY": "https://aistudio.google.com/apikey",
+    "DEEPSEEK_API_KEY": "https://platform.deepseek.com/api_keys",
+    "DASHSCOPE_API_KEY": "https://bailian.console.aliyun.com/?tab=model#/api-key",
+    "ZAI_API_KEY": "https://z.ai/manage-apikey/apikey-list",
+    "MOONSHOT_API_KEY": "https://platform.moonshot.ai/console/api-keys",
+    "VAST_API_KEY": "https://cloud.vast.ai/account/",
+    "RUNPOD_API_KEY": "https://www.runpod.io/console/user/settings",
+    "MODAL_TOKEN_ID": "https://modal.com/settings/tokens",
+    "MODAL_TOKEN_SECRET": "https://modal.com/settings/tokens",
+    "LAMBDA_API_KEY": "https://cloud.lambdalabs.com/api-keys",
+}
+
+
 def sections():
     out = {}
     for s in SETTINGS:

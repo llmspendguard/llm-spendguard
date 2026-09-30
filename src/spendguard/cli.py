@@ -17,7 +17,7 @@ import sys
 _GROUPS = [
     ("start here", [
         ("scan", "what your local coding-agent work costs — no key, no network, 10s"),
-        ("init", "set your caps + identity (deterministic; --quick for defaults)"),
+        ("init", "one-command setup: caps + identity + auto-wire your $0 lanes (--all also wires gate/MCP/receipt/rule/skills)"),
         ("run", "`run -- <cmd>` gate ONE command; nothing written to your interpreter"),
         ("sources", "where can this machine spend? providers · agent tools · ungated venvs"),
         ("doctor", "is the gate enforcing HERE? keys, lanes, ledger status"),
@@ -89,6 +89,9 @@ def _all_commands():
 
 def help_text():
     out = ["spendguard — know what an LLM job will cost before you run it, and prove your ledger matches the bill.",
+           "",
+           "quickstart:  pip install llm-spendguard[all]  &&  spendguard init --all",
+           "             (auto-detects your $0 subscription lanes + wires the gate, MCP tools, receipt & slash-commands)",
            "", "usage: spendguard <command> [args]    ·    spendguard --version", ""]
     for group, items in _GROUPS:
         out.append(f"{group}:")
@@ -134,7 +137,8 @@ def _dispatch(argv=None):
         try:
             from . import config
             if not config.CONFIG_JSON.exists() and not config.saas_path().exists():
-                print("ℹ not configured yet — run `spendguard init` (works standalone; optionally connect a team).\n")
+                print("ℹ not configured yet — run `spendguard init --all` for one-command setup (caps + $0 lanes + "
+                      "gate/MCP/receipt/rule/skills); plain `spendguard init` is config-only. Works standalone.\n")
         except Exception:
             pass
     if cmd in ("status", "on", "off", "doctor"):
