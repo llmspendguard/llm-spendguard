@@ -4,6 +4,29 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.11.2] — 2026-09-30
+
+Onboarding release — make `spendguard init` a true one-command setup: a new user is wired into their whole stack in
+one step, their $0 subscription lanes are detected and used automatically, and a first-timer is never left guessing
+where a key comes from. No breaking changes; plain `spendguard init --quick` stays config-only.
+
+### Added
+- **`spendguard init` auto-detects your $0 subscription lanes** and, when at least one CLI is installed + logged in,
+  sets `advisor.executor = pool` so realtime meta/best-value calls prefer your plans (billed $0) before the metered
+  API. Never clobbers an executor you — or `$SPENDGUARD_ADVISOR_EXECUTOR` — already chose; no ready lane ⇒ no change
+  (safe on CI). Intentionally does NOT auto-seed `advisor.lane_models`: without the plan's real model a priced guess
+  would undercount lane value, so you declare it via `spendguard lanes set-model` (which validates it is priced).
+- **`spendguard init --all`** folds the five installers into one guided flow — gate hook · MCP tools · in-chat
+  receipt · global assistant rule · slash-commands — each a per-step [Y/n]; `--all --quick` runs them all zero-prompt.
+  A governance stop (spend refusal / ledger lock) from any step propagates, never downgraded to "skipped".
+- **Key pre-flight over EVERY declared provider/compute key** (not just openai/anthropic), with a get-a-key link for
+  each one not set — from a new `config_schema.KEY_HELP_URLS` table (schema-driven, not a literal in setup logic).
+- **A closing setup card** — gate enforcing here, keys resolved, ready $0 lanes + `advisor.executor`, what was
+  wired — then the one `$0` command that proves the path end-to-end (`spendguard lanes --probe`), offered never
+  auto-run (a probe bills plan tokens; setup must not spend for you).
+- Discoverability: `spendguard --help` and the first-run nudge lead with the quickstart
+  (`pip install llm-spendguard[all] && spendguard init --all`); the README gains a one-command setup block.
+
 ## [0.11.1] — 2026-09-30
 
 Reliability + correctness release — ledger-truth, schema robustness, and embedding fixes that public consumers
