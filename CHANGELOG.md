@@ -4,6 +4,45 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.11.1] — 2026-09-30
+
+Reliability + correctness release — ledger-truth, schema robustness, and embedding fixes that public consumers
+(`llm-spendguard[openai,anthropic]`, e.g. via honestreview) need. 26 commits since 0.11.0.
+
+### Fixed
+- **Token-count integrity — a metered call no longer records a FABRICATED ceiling estimate.** A call routed through
+  `chat.completions.with_raw_response.create` (used to read the vendor's rate-limit headers) returns a wrapper with no
+  `.usage`; the usage extractor read `None` and the recorder fell back to the model's published OUTPUT CEILING as the
+  token count — recording e.g. a 35/16-token deepseek reply as `in=5 / out=393,216 / $0.47`, a ~9,000× over-record on
+  EVERY OpenAI-compatible call, poisoning the ledger, cost advice, and estimates. The chat/responses/anthropic usage
+  extractors now reach through the raw-response wrapper via `.parse()` (cached — one parse, no re-read).
+- **gemini / voyage embeddings crashed** with `int(None)` when a provider returns `index=None`; now keyed by the
+  stamped index when present, else the enumeration position (exact per the OpenAI-compat input-order guarantee).
+- **Schema validation** — UNION types (`["number","null"]`) no longer raise (the real healiom-investor-score crash); a
+  malformed contract is refused cleanly BEFORE billing (was an opaque `TypeError`, answer billed then discarded); and
+  declared value constraints (enum / const / bounds / `additionalProperties`) are enforced, not just type/required.
+- **The data-integrity guard is never blind** — an impossible per-call `out_tok` is flagged even for a model with no
+  published ceiling (resolves output-ceiling → context-window → a universal bound).
+- Realtime capture lands under the caller's INTENT (not `sig`) and honors `store_prompts`; an explicit `timeout_s` no
+  longer breaks the Anthropic VISION path; `bulk_delegate`'s lane path delivers the resolved prompt, not the raw key;
+  `experiment.py` routes output-budget + reasoning through the canonical homes (kills the 1500/400 hardcodes).
+
+### Added
+- **Embedding models are a CATALOG** (`model_catalog.embedding_models`) — the SSOT for "which models embed" (records
+  marked `mode: embedding`); gemini-embedding-001 + voyage-3.5 added; `_embed_default_model` / `embed_compare` and the
+  reliability harness all DERIVE from it — no hardcoded embedding-model ids anywhere.
+- Model capabilities (vision, `response_schema`, output ceilings) sourced from the LiteLLM breadth cache with a daily
+  freshness + completeness audit. `fell_from` on the calls ledger (which $0 lane a metered call fell over FROM) with a
+  `spendguard lanes --fallback-spend` rollup. Batch exactly-once offload (reconcile-before-submit) + >25K auto-chunking.
+  The OVERLOADED (429/529) retryable failure class covered end-to-end. A logged-out lane surfaces its exact re-login
+  command. A consumer×provider SEAM smoke matrix (`scripts/reliability/consumer_provider_smoke.py`, measure-then-project).
+
+### Changed
+- Call-path lane chatter is OPERATOR-opt-in (off by default) — a consumer never sees "lane" on the call path; a down
+  lane still fails over silently to its metered twin.
+- Attribution evidence is sent WHOLE (no silent `[:6000]` cut; input bounded only at the provider window); GPU-relevance
+  and other meaning classifications are LLM decisions, not regex gates.
+
 ## [0.11.0] — 2026-09-26
 
 ### Added
