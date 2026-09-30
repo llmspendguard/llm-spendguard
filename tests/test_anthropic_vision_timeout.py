@@ -18,6 +18,10 @@ import tempfile
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-anthropic-vision-timeout-")
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
+# Offline scripts must supply their OWN fake key: keyless CI has no ANTHROPIC_API_KEY, so without this the metered path
+# short-circuits at the "no key" check BEFORE the monkeypatched client is used, and every assertion cascades (the
+# green-locally/red-on-keyless-CI trap — the client is faked below + test_runner points a dead proxy at any real call).
+os.environ.setdefault("ANTHROPIC_API_KEY", "sk-ant-test-offline")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 import anthropic                                                    # noqa: E402
