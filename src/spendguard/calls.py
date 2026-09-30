@@ -342,6 +342,32 @@ def _resolve_attribution(model, cost, intent, chain, project):
 # > 1 only to absorb curated-ceiling / token-count slop; it never false-flags a legit at-ceiling output.
 _SUSPECT_CEILING_FACTOR = 1.5
 
+# The last-resort out_tok sanity bound when the catalog knows NEITHER an output ceiling NOR a context window for a model
+# (an uncurated / newly-seen id). No single completion emits this many tokens today — the largest published output
+# ceiling is well under 1M — so a per-call out_tok above this is definitionally an aggregate/backfill/recording bug (the
+# measured 1M-68M gpt-5-nano rows). Deliberately generous so it never false-flags a real call, only catches gross bugs.
+_UNIVERSAL_OUT_TOK_SANITY = 1_000_000
+
+
+def _out_tok_sanity_ceiling(model):
+    """The bound a single call's out_tok cannot legitimately exceed, resolved so the suspect check is NEVER BLIND (the
+    gap that let deepseek's 393,216-token artifact and the 68M-token rows through when a model had no curated ceiling):
+      1. the curated published OUTPUT ceiling (the tight, correct bound), else
+      2. the context WINDOW (a call cannot output more tokens than the window holds), else
+      3. _UNIVERSAL_OUT_TOK_SANITY (no call today emits this many — anything above is a bug, whatever the model).
+    Returns (bound:int, basis:str). Never raises; a catalog hiccup degrades to the universal bound, never to 'no bound'."""
+    from . import model_catalog as _mc
+    try:
+        v = _mc.published_ceiling(model)
+        if v:
+            return int(v), "output_ceiling"
+        cw = _mc.context_window(model)
+        if cw:
+            return int(cw), "context_window"
+    except Exception:
+        pass
+    return _UNIVERSAL_OUT_TOK_SANITY, "universal_bound"
+
 
 def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
            prompt=None, output=None, finish=None, intent=None, chain=None, who=None,
@@ -411,13 +437,12 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
         # the factor only absorbs curation/token-count slop and never false-flags a legit at-ceiling output.
         suspect = None
         try:
-            from . import model_catalog as _mc
-            _ceil = _mc.published_ceiling(model)
+            _ceil, _basis = _out_tok_sanity_ceiling(model)   # NEVER None — output_ceiling → context_window → universal
             if _ceil and int(out_tok or 0) > int(_ceil) * _SUSPECT_CEILING_FACTOR:
-                suspect = (f"out_tok {int(out_tok or 0)} > {_SUSPECT_CEILING_FACTOR}x ceiling {int(_ceil)} "
+                suspect = (f"out_tok {int(out_tok or 0)} > {_SUSPECT_CEILING_FACTOR}x {_basis} {int(_ceil)} "
                            f"(impossible per-call: aggregate/backfill/bug)")
                 config.warn_once(f"[spendguard] calls: suspect per-call out_tok {int(out_tok or 0)} for {model} "
-                                 f"(ceiling {int(_ceil)}) — flagged, not trusted as a per-call fact")
+                                 f"({_basis} {int(_ceil)}) — flagged, not trusted as a per-call fact")
         except Exception as _sce:
             from . import gate as _scg
             if _scg.is_deliberate_stop(_sce):    # a spend/deadline/containment stop HALTS — never swallowed into a flag

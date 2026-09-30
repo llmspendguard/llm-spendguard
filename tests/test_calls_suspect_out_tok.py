@@ -51,9 +51,22 @@ cid3b = calls.record_call("openai", "gpt-5-nano", "realtime", 0.4, in_tok=100, o
 ck("200000 (1.56x the 128K ceiling — impossible for nano) → flagged (a 2x margin would miss it)",
    bool(_row(cid3b)[2]))
 
-print("-- an unknown model (no known ceiling) is never flagged (conservative, no guessed bound) --")
+print("-- an unknown model (no curated ceiling) is NO LONGER a blind spot: the universal bound still catches absurdity --")
+# BEFORE #2: no published ceiling → the check was SKIPPED, so a 5M / 68M out_tok on an uncurated model sailed through
+# un-flagged (the deepseek/gpt-5-nano artifact class). NOW the resolver falls back output_ceiling → context_window →
+# a hard universal bound, so absurdity is caught whatever the model — while a plausible count is still never flagged.
 cid4 = calls.record_call("who", "who:mystery-model", "realtime", 0.5, in_tok=100, out_tok=5_000_000, intent="t")
-ck("unknown-ceiling model → suspect stays NULL (no guessed bound)", _row(cid4)[2] is None)
+ck("unknown-ceiling model + 5,000,000 out_tok → NOW flagged (universal bound, not blind)", bool(_row(cid4)[2]))
+ck("...the flag names the universal basis", "universal" in (_row(cid4)[2] or ""))
+cid4b = calls.record_call("who", "who:mystery-model", "realtime", 0.01, in_tok=100, out_tok=50_000, intent="t")
+ck("unknown-ceiling model + a PLAUSIBLE 50,000 out_tok → NOT flagged (no false positive)", _row(cid4b)[2] is None)
+
+print("-- the sanity-ceiling resolver is never blind: output_ceiling → context_window → universal --")
+_c_oc, _b_oc = calls._out_tok_sanity_ceiling("openai:gpt-5-nano")
+ck("a curated model resolves to its output_ceiling", _b_oc == "output_ceiling" and _c_oc > 0)
+_c_u, _b_u = calls._out_tok_sanity_ceiling("who:mystery-model")
+ck("an uncurated model falls back to the universal bound (never None)",
+   _b_u == "universal_bound" and _c_u == calls._UNIVERSAL_OUT_TOK_SANITY)
 
 print(f"\n{'[FAIL]' if _fails else 'OK'} test_calls_suspect_out_tok: {len(_fails)} failure(s)")
 sys.exit(1 if _fails else 0)

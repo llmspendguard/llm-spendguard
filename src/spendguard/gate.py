@@ -1003,8 +1003,27 @@ def _est_oai_chat(kw):
             _expected_out(_m, kw=kw)[0])
 
 
+def _usage_bearer(result):
+    """The object that actually carries `.usage`. A with_raw_response call (LegacyAPIResponse / APIResponse) has NO
+    `.usage` on the wrapper — the parsed body sits behind `.parse()` (cached, so calling it here and again in the
+    caller is one parse, no re-read, no stream consumption on a non-stream response). Without reaching through it, the
+    act extractor reads None and the recorder falls back to the max_tokens ESTIMATE — which for a cold model is the
+    published output CEILING: the deepseek 393,216-token / $0.47-per-call artifact (adapters uses with_raw_response to
+    learn rate-limit headers, so EVERY compat call took this path and recorded the ceiling instead of ~16 real tokens).
+    Returns the wrapper unchanged when it already has usage or cannot be parsed — never raises."""
+    if getattr(result, "usage", None) is not None:
+        return result
+    _parse = getattr(result, "parse", None)
+    if callable(_parse):
+        try:
+            return _parse()
+        except Exception:
+            return result
+    return result
+
+
 def _act_oai_chat(result):
-    u = getattr(result, "usage", None)
+    u = getattr(_usage_bearer(result), "usage", None)
     return None if not u else (getattr(u, "prompt_tokens", 0) or 0, getattr(u, "completion_tokens", 0) or 0)
 
 
@@ -1027,7 +1046,7 @@ def _est_oai_resp(kw):
 
 
 def _act_oai_resp(result):
-    u = getattr(result, "usage", None)              # Responses usage = input_tokens / output_tokens (not prompt/completion)
+    u = getattr(_usage_bearer(result), "usage", None)   # Responses usage = input_tokens / output_tokens (not prompt/completion)
     return None if not u else (getattr(u, "input_tokens", 0) or 0, getattr(u, "output_tokens", 0) or 0)
 
 
@@ -1109,7 +1128,7 @@ def _est_anth_msg(kw):
 
 
 def _act_anth_msg(result):
-    u = getattr(result, "usage", None)
+    u = getattr(_usage_bearer(result), "usage", None)
     return None if not u else (getattr(u, "input_tokens", 0) or 0, getattr(u, "output_tokens", 0) or 0)
 
 

@@ -61,11 +61,11 @@ def capture_live_on():
     if v is not None and v.strip() != "":
         return v.strip().lower() in ("1", "true", "yes", "on")
 
-    def _on(x):
+    def _cfg_truthy(x):
         return str(x).strip().lower() in ("1", "true", "yes", "on")
     try:
-        return (_on(config._cfg_get("callio", "capture_live", "off"))
-                or _on(config._cfg_get("callio", "store_prompts", "off")))
+        return (_cfg_truthy(config._cfg_get("callio", "capture_live", "off"))
+                or _cfg_truthy(config._cfg_get("callio", "store_prompts", "off")))
     except Exception:
         return False
 
