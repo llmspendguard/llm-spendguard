@@ -627,12 +627,167 @@ def _scaffold_keys_env():
         return p, False
 
 
+def _reraise_if_governance_stop(e):
+    """Re-raise a GOVERNANCE stop — a spend refusal / dispatch deadline (`gate.is_deliberate_stop`) or a ledger lock
+    (`ledger.LockedError`) — so a best-effort setup step never downgrades it to 'skipped'. The same 'stop or locked'
+    concept `provider_tokens._stop_or_locked` uses, delegated to the canonical predicates rather than re-listed. Any
+    other exception is left for the caller's broad handler to report."""
+    try:
+        from . import gate, ledger
+        stop = gate.is_deliberate_stop(e) or isinstance(e, ledger.LockedError)
+    except Exception:
+        stop = False
+    if stop:
+        raise e
+
+
+def _prompt_yn(prompt, default=True, assume=False, eof=None):
+    """A [Y/n] prompt. `assume` (the zero-prompt path) returns `default` with NO input; a closed stdin (EOFError —
+    a piped `init`, or CI) returns `eof` when given else `default`; an empty line keeps `default`. One place so every
+    step's prompt behaves identically."""
+    if assume:
+        return default
+    try:
+        ans = input(f"  {prompt} {'[Y/n]' if default else '[y/N]'}\n  > ").strip().lower()
+    except EOFError:
+        return default if eof is None else eof
+    if ans == "":
+        return default
+    return ans in ("y", "yes", "1", "true")
+
+
+def _autowire_lanes():
+    """Auto-detect installed + logged-in $0 subscription lanes and, when at least one is READY and advisor.executor
+    is still the metered default, flip it to 'pool' so realtime meta/best-value calls prefer the plans (billed $0)
+    before the metered API. Reuses the detection primitive (`lanes.lanes_status`) and the validated writer
+    (`tier_config._write_advisor_cfg`) — no new mechanism. NEVER clobbers an executor the user or the
+    SPENDGUARD_ADVISOR_EXECUTOR env already chose. Detection is host state only ($0, no model calls), so it is safe
+    under --quick / on CI (no ready lane ⇒ no change). advisor.lane_models is intentionally NOT auto-seeded: without
+    the plan's real model a priced guess would UNDERCOUNT the lane's value (a wrong number pointing the wrong way) —
+    the user declares it deliberately with `spendguard lanes set-model`, which validates the model is priced."""
+    try:
+        from . import lanes as _lanes, tier_config, config as _cfg
+        st = _lanes.lanes_status()
+    except Exception as e:
+        _reraise_if_governance_stop(e)
+        print(f"\n  (subscription-lane auto-detect unavailable: {e})")
+        return
+    ready = [ln for ln in st["lanes"] if ln.get("auth") == "ok"]
+    print("\nSubscription lanes ($0 plan-covered execution for realtime meta prompts + best-value calls):")
+    env_exec = os.environ.get("SPENDGUARD_ADVISOR_EXECUTOR")
+    stored_exec = _cfg._cfg_get("advisor", "executor", None)
+    if ready:
+        names = ", ".join(ln["lane"] for ln in ready)
+        if env_exec:
+            print(f"  detected ready: {names} — but $SPENDGUARD_ADVISOR_EXECUTOR={env_exec} pins the executor; leaving it.")
+        elif stored_exec and stored_exec != "api":
+            print(f"  detected ready: {names} — advisor.executor already {stored_exec!r}; leaving it.")
+        else:
+            try:
+                tier_config._write_advisor_cfg("executor", "pool")
+                print(f"  ✓ detected ready: {names}")
+                print("  ✓ set advisor.executor = 'pool' — realtime calls now try these $0 lanes first "
+                      "(revert anytime: `spendguard config set advisor.executor api`).")
+            except Exception as e:
+                _reraise_if_governance_stop(e)             # a lock / refusal from the writer must surface, not 'skip'
+                print(f"  (could not set advisor.executor: {e})")
+    # the standard per-lane state block (now reflects the executor just set) + the definitive probe hint
+    try:
+        summary = _lanes.lane_summary_lines()
+    except Exception as e:
+        _reraise_if_governance_stop(e)
+        summary = []
+    if summary:
+        for line in summary:
+            print("  " + line)
+        print("  Verify end-to-end: `spendguard lanes --probe` (one tiny plan-billed prompt per lane, $0).")
+    elif not ready:
+        hint = next((ln["activate"] for ln in st["lanes"] if ln.get("activate")), None)
+        print("  none active yet — realtime runs on the metered API. Activate a plan lane to route at $0"
+              + (f":\n    {hint}" if hint else " (`spendguard lanes` shows each lane's step)."))
+        print("  then re-run `spendguard init` (or `spendguard config set advisor.executor pool`).")
+
+
+def _run_integration_installers(quick=False, do_all=False):
+    """One guided flow that folds the five modular installers together — gate THIS interpreter, register the MCP
+    tools, install the in-chat receipt, drop the global assistant rule, install the slash-commands. Each step is
+    idempotent + reversible, prints its own result, and is a per-step [Y/n]. Reuses the existing installers (no
+    reimplementation): `install_hook`, `mcp_server.register_client`, `receipt.install_cli`, `install_rule`,
+    `install_skills`. A governance stop from any step propagates (never downgraded to 'skipped').
+
+    Flag semantics (backward-compatible): plain `--quick` stays CONFIG-ONLY and returns here untouched; `--all`
+    opts into the wiring (per-step prompts); `--all --quick` runs every step at its default with NO prompts (the
+    one-command full setup); plain interactive asks a single gateway question first, then per-step."""
+    import sys
+    if quick and not do_all:
+        return                                             # preserve the original --quick: config defaults only
+    if not do_all:                                         # plain interactive: one gateway question gates the flow
+        if not _prompt_yn("Wire spendguard into your dev tools now — gate this Python, MCP tools, in-chat receipt, "
+                          "global assistant rule, slash-commands?", default=True, eof=False):
+            print("  skipped — wire any later: `spendguard install-hook`, `spendguard mcp --register`, "
+                  "`spendguard install-receipts`, `spendguard install-rule --global`, `spendguard install-skills` "
+                  "(or `spendguard init --all` for all of them).")
+            return
+    print("\nWiring spendguard into your tools (each step optional, idempotent, reversible):")
+    # 1) gate THIS interpreter so every LLM script it runs is spend-checked
+    if _prompt_yn("Gate this Python so LLM scripts here are always spend-checked (recommended)?",
+                  default=True, assume=quick):
+        try:
+            if sys.prefix != sys.base_prefix:              # inside a venv where spendguard already imports → no pip
+                install_hook(venv=sys.prefix, install_pkg=False)
+            else:                                          # base/system python: PEP668-safe path-injecting usercustomize
+                install_hook(user=True, python=sys.executable)
+        except Exception as e:
+            _reraise_if_governance_stop(e)
+            print(f"  (gate step skipped: {e})")
+    # 2) MCP tools in Claude Code
+    if _prompt_yn("Register the spendguard MCP tools (model-advisor + spend) in Claude Code?",
+                  default=True, assume=quick):
+        try:
+            from . import mcp_server
+            mcp_server.register_client()
+        except Exception as e:
+            _reraise_if_governance_stop(e)
+            print(f"  (MCP step skipped: {e})")
+    # 3) always-on in-chat spend receipt
+    if _prompt_yn("Install the always-on in-chat spend receipt (Claude Code)?", default=True, assume=quick):
+        try:
+            from . import receipt
+            receipt.install_cli([])
+        except Exception as e:
+            _reraise_if_governance_stop(e)
+            print(f"  (receipt step skipped: {e})")
+    # 4) global assistant rule — every project's assistant then routes LLM code through spendguard
+    if _prompt_yn("Add the spendguard rule to your global assistant instructions (~/.claude/CLAUDE.md)?",
+                  default=True, assume=quick):
+        try:
+            install_rule(glob_=True)
+        except Exception as e:
+            _reraise_if_governance_stop(e)
+            print(f"  (rule step skipped: {e})")
+    # 5) slash-commands
+    if _prompt_yn("Install spendguard slash-commands (/spend, /spendguard-learn, …) for Claude Code?",
+                  default=True, assume=quick):
+        try:
+            install_skills()
+        except Exception as e:
+            _reraise_if_governance_stop(e)
+            print(f"  (skills step skipped: {e})")
+    print("\n  ✓ tool wiring complete — `spendguard doctor` confirms the gate is ENFORCING here.")
+
+
 def cmd_init(argv=None):
     argv = list(argv or [])
     quick = bool({"--quick", "--yes", "-y"} & set(argv))   # fast path: write defaults, zero prompts (CI/onboarding)
-    print("spendguard setup" + ("  (--quick: writing defaults, no prompts)" if quick else "") + "\n")
+    do_all = "--all" in argv                                # also WIRE the tools (gate/MCP/receipt/rule/skills)
+    _mode = "  (--all --quick: full setup, no prompts)" if (quick and do_all) else \
+            "  (--quick: writing defaults, no prompts)" if quick else \
+            "  (--all: also wiring your tools)" if do_all else ""
+    print("spendguard setup" + _mode + "\n")
     print("  spendguard runs FULLY STANDALONE — a local spend gate on this machine, no account needed.")
-    print("  Optionally connect to a team/org dashboard (llmspendguard.com) to roll spend up across your team.\n")
+    print("  Optionally connect to a team/org dashboard (llmspendguard.com) to roll spend up across your team.")
+    print("  This also auto-detects your $0 subscription lanes; add `--all` to wire the gate, MCP tools, in-chat "
+          "receipt, assistant rule + slash-commands in one go (`--all --quick` = zero prompts).\n")
     connect = "--connect" in argv
     if not connect and "--local" not in argv and not quick:
         try:
@@ -746,18 +901,13 @@ def cmd_init(argv=None):
         print(f"    {prov:<9}: {'🟢 resolved' if k else '🔴 MISSING — ' + prov + ' spend will be INVISIBLE to reconcile/report'}")
     if (cfgjson.get("budget") or {}).get("backend") == "sqlite":
         print(f"SQLite budget ledger will be created at {config.db_path()} on first charge.")
-    # Subscription lanes: if the executor covers a plan lane, tell the user EXACTLY what activates it —
-    # at call time a dead lane degrades silently to the metered API, so setup is where it must be said.
-    try:
-        from . import lanes as _lanes
-        _ll = _lanes.lane_summary_lines()
-        if _ll:
-            print()
-            for _l in _ll:
-                print(_l)
-            print("  Verify end-to-end: `spendguard lanes --probe` (one tiny plan-billed prompt per lane, $0).")
-    except Exception:
-        pass
+    # Subscription lanes: DETECT the ready ones and auto-route realtime calls through them at $0 (executor='pool'),
+    # then show each lane's state + exactly what activates the inactive ones. Supersedes the old print-only block —
+    # at call time a dead lane degrades silently to the metered API, so setup is where the routing must be wired.
+    _autowire_lanes()
+    # Fold the modular installers into this one command (gate / MCP / receipt / rule / skills). Plain `--quick` stays
+    # config-only; `--all` (optionally with --quick) wires the tools; plain interactive asks a single gateway first.
+    _run_integration_installers(quick=quick, do_all=do_all)
     # Cold-start the cost advisor from your OWN history (so day-one recommendations aren't empty).
     print("\nSeed the advisor: `spendguard bootstrap` mines your past provider batches (free retrieval) into a "
           "starter cost+quality corpus — the paid reasoning step is caged by caps.meta + estimate-first (opt-in --run).")
