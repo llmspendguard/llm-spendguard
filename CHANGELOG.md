@@ -4,6 +4,20 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.11.4] — 2026-09-30
+
+Packaging fix — ship the curated catalog so 0.11.3's embedding batch clamp actually works on a `pip install`.
+
+### Fixed
+- **`model_catalog.json` (the curated catalog SSOT) now ships in the wheel.** It was never in `package-data` (only
+  `prices.json` + `py.typed`), so on a pip install `model_catalog._load_records()` found no catalog and the curated
+  accessors — `embed_batch_ceiling`, `embedding_models`, curated capabilities/context/reasoning — silently degraded to
+  the litellm breadth / defaults. Concretely the 0.11.3 per-provider embedding batch **clamp was INERT for pip users**
+  (`embed_batch_ceiling` → None), and since litellm carries no embedding batch-cap data there was no fallback. Now
+  shipped, so a pip install matches the tested editable/dev config. Pricing is unchanged — `prices.json` (the generated
+  projection) already shipped and agrees with the catalog. Guard: `tests/test_packaging_data_files.py` (every runtime
+  data file in the package dir must be declared in `package-data`).
+
 ## [0.11.3] — 2026-09-30
 
 Correctness fix — per-provider embedding batch ceilings (a provider-enforced limit is now the catalog SSOT, not one

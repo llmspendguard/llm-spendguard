@@ -48,7 +48,11 @@ spendguard = "spendguard.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-spendguard = ["prices.json", "py.typed"]
+# prices.json is the GENERATED price projection; model_catalog.json is the curated SSOT that model_catalog.py reads at
+# runtime (embed_batch_ceiling / embedding_models / curated capabilities + context + reasoning). Both MUST ship or a
+# pip install silently degrades those accessors to the litellm breadth / defaults — which have NO embedding batch-cap
+# data, so the per-provider embed clamp was inert on pip until 0.11.4. Guarded by tests/test_packaging_data_files.py.
+spendguard = ["prices.json", "model_catalog.json", "py.typed"]
 
 [tool.setuptools.dynamic]
 # The version comes from ONE place — the src literal — read at build time so wheel metadata matches the code.
