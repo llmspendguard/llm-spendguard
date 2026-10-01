@@ -4,6 +4,41 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-10-01
+
+Anthropic Message Batch path + the collective data-plane's client overlay. spendguard's batch surface now spans BOTH
+providers (OpenAI chat batches + Anthropic Message Batches), and a curated catalog fact the server carries reaches an
+install without a package release.
+
+### Added
+- **Anthropic Message Batches — submit + collect + exactly-once offload** (the Messages-API twin of the OpenAI chat
+  batch). `submit.submit_message_batch(tasks, model, …)` builds the INLINE requests through the one
+  `models.apply_call_params` authority and submits via `client.messages.batches.create`, which the gate already
+  intercepts (`_gate_anthropic`) for the global/daily/monthly + per-batch caps and the provisional, intent-attributed
+  cost row — so there is no second, looser chokepoint. `callio.collect_message_batch(batch_ids, intent, model)` is the
+  settle twin, keyed by custom_id (joined text, or a forced-tool/schema result's `tool_use.input` as JSON), recording
+  REAL usage on BOTH token axes (fresh + cache_read, matching the realtime convention). REFUSE-NEVER-DEGRADE: over the
+  cap it returns {error, estimate} and a gate refusal propagates — it never silently falls back to realtime.
+- **Provider-aware batch offload + collect.** `batch_tracker.submit_offload` + `lane_queue.collect_batched` derive the
+  provider from `batch_model` and route Anthropic through the Messages Batch path. Anthropic batches carry NO
+  server-side metadata (unlike OpenAI), so exactly-once rides each request's globally-unique custom_id + a LOCAL pending
+  record (written before the paid create, confirmed after); a crash-after-accept is recovered by scanning the provider
+  for a batch carrying these rows' custom_ids, and an unconfirmable in-flight create is HELD (never a double-pay) — keyed
+  to our own record, bounded by the completion window, and never blocking on an unrelated batch. Fail-closed throughout
+  (an unreadable pending record refuses rather than blind-submits). Guards: tests/test_message_batch_{submit,collect}.py,
+  test_offload_exactly_once_anthropic.py, test_collect_batched_dispatch.py (offline, shared tests/_fake_anthropic.py).
+- **Client data-plane overlay (T2).** `model_catalog._load_records` layers the shipped floor → a server-synced
+  `catalog_synced.json` → local overrides (content-keyed, never stale on a restore/rsync/touch), and
+  `saas.sync_catalog_overlay` (wired into `spendguard sync-catalog`, fail-open) pulls the server's spendguard-CURATED
+  catalog so a measured fact (an embed ceiling, a verified price) reaches this install with no package release. See
+  docs/DATA_PLANE.md. Guards: tests/test_catalog_overlay*.py.
+
+### Fixed
+- **Two receipt/codex suite tests were calendar-fragile at the UTC month boundary.** They mixed local `date.today()`
+  with the receipt's UTC windows (`_utc_today`), so they failed only on a month/week-boundary day — not a code bug (the
+  receipt windows in UTC to match how providers bill, and keeps real-$ and est-value separate). Now UTC-consistent and
+  robust to window coincidence.
+
 ## [0.11.4] — 2026-09-30
 
 Packaging fix — ship the curated catalog so 0.11.3's embedding batch clamp actually works on a `pip install`.
