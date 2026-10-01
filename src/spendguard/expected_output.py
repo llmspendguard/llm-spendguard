@@ -34,17 +34,33 @@ estimate and trip caps on work costing pennies — the false-refusal failure, ar
 import sys
 
 # Every rung expect() can answer from, measured-first. A reader must be able to tell a MEASUREMENT
-# ("learned", "model-history") from a CEILING ("caller-cap", "model-max") from an admission ("unknown"),
-# because a ceiling presented as an expectation over-states a real answer by ~100x.
-BASES = ("learned", "model-history", "caller-cap", "reasoning-floor", "model-max", "unknown")
+# ("learned", "model-history") from a DECLARATION ("declared") from a CEILING ("caller-cap", "model-max") from an
+# admission ("unknown"), because a ceiling presented as an expectation over-states a real answer by ~100x.
+BASES = ("learned", "declared", "model-history", "caller-cap", "reasoning-floor", "model-max", "unknown")
+
+# The BATCH estimate's basis vocabulary. batch_output_estimate remaps expect()'s rungs ('measured:<intent>' /
+# 'measured:model' / 'declared' / 'reasoning-floor' / 'ceiling') for a reader who must tell a MEASUREMENT from a
+# DECLARATION from a CEILING at a glance; submit.estimate_jsonl_cost also emits 'measured avg' for a caller-supplied
+# avg_out_tokens. 'measured:<intent>' carries the intent, so membership is a predicate, not a flat set — use is_batch_basis().
+BATCH_BASES = ("measured:model", "measured avg", "declared", "reasoning-floor", "ceiling")
 
 MIN_OBS = 20                 # below this a class's distribution is noise, not a measurement
 _warned = set()
 
 
-def expect(model, sig=None, max_tokens=None):
+def is_batch_basis(b):
+    """True iff `b` is a valid batch_output_estimate basis label — the fixed BATCH_BASES, or a 'measured:<intent>' tag."""
+    return bool(b) and (b in BATCH_BASES or str(b).startswith("measured:"))
+
+
+def expect(model, sig=None, max_tokens=None, declared=None):
     """(tokens, basis) for ONE request. `basis` names where the number came from, so a receipt or a block
-    message can say it out loud: 'learned' · 'caller-cap' · 'model-max' · 'unknown'."""
+    message can say it out loud: 'learned' · 'declared' · 'caller-cap' · 'model-max' · 'unknown'.
+
+    `declared` is a caller's EXPLICIT, intent-specific expected-output figure (per request) — used after the per-class
+    LEARNED measurement (the most trustworthy) but BEFORE the broad model-history average and any ceiling, so a caller
+    who has measured their output can authorize a job without the ceiling's ~100x over-statement. It is the DECLARED
+    half of the batch estimate basis (the measured half is the learned/model-history rungs); see batch_output_estimate."""
     if sig:
         try:
             from . import bulkgate
@@ -58,6 +74,14 @@ def expect(model, sig=None, max_tokens=None):
                 # A caller's cap still bounds it: they cannot receive more than they allowed.
                 return (min(learned, int(max_tokens)) if max_tokens else learned), "learned"
         except Exception:
+            pass
+    # DECLARED — a caller's explicit, INTENT-SPECIFIC expected output. After the per-class LEARNED measurement (the most
+    # trustworthy) but BEFORE the broad model-history average and any ceiling: a declaration the caller is accountable for,
+    # for THIS call-class, beats a model-wide average that mixes unrelated classes, and avoids the ceiling's ~100x.
+    if declared:
+        try:
+            return int(declared), "declared"
+        except (TypeError, ValueError):
             pass
     # RUNG 2 — this model's measured output across ALL its call-classes. Broader than the class, but still a
     # MEASUREMENT. Below this the only remaining answers are ceilings (the caller's cap, the model's published
@@ -117,3 +141,39 @@ def warn_unknown(model):
     print(f"[spend_gate] OUTPUT UNKNOWN for '{model}': no max_tokens, no measured history, and no published "
           f"max_output_tokens — the estimate below counts INPUT ONLY and is a FLOOR, not a projection. "
           f"Run the job once to seed the measurement, or `spendguard sync-prices`.", file=sys.stderr)
+
+
+def batch_output_estimate(model, intent=None, declared_out=None, ceiling=None):
+    """Per-request EXPECTED output tokens + an ACCURATE basis label for a BATCH cost estimate — the ESTIMATE (what the
+    job will PLAUSIBLY emit), DISTINCT from the ceiling a batch SENDS. This is the fix for the conflation where the batch
+    estimate used the model ceiling (~100x over) labelled 'caller-cap', which made a $ cap unusable for authorization (a
+    $126 job demanded an $11,823 cap). What we SEND stays the ceiling (billed on ACTUAL tokens); what we ESTIMATE here is
+    what the job will plausibly emit.
+
+    Priority — reusing expect()'s measured ladder (NO duplication): MEASURED (this intent's learned p90 → the model's
+    measured p90) → DECLARED (the caller's expected_out_tokens) → the CEILING, named honestly. Returns (per_request_out,
+    basis) with basis ∈ 'measured:<intent>' | 'measured:model' | 'declared' | 'reasoning-floor' | 'ceiling'. `ceiling` is
+    the per-request SEND ceiling (adapters.output_budget) — used ONLY as the last-resort estimate, never the primary, and
+    the separate worst-case ceiling guard still backs it."""
+    sig = None
+    if intent:
+        try:
+            from . import bulkgate
+            sig = bulkgate.sig(model, template_id=intent)
+        except Exception:
+            sig = None
+    tok, basis = expect(model, sig=sig, max_tokens=None, declared=declared_out)
+    label = {"learned": ("measured:" + str(intent)) if intent else "measured:class",
+             "model-history": "measured:model", "declared": "declared",
+             "reasoning-floor": "reasoning-floor"}.get(basis)
+    if label and tok and int(tok) > 0:
+        # The estimate can't exceed the max_tokens that will actually be SENT: for Anthropic that is the large send
+        # CEILING (so this is a no-op), but for an OpenAI jsonl line it is the CALLER's own max_tokens — a real bound the
+        # output cannot exceed — so a measured/declared/reasoning figure above it is capped to it and named 'ceiling'.
+        if ceiling and int(tok) > int(ceiling):
+            return int(ceiling), "ceiling"
+        return int(tok), label
+    # expect() reached a CEILING rung (model-max) or 'unknown' (0): the cold fallback is the SEND ceiling, named honestly.
+    # A caller avoids it by declaring expected_out_tokens or by seeding one measured run; the worst-case guard backs it.
+    c = int(ceiling) if ceiling else int(tok or 0)
+    return c, "ceiling"

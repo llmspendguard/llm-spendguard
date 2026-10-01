@@ -171,6 +171,14 @@ def deliberate_stop_types():
         types.append(DispatchTimeout)
     except ImportError:
         pass
+    try:
+        # A refusal to produce a GROUNDED estimate is a deliberate stop too (provider_tokens / comprehend / whole_job
+        # all propagate it): it must never be downgraded to 'keep going' by a fail-open estimate handler. Lazy-imported
+        # to keep gate low in the import graph.
+        from .estimate_divergence import EstimateNotGrounded
+        types.append(EstimateNotGrounded)
+    except ImportError:
+        pass
     return tuple(types)
 
 
@@ -306,10 +314,14 @@ def _warn_implausible(model, in_tok, requests, per_item_max=None):
     return facts
 
 
-def _estimate_openai_jsonl(data: bytes):
+def _estimate_openai_jsonl(data: bytes, intent=None, declared_out=None):
+    from . import expected_output as _eo
     in_tok = out = n = 0
     max_req = 0            # largest SINGLE provider request/item — the impossibility bound (the window is per-request,
     model = None           # NOT per-batch); for embeddings it is the biggest single input, never the line's summed list.
+    ceiling_out = 0        # Σ per-request SEND ceilings — the WORST-CASE output, for the separate ceiling guard (NOT the cost estimate)
+    _out_cache = {}        # row_model -> (per_req_out, basis): the measured/declared/ceiling basis is per (model, intent), not per line
+    out_basis = "unknown"
     for line in data.decode("utf-8", "ignore").splitlines():
         line = line.strip()
         if not line:
@@ -317,6 +329,7 @@ def _estimate_openai_jsonl(data: bytes):
         n += 1
         body = json.loads(line).get("body", {})
         model = model or body.get("model")
+        row_model = body.get("model") or model
         line_in = 0        # this chat request's total (all its messages) — the whole request must fit the window
         for m in body.get("messages", []):
             t = _content_tokens(m.get("content", ""), provider="openai", model=model)
@@ -332,20 +345,30 @@ def _estimate_openai_jsonl(data: bytes):
             pim = _embed_per_item_max({"input": inp})
             if pim is not None:
                 max_req = max(max_req, pim)
-        _o, out_basis = _expected_out(body.get("model") or model, body=body)
+        rc = int(body.get("max_tokens") or body.get("max_completion_tokens") or 0)   # this request's SEND ceiling
+        ceiling_out += rc
+        # THE ESTIMATE BASIS (measured(intent)→measured(model)→declared→ceiling), per model, honestly labelled — NOT the
+        # send ceiling (which over-stated ~100x as 'caller-cap'). Cached per row_model (constant per (model, intent)).
+        if row_model not in _out_cache:
+            _out_cache[row_model] = _eo.batch_output_estimate(row_model, intent=intent, declared_out=declared_out, ceiling=rc)
+        _o, out_basis = _out_cache[row_model]
         out += _o
     cost = pricing.batch_cost(model, in_tok, out, provider="openai") if model else 0.0   # this estimator is OpenAI-specific — pin the vendor
+    # WORST CASE — every request to its SEND ceiling. For the SEPARATE ceiling guard (_worst_case_check), never the estimate.
+    worst_case_cost = pricing.batch_cost(model, in_tok, ceiling_out, provider="openai") if model else 0.0
     return dict(provider="openai", model=model, requests=n, in_tok=in_tok, out_tok=out, cost=cost,
-                out_basis=out_basis,
+                out_basis=out_basis, ceiling_out=ceiling_out, worst_case_cost=worst_case_cost,
                 implausible=_warn_implausible(model, in_tok, n, per_item_max=(max_req or None)))
 
 
-def _estimate_anthropic_requests(requests):
-    in_tok = out = n = 0
+def _estimate_anthropic_requests(requests, intent=None, declared_out=None):
+    from . import expected_output as _eo
+    in_tok = n = 0
     max_req = 0            # largest SINGLE request (system+messages) — the window bounds each request, not the batch
     skipped = 0            # sum; max_req ≥ the old batch AVERAGE, so this only ever catches MORE, never fewer (a single
     model = None           # oversized request the average would have hidden), and never false-fires where the avg didn't.
-    out_basis = "estimate"
+    ceiling_out = 0        # Σ per-request SEND ceilings — the WORST-CASE output, for the separate ceiling guard (NOT the cost estimate)
+    per_req_ceiling = 0
     for r in requests:
         n += 1
         params = r.get("params") if isinstance(r, dict) else getattr(r, "params", None)
@@ -364,25 +387,37 @@ def _estimate_anthropic_requests(requests):
             c = m.get("content") if isinstance(m, dict) else getattr(m, "content", "")
             t = _content_tokens(c, provider="anthropic", model=model); in_tok += t; req_in += t
         max_req = max(max_req, req_in)
-        _o, out_basis = _expected_out(g("model") or model, body={"max_tokens": g("max_tokens")})
-        out += _o
+        rc = int(g("max_tokens") or 0)         # this request's SEND ceiling (what we send, billed on ACTUAL tokens)
+        ceiling_out += rc
+        per_req_ceiling = per_req_ceiling or rc
+    counted = n - skipped
+    # THE ESTIMATE BASIS (what the job will PLAUSIBLY emit) — measured(intent) → measured(model) → declared → ceiling,
+    # per request × count. This is DISTINCT from the ceiling we SEND: using the ceiling as the estimate over-stated by
+    # ~100x and made a $ cap unusable for authorization. out_basis names the basis honestly (no more 'caller-cap' lie).
+    per_req_out, out_basis = (_eo.batch_output_estimate(model, intent=intent, declared_out=declared_out,
+                                                        ceiling=per_req_ceiling) if model else (0, "unknown"))
+    out = int(per_req_out) * counted
     if skipped:
         _warn_once(f"[spendguard] anthropic batch estimate: {skipped} of {n} request(s) had no params and were "
                    f"counted as zero tokens — the estimate may understate this batch.")
     cost = pricing.batch_cost(model, in_tok, out, provider="anthropic") if model else 0.0   # this estimator is Anthropic-specific — pin the vendor
+    # WORST CASE — every request runs to its SEND ceiling. Priced for the SEPARATE ceiling guard (_worst_case_check), a
+    # backstop that still catches a genuinely runaway request set; NEVER the authorization estimate.
+    worst_case_cost = pricing.batch_cost(model, in_tok, ceiling_out, provider="anthropic") if model else 0.0
     return dict(provider="anthropic", model=model, requests=n, in_tok=in_tok, out_tok=out, cost=cost,
-                out_basis=out_basis, skipped_no_params=skipped,
+                out_basis=out_basis, skipped_no_params=skipped, ceiling_out=ceiling_out, worst_case_cost=worst_case_cost,
                 implausible=_warn_implausible(model, in_tok, n, per_item_max=(max_req or None)))
 
 
-def estimate_message_batch(requests):
+def estimate_message_batch(requests, intent=None, declared_out=None):
     """Public, $0 estimate-only entry for an Anthropic Message Batch — the SAME estimator _gate_anthropic runs INSIDE
     client.messages.batches.create (see the gate patch table), so a caller's pre-flight estimate and per-call cap can
     never drift from the enforcement the gate applies at submit. `requests` is the inline list (each {custom_id,
-    params}); returns {provider, model, requests, in_tok, out_tok, cost, out_basis, …}. No network, no spend (pure
-    token counting). submit.submit_message_batch uses it for the pre-submit estimate + per-call cap; the gate re-runs
-    it at create for the global/daily/monthly caps + the provisional batch-cost row."""
-    return _estimate_anthropic_requests(list(requests or []))
+    params}); `intent` keys the MEASURED output basis (per-intent learned p90), and `declared_out` is the caller's
+    expected output tokens per request (the DECLARED basis). Returns {provider, model, requests, in_tok, out_tok, cost,
+    out_basis, ceiling_out, worst_case_cost, …}. No network, no spend (pure token counting). submit.submit_message_batch
+    uses it for the pre-submit estimate + per-call cap; the gate re-runs it at create for the caps + the provisional row."""
+    return _estimate_anthropic_requests(list(requests or []), intent=intent, declared_out=declared_out)
 
 
 def _log(rec):
@@ -456,27 +491,27 @@ def _est_cost_phrase(est):
 
 
 def _decide(est):
-    """Proceed (return) if under cap or allowed; raise SpendGateRefused to block. The CAP compares the CEILING on
-    purpose — a cap is fail-safe, it must bound what COULD be spent — but every printed number leads with the
-    learned expectation so the warning is a usable budget signal (see _calibrate_est)."""
+    """Proceed (return) if under cap or allowed; raise SpendGateRefused to block. The cap compares the REALISTIC
+    estimate (est['cost'], from the measured/declared basis named in est['out_basis']) — NOT the ceiling, which
+    over-stated ~100x and made a cap unusable for authorization. The CEILING worst-case is enforced SEPARATELY by
+    _worst_case_check (two thresholds, not one guard with the wrong number)."""
     if _refuse_metered_active():                       # 'prove $0' switch → refuse the metered batch submission
         raise MeteredCallRefused("metered submission refused (refuse_metered active): %s %s"
                                  % (est.get("provider"), est.get("model")))
     cap = _cap()
     est.setdefault("_cal", _calibrate_est(est))
+    _wc = est.get("worst_case_cost")
     line = (f"[spend_gate] {est['provider']} {est.get('model')} · {est['requests']} req · "
-            f"in~{est['in_tok']:,} out≤{est['out_tok']:,} -> {_est_cost_phrase(est)} (cap ${cap:.0f})")
+            f"in~{est['in_tok']:,} out~{est['out_tok']:,} ({est.get('out_basis', '?')}) -> {_est_cost_phrase(est)} (cap ${cap:.0f})")
     if est["cost"] <= cap:
         _log({**est, "decision": "under_cap"}); print(line + "  OK", file=sys.stderr); _submit_receipt(est); return
     if _allow():
         _log({**est, "decision": "allowed_env"}); print(line + "  ALLOWED (GATE_ALLOW=1)", file=sys.stderr); _submit_receipt(est); return
-    _c = est.get("_cal")
-    _proj = (f"could reach ${est['cost']:.2f} if every request runs to its max_tokens "
-             f"(likely ~${_c['cost_p50']:.2f})" if _c else f"is projected at ${est['cost']:.2f}")
+    _proj = (f"is projected at ${est['cost']:.2f} ({est.get('out_basis', '?')}"
+             + (f"; worst case ${_wc:,.2f} if every request hits the ceiling" if _wc else "") + ")")
     print(f"\n*** SPEND GATE: this single batch {_proj}, over the ${cap:.0f} cap. ***\n"
-          f"{line}\nBetter first: pack 25–40 items/request · trim max_tokens (the ceiling IS your max_tokens × "
-          f"requests) · use the cheaper executor (opus-4.8 output < gpt-5.5) · split the scope. "
-          f"(raise GATE_CAP or GATE_ALLOW=1 to force.)", file=sys.stderr)
+          f"{line}\nBetter first: declare expected_out_tokens · pack 25–40 items/request · use the cheaper executor · "
+          f"split the scope. (raise GATE_CAP or GATE_ALLOW=1 to force.)", file=sys.stderr)
     if sys.stdin and sys.stdin.isatty():
         try:
             ans = input(f"Allow this ${est['cost']:.2f} submission anyway? type 'yes' to proceed: ").strip().lower()
@@ -494,6 +529,43 @@ def _decide(est):
     raise SpendGateRefused(
         f"submission ${est['cost']:.2f} > cap ${cap:.0f} (non-interactive). "
         f"Set GATE_ALLOW=1 to permit this run, raise GATE_CAP, or pack/trim/cheaper-model.")
+
+
+def _worst_case_cap():
+    """The SEPARATE worst-case (ceiling) cap — the second of two thresholds. The per-batch cap (_cap) now bounds the
+    REALISTIC estimate; this one bounds the WORST case (every request running to the model's SEND ceiling), so a
+    genuinely runaway request set is still caught while a legitimate large batch — whose realistic cost is fine but
+    whose ceiling-worst-case is naturally large — is not false-refused. Much higher than _cap by design. env
+    SPENDGUARD_WORST_CASE_CAP → config gate.worst_case_cap → default max(GATE_CAP × 100, $10,000)."""
+    from . import config
+    try:
+        v = os.getenv("SPENDGUARD_WORST_CASE_CAP") or config._cfg_get("gate", "worst_case_cap", None)
+        if v is not None:
+            return float(v)
+    except Exception:
+        pass
+    try:
+        return max(float(_cap()) * 100.0, 10000.0)
+    except Exception:
+        return 10000.0
+
+
+def _worst_case_check(est):
+    """The ceiling guard (distinct from the per-batch cap on the realistic estimate): refuse when the WORST case — every
+    request running to its SEND ceiling (est['worst_case_cost']) — exceeds _worst_case_cap. A backstop for a genuinely
+    runaway request set; no-op when the estimator carried no worst_case_cost (e.g. a non-batch est). GATE_ALLOW forces
+    past it, same as the per-batch cap. Raises SpendGateRefused (a deliberate stop)."""
+    wc = est.get("worst_case_cost")
+    if not wc or _allow():
+        return
+    limit = _worst_case_cap()
+    if wc > limit:
+        _log({**est, "decision": "refused_worst_case"})
+        raise SpendGateRefused(
+            f"worst-case ${wc:,.2f} (all {est.get('requests')} requests running to the model ceiling) exceeds the "
+            f"worst-case cap ${limit:,.0f} — a genuinely runaway request set. (The realistic estimate is "
+            f"${est.get('cost', 0):,.2f} ({est.get('out_basis', '?')}); this backstop guards the ceiling separately.) "
+            f"Chunk the job, or raise SPENDGUARD_WORST_CASE_CAP deliberately.")
 
 
 def _read_filelike(file):
@@ -699,7 +771,8 @@ def _decide_and_account(est):
     _batch1_check(est)            # batch-1 discipline: warn/refuse a LARGE batch for an untested intent (may raise)
     _bulkgate_check(est)          # estimate+test-first: sig-keyed flags, blocks an unestimated/untested bulk (may raise)
     _budget_check(est["cost"], est.get("model"), est.get("provider"), "batch")   # daily/monthly (sqlite)
-    _decide(est)                                                                  # per-batch cap (may raise)
+    _decide(est)                                                                  # per-batch cap on the REALISTIC estimate (may raise)
+    _worst_case_check(est)                                                        # SEPARATE ceiling guard: runaway worst-case (may raise)
     _budget_record(est["cost"], est.get("model"), est.get("provider"), "batch",   # ledger (sqlite)
                    quarantine=bool(est.get("implausible")), basis=budget_basis_estimate())
     if _calls.enabled():                                                          # job-level call-context row
@@ -710,15 +783,23 @@ def _decide_and_account(est):
 def _gate_openai_files(kw, args=()):
     if kw.get("purpose") != "batch":
         return
+    # intent + a caller's declared output ride the recording CONTEXT (the submitter stamps them) → the at-create estimate
+    # uses the realistic basis (measured/declared), not the ceiling, so the cap + provisional row see the plausible cost.
+    try:
+        from . import calls as _c
+        _ctx = _c.current()
+        _intent, _declared = _ctx.get("intent"), _ctx.get("batch_expected_out")
+    except Exception:
+        _intent, _declared = None, None
     try:
         data = _read_filelike(kw.get("file"))
-        est = _estimate_openai_jsonl(data)
-    except SpendGateRefused:
+        est = _estimate_openai_jsonl(data, intent=_intent, declared_out=_declared)
+    except deliberate_stop_types():        # a spend refusal / deadline / refusal-to-ground must HALT, never fail-open
         raise
     except Exception as e:
         print(f"[spend_gate] WARN openai estimate failed ({e}); allowing (fail-open)", file=sys.stderr)
         return
-    _decide_and_account(est)  # per-batch cap + cross-process daily/monthly (sqlite)
+    _decide_and_account(est)  # per-batch cap + daily/monthly + the separate worst-case ceiling guard
 
 
 def _gate_anthropic(kw, args=()):
@@ -727,14 +808,23 @@ def _gate_anthropic(kw, args=()):
         reqs = args[0]
     if reqs is None:
         return
+    # intent + a caller's declared output ride the recording CONTEXT (submit_message_batch stamps them), so the AT-CREATE
+    # estimate uses the SAME realistic basis (measured/declared, not the ceiling) the per-call estimate did — the
+    # provisional cost row + the global cap then see what the job will PLAUSIBLY emit, not a ~100x ceiling.
     try:
-        est = _estimate_anthropic_requests(list(reqs))
-    except SpendGateRefused:
-        raise
+        from . import calls as _c
+        _ctx = _c.current()
+        _intent, _declared = _ctx.get("intent"), _ctx.get("batch_expected_out")
+    except Exception:
+        _intent, _declared = None, None
+    try:
+        est = _estimate_anthropic_requests(list(reqs), intent=_intent, declared_out=_declared)
+    except deliberate_stop_types():       # a spend refusal / deadline / refusal-to-ground must HALT, never be swallowed
+        raise                              # into a fail-open 'allow' (DELIBERATE REFUSAL never fail-open)
     except Exception as e:
         print(f"[spend_gate] WARN anthropic estimate failed ({e}); allowing (fail-open)", file=sys.stderr)
         return
-    _decide_and_account(est)  # per-batch cap + cross-process daily/monthly (sqlite)
+    _decide_and_account(est)  # per-batch cap + daily/monthly + the separate worst-case ceiling guard
 
 
 # ─────────────────────────── REAL-TIME cumulative budget ───────────────────────────

@@ -43,15 +43,19 @@ def _count_tokens(text, model):
 DEFAULT_OVERRUN_TOLERANCE = 1.2
 
 
-def estimate_jsonl_cost(jsonl_path, model, batch=True, avg_out_tokens=None, provider="openai"):
+def estimate_jsonl_cost(jsonl_path, model, batch=True, avg_out_tokens=None, provider="openai", intent=None):
     """Project cost of a /v1/chat/completions batch .jsonl. No paid calls.
 
     Image blocks are counted by their PIXELS via content_tokens, not by the length of their base64 — measuring
-    the payload over-stated real vision batches ~25× and refused every one of them at the cap."""
+    the payload over-stated real vision batches ~25× and refused every one of them at the cap.
+
+    OUTPUT is estimated by the measured/declared/ceiling basis (expected_output.batch_output_estimate, keyed by
+    `intent`), NOT the send ceiling — the ceiling over-stated ~100x and made the cap unusable. A caller's measured
+    `avg_out_tokens` still overrides (the 'measured avg' basis); absent it, the per-model basis is named honestly."""
     from . import content_tokens, expected_output
     n = 0
     in_tok = 0
-    out_ceiling = 0
+    out_est = 0        # Σ per-request EXPECTED output (measured/declared/ceiling basis) — the realistic estimate, NOT the ceiling
     media = False
     img = 0
     out_basis = "unknown"      # bound BEFORE the loop: an empty/blank-only .jsonl left it undefined and the
@@ -98,16 +102,15 @@ def estimate_jsonl_cost(jsonl_path, model, batch=True, avg_out_tokens=None, prov
             slot["in"] += t
             img += d["images"] + d["pdf_pages"]
             media = media or bool(d["images"] or d["pdf_pages"])
-        # NOT the caller's cap: max_tokens is a blast-radius bound, not a statement about expected output,
-        # and an omitted one used to estimate output at ZERO. See expected_output.py.
-        _o, out_basis = expected_output.expect(row_model,
-                                               max_tokens=(body.get("max_tokens")
-                                                           or body.get("max_completion_tokens")))
-        if out_basis == "unknown":
-            expected_output.warn_unknown(row_model)
-        out_ceiling += _o
+        # The ESTIMATE basis — measured(intent) → measured(model) → declared → ceiling, per model, named honestly in
+        # out_basis — NOT the send ceiling (which over-stated ~100x and made the cap unusable). A caller's measured
+        # avg_out_tokens still OVERRIDES below ('measured avg'); the ceiling now lives only as the last-resort basis.
+        _o, out_basis = expected_output.batch_output_estimate(
+            row_model, intent=intent, declared_out=None,
+            ceiling=(body.get("max_tokens") or body.get("max_completion_tokens")))
+        out_est += _o
         slot["out"] += _o
-    out_tok = int(avg_out_tokens * n) if measured else out_ceiling
+    out_tok = int(avg_out_tokens * n) if measured else out_est
     cost_fn = batch_cost if batch else realtime_cost
     # Price each model's own tokens at its own rate, then sum. A measured average output is spread over the
     # requests that produced it, pro-rata per model, rather than being priced at one arbitrary model's rate.
@@ -246,7 +249,7 @@ def guarded_submit(jsonl_path, model, cap_dollars, batch=True, avg_out_tokens=No
     `metadata` (an OpenAI batch metadata dict, keys/values ≤64/512 chars, ≤16 pairs) is attached to the created batch.
     batch_tracker.submit_offload uses it to stamp a DETERMINISTIC offload key on the batch so a crashed-then-retried
     offload is de-duplicated against the provider's own batch list (exactly-once) instead of double-submitting."""
-    est = estimate_jsonl_cost(jsonl_path, model, batch=batch, avg_out_tokens=avg_out_tokens)
+    est = estimate_jsonl_cost(jsonl_path, model, batch=batch, avg_out_tokens=avg_out_tokens, intent=intent)
     print(f"[submit_gate] {est['requests']:,} req · {est['mode']} · in={est['in_tok']:,} "
           f"out={est['out_tok']:,} ({est['out_basis']}; {est['token_basis']}) -> ${est['cost']:,.2f}")
 
@@ -419,24 +422,29 @@ def build_message_batch_requests(tasks, model, *, system=None, max_out=None, sch
     return requests, len(requests)
 
 
-def submit_message_batch(tasks, model, *, system=None, schema=None, max_out=None, cap_dollars=None,
-                         submit=True, request_cap=_ANTHROPIC_BATCH_REQUEST_CAP, intent=None):
+def submit_message_batch(tasks, model, *, system=None, schema=None, max_out=None, expected_out_tokens=None,
+                         cap_dollars=None, submit=True, request_cap=_ANTHROPIC_BATCH_REQUEST_CAP, intent=None):
     """Submit a list of tasks to the Anthropic Message Batches API (~half realtime, 29-day result window) — the
     Anthropic twin of submit_chat_tasks, and the Messages-API half of spendguard's batch surface. Each task is a prompt
     STRING (custom_id auto = 'task-<i>') OR a {custom_id, content[, system, schema, schema_name]} dict. Builds the
     INLINE requests through the ONE models.apply_call_params authority (build_message_batch_requests), ESTIMATES $0 via
-    gate.estimate_message_batch (the SAME estimator the gate re-runs at create — no drift), REFUSES over cap_dollars,
-    then submits via client.messages.batches.create — which the gate intercepts (_gate_anthropic, see the gate patch
-    table) for the global/daily/monthly + per-batch caps AND the provisional batch-cost row (attributed to `intent` via
-    the recording context set here, exactly as submit_chat_tasks does for OpenAI). Returns {batch_id, requests,
-    estimate, error}; submit=False estimates only ($0, no batch created). Collect later with its SETTLE twin
-    callio.collect_message_batch(batch_id, intent, model) — results keyed by custom_id.
+    gate.estimate_message_batch (the SAME estimator the gate re-runs at create — no drift), REFUSES over the cap, then
+    submits via client.messages.batches.create — which the gate intercepts (_gate_anthropic) for the global/daily/monthly
+    + per-batch caps AND the provisional batch-cost row (attributed to `intent` via the recording context set here).
+    Returns {batch_id, requests, estimate, error}; submit=False estimates only ($0). Collect with its SETTLE twin
+    callio.collect_message_batch(batch_id, intent, model).
 
-    REFUSE, NEVER DEGRADE: over the per-call cap the result carries the estimate + a REFUSED error and NO batch is
-    created (consistent with submit_chat_tasks), and a gate refusal at create (SpendGateRefused) / deadline PROPAGATES —
-    it never silently falls back to realtime, which would defeat batching for cost. Anthropic-only (the Message Batches
-    API serves only Anthropic ids); a non-Anthropic model returns a clear error (run it on submit_chat_tasks / the lane
-    fan), never a silent metered fallback.
+    COST ESTIMATE BASIS (the authorization number) is what the job will PLAUSIBLY emit, NOT the ceiling we send: the
+    MEASURED per-intent output (seeded as this `intent` accrues history) → a DECLARED `expected_out_tokens` (per request)
+    → the ceiling, named honestly in est['out_basis']. `expected_out_tokens` lets a caller who has measured their output
+    authorize a cold-intent job without the ceiling's ~100x over-statement; `max_out` informs NEITHER the send (spendguard
+    sends the ceiling, billed on ACTUAL tokens) NOR the estimate, so a passed max_out is pointed at expected_out_tokens.
+
+    DUAL CAP, named: the result states BOTH the caller `cap_dollars` AND the global GATE_CAP and WHICH one bound — so a
+    pass here can't be followed by a surprise gate refusal citing the other. A genuinely runaway request set is still
+    caught by the gate's SEPARATE worst-case (ceiling) guard. REFUSE, NEVER DEGRADE: over a cap the result carries the
+    estimate + a REFUSED error and NO batch is created; a gate refusal at create PROPAGATES — never a silent realtime
+    fallback. Anthropic-only; a non-Anthropic model returns a clear error.
 
     Unlike OpenAI there is NO `metadata` parameter: Anthropic batches carry no server-side metadata, so the
     exactly-once offload key (batch_tracker) rides each request's custom_id instead — see batch_tracker.submit_offload."""
@@ -449,34 +457,51 @@ def submit_message_batch(tasks, model, *, system=None, schema=None, max_out=None
     if prov != "anthropic":
         return {**base, "error": "message batch is Anthropic-only (the Message Batches API serves only Anthropic ids); "
                 "got %r (provider %r) — run it on submit_chat_tasks (OpenAI) / the lane fan instead." % (model, prov)}
-    # Set the intent CONTEXT for the WHOLE submit (exactly as submit_chat_tasks does) so the gate's provisional batch
-    # row — fired synchronously inside the gated messages.batches.create — attributes to the caller's intent, not
-    # '(none)'. Restored in the finally so the intent never leaks into a later call on this thread.
+    if max_out and not expected_out_tokens:          # max_out informs neither the send nor the estimate — point at the real knob
+        print(f"[submit_gate] max_out={max_out} informs NEITHER the send (spendguard sends the model ceiling, billed on "
+              f"ACTUAL tokens) NOR the cost estimate. To inform the ESTIMATE for authorization, pass "
+              f"expected_out_tokens=<measured per-request output>.", file=sys.stderr)
+    # Set intent + the DECLARED output on the recording CONTEXT for the whole submit, so the gate's provisional row (fired
+    # inside the gated create) attributes to intent AND the gate's at-create estimate uses the same declared basis.
+    # Restored in the finally so neither leaks into a later call on this thread.
     from . import calls as _calls, gate
     _prev_ctx = dict(_calls.current())
-    if intent:
-        _calls.set_context(intent=intent)
+    if intent or expected_out_tokens:
+        _calls.set_context(intent=intent, batch_expected_out=expected_out_tokens)
     try:
         requests, n = build_message_batch_requests(items, model, system=system, max_out=max_out, schema=schema)
-        est = gate.estimate_message_batch(requests)
+        est = gate.estimate_message_batch(requests, intent=intent, declared_out=expected_out_tokens)
         out = {**base, "requests": n, "estimate": est}
+        global_cap = gate._cap()                      # the global GATE_CAP — named alongside the caller cap so neither surprises
         print(f"[submit_gate] {n:,} req · batch · anthropic · in={est['in_tok']:,} out={est['out_tok']:,} "
-              f"({est.get('out_basis', '?')}) -> ${est['cost']:,.2f}")
+              f"({est.get('out_basis', '?')}) -> ${est['cost']:,.2f}  "
+              f"(caps: caller {('$%.2f' % cap_dollars) if cap_dollars is not None else '—'} · global ${global_cap:.0f})")
         if n > request_cap:
             return {**out, "error": f"REFUSED: {n:,} requests > request_cap {request_cap:,} (chunk it; the Anthropic "
                     f"batch limit is 100,000 requests / 256 MB)."}
+        # BOTH caps, and which binds (Part 4). est['cost'] is the REALISTIC basis (out_basis), never the ceiling.
+        binding = None
         if cap_dollars is not None and est["cost"] > cap_dollars:
-            return {**out, "error": f"REFUSED: projected ${est['cost']:,.2f} > cap ${cap_dollars:,.2f}. Pack more "
-                    f"items/request, shrink the prompt, pick a cheaper model, or raise the cap deliberately."}
+            binding = ("caller cap", cap_dollars)
+        elif est["cost"] > global_cap:
+            binding = ("global GATE_CAP", global_cap)
+        if binding:
+            which, capv = binding
+            other = (f"global GATE_CAP ${global_cap:.0f}" if which == "caller cap"
+                     else (f"caller cap ${cap_dollars:,.2f}" if cap_dollars is not None else "no caller cap set"))
+            return {**out, "error": f"REFUSED: projected ${est['cost']:,.2f} ({est.get('out_basis', '?')}) > {which} "
+                    f"${capv:,.2f} [also {other}]. Declare expected_out_tokens, pack more items/request, pick a cheaper "
+                    f"model, or raise the cap deliberately."}
         if not submit:
             print("[submit_gate] PASS (estimate only, submit=False).")
             return out
         import anthropic
         client = anthropic.Anthropic(api_key=_api_key("ANTHROPIC_API_KEY"))
-        # The gate (_gate_anthropic) estimates these inline requests, enforces the global/daily/monthly + per-batch caps
-        # (raising SpendGateRefused over cap — which propagates below), and records the provisional batch-cost row.
+        # The gate (_gate_anthropic) re-estimates these inline requests (same basis), enforces the global/daily/monthly +
+        # per-batch caps + the SEPARATE worst-case ceiling guard (raising SpendGateRefused — which propagates below), and
+        # records the provisional batch-cost row at the realistic estimate.
         b = client.messages.batches.create(requests=requests)
-        print(f"[submit_gate] SUBMITTED message batch {b.id} (projected ${est['cost']:,.2f}). "
+        print(f"[submit_gate] SUBMITTED message batch {b.id} (projected ${est['cost']:,.2f}, {est.get('out_basis', '?')}). "
               f"Collect with callio.collect_message_batch({b.id!r}, intent, {model!r}).")
         return {**out, "batch_id": b.id}
     except Exception as e:

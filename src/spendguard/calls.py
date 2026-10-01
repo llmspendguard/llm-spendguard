@@ -48,10 +48,14 @@ def current():
 
 def set_context(intent: Optional[str] = None, chain: Optional[str] = None, who: Optional[str] = None,
                 root_call: Optional[str] = None, attempt: Optional[int] = None,
-                fell_from: Optional[str] = None) -> None:
+                fell_from: Optional[str] = None, batch_expected_out: Optional[int] = None) -> None:
     c = dict(current())
     if intent is not None:
         c["intent"] = intent
+    if batch_expected_out is not None:
+        # a caller's DECLARED per-request expected output for a batch — carried to the gate's at-create estimate so the
+        # provisional cost row + the global cap use the declared basis, not the ceiling (see gate._gate_anthropic).
+        c["batch_expected_out"] = batch_expected_out
     if chain is not None:
         c["chain"] = chain
     if who is not None:

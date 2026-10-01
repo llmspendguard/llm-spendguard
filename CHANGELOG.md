@@ -4,6 +4,39 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.12.1] — 2026-10-01
+
+Batch cost-ESTIMATE basis fix. The estimate — the number that AUTHORIZES spend — no longer uses the model's output
+ceiling × request count (~100x over), which made a $ cap unusable (a $126 job demanded an ~$11,823 cap) and trained
+fail-open bypasses. What we SEND stays the ceiling (billed on ACTUAL tokens); what we ESTIMATE is what the job will
+PLAUSIBLY emit.
+
+### Fixed
+- **Batch output-token estimate used the ceiling and labelled it the lying 'caller-cap'.** Now a measured/declared/
+  ceiling basis, named honestly in `out_basis` (`expected_output.batch_output_estimate`), on BOTH providers
+  (gate._estimate_anthropic_requests + _estimate_openai_jsonl + submit.estimate_jsonl_cost):
+  - MEASURED — the per-intent learned p90 → the model-wide measured p90 (`measured:<intent>` / `measured:model`). No
+    caller input; improves as the ledger grows.
+  - DECLARED — a new `expected_out_tokens` (per request) on `submit_message_batch`, threaded to the gate's at-create
+    estimate via the recording context; labelled `declared`, it beats the broad model-history (intent-specific) and lets
+    a cold-intent job authorize without the ceiling's ~100x. `max_out` is no longer silently dropped — a passed max_out
+    is pointed at `expected_out_tokens`.
+  - CEILING — only the last-resort basis for a truly cold class, labelled `ceiling` (never the old `caller-cap` lie).
+- **The ceiling is kept as a SEPARATE worst-case guard**, not the primary cap. The per-batch cap now bounds the realistic
+  estimate; a distinct, much-higher worst-case cap (`gate._worst_case_check`; `SPENDGUARD_WORST_CASE_CAP`, default
+  max(GATE_CAP × 100, $10k)) still refuses a genuinely runaway request set. Two thresholds, not one guard with the wrong
+  number.
+- **A cap refusal names BOTH caps + which bound.** `submit_message_batch` states the caller `cap_dollars` AND the global
+  GATE_CAP and which binds — a pass here can no longer be followed by a surprise gate refusal citing the other.
+- **The provisional cost row booked at submit is now the realistic estimate** (not the ceiling), so an uncollected/
+  expired batch can't leave a ~100x overstatement in the ledger; $-truth is reconciled to provider billing as before,
+  and `collect_message_batch` records the REAL per-result usage (both token axes).
+- **EstimateNotGrounded is now a deliberate-stop type** (`gate.deliberate_stop_types()`), so a fail-open estimate handler
+  propagates a refusal-to-ground instead of swallowing it into an uncapped 'allow'.
+
+Guard: tests/test_batch_estimate_basis.py (measured / cold-ceiling / declared basis + honest labels, the worst-case
+guard, the dual-cap message, the realistic provisional, max_out guidance). Full offline suite green.
+
 ## [0.12.0] — 2026-10-01
 
 Anthropic Message Batch path + the collective data-plane's client overlay. spendguard's batch surface now spans BOTH

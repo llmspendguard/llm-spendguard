@@ -178,7 +178,7 @@ check("submit.estimate_jsonl_cost: an absent cap does not mean zero output", se[
       str(se["out_tok"]))
 check("…and never above the model's published output ceiling", se["out_tok"] <= 64_000, str(se["out_tok"]))
 check("…and it NAMES the rung it used, so a reader can tell a measurement from a ceiling",
-      se.get("out_basis") in eo.BASES, str(se.get("out_basis")))
+      eo.is_batch_basis(se.get("out_basis")) or se.get("out_basis") in eo.BASES, str(se.get("out_basis")))
 os.unlink(_jsonl)
 
 print("-- an UNKNOWN output side is stated where the cap decision is read --")
@@ -209,7 +209,8 @@ check("and the capped request is not estimated higher than the uncapped one",
       capped["out_tok"] <= uncapped["out_tok"], f"{capped['out_tok']} {uncapped['out_tok']}")
 check("a capped one never exceeds the caller's bound", capped["out_tok"] <= 8_000, str(capped["out_tok"]))
 check("the estimate says WHICH basis it used — on both the capped and uncapped paths",
-      uncapped.get("out_basis") in eo.BASES and capped.get("out_basis") in eo.BASES,
+      (eo.is_batch_basis(uncapped.get("out_basis")) or uncapped.get("out_basis") in eo.BASES)
+      and (eo.is_batch_basis(capped.get("out_basis")) or capped.get("out_basis") in eo.BASES),
       f"{uncapped.get('out_basis')} / {capped.get('out_basis')}")
 
 print(f"\n{'[FAIL]' if failures else 'OK'} test_expected_output: {failures} failure(s)")

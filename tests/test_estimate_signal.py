@@ -73,11 +73,13 @@ line2 = gate._est_cost_phrase(e2)
 check("falls back to the ceiling, SAYING it's a ceiling", "$16.20" in line2 and "ceiling" in line2)
 check("no invented 'likely' number when nothing is learned", "likely" not in line2)
 
-print("-- the CAP still compares the ceiling (fail-safe: a cap bounds what COULD be spent) --")
+print("-- the CAP compares the REALISTIC estimate; the ceiling is enforced by a SEPARATE worst-case guard --")
 import inspect
 src = inspect.getsource(gate._decide)
-check("cap comparison uses est['cost'] (the ceiling)", 'if est["cost"] <= cap' in src)
-check("the docstring states the fail-safe intent", "fail-safe" in (gate._decide.__doc__ or ""))
+check("cap comparison uses est['cost'] (the realistic estimate, not the ceiling)", 'if est["cost"] <= cap' in src)
+_doc = gate._decide.__doc__ or ""
+check("the docstring says the cap compares the REALISTIC estimate, not the ceiling", "REALISTIC" in _doc)
+check("…and names the SEPARATE worst-case guard that enforces the ceiling", "_worst_case_check" in _doc)
 
 print("-- key-missing errors name keys.env (the file init CREATES), never the legacy .env --")
 import spendguard.reconcile_openai as ro, spendguard.reconcile_anthropic as ra
