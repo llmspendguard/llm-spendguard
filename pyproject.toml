@@ -32,12 +32,15 @@ Repository = "https://github.com/llmspendguard/llm-spendguard"
 Changelog = "https://github.com/llmspendguard/llm-spendguard/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
-openai = ["openai>=1.0", "tiktoken"]
-anthropic = ["anthropic>=0.40"]
+# pydantic>=2 on the SDK extras: openai>=1 and anthropic are pydantic-2-based, but a loose/backtracking pip resolve can
+# pull pydantic 1.x into the set — which breaks `import anthropic` (its httpx2.Timeout is a pydantic dataclass). spendguard
+# imports no pydantic itself; this floor just stops the SDKs' own requirement from being silently downgraded.
+openai = ["openai>=1.0", "tiktoken", "pydantic>=2"]
+anthropic = ["anthropic>=0.40", "pydantic>=2"]
 otel = ["opentelemetry-sdk"]
 chat = ["cryptography>=3"]   # in-process AES for the claude.ai cookie decrypt (keeps the key out of argv)
 deid = ["presidio-analyzer>=2.2", "presidio-anonymizer>=2.2"]   # opt-in NER de-id; the regex floor needs no deps
-all = ["openai>=1.0", "tiktoken", "anthropic>=0.40", "opentelemetry-sdk", "cryptography>=3"]   # excl. deid (heavy spaCy)
+all = ["openai>=1.0", "tiktoken", "anthropic>=0.40", "opentelemetry-sdk", "cryptography>=3", "pydantic>=2"]   # excl. deid (heavy spaCy)
 dev = ["pytest>=7", "pytest-xdist>=3", "build", "twine", "ruff>=0.6", "coverage[toml]>=7", "hypothesis>=6",
        "httpx"]   # test_http_capture_toolfees uses httpx.MockTransport for offline raw-HTTP capture tests
 

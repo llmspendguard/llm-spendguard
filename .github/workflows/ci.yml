@@ -23,7 +23,9 @@ jobs:
       - name: Install (with provider SDKs + test deps)
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[openai,anthropic,otel,chat,dev]"
+          # pydantic>=2 is declared on the SDK extras too (see pyproject); pinned here as well so CI resolution stays
+          # deterministic — a backtracking resolve once pulled pydantic 1.x and broke `import anthropic` (httpx2.Timeout).
+          pip install -e ".[openai,anthropic,otel,chat,dev]" "pydantic>=2"
       - name: Warm the tiktoken o200k cache (the offline suite can't download it)
         run: python -c "import tiktoken; tiktoken.get_encoding('o200k_base'); print('o200k cached')"
       - name: Lint (ruff — pyflakes + bugbear correctness rules)

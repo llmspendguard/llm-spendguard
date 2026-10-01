@@ -22,7 +22,9 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install (same extras as CI)
-        run: python -m pip install -e ".[openai,anthropic,dev]"
+        # pydantic>=2 pinned (also on the extras): keep the release gate's resolve deterministic — a loose resolve can
+        # pull pydantic 1.x and break `import anthropic` (its httpx2.Timeout is a pydantic dataclass).
+        run: python -m pip install -e ".[openai,anthropic,dev]" "pydantic>=2"
       - name: Warm the tiktoken o200k cache (the offline suite can't download it)
         run: python -c "import tiktoken; tiktoken.get_encoding('o200k_base'); print('o200k cached')"
       - name: Lint
