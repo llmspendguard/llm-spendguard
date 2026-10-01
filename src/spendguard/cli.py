@@ -70,6 +70,7 @@ _GROUPS = [
         ("reliability", "sweep every lane ($0) + metered provider (--run) for reachability; --remediate = agentic per-lane FIX (which login/quota/API to fix), cached; --notify = macOS notification on any red"),
         ("preflight", "resolve model ids (served + priced; stale→fix) BEFORE a batch — catches a bad id for $0"),
         ("verify", "self-check every money path: model ids · failover map · keys · economics (--probe = live)"),
+        ("keys-audit", "scan repo .env files for a provider key that would SHADOW the keys.env SSOT (the stale-shadow 401 doctor can't see)"),
         ("deploy", "run the full gate, then promote committed HEAD → green pointer (running MCP servers roll onto latest+best)"),
         ("release", "what THIS process serves vs the green pointer — are the MCP servers on the latest? (--json)"),
         ("pricing", "print the canonical price table"),
@@ -166,6 +167,9 @@ def _dispatch(argv=None):
     if cmd == "verify":                               # forensic self-check: model ids · failover map · keys · economics (+--probe)
         from . import verify
         return verify.cmd(rest)
+    if cmd == "keys-audit":                           # $0 static scan: a repo .env provider key that would SHADOW keys.env
+        from . import keys_audit                       #   at load_dotenv() time — the stale-shadow 401 doctor cannot see
+        return keys_audit.cmd(rest)
     if cmd == "reconcile":
         _PROV = {"openai", "anthropic", "all"}
         # A bare `spendguard reconcile` defaults to openai. But a FLAG in the first slot (e.g. `--since 2026-08-01`)
