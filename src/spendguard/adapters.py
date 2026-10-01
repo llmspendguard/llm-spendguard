@@ -2931,12 +2931,16 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
     _cap = output_budget(model)                     # the doubling ladder's upper bound == the ceiling; a truncation AT it
     #                                                 means the output genuinely exceeds the model max (the jumbo case)
     attempt, budget = 0, int(max_tokens)
+    try:
+        _win_vendor = provider_for(model)    # the vendor for the dynamic connection window; SAFE — an unregistered model
+    except Exception:                        # (e.g. a test 'fake-model') has no provider, so window bookkeeping is skipped
+        _win_vendor = None
     while True:
         r = call(model, prompt, max_tokens=budget, _no_guard=True, no_substitution=_no_sub, **kw)
         if r.get("error"):
-            if r.get("status_code") in (429, 529):   # ANY rate-limit/overload → CONGESTION backoff: shrink this vendor's
-                from . import dispatch as _dsp       # dynamic connection window (universal — NOT subtyped). The single
-                _dsp.shrink_connection_window(provider_for(model))   # window-LOSS point; its own handler propagates a stop
+            if _win_vendor and r.get("status_code") in (429, 529):   # ANY rate-limit/overload → CONGESTION backoff: shrink
+                from . import dispatch as _dsp       # this vendor's dynamic connection window (universal — NOT subtyped);
+                _dsp.shrink_connection_window(_win_vendor)   # the single window-LOSS point (its own handler propagates a stop)
             return {**r, "truncated": None}                   # an errored call was not truncated, it failed
         trunc = bulkgate.is_truncated(r.get("finish_reason"), r.get("out_tok"), budget)
         # REASONING MODELS SPEND THE BUDGET WHERE YOU CANNOT SEE IT. On gpt-5/o-series the hidden reasoning
@@ -2973,8 +2977,9 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
             except Exception:
                 pass                                          # telemetry must not break the call
         if not trunc:
-            from . import dispatch as _dspg    # ACK (a clean, non-truncated success) → AIMD-grow the vendor's connection
-            _dspg.grow_connection_window(provider_for(model))   # window toward the default (its own handler propagates a stop)
+            if _win_vendor:                    # ACK (a clean, non-truncated success) → AIMD-grow the vendor's connection
+                from . import dispatch as _dspg   # window toward the default (its own handler propagates a stop)
+                _dspg.grow_connection_window(_win_vendor)
             return {**r, "truncated": False, "max_tokens_used": budget}
         attempt += 1
         _empty = bool(r.get("empty_answer"))
