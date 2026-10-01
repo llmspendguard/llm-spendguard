@@ -4,6 +4,24 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.12.2] — 2026-10-01
+
+Dependency-resolution hardening — `pip install llm-spendguard[openai|anthropic]` can no longer resolve into a broken set.
+No runtime code change; the public API and behavior are identical to 0.12.1.
+
+### Fixed
+- **Pin `pydantic>=2` on the `[openai]`, `[anthropic]`, and `[all]` extras.** The openai (>=1) and anthropic SDKs are
+  pydantic-2-based, but a loose/backtracking pip resolve could pull pydantic 1.x into the install — which breaks
+  `import anthropic` at import time (its `httpx2.Timeout` is a pydantic dataclass; under pydantic 1.x the
+  `Timeout(timeout=600, connect=5.0)` call raises *"must either include a default, or set all four parameters
+  explicitly"*). spendguard imports no pydantic itself — the floor just stops the SDKs' own requirement from being
+  silently downgraded. Also pinned in the `ci` + `release` workflow install steps so both resolve deterministically.
+- **`test_version_dunder`'s pre-3.11 fallback no longer false-fails.** The `tomllib`-absent path string-scanned
+  `pyproject.toml` and read the `[tool.setuptools.dynamic]` `version = {attr=…}` derivation line as a static
+  `[project]` literal — reddening ci on 3.9/3.10 while 3.11/3.12 (and the 3.12 release gate) passed. It now parses the
+  TOML structurally on every version (`tomllib` → `tomli` backport), with a corrected mechanical check only if neither
+  parser exists.
+
 ## [0.12.1] — 2026-10-01
 
 Batch cost-ESTIMATE basis fix. The estimate — the number that AUTHORIZES spend — no longer uses the model's output
