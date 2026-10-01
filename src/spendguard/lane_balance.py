@@ -863,30 +863,55 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
             if _big:
                 return i, {**_b, "reason": _big[0], "outcome": _vc.PREFLIGHT_UNMET, "error": _big[1]}
         _prov = adapters.provider_for(_vm)
-        try:
-            _waited = dispatch.acquire_or_none(_prov, _raw, deadline_s, sla_class=sla_class,   # governor: bound in-flight PER-VENDOR metered calls (sla_class="batch" respects the realtime reserve)
-                                               est_tokens=adapters._est_call_tokens(_p, system, None))   # + TPM pacing: the metered fan is the 429 source, so debit its tokens/minute (0 unless dispatch.tpm_<vendor> is set)
-        except _STOP_TYPES:
-            raise                                       # a genuine SPEND REFUSAL halts the fan (refusal-containment)
-        except Exception as e:
-            return i, {**_b, "reason": "dispatch", "error": f"dispatch: {str(e)[:60]}"}   # a NON-deliberate governor error
-        if _waited is None:                             # queue-slot TIMEOUT → THIS task's MISS (batched/queued/retried),
-            return i, {**_b, "reason": "dispatch_saturated",   # never a raise that aborts the fan or crashes the caller
-                       "error": f"queue full: no slot within {deadline_s:.0f}s"}
-        try:
-            calls.set_context(intent=intent)            # tag this worker's calls with the intent (attribution)
-            r = adapters.call(_vm, _p, system=system, reasoning=reasoning, sig=intent,
-                              timeout_s=deadline_s, no_metered_fallback=refuse_billed, schema=schema,
-                              images=(_imgs or None), no_substitution=True,   # NAMED model — never swap it (pinned)
-                              metered_only=metered_only,   # opt-in: force the METERED half of the pin (skip the $0 lane)
-                              _route=record_route)   # already a governed queue row when drain/submit set record_route=False
-        except _STOP_TYPES:
-            raise
-        except Exception as e:
-            return i, {**_b, "reason": "call_raised", "error": str(e)[:80]}
-        finally:
-            dispatch.release(_prov, _raw, sla_class=sla_class)
-        r = r if isinstance(r, dict) else {}
+        import time as _tmod
+        # RE-ADMIT loop: the QUEUE/GOVERNOR absorbs a burst by making excess work WAIT under the dynamic connection window
+        # until a slot frees — the whole point of admission. On ANY rate-limit 429/529 the window already backed off in
+        # adapters._call_guarded (the single LOSS point; grow-on-ACK lives there too), so this task just RE-ADMITS under the
+        # now-tighter window and keeps waiting+re-admitting until it is SERVED or its own deadline_s budget is genuinely
+        # spent — bounded ONLY by deadline_s (never N×deadline, never a wedge). A deadline exhaustion is SIGNALED (not a
+        # silent drop) so a truly-unservable burst is VISIBLE, per the SLO "queued-for-later, never a silent miss". The
+        # serial adapters.call path runs the SAME re-admit loop by recursion — one unified mechanism.
+        r = {}
+        _t_budget0 = _tmod.monotonic()
+        _cr = 0
+        while True:
+            _remaining = deadline_s - (_tmod.monotonic() - _t_budget0)
+            if _remaining <= 0.0:
+                if (r.get("status_code") if isinstance(r, dict) else None) in (429, 529):
+                    _bulk_notify(f"{_raw}: connection rate-limit NOT cleared within deadline {deadline_s:.0f}s after "
+                                 f"{_cr} ratchet+re-admit(s) — surfacing a miss (burst exceeded what the account drains "
+                                 f"in budget; raise deadline_s or lower the fan width).")   # SIGNAL, never a silent drop
+                break
+            try:
+                _waited = dispatch.acquire_or_none(_prov, _raw, _remaining, sla_class=sla_class,   # governor: bound in-flight PER-VENDOR metered calls
+                                                   est_tokens=adapters._est_call_tokens(_p, system, None))
+            except _STOP_TYPES:
+                raise                                       # a genuine SPEND REFUSAL halts the fan (refusal-containment)
+            except Exception as e:
+                return i, {**_b, "reason": "dispatch", "error": f"dispatch: {str(e)[:60]}"}   # a NON-deliberate governor error
+            if _waited is None:                             # queue-slot TIMEOUT within the remaining budget → THIS task's MISS
+                return i, {**_b, "reason": "dispatch_saturated", "error": f"queue full: no slot within {_remaining:.0f}s"}
+            _raised = None
+            try:
+                calls.set_context(intent=intent)            # tag this worker's calls with the intent (attribution)
+                r = adapters.call(_vm, _p, system=system, reasoning=reasoning, sig=intent,
+                                  timeout_s=deadline_s, no_metered_fallback=refuse_billed, schema=schema,
+                                  images=(_imgs or None), no_substitution=True,   # NAMED model — never swap it (pinned)
+                                  metered_only=metered_only,   # opt-in: force the METERED half of the pin (skip the $0 lane)
+                                  _route=record_route)   # already a governed queue row when drain/submit set record_route=False
+            except _STOP_TYPES:
+                raise                                       # (the finally releases THIS slot before the halt propagates)
+            except Exception as e:
+                r, _raised = {}, e
+            finally:
+                dispatch.release(_prov, _raw, sla_class=sla_class)   # free THIS slot before any re-admit (no leak)
+            if _raised is not None:
+                return i, {**_b, "reason": "call_raised", "error": str(_raised)[:80]}
+            r = r if isinstance(r, dict) else {}
+            if r.get("status_code") in (429, 529):   # ANY rate-limit → the window already backed off in _call_guarded
+                _cr += 1                             # (the single LOSS point, run inside this adapters.call); loop to
+                continue                             # RE-ADMIT (WAIT) under the tightened window until served or deadline
+            break
         _sp, _sm = r.get("provider") or _prov, r.get("model") or _raw
         # Same structured-reason contract as the lane row: adapters' code, else 'api_error' on a failed metered call
         # (a pinned/vision matrix always rides the metered API), else None when served. No error row is ever reason-less.

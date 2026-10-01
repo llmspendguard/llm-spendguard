@@ -150,9 +150,9 @@ class _LearnedLimits:
         self._maybe_reload()
         return self._d.get((vendor or "").strip().lower()) or {}
 
-    def learn(self, vendor, tpm=None, rpm=None, source=""):
+    def learn(self, vendor, tpm=None, rpm=None, conn=None, source=""):
         v = (vendor or "").strip().lower()
-        if not v or (not tpm and not rpm):
+        if not v or (not tpm and not rpm and not conn):
             return
 
         def _stamp_vendor_limits(data):                  # edits the on-disk map in place — preserves OTHER vendors'
@@ -161,16 +161,18 @@ class _LearnedLimits:
                 cur["tpm"] = int(tpm)
             if rpm and int(rpm) > 0:
                 cur["rpm"] = int(rpm)
+            if conn and int(conn) > 0:
+                cur["conn"] = int(conn)     # learned CONCURRENT-CONNECTION cap — a connection-429 has no tpm/rpm header
             cur["source"], cur["ts"] = source, time.time()
             data[v] = cur
             return data
         with self._lock:
             self._maybe_reload()
             _prev = self._d.get(v) or {}
-            _prev_tpm, _prev_rpm = _prev.get("tpm"), _prev.get("rpm")
+            _prev_tpm, _prev_rpm, _prev_conn = _prev.get("tpm"), _prev.get("rpm"), _prev.get("conn")
             _stamp_vendor_limits(self._d)                # MEMORY holds the freshest lesson (always)
             _now = self._d.get(v) or {}
-            if _now.get("tpm") == _prev_tpm and _now.get("rpm") == _prev_rpm:
+            if _now.get("tpm") == _prev_tpm and _now.get("rpm") == _prev_rpm and _now.get("conn") == _prev_conn:
                 return                                   # the LIMIT is unchanged → memory is enough; skip the durable
                 #                                          write. success headers repeat the same limit on EVERY call, so
                 #                                          this persists ONCE per (vendor, limit), never a per-call backup.
@@ -185,6 +187,35 @@ class _LearnedLimits:
                     raise                                # a spend refusal / ledger LOCK is a DELIBERATE stop — PROPAGATE,
                 _warn_learned_io("write", e)             # never downgrade. A transient IO/lock: memory holds the lesson.
 
+    def forget(self, vendor=None):
+        """Drop a vendor's learned limits (or ALL when None) from memory AND the persisted file, so the next read
+        cold-starts fresh. Backs reset_connection_window (operator reset after a provider limit change / test
+        cold-start). Propagates a deliberate stop (ledger lock); otherwise never raises."""
+        with self._lock:
+            if vendor:
+                self._d.pop((vendor or "").strip().lower(), None)
+            else:
+                self._d = {}
+            self._checked = time.monotonic()
+            try:
+                from . import config
+                p = self._path()
+                if not p.exists():
+                    return
+                if vendor is None:
+                    config.update_json(p, lambda d: {}, reason="forget-all")   # durable empty-rewrite, NOT a delete
+                else:
+                    vv = (vendor or "").strip().lower()
+                    config.update_json(p, lambda d: {k: val for k, val in (d or {}).items() if k != vv},
+                                       reason="forget-vendor")
+            except Exception as e:
+                # doctrine: ok — deliberate-refusal containment via the gate's STRUCTURAL isinstance check
+                # (gate.deliberate_stop_types()), the sanctioned primitive used across this module (see learn());
+                # a spend refusal / ledger lock PROPAGATES, a transient file error is non-fatal (memory cleared above).
+                from . import gate as _g
+                if _g.is_deliberate_stop(e):
+                    raise
+
 
 _LEARNED = _LearnedLimits()
 
@@ -192,6 +223,10 @@ _LEARNED = _LearnedLimits()
 # the durable, cross-process half is the learned LIMIT above; this is the immediate 'we are over RIGHT NOW' window.
 _COOL_UNTIL = {}
 _COOL_LOCK = threading.Lock()
+_RATCHET_AT = {}                   # vendor -> monotonic time of the last connection-cap ratchet (DEBOUNCE: a burst of
+_RATCHET_LOCK = threading.Lock()   # concurrent connection-429s must step the cap ONCE per wave, not N times down to 1)
+_GROW_AT = {}                      # vendor -> monotonic time of the last AIMD grow (debounce the ACK-side increase)
+_GROW_WIN = 0.2                    # grow the connection window at most once per this window (RTT-ish additive increase)
 
 
 def _cool_vendor(vendor, seconds):
@@ -229,6 +264,115 @@ def learn_rate_limit(vendor, tpm=None, rpm=None, retry_after_s=None, source="429
                   f"{_cap:.0f}s (dispatch.cooldown_cap_s); a real long window then re-cools on the next 429, raise "
                   f"the cap to honor it in one shot", file=_sys.stderr)
         _cool_vendor(vendor, min(_ra, _cap))
+
+
+def _learned_conn(vendor):
+    """The learned per-vendor concurrent-connection cap (set by shrink_connection_window), or 0 if none learned yet."""
+    return int((_LEARNED.for_vendor(vendor) or {}).get("conn") or 0)
+
+
+def shrink_connection_window(vendor):
+    """AIMD MULTIPLICATIVE-DECREASE — the LOSS side of the TCP-style window. ANY rate-limit 429/529 is a CONGESTION
+    signal (we do NOT try to subtype it — a provider may or may not send a tpm/rpm header, and guessing the kind is a
+    meaning decision; backing off concurrency is the SAFE universal response to any 429, and tpm/rpm pacing, when a
+    header IS present, is applied independently in learn_rate_limit). So SHRINK this vendor's learned concurrency cap
+    (toward the in-flight count that was just refused, floor 1) and let the governor's slot-wait drain the over-cap wave
+    on the next admit. Only ever LOWERS the cap (ground truth over an optimistic default); grow_connection_window
+    recovers it on success. Debounced so a whole over-cap WAVE's many 429s step the cap ONCE, not N times to 1. No
+    time-based cool: the remedy is LOWER CONCURRENCY (the ratchet + the slot-wait), not stalling every task on the clock.
+    A deliberate stop (spend refusal / ledger lock surfaced by _LEARNED.learn) PROPAGATES; a transient bookkeeping error
+    is swallowed (it must never turn a 429 into a crash). The applied cap is enforced live in Governor._conn_admit."""
+    try:
+        v = (vendor or "").strip().lower()
+        if not v:
+            return
+        _dbwin = 0.05                          # DEBOUNCE window: collapse a whole over-cap WAVE's many 429s into ONE
+        now = time.monotonic()                 # step (never N steps straight down to 1 for a single wave)
+        with _RATCHET_LOCK:
+            recently = (now - _RATCHET_AT.get(v, 0.0)) < _dbwin
+            if not recently:
+                _RATCHET_AT[v] = now
+        if not recently:
+            cur = _learned_conn(v) or _limit(f"vendor_concurrency_{v}", _limit("vendor_concurrency", DEFAULT_VENDOR_CONCURRENCY))
+            # Target just BELOW the concurrency in flight when the 429 hit (the real ceiling is below it) — precise
+            # convergence that does NOT slam to 1 the way a blind halving does. In-flight unknown → fall back to halving.
+            _inflight = 0
+            try:
+                _inflight = int(_GOV._conn_inflight.get("vendor:" + v, 0) or 0)   # the TRUE in-flight connection count
+            except Exception:
+                _inflight = 0
+            new = max(1, min(int(cur), _inflight - 1)) if _inflight > 1 else max(1, int(cur) // 2)
+            if new < int(cur):
+                _LEARNED.learn(v, conn=new, source="429-congestion")
+    except Exception as e:
+        from . import gate as _g
+        if _g.is_deliberate_stop(e):           # a spend refusal / ledger lock PROPAGATES (never fail-open)
+            raise
+        # else: a transient bookkeeping error must never turn a 429 into a crash
+
+
+def grow_connection_window(vendor):
+    """AIMD ADDITIVE-INCREASE — the ACK side of the TCP-style window: after a clean success, GROW this vendor's learned
+    connection cap UP by 1 toward the configured default, so the window RECOVERS headroom a prior 429 backed off (and a
+    one-off ratchet-too-low self-heals). Only once a cap has been LEARNED (a vendor that never 429'd has no cap and needs
+    none), capped at the configured/default ceiling, debounced to ~once per _GROW_WIN, and it WAKES a waiter to use the
+    freed slot. Never raises — an ACK-grow bookkeeping miss must not turn a success into a failure."""
+    try:
+        v = (vendor or "").strip().lower()
+        if not v:
+            return
+        cur = _learned_conn(v)
+        if cur <= 0:
+            return                              # no learned cap ⇒ unlimited already; nothing to grow
+        ceil_default = _limit(f"vendor_concurrency_{v}", _limit("vendor_concurrency", DEFAULT_VENDOR_CONCURRENCY))
+        if cur >= ceil_default:
+            return                              # never grow past the configured/default ceiling
+        now = time.monotonic()
+        with _RATCHET_LOCK:
+            if (now - _GROW_AT.get(v, 0.0)) < _GROW_WIN:
+                return
+            _GROW_AT[v] = now
+        _LEARNED.learn(v, conn=cur + 1, source="aimd-grow")
+        _GOV._conn_wake(v)                      # a slot opened — wake a waiter to use it
+    except Exception as e:
+        from . import gate as _g
+        if _g.is_deliberate_stop(e):            # a spend refusal / ledger lock PROPAGATES (never fail-open)
+            raise
+        # else: a transient ACK-grow bookkeeping error must never turn a success into a failure
+
+
+def reset_connection_window(vendor=None):
+    """Forget the learned connection cap + cooldown + ratchet/grow debounce + in-flight count for a vendor (or ALL when
+    None), so subsequent calls cold-start the dynamic connection window afresh. For an operator resetting a vendor after
+    a provider limit change, and for tests exercising independent cold starts. Clears in-process state AND the persisted
+    learned-limits file. Never raises."""
+    try:
+        v = (vendor or "").strip().lower()
+        with _RATCHET_LOCK:
+            if v:
+                _COOL_UNTIL.pop(v, None)
+                _RATCHET_AT.pop(v, None)
+                _GROW_AT.pop(v, None)
+            else:
+                _COOL_UNTIL.clear()
+                _RATCHET_AT.clear()
+                _GROW_AT.clear()
+        with _GOV._conn_meta:
+            if v:
+                _GOV._conn_inflight.pop("vendor:" + v, None)
+            else:
+                _GOV._conn_inflight.clear()
+        with _GOV._lock:
+            if v:
+                _GOV._buckets.pop("vendor:" + v, None)
+            else:
+                _GOV._buckets.clear()
+        _LEARNED.forget(v or None)
+    except Exception as e:
+        from . import gate as _g
+        if _g.is_deliberate_stop(e):            # a spend refusal / ledger lock PROPAGATES (never fail-open)
+            raise
+        # else: a transient reset bookkeeping error is non-fatal
 
 
 def learned_limits(vendor=None):
@@ -487,6 +631,58 @@ class Governor:
         self._buckets = {}
         self._lock = threading.Lock()
         self._global = None
+        # DYNAMIC CONNECTION WINDOW (the live-shrinkable TCP-style window for metered vendors): a per-vendor in-flight
+        # CONNECTION count + a Condition, gated against the LIVE learned connection cap (_learned_conn — shrunk by
+        # shrink_connection_window, grown by grow_connection_window). Separate from the fixed _Bucket semaphore so the
+        # cap can shrink/grow WITHOUT rebuilding a semaphore (which would orphan over-admitted holders). No cap learned
+        # ⇒ no wait (zero behaviour change for a vendor that never hit a concurrent-connection 429).
+        self._conn_inflight = {}
+        self._conn_cvs = {}
+        self._conn_meta = threading.Lock()
+
+    def _conn_cv(self, key):
+        """The per-key Condition guarding the dynamic connection window (lazily created, once)."""
+        cv = self._conn_cvs.get(key)
+        if cv is None:
+            with self._conn_meta:
+                cv = self._conn_cvs.get(key)
+                if cv is None:
+                    cv = threading.Condition()
+                    self._conn_cvs[key] = cv
+        return cv
+
+    def _conn_admit(self, key, vendor, deadline_s):
+        """WAIT until this metered vendor's in-flight CONNECTION count is below its LIVE learned cap, then count this
+        one. The cap is read live on every check, so a shrink (shrink_connection_window) throttles new admits IMMEDIATELY
+        and a grow (grow_connection_window) frees one — WITHOUT rebuilding any semaphore, so an over-admitted wave
+        DRAINS naturally instead of orphaning holders (the whole bug). cap<=0 (nothing learned) ⇒ admit at once."""
+        cv = self._conn_cv(key)
+        t0 = time.monotonic()
+        with cv:
+            while True:
+                cap = _learned_conn(vendor)
+                cur = self._conn_inflight.get(key, 0)
+                if cap <= 0 or cur < cap:
+                    self._conn_inflight[key] = cur + 1
+                    return
+                left = float(deadline_s) - (time.monotonic() - t0)
+                if left <= 0:
+                    raise DispatchTimeout(f"'{key}' connection window full ({cur}/{cap} in flight) — deadline "
+                                          f"{float(deadline_s):.0f}s exhausted")
+                cv.wait(timeout=min(left, 0.5))
+
+    def _conn_release(self, key):
+        """Free one connection-window slot and wake ONE waiter (a slot just opened)."""
+        cv = self._conn_cv(key)
+        with cv:
+            self._conn_inflight[key] = max(0, self._conn_inflight.get(key, 0) - 1)
+            cv.notify()
+
+    def _conn_wake(self, vendor):
+        """Wake all waiters on this vendor's connection window (e.g. after an AIMD grow raised the cap)."""
+        cv = self._conn_cv("vendor:" + (vendor or "").strip().lower())
+        with cv:
+            cv.notify_all()
 
     def _global_sem(self):
         if self._global is None:
@@ -526,6 +722,8 @@ class Governor:
             # vendor_concurrency_openai=12) tunes each provider to ITS real rate limit — never one hardcoded number for
             # every vendor. Mirrors the per-lane override; this cap is now also enforced ACROSS processes (acquire()).
             limit = _limit(f"vendor_concurrency_{vendor}", _limit("vendor_concurrency", DEFAULT_VENDOR_CONCURRENCY))
+            # NOTE: the learned CONNECTION cap is NOT folded into this (fixed) semaphore limit — it is enforced LIVE by
+            # the dynamic connection window in acquire() (_conn_admit), so it can shrink/grow without a semaphore rebuild.
         rpm = _limit(f"rpm_{vendor}", DEFAULT_RPM)     # per-vendor RPM, e.g. SPENDGUARD_DISPATCH_RPM_MOONSHOT=60
         if not rpm and not lane:                       # no explicit rpm on a METERED vendor → use the SELF-LEARNED limit
             rpm = int((_LEARNED.for_vendor(vendor) or {}).get("rpm") or 0)   # from a 429 header (learn_rate_limit); 0 until learned
@@ -599,6 +797,11 @@ class Governor:
                 # ONE cross-process cap (`limit` slots, per-vendor tunable) and self-throttle instead. _acquire_xp is
                 # key-generic (lane:/vendor: alike). SPENDGUARD_DISPATCH_XP_OFF=1 disables this whole cross-process layer.
                 xp = _acquire_xp(key, limit, float(deadline_s) - (time.monotonic() - t0))
+            if not _is_lane:                         # DYNAMIC CONNECTION WINDOW (metered only; lanes don't hit a
+                # concurrent-CONNECTION 429): WAIT until in-flight connections are under the LIVE learned cap, so a
+                # ratchet throttles HERE with no semaphore rebuild (no orphaned holders). On timeout it raises and the
+                # except below unwinds the bucket/global/xp already taken; nothing was counted here, so there is no leak.
+                self._conn_admit(key, vendor, float(deadline_s) - (time.monotonic() - t0))
         except BaseException:                        # unwind anything already taken, in reverse, then re-raise
             if xp is not None:
                 xp.release()
@@ -618,6 +821,12 @@ class Governor:
                 pass
         if _off():
             return
+        try:                                         # free the dynamic connection-window slot (metered only), paired with
+            _k, _l, _r, _is_lane = self._key_and_limit(vendor, model, skip_lane=skip_lane)   # the _conn_admit in acquire()
+            if not _is_lane:
+                self._conn_release(_k)
+        except Exception:
+            pass                                     # a bookkeeping miss here must never break the caller's release
         try:
             self._bucket(vendor, model, skip_lane=skip_lane).release(sla_class=sla_class)
         finally:

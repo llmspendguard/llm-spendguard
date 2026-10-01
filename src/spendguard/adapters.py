@@ -992,6 +992,8 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     #     read — so unlabelled / held / probe / _no_guard calls short-circuit before paying for it.)
     from . import dispatch
     _governed = bool(aliases.pop("governed", False))
+    _conn_tries = aliases.pop("_conn_tries", None)      # UNIVERSAL connection-429 retransmit budget (the serial/managed
+    _t_conn0 = aliases.pop("_t_conn0", None) or time.time()   # twin of the fan re-admit loop); _t_conn0 bounds it by deadline
     _adm = None
     _managed = (not _governed and not _no_guard and not _probe and bool(intent or sig)
                 and not dispatch.holding() and _manage_all_enabled())
@@ -1060,8 +1062,28 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     # text=None, in ONE attempt" contract (a jumbo reply must stay text=None, not silently become a base answer).
     # Config/catalog-gated (no provider_base -> no-op), billing-gated (no_metered_fallback -> skip), recursion-guarded
     # (the base retry passes base_fallback=False), and only on the NORMAL path (never the internal _no_guard recursion).
+    # UNIVERSAL RATE-LIMIT RETRANSMIT — the serial/managed twin of the fan's re-admit loop. ANY 429/529 means the dynamic
+    # window just backed off (in _call_guarded); re-admit FRESH under the tightened window (and any learned Retry-After
+    # cool) and retry, bounded by the caller's deadline, so a serial call gets its result instead of surfacing the 429.
+    # Never the _no_guard recursion or a probe, and NOT inside a fan's slot (dispatch.holding() → the fan re-admits
+    # itself). A rate-limit is NOT an availability failure, so it is handled HERE and excluded from base-fallback below
+    # (the base model shares the same account limits).
+    if (isinstance(r, dict) and r.get("status_code") in (429, 529)
+            and not _no_guard and not _probe and not dispatch.holding()):
+        from . import config as _cfgm
+        _ct = _conn_tries if _conn_tries is not None else int(_cfgm._cfg_get("dispatch", "conn_retry_max", 8))
+        if _ct > 0 and (not timeout_s or (time.time() - _t_conn0) < float(timeout_s)):
+            return call(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning, schema=schema,
+                        timeout_s=timeout_s, sig=sig, intent=intent, retries=retries, files=files,
+                        no_metered_fallback=no_metered_fallback, images=images, no_substitution=no_substitution,
+                        metered_only=metered_only, base_fallback=base_fallback, _route=_route,
+                        governed=_governed, _conn_tries=_ct - 1, _t_conn0=_t_conn0, **aliases)
+        import sys as _sysc   # budget/deadline spent with the 429 UNCLEARED → SIGNAL it (never a silent drop), then surface
+        print(f"[spendguard] connection rate-limit on {model} NOT cleared within the retransmit budget "
+              f"(tries_left={_ct}, elapsed={time.time() - _t_conn0:.0f}s / deadline {timeout_s}) — surfacing the 429; "
+              f"raise dispatch.conn_retry_max or the deadline.", file=_sysc.stderr)
     if base_fallback and not _no_guard and isinstance(r, dict) and r.get("error") and not r.get("truncated") \
-            and not no_metered_fallback:
+            and not no_metered_fallback and r.get("status_code") not in (429, 529):
         _bprov = provider_for(model)
         _base = provider_base_model(_bprov)
         if _base and _base != model and f"{_bprov}:{_base}" != model:
@@ -2590,13 +2612,13 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         # APITimeoutError / ReadTimeout) from a transport fault (the connection broke / was refused), so the
         # coverage report can say WHY a vendor didn't answer instead of lumping both under transport_error.
         _status, _perr, _retry = _exc_detail(e)
-        if _status in (429, 529):                       # a provider rate limit / overload → SELF-CALIBRATE the governor:
-            try:                                        # read the vendor's OWN limit headers + Retry-After and TEACH it,
-                from . import dispatch as _dispatch     # so the governor paces to the real ceiling and the first 429 is
-                _tpm_seen, _rpm_seen = _ratelimit_from_resp(getattr(e, "response", None))   # the last. Best-effort: a
-                try:                                    # learn failure must never turn a 429 result into a crash.
-                    _ra_s = float(_retry) if _retry else None
-                except (TypeError, ValueError):
+        if _status in (429, 529):                       # a provider rate limit / overload → PACE the governor when the
+            try:                                        # vendor sent its limit headers (tpm/rpm + Retry-After). We do NOT
+                from . import dispatch as _dispatch     # subtype the 429 here — guessing connection-vs-token from header
+                _tpm_seen, _rpm_seen = _ratelimit_from_resp(getattr(e, "response", None))   # presence is a meaning call;
+                try:                                    # the CONGESTION backoff (shrink the concurrency window) is applied
+                    _ra_s = float(_retry) if _retry else None   # UNIFORMLY to ANY 429 in _call_guarded, and tpm/rpm pacing
+                except (TypeError, ValueError):         # simply rides the header when present (both can apply).
                     _ra_s = None
                 _dispatch.learn_rate_limit(prov, tpm=_tpm_seen, rpm=_rpm_seen, retry_after_s=_ra_s,
                                            source=f"{_status}-header")
@@ -2912,6 +2934,9 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
     while True:
         r = call(model, prompt, max_tokens=budget, _no_guard=True, no_substitution=_no_sub, **kw)
         if r.get("error"):
+            if r.get("status_code") in (429, 529):   # ANY rate-limit/overload → CONGESTION backoff: shrink this vendor's
+                from . import dispatch as _dsp       # dynamic connection window (universal — NOT subtyped). The single
+                _dsp.shrink_connection_window(provider_for(model))   # window-LOSS point; its own handler propagates a stop
             return {**r, "truncated": None}                   # an errored call was not truncated, it failed
         trunc = bulkgate.is_truncated(r.get("finish_reason"), r.get("out_tok"), budget)
         # REASONING MODELS SPEND THE BUDGET WHERE YOU CANNOT SEE IT. On gpt-5/o-series the hidden reasoning
@@ -2948,6 +2973,8 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
             except Exception:
                 pass                                          # telemetry must not break the call
         if not trunc:
+            from . import dispatch as _dspg    # ACK (a clean, non-truncated success) → AIMD-grow the vendor's connection
+            _dspg.grow_connection_window(provider_for(model))   # window toward the default (its own handler propagates a stop)
             return {**r, "truncated": False, "max_tokens_used": budget}
         attempt += 1
         _empty = bool(r.get("empty_answer"))
