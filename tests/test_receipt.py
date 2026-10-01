@@ -60,14 +60,18 @@ ck("est-value: carries an as-of date", ev and ev.get("asof") == TODAY)
 # ── the tally: two axes, separate, never summed ──────────────────────────────
 budget.spent_since = lambda day, project=None, conv=None: {TODAY: 4.20, WEEK: 31.50, MONTH: 212.40}.get(day, 99.0)   # stub the gate ledger
 t = receipt.tally()
-ck("tally: actual-$ windows from the gate ledger", t["actual"]["today"] == 4.20 and t["actual"]["month"] == 212.40)
+# Each window's actual-$ is spent_since(that window start). Assert against the stub as the ORACLE rather than hardcoded
+# 4.20/212.40 — on a month/week boundary the window starts COINCIDE (e.g. the 1st: today-start == month-start), so
+# spent_since(today) == spent_since(month) and a hardcoded-distinct expectation is wrong that day (the calendar-fragile red).
+ck("tally: actual-$ windows from the gate ledger",
+   all(t["actual"][w] == budget.spent_since(d) for w, d in (("today", TODAY), ("week", WEEK), ("month", MONTH))))
 ck("tally: est-value present + distinct dict", t["est_value"] and abs(t["est_value"]["today"] - 7.0) < 1e-9)
 out = receipt.render_tally(t)
 ck("render_tally: real-$ (API+subs+remote) and est-value are SEPARATE", "real $ this month" in out and "est sub value (plan usage, NOT billed)" in out)
 # HARD RULE: the two axes are never summed. real month = API 212.40 + subs 400 = 612.40; est month = 7.00. Neither
 # real+est (619.40) nor API+est (219.40) may ever appear as one number.
 ck("render_tally: no combined total (axes never summed)", "619.40" not in out and "219.40" not in out)
-ck("render_tally: API today shown", "today $4.20" in out)
+ck("render_tally: API today shown", f"today {receipt._money(t['actual']['today'])}" in out)
 
 # ── render_flow: est → actual variance + the tally underneath ────────────────
 flow = {"intent": "loinc-typing", "n": 42, "in_tok": 1_200_000, "out_tok": 300_000, "est": 2.10, "actual": 1.87}

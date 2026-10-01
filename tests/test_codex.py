@@ -30,9 +30,12 @@ def ck(name, cond):
 # ── build a synthetic Codex session in the real on-disk layout (sessions/YYYY/MM/DD/rollout-*.jsonl) ──
 # Date it TODAY (not a fixed date) so its est-value lands in the CURRENT day/month bucket no matter when CI
 # runs. A hardcoded date silently drops out of the "month" tally once the month rolls over — that's exactly
-# the July-1 month-boundary failure this guards against; keep it relative.
+# the month-boundary failure this guards against; keep it relative. And date it in UTC — receipt._windows()
+# windows in UTC (_utc_today), so a session dated by LOCAL date.today() lands in the WRONG day/month at the
+# UTC boundary (local Sep-30 evening = UTC Oct-01 → a 'today' session drops out of the UTC month). UTC-today
+# keeps the synthetic 'session now' in the same windows the receipt measures.
 import datetime as _dt
-_d = _dt.date.today(); _iso = _d.isoformat()
+_d = _dt.datetime.now(_dt.timezone.utc).date(); _iso = _d.isoformat()
 sess_dir = pathlib.Path(os.environ["SPENDGUARD_CODEX_DIR"]) / _d.strftime("%Y") / _d.strftime("%m") / _d.strftime("%d")
 sess_dir.mkdir(parents=True, exist_ok=True)
 session = sess_dir / f"rollout-{_iso}T10-00-00-abc.jsonl"
@@ -82,8 +85,9 @@ with contextlib.redirect_stdout(io.StringIO()):
 ev = json.loads((pathlib.Path(os.environ["SPENDGUARD_HOME"]) / "receipt_cache.json").read_text())
 ck("show(): stamps est_value_by_source['codex']", "codex" in ev.get("est_value_by_source", {}))
 ck("show(): codex est-value month = the session cost", abs(ev["est_value_by_source"]["codex"]["month"] - exp_cost) < 1e-6)
-# prove the receipt sums sources (add a fake claude-code stamp, then the tally adds both)
-receipt.stamp_est_value([{"day": codex.datetime.date.today().isoformat(), "spend_micros": 5_000_000, "billed": False}], source="claude-code")
+# prove the receipt sums sources (add a fake claude-code stamp, then the tally adds both). Stamp it on the SAME UTC day
+# as the session (_iso) — receipt windows in UTC, so a LOCAL date.today() stamp would miss the month at the boundary.
+receipt.stamp_est_value([{"day": _iso, "spend_micros": 5_000_000, "billed": False}], source="claude-code")
 t = receipt._est_tally()
 ck("receipt._est_tally SUMS codex + claude-code", t and abs(t["month"] - (exp_cost + 5.0)) < 1e-6)
 
