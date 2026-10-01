@@ -387,17 +387,19 @@ def collect_batched(limit=2000, model=None):
               % type(_e).__name__, file=_syscb.stderr, flush=True)
         return {"rows": 0, "batches": 0, "done": 0, "failed": 0, "not_ready": 0, "collected": 0, "orphaned": 0,
                 "collect_errors": [{"error": "queue read failed: %s" % type(_e).__name__}]}
-    groups, orphaned = {}, []                          # (batch_id, intent) -> [row_id]; orphaned = no usable handle
+    groups, orphaned, group_model = {}, [], {}          # (batch_id, intent) -> [row_id]; orphaned = no usable handle
     for rid, intent, result_json in rows:
         try:
-            handle = (json.loads(result_json) if result_json else {}).get("batch")
+            _h = (json.loads(result_json) if result_json else {})
+            handle, _bmodel = _h.get("batch"), _h.get("batch_model")
         except (ValueError, TypeError):
-            handle = None
+            handle, _bmodel = None, None
         if handle:
             groups.setdefault((handle, intent), []).append(rid)
+            group_model[(handle, intent)] = _bmodel     # the batch's OWN model → its provider (picks the collect twin)
         else:
             orphaned.append(rid)                       # a queued_batch row with no usable batch handle — uncollectable
-    from . import callio, gate as _gate
+    from . import callio, gate as _gate, adapters
     out = {"rows": len(rows), "batches": len(groups), "done": 0, "failed": 0, "not_ready": 0, "collected": 0,
            "orphaned": len(orphaned), "not_settled": 0, "collect_errors": []}
     # UNSTICK orphaned rows: with no handle they can never be collected, so settle each to the retry ladder (re-runs
@@ -413,8 +415,20 @@ def collect_batched(limit=2000, model=None):
         out["not_settled"] += len(_orphan_failed)
         out["collect_errors"].append({"orphan_settle_failed": _orphan_failed[:50], "count": len(_orphan_failed)})
     for (batch_id, intent), ids in groups.items():
+        # The batch's OWN model (from its handle) picks the collect twin by provider — an Anthropic Message Batch settles
+        # via collect_message_batch, an OpenAI chat batch via collect_chat_tasks; both return the same {results, failed,
+        # not_ready, …} shape. Falls back to the function's `model` (and OpenAI) for an old row whose handle predates
+        # batch_model being stored — unchanged behaviour for those.
+        _bm = group_model.get((batch_id, intent)) or model
         try:
-            res = callio.collect_chat_tasks(batch_id, intent, model)
+            _prov = adapters.provider_for(_bm) if _bm else "openai"
+        except Exception:
+            _prov = "openai"
+        try:
+            if _prov == "anthropic":
+                res = callio.collect_message_batch(batch_id, intent, _bm)
+            else:
+                res = callio.collect_chat_tasks(batch_id, intent, _bm)
         except Exception as e:
             if _gate.is_deliberate_stop(e):
                 raise                                  # a spend/deadline refusal HALTS collection, never continues past it

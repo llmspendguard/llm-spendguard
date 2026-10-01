@@ -55,6 +55,15 @@ def _ensure_batch_jobs_schema(c):
         batch_id TEXT PRIMARY KEY, provider TEXT, model TEXT, intent TEXT, n_rows INTEGER,
         status TEXT, attempts INTEGER, submitted_ts REAL, updated_ts REAL, expires_at REAL, last_error TEXT)""")
     c.execute("CREATE INDEX IF NOT EXISTS idx_batch_jobs_status ON batch_jobs(status)")
+    # offload_pending — the LOCAL half of exactly-once for a provider whose batch list carries NO metadata to reconcile
+    # against (Anthropic Message Batches). OpenAI stamps the deterministic offload key into batch metadata and reconciles
+    # purely from the provider's list (no local record needed — see _existing_offload_batch). Anthropic has no such slot,
+    # so the submitter writes a row here keyed by the offload key BEFORE the paid create (batch_id NULL = 'submitting')
+    # and fills batch_id in right after — so a crash-retry ADOPTS by local lookup, and the narrow create-then-crash
+    # window is recovered by _recover_orphan_message_batch (provider scan, matched by the globally-unique row ids).
+    c.execute("""CREATE TABLE IF NOT EXISTS offload_pending(
+        offload_key TEXT PRIMARY KEY, provider TEXT, model TEXT, intent TEXT, n_rows INTEGER,
+        batch_id TEXT, created_ts REAL, updated_ts REAL)""")
     c.commit()
 
 
@@ -125,7 +134,206 @@ def _existing_offload_batch(offload_key, provider):
     return callio.find_live_batch_by_metadata(_OFFLOAD_KEY_FIELD, offload_key, dead_statuses=_DEAD_FOR_ADOPT)
 
 
-def submit_offload(intent, rows, batch_model, provider="openai", *, cap_dollars=None, expires_at=None):
+# A hard ceiling on the Anthropic orphan-recovery scan (the mirror of callio._RECONCILE_SCAN_CEILING): reaching it means
+# the scan could NOT reach the created-floor window within this many batches, so it RAISES rather than concluding 'no
+# orphan' — a truncated 'none' would read as 'nothing submitted, submit fresh' and DUPLICATE a paid batch.
+_ANTHROPIC_RECONCILE_SCAN_CEILING = 20000
+
+# The Anthropic Message Batch completion window (grounded from the docs: a batch is processed within 24h) + a margin.
+# Its role in recovery: a batch THIS offload created (if the create reached the provider) will be ENDED — and so found
+# by the orphan scan's custom_id match — within this window. So a 'submitting' record OLDER than this with NO ended
+# match means the create never reached the provider (or its results expired >29d), and submitting fresh is safe. WITHIN
+# the window a lost-id create may still be in flight, so the offload is HELD (never resubmitted) until it settles.
+_ANTHROPIC_BATCH_WINDOW_S = 26 * 3600
+
+
+class _OffloadInflightUnconfirmed(RuntimeError):
+    """This offload's OWN prior attempt is unconfirmed (a 'submitting' pending record written just before the paid
+    create, whose batch_id was lost to a crash) and recent enough that its batch may still be IN FLIGHT on the provider —
+    where Anthropic exposes no custom_ids to confirm identity. HOLD — never resubmit past it (the double-pay this
+    prevents): the drain retries, and once that batch ENDS the orphan scan matches it by custom_id and adopts it (or,
+    past the completion window with still no match, proves it was never created and submits fresh). This is keyed to THIS
+    offload's own pending record, never to an unrelated in-progress batch that merely shares a request count."""
+
+
+def _pending_lookup(offload_key):
+    """The local pending record for an Anthropic offload key, or None only when there is genuinely NO row. Anthropic
+    batches carry no metadata to reconcile against, so this local row (written BEFORE the paid create) is the durable
+    'did this offload already submit' record. FAILS CLOSED: a stop/lock propagates, and any OTHER read error RAISES too —
+    an UNREADABLE record must never be mistaken for 'no prior submit', because a CONFIRMED record read as None would
+    authorize a fresh paid batch and DUPLICATE the one it already holds. (submit_offload turns the raise into a reconcile
+    error so the drain retries rather than blind-submitting.)"""
+    from . import provider_tokens as _pt
+    try:
+        with _lock:
+            row = _jobs_db().execute(
+                "SELECT offload_key, provider, model, intent, n_rows, batch_id, created_ts FROM offload_pending "
+                "WHERE offload_key=?", (offload_key,)).fetchone()
+    except Exception as e:
+        if _pt._stop_or_locked(e):
+            raise
+        config.rollback_ledger_conn("batch_jobs")
+        raise                                          # fail CLOSED — an unreadable record is NOT 'no prior submit'
+    if not row:
+        return None
+    return dict(offload_key=row[0], provider=row[1], model=row[2], intent=row[3], n_rows=row[4],
+               batch_id=row[5], created_ts=row[6])
+
+
+def _pending_note(offload_key, provider, model, intent, n_rows):
+    """Durably note an offload is ABOUT to submit (batch_id NULL = 'submitting'), BEFORE the paid create. REPLACES any
+    stale record for the key and stamps a FRESH created_ts (the floor the orphan scan bounds itself to). Returns
+    created_ts. A stop/lock propagates; any other write error RAISES — without a durable pending record the submit
+    cannot be made exactly-once, so the caller MUST refuse rather than blind-submit (fail closed, never a double-pay)."""
+    from . import provider_tokens as _pt
+    now = time.time()
+    try:
+        with _lock:
+            _jobs_db().execute(
+                "INSERT OR REPLACE INTO offload_pending (offload_key, provider, model, intent, n_rows, batch_id, "
+                "created_ts, updated_ts) VALUES (?,?,?,?,?,?,?,?)",
+                (offload_key, provider, model, intent, int(n_rows or 0), None, now, now))
+            _jobs_db().commit()
+        return now
+    except Exception as e:
+        if _pt._stop_or_locked(e):
+            raise
+        config.rollback_ledger_conn("batch_jobs")
+        raise                                          # fail closed — no durable record ⇒ exactly-once not guaranteed
+
+
+def _pending_confirm(offload_key, batch_id):
+    """Record the batch_id the provider returned (pending → confirmed). After this a crash-retry adopts by local lookup,
+    no provider scan. Best-effort: a stop/lock propagates; any other error is logged, NOT fatal — the batch_id is also on
+    the queue rows (mark_batched) and re-findable by the orphan scan, so a lost confirm never loses the batch."""
+    from . import provider_tokens as _pt
+    try:
+        with _lock:
+            _jobs_db().execute("UPDATE offload_pending SET batch_id=?, updated_ts=? WHERE offload_key=?",
+                               (batch_id, time.time(), offload_key))
+            _jobs_db().commit()
+    except Exception as e:
+        if _pt._stop_or_locked(e):
+            raise
+        config.rollback_ledger_conn("batch_jobs")
+        import sys
+        print("[spendguard] batch_tracker._pending_confirm: could not confirm batch %s (%s) — recoverable via the "
+              "queue rows + orphan scan" % (batch_id, type(e).__name__), file=sys.stderr, flush=True)
+
+
+def _pending_clear(offload_key):
+    """Remove a pending record (its batch is dead/expired, so a legitimate re-offer submits fresh). Best-effort."""
+    from . import provider_tokens as _pt
+    try:
+        with _lock:
+            _jobs_db().execute("DELETE FROM offload_pending WHERE offload_key=?", (offload_key,))
+            _jobs_db().commit()
+    except Exception as e:
+        if _pt._stop_or_locked(e):
+            raise
+        config.rollback_ledger_conn("batch_jobs")
+
+
+def _recover_orphan_message_batch(row_ids, created_floor, client=None):
+    """Crash-after-accept recovery for an Anthropic offload: a 'submitting' pending record says a batch for THIS row-set
+    was created, but its batch_id was lost to a crash between create() and confirm. Find that batch on the provider and
+    ADOPT it, or prove it was never created and submit fresh — keyed to THIS offload's OWN record, NEVER to an unrelated
+    batch that merely shares a request count. Returns a batch_id to ADOPT, or None to submit fresh; raises
+    _OffloadInflightUnconfirmed to HOLD.
+
+    Exactly-once rests on row ids being GLOBALLY UNIQUE (lane_queue AUTOINCREMENT, never reused): the offload submits each
+    row with custom_id == its row id, so a batch carrying one of these custom_ids IS this offload's batch — a DEFINITIVE
+    identity test, available only once the batch has ENDED (Anthropic exposes no custom_ids while it is in flight). So:
+      · scan newest-first, bounded to batches created at/after `created_floor` (the pending row is written just before create);
+      · an ENDED candidate (matching request count) whose first readable result custom_id ∈ row_ids → ADOPT its id;
+      · an IN-PROGRESS / canceling candidate is SKIPPED, not held on — it cannot be confirmed, and it may be an UNRELATED
+        job that merely shares a count (holding on it would false-block this offload — the bug this version removes);
+      · after the window with no ended match: a pending record OLDER than the completion window means our batch (if any)
+        would have ENDED and been found → it was never created (or expired >29d) → None (submit fresh); a RECENT record
+        means our OWN lost-id create may still be in flight → raise _OffloadInflightUnconfirmed (HOLD until it settles,
+        then this scan adopts it) — bounded by the window and tied to OUR record, never to an unrelated batch.
+    Ceiling-bounded: a scan that cannot reach the window end RAISES (a truncated 'none' would DUPLICATE). $0 (a control-
+    plane list + at most one finished-result line per candidate). A deliberate spend/deadline stop propagates."""
+    import time
+    from . import callio
+    client = client or callio._anthropic_client()
+    want = set(str(r) for r in (row_ids or []))
+    if not want:
+        return None
+    seen = 0
+    saw_unconfirmable = False       # did we see an IN-PROGRESS matching-count batch — a candidate we cannot confirm?
+    for b in client.messages.batches.list(limit=100):      # anthropic SyncPage auto-paginates newest-first
+        if seen >= _ANTHROPIC_RECONCILE_SCAN_CEILING:
+            raise RuntimeError(
+                "anthropic offload orphan scan passed %d batches without reaching the created-floor window — cannot "
+                "confirm no orphan exists, so refusing to conclude 'none' (that would risk a DUPLICATE paid batch)."
+                % _ANTHROPIC_RECONCILE_SCAN_CEILING)
+        seen += 1
+        created = getattr(b, "created_at", None)
+        if created is not None and created_floor is not None and created.timestamp() < (created_floor - 5):
+            break                                          # newest-first: past the floor (−5s skew) ⇒ window exhausted
+        rc = getattr(b, "request_counts", None)
+        total = (sum(int(getattr(rc, k, 0) or 0) for k in ("processing", "succeeded", "errored", "canceled", "expired"))
+                 if rc is not None else None)
+        if total is not None and total != len(want):
+            continue                                       # a different-sized batch cannot be this exact row-set
+        bid = getattr(b, "id", None)
+        if getattr(b, "processing_status", None) == "ended" and getattr(b, "results_url", None):
+            for res in client.messages.batches.results(bid):   # one readable custom_id is a DEFINITIVE identity test
+                cid = getattr(res, "custom_id", None)
+                if cid is None:
+                    continue
+                if str(cid) in want:
+                    if not bid:
+                        raise RuntimeError("anthropic orphan matched by custom_id but the batch carries no id — "
+                                           "refusing to conclude 'none' (would risk a DUPLICATE paid batch).")
+                    return bid                              # ADOPT — definitive custom_id match
+                break                                      # first readable custom_id is not ours → a different batch
+        else:
+            saw_unconfirmable = True                        # an in-progress/canceling matching-count batch — note it, do NOT
+            #                                                 hold on it directly (it may be unrelated); the decision is below
+    # No ENDED batch of ours in the window. HOLD only when BOTH: an unconfirmable in-flight candidate exists AND our
+    # pending record is recent enough that our own lost-id create could still be that in-flight batch. Otherwise submit
+    # FRESH — an empty window (nothing in flight) proves the create never reached the provider, and a record older than
+    # the completion window means our batch (if any) would have ENDED and been adopted above, so a still-in-flight batch
+    # cannot be ours. This keys the hold to OUR record, never to an unrelated in-progress batch alone (bounded + rare).
+    recent = created_floor is not None and (time.time() - created_floor) <= _ANTHROPIC_BATCH_WINDOW_S
+    if saw_unconfirmable and recent:
+        raise _OffloadInflightUnconfirmed(
+            "a prior anthropic offload for this row-set is unconfirmed and a matching in-flight batch exists that "
+            "cannot yet be identified (no custom_ids until it ends); holding until it settles (then adopted by "
+            "custom_id) rather than risk a duplicate paid batch.")
+    return None                                            # nothing in flight, or our window elapsed → never created → fresh
+
+
+def _existing_offload_message_batch(offload_key, row_ids):
+    """Anthropic twin of _existing_offload_batch: is there already a batch for this offload (a prior attempt that
+    submitted, perhaps crashing before confirm)? Returns a batch_id to ADOPT, or None to submit fresh; raises
+    _OffloadInflightUnconfirmed to HOLD. Anthropic has no batch metadata, so the LOCAL pending record is the record of
+    'did this offload submit': a CONFIRMED record adopts directly (verifying the batch is still collectable — a dead or
+    >29-day-expired one is cleared so the rows re-run), and an unconfirmed 'submitting' record is resolved against the
+    provider by the orphan scan."""
+    rec = _pending_lookup(offload_key)
+    if not rec:
+        return None                                        # no prior attempt → submit fresh
+    from . import callio, gate
+    client = callio._anthropic_client()
+    if rec.get("batch_id"):
+        try:
+            b = client.messages.batches.retrieve(rec["batch_id"])
+        except Exception as e:
+            if gate.is_deliberate_stop(e):
+                raise
+            return rec["batch_id"]                         # can't verify now → adopt the known id (collect retries); never a fresh dup
+        status = getattr(b, "processing_status", None)
+        if status == "in_progress" or (status == "ended" and getattr(b, "results_url", None)):
+            return rec["batch_id"]                          # live or still collectable → ADOPT
+        _pending_clear(offload_key)                         # canceling, or ended-and-expired (>29d, no results) → dead → fresh
+        return None
+    return _recover_orphan_message_batch(row_ids, rec.get("created_ts"), client=client)   # 'submitting' → recover or prove-none
+
+
+def submit_offload(intent, rows, batch_model, *, cap_dollars=None, expires_at=None):
     """Offload a set of task rows to the Batch API and TRACK the job — the ONE place the submit→record sequence lives
     (used by the drain autobatch path and any explicit offload op). EXACTLY-ONCE: reconcile → (adopt | submit) → mark →
     register. Returns {batch_id, marked, error[, adopted]}.
@@ -145,17 +353,38 @@ def submit_offload(intent, rows, batch_model, provider="openai", *, cap_dollars=
     mark comes BEFORE register so that even if register fails, the rows already carry the handle and collect_batched
     settles them row-level; and reconcile makes even that recoverable (the keyed batch is re-findable). A reconcile
     failure is NOT swallowed into a blind submit — it returns an offload error so the drain retries. A deliberate
-    spend/deadline stop propagates."""
-    from . import submit as _submit, lane_queue, gate
+    spend/deadline stop propagates.
+
+    PROVIDER-AWARE (the exactly-once TAG differs by vendor). `provider` is derived from `batch_model` when the caller
+    gives none — so an OpenAI batch_model keeps the OpenAI path (unchanged) and an Anthropic batch_model routes to the
+    Messages Batch path. OpenAI stamps the key in BATCH METADATA and reconciles from the provider's list (no local
+    record). Anthropic batches carry NO metadata, so the key lives in a LOCAL pending record written BEFORE the paid
+    create, and the create-then-crash window is recovered by scanning the provider for a batch carrying these rows'
+    (globally-unique) custom_ids — an in-flight one that can't yet be confirmed is HELD, never resubmitted."""
+    from . import submit as _submit, lane_queue, gate, adapters
     rows = list(rows or [])
     if not rows:
         return {"batch_id": None, "marked": 0, "error": "no rows"}
+    # The offload RUNS on batch_model; its provider is DERIVED from the model — never taken from the caller — so the key
+    # and the submit/collect path always match the ACTUAL vendor (a caller cannot force an OpenAI path onto an Anthropic
+    # model). An OpenAI model derives 'openai' (the unchanged path); an Anthropic batch_model routes to the Messages Batch.
+    try:
+        provider = adapters.provider_for(batch_model)
+    except Exception as e:
+        return {"batch_id": None, "marked": 0, "error": "unknown provider for batch_model %r: %s" % (batch_model, type(e).__name__)}
     row_ids = [r["id"] for r in rows]
     key = _offload_key(row_ids, intent, batch_model, provider)
 
     # EXACTLY-ONCE step 1 — reconcile BEFORE paying: adopt an already-created batch for this exact row-set if one exists.
     try:
-        existing = _existing_offload_batch(key, provider)
+        if provider == "anthropic":
+            existing = _existing_offload_message_batch(key, row_ids)
+        else:
+            existing = _existing_offload_batch(key, provider)
+    except _OffloadInflightUnconfirmed as e:
+        # a prior attempt is in-flight and not yet confirmable (Anthropic: no readable custom_ids mid-flight) — HOLD,
+        # never resubmit past it. The drain retries; it adopts once the batch ends and its custom_ids become readable.
+        return {"batch_id": None, "marked": 0, "error": "inflight-hold: %s" % (str(e)[:120])}
     except Exception as e:
         if gate.is_deliberate_stop(e):
             raise
@@ -167,19 +396,36 @@ def submit_offload(intent, rows, batch_model, provider="openai", *, cap_dollars=
         register_batch(existing, provider, batch_model, intent, marked, expires_at=expires_at)   # INSERT OR IGNORE
         return {"batch_id": existing, "marked": marked, "error": None, "adopted": True}
 
-    # step 2 — first attempt: submit (estimate-first + $-capped) STAMPED with the offload key, then mark + register.
+    # step 2 — first attempt: submit (estimate-first + $-capped), then mark + register. The exactly-once tag differs by
+    # provider: OpenAI stamps the key in batch metadata; Anthropic (no metadata) writes a local pending record BEFORE the
+    # paid create so a crash-retry adopts it / recovers the orphan.
     tasks = [{"custom_id": r["id"], "content": r["task"], **({"system": r["system"]} if r.get("system") else {})}
              for r in rows]
     try:
-        res = _submit.submit_chat_tasks(tasks, batch_model, intent=intent, cap_dollars=cap_dollars,
-                                        metadata={_OFFLOAD_KEY_FIELD: key})   # the exactly-once tag on the created batch
+        if provider == "anthropic":
+            try:
+                _pending_note(key, provider, batch_model, intent, len(row_ids))   # durable BEFORE create — fail-closed
+            except Exception as e:
+                if gate.is_deliberate_stop(e):
+                    raise
+                return {"batch_id": None, "marked": 0, "error": "pending-note: %s" % (type(e).__name__)}
+            res = _submit.submit_message_batch(tasks, batch_model, intent=intent, cap_dollars=cap_dollars)
+        else:
+            res = _submit.submit_chat_tasks(tasks, batch_model, intent=intent, cap_dollars=cap_dollars,
+                                            metadata={_OFFLOAD_KEY_FIELD: key})   # the exactly-once tag on the created batch
     except Exception as e:
         if gate.is_deliberate_stop(e):
             raise                                      # a cap refusal / deadline HALTS — never a silent partial offload
         return {"batch_id": None, "marked": 0, "error": "submit: %s" % (str(e)[:80])}
     bid = res.get("batch_id") if isinstance(res, dict) else None
     if not bid:
+        # No batch created (a cap refusal, build error, or lost response). The Anthropic pending record is LEFT in place
+        # ('submitting'): the next reconcile scans the provider — if the create actually happened it ADOPTS, else it
+        # proves none and submits fresh. This never double-pays; a persistently-refused offload just re-scans (bounded by
+        # the drain's attempt limit), never a silent second batch.
         return {"batch_id": None, "marked": 0, "error": (res.get("error") if isinstance(res, dict) else "no batch_id")}
+    if provider == "anthropic":
+        _pending_confirm(key, bid)                     # pending → confirmed (a crash-retry now adopts by local lookup)
     marked = lane_queue.mark_batched(row_ids, bid, batch_model)   # per-row durable; custom_id = row id
     register_batch(bid, provider, batch_model, intent, marked, expires_at=expires_at)
     return {"batch_id": bid, "marked": marked, "error": None}

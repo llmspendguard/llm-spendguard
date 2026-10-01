@@ -1,8 +1,8 @@
 """Offline unit tests for the Anthropic Message Batch SUBMIT path (submit.build_message_batch_requests +
-submit.submit_message_batch) — the Messages-API twin of submit_chat_tasks. NO network, NO spend: the anthropic
-client is replaced with a fake whose messages.batches.create records its args and returns a fake batch; the cost
-estimate uses the REAL gate.estimate_message_batch (pure token counting, $0). Sets its OWN fake ANTHROPIC_API_KEY
-(the suite strips real keys — else green-local / red-keyless-CI).
+submit.submit_message_batch) — the Messages-API twin of submit_chat_tasks. NO network, NO spend: the anthropic client is
+the shared _fake_anthropic fake whose messages.batches.create records its args + returns a fake batch; the cost estimate
+uses the REAL gate.estimate_message_batch (pure token counting, $0). Sets its OWN fake ANTHROPIC_API_KEY (the suite strips
+real keys — else green-local / red-keyless-CI).
 
 Pins:
   · build_message_batch_requests emits the INLINE Anthropic shape [{custom_id, params}]: params.model/max_tokens set,
@@ -25,44 +25,17 @@ os.environ["ANTHROPIC_API_KEY"] = "sk-ant-test-FAKE"     # suite strips real key
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 import anthropic                                           # noqa: E402
+from _fake_anthropic import FakeAnthropic, FakeBatches, batch_obj   # noqa: E402
 from spendguard import submit, gate                        # noqa: E402
 
 MODEL = "claude-haiku-4-5"
 
 
-class _FakeBatch:
-    def __init__(self, bid):
-        self.id = bid
-
-
-class _FakeBatches:
-    def __init__(self, store, raise_exc=None):
-        self._store = store
-        self._raise = raise_exc
-
-    def create(self, requests=None, **kw):
-        self._store["create_calls"] += 1
-        self._store["last_requests"] = list(requests or [])
-        if self._raise is not None:
-            raise self._raise
-        return _FakeBatch("msgbatch_test_0001")
-
-
-class _FakeAnthropic:
-    _store = None
-    _raise = None
-
-    def __init__(self, *a, **kw):
-        self.messages = type("_M", (), {})()
-        self.messages.batches = _FakeBatches(_FakeAnthropic._store, _FakeAnthropic._raise)
-
-
-def _install_fake(raise_exc=None):
-    store = {"create_calls": 0, "last_requests": None}
-    _FakeAnthropic._store = store
-    _FakeAnthropic._raise = raise_exc
-    anthropic.Anthropic = _FakeAnthropic
-    return store
+def _install_fake(create_raises=None):
+    """Install the shared fake as anthropic.Anthropic; return the FakeBatches so the test can read create_calls."""
+    fb = FakeBatches(create_result=batch_obj("msgbatch_test_0001", "in_progress", 0), create_raises=create_raises)
+    anthropic.Anthropic = lambda *a, **k: FakeAnthropic(fb)
+    return fb
 
 
 def main():
@@ -102,32 +75,32 @@ def main():
     ck("non-anthropic model → no batch_id", r.get("batch_id") is None)
 
     # 3) over cap_dollars → REFUSED, estimate present, create NEVER called
-    store = _install_fake()
+    fb = _install_fake()
     r = submit.submit_message_batch(["estimate me"], MODEL, cap_dollars=1e-9, submit=True, intent="test:msgbatch")
     ck("over cap → REFUSED error", bool(r.get("error")) and "REFUSED" in r["error"], r.get("error"))
     ck("over cap → estimate still returned", isinstance(r.get("estimate"), dict) and r["estimate"].get("cost", 0) > 0, r.get("estimate"))
-    ck("over cap → create NEVER called (refuse, never degrade)", store["create_calls"] == 0, store["create_calls"])
+    ck("over cap → create NEVER called (refuse, never degrade)", len(fb.create_calls) == 0, len(fb.create_calls))
     ck("over cap → no batch_id", r.get("batch_id") is None)
 
     # 4) submit=False → estimate only, no create
-    store = _install_fake()
+    fb = _install_fake()
     r = submit.submit_message_batch(["just estimate"], MODEL, submit=False)
-    ck("submit=False → no create", store["create_calls"] == 0, store["create_calls"])
+    ck("submit=False → no create", len(fb.create_calls) == 0, len(fb.create_calls))
     ck("submit=False → estimate present, no batch_id", bool(r.get("estimate")) and r.get("batch_id") is None, r)
 
     # 5) submit=True → create called once with the built requests, batch_id returned
-    store = _install_fake()
+    fb = _install_fake()
     r = submit.submit_message_batch([{"custom_id": "a", "content": "one"}, {"custom_id": "b", "content": "two"}],
                                     MODEL, cap_dollars=100.0, submit=True, intent="test:msgbatch")
-    ck("submit=True → create called exactly once", store["create_calls"] == 1, store["create_calls"])
+    ck("submit=True → create called exactly once", len(fb.create_calls) == 1, len(fb.create_calls))
     ck("submit=True → create got the inline requests list (n=2)",
-       isinstance(store["last_requests"], list) and len(store["last_requests"]) == 2, store["last_requests"])
+       len(fb.create_calls) == 1 and len(fb.create_calls[0]) == 2, fb.create_calls)
     ck("submit=True → create requests carry custom_id+params",
-       bool(store["last_requests"]) and set(store["last_requests"][0]) == {"custom_id", "params"})
+       bool(fb.create_calls) and set(fb.create_calls[0][0]) == {"custom_id", "params"})
     ck("submit=True → batch_id returned", r.get("batch_id") == "msgbatch_test_0001", r.get("batch_id"))
 
     # 6) a deliberate stop (SpendGateRefused) from create PROPAGATES (never swallowed into {error})
-    _install_fake(raise_exc=gate.SpendGateRefused("over the daily cap"))
+    _install_fake(create_raises=gate.SpendGateRefused("over the daily cap"))
     propagated = False
     try:
         submit.submit_message_batch(["x"], MODEL, cap_dollars=100.0, submit=True)
