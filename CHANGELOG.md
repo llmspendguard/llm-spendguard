@@ -4,7 +4,22 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
-## [0.12.3] — 2026-10-01
+## [0.12.4] — 2026-10-01
+
+Adds `spendguard keys-audit` — a static scan that catches a repo `.env` holding a provider key that would shadow the
+keys.env SSOT at `load_dotenv()` time, the shadow `doctor` cannot see (it reads the live `os.environ`, not the files).
+This is the gap behind the "warden 401": a rotated key stays stale in a repo `.env` and a real env var wins in
+`api_key()`.
+
+### Added
+- **`spendguard keys-audit [path...] [--strict] [--json]`.** Reads `.env`-family files directly and, for each key whose
+  name keys.env ITSELF declares, compares the file value to the SSOT: `differ` (the dangerous active-when-loaded shadow →
+  exit 1) or `dup` (identical value, redundant → exit 1 only under `--strict`). A directory scans its root `.env` /
+  `.env.local` / … ; an explicit file is read directly. Last-4 only — values are compared in memory, never printed.
+  Whether a var is a provider key is keys.env's own declaration (a fact), never inferred from a `_KEY`/`_TOKEN` suffix,
+  so an app secret like `CSRF_TOKEN` is never mis-flagged. New `config.dotenv_key_shadow_report` /
+  `config._dotenv_scan_files` (reusing `config._iter_env_file`); `config.key_shadow_report` (runtime os.environ) is
+  unchanged. No change to any existing command.
 
 Reliability — ends the Anthropic concurrent-connection **429 storms** that had made batch/fan runs unreliable since
 2026-09-28. The 429s were a concurrent-CONNECTION cap ("Number of concurrent connections has exceeded your rate limit"),
