@@ -43,8 +43,19 @@ check("__init__ does not read importlib.metadata for __version__ (reads the SSOT
 # pyproject must be dynamic (no static literal) and derive the version from the SSOT at build time.
 pyproject_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pyproject.toml")
 raw = open(pyproject_path).read()
+# Parse the TOML STRUCTURALLY on every Python version: tomllib is 3.11+, tomli is its backport (present on 3.9/3.10
+# via coverage[toml] + the dev extras). A whole-file string scan cannot tell the [project] table's `version` from the
+# [tool.setuptools.dynamic] `version = {attr=...}` line — that conflation made the OLD mechanical fallback FALSE-FAIL
+# on 3.9/3.10 (it read the dynamic-derivation line as a static literal and reported a red build) while 3.11+ passed.
+# Parse, don't scan.
 try:
     import tomllib
+except ModuleNotFoundError:
+    try:
+        import tomli as tomllib
+    except ModuleNotFoundError:
+        tomllib = None
+if tomllib is not None:
     pp = tomllib.loads(raw)
     proj = pp.get("project", {})
     check("pyproject [project].version is DYNAMIC (no static literal)",
@@ -52,9 +63,11 @@ try:
     attr = (pp.get("tool", {}).get("setuptools", {}).get("dynamic", {}).get("version", {}) or {}).get("attr")
     check(f"pyproject derives the version from the SSOT attr (got {attr!r})",
           attr == "spendguard._version.__version__")
-except ModuleNotFoundError:                      # tomllib is py3.11+; fall back to a mechanical presence check
+else:                                            # no TOML parser AT ALL — a CORRECTED mechanical check: a static literal
+                                                 # is `version = "<str>"` (opening quote), which does NOT match the
+                                                 # dynamic `version = {attr=...}` brace form the old check tripped on.
     check("pyproject declares dynamic version (no static literal)",
-          'dynamic = ["version"]' in raw and "\nversion = " not in raw)
+          'dynamic = ["version"]' in raw and '\nversion = "' not in raw)
     check("pyproject derives the version from the SSOT attr",
           'attr = "spendguard._version.__version__"' in raw)
 
