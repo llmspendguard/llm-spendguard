@@ -61,8 +61,8 @@ def _usage(in_tok, out_tok, cread=0, ccreate=0):
                 cache_read_input_tokens=cread, cache_creation_input_tokens=ccreate)
 
 
-def _succeeded_text(cid, text, in_tok, out_tok):
-    msg = _Obj(content=[_Obj(type="text", text=text)], usage=_usage(in_tok, out_tok))
+def _succeeded_text(cid, text, in_tok, out_tok, cread=0):
+    msg = _Obj(content=[_Obj(type="text", text=text)], usage=_usage(in_tok, out_tok, cread=cread))
     return _Obj(custom_id=cid, result=_Obj(type="succeeded", message=msg))
 
 
@@ -93,7 +93,7 @@ def main():
     _FakeAnthropicCollect._batches = {"b_ok": ended, "b_wait": inprog}
     _FakeAnthropicCollect._results = {
         "b_ok": [
-            _succeeded_text("t1", "hello answer", 120, 30),
+            _succeeded_text("t1", "hello answer", 120, 30, cread=50),   # fresh 120 + cache_read 50 → total in_tok 170
             _succeeded_tool("t2", {"label": "spam"}, 200, 15),
             _errored("t3", _Obj(type="overloaded_error", message="server overloaded")),
             _no_custom_id(),
@@ -110,7 +110,10 @@ def main():
     ck("result with no custom_id → anomalies (nothing to key it by)", len(out["anomalies"]) == 1, out["anomalies"])
     ck("collected counts only succeeded rows (2)", out["collected"] == 2, out["collected"])
     ck("not-ended batch → not_ready, results never pulled", out["not_ready"] == ["b_wait"], out["not_ready"])
-    ck("usage.in_tok summed across succeeded (120+200)", out["usage"]["in_tok"] == 320, out["usage"]["in_tok"])
+    # in_tok is the TOTAL read-side input = fresh + cache_read ((120+50)+200=370), matching the realtime convention —
+    # recording input_tokens alone would under-report the cache hit (the defect-1 class, in the batch path).
+    ck("usage.in_tok = fresh + cache_read summed ((120+50)+200=370)", out["usage"]["in_tok"] == 370, out["usage"]["in_tok"])
+    ck("usage.cache_read summed separately (50)", out["usage"]["cache_read"] == 50, out["usage"]["cache_read"])
     ck("usage.out_tok summed across succeeded (30+15)", out["usage"]["out_tok"] == 45, out["usage"]["out_tok"])
 
     # require_ready=False still skips a batch with no results_url (nothing to pull)
@@ -127,11 +130,12 @@ def main():
 
     callio.record_io_sample = _spy
     try:
-        _FakeAnthropicCollect._results = {"b_ok": [_succeeded_text("r1", "x", 77, 9)]}
+        _FakeAnthropicCollect._results = {"b_ok": [_succeeded_text("r1", "x", 77, 9, cread=8)]}
         callio.collect_message_batch("b_ok", "test:collect", MODEL, record_io=True)
     finally:
         callio.record_io_sample = _real
-    ck("record_io=True captures REAL in_tok+out_tok (both axes)", captured.get("r1") == (77, 9), captured.get("r1"))
+    # in_tok passed to the corpus is the TOTAL (fresh 77 + cache_read 8 = 85), not fresh-only — both axes, cache-normalized
+    ck("record_io=True captures REAL in_tok(total)+out_tok (both axes)", captured.get("r1") == (85, 9), captured.get("r1"))
 
     print(f"\n{'[FAIL]' if fails else 'OK'} test_message_batch_collect: {len(fails)} failure(s)")
     return 1 if fails else 0

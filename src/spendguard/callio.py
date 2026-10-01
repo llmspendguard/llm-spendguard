@@ -729,11 +729,16 @@ def collect_message_batch(batch_ids, intent, model, require_ready=True, record_i
                     texts.append(getattr(blk, "text", "") or "")
             text = json.dumps(tool_input) if tool_input is not None else "".join(texts)
             usage = getattr(msg, "usage", None)
-            in_tok = int(getattr(usage, "input_tokens", 0) or 0)
+            # Anthropic reports input_tokens as the FRESH (uncached) input; a cache READ is a SEPARATE count. The total
+            # read-side input is fresh + cache_read — the SAME normalization the realtime path applies (adapters._call_once:
+            # `in_tok = input_tokens + cache_read`), so batch and realtime record input CONSISTENTLY and pricing._cost
+            # (which derives fresh = total - cached) stays correct. Recording input_tokens alone under-reports by the hit.
+            cache_read = int(getattr(usage, "cache_read_input_tokens", 0) or 0)
+            in_tok = int(getattr(usage, "input_tokens", 0) or 0) + cache_read
             out_tok = int(getattr(usage, "output_tokens", 0) or 0)
             out["usage"]["in_tok"] += in_tok
             out["usage"]["out_tok"] += out_tok
-            out["usage"]["cache_read"] += int(getattr(usage, "cache_read_input_tokens", 0) or 0)
+            out["usage"]["cache_read"] += cache_read
             out["usage"]["cache_creation"] += int(getattr(usage, "cache_creation_input_tokens", 0) or 0)
             if record_io:                            # REAL both axes (fetch_anthropic records out_tok only)
                 record_io_sample(intent, "anthropic", model, bid, cid, "", text, in_tok=in_tok, out_tok=out_tok)
