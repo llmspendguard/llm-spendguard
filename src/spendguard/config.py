@@ -133,6 +133,65 @@ def key_shadow_report():
     return out
 
 
+# The .env-family filenames a repo might hold a shadowing provider key in; scanned when a DIRECTORY is given.
+# Non-recursive on purpose — a repo keeps these at its root, and a deep walk would read unrelated vendored fixtures.
+_DOTENV_SCAN_NAMES = (".env", ".env.local", ".env.development", ".env.development.local",
+                      ".env.production", ".env.production.local", ".env.test", ".env.test.local")
+
+
+def _dotenv_scan_files(paths):
+    """The .env-family files an audit of `paths` will actually read: each directory expanded (non-recursive) to the
+    known .env names it contains, each explicit file kept, existence-checked and de-duplicated. The ONE walk both
+    dotenv_key_shadow_report() and the keys-audit CLI share, so the 'files scanned' count can never drift from what
+    was judged. Never raises per path."""
+    files, seen = [], set()
+    for p in paths or []:
+        try:
+            pp = Path(p).expanduser()
+            cands = [pp / n for n in _DOTENV_SCAN_NAMES] if pp.is_dir() else [pp]
+        except Exception:
+            continue                                      # an unreadable path is skipped, never crashes the audit
+        for f in cands:
+            rp = str(f)
+            try:
+                ok = f.is_file()
+            except Exception:
+                ok = False
+            if ok and rp not in seen:                     # a file named twice (via dir + explicitly) is audited once
+                seen.add(rp)
+                files.append(f)
+    return files
+
+
+def dotenv_key_shadow_report(paths):
+    """STATIC scan: keys sitting UNCOMMENTED in a repo's .env-family files that WOULD shadow the keys.env SSOT once the
+    app calls load_dotenv() — the shadow `doctor` cannot catch, because a bare CLI never runs that load_dotenv(), so the
+    value is not yet in os.environ. key_shadow_report() reads the RUNTIME os.environ; THIS reads the FILES. A key is
+    considered ONLY when its name EXACTLY matches one keys.env declares — so whether a var is a provider key is keys.env's
+    OWN declaration (a fact), never guessed from the name (a `_TOKEN`/`_KEY` suffix rule would mis-read an app secret
+    like CSRF_TOKEN as a provider key). Per matching (file, key): state 'differ' = the file's value ≠ keys.env's (the
+    dangerous active-when-loaded shadow of a possibly-rotated key — exactly the warden 401), 'dup' = identical value
+    (redundant, but a key must still live ONLY in keys.env). A commented / profile-suffixed / empty line, and any name
+    keys.env does not declare, never flags. Read-only, $0, LAST-4 only in the result (values are compared in memory,
+    never printed). `paths` = files and/or directories; a directory is scanned (non-recursive) for the known .env-family
+    names. Returns [{path, name, state, file4, declared4}]; never raises per path."""
+    declared = {}
+    for k, v in _iter_env_file(KEYS_ENV):
+        if k and v and "__" not in k:
+            declared.setdefault(k, v)                     # first wins, matching load_key_files order
+    out = []
+    for f in _dotenv_scan_files(paths):
+        for k, v in _iter_env_file(f):
+            if "__" in k or not v:
+                continue                                  # a profile entry (__ = the fixed suffix convention) / empty value: no bare shadow
+            d = declared.get(k)                           # keys.env's declared NAMES decide what counts as a key here — a fact, not a name guess
+            if d is None:
+                continue                                  # a name keys.env does not declare cannot shadow the SSOT — not this audit's concern
+            state, declared4 = ("dup", d[-4:]) if v == d else ("differ", d[-4:])
+            out.append({"path": str(f), "name": k, "state": state, "file4": v[-4:], "declared4": declared4})
+    return out
+
+
 def key_source(name):
     """Where the ACTIVE value of provider key `name` actually comes from — 'keys.env', 'profile:<p>', 'external'
     (a shadow), or 'missing'. Determined by COMPARING the resolved value to the declared default and the active
