@@ -4,6 +4,39 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.12.3] — 2026-10-01
+
+Reliability — ends the Anthropic concurrent-connection **429 storms** that had made batch/fan runs unreliable since
+2026-09-28. The 429s were a concurrent-CONNECTION cap ("Number of concurrent connections has exceeded your rate limit"),
+not tokens/min or requests/min — so they carry no `x-ratelimit` header, the rate learner had nothing to learn, the
+per-vendor cap never ratcheted, and the api-path 429 was never retried (`attempts`/`retry_after` were NULL on all
+recorded 429s). No public API change; callers do not need to set `metered_only` or retry params to get reliable fan-out.
+
+### Fixed
+- **One unified TCP-style congestion window per vendor (`dispatch.Governor`).** `_conn_admit` / `_conn_release` gate
+  admission against the LIVE learned per-vendor connection cap (a `Condition` + counter, read per-admit), so a
+  shrink/grow takes effect immediately WITHOUT rebuilding the bucket semaphore — the old rebuild orphaned over-admitted
+  holders, kept in-flight high, and left the storm unending (the real bug).
+- **AIMD on any 429/529 — no 429 subtyping.** `adapters._call_guarded` shrinks the window on any rate-limit/overload
+  (multiplicative-decrease toward in-flight−1, debounced per wave) and grows it on a clean success (additive-increase
+  toward the configured default). Classifying connection-vs-token would be a meaning decision, so it is not done; tpm/rpm
+  pacing still rides the header independently when present.
+- **Bounded re-admit retry on every path.** The fan (`lane_balance._run_task_on_api`) and serial (`adapters.call`,
+  guarded by `dispatch.holding()` so it never double-retries inside a fan's slot) both re-admit under the tightened
+  window until served or the caller's deadline; a deadline-spent miss is signaled, never silent; base-fallback is
+  skipped for any 429.
+- **Fail-closed handlers.** The window's shrink / grow / reset / forget re-raise deliberate stops before swallowing a
+  transient; `reset_connection_window` is a durable empty-rewrite of the learned limits, never a file delete.
+- **Window bookkeeping is safe for unregistered models.** `_call_guarded` resolves the vendor once in a guarded lookup
+  (None when the model has no provider, e.g. a test `fake-model`) and skips the window update — `provider_for()` no
+  longer raises mid-call.
+
+### Tests
+- New `tests/test_connection_storm_reliability.py` — burst fan-out at concurrency against a stub enforcing a connection
+  ceiling (the load-induced-storm test that was missing; the prior queue test drives self-clearing faults and
+  structurally cannot reproduce a storm). RED before (client-visible failures) → GREEN after (0 client failures, the
+  window converges to the ceiling, bounded re-admits).
+
 ## [0.12.2] — 2026-10-01
 
 Dependency-resolution hardening — `pip install llm-spendguard[openai|anthropic]` can no longer resolve into a broken set.
