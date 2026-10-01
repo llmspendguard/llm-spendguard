@@ -364,6 +364,130 @@ def submit_chat_tasks(tasks, model, *, system=None, schema=None, reasoning="mini
             pass
 
 
+# The Anthropic Message Batches API limit: 100,000 requests OR 256 MB per batch, whichever is reached first (grounded
+# from the Anthropic docs, 2026-09). Used as the DEFAULT request ceiling; a caller passes a tighter one for blast
+# radius, and the per-$ `cap_dollars` is the real spend bound. (The 256 MB size limit is provider-enforced at create.)
+_ANTHROPIC_BATCH_REQUEST_CAP = 100_000
+
+
+def build_message_batch_requests(tasks, model, *, system=None, max_out=None, schema=None, schema_name="result"):
+    """Build the INLINE request list for the Anthropic Message Batches API FROM an in-memory task list — the Anthropic
+    twin of build_chat_batch_jsonl. Unlike OpenAI (a .jsonl FILE uploaded first), Anthropic takes requests INLINE:
+    a list of {custom_id, params}, where params is a full Messages body. Returns (requests, n).
+
+    Each task is a prompt STRING (custom_id auto = 'task-<i>') OR a {custom_id, content[, system, schema, schema_name]}
+    dict. Same discipline as the OpenAI builder: the per-request body is built through the ONE models.apply_call_params
+    authority (dialect='anthropic') so a caller can never send a model-wrong param; `custom_id` is preserved VERBATIM
+    (the caller's mapping key, returned on each result line); `system` rides the Anthropic TOP-LEVEL `system` param
+    (NOT a system-role message — that is the Messages-API shape); structured output rides the SAME
+    adapters.json_schema_request('anthropic', …) forced-tool binding the realtime path uses (refused up front with
+    SchemaNotStrictExpressible if strict mode can't serve it — a batch cannot heal per row, so an unservable schema
+    would fail EVERY request). A task may override system/schema/schema_name; absent keys fall back to the shared
+    arguments. spendguard OWNS the output budget: max_tokens is adapters.output_budget(model) (the model CEILING — and
+    Anthropic REQUIRES max_tokens, so it is always present), the caller's `max_out` is warned+ignored (billed on ACTUAL
+    tokens, so the ceiling is free and no reasoning/JSON reply can silently truncate). Refuses a non-Anthropic model
+    and a task with no content — fail-closed, never a silent drop."""
+    from . import models, adapters
+    prov = adapters.provider_for(model)
+    if prov != "anthropic":
+        raise ValueError(f"build_message_batch_requests: the Anthropic Message Batches API serves only Anthropic "
+                         f"models; got {model!r} (provider {prov!r}). Use build_chat_batch_jsonl / the lane fan instead.")
+    if max_out:
+        adapters._warn_once_caller_maxtokens("msgbatch:" + str(model), int(max_out))   # caller max_out ignored — warned once
+    out_cap = adapters.output_budget(model)
+    requests = []
+    for i, t in enumerate(tasks or []):
+        if isinstance(t, dict):
+            cid = str(t.get("custom_id", "task-%d" % i))
+            content = t.get("content")
+            t_system, t_schema, t_name = t.get("system", system), t.get("schema", schema), t.get("schema_name", schema_name)
+        else:
+            cid, content = "task-%d" % i, t
+            t_system, t_schema, t_name = system, schema, schema_name
+        if content is None:
+            raise ValueError('each batch task must be a prompt string or a {"custom_id","content"[,…]} object; '
+                             'got one with no "content"')
+        params = {"model": model, "max_tokens": out_cap, "messages": [{"role": "user", "content": str(content)}]}
+        if t_system:
+            params["system"] = t_system        # Anthropic: system is a TOP-LEVEL param, not a system-role message
+        models.apply_call_params(model, params, dialect="anthropic")
+        if t_schema is not None:
+            params.update(adapters.json_schema_request("anthropic", t_schema, name=t_name))   # forced tool (enforces shape)
+        requests.append({"custom_id": cid, "params": params})
+    if not requests:
+        raise ValueError("no tasks to submit (each task = a prompt string or a {custom_id, content} object)")
+    return requests, len(requests)
+
+
+def submit_message_batch(tasks, model, *, system=None, schema=None, max_out=None, cap_dollars=None,
+                         submit=True, request_cap=_ANTHROPIC_BATCH_REQUEST_CAP, intent=None):
+    """Submit a list of tasks to the Anthropic Message Batches API (~half realtime, 29-day result window) — the
+    Anthropic twin of submit_chat_tasks, and the Messages-API half of spendguard's batch surface. Each task is a prompt
+    STRING (custom_id auto = 'task-<i>') OR a {custom_id, content[, system, schema, schema_name]} dict. Builds the
+    INLINE requests through the ONE models.apply_call_params authority (build_message_batch_requests), ESTIMATES $0 via
+    gate.estimate_message_batch (the SAME estimator the gate re-runs at create — no drift), REFUSES over cap_dollars,
+    then submits via client.messages.batches.create — which the gate intercepts (_gate_anthropic, see the gate patch
+    table) for the global/daily/monthly + per-batch caps AND the provisional batch-cost row (attributed to `intent` via
+    the recording context set here, exactly as submit_chat_tasks does for OpenAI). Returns {batch_id, requests,
+    estimate, error}; submit=False estimates only ($0, no batch created). Collect later with its SETTLE twin
+    callio.collect_message_batch(batch_id, intent, model) — results keyed by custom_id.
+
+    REFUSE, NEVER DEGRADE: over the per-call cap the result carries the estimate + a REFUSED error and NO batch is
+    created (consistent with submit_chat_tasks), and a gate refusal at create (SpendGateRefused) / deadline PROPAGATES —
+    it never silently falls back to realtime, which would defeat batching for cost. Anthropic-only (the Message Batches
+    API serves only Anthropic ids); a non-Anthropic model returns a clear error (run it on submit_chat_tasks / the lane
+    fan), never a silent metered fallback.
+
+    Unlike OpenAI there is NO `metadata` parameter: Anthropic batches carry no server-side metadata, so the
+    exactly-once offload key (batch_tracker) rides each request's custom_id instead — see batch_tracker.submit_offload."""
+    from . import adapters
+    items = list(tasks or [])
+    base = {"batch_id": None, "requests": len(items), "estimate": None, "error": None}
+    if not items:
+        return base
+    prov = adapters.provider_for(model)
+    if prov != "anthropic":
+        return {**base, "error": "message batch is Anthropic-only (the Message Batches API serves only Anthropic ids); "
+                "got %r (provider %r) — run it on submit_chat_tasks (OpenAI) / the lane fan instead." % (model, prov)}
+    # Set the intent CONTEXT for the WHOLE submit (exactly as submit_chat_tasks does) so the gate's provisional batch
+    # row — fired synchronously inside the gated messages.batches.create — attributes to the caller's intent, not
+    # '(none)'. Restored in the finally so the intent never leaks into a later call on this thread.
+    from . import calls as _calls, gate
+    _prev_ctx = dict(_calls.current())
+    if intent:
+        _calls.set_context(intent=intent)
+    try:
+        requests, n = build_message_batch_requests(items, model, system=system, max_out=max_out, schema=schema)
+        est = gate.estimate_message_batch(requests)
+        out = {**base, "requests": n, "estimate": est}
+        print(f"[submit_gate] {n:,} req · batch · anthropic · in={est['in_tok']:,} out={est['out_tok']:,} "
+              f"({est.get('out_basis', '?')}) -> ${est['cost']:,.2f}")
+        if n > request_cap:
+            return {**out, "error": f"REFUSED: {n:,} requests > request_cap {request_cap:,} (chunk it; the Anthropic "
+                    f"batch limit is 100,000 requests / 256 MB)."}
+        if cap_dollars is not None and est["cost"] > cap_dollars:
+            return {**out, "error": f"REFUSED: projected ${est['cost']:,.2f} > cap ${cap_dollars:,.2f}. Pack more "
+                    f"items/request, shrink the prompt, pick a cheaper model, or raise the cap deliberately."}
+        if not submit:
+            print("[submit_gate] PASS (estimate only, submit=False).")
+            return out
+        import anthropic
+        client = anthropic.Anthropic(api_key=_api_key("ANTHROPIC_API_KEY"))
+        # The gate (_gate_anthropic) estimates these inline requests, enforces the global/daily/monthly + per-batch caps
+        # (raising SpendGateRefused over cap — which propagates below), and records the provisional batch-cost row.
+        b = client.messages.batches.create(requests=requests)
+        print(f"[submit_gate] SUBMITTED message batch {b.id} (projected ${est['cost']:,.2f}). "
+              f"Collect with callio.collect_message_batch({b.id!r}, intent, {model!r}).")
+        return {**out, "batch_id": b.id}
+    except Exception as e:
+        from . import gate as _g
+        if isinstance(e, _g.deliberate_stop_types()):
+            raise                                    # a cap refusal / deadline HALTS — never a silent realtime fallback
+        return {**base, "error": str(e)[:200]}
+    finally:
+        _calls._local.ctx = _prev_ctx                # restore the caller's exact context (never leak the submit intent)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--jsonl", required=True)

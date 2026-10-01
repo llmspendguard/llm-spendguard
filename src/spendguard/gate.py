@@ -375,6 +375,16 @@ def _estimate_anthropic_requests(requests):
                 implausible=_warn_implausible(model, in_tok, n, per_item_max=(max_req or None)))
 
 
+def estimate_message_batch(requests):
+    """Public, $0 estimate-only entry for an Anthropic Message Batch — the SAME estimator _gate_anthropic runs INSIDE
+    client.messages.batches.create (see the gate patch table), so a caller's pre-flight estimate and per-call cap can
+    never drift from the enforcement the gate applies at submit. `requests` is the inline list (each {custom_id,
+    params}); returns {provider, model, requests, in_tok, out_tok, cost, out_basis, …}. No network, no spend (pure
+    token counting). submit.submit_message_batch uses it for the pre-submit estimate + per-call cap; the gate re-runs
+    it at create for the global/daily/monthly caps + the provisional batch-cost row."""
+    return _estimate_anthropic_requests(list(requests or []))
+
+
 def _log(rec):
     try:
         os.makedirs(os.path.dirname(LOG), exist_ok=True)

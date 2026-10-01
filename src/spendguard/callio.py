@@ -344,6 +344,11 @@ def _oai_client():
     return OpenAI(api_key=config.api_key("OPENAI_API_KEY"))
 
 
+def _anthropic_client():
+    import anthropic
+    return anthropic.Anthropic(api_key=config.api_key("ANTHROPIC_API_KEY"))
+
+
 def fetch_openai(client, batch_id, intent, model, cap, sample_n):
     """Sample one OpenAI batch via STREAMING (stop after sample_n lines — never download the whole
     multi-MB file). Pairs output+input by custom_id. Free."""
@@ -667,6 +672,71 @@ def collect_chat_tasks(batch_ids, intent, model, require_ready=True, record_io=F
         elif text is None:                          # a per-request FAILURE — surface it by id, never lose it
             out["failed"][cid] = (usage or {}).get("error") if isinstance(usage, dict) else str(usage)
         else:
+            out["results"][cid] = text
+            out["collected"] += 1
+    return out
+
+
+def collect_message_batch(batch_ids, intent, model, require_ready=True, record_io=False):
+    """SETTLE twin of submit.submit_message_batch — pull the FULL result set of Anthropic Message Batch(es) back and key
+    it by custom_id, closing submit→wait→collect so a submitted batch never sits uncollected. The Anthropic analogue of
+    collect_chat_tasks (OpenAI). Returns {results, failed, anomalies, not_ready, collected, batches, usage}:
+      · results   {custom_id: text}   — every SUCCEEDED result, keyed by the custom_id submit assigned. For a
+                                          forced-tool/schema batch the structured tool_use.input is returned as JSON;
+                                          otherwise the message's text blocks joined.
+      · failed    {custom_id: error}  — a per-request errored/canceled/expired result, surfaced by id (never dropped);
+      · anomalies [ {error, raw} ]    — a result with no custom_id (nothing to key it by) — surfaced, never a silent drop;
+      · not_ready [batch_id]          — a batch not ENDED yet (poll again later) — the 29-day window is never blocked on;
+      · collected int, batches int;
+      · usage {in_tok, out_tok, cache_read, cache_creation} — the REAL billed tokens summed from each result's own
+                                          usage (BOTH axes — this is the input half fetch_anthropic does not capture), so
+                                          the caller sees actual consumption. ($ truth still trues up at reconcile via
+                                          provider billing; this records real usage, it does not write a second $ row.)
+    $0 (a finished batch already billed at submit; this STREAMS the results). Anthropic-only (the Message Batches API is).
+    record_io=True also captures each succeeded row into the (intent, model) quality corpus with REAL in_tok+out_tok
+    (idempotent on batch+custom_id, so re-collecting never double-counts)."""
+    client = _anthropic_client()
+    if isinstance(batch_ids, str):
+        batch_ids = [batch_ids]
+    ids = [b for b in (batch_ids or []) if b]
+    out = {"results": {}, "failed": {}, "anomalies": [], "not_ready": [], "collected": 0, "batches": len(ids),
+           "usage": {"in_tok": 0, "out_tok": 0, "cache_read": 0, "cache_creation": 0}}
+    for bid in ids:
+        b = client.messages.batches.retrieve(bid)
+        # processing_status ∈ {in_progress, canceling, ended} (a FIXED API enum → parsing, not a judgement); results are
+        # only downloadable once ENDED, and results_url is absent after the 29-day window — either way, poll later.
+        if (require_ready and getattr(b, "processing_status", None) != "ended") or not getattr(b, "results_url", None):
+            out["not_ready"].append(bid)
+            continue
+        for res in client.messages.batches.results(bid):
+            cid = getattr(res, "custom_id", None)
+            r = getattr(res, "result", None)
+            rtype = getattr(r, "type", None)
+            if not cid:
+                out["anomalies"].append({"error": "batch result missing custom_id", "raw": str(res)[:120]})
+                continue
+            if rtype != "succeeded":                 # errored / canceled / expired — surface by id, never a silent drop
+                err = getattr(r, "error", None)
+                out["failed"][cid] = str(err) if err is not None else (rtype or "unknown")
+                continue
+            msg = getattr(r, "message", None)
+            tool_input, texts = None, []
+            for blk in (getattr(msg, "content", None) or []):
+                bt = getattr(blk, "type", None)
+                if bt == "tool_use":                 # a forced-tool/schema result — the structured object is the answer
+                    tool_input = getattr(blk, "input", None)
+                elif bt == "text":
+                    texts.append(getattr(blk, "text", "") or "")
+            text = json.dumps(tool_input) if tool_input is not None else "".join(texts)
+            usage = getattr(msg, "usage", None)
+            in_tok = int(getattr(usage, "input_tokens", 0) or 0)
+            out_tok = int(getattr(usage, "output_tokens", 0) or 0)
+            out["usage"]["in_tok"] += in_tok
+            out["usage"]["out_tok"] += out_tok
+            out["usage"]["cache_read"] += int(getattr(usage, "cache_read_input_tokens", 0) or 0)
+            out["usage"]["cache_creation"] += int(getattr(usage, "cache_creation_input_tokens", 0) or 0)
+            if record_io:                            # REAL both axes (fetch_anthropic records out_tok only)
+                record_io_sample(intent, "anthropic", model, bid, cid, "", text, in_tok=in_tok, out_tok=out_tok)
             out["results"][cid] = text
             out["collected"] += 1
     return out
