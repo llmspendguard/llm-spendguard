@@ -582,7 +582,11 @@ def mean_out_by_executor_model(intent):
     INCLUDES reasoning tokens (reasoning bills as output), so a model that OVER-REASONS on this intent shows a genuinely
     larger mean here — which is what lets the bandit price its REALIZED cost and deprioritize it. `executor` is the
     subscription LANE for a lane-served call (else the provider), matching how the bandit keys an arm. Excludes rows
-    with no out_tok. {} on any error (never raises — a routing read must not break routing)."""
+    with no out_tok AND rows flagged `suspect` (a per-call out_tok that EXCEEDS the model's ceiling — an aggregate/
+    backfill/bug value that is physically impossible for one call; the schema keeps the raw value but marks it
+    'exclude from per-call analysis'). Leaving them in would let a single 2.8M-tok artifact row dominate the mean and
+    make the value judge wrongly price an arm as hugely expensive — the same contamination reconcile_calls already
+    excludes with `suspect IS NULL`. {} on any error (never raises — a routing read must not break routing)."""
     out = {}
     if not intent:
         return out
@@ -591,7 +595,7 @@ def mean_out_by_executor_model(intent):
             rows = _calls_db().execute(
                 "SELECT COALESCE(NULLIF(executor,''), provider), COALESCE(model,'?'), "
                 "COALESCE(AVG(out_tok), 0), COUNT(*) FROM calls "
-                "WHERE intent=? AND out_tok IS NOT NULL AND out_tok > 0 "
+                "WHERE intent=? AND out_tok IS NOT NULL AND out_tok > 0 AND suspect IS NULL "
                 "GROUP BY COALESCE(NULLIF(executor,''), provider), model", (intent,)).fetchall()
         for ex, model, avg_out, n in rows:
             out[(ex or "?", model or "?")] = {"mean_out": float(avg_out or 0.0), "n": int(n)}
