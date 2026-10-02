@@ -1055,6 +1055,19 @@ def by_key(since=None):
     return {(p or "?", fp or "(none)"): {"cost": float(v["usd"]), "calls": v["n"]} for (p, fp), v in res.items()}
 
 
+def by_intent(since=None):
+    """{intent: {'cost': $, 'calls': n}} of gate-recorded COUNTABLE LLM workload since `since` — billed-$ grouped by
+    the forensic `intent` label, so "what did each job-type cost" is a command (`receipt --by-intent`), not the
+    hand-written spend.db query a caller had to run to verify it. Uses the SAME money columns (LLM_USD_COLS) and the
+    SAME countable filter (`_COUNTABLE`) as spent_since — the receipt's real-$ API line — so the Σ over all intents
+    RECONCILES with that headline for the same window, exactly. Blank/legacy intent groups under '(unlabelled)' and is
+    never dropped (an unattributed dollar stays visible, not silently folded into a named job)."""
+    from .ledger import LLM_USD_COLS
+    led = _ledger()
+    res = led.sum_by(["intent"], cols=LLM_USD_COLS, filt=led._COUNTABLE, since=since)
+    return {(i or "(unlabelled)"): {"cost": float(v["usd"]), "calls": v["n"]} for i, v in res.items()}
+
+
 def ledger_start(kind=None):
     """Earliest day in the ledger — spend before this wasn't recorded locally (pre-ledger). With `kind`, the
     earliest day for THAT category (its money column populated): axes start recording at different times

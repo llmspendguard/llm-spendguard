@@ -752,6 +752,12 @@ def _vendor_qualified(m, provider=None, exact_only=False):
 
 
 def price(model: str, provider: str = None) -> dict:
+    """The RAW per-token RATE row for `model` — {in_, out, cached_in, batch_in, batch_out, provider, …} in DOLLARS
+    PER MILLION TOKENS. This is the rate TABLE, not a cost: do NOT multiply raw token counts by these values (that is
+    off by 1e6 — a caller printed a $258,249 quote for a $0.26 job doing exactly that). To get DOLLARS, call
+    `pricing.realtime_cost(model, in_tok, out_tok[, cached_in_tok])` or `pricing.batch_cost(...)` — or
+    `cost_or_unpriced(...)` for None instead of a raise on an unpriced model. The input-rate key is `in_` (not `in`,
+    which is a Python keyword). Raises KeyError for an unknown model — never guesses a price."""
     # A NAMED PROVIDER IS ANSWERED BY THAT PROVIDER, before any bare-name lookup.
     #
     # Two fast paths used to reach a bare PRICING[model] first and return whatever single rate happened to

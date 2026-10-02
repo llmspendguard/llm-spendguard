@@ -117,6 +117,9 @@ MATRIX = {
                               "what the LEAK CHECK reads — accounted = gate-recorded + backfill"),
     "by_dims":               ({"plain", "reconciled", "true_down", "meta"}, "the SaaS PUSH payload — the org needs backfill, never quarantine"),
     "by_key":                ({"plain"},                "per-key workload spend"),
+    # by_intent uses the SAME countable filter + money columns as spent_since (the receipt's API line), so it counts
+    # exactly what the headline counts — that identity is its whole contract (`receipt --by-intent` must reconcile).
+    "by_intent":             ({"plain", "true_down"},   "billed $ grouped by intent — reconciles with the headline"),
     # by_basis answers "what KIND of number is this", so it must see labelled AND unlabelled workload rows —
     # everything except the three that are not workload spend at all.
     "by_basis":              ({"plain", "true_down"},   "the basis breakdown of the headline Actual $"),

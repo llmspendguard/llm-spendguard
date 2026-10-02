@@ -527,6 +527,38 @@ def deadline_cancels():
 _unhonored_effort = {}       # "model|requested->chosen" -> count of times an explicit effort pin was NOT honored
 _unhonored_lock = threading.Lock()   # a fan resolves effort CONCURRENTLY — the count must not lose an event
 
+# A NOT-honored effort pin is a STANDING CONFIG fact, not a transient runtime event like a truncation or a
+# deadline-cancel: it is equally true on call 1 and call 10,000, and — unlike those — it recurs across short-lived
+# HOOK processes, where the in-process decade counter (_TRUNC_ANNOUNCE) ALWAYS resets to 1 and so announced on EVERY
+# invocation (the caller saw this line on ~every hook call, all session). So this ONE warning throttles its ANNOUNCE
+# by WALL-CLOCK ACROSS processes — once per (model|req->chosen) key per window, persisted under SPENDGUARD_HOME — not
+# by the per-process count. The RECORD is unaffected: unhonored_efforts() still sees every event.
+_EFFORT_WARN_THROTTLE_S = 86400       # default window (24h); override via SPENDGUARD_EFFORT_WARN_THROTTLE_S
+_EFFORT_WARN_STATE = "effort_pin_warnings"   # config.load_state/save_state key -> {"model|req->chosen": last_epoch}
+
+
+def _effort_pin_warn_due(key, n, now=None):
+    """True iff the unhonored-effort-pin warning for `key` has NOT been announced within the throttle window in THIS
+    or any prior process (the last-announce epoch is persisted under SPENDGUARD_HOME via config state). A mechanical
+    wall-clock check — no meaning decision. Stamps `now` on a due hit so the next process in the window stays quiet.
+    Never raises; if the cross-process state cannot be read or written it DEGRADES to the in-process first-occurrence
+    gate (`n == 1`, using the already-recorded count) rather than silencing a cost guardrail or re-spamming a loop."""
+    now = time.time() if now is None else now
+    try:
+        window = float(os.environ.get("SPENDGUARD_EFFORT_WARN_THROTTLE_S") or _EFFORT_WARN_THROTTLE_S)
+    except (TypeError, ValueError):
+        window = _EFFORT_WARN_THROTTLE_S
+    try:
+        st = config.load_state(_EFFORT_WARN_STATE, {})
+        last = st.get(key)
+        if isinstance(last, (int, float)) and (now - last) < window:
+            return False
+        st[key] = now
+        config.save_state(_EFFORT_WARN_STATE, st, loud=False)
+        return True
+    except Exception:
+        return n == 1
+
 
 def note_unhonored_effort(model, requested, chosen):
     """GUARDRAIL A — record + SURFACE, un-swallowably, that a caller's EXPLICIT effort pin was NOT honored on this
@@ -545,8 +577,8 @@ def note_unhonored_effort(model, requested, chosen):
     with _unhonored_lock:                    # atomic RMW so a concurrent fan can't lose an event
         n = _unhonored_effort.get(key, 0) + 1
         _unhonored_effort[key] = n           # the RECORD is committed HERE — before any I/O — so it survives a bad stderr
-    if n not in _TRUNC_ANNOUNCE:             # print OUTSIDE the lock (never hold it across I/O)
-        return n
+    if not _effort_pin_warn_due(key, n):     # throttled ACROSS processes (standing-config warning, not a per-call
+        return n                             # event) — NOT the per-process decade gate, which resets to 1 every hook
     try:                                     # the count is already recorded; the announce line is best-effort and must
         print("[bulkgate] EFFORT PIN NOT HONORED on %s x%d: effort '%s' requested, but this model's verified floor is "
               "'%s' and it STILL reasons at '%s' — the pin buys NO saving here (measured: gpt-5.x at its floor burns "
