@@ -118,6 +118,16 @@ class MeteredCallRefused(SpendGateRefused):
     provider API, not the plan lanes. Turn on with env SPENDGUARD_REFUSE_METERED=1 (whole process) or refuse_metered()."""
 
 
+class EffortNotHonored(SpendGateRefused):
+    """A caller pinned a low reasoning effort (e.g. 'minimal') AND pinned the model (no_substitution), but the model's
+    verified floor still reasons (gpt-5.x floor='none'), so the pin buys NO saving — the model burns full reasoning
+    tokens exactly as if unpinned (the $45 warden overspend). Guardrail A is literally 'honor OR refuse': there is no
+    honoring substitute to route to when the model is pinned, so refuse rather than overspend silently. A SpendGateRefused
+    subclass, so it PROPAGATES through the deliberate-stop machinery. The fix for the caller: unpin the model (drop
+    no_substitution / use reasoning='best-value') so spendguard routes to an effort-honoring model, or accept the floor
+    explicitly (pin the floor value instead of 'minimal'). A SUBSTITUTABLE call never raises this — it routes away."""
+
+
 import threading as _threading
 _rm_local = _threading.local()           # per-thread nesting depth of refuse_metered() blocks — a CM's natural scope is
 #                                          its own thread's dynamic extent (no shared global to race); env covers process

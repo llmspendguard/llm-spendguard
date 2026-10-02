@@ -2466,6 +2466,18 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                                   file=_sA.stderr)
                         except Exception:
                             pass
+                    # GUARDRAIL A is literally HONOR **OR REFUSE**. If the pin could not be honored AND the caller PINNED
+                    # the model (no_substitution), there is no honoring model to route to — so REFUSE rather than let it
+                    # overspend silently (the warn above is the record; this is the stop). OUTSIDE the try above so this
+                    # deliberate stop is never swallowed by that fail-open handler. A SUBSTITUTABLE call never reaches this
+                    # (it is routed to an effort-honoring model upstream by best-value); only a pinned call is refused.
+                    if _eff_unhonored and _no_sub:
+                        from .gate import EffortNotHonored
+                        raise EffortNotHonored(
+                            "reasoning='minimal' cannot be honored by %s (floors to %r, which still reasons) and the call "
+                            "pinned the model (no_substitution) — refusing rather than overspend silently. Unpin the model "
+                            "(drop no_substitution, or use reasoning='best-value') to route to an effort-honoring model, or "
+                            "pin the floor value %r explicitly to accept it." % (raw, _eff, _eff))
             try:
                 from . import models as _mf
                 _mf.apply_call_params(raw, okw, dialect="openai")
@@ -2661,6 +2673,13 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 "requested_effort": _eff_requested, "chosen_effort": _effort_sent, "effort_unhonored": _eff_unhonored,
                 "finish_reason": _finish, "executor": "api", "error": None}   # metered API path — say so, like a lane says its name
     except Exception as e:
+        # A DELIBERATE STOP (a spend refusal like EffortNotHonored, a drawn-on-purpose deadline, a containment stop)
+        # must PROPAGATE out of the metered path — never be swallowed into the {error, error_type} dict below, which a
+        # caller can fail-open on (the deliberate-refusal doctrine). This is the metered twin of the lane path's re-raise
+        # (_call_lane @ L2018) and the 429-learn re-raise just below; the catch-all was the one remaining hole.
+        from . import gate as _gds
+        if _gds.is_deliberate_stop(e):
+            raise
         # error_type is the exception CLASS name — a structured signal (like an HTTP status or sqlite_errorname),
         # NOT the message prose. vendor_call uses it to tell a deadline (the vendor didn't answer in the budget:
         # APITimeoutError / ReadTimeout) from a transport fault (the connection broke / was refused), so the

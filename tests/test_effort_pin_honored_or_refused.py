@@ -107,5 +107,22 @@ ck("admission_state carries an 'unhonored_efforts' map", isinstance(st.get("unho
 ck("and it reflects the gpt-5.5 non-honor (auditable, not just printed)",
    any("gpt-5.5" in k for k in (st.get("unhonored_efforts") or {})))
 
+# ── (5) PINNED (no_substitution) + un-honorable 'minimal' → REFUSE pre-wire (guardrail A: honor OR **refuse**) ──
+# A SUBSTITUTABLE call (cases 1-3, no_substitution unset) proceeds + is recorded — best-value routes it to an honoring
+# model upstream. But when the caller PINNED the model (no_substitution), there is no honoring model to route to, so the
+# pin that cannot be honored is REFUSED rather than allowed to overspend silently — and BEFORE any vendor call.
+print("-- (5) gpt-5.5 + reasoning='minimal' + no_substitution → REFUSED pre-wire (EffortNotHonored, a SpendGateRefused) --")
+from spendguard.gate import EffortNotHonored, SpendGateRefused  # noqa: E402
+_wire_n = len(_WIRE)
+_raised = None
+try:
+    adapters._call_once("openai:gpt-5.5", "hi", max_tokens=100, reasoning="minimal", timeout_s=30, _no_sub=True)
+except EffortNotHonored as _e:
+    _raised = _e
+ck("a pinned (no_substitution) call that cannot honor 'minimal' RAISES EffortNotHonored", _raised is not None)
+ck("EffortNotHonored is a SpendGateRefused (propagates via the deliberate-stop machinery)",
+   isinstance(_raised, SpendGateRefused))
+ck("the refusal is PRE-WIRE — no vendor call was made, so nothing was spent", len(_WIRE) == _wire_n)
+
 print(f"\n{'[FAIL]' if _fails else 'OK'} test_effort_pin_honored_or_refused: {len(_fails)} failure(s)")
 sys.exit(1 if _fails else 0)
