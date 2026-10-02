@@ -1068,6 +1068,22 @@ def by_intent(since=None):
     return {(i or "(unlabelled)"): {"cost": float(v["usd"]), "calls": v["n"]} for i, v in res.items()}
 
 
+def billed_by_model(intent=None, as_of=None):
+    """{'provider:model': billed $} of COUNTABLE LLM spend from the LEDGER (money of record), optionally scoped to one
+    `intent` and/or AS-OF a date (`day <= as_of`, matching advise's backtest window). This is the COST BASIS advise /
+    best-value should rank on — the LEDGER, not the calls corpus, whose per-call cost figures diverge wildly for
+    lane-routed calls (a lane bills ~$0 but the corpus booked a metered-EQUIVALENT per call: measured ~$1,019 corpus vs
+    ~$18 billed for one model/month). A lane model reads ~$0 billed here; the caller (advise.ranked) floors it to its
+    amortized plan-draw (out_tok x lane_eff) so a $0-lane arm is priced at its TRUE marginal cost, never a flat $0 and
+    never the corpus fiction. Keyed 'provider:model' to match advise.evidence's row ids. Same LLM_USD_COLS + _COUNTABLE
+    filter as spent_since, so a metered arm's cost here reconciles with the real-$ ledger for that (intent, model)."""
+    from .ledger import LLM_USD_COLS
+    led = _ledger()
+    where = {"intent": intent} if intent is not None else None
+    res = led.sum_by(["provider", "model"], cols=LLM_USD_COLS, filt=led._COUNTABLE, where=where, until=as_of)
+    return {f"{(p or '?')}:{(m or '?')}": float(v["usd"]) for (p, m), v in res.items()}
+
+
 def ledger_start(kind=None):
     """Earliest day in the ledger — spend before this wasn't recorded locally (pre-ledger). With `kind`, the
     earliest day for THAT category (its money column populated): axes start recording at different times

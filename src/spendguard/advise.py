@@ -94,11 +94,26 @@ def ranked(intent=None, as_of=None, by_effort=False):
     # bandit STOP ranking a plan lane as free (measured live: claude-code ≈ $15/Mtok, not $0). Read ONCE; a metered arm
     # (no lane for its provider) is unchanged, and the map is empty when no lane has converged economics — fail-open to
     # the prior $0-lane behaviour, never a crash. The WASTE reclaim stays a per-job route_economics call, not here.
-    from . import route_economics as _re
+    from . import route_economics as _re, budget
     _lane_eff = _re.lane_eff_by_provider()
+    # COST BASIS = the LEDGER (money of record), NOT the calls corpus. The corpus books a per-call cost that for a
+    # lane-routed call is a metered-EQUIVALENT estimate — measured ~57x the ledger (one model: ~$1,019 corpus vs ~$18
+    # billed/month) — so ranking on it ranks a fiction. Read the real billed $ per provider:model from the ledger; a
+    # lane call reads ~$0 billed and is then FLOORED to its amortized plan-draw (out_tok x lane_eff) below, so a
+    # $0-lane arm is priced at its true marginal cost. (A3 — the corpus stays the QUALITY + out_tok source only.)
+    _billed = budget.billed_by_model(intent, as_of)
+    _model_outtok = {}                                 # per provider:model total out_tok — to apportion a model's ledger
+    for _a in agg.values():                            # $ across its effort arms (spend_events has no effort column)
+        _mid = f"{_a['provider']}:{_a['model']}"
+        _model_outtok[_mid] = _model_outtok.get(_mid, 0) + (_a["outtok"] or 0)
     models = []
     for key, a in agg.items():
-        cost = a["cost"] or 0.0
+        mid = f"{a['provider']}:{a['model']}"
+        model_billed = _billed.get(mid, 0.0)           # real billed $ for this (intent,) model from the LEDGER
+        if by_effort and _model_outtok.get(mid):       # split the per-model billed across effort arms by out_tok share
+            cost = model_billed * (a["outtok"] or 0) / _model_outtok[mid]
+        else:
+            cost = model_billed
         _lane_true = float(a["outtok"] or 0) * _lane_eff.get(a["provider"], 0.0)   # true cost when it rode a $0 lane
         if _lane_true > cost:
             cost = _lane_true                          # price the lane arm at its TRUE marginal cost, never a flat $0
