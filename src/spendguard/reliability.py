@@ -481,7 +481,7 @@ def health_reds(since_hours=48):
         with budget._lock:
             rows = db.execute("SELECT resource,kind,reason,fix,command,source FROM lane_health WHERE reachable=0 AND ts>=?",
                               (cutoff,)).fetchall()
-        out, recovered = [], []
+        out, recovered, stale = [], [], []
         for resource, kind, reason, fix, command, source in rows:
             if source == "event" and kind == "lane":     # an EVENT down is stale once the lane stops cooling: it
                 try:                                      # RECOVERED. Resolve it (below) rather than silently drop it.
@@ -491,11 +491,32 @@ def health_reds(since_hours=48):
                         continue
                 except Exception:
                     pass
+            if source == "sweep" and kind == "metered":
+                # A sweep-sourced metered red for a provider that can NEVER be (chat-)probed is STALE RESIDUE, not a
+                # live red: if the provider has no derivable probe TARGET — e.g. voyage, which is embed-ONLY, so
+                # _metered_target returns None and the sweep dropped it — no sweep can ever confirm it, yet its last
+                # chat-probe 'unreachable' row alarmed the receipt EVERY turn forever. It is 'unknown', not down, so
+                # it is dropped and DELETED (below) so it never fires again. This is PROVIDER-INTRINSIC (embed-only is
+                # a property of the provider, not of the key or environment), so a provider that IS chat-probeable but
+                # merely keyless right now keeps its red. Checked only when a metered red exists (the common no-reds
+                # path pays nothing). Fail SAFE: any error resolving the target → keep the red (never hide a real one).
+                try:
+                    _unprobeable = _metered_target(resource) is None
+                except Exception:
+                    _unprobeable = False
+                if _unprobeable:
+                    stale.append(resource)
+                    continue
             out.append({"resource": resource, "kind": kind, "reason": reason, "fix": fix, "command": command})
         if recovered:                                    # SELF-HEAL, traced (a DB write, not a silent skip): a recovered
             with budget._lock:                            # event-lane is marked reachable so it clears everywhere at once
                 db.executemany("UPDATE lane_health SET reachable=1 WHERE resource=? AND source='event'",
                                [(r,) for r in recovered])
+                db.commit()
+        if stale:                                        # DELETE the residue (traced) — a provider no longer probed has
+            with budget._lock:                            # no sweep verdict at all, so its stale 'unreachable' row goes
+                db.executemany("DELETE FROM lane_health WHERE resource=? AND kind='metered' AND source='sweep'",
+                               [(r,) for r in stale])
                 db.commit()
         return out
     except Exception:

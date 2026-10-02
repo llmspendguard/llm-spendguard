@@ -1278,9 +1278,46 @@ sys.stdout.write((prefix + "  ·  " if prefix else "") + line + nudge + "\n")
 '''
 
 
+def _by_intent_report(args) -> int:
+    """`spendguard receipt --by-intent [--today|--week|--all|--since YYYY-MM-DD] [--json]` — billed LLM $ grouped by
+    the forensic intent label, sorted by cost. The caller had to query spend.db by hand to see this; now it is a
+    command. The Σ over intents reconciles EXACTLY with the receipt's real-$ API line for the same window (budget.
+    by_intent reuses spent_since's countable filter). Default window: month-to-date (the headline window)."""
+    from . import budget
+    today, week, month = _windows()
+    since, wlabel = month, "month-to-date"
+    if "--today" in args:
+        since, wlabel = today, "today"
+    elif "--week" in args:
+        since, wlabel = week, "rolling 7d"
+    elif "--all" in args:
+        since, wlabel = None, "all time"
+    if "--since" in args and args.index("--since") + 1 < len(args):
+        since = args[args.index("--since") + 1]
+        wlabel = "since " + since
+    rows = budget.by_intent(since=since)
+    items = sorted(rows.items(), key=lambda kv: -kv[1]["cost"])
+    total = sum(v["cost"] for _, v in items)
+    calls = sum(v["calls"] for _, v in items)
+    if "--json" in args:
+        print(json.dumps({"window": wlabel, "since": since, "total_usd": total, "calls": calls,
+                          "by_intent": dict(items)}, indent=2))
+        return 0
+    print(f"billed LLM $ by intent · {wlabel}  (Σ reconciles with the receipt's API line)")
+    if not items:
+        print("  (no countable LLM spend in this window)")
+        return 0
+    w = max((len(k) for k, _ in items), default=6)
+    for name, v in items:
+        print(f"  {name:<{w}}  ${v['cost']:>11,.4f}  · {v['calls']:>7,} call{'' if v['calls'] == 1 else 's'}")
+    print(f"  {'TOTAL':<{w}}  ${total:>11,.4f}  · {calls:>7,} calls")
+    return 0
+
+
 def cli(args) -> int:
-    """`spendguard receipt [--footer|--flow|--json]` → prints the running tally to STDOUT (default --footer). This is
-    what the Claude Code Stop hook runs to surface the tally in-chat; also handy to check the tally any time."""
+    """`spendguard receipt [--footer|--flow|--json|--by-intent]` → prints the running tally to STDOUT (default
+    --footer). This is what the Claude Code Stop hook runs to surface the tally in-chat; also handy to check the tally
+    any time. `--by-intent` instead breaks billed LLM $ down by the forensic intent label."""
     args = list(args or [])
     if "--statusline" not in args:                # the statusline path refreshes lazily inside _cached_tally_line (on a
         try:                                       # cache MISS only), so a cached repaint does NO refresh; every other
@@ -1298,6 +1335,9 @@ def cli(args) -> int:
             return budget._project() or None
         except Exception:
             return None
+
+    if "--by-intent" in args:        # a MANUAL breakdown — handled BEFORE the hook-safe try (a real error should
+        return _by_intent_report(args)   # surface here, not be swallowed into the silent return-0 a status line needs)
 
     try:
         if "--json" in args:
