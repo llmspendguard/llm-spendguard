@@ -343,9 +343,18 @@ def predict_cost(label, n=1, model=None, transport="batch", est_in_tokens=None, 
     naive = None
     if est_out_max:
         naive = n * (est_in_tokens * p["in_"] + est_out_max * p["out"]) / 1e6
+    # OUTPUT HAS NO EMPIRICAL BASIS when basis == 'cap': no learned fill AND no out-per-in for this (label, model), so the
+    # output side — the DOMINANT cost term — is the caller's raw est_out_max, not a measurement. That is exactly how a quote
+    # came in 4.5x low (56 real out-tok/item vs an assumed 10) and was handed to a human as if measured. Surface it LOUDLY
+    # (a `warning` field the receipt / estimate CLI / check_bulk can show, + once to stderr) rather than returning it silent.
+    warning = None
+    if basis == "cap":
+        warning = (f"OUTPUT side ASSUMED — est_out_max={est_out_max} tok/req used verbatim; 0 prior {label!r} calls on "
+                   f"{pricing.normalize(model)} to learn output from, so this quote's dominant term has NO empirical basis. "
+                   f"Seed one real run to measure it, or read the $ as a FLOOR, not a projection.")
     return {"label": label, "model": pricing.normalize(model), "transport": transport, "n": n,
             "p50_usd": round(usd50, 4), "p90_usd": round(usd90, 4),
-            "level": level, "n_obs": n_obs, "basis": basis,
+            "level": level, "n_obs": n_obs, "basis": basis, "warning": warning,
             "naive_usd": round(naive, 4) if naive is not None else None,
             "per_request": {"in_p50": round(in50, 1), "out_p50": round(out50, 1)}}
 
