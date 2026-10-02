@@ -22,6 +22,8 @@ one-liners are read from each module's own top docstring.
 | `estimate_literals.py` | Guard — every cost function called with an integer literal, each adjudicated by a model so no magic number hides in the cost math; `spendguard estimate-literals`. |
 | `estimate_divergence.py` | Enforce that a quote is GROUNDED — when a quoted price and the real bill disagree, say so by judgement rather than by rule; `spendguard estimate-divergence`. |
 | `openai_batch_cli.py` | `spendguard batch-submit` / `batch-fetch` — the GATED, human-run halves of an OpenAI Batch-API job. |
+| `item_ledger.py` | ITEM-level completeness for a batch/fan job — every requested item ends answered/refused/unresolved, append-only + `assert_complete` at exit, so a packed reply answering 28/30 can't silently drop 2. Companion to `gated_batch`/`bulk_delegate` (SPEND vs COMPLETENESS). |
+| `job_fingerprint.py` | Resumable-job guard — plan/prompt/model fingerprints hashed SEPARATELY; a changed pack size (PLAN drift) refuses (`JobPlanDrift`, a `SpendGateRefused`) rather than silently re-buying the whole job, while a changed prompt/model (METHOD drift) is adjudicated (reuse/revalidate/rebuy). |
 
 ### Accounting, reconcile, report, observability
 | module | what it does |
