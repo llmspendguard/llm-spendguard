@@ -23,7 +23,10 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 TESTS = os.path.join(REPO, "tests")
-FILE_BUDGET_S = 120                      # same backstop test_runner.py uses (catches sleeps / runaway loops)
+FILE_BUDGET_S = 600                      # per-file timeout — MIRROR tests/test_runner.py's `timeout=600` (they must stay
+#                                          in step). 120 here silently diverged and false-failed `spendguard deploy` when a
+#                                          slow-but-correct test (e.g. test_resources_gpu) ran on a loaded machine; 600
+#                                          still catches real sleeps / runaway loops.
 _STRIP_KEYS = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "VAST_API_KEY", "GEMINI_API_KEY",
                "RUNPOD_API_KEY", "MODAL_TOKEN_ID", "MODAL_TOKEN_SECRET", "LAMBDA_API_KEY")
 
