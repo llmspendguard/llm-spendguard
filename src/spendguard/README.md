@@ -133,6 +133,7 @@ one-liners are read from each module's own top docstring.
 | `reasoning_equivalence.py` | Canonical LANE↔METERED reasoning-equivalence map — the persisted truth for how a pinned (provider, model, reasoning) request is served on its $0 lane and on the SAME provider's paid API at equal-or-greater reasoning (never a different provider, never less reasoning). |
 | `effort_titration.py` | Learn the CHEAPEST reasoning effort that HOLDS quality, per (intent, model); `spendguard effort-titrate`. |
 | `best_value.py` | Resolve `reasoning="best-value"` to a concrete (model, effort) AGENTICALLY, from the measured learnings. |
+| `intent_model_prior.py` | COLD-START model prior — for an intent with NO measured evidence yet, rank the real priced catalog AGENTICALLY (labelled `cold-start-prior`, estimate-first, persisted so it is never re-paid) so the advisor/best-value start logically instead of "no pick"; replaced the moment evidence exists. |
 | `reliability.py` | Lane + metered reachability sweep — prove every $0 lane and every keyed metered provider can actually SERVE a call (+ remediate); `spendguard reliability`. |
 | `metadata_audit.py` | Health + drift audit of the MODEL-METADATA backbone (the published limits spendguard clamps to, the measured caps it raises within them) — the guard for two real silent failures; `spendguard metadata`. |
 

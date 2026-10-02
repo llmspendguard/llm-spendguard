@@ -123,8 +123,9 @@ def select_model_effort(intent, requested_model, pin_model=False, quality_target
             raise                                             # a refusal is NOT cached and NOT downgraded
         return _none("best-value: advisor unavailable (%s) — keep the named model" % type(e).__name__)
     top = (rec or {}).get("top") or []
-    considered["source"] = "advisor.recommend_models"
-    considered["model_candidates"] = (rec or {}).get("ranked_from") or len(top)
+    considered["source"] = "cold-start-prior" if (rec or {}).get("prior") else "advisor.recommend_models"
+    considered["prior"] = bool((rec or {}).get("prior"))           # STRUCTURED: a cold-start PRIOR pick (a grounded guess),
+    considered["model_candidates"] = (rec or {}).get("ranked_from") or len(top)   # not measured evidence — replaced by a bakeoff
     considered["note"] = (rec or {}).get("note")
     if not top or not top[0].get("id"):                       # a RETURNED "no pick" (cold intent) is cached too — a later
         verdict = {"model": None, "considered": considered,   # bakeoff moves the fingerprint and this key is re-derived
