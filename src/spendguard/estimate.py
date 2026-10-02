@@ -178,6 +178,8 @@ def main():
                                     est_in_tokens=per_req_in, est_out_max=bp * out_per)
             print(f"  learned ({a.label}): ${lr['p50_usd']:,.2f} p50 … ${lr['p90_usd']:,.2f} p90 "
                   f"[basis={lr['basis']}, level={lr['level']}, n_obs={lr['n_obs']}] — history-corrected")
+            if lr.get("warning"):                  # basis='cap': the output side (dominant cost) had NO empirical basis — surface it, don't bury it
+                print(f"  ⚠ {lr['warning']}")
         except Exception as e:
             print(f"  learned ({a.label}): no calibration yet ({e}) — history will sharpen this")
     print("\nNext: pick a row, run that config, then verify with reconcile_openai_spend.py --estimate <$cost>")
