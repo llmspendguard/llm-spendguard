@@ -1,0 +1,24 @@
+# spendguard serve on Fly.io — the gated ask + embed surface the Vercel server routes its LLM calls through.
+# Rename `app`, pick `primary_region`, then follow README.md (fly launch --no-deploy, volumes create, secrets set, deploy).
+app = "spendguard-serve"
+primary_region = "sjc"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  SPENDGUARD_HOME = "/data/.spendguard"
+
+# Persistent SQLite ledger (survives suspend/resume + deploys). Create it with: fly volumes create spendguard_data.
+[[mounts]]
+  source = "spendguard_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8787
+  force_https = true
+  # Suspend-to-zero: cheapest, wakes on the first request (adds a brief cold start). For a hot search path set
+  # min_machines_running = 1 (always warm, costs more). The persistent volume is unaffected either way.
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 0
