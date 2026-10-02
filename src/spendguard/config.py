@@ -525,6 +525,18 @@ def _cfg_get(section, key, default=None):
     return (_cfg().get(section) or {}).get(key, default)
 
 
+def advisor_float(name, default):
+    """An `advisor.<name>` config knob as a float, defaulted. The ONE place this read lives (lane_balance and
+    lane_bandit delegate here — no divergent copies). Uses `v is None`, NOT `v or default`: a weight / margin the
+    operator deliberately set to 0 is falsy, so `... or default` would silently replace an explicit 0 with the
+    default. None means "unset" → default; a bad value → default."""
+    v = _cfg_get("advisor", name, None)
+    try:
+        return float(default if v is None else v)
+    except (TypeError, ValueError):
+        return default
+
+
 _GITROOT_CACHE = {}
 
 

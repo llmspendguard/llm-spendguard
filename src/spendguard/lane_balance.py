@@ -35,13 +35,9 @@ ROUTE_EST_OUT_DEFAULT = 500
 
 
 def _util_ratio_cfg(name, default):
-    # `v is None`, NOT `v or default`: a configured margin of 0 is falsy, so `... or default` silently replaced an
-    # explicit 0 with the default (0.5), ignoring the operator's deliberate setting. None means "unset" → default.
-    v = config._cfg_get("advisor", name, None)
-    try:
-        return float(default if v is None else v)
-    except (TypeError, ValueError):
-        return default
+    # Delegates to the ONE advisor-float reader (config.advisor_float), which uses `v is None` (NOT `v or default`) so
+    # an explicit 0 is honored — a configured margin/ratio of 0 must not be silently replaced by the default.
+    return config.advisor_float(name, default)
 
 
 def _resilience_min_units(default=1000):

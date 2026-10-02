@@ -12,7 +12,7 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from spendguard import advise, route_economics, lane_economics   # noqa: E402
+from spendguard import advise, route_economics, lane_economics, budget   # noqa: E402
 
 fails = []
 
@@ -38,35 +38,42 @@ finally:
 
 _orig_ev = advise.evidence
 _orig_lm = route_economics.lane_eff_by_provider
+_orig_billed = budget.billed_by_model
+# Under A3 the COST comes from the LEDGER (budget.billed_by_model), not the corpus. Each section seeds the ledger stub
+# with the arm's billed $ and sets evidence's `cost` to a FICTION (999) to PROVE ranked ignores the corpus cost.
 try:
-    # ── (b) a $0-lane arm is floored to its TRUE cost (out_tok × eff), never a flat $0 ──
+    # ── (b) a $0-lane arm (no ledger row) is floored to its TRUE cost (out_tok × eff), never a flat $0 ──
     print("\n-- (b) advise.ranked floors a $0-lane arm at out_tok x eff (no longer $0) --")
     advise.evidence = lambda *a, **k: {("anthropic", "claude-opus-4-8"): dict(
-        provider="anthropic", model="claude-opus-4-8", jobs=2, cost=0.0, outtok=100_000, good=2, labeled=2.0)}
+        provider="anthropic", model="claude-opus-4-8", jobs=2, cost=999.0, outtok=100_000, good=2, labeled=2.0)}
+    budget.billed_by_model = lambda intent=None, as_of=None: {}            # lane arm → no ledger row → $0 billed
     route_economics.lane_eff_by_provider = lambda now=None: {"anthropic": EFF}
     arm = advise.ranked(intent="x")["models"][0]
-    ck("a $0-lane arm is priced at its TRUE cost (out_tok x eff = $1.529), never a flat $0",
+    ck("a $0-lane arm is priced at its TRUE cost (out_tok x eff = $1.529), never a flat $0 or the corpus fiction",
        abs(arm["cost"] - 100_000 * EFF) < 1e-6 and arm["cost"] > 0)
     ck("per_good uses the true lane cost (not $0)", arm["per_good"] is not None and arm["per_good"] > 0)
 
-    # ── (c) a METERED arm (no lane for its provider) is UNCHANGED ──
-    print("\n-- (c) a metered arm (no lane for its provider) keeps its recorded cost --")
+    # ── (c) a METERED arm (no lane) is priced at its LEDGER billed $, not the corpus fiction ──
+    print("\n-- (c) a metered arm (no lane) is priced at its LEDGER billed $ (not the corpus fiction) --")
     advise.evidence = lambda *a, **k: {("openai", "gpt-5-nano"): dict(
-        provider="openai", model="gpt-5-nano", jobs=2, cost=0.05, outtok=100_000, good=2, labeled=2.0)}
-    route_economics.lane_eff_by_provider = lambda now=None: {"anthropic": EFF}   # no openai lane
+        provider="openai", model="gpt-5-nano", jobs=2, cost=999.0, outtok=100_000, good=2, labeled=2.0)}
+    budget.billed_by_model = lambda intent=None, as_of=None: {"openai:gpt-5-nano": 0.05}   # real billed $ from the ledger
+    route_economics.lane_eff_by_provider = lambda now=None: {"anthropic": EFF}   # no openai lane → no floor
     arm2 = advise.ranked(intent="x")["models"][0]
-    ck("a metered arm (no lane) keeps its recorded cost, unchanged", abs(arm2["cost"] - 0.05) < 1e-12)
+    ck("a metered arm is priced at its ledger billed $ (0.05), not the corpus fiction (999)", abs(arm2["cost"] - 0.05) < 1e-9)
 
-    # ── (d) empty map (no converged lane) → prior behaviour, the recorded $0 stands (fail-open) ──
-    print("\n-- (d) no converged lane -> prior $0-lane behaviour (fail-open) --")
+    # ── (d) no ledger row + no converged lane → $0 (fail-open, never crashes) ──
+    print("\n-- (d) no ledger cost + no converged lane -> $0 (fail-open) --")
     advise.evidence = lambda *a, **k: {("anthropic", "claude-opus-4-8"): dict(
-        provider="anthropic", model="claude-opus-4-8", jobs=2, cost=0.0, outtok=100_000, good=2, labeled=2.0)}
+        provider="anthropic", model="claude-opus-4-8", jobs=2, cost=999.0, outtok=100_000, good=2, labeled=2.0)}
+    budget.billed_by_model = lambda intent=None, as_of=None: {}
     route_economics.lane_eff_by_provider = lambda now=None: {}
     arm3 = advise.ranked(intent="x")["models"][0]
-    ck("no converged lane -> the arm's recorded $0 is unchanged (never crashes)", arm3["cost"] == 0.0)
+    ck("no ledger cost + no converged lane -> $0 (never crashes, never the corpus fiction)", arm3["cost"] == 0.0)
 finally:
     advise.evidence = _orig_ev
     route_economics.lane_eff_by_provider = _orig_lm
+    budget.billed_by_model = _orig_billed
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_lane_cost_in_ranking: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)
