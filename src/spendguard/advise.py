@@ -117,9 +117,25 @@ def ranked(intent=None, as_of=None, by_effort=False):
                 else (lambda m: m["per_m_out"] if m["per_m_out"] is not None else 1e18))
     models.sort(key=_rankkey)
     pick = models[0]["id"] if models and _rankkey(models[0]) < 1e18 else None
+    # CHEAPEST PER TOKEN vs the $/good PICK — a factual CONTRAST, never a quality verdict. When the lowest-$/M-out model
+    # is not the lowest-$/good model, surface BOTH with each side's MEASURED good_rate, so a reader scanning the
+    # per-token column also sees the per-GOOD cost (low $/token ≠ low $/answer). The code asserts nothing about whether
+    # the cheaper model is "wrong" — that is a quality judgement the mechanical "cheapest ≠ pick" test does not license
+    # (a 99%-good cheaper model is a fine choice; a 36%-good one is the trap a caller hit). The reader judges from the
+    # numbers shown. Only when quality is labeled (else there is no good_rate to contrast) and the two models differ.
+    cpt = None
+    if labeled_any and pick:
+        priced = [m for m in models if m["per_m_out"] is not None]
+        cheapest_tok = min(priced, key=lambda m: m["per_m_out"]) if priced else None
+        if cheapest_tok and cheapest_tok["id"] != pick and cheapest_tok.get("good_rate") is not None:
+            pick_row = next((m for m in models if m["id"] == pick), None)
+            cpt = dict(id=cheapest_tok["id"], per_m_out=cheapest_tok["per_m_out"],
+                       good_rate=cheapest_tok["good_rate"], per_good=cheapest_tok["per_good"],
+                       pick=pick, pick_good_rate=(pick_row or {}).get("good_rate"),
+                       pick_per_good=(pick_row or {}).get("per_good"))
     return dict(scope=(f"intent '{intent}'" if intent else "all intents"), as_of=as_of, labeled=labeled_any,
                 metric=("$/good-result" if labeled_any else "$/M output (quality not labeled yet)"),
-                pick=pick, models=models)
+                pick=pick, cheapest_per_token=cpt, models=models)
 
 
 def advise(intent=None, plan=None, as_of=None):
@@ -147,6 +163,13 @@ def advise(intent=None, plan=None, as_of=None):
     else:
         print(f"\n→ not enough signal to rank by {metric} yet (no model has a measured value); most-used is "
               f"{best}. Run `spendguard reconstruct` for quality labels, then re-check.")
+    cpt = r.get("cheapest_per_token")
+    if cpt:
+        gr = ("%.0f%%" % (100 * cpt["good_rate"])) if cpt["good_rate"] is not None else "—"
+        pgr = ("%.0f%%" % (100 * cpt["pick_good_rate"])) if cpt["pick_good_rate"] is not None else "—"
+        pg = ("$%.4f/good" % cpt["per_good"]) if cpt["per_good"] is not None else "no good result"
+        print(f"  ℹ️ cheapest per token is {cpt['id']}: ${cpt['per_m_out']:.2f}/M out, {gr} good → {pg}. "
+              f"The $/good pick {cpt['pick']} ({pgr} good) costs less per GOOD result — low $/token is not low $/answer.")
     plan_key = _resolve_plan(plan, {m["id"]: m for m in rows}) if plan else None
     if plan_key and plan_key != best:
         pr = next(m for m in rows if m["id"] == plan_key)
