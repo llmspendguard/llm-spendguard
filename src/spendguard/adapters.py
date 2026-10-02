@@ -8,6 +8,7 @@ already meters + budgets them.
 import time
 import json
 import threading
+import functools
 from . import config, pricing
 
 # name -> {base_url, key_env, prefixes, kind}
@@ -713,10 +714,44 @@ def _apply_best_value_default(reasoning, intent, sig, no_substitution, probe):
     return "best-value" if _default_reasoning_is_best_value() else reasoning
 
 
+class CallResult(dict):
+    """The result of `adapters.call` — a dict (every existing `r["text"]` / `r.get(...)` keeps working unchanged) that
+    ALSO exposes its keys as ATTRIBUTES, so `r.text` / `getattr(r, "text")` returns the text instead of silently None.
+
+    The footgun this closes (measured by a caller): `getattr(r, "text", None) or r`. A PLAIN dict has no `.text`
+    ATTRIBUTE (the text lives at `r["text"]`), so getattr returned None and `or r` yielded the WHOLE dict — which the
+    batch then parsed as an empty answer ($0, 'concepts missing'), with nothing erroring. With this subclass `r.text`
+    resolves to `r["text"]`, so the idiom works. Attribute access to a key returns its value (None when the key is
+    present-but-None, e.g. text on an error result); an attribute that is NOT a key raises AttributeError — normal
+    Python, never a silent None, so a typo fails loudly rather than reading as 'no value'."""
+    def __getattr__(self, name):
+        try:
+            return self[name]
+        except KeyError:
+            raise AttributeError(name) from None
+
+
+def _returns_callresult(fn):
+    """Wrap `call`'s return in a CallResult UNCONDITIONALLY — on every return path, not opt-in. A dict result is
+    re-boxed as a CallResult (a shallow copy; cheap); a non-dict (there is none today) passes through. This is the
+    one place the public result type is set, so no branch of `call` can leak a bare dict that reintroduces the
+    `.text`-is-None footgun — the same 'safety must not be opt-in' rule the call() docstring states for truncation."""
+    @functools.wraps(fn)
+    def _wrapped(*args, **kwargs):
+        r = fn(*args, **kwargs)
+        return CallResult(r) if (isinstance(r, dict) and not isinstance(r, CallResult)) else r
+    return _wrapped
+
+
+@_returns_callresult
 def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,
          sig=None, intent=None, retries=2, files=None, _no_guard=False, no_metered_fallback=False, images=None,
-         no_substitution=False, metered_only=False, base_fallback=None, _probe=False, _route=True, **aliases):
-    """Run one prompt against one model. Returns a result dict (never raises).
+         no_substitution=False, measurement=False, metered_only=False, base_fallback=None, _probe=False, _route=True, **aliases):
+    """Run one prompt against one model. Returns a CallResult (never raises).
+
+    A CallResult IS a dict — every `r["text"]` / `r.get(...)` works unchanged — that ALSO exposes its keys as
+    ATTRIBUTES, so `r.text` / `getattr(r, "text")` returns the text. The bare-dict version had no `.text` attribute,
+    so `getattr(r, "text", None) or r` silently yielded the whole dict (a caller then parsed it as an empty answer).
 
     `governed=True` (a kwarg carried via **aliases) runs THIS call inside the dispatch GOVERNOR — for a caller
     fanning many concurrent calls (a bakeoff / review panel). It bounds per-lane/vendor in-flight, and on a
@@ -731,6 +766,13 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     reasoning scale + warm-daemon concurrency) would drift the verdict. Default False = the lane serves first and a
     miss falls back to the metered API (the cheap, faithful-for-capability default). A vision call (`images=`) is
     metered by construction regardless.
+
+    `measurement=True` declares that WHICH MODEL answers IS the result — a bakeoff, a cross-vendor panel, a priced
+    A/B — and so IMPLIES no_substitution: the named model answers or the call errors, never a silent lane/bandit swap
+    to a different (often ~100x) model that would attribute the number to the wrong model. It is an EXPLICIT flag, not
+    inferred from the intent text (keyword-guessing would mis-pin an intent like 'measurement-conversion' and wrongly
+    block a permitted fallback). Unlike metered_only it does NOT force the metered API (a $0 lane that CAN serve the
+    named model is fine); it only forbids changing the model.
 
     `files=[path, …]` is the INPUT twin of the output guard below: each path is assembled into the prompt as a
     WHOLE, stamped, self-verified block by llm_files.attach_many (raises rather than send a partial file). The
@@ -850,6 +892,18 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     # for a reproducibility-critical caller cannot harm it and closes the 2026-08-29 "cross-vendor panel was one model"
     # gap at its structural root, not per-intent in a denylist.
     if metered_only:
+        no_substitution = True
+
+    # MEASUREMENT ⟹ NO_SUBSTITUTION. A measurement call — one where WHICH MODEL answered IS the result (a bakeoff, a
+    # cross-vendor panel, a priced A/B) — must be served by the model the caller NAMED, or the number is attributed to
+    # the WRONG model (measured by a caller: a bakeoff naming gpt-5-nano was served claude-opus-4-8 via a lane, ~100x
+    # the price, silently collapsing the comparison). The caller declares this EXPLICITLY with measurement=True, which
+    # pins the vendor exactly like metered_only, BEFORE the best-value default and the utilisation bandit run below.
+    # It is a FLAG, never an inference from the intent string: "does this intent denote a measurement?" is a meaning
+    # judgement that keyword-matching gets wrong (e.g. 'measurement-conversion' is not a model-measurement, and forcing
+    # no_substitution there would wrongly block a permitted fallback), so the caller states it rather than spendguard
+    # guessing. The bakeoff / titration / recommend paths that ARE measurements already pass no_substitution=True.
+    if measurement:
         no_substitution = True
 
     # BASE-FALLBACK DEFAULT (tier-3 reliability). Auto-ON so a call yields SOME answer when a model's lane AND its
