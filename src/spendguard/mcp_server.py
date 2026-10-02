@@ -451,16 +451,30 @@ def _tool_health(args):
     from . import reliability
     run = args.get("run", True)
     timeout_s = int(args.get("timeout_s") or 20)
-    res = reliability.sweep(run=run, timeout_s=timeout_s)
+    # DEGRADE, NEVER CRASH. The reachability surface is the thing you CALL to learn what is healthy, so it must not be
+    # the thing that breaks: a code/attr error here (e.g. the skewed-install pricing.OUTPUT_FLOOR AttributeError) returns
+    # a LABELLED internal-error result, not a raw exception that blanks the whole tool. sweep() is isolated below; the
+    # remediate/persist steps are best-effort and never take down a sweep that already succeeded.
+    try:
+        res = reliability.sweep(run=run, timeout_s=timeout_s)
+    except Exception as e:
+        return {"error": f"health-check internal error: {type(e).__name__}: {str(e)[:200]}",
+                "note": "the reachability surface hit an internal error and DEGRADED (it did not crash); fix the error "
+                        "or update a skewed install, then re-run.",
+                "lanes": {}, "metered": {}, "actions": [],
+                "summary": {"lanes_up": 0, "lanes_total": 0, "metered_up": 0, "metered_total": 0, "down": []}}
     lanes_up = sum(1 for d in res["lanes"].values() if d.get("reachable"))
     met_up = sum(1 for d in res["metered"].values() if d.get("reachable"))
     down = ([f"lane:{k}" for k, d in res["lanes"].items() if not d.get("reachable")]
             + [f"metered:{k}" for k, d in res["metered"].items() if not d.get("reachable")])
     actions = None
-    if run and down and args.get("remediate", True):
-        actions = reliability.remediate(res)              # agentic FIX per down resource (cached — $0 for a known failure)
-    if run:
-        reliability._persist_health(res, actions)         # a health check from ANY surface feeds the receipt alert + notifier
+    try:
+        if run and down and args.get("remediate", True):
+            actions = reliability.remediate(res)          # agentic FIX per down resource (cached — $0 for a known failure)
+        if run:
+            reliability._persist_health(res, actions)     # a health check from ANY surface feeds the receipt alert + notifier
+    except Exception:
+        actions = actions or None                         # best-effort: a remediate/persist hiccup never blanks a good sweep
     return {"note": ("live reachability + the FIX for each down resource (agentic, cached) — lanes $0, the metered "
                      "pings cost ~a few $0.0001; each probe is bounded by timeout_s so a dead endpoint fails fast. "
                      "The result is also cached so a down lane surfaces in the receipt" if run
