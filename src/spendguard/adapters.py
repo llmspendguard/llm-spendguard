@@ -2711,7 +2711,20 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
 # spent entirely on reasoning returns a well-formed response whose text is "".
 #
 # So: start at the floor and let a measurement raise it, never lower it. The prediction can only add.
-TOKEN_FLOOR = pricing.OUTPUT_FLOOR   # the OUTPUT floor lives in ONE home (pricing.OUTPUT_FLOOR=32K); adapters references it
+# DEFENSIVE read of the SSOT. pricing.OUTPUT_FLOOR (32K) is the one home; this re-exports it. But it is read at MODULE
+# LOAD, so a SKEWED install (a newer adapters.py against an older pricing.py that predates OUTPUT_FLOOR) made a bare
+# `pricing.OUTPUT_FLOOR` raise AttributeError at IMPORT — taking down EVERY path that imports adapters, not just the
+# one needing the floor. That is how a version skew became a TOTAL outage of the health surface (`spendguard_health`
+# returned {"error": "AttributeError: ... no attribute 'OUTPUT_FLOOR'"}). getattr degrades the skew to the documented
+# floor so the import survives; the literal is used ONLY when the SSOT is unreachable, and the skew is made VISIBLE
+# (warn-once) rather than silent. SSOT is still pricing.OUTPUT_FLOOR whenever it is present.
+TOKEN_FLOOR = getattr(pricing, "OUTPUT_FLOOR", 32_000)
+if not hasattr(pricing, "OUTPUT_FLOOR"):
+    try:
+        config.warn_once("[spendguard] pricing.OUTPUT_FLOOR is missing — stale/skewed install (pricing older than "
+                         "adapters). Using the 32K output floor default; update llm-spendguard so they match.")
+    except Exception:
+        pass
 MAX_TOKEN_CEILING = 128_000      # OUTPUT: absolute stop for the doubling retry — above the floor so retries have room
 # The auto-heal LEARNS a model's output ceiling by halving until the provider accepts a budget. Below this floor a
 # "success" is NOT evidence of a real output limit — no chat model caps output in the hundreds — it is a NON-budget
