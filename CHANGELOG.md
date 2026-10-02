@@ -4,6 +4,20 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.12.5] — 2026-10-02
+
+Adds `POST /embed` to `spendguard serve` — the embeddings analogue of `/ask`, so a non-Python caller (e.g. a
+Node/Vercel app) can route **embeddings** through the gate (metered + priced + ledgered), not just chat.
+
+### Added
+- **`POST /embed` on `spendguard serve`** → `adapters.embed` (gate-metered, priced, chunked + durable). Request
+  `{texts: [str], model?, dimensions?, max_batch?}`; response is `adapters.embed`'s contract — `{vectors (aligned to
+  inputs, None where an item failed), model, dims, n, failed, error}`, so a partial failure is a usable `200`, never a
+  silently-short list. A deliberate spend refusal (`BudgetRefused` / any `SpendGateRefused` cap breach) returns `402` —
+  never a false `200`; invalid `texts` → `400`; the host-local `checkpoint` path is stripped from the response.
+  `do_POST` was split into `_handle_ask` / `_handle_embed` (shared body read); `/ask`, `/health`, `/metadata` and the
+  network-bind-needs-a-token guard are unchanged.
+
 ## [0.12.4] — 2026-10-01
 
 Adds `spendguard keys-audit` — a static scan that catches a repo `.env` holding a provider key that would shadow the
