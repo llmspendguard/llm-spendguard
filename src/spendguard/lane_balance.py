@@ -897,6 +897,8 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
                 r = adapters.call(_vm, _p, system=system, reasoning=reasoning, sig=intent,
                                   timeout_s=deadline_s, no_metered_fallback=refuse_billed, schema=schema,
                                   images=(_imgs or None), no_substitution=True,   # NAMED model — never swap it (pinned)
+                                  _internal_pin=True,   # CONFINEMENT, not a caller effort-insistence → an un-honorable effort
+                                  #                       FLOORS here (path-independent, guardrail B), never EffortNotHonored
                                   metered_only=metered_only,   # opt-in: force the METERED half of the pin (skip the $0 lane)
                                   _route=record_route)   # already a governed queue row when drain/submit set record_route=False
             except _STOP_TYPES:
@@ -987,6 +989,9 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
             #                                                                      model OUTSIDE the requested set; the only
             #                                                                      fallback is THIS model's metered API,
             #                                                                      in-tier by construction
+                              _internal_pin=bool(tier or lanes),                 # that confinement is a ROUTING pin, not an
+            #                                                                      effort insistence → an un-honorable effort
+            #                                                                      FLOORS (path-independent), never refuses
                               _route=record_route)                               # this fan IS a queue row when drain/submit
             #                                                                      set record_route=False → don't re-record
             # (receipt suppressed via set_context above, not the context manager)  each reply feeds that measurement

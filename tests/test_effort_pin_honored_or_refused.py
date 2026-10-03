@@ -107,5 +107,40 @@ ck("admission_state carries an 'unhonored_efforts' map", isinstance(st.get("unho
 ck("and it reflects the gpt-5.5 non-honor (auditable, not just printed)",
    any("gpt-5.5" in k for k in (st.get("unhonored_efforts") or {})))
 
+# ── (5) PINNED (no_substitution) + un-honorable 'minimal' → REFUSE pre-wire (guardrail A: honor OR **refuse**) ──
+# A SUBSTITUTABLE call (cases 1-3, no_substitution unset) proceeds + is recorded — best-value routes it to an honoring
+# model upstream. But when the caller PINNED the model (no_substitution), there is no honoring model to route to, so the
+# pin that cannot be honored is REFUSED rather than allowed to overspend silently — and BEFORE any vendor call.
+print("-- (5) gpt-5.5 + reasoning='minimal' + no_substitution → REFUSED pre-wire (EffortNotHonored, a SpendGateRefused) --")
+from spendguard.gate import EffortNotHonored, SpendGateRefused  # noqa: E402
+_wire_n = len(_WIRE)
+_raised = None
+try:
+    adapters._call_once("openai:gpt-5.5", "hi", max_tokens=100, reasoning="minimal", timeout_s=30, _no_sub=True)
+except EffortNotHonored as _e:
+    _raised = _e
+ck("a pinned (no_substitution) call that cannot honor 'minimal' RAISES EffortNotHonored", _raised is not None)
+ck("EffortNotHonored is a SpendGateRefused (propagates via the deliberate-stop machinery)",
+   isinstance(_raised, SpendGateRefused))
+ck("the refusal is PRE-WIRE — no vendor call was made, so nothing was spent", len(_WIRE) == _wire_n)
+
+# ── (6) INTERNAL confinement pin (a bulk_delegate fan / tier=/lanes=) is NOT a caller insistence → the un-honorable
+# effort FLOORS, it does NOT refuse — so effort stays PATH-INDEPENDENT (guardrail B: the fan sends the same wire effort
+# as the plain path). `_internal_pin` exempts ONLY the refuse; no_substitution still pins the model. A DIRECT
+# no_substitution (case 5, _internal_pin unset) remains a caller pin → still refuses. This is the option-1 fix that let
+# #20's refuse coexist with guardrail B instead of regressing it.
+print("-- (6) gpt-5.5 + 'minimal' + no_substitution + _internal_pin (fan CONFINEMENT) → FLOORS to 'none', NOT refused --")
+_wire_n6 = len(_WIRE)
+_raised6 = None
+try:
+    r6 = adapters._call_once("openai:gpt-5.5", "hi", max_tokens=100, reasoning="minimal", timeout_s=30,
+                             _no_sub=True, _internal_pin=True)
+except EffortNotHonored as _e6:
+    _raised6 = _e6
+ck("an INTERNAL confinement pin does NOT raise EffortNotHonored (floors instead — guardrail B path-independence)",
+   _raised6 is None)
+ck("…and the call reached the wire at the floor 'none' (confinement floors, never silently honors 'minimal')",
+   len(_WIRE) > _wire_n6 and _wire_effort() == "none")
+
 print(f"\n{'[FAIL]' if _fails else 'OK'} test_effort_pin_honored_or_refused: {len(_fails)} failure(s)")
 sys.exit(1 if _fails else 0)

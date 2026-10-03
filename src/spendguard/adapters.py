@@ -746,7 +746,8 @@ def _returns_callresult(fn):
 @_returns_callresult
 def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,
          sig=None, intent=None, retries=2, files=None, _no_guard=False, no_metered_fallback=False, images=None,
-         no_substitution=False, measurement=False, metered_only=False, base_fallback=None, _probe=False, _route=True, **aliases):
+         no_substitution=False, measurement=False, metered_only=False, base_fallback=None, _probe=False, _route=True,
+         _internal_pin=False, **aliases):
     """Run one prompt against one model. Returns a CallResult (never raises).
 
     A CallResult IS a dict — every `r["text"]` / `r.get(...)` works unchanged — that ALSO exposes its keys as
@@ -1097,11 +1098,11 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                 r = _call_guarded(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
                                   schema=schema, timeout_s=timeout_s, sig=sig, retries=retries,
                                   no_metered_fallback=no_metered_fallback, images=images, _no_sub=no_substitution,
-                                  metered_only=metered_only, _probe=_probe)
+                                  metered_only=metered_only, _probe=_probe, _internal_pin=_internal_pin)
             else:
                 r = _call_once(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
                                schema=schema, timeout_s=timeout_s, no_metered_fallback=no_metered_fallback, images=images,
-                               _no_sub=no_substitution, _skip_lane=metered_only)   # metered_only=True → skip the lane
+                               _no_sub=no_substitution, _skip_lane=metered_only, _internal_pin=_internal_pin)   # metered_only=True → skip the lane
         finally:
             _sig_ctx._local.ctx = _ctx_before   # restore the caller's context exactly (nested calls keep their own tag)
             if _adm is not None:
@@ -1921,7 +1922,7 @@ def _est_call_tokens(prompt, system, out_tokens):
 
 
 def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,
-               _skip_lane=False, no_metered_fallback=False, images=None, _no_sub=False):
+               _skip_lane=False, no_metered_fallback=False, images=None, _no_sub=False, _internal_pin=False):
     """One raw request. Everything public goes through `call`, which adds the input and output guards.
 
     NO DEFAULT CAP. This carried `max_tokens=512` — the last place a number nobody chose could still reach a
@@ -2175,7 +2176,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         from . import calls as _calls_ff
         with _calls_ff.fell_from_context(lane_name):
             out = _call_once(_fb_model, prompt, max_tokens=max_tokens, system=system, reasoning=_fb_reasoning,
-                             schema=schema, timeout_s=timeout_s, _skip_lane=True, _no_sub=_no_sub)
+                             schema=schema, timeout_s=timeout_s, _skip_lane=True, _no_sub=_no_sub, _internal_pin=_internal_pin)
         out = out if isinstance(out, dict) else {"error": "metered fallback returned no result dict", "cost": None}
         out["fell_from"] = lane_name
         _kind = _learn_from_fallback(lane_name, prompt, bool(out.get("error", False)), model=raw, transient=bool(_ra))
@@ -2471,6 +2472,23 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                                   file=_sA.stderr)
                         except Exception:
                             pass
+                    # GUARDRAIL A is literally HONOR **OR REFUSE**. If the pin could not be honored AND the CALLER PINNED
+                    # the model (no_substitution), there is no honoring model to route to — so REFUSE rather than let it
+                    # overspend silently (the warn above is the record; this is the stop). OUTSIDE the try above so this
+                    # deliberate stop is never swallowed by that fail-open handler. A SUBSTITUTABLE call never reaches this
+                    # (it is routed to an effort-honoring model upstream by best-value); only a CALLER-pinned call is refused.
+                    # `_internal_pin` EXEMPTS a pin spendguard set INTERNALLY for model-CONFINEMENT (a bulk_delegate fan, or
+                    # tier=/lanes= confinement) rather than the caller insisting on this exact model+effort: that is a routing
+                    # detail, not an effort insistence, so it FLOORS the effort (like the un-pinned path) instead of refusing —
+                    # keeping effort PATH-INDEPENDENT (guardrail B: the fan must send the SAME wire effort as plain/governed).
+                    # A direct no_substitution / metered_only / measurement is a CALLER pin (_internal_pin stays False) → refuse.
+                    if _eff_unhonored and _no_sub and not _internal_pin:
+                        from .gate import EffortNotHonored
+                        raise EffortNotHonored(
+                            "reasoning='minimal' cannot be honored by %s (floors to %r, which still reasons) and the call "
+                            "pinned the model (no_substitution) — refusing rather than overspend silently. Unpin the model "
+                            "(drop no_substitution, or use reasoning='best-value') to route to an effort-honoring model, or "
+                            "pin the floor value %r explicitly to accept it." % (raw, _eff, _eff))
             try:
                 from . import models as _mf
                 _mf.apply_call_params(raw, okw, dialect="openai")
@@ -2666,6 +2684,13 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 "requested_effort": _eff_requested, "chosen_effort": _effort_sent, "effort_unhonored": _eff_unhonored,
                 "finish_reason": _finish, "executor": "api", "error": None}   # metered API path — say so, like a lane says its name
     except Exception as e:
+        # A DELIBERATE STOP (a spend refusal like EffortNotHonored, a drawn-on-purpose deadline, a containment stop)
+        # must PROPAGATE out of the metered path — never be swallowed into the {error, error_type} dict below, which a
+        # caller can fail-open on (the deliberate-refusal doctrine). This is the metered twin of the lane path's re-raise
+        # (_call_lane @ L2018) and the 429-learn re-raise just below; the catch-all was the one remaining hole.
+        from . import gate as _gds
+        if _gds.is_deliberate_stop(e):
+            raise
         # error_type is the exception CLASS name — a structured signal (like an HTTP status or sqlite_errorname),
         # NOT the message prose. vendor_call uses it to tell a deadline (the vendor didn't answer in the budget:
         # APITimeoutError / ReadTimeout) from a transport fault (the connection broke / was refused), so the
