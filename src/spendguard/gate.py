@@ -2460,7 +2460,26 @@ def _render_key_status_lines(statuses, down):
     return lines
 
 
+def _stale_editable_install():
+    """(stale, code_v, meta_v) — is this a STALE EDITABLE INSTALL? True when the RUNNING code's version (`_version`
+    SSOT, read live from source) != this venv's INSTALL-time metadata (importlib.metadata, frozen at `pip install -e`
+    time). The drift matters because the frozen DEP SET is also stale: any dependency a newer version added is NOT
+    installed here, so a lazy import fails at runtime (the 'reviewer unavailable' / ImportError class the caller hit).
+    meta_v is None when metadata is unreadable — that is 'unknown', NOT a skew (we never flag on a failed read)."""
+    try:
+        from . import __version__ as code_v
+    except Exception:
+        return False, None, None
+    try:
+        from importlib.metadata import version as _mv
+        meta_v = _mv("llm-spendguard")
+    except Exception:
+        meta_v = None
+    return bool(meta_v and meta_v != code_v), code_v, meta_v
+
+
 def _cli(cmd="status", live=False):
+    _stale_install = False              # set True when _stale_editable_install() finds code!=metadata (a broken install)
     if cmd == "off":
         open(FLAG, "w").write("disabled\n")
         print(f"🔴 spend gate DISABLED (persistent). Re-enable: spendguard on\n  flag: {FLAG}")
@@ -2474,20 +2493,15 @@ def _cli(cmd="status", live=False):
         # version of the CODE running (SSOT) vs THIS venv's install-time metadata: an editable install freezes its
         # dist-info version at install time, so a stale one silently under-reports (it read 0.7.2 while running
         # 0.10.0 code). Surface the drift here so a stale editable install is visible, not silent.
-        try:
-            from . import __version__ as _code_v
-            try:
-                from importlib.metadata import version as _mv
-                _meta_v = _mv("llm-spendguard")
-            except Exception:
-                _meta_v = None
-            if _meta_v and _meta_v != _code_v:
-                print(f"  version   : 🟡 {_code_v} (running code); this venv's install metadata says {_meta_v} "
-                      f"— stale editable install, refresh with `pip install -e . --no-deps` here")
-            else:
-                print(f"  version   : 🟢 {_code_v}")
-        except Exception:
-            pass
+        _stale_install, _code_v, _meta_v = _stale_editable_install()
+        if _stale_install:
+            print(f"  version   : 🔴 {_code_v} (running code) ≠ {_meta_v} (this venv's install metadata) — STALE "
+                  f"EDITABLE INSTALL. Its dependency set is frozen at {_meta_v}, so a dependency a newer version added "
+                  f"is NOT installed here and a lazy import can fail at runtime (the 'reviewer unavailable' / ImportError "
+                  f"class). Refresh WITH deps: `pip install -e .` in THIS venv (NOT --no-deps). `spendguard doctor` "
+                  f"exits non-zero while this drift stands.")
+        elif _code_v:
+            print(f"  version   : 🟢 {_code_v}")
         install()
         enforcing = _any_patched()
         print(f"  {ENFORCING_MARKER}: "
@@ -2696,7 +2710,10 @@ def _cli(cmd="status", live=False):
                           f"`pip uninstall {' '.join(_sh)}`.")
             except Exception:
                 pass
-    return 0
+    # BIND the freshness check: `spendguard doctor` exits non-zero on a STALE EDITABLE INSTALL (code != metadata), so CI
+    # / an install-verify step / a `doctor && <next>` chain CATCHES the drift instead of proceeding on a broken install
+    # whose frozen deps may be missing. `status` stays exit-0 (a casual glance); only the diagnostic `doctor` binds.
+    return 1 if (_stale_install and cmd == "doctor") else 0
 
 
 if __name__ == "__main__":

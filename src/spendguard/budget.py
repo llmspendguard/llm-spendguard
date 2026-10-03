@@ -101,19 +101,20 @@ def _attribute(ev, project):
 
 
 def _record_spend_event(provider, model, kind, cost, *, conv_id="", basis="", intent="", actor="", key_fp="",
-                        project="", occurred_at=None, in_tok=0, out_tok=0, cache_read_tok=0, cache_write_tok=0,
-                        reasoning_tok=0, source="gate", dedup_suffix="", invoice_id="", dedup_key=None):
+                        chain="", project="", occurred_at=None, in_tok=0, out_tok=0, cache_read_tok=0,
+                        cache_write_tok=0, reasoning_tok=0, source="gate", dedup_suffix="", invoice_id="", dedup_key=None):
     """THE write for a live charge → `spend_events`, the single money-of-record, through the ONE shared mapping
     (charge_to_event). Every budget writer records through here; there is no second ledger, and — since the
     cutover — no `charges` fallback behind it, so a dropped write is a dropped charge. The ledger connection
     carries sqlite's own busy_timeout (see SpendLedger, `timeout=`), so an ordinary transient lock blocks briefly
     and clears rather than failing. Fail-OPEN only as a last resort: warn LOUDLY and let the caller proceed
     (losing the user's work over a bookkeeping hiccup is worse than a missed row), and even then the miss is
-    recoverable from provider truth via `spendguard reconcile`."""
+    recoverable from provider truth via `spendguard reconcile`. `chain` is the caller's JOB/RUN tag — carried onto
+    the money row so billed $ slices by job, not just intent (two concurrent runs of one intent get distinct chains)."""
     try:
         from .ledger import live_dedup_key
         ev = charge_to_event(provider, model, kind, cost, conv_id=conv_id, basis=basis,
-                             intent=intent, actor=actor, key_fp=key_fp)
+                             intent=intent, actor=actor, key_fp=key_fp, chain=chain)
         _attribute(ev, project)
         oa = occurred_at or datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
         ev["occurred_at"] = ev["ts_utc"] = oa
@@ -269,10 +270,15 @@ def record_charge(provider, model, kind, cost, project=None, conv_id=None, basis
             actor = actor if actor is not None else (_c.caller() or "")
         except Exception:
             intent, actor = intent or "", actor or ""
+    try:                                               # the JOB/RUN tag from the live context (spendguard.context(chain=…)):
+        from . import calls as _cc                     # carried onto the money row so "my spend" slices by JOB, not just
+        chain = _cc.current().get("chain") or ""       # intent (which two concurrent runs of one intent would collide on)
+    except Exception:
+        chain = ""
     now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     _record_spend_event(provider, model, kind, float(cost), conv_id=conv or "", basis=basis or "",
-                        intent=(intent or "")[:120], actor=(actor or "")[:120], key_fp=fp, project=proj or "",
-                        occurred_at=now, source="gate")
+                        intent=(intent or "")[:120], actor=(actor or "")[:120], key_fp=fp, chain=chain,
+                        project=proj or "", occurred_at=now, source="gate")
 
 
 def snapshot(reason="", keep=None):
@@ -556,7 +562,7 @@ _KIND_TO_EVENT = {"realtime": ("realtime", 0), "batch": ("batch", 0), "meta": ("
                   "external": ("external", 0), "tool": ("external", 0), "mcp": ("external", 0)}
 
 
-def charge_to_event(provider, model, kind, cost, conv_id="", basis="", intent="", actor="", key_fp=""):
+def charge_to_event(provider, model, kind, cost, conv_id="", basis="", intent="", actor="", key_fp="", chain=""):
     """THE single charge → spend_event field mapping, faithful and in ONE place so the live gate write and the
     one-time migration can never disagree about what a charge MEANS. Returns the money/role/basis fields of a
     spend_event; the caller adds attribution (org/team/project), identity (dedup_key), and provenance (source).
@@ -585,7 +591,7 @@ def charge_to_event(provider, model, kind, cost, conv_id="", basis="", intent=""
     ev = {
         "provider": provider or "?", "model": model or "?",
         "conv_id": conv_id or "", "key_fp": key_fp or "",
-        "intent": (intent or "")[:120], "actor": (actor or "")[:120],
+        "intent": (intent or "")[:120], "actor": (actor or "")[:120], "chain": (chain or "")[:120],
         "is_meta": is_meta, "reconciled": reconciled,
         "recon_marker": model if reconciled else None,
         "status": "void" if is_quarantine else ("reconciled" if reconciled else "posted"),
@@ -616,6 +622,17 @@ def spent_since(day, project=None, conv=None):
     if conv is not None:
         where["conv_id"] = str(conv)
     return float(_ledger().spent_dec(since=day, where=where or None))
+
+
+def spent_by_job(job, since=None):
+    """Gate-recorded billed LLM $ for ONE job/run tag — the rows whose `chain` == `spendguard.context(chain=<job>)`.
+    This is the concurrency-SAFE "my spend": the chain is per-run, so a job's total never sweeps in a CONCURRENT run
+    that happens to share the intent (the collision that made `spent_since` filtered by intent over-count). Read from
+    spend_events via the same `_COUNTABLE` filter spent_since uses (batch+realtime; excludes meta / reconciliation /
+    voided / reconstructed). $0, read-only; 0.0 for an empty job. `since` optionally bounds it to an accounting day on."""
+    if not job:
+        return 0.0
+    return float(_ledger().spent_dec(since=since, where={"chain": str(job)}))
 
 
 def spent_all_time():
