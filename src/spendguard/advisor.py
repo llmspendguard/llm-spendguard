@@ -298,8 +298,11 @@ def recommend_models(intent=None, k=5, quality_bar=None, run=False):
     model = config.advisor_model()
     ev = advise.ranked(intent=intent)
     if not ev["models"]:
-        return dict(intent=intent, requests=0, cost=0.0, model=model, top=[],
-                    note="no evidence yet for this intent — record calls or run a bakeoff first. 0 spend.")
+        # COLD-START: no measured evidence for this intent → a grounded, AGENTIC model PRIOR (labelled
+        # source="cold-start-prior", prior=True) so the advisor / best-value start logically instead of "no pick".
+        # Estimate-first is preserved (run flag passes through); the prior is replaced the moment evidence exists.
+        from . import intent_model_prior
+        return intent_model_prior.rank_models_for_intent(intent, k=k, run=run)
     lines = ["id | jobs | $total | $/M-out | good% | $/good"]      # the same numbers advise shows, compacted
     for m in ev["models"]:
         gp = f"{100*m['good_rate']:.0f}%" if m["good_rate"] is not None else "—"

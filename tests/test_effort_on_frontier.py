@@ -21,7 +21,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
         raise SystemExit("refusing to re-exec a path outside the test directory: %s" % _self)
     os.execv(sys.executable, [sys.executable, _self])
 
-from spendguard import calls, advise
+from spendguard import calls, advise, budget, route_economics
 
 failures = 0
 def check(label, cond):
@@ -33,14 +33,23 @@ def check(label, cond):
 
 
 INTENT = "t:classify"
-# Same model, two efforts — BOTH hold quality, but 'low' is 5x cheaper. The whole point: 'low' must win.
-calls.insert("openai", "gpt-5.5", "realtime", 0.10, in_tok=500, out_tok=1000, intent=INTENT,
+# Same model, two efforts — BOTH hold quality, but 'low' is cheaper BECAUSE it emits fewer output tokens (high effort =
+# more reasoning tokens = more cost). Under A3 the COST is the LEDGER's per-model billed $ (budget.billed_by_model),
+# apportioned across efforts by OUT_TOK share (spend_events has no effort column). So the corpus supplies out_tok +
+# quality (its per-row cost is no longer the cost basis), and a realistic fixture gives 'high' a larger out_tok (2500)
+# than 'low' (500) — a 5:1 ratio that splits the model's $0.12 ledger total into high $0.10 / low $0.02.
+calls.insert("openai", "gpt-5.5", "realtime", 0.10, in_tok=500, out_tok=2500, intent=INTENT,
              quality="good", quality_src="judge", quality_conf=0.9, effort="high")
-calls.insert("openai", "gpt-5.5", "realtime", 0.02, in_tok=500, out_tok=1000, intent=INTENT,
+calls.insert("openai", "gpt-5.5", "realtime", 0.02, in_tok=500, out_tok=500, intent=INTENT,
              quality="good", quality_src="judge", quality_conf=0.9, effort="low")
 # A legacy row for a different model — effort was never recorded (None). Must still rank.
 calls.insert("openai", "gpt-5-mini", "realtime", 0.01, in_tok=400, out_tok=500, intent=INTENT,
              quality="good", quality_src="judge", quality_conf=0.9, effort=None)
+
+# A3: cost comes from the LEDGER, not the corpus. Seed the model's billed $ (gpt-5.5 $0.12 total, mini $0.01); A3
+# apportions gpt-5.5's $0.12 across its efforts by out_tok (2500:500 → high $0.10, low $0.02). Empty lane-eff = no floor.
+budget.billed_by_model = lambda intent=None, as_of=None: {"openai:gpt-5.5": 0.12, "openai:gpt-5-mini": 0.01}
+route_economics.lane_eff_by_provider = lambda now=None: {}
 
 print("-- ranked(by_effort=False): UNCHANGED per-model shape (efforts merged) --")
 r0 = advise.ranked(intent=INTENT)
@@ -48,7 +57,7 @@ by_id0 = {m["id"]: m for m in r0["models"]}
 check("gpt-5.5 appears exactly once (two efforts merged into one model row)",
       sum(1 for m in r0["models"] if m["id"] == "openai:gpt-5.5") == 1)
 check("no 'effort' field leaks into the per-model shape", "effort" not in by_id0["openai:gpt-5.5"])
-check("merged gpt-5.5 cost is the sum of both efforts ($0.12)",
+check("merged gpt-5.5 cost = the model's LEDGER billed ($0.12)",
       abs(by_id0["openai:gpt-5.5"]["cost"] - 0.12) < 1e-9)
 
 print("-- ranked(by_effort=True): split per (model, effort), ranked by $/good --")

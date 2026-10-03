@@ -24,9 +24,9 @@ def ck(name, cond):
 
 fails = []
 ARMS = [("gemini", "g-low"), ("codex", "gpt-5.5"), ("zai-coding", "glm-5.3")]
-# neutralize idle/cost tilts + cooling so the exploit ranking is PURE decayed win-rate and choices are deterministic
+# neutralize the idle tilt + cooling so the exploit ranking is PURE decayed win-rate and choices are deterministic
+# (cost is no longer a routing tilt — it lives in the bake-off VALUE judge; see test_bandit_value_judge_weighs_cost)
 lb._idle_bonus = lambda lane: 1.0
-lb._cost_bonus = lambda lane, un: 1.0
 lb._arm_cooling = lambda lane, un: False
 
 print("-- EQUAL-START: every untried arm is explored before any repeats --")
@@ -80,7 +80,7 @@ from spendguard import lane_catalog                                             
 _o_arms, _o_judge, _o_runarm = lane_catalog.arms, lb.bakeoff_judge, lb._run_arm
 try:
     lane_catalog.arms = lambda flt=None: [("gemini", "g-low"), ("codex", "gpt-5.5")]
-    lb.bakeoff_judge = lambda task, oa, ob, aa, ab: (aa, "A wins")     # the FIRST arm always wins
+    lb.bakeoff_judge = lambda task, oa, ob, aa, ab, ca=None, cb=None: (aa, "A wins")   # the FIRST arm always wins
     lb._run_arm = lambda arm, *a, **k: f"out-{arm[0]}"                 # each lane returns a tagged answer
     out = lb.run_bakeoff("intentZ", "do X")
     fails += ck("run_bakeoff returns the WINNER's output + lane", out and out["text"] == "out-gemini" and out["lane"] == "gemini")
@@ -93,11 +93,11 @@ try:
                 out2 and out2["text"] == "out-gemini" and out2["lane"] == "gemini")
 
     print("\n-- a JUDGE FAILURE (None, None) is NOT a tie — it records NOTHING (never corrupt the learned table) --")
-    lb.bakeoff_judge = lambda task, oa, ob, aa, ab: (None, None)       # judge unavailable (errored/empty/truncated)
+    lb.bakeoff_judge = lambda task, oa, ob, aa, ab, ca=None, cb=None: (None, None)   # judge unavailable (errored/empty/truncated)
     r_jf = lb.run_bakeoff("intentJF", "do Z")
     fails += ck("judge-unavailable still returns a usable answer", bool(r_jf and r_jf.get("text")))
     fails += ck("judge-unavailable records NO trial (no false tie)", not lb.arm_stats("intentJF"))
-    lb.bakeoff_judge = lambda task, oa, ob, aa, ab: (None, "tie")      # a DECIDED tie
+    lb.bakeoff_judge = lambda task, oa, ob, aa, ab, ca=None, cb=None: (None, "tie")   # a DECIDED tie
     lb.run_bakeoff("intentTIE", "do W")
     stt = lb.arm_stats("intentTIE")
     fails += ck("a DECIDED tie records both arms at 0.5", bool(stt) and all(abs(s["winrate"] - 0.5) < 0.01 for s in stt.values()))

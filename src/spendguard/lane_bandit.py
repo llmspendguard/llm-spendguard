@@ -29,11 +29,10 @@ EPSILON_DEFAULT = 0.15         # exploration floor — never fully abandon a liv
 
 
 def _bcfg(name, default):
-    """A float advisor.* knob, defaulted — every bandit parameter is CONFIG, never a hardcoded magic number."""
-    try:
-        return float(config._cfg_get("advisor", name, None) or default)
-    except (TypeError, ValueError):
-        return default
+    """A float advisor.* bandit knob (decay / epsilon / bake-off pacing), defaulted — every bandit parameter is CONFIG,
+    never a hardcoded magic number. Delegates to config.advisor_float (the ONE advisor-float reader) so an explicit 0
+    is honored (`v is None`, not `v or default`) and there is no divergent copy."""
+    return config.advisor_float(name, default)
 
 
 def _bandit_db():
@@ -107,25 +106,46 @@ def _idle_bonus(lane):
         return 1.0
 
 
-def _cost_bonus(lane, use_name):
-    """A gentle tilt toward CHEAPER arms (lower API-equivalent rate), from the catalog. 1.0 when unpriced; bounded
-    [0.5, 1.5] so cost is a tie-breaker, not the driver (quality leads)."""
+def _intent_realized_costs(intent, arms):
+    """{(lane, use_name): realized $/call} for an intent — each arm's MEASURED mean output (which INCLUDES reasoning,
+    since reasoning bills as output) priced at its rate, from the calls corpus. Only arms with measured output appear
+    (a cold arm is absent). This is what makes a reasoning model that emits 7x on a small-norm intent genuinely more
+    expensive than a lean one; it feeds the bake-off JUDGE (bakeoff_judge), which weighs that realized cost against
+    quality AGENTICALLY — so the reasoning tax enters the learned reward as an LLM's judgement, not a routing formula.
+    Never raises (a routing read must not break routing)."""
+    costs = {}
     try:
-        from . import lane_catalog
-        c = lane_catalog.use_name_cost(use_name, 1_000_000, 1_000_000, lane)
-        if not c:
-            return 1.0
-        return max(0.5, min(1.5, 10.0 / (5.0 + float(c))))
+        from . import calls, lane_catalog
+        norms = calls.mean_out_by_executor_model(intent)   # {(executor_or_provider, model): {mean_out, n}}
+        for arm in (arms or []):
+            lane, use_name = arm
+            base, _lv = lane_catalog.parse_use_name(use_name, lane)
+            # match the (executor, model) the lane path RECORDS: suffix-style lanes (gemini) log the whole use-name
+            model = use_name if lane_catalog.quirk(lane)["style"] == "suffix" else base
+            rec = norms.get((lane, model))
+            mean_out = (rec or {}).get("mean_out") or 0.0
+            if mean_out <= 0:
+                continue                                   # no measured output for this arm/intent → neutral tilt
+            c = lane_catalog.use_name_cost(use_name, int(mean_out), int(mean_out), lane)   # price the REALIZED output
+            if c:
+                costs[arm] = float(c)
     except Exception:
-        return 1.0
+        pass
+    return costs
 
 
 def arm_score(intent, arm):
-    """Exploit ranking for an arm: decayed WIN-RATE × idle-fill × cost tilt. Quality leads (it is what the judge
-    learned); idle-fill and cost only break near-ties. Pure read; no LLM."""
-    lane, use_name = arm
+    """Exploit ranking = the arm's AGENTIC value win-rate × a light idle-fill tilt. The win-rate is the bake-off JUDGE's
+    decayed verdict, and that judge weighs quality-vs-cost AGENTICALLY (quality ~`advisor.bandit_quality_weight` / cost
+    ~`advisor.bandit_cost_weight`, as PROMPT guidance — see bakeoff_judge). So cost already lives in this reward,
+    decided by an LLM per bake-off, NOT by an arithmetic tradeoff here — a reasoning model that emits 7x the norm wins
+    only when the judge found its quality worth the cost ("spend reasoning where it pays"). Routing itself stays PURE
+    STATE (no LLM, no cost formula): it optimizes the learned value-reward, monotonic in the win-rate, so the
+    equal-start / learned-winner invariant holds. `_idle_bonus` is a bounded capacity tilt toward idle paid plans
+    (fills spare subscription capacity); it only breaks near-ties, never overrides a real value gap. Pure read."""
+    lane, _use_name = arm
     wr = arm_stats(intent).get(arm, {}).get("winrate", 0.0)
-    return wr * _idle_bonus(lane) * _cost_bonus(lane, use_name)
+    return wr * _idle_bonus(lane)
 
 
 def choose_arm(intent, arms):
@@ -142,7 +162,7 @@ def choose_arm(intent, arms):
         return untried[0]
     if _rng.random() < _bcfg("bandit_epsilon", EPSILON_DEFAULT):
         return _rng.choice(live)
-    return max(live, key=lambda a: arm_score(intent, a))
+    return max(live, key=lambda a: arm_score(intent, a))   # exploit the learned value-reward (cost already in it via the judge)
 
 
 def should_bakeoff(intent, arms):
@@ -167,11 +187,42 @@ def _bandit_judge_model():
     return config._cfg_get("advisor", "bandit_judge_model", None) or config.advisor_judge_model()
 
 
-def bakeoff_judge(task, out_a, out_b, arm_a, arm_b):
-    """AGENTIC 2-way judge: which lane's output better accomplishes the task? Returns (winner_arm or None, reason).
-    The DECISION is the LLM's (meaning) — only the fixed A/B/TIE token is parsed. Caged under the meta intent
-    (attributed, never recurses into the bandit); an EMPTY output loses by default, so no judge call is spent when a
-    side is blank (or when the two are identical)."""
+def _value_judge_prompt(task, out_a, out_b, cost_a=None, cost_b=None):
+    """Build the bake-off judge prompt. When BOTH arms' realized $/call are known, the judge decides the better VALUE
+    CHOICE: quality weighted ~`advisor.bandit_quality_weight` (default 0.70) against cost ~`advisor.bandit_cost_weight`
+    (default 0.30), given as EXPLICIT GUIDANCE the LLM applies with JUDGEMENT — a large quality gap or a high-stakes
+    task may let quality dominate; near-equal answers prefer the cheaper. The weights STEER an agentic decision; they
+    are NOT an arithmetic tradeoff (that is the whole point — the "is the quality lift worth the cost?" call is the
+    LLM's). When costs are absent (a cold intent, or an unpriced arm) it is a pure-quality judge. Both answers are
+    included WHOLE — truncating one could hide the tail where the two DIFFER and flip the verdict. Pure string build,
+    no LLM, no spend."""
+    a, b = (out_a or "").strip(), (out_b or "").strip()
+    priced = cost_a is not None and cost_b is not None and (cost_a > 0 or cost_b > 0)
+    if priced:
+        w_q = config.advisor_float("bandit_quality_weight", 0.7)
+        w_c = config.advisor_float("bandit_cost_weight", 0.3)
+        q_pct, c_pct = round(w_q * 100), round(w_c * 100)
+        head = ("Two assistants answered the SAME task. Decide which is the better CHOICE for the task — the better "
+                f"VALUE. Weight QUALITY about {q_pct}% and COST about {c_pct}%. This is guidance for your JUDGEMENT, "
+                "not arithmetic: if one answer is clearly better in quality, or the task is high-stakes, let quality "
+                "dominate; if the two are close in quality, prefer the cheaper. Decide whether the better answer's "
+                f"quality gain is worth its extra cost. Per-call cost on this task type: ANSWER A ≈ ${cost_a:.4f}, "
+                f"ANSWER B ≈ ${cost_b:.4f}.\nReply with ONLY ONE WORD, nothing else: A, or B, or TIE.\n\n")
+    else:
+        head = ("Two assistants answered the SAME task. Which answer is better — more correct, complete, and on-format "
+                "for the task? Reply with ONLY ONE WORD, nothing else: A, or B, or TIE.\n\n")
+    return f"{head}TASK:\n{task}\n\n=== ANSWER A ===\n{a}\n\n=== ANSWER B ===\n{b}\n"
+
+
+def bakeoff_judge(task, out_a, out_b, arm_a, arm_b, cost_a=None, cost_b=None):
+    """AGENTIC 2-way VALUE judge: which arm is the better CHOICE for the task? When the two arms' realized $/call are
+    given, the judge weighs quality-vs-cost AGENTICALLY (quality ~70% / cost ~30% as PROMPT guidance — see
+    _value_judge_prompt), so the cost tradeoff enters the learned reward as an LLM's meaning call, never an arithmetic
+    formula; without costs it is a pure-quality judge. Returns (winner_arm or None, reason). The DECISION is the LLM's —
+    only the fixed A/B/TIE token is parsed. Caged under the meta intent (attributed, never recurses into the bandit); an
+    EMPTY output loses by default, so no judge call is spent when a side is blank (or when the two are identical).
+    No max_tokens is passed — the reply is one word (bills ~1 token), and adapters.call REFUSES an oversize pair loudly
+    rather than silently clipping the evidence."""
     a, b = (out_a or "").strip(), (out_b or "").strip()
     if a and not b:
         return arm_a, "B empty (no judge spend)"
@@ -181,21 +232,17 @@ def bakeoff_judge(task, out_a, out_b, arm_a, arm_b):
         return None, "both empty"
     if a == b:
         return None, "identical outputs (no judge spend)"
-    # The task and BOTH answers are fed WHOLE — a judge must see all of its evidence; truncating an answer can hide the
-    # tail where the two DIFFER, flipping the verdict (the evidence-truncation rule). If the pair genuinely exceeds the
-    # model's input window, adapters.call REFUSES it loudly (never a silent clip). Output is spendguard's (a one-word
-    # reply bills ~1 token regardless of the ceiling), so no max_tokens is passed.
-    prompt = ("Two assistants answered the SAME task. Which answer is better — more correct, complete, and on-format "
-              "for the task? Reply with ONLY ONE WORD, nothing else: A, or B, or TIE.\n\n"
-              f"TASK:\n{task}\n\n=== ANSWER A ===\n{a}\n\n=== ANSWER B ===\n{b}\n")
+    prompt = _value_judge_prompt(task, a, b, cost_a, cost_b)
     try:
-        from . import adapters, calls
+        from . import adapters, calls, gate
         from .advisor import META                                   # ONE source of the meta-intent prefix
         with calls.context(intent=f"{META}:bandit-judge"):          # caged: attributed, never bandit-routed
             r = adapters.call(_bandit_judge_model(), prompt)
         txt = (r.get("text") or "").strip()
-    except Exception:
-        return None, None                              # judge CALL failed → NO verdict (reason None): the caller must
+    except Exception as e:
+        if gate.is_deliberate_stop(e):                 # a spend refusal / deadline is NOT a tie — propagate, never fail-open
+            raise
+        return None, None                              # a genuine judge FAILURE → NO verdict (reason None): the caller must
     if not txt:                                        # NOT record a false tie about the arms. Empty/truncated = same.
         return None, None
     tok = (txt.split() or [""])[0].upper().strip(".:,)")            # PARSE a known-shape token — not a meaning call
@@ -252,7 +299,8 @@ def run_bakeoff(intent, task, system=None, reasoning=None, timeout_s=None):
     arm_a, arm_b = live[0], live[1]
     out_a = _run_arm(arm_a, task, system, reasoning, timeout_s)
     out_b = _run_arm(arm_b, task, system, reasoning, timeout_s)
-    winner, reason = bakeoff_judge(task, out_a, out_b, arm_a, arm_b)
+    costs = _intent_realized_costs(intent, [arm_a, arm_b])   # realized $/call (incl. reasoning) → the judge weighs VALUE
+    winner, reason = bakeoff_judge(task, out_a, out_b, arm_a, arm_b, costs.get(arm_a), costs.get(arm_b))
     if winner == arm_a:
         record_trial(intent, arm_a[0], arm_a[1], 1.0)
         record_trial(intent, arm_b[0], arm_b[1], 0.0)
@@ -301,8 +349,9 @@ def estimate_judge_cost(bakeoffs=(10, 100, 1000)):
     for a few bake-off counts. No LLM is called — this is arithmetic over pricing.py."""
     from . import pricing
     judge = _bandit_judge_model()
-    # the judge prompt caps: task ≤3000 + two answers ≤4000 each + ~300 boilerplate chars (see bakeoff_judge)
-    in_chars = 300 + 3000 + 2 * 4000
+    # the judge prompt caps: task ≤3000 + two answers ≤4000 each + ~700 boilerplate chars (the value-judge guidance +
+    # the two per-call cost figures; the pure-quality variant is smaller — see _value_judge_prompt)
+    in_chars = 700 + 3000 + 2 * 4000
     in_tok = in_chars // 4                                # ~4 chars/token; a conservative UPPER bound (answers are usually smaller)
     per = pricing.realtime_cost(judge, in_tok, _JUDGE_OUT_CAP)
     return {"judge_model": judge, "in_tok_bound": in_tok, "out_tok_cap": _JUDGE_OUT_CAP,

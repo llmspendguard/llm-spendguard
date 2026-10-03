@@ -18,7 +18,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-cheapest-pt-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
-from spendguard import advise, calls  # noqa: E402
+from spendguard import advise, calls, budget  # noqa: E402
 
 
 class Checks:
@@ -35,6 +35,10 @@ ck = Checks()
 
 
 def seed(provider, model, intent, cost, out_tok, n_good, n_bad):
+    # COST goes to the LEDGER (advise's A3 cost basis); QUALITY + out_tok go to the calls corpus. Same per-call cost in
+    # both, so per_m_out (ledger cost ÷ corpus out_tok) is unchanged — the ranking is identical, now ledger-grounded.
+    for _ in range(n_good + n_bad):
+        budget.record_charge(provider, model, "realtime", cost, intent=intent, basis=budget.BASIS_BILLED)
     for _ in range(n_good):
         calls.insert(provider, model, "realtime", cost, out_tok=out_tok, intent=intent,
                      quality="good", quality_conf=1.0, who="test")

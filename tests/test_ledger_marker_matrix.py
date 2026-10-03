@@ -126,6 +126,9 @@ MATRIX = {
     # by_intent uses the SAME countable filter + money columns as spent_since (the receipt's API line), so it counts
     # exactly what the headline counts — that identity is its whole contract (`receipt --by-intent` must reconcile).
     "by_intent":             ({"plain", "true_down"},   "billed $ grouped by intent — reconciles with the headline"),
+    # billed_by_model is the same countable set, grouped by provider:model — the LEDGER cost basis advise.ranked reads
+    # (A3), so it must count exactly what spent_since counts (never the corpus's metered-equivalent fiction).
+    "billed_by_model":       ({"plain", "true_down"},   "ledger billed $ per provider:model — advise's cost basis"),
     # by_basis answers "what KIND of number is this", so it must see labelled AND unlabelled workload rows —
     # everything except the three that are not workload spend at all.
     "by_basis":              ({"plain", "true_down"},   "the basis breakdown of the headline Actual $"),
