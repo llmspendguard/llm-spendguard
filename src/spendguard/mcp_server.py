@@ -515,6 +515,15 @@ def _tool_route_cost(args):
                                         lane=args.get("lane"), batch_model=args.get("batch_model"))
 
 
+def _tool_route_horizon(args):
+    """HORIZON plan (item C) for a whole job SET — allocate groups across lane / batch / metered-realtime over the
+    plan's reset-window horizon, honouring each group's URGENCY and the SHARED lane budget. Wraps
+    route_horizon.horizon_report (the same computation the `route-horizon` CLI prints), so MCP and CLI never disagree. $0."""
+    from . import route_horizon
+    return route_horizon.horizon_report(args.get("groups") or [], lane=args.get("lane"),
+                                        batch_model=args.get("batch_model"), realtime_model=args.get("realtime_model"))
+
+
 def _tool_plan_queue(args):
     """The $0 PREDICTIVE planner + async BATCH-JOB tracker state — the MCP twin of `spendguard plan-queue`, wrapping
     the same queue_planner.tick() (forecast of which vendor is about to 429, which intents to OFFLOAD to the Batch API
@@ -588,6 +597,27 @@ _TOOLS = {
             "batch_model": {"type": "string", "description": "metered model for the batch leg (default: config advisor.batch_model)"}},
          "required": ["intent", "n"], "additionalProperties": False},
         _tool_route_cost),
+    "spendguard_route_horizon": (
+        "HORIZON plan (item C) for a whole job SET: given groups [{intent, n, urgency?}], allocate each across the "
+        "subscription LANE (~free/waste capacity that would expire at reset reclaimed FIRST), the metered BATCH API, "
+        "and the metered REALTIME API over the plan's reset-window horizon — honouring caller-declared URGENCY (an "
+        "urgent group's overflow → fast realtime; a deferrable group's → cheap cap-free batch; default deferrable) and "
+        "the ONE SHARED, scarce lane budget (drawn URGENT-FIRST so groups never double-bank the free tokens). Returns a "
+        "per-group allocation + total $ + plain 'why'. $0, arithmetic on measured economics; no forecast of unknown "
+        "future work; degrades honestly (unpriced tokens said out loud, never invented at $0).",
+        {"type": "object", "properties": {
+            "groups": {"type": "array", "description": "the job groups to plan over the horizon",
+                       "items": {"type": "object", "properties": {
+                           "intent": {"type": "string", "description": "the job-type label the calls are tagged under"},
+                           "n": {"type": "integer", "description": "number of calls in the group"},
+                           "urgency": {"type": "string", "description": "urgent | deferrable (default deferrable)"},
+                           "in_tok": {"type": "integer"}, "out_tok": {"type": "integer"}},
+                           "required": ["intent", "n"]}},
+            "lane": {"type": "string", "description": "force a lane (default: the first converged one)"},
+            "batch_model": {"type": "string", "description": "metered model for the batch leg (default: config advisor.batch_model)"},
+            "realtime_model": {"type": "string", "description": "metered model for urgent overflow (default: config advisor.model)"}},
+         "required": ["groups"], "additionalProperties": False},
+        _tool_route_horizon),
     "spendguard_plan_queue": (
         "The $0 PREDICTIVE queue planner + async batch-job state (the MCP twin of `spendguard plan-queue`): a forecast "
         "of which vendor is about to breach its tokens/minute ceiling (a 429 BEFORE it happens), which intents to "

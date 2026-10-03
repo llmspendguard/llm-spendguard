@@ -15,7 +15,7 @@ os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from spendguard import whole_job, route_economics, lane_balance, submit, adapters, config, callio, gate  # noqa: E402
+from spendguard import whole_job, route_economics, route_horizon, lane_balance, submit, adapters, config, callio, gate  # noqa: E402
 
 
 def ck(results, label, cond):
@@ -29,6 +29,19 @@ _bulk_calls = []
 def _stub_route(path, usd):
     def _rep(intent, n_tasks, in_tok=None, out_tok=None, **_k):
         return {"recommend": {"path": path, "usd": usd}}
+    return _rep
+
+
+def _stub_horizon(usd):
+    """Stub route_horizon.horizon_report — the estimate source for the DEFAULT 'auto' path (item C). usd=None models an
+    UNPRICED group (fail-closed under a budget); a number models a priced per-group estimate the budget gate reads."""
+    def _rep(groups, **_k):
+        priced = usd is not None
+        allocs = [{"intent": g["intent"], "urgency": "deferrable", "n": g.get("n", 1), "tokens": 0,
+                   "method": ("batch" if priced else "unpriced"), "lane_free_tok": 0, "lane_eff_tok": 0,
+                   "batch_tok": (1 if priced else 0), "meter_tok": 0, "unpriced_tok": (0 if priced else 1),
+                   "usd": usd, "unpriced": not priced} for g in groups]
+        return {"allocations": allocs, "totals": {"usd": (usd * len(allocs) if priced else None)}, "why": "stub"}
     return _rep
 
 
@@ -54,16 +67,22 @@ def main():
     ck(results, "realtime: no pending, not refused", r["pending"] == [] and r["receipt"]["refused_code"] is None)
 
     # 2. budget OVER → refused before any execution (estimate-first). Structural: refused_code + nothing executed.
+    # The DEFAULT 'auto' goal routes the estimate through the item-C horizon planner, so stub THAT (its priced total
+    # feeds the same budget gate); route_report stays stubbed for the forced-urgency scenarios below.
     route_economics.route_report = _stub_route("lane_only", 1.0)
+    route_horizon.horizon_report = _stub_horizon(1.0)
     _bulk_calls.clear()
     r = whole_job.run_jobs(JOBS, {"budget_usd": 0.10})
     ck(results, "budget over → refused_code='budget_exceeded', NOTHING executed",
        r["receipt"]["refused_code"] == "budget_exceeded" and r["results"] == {} and _bulk_calls == [])
 
     # 3. unpriced group UNDER a budget → fail-CLOSED (never a $0-estimate slip-through). Structural: refused_code.
+    # On the 'auto' path the UNPRICED signal comes from the horizon planner (usd None); route_report also raises to
+    # prove the fallback path is unpriced too (deterministic either way).
     def _raise(*a, **k):
         raise RuntimeError("pricing unavailable")
     route_economics.route_report = _raise
+    route_horizon.horizon_report = _stub_horizon(None)
     _bulk_calls.clear()
     r = whole_job.run_jobs(JOBS, {"budget_usd": 100.0})
     ck(results, "unpriced + budget → refused_code='unpriced_under_budget', NOTHING executed",
@@ -94,6 +113,11 @@ def main():
     r = whole_job.run_jobs([{"id": "z", "prompt": "no intent"}], {})
     ck(results, "job missing intent → refused_code='missing_intent'",
        r["receipt"]["refused_code"] == "missing_intent" and r["results"] == {})
+
+    # 6b. a job with a DECLARED urgency outside {urgent, deferrable} → refused (never a free-text guess at what it meant)
+    r = whole_job.run_jobs([{"id": "q", "intent": "x", "prompt": "hi", "urgency": "critical"}], {})
+    ck(results, "invalid urgency → refused_code='invalid_urgency', NOTHING executed",
+       r["receipt"]["refused_code"] == "invalid_urgency" and r["results"] == {})
 
     # 7. collect_jobs consumes callio's STRUCTURED return ({results, failed, not_ready, anomalies}); keys each job by
     #    its custom_id, surfaces failures + not-ready + a no-batch_id handle — nothing dropped; a deliberate stop propagates.
