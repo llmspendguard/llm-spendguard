@@ -61,15 +61,21 @@ UNPRICED_MODEL = "kimi-k3-unpriceable"     # a real call whose $ is unknown — 
 
 
 def seed():
-    budget.record_charge("anthropic", "test-model", "batch", AMOUNTS["plain"], project="p1")
+    from spendguard import calls as _calls                 # the two COUNTABLE rows (plain + true_down) carry a JOB tag
+    #   (chain, via spendguard.context) so spent_by_job(<job>) has something to isolate; the non-countable rows
+    #   (quarantined / reconciled / meta) carry none — proving spent_by_job counts the SAME kinds as spent_since
+    #   (plain + true_down) AND only within its one chain.
+    with _calls.context(chain="matrix-job"):
+        budget.record_charge("anthropic", "test-model", "batch", AMOUNTS["plain"], project="p1")
     budget.record_charge("anthropic", "test-model", "batch", AMOUNTS["quarantined"], project="p1")
     # Target by ROWID. Seeding these in the same second is exactly the collision that made a ts-targeted
     # quarantine tag the plain row too — the failure this test found in the repair tool itself.
     rid = _se_id_by_cost(AMOUNTS["quarantined"])   # the spend_events id of the row to void
     budget.quarantine_charge(reason="seed: impossible estimate", row=rid)
     budget.record_charge("anthropic", budget._RECONCILED, "batch", AMOUNTS["reconciled"], project="p1")
-    budget.record_charge("anthropic", "test-model", "batch", AMOUNTS["true_down"], project="p1",
-                  conv_id=budget._TRUE_DOWN_CONV)
+    with _calls.context(chain="matrix-job"):
+        budget.record_charge("anthropic", "test-model", "batch", AMOUNTS["true_down"], project="p1",
+                      conv_id=budget._TRUE_DOWN_CONV)
     budget.record_charge("anthropic", "test-model", "meta", AMOUNTS["meta"], project="p1")
     budget.record_unpriced("moonshot", UNPRICED_MODEL, "realtime", in_tok=1200, out_tok=400, project="p1")
 
@@ -126,11 +132,17 @@ MATRIX = {
     # by_basis answers "what KIND of number is this", so it must see labelled AND unlabelled workload rows —
     # everything except the three that are not workload spend at all.
     "by_basis":              ({"plain", "true_down"},   "the basis breakdown of the headline Actual $"),
+    # spent_by_job is spent_since SCOPED TO ONE JOB tag (chain): the SAME _COUNTABLE kinds (plain+true_down), filtered
+    # to the rows carrying that job's chain. It exists so a caller reads "my spend" for ONE run even when a CONCURRENT
+    # run shares the intent — the collision that made an intent+since read over-count two jobs as one total. The seed
+    # tags exactly the plain + true_down rows with chain='matrix-job' (CALLS below), so the same subset decomposes out.
+    "spent_by_job":          ({"plain", "true_down"},   "one JOB's slice of the headline — same _COUNTABLE as spent_since, chain-filtered"),
 }
 # Called the way PRODUCTION calls them — a matrix that only holds for argument-less calls would prove nothing
 # about the paths that actually run.
 CALLS = {"spent_since": ("2000-01-01",), "quarantined_since": ("2000-01-01",),
-         "meta_spent_since": ("2000-01-01",), "by_basis": ("2000-01-01",)}
+         "meta_spent_since": ("2000-01-01",), "by_basis": ("2000-01-01",),
+         "spent_by_job": ("matrix-job",)}   # the job tag the two countable rows are seeded under
 # unpriced_since is deliberately NOT in the matrix: it counts CALLS, not dollars (the dollars are precisely
 # what is unknown), so it is not a cost aggregator and the scan correctly does not find it.
 KWARGS = {"by_provider_day": {"kind": "batch"}, "gate_by_project_day": {"kind": "batch"}}

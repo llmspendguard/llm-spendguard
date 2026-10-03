@@ -94,6 +94,18 @@ try:
         raised_g = str(e)
     check("call(governed=False) did NOT raise the alias-reject TypeError", raised_g is None)
 
+    print("-- _conn_tries / _t_conn0 are INTERNAL feature kwargs (the 429/529 retransmit recursion) --")
+    # REGRESSION: the connection-retransmit recursion re-calls call() with _conn_tries/_t_conn0, which are popped
+    # AFTER the reject loop — so without skipping them there, every rate-limited serial call that tried to retry (and
+    # the precommit review that runs on such a call) crashed with `call() got an unexpected keyword '_conn_tries'`.
+    import time as _time_mod
+    raised_c = None
+    try:
+        adapters.call("openai:gpt-5.5", "hi", max_tokens=50, _conn_tries=2, _t_conn0=_time_mod.time())
+    except TypeError as e:
+        raised_c = str(e)
+    check("call(_conn_tries=…, _t_conn0=…) did NOT raise the alias-reject TypeError", raised_c is None)
+
     print("-- an unknown kwarg fails LOUDLY with guidance (never silently swallowed) --")
     msg = None
     try:

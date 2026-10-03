@@ -18,7 +18,9 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-jobfp-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
-from spendguard import job_fingerprint as jf  # noqa: E402
+import spendguard.job_fingerprint as jf  # noqa: E402  (the MODULE — not `from spendguard import job_fingerprint`,
+#   which would now bind the package's compute_job_fingerprint export, not this module; a module and a function must
+#   never share a name in one namespace, so the function is `compute_job_fingerprint` and the module stays job_fingerprint)
 from spendguard.gate import SpendGateRefused  # noqa: E402
 
 HOME = os.environ["SPENDGUARD_HOME"]
@@ -47,19 +49,19 @@ def seed(name, fingerprint=None, n_rows=3):
     return path
 
 
-BASE = jf.job_fingerprint("task-a", 10, ["i1", "i2", "i3"], prompt_sample="PROMPT V1", model="gpt-5.5")
+BASE = jf.compute_job_fingerprint("task-a", 10, ["i1", "i2", "i3"], prompt_sample="PROMPT V1", model="gpt-5.5")
 
 # ── the three components hash SEPARATELY; a None component is omitted ───────────────────────────────────────────────
 ck("fingerprint carries plan/prompt/model separately", set(BASE) == {jf.PLAN, jf.PROMPT, jf.MODEL}, extra=repr(BASE))
-plan_only = jf.job_fingerprint("task-a", 10, ["i1", "i2", "i3"])
+plan_only = jf.compute_job_fingerprint("task-a", 10, ["i1", "i2", "i3"])
 ck("a None prompt/model is OMITTED (plan-only marker)", set(plan_only) == {jf.PLAN})
 ck("the plan hash is stable across runs that differ only in prompt/model", plan_only[jf.PLAN] == BASE[jf.PLAN])
 
 # ── compare() flags plan vs method drift ───────────────────────────────────────────────────────────────────────────
-drift_plan = jf.job_fingerprint("task-a", 8, ["i1", "i2", "i3"], prompt_sample="PROMPT V1", model="gpt-5.5")   # pack 10→8
+drift_plan = jf.compute_job_fingerprint("task-a", 8, ["i1", "i2", "i3"], prompt_sample="PROMPT V1", model="gpt-5.5")   # pack 10→8
 pc, mc = jf.compare_fingerprints(BASE, drift_plan)
 ck("a pack-size change is PLAN drift", pc is True and mc == [], extra=f"pc={pc} mc={mc}")
-drift_prompt = jf.job_fingerprint("task-a", 10, ["i1", "i2", "i3"], prompt_sample="PROMPT V2", model="gpt-5.5")
+drift_prompt = jf.compute_job_fingerprint("task-a", 10, ["i1", "i2", "i3"], prompt_sample="PROMPT V2", model="gpt-5.5")
 pc2, mc2 = jf.compare_fingerprints(BASE, drift_prompt)
 ck("a prompt change is METHOD drift (plan unchanged)", pc2 is False and mc2 == [jf.PROMPT], extra=f"pc={pc2} mc={mc2}")
 

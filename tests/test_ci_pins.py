@@ -46,16 +46,23 @@ print("-- the false positive is REAL and reproducible, not a story --")
 pat = re.compile(r"\btest_[A-Za-z0-9_]{35}\b")          # Lob's shape: test_ + exactly 35
 # Skip THIS file: it quotes the offending name in its own docstring on purpose, and the scanner correctly
 # matches it — a guard that documents a pattern will always contain the pattern.
-hits = []
+hits = []                                              # (file, line_no, token, line_text)
 for f in sorted((ROOT / "tests").glob("*.py")):
     if f.name == pathlib.Path(__file__).name:
         continue
     for i, ln in enumerate(f.read_text().splitlines(), 1):
-        hits += [f"{f.name}:{i}" for _ in pat.findall(ln)]
-check("test names of exactly Lob's shape still exist (so the exclusion is still needed)", hits, str(hits))
-check("…and they are function definitions, not credentials",
-      all("def " in (ROOT / "tests" / h.split(":")[0]).read_text().splitlines()[int(h.split(":")[1]) - 1]
-          for h in hits))
+        for tok in pat.findall(ln):
+            hits.append((f.name, i, tok, ln))
+check("test names of exactly Lob's shape still exist (so the exclusion is still needed)", hits,
+      str([(h[0], h[1]) for h in hits]))
+# Classify by the token's FORMAT, not a benign-list (a key that happened to match a test name would slip a benign-list).
+# A real Lob key is HEX — the authoritative `real` check below uses the SAME [0-9a-f] shape — whereas a pytest/script
+# test name is snake_case: non-hex letters (g-z, uppercase) and/or underscores. So a match is a credential CONCERN iff
+# its tail is 35 HEX chars; a snake_case name is not. This catches a leaked hex key even if it sits on a `def` line or
+# shares a token with a test name (a hex key cannot BE a snake_case name), and never false-flags a legit long name.
+_hex_key = re.compile(r"^test_[0-9a-f]{35}$")
+_unexplained = [(fn, i, tok) for (fn, i, tok, ln) in hits if _hex_key.match(tok)]
+check("…and they are snake_case NAMES, not hex-shaped Lob keys", not _unexplained, str(_unexplained))
 
 print("-- no real Lob key is hiding behind the exclusion --")
 real = re.compile(r"\b(live|test)_[0-9a-f]{32,40}\b")   # a genuine key is HEX, not words with underscores
