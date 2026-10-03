@@ -36,16 +36,25 @@ _REALTIME, _BATCH = "realtime", "batch"
 
 def _group_by_intent(jobs):
     """Jobs keyed by intent (the routing/attribution unit route_report + bulk_delegate operate on). A job with no
-    intent is an ERROR surfaced to the caller, never silently bucketed — attribution is the core mission."""
-    groups, bad = {}, []
+    intent, OR a `urgency` outside the declared {urgent, deferrable} enum, is an ERROR surfaced to the caller
+    (bad_intent / bad_urgency) — never silently bucketed or guessed (attribution is the core mission; urgency is a
+    DECLARED fact, so a mis-declared value is refused, not routed by a guess). Returns (groups, bad_intent, bad_urgency)."""
+    from . import route_horizon
+    groups, bad, bad_urgency = {}, [], []
     for i, j in enumerate(jobs or []):
         jid = str(j.get("id", "job-%d" % i))
         intent = j.get("intent")
         if not intent:
             bad.append(jid)
             continue
+        if j.get("urgency") is not None:
+            try:
+                route_horizon.normalize_urgency(j.get("urgency"))   # declared enum; raises on an unknown value
+            except ValueError:
+                bad_urgency.append(jid)
+                continue
         groups.setdefault(intent, []).append({**j, "id": jid})
-    return groups, bad
+    return groups, bad, bad_urgency
 
 
 def _method_for(intent, n, goal, in_tok, out_tok):
@@ -80,19 +89,65 @@ def _method_for(intent, n, goal, in_tok, out_tok):
     return _REALTIME, est, "auto → route_report recommends %s" % rec_path
 
 
+def _horizon_plan(groups, goal):
+    """The shared-budget, URGENCY-aware HORIZON plan (item C) for ALL groups at once → {intent: {method, est, why}},
+    or None if it could not resolve (plan_jobs then falls back to the per-group route_report pick). Per-group urgency =
+    'urgent' if ANY job in the intent-group is flagged urgent (urgent work is never batched), else the goal's default,
+    else 'deferrable'. One route_horizon.horizon_report over the whole set allocates the ONE shared lane budget
+    urgent-first; each group maps to whole_job's single-method execution: an URGENT group runs REALTIME (lane + metered
+    overflow, now); a DEFERRABLE group BATCHES when its allocation overflowed to the cap-free Batch API, else runs
+    realtime (it fit the lane's ~free/eff capacity — cheap, now). A DELIBERATE stop propagates; any other failure → None
+    (fall back, never a crash, never a silent bad plan)."""
+    try:
+        from . import route_horizon
+        default_urg = route_horizon.DEFERRABLE                 # the approved default; goal.urgency's auto/realtime/batch
+        #                                                        vocab is resolved in plan_jobs, never re-interpreted here
+        hgroups = []
+        for intent, items in groups.items():
+            any_urgent = any(route_horizon.normalize_urgency(j.get("urgency")) == route_horizon.URGENT for j in items)
+            in_tok = max(1, sum(len(str(j.get("prompt", ""))) for j in items) // max(1, len(items)) // 4)
+            hgroups.append({"intent": intent, "n": len(items), "in_tok": in_tok, "out_tok": None,
+                            "urgency": (route_horizon.URGENT if any_urgent else default_urg)})
+        rep = route_horizon.horizon_report(hgroups)
+        out = {}
+        for a in (rep.get("allocations") or []):
+            method = _REALTIME if a["urgency"] == route_horizon.URGENT else (
+                     _BATCH if (a.get("batch_tok") or 0) > 0 else _REALTIME)
+            out[a["intent"]] = {"method": method, "est": a.get("usd"),
+                                "why": "horizon (%s → %s): %s" % (a["urgency"], a.get("method"), rep.get("why", ""))}
+        return out or None
+    except Exception as e:
+        from . import gate
+        if gate.is_deliberate_stop(e):
+            raise                                     # a spend/estimate stop HALTS — never downgraded to "fall back"
+        return None
+
+
 def plan_jobs(jobs, goal=None):
     """The PLAN for a whole job set — the per-intent method + estimate, and the whole-set estimate — with NO execution
     and NO spend. run_jobs calls this first (estimate-first) so the budget gate can refuse before a cent is spent; a
     caller can also call it alone to preview what spendguard would do. `est_usd` is None (unknown) if ANY group could
-    not be priced; `unpriced` names those groups. Returns {plan, est_usd, unpriced, groups, bad_jobs}."""
-    groups, bad = _group_by_intent(jobs)
+    not be priced; `unpriced` names those groups. Returns {plan, est_usd, unpriced, groups, bad_jobs}.
+
+    When goal.urgency is 'auto' (the default), the per-group method + estimate come from the item-C HORIZON planner
+    (route_horizon): the groups are allocated TOGETHER against the ONE shared lane budget, urgent-first, with per-job
+    urgency deciding fast-realtime-overflow vs cheap-batch-overflow. A forced goal.urgency ('realtime'/'batch') keeps
+    the per-group route_report pick. Either way the budget gate reads the same est_usd."""
+    goal = goal or {}
+    groups, bad, bad_urgency = _group_by_intent(jobs)
+    set_urgency = str(goal.get("urgency", "auto")).strip().lower()
+    horizon = _horizon_plan(groups, goal) if set_urgency not in (_REALTIME, _BATCH) else None
     plan, total, unpriced = [], 0.0, []
     for intent, items in groups.items():
         n = len(items)
-        # per-task input size from THIS set (chars/4, the neutral basis route_report defaults to); out_tok left to
-        # route_report (expected_output for the intent) so the estimate reflects both the set and the intent's history.
-        in_tok = max(1, sum(len(str(j.get("prompt", ""))) for j in items) // max(1, n) // 4)
-        method, est, why = _method_for(intent, n, goal, in_tok, None)
+        if horizon and intent in horizon:
+            h = horizon[intent]
+            method, est, why = h["method"], h["est"], h["why"]
+        else:
+            # per-task input size from THIS set (chars/4, the neutral basis route_report defaults to); out_tok left to
+            # route_report (expected_output for the intent) so the estimate reflects both the set and the intent's history.
+            in_tok = max(1, sum(len(str(j.get("prompt", ""))) for j in items) // max(1, n) // 4)
+            method, est, why = _method_for(intent, n, goal, in_tok, None)
         if est is None:
             unpriced.append(intent)
         else:
@@ -100,7 +155,8 @@ def plan_jobs(jobs, goal=None):
         plan.append({"intent": intent, "n": n, "method": method,
                      "est_usd": (round(est, 6) if est is not None else None), "why": why})
     return {"plan": plan, "est_usd": (round(total, 6) if not unpriced else None),
-            "priced_est_usd": round(total, 6), "unpriced": unpriced, "groups": groups, "bad_jobs": bad}
+            "priced_est_usd": round(total, 6), "unpriced": unpriced, "groups": groups, "bad_jobs": bad,
+            "bad_urgency": bad_urgency}
 
 
 def run_jobs(jobs, goal=None, checkpoint=None):
@@ -118,6 +174,14 @@ def run_jobs(jobs, goal=None, checkpoint=None):
         return {"results": {}, "pending": [], "plan": planned["plan"],
                 "receipt": {"refused_code": "missing_intent",
                             "refused": "jobs missing an intent: %s" % ", ".join(planned["bad_jobs"][:10]),
+                            "est_usd": planned["priced_est_usd"], "unpriced": planned["unpriced"]}}
+    if planned.get("bad_urgency"):
+        # a DECLARED urgency outside {urgent, deferrable} is a caller contract error — refuse loudly (never silently
+        # route it by a guess at what the word meant). Structural refused_code, like missing_intent.
+        return {"results": {}, "pending": [], "plan": planned["plan"],
+                "receipt": {"refused_code": "invalid_urgency",
+                            "refused": "job(s) with an urgency outside {urgent, deferrable}: %s — declare a known "
+                            "urgency (spendguard never guesses a free-text one)" % ", ".join(planned["bad_urgency"][:10]),
                             "est_usd": planned["priced_est_usd"], "unpriced": planned["unpriced"]}}
     budget = goal.get("budget_usd")
     if budget is not None:
