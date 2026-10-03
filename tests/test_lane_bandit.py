@@ -81,7 +81,7 @@ _o_arms, _o_judge, _o_runarm = lane_catalog.arms, lb.bakeoff_judge, lb._run_arm
 try:
     lane_catalog.arms = lambda flt=None: [("gemini", "g-low"), ("codex", "gpt-5.5")]
     lb.bakeoff_judge = lambda task, oa, ob, aa, ab, ca=None, cb=None: (aa, "A wins")   # the FIRST arm always wins
-    lb._run_arm = lambda arm, *a, **k: f"out-{arm[0]}"                 # each lane returns a tagged answer
+    lb._run_arm = lambda arm, *a, **k: (f"out-{arm[0]}", 0)           # each lane returns (tagged answer, out_tok)
     out = lb.run_bakeoff("intentZ", "do X")
     fails += ck("run_bakeoff returns the WINNER's output + lane", out and out["text"] == "out-gemini" and out["lane"] == "gemini")
     stz = lb.arm_stats("intentZ")
