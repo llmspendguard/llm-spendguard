@@ -73,7 +73,7 @@ def _fp_digest(payload) -> str:
         json.dumps(payload, sort_keys=False, ensure_ascii=False).encode("utf-8")).hexdigest()[:32]
 
 
-def job_fingerprint(task: str, pack: int, item_ids, prompt_sample: str = None, model: str = None) -> dict:
+def compute_job_fingerprint(task: str, pack: int, item_ids, prompt_sample: str = None, model: str = None) -> dict:
     """The three components a resume depends on, hashed SEPARATELY (plan drift is unrecoverable; method drift is a
     judgement — one combined digest would collapse both into "something changed" and force the harshest answer).
 
