@@ -119,6 +119,9 @@ CREATE TABLE IF NOT EXISTS spend_events (
   -- forensic pair (carried from charges): WHAT the money bought · WHAT RAN IT
   intent        TEXT,                      -- 'review:config.py', 'spendguard:cache-test'
   actor         TEXT,                      -- 'repo_review_panel.py:fan_out:238' (entrypoint:function:line)
+  chain         TEXT,                      -- the caller's JOB/RUN tag (spendguard.context(chain=…)); slice "my spend"
+                                           --   by JOB, not just intent — two concurrent runs of ONE intent get
+                                           --   distinct chains, so a since-window read no longer sweeps them together
   -- attribution audit (snapshot of the determination)
   attr_what     TEXT,
   attr_why      TEXT,
@@ -201,7 +204,7 @@ SUMMABLE_INT_COLS = ("in_tok", "out_tok", "cache_read_tok", "cache_write_tok", "
 # Forward-only additive columns: one added after the v5 schema shipped is ALTER-ADDed to an existing table
 # (CREATE TABLE IF NOT EXISTS never adds a column to a table that already exists). Append new columns here.
 # intent/actor are the FORENSIC pair carried from charges: WHAT the money bought · WHAT RAN IT.
-_ADDITIVE_COLUMNS = (("intent", "TEXT"), ("actor", "TEXT"), ("external_usd", "TEXT"))
+_ADDITIVE_COLUMNS = (("intent", "TEXT"), ("actor", "TEXT"), ("external_usd", "TEXT"), ("chain", "TEXT"))
 _KIND_TO_USD = {"batch": "batch_usd", "realtime": "realtime_usd",
                 "est_chat": "est_chat_usd", "est-chat": "est_chat_usd", "estchat": "est_chat_usd",
                 "remote": "remote_compute_usd", "remote_compute": "remote_compute_usd", "gpu": "remote_compute_usd",
