@@ -108,7 +108,7 @@ try:
     _lc.arms = lambda *a, **k: [A_LEAN, A_REASON]
     lb._arm_cooling = lambda *a, **k: False
     lb.arm_stats = lambda intent: {}                 # both untried → both are the least-tried pair
-    lb._run_arm = lambda arm, *a, **k: ("LEAN-OUT" if arm == A_LEAN else "REASON-OUT")
+    lb._run_arm = lambda arm, *a, **k: (("LEAN-OUT" if arm == A_LEAN else "REASON-OUT"), 0)   # (text, out_tok)
     lb._intent_realized_costs = lambda intent, arms: {A_LEAN: 0.001, A_REASON: 0.007}
 
     def _capture_judge(task, oa, ob, aa, ab, ca=None, cb=None):

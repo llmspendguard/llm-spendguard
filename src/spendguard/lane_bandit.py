@@ -26,6 +26,8 @@ from . import config
 _rng = random.Random()          # module-level so tests can seed it deterministically
 DECAY_DEFAULT = 0.95            # exponential forgetting per trial — recent results weigh more (relearn)
 EPSILON_DEFAULT = 0.15         # exploration floor — never fully abandon a live arm
+RUNAWAY_REWARD_DEFAULT = 0.5   # A2.3: an EXPLOIT answer that overshoots its arm's OWN measured output norm is a PARTIAL
+#                                keep — usable but anomalously costly, penalized toward cheaper arms (not a failure=0.0)
 
 
 def _bcfg(name, default):
@@ -256,7 +258,8 @@ def bakeoff_judge(task, out_a, out_b, arm_a, arm_b, cost_a=None, cost_b=None):
 def _run_arm(arm, task, system, reasoning, timeout_s):
     """Run ONE arm on its lane DIRECTLY (no API fallback — a lane that fails or returns blank just LOSES the bake-off,
     so the judge scores the LANE's own output, never a metered stand-in). Records the successful lane call for
-    est-value. Returns the text ('' on any failure)."""
+    est-value. Returns (text, out_tok): ('', 0) on any failure; out_tok is the completed call's output-token count
+    (reasoning INCLUDED, since it bills as output) so the EXPLOIT path can detect a cost-runaway (A2.3)."""
     lane, use_name = arm
     try:
         from . import adapters, lane_catalog, calls
@@ -264,7 +267,7 @@ def _run_arm(arm, task, system, reasoning, timeout_s):
         prov = lane_catalog.lane_provider(lane)
         entry = adapters._LANES.get(prov)
         if not entry:
-            return ""
+            return "", 0
         mod = importlib.import_module("." + entry[1], "spendguard")
         base, level = lane_catalog.parse_use_name(use_name, lane)
         # gemini carries effort in the model SUFFIX (pass the whole use-name); the others take it as `reasoning`
@@ -273,15 +276,16 @@ def _run_arm(arm, task, system, reasoning, timeout_s):
         r = mod.run_prompt(task, system=system, model=model, timeout=min(cap, int(timeout_s or cap)),
                            reasoning=(level or reasoning))
         if not isinstance(r, dict) or r.get("error") or not (r.get("text") or "").strip():
-            return ""
+            return "", 0
+        out_tok = int(r.get("out_tok") or 0)
         try:
-            calls.record_call(prov, model, "subscription", 0.0, in_tok=r.get("in_tok", 0), out_tok=r.get("out_tok", 0),
+            calls.record_call(prov, model, "subscription", 0.0, in_tok=r.get("in_tok", 0), out_tok=out_tok,
                          latency=r.get("latency"), executor=lane, effort=(level or reasoning))
         except Exception:
             pass
-        return r.get("text") or ""
+        return (r.get("text") or ""), out_tok
     except Exception:
-        return ""
+        return "", 0
 
 
 def run_bakeoff(intent, task, system=None, reasoning=None, timeout_s=None):
@@ -297,8 +301,8 @@ def run_bakeoff(intent, task, system=None, reasoning=None, timeout_s=None):
     st = arm_stats(intent)
     live.sort(key=lambda a: (st.get(a, {}).get("trials", 0.0), st.get(a, {}).get("last_ts") or ""))
     arm_a, arm_b = live[0], live[1]
-    out_a = _run_arm(arm_a, task, system, reasoning, timeout_s)
-    out_b = _run_arm(arm_b, task, system, reasoning, timeout_s)
+    out_a, _ = _run_arm(arm_a, task, system, reasoning, timeout_s)   # bake-off: out_tok unused here — the value JUDGE
+    out_b, _ = _run_arm(arm_b, task, system, reasoning, timeout_s)   #   weighs realized cost (A2.3's overshoot penalty is exploit-only)
     costs = _intent_realized_costs(intent, [arm_a, arm_b])   # realized $/call (incl. reasoning) → the judge weighs VALUE
     winner, reason = bakeoff_judge(task, out_a, out_b, arm_a, arm_b, costs.get(arm_a), costs.get(arm_b))
     if winner == arm_a:
@@ -320,6 +324,41 @@ def run_bakeoff(intent, task, system=None, reasoning=None, timeout_s=None):
             "why": "bake-off tie" if reason is not None else "judge unavailable (not recorded)"}
 
 
+def _exploit_overshoot_reward(intent, arm, out_tok, pre_norm):
+    """The EXPLOIT-path reward for a USABLE lane answer — 1.0 normally, a PENALTY (`advisor.bandit_runaway_reward`) when
+    the call's out_tok is a cost-RUNAWAY vs this arm's OWN measured mean output for the intent. This is guardrail-E's
+    signal brought to the lane path: metered calls get it via adapters._call_guarded (bulkgate.check_runaway), but lane
+    calls BYPASS that path, so a learned-winner arm that drifts into over-reasoning would keep scoring a full 1.0 while
+    silently costing more. ARITHMETIC on billed tokens (tokens = $), never a content/quality judgement — a reply many
+    times the arm's norm costs that multiple whether it is good or bad, and the bandit should re-explore cheaper arms.
+    `pre_norm` is mean_out_by_executor_model(intent) captured BEFORE this call was recorded, so the call cannot inflate
+    its own baseline. Cold / too-few-samples ⇒ 1.0 (never accuse on an untrustworthy norm; guardrail D bounds the $).
+    Also SURFACES the trip via bulkgate.note_runaway so a lane runaway is visible + counted like a metered one. Never
+    raises (a reward read must not break routing)."""
+    try:
+        if not out_tok or int(out_tok) <= 0:
+            return 1.0
+        from . import lane_catalog, bulkgate
+        lane, use_name = arm
+        base, _lv = lane_catalog.parse_use_name(use_name, lane)
+        # the (executor, model) the lane path RECORDS under — suffix-style lanes (gemini) log the whole use-name
+        model = use_name if lane_catalog.quirk(lane)["style"] == "suffix" else base
+        rec = (pre_norm or {}).get((lane, model)) or {}
+        mean_out, n = float(rec.get("mean_out") or 0.0), int(rec.get("n") or 0)
+        if mean_out <= 0 or n < bulkgate.RUNAWAY_MIN_SAMPLES:
+            return 1.0                                       # cold / unstable norm ⇒ cannot accuse (guardrail D bounds the $)
+        if int(out_tok) > bulkgate._runaway_factor() * mean_out:
+            try:                                             # SURFACE + count — closes "note_runaway never fires on lanes"
+                bulkgate.note_runaway(bulkgate.sig(model, template_id=intent), model, int(out_tok), int(mean_out),
+                                      "lane-exploit-mean")
+            except Exception:
+                pass
+            return config.advisor_float("bandit_runaway_reward", RUNAWAY_REWARD_DEFAULT)
+        return 1.0
+    except Exception:
+        return 1.0
+
+
 def bandit_call(intent, task, system=None, reasoning=None, timeout_s=None):
     """The bandit's ENTRY for a delegatable task: EXPLORE via a bake-off (while cold, or at rate ε) else EXPLOIT the
     learned-winner arm on its lane. Returns {text, lane, use_name, why} of the answering lane, or None if no arm
@@ -334,9 +373,12 @@ def bandit_call(intent, task, system=None, reasoning=None, timeout_s=None):
     arm = choose_arm(intent, arms)
     if not arm:
         return None
-    out = _run_arm(arm, task, system, reasoning, timeout_s)
+    from . import calls
+    pre_norm = calls.mean_out_by_executor_model(intent)   # PRE-call norm (this call not yet recorded) → no self-inflation
+    out, out_tok = _run_arm(arm, task, system, reasoning, timeout_s)
     if out:
-        record_trial(intent, arm[0], arm[1], 1.0)     # produced a usable answer on exploit → a reliability "keep"
+        won = _exploit_overshoot_reward(intent, arm, out_tok, pre_norm)   # 1.0, or a PENALTY on a cost-runaway (A2.3)
+        record_trial(intent, arm[0], arm[1], won)     # usable answer → keep; a runaway keep is PARTIAL so cheaper arms overtake
         return {"text": out, "lane": arm[0], "use_name": arm[1], "why": "exploit (learned)"}
     record_trial(intent, arm[0], arm[1], 0.0)         # it failed → drop its win-rate so a flaky arm falls out
     return None
