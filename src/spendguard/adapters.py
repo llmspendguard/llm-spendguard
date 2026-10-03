@@ -852,14 +852,19 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     if aliases:
         _ALIASES = {"effort": "reasoning", "reasoning_effort": "reasoning",
                     "max_output_tokens": "max_tokens", "max_completion_tokens": "max_tokens"}
-        # `governed` is a REAL feature kwarg carried via **aliases (the docstring documents it; it is popped at the
-        # dispatch-governor step below), NOT a rename and NOT an unknown. It must be skipped here or the documented
-        # governed=True concurrent-fan path — and every governed=False single call — dies with a spurious
-        # 'unexpected keyword' TypeError before the pop ever runs (the reject loop preceded the pop).
+        # Two kinds of kwarg are NOT public renames and must be skipped here, or they die with a spurious
+        # 'unexpected keyword' TypeError BEFORE the pop that owns them runs (this reject loop precedes the pops):
+        #   • `governed` — a documented feature kwarg carried via **aliases, popped at the dispatch-governor step below;
+        #     without the skip every governed=True concurrent-fan / governed=False single call dies here.
+        #   • ANY `_`-prefixed kwarg — spendguard-INTERNAL by convention (`_conn_tries`/`_t_conn0`, …), forwarded by the
+        #     429/529 connection-retransmit RECURSION (bottom of this function) and popped at L~1053. Skipping the whole
+        #     underscore CLASS (not an enumerated pair) future-proofs it: a new internal kwarg a recursion forwards can
+        #     never reintroduce the crash where every retried call died with `unexpected keyword '_conn_tries'`.
+        # Public (non-underscore) kwargs are still validated — a genuinely unknown one fails LOUDLY below.
         _FEATURE_KW = {"governed"}
         _canon = {}
         for _k in list(aliases):
-            if _k in _FEATURE_KW:
+            if _k.startswith("_") or _k in _FEATURE_KW:   # internal (underscore-prefixed) + documented feature kwargs: pops own them
                 continue
             _c = _ALIASES.get(_k)
             if not _c:
