@@ -32,13 +32,27 @@ from spendguard import calls, lane_bandit, budget
 MEASURE_INTENT = "measure:value-judge"                 # all caged calls are tagged with THIS (attribution + the cap read)
 
 
+def _is_lane_arm(executor):
+    """True iff `executor` is a subscription LANE (lane_bandit._run_arm can regenerate on it), NOT a metered provider
+    ('api' / 'openai' / 'anthropic'). The measurement REGENERATES both arms via _run_arm, so BOTH must be lanes —
+    a metered arm would come back blank and silently skip every pair. $0; False on any error."""
+    try:
+        from spendguard import lane_catalog, adapters
+        prov = lane_catalog.lane_provider(executor)
+        return bool(prov and adapters._LANES.get(prov))
+    except Exception:
+        return False
+
+
 def _derive_arms(target, min_arm_n=2):
     """(lean_arm, heavy_arm) for `target`, DERIVED from its recorded output distribution — the lowest- and highest-
-    mean-output measured (exec, model) arms with ≥ min_arm_n calls. Each arm is (lane, use_name) as lane_bandit keys it.
-    None if the intent lacks two comparable arms (the measurement needs a lean-vs-heavy contrast). Reads recorded data
-    only ($0); never invents an arm."""
+    mean-output measured LANE arms (exec is a subscription lane, NOT a metered provider) with ≥ min_arm_n calls. Each
+    arm is (lane, use_name) as lane_bandit keys it; restricting to lanes is REQUIRED because _run_arm regenerates on a
+    lane. None if the intent lacks two comparable LANE arms (the measurement needs a lean-vs-heavy contrast both arms
+    can produce). Reads recorded data only ($0); never invents an arm."""
     norms = calls.mean_out_by_executor_model(target) or {}
-    arms = [(k, v) for k, v in norms.items() if (v.get("mean_out") or 0) > 0 and (v.get("n") or 0) >= min_arm_n]
+    arms = [(k, v) for k, v in norms.items()
+            if (v.get("mean_out") or 0) > 0 and (v.get("n") or 0) >= min_arm_n and _is_lane_arm(k[0])]
     if len(arms) < 2:
         return None
     arms.sort(key=lambda kv: kv[1]["mean_out"])
@@ -122,17 +136,33 @@ def plan(target, Ms=(10, 15, 20)):
     return 0
 
 
-def run(target, M, budget_usd, src_files=None):
+def _parse_arm(spec):
+    """A caller-supplied arm 'lane:use_name' → (lane, use_name). Lets the caller pin a KNOWN-GENERATABLE pair when the
+    auto-derived one includes an arm the lane can't reproduce (e.g. a bare gemini model id the lane rejects without an
+    effort suffix). PARSING a fixed 'lane:use_name' shape, not a decision."""
+    lane, _sep, use_name = str(spec).partition(":")
+    if not lane or not use_name:
+        raise SystemExit("--lean/--heavy must be 'lane:use_name' (e.g. codex:gpt-5.6-sol) — got %r" % spec)
+    return (lane, use_name)
+
+
+def run(target, M, budget_usd, src_files=None, lean=None, heavy=None):
     """EXECUTE the measurement for `target` at M pairs under a hard ledger-delta cap `budget_usd`. HARD-CAGED (judge +
-    grade metered+pinned+no_substitution; arm-gen deliberate _run_arm) and FAIL-CLOSED: before every pair it reads the
-    REAL billed delta budget.spent_by_job(run_chain) and ABORTS (records the partial result) once it would exceed the
-    cap. Returns a summary {before_picks, after_picks, grades, pairs_done, billed_usd, aborted}."""
+    grade metered+pinned+no_substitution; arm-gen deliberate _run_arm) and FAIL-CLOSED: a pair starts only if the REAL
+    billed delta budget.spent_by_job(run_chain) + the pair's worst case still fits the cap. `lean`/`heavy` (each
+    'lane:use_name') pin the arms when the auto-derived pair isn't generatable; default = _derive_arms. Returns a
+    summary {before, after, grades, pairs_done, billed_usd, aborted}."""
     if not budget_usd or budget_usd <= 0:
         raise SystemExit("run REQUIRES a positive --budget (the ledger-delta cap) — the estimate-first API-spend protocol")
-    arms = _derive_arms(target)
-    if not arms:
-        raise SystemExit("%r has < 2 comparable recorded arms — not measurable" % target)
-    lean_arm, heavy_arm = arms["lean"]["arm"], arms["heavy"]["arm"]
+    if lean and heavy:
+        lean_arm, heavy_arm = _parse_arm(lean), _parse_arm(heavy)
+    elif lean or heavy:
+        raise SystemExit("pass BOTH --lean and --heavy, or neither (then the arms are derived)")
+    else:
+        arms = _derive_arms(target)
+        if not arms:
+            raise SystemExit("%r has < 2 comparable recorded LANE arms — not measurable; pin --lean/--heavy explicitly" % target)
+        lean_arm, heavy_arm = arms["lean"]["arm"], arms["heavy"]["arm"]
     tasks = _review_tasks(M, src_files)                # M real .py review prompts (honestreview coding_router), WHOLE
     if len(tasks) < M:
         print("  only %d review tasks available (< M=%d) — measuring the %d available (no padding)." % (len(tasks), M, len(tasks)))
@@ -224,12 +254,14 @@ def main(argv=None):
     ap.add_argument("--m", type=int, default=None, help="pairs to measure (REQUIRED with --run)")
     ap.add_argument("--budget", type=float, default=None, help="hard ledger-delta cap in $ (REQUIRED with --run)")
     ap.add_argument("--src", default=None, help="dir of .py review tasks (default: spendguard's own src)")
+    ap.add_argument("--lean", default=None, help="pin the LEAN arm 'lane:use_name' (default: auto-derived lowest-output lane arm)")
+    ap.add_argument("--heavy", default=None, help="pin the HEAVY arm 'lane:use_name' (default: auto-derived highest-output lane arm)")
     a = ap.parse_args(argv)
     if not a.run:
         return plan(a.target)
     if a.m is None or a.budget is None:
         ap.error("--run REQUIRES --m <pairs> and --budget <$> (the estimate-first ledger-delta cap)")
-    run(a.target, a.m, a.budget, src_files=a.src)
+    run(a.target, a.m, a.budget, src_files=a.src, lean=a.lean, heavy=a.heavy)
     return 0
 
 
