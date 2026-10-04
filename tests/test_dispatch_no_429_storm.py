@@ -63,17 +63,57 @@ def _should_batch_fan(provider, model, n, est_in=4000, est_out=800):
         return None
 
 
-# ── GUARD 1 (PRIMARY): each mined storm-scale fan is DIVERTED TO BATCH at submission ─────────────────────────
-for intent, n, batchable in STORMS:
-    ck("1.%s: a %d-request '%s' fan is diverted to BATCH (not %d realtime calls)" % (intent.split(':')[0], n, intent, n),
-       _should_batch_fan(VENDOR, MODEL, n) is True,
-       extra="should_batch_fan not wired yet — the PRIMARY fix (submission-scale → batch)")
+# ── GUARD 1 (PRIMARY): a COLD metered vendor is PACED by the seeded cold cap — the storm cannot happen ────────
+# The storm's root: a cold anthropic bucket had rpm=0/tpm=0 (unlimited), so a fan of N dispatched ALL at once. With
+# the catalog cold cap seeded, acquire PACES: a call that would exceed the seeded budget QUEUES OUT within its
+# deadline instead of dispatching over-budget — "never intentionally dispatch above the known quota" (your chosen
+# promise). No manual config/learned limit is set here: the pacing comes purely from the proactive floor.
+_reset_governor()
+# Consume the seeded 2M tpm with two in-capacity calls, then a third must be PACED (queued out) — the pacing comes
+# purely from the catalog floor (no config/learned limit set). A single >capacity call is clamped through (can't
+# deadlock forever), so the honest proof is cumulative consumption then back-pressure on the next.
+_a1 = dispatch.admit(VENDOR, MODEL, deadline_s=0.5, est_tokens=900_000, shed=False, skip_lane=True)
+_a2 = dispatch.admit(VENDOR, MODEL, deadline_s=0.5, est_tokens=900_000, shed=False, skip_lane=True)
+_a3 = dispatch.admit(VENDOR, MODEL, deadline_s=0.3, est_tokens=900_000, shed=False, skip_lane=True)  # 2.7M > seeded 2M
+ck("1. once the seeded tpm budget is consumed, the next COLD metered call is PACED (queues out, not over-dispatched)",
+   bool(_a1.ok) and bool(_a2.ok) and not _a3.ok,
+   extra="a1=%s a2=%s a3=%s — pacing must come from the catalog floor alone" % (_a1.ok, _a2.ok, _a3.ok))
+for _a in (_a1, _a2, _a3):
+    try:
+        _a.release()
+    except Exception:
+        pass
 
-# ── GUARD 2: the decision is driven by SCALE vs the rate budget, not a blanket rule ──────────────────────────
-#   a tiny fan that FITS anthropic's 1,000 rpm budget over the window must STAY realtime (no over-eager batching).
-ck("2a. a small fan (n=5) within the realtime rate budget stays realtime (not force-batched)",
-   _should_batch_fan(VENDOR, MODEL, 5) is False, extra="small submissions must not be needlessly batched")
-ck("2b. a storm-scale fan (n=3000) exceeds the budget → batch", _should_batch_fan(VENDOR, MODEL, 3000) is True)
+# ── GUARD 2: a small in-budget call still admits immediately (pacing doesn't tax normal traffic) ──────────────
+_reset_governor()
+_small = dispatch.admit(VENDOR, MODEL, deadline_s=0.5, est_tokens=500, shed=False, skip_lane=True)
+ck("2. a small in-budget metered call admits immediately (no needless delay from the floor)", bool(_small.ok))
+try:
+    _small.release()
+except Exception:
+    pass
+
+# ── GUARD 2b: a storm-scale fan that can't drain within a caller DEADLINE is offered BATCH (deadline-driven) ──
+# NOT shape-inferred and NOT transparent (transparent async batch deadlocks a sync caller — the panel's fatal flaw);
+# it is deadline/opt-in, decided at the ONE chokepoint via route_horizon. Still to wire -> RED.
+ck("2b. a deadline-bound storm-scale fan is offered BATCH (deadline-driven, via the one chokepoint)",
+   _should_batch_fan(VENDOR, MODEL, 3000) is True, extra="deadline->batch not wired into admit/route_horizon yet")
+
+# ── GUARD 2c: a batch-diverted fan is AUTO-CHUNKED to the batch API's own limits (always ensure success) ──────
+# Diverting 200,000 requests as one batch would hit anthropic's batch max_per_batch/max_in_queue -> a batch 429.
+# The planner must split into sub-batches that FIT the catalog's batch limits, so a huge fan always submits cleanly
+# (CHUNK-never-single-shot). Probed via the intended planner accessor; RED until wired.
+def _chunk_plan(provider, n):
+    fn = getattr(__import__("spendguard.route_horizon", fromlist=["x"]), "chunk_for_batch", None)
+    try:
+        return fn(provider, n) if fn else None
+    except Exception:
+        return None
+_bm = ((mc.vendor_record("anthropic") or {}).get("batch_api") or {}).get("start", {}).get("max_in_queue") or 200000
+_plan = _chunk_plan("anthropic", 500000)
+ck("2c. a 500k-request fan diverted to batch is auto-chunked to sub-batches within the catalog batch limit (%s)" % _bm,
+   bool(_plan) and all(c <= _bm for c in _plan) and sum(_plan) == 500000,
+   extra="chunk_for_batch not wired — a huge fan must split to fit, never one oversized batch -> batch 429")
 
 # ── GUARD 3: proactive cold cap exists for the storm model (so even a non-fan burst is paced from call #1) ────
 cap = mc.rate_limit_for(MODEL)
