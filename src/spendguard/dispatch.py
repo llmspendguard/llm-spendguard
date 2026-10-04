@@ -996,6 +996,31 @@ def admit(vendor, model, deadline_s, no_metered_fallback=False, est_tokens=0, sh
         return _Admission(True, False, False, vendor, model, False)
 
 
+def is_saturated(vendor=None, model=None):
+    """TRUE when the governor is under backpressure RIGHT NOW — some admission bucket has callers WAITING for a slot,
+    or a bucket is at its in-flight concurrency limit. This is the signal a fan planner reads to decide 'realtime is
+    saturated → divert the deferrable remainder to batch' (the storm->batch trigger, observed not guessed). With
+    (vendor[, model]) it checks just that key's bucket; with neither, any bucket. $0, read-only, never raises."""
+    try:
+        with _GOV._lock:
+            buckets = list(_GOV._buckets.items())
+    except Exception:
+        return False
+    if vendor:
+        try:
+            key = _GOV._key_and_limit(vendor, model)[0]
+        except Exception:
+            key = None
+        buckets = [(k, b) for k, b in buckets if key and k == key]
+    for _k, b in buckets:
+        waiting = getattr(b, "waiting", 0) or 0
+        in_flight = getattr(b, "in_flight", 0) or 0
+        limit = getattr(b, "limit", 0) or 0
+        if waiting > 0 or (limit and in_flight >= limit):
+            return True
+    return False
+
+
 def queue_state():
     """Current per-key admission state — {key: {limit, rpm, in_flight, waiting}}. Named uniquely (not `stats`)
     so it never collides with semcache.stats, an unrelated job (NAME_REGISTRY). What a receipt/doctor shows to
