@@ -132,6 +132,74 @@ def ids():
     return sorted(_load_records().keys())
 
 
+def _parse_vendors(raw):
+    """The {provider: vendor_record} map from catalog BYTES (the 'vendors' section) — per-vendor metered-API rate-limit
+    SSOT. {} for empty/corrupt. Mirrors _parse_models for the sibling section of the same file."""
+    if not raw:
+        return {}
+    try:
+        return (json.loads(raw) or {}).get("vendors") or {}
+    except Exception:
+        return {}
+
+
+@functools.lru_cache(maxsize=8)
+def _merged_vendors(floor_b, ov_b):
+    """Layer the two catalog blobs' vendors sections (synced T2 overrides the shipped floor T1 by provider),
+    content-keyed exactly like _merged_records so a changed byte-blob always re-parses."""
+    return {**_parse_vendors(floor_b), **_parse_vendors(ov_b)}
+
+
+def _load_vendors():
+    """The {provider: vendor_record} map, layered (shipped floor overlaid by the synced/override catalog). {} when
+    neither layer is present — a missing vendors section degrades to 'no curated vendor', never an exception."""
+    floor_b = _read_bytes(DATA_PATH)
+    ov_b = _read_bytes(_overlay_path())
+    if floor_b is None and ov_b is None:
+        return {}
+    return _merged_vendors(floor_b, ov_b)
+
+
+def vendor_record(provider):
+    """The catalog's per-vendor metered-API record (rate-limit tiers, cold_floor, header_names, model_family_map), or
+    None when the vendor is not curated. Read-only. The SSOT the dispatch governor reads for its PROACTIVE cold cap."""
+    if not provider:
+        return None
+    return _load_vendors().get(str(provider))
+
+
+def _family_of(provider, model_id):
+    """The rate-limit FAMILY bucket `model_id` falls in for `provider` (per the vendor's model_family_map), or None.
+    Most-SPECIFIC family wins (so 'opus-5.5' beats 'opus') — matched on the bare id, no suffix regex."""
+    fam_map = (vendor_record(provider) or {}).get("model_family_map") or {}
+    bare = _bare(model_id)
+    hit = None
+    for fam, id_list in fam_map.items():
+        if bare in (id_list or []) and (hit is None or len(fam) > len(hit)):
+            hit = fam
+    return hit
+
+
+def rate_limit_for(model_id, provider=None, tier=None):
+    """The PROACTIVE cold-cap dict ({rpm, itpm?, otpm?, tpm?}) for (model, tier) from the catalog vendors section, or
+    None when the vendor is not curated (the caller then applies its own default — the catalog asserts no floor it does
+    not have). `provider` defaults to the model's curated provider; `tier` to the vendor's cold_tier. For a per-family
+    vendor (anthropic) it maps model→family→the tier row, falling to the vendor cold_floor for an unmapped model; for a
+    per-key vendor (openai/gemini/zai/moonshot) it returns the cold_floor. The governor uses this as the FLOOR applied
+    before any response header, then learns the real ceiling from headers on top. Read-only; never raises."""
+    prov = provider or provider_of(model_id)
+    rec = vendor_record(prov)
+    if not rec:
+        return None
+    tiers = rec.get("tiers")
+    if tiers:
+        trow = (tiers.get(tier or rec.get("cold_tier")) or {}).get("models") or {}
+        fam = _family_of(prov, model_id)
+        if fam and fam in trow:
+            return dict(trow[fam])
+    return dict(rec["cold_floor"]) if isinstance(rec.get("cold_floor"), dict) else None
+
+
 def model_price(model_id):
     """The price sub-record {in_, out, cached_in, batch_in, batch_out, [batch_cached_in], source, verified} for a
     model, or None when the model is not in the catalog or has no price (a curated model may carry price_error). This
