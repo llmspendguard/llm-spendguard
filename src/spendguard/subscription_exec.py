@@ -181,6 +181,37 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
         return {"error": "unparseable claude -p output"}
     if d.get("is_error"):
         return {"error": str(d.get("result") or "claude reported an error")[:200]}
+    text = d.get("result") or ""
     u = d.get("usage") or {}
-    return {"text": d.get("result") or "", "in_tok": int(u.get("input_tokens") or 0),
-            "out_tok": int(u.get("output_tokens") or 0), "latency": time.time() - t0, "error": None}
+    # The Claude CLI reports the model's REAL processed input SPLIT across three fields — input_tokens (fresh),
+    # cache_creation_input_tokens (cache WRITE, the bulk on a cold call), cache_read_input_tokens (cache READ, the
+    # bulk on a warm repeat). The original code read ONLY input_tokens, so it recorded in=2 for a call that actually
+    # processed ~23K tokens (the CLI also injects its own agent scaffolding into every -p prompt, which the plan
+    # genuinely pays for). Sum all three for the true read-side input — mirroring the API path's fresh+cache_read,
+    # plus the cache_creation the lane also sees. Trust the CLI's own counts when present (they are what the plan
+    # metered); fall back to a provider-aware content count ONLY when the CLI reports nothing (measured: it
+    # sometimes returns an all-zero usage block), marking the row tok_estimated so the cost×token cross-check and
+    # est-value never treat a fallback as an exact figure. (The CLI also reports a top-level total_cost_usd — the
+    # plan-equivalent est-value of this $0 lane call — deliberately NOT surfaced here yet: wiring it needs a ledger
+    # column + a decision on whether claude-code est-value moves off transcript-mining onto this ground truth.
+    # Tracked as a P0 follow-up.)
+    _in_cli = (int(u.get("input_tokens") or 0) + int(u.get("cache_creation_input_tokens") or 0)
+               + int(u.get("cache_read_input_tokens") or 0))
+    _out_cli = int(u.get("output_tokens") or 0)
+    _estimated = False
+    if _in_cli > 0:
+        _in = _in_cli
+    else:
+        from . import content_tokens as _ct
+        _in = _ct.count_tokens((system + "\n\n" + prompt) if system else prompt, provider="anthropic", model=alias)
+        _estimated = True
+    if _out_cli > 0:
+        _out = _out_cli
+    else:
+        from . import content_tokens as _ct
+        _out = _ct.count_tokens(text, provider="anthropic", model=alias)
+        _estimated = True
+    res = {"text": text, "in_tok": _in, "out_tok": _out, "latency": time.time() - t0, "error": None}
+    if _estimated:
+        res["tok_estimated"] = True
+    return res
