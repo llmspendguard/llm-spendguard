@@ -195,26 +195,16 @@ def should_batch_fan(provider, model, n, est_in=0, est_out=0, deadline_s=None):
 
 
 def chunk_for_batch(provider, n, max_per=None):
-    """Split a fan of `n` requests into sub-batch sizes that each FIT the provider's Batch-API queue limit (from the
-    catalog vendor_record.batch_api), so a huge DIVERTED fan always submits cleanly instead of moving a realtime storm
-    into a batch 429 (CHUNK-never-single-shot / always-ensure-success). Returns a list of chunk sizes summing to n.
-    Fail-safe default limit when the vendor is uncurated. Pure arithmetic."""
-    lim = max_per
-    if not lim:
-        try:
-            from . import model_catalog
-            rec = model_catalog.vendor_record(provider) or {}
-            lim = ((rec.get("batch_api") or {}).get("start", {}) or {}).get("max_in_queue")
-        except Exception:
-            lim = None
-    lim = max(1, int(lim or 100000))
-    n = int(n)
-    out = []
-    while n > 0:
-        c = min(lim, n)
-        out.append(c)
-        n -= c
-    return out
+    """Split a fan of `n` requests into sub-batch sizes that each FIT the provider's Batch-API limits, so a huge
+    DIVERTED fan always submits cleanly instead of moving a realtime storm into a batch 429 (CHUNK-never-single-shot /
+    always-ensure-success). DELEGATES to queue_planner.plan_batch_chunks — the ONE complete chunker (provider
+    max-requests, MB cap, enqueued-token cap, and the validated stage ceiling); this is not a second copy. Returns the
+    list of chunk sizes summing to n. `max_per` overrides the stage ceiling. Fail-safe to a single chunk on error."""
+    try:
+        from . import queue_planner
+        return queue_planner.plan_batch_chunks(int(n), provider, stage_cap=max_per)["chunks"]
+    except Exception:
+        return [int(n)] if int(n) > 0 else []
 
 
 def horizon_report(groups, *, lane=None, batch_model=None, realtime_model=None, reserve_frac=None, now=None):
