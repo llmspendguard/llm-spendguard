@@ -375,6 +375,44 @@ def reset_connection_window(vendor=None):
         # else: a transient reset bookkeeping error is non-fatal
 
 
+def _catalog_rate(vendor, model):
+    """The PROACTIVE cold-cap (rpm, tpm) for (vendor, model) from the model catalog's published limits — the floor the
+    governor paces against BEFORE any header is learned, so a cold burst can't storm (the root cause: anthropic had
+    rpm=0/tpm=0 and only a concurrency cap, so 6 workers all admitted and blew the real per-minute limit). tpm uses the
+    INPUT-tokens/min ceiling (itpm) for a per-family vendor, else the vendor tpm floor. (0,0) when the vendor/model is
+    not curated — an uncurated vendor keeps today's behaviour (concurrency-only), never a fabricated cap. Lazy import
+    (model_catalog is import-light; avoids a cycle) and fail-safe: a lookup error never breaks admission."""
+    try:
+        from . import model_catalog
+        cap = model_catalog.rate_limit_for(model, provider=vendor) or {}
+    except Exception:
+        return 0, 0
+    return int(cap.get("rpm") or 0), int(cap.get("itpm") or cap.get("tpm") or 0)
+
+
+def effective_limits(vendor, model=None):
+    """The {rpm, tpm, source} the governor WILL pace this (vendor, model) against RIGHT NOW: explicit config > the
+    SELF-LEARNED header limit > the PROACTIVE catalog cold-cap floor. This is the observability the 429-storm guard and
+    `doctor` read to answer 'is this vendor actually paced, or admitting unlimited?'. rpm/tpm 0 means genuinely unpaced
+    (a $0 lane, or an uncurated vendor). Never raises."""
+    vendor = (vendor or "").strip().lower()
+    rpm = int(_limit(f"rpm_{vendor}", 0) or 0)
+    tpm = int(_limit(f"tpm_{vendor}", 0) or 0)
+    source = "config" if (rpm or tpm) else ""
+    learned = _LEARNED.for_vendor(vendor) or {}
+    if not rpm:
+        rpm = int(learned.get("rpm") or 0)
+        source = source or (learned.get("source") if rpm else "")
+    if not tpm:
+        tpm = int(learned.get("tpm") or 0)
+        source = source or (learned.get("source") if tpm else "")
+    if not rpm or not tpm:
+        crpm, ctpm = _catalog_rate(vendor, model)
+        rpm, tpm = (rpm or crpm), (tpm or ctpm)
+        source = source or ("catalog-cold-cap" if (crpm or ctpm) else "")
+    return {"rpm": rpm, "tpm": tpm, "source": source or "unpaced"}
+
+
 def learned_limits(vendor=None):
     """The learned per-vendor limits, for observability / a receipt / a test: one vendor's {tpm,rpm,source,ts}, or the
     whole map when vendor is None."""
@@ -727,6 +765,8 @@ class Governor:
         rpm = _limit(f"rpm_{vendor}", DEFAULT_RPM)     # per-vendor RPM, e.g. SPENDGUARD_DISPATCH_RPM_MOONSHOT=60
         if not rpm and not lane:                       # no explicit rpm on a METERED vendor → use the SELF-LEARNED limit
             rpm = int((_LEARNED.for_vendor(vendor) or {}).get("rpm") or 0)   # from a 429 header (learn_rate_limit); 0 until learned
+        if not rpm and not lane:                       # STILL unknown → the PROACTIVE catalog cold-cap floor, so a cold
+            rpm = _catalog_rate(vendor, model)[0]      # metered vendor is paced from call #1 (never admits unlimited → storm)
         return key, limit, rpm, bool(lane)
 
     def _reserve_for(self, key, limit):
@@ -746,6 +786,8 @@ class Governor:
         _vk = key.split(":", 1)[-1]                     # the normalised vendor for a vendor: key
         tpm = 0 if _is_lane else (_limit(f"tpm_{_vk}", DEFAULT_TPM)                 # explicit config >
                                   or int((_LEARNED.for_vendor(_vk) or {}).get("tpm") or 0))   # SELF-LEARNED (429 header) > 0
+        if not tpm and not _is_lane:                    # STILL unknown → the PROACTIVE catalog cold-cap floor (itpm),
+            tpm = _catalog_rate(_vk, model)[1]          # so a cold metered vendor paces on tokens/min from call #1
         with self._lock:
             b = self._buckets.get(key)
             # Re-key if the configured limit/rpm/tpm/reserve changed since the bucket was made (config edited at
