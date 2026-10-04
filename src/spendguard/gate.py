@@ -2629,6 +2629,13 @@ def _cli(cmd="status", live=False):
                               f"`spendguard reconcile` refreshes)")
             except Exception:
                 print("  ledger    : leak status UNKNOWN — check could not run")
+            try:                                          # COST×TOKEN cross-check: the ledger cost column is what
+                from . import cost_integrity              # every $ figure rests on; a cost PROVABLY above the max
+                for _l in cost_integrity.cost_integrity_lines():   # token price = under-recorded tokens, caught here
+                    print("  integrity : " + _l)          # BEFORE it is quoted as verified (always ≥1 line: green+
+            except Exception as _cie:                     # coverage / UNKNOWN on read-fail / 🔴 per impossible bucket)
+                # the check itself erroring must NOT let the status silently VANISH (that reads as clean) — say UNKNOWN
+                print(f"  integrity : ⚪ UNKNOWN — cost×token cross-check could not run ({str(_cie)[:120]})")
             try:                                          # subscription-lane activation: silent-by-design at call
                 from . import lanes                       # time (degrade to API), so doctor is where a dead lane
                 for _ln in lanes.lane_summary_lines():         # must become VISIBLE with its exact activation step
