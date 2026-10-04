@@ -29,6 +29,7 @@ literal at a call site.
 import datetime
 import json
 import os
+import sqlite3
 import time
 
 from . import config
@@ -106,20 +107,20 @@ def _ensure_queue_schema(c):
         lease_until TEXT, attempts INTEGER DEFAULT 0, max_attempts INTEGER DEFAULT 3,
         worker TEXT, result TEXT, lane TEXT, billed INTEGER DEFAULT 0,
         created_ts TEXT, updated_ts TEXT)""")
-    # FORWARD-ONLY additive migration for tables created before sla_class/deadline_ts existed: a queue item carries its
-    # SERVICE CLASS ('realtime' | 'batch') and an absolute SLA DEADLINE. SQLite has no ADD COLUMN IF NOT EXISTS, so the
-    # live columns are checked first (idempotent; runs once per new column).
-    _cols = {r[1] for r in c.execute("PRAGMA table_info(lane_queue)").fetchall()}
-    if "sla_class" not in _cols:
-        c.execute("ALTER TABLE lane_queue ADD COLUMN sla_class TEXT DEFAULT 'batch'")
-    if "deadline_ts" not in _cols:
-        c.execute("ALTER TABLE lane_queue ADD COLUMN deadline_ts TEXT")
-    # PARKING (Step 4): defer_until = a pending row is NOT leasable until this ts (capacity backpressure); parks =
-    # how many times it has been deferred for saturation (bounded by MAX_PARKS, distinct from failure `attempts`).
-    if "defer_until" not in _cols:
-        c.execute("ALTER TABLE lane_queue ADD COLUMN defer_until TEXT")
-    if "parks" not in _cols:
-        c.execute("ALTER TABLE lane_queue ADD COLUMN parks INTEGER DEFAULT 0")
+    # FORWARD-ONLY additive migration for tables created before these columns existed: a queue item carries its
+    # SERVICE CLASS ('realtime' | 'batch'), an absolute SLA DEADLINE, and PARKING state (defer_until = NOT leasable
+    # until this ts, for capacity backpressure; parks = how many times deferred for saturation, bounded by MAX_PARKS,
+    # distinct from failure `attempts`). SQLite has no ADD COLUMN IF NOT EXISTS; the repo pattern (bulkgate) is to
+    # ATTEMPT the ALTER and swallow OperationalError. This is RACE-SAFE across the concurrent pooled connections — a
+    # check-then-ALTER (PRAGMA table_info, then conditional ADD) is TOCTOU: under a concurrent fan two connections both
+    # pass the check, the second ALTER raises "duplicate column name: sla_class", and that crashed the enqueue path
+    # (observed in the 429 storm replay). Attempt-and-swallow cannot race: the column exists either way.
+    for _col, _decl in (("sla_class", "TEXT DEFAULT 'batch'"), ("deadline_ts", "TEXT"),
+                        ("defer_until", "TEXT"), ("parks", "INTEGER DEFAULT 0")):
+        try:
+            c.execute(f"ALTER TABLE lane_queue ADD COLUMN {_col} {_decl}")
+        except sqlite3.OperationalError:
+            pass                                  # already present (or a concurrent racer just added it) — goal holds
     # index the lease hot-path (pick highest-priority oldest pending) so a deep backlog stays cheap to poll.
     c.execute("CREATE INDEX IF NOT EXISTS lane_queue_pick ON lane_queue(state, priority DESC, id)")
 

@@ -830,9 +830,22 @@ class Governor:
         got_bucket, xp = False, None
         try:
             key, limit, _rpm, _is_lane = self._key_and_limit(vendor, model, skip_lane=skip_lane)
-            self._bucket(vendor, model, skip_lane=skip_lane).acquire(
-                float(deadline_s) - (time.monotonic() - t0), sla_class=sla_class, est_tokens=est_tokens)
+            _b = self._bucket(vendor, model, skip_lane=skip_lane)
+            _b.acquire(float(deadline_s) - (time.monotonic() - t0), sla_class=sla_class, est_tokens=est_tokens)
             got_bucket = True
+            if not _is_lane:                         # CROSS-PROCESS RATE (metered vendors): the in-process bucket paces
+                # rpm/tpm PER PROCESS and STARTS FULL (burst allowance) — so K processes each admit a burst to one
+                # vendor and aggregate K× over the wall (the measured 429 storm; Prompt 9 panel's #1). This shared
+                # sqlite sliding window has NO burst allowance beyond an explicit per-second sub-cap, so aggregate
+                # egress across ALL processes stays under the vendor's real rpm/tpm. Checked BEFORE the scarce flock
+                # slot so a rate-wait does not hold cross-process concurrency. Lanes are excluded (their ceiling is a
+                # subscription plan, governed by the flock slots below). Degrades to admit on an infra failure.
+                from . import xp_rate_window as _xpr
+                try:
+                    _xpr.reserve(key, _xpr.limits_for(rpm=_b.rpm, tpm=_b.tpm), est_tokens=est_tokens,
+                                 deadline_s=float(deadline_s) - (time.monotonic() - t0))
+                except _xpr.RateDeadline as _e:
+                    raise DispatchTimeout(str(_e))   # aggregate vendor rate saturated within the deadline (not a 429)
             if not _xp_off():                        # co-govern ACROSS processes: a lane's shared subscription plan AND
                 # a metered vendor's per-provider cap. Previously lane-only — so N concurrent runs each ran up to
                 # vendor_concurrency to ONE metered provider (8 in-process × N procs) and 429-STORMED it. Now they share

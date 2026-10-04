@@ -132,9 +132,10 @@ def ids():
     return sorted(_load_records().keys())
 
 
-def _parse_vendors(raw):
+def _parse_catalog_vendors(raw):
     """The {provider: vendor_record} map from catalog BYTES (the 'vendors' section) — per-vendor metered-API rate-limit
-    SSOT. {} for empty/corrupt. Mirrors _parse_models for the sibling section of the same file."""
+    SSOT. {} for empty/corrupt. Mirrors _parse_models for the sibling section of the same file. (Named
+    _parse_catalog_vendors, not _parse_vendors, to stay unique vs crossllm._parse_vendors — a different job.)"""
     if not raw:
         return {}
     try:
@@ -147,7 +148,7 @@ def _parse_vendors(raw):
 def _merged_vendors(floor_b, ov_b):
     """Layer the two catalog blobs' vendors sections (synced T2 overrides the shipped floor T1 by provider),
     content-keyed exactly like _merged_records so a changed byte-blob always re-parses."""
-    return {**_parse_vendors(floor_b), **_parse_vendors(ov_b)}
+    return {**_parse_catalog_vendors(floor_b), **_parse_catalog_vendors(ov_b)}
 
 
 def _load_vendors():
