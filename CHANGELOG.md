@@ -4,6 +4,31 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.12.7] — 2026-10-05
+
+**`spendguard delegate`** — the 2-hop that offloads a self-contained sub-task off a capped Claude plan onto a cheaper
+or $0 subscription — plus a batch-submit 404 fix.
+
+### Added
+- **`spendguard delegate "<task>"`** (CLI) + **`spendguard_delegate`** (MCP tool): classify the task on a $0 lane
+  (oneshot | agentic | needs_claude; provider from `advisor.lane_models`), then route — oneshot → `lane_balance.delegate`,
+  agentic → the provider's agent CLI (`codex_exec` workspace-write) — or refuse `needs_claude` (never fail-open into the
+  capped Claude call). Estimate-first dry-run by default; `--yes` / `execute=True` runs it. The receipt splits
+  real-API-$ / plan est-value / avoided-overage-$ (ledger-measured rate) and never sums them.
+- **Lane readiness**: `delegate_router.delegation_lanes_ready()` + a `spendguard doctor` line showing which delegation
+  lanes are installed + authed, so a user with only some provider CLIs is routed to what they actually have (and told
+  how to add more). Nothing is hardcoded to one machine's plans.
+- `codex_exec.run_prompt(sandbox=…)` — an opt-in `workspace-write` agentic run (the read-only default is unchanged).
+
+### Fixed
+- **Batch builders 404** (`submit.build_message_batch_requests` + `build_chat_batch_jsonl`): the provider-prefixed model
+  id (e.g. `anthropic:claude-haiku-4-5`) was sent to the vendor API verbatim, so every batch request 404'd. Both now
+  strip to the bare id — the same strip every realtime path already does — while keeping the full id for pricing facts.
+  Regression-guarded in both batch tests.
+
+### Changed
+- A shared CLI option-parser (`cli_arguments`) de-duplicates the `cli.py` / `lanes.py` option lookups.
+
 ## [0.12.6] — 2026-10-05
 
 Reliability — the complete **429 storm → batch** system at the one admission chokepoint (`adapters.call → dispatch`),
