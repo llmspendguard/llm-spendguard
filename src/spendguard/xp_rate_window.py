@@ -18,11 +18,13 @@ rate is not an infra error: that WAITS (bounded by the deadline), which is the w
 """
 import math
 import os
+import sqlite3
 import time
 
 from . import config
 
 _XP_RATE_KEY = "xp_rate"
+_MIN_WAIT_S = 0.02        # floor on a recomputed wait so an over-limit boundary (wait≈0) can never busy-loop
 
 
 class RateDeadline(Exception):
@@ -62,26 +64,35 @@ def limits_for(rpm=0, tpm=0, per_second_burst=1.0):
 
 def _try_reserve(c, key, limits, est, now):
     """ONE atomic attempt inside a BEGIN IMMEDIATE txn (the caller holds the cross-process write lock). Prunes expired
-    rows, checks EVERY window, and either records the admission (returns (True, 0.0)) or returns (False, wait_s) with
-    the time until the binding window's oldest event expires. Pure given `now` — the unit test drives it with a fake
-    clock for deterministic window math."""
+    rows, checks EVERY window, and either RECORDS the admission (returns (True, 0.0)) or returns (False, wait_s) with
+    the time until the binding window frees. Pure given `now` — the unit test drives it with a fake clock for
+    deterministic window math."""
+    est = max(0, int(math.ceil(est or 0)))                       # D: round UP (never truncate a fractional est to 0)
     max_w = max((w for (w, _, _) in limits), default=60.0)
-    c.execute("DELETE FROM xp_rate WHERE k=? AND at < ?", (key, now - max_w))
+    c.execute("DELETE FROM xp_rate WHERE at < ?", (now - max_w,))  # G: GLOBAL prune of expired rows (any key) — no leak
+    any_over = False
     worst_wait = 0.0
     for (w, maxc, maxt) in limits:
         rows = c.execute("SELECT at, tokens FROM xp_rate WHERE k=? AND at >= ?", (key, now - w)).fetchall()
         over = False
         if maxc is not None and len(rows) + 1 > maxc:
             over = True
-        # a call whose OWN est exceeds the token window can never fit — admit it (unavoidable) rather than wedge forever
-        if maxt is not None and est < maxt and sum(r[1] for r in rows) + est > maxt:
-            over = True
+        if maxt is not None:
+            existing = sum((r[1] or 0) for r in rows)            # F: NULL-safe token sum
+            if existing + est > maxt:
+                # A: a request that cannot fit even an EMPTY window (est >= maxt) runs ALONE — admit ONLY when the
+                # window is empty of tokens (unavoidable, cannot split), and it is STILL recorded so the NEXT request
+                # paces behind it. Otherwise it is over and waits. This closes the old bypass where every oversized
+                # request was admitted unconditionally, defeating tpm for exactly the biggest callers.
+                if not (est >= maxt and existing == 0):
+                    over = True
         if over:
+            any_over = True
             oldest = min((r[0] for r in rows), default=now)
             worst_wait = max(worst_wait, (oldest + w) - now)
-    if worst_wait > 0:
-        return (False, worst_wait)                       # do NOT insert; the prune still commits (keeps the table small)
-    c.execute("INSERT INTO xp_rate(k, at, tokens) VALUES(?,?,?)", (key, now, int(max(0, est))))
+    if any_over:                                                 # H: OVER always WAITS — never fall through to INSERT
+        return (False, max(worst_wait, _MIN_WAIT_S))
+    c.execute("INSERT INTO xp_rate(k, at, tokens) VALUES(?,?,?)", (key, now, est))
     return (True, 0.0)
 
 
@@ -94,17 +105,20 @@ def reserve(key, limits, est_tokens=0, deadline_s=30.0, clock=time.time, sleep=t
         return 0.0
     t0 = clock()
     while True:
-        now = clock()
-        remaining = float(deadline_s) - (now - t0)
+        remaining = float(deadline_s) - (clock() - t0)
         if remaining <= 0:
             raise RateDeadline("'%s' shared rate window saturated — deadline %.0fs exhausted" % (key, float(deadline_s)))
         try:
             with config.ledger_op(_XP_RATE_KEY, _ensure_xp_rate_schema) as c:
                 c.execute("BEGIN IMMEDIATE")             # cross-process write lock: check+insert is one atomic step
+                now = clock()                            # B: capture AFTER the lock — the window is checked at commit time
                 ok, wait = _try_reserve(c, key, limits, est_tokens, now)
                 c.commit()
-        except Exception:
-            return clock() - t0                          # INFRA failure → admit (fail-open on infra, not on rate)
+        except sqlite3.OperationalError:                 # C: transient lock/busy — RETRY within the deadline, do NOT
+            sleep(min(_MIN_WAIT_S, max(0.0, remaining)))  #    silently admit (a momentary contention must not bypass the rate)
+            continue
+        except sqlite3.Error:
+            return clock() - t0                          # a REAL db/infra failure → fail-open admit (in-process bucket backstops)
         if ok:
             return clock() - t0
         sleep(min(wait + 0.001, remaining))

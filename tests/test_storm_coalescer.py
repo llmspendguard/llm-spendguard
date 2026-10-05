@@ -233,6 +233,25 @@ served = sum(1 for r in res if isinstance(r, dict) and r.get("text"))
 ck("I12 all futures resolved (served or typed-error), none pending", all_done and errs == 20 and served == 10,
    extra="done=%s errors=%d served=%d (want True,20,10)" % (all_done, errs, served))
 
+# ── I4b (panel fix) — a realtime call that RAISES or returns an ERROR reroutes to BATCH; siblings unaffected ───
+print("-- I4b realtime exception/error isolation: the bad item reroutes to batch, one failure can't abort the cohort --")
+fp = H.FakeProvider(cap=100000, window_s=1.0)
+BOOM, ERRC = H.canary(3), H.canary(7)
+def _rt_flaky(req):
+    if BOOM in str(req):
+        raise RuntimeError("realtime boom")                        # a RAISE must not abort the cohort (old bug)
+    if ERRC in str(req):
+        return {"text": None, "error": "realtime 500", "status_code": 500}   # an error result must not count as success
+    return fp._realtime("m", req)
+c = StormCoalescer(execute_realtime=_rt_flaky, execute_batch=_batch(fp),
+                   sustainable_rate_per_s=100000, horizon_s=1.0, provider="anthropic")   # huge budget → all start realtime
+res = _results(c.submit_all(["do %s" % H.canary(i) for i in range(20)]))
+c.close()
+ok_n = sum(1 for r in res if r.get("text") and not r.get("error"))
+ck("I4b realtime raise + error both reroute to batch, all 20 served, siblings fine",
+   ok_n == 20 and res[3].get("served_via") == "batch" and res[7].get("served_via") == "batch",
+   extra="ok=%d/20 canary3_via=%s canary7_via=%s" % (ok_n, res[3].get("served_via"), res[7].get("served_via")))
+
 # ── I14 — chunk coverage: slices cover the overflow exactly, no overlap, no dropped tail ──────────────────────
 print("-- I14 chunks cover overflow exactly (union==overflow, no overlap) --")
 c = StormCoalescer(execute_realtime=lambda r: {}, execute_batch=lambda rs: [{} for _ in rs],

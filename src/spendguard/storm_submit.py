@@ -14,6 +14,9 @@ default here because a correct provider-aware submit+collect (id-keyed, deadline
 tight deadline becomes typed backpressure, not a blocked thread) is its own scoped build — shipping an unexercised
 default would be the 'capability built but not wired' shortcut. realtime, by contrast, rides the real governed metered
 path here (adapters.call → dispatch.admit → the cross-process rate window → _call_guarded)."""
+import time
+from concurrent.futures import TimeoutError as FuturesTimeout
+
 from . import adapters, dispatch
 from .storm_coalescer import StormCoalescer
 
@@ -42,14 +45,20 @@ def _realtime_executor(model, system, reasoning, intent, deadline_s):
 
 
 def submit_storm(tasks, intent, model, execute_batch, deadline_s=30.0, system=None, reasoning="minimal",
-                 prompt_for=None, max_workers=16, idle_gap_s=0.01, max_wait_s=1.0):
+                 prompt_for=None, max_workers=16, idle_gap_s=0.01, max_wait_s=1.0, collect_timeout_s=1800.0):
     """Submit N tasks through the pace+batch combo and COLLECT N results (submission order). `execute_batch` is the
     REQUIRED provider-aware batch executor (see module docstring). `prompt_for(task)` maps a task to its prompt string
     (default: the task IS the prompt). `deadline_s` is the async urgency horizon that sizes the realtime budget
-    (rate × horizon); the overflow diverts to batch. Returns a list of result dicts aligned to `tasks`."""
+    (rate × horizon); the overflow diverts to batch. `collect_timeout_s` BOUNDS the total wait: a request still
+    unfinished by then returns TYPED BACKPRESSURE (served_via='backpressure') rather than blocking the caller
+    indefinitely — so a hung or multi-hour batch can never deadlock the calling thread (the sync→async guard).
+    Realtime + a fast batch resolve well within it. Returns a list of result dicts aligned to `tasks`."""
+    tasks = list(tasks)                                   # materialize (a generator is truthy + single-use; see below)
     if not tasks:
         return []
     provider = adapters.provider_for(model)
+    if not provider:                                      # fail LOUD on an unknown model, not an obscure downstream error
+        raise ValueError("unknown model %r — adapters.provider_for returned no provider" % (model,))
     rate = sustainable_rate_per_s(provider, model)
     coalescer = StormCoalescer(
         execute_realtime=_realtime_executor(model, system, reasoning, intent, deadline_s),
@@ -58,6 +67,17 @@ def submit_storm(tasks, intent, model, execute_batch, deadline_s=30.0, system=No
     _pf = prompt_for if callable(prompt_for) else (lambda t: t)
     try:
         futures = coalescer.submit_all([_pf(t) for t in tasks])
-        return [f.result() for f in futures]
+        out, t0 = [], time.monotonic()
+        for f in futures:
+            remaining = collect_timeout_s - (time.monotonic() - t0)
+            try:
+                out.append(f.result(timeout=max(0.0, remaining)))
+            except FuturesTimeout:                        # NEVER block indefinitely — typed backpressure, not a hung thread
+                out.append({"text": None, "status_code": None, "served_via": "backpressure",
+                            "error": "storm: result not ready within collect_timeout_s=%.0fs (batch ETA exceeded the "
+                                     "wait) — typed backpressure, not a blocked thread" % collect_timeout_s})
+        return out
     finally:
-        coalescer.close()
+        # every result is already collected or typed-backpressured above, so do NOT re-block draining a stuck batch
+        # future here (that would reintroduce the hang collect_timeout_s just prevented).
+        coalescer.close(wait=False)

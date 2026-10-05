@@ -62,9 +62,19 @@ X.reserve("k-tpm", lims, est_tokens=40, clock=clk.now, sleep=clk.sleep, deadline
 w3 = X.reserve("k-tpm", lims, est_tokens=40, clock=clk.now, sleep=clk.sleep, deadline_s=1000)  # 120>100 → wait
 verify_condition("tpm: a call that would exceed the token window waits", w3 >= 59.0, extra="wait=%.3f" % w3)
 clk2 = _Clock()
-w_big = X.reserve("k-tpm-big", lims, est_tokens=500, clock=clk2.now, sleep=clk2.sleep, deadline_s=5)  # est>max → admit
-verify_condition("tpm: a single call larger than the whole window is ADMITTED (unavoidable), not wedged", w_big < 0.001,
+w_big = X.reserve("k-tpm-big", lims, est_tokens=500, clock=clk2.now, sleep=clk2.sleep, deadline_s=5)  # est>max, empty → admit alone
+verify_condition("tpm: a lone oversized call (empty window) is ADMITTED (unavoidable), not wedged", w_big < 0.001,
                  extra="wait=%.3f (should admit immediately)" % w_big)
+# the oversized call is RECORDED (not a free bypass): the NEXT request on that key must WAIT for it to drain
+w_after_big = X.reserve("k-tpm-big", lims, est_tokens=10, clock=clk2.now, sleep=clk2.sleep, deadline_s=1000)
+verify_condition("tpm: after a lone-oversized admit, the next request WAITS (oversized was recorded, no free bypass)",
+                 w_after_big >= 59.0, extra="wait=%.3f (the 500-tok row must hold the window)" % w_after_big)
+# a SECOND oversized request does not also bypass while the first is in-window
+clk3 = _Clock()
+X.reserve("k-tpm-big2", lims, est_tokens=500, clock=clk3.now, sleep=clk3.sleep, deadline_s=5)   # 1st admits alone
+w_big2 = X.reserve("k-tpm-big2", lims, est_tokens=500, clock=clk3.now, sleep=clk3.sleep, deadline_s=1000)  # 2nd must wait
+verify_condition("tpm: two oversized requests do NOT both bypass — the 2nd waits for the 1st to drain",
+                 w_big2 >= 59.0, extra="wait=%.3f (second oversized must not stampede)" % w_big2)
 
 # ── multi-window: a per-second sub-cap blocks even when the minute has ample room ─────────────────────────────
 clk = _Clock()

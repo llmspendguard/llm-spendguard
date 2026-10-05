@@ -25,9 +25,10 @@ refilled; siblings are untouched). A result dict carrying status_code/http_statu
 MECHANISMS OPENED (Prompt 8): the bucket starts full (→ own pacer, I5); submit_chat_tasks is OpenAI-only (→ injected
 provider-aware batch seam); plan_batch_chunks returns int counts (→ slice overflow by count, never drop the tail, I14).
 """
+import math
 import threading
 import time
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future, InvalidStateError, ThreadPoolExecutor
 
 from . import queue_planner
 
@@ -78,8 +79,15 @@ class StormCoalescer:
                  batch_concurrency=4, provider="?", batch_refill_depth=1):
         if not callable(execute_realtime) or not callable(execute_batch):
             raise ValueError("execute_realtime and execute_batch are REQUIRED callables (no silent default)")
-        if sustainable_rate_per_s <= 0:
-            raise ValueError("sustainable_rate_per_s must be > 0 (rpm/60 for the vendor); got %r" % (sustainable_rate_per_s,))
+        if not (sustainable_rate_per_s > 0 and math.isfinite(sustainable_rate_per_s)):
+            raise ValueError("sustainable_rate_per_s must be a FINITE number > 0 (rpm/60 for the vendor); got %r "
+                             "(inf/NaN would silently disable pacing)" % (sustainable_rate_per_s,))
+        if not (horizon_s > 0 and math.isfinite(horizon_s)):
+            raise ValueError("horizon_s must be a finite number > 0; got %r (<=0 collapses the realtime budget to 1)"
+                             % (horizon_s,))
+        if idle_gap_s <= 0 or max_wait_s <= 0:
+            raise ValueError("idle_gap_s and max_wait_s must be > 0; got idle_gap_s=%r max_wait_s=%r"
+                             % (idle_gap_s, max_wait_s))
         self._execute_realtime = execute_realtime
         self._execute_batch = execute_batch
         self.sustainable_rate_per_s = float(sustainable_rate_per_s)
@@ -105,6 +113,7 @@ class StormCoalescer:
         self.realtime_429_rerouted = 0
         self.batch_served = 0
         self.batch_jobs = 0
+        self.close_abandoned = 0        # futures close() stopped waiting on at its drain deadline — SURFACED, never silent
 
     @property
     def realtime_budget(self):
@@ -135,12 +144,30 @@ class StormCoalescer:
     # ── the planner: accumulate a cohort at a LOGICAL BREAK, then hand it to routing (never block here) ──────────
     def _plan_loop(self):
         while True:
-            cohort = self._drain_cohort()
-            if cohort is None:
+            cohort = None
+            try:
+                cohort = self._drain_cohort()
+                if cohort is None:
+                    return
+                fut = self._route_pool.submit(self._route_cohort, cohort)
+                fut.add_done_callback(self._drop_inflight)
+                with self._lock:
+                    self._inflight.append(fut)
+            except BaseException:
+                # the planner must NEVER die silently and strand pending futures (e.g. route pool shut down in a close
+                # race). Resolve whatever it just drained, then exit — close() has set _stop, or the pool is gone.
+                if cohort:
+                    self._resolve_error(cohort, "planner stopped")
                 return
-            fut = self._route_pool.submit(self._route_cohort, cohort)
-            with self._lock:
-                self._inflight.append(fut)
+
+    def _drop_inflight(self, fut):
+        """Remove a completed route/batch future from _inflight (a done-callback) so a long-running coalescer does not
+        leak one Future per cohort for its lifetime."""
+        with self._lock:
+            try:
+                self._inflight.remove(fut)
+            except ValueError:
+                pass
 
     def _drain_cohort(self):
         """Block for the first pending, then accumulate until the FIRST logical break: (a) quiescence — no new arrival
@@ -175,31 +202,40 @@ class StormCoalescer:
         realtime = cohort[:budget]
         overflow = list(cohort[budget:])
         try:
-            rt_429 = self._run_realtime_paced(realtime)              # paced; returns the items that still 429'd
-        except BaseException as e:                                   # never leave a realtime future pending (I12)
+            rt_reroute = self._run_realtime_paced(realtime)         # paced; returns items to re-route to batch (429 or error)
+        except BaseException as e:                                  # e.g. realtime pool shut down during close — never strand
             self._resolve_error(realtime, "realtime: %s" % (str(e)[:120]))
-            rt_429 = []
-        overflow.extend(rt_429)
+            rt_reroute = []
+        overflow.extend(rt_reroute)
         if overflow:
-            fut = self._batch_pool.submit(self._run_batch_overflow, overflow, 0)   # batch may block minutes → own pool
-            with self._lock:
-                self._inflight.append(fut)
+            try:
+                fut = self._batch_pool.submit(self._run_batch_overflow, overflow, 0)   # batch may block minutes → own pool
+                fut.add_done_callback(self._drop_inflight)
+                with self._lock:
+                    self._inflight.append(fut)
+            except RuntimeError as e:                               # batch pool already shut down → resolve, never hang overflow
+                self._resolve_error(overflow, "batch pool closed: %s" % (str(e)[:80]))
 
     def _run_realtime_paced(self, pend):
         """Release each realtime call through the SHARED pacer (≤ sustainable rate across all cohorts), execute on the
-        realtime pool, resolve served ones; RETURN the _Pending items that came back rate-limited (→ re-routed to
-        batch so no 429 ever surfaces, I4)."""
+        realtime pool, resolve served ones; RETURN the _Pending items to RE-ROUTE to batch — a 429/529 OR an error
+        result (so no 429 ever surfaces AND a failed realtime call is retried via batch rather than silently resolved
+        as a success, I4). Each worker handles its OWN outcome and NEVER raises out, so one failing call can neither
+        abort the others nor lose a sibling's reroute (the single-exception-aborts-the-loop defect)."""
         if not pend:
             return []
-        rate_limited = []
+        reroute = []
         rl_lock = threading.Lock()
 
         def _serve_one_realtime(p):
-            self._pacer.wait()
-            r = self._execute_realtime(p.req)
-            if _is_rate_limited(r):
+            try:
+                self._pacer.wait()
+                r = self._execute_realtime(p.req)
+            except BaseException as e:                              # a worker exception is THIS item's failure, not the cohort's
+                r = {"text": None, "error": "realtime: %s" % (str(e)[:120]), "status_code": None}
+            if _is_rate_limited(r) or (isinstance(r, dict) and r.get("error")):
                 with rl_lock:
-                    rate_limited.append(p)
+                    reroute.append(p)                              # 429 or error → batch (never surface, never silent success)
                 return
             with self._lock:
                 self.realtime_served += 1
@@ -207,11 +243,14 @@ class StormCoalescer:
 
         futs = [self._rt_pool.submit(_serve_one_realtime, p) for p in pend]
         for f in futs:
-            f.result()                                               # propagate a worker crash to _route_cohort's guard
-        if rate_limited:
+            try:
+                f.result()
+            except BaseException:
+                pass                                               # the worker already resolved/collected its own item
+        if reroute:
             with self._lock:
-                self.realtime_429_rerouted += len(rate_limited)
-        return rate_limited
+                self.realtime_429_rerouted += len(reroute)
+        return reroute
 
     def _run_batch_overflow(self, pend, depth):
         """Submit the overflow to the injected batch path, chunked by queue_planner.plan_batch_chunks, demuxing the
@@ -270,41 +309,78 @@ class StormCoalescer:
 
     # ── future resolution (exactly once) ─────────────────────────────────────────────────────────────────────────
     def _set(self, p, r, via):
-        if p.future.done():
-            return
-        if isinstance(r, dict):
-            p.future.set_result(dict(r, served_via=via))
-        else:
-            p.future.set_result(r)
+        # set_result raises InvalidStateError if a RACING path already resolved this future — swallow it so resolution
+        # is idempotent and exactly-once under concurrency (the check-then-set TOCTOU would crash the worker instead).
+        try:
+            p.future.set_result(dict(r, served_via=via) if isinstance(r, dict) else r)
+        except InvalidStateError:
+            pass
 
     def _resolve_error(self, pends, msg):
         for p in pends:
-            if not p.future.done():
+            try:
                 p.future.set_result({"text": None, "error": "coalescer: %s" % msg, "provider": self.provider,
                                      "served_via": "error", "status_code": None})
+            except InvalidStateError:
+                pass
 
-    def close(self, wait=True):
-        """Stop accepting work, let the planner exit, and (if wait) DRAIN all in-flight routing/batch work so every
-        future is resolved before shutdown (N:N on shutdown). Idempotent."""
+    def close(self, wait=True, drain_timeout_s=None):
+        """Stop accepting work, let the planner exit, and (if wait) DRAIN in-flight routing/batch work so every future
+        is resolved before shutdown (N:N on shutdown) — BOUNDED by drain_timeout_s so a HUNG batch can never hang
+        close() itself (the sync→async guard applies to shutdown too). On timeout, stop waiting and shut the pools down
+        without blocking; a stuck worker is a daemon thread that dies with the process. Idempotent."""
         with self._cond:
             if self._stop:
                 return
             self._stop = True
             self._cond.notify_all()
+        deadline = (time.monotonic() + float(drain_timeout_s if drain_timeout_s is not None
+                                             else (self.max_wait_s * 3 + 10.0))) if wait else None
         if self._planner is not None:
-            self._planner.join(timeout=self.max_wait_s * 3 + 5.0)
+            self._planner.join(timeout=(max(0.0, deadline - time.monotonic()) if deadline else None))
+        timed_out = False
         if wait:
+            # Do NOT clear _inflight — a route future appends its batch future LATER (after it completes), so clearing
+            # the snapshot would lose that work and let a transient-empty list break the loop early (then a wait=True
+            # pool shutdown would block on the hung batch anyway). Instead keep _inflight authoritative (the
+            # done-callback prunes finished futures), bound everything by the WALL-CLOCK deadline, and grace-recheck
+            # the empty case once for the append race.
             while True:
-                with self._lock:
-                    fs = list(self._inflight)
-                    self._inflight = []
-                if not fs:
+                if time.monotonic() >= deadline:
+                    timed_out = True
                     break
+                with self._lock:
+                    fs = [f for f in self._inflight if not f.done()]
+                if not fs:
+                    time.sleep(min(0.02, max(0.0, deadline - time.monotonic())))   # grace: a route future may still append a batch future
+                    with self._lock:
+                        fs = [f for f in self._inflight if not f.done()]
+                    if not fs:
+                        break                                      # truly idle — all route + batch work resolved
+                    continue
                 for f in fs:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        timed_out = True
+                        break
                     try:
-                        f.result()
+                        f.result(timeout=remaining)
                     except BaseException:
-                        pass
-        self._route_pool.shutdown(wait=wait)
-        self._batch_pool.shutdown(wait=wait)
-        self._rt_pool.shutdown(wait=wait)
+                        pass                                       # a hung/errored future must not hang close()
+                if timed_out:
+                    break
+            if timed_out:
+                with self._lock:
+                    self.close_abandoned = sum(1 for g in self._inflight if not g.done())
+        if timed_out:
+            # SURFACE the abandonment — a silent timeout-cap would hide a hung batch (the coding:python finding). The
+            # caller already holds every result (collected or typed-backpressure above); these futures resolve late or
+            # not at all, and `close_abandoned` records how many for the caller/metrics to see.
+            import sys as _sys
+            print("[spendguard] storm_coalescer.close(): drain deadline reached — ABANDONED %d in-flight future(s) "
+                  "(a hung/slow batch worker); shutting pools down without waiting on it." % self.close_abandoned,
+                  file=_sys.stderr)
+        _wait_pools = wait and not timed_out                       # on a hung worker, do NOT block shutdown on it
+        self._route_pool.shutdown(wait=_wait_pools)
+        self._batch_pool.shutdown(wait=_wait_pools)
+        self._rt_pool.shutdown(wait=_wait_pools)
