@@ -170,6 +170,43 @@ def _plan_why(allocations, lane_ok, lane_label, reset_days, totals):
     return ("%d urgent / %d deferrable group(s): " % (u, len(allocations) - u)) + "; ".join(bits) + tail
 
 
+def should_batch_fan(provider, model, n, est_in=0, est_out=0, deadline_s=None):
+    """TRUE when a fan of `n` requests to (provider, model) CANNOT drain on the realtime API within its window and so
+    should be diverted to the Batch API — the storm->batch decision. DEADLINE-DRIVEN, never shape-inferred and never a
+    transparent swap of a synchronous call (that deadlocks the caller — the cross-LLM panel's fatal flaw): a caller
+    opts in or supplies a deadline, and this says whether realtime can meet it. Pure arithmetic on the PUBLISHED rate
+    budget (model_catalog.rate_limit_for → requests/min + tokens/min): drain_minutes = max(n/rpm, n*(in+out)/tpm);
+    batch when that exceeds the window (deadline_s if given, else one rate-window = 1 min). FALSE for an uncurated
+    vendor (no budget to reason about) and for a small fan that fits — never needlessly batched. Lazy, fail-safe."""
+    try:
+        from . import model_catalog
+        cap = model_catalog.rate_limit_for(model, provider=provider) or {}
+    except Exception:
+        return False
+    rpm = int(cap.get("rpm") or 0)
+    tpm = int(cap.get("itpm") or cap.get("tpm") or 0)
+    if rpm <= 0:
+        return False
+    drain_min = int(n) / float(rpm)
+    if tpm > 0 and (est_in or est_out):
+        drain_min = max(drain_min, (int(n) * (int(est_in) + int(est_out))) / float(tpm))
+    window_min = (float(deadline_s) / 60.0) if deadline_s else 1.0
+    return drain_min > window_min
+
+
+def chunk_for_batch(provider, n, max_per=None):
+    """Split a fan of `n` requests into sub-batch sizes that each FIT the provider's Batch-API limits, so a huge
+    DIVERTED fan always submits cleanly instead of moving a realtime storm into a batch 429 (CHUNK-never-single-shot /
+    always-ensure-success). DELEGATES to queue_planner.plan_batch_chunks — the ONE complete chunker (provider
+    max-requests, MB cap, enqueued-token cap, and the validated stage ceiling); this is not a second copy. Returns the
+    list of chunk sizes summing to n. `max_per` overrides the stage ceiling. Fail-safe to a single chunk on error."""
+    try:
+        from . import queue_planner
+        return queue_planner.plan_batch_chunks(int(n), provider, stage_cap=max_per)["chunks"]
+    except Exception:
+        return [int(n)] if int(n) > 0 else []
+
+
 def horizon_report(groups, *, lane=None, batch_model=None, realtime_model=None, reserve_frac=None, now=None):
     """Resolve the LIVE horizon inputs and run plan_horizon, returning its result plus a `resolved` block naming every
     input + its basis (auditable, 'estimating' visible) — the horizon twin of route_economics.route_report. `groups`

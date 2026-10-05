@@ -747,7 +747,7 @@ def _returns_callresult(fn):
 def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,
          sig=None, intent=None, retries=2, files=None, _no_guard=False, no_metered_fallback=False, images=None,
          no_substitution=False, measurement=False, metered_only=False, base_fallback=None, _probe=False, _route=True,
-         _internal_pin=False, **aliases):
+         _internal_pin=False, _coalesce_eligible=True, **aliases):
     """Run one prompt against one model. Returns a CallResult (never raises).
 
     A CallResult IS a dict — every `r["text"]` / `r.get(...)` works unchanged — that ALSO exposes its keys as
@@ -1055,6 +1055,27 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     _conn_tries = aliases.pop("_conn_tries", None)      # UNIVERSAL connection-429 retransmit budget (the serial/managed
     _t_conn0 = aliases.pop("_t_conn0", None) or time.time()   # twin of the fan re-admit loop); _t_conn0 bounds it by deadline
     _adm = None
+    # 4b — route an IMPLICIT concurrent fan (many independent labelled adapters.call at one vendor — the actual
+    # 429-storm caller: honestreview's metered_only fan) through the shared storm coalescer so it gets the pace+batch
+    # COMBO (pace the sustainable realtime share, divert the overflow to the ~half-price Batch API). ON by default
+    # (SPENDGUARD_STORM_COALESCE=0 kills it). Four gates keep it correct:
+    #   • metered_only — only metered calls route; the coalescer's realtime executor is metered, so routing a $0-LANE-
+    #     eligible call would force it onto the paid API. Lane traffic stays on its lanes; a metered call is cost-SAFE
+    #     (metered anyway) and its overflow is CHEAPER (batch).
+    #   • _coalesce_eligible — the EXPLICIT fans (bulk_delegate/submit_storm) set this False: they are ALREADY governed
+    #     against the storm by the dispatch connection-window (proven in realtime by test_connection_storm_reliability)
+    #     AND have their own native Batch-API offload, so re-coalescing them would REPLACE a proven ~1s realtime path
+    #     with a batch divert (minutes) — strictly worse. 4b is the net under the RAW fan only. (Distinct from _route,
+    #     which bulk_delegate overloads for durable-record suppression — decoupled on purpose.)
+    #   • _route=False — the coalescer's OWN realtime re-entry (recursion guard).
+    #   • not _probe / not _no_guard / (intent or sig) — skip health probes, internal recursion, and unlabelled calls.
+    # storm_route.route returns a result dict, or None when it declines (routing off / no known rate) → fall through.
+    if metered_only and _route and _coalesce_eligible and not _no_guard and not _probe and (intent or sig):
+        from . import storm_route as _sr
+        _routed_result = _sr.route(model, prompt, intent or sig, system=system, reasoning=reasoning)
+        if _routed_result is not None:
+            _sig_ctx._local.ctx = _ctx_before            # returning early — restore the caller's context exactly
+            return _routed_result
     _managed = (not _governed and not _no_guard and not _probe and bool(intent or sig)
                 and not dispatch.holding() and _manage_all_enabled())
     if (_governed or _managed) and not _no_guard:
@@ -1062,8 +1083,9 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
         _gov_dl = float(timeout_s) if timeout_s else (deadline_for(
             model, intent=intent or sig, in_chars=len(prompt or ""), default_s=LANE_MIN_TIMEOUT_S)[0] or LANE_MIN_TIMEOUT_S)
         _adm = dispatch.admit(_gprov, model, _gov_dl, no_metered_fallback=no_metered_fallback,
-                              est_tokens=_est_call_tokens(prompt, system, max_tokens), shed=_governed,
-                              skip_lane=bool(metered_only))   # metered_only hits the paid vendor → pace on its RPM/TPM
+                              est_tokens=_est_call_tokens(prompt, system, max_tokens, model=model, intent=intent or sig),
+                              shed=_governed,                 # output-aware: unpinned max_tokens paces on the LEARNED
+                              skip_lane=bool(metered_only))   # per-intent output, so OTPM isn't under-counted. metered_only → pace on the vendor RPM/TPM
         if not _adm.ok:
             _sig_ctx._local.ctx = _ctx_before
             return {"provider": _gprov, "model": model, "text": None, "parsed": None, "in_tok": 0, "out_tok": 0,
@@ -1910,15 +1932,24 @@ _NOMINAL_OUT_TOKENS = 2000   # output allowance for a call that did not pin max_
 # Step-3 self-calibration from real 429 headers corrects the aggregate). NOT a billing figure and NOT the ceiling.
 
 
-def _est_call_tokens(prompt, system, out_tokens):
+def _est_call_tokens(prompt, system, out_tokens, model=None, intent=None):
     """Estimated INPUT+OUTPUT tokens for one call — the amount the dispatch TPM bucket debits so a fan can't blow a
     provider's tokens/minute limit (the real 429 axis). INPUT via a cheap chars→tokens heuristic (no tokenizer on the
-    hot path — a soft rate bucket wants a ballpark, not a billing count); OUTPUT = the caller's max_tokens when pinned,
-    else a nominal allowance. Deliberately arithmetic (a bound on a real quantity), never a meaning judgement."""
+    hot path — a soft rate bucket wants a ballpark, not a billing count). OUTPUT: the caller's max_tokens when pinned;
+    else the LEARNED expected output for this (model, intent) via expected_output.expect — OUTPUT tokens/minute is
+    metered on the ACTUAL output produced, so pacing must reflect what the intent really emits, NOT a flat nominal that
+    under-counts output-heavy work (the opus run that produced 126K out); else a nominal allowance. Deliberately
+    arithmetic (a bound on a real quantity), never a meaning judgement."""
     n_in = (len(prompt) if isinstance(prompt, str) else len(str(prompt or ""))) // 4
     n_sys = (len(system) // 4) if system else 0
-    n_out = int(out_tokens) if out_tokens else _NOMINAL_OUT_TOKENS
-    return n_in + n_sys + max(0, n_out)
+    n_out = int(out_tokens) if out_tokens else 0
+    if not n_out and model and intent:                   # unpinned → pace on the LEARNED per-intent output, not nominal
+        try:
+            from . import expected_output
+            n_out = int((expected_output.expect(model, sig=intent) or (0,))[0] or 0)
+        except Exception:
+            n_out = 0
+    return n_in + n_sys + max(0, n_out or _NOMINAL_OUT_TOKENS)
 
 
 def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,

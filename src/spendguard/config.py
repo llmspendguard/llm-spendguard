@@ -525,16 +525,30 @@ def _cfg_get(section, key, default=None):
     return (_cfg().get(section) or {}).get(key, default)
 
 
-def advisor_float(name, default):
-    """An `advisor.<name>` config knob as a float, defaulted. The ONE place this read lives (lane_balance and
-    lane_bandit delegate here — no divergent copies). Uses `v is None`, NOT `v or default`: a weight / margin the
-    operator deliberately set to 0 is falsy, so `... or default` would silently replace an explicit 0 with the
-    default. None means "unset" → default; a bad value → default."""
+def _advisor_coerced(name, default, coerce):
+    """Read an `advisor.<name>` config knob and coerce it with `coerce` (e.g. float, or type(default)), defaulted —
+    the ONE place the advisor-knob read + fallback logic lives, so no caller keeps a divergent copy. Uses `v is None`,
+    NOT `v or default`: a value the operator deliberately set to 0 is falsy, so `... or default` would silently
+    replace an explicit 0 with the default. None (unset) → the coerced default; a bad value → the default unchanged."""
     v = _cfg_get("advisor", name, None)
     try:
-        return float(default if v is None else v)
+        return coerce(default if v is None else v)
     except (TypeError, ValueError):
         return default
+
+
+def advisor_float(name, default):
+    """An `advisor.<name>` knob as a FLOAT, defaulted (lane_balance and lane_bandit delegate here — no divergent
+    copies). Explicit-0 / unset / bad-value rules: see _advisor_coerced."""
+    return _advisor_coerced(name, default, float)
+
+
+def advisor_num(name, default):
+    """An `advisor.<name>` knob coerced to the DEFAULT'S type — an int default → int, a float default → float —
+    defaulted. For callers whose knob has a declared integer OR float type (the lane_queue parameters), so an int
+    knob is not silently widened to float. Same explicit-0 / unset / bad-value rules as advisor_float; see
+    _advisor_coerced."""
+    return _advisor_coerced(name, default, type(default))
 
 
 _GITROOT_CACHE = {}

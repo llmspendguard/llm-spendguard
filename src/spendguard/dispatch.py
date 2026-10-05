@@ -375,6 +375,53 @@ def reset_connection_window(vendor=None):
         # else: a transient reset bookkeeping error is non-fatal
 
 
+def _catalog_rate(vendor, model):
+    """The PROACTIVE cold-cap (rpm, tpm) for (vendor, model) from the model catalog's published limits — the floor the
+    governor paces against BEFORE any header is learned, so a cold burst can't storm (the root cause: anthropic had
+    rpm=0/tpm=0 and only a concurrency cap, so 6 workers all admitted and blew the real per-minute limit). tpm uses the
+    INPUT-tokens/min ceiling (itpm) for a per-family vendor, else the vendor tpm floor. (0,0) when the vendor/model is
+    not curated — an uncurated vendor keeps today's behaviour (concurrency-only), never a fabricated cap. Lazy import
+    (model_catalog is import-light; avoids a cycle) and fail-safe: a lookup error never breaks admission."""
+    try:
+        from . import model_catalog
+        cap = model_catalog.rate_limit_for(model, provider=vendor) or {}
+    except Exception:
+        return 0, 0
+    return int(cap.get("rpm") or 0), int(cap.get("itpm") or cap.get("tpm") or 0)
+
+
+def effective_limits(vendor, model=None):
+    """The {rpm, tpm, source} the governor WILL pace this (vendor, model) against RIGHT NOW: explicit config > the
+    SELF-LEARNED header limit > the PROACTIVE catalog cold-cap floor. This is the observability the 429-storm guard and
+    `doctor` read to answer 'is this vendor actually paced, or admitting unlimited?'. rpm/tpm 0 means genuinely unpaced
+    (a $0 lane, or an uncurated vendor). Never raises."""
+    vendor = (vendor or "").strip().lower()
+    rpm = int(_limit(f"rpm_{vendor}", 0) or 0)
+    tpm = int(_limit(f"tpm_{vendor}", 0) or 0)
+    source = "config" if (rpm or tpm) else ""
+    learned = _LEARNED.for_vendor(vendor) or {}
+    if not rpm:
+        rpm = int(learned.get("rpm") or 0)
+        source = source or (learned.get("source") if rpm else "")
+    if not tpm:
+        tpm = int(learned.get("tpm") or 0)
+        source = source or (learned.get("source") if tpm else "")
+    if not rpm or not tpm:
+        crpm, ctpm = _catalog_rate(vendor, model)
+        rpm, tpm = (rpm or crpm), (tpm or ctpm)
+        source = source or ("catalog-cold-cap" if (crpm or ctpm) else "")
+    return {"rpm": rpm, "tpm": tpm, "source": source or "unpaced"}
+
+
+def rate_per_s(vendor, model=None):
+    """The vendor's sustainable realtime requests/second = effective rpm / 60 — the ONE place that conversion lives
+    (the storm combo sizes its realtime budget from it). None when no rpm is known (an unpaced $0 lane / uncurated
+    vendor); the CALLER chooses the policy for 'unknown' — storm_route declines to coalesce (None → direct path),
+    submit_storm raises (it cannot size a budget without it). Never raises."""
+    rpm = int((effective_limits(vendor, model) or {}).get("rpm") or 0)
+    return (rpm / 60.0) if rpm > 0 else None
+
+
 def learned_limits(vendor=None):
     """The learned per-vendor limits, for observability / a receipt / a test: one vendor's {tpm,rpm,source,ts}, or the
     whole map when vendor is None."""
@@ -727,6 +774,8 @@ class Governor:
         rpm = _limit(f"rpm_{vendor}", DEFAULT_RPM)     # per-vendor RPM, e.g. SPENDGUARD_DISPATCH_RPM_MOONSHOT=60
         if not rpm and not lane:                       # no explicit rpm on a METERED vendor → use the SELF-LEARNED limit
             rpm = int((_LEARNED.for_vendor(vendor) or {}).get("rpm") or 0)   # from a 429 header (learn_rate_limit); 0 until learned
+        if not rpm and not lane:                       # STILL unknown → the PROACTIVE catalog cold-cap floor, so a cold
+            rpm = _catalog_rate(vendor, model)[0]      # metered vendor is paced from call #1 (never admits unlimited → storm)
         return key, limit, rpm, bool(lane)
 
     def _reserve_for(self, key, limit):
@@ -746,6 +795,8 @@ class Governor:
         _vk = key.split(":", 1)[-1]                     # the normalised vendor for a vendor: key
         tpm = 0 if _is_lane else (_limit(f"tpm_{_vk}", DEFAULT_TPM)                 # explicit config >
                                   or int((_LEARNED.for_vendor(_vk) or {}).get("tpm") or 0))   # SELF-LEARNED (429 header) > 0
+        if not tpm and not _is_lane:                    # STILL unknown → the PROACTIVE catalog cold-cap floor (itpm),
+            tpm = _catalog_rate(_vk, model)[1]          # so a cold metered vendor paces on tokens/min from call #1
         with self._lock:
             b = self._buckets.get(key)
             # Re-key if the configured limit/rpm/tpm/reserve changed since the bucket was made (config edited at
@@ -788,9 +839,22 @@ class Governor:
         got_bucket, xp = False, None
         try:
             key, limit, _rpm, _is_lane = self._key_and_limit(vendor, model, skip_lane=skip_lane)
-            self._bucket(vendor, model, skip_lane=skip_lane).acquire(
-                float(deadline_s) - (time.monotonic() - t0), sla_class=sla_class, est_tokens=est_tokens)
+            _b = self._bucket(vendor, model, skip_lane=skip_lane)
+            _b.acquire(float(deadline_s) - (time.monotonic() - t0), sla_class=sla_class, est_tokens=est_tokens)
             got_bucket = True
+            if not _is_lane:                         # CROSS-PROCESS RATE (metered vendors): the in-process bucket paces
+                # rpm/tpm PER PROCESS and STARTS FULL (burst allowance) — so K processes each admit a burst to one
+                # vendor and aggregate K× over the wall (the measured 429 storm; Prompt 9 panel's #1). This shared
+                # sqlite sliding window has NO burst allowance beyond an explicit per-second sub-cap, so aggregate
+                # egress across ALL processes stays under the vendor's real rpm/tpm. Checked BEFORE the scarce flock
+                # slot so a rate-wait does not hold cross-process concurrency. Lanes are excluded (their ceiling is a
+                # subscription plan, governed by the flock slots below). Degrades to admit on an infra failure.
+                from . import xp_rate_window as _xpr
+                try:
+                    _xpr.reserve(key, _xpr.limits_for(rpm=_b.rpm, tpm=_b.tpm), est_tokens=est_tokens,
+                                 deadline_s=float(deadline_s) - (time.monotonic() - t0))
+                except _xpr.RateDeadline as _e:
+                    raise DispatchTimeout(str(_e))   # aggregate vendor rate saturated within the deadline (not a 429)
             if not _xp_off():                        # co-govern ACROSS processes: a lane's shared subscription plan AND
                 # a metered vendor's per-provider cap. Previously lane-only — so N concurrent runs each ran up to
                 # vendor_concurrency to ONE metered provider (8 in-process × N procs) and 429-STORMED it. Now they share
@@ -952,6 +1016,31 @@ def admit(vendor, model, deadline_s, no_metered_fallback=False, est_tokens=0, sh
         print(f"[spendguard] dispatch governor unavailable ({type(_ge).__name__}: {str(_ge)[:80]}) — admitting "
               f"{vendor}/{model} UNGOVERNED this call; the spend gate still enforces the cap", file=_sys.stderr)
         return _Admission(True, False, False, vendor, model, False)
+
+
+def is_saturated(vendor=None, model=None):
+    """TRUE when the governor is under backpressure RIGHT NOW — some admission bucket has callers WAITING for a slot,
+    or a bucket is at its in-flight concurrency limit. This is the signal a fan planner reads to decide 'realtime is
+    saturated → divert the deferrable remainder to batch' (the storm->batch trigger, observed not guessed). With
+    (vendor[, model]) it checks just that key's bucket; with neither, any bucket. $0, read-only, never raises."""
+    try:
+        with _GOV._lock:
+            buckets = list(_GOV._buckets.items())
+    except Exception:
+        return False
+    if vendor:
+        try:
+            key = _GOV._key_and_limit(vendor, model)[0]
+        except Exception:
+            key = None
+        buckets = [(k, b) for k, b in buckets if key and k == key]
+    for _k, b in buckets:
+        waiting = getattr(b, "waiting", 0) or 0
+        in_flight = getattr(b, "in_flight", 0) or 0
+        limit = getattr(b, "limit", 0) or 0
+        if waiting > 0 or (limit and in_flight >= limit):
+            return True
+    return False
 
 
 def queue_state():

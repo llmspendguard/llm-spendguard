@@ -1,6 +1,42 @@
 {
-  "_doc": "SSOT for per-model data. Authored here (curated edits welcome); prices.json is GENERATED from this. See docs/CANONICAL_CONCERNS.json concern 'model_catalog'.",
+  "_doc": "SSOT for per-model data (models) AND per-vendor metered-API data (vendors). Authored here (curated edits welcome); prices.json is GENERATED from this. See docs/CANONICAL_CONCERNS.json concern 'model_catalog'.",
   "_seeded_from": "scripts/migrate/seed_model_catalog.py (current resolved values)",
+  "vendors": {
+    "_doc": "Per-vendor metered-API rate limits — the SSOT the dispatch governor reads for its PROACTIVE cold-start cap (the floor applied BEFORE any response header, so a cold burst is paced from call #1 instead of storming). Response headers REFINE these upward to the account's real ceiling (dispatch.learn_rate_limit). Researched 2026-10-04 — anthropic AUTHORITATIVE (platform.claude.com/docs/en/api/rate-limits, full tier tables); openai tier caps (developers.openai.com/api/docs/guides/rate-limits), per-model rpm/tpm ride x-ratelimit headers (this account measured tpm=40000000 rpm=15000); gemini/zai/moonshot not publicly tabulated → conservative floor, refine from headers. units: rpm=requests/min, itpm=INPUT tok/min, otpm=OUTPUT tok/min, tpm=combined where one bucket. SAVED HERE so it is never re-researched.",
+    "_behaviors": {
+      "acceleration_slow_start": "Anthropic (and in practice others) 429 on a SHARP usage increase even BELOW the steady ceiling; documented remedy is to ramp gradually. => the governor must SLOW-START (ramp concurrency/rate from low), not fire full concurrency cold. This is the PRIMARY cause of a cold-burst storm.",
+      "cache_aware_itpm": "Anthropic ITPM counts input_tokens + cache_creation_input_tokens but NOT cache_read_input_tokens (except Haiku 3.5). => pace input by fresh+cache_creation, and caching the repeated prompt lowers ITPM pressure.",
+      "otpm_realtime": "OTPM meters ACTUAL output as produced; max_tokens does NOT count. => pace output by the learned expected output (expected_output.expect), never by max_tokens.",
+      "per_model_buckets": "Limits are PER MODEL-FAMILY (opus separate from haiku). => key tpm/rpm by (vendor, family), via model_family_map below.",
+      "spend_cap_429": "A monthly-spend-cap 429 carries error_code enforced_spend_limit_reached and NO retry-after — not a transient rate limit; do not retry it."
+    },
+    "anthropic": {
+      "limit_scope": "per_model_family_per_org",
+      "cold_tier": "start",
+      "note": "New orgs may begin in an 'Evaluation' tier BELOW Start; Start is the safe published floor to assume cold, with SLOW-START on top handling Evaluation + acceleration limits.",
+      "header_names": {"rpm": "anthropic-ratelimit-requests-limit", "itpm": "anthropic-ratelimit-input-tokens-limit", "otpm": "anthropic-ratelimit-output-tokens-limit", "retry_after": "retry-after"},
+      "tiers": {
+        "start": {"monthly_cap_usd": 500, "models": {"opus": {"rpm": 1000, "itpm": 2000000, "otpm": 400000}, "sonnet": {"rpm": 1000, "itpm": 2000000, "otpm": 400000}, "haiku": {"rpm": 1000, "itpm": 2000000, "otpm": 400000}, "fable": {"rpm": 1000, "itpm": 500000, "otpm": 100000}, "haiku-3.5": {"rpm": 1000, "itpm": 100000, "otpm": 20000}}},
+        "build": {"monthly_cap_usd": 1000, "models": {"opus": {"rpm": 5000, "itpm": 5000000, "otpm": 1000000}, "sonnet": {"rpm": 5000, "itpm": 5000000, "otpm": 1000000}, "haiku": {"rpm": 5000, "itpm": 5000000, "otpm": 1000000}, "fable": {"rpm": 2000, "itpm": 1500000, "otpm": 300000}, "haiku-3.5": {"rpm": 2000, "itpm": 200000, "otpm": 40000}}},
+        "scale": {"monthly_cap_usd": 200000, "models": {"opus": {"rpm": 10000, "itpm": 10000000, "otpm": 2000000}, "sonnet": {"rpm": 10000, "itpm": 10000000, "otpm": 2000000}, "haiku": {"rpm": 10000, "itpm": 10000000, "otpm": 2000000}, "fable": {"rpm": 4000, "itpm": 4000000, "otpm": 800000}, "haiku-3.5": {"rpm": 4000, "itpm": 400000, "otpm": 80000}}}
+      },
+      "batch_api": {"start": {"rpm": 1000, "max_in_queue": 200000}, "build": {"rpm": 2000, "max_in_queue": 300000}, "scale": {"rpm": 4000, "max_in_queue": 500000}},
+      "cold_floor": {"rpm": 1000, "itpm": 500000, "otpm": 100000},
+      "model_family_map": {"opus": ["claude-opus-4-5", "claude-opus-4-6", "claude-opus-4-7", "claude-opus-4-8"], "opus-5": ["claude-opus-5"], "opus-5.5": ["claude-opus-5-5"], "sonnet": ["claude-sonnet-4-5", "claude-sonnet-4-6"], "haiku": ["claude-haiku-4-5"], "haiku-3.5": ["claude-haiku-3-5"]}
+    },
+    "openai": {
+      "limit_scope": "per_model_per_org",
+      "cold_tier": "tier1",
+      "note": "Per-model rpm/tpm are account/dashboard-specific and ride x-ratelimit-limit-{tokens,requests} on every response; this account measured tpm=40000000 rpm=15000 (~tier4-5). cold_floor is a conservative seed used only until a header is seen.",
+      "header_names": {"tpm": "x-ratelimit-limit-tokens", "rpm": "x-ratelimit-limit-requests", "retry_after": "retry-after"},
+      "tier_qualification_usd": {"tier1": 5, "tier2": 50, "tier3": 100, "tier4": 250, "tier5": 1000},
+      "monthly_cap_usd": {"free": 100, "tier1": 100, "tier2": 500, "tier3": 1000, "tier4": 5000, "tier5": 200000},
+      "cold_floor": {"rpm": 500, "tpm": 200000}
+    },
+    "gemini": {"limit_scope": "per_model_per_tier", "note": "Public doc does not tabulate rpm/tpm/rpd (AI Studio dashboard); priority inference = 0.3x standard. Conservative floor; refine from headers.", "cold_floor": {"rpm": 150, "tpm": 1000000}},
+    "zai": {"limit_scope": "per_key", "note": "OpenAI-compatible; no public per-model table transcribed yet. Conservative floor; refine from headers.", "cold_floor": {"rpm": 60, "tpm": 200000}},
+    "moonshot": {"limit_scope": "per_key", "note": "Kimi/Moonshot, OpenAI-compatible; no public per-model table transcribed yet. Conservative floor; refine from headers.", "cold_floor": {"rpm": 60, "tpm": 200000}}
+  },
   "models": {
     "Qwen/Qwen2.5-14B-Instruct-AWQ": {
       "id": "Qwen/Qwen2.5-14B-Instruct-AWQ",
