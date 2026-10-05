@@ -107,6 +107,9 @@ class StormCoalescer:
         self._route_pool = ThreadPoolExecutor(max_workers=int(route_concurrency), thread_name_prefix="storm-route")
         self._batch_pool = ThreadPoolExecutor(max_workers=int(batch_concurrency), thread_name_prefix="storm-batch")
         self._inflight = []              # routing/batch futures, so close() can drain to completion (N:N on shutdown)
+        self._rt_reserved = []           # monotonic ts of realtime slots RESERVED in the rolling horizon (I20: reserve
+        #                                  realtime capacity ACROSS overlapping cohorts so a sustained fan overflows to
+        #                                  batch instead of getting a fresh full budget every cohort)
         # observability — honest, per-instance evidence the tests assert on (never spendguard's own logs)
         self.cohorts = 0
         self.realtime_served = 0
@@ -119,6 +122,39 @@ class StormCoalescer:
     def realtime_budget(self):
         """How many requests the sustainable rate can clear within the urgency horizon — the COMBO split point."""
         return max(1, int(self.sustainable_rate_per_s * self.horizon_s))
+
+    def _available_realtime(self):
+        """How much of the realtime budget is FREE right now, after subtracting realtime RESERVED by overlapping
+        cohorts in the last horizon (I20). A sustained fan therefore shares one budget-per-horizon across cohorts —
+        once it is spent, further cohorts route entirely to batch — instead of each cohort claiming a fresh full
+        budget (which would grow the realtime backlog unboundedly and never engage batch)."""
+        now = time.monotonic()
+        with self._lock:
+            self._rt_reserved = [t for t in self._rt_reserved if now - t < self.horizon_s]
+            return max(0, self.realtime_budget - len(self._rt_reserved))
+
+    def _reserve_realtime(self, n):
+        """SETUP/TEST helper only — unconditionally add `n` reservations. The HOT PATH must use _claim_realtime (which
+        checks-and-reserves atomically); a check-then-reserve against this would race two concurrent cohorts."""
+        if n <= 0:
+            return
+        now = time.monotonic()
+        with self._lock:
+            self._rt_reserved.extend([now] * int(n))
+
+    def _claim_realtime(self, n_requested):
+        """Atomically reserve up to `n_requested` realtime slots from the rolling-horizon budget; returns how many were
+        GRANTED (0..n_requested). ONE lock hold for prune+check+reserve, so two concurrent cohorts can NOT both observe
+        the same free capacity and each claim it (the I20 check-then-reserve TOCTOU) — aggregate realtime across
+        overlapping cohorts stays ≤ budget per horizon, so a sustained fan's overflow diverts to batch."""
+        now = time.monotonic()
+        with self._lock:
+            self._rt_reserved = [t for t in self._rt_reserved if now - t < self.horizon_s]
+            avail = max(0, self.realtime_budget - len(self._rt_reserved))
+            grant = min(max(0, int(n_requested)), avail)
+            if grant:
+                self._rt_reserved.extend([now] * grant)
+            return grant
 
     # ── submission ────────────────────────────────────────────────────────────────────────────────────────────
     def submit_request(self, req):
@@ -198,9 +234,9 @@ class StormCoalescer:
     def _route_cohort(self, cohort):
         with self._lock:
             self.cohorts += 1
-        budget = self.realtime_budget
-        realtime = cohort[:budget]
-        overflow = list(cohort[budget:])
+        grant = self._claim_realtime(len(cohort))                  # I20: ATOMIC check-and-reserve (no cross-cohort TOCTOU)
+        realtime = cohort[:grant]
+        overflow = list(cohort[grant:])
         try:
             rt_reroute = self._run_realtime_paced(realtime)         # paced; returns items to re-route to batch (429 or error)
         except BaseException as e:                                  # e.g. realtime pool shut down during close — never strand

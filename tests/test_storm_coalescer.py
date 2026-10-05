@@ -252,6 +252,56 @@ ck("I4b realtime raise + error both reroute to batch, all 20 served, siblings fi
    ok_n == 20 and res[3].get("served_via") == "batch" and res[7].get("served_via") == "batch",
    extra="ok=%d/20 canary3_via=%s canary7_via=%s" % (ok_n, res[3].get("served_via"), res[7].get("served_via")))
 
+# ── close() bounded-drain SURFACES abandonment on a hung batch (coding:python finding — never a silent timeout-cap) ─
+print("-- close() bounded: a hung batch is abandoned VISIBLY (close_abandoned), not a silent hang --")
+fp = H.FakeProvider(cap=100000, window_s=1.0)
+_hang_gate = threading.Event()
+def _hang_batch(items):
+    _hang_gate.wait(timeout=30)                          # released at the end; simulates a batch that never finishes in time
+    return {cid: {"text": "late", "status_code": 200} for cid, _ in items}
+c = StormCoalescer(execute_realtime=_rt(fp), execute_batch=_hang_batch,
+                   sustainable_rate_per_s=5, horizon_s=1.0, provider="anthropic")   # budget 5, N 20 → 15 overflow hangs
+c.submit_all(["do %s" % H.canary(i) for i in range(20)])
+_t = time.monotonic()
+c.close(wait=True, drain_timeout_s=0.5)                  # hung batch → bounded drain → abandon VISIBLY
+_close_s = time.monotonic() - _t
+_hang_gate.set()                                         # release the hung worker for a clean exit
+ck("close() bounded: hung batch ABANDONED visibly (close_abandoned>=1) and close returns bounded, not a hang",
+   c.close_abandoned >= 1 and _close_s < 5.0, extra="close_abandoned=%d close_s=%.2f" % (c.close_abandoned, _close_s))
+
+# ── I20 — realtime reserved ACROSS cohorts: a sustained fan overflows to batch, not budget-sized all-realtime ──
+print("-- I20 cohort reservation: the realtime budget is shared across the horizon (sustained fan -> batch) --")
+fp = H.FakeProvider(cap=100000, window_s=1.0)
+c = StormCoalescer(execute_realtime=_rt(fp), execute_batch=_batch(fp),
+                   sustainable_rate_per_s=40, horizon_s=3.0, provider="anthropic")   # budget 120
+fresh = c._available_realtime()
+c._reserve_realtime(c.realtime_budget)
+spent = c._available_realtime()
+c._reserve_realtime(50)                                          # over-reserve → still 0 (capped, not negative)
+capped = c._available_realtime()
+c._rt_reserved = [time.monotonic() - c.horizon_s - 1] * 200      # age all reservations out of the window
+expired = c._available_realtime()
+ck("I20 reservation math: fresh==budget, full→0, capped at 0, expired→budget",
+   fresh == c.realtime_budget and spent == 0 and capped == 0 and expired == c.realtime_budget,
+   extra="fresh=%d spent=%d capped=%d expired=%d budget=%d" % (fresh, spent, capped, expired, c.realtime_budget))
+c._rt_reserved = [time.monotonic()] * c.realtime_budget          # budget fully reserved NOW (a prior cohort's claim)
+res = _results(c.submit_all(["do %s" % H.canary(i) for i in range(20)]))
+c.close()
+ck("I20 sustained: budget already reserved → the cohort overflows ENTIRELY to batch (0 realtime, not a fresh budget)",
+   c.realtime_served == 0 and c.batch_served == 20 and all(r.get("served_via") == "batch" for r in res),
+   extra="rt_served=%d batch_served=%d" % (c.realtime_served, c.batch_served))
+
+# ── I20 atomicity: concurrent cohorts claiming realtime must NOT over-grant (the check-then-reserve TOCTOU fix) ─
+print("-- I20 atomic claim: concurrent claims never exceed the budget in total --")
+fp = H.FakeProvider(cap=100000, window_s=1.0)
+c = StormCoalescer(execute_realtime=_rt(fp), execute_batch=_batch(fp),
+                   sustainable_rate_per_s=40, horizon_s=3.0, provider="anthropic")   # budget 120
+with cf.ThreadPoolExecutor(max_workers=16) as ex:
+    grants = list(ex.map(lambda _: c._claim_realtime(c.realtime_budget), range(16)))  # 16 threads each want the full budget
+c.close()
+ck("I20 atomic: 16 concurrent full-budget claims grant <= budget TOTAL (no TOCTOU over-grant)",
+   sum(grants) <= c.realtime_budget, extra="total_granted=%d budget=%d" % (sum(grants), c.realtime_budget))
+
 # ── I14 — chunk coverage: slices cover the overflow exactly, no overlap, no dropped tail ──────────────────────
 print("-- I14 chunks cover overflow exactly (union==overflow, no overlap) --")
 c = StormCoalescer(execute_realtime=lambda r: {}, execute_batch=lambda rs: [{} for _ in rs],

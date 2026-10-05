@@ -211,19 +211,22 @@ replay). Fixed to the repo's race-safe attempt-and-swallow pattern (bulkgate.py:
   separate slow+billed validation.)
 - ✅ **(I16) deadline→typed backpressure — DONE in submit_storm:** `collect_timeout_s` → a hung/slow batch surfaces as
   `served_via='backpressure'`, never an indefinite block (`tests/test_storm_submit.py`).
-- ⚙️ **(4b) both doors — MECHANISM wired, FLAGGED OFF (`SPENDGUARD_STORM_COALESCE`, default off).** `storm_route.py`
-  routes a labelled `adapters.call` through a shared coalescer keyed by (vendor,model,intent,reasoning,system);
-  adapters.py:~1058 is the seam; recursion-guarded by `_route=False`. Mechanism proven:
-  `tests/test_storm_route_mechanism.py` (flag toggles direct-vs-coalesced; N→N; 0 surfaced 429; demux). **GATE ON
-  ENABLING 4b = I20:** the cohort is cut AT `realtime_budget`, so a SUSTAINED raw fan is chopped into budget-sized
-  all-realtime cohorts that never overflow to batch (latency/backlog grows; batch never engages). Enabling 4b needs the
-  I20 cohort-reservation fix (reserve realtime capacity across overlapping cohorts within the horizon). Until then 4b
-  stays dark; the raw door still has SAFETY from the wired xp_rate limiter (0 surfaced 429).
-- 🔜 **(3) durable idempotency / crash-resume (I13/I22).** submit_storm's cohort/futures are IN-MEMORY — a SIGKILL
-  mid-batch still loses in-flight work + risks a double-submit. Move the cohort + disposition onto `lane_queue`
-  (durable, cross-process) with an idempotency key on batch submit + reattach-on-restart. id-keyed demux is done;
-  durable resume is not.
-- 🔜 **(I20) cohort reservation across the horizon** — the gate on turning 4b on (above).
+- ✅ **(I20) cohort reservation across the horizon — DONE.** The coalescer tracks realtime RESERVED in a rolling
+  horizon and a new cohort's realtime share = `budget − reserved`, so a SUSTAINED fan shares one budget-per-horizon
+  across cohorts (overflow → batch) instead of each cohort claiming a fresh full budget. Guard:
+  `tests/test_storm_coalescer.py` I20 (reservation math + a pre-reserved cohort overflowing entirely to batch).
+- ✅ **(4b) both doors — MECHANISM + COMBO proven; flag STILL DEFAULT-OFF pending a live validation.** `storm_route.py`
+  routes a labelled `adapters.call` through a shared coalescer keyed by (vendor,model,intent,reasoning,system) at the
+  adapters.py:~1058 seam (recursion-guarded by `_route=False`). `tests/test_storm_route_mechanism.py` proves routing
+  (flag toggles; N→N; 0 surfaced 429; demux). `tests/test_storm_route_both_doors.py` proves the COMBO through the RAW
+  door, 3× deterministic (realtime=budget 40 + batch 60, 0 surfaced 429, demux) — now reliable because of I20. The
+  flag (`SPENDGUARD_STORM_COALESCE`) stays DEFAULT-OFF: enabling it process-wide is a rollout decision that wants a
+  LIVE both-doors validation first (real provider, real Batch API). Until then the raw door keeps SAFETY from the
+  wired xp_rate limiter (0 surfaced 429), and the combo is one env var away.
+- 🔜 **(3) durable idempotency / crash-resume (I13/I22) — the last piece.** submit_storm's cohort/futures are
+  IN-MEMORY — a SIGKILL mid-batch still loses in-flight work + risks a double-submit. Move the cohort + disposition
+  onto `lane_queue` (durable, cross-process) with an idempotency key on batch submit + reattach-on-restart. id-keyed
+  demux is done; durable resume is not.
 
 ## The fix (in dependency order)
 - **A. Submission-scale batch-diversion (PRIMARY).** In the fan planner (`whole_job`/`bulk_delegate` via `route_horizon`,
