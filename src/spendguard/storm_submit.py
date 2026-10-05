@@ -14,6 +14,7 @@ collect_message_batch). A caller passes its own only to override (e.g. the accep
 one). The caller's blocked-thread risk is bounded by submit_storm's `collect_timeout_s` (a multi-hour batch ETA becomes
 typed backpressure, not a hang), independent of how long the batch worker itself polls. realtime rides the real
 governed metered path here (adapters.call → dispatch.admit → the cross-process rate window → _call_guarded)."""
+import sys
 import time
 from concurrent.futures import TimeoutError as FuturesTimeout
 
@@ -102,6 +103,57 @@ def default_batch_executor(model, intent, system=None, reasoning="minimal", poll
                             "error": "batch poll ceiling (max_poll_s=%.0fs) reached — request still pending" % max_poll_s}
         return res
     return _execute_batch
+
+
+def durable_batch_executor(model, intent, batch_model=None, poll_interval_s=2.0, max_poll_s=86400.0):
+    """3 — a CRASH-RESUMABLE, EXACTLY-ONCE batch executor (the durable alternative to default_batch_executor's in-memory
+    submit+poll). Per cohort: enqueue the items as durable lane_queue rows, offload them via batch_tracker.submit_offload
+    (EXACTLY-ONCE: a crash-retry of the same rows ADOPTS the existing provider batch, never double-submits), then poll
+    lane_queue.collect_batched until the rows settle and return {custom_id: result}. The batch_id is durably recorded ON
+    the rows at submit, so a SIGKILL mid-batch loses nothing: the rows persist (sqlite) and a restart/drain reconciles
+    them (collect_batched reattaches by the stored handle) — no dropped request, no double-spend. `batch_model` defaults
+    to `model` (must be a batch-capable openai/anthropic model). Durable enqueue unavailable → honest NON-durable
+    fallback to default_batch_executor (loud, never a silent downgrade)."""
+    from . import lane_queue as _lq, batch_tracker as _bt
+    bm = batch_model or model
+
+    def _run_durable_batch(items):
+        items = list(items)
+        if not items:
+            return {}
+        row_ids = _lq._enqueue_leased(intent, [p for _c, p in items], sla_class="batch")
+        if len(row_ids) != len(items):
+            print("[spendguard] durable_batch_executor: durable enqueue unavailable — falling back to the in-memory "
+                  "(NON-crash-resumable) batch executor for this cohort.", file=sys.stderr)
+            return default_batch_executor(model, intent)(items)
+        cid_by_row = {rid: cid for rid, (cid, _p) in zip(row_ids, items)}
+        rows = [{"id": rid, "task": p} for rid, (_c, p) in zip(row_ids, items)]
+        off = _bt.submit_offload(intent, rows, bm)                   # exactly-once: adopt-or-submit + mark queued_batch
+        if not off.get("batch_id"):
+            err = off.get("error") or "offload produced no batch_id"
+            for rid in row_ids:
+                _lq.settle(rid, {"error": "offload: %s" % err})      # don't leave rows stuck; surface per-item
+            return {cid: {"text": None, "status_code": None, "error": "offload: %s" % err} for cid in cid_by_row.values()}
+        results, pending, t0 = {}, set(row_ids), time.monotonic()
+        while pending and (time.monotonic() - t0) < max_poll_s:
+            _lq.collect_batched(model=bm)                            # settle queued_batch rows from the provider batch
+            try:
+                rr = _lq.row_results(list(pending))
+            except Exception:
+                rr = {}                                              # transient read failure THIS round → retry next poll
+                #                                                      (never settle/ceiling on a read hiccup; a persistent
+                #                                                      failure for the whole window still surfaces as backpressure)
+            for rid, info in rr.items():
+                if info["state"] in ("done", "failed"):
+                    results[cid_by_row[rid]] = info["result"]
+                    pending.discard(rid)
+            if pending:
+                time.sleep(poll_interval_s)
+        for rid in pending:                                          # poll ceiling → typed backpressure (no silent drop)
+            results[cid_by_row[rid]] = {"text": None, "status_code": None, "served_via": "batch_pending",
+                                        "error": "durable batch poll ceiling (max_poll_s=%.0fs) — still pending" % max_poll_s}
+        return results
+    return _run_durable_batch
 
 
 def submit_storm(tasks, intent, model, execute_batch=None, deadline_s=30.0, system=None, reasoning="minimal",

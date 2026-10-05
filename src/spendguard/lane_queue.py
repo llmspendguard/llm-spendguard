@@ -318,6 +318,28 @@ def settle(row_id, result):
         return False
 
 
+def row_results(row_ids):
+    """Read the current (state, parsed result) for a set of rows by id — the durable read the storm batch executor
+    polls after collect_batched settles. Returns {id: {"state": state, "result": {...}}} for the rows FOUND (empty if
+    none). A read failure PROPAGATES (not swallowed to {}) — a swallowed DB error would be indistinguishable from 'row
+    not yet settled' and could become a FALSE poll-ceiling; the caller must see the failure and retry. Only a corrupt
+    result JSON is tolerated (that one row's result is {}), since that is per-row, not a read failure."""
+    ids = [int(r) for r in (row_ids or [])]
+    if not ids:
+        return {}
+    out = {}
+    with _queue_op() as c:
+        rows = c.execute("SELECT id, state, result FROM lane_queue WHERE id IN (%s)" % ",".join("?" * len(ids)),
+                         ids).fetchall()
+    for rid, state, rjson in rows:
+        try:
+            res = json.loads(rjson) if rjson else {}
+        except (ValueError, TypeError):
+            res = {}
+        out[rid] = {"state": state, "result": res}
+    return out
+
+
 def mark_batched(row_ids, batch_id, batch_model=None):
     """Move leased rows to the 'queued_batch' state, recording the batch handle (batch_id + model) so collect_batched
     can settle them later BY custom_id (== row id). Called by the drain OFFLOAD path right after submit_chat_tasks
@@ -441,19 +463,24 @@ def collect_batched(limit=2000, model=None):
         if batch_id in (res.get("not_ready") or []):
             out["not_ready"] += len(ids)
             continue                                   # output not ready → rows stay queued_batch, re-collected next round
-        results, failed = (res.get("results") or {}), (res.get("failed") or {})
+        # KEY TYPE: a row id is an int, but custom_id round-trips through the Batch API as a STRING (submit coerces it),
+        # so the collector returns STRING-keyed results. Match on str(rid) so an int row id finds its str-keyed result —
+        # without this, real offloaded rows never settle (they sit queued_batch forever). Coerce both maps once.
+        results = {str(k): v for k, v in (res.get("results") or {}).items()}
+        failed = {str(k): v for k, v in (res.get("failed") or {}).items()}
         for rid in ids:
-            if rid in results:
+            _k = str(rid)
+            if _k in results:
                 # count done/collected ONLY when settle actually recorded it — a transient settle failure returns
                 # falsy, and counting it would report the row collected while it stays queued_batch (F1). An un-settled
                 # row is NAMED and stays queued_batch → re-collected next round (never lost, never over-reported).
-                if settle(rid, {"text": results[rid], "lane": "batch"}):  # → done(text)
+                if settle(rid, {"text": results[_k], "lane": "batch"}):   # → done(text)
                     out["done"] += 1
                     out["collected"] += 1
                 else:
                     out["collect_errors"].append({"batch_id": batch_id, "row": rid, "error": "settle failed — stays queued_batch"})
-            elif rid in failed:
-                if settle(rid, {"error": failed[rid]}):                   # → the normal retry/failed ladder
+            elif _k in failed:
+                if settle(rid, {"error": failed[_k]}):                    # → the normal retry/failed ladder
                     out["failed"] += 1
                     out["collected"] += 1
                 else:

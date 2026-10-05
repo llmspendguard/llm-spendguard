@@ -223,10 +223,17 @@ replay). Fixed to the repo's race-safe attempt-and-swallow pattern (bulkgate.py:
   flag (`SPENDGUARD_STORM_COALESCE`) stays DEFAULT-OFF: enabling it process-wide is a rollout decision that wants a
   LIVE both-doors validation first (real provider, real Batch API). Until then the raw door keeps SAFETY from the
   wired xp_rate limiter (0 surfaced 429), and the combo is one env var away.
-- 🔜 **(3) durable idempotency / crash-resume (I13/I22) — the last piece.** submit_storm's cohort/futures are
-  IN-MEMORY — a SIGKILL mid-batch still loses in-flight work + risks a double-submit. Move the cohort + disposition
-  onto `lane_queue` (durable, cross-process) with an idempotency key on batch submit + reattach-on-restart. id-keyed
-  demux is done; durable resume is not.
+- ✅ **(3) durable idempotency / crash-resume (I13/I22) — DONE.** `storm_submit.durable_batch_executor` runs the
+  combo's batch half on `lane_queue` (durable rows) + `batch_tracker.submit_offload` (EXACTLY-ONCE — a crash-retry of
+  the same rows ADOPTS the existing provider batch, never double-submits), then polls `lane_queue.collect_batched` +
+  reads results via the new `lane_queue.row_results`. The batch_id is durably recorded on the rows at submit, so a
+  SIGKILL mid-batch loses nothing: the rows persist (sqlite) and a restart reconciles them. Proven by
+  `tests/test_durable_batch_executor.py` incl. a REAL `kill -9` (the worker enqueues+offloads then SIGKILLs itself
+  before collecting; the parent recovers ALL N from the durable store, batch created EXACTLY ONCE — no double-spend,
+  no dropped request). Also fixed a real latent bug this exposed: `collect_batched` compared int row ids against the
+  collector's STRING custom_id keys → offloaded rows never settled; now matched on `str(rid)` (helps the whole
+  autobatch path, not just the storm). The in-memory `default_batch_executor` (4a) remains the fast default;
+  `durable_batch_executor` is the crash-resumable one for when that matters.
 
 ## The fix (in dependency order)
 - **A. Submission-scale batch-diversion (PRIMARY).** In the fan planner (`whole_job`/`bulk_delegate` via `route_horizon`,
