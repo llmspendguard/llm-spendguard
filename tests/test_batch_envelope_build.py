@@ -77,6 +77,13 @@ fails += report_check("older gpt- gets the model's real start-high ceiling, IDEN
                       "gpt-4o-mini's is 16384, its published max, honestly BELOW the 32K floor (a published max may be lower)",
                       all(int(r["body"]["max_tokens"]) == _ob4 for r in rows4))
 
+print("\n-- a PROVIDER-PREFIXED openai id is STRIPPED to the bare id the Batch API accepts (the batch-404 bug) --")
+builtp, _ = submit.build_chat_batch_jsonl(tasks_p, "openai:gpt-5.6-luna", system="t")
+rowsp = _read_built(builtp)
+os.unlink(builtp)
+fails += report_check("provider-prefixed 'openai:gpt-5.6-luna' → body.model is the bare 'gpt-5.6-luna' (unstripped would be the 'openai:gpt-5.6-luna' that 404s)",
+                      all(r["body"]["model"] == "gpt-5.6-luna" for r in rowsp))
+
 print("\n-- fail-closed: a non-OpenAI model and a malformed task are REFUSED, never a silent drop --")
 _refused_model = False
 try:

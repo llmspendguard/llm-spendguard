@@ -209,7 +209,9 @@ def build_chat_batch_jsonl(tasks_path, model, system=None, max_out=None, reasoni
                 t_name = task.get("schema_name", schema_name)
                 msgs = ([{"role": "system", "content": t_system}] if t_system else []) + \
                        [{"role": "user", "content": content}]
-                body = {"model": model, "max_tokens": out_cap, "messages": msgs}
+                raw_model = model.split(":", 1)[1] if ":" in model else model   # vendor API takes the BARE id; the full
+                #   'openai:…' id 404s — the SAME strip every realtime path does. apply_call_params gets the FULL id.
+                body = {"model": raw_model, "max_tokens": out_cap, "messages": msgs}
                 models.apply_call_params(model, body, dialect="openai")   # tokens_param (max_tokens vs max_completion_tokens)
                 if _eff is None:
                     body.pop("reasoning_effort", None)   # endpoint takes no accepted effort → OMIT (model default)
@@ -410,7 +412,10 @@ def build_message_batch_requests(tasks, model, *, system=None, max_out=None, sch
         if content is None:
             raise ValueError('each batch task must be a prompt string or a {"custom_id","content"[,…]} object; '
                              'got one with no "content"')
-        params = {"model": model, "max_tokens": out_cap, "messages": [{"role": "user", "content": str(content)}]}
+        raw_model = model.split(":", 1)[1] if ":" in model else model   # the vendor API takes the BARE id; the full
+        #   spendguard id ('anthropic:claude-haiku-4-5') 404s as a model name — the SAME strip every realtime path does
+        #   (adapters._call_once). apply_call_params below still receives the FULL id for its fact/pricing lookups.
+        params = {"model": raw_model, "max_tokens": out_cap, "messages": [{"role": "user", "content": str(content)}]}
         if t_system:
             params["system"] = t_system        # Anthropic: system is a TOP-LEVEL param, not a system-role message
         models.apply_call_params(model, params, dialect="anthropic")

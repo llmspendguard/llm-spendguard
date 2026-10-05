@@ -69,6 +69,12 @@ def main():
     ck("schema → params carries forced tool `tools`", isinstance(sp.get("tools"), list) and bool(sp["tools"]), sp.get("tools"))
     ck("schema → params carries `tool_choice`", bool(sp.get("tool_choice")), sp.get("tool_choice"))
 
+    # 1b) a PROVIDER-PREFIXED model id is STRIPPED to the bare id the vendor API accepts — the batch-404 bug:
+    #     'anthropic:claude-haiku-4-5' reached the API verbatim and every request 404'd. Realtime strips it; batch must too.
+    preqs, _ = submit.build_message_batch_requests(["hi"], "anthropic:" + MODEL)
+    ck("provider-prefixed model → params.model is the bare id (unstripped would be 'anthropic:...', the 404)",
+       preqs[0]["params"]["model"] == MODEL, preqs[0]["params"].get("model"))
+
     # 2) non-Anthropic model → clear error, no raise
     r = submit.submit_message_batch(["x"], "gpt-5.5", submit=False)
     ck("non-anthropic model → error (not a raise)", bool(r.get("error")) and "Anthropic-only" in r["error"], r.get("error"))
