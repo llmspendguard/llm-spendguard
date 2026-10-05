@@ -413,6 +413,15 @@ def effective_limits(vendor, model=None):
     return {"rpm": rpm, "tpm": tpm, "source": source or "unpaced"}
 
 
+def rate_per_s(vendor, model=None):
+    """The vendor's sustainable realtime requests/second = effective rpm / 60 — the ONE place that conversion lives
+    (the storm combo sizes its realtime budget from it). None when no rpm is known (an unpaced $0 lane / uncurated
+    vendor); the CALLER chooses the policy for 'unknown' — storm_route declines to coalesce (None → direct path),
+    submit_storm raises (it cannot size a budget without it). Never raises."""
+    rpm = int((effective_limits(vendor, model) or {}).get("rpm") or 0)
+    return (rpm / 60.0) if rpm > 0 else None
+
+
 def learned_limits(vendor=None):
     """The learned per-vendor limits, for observability / a receipt / a test: one vendor's {tpm,rpm,source,ts}, or the
     whole map when vendor is None."""

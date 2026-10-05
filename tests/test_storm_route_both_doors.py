@@ -57,7 +57,7 @@ col = H.CallerCollector()
 try:
     with cf.ThreadPoolExecutor(max_workers=N) as ex:                 # the raw implicit fan (what honestreview did)
         out = list(ex.map(lambda i: adapters.call(MODEL, "do %s" % H.canary(i), intent="acc:4b-combo",
-                                                  sig="acc:4b-combo"), range(N)))
+                                                  sig="acc:4b-combo", metered_only=True), range(N)))   # 4b gates on metered_only
     for r in out:
         col.record(r)
 finally:

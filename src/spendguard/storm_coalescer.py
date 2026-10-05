@@ -156,6 +156,13 @@ class StormCoalescer:
                 self._rt_reserved.extend([now] * grant)
             return grant
 
+    def is_idle(self):
+        """True iff nothing is queued AND no routing/batch future is still running — i.e. close() would abandon no
+        work. storm_route reads this before evicting a coalescer whose call-shape has gone quiet, so eviction can never
+        strand an in-flight cohort. Checked under the same lock submit_request/_route_cohort mutate _queue/_inflight."""
+        with self._lock:
+            return not self._queue and not any(not f.done() for f in self._inflight)
+
     # ── submission ────────────────────────────────────────────────────────────────────────────────────────────
     def submit_request(self, req):
         """Enqueue one request; returns a Future resolved EXACTLY ONCE with its result dict. Thread-safe; lazily starts
@@ -167,7 +174,10 @@ class StormCoalescer:
             p = _Pending(req, self._seq)
             self._seq += 1
             self._queue.append(p)
-            if self._planner is None:
+            # Start the planner lazily, and RESTART it if a prior one died unexpectedly (is_alive() False while _stop is
+            # still False) — otherwise a crashed planner would leave this and every later arrival stranded in _queue
+            # with nothing to drain it. (_stop was checked above, so a not-alive planner here means an unexpected exit.)
+            if self._planner is None or not self._planner.is_alive():
                 self._planner = threading.Thread(target=self._plan_loop, name="storm-planner", daemon=True)
                 self._planner.start()
             self._cond.notify()
@@ -191,9 +201,16 @@ class StormCoalescer:
                     self._inflight.append(fut)
             except BaseException:
                 # the planner must NEVER die silently and strand pending futures (e.g. route pool shut down in a close
-                # race). Resolve whatever it just drained, then exit — close() has set _stop, or the pool is gone.
-                if cohort:
-                    self._resolve_error(cohort, "planner stopped")
+                # race, or a drain-loop fault). Resolve whatever it just drained AND anything still queued (an exception
+                # inside _drain_cohort leaves the arrivals in _queue, never assigned to a cohort), then exit — close()
+                # has set _stop, or a fresh planner restarts on the next submit_request (which also recovers the queue).
+                stranded = list(cohort) if cohort else []
+                with self._lock:
+                    if self._queue:
+                        stranded += self._queue
+                        self._queue = []
+                if stranded:
+                    self._resolve_error(stranded, "planner stopped")
                 return
 
     def _drop_inflight(self, fut):

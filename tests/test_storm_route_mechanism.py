@@ -1,8 +1,9 @@
-"""4b — the ROUTING MECHANISM (flagged, default OFF). Proves that SPENDGUARD_STORM_COALESCE routes a labelled
-adapters.call through the shared storm coalescer (the implicit-fan door), that it is a no-op when OFF, and that a
-concurrent labelled fan returns N->N with zero surfaced 429s. This test deliberately stays BELOW the realtime budget
-so it exercises routing + pacing WITHOUT the batch path — the pace+batch COMBO under a *sustained* raw fan needs the
-I20 cohort-reservation fix (see docs/PLAN_429_storm_to_batch.md), which is why 4b ships flagged OFF. Offline ($0):
+"""4b — the ROUTING MECHANISM. Proves that SPENDGUARD_STORM_COALESCE routes a labelled adapters.call through the shared
+storm coalescer (the implicit-fan door), that it is a no-op when the kill switch (=0) is set, and that a concurrent
+labelled fan returns N->N with zero surfaced 429s. 4b is ON by default now; this test pins the flag EXPLICITLY (="0"
+then "1") for determinism rather than relying on the ambient default. It deliberately stays BELOW the realtime budget
+so it exercises routing + pacing WITHOUT the batch path (the pace+batch COMBO under a sustained raw fan is proven in
+test_storm_route_both_doors, and the explicit-fan opt-out in test_storm_route_explicit_fan_optout). Offline ($0):
 realtime rides the governed path to the FakeProvider wall.
 """
 import concurrent.futures as cf
@@ -39,7 +40,8 @@ def _fan(n):
     """Fire n concurrent labelled adapters.call (the implicit-fan shape) and collect (result, surfaced_429)."""
     col = H.CallerCollector()
     with cf.ThreadPoolExecutor(max_workers=n) as ex:
-        out = list(ex.map(lambda i: adapters.call(MODEL, "do %s" % H.canary(i), intent="acc:4b", sig="acc:4b"), range(n)))
+        out = list(ex.map(lambda i: adapters.call(MODEL, "do %s" % H.canary(i), intent="acc:4b", sig="acc:4b",
+                                                  metered_only=True), range(n)))   # 4b gates on metered_only
     for r in out:
         col.record(r)
     return out, col

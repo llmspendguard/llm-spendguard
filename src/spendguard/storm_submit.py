@@ -23,25 +23,27 @@ from .storm_coalescer import StormCoalescer
 
 
 def sustainable_rate_per_s(provider, model):
-    """The vendor's sustainable realtime requests/second = published rpm / 60 (from the catalog cold-cap / config /
-    learned limits, via dispatch.effective_limits). Raises if unknown — the combo cannot size a realtime budget
-    without it, and guessing is exactly the kind of invented number this project forbids (seed the catalog cold cap)."""
-    el = dispatch.effective_limits(provider, model) or {}
-    rpm = int(el.get("rpm") or 0)
-    if rpm <= 0:
+    """The vendor's sustainable realtime requests/second (dispatch.rate_per_s — the single rpm/60 resolver). RAISES if
+    unknown: the combo cannot size a realtime budget without it, and guessing is exactly the kind of invented number
+    this project forbids (seed the catalog cold cap). storm_route's router takes the opposite policy (None → decline)."""
+    r = dispatch.rate_per_s(provider, model)
+    if r is None:
         raise ValueError("no rpm known for %s:%s (source=%s) — seed the catalog cold cap before storm-submitting"
-                         % (provider, model, el.get("source")))
-    return rpm / 60.0
+                         % (provider, model, (dispatch.effective_limits(provider, model) or {}).get("source")))
+    return r
 
 
-def _realtime_executor(model, system, reasoning, intent, deadline_s):
-    """A governed metered realtime call. Rides the REAL admission path (dispatch.admit → the cross-process rate window
-    → _call_guarded), metered (skip the $0 lane), never substituted, and `_route=False` so it does NOT re-enter the
-    queue-record path (the same flag bulk_delegate sets for already-governed work) — no recursion."""
+def governed_realtime_executor(model, system, reasoning, intent, timeout_s):
+    """The ONE governed metered realtime executor BOTH storm doors use (submit_storm's realtime leg and storm_route's
+    4b re-entry): a prompt->result callable that rides the REAL admission path (dispatch.admit → the cross-process rate
+    window → _call_guarded), metered (skip the $0 lane), never substituted, and OUT of both re-entrant paths —
+    `_route=False` (no queue-record recursion) and `_coalesce_eligible=False` (no 4b re-coalescing: the caller IS the
+    explicit fan / the coalescer's own leg). submit_storm sizes `timeout_s` from its deadline, storm_route from its
+    horizon — the only axis that differs, so it is the one parameter."""
     def _run_governed_realtime(prompt):
         return adapters.call(model, prompt, system=system, reasoning=reasoning, sig=intent,
                              metered_only=True, governed=True, no_substitution=True,
-                             _route=False, timeout_s=deadline_s)
+                             _route=False, _coalesce_eligible=False, timeout_s=timeout_s)
     return _run_governed_realtime
 
 
@@ -176,7 +178,7 @@ def submit_storm(tasks, intent, model, execute_batch=None, deadline_s=30.0, syst
         execute_batch = default_batch_executor(model, intent, system=system, reasoning=reasoning)
     rate = sustainable_rate_per_s(provider, model)
     coalescer = StormCoalescer(
-        execute_realtime=_realtime_executor(model, system, reasoning, intent, deadline_s),
+        execute_realtime=governed_realtime_executor(model, system, reasoning, intent, deadline_s),
         execute_batch=execute_batch, sustainable_rate_per_s=rate, horizon_s=deadline_s,
         realtime_concurrency=max_workers, idle_gap_s=idle_gap_s, max_wait_s=max_wait_s, provider=provider)
     _pf = prompt_for if callable(prompt_for) else (lambda t: t)

@@ -59,12 +59,11 @@ PRIORITY_INTERACTIVE = 10       # a `delegate(enqueue=True)` task the caller wan
 
 
 def _qcfg(name, default):
-    """A numeric advisor.* knob, defaulted — every queue parameter is CONFIG, never a hardcoded magic number."""
-    try:
-        v = config._cfg_get("advisor", name, None)
-        return type(default)(v) if v is not None else default
-    except (TypeError, ValueError):
-        return default
+    """A numeric advisor.* queue knob, defaulted — every queue parameter is CONFIG, never a hardcoded magic number.
+    Delegates to the ONE advisor-knob reader (config.advisor_num), coerced to the default's declared type (int or
+    float), so there is no second copy of the read / None / bad-value logic (an explicit 0 is honored; a bad value →
+    the default)."""
+    return config.advisor_num(name, default)
 
 
 def _utcnow():
@@ -319,24 +318,33 @@ def settle(row_id, result):
 
 
 def row_results(row_ids):
-    """Read the current (state, parsed result) for a set of rows by id — the durable read the storm batch executor
-    polls after collect_batched settles. Returns {id: {"state": state, "result": {...}}} for the rows FOUND (empty if
-    none). A read failure PROPAGATES (not swallowed to {}) — a swallowed DB error would be indistinguishable from 'row
-    not yet settled' and could become a FALSE poll-ceiling; the caller must see the failure and retry. Only a corrupt
-    result JSON is tolerated (that one row's result is {}), since that is per-row, not a read failure."""
+    """Read the current (state, parsed result, AND the originating request) for a set of rows by id — the durable read
+    the storm batch executor polls after collect_batched settles. Returns {id: {"state": state, "result": {...},
+    "task": <prompt str>, "system": <system str|None>}} for the rows FOUND (empty if none).
+
+    WHY `task`/`system` are returned, not just the result: a reply can be meaningless WITHOUT the request that produced
+    it — the classic case is an ORDINAL-into-a-candidate-list answer ("2" means candidates[2]), which is unparseable
+    unless the exact candidate list (carried in the prompt) is still available at COLLECTION time. Collection happens
+    hours later and may be a FRESH process whose in-memory custom_id→candidates map is gone, so the prompt must come
+    back FROM THE DURABLE ROW. It is persisted at submit (lane_queue.task, written by _enqueue_leased), and surfacing it
+    here lets the result and its parsing context travel together — the durable read is self-describing.
+
+    A read failure PROPAGATES (not swallowed to {}) — a swallowed DB error would be indistinguishable from 'row not yet
+    settled' and could become a FALSE poll-ceiling; the caller must see the failure and retry. Only a corrupt result
+    JSON is tolerated (that one row's result is {}), since that is per-row, not a read failure."""
     ids = [int(r) for r in (row_ids or [])]
     if not ids:
         return {}
     out = {}
     with _queue_op() as c:
-        rows = c.execute("SELECT id, state, result FROM lane_queue WHERE id IN (%s)" % ",".join("?" * len(ids)),
-                         ids).fetchall()
-    for rid, state, rjson in rows:
+        rows = c.execute("SELECT id, state, result, task, system FROM lane_queue WHERE id IN (%s)"
+                         % ",".join("?" * len(ids)), ids).fetchall()
+    for rid, state, rjson, task, system in rows:
         try:
             res = json.loads(rjson) if rjson else {}
         except (ValueError, TypeError):
             res = {}
-        out[rid] = {"state": state, "result": res}
+        out[rid] = {"state": state, "result": res, "task": task, "system": system}
     return out
 
 

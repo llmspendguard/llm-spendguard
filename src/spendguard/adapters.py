@@ -747,7 +747,7 @@ def _returns_callresult(fn):
 def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,
          sig=None, intent=None, retries=2, files=None, _no_guard=False, no_metered_fallback=False, images=None,
          no_substitution=False, measurement=False, metered_only=False, base_fallback=None, _probe=False, _route=True,
-         _internal_pin=False, **aliases):
+         _internal_pin=False, _coalesce_eligible=True, **aliases):
     """Run one prompt against one model. Returns a CallResult (never raises).
 
     A CallResult IS a dict — every `r["text"]` / `r.get(...)` works unchanged — that ALSO exposes its keys as
@@ -1056,12 +1056,21 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     _t_conn0 = aliases.pop("_t_conn0", None) or time.time()   # twin of the fan re-admit loop); _t_conn0 bounds it by deadline
     _adm = None
     # 4b — route an IMPLICIT concurrent fan (many independent labelled adapters.call at one vendor — the actual
-    # 429-storm caller) through the shared storm coalescer so it gets the SAME pace+batch COMBO as the explicit fan
-    # entries (bulk_delegate/submit_storm). FLAGGED OFF by default (SPENDGUARD_STORM_COALESCE). Skipped for the
-    # coalescer's OWN realtime re-entry (_route=False, the recursion guard), and for unlabelled / probe / _no_guard
-    # calls. storm_route.route returns a result dict, or None when it declines (routing off, or no known rate) → fall
-    # through to the normal admit+execute path below.
-    if _route and not _no_guard and not _probe and (intent or sig):
+    # 429-storm caller: honestreview's metered_only fan) through the shared storm coalescer so it gets the pace+batch
+    # COMBO (pace the sustainable realtime share, divert the overflow to the ~half-price Batch API). ON by default
+    # (SPENDGUARD_STORM_COALESCE=0 kills it). Four gates keep it correct:
+    #   • metered_only — only metered calls route; the coalescer's realtime executor is metered, so routing a $0-LANE-
+    #     eligible call would force it onto the paid API. Lane traffic stays on its lanes; a metered call is cost-SAFE
+    #     (metered anyway) and its overflow is CHEAPER (batch).
+    #   • _coalesce_eligible — the EXPLICIT fans (bulk_delegate/submit_storm) set this False: they are ALREADY governed
+    #     against the storm by the dispatch connection-window (proven in realtime by test_connection_storm_reliability)
+    #     AND have their own native Batch-API offload, so re-coalescing them would REPLACE a proven ~1s realtime path
+    #     with a batch divert (minutes) — strictly worse. 4b is the net under the RAW fan only. (Distinct from _route,
+    #     which bulk_delegate overloads for durable-record suppression — decoupled on purpose.)
+    #   • _route=False — the coalescer's OWN realtime re-entry (recursion guard).
+    #   • not _probe / not _no_guard / (intent or sig) — skip health probes, internal recursion, and unlabelled calls.
+    # storm_route.route returns a result dict, or None when it declines (routing off / no known rate) → fall through.
+    if metered_only and _route and _coalesce_eligible and not _no_guard and not _probe and (intent or sig):
         from . import storm_route as _sr
         _routed_result = _sr.route(model, prompt, intent or sig, system=system, reasoning=reasoning)
         if _routed_result is not None:

@@ -896,6 +896,8 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
                                   _internal_pin=True,   # CONFINEMENT, not a caller effort-insistence → an un-honorable effort
                                   #                       FLOORS here (path-independent, guardrail B), never EffortNotHonored
                                   metered_only=metered_only,   # opt-in: force the METERED half of the pin (skip the $0 lane)
+                                  _coalesce_eligible=False,   # explicit fan: already connection-window-governed + has its own
+                                  #                             batch offload → never re-route through the 4b storm coalescer
                                   _route=record_route)   # already a governed queue row when drain/submit set record_route=False
             except _STOP_TYPES:
                 raise                                       # (the finally releases THIS slot before the halt propagates)
@@ -988,6 +990,8 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
                               _internal_pin=bool(tier or lanes),                 # that confinement is a ROUTING pin, not an
             #                                                                      effort insistence → an un-honorable effort
             #                                                                      FLOORS (path-independent), never refuses
+                              _coalesce_eligible=False,                          # explicit fan (connection-window-governed +
+            #                                                                      its own batch offload) → skip 4b coalescer
                               _route=record_route)                               # this fan IS a queue row when drain/submit
             #                                                                      set record_route=False → don't re-record
             # (receipt suppressed via set_context above, not the context manager)  each reply feeds that measurement

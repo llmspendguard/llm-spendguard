@@ -73,5 +73,31 @@ verify_condition("B: ALL N requests recovered from the durable store after the c
 verify_condition("B: EXACTLY-ONCE — no second batch created during recovery (no double-spend)",
                  M.creates() == creates_at_recover, extra="creates now=%d (was %d at recovery start)" % (M.creates(), creates_at_recover))
 
+# ── C — ORDINAL-reply parseability at collection: the candidate list persisted at SUBMIT must come back with the
+# result, so a reply that is an ORDINAL into that list ("2" → candidates[2]) is still parseable HOURS LATER / in a
+# FRESH process whose in-memory custom_id→candidates map is gone. Proven at the durable layer, reconstructing the
+# candidate list ONLY from row_results (no in-memory map held). ──────────────────────────────────────────────────
+CANDS = ["alpha", "beta", "gamma", "delta"]
+_ordinal_prompt = ("Pick the matching ingredient by NUMBER:\n"
+                   + "\n".join("%d=%s" % (i, c) for i, c in enumerate(CANDS))
+                   + "\nReply with ONLY the number.")
+_rid = lq._enqueue_leased("acc:3-ordinal", [_ordinal_prompt], sla_class="batch")[0]
+lq.settle(_rid, {"text": "2"})                                    # the model's reply is the ORDINAL, not the name
+# a FRESH collector: it holds NO candidate list in memory — everything must come from the durable row
+rr_ord = lq.row_results([_rid])
+got = rr_ord.get(_rid, {})
+verify_condition("C: row_results returns the result AND the originating task (prompt) together",
+                 got.get("result", {}).get("text") == "2" and got.get("task") == _ordinal_prompt,
+                 extra="result=%r task_present=%s" % (got.get("result"), got.get("task") is not None))
+# reconstruct the candidate list FROM THE PERSISTED TASK (fixed "i=name" format — mechanical parse, not a judgement)
+recovered_cands = {}
+for _ln in (got.get("task") or "").splitlines():
+    if "=" in _ln and _ln.split("=", 1)[0].strip().isdigit():
+        _i, _name = _ln.split("=", 1)
+        recovered_cands[int(_i)] = _name.strip()
+picked = recovered_cands.get(int(got.get("result", {}).get("text")))
+verify_condition("C: the ORDINAL reply is parseable against the candidate list recovered from the row (→ 'gamma')",
+                 picked == "gamma", extra="recovered=%s picked=%r" % (recovered_cands, picked))
+
 print("\n%s: test_durable_batch_executor — %d checks RED" % ("ALL GREEN" if not fails else "RED", len(fails)))
 sys.exit(1 if fails else 0)
