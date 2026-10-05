@@ -281,6 +281,22 @@ def record_charge(provider, model, kind, cost, project=None, conv_id=None, basis
                         project=proj or "", occurred_at=now, source="gate")
 
 
+def reconcile_money_batch_estimate(provider, model, intent, in_tok, out_tok, cost):
+    """Auditably revise the newest open gate estimate to the measured batch actual; never delete or clamp rows."""
+    led = _ledger()
+    with _lock:
+        row = led._conn.execute(
+            "SELECT id FROM spend_events WHERE source='gate' AND cost_type='batch' AND cost_basis='estimate' "
+            "AND provider=? AND model=? AND intent IS ? ORDER BY rowid DESC LIMIT 1",
+            (provider, model, intent or "")).fetchone()
+        if not row:
+            return False
+        led.update(row[0], {"batch_usd": str(cost), "in_tok": int(in_tok or 0), "out_tok": int(out_tok or 0),
+                            "cost_basis": "billed", "status": "reconciled"},
+                   actor="batch_collect", reason="provider-measured usage collected", pass_="collect")
+    return True
+
+
 def snapshot(reason="", keep=None):
     """Copy the ledger database aside BEFORE anything mutates it. Returns the path, or None.
 

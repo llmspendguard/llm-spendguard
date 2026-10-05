@@ -115,8 +115,10 @@ def classify_task(task, files=None, provider="auto"):
               f"CONFIGURED PLAN NAMES: {json.dumps(menu)}\n"
               f"Provider is {'fixed to ' + explicit if explicit else 'for you to choose from that exact list'}. "
               "Return kind, provider, self_contained, why.")
-    response = lane_balance.delegate(prompt, system=_CLASSIFY_SYSTEM, intent=CLASSIFY_INTENT,
-                                     max_tokens=CLASSIFY_OUTPUT_TOKENS, schema=_CLASSIFY_SCHEMA)
+    from . import calls
+    with calls.gate_internal():
+        response = lane_balance.delegate(prompt, system=_CLASSIFY_SYSTEM, intent=CLASSIFY_INTENT,
+                                         max_tokens=CLASSIFY_OUTPUT_TOKENS, schema=_CLASSIFY_SCHEMA)
     if response.get("error") or not response.get("text"):
         return {"error": response.get("error") or "classifier returned no result"}
     try:

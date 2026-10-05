@@ -1033,6 +1033,13 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     _ctx_before = dict(_sig_ctx.current() or {})
     if sig and not _ctx_before.get("intent"):
         _sig_ctx.set_context(intent=sig)
+    if not _ctx_before.get("call_class"):
+        if _probe:
+            _sig_ctx.set_context(call_class="probe")
+        elif str(sig or "").startswith("spendguard:"):
+            # `spendguard:` is the explicit internal-intent protocol, not a semantic guess. Keep an enclosing workload
+            # intent intact while stamping this nested meta dispatch on its independent attribution dimension.
+            _sig_ctx.set_context(call_class="gate_internal")
     # GOVERNED (opt-in `governed=True`, for a CONCURRENT fan) — enter the dispatch governor with the SAME
     # shed-to-metered + deadline-split policy vendor_call uses, via the shared dispatch.admit brain, so the two
     # entries can never drift. A saturated $0 lane SHEDS to its metered twin (lane-first, not a per-call metered
@@ -2345,7 +2352,9 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                     def _astream():
                         try:
                             _actx.set_context(intent=_apctx.get("intent"), chain=_apctx.get("chain"),
-                                              who=_apctx.get("who") or _acaller)
+                                              who=_apctx.get("who") or _acaller,
+                                              call_class=_apctx.get("call_class"),
+                                              origin_session=_apctx.get("origin_session"))
                         except Exception:
                             pass
                         try:
@@ -2555,7 +2564,9 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 def _worker():
                     try:
                         _octx.set_context(intent=_opctx.get("intent"), chain=_opctx.get("chain"),
-                                          who=_opctx.get("who") or _ocaller)
+                                          who=_opctx.get("who") or _ocaller,
+                                          call_class=_opctx.get("call_class"),
+                                          origin_session=_opctx.get("origin_session"))
                     except Exception:
                         pass
                     try:

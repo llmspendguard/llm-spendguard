@@ -330,22 +330,8 @@ def _tool_spend_overview(_args):
 
 
 def _tool_overage_status(_args):
-    import contextlib
-    import io
-    import time
-    from . import claudecode
-    with contextlib.redirect_stdout(io.StringIO()):
-        windows, _anchor = claudecode._overage_windows(claudecode._overage_events())
-    now = time.time()
-    con = _cc_db()
-    try:
-        month = con.execute("SELECT substr(occurred_at,1,7) mo, ROUND(SUM(CAST(realtime_usd AS REAL)),2) FROM spend_events "
-                            "WHERE source='anthropic-invoice' AND intent LIKE 'anthropic-invoice:cc-overage%' GROUP BY mo ORDER BY mo DESC").fetchall()
-    finally:
-        con.close()
-    return {"on_overage_now": any(b <= now < r for (b, r) in windows),
-            "meaning": "true = the weekly plan cap is hit and this account is paying per-token right now",
-            "observed_overage_windows": len(windows), "real_overage_by_month_usd": {m: v for m, v in month[:6]}}
+    from . import overage
+    return overage.current_overage_status()
 
 
 def _tool_top_conversations(args):

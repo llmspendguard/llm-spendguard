@@ -38,6 +38,7 @@ _GROUPS = [
         ("otel-ingest", "import an OTel GenAI trace (OpenLLMetry/Traceloop) → spend_events (idempotent)"),
         ("keys", "spend per API key (which workspace/project key)"),
         ("coverage", "which LLM-capable interpreters are NOT gated"),
+        ("overage", "is the subscription plan on paid per-token overage right now?"),
     ]),
     ("spend less (measured, not guessed)", [
         ("advise", "cheapest config that HELD quality, per intent (the auto knob: reasoning='best-value')"),
@@ -149,6 +150,9 @@ def _dispatch(argv=None):
     if cmd == "delegate":
         from . import delegate_router
         return delegate_router.delegate_cli(rest)
+    if cmd == "overage":
+        from . import overage
+        return overage.overage_cli(rest)
     if cmd == "report":
         from . import report
         sys.argv = ["report"] + rest

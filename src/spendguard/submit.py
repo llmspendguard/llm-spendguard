@@ -288,8 +288,7 @@ def guarded_submit(jsonl_path, model, cap_dollars, batch=True, avg_out_tokens=No
     # caller's exact context so the intent set here never leaks into a later call on this thread.
     from . import calls as _calls
     _prev_ctx = dict(_calls.current())
-    if intent:
-        _calls.set_context(intent=intent)
+    _calls.set_context(intent=intent, defer_batch_booking=True)
     try:
         from openai import OpenAI
         client = OpenAI(api_key=_api_key("OPENAI_API_KEY"))
@@ -299,6 +298,8 @@ def guarded_submit(jsonl_path, model, cap_dollars, batch=True, avg_out_tokens=No
         # (found by that key in the provider's batch list) instead of creating a duplicate — the exactly-once tag.
         _extra = {"metadata": metadata} if metadata else {}
         b = client.batches.create(input_file_id=f.id, endpoint=endpoint, completion_window="24h", **_extra)
+        from . import gate as _gate
+        _gate.record_accepted_batch_estimate({**est, "provider": "openai", "model": est["model"]})
     finally:
         _calls._local.ctx = _prev_ctx             # restore the caller's exact context (never leak the submit intent)
     print(f"[submit_gate] SUBMITTED batch {b.id} (projected ${est['cost']:,.2f}). "
@@ -471,8 +472,7 @@ def submit_message_batch(tasks, model, *, system=None, schema=None, max_out=None
     # Restored in the finally so neither leaks into a later call on this thread.
     from . import calls as _calls, gate
     _prev_ctx = dict(_calls.current())
-    if intent or expected_out_tokens:
-        _calls.set_context(intent=intent, batch_expected_out=expected_out_tokens)
+    _calls.set_context(intent=intent, batch_expected_out=expected_out_tokens, defer_batch_booking=True)
     try:
         requests, n = build_message_batch_requests(items, model, system=system, max_out=max_out, schema=schema)
         est = gate.estimate_message_batch(requests, intent=intent, declared_out=expected_out_tokens)
@@ -506,6 +506,7 @@ def submit_message_batch(tasks, model, *, system=None, schema=None, max_out=None
         # per-batch caps + the SEPARATE worst-case ceiling guard (raising SpendGateRefused — which propagates below), and
         # records the provisional batch-cost row at the realistic estimate.
         b = client.messages.batches.create(requests=requests)
+        gate.record_accepted_batch_estimate(est)
         print(f"[submit_gate] SUBMITTED message batch {b.id} (projected ${est['cost']:,.2f}, {est.get('out_basis', '?')}). "
               f"Collect with callio.collect_message_batch({b.id!r}, intent, {model!r}).")
         return {**out, "batch_id": b.id}

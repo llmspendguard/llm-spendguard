@@ -10,7 +10,7 @@ That powers cost-per-GOOD-result per intent (`spendguard calls`) and, later, an 
 Shares the SQLite db with budget (config.db_path()), table `calls`. RLock — reentrant (record/query
 hold it and call _calls_db() which re-acquires).
 """
-import os, sqlite3, datetime, threading, hashlib, inspect, contextlib
+import os, sqlite3, datetime, threading, hashlib, inspect, contextlib, uuid
 from typing import Optional
 
 from . import config
@@ -18,6 +18,8 @@ from . import config
 _lock = threading.RLock()
 _local = threading.local()
 _PKG = os.path.dirname(os.path.abspath(__file__))
+_ORIGIN_SESSION = uuid.uuid4().hex[:12]
+_CALL_CLASSES = frozenset(("workload", "gate_internal", "probe"))
 
 
 # ── opt-in flags ──
@@ -48,7 +50,9 @@ def current():
 
 def set_context(intent: Optional[str] = None, chain: Optional[str] = None, who: Optional[str] = None,
                 root_call: Optional[str] = None, attempt: Optional[int] = None,
-                fell_from: Optional[str] = None, batch_expected_out: Optional[int] = None) -> None:
+                fell_from: Optional[str] = None, batch_expected_out: Optional[int] = None,
+                call_class: Optional[str] = None, origin_session: Optional[str] = None,
+                defer_batch_booking: Optional[bool] = None) -> None:
     c = dict(current())
     if intent is not None:
         c["intent"] = intent
@@ -69,6 +73,14 @@ def set_context(intent: Optional[str] = None, chain: Optional[str] = None, who: 
         c["attempt"] = attempt            # 1-based try number; record_call stamps retry_of/attempts from it
     if fell_from is not None:
         c["fell_from"] = fell_from        # the $0 lane a METERED fallback fell over FROM — read by the success recorder
+    if call_class is not None:
+        if call_class not in _CALL_CLASSES:
+            raise ValueError(f"call_class must be one of {sorted(_CALL_CLASSES)}; got {call_class!r}")
+        c["call_class"] = call_class
+    if origin_session is not None:
+        c["origin_session"] = origin_session
+    if defer_batch_booking is not None:
+        c["defer_batch_booking"] = bool(defer_batch_booking)
     _local.ctx = c                        #   (gate._record_rt fires DURING the SDK call, on this thread, so it reads ctx)
 
 
@@ -99,6 +111,22 @@ def fell_from_context(lane_name: str):
         else:
             c["fell_from"] = prev
         _local.ctx = c
+
+
+@contextlib.contextmanager
+def gate_internal():
+    """Stamp spendguard's own meta dispatches without losing an enclosing workload intent."""
+    previous = current().get("call_class")
+    set_context(call_class="gate_internal")
+    try:
+        yield
+    finally:
+        restored = dict(current())
+        if previous is None:
+            restored.pop("call_class", None)
+        else:
+            restored["call_class"] = previous
+        _local.ctx = restored
 
 
 def recorded_intents(min_calls=1, limit=200):
@@ -243,7 +271,8 @@ def _ensure_calls_schema(c):
         in_tok INTEGER, out_tok INTEGER, cost REAL, latency REAL,
         prompt_hash TEXT, prompt_snip TEXT, output_snip TEXT, finish TEXT,
         quality TEXT, quality_src TEXT, quality_conf REAL,
-        executor TEXT, project TEXT, effort TEXT, suspect TEXT)""")
+        executor TEXT, project TEXT, effort TEXT, suspect TEXT,
+        call_class TEXT, origin_session TEXT)""")
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_chain ON calls(chain)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_intent ON calls(intent)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_ts ON calls(ts)")  # as_of/since range reads (calibrate, advise)
@@ -289,13 +318,15 @@ def _ensure_calls_schema(c):
                         ("effort", "TEXT"), ("suspect", "TEXT"),
                         ("outcome", "TEXT"), ("http_status", "INTEGER"), ("provider_error", "TEXT"),
                         ("retry_after", "REAL"), ("attempts", "INTEGER"), ("disposition", "TEXT"),
-                        ("retry_of", "TEXT"), ("fell_from", "TEXT")):
+                        ("retry_of", "TEXT"), ("fell_from", "TEXT"),
+                        ("call_class", "TEXT"), ("origin_session", "TEXT")):
         if _col not in _have:
             c.execute(f"ALTER TABLE calls ADD COLUMN {_col} {_decl}")
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_executor ON calls(executor)")  # per-lane rollups
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_outcome ON calls(outcome)")    # reliability / error-class rollups
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_retry_of ON calls(retry_of)")  # reconstruct one call's retry chain
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_fell_from ON calls(fell_from)")  # per-lane fallback-spend rollups
+    c.execute("CREATE INDEX IF NOT EXISTS idx_calls_class_session ON calls(call_class, origin_session)")
     c.commit()
 
 
@@ -310,7 +341,7 @@ def _uuid():
     return uuid.uuid4().hex[:16]
 
 
-def _resolve_attribution(model, cost, intent, chain, project):
+def _resolve_attribution(model, cost, intent, chain, project, call_class=None, origin_session=None):
     """The SHARED attribution brain for EVERY writer into the `calls` table (record_call AND insert), so no INSERT
     path can drift un-attributed — the record-call-outcome DRIFT the capability map found (insert was a second,
     ungated, un-attributed INSERT). Two things, one place:
@@ -338,7 +369,12 @@ def _resolve_attribution(model, cost, intent, chain, project):
             project = budget._project()
         except Exception:
             project = None
-    return intent, chain, ((project or "").strip().lower() or None)   # lowercased project_primary for clean joins
+    resolved_class = call_class or ctx.get("call_class") or "workload"
+    if resolved_class not in _CALL_CLASSES:
+        raise ValueError(f"call_class must be one of {sorted(_CALL_CLASSES)}; got {resolved_class!r}")
+    resolved_session = origin_session or ctx.get("origin_session") or _ORIGIN_SESSION
+    return (intent, chain, ((project or "").strip().lower() or None), resolved_class,
+            resolved_session)   # lowercased project_primary for clean joins
 
 
 # A clean per-call out_tok is <= the model's output ceiling (the API caps completion at max_tokens <= ceiling), so
@@ -377,7 +413,7 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
            prompt=None, output=None, finish=None, intent=None, chain=None, who=None,
            executor=None, project=None, effort=None, *, outcome=None, http_status=None,
            provider_error=None, retry_after=None, attempts=None, disposition=None, retry_of=None,
-           fell_from=None, call_id=None):
+           fell_from=None, call_id=None, call_class=None, origin_session=None):
     """Record one call — its full OUTCOME, success OR failure. Returns call_id. Never raises.
 
     FORENSIC MANDATE (the reason this tool exists): EVERY call is on the ledger, whatever its fate — a metered success,
@@ -407,7 +443,8 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
     attributes to a project exactly like billed spend does."""
     # ATTRIBUTION is resolved by the SHARED brain _attribute (enforce a paid un-intented call + resolve intent/chain/
     # project) BEFORE enabled()/try, so record_call and insert can never drift on it (the record-call-outcome DRIFT).
-    intent, chain, proj = _resolve_attribution(model, cost, intent, chain, project)
+    intent, chain, proj, call_class, origin_session = _resolve_attribution(
+        model, cost, intent, chain, project, call_class, origin_session)
     if _truthy(os.getenv("SPENDGUARD_NO_LEDGER")):
         return None                                      # explicit total opt-out (rare) — otherwise ALWAYS record
     # The OUTCOME row is recorded ALWAYS (forensic mandate); `enabled()` + store_prompts now gate ONLY the private
@@ -456,8 +493,8 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
             _calls_db().execute(
                 "INSERT INTO calls (id,ts,chain,intent,caller,provider,model,kind,in_tok,out_tok,"
                 "cost,latency,prompt_hash,prompt_snip,output_snip,finish,executor,project,effort,suspect,"
-                "outcome,http_status,provider_error,retry_after,attempts,disposition,retry_of,fell_from) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "outcome,http_status,provider_error,retry_after,attempts,disposition,retry_of,fell_from,"
+                "call_class,origin_session) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (cid, ts, chain, intent, who or ctx.get("who") or caller(), provider, model, kind,
                  int(in_tok or 0), int(out_tok or 0), float(cost or 0), latency, ph, psnip, osnip, finish,
                  executor, proj, (effort or None), suspect,
@@ -466,7 +503,7 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
                  (provider_error[:1000] if isinstance(provider_error, str) else None),
                  (float(retry_after) if isinstance(retry_after, (int, float)) else None),
                  (int(attempts) if isinstance(attempts, int) else None),
-                 (disposition or None), (retry_of or None), (fell_from or None)))
+                 (disposition or None), (retry_of or None), (fell_from or None), call_class, origin_session))
             _calls_db().commit()
         # deferred implicit feedback: did THIS call reuse an earlier output in the same chain?
         if chain and prompt:
@@ -498,23 +535,41 @@ def feedback(call_id: Optional[str], ok: bool = True, source: str = "explicit",
 
 
 def insert(provider, model, kind, cost, in_tok=0, out_tok=0, ts=None, intent=None, chain=None,
-           quality=None, quality_src=None, quality_conf=None, who="backfill", effort=None, project=None):
+           quality=None, quality_src=None, quality_conf=None, who="backfill", effort=None, project=None,
+           call_class=None, origin_session=None):
     """Low-level insert used by backfill (ungated) and the bakeoff/titration (per-EFFORT arms, with an inline quality
     label). Returns call_id. Shares the ATTRIBUTION brain (_attribute) with record_call — so a paid row here enforces
     intent + records the project exactly like a live call, never a second un-attributed INSERT (the
     record-call-outcome DRIFT). `effort` = the reasoning tier this row was produced at (sliceable evidence)."""
-    intent, chain, proj = _resolve_attribution(model, cost, intent, chain, project)
+    intent, chain, proj, call_class, origin_session = _resolve_attribution(
+        model, cost, intent, chain, project, call_class, origin_session)
     cid = _uuid()
     ts = ts or datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     with _lock:
         _calls_db().execute(
             "INSERT INTO calls (id,ts,chain,intent,caller,provider,model,kind,in_tok,out_tok,"
-            "cost,quality,quality_src,quality_conf,effort,project) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "cost,quality,quality_src,quality_conf,effort,project,call_class,origin_session) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (cid, ts, chain, intent, who, provider, model, kind,
              int(in_tok or 0), int(out_tok or 0), float(cost or 0), quality, quality_src, quality_conf,
-             (effort or None), proj))
+             (effort or None), proj, call_class, origin_session))
         _calls_db().commit()
     return cid
+
+
+def reconcile_calls_batch_estimate(provider, model, intent, in_tok, out_tok, cost):
+    """Revise the newest matching provisional call row to provider-measured batch usage, preserving the row."""
+    with _lock:
+        con = _calls_db()
+        row = con.execute(
+            "SELECT id FROM calls WHERE kind='batch' AND provider=? AND model=? AND intent IS ? "
+            "ORDER BY rowid DESC LIMIT 1", (provider, model, intent)).fetchone()
+        if not row:
+            return False
+        con.execute("UPDATE calls SET in_tok=?, out_tok=?, cost=? WHERE id=?",
+                    (int(in_tok or 0), int(out_tok or 0), float(cost or 0), row[0]))
+        con.commit()
+    return True
 
 
 def _link_used(chain, current_prompt):
@@ -577,7 +632,7 @@ def cost_summary(intent=None):
     return rows
 
 
-def mean_out_by_executor_model(intent):
+def mean_out_by_executor_model(intent, call_class=None, origin_session=None):
     """{(executor_or_provider, model): {'mean_out', 'n'}} for an intent — the measured OUTPUT norm per lane-arm. out_tok
     INCLUDES reasoning tokens (reasoning bills as output), so a model that OVER-REASONS on this intent shows a genuinely
     larger mean here — which is what lets the bandit price its REALIZED cost and deprioritize it. `executor` is the
@@ -592,11 +647,19 @@ def mean_out_by_executor_model(intent):
         return out
     try:
         with _lock:
+            predicates = ["intent=?", "out_tok IS NOT NULL", "out_tok > 0", "suspect IS NULL"]
+            args = [intent]
+            if call_class is not None:
+                predicates.append("call_class=?")
+                args.append(call_class)
+            if origin_session is not None:
+                predicates.append("origin_session=?")
+                args.append(origin_session)
             rows = _calls_db().execute(
                 "SELECT COALESCE(NULLIF(executor,''), provider), COALESCE(model,'?'), "
                 "COALESCE(AVG(out_tok), 0), COUNT(*) FROM calls "
-                "WHERE intent=? AND out_tok IS NOT NULL AND out_tok > 0 AND suspect IS NULL "
-                "GROUP BY COALESCE(NULLIF(executor,''), provider), model", (intent,)).fetchall()
+                f"WHERE {' AND '.join(predicates)} "
+                "GROUP BY COALESCE(NULLIF(executor,''), provider), model", args).fetchall()
         for ex, model, avg_out, n in rows:
             out[(ex or "?", model or "?")] = {"mean_out": float(avg_out or 0.0), "n": int(n)}
     except Exception:

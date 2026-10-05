@@ -1,12 +1,10 @@
 """The two attribution gaps a metered_only refute run surfaced — closed and GUARDED so neither can regress.
 
-GAP 1 — a billed METERED row recorded executor=None. gate._record_rt is the ONE recorder for every realtime/metered
+GAP 1 — a billed METERED row must keep executor=None. gate._record_rt is the ONE recorder for every realtime/metered
         call (the SDK gate + http_capture, whose PROVIDER_HOSTS are only the metered openai/anthropic/google hosts). A
         subscription LANE never reaches it: lanes run as subprocess / raw-urllib CLIs and are recorded separately as
         kind='subscription' with their lane name. So a realtime row is BY CONSTRUCTION the metered provider API and
-        must record executor='api' — the SAME value the metered result dict carries (adapters._call_once). Before the
-        fix the row's executor was None, so the receipt's lane view / served_by could not tell a metered call from an
-        untagged one, and a billed row had no path recorded — an attribution hole in spendguard's core mission.
+        executor column is reserved for a subscription lane; NULL therefore means the metered provider API.
 
 GAP 2 — spendguard's OWN effort-discovery probe (vendor_call.discover_efforts, reached from models.resolve_effort
         during a batch build / pinned-matrix / metered_only run) fired a tiny PAID call with NO intent, so it landed
@@ -30,6 +28,8 @@ _atexit.register(_shutil.rmtree, _SG_HOME, ignore_errors=True)   # clean up the 
 os.environ["SPENDGUARD_CALLS"] = "1"                       # enable call logging (it FAILS CLOSED without this)
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
+os.environ["OPENAI_API_KEY"] = "sk-test-fake-not-real"
+os.environ["ANTHROPIC_API_KEY"] = "sk-ant-test-fake-not-real"
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 from spendguard import gate, calls, config, vendor_call, adapters   # noqa: E402
@@ -52,7 +52,7 @@ def _last_row():
 
 fails = []
 
-print("-- GAP 1a: a WORKLOAD metered/realtime row records executor='api' (never None) --")
+print("-- GAP 1a: a WORKLOAD metered/realtime row records executor=NULL (never a lane) --")
 # authoritative cost → _record_rt skips pricing; a plain workload intent → the non-meta branch (what a real metered
 # call takes). The row must carry executor='api' AND the reasoning_effort actually sent.
 with calls.context(intent="attr-test-workload"):
@@ -60,16 +60,16 @@ with calls.context(intent="attr-test-workload"):
                     in_tok=100, out_tok=50, latency=0.2, output="ok", finish="stop", cost=0.01, provider="openai")
 _row = _last_row()
 fails += report_check("a realtime row was recorded", bool(_row) and _row[0] == "realtime")
-fails += report_check("executor == 'api' (the metered path is NAMED, not None)", bool(_row) and _row[1] == "api")
+fails += report_check("executor is NULL (metered API, never a subscription lane)", bool(_row) and _row[1] is None)
 fails += report_check("the workload intent rode the row (attribution intact)", bool(_row) and _row[2] == "attr-test-workload")
 fails += report_check("the applied reasoning_effort rode the row too ('none')", bool(_row) and _row[3] == "none")
 
-print("\n-- GAP 1b: the META branch of _record_rt ALSO records executor='api' (both twins fixed) --")
+print("\n-- GAP 1b: the META branch of _record_rt ALSO leaves executor NULL --")
 with calls.context(intent="spendguard:attr-probe-test"):
     gate._record_rt("gpt-5.6-sol", {"model": "gpt-5.6-sol"},
                     in_tok=10, out_tok=5, latency=0.1, output="ok", finish="stop", cost=0.02, provider="openai")
 _mrow = _last_row()
-fails += report_check("the meta row records executor='api' too", bool(_mrow) and _mrow[1] == "api")
+fails += report_check("the meta row records executor=NULL too", bool(_mrow) and _mrow[1] is None)
 fails += report_check("the meta row kept its spendguard:* intent", bool(_mrow) and _mrow[2] == "spendguard:attr-probe-test")
 
 print("\n-- GAP 2: discover_efforts runs its probe under a spendguard:* META intent (never workload '(none)') --")

@@ -783,6 +783,13 @@ def _decide_and_account(est):
     _budget_check(est["cost"], est.get("model"), est.get("provider"), "batch")   # daily/monthly (sqlite)
     _decide(est)                                                                  # per-batch cap on the REALISTIC estimate (may raise)
     _worst_case_check(est)                                                        # SEPARATE ceiling guard: runaway worst-case (may raise)
+    if _calls.current().get("defer_batch_booking"):
+        return                                                        # submitter books only after provider acceptance
+    record_accepted_batch_estimate(est)
+
+
+def record_accepted_batch_estimate(est):
+    """Book a provisional batch estimate only after the provider accepted the submission."""
     _budget_record(est["cost"], est.get("model"), est.get("provider"), "batch",   # ledger (sqlite)
                    quarantine=bool(est.get("implausible")), basis=budget_basis_estimate())
     if _calls.enabled():                                                          # job-level call-context row
@@ -1366,13 +1373,8 @@ def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, 
         from . import budget
         budget.record_meta(prov, model, cost)
         if _calls.enabled():
-            # executor="api": a realtime row is BY CONSTRUCTION the metered provider API. The gate's realtime capture
-            # (the SDK gate + http_capture, whose PROVIDER_HOSTS are only the metered openai/anthropic/google hosts)
-            # never sees a subscription LANE — those run as subprocess / raw-urllib CLIs and are recorded separately as
-            # kind='subscription' with their lane name. So the ledger says 'api', matching the metered result dict's own
-            # executor (adapters._call_once) — closing the executor=None gap where a billed metered row had no path.
             _calls.record_call(prov, model, "realtime", cost, in_tok=in_tok, out_tok=out_tok, latency=latency,
-                          prompt=_prompt_text(kw), output=output, finish=finish, effort=_effort, executor="api")
+                          prompt=_prompt_text(kw), output=output, finish=finish, effort=_effort, executor=None)
         return
     _calls.check_output(output)      # realtime output CONTRACT (no-op unless the flow declared one)
     _rt_record(prov, model, cost, in_tok=in_tok, out_tok=out_tok, cached=cached, basis=basis, per_item_max=per_item_max)
@@ -1387,7 +1389,7 @@ def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, 
     if _calls.enabled():
         _calls.record_call(prov, model, "realtime", cost, in_tok=in_tok, out_tok=out_tok, latency=latency,
                       prompt=_prompt_text(kw), output=output, finish=finish, effort=_effort,
-                      executor="api")   # metered API path — see the meta branch above (a realtime row ⟺ 'api')
+                      executor=None)   # NULL means metered API; only subscription lanes populate executor
 
 
 def _stream_out_estimate(model, kw, est_fn):

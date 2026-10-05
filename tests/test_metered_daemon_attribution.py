@@ -32,7 +32,7 @@ for _k in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
     os.environ[_k] = "sk-test-fake-not-real"
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from spendguard import adapters, calls, config, gate   # noqa: E402
+from spendguard import adapters, calls, config, gate, lane_balance   # noqa: E402
 
 
 def report_check(name, cond):
@@ -79,30 +79,37 @@ def _ledger_rows(intent):
 
 import openai as _openai_mod   # noqa: E402
 _orig = _openai_mod.OpenAI
+_orig_lane_for = adapters._lane_for
 _openai_mod.OpenAI = _RecInDaemon
 try:
-    # simulate the fan: the worker tags the intent, then makes a metered_only call bounded by a wall-clock timeout
-    # (→ the daemon path). TWO calls = two "rows", so we prove EVERY row is tagged, not just the first.
+    # Happy path (no lane) and lane-down path (a lane is configured but must never be entered): both force the meter.
     with calls.context(intent=INTENT):
-        for _ in range(2):
-            adapters.call("gpt-5.6-luna", "classify: refund please", sig=INTENT, timeout_s=5,
-                          metered_only=True, max_tokens=100)
+        adapters._lane_for = lambda _provider: None
+        adapters.call("gpt-5.6-luna", "happy", sig=INTENT, timeout_s=5, metered_only=True, max_tokens=100)
+        adapters._lane_for = lambda _provider: "codex"
+        adapters.call("gpt-5.6-luna", "lane down", sig=INTENT, timeout_s=5, metered_only=True, max_tokens=100)
+        lane_balance.bulk_delegate(["bulk happy"], INTENT, model_for=lambda _task: "openai:gpt-5.6-luna",
+                                   metered_only=True, max_workers=1, force=True, deadline_s=5)
+        lane_balance.bulk_delegate(["bulk lane down"], INTENT, model_for=lambda _task: "openai:gpt-5.6-luna",
+                                   metered_only=True, max_workers=1, force=True, deadline_s=5)
 finally:
     _openai_mod.OpenAI = _orig
+    adapters._lane_for = _orig_lane_for
 
 print("-- the provider call ran on the DAEMON and now SEES the carried intent (the fix) --")
-fails += report_check("both metered calls ran (via the daemon path)", len(seen) == 2)
+fails += report_check("single + bulk metered calls ran on both happy and lane-down paths", len(seen) == 4)
 fails += report_check("the daemon thread saw the caller's intent (not None) on EVERY call",
                       bool(seen) and all(s["intent"] == INTENT for s in seen))
 fails += report_check("the daemon carries a REAL caller in ctx['who'] (what record_call uses), not threading.py:run",
                       bool(seen) and all(s["who"] and not str(s["who"]).startswith("threading.py:run") for s in seen))
 
-print("\n-- GROUNDED against the LEDGER: every metered row is tagged (intent + executor='api'), none in '(none)' --")
+print("\n-- GROUNDED against the LEDGER: every metered row is tagged and no lane executor is recorded --")
 rows = _ledger_rows(INTENT)
-fails += report_check("two realtime rows were recorded", len(rows) == 2)
+fails += report_check("four realtime rows were recorded", len(rows) == 4)
 fails += report_check("EVERY metered row records the caller's intent (not None / '(none)')",
                       bool(rows) and all(r[0] == INTENT for r in rows))
-fails += report_check("every metered row records executor='api'", bool(rows) and all(r[1] == "api" for r in rows))
+fails += report_check("every metered row records executor=NULL (metered API, never a lane)",
+                      bool(rows) and all(r[1] is None for r in rows))
 fails += report_check("no metered row records caller=threading.py:run (the wrong-thread stack walk)",
                       bool(rows) and all(r[2] and not str(r[2]).startswith("threading.py:run") for r in rows))
 
