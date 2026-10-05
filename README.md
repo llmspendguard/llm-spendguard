@@ -114,6 +114,10 @@ it reconstructs *what* you should do cheaper, and won't let "cheaper" cost you q
 - **gate** — overlay on the OpenAI/Anthropic SDKs (armed by `spendguard run --`, by `import spendguard`, or venv-wide via the opt-in hook): estimates every
   batch/real-time call — chat, Responses API, Anthropic messages, **and embeddings** (realtime + batch
   `input` bodies) — **hard-stops** over a cap (per-batch + cross-process daily/monthly) — then *asks* if interactive.
+- **reliability (no 429 storms)** — one admission chokepoint paces every fan under the vendor's real rpm/tpm
+  (seeded from the catalog's published limits, refined by AIMD from live headers) and diverts an over-deadline
+  burst to the Batch API — so a thousand-wide fan is paced or batched, **never stormed**. Durable, crash-resumable,
+  exactly-once; the caller is always served with no 429 surfaced. See [docs/PLAN_429_storm_to_batch.md](docs/PLAN_429_storm_to_batch.md).
 - **pricing** — one canonical, verifiable table (layered from LiteLLM + curated + override), cross-checked
   vs OpenRouter; an `audit` fails CI if any code hardcodes a disagreeing price.
 - **reconcile** — actual $ from real billed tokens; **`reconcile-ledger`** compares the local ledger to
