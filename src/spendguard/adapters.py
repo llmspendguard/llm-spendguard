@@ -1055,6 +1055,18 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     _conn_tries = aliases.pop("_conn_tries", None)      # UNIVERSAL connection-429 retransmit budget (the serial/managed
     _t_conn0 = aliases.pop("_t_conn0", None) or time.time()   # twin of the fan re-admit loop); _t_conn0 bounds it by deadline
     _adm = None
+    # 4b — route an IMPLICIT concurrent fan (many independent labelled adapters.call at one vendor — the actual
+    # 429-storm caller) through the shared storm coalescer so it gets the SAME pace+batch COMBO as the explicit fan
+    # entries (bulk_delegate/submit_storm). FLAGGED OFF by default (SPENDGUARD_STORM_COALESCE). Skipped for the
+    # coalescer's OWN realtime re-entry (_route=False, the recursion guard), and for unlabelled / probe / _no_guard
+    # calls. storm_route.route returns a result dict, or None when it declines (routing off, or no known rate) → fall
+    # through to the normal admit+execute path below.
+    if _route and not _no_guard and not _probe and (intent or sig):
+        from . import storm_route as _sr
+        _routed_result = _sr.route(model, prompt, intent or sig, system=system, reasoning=reasoning)
+        if _routed_result is not None:
+            _sig_ctx._local.ctx = _ctx_before            # returning early — restore the caller's context exactly
+            return _routed_result
     _managed = (not _governed and not _no_guard and not _probe and bool(intent or sig)
                 and not dispatch.holding() and _manage_all_enabled())
     if (_governed or _managed) and not _no_guard:

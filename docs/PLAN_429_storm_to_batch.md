@@ -203,20 +203,27 @@ replay). Fixed to the repo's race-safe attempt-and-swallow pattern (bulkgate.py:
   canary bijection, **zero surfaced AND zero internal 429s**, inside the 3s horizon. This is the contract the user has
   wanted for a month: storm → pace+batch combo → every result back, no 429.
 
-**STILL REMAINING for full production (honest — the ⭐ proves the MECHANISM with real governed realtime + an injected
-batch seam; these make it the real default path):**
-- **(3) durable idempotency / crash-resume (I13/I22).** submit_storm's cohort/futures are IN-MEMORY — a SIGKILL
+**STATUS (2026-10-04, commits 9656d04 storm-fix · 66115ea rigor-pass · 5b42ccc 4a):**
+- ✅ **(4a) production provider-aware batch executor — DONE.** `storm_submit.default_batch_executor`: provider dispatch
+  (openai→submit_chat_tasks+collect_chat_tasks; anthropic→submit_message_batch+collect_message_batch), id-keyed,
+  poll-until-ready, no silent drop (whole-submit failure, per-item failure, AND poll-ceiling all return typed results).
+  submit_storm defaults to it. Test: `tests/test_default_batch_executor.py`. (Live-batch submit/poll/collect = a
+  separate slow+billed validation.)
+- ✅ **(I16) deadline→typed backpressure — DONE in submit_storm:** `collect_timeout_s` → a hung/slow batch surfaces as
+  `served_via='backpressure'`, never an indefinite block (`tests/test_storm_submit.py`).
+- ⚙️ **(4b) both doors — MECHANISM wired, FLAGGED OFF (`SPENDGUARD_STORM_COALESCE`, default off).** `storm_route.py`
+  routes a labelled `adapters.call` through a shared coalescer keyed by (vendor,model,intent,reasoning,system);
+  adapters.py:~1058 is the seam; recursion-guarded by `_route=False`. Mechanism proven:
+  `tests/test_storm_route_mechanism.py` (flag toggles direct-vs-coalesced; N→N; 0 surfaced 429; demux). **GATE ON
+  ENABLING 4b = I20:** the cohort is cut AT `realtime_budget`, so a SUSTAINED raw fan is chopped into budget-sized
+  all-realtime cohorts that never overflow to batch (latency/backlog grows; batch never engages). Enabling 4b needs the
+  I20 cohort-reservation fix (reserve realtime capacity across overlapping cohorts within the horizon). Until then 4b
+  stays dark; the raw door still has SAFETY from the wired xp_rate limiter (0 surfaced 429).
+- 🔜 **(3) durable idempotency / crash-resume (I13/I22).** submit_storm's cohort/futures are IN-MEMORY — a SIGKILL
   mid-batch still loses in-flight work + risks a double-submit. Move the cohort + disposition onto `lane_queue`
-  (durable, cross-process) with an idempotency key on batch submit + reattach-on-restart (extend
-  mark_batched/collect_batched). id-keyed demux is already done; durable resume is not.
-- **(4a) production provider-aware batch executor.** submit_storm REQUIRES an injected `execute_batch` (no default, by
-  design — no unexercised seam). Build the real one: openai→submit_chat_tasks+collect_chat_tasks (id-keyed),
-  anthropic→Message Batches (callio.fetch_anthropic/batch_tracker), deadline-aware so a multi-hour batch ETA on a tight
-  deadline becomes typed backpressure (I16), never a blocked thread.
-- **(4b) both doors (I10).** submit_storm is ONE governed door (proven). A raw concurrent `adapters.call` fan gets
-  SAFETY today (the wired xp_rate limiter → 0 surfaced 429) but NOT batch-diversion — route it through the combo via the
-  dormant `route_through_queue` seam so the adapters.call door also diverts overflow (not just paces).
-- **(I16) deadline→typed backpressure** as a first-class outcome (distinct from the batch-collect block).
+  (durable, cross-process) with an idempotency key on batch submit + reattach-on-restart. id-keyed demux is done;
+  durable resume is not.
+- 🔜 **(I20) cohort reservation across the horizon** — the gate on turning 4b on (above).
 
 ## The fix (in dependency order)
 - **A. Submission-scale batch-diversion (PRIMARY).** In the fan planner (`whole_job`/`bulk_delegate` via `route_horizon`,
