@@ -270,7 +270,8 @@ def usage():
     return lane_quota.cached_usage(_usage_cache, _USAGE_TTL_S, _fetch_usage)
 
 
-def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=None, max_tokens=None):   # max_tokens: protocol-uniform; codex exec has no one-shot output-cap flag → accepted, not enforced
+def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=None, max_tokens=None,
+               sandbox="read-only"):   # max_tokens: protocol-uniform; codex exec has no one-shot output-cap flag
     """→ {text, in_tok, out_tok, latency, error} from one headless plan-billed Codex run. `system` is
     prepended to the prompt (codex exec has no separate system slot for one-shot prompt mode). `model` IS
     forwarded to `codex -m` when given (e.g. gpt-5.5), so the recorded model is the one that actually ran —
@@ -278,14 +279,18 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     account") makes codex exit non-zero, so adapters cools the lane and falls back to the metered API: the
     lane degrades, it never silently answers on a different model than the caller asked for.
     `--skip-git-repo-check` because a headless one-shot is not an interactive session that needs the
-    working-tree guard, and honestreview may run it from any directory (measured: /tmp tripped the guard)."""
+    working-tree guard, and honestreview may run it from any directory (measured: /tmp tripped the guard).
+    `sandbox` defaults to the historical read-only behavior; callers deliberately delegating an agentic repository
+    task may pass workspace-write. Any other value is refused before the CLI is touched."""
+    if sandbox not in ("read-only", "workspace-write"):
+        return {"error": f"unsupported codex sandbox {sandbox!r}"}
     _eff = _codex_effort(reasoning)   # the effort ACTUALLY applied on this lane (Codex's own scale: 'minimal'→'none').
     #                                   Reported on the result so the ledger records what RAN, not the requested tier —
     #                                   letting a caller VERIFY the lane matched its metered fallback's applied reasoning.
     # WARM DAEMON PATH (opt-in): reuse a persistent codex mcp-server instead of cold-starting `codex exec` each call
     # (>75s → ~5s, reliable). Falls THROUGH to the exec path on any daemon failure — degrade, never break. Stateless
     # here (the lane carries no thread); persistent context is a higher-level feature (codex_daemon.run(thread=…)).
-    if _daemon_enabled():
+    if sandbox == "read-only" and _daemon_enabled():
         from . import codex_daemon
         _full = (f"{system.strip()}\n\n{prompt}" if system else prompt)
         _t0 = time.time()
@@ -316,9 +321,15 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     try:
         fd, out_file = tempfile.mkstemp(prefix="spendguard-codex-", suffix=".txt")
         os.close(fd)
-        cmd = [exe, "exec", "--json", "--skip-git-repo-check", "-s", "read-only", "--output-last-message", out_file]
+        cmd = [exe, "exec", "--json", "--skip-git-repo-check", "--output-last-message", out_file]
+        if sandbox == "workspace-write":
+            cmd += ["--approve-for-me"]                    # IMPLIES the workspace-write sandbox AND auto-approves each
+            #                                                action; codex REFUSES -s/--sandbox combined with it, so the
+            #                                                writable path passes --approve-for-me ALONE (never -s).
+        else:
+            cmd += ["-s", sandbox]                         # read-only: explicit sandbox, no approval policy needed
         cmd += _plugin_disable_flags()                     # the TWO per-call cold-start costs a headless completion needs
-        #                                                    NEITHER: the writable-workspace sandbox (-s read-only above)
+        #                                                    NEITHER: the sandbox restriction (read-only above)
         #                                                    AND loading enabled plugins/MCP servers. Both off: >75s → ~5s.
         if _eff:
             cmd += ["-c", f"model_reasoning_effort={_eff}"]   # Codex's OWN scale (none|low|…); 'minimal'→'none' (computed above)

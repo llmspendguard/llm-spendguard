@@ -23,6 +23,7 @@ _GROUPS = [
         ("doctor", "is the gate enforcing HERE? keys, lanes, ledger status"),
         ("ask", "run ONE prompt across many LLMs — honest per-vendor coverage, $0 lanes"),
         ("comprehend", "fan a CORPUS across the $0 lanes (doc-mining/gap-analysis) — NOT Claude sub-agents; estimate-first"),
+        ("delegate", "classify then offload one self-contained task to another subscription plan; dry-run by default"),
         ("serve", "the ask surface over localhost HTTP — POST /ask from any tool/language"),
         ("mcp", "spendguard's tools over MCP (stdio): model-advisor + spend/compaction queries"),
         ("install-mcp", "register `spendguard mcp` in Claude Code (~/.claude.json); --remove to undo"),
@@ -145,6 +146,9 @@ def _dispatch(argv=None):
     if cmd in ("status", "on", "off", "doctor"):
         from . import gate
         return gate._cli(cmd, live="--live" in rest)   # doctor --live forces the full provider pull
+    if cmd == "delegate":
+        from . import delegate_router
+        return delegate_router.delegate_cli(rest)
     if cmd == "report":
         from . import report
         sys.argv = ["report"] + rest

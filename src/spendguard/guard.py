@@ -17,7 +17,7 @@ from . import budget
 # counterfactual (the baseline call was never made), a little more grounded than a blind advisor swap since the pick
 # is backed by recorded good_rate — hence a touch above 'advisor', still well below the CERTAIN (measured) sources.
 CONFIDENCE = {"cache": 0.95, "block": 0.70, "cascade": 0.90, "advisor": 0.50, "compaction": 0.65,
-              "realized": 0.90, "best-value": 0.55}   # realized = MEASURED before/after (realized.py), not a counterfactual
+              "realized": 0.90, "best-value": 0.55, "delegate": 0.55}   # delegate uses measured overage rate
 CERTAIN = ("cache", "block", "cascade", "realized", "prompt_cache")   # vs counterfactual: advisor, compaction, best-value
 
 # EST-VALUE is the plan-served saving (work run $0 on a subscription plan instead of the metered API). It is ALREADY

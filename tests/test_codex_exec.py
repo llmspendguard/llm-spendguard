@@ -59,6 +59,14 @@ ck("final message read from the file", r["text"] == ANSWER and r["error"] is Non
 ck("usage extracted by field name, max over events", r["in_tok"] == 850 and r["out_tok"] == 97)
 ck("tmp last-message file cleaned up", not os.path.exists(seen["cmd"][seen["cmd"].index("--output-last-message") + 1]))
 
+print("-- agentic delegation explicitly opts into a writable sandbox; default remains read-only --")
+ce.run_prompt("edit and test", sandbox="workspace-write")
+ck("workspace-write uses --approve-for-me alone (it implies the writable sandbox; codex forbids combining it with -s)",
+   "--approve-for-me" in seen["cmd"] and "-s" not in seen["cmd"])
+ce.run_prompt("read only")
+ck("existing callers retain the read-only default", "read-only" in seen["cmd"] and "--approve-for-me" not in seen["cmd"])
+ck("unknown sandbox is refused before execution", "unsupported codex sandbox" in ce.run_prompt("x", sandbox="danger-full-access")["error"])
+
 print("-- degrade paths: every mismatch is an {error}, never an exception --")
 def run_empty(cmd, **kw):
     seen["cmd"] = cmd
