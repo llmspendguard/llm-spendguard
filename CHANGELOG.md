@@ -4,6 +4,41 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.12.6] — 2026-10-05
+
+Reliability — the complete **429 storm → batch** system at the one admission chokepoint (`adapters.call → dispatch`),
+building on 0.12.3's connection-window: a bulk fan is now **paced or diverted to the Batch API before it can storm**,
+and implicit-fan coalescing (4b) is safely **default-on**. Validated live on the real metered API through both
+admission doors (0 surfaced 429s, caller always served). No caller-side `metered_only`/`batch` tuning required.
+
+### Added
+- **Proactive cold cap** — the governor seeds `rpm`/`tpm` from the catalog's published limits
+  (`model_catalog.rate_limit_for`), so a cold metered vendor is paced from call #1 (anthropic `0/0 → 1000 rpm / 2M
+  tpm`) instead of admitting an unpaced burst.
+- **`StormCoalescer` pace+batch combo + both admission doors** — `storm_submit.submit_storm` (explicit async entry,
+  typed backpressure) and `storm_route` (the implicit raw-`adapters.call`-fan door, **default-on**, kill switch
+  `SPENDGUARD_STORM_COALESCE=0`). Safe-on because it routes only the raw fan: explicit fans
+  (`bulk_delegate`/`submit_storm`) pass `_coalesce_eligible=False`. Registry idle-TTL (120s) + cap (256) eviction so
+  default-on can't grow one planner thread per call-shape.
+- **Durable, crash-resumable, exactly-once batch** — `durable_batch_executor` on `lane_queue` + `batch_tracker`
+  (`kill -9` proven); `row_results` now returns the originating prompt with each result, so an ordinal-into-a-candidate
+  -list reply stays parseable hours later / in a fresh post-crash process.
+- **`scripts/probe/live_validate_no_429_storm.py`** — both-doors live validation on the real metered path (honest
+  intent+rowid ledger evidence; passes only when `rows_recorded >= N`, so a blind read can't pass vacuously).
+
+### Changed
+- Output-aware admission: `est_tokens` uses the learned `expected_output.expect` so OTPM isn't under-paced; AIMD
+  (decrease-on-429 / increase-on-success) refines the floor; deadline-driven batch (`route_horizon.should_batch_fan`)
+  + auto-chunk to the provider batch limits.
+- `install-rule` §8 doctrine: when the Anthropic plan is capped, delegate agentic subwork to the codex/gemini/zai
+  CLIs (regenerates the global + per-repo rule files).
+
+### Fixed
+- Internal 429s on the incident replay **931 → 0** (the shared cross-process sliding window has no burst allowance, so
+  a fan ≤ rpm is paced from the first call — the per-request `_Bucket` that started full could not).
+- DRY: one rate resolver (`dispatch.rate_per_s`), one governed-realtime executor
+  (`storm_submit.governed_realtime_executor`), one advisor-knob reader (`config._advisor_coerced`).
+
 ## [0.12.5] — 2026-10-02
 
 Adds `POST /embed` to `spendguard serve` — the embeddings analogue of `/ask`, so a non-Python caller (e.g. a
