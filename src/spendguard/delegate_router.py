@@ -41,11 +41,46 @@ def _configured_plan_models():
 
 
 def _model_for_plan(plan, kind):
+    # This is intentionally not lane_catalog.lane_model_for_tier: a plain-string delegation model serves both task
+    # kinds, while the catalog resolver requires that string to be enrolled in advisor.tiers for the requested tier.
     declaration = _configured_plan_models().get(plan)
     if isinstance(declaration, dict):
         tier = "strong" if kind == "agentic" else "cheap"
         return declaration.get(tier) or next((v for v in declaration.values() if isinstance(v, str) and v), None)
     return declaration if isinstance(declaration, str) and declaration else None
+
+
+def delegation_lanes_ready():
+    """Configured delegation plans usable on this host, derived from the existing lane activation machinery.
+
+    Returns ready, configured-but-unavailable, and registry lanes not configured for delegation. ``lanes_status``
+    already resolves registry executor
+    installation plus the lane's established reachability/auth evidence; delegation must not create a second probe.
+    """
+    from . import lanes, reliability
+    configured = _configured_plan_models()
+    status_by_lane = {row["lane"]: row for row in lanes.lanes_status()["lanes"]}
+    health_down = {row["resource"] for row in reliability.health_reds() if row.get("kind") == "lane"}
+    ready = []
+    for plan in sorted(configured):
+        row = status_by_lane.get(plan)
+        if (row and row.get("auth") == "ok" and (row.get("cli") or not row.get("activate"))
+                and plan not in health_down):
+            ready.append(plan)
+    return {"ready": ready,
+            "unavailable": sorted(set(configured) - set(ready)),
+            "not_configured": sorted(set(lane_registry.all_lanes()) - set(configured))}
+
+
+def delegation_doctor_line():
+    """Render the doctor summary for two-hop delegation readiness."""
+    readiness = delegation_lanes_ready()
+    ready = ", ".join(readiness["ready"]) or "none"
+    not_configured = ", ".join(readiness["not_configured"]) or "none"
+    unavailable = readiness["unavailable"]
+    suffix = f" · unavailable: {', '.join(unavailable)}" if unavailable else ""
+    return (f"delegation lanes ready: {ready} ({len(readiness['ready'])}) · "
+            f"not configured: {not_configured}{suffix}")
 
 
 def _resolve_plan_name(requested):
@@ -167,11 +202,29 @@ def _route_agentic(plan, prompt, model, timeout):
 def delegate_task(task, files=None, intent=None, provider="auto", execute=False, timeout=None):
     """Classify, estimate, and optionally execute one delegated task. Default is zero-execution dry-run."""
     intent = intent or DEFAULT_DELEGATE_INTENT
-    classification = classify_task(task, files=files, provider=provider)
+    readiness = delegation_lanes_ready()
+    ready = readiness["ready"]
+    if not ready:
+        return {"status": "refused", "classification": {"error": "no delegation lanes ready"},
+                "why": "no delegation lane is ready; install and authenticate a configured provider CLI, then retry",
+                "ready_alternatives": []}
+    resolved_provider = None if provider == "auto" else _resolve_plan_name(provider)
+    if provider != "auto" and resolved_provider not in ready:
+        alternatives = ", ".join(ready)
+        return {"status": "refused", "classification": {"error": f"provider {provider!r} is unavailable"},
+                "why": f"delegation plan {provider!r} is not ready; ready alternatives: {alternatives}",
+                "ready_alternatives": ready}
+    classification = classify_task(task, files=files, provider=(resolved_provider or provider))
     if classification.get("error"):
         return {"status": "error", "classification": classification}
     if classification["kind"] == "needs_claude" or not classification["self_contained"]:
         return {"status": "refused", "classification": classification, "why": classification["why"]}
+    if classification.get("provider") not in ready:
+        alternatives = ", ".join(ready)
+        return {"status": "refused", "classification": classification,
+                "why": f"classifier selected unavailable plan {classification.get('provider')!r}; "
+                       f"ready alternatives: {alternatives}",
+                "ready_alternatives": ready}
     estimate = _estimate_route(task, files, classification, intent)
     if estimate.get("error"):
         return {"status": "error", "classification": classification, "estimate": estimate}
@@ -208,14 +261,23 @@ def delegate_task(task, files=None, intent=None, provider="auto", execute=False,
 
 def delegate_cli(argv=None):
     import argparse
-    parser = argparse.ArgumentParser(prog="spendguard delegate")
-    parser.add_argument("task")
-    parser.add_argument("--files", help="comma-separated files; every file is read in full")
-    parser.add_argument("--intent")
-    parser.add_argument("--provider", default="auto")
-    parser.add_argument("--estimate", action="store_true", help="force dry-run even with --yes")
-    parser.add_argument("--yes", action="store_true", help="execute after classification and estimate")
-    parser.add_argument("--timeout", type=float)
+    parser = argparse.ArgumentParser(
+        prog="spendguard delegate",
+        description="Classify and offload one SELF-CONTAINED subtask to another configured provider plan. "
+                    "Dry-run is the default: classify + estimate only, with est $ saved vs Claude overage.",
+        epilog=("examples:\n"
+                "  spendguard delegate 'summarize this design' --files docs/design.md\n"
+                "  spendguard delegate 'fix and test this module' --provider codex --files src/app.py --yes\n"
+                "  spendguard delegate 'analyze these logs' --intent incident-review --yes"),
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("task", help="complete, self-contained task to classify and delegate")
+    parser.add_argument("--files", help="comma-separated supporting files; every file is read in full")
+    parser.add_argument("--intent", help="attribution/cost-control intent (default: spendguard:delegate-task)")
+    parser.add_argument("--provider", default="auto",
+                        help="configured plan to use, or auto for agentic selection among ready lanes (default: auto)")
+    parser.add_argument("--estimate", action="store_true", help="force dry-run even when --yes is also present")
+    parser.add_argument("--yes", action="store_true", help="execute hop 2 after classification and estimate")
+    parser.add_argument("--timeout", type=float, help="optional execution timeout in seconds")
     args = parser.parse_args(argv)
     result = delegate_task(args.task, files=[p for p in (args.files or "").split(",") if p], intent=args.intent,
                            provider=args.provider, execute=args.yes and not args.estimate, timeout=args.timeout)

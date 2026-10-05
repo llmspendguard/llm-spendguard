@@ -494,18 +494,20 @@ def main(argv=None):
                 print(f"delegate failed: {r.get('error')}")
     if "--bulk" in argv:                                  # fan a LIST of similar tasks across ALL idle lanes at once
         import json as _json
+        from .cli_arguments import cli_option_value_after
         rest = argv[argv.index("--bulk") + 1:]
 
-        def _optval(flag):                                # value following an optional flag, or None
-            return rest[rest.index(flag) + 1] if (flag in rest and rest.index(flag) + 1 < len(rest)) else None
-        file_p, ck_p, out_p = _optval("--file"), _optval("--checkpoint"), _optval("--out")
-        sys_p, sysfile_p = _optval("--system"), _optval("--system-file")
-        tier_p = _optval("--tier")                        # capability GROUP (advisor.tiers) → confine the fan-out to it
-        hedge_p = _optval("--hedge-ms")                   # tail-hedge window (ms): race a straggling per-unit miss onto
+        file_p = cli_option_value_after(rest, "--file")
+        ck_p = cli_option_value_after(rest, "--checkpoint")
+        out_p = cli_option_value_after(rest, "--out")
+        sys_p = cli_option_value_after(rest, "--system")
+        sysfile_p = cli_option_value_after(rest, "--system-file")
+        tier_p = cli_option_value_after(rest, "--tier")   # capability GROUP (advisor.tiers) → confine the fan-out to it
+        hedge_p = cli_option_value_after(rest, "--hedge-ms")  # tail-hedge window (ms): race a straggling per-unit miss onto
         #                                                   another healthy $0 lane in the SAME fan (spare-capacity-gated
         #                                                   inside bulk_delegate; the hedge always runs no_fallback, so it
         #                                                   can only cost a free lane miss). Absent → the config default (off).
-        lanes_p = _optval("--lanes") or os.environ.get("SPENDGUARD_BULK_LANES")  # CSV lane subset → CONFINE the fan
+        lanes_p = cli_option_value_after(rest, "--lanes") or os.environ.get("SPENDGUARD_BULK_LANES")  # CSV lane subset → CONFINE the fan
                                                           # (bulk_delegate lanes=), fail-closed: a caller picks e.g.
                                                           # "zai-coding,codex,gemini" to keep a job off a lane its
                                                           # output does not suit. --lanes wins; else the env default

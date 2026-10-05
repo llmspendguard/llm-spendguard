@@ -3,7 +3,7 @@ Claude Desktop, an IDE agent) can ask spendguard, from inside a repo, "which mod
 for THIS kind of job, at the quality it needs?" — answered from the caller's OWN measured usage, not a vendor's
 marketing.
 
-Tools — NINE, in two families (every read-only tool is $0, from data spendguard already has):
+Tools include these two core families (every read-only tool is $0, from data spendguard already has):
 
 MODEL-ADVISOR (rank / recommend / prove models for a job-type):
   • spendguard_advise    {intent?, plan?, as_of?}  → per-(vendor:model) cost×quality ranking for an intent
@@ -555,7 +555,28 @@ def _tool_run_jobs(args):
     return {"executed": True, **whole_job.run_jobs(jobs, goal)}
 
 
+def _tool_delegate(args):
+    """Offload a SELF-CONTAINED subtask through the same two-hop engine as the delegate CLI."""
+    from . import delegate_router
+    return delegate_router.delegate_task(
+        args.get("task"), files=args.get("files"), intent=args.get("intent"),
+        provider=args.get("provider", "auto"), execute=bool(args.get("execute", False)))
+
+
 _TOOLS = {
+    "spendguard_delegate": (
+        "Offloads a SELF-CONTAINED subtask to another provider's plan; it does NOT reroute the calling agent's "
+        "own turns. Dry-run is the default (execute=false): it classifies and returns the structured plan plus "
+        "the est $ saved vs overage without running hop 2. Set execute=true to run the delegated task.",
+        {"type": "object", "properties": {
+            "task": {"type": "string", "description": "the complete self-contained task"},
+            "files": {"type": "array", "items": {"type": "string"},
+                      "description": "optional supporting file paths; each is read in full"},
+            "intent": {"type": "string", "description": "optional attribution/cost-control intent"},
+            "provider": {"type": "string", "description": "configured plan or auto (default auto)"},
+            "execute": {"type": "boolean", "description": "run hop 2; default false (dry-run)"}},
+         "required": ["task"], "additionalProperties": False},
+        _tool_delegate),
     "spendguard_version": (
         "Which spendguard COMMIT this MCP server is running, the green pointer it should be on, and whether it is "
         "STALE (a newer gate-green commit was deployed). $0 — a git-SHA compare. If stale, the server hands off to "
@@ -826,6 +847,9 @@ def handle(req):
                              "• spendguard_health(run?, timeout_s?) — BOUNDED reachability of every $0 subscription "
                              "lane + every metered provider; one hung endpoint fails fast (timeout_s), never wedges. "
                              "Lanes $0, metered pings ~pennies.\n"
+                             "• spendguard_delegate(task, files?, intent?, provider?, execute?) — offload a "
+                             "SELF-CONTAINED subtask to another provider plan; dry-run by default. It does NOT "
+                             "reroute this calling agent's own turns.\n"
                              "TO MAKE SPENDGUARD PICK FOR YOU on a real call (not just advise): the programmatic API "
                              "(adapters.call / vendor_call) takes reasoning='best-value' with an intent — it resolves "
                              "the cheapest (model, effort) whose measured quality holds for that intent, and books the "
@@ -966,7 +990,7 @@ def register_client(remove=False):
         print(f"unregistered spendguard MCP server from {p}")
     else:
         print(f"registered spendguard MCP server in {p}  (command: {_spendguard_bin()} mcp)")
-        print("  → restart Claude Code (or reconnect MCP) to pick up all 9 tools: model-advisor + spend/compaction")
+        print(f"  → restart Claude Code (or reconnect MCP) to pick up all {len(_TOOLS)} tools")
     return 0
 
 

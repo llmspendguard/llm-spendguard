@@ -138,6 +138,26 @@ it reconstructs *what* you should do cheaper, and won't let "cheaper" cost you q
 The advisor's own LLM use is itself **caged** (a separate `caps.meta` budget, tagged `spendguard:*`, excluded
 from the corpus it analyzes) so the governor can't overspend governing.
 
+## Delegate work to another plan
+
+When the current plan is capped or on paid overage, `spendguard delegate` can hand a self-contained subtask to a
+configured $0 or cheaper subscription plan. It is a two-hop flow: a plan-covered classifier decides whether the
+task is a one-shot, an agentic workspace task, or needs the current Claude context; then the selected provider CLI
+runs it. The default is a dry-run that returns the classification, route, separate real-$ and est-value estimate,
+and estimated dollars saved versus measured Claude overage:
+
+```bash
+spendguard delegate "summarize this design" --files docs/design.md
+spendguard delegate "fix and test this module" --provider codex --files src/app.py --yes
+```
+
+MCP clients can use the same engine with `spendguard_delegate` (`execute=false` by default). The honest boundary:
+this offloads a **SELF-CONTAINED subtask to another provider's plan; it does NOT reroute the calling agent's own
+turns.** Use it for bounded work you can describe completely; keep live-context conversational work in the current
+agent. This implements the packaged assistant guidance in §8 of the installed `spendguard:rule`: batchable
+comprehension goes through lane routing, while agentic subwork can be handed to another provider CLI when the current
+plan is capped or on overage.
+
 **Docs:** [Architecture + diagrams](docs/ARCHITECTURE.md) · [Model-advisor (MCP)](docs/MODEL_ADVISOR.md) · [Use with Claude/Cursor](docs/USING-WITH-CLAUDE.md) · [Methodology](docs/README.md) · [Roadmap (teams/orgs/SaaS)](docs/ROADMAP.md) · [Module map](src/spendguard/README.md) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md) · [Setup](SETUP.md)
 
 **Use with an AI assistant:** `spendguard install-rule --global` writes a rule into `CLAUDE.md` so **every** Claude/Cursor conversation routes the LLM code it builds through spendguard — then `spendguard install-skills` adds the slash-commands: `/spend` (status), `/spendguard-reconcile` (trust the number), `/spendguard-learn` (advisor), `/spendguard-prompts` (the prompt lab), `/spendguard-close` (monthly close). See [Use with Claude](docs/USING-WITH-CLAUDE.md).

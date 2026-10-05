@@ -2591,6 +2591,11 @@ def _cli(cmd="status", live=False):
         except Exception:
             pass
         if cmd == "doctor":
+            try:
+                from . import delegate_router as _delegate_router
+                print("  " + _delegate_router.delegation_doctor_line())
+            except Exception as _delegation_error:
+                print(f"  delegation lanes ready: UNKNOWN — check could not run ({type(_delegation_error).__name__})")
             # SaaS push readiness — confirm THIS repo will independently push to the aggregation server.
             try:
                 from . import saas as _saas

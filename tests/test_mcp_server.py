@@ -63,6 +63,32 @@ ck("the 5 spend/compaction tools are ALSO advertised (wired into _TOOLS, not jus
 ck("every tool carries a description + inputSchema",
    all(t.get("description") and isinstance(t.get("inputSchema"), dict) for t in tl))
 
+print("-- spendguard_delegate: dry-run delegates to the engine and spends nothing --")
+from spendguard import delegate_router as _delegate_router
+_original_delegate_task = _delegate_router.delegate_task
+_delegate_calls = []
+
+
+def _stub_delegate_task(task, **kwargs):
+    _delegate_calls.append((task, kwargs))
+    return {"status": "estimate", "classification": {"kind": "agentic", "provider": "codex",
+            "self_contained": True, "why": "bounded"},
+            "estimate": {"plan": "codex", "real_api_usd": 0.0, "est_value_usd": 0.1,
+                         "saved_overage_usd": 0.05}}
+
+
+_delegate_router.delegate_task = _stub_delegate_task
+try:
+    delegated = rpc("tools/call", {"name": "spendguard_delegate", "arguments": {
+        "task": "fix the parser", "files": ["src/parser.py"]}})["result"]["structuredContent"]
+finally:
+    _delegate_router.delegate_task = _original_delegate_task
+ck("delegate MCP tool is advertised", "spendguard_delegate" in names)
+ck("delegate dry-run returns the structured plan", delegated["status"] == "estimate")
+ck("delegate dry-run defaults execute to false and forwards CLI-shaped arguments",
+   _delegate_calls == [("fix the parser", {"files": ["src/parser.py"], "intent": None,
+                                             "provider": "auto", "execute": False})])
+
 print("-- tools/call spendguard_advise: real ranking, agreeing with advise.ranked --")
 ca = rpc("tools/call", {"name": "spendguard_advise", "arguments": {"intent": "loinc-typing"}})["result"]
 ck("advise call is not an error", ca.get("isError") is False)

@@ -13,7 +13,7 @@ os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 os.environ.setdefault("OPENAI_API_KEY", "sk-test-not-used")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from spendguard import codex_exec, config, delegate_router, gate, guard, lane_balance, pricing  # noqa: E402
+from spendguard import codex_exec, config, delegate_router, gate, guard, lane_balance, lanes, pricing, reliability  # noqa: E402
 
 
 _failed = []
@@ -32,16 +32,19 @@ original_ratio = delegate_router._measured_claude_overage_ratio
 original_decision = guard.record_decision
 original_saving = guard.record_saving
 original_require = gate.require
+original_lanes_status = lanes.lanes_status
+original_health_reds = reliability.health_reds
 lane_calls = []
 codex_calls = []
 decision_calls = []
 saving_calls = []
 classification = {"kind": "oneshot", "provider": "codex", "self_contained": True, "why": "independent answer"}
+configured_models = {"codex": {"cheap": "test-cheap", "strong": "test-strong"}}
 
 
 def fake_config(section, key, default=None):
     if (section, key) == ("advisor", "lane_models"):
-        return {"codex": {"cheap": "test-cheap", "strong": "test-strong"}}
+        return configured_models
     if (section, key) == ("advisor", "route_est_out"):
         return 40
     if (section, key) == ("caps", "intent_caps"):
@@ -71,6 +74,18 @@ try:
     guard.record_decision = lambda **kwargs: decision_calls.append(kwargs)
     guard.record_saving = lambda *args, **kwargs: saving_calls.append((args, kwargs))
     gate.require = lambda: None
+    lanes.lanes_status = lambda: {"executor": "pool", "lanes": [
+        {"lane": "codex", "enabled": True, "cli": "/fake/codex", "auth": "ok", "activate": None}]}
+    reliability.health_reds = lambda: []
+
+    print("-- delegation lane readiness reuses configured activation state --")
+    readiness = delegate_router.delegation_lanes_ready()
+    check("configured installed reachable lane is ready", readiness["ready"] == ["codex"])
+    check("doctor line renders ready count", "delegation lanes ready: codex (1)" in delegate_router.delegation_doctor_line())
+    reliability.health_reds = lambda: [{"resource": "codex", "kind": "lane"}]
+    check("cached health-down state removes an otherwise installed lane",
+          delegate_router.delegation_lanes_ready()["ready"] == [])
+    reliability.health_reds = lambda: []
 
     print("-- validates every classifier kind and configured provider --")
     for kind in ("oneshot", "agentic", "needs_claude"):
@@ -89,6 +104,21 @@ try:
     check("dry-run returns estimate", dry["status"] == "estimate")
     check("dry-run never invokes codex executor", len(codex_calls) == before_codex)
     check("agentic route selects configured strong model", dry["estimate"]["model"] == "test-strong")
+
+    print("-- unavailable selections refuse with ready alternatives --")
+    lanes.lanes_status = lambda: {"executor": "pool", "lanes": [
+        {"lane": "codex", "enabled": True, "cli": None, "auth": "missing", "activate": "install/login"}]}
+    unavailable = delegate_router.delegate_task("edit it", provider="codex")
+    check("no ready plan is a typed refusal with install/auth guidance",
+          unavailable["status"] == "refused" and "install and authenticate" in unavailable["why"])
+    lanes.lanes_status = lambda: {"executor": "pool", "lanes": [
+        {"lane": "codex", "enabled": True, "cli": "/fake/codex", "auth": "ok", "activate": None}]}
+    configured_models["gemini"] = {"cheap": "gemini-cheap", "strong": "gemini-strong"}
+    classification.update(kind="agentic", provider="gemini", self_contained=True, why="bounded")
+    selected_unavailable = delegate_router.delegate_task("edit it")
+    check("classifier cannot route to an unavailable configured plan and names ready alternatives",
+          selected_unavailable["status"] in ("error", "refused") and "codex" in str(selected_unavailable))
+    configured_models.pop("gemini")
 
     print("-- needs_claude is a typed refusal with no hop-2 execution --")
     classification.update(kind="needs_claude", provider=None, self_contained=False, why="needs live session")
@@ -123,6 +153,8 @@ finally:
     guard.record_decision = original_decision
     guard.record_saving = original_saving
     gate.require = original_require
+    lanes.lanes_status = original_lanes_status
+    reliability.health_reds = original_health_reds
 
 print(f"\n{'[FAIL]' if _failed else 'OK'} test_delegate_router: {len(_failed)} failure(s)")
 sys.exit(1 if _failed else 0)

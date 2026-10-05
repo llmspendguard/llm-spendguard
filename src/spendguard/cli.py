@@ -545,12 +545,13 @@ def _dispatch(argv=None):
                   "[--provider <name>] [--batch-in X] [--batch-out Y] [--cached-in Z]")
             return 2
         model = r[0]
-        def _opt(flag, default=None):
-            return r[r.index(flag) + 1] if flag in r and r.index(flag) + 1 < len(r) else default
+        from .cli_arguments import cli_option_value_after
         try:
             path, entry = _pr.set_price(
-                model, _opt("--provider", "custom"), _opt("--in"), _opt("--out"), _opt("--source", ""),
-                batch_in=_opt("--batch-in"), batch_out=_opt("--batch-out"), cached_in=_opt("--cached-in"))
+                model, cli_option_value_after(r, "--provider", "custom"), cli_option_value_after(r, "--in"),
+                cli_option_value_after(r, "--out"), cli_option_value_after(r, "--source", ""),
+                batch_in=cli_option_value_after(r, "--batch-in"), batch_out=cli_option_value_after(r, "--batch-out"),
+                cached_in=cli_option_value_after(r, "--cached-in"))
         except ValueError as e:
             print(f"refused: {e}")
             return 2
@@ -566,9 +567,8 @@ def _dispatch(argv=None):
         from . import budget as _bud, config as _cfg
         r = list(rest)
 
-        def _ropt(flag, default=None):
-            return r[r.index(flag) + 1] if flag in r and r.index(flag) + 1 < len(r) else default
-        _model, _apply = _ropt("--model"), ("--apply" in r)
+        from .cli_arguments import cli_option_value_after
+        _model, _apply = cli_option_value_after(r, "--model"), ("--apply" in r)
         if _apply:                                         # consistent snapshot BEFORE any write (integrity first)
             import sqlite3 as _sq
             import time as _t
@@ -606,16 +606,14 @@ def _dispatch(argv=None):
             # IndexError out of the CLI — a traceback where a usage message belongs, on the command that
             # EDITS THE LEDGER. _opt returns None for a flag given without a value, so the missing-target
             # check below can report it as the user error it is.
-            def _opt(flag):
-                i = rest_l.index(flag) if flag in rest_l else -1
-                return rest_l[i + 1] if 0 <= i < len(rest_l) - 1 else None
-            reason = _opt("--reason") or "impossible estimate"
-            _row = _opt("--row")
+            from .cli_arguments import cli_option_value_after
+            reason = cli_option_value_after(rest_l, "--reason") or "impossible estimate"
+            _row = cli_option_value_after(rest_l, "--row")
             try:
                 row = int(_row) if _row is not None else None
             except ValueError:
                 print(f"quarantine: --row must be a rowid (got {_row!r})"); return 2
-            ts = _opt("--ts")
+            ts = cli_option_value_after(rest_l, "--ts")
             if row is None and ts is None:
                 print("quarantine: --row <rowid> or --ts <timestamp> is required "
                       "(the flag was given without a value)"); return 2
