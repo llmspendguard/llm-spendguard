@@ -79,9 +79,13 @@ When you WRITE or RUN code that calls an LLM:
    **When the Anthropic plan is CAPPED / on paid overage, move even AGENTIC subwork off it — delegate to another
    provider's own CLI, never a Claude Task subagent.** The Claude Code agent and every Task/Agent subagent it spawns
    run ONLY on the Anthropic plan and NO flag redirects them; the only routes onto another provider are (i) the
-   lane-routed one-shot comprehension above, or (ii) handing a SELF-CONTAINED sub-task to that provider's agent CLI
-   — `codex exec "<task>"` (OpenAI plan), `agy` (gemini), `kimi`, `zai` — and collecting its result, so the heavy
-   tokens bill THAT subscription instead of the capped Anthropic plan. While capped, also set
+   lane-routed one-shot comprehension above, or (ii) handing a SELF-CONTAINED sub-task to another provider's plan. The
+   ergonomic front-door is **`spendguard delegate "<task>"`** — it classifies the task on a $0 lane (one-shot vs
+   agentic vs needs-Claude), routes an agentic one to that provider's agent CLI ONLY when its lane is READY (else it
+   names the ready alternatives, never fail-open into the capped Claude call), and prints a SPLIT receipt
+   (real-$ / est-value / saved-vs-overage); `--estimate` dry-runs it, `--yes` executes. Under the hood it rides the
+   same provider CLIs you can also call directly — `codex exec "<task>"` (OpenAI plan), `agy` (gemini), `kimi`, `zai`
+   — collecting the result so the heavy tokens bill THAT subscription instead of the capped Anthropic plan. While capped, also set
    `SPENDGUARD_BULK_LANES=codex,gemini,zai-coding` so bulk work skips the Anthropic lane entirely; `spendguard lanes
    --usage` shows which lanes have room and whether the plan is on overage.
 
