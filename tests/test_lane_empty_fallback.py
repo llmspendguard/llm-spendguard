@@ -39,7 +39,7 @@ def _run(text, schema=None):
         return adapters._call_once("openai:gpt-5-mini", "hi", max_tokens=100, schema=schema)
 
 
-_orig = (adapters._lane_for, adapters.call, lane_balance.route_decision,
+_orig = (adapters._lane_for, adapters.call, lane_balance.quality_equivalent_free_substitutes,
          adapters._input_fits, adapters.json_schema_request, output_contract.check_item)
 try:
     adapters._lane_for = lambda prov: ("codex", _FakeLane) if prov == "openai" else None
@@ -50,8 +50,7 @@ try:
     # _lane_cool no longer stubbed: cooldowns now write to the per-test-isolated resource_state store, so real
     # cooling is a harmless side effect here (this test asserts on the reply text, not on cooldowns).
     adapters._input_fits = lambda *a, **k: (True, "stub")
-    lane_balance.route_decision = lambda intent, model, reactive=False: (
-        ("openai:gpt-5.5-sub", "primary failed") if reactive else (None, ""))
+    lane_balance.quality_equivalent_free_substitutes = lambda intent, model, excluded=None: ["openai:gpt-5.5-sub"]
     adapters.json_schema_request = lambda kind, schema, **k: {"_schema_prompt": "emit JSON"}
 
     print("-- EMPTY / WHITESPACE lane replies fail over to the API (not a $0 'success') --")
@@ -69,7 +68,7 @@ try:
     r2 = _run('{"ok":1}', schema={"type": "object"})
     fails += ck("non-empty and ON-shape reply → lane KEPT", r2.get("text") == '{"ok":1}' and r2.get("executor") == "codex")
 finally:
-    (adapters._lane_for, adapters.call, lane_balance.route_decision,
+    (adapters._lane_for, adapters.call, lane_balance.quality_equivalent_free_substitutes,
      adapters._input_fits, adapters.json_schema_request, output_contract.check_item) = _orig
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_lane_empty_fallback: {len(fails)} failure(s)")

@@ -24,6 +24,15 @@ import tempfile
 import time
 
 TIMEOUT_S = 300
+_USAGE_TTL_S = 300
+_usage_cache = {"at": 0.0, "val": None}
+
+
+def usage():
+    """Kimi Code exposes no plan-quota/status surface. Cache the honest unknown so repeated cross-lane refreshes do
+    no work and, critically, never manufacture headroom from token estimates or call counts."""
+    from . import lane_quota
+    return lane_quota.cached_usage(_usage_cache, _USAGE_TTL_S, lambda: None)
 
 
 def _bin():

@@ -486,10 +486,12 @@ def main(argv=None):
             print('usage: spendguard lanes --delegate "<task>"   (needs advisor.lane_models set)')
         else:
             from . import lane_balance
-            r = lane_balance.delegate(task)
+            r = lane_balance.delegate(task, refuse_billed="--refuse-billed" in rest)
             if r.get("text"):
                 flag = f"BILLED ${r.get('cost')}" if r.get("billed") else "$0 on-plan"
                 print(f"[delegated → {r['lane']} · {r['model']} · {flag}]\n{r['text']}")
+                if r.get("fallback_notice"):
+                    print(f"⚠ {r['fallback_notice']}")
             else:
                 print(f"delegate failed: {r.get('error')}")
     if "--bulk" in argv:                                  # fan a LIST of similar tasks across ALL idle lanes at once

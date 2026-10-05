@@ -150,7 +150,7 @@ def _aggregate(tasks, keyed):
 
 
 def comprehend_corpus(patterns, intent, question=None, model=None, run=False, budget_usd=None, lanes=None,
-                      max_chars=_DEFAULT_MAX_CHARS, checkpoint=None):
+                      max_chars=_DEFAULT_MAX_CHARS, checkpoint=None, refuse_billed=False):
     """Fan the corpus across the $0 lanes and aggregate per file. Default (run=False) is a ZERO-SPEND estimate.
 
     `intent` is the job-type label every call records under (required — attribution is the core mission).
@@ -188,7 +188,7 @@ def comprehend_corpus(patterns, intent, question=None, model=None, run=False, bu
     keys = [t["key"] for t in live]            # unique per task (file or file#part) → pair results by MEANING
     with calls.context(intent=intent):
         keyed = lane_balance.bulk_delegate(prompts, intent=intent, lanes=lanes, checkpoint=checkpoint,
-                                           task_key=keys, return_keyed=True)
+                                           task_key=keys, return_keyed=True, refuse_billed=refuse_billed)
     rows = keyed if isinstance(keyed, dict) else {}
     by_file = _aggregate(tasks, rows)
     served = sum(1 for v in rows.values() if isinstance(v, dict) and v.get("text"))
@@ -210,6 +210,8 @@ def cmd(argv=None):
     ap.add_argument("--question", help="what to ask of each file (default: extract key points + gaps/risks)")
     ap.add_argument("--run", action="store_true", help="actually fan across the lanes (default: zero-spend estimate)")
     ap.add_argument("--budget-usd", type=float, help="refuse the run if the estimate ceiling exceeds this")
+    ap.add_argument("--refuse-billed", action="store_true",
+                    help="explicit $0-or-fail mode; default ensures success via a loud metered fallback if needed")
     ap.add_argument("--lanes", help="confine the fan to these lanes, comma-separated (e.g. codex,gemini)")
     ap.add_argument("--max-chars", type=int, default=_DEFAULT_MAX_CHARS,
                     help=f"per-task evidence ceiling; larger files are chunked, never cut (default {_DEFAULT_MAX_CHARS})")
@@ -219,7 +221,8 @@ def cmd(argv=None):
     a = ap.parse_args(argv)
     lanes = [x.strip() for x in a.lanes.split(",") if x.strip()] if a.lanes else None
     res = comprehend_corpus(a.patterns, intent=a.intent, question=a.question, model=a.model, run=a.run,
-                            budget_usd=a.budget_usd, lanes=lanes, max_chars=a.max_chars, checkpoint=a.checkpoint)
+                            budget_usd=a.budget_usd, lanes=lanes, max_chars=a.max_chars, checkpoint=a.checkpoint,
+                            refuse_billed=a.refuse_billed)
     est = res["estimate"]
     print(f"comprehend — {res['files']} file(s) → {res['tasks']} task(s), model {est['model']} · "
           f"estimate ceiling ${est['est_usd_ceiling']:.4f} "

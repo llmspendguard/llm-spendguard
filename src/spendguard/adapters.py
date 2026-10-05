@@ -9,6 +9,7 @@ import time
 import json
 import threading
 import functools
+import sys
 from . import config, pricing
 
 # name -> {base_url, key_env, prefixes, kind}
@@ -2152,42 +2153,48 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                     _rel_auth.note_lane_auth_down(lane_name, _astat.get("cmd") or "")
                 except Exception:
                     pass
-        if no_metered_fallback and _lane_reason not in ("lane_error", "auth"):
-            # $0-ONLY caller (--refuse-billed): it opted out of paying metered to RETRY A TASK the free lane found
-            # UNSUITABLE (empty / off-shape / too big / a transient quota it will reset from) — that stays a $0 miss,
-            # never a surprise charge. But a LANE_ERROR is the executor reporting the lane could NOT serve AT ALL
-            # (login/token expired, CLI crash, rejected model) — infrastructure DOWN, not an unsuitable task. Losing
-            # work to it is the silent-empty the user hit, so a down lane still applies the ladder below (reroute to
-            # another $0 lane first, then metered) — a result is never lost. This is the STRUCTURAL split (which branch
-            # set _lane_reason), never a parse of the error prose (which the agentic remediation owns). Decided with Ash
-            # 2026-09-26: "a down lane still fails over."
+        if no_metered_fallback:
+            # EXPLICIT $0-ONLY caller (--refuse-billed): EVERY lane miss stays a free error, including an executor/auth
+            # outage. This is deliberately the rare exception to ensure-success; without this opt-in, the ladder below
+            # exhausts quality-proven free lanes and then uses the metered twin. The structured reason is preserved so
+            # a caller can distinguish task-unsuitable from infrastructure-down without parsing prose.
             return {**base, "text": None, "cost": None, "executor": lane_name, "reason": _lane_reason,   # MISS is an
                     "error": f"refused: would bill metered API ({s.get('error')})"}   # error row, NOT a paid retry — $0
         if _lane_reason == "lane_error":                 # the lane could not serve → tell the user ONCE (never a silent
             _surface_lane_down(lane_name, s.get("error"))  # empty); the ladder below reroutes + cools via _learn_from_fallback
-        # LANE FAILED. REACTIVE FAILOVER (Part 2) FIRST: before paying the metered API, try a CONFIRMED substitute
-        # PLAN for this intent — one hop, guarded against recursion. Routed through call() so the substitute resolves
-        # its OWN budget and rides its OWN lane; if it answers, the primary lane is cooled (it failed) and the
-        # substitution is recorded. Default OFF: no confirmed substitute → route_decision returns None → unchanged.
+        # LANE FAILED. REACTIVE FAILOVER FIRST: before paying the metered API, exhaust every $0 arm whose measured
+        # bandit quality holds for this intent, best measured headroom first. Each substitute is itself free-only, so a
+        # miss can never silently meter early; only after the quality-equivalent free set is exhausted do we use the
+        # original model's metered twin. Routed through call() so each arm resolves its own budget and lane.
         # `_no_sub` (caller's no_substitution=True) pins the vendor: the requested model answers or errors, never a
         # silent swap — for calls where the vendor IS the measurement (a cross-vendor panel / adjudication).
+        _failed_free_lanes = [lane_name]
         if not _no_sub and not getattr(_sub_guard, "on", False):
             try:
                 from . import lane_balance, calls as _calls
-                _rsub, _rwhy = lane_balance.route_decision((_calls.current() or {}).get("intent"), model, reactive=True)
-            except Exception:
-                _rsub, _rwhy = None, ""
-            if _rsub and _rsub != model:
+                _intent = (_calls.current() or {}).get("intent")
+                _free_subs = lane_balance.quality_equivalent_free_substitutes(_intent, model,
+                                                                              excluded=_failed_free_lanes)
+            except Exception as _quality_error:
+                from . import gate as _quality_gate
+                if _quality_gate.is_deliberate_stop(_quality_error):
+                    raise
+                _free_subs = []
+            for _rsub in _free_subs:
+                _rsub_lane = _LANES.get(provider_for(_rsub), (None,))[0]
+                _rwhy = "measured quality holds; $0 lane before metered fallback"
                 _lane_chatter(f"[spendguard] lane-balance REACTIVE: {lane_name} lane failed → {_rsub} ({_rwhy})")
                 _sub_guard.on = True
                 try:
                     _rr = call(_rsub, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
-                               schema=schema, timeout_s=timeout_s)
+                               schema=schema, timeout_s=timeout_s, no_metered_fallback=True)
                 finally:
                     _sub_guard.on = False
                 if not _rr.get("error"):
                     _lane_cool(lane_name, reason="failover")   # primary failed → back off; the substitute carried it
                     return {**_rr, "substituted_from": model, "substitution": _rwhy}
+                if _rsub_lane:
+                    _failed_free_lanes.append(_rsub_lane)
         # No substitute (or it also failed) → fall back to the API on the SAME prompt (this recurses with the lane
         # disabled, so the existing API path runs once, unchanged) and let its OUTCOME settle whether the lane was
         # unsuitable for this prompt (keep it) or genuinely down (cool it).
@@ -2217,6 +2224,12 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                              schema=schema, timeout_s=timeout_s, _skip_lane=True, _no_sub=_no_sub, _internal_pin=_internal_pin)
         out = out if isinstance(out, dict) else {"error": "metered fallback returned no result dict", "cost": None}
         out["fell_from"] = lane_name
+        _fallback_cost = out.get("cost")
+        _fallback_cost_text = (f"${float(_fallback_cost):.4f}" if _fallback_cost is not None else "cost unavailable")
+        _fallback_notice = (f"fell over to metered {_fallback_cost_text} — lanes "
+                            f"{', '.join(_failed_free_lanes)} unavailable")
+        print(f"[spendguard] ⚠ {_fallback_notice}", file=sys.stderr)
+        out["fallback_notice"] = _fallback_notice
         _kind = _learn_from_fallback(lane_name, prompt, bool(out.get("error", False)), model=raw, transient=bool(_ra))
         # OPERATOR-only (opt-in) commentary on WHY the lane missed + that the API served — off by default so a CONSUMER
         # never sees a lane on the call path. The call already SUCCEEDED on the metered fallback (`out`, returned below);

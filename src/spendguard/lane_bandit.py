@@ -108,6 +108,20 @@ def _idle_bonus(lane):
         return 1.0
 
 
+def _measured_headroom_tiebreak(lane):
+    """Provider-measured quota score used ONLY after learned quality ties exactly. Unknown headroom is neutral, and
+    the persisted snapshot means choosing an arm never launches a status command on the routing hot path."""
+    try:
+        from . import lanes, route_utility
+        rows = lanes.lane_headroom(do_fetch=False)
+        ranked = {r["lane"]: r for r in route_utility.rank_lanes(rows)}
+        row = ranked.get(lane) or {}
+        score = row.get("score")
+        return float(score) if score is not None else 0.0
+    except Exception:
+        return 0.0
+
+
 def _intent_realized_costs(intent, arms):
     """{(lane, use_name): realized $/call} for an intent — each arm's MEASURED mean output (which INCLUDES reasoning,
     since reasoning bills as output) priced at its rate, from the calls corpus. Only arms with measured output appear
@@ -164,7 +178,9 @@ def choose_arm(intent, arms):
         return untried[0]
     if _rng.random() < _bcfg("bandit_epsilon", EPSILON_DEFAULT):
         return _rng.choice(live)
-    return max(live, key=lambda a: arm_score(intent, a))   # exploit the learned value-reward (cost already in it via the judge)
+    # Headroom is a TIEBREAKER only: it can never overturn the agentic learned-quality ordering. With no measured
+    # quota every tiebreak is equal, so max() preserves the old arm order exactly.
+    return max(live, key=lambda a: (arm_score(intent, a), _measured_headroom_tiebreak(a[0])))
 
 
 def should_bakeoff(intent, arms):

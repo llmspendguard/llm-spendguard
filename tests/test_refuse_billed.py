@@ -5,11 +5,8 @@ Guards _call_once directly, on STRUCTURAL signals (which branch produced the row
     refuse_billed: the row is attributed to the LANE (executor is the lane), carries no cost and no text, and the
     metered API is never reached. Paying metered to retry a task the free lane found unsuitable is what refuse_billed
     opts out of.
-  • a lane that is DOWN — its executor returned an ERROR (_lane_reason='lane_error': auth/token expired, CLI crash,
-    rejected model) — is INFRASTRUCTURE failure, not an unsuitable task, so it STILL fails over through the ladder even
-    under refuse_billed (Ash 2026-09-26: "a down lane still fails over"; budget_usd is the hard $0 cap) and the outage
-    is SURFACED. The surface fires ONLY on the lane_error path, so its presence is the structural proof the down→ladder
-    branch was taken rather than the $0 refusal.
+  • a lane that is DOWN is also refused: --refuse-billed is now the explicit, literal $0-or-fail opt-in. The default
+    ensure-success path still exhausts measured-good free lanes and then meters, but this flag never does.
 
 Offline: the lane is stubbed to miss/err, the metered key and reactive substitute are stubbed out — no network, no spend.
 """
@@ -55,7 +52,7 @@ class _DownLane:
 adapters._lane_too_big = lambda lane, prompt: False
 adapters._lane_model_cooling = lambda lane, model: False
 config.api_key = lambda env: None                          # metered leg fails fast (no key) — offline, no spend
-lane_balance.route_decision = lambda intent, model, reactive=False: (None, "no sub (test)")  # isolate: no reactive sub
+lane_balance.quality_equivalent_free_substitutes = lambda intent, model, excluded=None: []
 # The lane-down SURFACE is now OPERATOR-opt-in (advisor.lane_call_alerts) — a consumer never sees it on the call path
 # (guarded by test_lane_alerts_default_off). This test probes that surface AS the structural proof of the down→ladder
 # branch, so it runs as an OPERATOR would: alerts ON. (A task miss still does not surface — that is the point below.)
@@ -70,14 +67,15 @@ fails += ck("task miss + refuse_billed → row attributed to the LANE (not 'api'
 fails += ck("...carries NO cost and NO text (a refusal, not an answer)", r.get("cost") is None and r.get("text") is None)
 fails += ck("...and a task miss is NOT surfaced as a lane-down", "gemini" not in adapters._lane_announce._at)
 
-print("\n-- a DOWN lane (executor error) under refuse_billed → fails over past the lane, surfaced --")
+print("\n-- a DOWN lane (executor error) under refuse_billed → still $0-refused --")
 adapters._lane_for = lambda prov: ("gemini", _DownLane)
 adapters._lane_announce._at.clear()
 r = adapters._call_once("gemini:g-low", "hi", max_tokens=100, no_metered_fallback=True)
-fails += ck("down lane + refuse_billed → SURFACED (structural proof the down→ladder branch ran, not the $0 refusal)",
-            "gemini" in adapters._lane_announce._at)
-fails += ck("...and the row is NOT a lane-attributed $0 refusal (it left the lane for the ladder)",
-            not (r.get("executor") == "gemini" and r.get("cost") is None and r.get("text") is None))
+fails += ck("down lane + refuse_billed does not emit a metered-fallback alert",
+            "gemini" not in adapters._lane_announce._at)
+fails += ck("...and remains a lane-attributed $0 refusal (no metered exception)",
+            r.get("executor") == "gemini" and r.get("cost") is None and r.get("text") is None
+            and str(r.get("error") or "").startswith("refused"))
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_refuse_billed: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

@@ -1,9 +1,5 @@
-"""A lane that is DOWN (its executor returned an error — login/token expired, CLI crash, rejected model) still fails
-over THROUGH the ladder even under the $0-only contract (no_metered_fallback). Infrastructure failure is not a task
-being too hard, so work is never silently lost — the empty-and-skipped a logged-out codex lane produced (Ash
-2026-09-26: "a down lane still fails over"). A TASK miss (empty / off-shape) under the SAME contract still stays a $0
-miss (no surprise metered charge). The split is STRUCTURAL (which branch set _lane_reason), never a parse of the error
-prose — that (auth vs other) is the agentic remediation's job.
+"""The explicit $0-only contract (no_metered_fallback / --refuse-billed) never bills, including when a lane is down.
+The default still ensures success through free alternatives then metered; this rare opt-in deliberately chooses error.
 
 Offline, isolated home: a fake lane executor returns an error (down) or empty (task miss); the metered API fails fast
 with no key, so we assert WHICH path was taken (refused-$0 short-circuit vs ladder-attempted), never a live success.
@@ -50,7 +46,7 @@ def _run(lane_name, exec_module, no_metered_fallback):
 def main():
     results = []
 
-    # ── a DOWN lane (executor error) under no_metered_fallback → applies the ladder, does NOT short-circuit to $0 ──
+    # ── a DOWN lane under no_metered_fallback → loud outage plus a literal $0 refusal ──
     resource_state._reset()
     adapters._lane_announce._at.clear()
     down_exec = types.SimpleNamespace(
@@ -58,12 +54,12 @@ def main():
         run_prompt=lambda prompt, system=None, model=None, timeout=None, **_kw: {
             "error": "access token could not be refreshed — please log out", "text": None})
     rA = _run("codex-down", down_exec, no_metered_fallback=True)
-    ck(results, "a DOWN lane under no_metered_fallback does NOT return the $0 'refused' miss (it applies the ladder)",
-       not str(rA.get("error") or "").startswith("refused"), extra=str(rA.get("error"))[:80])
-    ck(results, "...the outage is SURFACED once (never a silent empty)",
-       "codex-down" in adapters._lane_announce._at)
-    ck(results, "...and the metered leg failed too (no key) so the lane was cooled (down)",
-       adapters._lane_cooling("codex-down"))
+    ck(results, "a DOWN lane under no_metered_fallback returns the $0 'refused' miss",
+       str(rA.get("error") or "").startswith("refused"), extra=str(rA.get("error"))[:80])
+    ck(results, "...no metered-fallback outage alert is emitted",
+       "codex-down" not in adapters._lane_announce._at)
+    ck(results, "...and it never leaves the lane for a metered leg",
+       rA.get("executor") == "codex-down" and rA.get("cost") is None)
 
     # ── a TASK miss (empty text, executor set NO error) under no_metered_fallback → stays a $0 'refused' miss ──
     resource_state._reset()

@@ -8,8 +8,8 @@ read two honest ways:
   • OPPORTUNISTIC CAPTURE (codex: the `codex.rate_limits` events the CLI records in its logs sqlite on every real
     call — `exec --json` itself emits only token counts) — read from what real traffic already left behind, no extra
     call; None until traffic has populated it.
-  • NO SURFACE (zai-coding): VERIFIED — the z.ai coding-plan endpoint returns no rate-limit headers and there is no
-    status command, so usage() stays None (quota UNKNOWN) and routing falls back to the utilisation proxy for it.
+  • NO SURFACE (kimi, zai-coding): VERIFIED — their plan paths expose no remaining-quota status/header surface, so
+    usage() stays None (quota UNKNOWN) and routing falls back to the utilisation proxy for them.
     A gauge is never invented where the provider exposes nothing.
 
 This module holds only the PROVIDER-AGNOSTIC pieces: the freshness cache (with the reset-boundary invalidation the

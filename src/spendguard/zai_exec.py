@@ -38,6 +38,15 @@ DEFAULT_BASE_URL = "https://api.z.ai/api/anthropic"
 _ANTHROPIC_VERSION = "2023-06-01"
 KEY_ENV = "ZAI_CODING_API_KEY"          # the coding-PLAN token; falls back to the account's ZAI_API_KEY
 TIMEOUT_S = 300
+_USAGE_TTL_S = 300
+_usage_cache = {"at": 0.0, "val": None}
+
+
+def usage():
+    """The Z.ai coding-plan endpoint exposes neither remaining quota headers nor a status command. Return a cached,
+    explicit unknown; request usage is not a quota and must never be presented as one."""
+    from . import lane_quota
+    return lane_quota.cached_usage(_usage_cache, _USAGE_TTL_S, lambda: None)
 # Only used when neither the caller nor the price table knows the model's output ceiling. The plan is flat-fee,
 # so a generous cap costs nothing and only avoids truncation; a real measured/published max always wins over it.
 _FALLBACK_MAX_TOKENS = 16384

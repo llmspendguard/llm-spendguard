@@ -321,12 +321,9 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
          attempts=IN_PROCESS_RETRY_ATTEMPTS, backoff_s=2.0, reasoning=None, no_metered_fallback=False):
     """Call ONE model, bounded by a TOTAL deadline, returning a typed Result. Never raises for a call failure.
 
-    `no_metered_fallback=True` is the $0-ONLY contract, with ONE deliberate exception: it declines paying metered to
-    RETRY A TASK the free lane found UNSUITABLE (empty / off-shape / too big / a transient quota it resets from) — that
-    is an honest $0 miss, never a surprise charge. But a lane that is DOWN — the executor reports it could NOT serve at
-    all (login/token expired, CLI crash, rejected model) — is INFRASTRUCTURE failure, not an unsuitable task, and still
-    fails over through the ladder (another $0 lane first, then the metered twin) so a result is never lost, with the
-    outage surfaced (adapters._surface_lane_down). Losing work to a logged-out lane was the silent-empty this closes.
+    `no_metered_fallback=True` is the explicit $0-ONLY contract: any lane miss, including a down executor, returns a
+    free error instead of billing. The default remains ensure-success: exhaust quality-proven $0 alternatives, then
+    use the exact model's metered twin as a loud, ledger-accounted last resort.
     Default False = a $0 lane that errors or is too busy sheds to its metered twin so the call completes — burst
     behaves like isolation (see the dispatch shed below).
 
@@ -1128,7 +1125,8 @@ def time_budget(vendor, model, sig=None, default_s=None, in_chars=None):
     return None, "unknown"
 
 
-def fan_out(vendors, prompt, *, deadline_s, purpose="", system=None, schema=None, max_tokens=None):
+def fan_out(vendors, prompt, *, deadline_s, purpose="", system=None, schema=None, max_tokens=None,
+            no_metered_fallback=False):
     """Ask N vendors the same question. Returns {"results": [...], "ok": [...], "failed": [...], "n": N,
     "n_ok": k, "complete": k == N, "run_id": ...}.
 
@@ -1143,7 +1141,7 @@ def fan_out(vendors, prompt, *, deadline_s, purpose="", system=None, schema=None
     def _one(v, m):
         budget, _basis = time_budget(v, m, sig=class_sig(m, purpose), default_s=deadline_s, in_chars=len(prompt or ""))
         return call(v, m, prompt, deadline_s=budget or deadline_s, purpose=purpose, system=system,
-                    schema=schema, max_tokens=max_tokens)
+                    schema=schema, max_tokens=max_tokens, no_metered_fallback=no_metered_fallback)
 
     with cf.ThreadPoolExecutor(max_workers=max(1, len(vendors))) as pool:
         futs = {pool.submit(_one, v, m): (v, m) for v, m in vendors}
@@ -1160,7 +1158,8 @@ def fan_out(vendors, prompt, *, deadline_s, purpose="", system=None, schema=None
             "run_id": run_id()}
 
 
-def first_ok(vendors, prompt, *, deadline_s, need=1, purpose="", system=None, schema=None, max_tokens=None):
+def first_ok(vendors, prompt, *, deadline_s, need=1, purpose="", system=None, schema=None, max_tokens=None,
+             no_metered_fallback=False):
     """Ask all vendors at once; return as soon as `need` of them have ANSWERED. For timeliness, not agreement.
 
     fan_out waits for everybody, so its latency is the SLOWEST vendor's — and one vendor timing out at 180s
@@ -1177,7 +1176,7 @@ def first_ok(vendors, prompt, *, deadline_s, need=1, purpose="", system=None, sc
     def _one(v, m):
         budget, _b = time_budget(v, m, sig=class_sig(m, purpose), default_s=deadline_s, in_chars=len(prompt or ""))
         return call(v, m, prompt, deadline_s=budget or deadline_s, purpose=purpose, system=system,
-                    schema=schema, max_tokens=max_tokens)
+                    schema=schema, max_tokens=max_tokens, no_metered_fallback=no_metered_fallback)
 
     pool = cf.ThreadPoolExecutor(max_workers=max(1, len(vendors)))
     futs = {pool.submit(_one, v, m): (v, m) for v, m in vendors}

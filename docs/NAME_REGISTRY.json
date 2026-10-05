@@ -253,9 +253,9 @@
       "why": "chat/claudecode/codex.update all share a duck-typed contract: each is an incremental 'read new data since watermark, digest into local state' operation for a different provider (Claude web, Claude Cod"
     },
     "usage": {
-      "n": 3,
+      "n": 5,
       "verdict": "PROTOCOL",
-      "why": "Each usage() is a per-lane implementation of the same lane-quota contract (return buckets [{bucket, remaining_pct, reset_ts}] or None), delegating to a shared lane_quota.cached_usage with lane-specific _fetch_usage. Intentional polymorphism across lane modules (antigravity/codex/subscription exec), consumed uniformly by lanes.lane_headroom() iterating mod.usage(). [Adjudicated PROTOCOL by honestreview name --run, 2026-08-27.]"
+      "why": "Each usage() is a per-lane implementation of the same lane-quota contract (return buckets [{bucket, remaining_pct, reset_ts}] or None), delegating to shared lane_quota.cached_usage. Antigravity/codex/subscription parse provider surfaces; Kimi/Z.ai explicitly return cached None because those providers expose no quota surface. Intentional polymorphism consumed uniformly by lanes.lane_headroom() iterating mod.usage(). [Original protocol adjudicated by honestreview name --run, 2026-08-27; Kimi/Z.ai protocol implementations reviewed 2026-10-05.]"
     },
     "w": {
       "n": 12,

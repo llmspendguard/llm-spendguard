@@ -7,11 +7,8 @@ Locked here so the separation cannot silently regress:
     lane misses — the requested model is unchanged, executor='api', and the metered call actually happened;
   • no_metered_fallback=True suppresses that fallback ONLY for a TASK miss — a lane that RAN but returned no usable
     text (empty / off-shape) yields a refusal row ($0, attributed to the LANE) and the metered API is NEVER called.
-    But a lane that is DOWN (its executor returned an error — auth/token expired, CLI crash, rejected model) is an
-    INFRASTRUCTURE failure, not an unsuitable task, so it STILL fails over to the metered API even under
-    no_metered_fallback (Ash 2026-09-26: "a down lane still fails over" — the empty-and-skipped a logged-out lane
-    produced is the bug this closes; budget_usd is the hard $0 cap for a caller that truly must never bill);
-  • no_substitution gates ONLY the DIFFERENT-model reactive failover: route_decision is consulted when it is
+    A lane that is DOWN is also refused: the explicit flag is literal $0-or-fail;
+  • no_substitution gates ONLY the DIFFERENT-model reactive failover: the quality-equivalent selector is consulted when it is
     False and skipped when it is True.
 The two no_metered_fallback outcomes are told apart STRUCTURALLY (which branch set _lane_reason: 'empty' task miss
 vs 'lane_error' executor error), never by a substring of the error prose. Offline: the lane, the OpenAI SDK client,
@@ -105,21 +102,21 @@ pricing.realtime_cost = lambda m, i, o, **k: 0.001
 adapters._book_substitution = lambda *a, **k: None
 openai.OpenAI = _FakeOpenAI
 
-_route_calls = []
+_substitute_queries = []
 
 
-def _spy_route(intent, model, reactive=False):
-    _route_calls.append((intent, model, reactive))
-    return (None, "")                                            # no confirmed substitute → falls through to metered
+def _spy_quality_substitutes(intent, model, excluded=None):
+    _substitute_queries.append((intent, model, excluded))
+    return []
 
 
-lane_balance.route_decision = _spy_route
+lane_balance.quality_equivalent_free_substitutes = _spy_quality_substitutes
 
 
 def _run(**kw):
     """One raw dispatch through call(_no_guard=True) → _call_once, with the lane in front (it will miss)."""
     _metered_calls.clear()
-    _route_calls.clear()
+    _substitute_queries.clear()
     return adapters.call(MODEL, "hello", max_tokens=32, _no_guard=True, **kw)
 
 
@@ -128,15 +125,14 @@ r = _run(no_substitution=True, no_metered_fallback=False)
 ck("pinned (no_substitution=True): a lane miss falls back to the metered API", r.get("executor") == "api" and r.get("error") is None)
 ck("...and the metered call actually happened for the SAME model", _metered_calls == ["deepseek-v4-flash"])
 ck("...and the model was NOT swapped (no different-model substitution)", r.get("model") == "deepseek-v4-flash" and "substituted_from" not in r)
-ck("...and no_substitution=True SKIPS the different-model failover (route_decision not consulted)", _route_calls == [])
+ck("...and no_substitution=True SKIPS the different-model failover", _substitute_queries == [])
 
-# ── no_metered_fallback suppresses the fallback ONLY for a TASK miss; a DOWN lane still fails over ──
-# (a) a DOWN lane (executor error) is INFRA failure → it STILL fails over to the metered API even under refuse_billed
-#     (Ash 2026-09-26: "a down lane still fails over" — never lose work to a logged-out lane; budget_usd is the hard $0)
+# ── no_metered_fallback is literal $0-or-fail for both task misses and down lanes ──
+# (a) a DOWN lane under the explicit flag is still $0-or-fail.
 adapters._lane_for = lambda prov: ("deadlane", _DeadLane())
 r = _run(no_substitution=True, no_metered_fallback=True)
-ck("refuse_billed + a DOWN lane (error) STILL fails over to the metered API (infra, not a task miss)",
-   _metered_calls == ["deepseek-v4-flash"] and r.get("executor") == "api" and r.get("error") is None)
+ck("refuse_billed + a DOWN lane returns a free error and never calls metered",
+   _metered_calls == [] and r.get("executor") == "deadlane" and r.get("cost") is None and r.get("error"))
 # (b) a TASK miss (ran, empty, NO error) under refuse_billed → $0 refusal, metered NEVER called (the preserved contract).
 #     Asserted structurally: the metered leg never ran, the row is attributed to the LANE, nothing was answered/charged.
 adapters._lane_for = lambda prov: ("emptylane", _EmptyLane())
@@ -148,7 +144,8 @@ ck("...and nothing was answered or charged (a refusal row, not an answer)", r.ge
 # ── no_substitution=False DOES consult the different-model failover (the other half of the separation) ──
 adapters._lane_for = lambda prov: ("deadlane", _DeadLane())    # a failing lane → the reactive different-model path
 r = _run(no_substitution=False, no_metered_fallback=False)
-ck("unpinned (no_substitution=False): route_decision IS consulted for a different-model failover", len(_route_calls) == 1 and _route_calls[0][2] is True)
+ck("unpinned (no_substitution=False): measured-quality substitutes are consulted before metered",
+   len(_substitute_queries) == 1)
 ck("...and with no confirmed substitute it STILL reaches the same-model metered API", _metered_calls == ["deepseek-v4-flash"] and r.get("executor") == "api")
 
 print(("[OK]" if not fails else "[FAIL]") + " lane/metered fallback separation: %d failure(s)" % len(fails))

@@ -270,7 +270,8 @@ class AskResult:
 
 
 def ask(prompt, *, vendors=None, n=None, schema=None, system=None, purpose="ask", deadline_s=None,
-        budget_usd=None, mode="all", require=None, max_tokens=None, est_output_tokens=None, preflight=True):
+        budget_usd=None, mode="all", require=None, max_tokens=None, est_output_tokens=None, preflight=True,
+        refuse_billed=False):
     """Ask N models the same prompt; return an honest AskResult. The stable public entry point for cross-LLM work.
 
     vendors        : ["vendor:model", ...] or [("vendor","model"), ...]. Omit to use the configured default
@@ -317,10 +318,12 @@ def ask(prompt, *, vendors=None, n=None, schema=None, system=None, purpose="ask"
     dl = float(deadline_s or _DEFAULT_DEADLINE_S)
     if mode == "first":
         fan = vendor_call.first_ok(vlist, prompt, deadline_s=dl, need=int(require or 1), purpose=purpose,
-                                   system=system, schema=schema, max_tokens=max_tokens)
+                                   system=system, schema=schema, max_tokens=max_tokens,
+                                   no_metered_fallback=refuse_billed)
     elif mode == "all":
         fan = vendor_call.fan_out(vlist, prompt, deadline_s=dl, purpose=purpose, system=system,
-                                  schema=schema, max_tokens=max_tokens)
+                                  schema=schema, max_tokens=max_tokens,
+                                  no_metered_fallback=refuse_billed)
     else:
         raise ValueError(f"mode must be 'all' or 'first', not {mode!r}")
     return AskResult(_inject_unmet(fan, unmet), mode, estimate=estimate)
@@ -418,6 +421,8 @@ def cmd(argv=None):
     ap.add_argument("--purpose", default="ask", help="intent tag for attribution in the ledger")
     ap.add_argument("--deadline", type=float, default=None, help="per-vendor deadline seconds")
     ap.add_argument("--budget", type=float, default=None, help="refuse if the estimated metered $ exceeds this")
+    ap.add_argument("--refuse-billed", action="store_true",
+                    help="explicit $0-or-fail mode; default ensures success and may use a loud metered fallback")
     ap.add_argument("--mode", choices=["all", "first"], default="all")
     ap.add_argument("--require", type=int, default=None, help="for --mode first: how many must answer")
     ap.add_argument("--json", action="store_true", help="emit the honest machine-readable result")
@@ -433,7 +438,8 @@ def cmd(argv=None):
             schema = _json.load(fh)
     try:
         r = ask(prompt, vendors=vendors, n=a.n, schema=schema, system=a.system, purpose=a.purpose,
-                deadline_s=a.deadline, budget_usd=a.budget, mode=a.mode, require=a.require)
+                deadline_s=a.deadline, budget_usd=a.budget, mode=a.mode, require=a.require,
+                refuse_billed=a.refuse_billed)
     except BudgetRefused as e:
         print(f"ask: {e}", file=_sys.stderr)
         return 1

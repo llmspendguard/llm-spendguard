@@ -203,7 +203,7 @@ _DELEGATE_OUT = 1500             # OUTPUT budget for a delegated task — NAMED,
 
 
 def delegate(task, system=None, lanes=None, reasoning="low", max_tokens=_DELEGATE_OUT, intent=None,
-             enqueue=False, priority=None, schema=None):
+             enqueue=False, priority=None, schema=None, refuse_billed=False):
     """Offload one task to the cheapest VIABLE idle subscription lane and return the answer — so heavy work runs $0
     on an idle plan while the orchestrator (e.g. this Claude Code session) spends nothing but coordination.
 
@@ -262,13 +262,14 @@ def delegate(task, system=None, lanes=None, reasoning="low", max_tokens=_DELEGAT
         tried.append(model)
         with calls.context(intent=intent):
             r = adapters.call(model, task, system=system, reasoning=reasoning, max_tokens=max_tokens, sig=intent,
-                              schema=schema)   # structured output: shape rides the lane prompt + local-validate + API fallback
+                              schema=schema, no_metered_fallback=refuse_billed)
             # sig=intent → autotune raises this class's OUTPUT budget from its measured p99 (over the 1500 floor),
             # so a long delegated answer stops truncating at 1500/3000/6000 as the class is learned.
         txt = (r.get("text") or "").strip()
         if txt and not r.get("error"):
             return {"text": txt, "lane": lane, "model": model, "cost": r.get("cost"),
-                    "billed": bool(r.get("cost")), "executor": r.get("executor"), "tried": tried}
+                    "billed": bool(r.get("cost")), "executor": r.get("executor"), "tried": tried,
+                    "fell_from": r.get("fell_from"), "fallback_notice": r.get("fallback_notice")}
     return {"text": None, "lane": None, "model": None, "tried": tried,
             "error": f"no viable delegation lane answered (tried {tried or 'none — set advisor.lane_models {lane: model}'})"}
 
@@ -294,6 +295,48 @@ def _bulk_arms(intent, lanes=None):
         if cur is None or wr > cur[0]:
             best[arm[0]] = (wr, arm)
     return [a for _wr, a in best.values()]
+
+
+def quality_equivalent_free_substitutes(intent, primary_model, excluded=None):
+    """Quality-proven $0 alternatives for a FUNGIBLE call, ordered by measured headroom.
+
+    Quality equivalence is decided by the EXISTING best-value advisor over MEASURED cost/quality evidence, with an
+    explicit "equivalent to the primary" quality bar; code only reads its structured `meets_bar` verdict. The result
+    is intersected with the intent's propose→confirm registry, so neither an unapproved model nor a cold prior can
+    enter failover. `route_utility.rank_lanes` then orders those agentically-approved arms by provider headroom.
+    """
+    from . import advisor, lane_catalog, lanes as lane_status, route_utility
+    blocked = set(excluded or ())
+    primary_provider = adapters.provider_for(primary_model)
+    primary_lane = adapters._LANES.get(primary_provider, (None,))[0]
+    confirmed = list(substitutes_for(intent))
+    if not confirmed:
+        return []
+    verdict = advisor.recommend_models(
+        intent, k=max(1, len(confirmed)), quality_bar=f"quality equivalent to {primary_model} for this intent",
+        run=True)
+    # The advisor labels a cold-start result explicitly; it is not measured evidence and authorizes nothing. On a
+    # measured result, trust the advisor's semantic `meets_bar` verdict directly — code adds no quality proxy/cutoff.
+    approved = set() if (verdict or {}).get("prior") else {
+        str(r.get("id")) for r in (verdict or {}).get("top", [])
+        if r.get("id") and r.get("meets_bar") is True}
+    candidates = []
+    for spec in confirmed:
+        provider = adapters.provider_for(spec)
+        lane = adapters._LANES.get(provider, (None,))[0]
+        use_name = spec.split(":", 1)[1] if ":" in spec else spec
+        if not lane or lane == primary_lane or lane in blocked or (spec not in approved and use_name not in approved):
+            continue
+        candidates.append((lane, use_name))
+    if not candidates:
+        return []
+    snapshot = {r["lane"]: r for r in lane_status.lane_headroom(do_fetch=False)}
+    rows = [snapshot.get(lane, {"lane": lane, "provider": lane_catalog.lane_provider(lane), "known": False,
+                                "remaining_pct": None, "reset_ts": None}) for lane, _ in candidates]
+    rank = {r["lane"]: i for i, r in enumerate(route_utility.rank_lanes(rows)) if r.get("available")}
+    candidates = [a for a in candidates if a[0] in rank]
+    candidates.sort(key=lambda a: rank[a[0]])
+    return [f"{lane_catalog.lane_provider(lane)}:{use_name}" for lane, use_name in candidates]
 
 
 def _arm_fallback_pricey(lane, use_name):
@@ -926,6 +969,10 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
                "reasoning": reasoning, "effort": r.get("effort"),
                "parsed": (r.get("parsed") if schema is not None else None),
                "reason": _row_reason, "error": r.get("error")}
+        if r.get("fell_from"):
+            row["fell_from"] = r["fell_from"]
+        if r.get("fallback_notice"):
+            row["fallback_notice"] = r["fallback_notice"]
         return i, _arity_checked(row, task, expect_ids)
 
     def _pick_arm(i):
@@ -1045,6 +1092,10 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
                # Structurally separable from a dispatch/arity miss so a caller routes by CAUSE, never by string-sniffing
                # `error`. None only when the row was SERVED (has text). See _row_reason above.
                "reason": _row_reason, "error": r.get("error")}
+        if r.get("fell_from"):
+            row["fell_from"] = r["fell_from"]
+        if r.get("fallback_notice"):
+            row["fallback_notice"] = r["fallback_notice"]
         if r.get("substituted_from") and f"{served_prov}:{served_model}" != f"{prov}:{use_name}":
             row["intended"] = f"{prov}:{use_name}"           # what the pick chose, before the substitution
             row["substituted_from"] = r["substituted_from"]
