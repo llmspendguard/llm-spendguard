@@ -4,6 +4,20 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.12.10] — 2026-10-06
+
+### Fixed
+- **`embed()` false "batch rejected" on a group smaller than the batch size** — `adapters.embed` compared the largest
+  successful sub-group `w` to the batch size `_n`, so a fully-successful group with FEWER inputs than `_n` (a 1-input
+  query embed, or any partial final chunk) read as a provider rejection: it logged "batches of N were rejected; the
+  workable size here was <w> — running the rest at <w>/request" and spuriously shrank `_n`, though nothing was
+  rejected. Now compares `w` to the size actually attempted, `len(grp)` — a real rejection is `w < len(grp)` (the
+  group had to bisect) — and the warning reports that attempted size. No cross-call state is involved; the batch size
+  is per-call, and `text-embedding-3-large` already carries `capabilities.embed_max_batch = 2048`.
+- **SDK-surface gate test no longer flakes on run-order** — `test_every_sdk_surface_that_spends_is_gated` now arms the
+  gate (idempotent `gate.install()`) before asserting, so a sibling test that reloads an SDK submodule can't leave a
+  surface transiently unwrapped and red the gate by chunk-order.
+
 ## [0.12.9] — 2026-10-06
 
 Delegate agentic-readiness fix + warm Codex daemon default — makes `spendguard delegate` **correct** (no false refusal

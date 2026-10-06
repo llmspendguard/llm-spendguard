@@ -1468,10 +1468,14 @@ def embed(texts, model=None, *, dimensions=None, max_batch=None, timeout_s=None,
         grp = todo[i0:i0 + _n]
         w = _embed_one(grp)
         i0 += len(grp)
-        if 0 < w < _n:                                               # the clamp missed this cap (uncurated/stale) →
-            config.warn_once(f"[spendguard] embed {raw}: batches of {_n} were rejected; the workable size here was "
-                             f"{w} — running the rest at {w}/request. Add capabilities.embed_max_batch for {raw} to "
-                             f"model_catalog.json to size it right up front.")
+        if 0 < w < len(grp):                                         # REJECTED: the group only went through at a size
+            #                                                          SMALLER than the one attempted. Compare to len(grp),
+            #                                                          NOT _n — a partial final chunk or a 1-input query
+            #                                                          embed succeeds WHOLE at w < _n and is NOT a rejection
+            #                                                          (comparing to _n mis-read those as a cap-of-w).
+            config.warn_once(f"[spendguard] embed {raw}: batches of {len(grp)} were rejected; the workable size here "
+                             f"was {w} — running the rest at {w}/request. Add capabilities.embed_max_batch for {raw} "
+                             f"to model_catalog.json to size it right up front.")
             _n = w
     out = [done.get(k) for k in keys]
     n_missing = sum(1 for v in out if v is None)
