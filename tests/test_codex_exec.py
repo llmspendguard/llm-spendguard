@@ -45,6 +45,7 @@ def fake_run(cmd, capture_output=None, text=None, timeout=None, env=None):
 shutil.which = lambda name: "/usr/local/bin/codex"
 ce.subprocess.run = fake_run
 os.environ[KEY_ENV] = "sk-test-not-real"
+os.environ["SPENDGUARD_CODEX_DAEMON"] = "0"   # this file exercises the cold exec contract; daemon tests cover warm
 
 print("-- happy path: exec + json + last-message file; usage = max over cumulative events --")
 r = ce.run_prompt("judge this insight…", system="You are the advisor.")

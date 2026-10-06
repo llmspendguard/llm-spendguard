@@ -28,13 +28,15 @@ import select
 import subprocess
 import tempfile
 import threading
+import time
 
 from . import config
 
 STARTUP_TIMEOUT_S = 60             # the ONE-TIME server handshake budget
 CALL_TIMEOUT_S = 180              # a single warm tools/call (a real task can reason for a while)
-# A FIXED, non-external working directory for the headless read-only server (it does no file work for meta prompts).
-# A constant cwd is the contained-spawn form: the spawn's directory can never be steered by any caller's input.
+IDLE_TIMEOUT_S = 600              # reclaim the persistent subprocess after ten minutes with no completed/new call
+# A FIXED, non-external bootstrap directory for the server process. Each tool call carries its explicit task cwd;
+# keeping the daemon spawn itself here means its startup directory can never be steered by prompt content.
 _SAFE_CWD = tempfile.gettempdir()
 
 
@@ -47,11 +49,40 @@ class _CodexDaemon:
         self._spawn_lock = threading.Lock()    # serialises SPAWNS (a slow handshake must not run under _state_lock)
         self._write_lock = threading.Lock()    # serialises stdin WRITES only — never held while awaiting a response
         self._proc = None
+        self._idle_timer = None
+        self._last_activity = 0.0
         self._waiters = {}                     # rpc_id -> {"event","msg"} — one per in-flight request (instance state)
         self._ids = itertools.count(1)         # itertools.count.__next__ is atomic under the GIL
 
     def _next_id(self):
         return next(self._ids)
+
+    def _cancel_idle_shutdown(self):
+        with self._state_lock:
+            timer, self._idle_timer = self._idle_timer, None
+        if timer is not None:
+            timer.cancel()
+
+    def _schedule_idle_shutdown(self):
+        """Reset the one-shot idle timer after a call. The timestamp check makes a stale callback harmless."""
+        self._cancel_idle_shutdown()
+        activity = time.monotonic()
+        with self._state_lock:
+            self._last_activity = activity
+
+        def _shutdown_if_still_idle():
+            with self._state_lock:
+                still_idle = self._last_activity == activity
+                if still_idle:
+                    self._idle_timer = None
+            if still_idle:
+                self.shutdown()
+
+        timer = threading.Timer(IDLE_TIMEOUT_S, _shutdown_if_still_idle)
+        timer.daemon = True
+        with self._state_lock:
+            self._idle_timer = timer
+        timer.start()
 
     def _register_waiter(self, rid):
         w = {"event": threading.Event(), "msg": None}
@@ -200,6 +231,7 @@ class _CodexDaemon:
         return self._proc is not None and self._proc.poll() is None
 
     def shutdown(self):
+        self._cancel_idle_shutdown()
         with self._state_lock:
             p, self._proc = self._proc, None          # detach under the lock; REAP outside it (wait() can block)
         if p is None:
@@ -215,63 +247,68 @@ class _CodexDaemon:
                 pass
         self._fail_all_waiters()                      # anything still pending on the dead proc is woken, not hung
 
-    def run_warm(self, prompt, model=None, thread=None, reasoning=None):
+    def run_warm(self, prompt, model=None, thread=None, reasoning=None, sandbox="read-only", cwd=None):
         """One delegation on the WARM server, CONCURRENCY-SAFE — many callers in flight, each waiting on its OWN
         response by id, holding no lock. A single call that TIMES OUT fails only ITSELF (the caller falls back to
         the metered API); only a genuinely dead pipe restarts the server, so one slow turn never sinks the others."""
         prompt = (prompt or "")
-        for attempt in (1, 2):
-            p = self.ensure_running()
-            if p is None:
-                return {"text": None, "thread": None, "error": "codex mcp-server would not start"}
-            if thread:
-                args = {"conversationId": thread, "threadId": thread, "prompt": prompt}
-                name = "codex-reply"
-            else:
-                args = {"prompt": prompt, "approval-policy": "never", "sandbox": "read-only"}
-                if model:
-                    args["model"] = model.split(":", 1)[-1]
-                from . import codex_exec
-                eff = codex_exec._codex_effort(reasoning)
-                if eff:
-                    args["config"] = {"model_reasoning_effort": eff}
-                name = "codex"
-            rid = self._next_id()
-            w = self._register_waiter(rid)
-            try:
+        self._cancel_idle_shutdown()
+        try:
+            for attempt in (1, 2):
+                p = self.ensure_running()
+                if p is None:
+                    return {"text": None, "thread": None, "error": "codex mcp-server would not start"}
+                if thread:
+                    args = {"conversationId": thread, "threadId": thread, "prompt": prompt}
+                    name = "codex-reply"
+                else:
+                    args = {"prompt": prompt, "approval-policy": "never", "sandbox": sandbox,
+                            "cwd": os.path.abspath(cwd or os.getcwd())}
+                    name = "codex"
+                    if model:
+                        args["model"] = model.split(":", 1)[-1]
+                    from . import codex_exec
+                    eff = codex_exec._codex_effort(reasoning)
+                    if eff:
+                        args["config"] = {"model_reasoning_effort": eff}
+                rid = self._next_id()
+                w = self._register_waiter(rid)
                 try:
-                    self._write_rpc(p, {"jsonrpc": "2.0", "id": rid, "method": "tools/call",
-                                   "params": {"name": name, "arguments": args}})
-                except (BrokenPipeError, OSError):
-                    w["msg"] = {"__dead__": True}
-                    w["event"].set()
-                got = w["event"].wait(CALL_TIMEOUT_S)         # wait on OUR response only — NO lock held here
-                msg = w["msg"] if got else None
-            finally:
-                self._drop_waiter(rid)
-            if msg is not None and msg.get("__dead__"):       # the pipe died under us → restart once, then retry
-                self.shutdown()
-                if attempt == 2:
-                    config.warn_once("[spendguard] codex warm daemon: a call still failed after a restart — the "
-                                     "lane is degrading to the metered API this run (not the advisor breaking)")
-                    return {"text": None, "thread": thread, "error": "codex mcp-server call failed after restart"}
-                continue
-            if msg is None:                                   # THIS call timed out but the pipe is alive → fail only IT
-                config.warn_once("[spendguard] codex warm daemon: a warm call exceeded %ds — failing that ONE call "
-                                 "to the metered API (the server stays up for the others)" % CALL_TIMEOUT_S)
-                return {"text": None, "thread": thread, "error": f"codex warm call timeout ({CALL_TIMEOUT_S}s)"}
-            if msg.get("error"):
-                return {"text": None, "thread": thread, "error": str(msg["error"])[:200]}
-            result = msg.get("result") or {}
-            text, new_thread = _extract(result)
+                    try:
+                        self._write_rpc(p, {"jsonrpc": "2.0", "id": rid, "method": "tools/call",
+                                       "params": {"name": name, "arguments": args}})
+                    except (BrokenPipeError, OSError):
+                        w["msg"] = {"__dead__": True}
+                        w["event"].set()
+                    got = w["event"].wait(CALL_TIMEOUT_S)         # wait on OUR response only — NO lock held here
+                    msg = w["msg"] if got else None
+                finally:
+                    self._drop_waiter(rid)
+                if msg is not None and msg.get("__dead__"):       # the pipe died under us → restart once, then retry
+                    self.shutdown()
+                    if attempt == 2:
+                        config.warn_once("[spendguard] codex warm daemon: a call still failed after a restart — the "
+                                         "lane is degrading to the metered API this run (not the advisor breaking)")
+                        return {"text": None, "thread": thread, "error": "codex mcp-server call failed after restart"}
+                    continue
+                if msg is None:                                   # THIS call timed out but the pipe is alive → fail only IT
+                    config.warn_once("[spendguard] codex warm daemon: a warm call exceeded %ds — failing that ONE call "
+                                     "to the metered API (the server stays up for the others)" % CALL_TIMEOUT_S)
+                    return {"text": None, "thread": thread, "error": f"codex warm call timeout ({CALL_TIMEOUT_S}s)"}
+                if msg.get("error"):
+                    return {"text": None, "thread": thread, "error": str(msg["error"])[:200]}
+                result = msg.get("result") or {}
+                text, new_thread = _extract(result)
             # MCP TOOL ERROR: `isError: true` means the tool itself failed (e.g. codex rejecting the model). That text
             # is NOT an answer; return it as an error so the caller falls back to the metered API. `tool_error` marks
             # a HARD request rejection (a cold `codex exec` would hit the same wall) so run_prompt skips a cold retry.
-            if isinstance(result, dict) and result.get("isError"):
-                return {"text": None, "thread": thread, "error": (text or "codex tool reported an error")[:200],
-                        "tool_error": True}
-            return {"text": text or None, "thread": new_thread or thread,
-                    "error": None if text else "empty codex reply"}
+                if isinstance(result, dict) and result.get("isError"):
+                    return {"text": None, "thread": thread, "error": (text or "codex tool reported an error")[:200],
+                            "tool_error": True}
+                return {"text": text or None, "thread": new_thread or thread,
+                        "error": None if text else "empty codex reply"}
+        finally:
+            self._schedule_idle_shutdown()
 
 
 def _extract(result):

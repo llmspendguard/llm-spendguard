@@ -124,14 +124,14 @@ def _plugin_disable_flags():
 
 def _daemon_enabled():
     """Use the WARM `codex mcp-server` (codex_daemon) instead of cold-starting `codex exec` per call? Env
-    SPENDGUARD_CODEX_DAEMON wins, else config advisor.codex_daemon. Default OFF: the daemon is proven + available,
-    but arming a per-process persistent subprocess on the hot lane is a deliberate opt-in (the exec path stays the
-    safe default, and offline tests that stub `codex exec` are untouched)."""
+    SPENDGUARD_CODEX_DAEMON wins, else config advisor.codex_daemon. Default ON so agentic delegation pays the daemon
+    startup once and subsequent turns are warm; either setting can opt out. A daemon failure still falls through to
+    the cold exec path, so enabling it changes latency, never availability."""
     from . import config
     v = os.getenv("SPENDGUARD_CODEX_DAEMON")
     if v is not None:
         return v.strip().lower() not in ("0", "false", "no", "off")
-    return bool(config._cfg_get("advisor", "codex_daemon", False))
+    return bool(config._cfg_get("advisor", "codex_daemon", True))
 
 
 def _codex_effort(level):
@@ -287,15 +287,16 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     _eff = _codex_effort(reasoning)   # the effort ACTUALLY applied on this lane (Codex's own scale: 'minimal'→'none').
     #                                   Reported on the result so the ledger records what RAN, not the requested tier —
     #                                   letting a caller VERIFY the lane matched its metered fallback's applied reasoning.
-    # WARM DAEMON PATH (opt-in): reuse a persistent codex mcp-server instead of cold-starting `codex exec` each call
+    # WARM DAEMON PATH (default-on, explicit opt-out): reuse a persistent codex mcp-server instead of cold-starting
+    # `codex exec` each call
     # (>75s → ~5s, reliable). Falls THROUGH to the exec path on any daemon failure — degrade, never break. Stateless
     # here (the lane carries no thread); persistent context is a higher-level feature (codex_daemon.run(thread=…)).
-    if sandbox == "read-only" and _daemon_enabled():
+    if _daemon_enabled():
         from . import codex_daemon
         _full = (f"{system.strip()}\n\n{prompt}" if system else prompt)
         _t0 = time.time()
         try:
-            _r = codex_daemon.run_warm(_full, model=model, reasoning=reasoning)
+            _r = codex_daemon.run_warm(_full, model=model, reasoning=reasoning, sandbox=sandbox, cwd=os.getcwd())
         except Exception as _e:                        # an exception must NEVER bypass the exec/API fallback below
             _r = {"error": f"codex daemon raised: {str(_e)[:150]}"}
         if _r.get("text") and not _r.get("error"):

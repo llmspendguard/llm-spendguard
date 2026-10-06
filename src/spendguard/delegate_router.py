@@ -50,23 +50,40 @@ def _model_for_plan(plan, kind):
     return declaration if isinstance(declaration, str) and declaration else None
 
 
-def delegation_lanes_ready():
-    """Configured delegation plans usable on this host, derived from the existing lane activation machinery.
+def delegation_lanes_ready(route_kind="oneshot"):
+    """Configured plans ready for exactly one delegation route kind.
 
-    Returns ready, configured-but-unavailable, and registry lanes not configured for delegation. ``lanes_status``
-    already resolves registry executor
-    installation plus the lane's established reachability/auth evidence; delegation must not create a second probe.
+    A one-shot delegates through ``lane_balance`` and therefore uses that lane's established reachability probe.
+    An agentic task executes the provider module directly, so its readiness is the executor's own CLI/key
+    availability plus its definitive auth status when it exposes one. In particular, Codex reuses
+    ``codex_exec.available`` + ``codex_exec.auth_status``; a failed one-shot probe is irrelevant to that route.
     """
-    from . import lanes, reliability
+    if route_kind not in ("oneshot", "agentic"):
+        raise ValueError(f"unsupported delegation route kind {route_kind!r}")
     configured = _configured_plan_models()
-    status_by_lane = {row["lane"]: row for row in lanes.lanes_status()["lanes"]}
-    health_down = {row["resource"] for row in reliability.health_reds() if row.get("kind") == "lane"}
     ready = []
-    for plan in sorted(configured):
-        row = status_by_lane.get(plan)
-        if (row and row.get("auth") == "ok" and (row.get("cli") or not row.get("activate"))
-                and plan not in health_down):
-            ready.append(plan)
+    if route_kind == "oneshot":
+        from . import lanes, reliability
+        status_by_lane = {row["lane"]: row for row in lanes.lanes_status()["lanes"]}
+        health_down = {row["resource"] for row in reliability.health_reds() if row.get("kind") == "lane"}
+        for plan in sorted(configured):
+            row = status_by_lane.get(plan)
+            if (row and row.get("auth") == "ok" and (row.get("cli") or not row.get("activate"))
+                    and plan not in health_down):
+                ready.append(plan)
+    else:
+        for plan in sorted(configured):
+            spec = lane_registry.lane_spec(plan)
+            if not spec:
+                continue
+            module = importlib.import_module(f".{spec['exec']}", __package__)
+            try:
+                executor_available = bool(module.available())
+                auth = module.auth_status().get("authed") if hasattr(module, "auth_status") else None
+            except Exception:
+                executor_available, auth = False, None
+            if executor_available and auth is True:
+                ready.append(plan)
     return {"ready": ready,
             "unavailable": sorted(set(configured) - set(ready)),
             "not_configured": sorted(set(lane_registry.all_lanes()) - set(configured))}
@@ -74,13 +91,13 @@ def delegation_lanes_ready():
 
 def delegation_doctor_line():
     """Render the doctor summary for two-hop delegation readiness."""
-    readiness = delegation_lanes_ready()
-    ready = ", ".join(readiness["ready"]) or "none"
-    not_configured = ", ".join(readiness["not_configured"]) or "none"
-    unavailable = readiness["unavailable"]
-    suffix = f" · unavailable: {', '.join(unavailable)}" if unavailable else ""
-    return (f"delegation lanes ready: {ready} ({len(readiness['ready'])}) · "
-            f"not configured: {not_configured}{suffix}")
+    oneshot = delegation_lanes_ready("oneshot")
+    agentic = delegation_lanes_ready("agentic")
+    oneshot_ready = ", ".join(oneshot["ready"]) or "none"
+    agentic_ready = ", ".join(agentic["ready"]) or "none"
+    not_configured = ", ".join(oneshot["not_configured"]) or "none"
+    return (f"delegation ready: oneshot {oneshot_ready} ({len(oneshot['ready'])}) · "
+            f"agentic {agentic_ready} ({len(agentic['ready'])}) · not configured: {not_configured}")
 
 
 def _resolve_plan_name(requested):
@@ -204,23 +221,14 @@ def _route_agentic(plan, prompt, model, timeout):
 def delegate_task(task, files=None, intent=None, provider="auto", execute=False, timeout=None):
     """Classify, estimate, and optionally execute one delegated task. Default is zero-execution dry-run."""
     intent = intent or DEFAULT_DELEGATE_INTENT
-    readiness = delegation_lanes_ready()
-    ready = readiness["ready"]
-    if not ready:
-        return {"status": "refused", "classification": {"error": "no delegation lanes ready"},
-                "why": "no delegation lane is ready; install and authenticate a configured provider CLI, then retry",
-                "ready_alternatives": []}
     resolved_provider = None if provider == "auto" else _resolve_plan_name(provider)
-    if provider != "auto" and resolved_provider not in ready:
-        alternatives = ", ".join(ready)
-        return {"status": "refused", "classification": {"error": f"provider {provider!r} is unavailable"},
-                "why": f"delegation plan {provider!r} is not ready; ready alternatives: {alternatives}",
-                "ready_alternatives": ready}
     classification = classify_task(task, files=files, provider=(resolved_provider or provider))
     if classification.get("error"):
         return {"status": "error", "classification": classification}
     if classification["kind"] == "needs_claude" or not classification["self_contained"]:
         return {"status": "refused", "classification": classification, "why": classification["why"]}
+    readiness = delegation_lanes_ready(classification["kind"])
+    ready = readiness["ready"]
     if classification.get("provider") not in ready:
         alternatives = ", ".join(ready)
         return {"status": "refused", "classification": classification,

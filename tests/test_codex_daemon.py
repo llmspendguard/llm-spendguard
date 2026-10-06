@@ -68,13 +68,14 @@ def _canned_daemon(reply_for):
     return d, sent
 
 
-print("\n-- STATELESS run → the `codex` tool, read-only + model + reasoning, returns a new thread --")
+print("\n-- STATELESS run → the `codex` tool, requested sandbox + model + reasoning, returns a new thread --")
 d1, sent1 = _canned_daemon(lambda a: {"result": {"structuredContent": {"content": "ANS", "threadId": "tid1"}}})
-r = d1.run_warm("do X", model="openai:gpt-5.5", reasoning="low")
+r = d1.run_warm("do X", model="openai:gpt-5.5", reasoning="low", sandbox="workspace-write")
 a = sent1[-1]["params"]
 fails += ck("calls the `codex` tool", a["name"] == "codex")
-fails += ck("...model stripped of provider + sandbox read-only",
-            a["arguments"].get("model") == "gpt-5.5" and a["arguments"].get("sandbox") == "read-only")
+fails += ck("...model stripped of provider + requested workspace-write sandbox",
+            a["arguments"].get("model") == "gpt-5.5" and a["arguments"].get("sandbox") == "workspace-write")
+fails += ck("...workspace cwd is carried into the warm agent tool", a["arguments"].get("cwd") == os.getcwd())
 fails += ck("...reasoning threaded into config (low)", (a["arguments"].get("config") or {}).get("model_reasoning_effort") == "low")
 fails += ck("...returns the answer + a NEW threadId", r["text"] == "ANS" and r["thread"] == "tid1")
 
@@ -182,20 +183,35 @@ try:
 finally:
     _cx._bin, _cx._plugin_disable_flags = _o_bin, _o_flags
 
-print("\n-- codex_exec.run_prompt swallows a run_warm EXCEPTION → error, never propagates --")
-_o_daemon, _o_runwarm, _o_bin2 = _cx._daemon_enabled, cd.run_warm, _cx._bin
+print("\n-- daemon is default-on, opt-out works, and workspace-write failure falls back to cold exec --")
+_o_daemon, _o_runwarm, _o_bin2, _o_run = _cx._daemon_enabled, cd.run_warm, _cx._bin, _cx.subprocess.run
+_old_env = os.environ.pop("SPENDGUARD_CODEX_DAEMON", None)
 try:
-    _cx._daemon_enabled = lambda: True
+    fails += ck("daemon is enabled by default", _cx._daemon_enabled())
+    os.environ["SPENDGUARD_CODEX_DAEMON"] = "0"
+    fails += ck("SPENDGUARD_CODEX_DAEMON=0 opts out", not _cx._daemon_enabled())
+    os.environ.pop("SPENDGUARD_CODEX_DAEMON")
 
     def _boom(*a, **k):
         raise RuntimeError("boom")
     cd.run_warm = _boom
-    _cx._bin = lambda: None
-    _out = _cx.run_prompt("hi", model="openai:gpt-5.5")
-    fails += ck("run_prompt returns an error dict (exception did not bypass the fallback)",
-                isinstance(_out, dict) and bool(_out.get("error")))
+    _cx._bin = lambda: "/fake/codex"
+
+    def _cold_ok(cmd, **kwargs):
+        out_file = cmd[cmd.index("--output-last-message") + 1]
+        with open(out_file, "w") as destination:
+            destination.write("cold answer")
+        return type("ColdResult", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+    _cx.subprocess.run = _cold_ok
+    _out = _cx.run_prompt("hi", model="openai:gpt-5.5", sandbox="workspace-write")
+    fails += ck("workspace-write daemon exception degrades cleanly to cold exec",
+                _out.get("text") == "cold answer" and not _out.get("error"))
 finally:
-    _cx._daemon_enabled, cd.run_warm, _cx._bin = _o_daemon, _o_runwarm, _o_bin2
+    _cx._daemon_enabled, cd.run_warm, _cx._bin, _cx.subprocess.run = _o_daemon, _o_runwarm, _o_bin2, _o_run
+    if _old_env is not None:
+        os.environ["SPENDGUARD_CODEX_DAEMON"] = _old_env
+    else:
+        os.environ.pop("SPENDGUARD_CODEX_DAEMON", None)
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_codex_daemon: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

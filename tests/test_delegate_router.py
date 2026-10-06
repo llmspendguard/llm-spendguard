@@ -27,6 +27,8 @@ def check(label, condition):
 original_config = config._cfg_get
 original_lane = lane_balance.delegate
 original_codex = codex_exec.run_prompt
+original_codex_available = codex_exec.available
+original_codex_auth_status = codex_exec.auth_status
 original_price = pricing.realtime_cost
 original_ratio = delegate_router._measured_claude_overage_ratio
 original_decision = guard.record_decision
@@ -69,6 +71,8 @@ try:
     config._cfg_get = fake_config
     lane_balance.delegate = fake_lane
     codex_exec.run_prompt = fake_codex
+    codex_exec.available = lambda: True
+    codex_exec.auth_status = lambda: {"authed": True}
     pricing.realtime_cost = lambda model, in_tok, out_tok, provider=None: (in_tok + out_tok) / 1000
     delegate_router._measured_claude_overage_ratio = lambda: 0.5
     guard.record_decision = lambda **kwargs: decision_calls.append(kwargs)
@@ -78,13 +82,17 @@ try:
         {"lane": "codex", "enabled": True, "cli": "/fake/codex", "auth": "ok", "activate": None}]}
     reliability.health_reds = lambda: []
 
-    print("-- delegation lane readiness reuses configured activation state --")
-    readiness = delegate_router.delegation_lanes_ready()
+    print("-- delegation readiness is split by route kind --")
+    readiness = delegate_router.delegation_lanes_ready("oneshot")
     check("configured installed reachable lane is ready", readiness["ready"] == ["codex"])
-    check("doctor line renders ready count", "delegation lanes ready: codex (1)" in delegate_router.delegation_doctor_line())
+    check("doctor line renders both route kinds",
+          "oneshot codex (1)" in delegate_router.delegation_doctor_line()
+          and "agentic codex (1)" in delegate_router.delegation_doctor_line())
     reliability.health_reds = lambda: [{"resource": "codex", "kind": "lane"}]
     check("cached health-down state removes an otherwise installed lane",
-          delegate_router.delegation_lanes_ready()["ready"] == [])
+          delegate_router.delegation_lanes_ready("oneshot")["ready"] == [])
+    check("agentic readiness ignores one-shot lane health and uses the executor's auth check",
+          delegate_router.delegation_lanes_ready("agentic")["ready"] == ["codex"])
     reliability.health_reds = lambda: []
 
     print("-- validates every classifier kind and configured provider --")
@@ -105,12 +113,23 @@ try:
     check("dry-run never invokes codex executor", len(codex_calls) == before_codex)
     check("agentic route selects configured strong model", dry["estimate"]["model"] == "test-strong")
 
-    print("-- unavailable selections refuse with ready alternatives --")
+    print("-- a down one-shot lane cannot falsely refuse an authenticated agentic Codex route --")
     lanes.lanes_status = lambda: {"executor": "pool", "lanes": [
         {"lane": "codex", "enabled": True, "cli": None, "auth": "missing", "activate": "install/login"}]}
-    unavailable = delegate_router.delegate_task("edit it", provider="codex")
-    check("no ready plan is a typed refusal with install/auth guidance",
-          unavailable["status"] == "refused" and "install and authenticate" in unavailable["why"])
+    classification.update(kind="agentic", provider="codex", self_contained=True, why="self-contained repo task")
+    authenticated_agent = delegate_router.delegate_task("edit it", provider="codex")
+    check("agentic Codex remains ready when its CLI is present+authed despite the one-shot probe being down",
+          authenticated_agent["status"] == "estimate")
+    classification.update(kind="oneshot", provider="codex", self_contained=True, why="independent answer")
+    unavailable_oneshot = delegate_router.delegate_task("answer it", provider="codex")
+    check("oneshot Codex still refuses when the one-shot lane probe is down",
+          unavailable_oneshot["status"] == "refused" and unavailable_oneshot["ready_alternatives"] == [])
+    classification.update(kind="agentic", provider="codex", self_contained=True, why="self-contained repo task")
+    codex_exec.auth_status = lambda: {"authed": False}
+    unavailable_agent = delegate_router.delegate_task("edit it", provider="codex")
+    check("genuinely unauthenticated agent CLI retains the typed refusal",
+          unavailable_agent["status"] == "refused" and unavailable_agent["ready_alternatives"] == [])
+    codex_exec.auth_status = lambda: {"authed": True}
     lanes.lanes_status = lambda: {"executor": "pool", "lanes": [
         {"lane": "codex", "enabled": True, "cli": "/fake/codex", "auth": "ok", "activate": None}]}
     configured_models["gemini"] = {"cheap": "gemini-cheap", "strong": "gemini-strong"}
@@ -148,6 +167,8 @@ finally:
     config._cfg_get = original_config
     lane_balance.delegate = original_lane
     codex_exec.run_prompt = original_codex
+    codex_exec.available = original_codex_available
+    codex_exec.auth_status = original_codex_auth_status
     pricing.realtime_cost = original_price
     delegate_router._measured_claude_overage_ratio = original_ratio
     guard.record_decision = original_decision
