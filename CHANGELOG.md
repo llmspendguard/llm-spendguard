@@ -4,6 +4,37 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.12.8] — 2026-10-05
+
+Ledger attribution + ensure-success routing — the accounting-trust + cost-safety follow-up to a heavy real workload's
+forensics. Makes "whose votes are these?" answerable, settles the `metered_only` question (no leak), and guarantees a
+task always succeeds while never billing silently.
+
+### Added
+- **Ledger attribution dimensions** — `calls.call_class` (`workload` / `gate_internal` / `probe`) and
+  `calls.origin_session` (per-process id), additive (NULL on legacy rows). spendguard's own meta calls stamp
+  `gate_internal` even under a workload intent, so a caller's votes, gate-internal calls, and another session's work
+  are no longer conflated under one shared intent tag. Groupable/filterable in the spend views.
+- **Lane-quota capture + headroom-aware shedding** — remaining quota is captured per lane where the provider exposes
+  it (honest `unknown` for kimi/zai, never fabricated), surfaced in `spendguard lanes --usage`; the router prefers a
+  ready lane with more measured headroom.
+- **`spendguard overage` CLI** — parity with the `spendguard_overage_status` MCP tool (was MCP-only; the CLI used to
+  mis-suggest the unrelated `coverage`).
+- **`--refuse-billed`** on `ask` / `delegate` / `comprehend` / bulk — an explicit opt-in "$0-or-fail" guard.
+
+### Changed
+- **Ensure-success routing** — a lane miss never silently fails and never silently bills. A FUNGIBLE call substitutes
+  only to a $0 lane whose MEASURED quality holds (the advisor's agentic `meets_bar` verdict, no proxy/cutoff),
+  exhausting quality-equivalent $0 lanes before a metered last resort; a PINNED call
+  (`model_for` / `no_substitution` / `metered_only`) keeps its EXACT model and runs it metered if its lane is down.
+  Any metered fallback is loud and carries `fell_from` — never a silent charge.
+
+### Fixed
+- **Batch booking** — a REFUSED submit now books zero rows (kills a confirmed $12.77 double-book); `collect`
+  reconciles the submit-time estimate to the measured actuals in place.
+- **`metered_only` audit** — confirmed NO lane leak: a `metered_only` call records `executor=NULL`, never a lane
+  (direct and bulk, happy path and lane-down).
+
 ## [0.12.7] — 2026-10-05
 
 **`spendguard delegate`** — the 2-hop that offloads a self-contained sub-task off a capped Claude plan onto a cheaper
