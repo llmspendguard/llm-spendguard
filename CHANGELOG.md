@@ -17,6 +17,14 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 - **SDK-surface gate test no longer flakes on run-order** — `test_every_sdk_surface_that_spends_is_gated` now arms the
   gate (idempotent `gate.install()`) before asserting, so a sibling test that reloads an SDK submodule can't leave a
   surface transiently unwrapped and red the gate by chunk-order.
+- **`spendguard doctor` no longer live-pulls on its default path** — the metadata-backbone health check (whose
+  capability-completeness leg fetches the org `/v1/models`) and its empty-cache auto-heal `sync()` ran on the DEFAULT
+  `doctor` path, so whenever that server was slow/unreachable `doctor` blocked ~1.4–2.6s and blew its own `<2s`
+  health-check budget — the single test that reliably reddened the deploy gate. Now, like the ledger-leak check beside
+  it, the full networked backbone audit + auto-heal run only under `doctor --live`; the default path reads the LOCAL
+  cache freshness alone (`metadata_audit._cache_health`, $0, no network, no mutation). `test_gate_cli` is hardened
+  from a flaky `<2s` timing proxy into a deterministic assertion that the default path makes no backbone pull, so the
+  blind guard that let this latent live-pull ship cannot do so again.
 
 ## [0.12.9] — 2026-10-06
 

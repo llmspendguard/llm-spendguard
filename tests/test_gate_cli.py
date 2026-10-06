@@ -74,5 +74,32 @@ with contextlib.redirect_stdout(buf3):
     gate._cli("doctor", live=True)
 ck("doctor --live forces the full computation", "accounted" in buf3.getvalue() and "as of" not in buf3.getvalue())
 
+# ── GUARD (deterministic, not a timing proxy): the DEFAULT doctor path must NOT run the networked metadata
+# backbone audit — its capability-completeness leg reaches the org /v1/models — only `--live` does. The <2s check
+# above only caught this when that server happened to be slow; a fast/absent server let the live-pull-on-default
+# regression ship unseen. So assert the CALL itself, independent of wall-clock (CLAUDE.md #0c: when a rule keeps
+# breaking, the guard was blind to the defect — widen it to see the defect, not a proxy for it).
+from spendguard import metadata_audit as _ma
+_bh = {"n": 0}
+_orig_bh = _ma.backbone_health
+
+
+def _spy_backbone(*a, **k):
+    _bh["n"] += 1
+    return {"ok": True, "cache": {"present": True, "models": 2500, "age_days": 1, "ok": True},
+            "drift": [], "unknown": [], "capabilities": {}}
+
+
+_ma.backbone_health = _spy_backbone
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        gate._cli("doctor")                       # DEFAULT path
+    ck("default doctor does NOT run the networked backbone audit (no live pull)", _bh["n"] == 0)
+    with contextlib.redirect_stdout(io.StringIO()):
+        gate._cli("doctor", live=True)            # --live path
+    ck("`doctor --live` DOES run the full backbone audit", _bh["n"] >= 1)
+finally:
+    _ma.backbone_health = _orig_bh
+
 print(("\n[FAIL] " if fails else "\n[OK] ") + f"gate_cli: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

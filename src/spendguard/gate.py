@@ -2683,23 +2683,36 @@ def _cli(cmd="status", live=False):
                               + "  (`spendguard tiers --probe` for detail)")
             except Exception:
                 pass
-            try:                                          # MODEL-METADATA BACKBONE: the LiteLLM limits cache that
-                from . import metadata_audit              # output_cap clamps to. Its silent EMPTY state once
-                mr = metadata_audit.backbone_health()     # disabled the clamp — so doctor surfaces it, and
-                if not mr["cache"]["present"]:            # AUTO-HEALS an absent/empty cache by adopting the table now.
-                    try:
-                        from . import sync as _sync
-                        _sync.sync()
-                        import importlib
-                        from . import pricing as _pr
-                        importlib.reload(_pr)
-                        mr = metadata_audit.backbone_health()
-                    except Exception:
-                        pass
-                _c = mr["cache"]
-                _drift = f" · {len(mr['drift'])} cap(s) DRIFTED below published" if mr["drift"] else ""
-                print(f"  metadata  : {'🟢' if mr['ok'] else '🟡'} LiteLLM limits cache {_c['models']} models, "
-                      f"age {_c['age_days']}d{_drift}" + ("" if mr["ok"] else " — run `spendguard metadata`"))
+            # MODEL-METADATA BACKBONE: the LiteLLM limits cache output_cap clamps to; its silent EMPTY state once
+            # disabled the clamp, so doctor surfaces it. SAME fast-by-default rule as the ledger check above — a
+            # health check must NOT block or mutate on its default path: `doctor` reads only the LOCAL cache
+            # freshness ($0, no network, no heal), while `doctor --live` runs the full backbone audit (its
+            # capability-completeness leg reaches the org `/v1/models`) and AUTO-HEALS an absent/empty cache. The
+            # live pull used to run on the DEFAULT path, so whenever that server was slow/unreachable it blocked
+            # ~1.4–2.6s and blew doctor's <2s health-check budget — the regression test_gate_cli guards.
+            try:
+                from . import metadata_audit
+                if live:
+                    mr = metadata_audit.backbone_health()
+                    if not mr["cache"]["present"]:        # AUTO-HEAL an absent/empty cache by adopting the table now
+                        try:
+                            from . import sync as _sync
+                            _sync.sync()
+                            import importlib
+                            from . import pricing as _pr
+                            importlib.reload(_pr)
+                            mr = metadata_audit.backbone_health()
+                        except Exception:
+                            pass
+                    _c = mr["cache"]
+                    _drift = f" · {len(mr['drift'])} cap(s) DRIFTED below published" if mr["drift"] else ""
+                    print(f"  metadata  : {'🟢' if mr['ok'] else '🟡'} LiteLLM limits cache {_c['models']} models, "
+                          f"age {_c['age_days']}d{_drift}" + ("" if mr["ok"] else " — run `spendguard metadata`"))
+                else:
+                    _c = metadata_audit._cache_health()   # LOCAL-only: cache freshness/breadth — no network, no heal
+                    _age = f"age {_c['age_days']}d" if _c["age_days"] is not None else "age n/a"
+                    print(f"  metadata  : {'🟢' if _c['ok'] else '🟡'} LiteLLM limits cache {_c['models']} models, "
+                          f"{_age}" + ("" if _c["ok"] else " — `spendguard metadata` or `spendguard doctor --live` (heals)"))
             except Exception:
                 pass
             try:                                          # PRICE-TABLE FRESHNESS: pricing.freshness() computes it but
