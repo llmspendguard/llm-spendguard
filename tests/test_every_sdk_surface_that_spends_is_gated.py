@@ -46,6 +46,15 @@ def _resolve(module_path, class_name, method):
     return getattr(cls, method, None)
 
 
+# Arm the gate before asserting — this test verifies the POST-install() invariant ("every claimed spend surface is
+# wrapped"), so it must not depend on ambient run-order. A sibling test that reloads an SDK submodule or the spendguard
+# package can transiently replace a surface's method with a fresh UNWRAPPED object in this process; that previously made
+# this test flake by chunk-order (green in one run, red on beta.messages.AsyncMessages.parse/stream in another).
+# install() is idempotent (already-gated methods are skipped) and re-wraps any present-but-unwrapped method, so calling
+# it here asserts install()'s REAL coverage deterministically — and still fails loudly if install() ever stops
+# claiming or wrapping a surface (the sweep below reads the tables, not this call).
+gate.install()
+
 print("-- every method named in an interceptor table is actually wrapped --")
 TABLES = [("RT_INTERCEPTORS", getattr(gate, "RT_INTERCEPTORS", []), 3),
           ("STREAM_INTERCEPTORS", getattr(gate, "STREAM_INTERCEPTORS", []), 3),
