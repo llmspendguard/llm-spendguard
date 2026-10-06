@@ -4,6 +4,28 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.12.9] — 2026-10-06
+
+Delegate agentic-readiness fix + warm Codex daemon default — makes `spendguard delegate` **correct** (no false refusal
+of an authenticated agent) and **warm** (~5s, not a >75s cold start). Fixes the false-negative observed live: an authed
+`codex exec` was refused as "unavailable" merely because the $0 one-shot lane probe was down.
+
+### Fixed
+- **Delegate agentic false-negative** — `delegate_router.delegation_lanes_ready` now splits readiness by ROUTE KIND.
+  An agentic route (runs the provider's agent CLI via `codex_exec.run_prompt`) is ready iff that CLI is present AND
+  authed — reusing the executor's own `codex_exec.available()` + `auth_status()`, not inventing a second probe — NOT
+  the $0 one-shot lane probe, which remains the readiness test for the one-shot route only. `delegate_task` classifies
+  FIRST, then checks readiness for that route kind. An authenticated agent CLI is never refused because the $0 one-shot
+  lane is down; a genuinely unauthenticated CLI still gets the typed refusal (never fail-open onto the capped Claude
+  plan). The doctor line now reports both route kinds.
+
+### Changed
+- **Warm Codex daemon default-on** — the persistent `codex mcp-server` (`codex_daemon`) is now the default for the
+  codex lane (opt out via `SPENDGUARD_CODEX_DAEMON` / `advisor.codex_daemon`), so an agentic delegation is ~5s warm
+  instead of a >75s cold start. `run_warm` now serves workspace-write with an explicit per-call `cwd` (verified live:
+  it writes files, not a no-op) and reclaims the idle subprocess after a timeout. Any daemon failure falls through to
+  a cold `codex exec` — latency changes, never availability.
+
 ## [0.12.8] — 2026-10-05
 
 Ledger attribution + ensure-success routing — the accounting-trust + cost-safety follow-up to a heavy real workload's
