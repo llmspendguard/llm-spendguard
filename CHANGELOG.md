@@ -4,7 +4,34 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.12.11] — 2026-10-07
+
 ### Fixed
+- **Warm codex lane hung 45s on every turn, so no codex call ever succeeded.** The warm `codex app-server` turn
+  waiter keyed on a `(thread_id, turn_id)` that a tiny turn's `item/completed` notification can reach BEFORE the
+  `turn/start` response that reveals the turn id — so the completion was dropped (no waiter installed yet) and the
+  turn waited out `CALL_TIMEOUT_S`. Racing notifications are now retained in `_pending_turn_notifications` and
+  replayed the moment correlation exists (`_correlate_turn_waiter`). A headless app-server also no longer boots the
+  user's 8 MCP servers on the thread (`-c orchestrator.mcp.enabled=false`). A consequence: a "codex lane logged out"
+  health banner self-heals again — it clears only on a *successful* codex call, which the hang had been preventing.
+- **Bandit denylist drift silently unprotected a cross-vendor consensus panel.** An external writer could replace
+  `advisor.bandit_denylist` without updating `advisor.bandit_denylist_sources`, dropping a source-credited pin. The
+  reader now self-heals: `_effective_bandit_denylist()` is the UNION of the list and the sources-map keys, so every
+  source-credited pin stays effective regardless of drift. `register_critical` remains the writer; the empty-list
+  optout default is preserved.
+- **Receipt invented `0%/0%` cache axes when a scope had no cache-token data.** `_cache_split_line` now gates on
+  actual cache-read/cache-write token evidence and states "no measured token data for this scope" instead of
+  rendering a measured-looking zero. (Recording was already wired end-to-end: `adapters._call_once` →
+  `cache_read_tok`/`cache_write_tok` ledger columns → `budget.input_cache_split`.)
+- **Compaction nudge fired every turn and claimed a false "~1x cheaper" saving.** The Stop-hook nudge now fires once
+  per threshold crossing (debounced, re-firing only after context grows materially), and the unsupported savings
+  multiplier is gone — it reads `⚠ NNNK tok/turn · /compact (guided)`.
+- **PreCompact hook emitted a schema-invalid payload** (`hookSpecificOutput` is not allowed on PreCompact). It now
+  emits only `{"suppressOutput": true}` and the post-compaction preservation digest is re-injected via the
+  SessionStart(`source=compact`) hook, which does support `additionalContext`.
+- **Delegated provider spawns inherited an untrusted cwd and an open stdin**, guaranteeing a 300s hang for the
+  capped-plan escape hatch. All cold provider spawns now set `stdin=DEVNULL`, the exec/daemon layer no longer reads
+  ambient `os.getcwd()`, and agentic/workspace-write delegations require an explicit absolute cwd.
 - **Batch doors could submit N requests that all 400, and could book phantom spend.** Two fixes. (1) **One param-name
   authority** — the OpenAI output-budget parameter name now comes from `models.tokens_param()`, read by BOTH the
   realtime path (`adapters._call_once`) and the Batch builder (via `apply_call_params`). It returns
@@ -18,6 +45,12 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
   surfaces as ONE clear error — not N — and a 0-success "completed" batch can never settle as phantom spend. A
   stale/unknown id carries the agentic "did you mean" hint (`vendor_call.closest_served`). Opt out with
   `preflight=False`.
+
+### Added
+- **Agent-spawn gate** — a near-cap Anthropic plan reroutes a reroutable `Agent`/`Task` spawn off the capped lane
+  instead of silently billing overage.
+- **Warm codex daemon rewired to `codex app-server`** (codex 0.160.1 removed the `mcp-server` subcommand), the
+  substrate for the warm-lane turn fix above.
 
 ## [0.12.10] — 2026-10-06
 
