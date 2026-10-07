@@ -277,10 +277,68 @@ def maybe_refresh_on_failure(lane):
         pass
 
 
-def refresh_lane_servability(lane=None, announce=True):
+_PROBE_PROMPT = "reply with the single word: ok"       # a tiny $0 recovery probe — content is irrelevant, only ok-vs-error
+_PROBE_TIMEOUT_S = 60                                   # a lane recovery probe is bounded; a hung probe must not wedge
+
+
+def _lane_module(lane):
+    """The executor module for a lane (codex → codex_exec, …), from adapters._LANES — never a hardcoded map. None if
+    the lane is unknown or its module cannot be imported."""
+    try:
+        import importlib
+        from . import adapters
+        for _prov, (ln, mod) in adapters._LANES.items():
+            if ln == lane:
+                return importlib.import_module(f".{mod}", __package__)
+    except Exception:
+        return None
+    return None
+
+
+def reprobe_rejected(lane):
+    """RECOVERY probe: for each model this lane is MEASURED unserved (catalog.lane_unserved_ids), send ONE $0 lane call
+    to test whether it serves AGAIN. This is the self-heal a transient outage needs — once a drop is recorded, the
+    dispatch preflight auto-redirects that model, so no organic gated call ever re-tests it (gpt-5.6-sol hit exactly
+    this: a sustained-but-transient outage recorded as a drop on 2026-10-06, then recovered). A successful probe moves
+    the model served→out of the unserved set and clears its shift banner; a still-failing probe (a genuine
+    deterministic 400, or a continuing outage) leaves it rejected, to be re-probed next time. Returns
+    {"recovered", "still", "probed"}. $0 (plan-lane calls); never raises."""
+    out = {"recovered": [], "still": [], "probed": 0}
+    try:
+        from . import catalog, reliability
+        rejected = list(catalog.lane_unserved_ids(lane) or [])
+        if not rejected:
+            return out
+        mod = _lane_module(lane)
+        if mod is None or not hasattr(mod, "run_prompt"):
+            return out
+        recovered, still = [], []
+        for m in rejected:
+            out["probed"] += 1
+            try:
+                r = mod.run_prompt(_PROBE_PROMPT, model=m, timeout=_PROBE_TIMEOUT_S)
+            except Exception:
+                r = {"error": "probe raised"}
+            if r.get("text") and not r.get("error"):
+                recovered.append(m)
+                reliability.note_lane_model_ok(lane, m)
+            else:
+                still.append(m)                            # deterministic reject OR still-down → stays rejected, re-probed later
+        if recovered:
+            served = list(catalog.lane_model_ids(lane) or [])
+            catalog.merge_lane_observation(lane, served + recovered, still)   # asof defaults to now in merge_lane_observation
+        out["recovered"], out["still"] = recovered, still
+    except Exception:
+        pass
+    return out
+
+
+def refresh_lane_servability(lane=None, announce=True, reprobe=False):
     """Observe every configured lane (or one), write its served/rejected sets into the catalog, and fire the loud
-    shift detector. The $0 entry point a periodic refresh or a transport-error burst calls. Returns
-    {lane: {"served", "rejected", "shifted", "shifts"}}. Never raises."""
+    shift detector. The $0 entry point a periodic refresh or a transport-error burst calls. With reprobe=True it also
+    RECOVERY-probes each lane's rejected models (a $0 lane call apiece) so a model that came back self-heals — OFF by
+    default so the hot failure-trigger path stays cheap; a periodic/manual refresh turns it on. Returns
+    {lane: {"served", "rejected", "shifted", "shifts", "recovered"}}. Never raises."""
     out = {}
     try:
         from . import catalog
@@ -290,8 +348,9 @@ def refresh_lane_servability(lane=None, announce=True):
             if obs["served"] or obs["rejected"]:
                 catalog.merge_lane_observation(ln, obs["served"], obs["rejected"], asof=obs["asof"])
             shifts = detect_served_shift(ln, announce=announce) if obs["shifted"] else []
+            recovered = reprobe_rejected(ln)["recovered"] if reprobe else []
             out[ln] = {"served": obs["served"], "rejected": obs["rejected"],
-                       "shifted": obs["shifted"], "shifts": shifts}
+                       "shifted": obs["shifted"], "shifts": shifts, "recovered": recovered}
     except Exception:
         pass
     return out

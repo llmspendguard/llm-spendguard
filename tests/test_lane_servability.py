@@ -133,5 +133,34 @@ os.environ["SPENDGUARD_LANE_SERVABILITY_OK_RATE_FLOOR"] = "0.1"      # the opera
 ck("recent rate above the operator's floor → not degraded", ls.lane_readiness("codex")["degraded"] is False)
 os.environ.pop("SPENDGUARD_LANE_SERVABILITY_OK_RATE_FLOOR", None)
 
+# ── 7. reprobe_rejected: a recovered model self-heals (clears unserved); a still-dead one stays rejected ──
+import types as _types
+catalog.merge_lane_observation("codex", ["gpt-6-sol"], ["came-back", "still-dead"], asof="2026-10-07T20:00:00+00:00")
+_PROBE_RESULT = {"came-back": {"text": "ok"}, "still-dead": {"error": "not supported", "status_code": 400}}  # fixture data
+def _fake_mod():
+    m = _types.SimpleNamespace()
+    m.run_prompt = lambda prompt, system=None, model=None, timeout=None, reasoning=None, max_tokens=None: \
+        dict(_PROBE_RESULT[model])
+    return m
+ls._lane_module = lambda lane: _fake_mod()
+reliability.note_lane_model_ok = lambda lane, model: None
+res = ls.reprobe_rejected("codex")
+ck("a recovered model probes OK and moves out of unserved", res["recovered"] == ["came-back"])
+ck("a still-dead model stays rejected", res["still"] == ["still-dead"])
+ck("catalog reflects recovery: came-back no longer unserved, still-dead still unserved",
+   "came-back" not in set(catalog.lane_unserved_ids("codex") or [])
+   and "still-dead" in set(catalog.lane_unserved_ids("codex") or []))
+
+# ── 8. 2c: a codex DETERMINISTIC rejection (HTTP 400) is non-retryable; a transient (no status) stays retryable ──
+from spendguard import codex_exec as _cx, vendor_call as _vc
+ck("codex 400 status is PARSED from the documented payload",
+   _cx._codex_error_status('{"type":"error","status":400,"error":{"type":"invalid_request_error"}}') == 400)
+ck("a transient error carries no status → None (not forced non-retryable)",
+   _cx._codex_error_status("codex lane timeout (40s)") is None)
+ck("a codex 400 classifies NON-retryable (payload_rejected)",
+   _vc._classify({"error": "unsupported model", "status_code": 400})[0] not in _vc.RETRYABLE)
+ck("a codex transient (no status) classifies RETRYABLE (correct for the gpt-5.6-sol outage)",
+   _vc._classify({"error": "codex lane timeout (40s)"})[0] in _vc.RETRYABLE)
+
 print(("[OK]" if not fails else "[FAIL]") + " lane servability: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)

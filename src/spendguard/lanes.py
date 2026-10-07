@@ -421,6 +421,17 @@ def main(argv=None):
             when = (" · resets " + datetime.datetime.fromtimestamp(h["reset_ts"]).strftime("%b %d %H:%M")) if h.get("reset_ts") else ""
             flag = "🟢" if rem >= _QUOTA_WARN_PCT else ("🟡" if rem > 0 else "🔴")
             print(f"  {h['lane']:<12} ({h['provider']} plan): {flag} {rem:3}% left {bar}{when}")
+    if "--reprobe" in argv:                               # RECOVERY: re-probe each lane's measured-unserved models ($0
+        from . import lane_servability                     # lane calls); a model that came back self-heals out of unserved
+        _any = False
+        for _ln, _r in lane_servability.refresh_lane_servability(reprobe=True).items():
+            if _r.get("recovered"):
+                _any = True
+                print(f"  {_ln:<12} recovered: {', '.join(_r['recovered'])} (back to served)")
+            if _r.get("rejected"):
+                print(f"  {_ln:<12} still unserved: {', '.join(_r['rejected'])}")
+        if not _any:
+            print("  no lane-model recoveries this pass.")
     if "--judge-eligibility" in argv:                     # defect 3: classify the UNJUDGED metered intents — opt-in SPEND,
         from . import lane_eligibility                     # ESTIMATE-FIRST (default shows the estimate; --yes executes).
         _est = lane_eligibility.lane_eligible_report(execute=False)

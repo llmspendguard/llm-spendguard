@@ -472,6 +472,25 @@ def note_lane_model_shift(lane, model, diagnosis):
         pass
 
 
+def note_lane_model_ok(lane, model):
+    """Clear a (lane, MODEL) served-shift alert (note_lane_model_shift) when that model SERVES AGAIN — the recovery
+    side of the shift detector, called by lane_servability.reprobe_rejected after a successful recovery probe. A
+    single conditional UPDATE on the shared lane:model row (source 'event-shift'); a no-op when none is open. This is
+    what lets a transient outage that was recorded as a drop (gpt-5.6-sol 2026-10-06, then recovered) clear its banner
+    once it answers again. NEVER raises."""
+    try:
+        import datetime
+        from . import budget
+        db = _health_db()
+        with budget._lock:
+            db.execute("UPDATE lane_health SET reachable=1, reason=NULL, source='event-shift-recovered', ts=? "
+                       "WHERE resource=? AND reachable=0 AND source='event-shift'",
+                       (datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"), f"{lane}:{model}"))
+            db.commit()
+    except Exception:
+        pass
+
+
 def _persist_health(sweep_result, acts=None):
     """Record the last check's reachability (+ any remediation fixes) so the RECEIPT and the notifier can read it
     with NO new sweep — that is what lets a red lane surface in every conversation for $0. One row per resource.

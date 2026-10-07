@@ -316,6 +316,19 @@ def usage():
     return lane_quota.cached_usage(_usage_cache, _USAGE_TTL_S, _fetch_usage)
 
 
+def _codex_error_status(err_text):
+    """The HTTP status code codex reported in a failed turn's error payload, as an int, or None when absent. codex's
+    app-server wraps the provider error as JSON carrying a numeric `"status"` (MEASURED 2026-10-07: a model the plan
+    does not serve returns `{"type":"error","status":400,"error":{"type":"invalid_request_error", ...}}`). This pulls
+    that known-shape integer out — FIELD PARSING on a documented payload, not a judgement about the message's meaning —
+    so the shared vendor_call._classify status taxonomy (400/401/403/413/414 → PAYLOAD_REJECTED, NON-retryable) applies
+    to a codex lane error exactly as to a metered 4xx: a deterministic bad request (e.g. an unsupported model) is not
+    retried, while a transient transport failure carries NO status and stays correctly retryable. None on no match."""
+    import re as _re
+    m = _re.search(r'"status"\s*:\s*(\d{3})', err_text or "")   # the documented numeric field, not the prose message
+    return int(m.group(1)) if m else None
+
+
 def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=None, max_tokens=None,
                sandbox="read-only", cwd=None):   # max_tokens: protocol-uniform; codex exec has no one-shot output-cap flag
     """→ {text, in_tok, out_tok, latency, error} from one headless plan-billed Codex run. `system` is
@@ -374,7 +387,8 @@ def _run_prompt_in_cwd(prompt, system=None, model=None, timeout=TIMEOUT_S, reaso
             # (lane, model). NEVER surface the rejection text as `text` — that is the very bug that recorded a codex
             # 400 as content. (A merely TRANSIENT daemon problem — would-not-start / dead pipe — has no tool_error,
             # so it still falls through to one cold `codex exec` below.)
-            return {"error": (_r.get("error") or "codex rejected the request")[:200]}
+            _derr = _r.get("error") or "codex rejected the request"
+            return {"error": _derr[:200], "status_code": _codex_error_status(_derr)}
     exe = _bin()
     if not exe:
         return {"error": "codex CLI not found"}
@@ -410,7 +424,8 @@ def _run_prompt_in_cwd(prompt, system=None, model=None, timeout=TIMEOUT_S, reaso
         except Exception as e:
             return {"error": str(e)[:200]}
         if r.returncode != 0:
-            return {"error": (r.stderr or r.stdout or "codex exited non-zero").strip()[:200]}
+            _cerr = (r.stderr or r.stdout or "codex exited non-zero").strip()
+            return {"error": _cerr[:200], "status_code": _codex_error_status(_cerr)}
         try:
             text = open(out_file).read().strip()
         except Exception:
