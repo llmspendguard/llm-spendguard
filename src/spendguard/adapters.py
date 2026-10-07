@@ -1054,6 +1054,15 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     _ctx_before = dict(_sig_ctx.current() or {})
     if sig and not _ctx_before.get("intent"):
         _sig_ctx.set_context(intent=sig)
+    if not _ctx_before.get("who"):
+        # Capture the REAL caller ON THIS ENTRY THREAD so it propagates (with intent) into every dispatch/daemon
+        # worker below. A worker's own calls.caller() cannot see the app frame across the thread boundary — it lands
+        # None (post-trampoline-hardening) or the old threading.py:run — so the daemon boundaries' `ctx['who'] or
+        # caller()` had no real frame to carry. Resolved here, where the app frame IS on the stack; a nested worker
+        # re-entry resolves None and leaves the inherited who intact. Restored with the rest of the context after.
+        _who_entry = _sig_ctx.caller()
+        if _who_entry:
+            _sig_ctx.set_context(who=_who_entry)
     if not _ctx_before.get("call_class"):
         if _probe:
             _sig_ctx.set_context(call_class="probe")

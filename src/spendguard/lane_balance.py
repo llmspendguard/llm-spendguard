@@ -557,6 +557,10 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
     import concurrent.futures as _cf
     from . import adapters, calls, dispatch, lane_catalog
 
+    _bulk_who = (calls.current() or {}).get("who") or calls.caller()   # ORIGINATING caller, captured on THIS submitting
+    #   thread (the app frame is on the stack here). The lane/API worker threads below have no app frame, so carry who
+    #   into their set_context exactly like intent — else a worker's metered-fallback wall-clock daemon attributes the
+    #   row to None / a thread trampoline instead of the code that caused the fan.
     tasks = list(tasks)
     # COST-AWARE FALLBACK PREVENTION (Warden #1, 2026-09-25): a BULK lane-miss on an EXPENSIVE arm (opus/sol) must not
     # silently bill that model's metered API — the $0 lane is free, the runaway is the paid fallback. UNLESS the caller
@@ -932,7 +936,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
                 return i, {**_b, "reason": "dispatch_saturated", "error": f"queue full: no slot within {_remaining:.0f}s"}
             _raised = None
             try:
-                calls.set_context(intent=intent)            # tag this worker's calls with the intent (attribution)
+                calls.set_context(intent=intent, who=_bulk_who)   # tag this worker's calls: intent + ORIGINATING caller
                 r = adapters.call(_vm, _p, system=system, reasoning=reasoning, sig=intent,
                                   timeout_s=deadline_s, no_metered_fallback=refuse_billed, schema=schema,
                                   images=(_imgs or None), no_substitution=True,   # NAMED model — never swap it (pinned)
@@ -1015,7 +1019,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
             return i, {"text": None, "lane": lane, "use_name": use_name, "model": model, "billed": False,
                        "reason": "dispatch_saturated", "error": f"queue full: no lane slot within {deadline_s:.0f}s"}
         try:
-            calls.set_context(intent=intent)          # tag this worker thread's calls with the intent (attribution)
+            calls.set_context(intent=intent, who=_bulk_who)   # tag this worker thread's calls: intent + ORIGINATING caller
             # COST-AWARE: an EXPENSIVE arm's lane miss does not bill its pricey metered model unless the caller opted
             # into paid — the item then errors $0 and retries on a cheaper lane (see _allow_paid_expensive above).
             _eff_no_fallback = no_fallback or (not _allow_paid_expensive and _arm_fallback_pricey(lane, use_name))

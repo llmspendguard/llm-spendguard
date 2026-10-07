@@ -60,7 +60,13 @@ cx._bin = lambda: "/usr/local/bin/codex"
 cx.subprocess.run = _fake_run_exit(0, out="Logged in using ChatGPT")
 ck("codex exit 0 → authed True", cx.auth_status().get("authed") is True)
 cx.subprocess.run = _fake_run_exit(1, err="Not logged in")
-ck("codex exit non-zero → authed False (logged out)", cx.auth_status().get("authed") is False)
+_orig_tok = cx._token_unexpired                   # under a non-zero status, the on-disk token's exp is AUTHORITATIVE
+cx._token_unexpired = lambda *a, **k: False        # non-zero AND no valid token on disk → a genuine logout
+ck("codex exit non-zero + no valid token → authed False (logged out)", cx.auth_status().get("authed") is False)
+cx._token_unexpired = lambda *a, **k: True         # non-zero BUT the token is unexpired → a status/refresh race, NOT a logout
+ck("codex exit non-zero + VALID token → authed True (token exp authoritative; a status race is never a false logout)",
+   cx.auth_status().get("authed") is True)
+cx._token_unexpired = _orig_tok
 
 # ── 3. lanes.lane_auth_status: dispatch to the exec + attach the registry's authored relogin_cmd ──
 lanes._auth_status_cache.clear()

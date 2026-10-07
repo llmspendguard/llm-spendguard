@@ -40,7 +40,15 @@ def governed_realtime_executor(model, system, reasoning, intent, timeout_s):
     `_route=False` (no queue-record recursion) and `_coalesce_eligible=False` (no 4b re-coalescing: the caller IS the
     explicit fan / the coalescer's own leg). submit_storm sizes `timeout_s` from its deadline, storm_route from its
     horizon — the only axis that differs, so it is the one parameter."""
+    from . import calls as _cre
+    _who = (_cre.current() or {}).get("who")          # the ORIGINATING caller, captured HERE on the submitting thread
+    #   (the executor is built during the caller's own adapters.call, where the app frame is on the stack). The
+    #   storm-rt worker that runs the re-entry has NO app frame, so its calls.caller() lands None/thread-trampoline —
+    #   carry who across the boundary exactly like intent, or the re-entrant call + its wall-clock daemon mis-attribute.
+
     def _run_governed_realtime(prompt):
+        if _who:
+            _cre.set_context(who=_who)                # re-apply on the storm-rt worker so the re-entry inherits it
         return adapters.call(model, prompt, system=system, reasoning=reasoning, sig=intent,
                              metered_only=True, governed=True, no_substitution=True,
                              _route=False, _coalesce_eligible=False, timeout_s=timeout_s)
