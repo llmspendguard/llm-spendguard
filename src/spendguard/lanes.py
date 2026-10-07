@@ -387,8 +387,16 @@ def main(argv=None):
         _fb_total = round(sum(r["metered_usd"] for r in _fb_rows), 2)
         if _fb_total >= 0.01:
             _top = ", ".join(f"{r['lane']} ${r['metered_usd']:.2f}" for r in _fb_rows[:4])
-            print(f"⚠ ${_fb_total:.2f} metered spent this month FALLING OVER from down lanes ({_top}) — re-login those "
-                  f"lanes to restore $0. Full: spendguard lanes --fallback-spend")
+            print(f"⚠ ${_fb_total:.2f} metered this month FELL OVER from lanes the router TRIED and found DOWN ({_top}) "
+                  f"— re-login to restore $0. NB: this is lane-tried-then-down spend ONLY, not all lane-ELIGIBLE metered "
+                  f"(see the next line). Full: spendguard lanes --fallback-spend")
+    except Exception:
+        pass
+    try:                                                  # defect 3: the figure that answers 'is rule #8 in force' —
+        from . import lane_eligibility                     # lane-ELIGIBLE work billed metered anyway ($0, cached verdicts)
+        _le_line = lane_eligibility.summary_line()
+        if _le_line:
+            print("ℹ " + _le_line)
     except Exception:
         pass
     if "--probe" in argv:
@@ -413,6 +421,24 @@ def main(argv=None):
             when = (" · resets " + datetime.datetime.fromtimestamp(h["reset_ts"]).strftime("%b %d %H:%M")) if h.get("reset_ts") else ""
             flag = "🟢" if rem >= _QUOTA_WARN_PCT else ("🟡" if rem > 0 else "🔴")
             print(f"  {h['lane']:<12} ({h['provider']} plan): {flag} {rem:3}% left {bar}{when}")
+    if "--judge-eligibility" in argv:                     # defect 3: classify the UNJUDGED metered intents — opt-in SPEND,
+        from . import lane_eligibility                     # ESTIMATE-FIRST (default shows the estimate; --yes executes).
+        _est = lane_eligibility.lane_eligible_report(execute=False)
+        if not _est["unjudged"]:
+            print(f"lane-eligibility: all metered intents judged — ${_est['eligible_usd']:.2f} of "
+                  f"${_est['total_metered_usd']:.2f} realtime metered was lane-eligible and billed anyway.")
+        elif "--yes" not in argv:
+            print(f"lane-eligibility: {_est['unjudged']} intent(s) (${_est['unjudged_usd']:.2f}) UNJUDGED. Classifying "
+                  f"them costs ~${_est['est_judge_usd']:.4f} of metered judge calls (estimate-first). Re-run to spend: "
+                  f"spendguard lanes --judge-eligibility --yes")
+        else:
+            _done = lane_eligibility.lane_eligible_report(execute=True)
+            print(f"lane-eligibility (judged {_done['judged']} intent(s)): ${_done['eligible_usd']:.2f} of "
+                  f"${_done['total_metered_usd']:.2f} realtime metered was LANE-ELIGIBLE and billed anyway "
+                  f"({_done['eligible_calls']} calls, {_done['eligible_tok']} in-tok).")
+            for d in _done["by_intent"][:8]:
+                _mark = "LANE-ELIGIBLE" if d["eligible"] else "legit-metered"
+                print(f"  ${d['usd']:>8.2f}  {_mark:<14} {d['intent']}  — {d['why']}")
     if "--catalog" in argv:                               # the lane model catalog: use-names · provider · reasoning · $
         from . import lane_catalog
         print()

@@ -744,6 +744,32 @@ def lane_model_outcomes(executor, since=None, call_class=None):
     return out
 
 
+def metered_realtime_by_intent(since):
+    """[{intent, model, calls, usd, in_tok, avg_in}] for REALTIME METERED spend since `since` (ISO8601 UTC), grouped
+    by (intent, model), biggest $ first. The corpus lane_eligibility judges: which of this BILLED realtime work was
+    independent one-shot comprehension that could have ridden a $0 lane or the Batch API. Metered = cost>0 AND no $0
+    lane executor; realtime-only so the Batch-API paths (legitimately metered, half price) are excluded by
+    construction; embeddings are excluded (kind!='realtime'); spendguard's own meta calls are excluded. {} on error —
+    a reporting read must never raise."""
+    out = []
+    if not since:
+        return out
+    try:
+        with _lock:
+            rows = _calls_db().execute(
+                "SELECT COALESCE(intent,'(none)'), COALESCE(model,'?'), COUNT(*), COALESCE(SUM(cost),0), "
+                "COALESCE(SUM(in_tok),0), COALESCE(AVG(in_tok),0) FROM calls "
+                "WHERE cost > 0 AND ts >= ? AND COALESCE(NULLIF(executor,''),'')='' AND kind='realtime' "
+                "AND (intent IS NULL OR intent NOT LIKE 'spendguard:%') "
+                "GROUP BY intent, model ORDER BY SUM(cost) DESC", (since,)).fetchall()
+        for intent, model, n, usd, in_tok, avg_in in rows:
+            out.append({"intent": intent, "model": model, "calls": int(n), "usd": float(usd or 0.0),
+                        "in_tok": int(in_tok or 0), "avg_in": int(avg_in or 0)})
+    except Exception:
+        config.rollback_ledger_conn("calls")
+    return out
+
+
 def tested_recently(intent, model=None, days=14, kinds=("realtime",)):
     """True iff there's a recent SMALL test for this intent — a realtime call (a batch-1 / PROMPT-CHECK on a
     handful of items) within `days`. The signal the batch-1 gate uses to tell "you tested this prompt shape before
