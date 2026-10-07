@@ -640,6 +640,30 @@ def spent_since(day, project=None, conv=None):
     return float(_ledger().spent_dec(since=day, where=where or None))
 
 
+def input_cache_split(since=None, project=None, conv=None):
+    """Measured input-token cache axes across live ledger rows: read, write, and total processed input.
+
+    The ledger's canonical Claude Code shape is fresh `in_tok` plus the two independent cache columns, so the
+    denominator is their sum. Include reconstructed subscription rows because their transcript usage is the primary
+    measured cache evidence; exclude reconciliation mirrors so the same usage is not counted twice. The two cache
+    axes stay separate and are never inferred."""
+    from .ledger import LLM_USD_COLS
+    where = {}
+    if project is not None:
+        where["project_primary"] = str(project).strip().lower()
+    if conv is not None:
+        where["conv_id"] = str(conv)
+    rows = _ledger().sum_by("day", cols=LLM_USD_COLS, filt="COALESCE(reconciled,0)=0", since=since,
+                            where=where or None, int_cols=["in_tok", "cache_read_tok", "cache_write_tok"])
+    read = sum(int(v.get("cache_read_tok") or 0) for v in rows.values())
+    write = sum(int(v.get("cache_write_tok") or 0) for v in rows.values())
+    total = sum(int(v.get("in_tok") or 0) + int(v.get("cache_read_tok") or 0)
+                + int(v.get("cache_write_tok") or 0) for v in rows.values())
+    return {"cache_read_tok": read, "cache_write_tok": write, "input_tok": total,
+            "cache_read_share": (read / total if total else 0.0),
+            "cache_write_share": (write / total if total else 0.0)}
+
+
 def spent_by_job(job, since=None):
     """Gate-recorded billed LLM $ for ONE job/run tag — the rows whose `chain` == `spendguard.context(chain=<job>)`.
     This is the concurrency-SAFE "my spend": the chain is per-run, so a job's total never sweeps in a CONCURRENT run

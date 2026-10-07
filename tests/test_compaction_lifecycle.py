@@ -1,12 +1,15 @@
 """Guard: spendguard's COMPACTION LIFECYCLE — the PreCompact + SessionStart(compact) hooks and their installer.
   1. guidance_text() returns the preservation directive (decisions+rationale, paths/ids) — config-pathed, else fallback.
-  2. record_precompact() records the event (trigger + pre-context) and RETURNS the guidance to inject.
-  3. record_sessionstart(source=compact) fills the post-context → the REAL per-event k× = pre/post is measured; a
+  2. record_precompact() records the event (trigger + pre-context) and persists the WHOLE preservation digest.
+  3. SessionStart(source=compact) fills post-context, measures k×, and re-injects that persisted digest; a
      non-compact SessionStart is ignored.
   4. the installer wires BOTH hooks into settings.json and removes ONLY ours (a user's other hooks in the same group
      survive).
 Hermetic: isolated SPENDGUARD_HOME + a monkeypatched ~/.claude for the installer. Zero spend, never touches real config."""
-import os, sys, tempfile, json, pathlib
+import os, sys, tempfile, json, pathlib, io, contextlib
+
+os.environ["OPENAI_API_KEY"] = "sk-test-compaction-offline"
+os.environ["ANTHROPIC_API_KEY"] = "sk-ant-test-compaction-offline"
 
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     home = tempfile.mkdtemp(prefix="spendguard-compact-")
@@ -34,7 +37,7 @@ gt = compaction.guidance_text()
 ck("guidance_text names decisions+rationale and paths/ids", "rationale" in gt.lower() and "path" in gt.lower())
 
 g = compaction.record_precompact({"session_id": "s1", "transcript_path": pre, "trigger": "auto"})
-ck("record_precompact returns the injected guidance", gt[:24] in g)
+ck("record_precompact returns the persisted guidance", gt == g)
 ck("event recorded with its trigger (auto)", compaction.event_summary()["by_trigger"].get("auto") == 1)
 ck("k× not measured until a post-compaction context arrives", compaction.measured_k() == (None, 0))
 
@@ -43,6 +46,49 @@ k, n = compaction.measured_k()
 ck("real per-event k× = pre/post = 500K/45K ≈ 11.1 (measured, not a heuristic)", round(k, 1) == 11.1 and n == 1)
 compaction.record_sessionstart({"session_id": "sX", "source": "startup", "transcript_path": post})
 ck("a NON-compact SessionStart is ignored (still 1 event)", compaction.event_summary()["events"] == 1)
+
+# ── authoritative Claude Code hook schemas + cross-compaction re-injection ──
+def hook(args, payload):
+    old = receipt.sys.stdin
+    receipt.sys.stdin = io.StringIO(json.dumps(payload))
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf):
+            rc = receipt.cli(args)
+    finally:
+        receipt.sys.stdin = old
+    ck("hook exits cleanly: " + args[0], rc == 0)
+    return json.loads(buf.getvalue()) if buf.getvalue().strip() else {}
+
+whole_digest = "goal [NEXT] edit receipt.py:1383; decision=SessionStart because PreCompact cannot inject; port 4317"
+old_guidance = compaction.guidance_text
+compaction.guidance_text = lambda: whole_digest
+pre_out = hook(["--precompact-hook"], {"session_id": "hook-s", "transcript_path": pre, "trigger": "manual"})
+compaction.guidance_text = old_guidance
+allowed_precompact = {"continue", "systemMessage", "suppressOutput", "terminalSequence", "decision", "reason"}
+ck("PreCompact emits only allowed top-level fields", set(pre_out) <= allowed_precompact)
+ck("PreCompact never emits hookSpecificOutput", "hookSpecificOutput" not in pre_out)
+
+compact_out = hook(["--sessionstart-hook"], {"session_id": "hook-s", "source": "compact",
+                                             "transcript_path": post})
+specific = compact_out.get("hookSpecificOutput") or {}
+ck("SessionStart(compact) uses its supported hookEventName", specific.get("hookEventName") == "SessionStart")
+ck("SessionStart(compact) re-injects the persisted digest WHOLE",
+   whole_digest in specific.get("additionalContext", ""))
+startup_out = hook(["--sessionstart-hook"], {"session_id": "hook-s", "source": "startup",
+                                             "transcript_path": post})
+ck("SessionStart(startup) emits no preservation directive", "hookSpecificOutput" not in startup_out)
+
+# Stop keeps the user-facing tally and additionally nudges the MODEL only when over threshold.
+with open(os.path.join(HOME, "compaction_hint.json"), "w") as f:
+    json.dump({"threshold_tokens": 100000, "k": 11.2}, f)
+stop_big = hook(["--stop-hook"], {"transcript_path": pre})
+ck("over-threshold Stop emits user systemMessage", "systemMessage" in stop_big and "/compact" in stop_big["systemMessage"])
+ck("over-threshold Stop also emits model-visible additionalContext",
+   (stop_big.get("hookSpecificOutput") or {}).get("hookEventName") == "Stop" and
+   "/compact" in (stop_big.get("hookSpecificOutput") or {}).get("additionalContext", ""))
+stop_small = hook(["--stop-hook"], {"transcript_path": post})
+ck("under-threshold Stop emits tally only", "systemMessage" in stop_small and "hookSpecificOutput" not in stop_small)
 
 # ── installer round-trip on an isolated ~/.claude ──
 tmphome = tempfile.mkdtemp()

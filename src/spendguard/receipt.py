@@ -517,6 +517,10 @@ def tally(project=None, conv=None) -> dict:
     out = {"api": api, "actual": api, "remote": remote, "external": external, "subscription": sub,
            "subscription_assumed": sub_assumed,
            "est_value": (_est_tally(repo=project) if project else _est_tally())}
+    try:
+        out["input_cache"] = budget.input_cache_split(month, project=project, conv=conv)
+    except Exception:
+        out["input_cache"] = None
     out["real_month"] = ((api.get("month") or 0) + (sub or 0) + ((remote or {}).get("month") or 0)
                          + ((external or {}).get("month") or 0))
     ev = out["est_value"]
@@ -649,6 +653,9 @@ def _tally_lines(t: dict) -> list:
         mult = f"  →  {t['plan_mult']:.0f}× the subscription" if t.get("plan_mult") else ""
         lines.append(f":: est sub value (plan usage, NOT billed){asof}: month {_money(ev.get('month'))}"
                      f" · today {_money(ev.get('today'))} · 7d {_money(ev.get('week'))}{mult}")
+    cache_line = _cache_split_line(t)
+    if cache_line:
+        lines.append(cache_line)
     seg = _lane_seg(t)
     if seg:                                        # WHICH plan served spendguard's own work — the inline lane visibility
         lines.append(f":: lanes serving your work (mo): {seg}  ($0 billed — a plan served these, not the metered API)")
@@ -659,6 +666,17 @@ def _tally_lines(t: dict) -> list:
     if ha:
         lines.append(ha)
     return lines
+
+
+def _cache_split_line(t: dict) -> str:
+    """The measured monthly input-cache axes, kept named and separate; empty when no token evidence exists."""
+    cache = t.get("input_cache") or {}
+    if not cache.get("input_tok"):
+        return ""
+    return ":: input cache split (mo): read %s (%.1f%%) · write %s (%.1f%%) · total input %s" % (
+        _tok(cache.get("cache_read_tok")), 100 * cache.get("cache_read_share", 0),
+        _tok(cache.get("cache_write_tok")), 100 * cache.get("cache_write_share", 0),
+        _tok(cache.get("input_tok")))
 
 
 def _lane_health_alert():
@@ -720,6 +738,10 @@ def render_line(t: Optional[dict] = None) -> str:
     ev = t.get("est_value")
     if ev:
         s += f"  ::  est value {_k(ev.get('month'))}/mo"
+    cache = t.get("input_cache") or {}
+    if cache.get("input_tok"):
+        s += "  ::  cache read %.1f%% · write %.1f%%" % (100 * cache.get("cache_read_share", 0),
+                                                           100 * cache.get("cache_write_share", 0))
     seg = _lane_seg(t)
     if seg:                                        # the every-turn Stop-hook line: name the plan(s) that served work
         s += f"  · lanes: {seg} ($0)"
@@ -950,6 +972,9 @@ def render_tree(scope_org=None) -> str:
     t = tally()
     parts = [_PREFIX + "spend this month"]
     parts += [_INDENT + ln for ln in _two_axis_table(t)]
+    cache_line = _cache_split_line(t)
+    if cache_line:
+        parts.append(_INDENT + cache_line)
     parts += [_INDENT + ln for ln in _saved_lines(t)]      # 3rd axis: guarded savings (avoided $) — never summed in
     tree = _est_tree(scope_org)
     if not tree:
@@ -1356,18 +1381,24 @@ def cli(args) -> int:
             _write_statusline_cache(_line)          # refresh the FAST status line's cache each turn (cheap render reads it)
             _compaction_hint()                      # refresh the compaction nudge's account-level hint (self-caches hourly)
             _msg = _line
+            _hook_context = None
             try:
                 from . import config as _cfg, compaction
                 _nud = _compaction_nudge(info, str(_cfg.HOME))     # non-empty only when this session is over threshold
                 if _nud:
-                    _msg = _line + "\n" + _nud + "\n→ paste to compact well:  " + compaction.compact_snippet()
+                    _compact = compaction.compact_snippet()
+                    _msg = _line + "\n" + _nud + "\n→ paste to compact well:  " + _compact
+                    _hook_context = _nud + "\nProactive compaction action: " + _compact
             except Exception:
                 pass
-            print(json.dumps({"systemMessage": _msg}))
+            _output = {"systemMessage": _msg}
+            if _hook_context:
+                _output["hookSpecificOutput"] = {"hookEventName": "Stop", "additionalContext": _hook_context}
+            print(json.dumps(_output))
             return 0
         if "--precompact-hook" in args:
-            # Claude Code PreCompact hook: record the compaction event (trigger + pre-context) and INJECT the
-            # preservation guidance so both auto AND manual compaction keep task goal / decisions+rationale / paths.
+            # Claude Code PreCompact cannot inject context. Record the event + digest for SessionStart(compact), then
+            # emit only a schema-valid, silent acknowledgement.
             info = {}
             if not sys.stdin.isatty():
                 try:
@@ -1375,14 +1406,12 @@ def cli(args) -> int:
                 except Exception:
                     info = {}
             from . import compaction
-            guidance = compaction.record_precompact(info)
-            print(json.dumps({"hookSpecificOutput": {
-                "hookEventName": "PreCompact", "permissionDecision": "allow",
-                "additionalContext": "COMPACTION PRESERVATION DIRECTIVE (do not summarize these away):\n" + guidance}}))
+            compaction.record_precompact(info)
+            print(json.dumps({"suppressOutput": True}))
             return 0
         if "--sessionstart-hook" in args:
-            # Claude Code SessionStart hook: on a post-COMPACT restart, record the post-compaction context so the
-            # REAL per-event k× (pre/post) is measured. Emits nothing user-facing.
+            # Claude Code SessionStart(compact): measure post-context and re-inject the WHOLE digest that PreCompact
+            # persisted. Other SessionStart sources receive no directive.
             info = {}
             if not sys.stdin.isatty():
                 try:
@@ -1391,6 +1420,10 @@ def cli(args) -> int:
                     info = {}
             from . import compaction
             compaction.record_sessionstart(info)
+            if info.get("source") == "compact":
+                digest = compaction.preservation_digest(info)
+                print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart",
+                    "additionalContext": "POST-COMPACTION PRESERVATION PINS — still in force:\n" + digest}}))
             return 0
         if "--statusline" in args:
             # Claude Code statusLine: session JSON on stdin; prepend cwd · model · ctx% to the global one-line tally.

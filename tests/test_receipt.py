@@ -14,6 +14,8 @@ import os, sys, io, tempfile, contextlib
 # lived inside the self-isolation block, so under test_runner the flow-aggregation tests ran with calls logging off.
 os.environ["SPENDGUARD_CALLS"] = "1"            # exercise the rich per-call flow aggregation
 os.environ.pop("SPENDGUARD_RECEIPTS", None)     # default level = flow
+os.environ["OPENAI_API_KEY"] = "sk-test-receipt-offline"
+os.environ["ANTHROPIC_API_KEY"] = "sk-ant-test-receipt-offline"
 
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
@@ -59,6 +61,11 @@ ck("est-value: carries an as-of date", ev and ev.get("asof") == TODAY)
 
 # ── the tally: two axes, separate, never summed ──────────────────────────────
 budget.spent_since = lambda day, project=None, conv=None: {TODAY: 4.20, WEEK: 31.50, MONTH: 212.40}.get(day, 99.0)   # stub the gate ledger
+# Metered ledger rows retain fresh input, cache READ, and cache WRITE independently. Processed input is
+# 200+400+300=900; read=400/900 (44.4%), write=300/900 (33.3%).
+budget._record_spend_event("anthropic", "claude-test", "realtime", 0.01, occurred_at=TODAY + "T12:00:00+00:00",
+                           in_tok=200, out_tok=10, cache_read_tok=400, cache_write_tok=300,
+                           source="receipt-cache-test", dedup_key="receipt-cache-split")
 t = receipt.tally()
 # Each window's actual-$ is spent_since(that window start). Assert against the stub as the ORACLE rather than hardcoded
 # 4.20/212.40 — on a month/week boundary the window starts COINCIDE (e.g. the 1st: today-start == month-start), so
@@ -66,12 +73,18 @@ t = receipt.tally()
 ck("tally: actual-$ windows from the gate ledger",
    all(t["actual"][w] == budget.spent_since(d) for w, d in (("today", TODAY), ("week", WEEK), ("month", MONTH))))
 ck("tally: est-value present + distinct dict", t["est_value"] and abs(t["est_value"]["today"] - 7.0) < 1e-9)
+cache = t.get("input_cache") or {}
+ck("tally: cache read/write axes stay split with measured shares",
+   cache.get("cache_read_tok") == 400 and cache.get("cache_write_tok") == 300 and
+   round(cache.get("cache_read_share", 0) * 100, 1) == 44.4 and
+   round(cache.get("cache_write_share", 0) * 100, 1) == 33.3)
 out = receipt.render_tally(t)
 ck("render_tally: real-$ (API+subs+remote) and est-value are SEPARATE", "real $ this month" in out and "est sub value (plan usage, NOT billed)" in out)
 # HARD RULE: the two axes are never summed. real month = API 212.40 + subs 400 = 612.40; est month = 7.00. Neither
 # real+est (619.40) nor API+est (219.40) may ever appear as one number.
 ck("render_tally: no combined total (axes never summed)", "619.40" not in out and "219.40" not in out)
 ck("render_tally: API today shown", f"today {receipt._money(t['actual']['today'])}" in out)
+ck("render_tally: cache read and write are explicit named axes", "cache split" in out and "read 400" in out and "write 300" in out)
 
 # ── render_flow: est → actual variance + the tally underneath ────────────────
 flow = {"intent": "loinc-typing", "n": 42, "in_tok": 1_200_000, "out_tok": 300_000, "est": 2.10, "actual": 1.87}
@@ -87,6 +100,7 @@ ck("render_flow: no estimate → actual only (no arrow)", "→" not in receipt.r
 ln = receipt.render_line(t)
 ck("render_line: single line", "\n" not in ln)
 ck("render_line: real-$ + est value both present, labelled, separate", "real" in ln and "est value" in ln and "::" in ln)
+ck("render_line: compact cache axes remain named and split", "cache read 44.4%" in ln and "write 33.3%" in ln)
 ck("render_line: _k compacts ≥$1000 to k, keeps small values plain",
    receipt._k(2015.43) == "$2.0k" and receipt._k(212.40) == "$212" and receipt._k(None) == "—")
 
@@ -213,6 +227,7 @@ ck("_est_tree(scope_org): limits to one org", set(receipt._est_tree("manga2anime
 rt = receipt.render_tree()
 ck("render_tree: shows org → team → project", "healiom" in rt.lower() and "clinical-ai" in rt and "medical-taxonomy" in rt)
 ck("render_tree: header is the two-axis Actual$ | Est-value$ TABLE", "Actual $" in rt and "Est value $" in rt and "never added" in rt)
+ck("render_tree: default receipt surfaces cache read/write axes", "cache split" in rt and "read 400" in rt and "write 300" in rt)
 
 # ── two-axis TABLE: Actual $ and Est value $ are SEPARATE COLUMNS, totalled independently, never one number ──
 tt = receipt.tally()

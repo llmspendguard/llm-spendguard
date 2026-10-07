@@ -2,11 +2,10 @@
 
 Two hooks feed this (wired by receipt._install_claude_code):
   • PreCompact       → record_precompact(info): records the compaction EVENT (its trigger + the context it compacted
-                       at) AND returns the preservation GUIDANCE to inject (so both auto and manual compaction keep
-                       the task goal / decisions+rationale / paths+ids — the review measured auto loss at 19%,
-                       manual at 0%). The guidance text is CONFIG-PATHED (advisor.precompact_guidance_file →
-                       the review's generated precompact_guidance.txt), so re-running the review updates it; a small
-                       bundled fallback is used only if that file is absent. Nothing hardcoded.
+                       at) AND persists the preservation digest. PreCompact cannot inject context; the digest is kept
+                       on this event for the following SessionStart(compact). The text is CONFIG-PATHED
+                       (advisor.precompact_guidance_file → the review's generated precompact_guidance.txt), so
+                       re-running the review updates it; a small bundled fallback is used only if that file is absent.
   • SessionStart(compact) → record_sessionstart(info): records the POST-compaction context on the same event, so we
                        measure the REAL per-event k× = pre_context / post_context (grounding the status-line nudge in
                        measured events instead of the ledger-drop heuristic).
@@ -23,7 +22,8 @@ _STATE = "compaction_events"
 _MAX_EVENTS = 500
 
 _FALLBACK_GUIDANCE = (
-    "Before summarizing, preserve VERBATIM in a pinned section: (1) the current task goal/sequence with "
+    "These are the preservation pins from before the compaction; treat them as still in force: (1) the current "
+    "task goal/sequence with "
     "[DONE]/[NEXT]/[TODO] markers; (2) every user decision, redirect, or constraint AND its rationale (not just the "
     "choice); (3) all file paths, line numbers, ids, ports, numbers exactly as written; (4) the immediate next "
     "action to run; (5) any open question awaiting a reply. Do not paraphrase decisions or drop rationale.")
@@ -60,7 +60,7 @@ def _guidance_file():
 
 
 def guidance_text():
-    """The preservation directive to inject at PreCompact — from the config-pathed file, else the bundled fallback."""
+    """The preservation digest persisted at PreCompact — from the config-pathed file, else the bundled fallback."""
     f = _guidance_file()
     if f:
         try:
@@ -237,18 +237,32 @@ def _tail_context(transcript_path):
 
 
 def record_precompact(info):
-    """Record the compaction event (trigger + pre-context) and RETURN the preservation guidance. Never raises."""
+    """Record the compaction event, including its WHOLE preservation digest, and return that digest. Never raises."""
+    guidance = guidance_text()
     try:
         tp = info.get("transcript_path") or info.get("transcriptPath") or ""
         ctx, cr, model = _tail_context(tp) if tp and os.path.exists(tp) else (0, 0, None)
         evs = _load_events()
         evs.append({"ts": _iso_now(), "session": info.get("session_id") or info.get("sessionId") or "",
                     "trigger": info.get("trigger") or info.get("compaction_type") or "unknown", "model": model,
-                    "pre_context": ctx, "pre_cache_read": cr, "post_context": None, "k": None})
+                    "pre_context": ctx, "pre_cache_read": cr, "post_context": None, "k": None,
+                    "preservation_digest": guidance})
         _save_events(evs)
     except Exception:
         pass
-    return guidance_text()
+    return guidance
+
+
+def preservation_digest(info):
+    """The last WHOLE digest persisted for this session, or the short honest fallback. Never raises."""
+    try:
+        sid = info.get("session_id") or info.get("sessionId") or ""
+        for ev in reversed(_load_events()):
+            if ev.get("session") == sid and ev.get("preservation_digest"):
+                return ev["preservation_digest"]
+    except Exception:
+        pass
+    return _FALLBACK_GUIDANCE
 
 
 def record_sessionstart(info):

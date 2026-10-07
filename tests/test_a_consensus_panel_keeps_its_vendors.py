@@ -20,6 +20,8 @@ import tempfile
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-panel-")
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
+os.environ["OPENAI_API_KEY"] = "sk-test-panel-offline"
+os.environ["ANTHROPIC_API_KEY"] = "sk-ant-test-panel-offline"
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 from spendguard.lane_balance import _intent_listed as listed                            # noqa: E402
@@ -67,13 +69,19 @@ import pathlib as _pathlib                                                      
 _live = _pathlib.Path(os.path.expanduser("~/.spendguard/config.json"))
 if not _live.exists():
     print(f"  n/a  no deployed config at {_live} — deployed posture UNCHECKED (not a pass)")
+    fails.append("deployed config absent — denylist/source invariant unchecked")
 else:
     try:
-        _deny = (_json.loads(_live.read_text()).get("advisor") or {}).get("bandit_denylist") or []
+        _advisor = _json.loads(_live.read_text()).get("advisor") or {}
+        _deny = _advisor.get("bandit_denylist") or []
+        _sources = _advisor.get("bandit_denylist_sources") or {}
     except Exception as e:                  # a config that cannot be read is NOT a pass
-        _deny, _ = [], print(f"  FAIL live config unreadable: {type(e).__name__}")
+        _deny, _sources, _ = [], {}, print(f"  FAIL live config unreadable: {type(e).__name__}")
     fails += ck(f"the DEPLOYED config denies the consensus panel (denylist={_deny})",
                 listed("review:catalog.py", _deny))
+    _missing_source_pins = sorted(set(_sources) - set(_deny))
+    fails += ck("the DEPLOYED denylist contains every pin credited in bandit_denylist_sources "
+                f"(missing={_missing_source_pins})", not _missing_source_pins)
 
 print(f"\n{'[FAIL]' if fails else 'OK'} a_consensus_panel_keeps_its_vendors: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)
