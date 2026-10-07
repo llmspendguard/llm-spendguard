@@ -47,6 +47,15 @@ def test_failed_turn_is_a_hard_error():
         daemon.shutdown()
 
 
+def test_real_notifications_racing_before_turn_response_are_replayed():
+    daemon = new_daemon()
+    try:
+        result = daemon.run_warm("race")
+        assert result == {"text": "reply:race", "thread": "thread-1", "error": None}, result
+    finally:
+        daemon.shutdown()
+
+
 def test_dead_pipe_wakes_every_waiter():
     daemon = new_daemon()
     try:
@@ -62,6 +71,7 @@ def test_dead_pipe_wakes_every_waiter():
 
 if __name__ == "__main__":
     tests = [test_agent_message, test_concurrent_turns_are_demultiplexed,
+             test_real_notifications_racing_before_turn_response_are_replayed,
              test_failed_turn_is_a_hard_error, test_dead_pipe_wakes_every_waiter]
     for test in tests:
         test()

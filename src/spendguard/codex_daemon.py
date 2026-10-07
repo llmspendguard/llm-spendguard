@@ -34,6 +34,16 @@ IDLE_TIMEOUT_S = 600              # reclaim the persistent subprocess after ten 
 _SAFE_CWD = tempfile.gettempdir()
 
 
+def _mcp_disable_flags():
+    """Disable MCP orchestration globally for this headless app-server process.
+
+    Codex 0.160.1's config explicitly gates configured servers on ``orchestrator.mcp.enabled``. Empty-table and
+    per-entry overrides are not equivalent: config layers merge the former, while the latter can replace required
+    transport fields and make app-server exit before the initialize handshake.
+    """
+    return ["-c", "orchestrator.mcp.enabled=false"]
+
+
 class _CodexDaemon:
     """One warm `codex app-server` + a concurrent JSON-RPC client over it. All mutable state is on the instance
     (guarded by the instance locks), so N callers run concurrent turns without a serialising round-trip lock."""
@@ -47,6 +57,7 @@ class _CodexDaemon:
         self._last_activity = 0.0
         self._waiters = {}                     # rpc_id -> request waiter
         self._turn_waiters = {}                # (thread_id, turn_id) -> completion waiter
+        self._pending_turn_notifications = {}  # notification can race ahead of the turn/start response
         self._ids = itertools.count(1)         # itertools.count.__next__ is atomic under the GIL
 
     def _next_id(self):
@@ -125,6 +136,9 @@ class _CodexDaemon:
         with self._state_lock:
             waiter = self._turn_waiters.get(key)
             if waiter is None:
+                # A tiny turn can complete before this reader handles the turn/start response that reveals its id.
+                # Retain the complete evidence and replay it as soon as correlation exists instead of dropping it.
+                self._pending_turn_notifications.setdefault(key, []).append(msg)
                 return
             if method == "item/completed":
                 item = params.get("item") or {}
@@ -133,6 +147,16 @@ class _CodexDaemon:
             else:
                 waiter["turn"] = turn
                 waiter["turn_event"].set()
+
+    def _correlate_turn_waiter(self, waiter, thread_id, turn_id):
+        """Install turn correlation and replay real notifications that won the response/notification race."""
+        key = (thread_id, turn_id)
+        with self._state_lock:
+            waiter["turn_id"] = turn_id
+            self._turn_waiters[key] = waiter
+            pending = self._pending_turn_notifications.pop(key, [])
+        for notification in pending:
+            self._route_notification(notification)
 
     def _reader_loop(self, p):
         """SOLE stdout reader: route responses by id and notifications by (threadId, turnId)."""
@@ -174,10 +198,10 @@ class _CodexDaemon:
                         if w is not None:
                             w["msg"] = msg
                             turn = (msg.get("result") or {}).get("turn") or {}
-                            if w["turn_thread_id"] and turn.get("id"):
-                                w["turn_id"] = turn["id"]
-                                self._turn_waiters[(w["turn_thread_id"], turn["id"])] = w
-                            w["event"].set()
+                    if w is not None:
+                        if w["turn_thread_id"] and turn.get("id"):
+                            self._correlate_turn_waiter(w, w["turn_thread_id"], turn["id"])
+                        w["event"].set()
         finally:
             self._fail_all_waiters()
 
@@ -199,7 +223,7 @@ class _CodexDaemon:
             config.warn_once("[spendguard] codex warm daemon: resolved codex path %r is not an executable file "
                              "— codex lane unavailable, falling back to the metered API" % exe)
             return None
-        cmd = [exe, "app-server"] + codex_exec._plugin_disable_flags()
+        cmd = [exe, "app-server"] + codex_exec._plugin_disable_flags() + _mcp_disable_flags()
         try:
             p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                  bufsize=0, cwd=_SAFE_CWD, env=config.lane_plan_env())   # no metered key in the child

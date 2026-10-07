@@ -33,6 +33,7 @@ def finish_turn(thread_id, turn_id, prompt):
 
 if len(sys.argv) < 2 or sys.argv[1] != "app-server":
     raise SystemExit(2)
+assert "orchestrator.mcp.enabled=false" in sys.argv
 
 for line in sys.stdin:
     message = json.loads(line)
@@ -59,8 +60,11 @@ for line in sys.stdin:
         assert params["approvalPolicy"] == "never"
         assert params["sandboxPolicy"]["type"] in ("readOnly", "workspaceWrite")
         prompt = params["input"][0]["text"]
+        if prompt == "race":
+            finish_turn(params["threadId"], turn_id, prompt)
         send({"jsonrpc": "2.0", "id": message["id"],
               "result": {"turn": {"id": turn_id, "status": "inProgress", "items": []}}})
-        threading.Thread(target=finish_turn, args=(params["threadId"], turn_id, prompt), daemon=True).start()
+        if prompt != "race":
+            threading.Thread(target=finish_turn, args=(params["threadId"], turn_id, prompt), daemon=True).start()
     elif method == "fake/exit":
         os._exit(0)

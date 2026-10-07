@@ -63,6 +63,17 @@ _suspect = [e for e in _un if e not in (cov.get("sources") or {})]
 ck("a registered pin reads as registered-unmatched (benign)", "warden:govern_adjudicate*" in _registered)
 ck("no unregistered suspects here (every pin was registered with a source)", _suspect == [])
 
+print("-- reader self-heals a list replaced without its source-credited pins --")
+config.update_json(config.CONFIG_JSON, lambda d: {**d, "advisor": {
+    **(d.get("advisor") or {}), "bandit_denylist": ["warden:card_faithful*"]}},
+    reason="test-external-replacement", required=True)
+config.cfg_invalidate()
+effective = lane_balance._effective_bandit_denylist()
+ck("a dropped source-credited review pin remains effective",
+   lane_balance._intent_listed("review:catalog.py", effective))
+ck("the reader's union preserves both configured and credited pins",
+   "warden:card_faithful*" in effective and "review:" in effective)
+
 print("-- empty call is a no-op returning the current list unchanged --")
 before = config._cfg_get("advisor", "bandit_denylist", None) or []
 ck("register_critical([]) is a no-op", lane_balance.register_critical([]) == before)

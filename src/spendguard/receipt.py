@@ -669,10 +669,10 @@ def _tally_lines(t: dict) -> list:
 
 
 def _cache_split_line(t: dict) -> str:
-    """The measured monthly input-cache axes, kept named and separate; empty when no token evidence exists."""
+    """The monthly input-cache axes, kept named and separate; absence is stated instead of invented as 0%/0%."""
     cache = t.get("input_cache") or {}
-    if not cache.get("input_tok"):
-        return ""
+    if not (cache.get("cache_read_tok") or cache.get("cache_write_tok")):
+        return ":: input cache split (mo): no measured token data for this scope"
     return ":: input cache split (mo): read %s (%.1f%%) · write %s (%.1f%%) · total input %s" % (
         _tok(cache.get("cache_read_tok")), 100 * cache.get("cache_read_share", 0),
         _tok(cache.get("cache_write_tok")), 100 * cache.get("cache_write_share", 0),

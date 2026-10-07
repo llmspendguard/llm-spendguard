@@ -1389,6 +1389,13 @@ def _intent_listed(intent, entries):
     return False
 
 
+def _effective_bandit_denylist():
+    """Reader-side self-heal: source-credited pins remain effective if an external writer replaces the list."""
+    configured = config._cfg_get("advisor", "bandit_denylist", None) or []
+    credited = config._cfg_get("advisor", "bandit_denylist_sources", None) or {}
+    return sorted(set(configured) | set(credited))
+
+
 def bandit_list_coverage():
     """Which bandit allow/deny-list entries are UNMATCHED — they match NO intent recorded in the calls ledger. This
     is a FACT, not a verdict: the determination runs the SAME _intent_listed the router uses (exact / trailing ':'
@@ -1484,7 +1491,7 @@ def route_decision(intent, model, reactive=False):
         # governed by the bake-off learning; DENY an intent that genuinely needs the primary model.
         _mode = str(config._cfg_get("advisor", "bandit_mode", "allowlist")).strip().lower()
         if _mode == "optout":
-            _eligible = not _intent_listed(intent, config._cfg_get("advisor", "bandit_denylist", None))
+            _eligible = not _intent_listed(intent, _effective_bandit_denylist())
         else:
             _eligible = _intent_listed(intent, config._cfg_get("advisor", "bandit_intents", None))
         if _bandit_on and not str(intent).startswith(_META) and _eligible:
