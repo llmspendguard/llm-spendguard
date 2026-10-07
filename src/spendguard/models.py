@@ -25,8 +25,15 @@ _RULES = [
         note="gpt-5 mini/nano + o-series: reasoning_effort='minimal' (verified) — 'none' is REJECTED (400); "
              "without it reasoning eats the budget → EMPTY output. Rejects max_tokens (use max_completion_tokens). "
              "OpenAI auto-caches ≥1024-tok static-first prefix (read 0.5x).")),
-    (r"^gpt-", dict(provider="openai", reasoning=None, tokens_param="max_tokens", cache="auto", cache_min=1024,
-        note="OpenAI auto-caches ≥1024-tok identical static-first prefix (read 0.5x).")),
+    # The OpenAI catch-all (any gpt- not matched by a specific rule above, incl. future gpt-N families). tokens_param
+    # is max_completion_tokens: modern OpenAI chat models REJECT max_tokens with a hard 400 ("use max_completion_tokens
+    # instead") and it is what the realtime path sends UNCONDITIONALLY (adapters._bounded_create), so batch — which
+    # renames via this rule — must agree or it misroutes every unlisted family (gpt-6.1-sol: 1,930/1,930 HTTP 400 on a
+    # real batch). max_completion_tokens is accepted by every current chat model, so this is safe as the default; the
+    # mandatory batch pre-flight (submit.guarded_submit) catches any rare model that still wants max_tokens as ONE error.
+    (r"^gpt-", dict(provider="openai", reasoning=None, tokens_param="max_completion_tokens", cache="auto", cache_min=1024,
+        note="OpenAI chat default: max_completion_tokens (modern + future gpt-N REJECT max_tokens; same param the "
+             "realtime path sends). OpenAI auto-caches ≥1024-tok identical static-first prefix (read 0.5x).")),
     # VERIFIED 2026-08-25 against the live metered endpoint (generativelanguage v1beta/openai): reasoning is a
     # PARAMETER here, not a mandatory floor — reasoning=None so a DIRECT call sends nothing and gets Gemini's own
     # default thinking; reasoning_effort_ok marks that low/medium/high ARE accepted (pass through). 'minimal' is a
@@ -149,6 +156,24 @@ def normalize_reasoning(model, level):
     return None                                   # verified NON-reasoning model (gpt-4, claude-haiku) → no effort param
 
 
+def tokens_param(model, *, dialect=None):
+    """THE one place that decides the OUTPUT-budget parameter NAME for a model's request body — read by BOTH call
+    doors (realtime adapters._call_once AND the Batch builder via apply_call_params) so the two can never drift. That
+    drift is exactly what sent gpt-6.1-sol 1,930/1,930 HTTP 400s: the batch door emitted `max_tokens` while realtime
+    emitted `max_completion_tokens`. Anthropic Messages takes `max_tokens`; every Chat-Completions / OpenAI-compatible
+    endpoint (openai, moonshot, z.ai, gemini) takes `max_completion_tokens` — modern ones REJECT max_tokens, and legacy
+    ones still accept max_completion_tokens, so it is universally safe on the chat dialect. `dialect` wins when the
+    caller knows the request SHAPE ('openai'|'anthropic'); else the family-rule provider decides. A MEASURED per-model
+    fact (add_fact(model,'tokens_param',…)) still overrides for a genuine exception, but the family-rule DEFAULT never
+    forces legacy max_tokens onto a chat model — that was the latent miss for kimi-k3 / glm-5.2, which match no rule and
+    so inherited the provider='?' default `max_tokens` while only the realtime hardcode kept them working."""
+    shape = dialect or profile(model).get("provider")
+    if shape == "anthropic":
+        return "max_tokens"
+    fact = facts(model).get("tokens_param")                 # a DELIBERATE measured fact may override (never the default)
+    return fact[0] if (fact and fact[0] in ("max_tokens", "max_completion_tokens")) else "max_completion_tokens"
+
+
 def apply_call_params(model, kw, *, dialect=None):
     """Mutate a chat-call kwargs dict to use the model correctly — the AUTO-APPLY that prevents the
     'forgot reasoning=none → empty output' class of bug. Returns kw.
@@ -167,7 +192,7 @@ def apply_call_params(model, kw, *, dialect=None):
     — so name-inference alone would drop the very facts the A/B was run to establish."""
     p = profile(model)
     shape = dialect or p.get("provider")
-    if p.get("tokens_param") == "max_completion_tokens" and "max_tokens" in kw:
+    if tokens_param(model, dialect=shape) == "max_completion_tokens" and "max_tokens" in kw:
         kw["max_completion_tokens"] = kw.pop("max_tokens")
     eff = p.get("reasoning")
     # '?' is the family-rule miss marker, not a tier any endpoint accepts. Sending it is a 400.

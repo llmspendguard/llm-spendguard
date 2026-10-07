@@ -1485,7 +1485,8 @@ def embed(texts, model=None, *, dimensions=None, max_batch=None, timeout_s=None,
                       if n_missing else None)}
 
 
-def embed_batch(texts, model=None, *, dimensions=None, jsonl_path=None, cap_dollars=None, submit=True):
+def embed_batch(texts, model=None, *, dimensions=None, jsonl_path=None, cap_dollars=None, submit=True,
+                preflight=True):
     """The first-class BATCH embedding surface — the ASYNC Batch API (~50% cheaper) for a LARGE corpus, gated
     estimate-first + capped by the SAME chokepoint every batch submission passes (submit.guarded_submit). Builds a
     /v1/embeddings JSONL (one input per line, custom_id 'emb-<i>' = input index) at a durable path, estimates +
@@ -1521,7 +1522,7 @@ def embed_batch(texts, model=None, *, dimensions=None, jsonl_path=None, cap_doll
                                       "url": "/v1/embeddings", "body": body}) + "\n")
         from . import submit as _submit
         bid = _submit.guarded_submit(jsonl_path, model=raw, cap_dollars=cap_dollars, batch=True,
-                                     submit=submit, endpoint="/v1/embeddings")
+                                     submit=submit, endpoint="/v1/embeddings", preflight=preflight)
         return {**base, "batch_id": bid, "jsonl": jsonl_path}
     except Exception as e:
         from . import gate as _g2
@@ -2607,8 +2608,13 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 if "e" in _box:
                     raise _box["e"]                          # a real error (e.g. a param 400) → the ladder handles it
                 return _finish_create(_box["r"])
-            try:                                              # gpt-5+ require max_completion_tokens; older models take max_tokens
-                r = _bounded_create(max_completion_tokens=max_tokens, **okw)
+            # ONE param-name authority (models.tokens_param) — the Batch door reads the SAME function via
+            # apply_call_params, so the primary send can never drift from it again (the gpt-6.1-sol 400 storm). The
+            # heal ladder below still tries the other spelling if the provider rejects this one.
+            from . import models as _mtp
+            _primary_tok = _mtp.tokens_param(raw, dialect="openai")
+            try:                                              # chat dialect → max_completion_tokens; ladder heals exceptions
+                r = _bounded_create(**{_primary_tok: max_tokens}, **okw)
             except Exception as e:
                 # WHICH PARAMETER, FROM THE TYPED FIELD — not from the message text. These branches matched
                 # `"response_format" in str(e)` and `"reasoning_effort" in str(e)`, so an error that merely

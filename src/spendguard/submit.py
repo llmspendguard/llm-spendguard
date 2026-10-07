@@ -235,11 +235,59 @@ def build_chat_batch_jsonl(tasks_path, model, system=None, max_out=None, reasoni
     return out_path, n
 
 
+def _preflight_first_request(provider, first_request, endpoint):
+    """MANDATORY pre-flight for a batch door: send the FIRST built request LIVE to the provider, synchronously, and
+    require a 2xx BEFORE the batch of N is committed and BEFORE any estimate is booked. One request costs fractions of
+    a cent; it catches the whole class an estimate cannot see — a model-wrong parameter (max_tokens vs
+    max_completion_tokens), a rejected reasoning_effort, an unservable response_format schema, an auth failure, a
+    deprecated/stale model id — turning 1,930/1,930 HTTP 400 into ONE actionable error at the boundary we actually ship
+    across (and so a 'completed' batch with 0 successes can never settle as phantom spend). The probe rides the gated
+    SDK (recorded), output capped tiny (it is a liveness check, not the real generation). Returns {"ok": True} or
+    {"ok": False, "error": <verbatim provider error>, "hint": <agentic 'did you mean' for a stale id>}. NEVER raises —
+    a probe that itself errors returns ok:False, so the caller REFUSES rather than guessing (fail-closed)."""
+    try:
+        req = first_request or {}
+        body = dict(req.get("body") or req.get("params") or {})   # OpenAI jsonl line = 'body'; Anthropic request = 'params'
+        if not body:
+            return {"ok": True}                              # the builders guarantee >=1 line; nothing to probe → don't block
+        raw = body.get("model") or ""
+        if provider == "openai":
+            from openai import OpenAI
+            client = OpenAI(api_key=_api_key("OPENAI_API_KEY"))
+            if endpoint == "/v1/embeddings":
+                client.embeddings.create(**body)             # one input → cheap; exercises model id / auth / dimensions
+            else:
+                probe = dict(body)                           # cap output tiny: shape acceptance (param/schema/effort), not output
+                for _k in ("max_completion_tokens", "max_tokens"):
+                    if _k in probe:
+                        probe[_k] = min(int(probe[_k] or 16), 16)
+                client.chat.completions.create(**probe)      # tests the EXACT param name + response_format + reasoning_effort
+        elif provider == "anthropic":
+            import anthropic
+            client = anthropic.Anthropic(api_key=_api_key("ANTHROPIC_API_KEY"))
+            probe = dict(body)
+            probe["max_tokens"] = min(int(probe.get("max_tokens") or 16), 16)
+            client.messages.create(**probe)
+        else:
+            return {"ok": True}                              # unknown door — do not block (never reached for the two doors)
+        return {"ok": True}
+    except Exception as e:
+        hint = ""
+        try:                                                 # agentic 'did you mean' for a stale/unknown id — the SAME
+            from . import vendor_call as _vc                 # resolver the realtime dispatch pre-flight uses (closest_served)
+            _same, _live = _vc.closest_served(provider, raw)
+            if _same:
+                hint = f"  (did you mean {_same!r} — the currently-served same model?)"
+        except Exception:
+            pass
+        return {"ok": False, "error": str(e)[:300], "hint": hint}
+
+
 def guarded_submit(jsonl_path, model, cap_dollars, batch=True, avg_out_tokens=None,
                    expected_cost=None, submit=True, request_cap=25000,
                    overrun_tolerance=DEFAULT_OVERRUN_TOLERANCE, endpoint="/v1/chat/completions", intent=None,
-                   metadata=None):
-    """Estimate -> enforce cap -> log -> submit. Raises RuntimeError if it won't pass. `endpoint` is the Batch API
+                   metadata=None, preflight=True):
+    """Estimate -> enforce cap -> PRE-FLIGHT one live request -> log -> submit. Raises RuntimeError if it won't pass. `endpoint` is the Batch API
     target the .jsonl lines address ('/v1/chat/completions' by default, '/v1/embeddings' for an embeddings batch) —
     it must match the lines' `url`, so it is a parameter, not a hardcoded literal at the batches.create call.
 
@@ -283,6 +331,30 @@ def guarded_submit(jsonl_path, model, cap_dollars, batch=True, avg_out_tokens=No
         print(f"[submit_gate] PASS (estimate only, submit=False). audit: {audit_path}")
         return None
 
+    # MANDATORY PRE-FLIGHT — a gate whose purpose is preventing wasted spend must not submit N requests that cannot
+    # succeed. Send the FIRST built request live and require a 2xx BEFORE client.batches.create AND BEFORE booking the
+    # estimate (record_accepted_batch_estimate below), so a model-wrong param / rejected reasoning_effort / unservable
+    # response_format / auth failure / stale id surfaces as ONE error — not N — and never settles as phantom spend.
+    # preflight=False bypasses deliberately (a caller who already pre-flighted).
+    if preflight:
+        import json as _jpf
+        _first = None
+        try:
+            with open(jsonl_path, errors="replace") as _pfh:
+                for _ln in _pfh:
+                    if _ln.strip():
+                        _first = _jpf.loads(_ln)
+                        break
+        except Exception:
+            _first = None
+        if _first is not None:
+            _pf = _preflight_first_request("openai", _first, endpoint)
+            if not _pf["ok"]:
+                raise RuntimeError(
+                    f"PRE-FLIGHT FAILED — NOT submitting {est['requests']:,} requests and NOT booking the estimate. "
+                    f"First request rejected by {endpoint}: {_pf['error']}{_pf.get('hint', '')}  "
+                    f"(set preflight=False to bypass deliberately).")
+
     # passed the gate — submit via OpenAI, with the intent on the recording context so the gate's provisional batch
     # row (recorded synchronously inside the gated files.create) attributes to it, not '(none)'. Save + restore the
     # caller's exact context so the intent set here never leaks into a later call on this thread.
@@ -308,7 +380,7 @@ def guarded_submit(jsonl_path, model, cap_dollars, batch=True, avg_out_tokens=No
 
 
 def submit_chat_tasks(tasks, model, *, system=None, schema=None, reasoning="minimal", max_out=None,
-                      cap_dollars=None, submit=True, intent=None, metadata=None):
+                      cap_dollars=None, submit=True, intent=None, metadata=None, preflight=True):
     """Submit a list of CHAT tasks to the OpenAI /v1/chat/completions Batch API (~half realtime, 24h window) — the
     first-class chat BATCH submitter (the chat analogue of adapters.embed_batch), and the callable that wires
     route_economics' / bulk_delegate's BATCH leg to a real submission. Each task is a prompt STRING (custom_id auto
@@ -355,7 +427,8 @@ def submit_chat_tasks(tasks, model, *, system=None, schema=None, reasoning="mini
         req_path, n = build_chat_batch_jsonl(tasks_path, model, system=system, max_out=max_out,
                                              reasoning=reasoning, schema=schema)
         bid = guarded_submit(req_path, model, cap_dollars, batch=True, submit=submit,
-                             endpoint="/v1/chat/completions", intent=intent, metadata=metadata)
+                             endpoint="/v1/chat/completions", intent=intent, metadata=metadata,
+                             preflight=preflight)
         return {**base, "batch_id": bid, "jsonl": req_path, "requests": n}
     except Exception as e:
         from . import gate as _g
@@ -429,7 +502,8 @@ def build_message_batch_requests(tasks, model, *, system=None, max_out=None, sch
 
 
 def submit_message_batch(tasks, model, *, system=None, schema=None, max_out=None, expected_out_tokens=None,
-                         cap_dollars=None, submit=True, request_cap=_ANTHROPIC_BATCH_REQUEST_CAP, intent=None):
+                         cap_dollars=None, submit=True, request_cap=_ANTHROPIC_BATCH_REQUEST_CAP, intent=None,
+                         preflight=True):
     """Submit a list of tasks to the Anthropic Message Batches API (~half realtime, 29-day result window) — the
     Anthropic twin of submit_chat_tasks, and the Messages-API half of spendguard's batch surface. Each task is a prompt
     STRING (custom_id auto = 'task-<i>') OR a {custom_id, content[, system, schema, schema_name]} dict. Builds the
@@ -500,6 +574,15 @@ def submit_message_batch(tasks, model, *, system=None, schema=None, max_out=None
         if not submit:
             print("[submit_gate] PASS (estimate only, submit=False).")
             return out
+        # MANDATORY PRE-FLIGHT — send the FIRST inline request live and require a 2xx BEFORE messages.batches.create
+        # and BEFORE booking the estimate, so a model-wrong param / unservable schema / auth / stale id surfaces as ONE
+        # error, never N, and never settles as phantom spend. preflight=False bypasses deliberately.
+        if preflight:
+            _pf = _preflight_first_request("anthropic", requests[0] if requests else {}, "/v1/messages")
+            if not _pf["ok"]:
+                return {**out, "error": f"PRE-FLIGHT FAILED — NOT submitting {n:,} requests and NOT booking the "
+                        f"estimate. First request rejected by the Messages API: {_pf['error']}{_pf.get('hint', '')} "
+                        f"(set preflight=False to bypass deliberately)."}
         import anthropic
         client = anthropic.Anthropic(api_key=_api_key("ANTHROPIC_API_KEY"))
         # The gate (_gate_anthropic) re-estimates these inline requests (same basis), enforces the global/daily/monthly +

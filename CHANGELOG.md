@@ -4,6 +4,21 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+### Fixed
+- **Batch doors could submit N requests that all 400, and could book phantom spend.** Two fixes. (1) **One param-name
+  authority** — the OpenAI output-budget parameter name now comes from `models.tokens_param()`, read by BOTH the
+  realtime path (`adapters._call_once`) and the Batch builder (via `apply_call_params`). It returns
+  `max_completion_tokens` for every chat / OpenAI-compatible model, **regex-independent**, so an unlisted family
+  (gpt-6.1-sol — or kimi-k3 / glm-5.2, which match no family rule) can no longer inherit the legacy `max_tokens` and
+  hard-400. This closes the drift that 400'd **1,930/1,930** requests of a real gpt-6.1-sol batch (realtime sent
+  `max_completion_tokens`; the batch door sent `max_tokens`). (2) **Mandatory one-request pre-flight at every batch
+  door** — `submit.guarded_submit` (OpenAI chat + embeddings) and `submit.submit_message_batch` (Anthropic) now send
+  the FIRST built request live and require a 2xx **before** `.batches.create` and **before** the cost estimate is
+  booked, so a model-wrong param / rejected reasoning_effort / unservable `response_format` / auth failure / stale id
+  surfaces as ONE clear error — not N — and a 0-success "completed" batch can never settle as phantom spend. A
+  stale/unknown id carries the agentic "did you mean" hint (`vendor_call.closest_served`). Opt out with
+  `preflight=False`.
+
 ## [0.12.10] — 2026-10-06
 
 ### Fixed
