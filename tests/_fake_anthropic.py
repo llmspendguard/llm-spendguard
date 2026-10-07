@@ -78,4 +78,7 @@ class FakeAnthropic:
     test configured; accepts (and ignores) api_key/kwargs so it drops in for `anthropic.Anthropic(api_key=…)`."""
 
     def __init__(self, fake_batches=None, *a, **kw):
-        self.messages = SimpleNamespace(batches=fake_batches if fake_batches is not None else FakeBatches())
+        self.messages = SimpleNamespace(
+            batches=fake_batches if fake_batches is not None else FakeBatches(),
+            create=lambda **kwargs: SimpleNamespace(content=[]),
+        )

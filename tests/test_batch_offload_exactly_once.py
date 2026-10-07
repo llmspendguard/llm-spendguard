@@ -90,10 +90,16 @@ class _FakeFiles:
         return _FakeFile("file_test_1")
 
 
+class _FakeCompletions:
+    def create(self, **kw):
+        return type("FakeCompletion", (), {"choices": []})()
+
+
 class _FakeOpenAI:
     def __init__(self, reg):
         self.batches = _FakeBatches(reg)
         self.files = _FakeFiles()
+        self.chat = type("FakeChat", (), {"completions": _FakeCompletions()})()
 
 
 def _seed_leased(n):

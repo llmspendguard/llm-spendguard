@@ -66,16 +66,16 @@ fails += report_check("system is a system message + the user content is preserve
 fails += report_check("each line is a batch chat-completions envelope (method POST, url /v1/chat/completions)",
                       all(r["url"] == "/v1/chat/completions" and r["method"] == "POST" for r in rows5))
 
-print("\n-- an OLDER gpt- model → max_tokens (NEVER max_completion_tokens): the family split from models.py --")
+print("\n-- an unlisted/older gpt- model → max_completion_tokens (unified with realtime; never the legacy max_tokens) --")
 built4, _ = submit.build_chat_batch_jsonl(tasks_p, "gpt-4o-mini", system="You are terse.")
 rows4 = _read_built(built4)
 os.unlink(built4)
-fails += report_check("every body uses max_tokens, NEVER max_completion_tokens (older gpt- family)",
-                      all("max_tokens" in r["body"] and "max_completion_tokens" not in r["body"] for r in rows4))
+fails += report_check("every body uses max_completion_tokens, NEVER max_tokens (unified via models.tokens_param — gpt-4o-mini included)",
+                      all("max_completion_tokens" in r["body"] and "max_tokens" not in r["body"] for r in rows4))
 _ob4 = adapters.output_budget("gpt-4o-mini")   # the ONE canonical send-budget — batch must equal it (no drift)
 fails += report_check("older gpt- gets the model's real start-high ceiling, IDENTICAL batch and realtime (no drift) — "
                       "gpt-4o-mini's is 16384, its published max, honestly BELOW the 32K floor (a published max may be lower)",
-                      all(int(r["body"]["max_tokens"]) == _ob4 for r in rows4))
+                      all(int(r["body"]["max_completion_tokens"]) == _ob4 for r in rows4))
 
 print("\n-- a PROVIDER-PREFIXED openai id is STRIPPED to the bare id the Batch API accepts (the batch-404 bug) --")
 builtp, _ = submit.build_chat_batch_jsonl(tasks_p, "openai:gpt-5.6-luna", system="t")

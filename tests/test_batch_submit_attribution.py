@@ -50,9 +50,14 @@ def _fake_openai_capturing(seen):
             seen["batch_intent"] = (calls.current() or {}).get("intent")
             return types.SimpleNamespace(id="batch-fake")
 
+    class _Completions:
+        def create(self, **kw):
+            return types.SimpleNamespace(choices=[])
+
     class _OpenAI:
         def __init__(self, api_key=None):
             self.files, self.batches = _Files(), _Batches()
+            self.chat = types.SimpleNamespace(completions=_Completions())
 
     return types.SimpleNamespace(OpenAI=_OpenAI)
 

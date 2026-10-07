@@ -16,7 +16,8 @@ check("gpt-5.5 → reasoning='none'", models._family("gpt-5.5")["reasoning"] == 
 check("gpt-5-nano → reasoning='minimal'", models._family("gpt-5-nano")["reasoning"] == "minimal")
 check("gpt-5-mini → reasoning='minimal'", models._family("gpt-5-mini")["reasoning"] == "minimal")
 check("gpt-5 family → max_completion_tokens", models._family("gpt-5-nano")["tokens_param"] == "max_completion_tokens")
-check("gpt-4o-mini → max_tokens (not reasoning)", models._family("gpt-4o-mini")["tokens_param"] == "max_tokens"
+# The OpenAI catch-all now defaults to max_completion_tokens (unified with realtime; universally accepted on chat; removes the batch drift that 400'd gpt-6.1-sol).
+check("gpt-4o-mini → max_completion_tokens (not reasoning)", models._family("gpt-4o-mini")["tokens_param"] == "max_completion_tokens"
       and models._family("gpt-4o-mini")["reasoning"] is None)
 check("claude-haiku → cache_min 2048", models._family("claude-haiku-4-5")["cache_min"] == 2048)
 check("claude-opus → cache_min 1024 + explicit", models._family("claude-opus-4-8")["cache_min"] == 1024
