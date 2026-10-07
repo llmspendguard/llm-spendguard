@@ -4,6 +4,21 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.12.12] — 2026-10-07
+
+### Fixed
+- **Codex lane flapped to a false "logged out" banner under process contention.** A single non-zero
+  `codex login status` (many codex spawns racing on the auth/refresh file) was reported as a confirmed logout,
+  firing a persistent "re-login" banner that re-notified every 30 min until a successful call cleared it — while the
+  ChatGPT plan token was in fact valid. Now `codex_exec.auth_status` CONFIRMS a non-zero exit with one re-check
+  before reporting `authed=False` (a real logout stays non-zero on both; a transient recovers; `None` still on
+  timeout/exception), and `lanes.lane_auth_status` clears a stale `event-auth` banner the moment it observes
+  `authed=True`, so a re-login (or any positive re-check) self-heals on the spot rather than only on a later served
+  call. This keeps the $0 codex lane usable instead of falling back to the metered API on a phantom logout.
+- **The deployed-posture check in the consensus-panel test treated "no live config" as a failure**, reddening
+  release CI on keyless runners while passing locally; absence of a deployed `~/.spendguard/config.json` is now a
+  genuine n/a (the code behaviour checks still gate; the deployed checks still fire where a config exists).
+
 ## [0.12.11] — 2026-10-07
 
 ### Fixed
