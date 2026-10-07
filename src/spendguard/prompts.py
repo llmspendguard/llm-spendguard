@@ -27,14 +27,15 @@ def _batchable_verdict(intent, model, n, med_in):
     reasonable people can disagree — a bulk classify vs a chat turn), so a meta-caged LLM decides it, never a rule.
     Returns {batchable: bool, why: str}, or None when the judge is unavailable (→ the candidate is not emitted).
     A deliberate spend refusal (caps.meta) PROPAGATES — it halts the analysis, never degrades to a silent skip."""
-    from . import adapters, calls, config, gate
+    from . import adapters, calls, config, gate, plan_admission
+    judge_model = plan_admission.ready_meta_model(config.advisor_judge_model())  # route this meta call off a CAPPED plan to a READY provider
     q = (f"A job-type '{intent}' made {n} separate REALTIME LLM calls on {model}, each with a small (~{med_in}-token) "
          f"prompt. Are these INDEPENDENT items of one job that could be PACKED many-per-call or sent via the async "
          f"Batch API — or LATENCY-SENSITIVE interactive turns (a user waiting) that must stay realtime? "
          f'Return JSON only: {{"batchable": true|false, "why": "<one sentence>"}}.')
     try:
         with calls.context(intent="spendguard:batchable-judge"):           # meta-caged (caps.meta)
-            r = adapters.call(config.advisor_judge_model(), q, sig="spendguard:batchable-judge",
+            r = adapters.call(judge_model, q, sig="spendguard:batchable-judge",
                               max_tokens=_BATCH_JUDGE_OUT,
                               schema={"type": "object", "additionalProperties": False, "required": ["batchable"],
                                       "properties": {"batchable": {"type": "boolean"}, "why": {"type": "string"}}})
