@@ -104,6 +104,13 @@ try:
 
     classification.update(kind="bogus", provider="codex", self_contained=True)
     check("invalid kind is refused", "error" in delegate_router.classify_task("do it"))
+    configured_models["gemini"] = {"cheap": "gemini-cheap", "strong": "gemini-strong"}
+    classification.update(kind="oneshot", provider="gemini", self_contained=True, why="off-host answer")
+    excluded = delegate_router.classify_task("exclusion-check", exclude_plans=["codex"])
+    classifier_prompt = lane_calls[-1][0]
+    check("classifier exclusions remove the hosting lane from the supplied plan menu",
+          excluded.get("provider") == "gemini" and 'CONFIGURED PLAN NAMES: ["gemini"]' in classifier_prompt)
+    configured_models.pop("gemini")
 
     print("-- dry-run classifies and estimates but executes nothing --")
     classification.update(kind="agentic", provider="codex", self_contained=True, why="self-contained repo task")

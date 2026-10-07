@@ -117,7 +117,7 @@ def _whole_file_evidence(paths):
     return "".join(parts)
 
 
-def classify_task(task, files=None, provider="auto"):
+def classify_task(task, files=None, provider="auto", exclude_plans=None):
     """Agentically classify the WHOLE task and WHOLE attached files on an existing $0 lane."""
     from . import gate
     gate.require()                         # fail closed: even this plan-routed LLM call runs only in an enforcing process
@@ -127,7 +127,10 @@ def classify_task(task, files=None, provider="auto"):
     explicit = None if provider == "auto" else _resolve_plan_name(provider)
     if provider != "auto" and explicit is None:
         return {"error": f"provider {provider!r} is not a configured advisor.lane_models plan"}
-    menu = [explicit] if explicit else sorted(plans)
+    excluded = set(exclude_plans or ())
+    menu = [explicit] if explicit else sorted(plan for plan in plans if plan not in excluded)
+    if not menu:
+        return {"error": "no eligible configured plans remain after exclusions"}
     prompt = (f"TASK (complete):\n{task}\n{_whole_file_evidence(files)}\n\n"
               f"CONFIGURED PLAN NAMES: {json.dumps(menu)}\n"
               f"Provider is {'fixed to ' + explicit if explicit else 'for you to choose from that exact list'}. "

@@ -62,6 +62,7 @@ _GROUPS = [
     ("setup & plumbing", [
         ("config", "`config` show all · `config set <section.key> <value>`"),
         ("install-hook", "gate EVERY process in a venv (opt-in; --uninstall removes)"),
+        ("install-agent-gate", "hard-route reroutable Agent/Task spawns off a near-cap hosting plan"),
         ("install-rule", "teach Claude/Cursor to route generated code through the gate"),
         ("install-skills", "add the /spend, /spendguard-* slash commands"),
         ("schedule", "OS-native daily sync (launchd / cron / schtasks)"),
@@ -150,6 +151,9 @@ def _dispatch(argv=None):
     if cmd == "delegate":
         from . import delegate_router
         return delegate_router.delegate_cli(rest)
+    if cmd == "agent-spawn-gate":
+        from . import agent_spawn_gate
+        return agent_spawn_gate.cmd(rest)
     if cmd == "overage":
         from . import overage
         return overage.overage_cli(rest)
@@ -478,6 +482,9 @@ def _dispatch(argv=None):
     if cmd in ("install-hook", "gate-venv"):          # gate every process in another venv (other repos)
         from . import setup
         return setup.cmd_install_hook(rest)
+    if cmd == "install-agent-gate":
+        from . import agent_spawn_gate
+        return agent_spawn_gate.install_agent_gate_cli(rest)
     if cmd == "schedule":                             # install the OS-native scheduler (launchd/cron/schtasks)
         from . import schedule
         return schedule.main(rest)

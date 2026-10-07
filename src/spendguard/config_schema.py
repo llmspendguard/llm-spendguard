@@ -257,6 +257,15 @@ SETTINGS = [
     dict(section="advisor", key="lane_hot_ratio", store="config.json:advisor.lane_hot_ratio", default=1.5,
          kind="float", secret=False,
          desc="Above this x-of-fee est-value a plan reads as HOT in `spendguard lanes --balance` (display only)."),
+    dict(section="agent_spawn_gate", key="near_cap_remaining_pct",
+         store="config.json:agent_spawn_gate.near_cap_remaining_pct",
+         env="SPENDGUARD_AGENT_GATE_NEAR_CAP_REMAINING_PCT", default=25, kind="float", secret=False,
+         desc="Deny reroutable Agent/Task spawns when the hosting plan has at most this percentage remaining. "
+              "Paid overage always activates the gate regardless of this threshold."),
+    dict(section="agent_spawn_gate", key="plan_lane", store="config.json:agent_spawn_gate.plan_lane",
+         env="SPENDGUARD_AGENT_GATE_PLAN_LANE", default=None, kind="string|null", secret=False,
+         desc="Subscription lane consumed by Agent/Task spawns. Unset uses the lane_registry row marked "
+              "subagent_host; set this for a different hosting plan without changing source."),
     dict(section="advisor", key="executor", store="config.json:advisor.executor", env="SPENDGUARD_ADVISOR_EXECUTOR",
          default="api", kind="enum:api,claude-code,codex,zai-coding,pool", secret=False,
          desc="Where spendguard's OWN meta prompts run: api = metered API under caps.meta (default); "

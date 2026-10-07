@@ -34,6 +34,7 @@ def _home_path(*parts):
 
 LANES = [
     {"lane": "claude-code", "provider": "anthropic", "exec": "subscription_exec", "kind": "cli",
+     "subagent_host": True,
      "creds": (_home_path(".claude", ".credentials.json"),), "keychain": "Claude Code-credentials", "probe_tier": "haiku",
      "reasoning": {"style": "thinking", "levels": (), "default": None},
      "login": ("run `claude` then `/login`, sign in with your SUBSCRIPTION account — and if it offers to use a "
