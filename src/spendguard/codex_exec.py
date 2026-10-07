@@ -35,6 +35,32 @@ import time
 TIMEOUT_S = 300               # meta prompts are small; a hung CLI must not stall the daily report
 _USAGE_TTL_S = 300            # the codex rate-limit log is re-read at most this often (shared cache adds reset-boundary)
 _AUTH_RECHECK_BACKOFF_S = 0.75  # a non-zero `codex login status` is confirmed once (transient vs real logout) before False
+_TOKEN_EXPIRY_MARGIN_S = 120    # a token within this of its own exp is not treated as still-valid (leave room to refresh)
+
+
+def _token_unexpired(now=None):
+    """Authoritative STRUCTURAL check: is the Codex plan token on disk present and not past its own expiry? Reads
+    ${CODEX_HOME:-~/.codex}/auth.json and decodes the access_token JWT's `exp` claim — PARSING a fixed-format field
+    (the exp integer), never a judgement about prose. Returns True when a token is present AND exp is more than
+    _TOKEN_EXPIRY_MARGIN_S in the future; False when present but expired; None when it cannot be determined (home/
+    file/field absent or unparseable) so a can't-read is NEVER mistaken for a logout. The token's own exp is the
+    DEFINITIVE 'am I logged in' signal — it beats a `codex login status` subprocess that can race a concurrent token
+    refresh and exit non-zero for a few seconds while the plan is in fact authed. $0, never raises."""
+    import base64
+    try:
+        home = os.environ.get("CODEX_HOME") or os.path.expanduser("~/.codex")
+        with open(os.path.join(home, "auth.json")) as fh:
+            tok = ((json.load(fh).get("tokens") or {}).get("access_token")) or ""
+        parts = tok.split(".")
+        if len(parts) < 2:
+            return None
+        payload = parts[1] + "=" * (-len(parts[1]) % 4)
+        exp = json.loads(base64.urlsafe_b64decode(payload)).get("exp")
+        if not exp:
+            return None
+        return (float(exp) - (now if now is not None else time.time())) > _TOKEN_EXPIRY_MARGIN_S
+    except Exception:
+        return None
 _usage_cache = {"at": 0.0, "val": None}
 
 
@@ -75,7 +101,15 @@ def auth_status(timeout=20):
         r = subprocess.run([exe, "login", "status"], capture_output=True, text=True, timeout=timeout, env=env)
         if r.returncode == 0:
             return {"authed": True}
-        time.sleep(_AUTH_RECHECK_BACKOFF_S)        # confirm a logout — a transient non-zero recovers on the re-check
+        # A non-zero status with a VALID token on disk is a transient (the status subprocess raced a concurrent token
+        # refresh), NOT a logout — the token's own exp is authoritative. Only an absent/expired token is a real
+        # logout; a token we cannot read falls back to one confirming re-check (never a single flaky call's verdict).
+        tok = _token_unexpired()
+        if tok is True:
+            return {"authed": True}
+        if tok is False:
+            return {"authed": False}
+        time.sleep(_AUTH_RECHECK_BACKOFF_S)        # token unreadable: confirm once — a transient non-zero recovers here
         r2 = subprocess.run([exe, "login", "status"], capture_output=True, text=True, timeout=timeout, env=env)
         return {"authed": r2.returncode == 0}
     except Exception:

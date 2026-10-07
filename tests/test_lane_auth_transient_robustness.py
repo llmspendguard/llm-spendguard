@@ -1,9 +1,13 @@
-"""A transient `codex login status` non-zero must NOT be reported as a logout, and a positive auth must retract a
-stale 'logged out' banner — so codex stays robustly usable ($0 lane) instead of flapping to a re-login nag + metered
-fallback while the token is in fact valid. Offline: subprocess + exec are monkeypatched; no codex CLI, no spend."""
+"""The codex lane must stay usable while its token is valid: a non-zero `codex login status` (the status subprocess
+racing a concurrent token refresh) is NOT a logout — the token's own exp is authoritative — and a positive auth
+retracts a stale 'logged out' banner. Without this, a valid 10-day token still produced hourly false re-login toasts
+and phantom metered fallback. Offline: subprocess, exec and the token reader are monkeypatched; no codex CLI, no spend."""
+import base64
+import json
 import os
 import sys
 import tempfile
+import time
 
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-auth-robust-")
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
@@ -29,7 +33,7 @@ class _Proc:
 
 
 def _scripted_run(return_codes):
-    """A subprocess.run stand-in that yields the given returncodes in order across successive calls."""
+    """A subprocess.run stand-in yielding the given returncodes in order; counts calls."""
     seq = list(return_codes)
     calls = {"n": 0}
 
@@ -41,28 +45,74 @@ def _scripted_run(return_codes):
     return _run, calls
 
 
-# --- (A) auth_status confirms a logout before reporting False -------------------------------------------------
+# --- (A) token-exp is authoritative: a non-zero status with a VALID token is NOT a logout ----------------------
 _orig_run, _orig_bin, _orig_sleep = codex_exec.subprocess.run, codex_exec._bin, codex_exec.time.sleep
+_orig_tok = codex_exec._token_unexpired
 codex_exec._bin = lambda: "/usr/bin/true"              # a resolvable exe so auth_status runs the (patched) subprocess
 codex_exec.time.sleep = lambda *_: None                # don't actually wait the re-check backoff in a test
 try:
     run_ok, _ = _scripted_run([0])
     codex_exec.subprocess.run = run_ok
-    fails += ck("a clean status (rc 0) is authed with no re-check", codex_exec.auth_status() == {"authed": True})
+    codex_exec._token_unexpired = lambda *a, **k: None   # a clean status never consults the token
+    fails += ck("a clean status (rc 0) is authed with no token check", codex_exec.auth_status() == {"authed": True})
 
-    run_transient, calls_t = _scripted_run([1, 0])     # one non-zero, then recovers
+    run_valid, calls_v = _scripted_run([1, 1])           # status would say down on every call...
+    codex_exec.subprocess.run = run_valid
+    codex_exec._token_unexpired = lambda *a, **k: True   # ...but the token on disk is VALID → authoritative
+    fails += ck("a non-zero status with a VALID token is NOT a logout (the hourly false-toast fix)",
+                codex_exec.auth_status() == {"authed": True})
+    fails += ck("...and it short-circuits BEFORE any re-check (one status call only)", calls_v["n"] == 1)
+
+    run_exp, _ = _scripted_run([1, 1])
+    codex_exec.subprocess.run = run_exp
+    codex_exec._token_unexpired = lambda *a, **k: False  # token genuinely expired → a real logout
+    fails += ck("a non-zero status with an EXPIRED token is reported authed=False",
+                codex_exec.auth_status() == {"authed": False})
+
+    run_transient, calls_t = _scripted_run([1, 0])       # token unreadable → fall back to the confirming re-check
     codex_exec.subprocess.run = run_transient
-    r_transient = codex_exec.auth_status()
-    fails += ck("a TRANSIENT non-zero (1 then 0) is NOT reported as logged out", r_transient == {"authed": True})
-    fails += ck("...and it took exactly one confirming re-check (2 status calls)", calls_t["n"] == 2)
+    codex_exec._token_unexpired = lambda *a, **k: None
+    fails += ck("token unreadable + transient (1 then 0) recovers to authed via the re-check",
+                codex_exec.auth_status() == {"authed": True})
+    fails += ck("...using exactly one confirming re-check (two status calls)", calls_t["n"] == 2)
 
-    run_down, _ = _scripted_run([1, 1])                # non-zero on both — a real logout
+    run_down, _ = _scripted_run([1, 1])
     codex_exec.subprocess.run = run_down
-    fails += ck("a CONFIRMED logout (1 then 1) is reported authed=False", codex_exec.auth_status() == {"authed": False})
+    codex_exec._token_unexpired = lambda *a, **k: None
+    fails += ck("token unreadable + confirmed (1 then 1) is authed=False", codex_exec.auth_status() == {"authed": False})
 finally:
     codex_exec.subprocess.run, codex_exec._bin, codex_exec.time.sleep = _orig_run, _orig_bin, _orig_sleep
+    codex_exec._token_unexpired = _orig_tok
 
-# --- (B) a positive auth retracts a stale 'logged out' banner (self-heal, no served call needed) ---------------
+
+# --- (B) _token_unexpired decodes the JWT exp honestly (the authoritative signal itself) -----------------------
+def _jwt(exp):
+    payload = base64.urlsafe_b64encode(json.dumps({"exp": exp}).encode()).rstrip(b"=").decode()
+    return "h." + payload + ".s"
+
+
+_codex_home = tempfile.mkdtemp(prefix="codex-home-")
+_orig_codex_home = os.environ.get("CODEX_HOME")
+os.environ["CODEX_HOME"] = _codex_home
+try:
+    with open(os.path.join(_codex_home, "auth.json"), "w") as fh:
+        json.dump({"tokens": {"access_token": _jwt(int(time.time()) + 10 * 86400)}}, fh)
+    fails += ck("a token 10 days from exp reads unexpired (True)", codex_exec._token_unexpired() is True)
+
+    with open(os.path.join(_codex_home, "auth.json"), "w") as fh:
+        json.dump({"tokens": {"access_token": _jwt(int(time.time()) - 3600)}}, fh)
+    fails += ck("a token past exp reads expired (False)", codex_exec._token_unexpired() is False)
+
+    os.remove(os.path.join(_codex_home, "auth.json"))
+    fails += ck("no auth.json reads inconclusive (None — never a false logout)", codex_exec._token_unexpired() is None)
+finally:
+    if _orig_codex_home is None:
+        os.environ.pop("CODEX_HOME", None)
+    else:
+        os.environ["CODEX_HOME"] = _orig_codex_home
+
+
+# --- (C) a positive auth retracts a stale 'logged out' banner (self-heal, no served call needed) ---------------
 reliability.note_lane_auth_down("codex", "codex login")      # seed the persistent event-auth down row
 _row = reliability._health_db().execute(
     "SELECT reachable, source FROM lane_health WHERE resource='codex'").fetchone()
