@@ -796,16 +796,20 @@ def served_substitute(vendor, requested):
     cands = sorted(set(catalog.live_model_ids(vendor) or []) | set(catalog.lane_model_ids(vendor) or []))
     if not cands:
         return requested, None                        # no served id to choose from → dispatch errors honestly
-    from . import adapters, calls, config, gate
+    from . import adapters, calls, config, gate, plan_admission
     prompt = (f"Vendor: {vendor}\nRequested (NOT served by this vendor): {requested}\n\nServed ids to choose from:\n"
               + "\n".join(f"  {c}" for c in cands)
               + '\n\nReply JSON only: {"id": "<the best served id, or null>", "reason": "<one short line>"}')
+    _meta = plan_admission.ready_meta_model(config.advisor_model())   # the resolver itself must ride a READY provider —
+    #                                                                    not be refused (or billed on an expensive model) on a
+    #                                                                    capped plan. ready_meta_model makes no LLM call, so
+    #                                                                    it never recurses back through this resolver.
     adapters._resolve_guard.on = True                 # the resolver's OWN advisor call must not itself resolve (recursion)
     try:
         with calls.context(intent="spendguard:resolve-servable-model"):
             # sig= (not a hardcoded cap): the OUTPUT budget is this call-class's MEASURED p99, and a truncated reply
             # is retried at double — the reply is a tiny {id, reason} JSON, so the measured budget converges small.
-            r = adapters.call(config.advisor_model(), prompt, sig="resolve-servable-model",
+            r = adapters.call(_meta, prompt, sig="resolve-servable-model",
                               system=_SYS_SERVED_SUBSTITUTE, no_substitution=True)
     except Exception as e:
         if isinstance(e, gate.deliberate_stop_types()):
@@ -817,15 +821,22 @@ def served_substitute(vendor, requested):
         return requested, None                        # the resolver call failed → honest unserved path (nothing cached)
     try:
         blob = _re.search(r"\{.*\}", r.get("text") or "", _re.S)   # PARSE the JSON envelope; the model decided, not this
-        obj = _json.loads(blob.group(0)) if blob else {}
+        if not blob:
+            return requested, None                    # no JSON envelope → the PARSE failed, NOT a verdict of 'no substitute';
+            #                                            leave it UNCACHED so the next call re-asks (absence coverage)
+        obj = _json.loads(blob.group(0))
     except Exception:
-        obj = {}
-    pick = obj.get("id") if isinstance(obj, dict) else None
-    reason = ((obj.get("reason") if isinstance(obj, dict) else "") or "").strip()
+        return requested, None                        # unparseable reply → parse failed, not a negative verdict → never cache a false 'no substitute'
+    if not isinstance(obj, dict):
+        return requested, None                        # a non-object JSON is not a verdict either → uncached
+    pick = obj.get("id")
+    reason = (obj.get("reason") or "").strip()
     if pick and pick not in set(cands):
         pick = None                                   # a name the model invented is not an answer
+    # Reached ONLY on a SUCCESSFUL parse: a pick=None HERE is a REAL 'no good substitute' verdict and is cached as such;
+    # every parse FAILURE returned above, so a failed call can never be recorded as a negative verdict.
     _models.add_fact(requested, "served_substitute", pick or "", confidence=0.9,
-                     source=f"agentic servable-substitute ({config.advisor_model()}) :: {reason}", verified=False)
+                     source=f"agentic servable-substitute ({_meta}) :: {reason}", verified=False)
     if pick:                                          # announce the substitution ONCE (this branch only runs on the
         import sys as _sysr                           # first, uncached resolution per id) — thereafter resolved_from
         print(f"[spendguard] {vendor} does not serve {requested!r} → resolved to {pick!r} "   # on the result carries it
@@ -1132,23 +1143,60 @@ def time_budget(vendor, model, sig=None, default_s=None, in_chars=None):
     return None, "unknown"
 
 
+def _fan_budget_tracker(budget_usd, n_vendors):
+    """A CUMULATIVE-spend ceiling for a cross-vendor fan. Each call is already governed per-call by the gate, but a
+    hand-rolled pool over call() has no limit on the SUM across the fan — a per-call reasoning blow-up could run to N
+    vendors unchecked. The ceiling is the caller's `budget_usd` when given, else config caps.fan_usd, else the
+    per-batch cap — a real running limit is always in force (never None on the normal path). Returns (allow, record):
+    allow() is checked BEFORE each vendor call (False once the running total reaches the ceiling → that call is
+    skipped, not spent), record(r) adds a completed result's cost to the total. Thread-safe for the pool."""
+    import threading as _th
+    from . import config as _cfg
+    try:
+        ceiling = float(budget_usd) if budget_usd is not None else float(_cfg._cfg_get("caps", "fan_usd", None) or _cfg.cap())
+    except Exception:
+        ceiling = float("inf")                            # a ceiling read must never BREAK a fan — degrade to unbounded, never refuse all
+    state, lock = {"spent": 0.0}, _th.Lock()
+
+    def _fan_spend_allow():
+        with lock:
+            return state["spent"] < ceiling
+
+    def _fan_spend_record(r):
+        try:
+            with lock:
+                state["spent"] += float(getattr(r, "cost", 0) or 0)
+        except Exception:
+            pass
+    return _fan_spend_allow, _fan_spend_record
+
+
 def fan_out(vendors, prompt, *, deadline_s, purpose="", system=None, schema=None, max_tokens=None,
-            no_metered_fallback=False):
+            no_metered_fallback=False, budget_usd=None):
     """Ask N vendors the same question. Returns {"results": [...], "ok": [...], "failed": [...], "n": N,
     "n_ok": k, "complete": k == N, "run_id": ...}.
 
     `complete` is the whole point. The harness that started this reported "45 findings from 4 reviewers" when
     zero of the four had answered, because the merge step read absence as success. A caller must branch on
-    `complete` — and `consensus()` below refuses outright rather than trusting them to remember."""
+    `complete` — and `consensus()` below refuses outright rather than trusting them to remember.
+
+    `budget_usd` (or the config fan ceiling) bounds the CUMULATIVE spend across the fan: each call is gate-governed
+    per-call, and this is the running limit on their sum so one vendor's reasoning blow-up cannot run to N unchecked."""
     # CONCURRENT, not sequential. This was a list comprehension, so a four-vendor panel cost the SUM of four
     # latencies rather than the slowest one — measured p90s of 20.6 + 116.8 + 24.0 + 180.0s means a review
     # panel took over five minutes to do twenty seconds of parallel work, and the slowest vendor set the pace
     # for every question asked. Each vendor gets its own MEASURED budget: one global deadline is generous for
     # the fast vendor and marginal for the slow one at the same time.
+    allow, record = _fan_budget_tracker(budget_usd, len(vendors))
+
     def _one(v, m):
+        if not allow():                                   # cumulative fan ceiling reached → skip, do not spend
+            return Result(GATE_REFUSED, v, m, error="fan cumulative budget reached", purpose=purpose)
         budget, _basis = time_budget(v, m, sig=class_sig(m, purpose), default_s=deadline_s, in_chars=len(prompt or ""))
-        return call(v, m, prompt, deadline_s=budget or deadline_s, purpose=purpose, system=system,
-                    schema=schema, max_tokens=max_tokens, no_metered_fallback=no_metered_fallback)
+        r = call(v, m, prompt, deadline_s=budget or deadline_s, purpose=purpose, system=system,
+                 schema=schema, max_tokens=max_tokens, no_metered_fallback=no_metered_fallback)
+        record(r)
+        return r
 
     with cf.ThreadPoolExecutor(max_workers=max(1, len(vendors))) as pool:
         futs = {pool.submit(_one, v, m): (v, m) for v, m in vendors}
@@ -1166,7 +1214,7 @@ def fan_out(vendors, prompt, *, deadline_s, purpose="", system=None, schema=None
 
 
 def first_ok(vendors, prompt, *, deadline_s, need=1, purpose="", system=None, schema=None, max_tokens=None,
-             no_metered_fallback=False):
+             no_metered_fallback=False, budget_usd=None):
     """Ask all vendors at once; return as soon as `need` of them have ANSWERED. For timeliness, not agreement.
 
     fan_out waits for everybody, so its latency is the SLOWEST vendor's — and one vendor timing out at 180s
@@ -1179,11 +1227,16 @@ def first_ok(vendors, prompt, *, deadline_s, need=1, purpose="", system=None, sc
     running to completion in the background so their latency and usage are still recorded: abandoning a call
     you already paid for teaches the estimator nothing."""
     got, results = [], []
+    allow, record = _fan_budget_tracker(budget_usd, len(vendors))
 
     def _one(v, m):
+        if not allow():                                   # cumulative fan ceiling reached → skip, do not spend
+            return Result(GATE_REFUSED, v, m, error="fan cumulative budget reached", purpose=purpose)
         budget, _b = time_budget(v, m, sig=class_sig(m, purpose), default_s=deadline_s, in_chars=len(prompt or ""))
-        return call(v, m, prompt, deadline_s=budget or deadline_s, purpose=purpose, system=system,
-                    schema=schema, max_tokens=max_tokens, no_metered_fallback=no_metered_fallback)
+        r = call(v, m, prompt, deadline_s=budget or deadline_s, purpose=purpose, system=system,
+                 schema=schema, max_tokens=max_tokens, no_metered_fallback=no_metered_fallback)
+        record(r)
+        return r
 
     pool = cf.ThreadPoolExecutor(max_workers=max(1, len(vendors)))
     futs = {pool.submit(_one, v, m): (v, m) for v, m in vendors}
