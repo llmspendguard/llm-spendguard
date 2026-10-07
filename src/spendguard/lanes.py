@@ -119,6 +119,12 @@ def lane_auth_status(lane, ttl=_AUTH_STATUS_TTL_S):
                 authed = a if isinstance(a, bool) else None
         except Exception:
             authed = None
+        if authed is True:                                # a positive auth RETRACTS a stale 'logged out' banner, so a
+            try:                                          # re-login (or any positive re-check) self-heals it on the
+                from . import reliability                 # spot — not only a subsequent SERVED call. No-op when clean.
+                reliability.note_lane_ok(lane)
+            except Exception:
+                pass
         out = {"authed": authed, "cmd": str(spec.get("relogin_cmd") or "")}
         _auth_status_cache[lane] = (now, out)             # only KNOWN lanes reach here → bounded to the registry size
         return out

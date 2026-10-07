@@ -34,6 +34,7 @@ import time
 
 TIMEOUT_S = 300               # meta prompts are small; a hung CLI must not stall the daily report
 _USAGE_TTL_S = 300            # the codex rate-limit log is re-read at most this often (shared cache adds reset-boundary)
+_AUTH_RECHECK_BACKOFF_S = 0.75  # a non-zero `codex login status` is confirmed once (transient vs real logout) before False
 _usage_cache = {"at": 0.0, "val": None}
 
 
@@ -57,16 +58,26 @@ def auth_status(timeout=20):
     """DEFINITIVE plan-login state from the CLI's OWN status command → {"authed": True|False|None}. `codex login
     status` EXITS 0 when signed in and non-zero when not — a STRUCTURAL signal (the process exit code), read
     directly, never a regex on its printed prose. True/False from returncode when the CLI answers; None when it
-    can't be determined (CLI absent, timeout) so a can't-check is NEVER mistaken for a positive logout. Run on the
-    plan LOGIN env (metered keys stripped) so it reflects the auth the lane's run_prompt uses. $0. Never raises."""
+    can't be determined (CLI absent, timeout) so a can't-check is NEVER mistaken for a positive logout.
+
+    A SINGLE non-zero exit is a TRANSIENT under process contention (many codex spawns racing on the auth/refresh
+    file), NOT a logout — so a non-zero is CONFIRMED by one re-check before being reported False: a real logout
+    stays non-zero on both attempts, a transient recovers on the second. Without this, one flapping status call
+    fired a persistent 'logged out (re-login)' banner while the 10-day token was in fact valid, and the banner then
+    re-notified every 30 min until a successful call cleared it. Run on the plan LOGIN env (metered keys stripped)
+    so it reflects the auth the lane's run_prompt uses. $0. Never raises."""
     try:
         exe = _bin()                               # INSIDE the try: _bin() "fails LOUD" (raises) on a pinned
         if not exe:                                # SPENDGUARD_CODEX_BIN that points at a missing binary — that must
             return {"authed": None}                # become an honest {"authed": None}, never propagate (docstring: Never raises)
         from . import config
-        r = subprocess.run([exe, "login", "status"], capture_output=True, text=True,
-                           timeout=timeout, env=config.lane_plan_env())
-        return {"authed": r.returncode == 0}
+        env = config.lane_plan_env()
+        r = subprocess.run([exe, "login", "status"], capture_output=True, text=True, timeout=timeout, env=env)
+        if r.returncode == 0:
+            return {"authed": True}
+        time.sleep(_AUTH_RECHECK_BACKOFF_S)        # confirm a logout — a transient non-zero recovers on the re-check
+        r2 = subprocess.run([exe, "login", "status"], capture_output=True, text=True, timeout=timeout, env=env)
+        return {"authed": r2.returncode == 0}
     except Exception:
         return {"authed": None}
 
