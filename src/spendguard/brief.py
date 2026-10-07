@@ -131,11 +131,12 @@ def _llm_refine(task, intent):
     from . import calls, config
     META = "spendguard"
     try:
-        from . import adapters
+        from . import adapters, plan_admission
         sysmsg = ("Given a short task description, propose the 6 briefing fields (intent, quality_bar, "
                   "scale, budget, output_format, test_or_prod) as terse defaults. <120 words.")
+        _meta = plan_admission.ready_meta_model(config.advisor_model())   # off a capped plan to a READY provider
         with calls.context(intent=f"{META}:brief"):
-            r = adapters.call(config.advisor_model(), f"Task: {task}\nIntent: {intent}", sig=f"{META}:brief", system=sysmsg)
+            r = adapters.call(_meta, f"Task: {task}\nIntent: {intent}", sig=f"{META}:brief", system=sysmsg)
         if not r["error"]:
             print("\n  LLM-inferred defaults (caged):\n  " + (r["text"] or "").replace("\n", "\n  "))
     except Exception:

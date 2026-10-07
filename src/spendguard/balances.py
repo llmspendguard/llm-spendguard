@@ -176,11 +176,13 @@ def extract_available(vendor, raw, run=True):
     try:
         if not run:
             return {"available": None, "currency": None, "expiring": None, "note": "estimate-only"}
+        from . import plan_admission
+        _meta = plan_admission.ready_meta_model(config.advisor_model())   # off a capped plan to a READY provider
         with calls.context(intent="spendguard:balance-read"):
             # NO hardcoded cap: the reply IS content (the balance number), so a literal max_tokens would be a cap on
             # a content call — the exact truncate-to-wrong-number defect. The sig lets _call_guarded floor + measure
             # the budget and clamp it to the model ceiling, so a tiny JSON reply is never cut off.
-            r = adapters.call(config.advisor_model(), prompt, system=_BALANCE_SYS,
+            r = adapters.call(_meta, prompt, system=_BALANCE_SYS,
                               schema=_BALANCE_SCHEMA, sig="spendguard:balance-read")
         if r.get("error"):
             return {"available": None, "currency": None, "expiring": None, "note": f"read failed: {r.get('error')}"}

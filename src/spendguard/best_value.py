@@ -163,8 +163,10 @@ def _infer_intent(prompt):
         _schema = {"type": "object", "additionalProperties": False, "required": ["intent"],
                    "properties": {"intent": {"type": ["string", "null"]}}}
         try:
+            from . import plan_admission
+            _judge = plan_admission.ready_meta_model(config.advisor_judge_model())  # off a capped plan to a READY provider
             with calls.context(intent="spendguard:infer-intent"):
-                r = adapters.call(config.advisor_judge_model(),
+                r = adapters.call(_judge,
                                   "Known intents:\n%s\n\nTASK PROMPT:\n%s" % ("\n".join("- " + k for k in known), prompt),
                                   system=_sys, schema=_schema, sig="spendguard:infer-intent", max_tokens=_INFER_OUT, timeout_s=60)
             j = adapters.structured_reply(r)
