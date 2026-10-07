@@ -359,6 +359,11 @@ def _learn_from_fallback(lane_name, prompt, api_failed, model=None, transient=Fa
         return "unsuitable"
     if model:                                       # no proven-good baseline (or within it) ⇒ model/content miss,
         _lane_model_cool(lane_name, model)          # retryable — back off THIS model on THIS lane, NOT a permanent
+        try:                                        # a REPEATED model-miss may be a PERMANENT plan drop (codex 0.160.1
+            from . import lane_servability as _ls_fb  # dropped gpt-5.6-sol) — re-measure this lane's servability so the
+            _ls_fb.maybe_refresh_on_failure(lane_name)  # drop is recorded + shouted within a throttle window, not all day
+        except Exception:
+            pass                                    # the trigger is a bonus; a miss must never fail over it
     return "model-cooled"                           # size ceiling from an ambiguous first miss
 
 
@@ -965,6 +970,33 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
             if isinstance(_rex, _rgate.deliberate_stop_types()):
                 raise                                  # a spend/budget refusal or deadline HALTS — never a silent guess
             # unknown provider / resolver hiccup → leave the id UNCHANGED and proceed (the honest unresolved path)
+    # LANE-DROP PREFLIGHT (lane_servability) — a model a $0 LANE is MEASURED to no longer serve (a plan dropped it:
+    # codex-cli 0.160.1 dropped gpt-5.6-sol on 2026-10-06 while the metered API kept it) must not be dispatched to
+    # that lane: the lane rejects it and the work churns to the paid API, call after call — a temporary (lane,model)
+    # cooldown only RATE-LIMITS the re-failures (measured: it bled all day on a ~900s re-fail cycle), it cannot stop a
+    # PERMANENT drop. For a pinned call (no_substitution/measurement) keep the LITERAL model but force the METERED API,
+    # which still serves it, so a measurement is never silently swapped; otherwise resolve to the lane's served model
+    # so the work stays $0. Recorded via _resolved_from/_resolution exactly like served_substitute — never silent.
+    if _route and not _probe and not getattr(_resolve_guard, "on", False):
+        try:
+            from . import catalog as _cat_ld
+            _ldprov = provider_for(model)
+            _ldraw = model.split(":", 1)[1] if ":" in model else model
+            _ldlane = _LANES.get(_ldprov, (None, None))[0]
+            if _ldlane and _executor() in ("pool", _ldlane) and _ldraw in set(_cat_ld.lane_unserved_ids(_ldlane) or []):
+                if no_substitution or measurement:
+                    metered_only = True                    # pin the literal id to the metered API (it serves it) — never swap a measurement
+                else:
+                    from . import lane_servability as _ld_ls
+                    _ldsub, _ldwhy = _ld_ls.lane_served_substitute(_ldlane, _ldraw)
+                    if _ldsub and _ldsub != _ldraw:
+                        if _resolved_from is None:
+                            _resolved_from, _resolution = f"{_ldprov}:{_ldraw}", _ldwhy
+                        model = f"{_ldprov}:{_ldsub}"
+                    else:
+                        metered_only = True                # nothing served to fall to on this lane → honest metered path
+        except Exception:
+            pass                                           # a servability read must never break a real call
     # BEST-VALUE RESOLUTION — reasoning="best-value" delegates the (model, effort) choice to the MEASURED frontier:
     # the cheapest (model, effort) whose recorded good_rate for this intent clears the bar (best_value.resolve). It is
     # $0 and makes NO LLM call — the quality was already judged+recorded, so picking the cheapest arm that holds is

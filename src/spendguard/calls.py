@@ -701,6 +701,49 @@ def mean_out_by_executor_model(intent, call_class=None, origin_session=None):
     return out
 
 
+def lane_model_outcomes(executor, since=None, call_class=None):
+    """{model: {"ok", "fail", "last_ok", "last_fail", "by_outcome"}} for ONE lane (executor), grouped by model — the
+    MEASURED served/rejected evidence lane_servability reads to decide which models a lane ACTUALLY serves. Never
+    prose-parsed: a model the lane never succeeds on but repeatedly fails is a rejection established by the PATTERN
+    (zero ok, sustained fail), not by reading an error string. `since` (ISO8601 UTC) bounds the window; None = all
+    history. A DELIBERATE gate refusal is not a servability signal (the lane could have served it — the spend gate
+    said no), so it is counted in neither ok nor fail. {} on any error — a routing read must never raise."""
+    out = {}
+    if not executor:
+        return out
+    try:
+        predicates = ["COALESCE(NULLIF(executor,''), provider)=?"]
+        args = [executor]
+        if since is not None:
+            predicates.append("ts>=?"); args.append(since)
+        if call_class is not None:
+            predicates.append("call_class=?"); args.append(call_class)
+        with _lock:
+            rows = _calls_db().execute(
+                "SELECT COALESCE(model,'?'), COALESCE(outcome,''), COUNT(*), MAX(ts) FROM calls "
+                f"WHERE {' AND '.join(predicates)} "
+                "GROUP BY COALESCE(model,'?'), COALESCE(outcome,'')", args).fetchall()
+        for model, outcome, n, last_ts in rows:
+            rec = out.setdefault(model or "?", {"ok": 0, "fail": 0, "last_ok": None,
+                                                "last_fail": None, "by_outcome": {}})
+            n = int(n or 0)
+            rec["by_outcome"][outcome or ""] = rec["by_outcome"].get(outcome or "", 0) + n
+            if outcome == "ok":
+                rec["ok"] += n
+                if last_ts and (rec["last_ok"] is None or last_ts > rec["last_ok"]):
+                    rec["last_ok"] = last_ts
+            elif outcome == "gate_refused":
+                pass                                      # deliberate spend-gate refusal — not a lane capability signal
+            elif outcome:                                 # any other recorded non-ok outcome is a served-attempt that missed
+                rec["fail"] += n
+                if last_ts and (rec["last_fail"] is None or last_ts > rec["last_fail"]):
+                    rec["last_fail"] = last_ts
+            # outcome == '' (unsettled / pre-taxonomy row) counts toward neither — it is not evidence either way
+    except Exception:
+        pass
+    return out
+
+
 def tested_recently(intent, model=None, days=14, kinds=("realtime",)):
     """True iff there's a recent SMALL test for this intent — a realtime call (a batch-1 / PROMPT-CHECK on a
     handful of items) within `days`. The signal the batch-1 gate uses to tell "you tested this prompt shape before

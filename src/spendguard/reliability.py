@@ -433,6 +433,45 @@ def note_lane_auth_down(lane, cmd=""):
         pass
 
 
+def note_lane_model_shift(lane, model, diagnosis):
+    """A specific (lane, MODEL) that USED TO serve has shifted to a wall of transport errors (lane_servability
+    detected it) → record it LOUD + alarm. DISTINCT from note_lane_auth_down (the whole lane logged out) and
+    note_lane_down (a generic lane miss): the lane is still UP for its other models — only this one id died (a plan
+    dropped it, the provider dropped it, or it was renamed). So the health row is keyed on `lane:model`, kind
+    'lane-model', NOT the lane — it must not make a working lane read as unreachable. `diagnosis` is the one-line
+    actionable fix (built by lane_servability from the /models cross-check). Source 'event-shift' so health_reds
+    surfaces it on the receipt and the self-heal branch (which keys on kind 'lane' event rows) leaves it alone; it
+    ages out of the receipt via health_reds' since_hours once the failures stop. macOS notify throttled by
+    notified_ts. $0, no LLM. NEVER raises."""
+    try:
+        import datetime
+        from . import budget
+        now = datetime.datetime.now(datetime.timezone.utc)
+        resource = f"{lane}:{model}"
+        db = _health_db()
+        with budget._lock:
+            prev = db.execute("SELECT notified_ts FROM lane_health WHERE resource=?", (resource,)).fetchone()
+            db.execute("INSERT OR REPLACE INTO lane_health "
+                       "(resource,kind,reachable,reason,fix,command,ts,source,notified_ts) VALUES (?,?,?,?,?,?,?,?,?)",
+                       (resource, "lane-model", 0, "served shift (model stopped serving on this lane)", diagnosis,
+                        None, now.isoformat(timespec="seconds"), "event-shift", prev[0] if prev else None))
+            db.commit()
+        last = None
+        if prev and prev[0]:
+            try:
+                last = datetime.datetime.fromisoformat(prev[0])
+            except Exception:
+                last = None
+        if last is None or (now - last).total_seconds() >= _EVENT_NOTIFY_THROTTLE_S:
+            _notify_macos("spendguard: %s stopped serving %s" % (lane, model), diagnosis)
+            with budget._lock:
+                db.execute("UPDATE lane_health SET notified_ts=? WHERE resource=?",
+                           (now.isoformat(timespec="seconds"), resource))
+                db.commit()
+    except Exception:
+        pass
+
+
 def _persist_health(sweep_result, acts=None):
     """Record the last check's reachability (+ any remediation fixes) so the RECEIPT and the notifier can read it
     with NO new sweep — that is what lets a red lane surface in every conversation for $0. One row per resource.

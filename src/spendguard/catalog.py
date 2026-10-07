@@ -126,6 +126,49 @@ def lane_model_ids(provider):
     return list(ids) if ids else None
 
 
+def lane_unserved_ids(lane):
+    """Model ids a LANE is MEASURED to no longer serve — e.g. a plan dropped a model (codex-cli 0.160.1 dropped
+    gpt-5.6-sol on 2026-10-06 while the metered OpenAI API still lists it). Written by lane_servability from the
+    ledger, kept SEPARATE from lane_model_ids (served) so a dispatch pre-flight can refuse/resolve a known-dead
+    (lane, model) with no round-trip. Keyed by LANE (codex/claude-code/…), not the metered provider — the whole
+    point is that the lane differs from metered. None when nothing is recorded for this lane (never read as
+    'all served')."""
+    data = _load_catalog()
+    if not data:
+        return None
+    ids = (data.get("lane_unserved") or {}).get(lane)
+    return list(ids) if ids else None
+
+
+def merge_lane_observation(lane, served_ids, rejected_ids, asof=None):
+    """MERGE a lane's MEASURED served/rejected model sets into the catalog cache (a state-modifying read-modify-write,
+    not a log line) — lane_models[lane] (served, UNIONED with any already present so an agy-pulled set is never
+    dropped) and lane_unserved[lane] (rejected). A model that is now rejected is removed from served so the two sets
+    can never disagree. Additive + idempotent: re-recording rewrites ONLY this lane's two sets + its asof stamp,
+    never another lane's and never the metered `models`. The one writer is config.update_json (atomic, +backup),
+    like pull_live_catalog. Returns the written (served, rejected)."""
+    import datetime as _dt
+    served_ids = sorted({m for m in (served_ids or []) if m})
+    rejected_ids = sorted({m for m in (rejected_ids or []) if m})
+    stamp = asof or _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
+
+    def _merge_lane_sets(d):
+        d = dict(d or {})
+        lm = dict(d.get("lane_models") or {})
+        lu = dict(d.get("lane_unserved") or {})
+        prior_served = [m for m in (lm.get(lane) or []) if m not in set(rejected_ids)]
+        lm[lane] = sorted(set(prior_served) | set(served_ids))
+        lu[lane] = rejected_ids
+        obs = dict(d.get("lane_observed_asof") or {})
+        obs[lane] = stamp
+        d["lane_models"], d["lane_unserved"], d["lane_observed_asof"] = lm, lu, obs
+        return d
+
+    config.update_json(CATALOG_CACHE, _merge_lane_sets, quarantine_unparseable=True)
+    _CACHE_MEM["mtime"] = None                             # force the memo to reload the freshly-written file
+    return served_ids, rejected_ids
+
+
 def served(provider, model):
     """True / False / None — is `model` servable for `provider` on ANY route spendguard knows: the metered API
     catalog OR a subscription lane's own namespace. None = cannot check (NEITHER is known) — a caveat, never read

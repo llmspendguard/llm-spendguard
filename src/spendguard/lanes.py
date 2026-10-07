@@ -290,6 +290,17 @@ def lane_summary_lines():
             continue
         if ln["auth"] == "ok":
             state = f"🟢 ready ({ln['cli'] or ln['provider'] + ' key'})"   # CLI lanes show the binary path; key lanes show the key
+            try:                                            # readiness is MEASURED, not just auth/binary presence (defect 2):
+                from . import lane_servability as _lsr      # codex printed 🟢 ready while failing 4 of 5 calls — a lane that
+                _rd = _lsr.lane_readiness(ln["lane"])        # authenticates but whose recent calls FAIL is not actually ready
+                if _rd["degraded"]:
+                    _pct = int(round((_rd["ok_rate"] or 0) * 100))
+                    state = (f"🔴 auth ok but DEGRADED — {_pct}% recent success ({_rd['ok']}/{_rd['total']})"
+                             + (f"; dropped: {', '.join(_rd['rejected'])}" if _rd["rejected"] else ""))
+                elif _rd["rejected"]:
+                    state += f" — ⚠ no longer serving {', '.join(_rd['rejected'])} (auto-resolved to a served model)"
+            except Exception:
+                pass                                        # a readiness read must never break the lanes view
         elif ln["cli"] and ln["auth"] == "unknown":
             state = f"🟡 CLI found; login unverified — {ln['activate']} if unsure, or `spendguard lanes --probe`"
         else:
@@ -394,7 +405,8 @@ def main(argv=None):
         print("\nplan quota headroom (provider truth where the plan exposes it; 'unknown' = no quota surface yet):")
         for h in lane_headroom():
             if not h["known"]:
-                print(f"  {h['lane']:<12} ({h['provider']} plan): quota unknown — no status surface / no call captured yet")
+                print(f"  {h['lane']:<12} ({h['provider']} plan): quota not exposed by this plan (no quota API) — "
+                      f"usage is recorded in the ledger (`spendguard receipt`), not as a plan-side headroom %")
                 continue
             rem = int(h["remaining_pct"])
             bar = "█" * (rem // 10) + "░" * (10 - rem // 10)
