@@ -1,7 +1,9 @@
 """Guard: the status-line COMPACTION NUDGE. spendguard surfaces, in the current session's status line, when that
 session is expensive to keep alive — it tails the session's transcript for the last turn's re-read context and, if
-that is at/above the configured threshold, appends a '/compact' suggestion carrying the measured k×. Pins:
-  1. a bloated session (context >= threshold) → a nudge with the tok/turn + '/compact' + the k×.
+that is at/above the configured threshold, appends a '/compact' suggestion. The one-liner makes NO savings claim —
+the old '~1x cheaper' asserted a saving at identical cost (and whether a ratio is a saving worth showing is not a
+cutoff a per-turn hook may hard-code); the tok/turn count is the signal. Pins:
+  1. a bloated session (context >= threshold) → a nudge with the tok/turn + '/compact', and NO '~Nx cheaper' claim.
   2. a small session → no nudge; no transcript → no nudge (graceful, never raises).
   3. it reads the LAST turn (so once a session compacts and drops below threshold, the nudge disappears).
 Hermetic: isolated home + fabricated transcript + hint. Zero spend, no import of the heavy path."""
@@ -37,8 +39,8 @@ with open(small, "w") as f:
     f.write(turn(1000, 4000, 0, 50) + "\n")                # context = 5,000 << threshold
 
 n_big = receipt._compaction_nudge({"transcript_path": big}, HOME)
-ck("bloated session → nudge names tok/turn + /compact + measured k×",
-   "compact" in n_big and "500K" in n_big and "11x" in n_big)
+ck("bloated session → the EXACT claim-free one-liner (tok/turn + /compact, no savings multiplier)",
+   n_big == "⚠ 500K tok/turn · /compact (guided)")
 ck("nudge signals it is (guided) — so the user knows the hook will preserve context", "(guided)" in n_big)
 ck("small session → no nudge", receipt._compaction_nudge({"transcript_path": small}, HOME) == "")
 ck("no transcript → no nudge (graceful)", receipt._compaction_nudge({}, HOME) == "")

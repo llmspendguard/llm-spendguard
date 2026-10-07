@@ -1193,10 +1193,56 @@ def _compaction_hint():
     return hint
 
 
-def _compaction_nudge(info, home):
+# Re-nudge only after the live context grows this fraction beyond the last nudge: the Stop-hook interrupt fires
+# ONE notice per threshold crossing, then stays silent until the context moves materially OR the session is
+# compacted (ctx falls back under the threshold, clearing the mark so the next crossing nudges once). A nudge that
+# repeats every turn with no new information is an interrupt, not a receipt.
+_RENUDGE_GROWTH_FRAC = 0.5
+
+
+def _nudge_state_path(home):
+    return os.path.join(home, "compaction_nudge_state.json")
+
+
+def _nudge_should_fire(home, session_key, ctx, threshold):
+    """Debounce the Stop-hook compaction nudge. Returns True at most ONCE per threshold crossing: on the first
+    crossing, and again only after `ctx` grows _RENUDGE_GROWTH_FRAC beyond the last nudge. Under the threshold it
+    clears the session's mark (a compaction / fresh start resets it) and returns False. State writes go through
+    config.update_json (atomic, backed up, refuses a corrupt file) — never a hand-rolled whole-file write.
+    Hook-safe: any read/write failure fails to False (stay silent) rather than raising or looping."""
+    from . import config
+    path = _nudge_state_path(home)
+    try:
+        state = {}
+        try:
+            with open(path) as fh:                 # a READ, not a write — safe to hand-roll
+                state = json.load(fh)
+        except Exception:
+            state = {}
+        if not isinstance(state, dict):
+            state = {}
+        last = state.get(session_key)
+        if ctx < threshold:                        # user acted / fresh / compacted → clear so the next crossing nudges
+            if last is not None:
+                config.update_json(path, lambda d: {k: v for k, v in dict(d or {}).items() if k != session_key},
+                                   reason="compaction-nudge-reset", keep_backups=0)
+            return False
+        if last is not None and ctx < int(last) * (1.0 + _RENUDGE_GROWTH_FRAC):
+            return False                           # over threshold, but not materially larger than the last notice
+        config.update_json(path, lambda d: {**dict(d or {}), session_key: ctx},
+                           reason="compaction-nudge-fire", keep_backups=0)
+        return True
+    except Exception:
+        return False
+
+
+def _compaction_nudge(info, home, once=False):
     """The per-SESSION compaction nudge string (or '') — tails the CURRENT session's transcript for the re-read context
     of its last turn, and if that is at/above the cached threshold, returns a '/compact' suggestion carrying the
-    measured k×. Cheap (tail only, ~64KB). Mirrored inline in the standalone statusline. Never raises."""
+    measured k×. With `once=True` (the Stop-hook INTERRUPT) it fires at most once per threshold crossing (see
+    _nudge_should_fire); the passive status line leaves it False and shows the notice whenever over threshold. The k×
+    is shown ONLY when it rounds to a real saving (>=2x) — '~1x' is identical cost and claims a saving that is not
+    there, so it is suppressed. Cheap (tail only, ~64KB). Mirrored inline in the standalone statusline. Never raises."""
     try:
         tp = info.get("transcript_path") or info.get("transcriptPath")
         if not tp or not os.path.exists(tp):
@@ -1227,11 +1273,17 @@ def _compaction_nudge(info, home):
                 hint = json.load(hf)
         except Exception:
             hint = {}
-        if ctx < int(hint.get("threshold_tokens") or 100000):
+        threshold = int(hint.get("threshold_tokens") or 100000)
+        session_key = str(info.get("session_id") or info.get("sessionId") or os.path.basename(tp))
+        if once:
+            if not _nudge_should_fire(home, session_key, ctx, threshold):
+                return ""
+        elif ctx < threshold:
             return ""
-        k = hint.get("k")
-        ktxt = (" ~%.0fx cheaper" % k) if k else ""
-        return "⚠ %dK tok/turn · /compact (guided)%s" % (ctx // 1000, ktxt)
+        # The terse per-turn nudge carries NO savings multiplier: "~1x cheaper" claimed a saving that was not there,
+        # and whether a given ratio is a saving worth showing is a judgement a per-turn hook must not hard-code. The
+        # token count is the signal; the measured k× lives in the guided /compact detail, not this one-liner.
+        return "⚠ %dK tok/turn · /compact (guided)" % (ctx // 1000)
     except Exception:
         return ""
 
@@ -1294,9 +1346,7 @@ try:
             except Exception:
                 hint = {}
             if ctx >= int(hint.get("threshold_tokens") or 100000):
-                k = hint.get("k")
-                ktxt = (" ~%.0fx cheaper" % k) if k else ""
-                nudge = "  ·  ⚠ %dK tok/turn · /compact (guided)%s" % (ctx // 1000, ktxt)
+                nudge = "  ·  ⚠ %dK tok/turn · /compact (guided)" % (ctx // 1000)   # no savings multiplier (see receipt.py)
 except Exception:
     nudge = ""
 sys.stdout.write((prefix + "  ·  " if prefix else "") + line + nudge + "\n")
@@ -1384,7 +1434,7 @@ def cli(args) -> int:
             _hook_context = None
             try:
                 from . import config as _cfg, compaction
-                _nud = _compaction_nudge(info, str(_cfg.HOME))     # non-empty only when this session is over threshold
+                _nud = _compaction_nudge(info, str(_cfg.HOME), once=True)   # debounced: ONE notice per crossing, not per turn
                 if _nud:
                     _compact = compaction.compact_snippet()
                     _msg = _line + "\n" + _nud + "\n→ paste to compact well:  " + _compact
