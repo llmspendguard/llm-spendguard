@@ -151,9 +151,13 @@ KWARGS = {"by_provider_day": {"kind": "batch"}, "gate_by_project_day": {"kind": 
 # A SpendLedger method that returns a DOLLAR sum. budget is a facade over these now, so a $-aggregator is a
 # budget function that CALLS one of them (detected structurally from the AST, not a substring scan).
 _DOLLAR_PRIMITIVES = {"sum_by", "spent_dec", "meta_dec", "remote_dec", "est_value_dec", "subscription_dec"}
-# sum_by also backs COUNT-only readers (unpriced_since reads its 'n', not 'usd' — the dollars are precisely what
-# is unknown there). Adjudicated out of the matrix by name, once, rather than guessed per-run.
-_COUNT_ONLY = {"unpriced_since"}
+# sum_by also backs COUNT-only readers that total tokens/counts, not dollars, so the DOLLAR decomposition below
+# does not apply to them: unpriced_since reads its 'n' (the dollars are precisely what is unknown there);
+# input_cache_split totals the input-token cache axes (read/write shares) via sum_by's int_cols, reading no 'usd'.
+# Both still respect the void+reconciled markers — sum_by ANDs _NOT_VOID by default so quarantined rows are
+# excluded, and input_cache_split adds the reconciled exclusion. Adjudicated out of the matrix by name, once,
+# rather than guessed per-run.
+_COUNT_ONLY = {"unpriced_since", "input_cache_split"}
 
 
 def aggregators():
