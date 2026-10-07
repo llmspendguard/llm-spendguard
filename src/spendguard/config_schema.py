@@ -266,6 +266,10 @@ SETTINGS = [
          env="SPENDGUARD_AGENT_GATE_PLAN_LANE", default=None, kind="string|null", secret=False,
          desc="Subscription lane consumed by Agent/Task spawns. Unset uses the lane_registry row marked "
               "subagent_host; set this for a different hosting plan without changing source."),
+    dict(section="plan_admission", key="remaining_pct", store="config.json:plan_admission.remaining_pct",
+         env="SPENDGUARD_PLAN_ADMISSION_REMAINING_PCT", default=0.0, kind="float", secret=False,
+         desc="Refuse or redirect labelled, substitutable adapters.call traffic when its plan lane has at most this "
+              "percentage remaining. Paid overage always activates admission. 0 means enforce at the plan boundary."),
     dict(section="advisor", key="executor", store="config.json:advisor.executor", env="SPENDGUARD_ADVISOR_EXECUTOR",
          default="api", kind="enum:api,claude-code,codex,zai-coding,pool", secret=False,
          desc="Where spendguard's OWN meta prompts run: api = metered API under caps.meta (default); "

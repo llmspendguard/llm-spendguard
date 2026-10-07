@@ -107,22 +107,24 @@ ck("admission_state carries an 'unhonored_efforts' map", isinstance(st.get("unho
 ck("and it reflects the gpt-5.5 non-honor (auditable, not just printed)",
    any("gpt-5.5" in k for k in (st.get("unhonored_efforts") or {})))
 
-# ── (5) PINNED (no_substitution) + un-honorable 'minimal' → REFUSE pre-wire (guardrail A: honor OR **refuse**) ──
-# A SUBSTITUTABLE call (cases 1-3, no_substitution unset) proceeds + is recorded — best-value routes it to an honoring
-# model upstream. But when the caller PINNED the model (no_substitution), there is no honoring model to route to, so the
-# pin that cannot be honored is REFUSED rather than allowed to overspend silently — and BEFORE any vendor call.
-print("-- (5) gpt-5.5 + reasoning='minimal' + no_substitution → REFUSED pre-wire (EffortNotHonored, a SpendGateRefused) --")
-from spendguard.gate import EffortNotHonored, SpendGateRefused  # noqa: E402
+# ── (5) PINNED (no_substitution) + un-honorable 'minimal' → AUTOTRANSLATE to the floor + record + proceed, NEVER crash ──
+# A caller that PINS the MODEL (no_substitution) confined the MODEL, not the exact effort. 'minimal' the model cannot
+# express is remapped to its floor, RECORDED (never silent — see case 4's unhonored_efforts), and the call PROCEEDS to
+# the wire at that floor. spendguard AUTOTRANSLATES rather than refusing a legitimate confinement: the old raise crashed
+# every precommit review while a plan was on overage (advisor_model → a model that floors 'minimal'). A measurement that
+# needs exact effort reads requested!=applied and discards; the default is to translate and proceed.
+print("-- (5) gpt-5.5 + reasoning='minimal' + no_substitution → AUTOTRANSLATED to 'none' + recorded, NOT crashed --")
+from spendguard.gate import EffortNotHonored  # noqa: E402
 _wire_n = len(_WIRE)
 _raised = None
 try:
     adapters._call_once("openai:gpt-5.5", "hi", max_tokens=100, reasoning="minimal", timeout_s=30, _no_sub=True)
 except EffortNotHonored as _e:
     _raised = _e
-ck("a pinned (no_substitution) call that cannot honor 'minimal' RAISES EffortNotHonored", _raised is not None)
-ck("EffortNotHonored is a SpendGateRefused (propagates via the deliberate-stop machinery)",
-   isinstance(_raised, SpendGateRefused))
-ck("the refusal is PRE-WIRE — no vendor call was made, so nothing was spent", len(_WIRE) == _wire_n)
+ck("a pinned (no_substitution) call that cannot honor 'minimal' does NOT crash (autotranslate, not refuse)",
+   _raised is None)
+ck("…it reaches the wire at the model's floor 'none' (translated, never silently left at 'minimal')",
+   len(_WIRE) > _wire_n and _wire_effort() == "none")
 
 # ── (6) INTERNAL confinement pin (a bulk_delegate fan / tier=/lanes=) is NOT a caller insistence → the un-honorable
 # effort FLOORS, it does NOT refuse — so effort stays PATH-INDEPENDENT (guardrail B: the fan sends the same wire effort

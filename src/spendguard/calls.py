@@ -52,7 +52,8 @@ def set_context(intent: Optional[str] = None, chain: Optional[str] = None, who: 
                 root_call: Optional[str] = None, attempt: Optional[int] = None,
                 fell_from: Optional[str] = None, batch_expected_out: Optional[int] = None,
                 call_class: Optional[str] = None, origin_session: Optional[str] = None,
-                defer_batch_booking: Optional[bool] = None) -> None:
+                defer_batch_booking: Optional[bool] = None, requested_model: Optional[str] = None,
+                redirect_reason: Optional[str] = None, resolved_lane: Optional[str] = None) -> None:
     c = dict(current())
     if intent is not None:
         c["intent"] = intent
@@ -81,6 +82,12 @@ def set_context(intent: Optional[str] = None, chain: Optional[str] = None, who: 
         c["origin_session"] = origin_session
     if defer_batch_booking is not None:
         c["defer_batch_booking"] = bool(defer_batch_booking)
+    if requested_model is not None:
+        c["requested_model"] = requested_model
+    if redirect_reason is not None:
+        c["redirect_reason"] = redirect_reason
+    if resolved_lane is not None:
+        c["resolved_lane"] = resolved_lane
     _local.ctx = c                        #   (gate._record_rt fires DURING the SDK call, on this thread, so it reads ctx)
 
 
@@ -111,6 +118,17 @@ def fell_from_context(lane_name: str):
         else:
             c["fell_from"] = prev
         _local.ctx = c
+
+
+@contextlib.contextmanager
+def redirect_context(requested_model: str, reason: str, resolved_lane: Optional[str] = None):
+    """Carry model/lane redirect provenance through recursive calls and worker threads."""
+    prev = dict(current())
+    set_context(requested_model=requested_model, redirect_reason=reason, resolved_lane=resolved_lane)
+    try:
+        yield
+    finally:
+        _local.ctx = prev
 
 
 @contextlib.contextmanager
@@ -251,10 +269,15 @@ def flow_agg(since_rowid: int = 0, chain: Optional[str] = None):
 
 
 def caller():
+    """Return the first real application frame, never a worker-thread trampoline."""
     try:
         for fr in inspect.stack()[2:]:
             fn = fr.filename
-            if not fn.startswith(_PKG) and "site-packages" not in fn and fn not in ("<string>", "<stdin>"):
+            base = os.path.basename(fn)
+            trampoline = (base in ("thread.py", "threading.py") or
+                          "concurrent/futures" in fn.replace("\\", "/"))
+            if (not trampoline and not fn.startswith(_PKG) and "site-packages" not in fn
+                    and fn not in ("<string>", "<stdin>")):
                 return f"{os.path.basename(fn)}:{fr.function}:{fr.lineno}"
     except Exception:
         pass
@@ -272,7 +295,8 @@ def _ensure_calls_schema(c):
         prompt_hash TEXT, prompt_snip TEXT, output_snip TEXT, finish TEXT,
         quality TEXT, quality_src TEXT, quality_conf REAL,
         executor TEXT, project TEXT, effort TEXT, suspect TEXT,
-        call_class TEXT, origin_session TEXT)""")
+        call_class TEXT, origin_session TEXT,
+        requested_model TEXT, served_model TEXT, resolved_lane TEXT, redirect_reason TEXT)""")
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_chain ON calls(chain)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_intent ON calls(intent)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_ts ON calls(ts)")  # as_of/since range reads (calibrate, advise)
@@ -319,7 +343,9 @@ def _ensure_calls_schema(c):
                         ("outcome", "TEXT"), ("http_status", "INTEGER"), ("provider_error", "TEXT"),
                         ("retry_after", "REAL"), ("attempts", "INTEGER"), ("disposition", "TEXT"),
                         ("retry_of", "TEXT"), ("fell_from", "TEXT"),
-                        ("call_class", "TEXT"), ("origin_session", "TEXT")):
+                        ("call_class", "TEXT"), ("origin_session", "TEXT"),
+                        ("requested_model", "TEXT"), ("served_model", "TEXT"),
+                        ("resolved_lane", "TEXT"), ("redirect_reason", "TEXT")):
         if _col not in _have:
             c.execute(f"ALTER TABLE calls ADD COLUMN {_col} {_decl}")
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_executor ON calls(executor)")  # per-lane rollups
@@ -413,7 +439,8 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
            prompt=None, output=None, finish=None, intent=None, chain=None, who=None,
            executor=None, project=None, effort=None, *, outcome=None, http_status=None,
            provider_error=None, retry_after=None, attempts=None, disposition=None, retry_of=None,
-           fell_from=None, call_id=None, call_class=None, origin_session=None):
+           fell_from=None, call_id=None, call_class=None, origin_session=None,
+           requested_model=None, served_model=None, resolved_lane=None, redirect_reason=None):
     """Record one call — its full OUTCOME, success OR failure. Returns call_id. Never raises.
 
     FORENSIC MANDATE (the reason this tool exists): EVERY call is on the ledger, whatever its fate — a metered success,
@@ -465,6 +492,10 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
         # call on this thread, so read the lane from the context calls.fell_from_context scoped around that dispatch.
         if fell_from is None:
             fell_from = ctx.get("fell_from")
+        requested_model = requested_model or ctx.get("requested_model")
+        served_model = served_model or model
+        resolved_lane = resolved_lane or ctx.get("resolved_lane") or executor
+        redirect_reason = redirect_reason or ctx.get("redirect_reason")
         cid = call_id or (_root if (_root and _seq == 1) else None) or _uuid()
         sp = _snip()
         ph = hashlib.sha256((prompt or "").encode("utf-8", "ignore")).hexdigest()[:16] if prompt else None
@@ -494,7 +525,8 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
                 "INSERT INTO calls (id,ts,chain,intent,caller,provider,model,kind,in_tok,out_tok,"
                 "cost,latency,prompt_hash,prompt_snip,output_snip,finish,executor,project,effort,suspect,"
                 "outcome,http_status,provider_error,retry_after,attempts,disposition,retry_of,fell_from,"
-                "call_class,origin_session) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "call_class,origin_session,requested_model,served_model,resolved_lane,redirect_reason) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (cid, ts, chain, intent, who or ctx.get("who") or caller(), provider, model, kind,
                  int(in_tok or 0), int(out_tok or 0), float(cost or 0), latency, ph, psnip, osnip, finish,
                  executor, proj, (effort or None), suspect,
@@ -503,7 +535,9 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
                  (provider_error[:1000] if isinstance(provider_error, str) else None),
                  (float(retry_after) if isinstance(retry_after, (int, float)) else None),
                  (int(attempts) if isinstance(attempts, int) else None),
-                 (disposition or None), (retry_of or None), (fell_from or None), call_class, origin_session))
+                 (disposition or None), (retry_of or None), (fell_from or None), call_class, origin_session,
+                 (requested_model or None), (served_model or None), (resolved_lane or None),
+                 (redirect_reason or None)))
             _calls_db().commit()
         # deferred implicit feedback: did THIS call reuse an earlier output in the same chain?
         if chain and prompt:

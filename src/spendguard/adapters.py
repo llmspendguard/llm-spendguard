@@ -913,6 +913,10 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     if measurement:
         no_substitution = True
 
+    # Preserve the CALLER'S contract before best-value or another internal routing choice pins its selected arm.
+    # Plan admission may redirect an internally pinned discretionary choice, but never a caller's explicit pin.
+    _caller_model_pin = bool(no_substitution or metered_only or measurement)
+
     # BASE-FALLBACK DEFAULT (tier-3 reliability). Auto-ON so a call yields SOME answer when a model's lane AND its
     # metered API both fail — EXCEPT where the model IS the measurement (no_substitution / metered_only pins it) or a
     # tiny probe, and except when the operator turns it off (advisor.base_fallback_default=false). An explicit
@@ -1024,6 +1028,22 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                     print(f"[spendguard] {_bv_why} (was {_bv_from})", file=_sbv.stderr)
             elif _pick is not None and _pick.get("why"):
                 print(f"[spendguard] {_pick['why']}", file=_sbv.stderr)   # honest no-pick: keep the named model
+    # PLAN-AXIS ADMISSION: billed-$ caps cannot see a $0 subscription call. A labelled, unpinned call is discretionary;
+    # when its plan is capped/on paid overage, route only through the pre-confirmed semantic substitute registry. If
+    # none is READY, refuse — never fail open onto the exhausted lane. Caller pins remain the hard contract above.
+    _plan_redirect = None
+    if (intent or sig) and not _caller_model_pin and not _probe and not images:
+        from . import plan_admission as _pa
+        _plan_redirect = _pa.decide(model, intent or sig)
+        if _plan_redirect.get("action") == "refuse":
+            return {"provider": provider_for(model), "model": model, "text": None, "parsed": None,
+                    "in_tok": 0, "out_tok": 0, "cost": None, "latency": 0.0, "finish_reason": None,
+                    "executor": None, "error_type": "PlanAdmissionRefused", "reason": "plan_exhausted",
+                    "error": _plan_redirect["reason"], "plan_risk": _plan_redirect.get("risk")}
+        if _plan_redirect.get("action") == "redirect":
+            model = _plan_redirect["model"]
+            no_substitution = True
+            _internal_pin = True
     # ATTRIBUTION: a caller that passed a sig/intent but is NOT inside a `with calls.context(...)` must still have
     # THIS call's ledger row tagged. gate._record_rt reads the THREAD-LOCAL intent, and sig= alone never set it — so a
     # metered call passing only sig= landed in '(none)' despite the tag, the exact gap the sig/intent alias claims to
@@ -1041,6 +1061,15 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
             # `spendguard:` is the explicit internal-intent protocol, not a semantic guess. Keep an enclosing workload
             # intent intact while stamping this nested meta dispatch on its independent attribution dimension.
             _sig_ctx.set_context(call_class="gate_internal")
+    if _plan_redirect and _plan_redirect.get("action") == "redirect":
+        _sig_ctx.set_context(requested_model=_plan_redirect["requested_model"],
+                             redirect_reason=_plan_redirect["reason"], resolved_lane=_plan_redirect["lane"])
+    elif _bv_from and model != _bv_from:
+        _sig_ctx.set_context(requested_model=_bv_from, redirect_reason="best-value: " + str(_bv_why or "measured pick"),
+                             resolved_lane=(_LANES.get(provider_for(model), (None,))[0]))
+    elif _resolved_from and model != _resolved_from:
+        _sig_ctx.set_context(requested_model=_resolved_from, redirect_reason="tier mapping: " + str(_resolution or "served id"),
+                             resolved_lane=(_LANES.get(provider_for(model), (None,))[0]))
     # GOVERNED (opt-in `governed=True`, for a CONCURRENT fan) — enter the dispatch governor with the SAME
     # shed-to-metered + deadline-split policy vendor_call uses, via the shared dispatch.admit brain, so the two
     # entries can never drift. A saturated $0 lane SHEDS to its metered twin (lane-first, not a per-call metered
@@ -1177,9 +1206,12 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
         _bprov = provider_for(model)
         _base = provider_base_model(_bprov)
         if _base and _base != model and f"{_bprov}:{_base}" != model:
-            _rb = call(f"{_bprov}:{_base}", prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
-                       schema=schema, timeout_s=timeout_s, sig=sig, no_substitution=True, base_fallback=False,
-                       no_metered_fallback=no_metered_fallback)
+            _base_target = f"{_bprov}:{_base}"
+            with _sig_ctx.redirect_context(model, f"tier-3 base fallback: {model} unavailable",
+                                           _LANES.get(_bprov, ("api",))[0]):
+                _rb = call(_base_target, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
+                           schema=schema, timeout_s=timeout_s, sig=sig, no_substitution=True, base_fallback=False,
+                           no_metered_fallback=no_metered_fallback)
             if isinstance(_rb, dict) and _rb.get("text") and not _rb.get("error"):
                 r = {**_rb, "substituted_from": model, "substitution": f"tier-3 base fallback: {model} unavailable",
                      "base_fallback": True}
@@ -1191,6 +1223,10 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
         r = {**r, "substituted_from": r.get("substituted_from") or _bv_from,
              "substitution": r.get("substitution") or _bv_why, "best_value": True,
              "requested_effort": None, "chosen_effort": _bv_effort}
+    if _plan_redirect and _plan_redirect.get("action") == "redirect" and isinstance(r, dict):
+        r = {**r, "substituted_from": r.get("substituted_from") or _plan_redirect["requested_model"],
+             "substitution": r.get("substitution") or _plan_redirect["reason"],
+             "resolved_lane": r.get("resolved_lane") or _plan_redirect["lane"]}
     _book_substitution(r)   # book the DECISION (value proof + learner evidence) + any metered→cheaper saving
     # `billed` (cost>0) is NOT "served by the metered API": a per-token key LANE (e.g. zai-coding) costs while still
     # being lane-served, so a caller proving refuse_billed/$0 via `billed` gets false positives. This is the field to
@@ -2191,8 +2227,10 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 _lane_chatter(f"[spendguard] lane-balance REACTIVE: {lane_name} lane failed → {_rsub} ({_rwhy})")
                 _sub_guard.on = True
                 try:
-                    _rr = call(_rsub, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
-                               schema=schema, timeout_s=timeout_s, no_metered_fallback=True)
+                    from . import calls as _redirect_calls
+                    with _redirect_calls.redirect_context(model, "fallback ladder: " + _rwhy, _rsub_lane):
+                        _rr = call(_rsub, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
+                                   schema=schema, timeout_s=timeout_s, no_metered_fallback=True)
                 finally:
                     _sub_guard.on = False
                 if not _rr.get("error"):
@@ -2224,7 +2262,8 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         # thread-local context; ALSO stamp the returned dict so a FAILED fallback (recorded later in the outer call) and
         # any consumer reading the result carry the same fact. A plain fact (the lane name), never a judgement about why.
         from . import calls as _calls_ff
-        with _calls_ff.fell_from_context(lane_name):
+        with _calls_ff.fell_from_context(lane_name), _calls_ff.redirect_context(
+                model, "lane-unavailable: metered fallback", "api"):
             out = _call_once(_fb_model, prompt, max_tokens=max_tokens, system=system, reasoning=_fb_reasoning,
                              schema=schema, timeout_s=timeout_s, _skip_lane=True, _no_sub=_no_sub, _internal_pin=_internal_pin)
         out = out if isinstance(out, dict) else {"error": "metered fallback returned no result dict", "cost": None}
@@ -2372,7 +2411,10 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                             _actx.set_context(intent=_apctx.get("intent"), chain=_apctx.get("chain"),
                                               who=_apctx.get("who") or _acaller,
                                               call_class=_apctx.get("call_class"),
-                                              origin_session=_apctx.get("origin_session"))
+                                              origin_session=_apctx.get("origin_session"),
+                                              requested_model=_apctx.get("requested_model"),
+                                              redirect_reason=_apctx.get("redirect_reason"),
+                                              resolved_lane=_apctx.get("resolved_lane"))
                         except Exception:
                             pass
                         try:
@@ -2530,23 +2572,26 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                                   file=_sA.stderr)
                         except Exception:
                             pass
-                    # GUARDRAIL A is literally HONOR **OR REFUSE**. If the pin could not be honored AND the CALLER PINNED
-                    # the model (no_substitution), there is no honoring model to route to — so REFUSE rather than let it
-                    # overspend silently (the warn above is the record; this is the stop). OUTSIDE the try above so this
-                    # deliberate stop is never swallowed by that fail-open handler. A SUBSTITUTABLE call never reaches this
-                    # (it is routed to an effort-honoring model upstream by best-value); only a CALLER-pinned call is refused.
-                    # `_internal_pin` EXEMPTS a pin spendguard set INTERNALLY for model-CONFINEMENT (a bulk_delegate fan, or
-                    # tier=/lanes= confinement) rather than the caller insisting on this exact model+effort: that is a routing
-                    # detail, not an effort insistence, so it FLOORS the effort (like the un-pinned path) instead of refusing —
-                    # keeping effort PATH-INDEPENDENT (guardrail B: the fan must send the SAME wire effort as plain/governed).
-                    # A direct no_substitution / metered_only / measurement is a CALLER pin (_internal_pin stays False) → refuse.
+                    # GUARDRAIL A — HONOR OR AUTOTRANSLATE, NEVER SILENTLY DROP AN EFFORT PIN, NEVER CRASH THE CALL.
+                    # 'minimal' is ALREADY remapped above to this model's floor (_eff) and applied to the wire. When the
+                    # model still REASONS at that floor the pin buys no saving — so the mismatch is RECORDED loudly
+                    # (note_unhonored_effort above + this notice + the ledger's real-effort row + guardrail-D's dollar
+                    # cap). THAT recording — not a refusal — is the doctrine's "never silent" requirement
+                    # (docs/GUARDRAILS_reasoning_overspend.md §A). spendguard AUTOTRANSLATES the requested effort to what
+                    # the model can express and PROCEEDS: refusing a caller's MODEL confinement over an effort the model
+                    # simply cannot represent is user-hostile — the old raise crashed EVERY commit's precommit review
+                    # while a plan was on overage (advisor_model → gpt-5.6-sol, which floors 'minimal'). A caller that
+                    # needs EXACT effort (a measurement) reads the recorded requested!=applied and discards; the default
+                    # is to translate and proceed. `_internal_pin` (fan/tier confinement) floored here already; a direct
+                    # no_substitution / metered_only now floors the SAME way, keeping effort PATH-INDEPENDENT.
                     if _eff_unhonored and _no_sub and not _internal_pin:
-                        from .gate import EffortNotHonored
-                        raise EffortNotHonored(
-                            "reasoning='minimal' cannot be honored by %s (floors to %r, which still reasons) and the call "
-                            "pinned the model (no_substitution) — refusing rather than overspend silently. Unpin the model "
-                            "(drop no_substitution, or use reasoning='best-value') to route to an effort-honoring model, or "
-                            "pin the floor value %r explicitly to accept it." % (raw, _eff, _eff))
+                        try:
+                            import sys as _sT
+                            print("[spendguard] reasoning=%r is not expressible by %s (floored to %r, which still reasons) "
+                                  "— AUTOTRANSLATED to the floor and proceeding; the applied effort is recorded, not silent."
+                                  % (reasoning, raw, _eff), file=_sT.stderr)
+                        except Exception:
+                            pass
             try:
                 from . import models as _mf
                 _mf.apply_call_params(raw, okw, dialect="openai")
@@ -2584,7 +2629,10 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                         _octx.set_context(intent=_opctx.get("intent"), chain=_opctx.get("chain"),
                                           who=_opctx.get("who") or _ocaller,
                                           call_class=_opctx.get("call_class"),
-                                          origin_session=_opctx.get("origin_session"))
+                                          origin_session=_opctx.get("origin_session"),
+                                          requested_model=_opctx.get("requested_model"),
+                                          redirect_reason=_opctx.get("redirect_reason"),
+                                          resolved_lane=_opctx.get("resolved_lane"))
                     except Exception:
                         pass
                     try:
@@ -3022,7 +3070,11 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
                   f"(recorded as {_sub}{'; prompt adapted' if _adapt is not None else ''})", file=_sys.stderr)
             _sub_guard.on = True                   # one hop: the substitute must not itself substitute (proactive OR reactive)
             try:
-                r = _call_guarded(_sub, prompt, max_tokens=max_tokens, sig=sig, retries=retries, _no_sub=True, **_subkw)
+                from . import calls as _redirect_calls
+                _sub_lane = _LANES.get(provider_for(_sub), (None,))[0]
+                with _redirect_calls.redirect_context(model, "load-balance: " + str(_why), _sub_lane):
+                    r = _call_guarded(_sub, prompt, max_tokens=max_tokens, sig=sig, retries=retries,
+                                      _no_sub=True, **_subkw)
             except Exception as _se:               # a substitute that RAISES (transport/etc.) must not sink the call —
                 from . import gate as _gsub
                 if _gsub.is_deliberate_stop(_se):  # …but a SpendGateRefused / deadline / containment HALTS: it is NEVER

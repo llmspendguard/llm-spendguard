@@ -2656,6 +2656,14 @@ def _cli(cmd="status", live=False):
                     print("  " + _nudge)
             except Exception:
                 pass
+            try:
+                from . import plan_admission as _plan_admit
+                for _risk in _plan_admit.risks():
+                    if _risk.get("at_risk"):
+                        _why = "PAID OVERAGE" if _risk.get("paid_overage") else f"{_risk.get('remaining_pct')}% left"
+                        print(f"  plan axis : 🔴 {_risk['lane']} {_why} — labelled discretionary calls reroute or REFUSE")
+            except Exception:
+                print("  plan axis : ⚪ UNKNOWN — admission risk state could not be read")
             try:                                          # BULK-LANE SURFACE: an estate can migrate its bulk onto
                 from . import tier_config                 # bulk_delegate, pass every check, and STILL route 100% to
                 _tc = tier_config.tier_config_report()    # the metered API if advisor.tiers is unset — inert while the

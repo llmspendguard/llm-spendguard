@@ -4,6 +4,40 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.12.13] — 2026-10-07
+
+### Added
+- **Plan-axis admission — a $0 subscription call is now governable.** Billed-$ caps (`caps.intent_caps`,
+  `caps.llm.daily`, caller `*_SESSION_USD`) are structurally blind to plan burn because a plan-lane call books $0, so
+  a capped plan could drain unchecked (measured: 139 `claude-code` calls / 12.3M input tok / `$0.0000`, `deferred:
+  0`). New `plan_admission.decide()` governs plan burn in its OWN axis (plan quota / paid-overage), NOT dollars: a
+  labelled, UNPINNED `adapters.call` whose plan lane is capped or on paid overage is redirected to a pre-confirmed
+  READY substitute lane, or REFUSED (`PlanAdmissionRefused`) when none is ready — never failing open onto the
+  exhausted plan. Caller pins (`no_substitution` / `metered_only` / `measurement`) bypass admission entirely — the
+  hard substitution contract is unchanged. Threshold is config (`plan_admission.remaining_pct` /
+  `SPENDGUARD_PLAN_ADMISSION_REMAINING_PCT`). `spendguard doctor` and `receipt` surface the plan axis as a
+  first-class risk line, kept separate from billed dollars.
+
+### Fixed
+- **A redirected call now records WHY.** Lane/model redirects wrote `fell_from=NULL`, `retry_of=NULL` and were
+  indistinguishable from a genuine request for the served model — the reason a 48h substitution drift was invisible.
+  The calls ledger gains `requested_model` / `served_model` / `resolved_lane` / `redirect_reason` (additive columns,
+  not overloading `fell_from`), populated for bandit / load-balance / fallback-ladder / lane-unavailable / tier-
+  mapping / plan-admission redirects. Caller attribution now walks PAST the worker-thread trampoline
+  (`thread.py`/`threading.py`/`concurrent.futures`) to the real originating frame, so a burst is attributable to the
+  code that caused it rather than `thread.py:run`. Guard: `tests/test_plan_admission_and_redirect_provenance.py`.
+- **Codex lane auth uses the token's own exp as authoritative** (carried from `55b8459`): a non-zero `codex login
+  status` while the on-disk token is unexpired is a transient (a status subprocess racing a token refresh), not a
+  logout, so it no longer fires a false "re-login" banner on a valid token.
+- **An un-honorable effort pin AUTOTRANSLATES instead of crashing the call.** Guardrail A used to `raise
+  EffortNotHonored` when a caller pinned a model (`no_substitution`) that cannot express the requested `reasoning`
+  (e.g. `minimal` on a model whose floor is `none`). That refusal crashed every commit's honestreview precommit
+  review once a plan hit paid overage and `advisor_model` resolved to such a model. spendguard now floors the effort
+  to the model's supported value, records the mismatch loudly (`note_unhonored_effort` + the ledger's real-effort
+  row + guardrail-D's dollar cap — the doctrine's "never silent" requirement), and PROCEEDS. A measurement that needs
+  exact effort reads requested!=applied and discards. Internal confinement pins already floored; a direct
+  `no_substitution`/`metered_only` now floors the same way (path-independent).
+
 ## [0.12.12] — 2026-10-07
 
 ### Fixed

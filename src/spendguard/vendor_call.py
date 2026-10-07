@@ -532,15 +532,22 @@ def _attempt(vendor, model, prompt, system, max_tokens, budget_s, schema=None, r
     try:
         from . import calls as _c
         _parent_ctx = dict(_c.current() or {})
+        _parent_caller = _parent_ctx.get("who") or _c.caller()
     except Exception:
         _parent_ctx = {}
+        _parent_caller = None
 
     def _run():
-        if _parent_ctx:
+        if _parent_ctx or _parent_caller:
             try:
                 from . import calls as _c2
                 _c2.set_context(intent=_parent_ctx.get("intent"), chain=_parent_ctx.get("chain"),
-                                root_call=_parent_ctx.get("root_call"), attempt=_parent_ctx.get("attempt"))
+                                who=_parent_caller, root_call=_parent_ctx.get("root_call"),
+                                attempt=_parent_ctx.get("attempt"), call_class=_parent_ctx.get("call_class"),
+                                origin_session=_parent_ctx.get("origin_session"),
+                                requested_model=_parent_ctx.get("requested_model"),
+                                redirect_reason=_parent_ctx.get("redirect_reason"),
+                                resolved_lane=_parent_ctx.get("resolved_lane"))
             except Exception:
                 pass
         try:

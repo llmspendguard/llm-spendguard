@@ -659,6 +659,14 @@ def _tally_lines(t: dict) -> list:
     seg = _lane_seg(t)
     if seg:                                        # WHICH plan served spendguard's own work — the inline lane visibility
         lines.append(f":: lanes serving your work (mo): {seg}  ($0 billed — a plan served these, not the metered API)")
+    try:
+        from . import plan_admission
+        risky = [r for r in plan_admission.risks() if r.get("at_risk")]
+        for r in risky:
+            why = "PAID OVERAGE" if r.get("paid_overage") else f"{r.get('remaining_pct')}% remaining"
+            lines.append(f":: PLAN RISK 🔴 {r['lane']} {why} — discretionary calls reroute or refuse")
+    except Exception:
+        lines.append(":: PLAN RISK ⚪ UNKNOWN — admission state unavailable")
     gb = _gate_blocks_line()
     if gb:
         lines.append(gb)
