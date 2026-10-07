@@ -29,7 +29,7 @@ seen = {}
 ANSWER = "META JUDGMENT: keep"
 
 
-def fake_run(cmd, capture_output=None, text=None, timeout=None, env=None):
+def fake_run(cmd, capture_output=None, text=None, timeout=None, env=None, stdin=None, cwd=None):
     seen["cmd"], seen["env"] = cmd, env
     out_file = cmd[cmd.index("--output-last-message") + 1]
     open(out_file, "w").write(ANSWER)
@@ -61,7 +61,7 @@ ck("usage extracted by field name, max over events", r["in_tok"] == 850 and r["o
 ck("tmp last-message file cleaned up", not os.path.exists(seen["cmd"][seen["cmd"].index("--output-last-message") + 1]))
 
 print("-- agentic delegation explicitly opts into a writable sandbox; default remains read-only --")
-ce.run_prompt("edit and test", sandbox="workspace-write")
+ce.run_prompt("edit and test", sandbox="workspace-write", cwd=os.path.dirname(__file__))
 ck("workspace-write uses --approve-for-me alone (it implies the writable sandbox; codex forbids combining it with -s)",
    "--approve-for-me" in seen["cmd"] and "-s" not in seen["cmd"])
 ce.run_prompt("read only")

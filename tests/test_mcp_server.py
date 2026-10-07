@@ -87,7 +87,7 @@ ck("delegate MCP tool is advertised", "spendguard_delegate" in names)
 ck("delegate dry-run returns the structured plan", delegated["status"] == "estimate")
 ck("delegate dry-run defaults execute to false and forwards CLI-shaped arguments",
    _delegate_calls == [("fix the parser", {"files": ["src/parser.py"], "intent": None,
-                                             "provider": "auto", "execute": False})])
+                                             "provider": "auto", "execute": False, "cwd": None})])
 
 print("-- tools/call spendguard_advise: real ranking, agreeing with advise.ranked --")
 ca = rpc("tools/call", {"name": "spendguard_advise", "arguments": {"intent": "loinc-typing"}})["result"]

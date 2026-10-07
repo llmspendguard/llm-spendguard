@@ -126,7 +126,8 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
         #                                                        meta prompt needs no repo, and a throwaway dir keeps an
         #                                                        agentic step from ever touching the caller's working tree
         try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env, cwd=tmpdir)
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env, cwd=tmpdir,
+                               stdin=subprocess.DEVNULL)
         except subprocess.TimeoutExpired:
             return {"error": f"kimi lane timeout ({timeout}s)"}
         except Exception as e:

@@ -57,7 +57,7 @@ try:
             destination.write("cold answer")
         return type("ColdResult", (), {"returncode": 0, "stdout": "", "stderr": ""})()
     _cx.subprocess.run = _cold_ok
-    _out = _cx.run_prompt("hi", model="openai:gpt-5.5", sandbox="workspace-write")
+    _out = _cx.run_prompt("hi", model="openai:gpt-5.5", sandbox="workspace-write", cwd=os.path.dirname(__file__))
     fails += ck("workspace-write daemon exception degrades cleanly to cold exec",
                 _out.get("text") == "cold answer" and not _out.get("error"))
 finally:

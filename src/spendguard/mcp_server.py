@@ -546,7 +546,7 @@ def _tool_delegate(args):
     from . import delegate_router
     return delegate_router.delegate_task(
         args.get("task"), files=args.get("files"), intent=args.get("intent"),
-        provider=args.get("provider", "auto"), execute=bool(args.get("execute", False)))
+        provider=args.get("provider", "auto"), execute=bool(args.get("execute", False)), cwd=args.get("cwd"))
 
 
 _TOOLS = {
@@ -560,6 +560,7 @@ _TOOLS = {
                       "description": "optional supporting file paths; each is read in full"},
             "intent": {"type": "string", "description": "optional attribution/cost-control intent"},
             "provider": {"type": "string", "description": "configured plan or auto (default auto)"},
+            "cwd": {"type": "string", "description": "absolute trusted target repo path; required for execute=true agentic tasks"},
             "execute": {"type": "boolean", "description": "run hop 2; default false (dry-run)"}},
          "required": ["task"], "additionalProperties": False},
         _tool_delegate),

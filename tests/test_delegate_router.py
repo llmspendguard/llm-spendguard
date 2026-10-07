@@ -158,9 +158,10 @@ try:
     one = delegate_router.delegate_task("answer", execute=True)
     check("oneshot ran through lane", one["execution"]["text"] == "one-shot result")
     classification.update(kind="agentic", provider="codex", self_contained=True, why="self-contained repo task")
-    agent = delegate_router.delegate_task("edit and test", execute=True)
+    agent = delegate_router.delegate_task("edit and test", execute=True, cwd=os.path.dirname(__file__))
     check("agentic ran through codex", agent["execution"]["text"] == "agentic result")
     check("codex received workspace-write sandbox", codex_calls[-1][1].get("sandbox") == "workspace-write")
+    check("codex received the explicit trusted workspace", codex_calls[-1][1].get("cwd") == os.path.dirname(__file__))
     check("routing decision was recorded with delegate basis",
           decision_calls[-1].get("basis") == "delegate" and decision_calls[-1].get("why") == "self-contained repo task")
     check("avoided overage was booked in the existing savings store",

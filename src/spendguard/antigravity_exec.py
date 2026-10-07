@@ -23,7 +23,9 @@ model to an `agy` id; a plain probe (model=None) runs on agy's default and needs
 """
 import json
 import re
+import shutil
 import subprocess
+import tempfile
 import time
 
 TIMEOUT_S = 300               # meta prompts are small; a hung CLI must not stall the daily report
@@ -244,12 +246,19 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     if model:
         cmd += ["--model", model.split(":", 1)[-1]]   # forward the requested id; a bad one fails → API fallback
     t0 = time.time()
+    neutral_cwd = None
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
-    except subprocess.TimeoutExpired:
-        return {"error": f"gemini lane timeout ({timeout}s)"}
-    except Exception as e:
-        return {"error": str(e)[:200]}
+        neutral_cwd = tempfile.mkdtemp(prefix="spendguard-antigravity-")
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env,
+                               stdin=subprocess.DEVNULL, cwd=neutral_cwd)
+        except subprocess.TimeoutExpired:
+            return {"error": f"gemini lane timeout ({timeout}s)"}
+        except Exception as e:
+            return {"error": str(e)[:200]}
+    finally:
+        if neutral_cwd:
+            shutil.rmtree(neutral_cwd, ignore_errors=True)
     if r.returncode != 0:
         return _error_result(r.stderr or r.stdout or "agy exited non-zero")   # quota→a reset window rides retry_after_s
     obj = _result_obj(r.stdout)

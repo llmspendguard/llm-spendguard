@@ -208,7 +208,11 @@ def _estimate_route(task, files, classification, intent):
             "overage_basis": "ledger measured" if ratio is not None else "unavailable"}
 
 
-def _route_agentic(plan, prompt, model, timeout):
+def _route_agentic(plan, prompt, model, timeout, cwd):
+    if cwd is None:
+        return {"error": "agentic workspace-write delegation requires cwd (the explicit target repo path)"}
+    if not os.path.isabs(os.path.expanduser(os.fspath(cwd))):
+        return {"error": "agentic workspace-write delegation requires cwd to be an absolute target repo path"}
     spec = lane_registry.lane_spec(plan)
     if not spec:
         return {"error": f"unknown configured plan {plan!r}"}
@@ -218,10 +222,11 @@ def _route_agentic(plan, prompt, model, timeout):
         kwargs["timeout"] = timeout
     if spec["exec"] == "codex_exec":
         kwargs["sandbox"] = "workspace-write"
+        kwargs["cwd"] = cwd
     return module.run_prompt(prompt, **kwargs)
 
 
-def delegate_task(task, files=None, intent=None, provider="auto", execute=False, timeout=None):
+def delegate_task(task, files=None, intent=None, provider="auto", execute=False, timeout=None, cwd=None):
     """Classify, estimate, and optionally execute one delegated task. Default is zero-execution dry-run."""
     intent = intent or DEFAULT_DELEGATE_INTENT
     resolved_provider = None if provider == "auto" else _resolve_plan_name(provider)
@@ -244,6 +249,12 @@ def delegate_task(task, files=None, intent=None, provider="auto", execute=False,
     result = {"status": "estimate", "classification": classification, "estimate": estimate}
     if not execute:
         return result
+    if classification["kind"] == "agentic" and cwd is None:
+        return {**result, "status": "refused",
+                "why": "agentic workspace-write delegation requires cwd; pass the explicit target repo path"}
+    if classification["kind"] == "agentic" and not os.path.isabs(os.path.expanduser(os.fspath(cwd))):
+        return {**result, "status": "refused",
+                "why": "agentic workspace-write delegation requires cwd to be an absolute target repo path"}
     cap = config.intent_cap(intent)
     if cap is not None and estimate["real_api_usd"] > float(cap):
         return {**result, "status": "refused", "why": f"estimated real API cost exceeds intent cap for {intent}"}
@@ -251,7 +262,7 @@ def delegate_task(task, files=None, intent=None, provider="auto", execute=False,
     if classification["kind"] == "oneshot":
         execution = lane_balance.delegate(prompt, lanes=[estimate["plan"]], intent=intent)
     else:
-        execution = _route_agentic(estimate["plan"], prompt, estimate["model"], timeout)
+        execution = _route_agentic(estimate["plan"], prompt, estimate["model"], timeout, cwd)
     if execution.get("error") or not execution.get("text"):
         return {**result, "status": "error", "execution": execution}
     actual_in = int(execution.get("in_tok") or estimate["input_tokens"])
@@ -291,9 +302,12 @@ def delegate_cli(argv=None):
     parser.add_argument("--estimate", action="store_true", help="force dry-run even when --yes is also present")
     parser.add_argument("--yes", action="store_true", help="execute hop 2 after classification and estimate")
     parser.add_argument("--timeout", type=float, help="optional execution timeout in seconds")
+    parser.add_argument("--cwd", default=os.getcwd(),
+                        help="trusted target repo for agentic workspace-write tasks (default: current shell cwd)")
     args = parser.parse_args(argv)
     result = delegate_task(args.task, files=[p for p in (args.files or "").split(",") if p], intent=args.intent,
-                           provider=args.provider, execute=args.yes and not args.estimate, timeout=args.timeout)
+                           provider=args.provider, execute=args.yes and not args.estimate, timeout=args.timeout,
+                           cwd=args.cwd)
     classification = result.get("classification") or {}
     print(f"classification: {classification.get('kind', 'error')}"
           f"{(' → ' + str(classification.get('provider'))) if classification.get('provider') else ''}"

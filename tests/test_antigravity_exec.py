@@ -32,7 +32,7 @@ RESULT = {"conversation_id": "c1", "status": "SUCCESS", "response": "OK\n", "dur
                                     "cache_read_tokens": 0, "total_tokens": 895}}
 
 
-def fake_run(cmd, capture_output=None, text=None, timeout=None, env=None):
+def fake_run(cmd, capture_output=None, text=None, timeout=None, env=None, stdin=None, cwd=None):
     seen["cmd"], seen["env"] = cmd, env
     return types.SimpleNamespace(returncode=0, stdout=json.dumps(RESULT), stderr="")
 

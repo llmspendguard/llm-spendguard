@@ -27,6 +27,7 @@ Doctrine note: prompt-mode ONLY, same as the claude-code lane — no tools, no a
 """
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import time
@@ -271,7 +272,7 @@ def usage():
 
 
 def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=None, max_tokens=None,
-               sandbox="read-only"):   # max_tokens: protocol-uniform; codex exec has no one-shot output-cap flag
+               sandbox="read-only", cwd=None):   # max_tokens: protocol-uniform; codex exec has no one-shot output-cap flag
     """→ {text, in_tok, out_tok, latency, error} from one headless plan-billed Codex run. `system` is
     prepended to the prompt (codex exec has no separate system slot for one-shot prompt mode). `model` IS
     forwarded to `codex -m` when given (e.g. gpt-5.5), so the recorded model is the one that actually ran —
@@ -284,6 +285,25 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     task may pass workspace-write. Any other value is refused before the CLI is touched."""
     if sandbox not in ("read-only", "workspace-write"):
         return {"error": f"unsupported codex sandbox {sandbox!r}"}
+    if sandbox == "workspace-write" and cwd is None:
+        return {"error": "workspace-write codex execution requires an explicit trusted cwd (target repo path)"}
+    neutral_cwd = None
+    try:
+        if sandbox == "read-only":
+            neutral_cwd = tempfile.mkdtemp(prefix="spendguard-codex-")
+            resolved_cwd = neutral_cwd
+        else:
+            resolved_cwd = os.path.abspath(os.path.expanduser(os.fspath(cwd)))
+        return _run_prompt_in_cwd(prompt, system=system, model=model, timeout=timeout, reasoning=reasoning,
+                                  max_tokens=max_tokens, sandbox=sandbox, cwd=resolved_cwd)
+    finally:
+        if neutral_cwd:
+            shutil.rmtree(neutral_cwd, ignore_errors=True)
+
+
+def _run_prompt_in_cwd(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=None, max_tokens=None,
+                       sandbox="read-only", cwd=None):
+    """Execute after ``run_prompt`` has resolved and, when needed, owned the task working directory."""
     _eff = _codex_effort(reasoning)   # the effort ACTUALLY applied on this lane (Codex's own scale: 'minimal'→'none').
     #                                   Reported on the result so the ledger records what RAN, not the requested tier —
     #                                   letting a caller VERIFY the lane matched its metered fallback's applied reasoning.
@@ -296,7 +316,7 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
         _full = (f"{system.strip()}\n\n{prompt}" if system else prompt)
         _t0 = time.time()
         try:
-            _r = codex_daemon.run_warm(_full, model=model, reasoning=reasoning, sandbox=sandbox, cwd=os.getcwd())
+            _r = codex_daemon.run_warm(_full, model=model, reasoning=reasoning, sandbox=sandbox, cwd=cwd)
         except Exception as _e:                        # an exception must NEVER bypass the exec/API fallback below
             _r = {"error": f"codex daemon raised: {str(_e)[:150]}"}
         if _r.get("text") and not _r.get("error"):
@@ -338,7 +358,8 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
             cmd += ["-m", model.split(":", 1)[-1]]     # forward the requested id; a bad one fails → API fallback
         cmd += ["--", full]      # `--` end-of-options: a prompt/system beginning with '-' is a positional, not a flag
         try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env,
+                               stdin=subprocess.DEVNULL, cwd=cwd)
         except subprocess.TimeoutExpired:
             return {"error": f"codex lane timeout ({timeout}s)"}
         except Exception as e:

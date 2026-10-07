@@ -31,7 +31,7 @@ KEY_ENV = "ANTHROPIC" + "_API_KEY"                     # the env var the child m
 seen = {}
 
 
-def fake_run(cmd, capture_output=None, text=None, timeout=None, env=None):
+def fake_run(cmd, capture_output=None, text=None, timeout=None, env=None, stdin=None, cwd=None):
     seen["cmd"], seen["env"] = cmd, env
     out = json.dumps({"type": "result", "is_error": False, "result": "SYNTHESIZED INSIGHT",
                       "usage": {"input_tokens": 900, "output_tokens": 120}})

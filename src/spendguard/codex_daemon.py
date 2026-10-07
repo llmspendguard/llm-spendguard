@@ -293,7 +293,7 @@ class _CodexDaemon:
                 def remaining_timeout(call_deadline=deadline):
                     return max(0.0, call_deadline - time.monotonic())
 
-                task_cwd = os.path.abspath(cwd or os.getcwd())
+                task_cwd = os.path.abspath(cwd or _SAFE_CWD)
                 bare_model = model.split(":", 1)[-1] if model else None
                 approval_policy = "never"
                 if thread:

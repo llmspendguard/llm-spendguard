@@ -19,7 +19,9 @@ Doctrine note: prompt-mode ONLY. The meta tasks keep meaningâ†’LLM / mechanicsâ†
 code reads the corpus and writes the sqlite; this executor never gets tool access to do so itself.
 """
 import json
+import shutil
 import subprocess
+import tempfile
 import time
 
 TIMEOUT_S = 300               # meta prompts are small; a hung CLI must not stall the daily report
@@ -167,12 +169,19 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     #                                   ANTHROPIC key (that would bill Claude for "$0 plan" work), nor carry another
     #                                   provider's key. (config.lane_plan_env centralizes what _PLAN_STRIP_ENV did.)
     t0 = time.time()
+    neutral_cwd = None
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
-    except subprocess.TimeoutExpired:
-        return {"error": f"subscription executor timeout ({timeout}s)"}
-    except Exception as e:
-        return {"error": str(e)[:200]}
+        neutral_cwd = tempfile.mkdtemp(prefix="spendguard-subscription-")
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env,
+                               stdin=subprocess.DEVNULL, cwd=neutral_cwd)
+        except subprocess.TimeoutExpired:
+            return {"error": f"subscription executor timeout ({timeout}s)"}
+        except Exception as e:
+            return {"error": str(e)[:200]}
+    finally:
+        if neutral_cwd:
+            shutil.rmtree(neutral_cwd, ignore_errors=True)
     if r.returncode != 0:
         return {"error": (r.stderr or r.stdout or "claude exited non-zero").strip()[:200]}
     try:
