@@ -208,6 +208,62 @@ def _estimate_route(task, files, classification, intent):
             "overage_basis": "ledger measured" if ratio is not None else "unavailable"}
 
 
+# AUTHOR-IN-WORKTREE contract, baked into the delegate prompt so callers stop re-phrasing it and the provider's
+# sandboxed agent stops BAILING on constraints it keeps hitting (measured: codex's sandbox cannot push and sometimes
+# cannot even `git commit` — index.lock — and it refuses when told to use host-only hook-enabled Write/Edit tools).
+# The contract: the delegated agent only WRITES FILES in cwd; the AUTHED CALLER owns all of git. Advisory (a prompt
+# instruction, not a sandbox boundary) — but the caller owns git regardless, and the returned changed-file set
+# captures the edits either way, so a model that ignores it cannot break the caller's commit flow.
+_WORKTREE_AUTHOR_CONSTRAINTS = (
+    "\n\n---\nEXECUTION CONSTRAINTS (your sandbox):\n"
+    "- Write source by EDITING FILES DIRECTLY in the working directory. Do NOT use shell heredocs/redirects/tee to write files.\n"
+    "- Do NOT run git (no add/commit/push), do NOT open a PR, do NOT touch the git index. The HOST owns version control and\n"
+    "  will stage, commit and push your file changes through its own commit gate after reviewing them.\n"
+    "- Host write-time hooks (honestreview and similar) are NOT available in your sandbox and are NOT required — the host\n"
+    "  reviews your changes via its commit gate. Do NOT bail or refuse for lack of hook-enabled tools; just edit the files.\n"
+    "- Make ONLY the file changes the task requires, confined to this working directory.\n"
+)
+
+
+def _worktree_state(cwd):
+    """(head_sha, {dirty-or-untracked paths}) for the git worktree at `cwd`, captured BEFORE a delegation so the
+    changed-file set after can attribute ONLY the agent's edits (subtracting pre-existing dirt). (None, set()) when
+    cwd is not a git worktree or git is unavailable — the caller then gets changed_files=None, never a wrong set.
+    $0, read-only; never raises."""
+    import subprocess
+
+    def _git(*a):
+        return subprocess.run(["git", "-C", str(cwd), *a], capture_output=True, text=True, timeout=30)
+
+    try:
+        head = _git("rev-parse", "HEAD")
+        status = _git("status", "--porcelain")
+        if status.returncode != 0:
+            return None, set()
+        dirty = set()
+        for line in status.stdout.splitlines():
+            if len(line) < 4:
+                continue
+            path = line[3:]
+            if " -> " in path:                            # a rename reports "old -> new"; attribute the new path
+                path = path.split(" -> ", 1)[1]
+            dirty.add(path)
+        return (head.stdout.strip() if head.returncode == 0 else None), dirty
+    except Exception:
+        return None, set()
+
+
+def _worktree_changed_files(cwd, before_dirty):
+    """The paths the delegation CHANGED in `cwd`: the worktree's dirty/untracked set now, minus the set captured
+    before the run (so pre-existing local edits are never mis-attributed to the agent). None when cwd is not a git
+    worktree. A file that was ALREADY dirty and then further edited is not re-reported — an under-attribution the
+    caller sees in its own `git status`, never an over-claim. $0, read-only."""
+    head_after, after_dirty = _worktree_state(cwd)
+    if head_after is None and not after_dirty:
+        return None
+    return sorted(p for p in after_dirty if p not in before_dirty)
+
+
 def _route_agentic(plan, prompt, model, timeout, cwd):
     if cwd is None:
         return {"error": "agentic workspace-write delegation requires cwd (the explicit target repo path)"}
@@ -223,6 +279,7 @@ def _route_agentic(plan, prompt, model, timeout, cwd):
     if spec["exec"] == "codex_exec":
         kwargs["sandbox"] = "workspace-write"
         kwargs["cwd"] = cwd
+        prompt = prompt + _WORKTREE_AUTHOR_CONSTRAINTS    # bake the sandbox/git/hook contract into what codex actually receives
     return module.run_prompt(prompt, **kwargs)
 
 
@@ -259,10 +316,13 @@ def delegate_task(task, files=None, intent=None, provider="auto", execute=False,
     if cap is not None and estimate["real_api_usd"] > float(cap):
         return {**result, "status": "refused", "why": f"estimated real API cost exceeds intent cap for {intent}"}
     prompt = task + _whole_file_evidence(files)
+    changed_files = None
     if classification["kind"] == "oneshot":
         execution = lane_balance.delegate(prompt, lanes=[estimate["plan"]], intent=intent)
     else:
+        _dirty_before = _worktree_state(cwd)[1]            # pre-existing dirt, so changed_files is ONLY the agent's edits
         execution = _route_agentic(estimate["plan"], prompt, estimate["model"], timeout, cwd)
+        changed_files = _worktree_changed_files(cwd, _dirty_before)   # the authed caller stages THESE → commit → push → PR
     if execution.get("error") or not execution.get("text"):
         return {**result, "status": "error", "execution": execution}
     actual_in = int(execution.get("in_tok") or estimate["input_tokens"])
@@ -278,9 +338,16 @@ def delegate_task(task, files=None, intent=None, provider="auto", execute=False,
                           saved_usd=max(0, (avoided or 0) - actual_api),
                           basis="delegate", why=classification["why"])
     guard.record_saving("delegate", max(0, (avoided or 0) - actual_api))
+    # est-value basis, labelled HONESTLY (CHANGE 1): a oneshot rides the lane with measured tokens; an agentic codex
+    # turn on the warm daemon returns ESTIMATED tokens (the app-server does not report usage), so its est-value is a
+    # token estimate, not plan truth — the authoritative plan value is reconciled daily by codex.py (`spendguard codex
+    # sync` mines ~/.codex/sessions). Never presented as measured when it is estimated.
+    est_value_basis = ("lane-measured tokens" if classification["kind"] == "oneshot"
+                       else "token estimate (warm daemon); reconcile plan value via `spendguard codex sync`")
     receipt = {"plan": estimate["plan"], "model": estimate["model"], "real_api_usd": actual_api,
-               "est_value_usd": actual_value, "saved_overage_usd": avoided}
-    return {**result, "status": "executed", "execution": execution, "receipt": receipt}
+               "est_value_usd": actual_value, "saved_overage_usd": avoided, "est_value_basis": est_value_basis}
+    return {**result, "status": "executed", "execution": execution,
+            "receipt": receipt, "changed_files": changed_files}
 
 
 def delegate_cli(argv=None):
