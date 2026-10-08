@@ -2649,6 +2649,19 @@ def _cli(cmd="status", live=False):
                     print("  " + _ln)
             except Exception:
                 pass
+            try:                                          # CONFIG HYGIENE: a configured lane/tier/advisor model that is
+                from . import model_preflight as _mpf     # UNPRICED or unserved silently bleeds UNPRICED spend (codex.
+                #                                            strong=gpt-6-sol did exactly this) — surface it EVERY doctor.
+                _pf = _mpf.preflight_models(_mpf.configured_specs(), correct=False)   # $0: cached served+pricing, no agentic call
+                _bad = [r for r in _pf if not r["usable"]]
+                if _bad:
+                    print(f"  model ids : 🔴 {len(_bad)} configured id(s) NOT callable as written — fix before they bleed UNPRICED:")
+                    for _r in _bad[:6]:
+                        print(f"              {_r['spec']}: {_r['note']}")
+                else:
+                    print(f"  model ids : 🟢 all {len(_pf)} configured ids served (or unchecked) + priced")
+            except Exception:
+                print("  model ids : ⚪ UNKNOWN — configured-model preflight could not run")
             try:                                          # OVERAGE NUDGE: when a plan lane is at/below its warn
                 from . import lanes as _lanes_nudge       # level, steer batchable comprehension onto the OTHER
                 _nudge = _lanes_nudge.overage_nudge_line(do_fetch=False)   # $0 lanes (cached read — no CLI here)
