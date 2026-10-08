@@ -328,10 +328,17 @@ def main(argv=None):
     ap.add_argument("--requirement-aware", action="store_true",
                     help="judge each output against the PROMPT'S OWN requirements, two-tier (screen -> opus adjudicator)")
     ap.add_argument("--adjudicator", help="opus-tier adjudicator model for --requirement-aware (default config.advisor_adjudicator_model)")
+    ap.add_argument("--temperature", type=float, help="DETERMINISM: run each arm as a measurement at this temperature "
+                    "(e.g. 0) — one deterministic pass per arm instead of n replicates. FORCES the metered API (a $0 "
+                    "lane has no temperature channel). Omit to run at production settings on the $0 lane.")
+    ap.add_argument("--top-p", type=float, dest="top_p", help="DETERMINISM: nucleus top_p for the measurement (metered).")
+    ap.add_argument("--seed", type=int, help="DETERMINISM: sampling seed for the measurement (OpenAI-only; dropped on "
+                    "vendors without a seed param, recorded in gen_params_dropped).")
     a = ap.parse_args(argv)
     r = bakeoff(a.intent, candidates=[c for c in a.candidates.split(",") if c.strip()],
                 sample_n=a.sample, run=a.run, budget_usd=a.budget,
                 efforts=[e for e in (a.efforts or "").split(",") if e.strip()] or None,
-                requirement_aware=a.requirement_aware, adjudicator_model=a.adjudicator)
+                requirement_aware=a.requirement_aware, adjudicator_model=a.adjudicator,
+                temperature=a.temperature, top_p=a.top_p, seed=a.seed)
     print(json.dumps(r, indent=1, default=str))
     return 0 if not r.get("error") else 1
