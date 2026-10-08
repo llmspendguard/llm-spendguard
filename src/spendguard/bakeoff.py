@@ -159,7 +159,8 @@ def _plan(intent, candidates, prompts, judge_model, efforts, requirement_aware=F
 
 
 def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget_usd=None,
-            judge_model=None, parent_reading=None, efforts=None, requirement_aware=False, adjudicator_model=None):
+            judge_model=None, parent_reading=None, efforts=None, requirement_aware=False, adjudicator_model=None,
+            temperature=None, top_p=None, seed=None):
     """Measure cost×quality for `candidates` on a SAMPLE of `intent`'s real tasks, judge each output, and (run=True)
     record it so advise/recommend rank the candidates. `candidates` = ['vendor:model', …] (required — the slate to
     test). `prompts` overrides the auto-sample (from the intent's recorded prompts). ESTIMATE-FIRST: run=False
@@ -222,28 +223,46 @@ def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget
                 # that feeds advise/recommend). Still $0 on c's OWN lane where available (pinning suppresses
                 # cross-model substitution, not same-provider lane use). images= is passed ONLY for a vision task,
                 # so a text run is byte-for-byte the prior call (a vision call skips the lane by construction).
+                # DETERMINISM (optional): when the caller passes temperature/top_p/seed, run each arm as a MEASUREMENT
+                # with those knobs — one deterministic pass per arm instead of n replicates to separate the effect from
+                # run noise. This FORCES the metered API (a $0 lane has no knob channel), so it is opt-in per the caller.
+                # Unset (the default) → arms stay on their $0 lane where available (the production-settings behaviour).
+                _det = {k: v for k, v in (("temperature", temperature), ("top_p", top_p), ("seed", seed)) if v is not None}
                 r = adapters.call(c, txt, sig=intent, timeout_s=120, reasoning=eff, no_substitution=True,
+                                  **({"measurement": True} if _det else {}), **_det,
                                   **({"images": imgs} if imgs else {}))
                 if r.get("error"):
                     n_err += 1                                      # a dropped run is COUNTED + surfaced, never silent —
                     last_error = (r.get("error") or "")[:140]      # a candidate/effort that fails every prompt is visible,
                     continue                                       # not read as a clean zero-run bakeoff
+                if not (r.get("text") or "").strip():              # a SUCCESSFUL call that produced NO usable text is a
+                    n_err += 1                                      # FAILED arm, not a clean run — count + skip, never hand
+                    last_error = "empty reply (no text)"           # an empty output to the judge as if it were an answer
+                    continue
                 n_run += 1
                 cost = float(r.get("cost") or 0.0)
                 spent += cost
-                if requirement_aware:                               # judge by the PROMPT'S OWN requirements, two-tier (screen→opus)
-                    from . import requirement_judge
-                    _v = requirement_judge.judge_requirements(txt, r.get("text"), screen_model=judge_model,
-                                                              adjudicator_model=adjudicator_model,
-                                                              **({"images": imgs} if imgs else {}))
-                    verdict = _v.get("good")                        # same True/False/None contract as _judge_one
-                    spent += float(_v.get("cost") or 0.0)          # the judge's own meta-cost, folded into the arm's spend
-                    for _rq in (_v.get("requirements") or []):     # collect the applied rubric (deduped) for the receipt
-                        if _rq not in req_seen:
-                            req_seen.append(_rq)
-                else:
-                    verdict = _judge_one(txt, r.get("text"), judge_model,
-                                         **({"images": imgs} if imgs else {}))  # generic LLM judge — the quality signal
+                # THE JUDGE MUST NOT ABORT THE SLATE. A judge that RAISES (an unparseable verdict, a transport error, a
+                # requirement_judge exception) would otherwise crash the whole bakeoff mid-loop and discard every arm
+                # already measured. Contain it: the run is counted as UNLABELED (verdict=None), the error is surfaced in
+                # last_error, and the loop continues — the same counted-and-skipped discipline a failed ARM gets.
+                try:
+                    if requirement_aware:                           # judge by the PROMPT'S OWN requirements, two-tier (screen→opus)
+                        from . import requirement_judge
+                        _v = requirement_judge.judge_requirements(txt, r.get("text"), screen_model=judge_model,
+                                                                  adjudicator_model=adjudicator_model,
+                                                                  **({"images": imgs} if imgs else {}))
+                        verdict = _v.get("good")                    # same True/False/None contract as _judge_one
+                        spent += float(_v.get("cost") or 0.0)      # the judge's own meta-cost, folded into the arm's spend
+                        for _rq in (_v.get("requirements") or []): # collect the applied rubric (deduped) for the receipt
+                            if _rq not in req_seen:
+                                req_seen.append(_rq)
+                    else:
+                        verdict = _judge_one(txt, r.get("text"), judge_model,
+                                             **({"images": imgs} if imgs else {}))  # generic LLM judge — the quality signal
+                except Exception as _je:
+                    verdict = None                                  # UNLABELED, not a crash — the arm's output still counts as a run
+                    last_error = f"judge error: {type(_je).__name__}: {str(_je)[:100]}"
                 q = None if verdict is None else ("good" if verdict else "bad")
                 if q is not None:
                     n_lab += 1
@@ -321,10 +340,17 @@ def main(argv=None):
     ap.add_argument("--requirement-aware", action="store_true",
                     help="judge each output against the PROMPT'S OWN requirements, two-tier (screen -> opus adjudicator)")
     ap.add_argument("--adjudicator", help="opus-tier adjudicator model for --requirement-aware (default config.advisor_adjudicator_model)")
+    ap.add_argument("--temperature", type=float, help="DETERMINISM: run each arm as a measurement at this temperature "
+                    "(e.g. 0) — one deterministic pass per arm instead of n replicates. FORCES the metered API (a $0 "
+                    "lane has no temperature channel). Omit to run at production settings on the $0 lane.")
+    ap.add_argument("--top-p", type=float, dest="top_p", help="DETERMINISM: nucleus top_p for the measurement (metered).")
+    ap.add_argument("--seed", type=int, help="DETERMINISM: sampling seed for the measurement (OpenAI-only; dropped on "
+                    "vendors without a seed param, recorded in gen_params_dropped).")
     a = ap.parse_args(argv)
     r = bakeoff(a.intent, candidates=[c for c in a.candidates.split(",") if c.strip()],
                 sample_n=a.sample, run=a.run, budget_usd=a.budget,
                 efforts=[e for e in (a.efforts or "").split(",") if e.strip()] or None,
-                requirement_aware=a.requirement_aware, adjudicator_model=a.adjudicator)
+                requirement_aware=a.requirement_aware, adjudicator_model=a.adjudicator,
+                temperature=a.temperature, top_p=a.top_p, seed=a.seed)
     print(json.dumps(r, indent=1, default=str))
     return 0 if not r.get("error") else 1

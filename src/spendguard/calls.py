@@ -53,10 +53,20 @@ def set_context(intent: Optional[str] = None, chain: Optional[str] = None, who: 
                 fell_from: Optional[str] = None, batch_expected_out: Optional[int] = None,
                 call_class: Optional[str] = None, origin_session: Optional[str] = None,
                 defer_batch_booking: Optional[bool] = None, requested_model: Optional[str] = None,
-                redirect_reason: Optional[str] = None, resolved_lane: Optional[str] = None) -> None:
+                redirect_reason: Optional[str] = None, resolved_lane: Optional[str] = None,
+                measurement: Optional[bool] = None, gen_params: Optional[dict] = None) -> None:
     c = dict(current())
     if intent is not None:
         c["intent"] = intent
+    if measurement is not None:
+        # a MEASUREMENT call (a bakeoff / priced A/B) — carried so gate._record_rt records an EXPLICIT effort
+        # sentinel instead of an ambiguous NULL when the model sent no reasoning_effort, so a replicate is
+        # distinguishable from an effort change in the calls corpus.
+        c["measurement"] = bool(measurement)
+    if gen_params is not None:
+        # SCOPED determinism knobs (temperature/top_p/seed) set by `with adapters.generation(...)` — adapters.call
+        # reads these as the default for every nested call so one scope governs a whole bakeoff / chat session.
+        c["gen_params"] = dict(gen_params)
     if batch_expected_out is not None:
         # a caller's DECLARED per-request expected output for a batch — carried to the gate's at-create estimate so the
         # provisional cost row + the global cap use the declared basis, not the ceiling (see gate._gate_anthropic).

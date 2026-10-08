@@ -857,6 +857,9 @@ _rt_lock = _threading.Lock()
 _rt_spent = 0.0          # per-process cumulative real-time $
 _rt_agg = {}             # (day, provider, model) -> [calls, cost]  pending flush
 _rt_since_flush = 0
+MEASUREMENT_EFFORT_DEFAULT = "provider-default"   # the effort sentinel recorded for a MEASUREMENT call that sent no
+#   reasoning_effort (a non-reasoning model has none) — an EXPLICIT 'ran at the provider default', never an ambiguous
+#   NULL, so a replicate is distinguishable from an effort change in the calls corpus.
 _rt_warned = False
 _rt_bypass = False        # interactive "allow rest of run's real-time calls" — bypasses ONLY the RT budget
 
@@ -1370,6 +1373,15 @@ def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, 
     # THE EFFORT TIER ACTUALLY SENT — read off the request body (a fixed field, not a judgement), so the calls
     # corpus can slice cost×quality per (intent, model, effort). None when no reasoning_effort rode the request.
     _effort = kw.get("reasoning_effort") if isinstance(kw, dict) else None
+    if _effort is None:
+        # A MEASUREMENT call that sent NO reasoning_effort (a non-reasoning model has none to send) must not record an
+        # ambiguous NULL — a replicate then can't be told from an effort change. Record the EXPLICIT sentinel: the
+        # model ran at the provider default. Only for a measurement (the context flag); production NULLs are unchanged.
+        try:
+            if (_calls.current() or {}).get("measurement"):
+                _effort = MEASUREMENT_EFFORT_DEFAULT
+        except Exception:
+            pass
     if _meta_intent():                            # meta call → meta ledger only (not workload realtime)
         from . import budget
         budget.record_meta(prov, model, cost)
@@ -1693,7 +1705,13 @@ def _autotune(kw, model):
     mode = _autotune_mode()
     if mode not in ("suggest", "apply") or kw.pop("autotune", None) is False:
         return
-    cap = kw.get("max_tokens")
+    # THE SAME PARAM-NAME AUTHORITY the primary send + batch door use: operate on WHICHEVER output-cap key the request
+    # already carries (tokens_param chose it per model family), NEVER the hardcoded `max_tokens`. Writing `max_tokens`
+    # for a family that requires `max_completion_tokens` (gpt-5.x/6 sol/luna) made the metered realtime path 400 — the
+    # exact drift the authority was unified to stop, reintroduced here. Reading the WRONG key also silently no-op'd
+    # autotune for those models. Detect the present key; if neither is set there is no caller cap to tune.
+    _tok_key = "max_completion_tokens" if "max_completion_tokens" in kw else "max_tokens"
+    cap = kw.get(_tok_key)
     if not cap or not model:
         return
     from . import bulkgate
@@ -1740,11 +1758,11 @@ def _autotune(kw, model):
             return
         key = (sig, "raise")
         if mode == "apply":
-            kw["max_tokens"] = target
+            kw[_tok_key] = target                              # the model's OWN cap key (never hardcoded max_tokens)
         if key not in _autotune_said:
             _autotune_said.add(key)
             verb = "AUTOTUNE" if mode == "apply" else "AUTOTUNE (suggest)"
-            print(f"[spend_gate] {verb} max_tokens {cap} → {target} for '{intent or model}' — this class "
+            print(f"[spend_gate] {verb} {_tok_key} {cap} → {target} for '{intent or model}' — this class "
                   f"TRUNCATED {cut}/{complete + cut} time(s); a cut-off answer is 100% waste, you were "
                   f"billed for the input and a body that does not parse"
                   + ("" if mode == "apply" else " (set gate.autotune=apply to act)"), file=sys.stderr)
@@ -1759,18 +1777,18 @@ def _autotune(kw, model):
         return
     key = (sig, mode)
     if mode == "apply":
-        kw["max_tokens"] = rec
+        kw[_tok_key] = rec                                    # the model's OWN cap key (never hardcoded max_tokens)
         _log({"kind": "autotune", "direction": "shrink", "sig": sig, "model": model,
               "intent": intent or None, "from": cap, "to": rec, "n_obs": complete, "p99": b.get("p99")})
         if key not in _autotune_said:
             _autotune_said.add(key)
-            print(f"[spend_gate] AUTOTUNE max_tokens {cap} → {rec} for '{intent or model}' "
+            print(f"[spend_gate] AUTOTUNE {_tok_key} {cap} → {rec} for '{intent or model}' "
                   f"(measured p99 {b.get('p99')}, n={complete}, 0 truncations — sharpens the worst-case "
                   f"estimate; saves no money, since you are billed on tokens GENERATED — "
                   f"kw autotune=False to opt out)", file=sys.stderr)
     elif key not in _autotune_said:
         _autotune_said.add(key)
-        print(f"[spend_gate] autotune(suggest): max_tokens {cap} vs measured p99×1.5 = {rec} for "
+        print(f"[spend_gate] autotune(suggest): {_tok_key} {cap} vs measured p99×1.5 = {rec} for "
               f"'{intent or model}' (n={b['n']}) — gate.autotune=apply clamps this automatically",
               file=sys.stderr)
 
@@ -2650,6 +2668,19 @@ def _cli(cmd="status", live=False):
                     print("  " + _ln)
             except Exception:
                 pass
+            try:                                          # CONFIG HYGIENE: a configured lane/tier/advisor model that is
+                from . import model_preflight as _mpf     # UNPRICED or unserved silently bleeds UNPRICED spend (codex.
+                #                                            strong=gpt-6-sol did exactly this) — surface it EVERY doctor.
+                _pf = _mpf.preflight_models(_mpf.configured_specs(), correct=False)   # $0: cached served+pricing, no agentic call
+                _bad = [r for r in _pf if not r["usable"]]
+                if _bad:
+                    print(f"  model ids : 🔴 {len(_bad)} configured id(s) NOT callable as written — fix before they bleed UNPRICED:")
+                    for _r in _bad[:6]:
+                        print(f"              {_r['spec']}: {_r['note']}")
+                else:
+                    print(f"  model ids : 🟢 all {len(_pf)} configured ids served (or unchecked) + priced")
+            except Exception:
+                print("  model ids : ⚪ UNKNOWN — configured-model preflight could not run")
             try:                                          # OVERAGE NUDGE: when a plan lane is at/below its warn
                 from . import lanes as _lanes_nudge       # level, steer batchable comprehension onto the OTHER
                 _nudge = _lanes_nudge.overage_nudge_line(do_fetch=False)   # $0 lanes (cached read — no CLI here)

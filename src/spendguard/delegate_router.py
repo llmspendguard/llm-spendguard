@@ -14,6 +14,11 @@ from . import config, guard, lane_balance, lane_registry, pricing, provider_toke
 CLASSIFY_INTENT = "spendguard:classify"
 DEFAULT_DELEGATE_INTENT = "spendguard:delegate-task"
 CLASSIFY_OUTPUT_TOKENS = 800
+# An agentic repo delegation is a single-tenant, multi-step turn — far longer than a meta prompt — so it gets its own
+# generous default deadline (operator-overridable via config `delegate.agentic_timeout_s`), NOT the warm lane's short
+# meta default. A caller's explicit `timeout` still wins; this is only the floor when none was supplied, so a wedged
+# codex turn is HARD-killed (the daemon recycled) at a known bound instead of stalling the next delegation forever.
+AGENTIC_DELEGATE_TIMEOUT_S = 1800
 
 _CLASSIFY_SCHEMA = {
     "type": "object", "additionalProperties": False,
@@ -279,6 +284,13 @@ def _route_agentic(plan, prompt, model, timeout, cwd):
     if spec["exec"] == "codex_exec":
         kwargs["sandbox"] = "workspace-write"
         kwargs["cwd"] = cwd
+        # Honor an explicit caller timeout; otherwise give the agentic turn its generous config'd budget rather than
+        # the warm lane's short meta default, and HARD-kill + recycle the daemon on timeout so a wedged turn fails
+        # fast instead of stalling every later delegation.
+        if timeout is None:
+            kwargs["timeout"] = float(config._cfg_get("delegate", "agentic_timeout_s", AGENTIC_DELEGATE_TIMEOUT_S)
+                                      or AGENTIC_DELEGATE_TIMEOUT_S)
+        kwargs["recycle_on_timeout"] = True
         prompt = prompt + _WORKTREE_AUTHOR_CONSTRAINTS    # bake the sandbox/git/hook contract into what codex actually receives
     return module.run_prompt(prompt, **kwargs)
 

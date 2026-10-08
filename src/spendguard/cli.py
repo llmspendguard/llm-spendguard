@@ -42,7 +42,8 @@ _GROUPS = [
     ]),
     ("spend less (measured, not guessed)", [
         ("advise", "cheapest config that HELD quality, per intent (the auto knob: reasoning='best-value')"),
-        ("bakeoff", "measure cost×quality for a SLATE of untried models on an intent's tasks (feeds advise)"),
+        ("bakeoff", "measure cost×quality for a SLATE of untried models on an intent's tasks (feeds advise); --temperature/--seed for a deterministic A/B"),
+        ("stability", "measure a model/lane's RUN-TO-RUN variance at production settings (replicates) — the stability question temp=0 can't answer"),
         ("effort-titrate", "learn the CHEAPEST reasoning effort that HOLDS quality, per (intent, model)"),
         ("calibrate", "learned estimator: your history corrects the naive $"),
         ("prompts", "lint the call corpus for prompt waste"),
@@ -154,6 +155,12 @@ def _dispatch(argv=None):
     if cmd == "agent-spawn-gate":
         from . import agent_spawn_gate
         return agent_spawn_gate.cmd(rest)
+    if cmd == "residency-gate":                           # PostToolUse context-residency NUDGE (warns, never blocks)
+        from . import residency_gate
+        return residency_gate.cmd(rest)
+    if cmd == "install-residency-gate":
+        from . import residency_gate
+        return residency_gate.install_residency_gate_cli(rest)
     if cmd == "overage":
         from . import overage
         return overage.overage_cli(rest)
@@ -300,6 +307,9 @@ def _dispatch(argv=None):
     if cmd == "bakeoff":                              # measure cost×quality for a slate on a sample (fills untried models)
         from . import bakeoff
         return bakeoff.main(rest)
+    if cmd == "stability":                            # run-to-run variance at production settings (replicates) — stability, not A/B
+        from . import stability
+        return stability.cmd(rest)
     if cmd == "effort-titrate":                       # learn the cheapest reasoning effort that holds quality per (intent,model)
         from . import effort_titration
         return effort_titration.main(rest)

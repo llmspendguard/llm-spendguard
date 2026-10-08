@@ -101,17 +101,33 @@ def auth_status(timeout=20):
         r = subprocess.run([exe, "login", "status"], capture_output=True, text=True, timeout=timeout, env=env)
         if r.returncode == 0:
             return {"authed": True}
-        # A non-zero status with a VALID token on disk is a transient (the status subprocess raced a concurrent token
-        # refresh), NOT a logout — the token's own exp is authoritative. Only an absent/expired token is a real
-        # logout; a token we cannot read falls back to one confirming re-check (never a single flaky call's verdict).
+        # A non-zero `codex login status` is NOT authoritative — it races the periodic OAuth token refresh that
+        # rewrites ~/.codex/auth.json. The TOKEN on disk decides: a VALID token is authed (the hourly false-toast fix),
+        # a present-and-EXPIRED token is a real logout.
         tok = _token_unexpired()
         if tok is True:
             return {"authed": True}
         if tok is False:
             return {"authed": False}
-        time.sleep(_AUTH_RECHECK_BACKOFF_S)        # token unreadable: confirm once — a transient non-zero recovers here
+        # Token UNREADABLE (a non-atomic auth.json rewrite in flight, or process contention): ONE confirming re-check —
+        # a transient non-zero status recovers to 0 here (the legitimate recovery path).
+        time.sleep(_AUTH_RECHECK_BACKOFF_S)
         r2 = subprocess.run([exe, "login", "status"], capture_output=True, text=True, timeout=timeout, env=env)
-        return {"authed": r2.returncode == 0}
+        if r2.returncode == 0:
+            return {"authed": True}
+        # BOTH the status AND the re-check are non-zero WHILE the token is unreadable. That is NOT a confirmed logout
+        # when auth.json is merely being rewritten: a present-but-unreadable file is a refresh write in flight →
+        # INCONCLUSIVE (None, which NEVER fires the persistent 'logged out' toast — the fix for the recurring hourly
+        # banner that escalated an unreadable token to False on every refresh). Only a genuinely ABSENT file is a real
+        # logout (False). A real logout therefore still surfaces (expired token above, or absent file here, or the
+        # call's own auth error); a token-refresh race no longer toasts.
+        import os as _os
+        _home = _os.environ.get("CODEX_HOME") or _os.path.expanduser("~/.codex")
+        try:
+            _present = _os.path.exists(_os.path.join(_home, "auth.json"))
+        except Exception:
+            _present = True
+        return {"authed": False if not _present else None}
     except Exception:
         return {"authed": None}
 
@@ -330,7 +346,7 @@ def _codex_error_status(err_text):
 
 
 def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=None, max_tokens=None,
-               sandbox="read-only", cwd=None):   # max_tokens: protocol-uniform; codex exec has no one-shot output-cap flag
+               sandbox="read-only", cwd=None, recycle_on_timeout=False):   # max_tokens: protocol-uniform; codex exec has no one-shot output-cap flag
     """→ {text, in_tok, out_tok, latency, error} from one headless plan-billed Codex run. `system` is
     prepended to the prompt (codex exec has no separate system slot for one-shot prompt mode). `model` IS
     forwarded to `codex -m` when given (e.g. gpt-5.5), so the recorded model is the one that actually ran —
@@ -353,14 +369,15 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
         else:
             resolved_cwd = os.path.abspath(os.path.expanduser(os.fspath(cwd)))
         return _run_prompt_in_cwd(prompt, system=system, model=model, timeout=timeout, reasoning=reasoning,
-                                  max_tokens=max_tokens, sandbox=sandbox, cwd=resolved_cwd)
+                                  max_tokens=max_tokens, sandbox=sandbox, cwd=resolved_cwd,
+                                  recycle_on_timeout=recycle_on_timeout)
     finally:
         if neutral_cwd:
             shutil.rmtree(neutral_cwd, ignore_errors=True)
 
 
 def _run_prompt_in_cwd(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=None, max_tokens=None,
-                       sandbox="read-only", cwd=None):
+                       sandbox="read-only", cwd=None, recycle_on_timeout=False):
     """Execute after ``run_prompt`` has resolved and, when needed, owned the task working directory."""
     _eff = _codex_effort(reasoning)   # the effort ACTUALLY applied on this lane (Codex's own scale: 'minimal'→'none').
     #                                   Reported on the result so the ledger records what RAN, not the requested tier —
@@ -374,7 +391,8 @@ def _run_prompt_in_cwd(prompt, system=None, model=None, timeout=TIMEOUT_S, reaso
         _full = (f"{system.strip()}\n\n{prompt}" if system else prompt)
         _t0 = time.time()
         try:
-            _r = codex_daemon.run_warm(_full, model=model, reasoning=reasoning, sandbox=sandbox, cwd=cwd)
+            _r = codex_daemon.run_warm(_full, model=model, reasoning=reasoning, sandbox=sandbox, cwd=cwd,
+                                       timeout=timeout, recycle_on_timeout=recycle_on_timeout)
         except Exception as _e:                        # an exception must NEVER bypass the exec/API fallback below
             _r = {"error": f"codex daemon raised: {str(_e)[:150]}"}
         if _r.get("text") and not _r.get("error"):

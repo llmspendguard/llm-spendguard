@@ -2,6 +2,41 @@
   "_comment": "Every bare function name shared by more than one definition in src/spendguard, with the verdict a model reached by reading the BODIES (scripts/probe/review_axes.py name). PROTOCOL = intentional polymorphism, correct as-is. DUPLICATION = one job, many copies; merge. COLLISION = different jobs wearing one name; rename. This file is a BASELINE, not an approval: tests/test_names_stay_unique.py fails on any name NOT listed here, so new collisions must be judged before they land. Shrinking this file is the goal.",
   "generated_by": "scripts/probe/review_axes.py name --run",
   "names": {
+    "run_warm": {
+      "n": 2,
+      "verdict": "PROTOCOL",
+      "why": "The uniform WARM-LANE entrypoint: one delegation on a persistent server → {text, error}. _CodexDaemon.run_warm drives codex app-server (thread/start → turn/start); _KimiAcpDaemon.run_warm drives kimi acp (session/new → session/prompt). Same contract, deliberately parallel bodies over different protocols; callers (codex_exec/kimi_exec) invoke it identically. [Adjudicated PROTOCOL while building the warm-lane exec pool, 2026-10-08.]"
+    },
+    "_route_notification": {
+      "n": 3,
+      "verdict": "PROTOCOL",
+      "why": "The base warm_stdio_daemon hook for one server-originated message; the base default ignores, _CodexDaemon demuxes item/completed+turn/completed by (threadId,turnId), _KimiAcpDaemon handles session/update agent_message_chunk + declines server-initiated requests. Override polymorphism dispatched by the shared reader loop. [PROTOCOL, warm-lane exec pool, 2026-10-08.]"
+    },
+    "_handshake": {
+      "n": 2,
+      "verdict": "PROTOCOL",
+      "why": "The base-called protocol initialize exchange run inside _spawn; _CodexDaemon does codex initialize+initialized, _KimiAcpDaemon does ACP initialize (protocolVersion 1, no initialized). Same contract (return True once the server is ready), per-protocol body. [PROTOCOL, warm-lane exec pool, 2026-10-08.]"
+    },
+    "_spawn_cmd": {
+      "n": 2,
+      "verdict": "PROTOCOL",
+      "why": "The base-called argv builder (argv[0] the CLI path, or None when unavailable); _CodexDaemon returns [codex, app-server, ...flags], _KimiAcpDaemon returns [kimi, acp]. Each resolves its own CLI intentionally, exactly like the _bin resolver protocol. [PROTOCOL, warm-lane exec pool, 2026-10-08.]"
+    },
+    "_extra_waiters_to_fail": {
+      "n": 3,
+      "verdict": "PROTOCOL",
+      "why": "The base-called enumerator of provider-specific notification-waiter registries the dead-pipe path must also wake; base default none, _CodexDaemon exposes _turn_waiters, _KimiAcpDaemon exposes _session_waiters. Override polymorphism over the shared fail-all. [PROTOCOL, warm-lane exec pool, 2026-10-08.]"
+    },
+    "_on_response": {
+      "n": 2,
+      "verdict": "PROTOCOL",
+      "why": "The base-called hook to react to a correlated response before its waiter wakes; base default no-op, _CodexDaemon installs turn-id correlation from a turn/start response (kimi needs none, so does not override). Shared-reader override polymorphism. [PROTOCOL, warm-lane exec pool, 2026-10-08.]"
+    },
+    "_daemon_enabled": {
+      "n": 2,
+      "verdict": "PROTOCOL",
+      "why": "Per-lane toggle for the warm daemon path (env SPENDGUARD_<LANE>_DAEMON → config advisor.<lane>_daemon, default on); codex_exec and kimi_exec each own their lane's switch, read by that lane's run_prompt before trying the warm path. Same contract per lane, mirroring the _bin protocol. [PROTOCOL, warm-lane exec pool, 2026-10-08.]"
+    },
     "_bin": {
       "n": 4,
       "verdict": "PROTOCOL",
@@ -148,9 +183,9 @@
       "why": "Three parallel per-source CLI subcommands (chat/claude-code/codex classify) implementing the same command contract for different data backends. claudecode and codex both delegate to the SHARED attribu"
     },
     "cmd": {
-      "n": 28,
+      "n": 30,
       "verdict": "PROTOCOL",
-      "why": "Every module exposes `cmd(argv=None)` as its uniform CLI subcommand entrypoint (parse argv → run that subcommand → return an int exit code), dispatched by name by the top-level `spendguard <subcommand>` router. The bodies differ because each implements a different subcommand, but that is the point of the shared contract, not drift or a name clash. mcp_server.cmd runs the `spendguard mcp` stdio server; model_preflight.cmd and verify.cmd are the 18th and 19th members (parse argv → run the `spendguard preflight` / `spendguard verify` subcommand → return an int exit code) — same contract, re-confirmed PROTOCOL by a full honestreview name adjudication of src/spendguard on 2026-09-01. measurement.cmd is the 20th member (parse argv → run the `spendguard measurement inspect|list|reconstruct` subcommand → return an int exit code) — same contract, body-read and adjudicated PROTOCOL 2026-09-05. provider_tokens.cmd is the 21st member (parse argv -> run the `spendguard tokens show|calibrate` subcommand -> return an int exit code) -- same contract, added 2026-09-12. comprehend.cmd is the 22nd member (parse argv -> run the `spendguard comprehend` subcommand -> return an int exit code) -- same contract, body-read and added 2026-09-15. route_economics.cmd is the 23rd member (parse argv -> run the `spendguard route-cost` subcommand: the TRUE-cost batch-vs-lane-vs-combo split for an intent at volume N -> return an int exit code) -- same contract, body-read and added 2026-09-22. whole_job.cmd is the 24th member (parse argv -> run the `spendguard submit-jobs` subcommand: PLAN+estimate the whole job set ($0) by default, or --execute it (needs --budget), or --collect a prior run's durable batch handles -> return an int exit code) -- same contract, body-read and adjudicated PROTOCOL 2026-09-26. sync_capabilities.cmd is the 25th member (parse argv -> run the `spendguard sync-capabilities` subcommand: sync per-model capabilities + upper bounds from LiteLLM into the catalog -> return an int exit code) -- same contract, body-read and added 2026-09-26. keys_audit.cmd is the 26th member (parse argv -> run the `spendguard keys-audit` subcommand: static .env scan for a repo provider key that would shadow the keys.env SSOT -> return an int exit code) -- same contract, body-read and adjudicated PROTOCOL 2026-10-01. route_horizon.cmd is the 27th member (parse argv -> run the `spendguard route-horizon` subcommand: the item-C HORIZON batch/lane/meter plan for a job SET under caller-declared urgency + the ONE shared lane budget -> return an int exit code) -- same contract, body-read and added 2026-10-03 (authored to mirror route_economics.cmd's CLI-entrypoint contract; not re-run through honestreview name). agent_spawn_gate.cmd is the 28th member (parse argv -> run the `spendguard agent-spawn-gate --pretooluse-hook` subcommand -> return an int exit code), explicitly specified by the agent-spawn-gate plan as the same sanctioned CLI protocol name and body-read 2026-10-06."
+      "why": "Every module exposes `cmd(argv=None)` as its uniform CLI subcommand entrypoint (parse argv → run that subcommand → return an int exit code), dispatched by name by the top-level `spendguard <subcommand>` router. The bodies differ because each implements a different subcommand, but that is the point of the shared contract, not drift or a name clash. mcp_server.cmd runs the `spendguard mcp` stdio server; model_preflight.cmd and verify.cmd are the 18th and 19th members (parse argv → run the `spendguard preflight` / `spendguard verify` subcommand → return an int exit code) — same contract, re-confirmed PROTOCOL by a full honestreview name adjudication of src/spendguard on 2026-09-01. measurement.cmd is the 20th member (parse argv → run the `spendguard measurement inspect|list|reconstruct` subcommand → return an int exit code) — same contract, body-read and adjudicated PROTOCOL 2026-09-05. provider_tokens.cmd is the 21st member (parse argv -> run the `spendguard tokens show|calibrate` subcommand -> return an int exit code) -- same contract, added 2026-09-12. comprehend.cmd is the 22nd member (parse argv -> run the `spendguard comprehend` subcommand -> return an int exit code) -- same contract, body-read and added 2026-09-15. route_economics.cmd is the 23rd member (parse argv -> run the `spendguard route-cost` subcommand: the TRUE-cost batch-vs-lane-vs-combo split for an intent at volume N -> return an int exit code) -- same contract, body-read and added 2026-09-22. whole_job.cmd is the 24th member (parse argv -> run the `spendguard submit-jobs` subcommand: PLAN+estimate the whole job set ($0) by default, or --execute it (needs --budget), or --collect a prior run's durable batch handles -> return an int exit code) -- same contract, body-read and adjudicated PROTOCOL 2026-09-26. sync_capabilities.cmd is the 25th member (parse argv -> run the `spendguard sync-capabilities` subcommand: sync per-model capabilities + upper bounds from LiteLLM into the catalog -> return an int exit code) -- same contract, body-read and added 2026-09-26. keys_audit.cmd is the 26th member (parse argv -> run the `spendguard keys-audit` subcommand: static .env scan for a repo provider key that would shadow the keys.env SSOT -> return an int exit code) -- same contract, body-read and adjudicated PROTOCOL 2026-10-01. route_horizon.cmd is the 27th member (parse argv -> run the `spendguard route-horizon` subcommand: the item-C HORIZON batch/lane/meter plan for a job SET under caller-declared urgency + the ONE shared lane budget -> return an int exit code) -- same contract, body-read and added 2026-10-03 (authored to mirror route_economics.cmd's CLI-entrypoint contract; not re-run through honestreview name). agent_spawn_gate.cmd is the 28th member (parse argv -> run the `spendguard agent-spawn-gate --pretooluse-hook` subcommand -> return an int exit code), explicitly specified by the agent-spawn-gate plan as the same sanctioned CLI protocol name and body-read 2026-10-06. residency_gate.cmd is the 29th member (parse argv -> run the `spendguard residency-gate --posttooluse-hook` subcommand: the PostToolUse context-residency nudge, which WARNS and never blocks -> return an int exit code) -- same contract, body-read and adjudicated PROTOCOL 2026-10-08. stability.cmd is the 30th member (parse argv -> run the `spendguard stability` subcommand: measure a model/lane's run-to-run variance at production settings over k replicates -> return an int exit code) -- same CLI-entrypoint contract, body-read and adjudicated PROTOCOL 2026-10-08."
     },
     "configured": {
       "n": 4,

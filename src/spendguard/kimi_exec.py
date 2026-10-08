@@ -60,6 +60,45 @@ def _kimi_plan_aliases():
         return {}
 
 
+def _kimi_default_model():
+    """The plan's own default model id (config.toml top-level `default_model`, e.g. kimi-code/kimi-for-coding), read
+    LIVE — never a hardcoded id, so a plan whose default changes is tracked with no code edit. None on any read gap.
+    This is the model `kimi acp` answers on (it has no model flag), so the warm lane is only used when the REQUESTED
+    model resolves to it — otherwise the recorded model would not match the model that ran."""
+    try:
+        import tomllib
+        with open(os.path.expanduser("~/.kimi-code/config.toml"), "rb") as f:
+            v = tomllib.load(f).get("default_model")
+        return v if isinstance(v, str) and v else None
+    except Exception:
+        return None
+
+
+def _daemon_enabled():
+    """Use the WARM `kimi acp` server (kimi_daemon) instead of cold-starting `kimi -p` per call? Env
+    SPENDGUARD_KIMI_DAEMON wins, else config advisor.kimi_daemon. Default ON so batch/comprehension fan-out pays the
+    ACP startup once and subsequent turns are warm; either setting can opt out. A daemon failure falls through to the
+    cold `-p` path, so enabling it changes LATENCY, never AVAILABILITY."""
+    from . import config
+    v = os.getenv("SPENDGUARD_KIMI_DAEMON")
+    if v is not None:
+        return v.strip().lower() not in ("0", "false", "no", "off")
+    return bool(config._cfg_get("advisor", "kimi_daemon", True))
+
+
+def _warm_model_eligible(model):
+    """The warm ACP lane answers on the plan default_model (kimi acp has no model flag). It is SAFE for this call
+    only when the requested model resolves to that default — i.e. the alias is unresolved (unknown/unpinned → the CLI
+    uses its default on BOTH paths) or it equals the default. A specific OTHER plan model must take the cold `-p -m`
+    path so the model that runs is the model that was requested (and recorded). None default → not eligible (can't
+    prove equality → stay cold)."""
+    default = _kimi_default_model()
+    if default is None:
+        return False
+    alias = _kimi_model_alias(model)
+    return alias is None or alias == default
+
+
 def _kimi_model_alias(model):
     """Requested model id → the Kimi Code CLI -m alias, by EXACT identity against the plan's DECLARED models (looked
     up live from config.toml): the alias key (kimi-code/k3), its bare `model` field (k3), or the requested id with a
@@ -112,6 +151,28 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     if not exe:
         return {"error": "kimi CLI not found"}
     full = (f"{system.strip()}\n\n{prompt}" if system else prompt)
+    # WARM DAEMON PATH (default-on, explicit opt-out): reuse a persistent `kimi acp` server instead of cold-starting
+    # `kimi -p` each call. Used ONLY when the requested model resolves to the plan default (kimi acp has no model
+    # flag) — else the cold `-p -m <alias>` path runs below so the recorded model matches the model that ran. Falls
+    # THROUGH to the cold path on ANY daemon failure — degrade, never break. Tokens are ESTIMATED (len//4) exactly as
+    # the cold path: the ACP stream carries no usage, $0 billed either way (the flat-fee plan served it).
+    if _daemon_enabled() and _warm_model_eligible(model):
+        from . import kimi_daemon
+        _t0 = time.time()
+        try:
+            _r = kimi_daemon.run_warm(full, model=model, reasoning=reasoning, timeout=timeout)
+        except Exception as _e:                            # an exception must NEVER bypass the cold/API fallback below
+            _r = {"error": f"kimi daemon raised: {str(_e)[:150]}"}
+        if _r.get("text") and not _r.get("error"):
+            _txt = _r["text"]
+            return {"text": _txt, "in_tok": len(full) // 4, "out_tok": len(_txt) // 4,   # est: the ACP stream has no usage
+                    "latency": round(time.time() - _t0, 2), "error": None}
+        if _r.get("tool_error"):
+            # A HARD refusal/cancel. A cold `kimi -p` would refuse the same way, so return the error NOW and let the
+            # adapter fall back to the metered API + back off the lane. NEVER surface the refusal text as `text`. (A
+            # merely TRANSIENT daemon problem — would-not-start / dead pipe / timeout — has no tool_error, so it still
+            # falls through to one cold `kimi -p` below.)
+            return {"error": (_r.get("error") or "kimi acp refused the request")[:200]}
     cmd = [exe, "-p", full, "--output-format", "stream-json"]
     alias = _kimi_model_alias(model)
     if alias:

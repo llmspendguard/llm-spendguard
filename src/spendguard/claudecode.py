@@ -861,6 +861,125 @@ def compaction_candidates(min_context=None, min_turns=None, min_day=None):
     return out, (k, k_n), {"examined": examined, "flagged": len(out), "too_few_turns": short, "below_threshold": below}
 
 
+_RESIDENCY_SOURCES = ("instructions", "tool_output", "user_prompt", "assistant_output", "system_reminder")
+_SYSTEM_REMINDER_MARK = "<system-reminder>"   # the FIXED injected wrapper — format detection, never a meaning judgement
+
+
+def _conv_transcript_records(conv_id):
+    """Ordered transcript records for one conversation (sessionId) across resume/branch files, each assistant
+    message.id counted ONCE. [] on a missing/unreadable projects dir (never a wrong partial)."""
+    root = _projects_dir()
+    if not os.path.isdir(root):
+        return []
+    recs, seen = [], set()
+    for path in sorted(glob.glob(os.path.join(root, "**", "*.jsonl"), recursive=True)):
+        rows, _ = _scan_new_lines(path, 0)
+        for r in rows:
+            if r.get("sessionId") != conv_id:
+                continue
+            mid = (r.get("message") or {}).get("id")
+            if mid is not None:
+                if mid in seen:
+                    continue
+                seen.add(mid)
+            recs.append(r)
+    return recs
+
+
+def _resident_instruction_tokens(paths):
+    """Resident INSTRUCTION tokens from the EXPLICIT `paths` the caller supplies (the global + repo CLAUDE.md and the
+    MEMORY.md it means) — never discovered ambiently from the host cwd/home, so the number is REPRODUCIBLE and its
+    sources are recorded. Returns (total_tokens, [(path, tokens) actually read]); an unreadable path contributes 0 and
+    is omitted, so a missing instruction file never inflates or silently decides the count."""
+    total, measured = 0, []
+    for p in (paths or []):
+        try:
+            with open(os.path.expanduser(p), errors="ignore") as fh:
+                t = _toklen(fh.read())
+            total += t
+            measured.append((p, t))
+        except OSError:
+            pass
+    return total, measured
+
+
+def residency_decomposition(conv_id, instruction_tokens=None, instruction_paths=None):
+    """Decompose a conversation's RESIDENT-context cost by SOURCE — the finding that most Claude-Code burn is
+    re-reading retained context, not new work, and WHICH retained content is expensive. A resident item costs
+    tokens × (turns it stayed in the transcript) × the cache-read rate; the session's MEASURED recurring cache-read $
+    is split across sources by that resident token-turn WEIGHT, so the split RECONCILES with the measured total by
+    construction (the SHARE answers 'what is expensive'; the measured total is 'how much').
+
+    Sources (structural — parsed from block type / role / the fixed system-reminder wrapper, never a meaning call):
+    accumulated tool_output, attributed PER TOOL via tool_use_id→name (the dominant share); instructions (from the
+    caller's EXPLICIT instruction_paths / instruction_tokens — resident every turn, small, reported but NOT led with);
+    user_prompt; assistant_output; injected system_reminder. Instruction provenance is recorded on the output so the
+    number is reproducible, never ambiently sourced from the host. Returns {turns, measured_recurring_usd,
+    per_turn_usd, by_source_usd, by_tool_usd, top_contributors, instruction_tokens, instruction_source, reconciles}.
+    $0 — pure parse + pricing, no LLM call."""
+    recs = _conv_transcript_records(conv_id)
+    seq = _cc_conv_rows().get(conv_id) or []
+    rate = _cache_read_rate(seq[-1][1]) if seq else None
+    measured = (sum(cr for _o, _m, _i, cr, _cw in seq) * rate) if rate is not None else None
+    turn, id2tool, items = 0, {}, []           # items: (source, tool|None, tokens, entry_turn)
+    for r in recs:
+        msg = r.get("message") or {}
+        role = r.get("type") or msg.get("role")
+        content = msg.get("content")
+        blocks = content if isinstance(content, list) else (
+            [{"type": "text", "text": content}] if isinstance(content, str) else [])
+        for b in blocks:
+            if not isinstance(b, dict):
+                continue
+            bt = b.get("type")
+            if bt == "tool_use":
+                id2tool[b.get("id")] = b.get("name", "?")
+            elif bt == "tool_result":
+                tc = b.get("content")
+                s = tc if isinstance(tc, str) else (
+                    " ".join(x.get("text", "") for x in tc if isinstance(x, dict)) if isinstance(tc, list) else "")
+                items.append(("tool_output", id2tool.get(b.get("tool_use_id"), "?"), _toklen(s or ""), turn))
+            elif bt == "text":
+                s = b.get("text") or ""
+                if role == "assistant" or msg.get("role") == "assistant":
+                    items.append(("assistant_output", None, _toklen(s), turn))
+                elif _SYSTEM_REMINDER_MARK in s:
+                    items.append(("system_reminder", None, _toklen(s), turn))
+                else:
+                    items.append(("user_prompt", None, _toklen(s), turn))
+        if msg.get("usage") and msg.get("model"):
+            turn += 1
+    total_turns = turn or len(seq) or 1
+    if instruction_tokens is not None:
+        instr, instr_src = int(instruction_tokens), "declared"
+    else:
+        instr, instr_src = _resident_instruction_tokens(instruction_paths)   # [] when no paths given → unmeasured (honest 0)
+    by_source = {c: 0 for c in _RESIDENCY_SOURCES}
+    by_tool = {}
+    for src, tool, toks, entry in items:
+        w = toks * max(1, total_turns - entry)     # resident token-turns: re-read on every turn after it landed
+        by_source[src] += w
+        if src == "tool_output":
+            by_tool[tool] = by_tool.get(tool, 0) + w
+    by_source["instructions"] = instr * total_turns    # system-prompt instructions: resident on EVERY turn
+    total_w = sum(by_source.values()) or 1
+    usd = (lambda w: (measured * w / total_w) if measured is not None else None)
+    src_usd = {c: usd(w) for c, w in by_source.items()}
+    tool_usd = {t: usd(w) for t, w in by_tool.items()}
+    top = sorted([("tool:" + t, u) for t, u in tool_usd.items()]
+                 + [(c, src_usd[c]) for c in ("instructions", "user_prompt", "assistant_output", "system_reminder")],
+                 key=lambda kv: (kv[1] or 0), reverse=True)[:8]
+    reconciles = measured is None or abs(sum(v for v in src_usd.values() if v) - measured) <= max(1e-9, 0.01 * measured)
+    return {"conv_id": conv_id, "turns": total_turns,
+            "measured_recurring_usd": (round(measured, 4) if measured is not None else None),
+            "per_turn_usd": (round(measured / total_turns, 4) if measured is not None else None),
+            "by_source_usd": {k: (round(v, 4) if v is not None else None) for k, v in src_usd.items()},
+            "by_tool_usd": {k: (round(v, 4) if v is not None else None)
+                            for k, v in sorted(tool_usd.items(), key=lambda kv: (kv[1] or 0), reverse=True)},
+            "top_contributors": [(k, (round(v, 4) if v is not None else None)) for k, v in top],
+            "instruction_tokens": instr, "instruction_source": instr_src, "reconciles": reconciles}
+
+
 def context_cmd(conv_id=None, top=10):
     """`claude-code context` — the compaction view: open conversations whose sustained re-read context makes them
     expensive to keep alive, each with its $/turn re-read cost and (when k is measured from real compactions) the
@@ -873,6 +992,23 @@ def context_cmd(conv_id=None, top=10):
         print(f"  context tokens: current {t['current']:,} · max {t['max']:,} · mean {t['mean']:,.0f}")
         print(f"  recurring re-read cost: {('$%.4f/turn' % r) if r is not None else '—'} at the current context "
               f"(what every further turn costs just to re-read what's retained)")
+        # RESIDENCY by source: WHICH retained content is expensive. Instruction paths passed EXPLICITLY (this is the
+        # user-facing command; the paths are recorded as provenance on the result, never an ambient decider).
+        _instr = [os.path.expanduser("~/.claude/CLAUDE.md"), os.path.join(os.getcwd(), "CLAUDE.md")]
+        _instr += glob.glob(os.path.expanduser("~/.claude/projects/*/memory/MEMORY.md"))
+        rd = residency_decomposition(conv_id, instruction_paths=_instr)
+        if rd["measured_recurring_usd"] is not None:
+            print(f"  residency by source (recurring $/turn ${rd['per_turn_usd']:.4f} × {rd['turns']} turns):")
+            for _k in ("tool_output", "instructions", "assistant_output", "user_prompt", "system_reminder"):
+                _v = rd["by_source_usd"].get(_k)
+                if _v:
+                    print(f"    {_k:<16} ${_v:.4f}")
+            if rd["by_tool_usd"]:
+                _tt = " · ".join(f"{t} ${u:.4f}" for t, u in list(rd["by_tool_usd"].items())[:5] if u)
+                print(f"    └ tool_output by tool: {_tt}")
+            print("    ↑ instructions (CLAUDE.md/MEMORY.md) are resident but SMALL — trimming them is a rounding error; "
+                  "the lever is accumulated tool output. WHETHER a given tool result could have been delegated (read "
+                  "once in a subagent, not re-read every turn) is an agentic call about the work's shape, not decided here.")
         return 0
     cands, (k, k_n), stats = compaction_candidates()
     ktxt = (f"measured compaction ratio k≈{k:.1f}× (from {k_n} observed context drops)" if k

@@ -1260,7 +1260,7 @@ def _compaction_nudge(info, home, once=False):
             sz = f.tell()
             f.seek(max(0, sz - 65536))
             tail = f.read().decode("utf-8", "ignore")
-        ctx = 0
+        ctx, model = 0, None
         for ln in reversed(tail.splitlines()):
             if '"usage"' not in ln:
                 continue
@@ -1272,6 +1272,7 @@ def _compaction_nudge(info, home, once=False):
             if u:
                 ctx = (int(u.get("input_tokens", 0) or 0) + int(u.get("cache_read_input_tokens", 0) or 0)
                        + int(u.get("cache_creation_input_tokens", 0) or 0))
+                model = (o.get("message") or {}).get("model")      # for the $/turn re-read figure below
                 break
         if not ctx:
             return ""
@@ -1291,7 +1292,19 @@ def _compaction_nudge(info, home, once=False):
         # The terse per-turn nudge carries NO savings multiplier: "~1x cheaper" claimed a saving that was not there,
         # and whether a given ratio is a saving worth showing is a judgement a per-turn hook must not hard-code. The
         # token count is the signal; the measured k× lives in the guided /compact detail, not this one-liner.
-        return "⚠ %dK tok/turn · /compact (guided)" % (ctx // 1000)
+        # Add the $/turn re-read cost (est-value on the plan) so a resident-context bloat is visible as DOLLARS, not
+        # just tokens — the "a $0.50/turn session is impossible to miss" surface. ctx is already the resident size;
+        # × the model's cache-read rate is the recurring re-read cost. The per-SOURCE breakdown (which tool output is
+        # the lever) is a $0 drill-down on `spendguard claude-code context --conv <id>`.
+        dollar = ""
+        try:
+            from . import claudecode
+            _rate = claudecode._cache_read_rate(model) if model else None
+            if _rate is not None:
+                dollar = " (~$%.2f/turn re-read)" % (ctx * _rate)
+        except Exception:
+            dollar = ""
+        return "⚠ %dK tok/turn%s · /compact (guided)" % (ctx // 1000, dollar)
     except Exception:
         return ""
 

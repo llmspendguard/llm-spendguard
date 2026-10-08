@@ -148,7 +148,8 @@ def _tool_bakeoff(args):
         _eff = [e for e in _eff.split(",") if e.strip()]
     kw = dict(intent=args.get("intent"), candidates=args.get("candidates"),
               prompts=args.get("prompts"), sample_n=int(args.get("sample_n") or 5), efforts=(_eff or None),
-              requirement_aware=bool(args.get("requirement_aware")), adjudicator_model=args.get("adjudicator_model"))
+              requirement_aware=bool(args.get("requirement_aware")), adjudicator_model=args.get("adjudicator_model"),
+              temperature=args.get("temperature"), top_p=args.get("top_p"), seed=args.get("seed"))
     budget = args.get("budget_usd")
     if budget is None:                       # no budget → NEVER auto-spends; a bakeoff bills real workload $
         est = _bk.bakeoff(run=False, **kw)
@@ -157,6 +158,26 @@ def _tool_bakeoff(args):
                            "calls, preferring $0 lanes where available).")
         return est
     return _bk.bakeoff(run=True, budget_usd=float(budget), **kw)
+
+
+def _tool_stability(args):
+    """Measure a model/lane's RUN-TO-RUN variance at PRODUCTION settings — the stability question temperature=0 cannot
+    answer. Runs `k` replicates of each prompt on its normal path (the $0 lane at the plan's own sampling, NOT forced
+    metered), parses each reply's outcome (by `marker`, e.g. 'DECISION:', when given — a fixed shape, not a judgement),
+    and reports stable_frac + the per-label between-run rate band. Replicates spend subscription-plan usage ($0 billed
+    on a $0 lane); fails closed if the gate is not enforcing."""
+    import spendguard
+    spendguard.require()
+    from . import stability as _st, bakeoff as _bk
+    prompts = args.get("prompts")
+    if not prompts and args.get("intent"):
+        prompts = _bk._sample_prompts(args["intent"], int(args.get("sample_n") or 5))
+    if not prompts:
+        return {"error": "no prompts — pass `prompts` or an `intent` that has recorded prompts"}
+    marker = args.get("marker")
+    _parse = (lambda t: t.split(marker, 1)[1].strip() if marker in t else t.strip()) if marker else None
+    return _st.measure_stability(prompts, args.get("model"), k=int(args.get("k") or _st.DEFAULT_REPLICATES),
+                                 intent=args.get("intent"), system=args.get("system"), parse=_parse)
 
 
 _VISION_OUT_EST = 1024                        # conservative default OUTPUT tokens for a label envelope (override: max_out_tokens)
@@ -703,9 +724,28 @@ _TOOLS = {
                                   "description": "judge against the PROMPT'S OWN requirements, two-tier (screen → opus adjudicator)"},
             "adjudicator_model": {"type": "string",
                                   "description": "opus-tier adjudicator for requirement_aware (default config.advisor_adjudicator_model)"},
+            "temperature": {"type": "number", "description": "DETERMINISM: run each arm as a measurement at this temperature (e.g. 0) — one deterministic pass per arm, FORCES the metered API"},
+            "top_p": {"type": "number", "description": "DETERMINISM: nucleus top_p for the measurement (metered)"},
+            "seed": {"type": "integer", "description": "DETERMINISM: sampling seed (OpenAI-only; dropped+recorded on vendors without a seed param)"},
             "budget_usd": {"type": "number", "description": "run only if the estimate fits this; OMIT to get just the estimate"}},
          "additionalProperties": False},
         _tool_bakeoff),
+    "spendguard_stability": (
+        "Measure a model/lane's RUN-TO-RUN variance at PRODUCTION settings (replicates) — the stability question "
+        "temperature=0 CANNOT answer (temp=0 measures 'which arm is better'; this measures 'is the shipped config "
+        "stable'). Runs k replicates of each prompt on its normal $0-lane path at the plan's own sampling, and reports "
+        "stable_frac, the flipped prompts, and the per-label between-run rate band. Spends subscription-plan usage ($0 "
+        "billed on a $0 lane). Pass `marker` (e.g. 'DECISION:') to score stability on the decision, not wording.",
+        {"type": "object", "properties": {
+            "model": {"type": "string", "description": "the model/lane to measure (e.g. gpt-6-luna)"},
+            "intent": {"type": "string", "description": "job-type whose recorded prompts to replay (or pass `prompts`)"},
+            "prompts": {"type": "array", "items": {"type": "string"}, "description": "explicit prompts to replay; overrides intent sampling"},
+            "sample_n": {"type": "integer", "description": "how many recorded prompts to replay when sampling the intent (default 5)"},
+            "k": {"type": "integer", "description": "replicates per prompt (default 5) — more tightens the variance estimate"},
+            "marker": {"type": "string", "description": "parse each reply's OUTCOME as the text after this marker (e.g. 'DECISION:') — scores stability on the decision label"},
+            "system": {"type": "string", "description": "optional system prompt sent with every replicate"}},
+         "additionalProperties": False},
+        _tool_stability),
     "spendguard_vision": (
         "Run ONE metered VISION call (image(s) + prompt) through spendguard's governed adapter. The subscription "
         "lanes are text-only CLIs, so vision rides the metered API (executor='api'), pixel-priced and bounded by a "

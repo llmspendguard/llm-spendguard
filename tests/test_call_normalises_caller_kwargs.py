@@ -109,12 +109,23 @@ try:
     print("-- an unknown kwarg fails LOUDLY with guidance (never silently swallowed) --")
     msg = None
     try:
-        adapters.call("openai:gpt-5.5", "hi", max_tokens=50, temperature=0)
+        adapters.call("openai:gpt-5.5", "hi", max_tokens=50, frequency_penalty=0.2)   # a genuinely unsurfaced knob
     except TypeError as e:
         msg = str(e)
-    check("temperature= raised TypeError (not swallowed)", msg is not None)
+    check("an unsurfaced generation knob raised TypeError (not swallowed)", msg is not None)
     check("...the error NAMES the accepted params (guidance, not a bare failure)",
-          bool(msg) and "reasoning" in msg and "temperature" in msg)
+          bool(msg) and "reasoning" in msg and "frequency_penalty" in msg)
+
+    # temperature/top_p/seed are now FIRST-CLASS but measurement-only: on a production call they are refused with
+    # guidance to the measurement path (not treated as an unknown kwarg) — a clearer, more actionable message.
+    msg2 = None
+    try:
+        adapters.call("openai:gpt-5.5", "hi", max_tokens=50, temperature=0)
+    except TypeError as e:
+        msg2 = str(e)
+    check("temperature= on a production call raised TypeError", msg2 is not None)
+    check("...the refusal points at the measurement path (measurement=True)",
+          bool(msg2) and "measurement" in msg2.lower() and "temperature" in msg2)
 finally:
     adapters._call_guarded = _orig_guarded
     best_value.select_model_effort = _orig_sel
