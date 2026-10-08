@@ -144,9 +144,16 @@ def _fake_mod():
     return m
 ls._lane_module = lambda lane: _fake_mod()
 reliability.note_lane_model_ok = lambda lane, model: None
+import spendguard.calls as _calls_spy
+_recorded = []
+_calls_spy.record_call = lambda **kw: _recorded.append(kw)      # spy: the recovery must land in the LEDGER, not just caches
 res = ls.reprobe_rejected("codex")
 ck("a recovered model probes OK and moves out of unserved", res["recovered"] == ["came-back"])
 ck("a still-dead model stays rejected", res["still"] == ["still-dead"])
+ck("a recovery is RECORDED to the ledger as an ok (so observed_lane_models self-heals, banner stays cleared)",
+   any(k.get("outcome") == "ok" and k.get("executor") == "codex" and k.get("model") == "came-back" for k in _recorded))
+ck("a still-dead model is NOT recorded as ok (never a false recovery)",
+   not any(k.get("model") == "still-dead" and k.get("outcome") == "ok" for k in _recorded))
 ck("catalog reflects recovery: came-back no longer unserved, still-dead still unserved",
    "came-back" not in set(catalog.lane_unserved_ids("codex") or [])
    and "still-dead" in set(catalog.lane_unserved_ids("codex") or []))

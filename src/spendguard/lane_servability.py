@@ -313,6 +313,7 @@ def reprobe_rejected(lane):
         if mod is None or not hasattr(mod, "run_prompt"):
             return out
         recovered, still = [], []
+        provider = _lanes().get(lane)
         for m in rejected:
             out["probed"] += 1
             try:
@@ -322,6 +323,18 @@ def reprobe_rejected(lane):
             if r.get("text") and not r.get("error"):
                 recovered.append(m)
                 reliability.note_lane_model_ok(lane, m)
+                # RECORD the recovery in the LEDGER — the source observed_lane_models derives its verdict from. A
+                # successful probe IS a real $0 plan call, so the correction must land where the verdict is read, not
+                # only in the health/catalog caches a ledger-based refresh would overwrite. Without this fresh `ok` the
+                # shift re-fires on every refresh until the stale failures age out of the window (the false-banner bug).
+                try:
+                    from . import calls as _calls_rec
+                    _calls_rec.record_call(provider=provider, model=m, kind="subscription", cost=0.0,
+                                           in_tok=int(r.get("in_tok") or 0), out_tok=int(r.get("out_tok") or 0),
+                                           latency=r.get("latency"), intent="spendguard:lane-reprobe",
+                                           executor=lane, outcome="ok")
+                except Exception:
+                    pass                                   # the ledger record is the durable fix; a hiccup must not fail the probe
             else:
                 still.append(m)                            # deterministic reject OR still-down → stays rejected, re-probed later
         if recovered:
