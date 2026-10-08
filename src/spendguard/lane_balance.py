@@ -12,13 +12,10 @@ paid capacity. Ash's conversation-mining idea (limit-signals in Claude Code tran
 Numbers come from the receipt's OWN per-source est-value cache, re-windowed the same way — so they MATCH the receipt
 rather than being a parallel computation that could disagree.
 """
-from . import config, adapters
+from . import config, adapters, bulk_resilience
 
 
-class BulkResilienceRefused(Exception):
-    """A large bulk run was submitted as a single shot with NO crash-resilience (no checkpoint, or not actually
-    chunked). Raised BEFORE any lane is touched — a fail-closed guard, distinct from a per-task error row, so a
-    caller can catch it and add the missing checkpoint/chunking rather than lose the run to a transient stall."""
+BulkResilienceRefused = bulk_resilience.BulkResilienceRefused
 
 
 # Thresholds are CONFIG, never hardcoded: a plan whose est-value is below IDLE_RATIO of its fee has spare capacity;
@@ -40,16 +37,7 @@ def _util_ratio_cfg(name, default):
     return config.advisor_float(name, default)
 
 
-def _resilience_min_units(default=1000):
-    """The unit count AT OR ABOVE which bulk_delegate refuses an un-resilient single shot (config bulk.resilience_min_units;
-    env SPENDGUARD_BULK_RESILIENCE_MIN_UNITS). 0/None disables the gate. A named threshold, never a bare literal."""
-    try:
-        v = config._cfg_get("bulk", "resilience_min_units", None)
-        import os as _os
-        v = _os.environ.get("SPENDGUARD_BULK_RESILIENCE_MIN_UNITS", v)
-        return int(v) if v is not None else default
-    except (TypeError, ValueError):
-        return default
+_resilience_min_units = bulk_resilience._resilience_min_units
 
 
 def _recent_calls_by_lane(hours=24):
@@ -638,22 +626,9 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
     # lane is touched — the mistake that killed a 54k-unit single-shot on pass 1 is made un-submittable, not merely
     # discouraged. force=True (or bulk.resilience_min_units=0) overrides. The queue drainer is unaffected: it feeds
     # small leased batches, well under the threshold.
-    _min = _resilience_min_units()
-    if not force and _min and len(tasks) >= _min:        # >= not > : AT the min-units threshold resilience is already
-        #                                                  required (a strict > let EXACTLY _min un-resilient units slip
-        #                                                  into in-memory-only results — a crash there lost them silently).
-        _gaps = []
-        if not checkpoint:
-            _gaps.append("no checkpoint — a crash or transient stall loses the whole run (pass checkpoint=<jsonl>)")
-        if chunk_size >= len(tasks):
-            _gaps.append(f"not chunked — chunk_size={chunk_size} >= {len(tasks)} units, so one bad unit or a "
-                         f"momentary full-lane pass can wedge everything (lower chunk_size)")
-        if _gaps:
-            raise BulkResilienceRefused(
-                f"REFUSED: {len(tasks)} units (>= bulk.resilience_min_units={_min}) as a single shot without "
-                f"resilience — " + "; ".join(_gaps) + ". This is the chunk-never-single-shot rule: a large job "
-                "must checkpoint and chunk so a transient no-progress pass cannot kill it. Fix the above, or pass "
-                "force=True to override and own the risk.")
+    bulk_resilience.require_resilient(len(tasks), chunked=chunk_size < len(tasks),
+                                      checkpointed=bool(checkpoint), force=force, where="lane",
+                                      chunk_size=chunk_size)
     # BULK-GATE REACH (the axis-4 gap warden's Q8 found). The estimate→test→eval discipline does NOT follow work
     # onto a lane: a lane runs a CLI subprocess, touching no patched SDK, so gate._bulkgate_check never fires and a
     # lane fan is otherwise UNGOVERNED. The SPEND gate is moot ($0 on a plan) — but "was this proven to work before N

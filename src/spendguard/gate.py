@@ -175,7 +175,8 @@ def deliberate_stop_types():
     drifts. A brand-new REFUSAL should still subclass SpendGateRefused (covered automatically); only a genuinely
     different KIND of deliberate stop (like the deadline) is enumerated here. DispatchTimeout is imported lazily to
     keep this module low in the import graph."""
-    types = [SpendGateRefused]
+    from .bulk_resilience import BulkResilienceRefused
+    types = [SpendGateRefused, BulkResilienceRefused]
     try:
         from .dispatch import DispatchTimeout
         types.append(DispatchTimeout)

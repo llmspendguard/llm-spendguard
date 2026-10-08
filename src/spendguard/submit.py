@@ -19,6 +19,7 @@ CLI (estimate only, never submits):
 import os, sys, json, argparse
 
 from .pricing import batch_cost, realtime_cost, normalize
+from . import bulk_resilience
 
 from .config import HOME as _HOME, api_key as _api_key
 AUDIT_DIR = str(_HOME)
@@ -286,7 +287,7 @@ def _preflight_first_request(provider, first_request, endpoint):
 def guarded_submit(jsonl_path, model, cap_dollars, batch=True, avg_out_tokens=None,
                    expected_cost=None, submit=True, request_cap=25000,
                    overrun_tolerance=DEFAULT_OVERRUN_TOLERANCE, endpoint="/v1/chat/completions", intent=None,
-                   metadata=None, preflight=True):
+                   metadata=None, preflight=True, force=False):
     """Estimate -> enforce cap -> PRE-FLIGHT one live request -> log -> submit. Raises RuntimeError if it won't pass. `endpoint` is the Batch API
     target the .jsonl lines address ('/v1/chat/completions' by default, '/v1/embeddings' for an embeddings batch) —
     it must match the lines' `url`, so it is a parameter, not a hardcoded literal at the batches.create call.
@@ -300,6 +301,9 @@ def guarded_submit(jsonl_path, model, cap_dollars, batch=True, avg_out_tokens=No
     batch_tracker.submit_offload uses it to stamp a DETERMINISTIC offload key on the batch so a crashed-then-retried
     offload is de-duplicated against the provider's own batch list (exactly-once) instead of double-submitting."""
     est = estimate_jsonl_cost(jsonl_path, model, batch=batch, avg_out_tokens=avg_out_tokens, intent=intent)
+    if submit:
+        bulk_resilience.require_resilient(est["requests"], chunked=False, checkpointed=False,
+                                          force=force, where="guarded_submit")
     print(f"[submit_gate] {est['requests']:,} req · {est['mode']} · in={est['in_tok']:,} "
           f"out={est['out_tok']:,} ({est['out_basis']}; {est['token_basis']}) -> ${est['cost']:,.2f}")
 
@@ -401,7 +405,8 @@ def _fan_submit_shards(items, shard_size, cap_dollars, submit_one):
 
 
 def submit_chat_tasks(tasks, model, *, system=None, schema=None, reasoning="minimal", max_out=None,
-                      cap_dollars=None, submit=True, intent=None, metadata=None, preflight=True, shard_size=None):
+                      cap_dollars=None, submit=True, intent=None, metadata=None, preflight=True, shard_size=None,
+                      force=False):
     """Submit a list of CHAT tasks to the OpenAI /v1/chat/completions Batch API (~half realtime, 24h window) — the
     first-class chat BATCH submitter (the chat analogue of adapters.embed_batch), and the callable that wires
     route_economics' / bulk_delegate's BATCH leg to a real submission. Each task is a prompt STRING (custom_id auto
@@ -418,10 +423,14 @@ def submit_chat_tasks(tasks, model, *, system=None, schema=None, reasoning="mini
     import tempfile as _tf
     from . import adapters
     items = list(tasks or [])
+    if submit and items:
+        bulk_resilience.require_resilient(len(items), chunked=shard_size is not None and 0 < shard_size < len(items),
+                                          checkpointed=False, force=force, where="submit_chat_tasks")
     if shard_size and shard_size > 0 and len(items) > shard_size:   # fan into shards → a LIST of batch ids (not one)
         return _fan_submit_shards(items, shard_size, cap_dollars, lambda shard, cap: submit_chat_tasks(
             shard, model, system=system, schema=schema, reasoning=reasoning, max_out=max_out,
-            cap_dollars=cap, submit=submit, intent=intent, metadata=metadata, preflight=preflight))
+            cap_dollars=cap, submit=submit, intent=intent, metadata=metadata, preflight=preflight,
+            force=force))
     base = {"batch_id": None, "jsonl": None, "requests": len(items), "error": None}
     if not items:
         return base
@@ -453,7 +462,7 @@ def submit_chat_tasks(tasks, model, *, system=None, schema=None, reasoning="mini
                                              reasoning=reasoning, schema=schema)
         bid = guarded_submit(req_path, model, cap_dollars, batch=True, submit=submit,
                              endpoint="/v1/chat/completions", intent=intent, metadata=metadata,
-                             preflight=preflight)
+                             preflight=preflight, force=force)
         return {**base, "batch_id": bid, "jsonl": req_path, "requests": n}
     except Exception as e:
         from . import gate as _g
@@ -528,7 +537,7 @@ def build_message_batch_requests(tasks, model, *, system=None, max_out=None, sch
 
 def submit_message_batch(tasks, model, *, system=None, schema=None, max_out=None, expected_out_tokens=None,
                          cap_dollars=None, submit=True, request_cap=_ANTHROPIC_BATCH_REQUEST_CAP, intent=None,
-                         preflight=True, shard_size=None):
+                         preflight=True, shard_size=None, force=False):
     """Submit a list of tasks to the Anthropic Message Batches API (~half realtime, 29-day result window) — the
     Anthropic twin of submit_chat_tasks, and the Messages-API half of spendguard's batch surface. Each task is a prompt
     STRING (custom_id auto = 'task-<i>') OR a {custom_id, content[, system, schema, schema_name]} dict. Builds the
@@ -555,10 +564,14 @@ def submit_message_batch(tasks, model, *, system=None, schema=None, max_out=None
     exactly-once offload key (batch_tracker) rides each request's custom_id instead — see batch_tracker.submit_offload."""
     from . import adapters
     items = list(tasks or [])
+    if submit and items:
+        bulk_resilience.require_resilient(len(items), chunked=shard_size is not None and 0 < shard_size < len(items),
+                                          checkpointed=False, force=force, where="submit_message_batch")
     if shard_size and shard_size > 0 and len(items) > shard_size:   # fan into shards → a LIST of batch ids (not one)
         return _fan_submit_shards(items, shard_size, cap_dollars, lambda shard, cap: submit_message_batch(
             shard, model, system=system, schema=schema, max_out=max_out, expected_out_tokens=expected_out_tokens,
-            cap_dollars=cap, submit=submit, request_cap=request_cap, intent=intent, preflight=preflight))
+            cap_dollars=cap, submit=submit, request_cap=request_cap, intent=intent, preflight=preflight,
+            force=force))
     base = {"batch_id": None, "requests": len(items), "estimate": None, "error": None}
     if not items:
         return base

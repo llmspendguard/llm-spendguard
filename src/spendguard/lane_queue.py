@@ -849,10 +849,13 @@ def drain(worker=None, batch=None, lease_s=None, idle_rounds=None, idle_sleep=No
                 _dec = queue_planner.should_offload(intent, len(rows))
                 if _dec:
                     _off = batch_tracker.submit_offload(intent, rows, _dec["batch_model"],
-                                                        provider=_dec.get("provider") or "openai",
                                                         cap_dollars=_qcfg("queue_batch_cap_usd", None))
-                    if _off.get("batch_id") and _off.get("marked"):
+                    if (_off.get("batch_id") or _off.get("batch_ids")) and _off.get("marked"):
                         s["batched"] = s.get("batched", 0) + _off["marked"]
+                        if _off.get("error"):
+                            import sys as _sysob
+                            print("[spendguard] drain: some batch shards failed (%s); remaining leased rows retry"
+                                  % _off["error"], file=_sysob.stderr, flush=True)
                         continue                                        # rows now queued_batch (tracked) → skip realtime
                     if _off.get("error"):
                         import sys as _sysob                            # NAMED: offload skipped → running realtime
