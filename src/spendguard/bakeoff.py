@@ -235,22 +235,34 @@ def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget
                     n_err += 1                                      # a dropped run is COUNTED + surfaced, never silent —
                     last_error = (r.get("error") or "")[:140]      # a candidate/effort that fails every prompt is visible,
                     continue                                       # not read as a clean zero-run bakeoff
+                if not (r.get("text") or "").strip():              # a SUCCESSFUL call that produced NO usable text is a
+                    n_err += 1                                      # FAILED arm, not a clean run — count + skip, never hand
+                    last_error = "empty reply (no text)"           # an empty output to the judge as if it were an answer
+                    continue
                 n_run += 1
                 cost = float(r.get("cost") or 0.0)
                 spent += cost
-                if requirement_aware:                               # judge by the PROMPT'S OWN requirements, two-tier (screen→opus)
-                    from . import requirement_judge
-                    _v = requirement_judge.judge_requirements(txt, r.get("text"), screen_model=judge_model,
-                                                              adjudicator_model=adjudicator_model,
-                                                              **({"images": imgs} if imgs else {}))
-                    verdict = _v.get("good")                        # same True/False/None contract as _judge_one
-                    spent += float(_v.get("cost") or 0.0)          # the judge's own meta-cost, folded into the arm's spend
-                    for _rq in (_v.get("requirements") or []):     # collect the applied rubric (deduped) for the receipt
-                        if _rq not in req_seen:
-                            req_seen.append(_rq)
-                else:
-                    verdict = _judge_one(txt, r.get("text"), judge_model,
-                                         **({"images": imgs} if imgs else {}))  # generic LLM judge — the quality signal
+                # THE JUDGE MUST NOT ABORT THE SLATE. A judge that RAISES (an unparseable verdict, a transport error, a
+                # requirement_judge exception) would otherwise crash the whole bakeoff mid-loop and discard every arm
+                # already measured. Contain it: the run is counted as UNLABELED (verdict=None), the error is surfaced in
+                # last_error, and the loop continues — the same counted-and-skipped discipline a failed ARM gets.
+                try:
+                    if requirement_aware:                           # judge by the PROMPT'S OWN requirements, two-tier (screen→opus)
+                        from . import requirement_judge
+                        _v = requirement_judge.judge_requirements(txt, r.get("text"), screen_model=judge_model,
+                                                                  adjudicator_model=adjudicator_model,
+                                                                  **({"images": imgs} if imgs else {}))
+                        verdict = _v.get("good")                    # same True/False/None contract as _judge_one
+                        spent += float(_v.get("cost") or 0.0)      # the judge's own meta-cost, folded into the arm's spend
+                        for _rq in (_v.get("requirements") or []): # collect the applied rubric (deduped) for the receipt
+                            if _rq not in req_seen:
+                                req_seen.append(_rq)
+                    else:
+                        verdict = _judge_one(txt, r.get("text"), judge_model,
+                                             **({"images": imgs} if imgs else {}))  # generic LLM judge — the quality signal
+                except Exception as _je:
+                    verdict = None                                  # UNLABELED, not a crash — the arm's output still counts as a run
+                    last_error = f"judge error: {type(_je).__name__}: {str(_je)[:100]}"
                 q = None if verdict is None else ("good" if verdict else "bad")
                 if q is not None:
                     n_lab += 1
