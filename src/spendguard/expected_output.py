@@ -46,6 +46,35 @@ BATCH_BASES = ("measured:model", "measured avg", "declared", "reasoning-floor", 
 
 MIN_OBS = 20                 # below this a class's distribution is noise, not a measurement
 _warned = set()
+_contam_warned = set()
+
+
+def _model_ceiling(model):
+    """The model's published OUTPUT ceiling (pricing.max_output_tokens), or None when unknown. A single request can
+    NEVER emit more than this — so a learned 'per-request' value above it is not a measurement, it is contamination."""
+    try:
+        from . import pricing
+        return pricing.max_output_tokens(model)
+    except Exception:
+        return None
+
+
+def _discard_if_contaminated(value, model, scope):
+    """A measured per-request output that EXCEEDS the model's output ceiling is physically impossible for ONE request —
+    it is a per-SHARD / packed total that was learned as if per-request (the batch-contamination bug: a 60-request
+    shard's 231k output taught as a 339k 'per-request' p90). Return `value` when it is a sane per-request measurement,
+    else None (+ a loud once-per-scope warning) so expect() falls through to a TRUSTWORTHY basis instead of silently
+    degrading the inflated value to the ceiling (which then over-states the estimate ~shard_size× and false-refuses)."""
+    ceil = _model_ceiling(model)
+    if ceil and value > ceil:
+        if scope not in _contam_warned:
+            _contam_warned.add(scope)
+            print(f"[spend_gate] CONTAMINATED output measurement for {scope!r}: learned per-request p90 {value:,} > "
+                  f"model '{model}' output ceiling {ceil:,} — impossible for ONE request, so this is a per-SHARD/packed "
+                  f"total taught as per-request. DISCARDING it for a trustworthy basis. Fix: record per-ITEM out_tok "
+                  f"for batch/packed calls (bulkgate.note_response(..., n_items=<requests>)).", file=sys.stderr)
+        return None
+    return value
 
 
 def is_batch_basis(b):
@@ -70,9 +99,10 @@ def expect(model, sig=None, max_tokens=None, declared=None):
                 # size a termination bound; using it as the EXPECTED cost over-states ~4× against a measured
                 # p50. Two numbers, two jobs — the same discipline that separated the cap from the estimate,
                 # one level down.
-                learned = int(b["p90"])
-                # A caller's cap still bounds it: they cannot receive more than they allowed.
-                return (min(learned, int(max_tokens)) if max_tokens else learned), "learned"
+                learned = _discard_if_contaminated(int(b["p90"]), model, "sig:" + str(sig))
+                if learned is not None:
+                    # A caller's cap still bounds it: they cannot receive more than they allowed.
+                    return (min(learned, int(max_tokens)) if max_tokens else learned), "learned"
         except Exception:
             pass
     # DECLARED — a caller's explicit, INTENT-SPECIFIC expected output. After the per-class LEARNED measurement (the most
@@ -92,8 +122,9 @@ def expect(model, sig=None, max_tokens=None, declared=None):
         from . import bulkgate
         mo = bulkgate.model_outputs(model)
         if mo and (mo.get("n") or 0) >= MIN_OBS and mo.get("p90"):
-            broad = int(mo["p90"])
-            return (min(broad, int(max_tokens)) if max_tokens else broad), "model-history"
+            broad = _discard_if_contaminated(int(mo["p90"]), model, "model:" + str(model))
+            if broad is not None:
+                return (min(broad, int(max_tokens)) if max_tokens else broad), "model-history"
     except Exception:
         pass
     if max_tokens:

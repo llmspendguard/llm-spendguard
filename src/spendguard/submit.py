@@ -24,12 +24,32 @@ from .config import HOME as _HOME, api_key as _api_key
 AUDIT_DIR = str(_HOME)
 
 
+_tiktoken_warned = False
+
+
+def _warn_if_no_tiktoken():
+    """The INPUT token count feeds an AUTHORIZATION decision (the cap check). Without tiktoken it degrades to a
+    char/4 heuristic that can mis-size that decision materially (measured: installing tiktoken changed a job's input
+    count enough to flip the cap). Warn LOUDLY, once, so a heuristic is never a SILENT authorization input."""
+    global _tiktoken_warned
+    if _tiktoken_warned:
+        return
+    _tiktoken_warned = True
+    try:
+        import tiktoken  # noqa: F401
+    except Exception:
+        print("[submit_gate] tiktoken is NOT installed — the input token count feeding the cost/cap decision is a "
+              "char/4 HEURISTIC, not a real BPE count, and can mis-size authorization. `pip install tiktoken` in the "
+              "gated venv for an exact count before trusting a batch estimate.", file=sys.stderr)
+
+
 def _count_tokens(text, model):
     """Provider-aware INPUT token estimate: a REAL BPE base (exact tiktoken encoding for OpenAI models) × the
     MEASURED per-provider o200k→native factor (provider_tokens). This is what makes an anthropic/gemini/glm
     estimate honest instead of an OpenAI-tokenizer proxy. Signature is unchanged (text, model) so every caller —
     bakeoff, effort_titration, experiment — improves at once. Fail-open all the way down (never raises)."""
     from . import provider_tokens, adapters
+    _warn_if_no_tiktoken()                            # the input count authorizes spend — a char/4 proxy must be loud
     try:
         prov = adapters.provider_for(model)
     except Exception:
@@ -307,8 +327,15 @@ def guarded_submit(jsonl_path, model, cap_dollars, batch=True, avg_out_tokens=No
         raise RuntimeError(f"REFUSED: {est['requests']:,} requests > request_cap {request_cap:,} "
                            f"(chunk it; OpenAI batch limit + blast-radius control).")
     if cap_dollars is not None and est["cost"] > cap_dollars:
-        raise RuntimeError(f"REFUSED: projected ${est['cost']:,.2f} > cap ${cap_dollars:,.2f}. "
-                           f"Pack more items/request, shrink the prompt, pick a cheaper model, or raise the cap deliberately.")
+        _b = est.get("out_basis", "?")
+        if _b == "ceiling":                               # name the REAL cause: the estimate is a worst-case, not a projection
+            _fix = ("the output estimate is on basis 'ceiling' — a WORST-CASE send limit, NOT a projection (it can "
+                    "over-state ~shard_size× when a measured per-request stat was contaminated by a per-shard total). "
+                    "Supply a measured avg_out_tokens, or seed one real run to learn the per-request size, then re-estimate")
+        else:
+            _fix = "pack more items/request, shrink the prompt, pick a cheaper model, or raise the cap deliberately"
+        raise RuntimeError(f"REFUSED: projected ${est['cost']:,.2f} > cap ${cap_dollars:,.2f} "
+                           f"(output basis '{_b}'). {_fix}.")
     if expected_cost is not None and est["cost"] > expected_cost * overrun_tolerance:
         raise RuntimeError(f"REFUSED: projected ${est['cost']:,.2f} is "
                            f">{(overrun_tolerance - 1) * 100:.0f}% over your expected "
@@ -401,7 +428,8 @@ def _fan_submit_shards(items, shard_size, cap_dollars, submit_one):
 
 
 def submit_chat_tasks(tasks, model, *, system=None, schema=None, reasoning="minimal", max_out=None,
-                      cap_dollars=None, submit=True, intent=None, metadata=None, preflight=True, shard_size=None):
+                      cap_dollars=None, submit=True, intent=None, metadata=None, preflight=True, shard_size=None,
+                      avg_out_tokens=None):
     """Submit a list of CHAT tasks to the OpenAI /v1/chat/completions Batch API (~half realtime, 24h window) — the
     first-class chat BATCH submitter (the chat analogue of adapters.embed_batch), and the callable that wires
     route_economics' / bulk_delegate's BATCH leg to a real submission. Each task is a prompt STRING (custom_id auto
@@ -421,7 +449,8 @@ def submit_chat_tasks(tasks, model, *, system=None, schema=None, reasoning="mini
     if shard_size and shard_size > 0 and len(items) > shard_size:   # fan into shards → a LIST of batch ids (not one)
         return _fan_submit_shards(items, shard_size, cap_dollars, lambda shard, cap: submit_chat_tasks(
             shard, model, system=system, schema=schema, reasoning=reasoning, max_out=max_out,
-            cap_dollars=cap, submit=submit, intent=intent, metadata=metadata, preflight=preflight))
+            cap_dollars=cap, submit=submit, intent=intent, metadata=metadata, preflight=preflight,
+            avg_out_tokens=avg_out_tokens))
     base = {"batch_id": None, "jsonl": None, "requests": len(items), "error": None}
     if not items:
         return base
@@ -453,7 +482,7 @@ def submit_chat_tasks(tasks, model, *, system=None, schema=None, reasoning="mini
                                              reasoning=reasoning, schema=schema)
         bid = guarded_submit(req_path, model, cap_dollars, batch=True, submit=submit,
                              endpoint="/v1/chat/completions", intent=intent, metadata=metadata,
-                             preflight=preflight)
+                             preflight=preflight, avg_out_tokens=avg_out_tokens)   # a caller's MEASURED per-request output
         return {**base, "batch_id": bid, "jsonl": req_path, "requests": n}
     except Exception as e:
         from . import gate as _g

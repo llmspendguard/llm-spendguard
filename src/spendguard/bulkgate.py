@@ -441,20 +441,28 @@ def latency(sig=None, model=None, near_chars=None):
             "floor": max(hits) if hits else None}
 
 
-def note_response(sig, model, out_tok, max_tokens=None, finish_reason=None):
+def note_response(sig, model, out_tok, max_tokens=None, finish_reason=None, n_items=1):
     """Record one response's output size + whether it TRUNCATED, keyed by call-class sig. Truncation → loud warning
     (you paid for input + a cut-off output and got corrupt data) + a per-sig count; the sizes feed maxtokens() bounds.
-    The single place that sees both sides of every call → every repo protected automatically."""
-    trunc = is_truncated(finish_reason, out_tok, max_tokens)
+    The single place that sees both sides of every call → every repo protected automatically.
+
+    `n_items`: how many REQUESTS this `out_tok` covers. maxtokens() learns a PER-REQUEST distribution, so a PACKED or
+    BATCH call — which carries the WHOLE shard's output in one number — MUST be normalized to per-item HERE
+    (out_tok / n_items), or a 60-request shard teaches a ~60× inflated 'per-request' p90 that then exceeds the model
+    ceiling and silently degrades the batch cost estimate to the ceiling (the batch false-refusal bug). A normal
+    single call passes n_items=1 (unchanged); a batch recorder passes its shard's request count."""
+    n = max(1, int(n_items or 1))
+    per_item = int(int(out_tok or 0) / n)
+    trunc = is_truncated(finish_reason, per_item, max_tokens)
     try:
         with _lock:
             _gate_calls_db().execute("INSERT INTO gate_calls (sig,model,out_tok,max_tokens,truncated,ts) VALUES (?,?,?,?,?,?)",
-                                (sig, model, int(out_tok or 0), int(max_tokens or 0), int(trunc), time.time()))
+                                (sig, model, per_item, int(max_tokens or 0), int(trunc), time.time()))
             _gate_db().commit()
     except Exception:
         pass
     if trunc:
-        _warn_truncated(sig, model, out_tok, max_tokens)
+        _warn_truncated(sig, model, per_item, max_tokens)
     return trunc
 
 
