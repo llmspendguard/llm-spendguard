@@ -9,6 +9,7 @@ import time
 import json
 import threading
 import functools
+import contextlib
 import sys
 from . import config, pricing
 
@@ -546,6 +547,48 @@ def generation_support(provider, model):
     return support
 
 
+def _generation_config_defaults():
+    """The persistent GLOBAL generation knobs from the `generation` config section (temperature/top_p/seed) — the
+    lowest-precedence default under a scoped `with adapters.generation(...)` and an explicit per-call arg. Empty when
+    unset. A deliberate operator choice (it forces EVERY call metered — a $0 lane has no knob channel), so it is
+    honored as an explicit opt-in, not the stray-per-call case the measurement guard refuses."""
+    out = {}
+    for k in GEN_KNOBS:
+        v = config._cfg_get("generation", k, None)
+        if v is not None:
+            out[k] = v
+    return out
+
+
+@contextlib.contextmanager
+def generation(temperature=None, top_p=None, seed=None):
+    """Scope determinism knobs over EVERY nested adapters.call — the 'set it once for a bakeoff / a whole chat session'
+    surface, broader than a per-call arg. A DELIBERATE operator opt-in: calls inside honor the knobs WITHOUT needing
+    per-call measurement=True (unlike a stray per-call kwarg, which is refused), FORCE the metered API (a $0 lane has
+    no temperature/seed channel), and stamp gen_params on every result. Precedence: an explicit per-call knob still
+    wins; this sits above the `generation` config global. Nests (merges over an outer scope) and restores on exit.
+
+        with adapters.generation(temperature=0, seed=20261008):
+            bakeoff("vocab-ab", candidates=[...], run=True)   # every arm's call is deterministic + metered
+    """
+    from . import calls as _c
+    prev = (_c.current() or {}).get("gen_params")
+    merged = dict(prev or {})
+    for k, v in (("temperature", temperature), ("top_p", top_p), ("seed", seed)):
+        if v is not None:
+            merged[k] = v
+    _c.set_context(gen_params=merged)
+    try:
+        yield
+    finally:
+        c = dict(_c.current() or {})
+        if prev is None:
+            c.pop("gen_params", None)
+        else:
+            c["gen_params"] = prev
+        _c._local.ctx = c
+
+
 def _provider_schema(schema):
     """Our contract, stripped to what a provider can actually parse. `nonempty` is a spendguard concept and
     stays local — it is checked against the RESPONSE, never sent as if it were JSON Schema."""
@@ -953,30 +996,40 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     if measurement:
         no_substitution = True
 
-    # DETERMINISM KNOBS (temperature/top_p/seed) — a MEASUREMENT-ONLY path. Default-refused on a production call: a
-    # generation knob that silently varies a governed result is a wrong-result risk, which is why the governance layer
-    # does not surface them generally. For a MEASUREMENT call they are the point — without determinism a priced A/B
-    # needs n replicates to tell the effect from run noise. The gate runs ONCE at the top (skipped on the _no_guard
-    # re-entry _call_guarded makes, which has already validated + forced metered); the knobs then ride **kw down to
-    # _call_once on both entries. Validated as a FLAG decision (is this a measurement?), never from the knob values.
-    _gen_knobs = {k: v for k, v in (("temperature", temperature), ("top_p", top_p), ("seed", seed)) if v is not None}
+    # DETERMINISM KNOBS (temperature/top_p/seed) — resolved from THREE precedence levels so the same capability is
+    # usable per-call AND broadly: an explicit per-call arg WINS over a SCOPED default (`with adapters.generation(...)`
+    # — a whole bakeoff / chat session) which wins over the CONFIG global (`generation` section). A $0 LANE CLI has no
+    # temperature/seed channel, so ANY effective knob FORCES the metered API (and pins the model) — never silently
+    # ignored on a lane (which reproduces the nondeterminism this path removes). The refusal is the STRAY-KWARG guard,
+    # NOT a blanket ban: a bare per-call knob on a PRODUCTION call (no measurement, no operator-set default) is refused
+    # because a silently-varying governed result is a wrong-result risk; a knob coming from measurement=True OR a
+    # deliberate scoped/config default is an EXPLICIT, auditable opt-in and is allowed. Runs ONCE at the top (skipped on
+    # the _no_guard re-entry _call_guarded makes); the RESOLVED values then ride **kw down to _call_once on both entries.
+    from . import calls as _gen_ctx
+    _ctx_now = _gen_ctx.current() or {}
+    _ctx_gen = {k: v for k, v in (_ctx_now.get("gen_params") or {}).items() if v is not None}
+    _cfg_gen = _generation_config_defaults()
+    _explicit_gen = {k: v for k, v in (("temperature", temperature), ("top_p", top_p), ("seed", seed)) if v is not None}
+    _gen_knobs = {**_cfg_gen, **_ctx_gen, **_explicit_gen}      # config < scoped context < explicit per-call
+    _gen_knobs = {k: v for k, v in _gen_knobs.items() if v is not None}
     if _gen_knobs and not _no_guard:
-        if not measurement:
+        _declared = bool(measurement or _ctx_now.get("measurement") or _ctx_gen or _cfg_gen)
+        if _explicit_gen and not _declared:
             raise TypeError(
                 "temperature/top_p/seed are refused on a production call (a silently-varying governed result is a "
-                "wrong-result risk). They are honored ONLY for a measurement run, where reproducibility IS the result "
-                "— declare it: adapters.call(model, prompt, intent=..., measurement=True, temperature=0, "
-                "seed=20261008). For a production call, control variance by replication, not by setting these.")
-        # A $0 subscription LANE CLI has no temperature/seed channel — it runs at the plan default, the very
-        # nondeterminism this path removes. Honoring the caller's determinism REQUIRES the metered API, so force it
-        # (and pin the model) rather than silently accept-and-ignore the knobs on a lane (which reproduces the artefact).
+                "wrong-result risk). They are honored for a measurement run (measurement=True) or inside a deliberate "
+                "`with adapters.generation(...)` scope / `generation` config default — declare it: "
+                "adapters.call(model, prompt, intent=..., measurement=True, temperature=0, seed=20261008). For a "
+                "production call, control variance by replication, not by setting these.")
+        # Thread the RESOLVED values down so a scoped/config default reaches _call_once even with no explicit arg.
+        temperature, top_p, seed = _gen_knobs.get("temperature"), _gen_knobs.get("top_p"), _gen_knobs.get("seed")
         if not metered_only:
             metered_only = True
             no_substitution = True
             config.warn_once(
-                "[spendguard] measurement determinism (temperature/top_p/seed) is only honorable on the metered API "
-                "— a $0 lane CLI has no such channel. Forcing the metered path for this measurement call so the knobs "
-                "take effect (cost: metered, not $0).")
+                "[spendguard] generation determinism (temperature/top_p/seed) is only honorable on the metered API — a "
+                "$0 lane CLI has no such channel. Forcing the metered path so the knobs take effect (cost: metered, not "
+                "$0). Source: " + ("per-call" if _explicit_gen else "scoped context" if _ctx_gen else "config global") + ".")
 
     # Preserve the CALLER'S contract before best-value or another internal routing choice pins its selected arm.
     # Plan admission may redirect an internally pinned discretionary choice, but never a caller's explicit pin.

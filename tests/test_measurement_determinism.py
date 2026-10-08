@@ -73,6 +73,10 @@ ck("top_p reached the request", _captured.get("top_p") == 1)
 ck("seed reached the request", _captured.get("seed") == 20261008)
 ck("all three stamped as gen_params_applied", r.get("gen_params_applied") == {"temperature": 0, "top_p": 1, "seed": 20261008})
 ck("nothing dropped for a non-reasoning OpenAI model", not r.get("gen_params_dropped"))
+# the user's exact failure mode: a forced-metered determinism call must send the model's OWN cap key
+# (max_completion_tokens for this family), NEVER max_tokens — else HTTP 400 "use max_completion_tokens".
+ck("determinism send uses max_completion_tokens, not max_tokens (the 400 the realtime path hit)",
+   "max_completion_tokens" in _captured and "max_tokens" not in _captured)
 
 # ── 2b. a REASONING OpenAI model drops the sampling knobs, keeps seed — recorded, not a silent 400 ──
 _captured.clear()
@@ -154,6 +158,61 @@ _calls_mod._local.ctx = {"intent": "prod-call"}      # NOT a measurement → pro
 _gate._record_rt("gpt-6-luna", {"model": "gpt-6-luna", "messages": []}, 100, 50, cost=0.001)
 ck("a NON-measurement call with no effort stays NULL (production unchanged)", _eff_cap.get("effort") is None)
 _calls_mod._local.ctx = {}
+
+# ── 6. SCOPED default: `with adapters.generation(...)` applies to a nested call with NO per-call measurement ──
+_captured.clear()
+_openai_mod.OpenAI = _FakeOpenAI
+try:
+    with adapters.generation(temperature=0, seed=55):
+        rg = adapters.call("gpt-4.1-mini", "hi", intent="scoped-det")   # no per-call measurement= / knobs
+finally:
+    _openai_mod.OpenAI = _orig_openai
+ck("scoped generation() applies knobs to a nested call (no per-call measurement needed)",
+   _captured.get("temperature") == 0 and _captured.get("seed") == 55)
+ck("scoped generation() forced the metered path", rg.get("executor") == "api")
+# outside the scope, the knobs do not leak
+_captured.clear()
+_openai_mod.OpenAI = _FakeOpenAI
+try:
+    adapters.call("gpt-4.1-mini", "hi", intent="after-scope", measurement=True, metered_only=True)
+finally:
+    _openai_mod.OpenAI = _orig_openai
+ck("knobs do not leak past the generation() scope", "temperature" not in _captured and "seed" not in _captured)
+
+# ── 7. CONFIG global: a `generation` config default applies to a plain call (deliberate operator opt-in) ──
+_orig_cfg = adapters.config._cfg_get
+def _cfg_with_generation(section, key, default=None):
+    if section == "generation" and key == "temperature":
+        return 0
+    return _orig_cfg(section, key, default)
+adapters.config._cfg_get = _cfg_with_generation
+_captured.clear()
+_openai_mod.OpenAI = _FakeOpenAI
+try:
+    rc = adapters.call("gpt-4.1-mini", "hi", intent="cfg-global-det")   # no per-call knob, no measurement
+finally:
+    _openai_mod.OpenAI = _orig_openai
+    adapters.config._cfg_get = _orig_cfg
+ck("a config `generation` global applies to a plain call (no per-call opt-in)", _captured.get("temperature") == 0)
+
+# ── 8. AUTOTUNE operates on the model's OWN cap key, never the hardcoded max_tokens (the realtime 400 drift) ──
+from spendguard import gate as _gate, bulkgate as _bg  # noqa: E402
+_gate._autotune_said.clear()
+_orig_mt, _orig_mode = _bg.maxtokens, _gate._autotune_mode
+# a clean SHRINK scenario matching the logged "128000 → 6820, 0 truncations"
+_bg.maxtokens = lambda sig, cap=None, **k: {"recommend": 6820, "n": 46, "n_truncated": 0, "p95": 5000, "p99": 4547}
+_gate._autotune_mode = lambda: "apply"
+try:
+    _kw_cc = {"max_completion_tokens": 128000}
+    _gate._autotune(_kw_cc, "gpt-6-luna")
+    ck("autotune writes the request's OWN key (max_completion_tokens), never introduces max_tokens",
+       _kw_cc.get("max_completion_tokens") == 6820 and "max_tokens" not in _kw_cc)
+    _gate._autotune_said.clear()
+    _kw_mt = {"max_tokens": 128000}
+    _gate._autotune(_kw_mt, "legacy-chat-model")
+    ck("autotune on a max_tokens request stays on max_tokens", _kw_mt.get("max_tokens") == 6820 and "max_completion_tokens" not in _kw_mt)
+finally:
+    _bg.maxtokens, _gate._autotune_mode = _orig_mt, _orig_mode
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_measurement_determinism: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

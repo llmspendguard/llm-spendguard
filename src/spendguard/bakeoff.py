@@ -159,7 +159,8 @@ def _plan(intent, candidates, prompts, judge_model, efforts, requirement_aware=F
 
 
 def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget_usd=None,
-            judge_model=None, parent_reading=None, efforts=None, requirement_aware=False, adjudicator_model=None):
+            judge_model=None, parent_reading=None, efforts=None, requirement_aware=False, adjudicator_model=None,
+            temperature=None, top_p=None, seed=None):
     """Measure cost×quality for `candidates` on a SAMPLE of `intent`'s real tasks, judge each output, and (run=True)
     record it so advise/recommend rank the candidates. `candidates` = ['vendor:model', …] (required — the slate to
     test). `prompts` overrides the auto-sample (from the intent's recorded prompts). ESTIMATE-FIRST: run=False
@@ -222,7 +223,13 @@ def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget
                 # that feeds advise/recommend). Still $0 on c's OWN lane where available (pinning suppresses
                 # cross-model substitution, not same-provider lane use). images= is passed ONLY for a vision task,
                 # so a text run is byte-for-byte the prior call (a vision call skips the lane by construction).
+                # DETERMINISM (optional): when the caller passes temperature/top_p/seed, run each arm as a MEASUREMENT
+                # with those knobs — one deterministic pass per arm instead of n replicates to separate the effect from
+                # run noise. This FORCES the metered API (a $0 lane has no knob channel), so it is opt-in per the caller.
+                # Unset (the default) → arms stay on their $0 lane where available (the production-settings behaviour).
+                _det = {k: v for k, v in (("temperature", temperature), ("top_p", top_p), ("seed", seed)) if v is not None}
                 r = adapters.call(c, txt, sig=intent, timeout_s=120, reasoning=eff, no_substitution=True,
+                                  **({"measurement": True} if _det else {}), **_det,
                                   **({"images": imgs} if imgs else {}))
                 if r.get("error"):
                     n_err += 1                                      # a dropped run is COUNTED + surfaced, never silent —

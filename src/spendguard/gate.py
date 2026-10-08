@@ -1704,7 +1704,13 @@ def _autotune(kw, model):
     mode = _autotune_mode()
     if mode not in ("suggest", "apply") or kw.pop("autotune", None) is False:
         return
-    cap = kw.get("max_tokens")
+    # THE SAME PARAM-NAME AUTHORITY the primary send + batch door use: operate on WHICHEVER output-cap key the request
+    # already carries (tokens_param chose it per model family), NEVER the hardcoded `max_tokens`. Writing `max_tokens`
+    # for a family that requires `max_completion_tokens` (gpt-5.x/6 sol/luna) made the metered realtime path 400 — the
+    # exact drift the authority was unified to stop, reintroduced here. Reading the WRONG key also silently no-op'd
+    # autotune for those models. Detect the present key; if neither is set there is no caller cap to tune.
+    _tok_key = "max_completion_tokens" if "max_completion_tokens" in kw else "max_tokens"
+    cap = kw.get(_tok_key)
     if not cap or not model:
         return
     from . import bulkgate
@@ -1751,11 +1757,11 @@ def _autotune(kw, model):
             return
         key = (sig, "raise")
         if mode == "apply":
-            kw["max_tokens"] = target
+            kw[_tok_key] = target                              # the model's OWN cap key (never hardcoded max_tokens)
         if key not in _autotune_said:
             _autotune_said.add(key)
             verb = "AUTOTUNE" if mode == "apply" else "AUTOTUNE (suggest)"
-            print(f"[spend_gate] {verb} max_tokens {cap} → {target} for '{intent or model}' — this class "
+            print(f"[spend_gate] {verb} {_tok_key} {cap} → {target} for '{intent or model}' — this class "
                   f"TRUNCATED {cut}/{complete + cut} time(s); a cut-off answer is 100% waste, you were "
                   f"billed for the input and a body that does not parse"
                   + ("" if mode == "apply" else " (set gate.autotune=apply to act)"), file=sys.stderr)
@@ -1770,18 +1776,18 @@ def _autotune(kw, model):
         return
     key = (sig, mode)
     if mode == "apply":
-        kw["max_tokens"] = rec
+        kw[_tok_key] = rec                                    # the model's OWN cap key (never hardcoded max_tokens)
         _log({"kind": "autotune", "direction": "shrink", "sig": sig, "model": model,
               "intent": intent or None, "from": cap, "to": rec, "n_obs": complete, "p99": b.get("p99")})
         if key not in _autotune_said:
             _autotune_said.add(key)
-            print(f"[spend_gate] AUTOTUNE max_tokens {cap} → {rec} for '{intent or model}' "
+            print(f"[spend_gate] AUTOTUNE {_tok_key} {cap} → {rec} for '{intent or model}' "
                   f"(measured p99 {b.get('p99')}, n={complete}, 0 truncations — sharpens the worst-case "
                   f"estimate; saves no money, since you are billed on tokens GENERATED — "
                   f"kw autotune=False to opt out)", file=sys.stderr)
     elif key not in _autotune_said:
         _autotune_said.add(key)
-        print(f"[spend_gate] autotune(suggest): max_tokens {cap} vs measured p99×1.5 = {rec} for "
+        print(f"[spend_gate] autotune(suggest): {_tok_key} {cap} vs measured p99×1.5 = {rec} for "
               f"'{intent or model}' (n={b['n']}) — gate.autotune=apply clamps this automatically",
               file=sys.stderr)
 
