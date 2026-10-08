@@ -38,14 +38,19 @@ _AUTH_RECHECK_BACKOFF_S = 0.75  # a non-zero `codex login status` is confirmed o
 _TOKEN_EXPIRY_MARGIN_S = 120    # a token within this of its own exp is not treated as still-valid (leave room to refresh)
 
 
-def _token_unexpired(now=None):
+def _token_unexpired(now=None, margin=None):
     """Authoritative STRUCTURAL check: is the Codex plan token on disk present and not past its own expiry? Reads
     ${CODEX_HOME:-~/.codex}/auth.json and decodes the access_token JWT's `exp` claim — PARSING a fixed-format field
     (the exp integer), never a judgement about prose. Returns True when a token is present AND exp is more than
-    _TOKEN_EXPIRY_MARGIN_S in the future; False when present but expired; None when it cannot be determined (home/
-    file/field absent or unparseable) so a can't-read is NEVER mistaken for a logout. The token's own exp is the
-    DEFINITIVE 'am I logged in' signal — it beats a `codex login status` subprocess that can race a concurrent token
-    refresh and exit non-zero for a few seconds while the plan is in fact authed. $0, never raises."""
+    `margin` seconds in the future; False when present but within `margin` of (or past) exp; None when it cannot be
+    determined (home/file/field absent or unparseable) so a can't-read is NEVER mistaken for a logout.
+
+    `margin` defaults to _TOKEN_EXPIRY_MARGIN_S — headroom for 'is this token safe to RELY ON for a call that may run a
+    while'. For the LOGOUT decision pass margin=0: a token whose exp is still in the FUTURE means LOGGED IN (a refresh
+    is merely imminent), NOT logged out. The default margin reported a valid near-exp token as False, which fired the
+    'codex lane LOGGED OUT' banner in the ~2min window before every hourly token refresh — the recurring false toast.
+    The token's own exp is the DEFINITIVE 'am I logged in' signal, beating a `codex login status` subprocess that races
+    the refresh. $0, never raises."""
     import base64
     try:
         home = os.environ.get("CODEX_HOME") or os.path.expanduser("~/.codex")
@@ -58,7 +63,8 @@ def _token_unexpired(now=None):
         exp = json.loads(base64.urlsafe_b64decode(payload)).get("exp")
         if not exp:
             return None
-        return (float(exp) - (now if now is not None else time.time())) > _TOKEN_EXPIRY_MARGIN_S
+        _m = _TOKEN_EXPIRY_MARGIN_S if margin is None else margin
+        return (float(exp) - (now if now is not None else time.time())) > _m
     except Exception:
         return None
 _usage_cache = {"at": 0.0, "val": None}
@@ -103,8 +109,10 @@ def auth_status(timeout=20):
             return {"authed": True}
         # A non-zero `codex login status` is NOT authoritative — it races the periodic OAuth token refresh that
         # rewrites ~/.codex/auth.json. The TOKEN on disk decides: a VALID token is authed (the hourly false-toast fix),
-        # a present-and-EXPIRED token is a real logout.
-        tok = _token_unexpired()
+        # a present-and-EXPIRED token is a real logout. margin=0: the LOGOUT decision uses the token's ACTUAL exp — a
+        # token still valid but within the refresh margin is LOGGED IN (a refresh is imminent), not logged out. Using
+        # the default margin here is what fired the banner in the ~2min window before every hourly refresh.
+        tok = _token_unexpired(margin=0)
         if tok is True:
             return {"authed": True}
         if tok is False:

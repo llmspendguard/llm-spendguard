@@ -31,7 +31,7 @@ class _R:
 _status_rc = {"rc": 1}                                  # default: the flaky status subprocess returns NON-zero
 codex_exec.subprocess.run = lambda *a, **k: _R(_status_rc["rc"])
 
-def _set_token(v): codex_exec._token_unexpired = lambda now=None: v
+def _set_token(v): codex_exec._token_unexpired = lambda *a, **k: v   # accepts margin= (auth_status passes margin=0)
 
 def _run(token, rc=1, auth_present=True):
     _status_rc["rc"] = rc

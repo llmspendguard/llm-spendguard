@@ -125,6 +125,26 @@ try:
 
     os.remove(os.path.join(_codex_home, "auth.json"))
     fails += ck("no auth.json reads inconclusive (None — never a false logout)", codex_exec._token_unexpired() is None)
+
+    # NEAR-EXP (the refresh window): a token still VALID but within the expiry margin. With the default margin it reads
+    # 'not unexpired' (False) — correct for 'safe to rely on for a long call' — but the LOGOUT decision must use
+    # margin=0 (exp still in the future ⇒ logged in). This is the ~2min-before-refresh window that fired the hourly
+    # 'codex lane LOGGED OUT' banner despite a valid token.
+    with open(os.path.join(_codex_home, "auth.json"), "w") as fh:
+        json.dump({"tokens": {"access_token": _jwt(int(time.time()) + 30)}}, fh)   # exp 30s out, inside the 120s margin
+    fails += ck("near-exp token: default margin reports False (not safe to rely on for a long call)",
+                codex_exec._token_unexpired() is False)
+    fails += ck("near-exp token: margin=0 reports True (exp still in the future ⇒ LOGGED IN)",
+                codex_exec._token_unexpired(margin=0) is True)
+    # end-to-end: a flaky non-zero status + a near-exp VALID token → auth_status is authed True (no banner)
+    _sr, _sb = codex_exec.subprocess.run, codex_exec._bin
+    codex_exec._bin = lambda: "/usr/bin/true"
+    codex_exec.subprocess.run = (lambda *a, **k: _Proc(1))
+    try:
+        fails += ck("auth_status: non-zero status + near-exp valid token → authed True (the screenshot banner is gone)",
+                    codex_exec.auth_status() == {"authed": True})
+    finally:
+        codex_exec.subprocess.run, codex_exec._bin = _sr, _sb
 finally:
     if _orig_codex_home is None:
         os.environ.pop("CODEX_HOME", None)
