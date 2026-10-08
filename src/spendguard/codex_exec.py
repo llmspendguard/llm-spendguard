@@ -101,17 +101,33 @@ def auth_status(timeout=20):
         r = subprocess.run([exe, "login", "status"], capture_output=True, text=True, timeout=timeout, env=env)
         if r.returncode == 0:
             return {"authed": True}
-        # A non-zero status with a VALID token on disk is a transient (the status subprocess raced a concurrent token
-        # refresh), NOT a logout — the token's own exp is authoritative. Only an absent/expired token is a real
-        # logout; a token we cannot read falls back to one confirming re-check (never a single flaky call's verdict).
+        # A non-zero `codex login status` is NOT authoritative — it races the periodic OAuth token refresh that
+        # rewrites ~/.codex/auth.json. The TOKEN on disk decides: a VALID token is authed (the hourly false-toast fix),
+        # a present-and-EXPIRED token is a real logout.
         tok = _token_unexpired()
         if tok is True:
             return {"authed": True}
         if tok is False:
             return {"authed": False}
-        time.sleep(_AUTH_RECHECK_BACKOFF_S)        # token unreadable: confirm once — a transient non-zero recovers here
+        # Token UNREADABLE (a non-atomic auth.json rewrite in flight, or process contention): ONE confirming re-check —
+        # a transient non-zero status recovers to 0 here (the legitimate recovery path).
+        time.sleep(_AUTH_RECHECK_BACKOFF_S)
         r2 = subprocess.run([exe, "login", "status"], capture_output=True, text=True, timeout=timeout, env=env)
-        return {"authed": r2.returncode == 0}
+        if r2.returncode == 0:
+            return {"authed": True}
+        # BOTH the status AND the re-check are non-zero WHILE the token is unreadable. That is NOT a confirmed logout
+        # when auth.json is merely being rewritten: a present-but-unreadable file is a refresh write in flight →
+        # INCONCLUSIVE (None, which NEVER fires the persistent 'logged out' toast — the fix for the recurring hourly
+        # banner that escalated an unreadable token to False on every refresh). Only a genuinely ABSENT file is a real
+        # logout (False). A real logout therefore still surfaces (expired token above, or absent file here, or the
+        # call's own auth error); a token-refresh race no longer toasts.
+        import os as _os
+        _home = _os.environ.get("CODEX_HOME") or _os.path.expanduser("~/.codex")
+        try:
+            _present = _os.path.exists(_os.path.join(_home, "auth.json"))
+        except Exception:
+            _present = True
+        return {"authed": False if not _present else None}
     except Exception:
         return {"authed": None}
 
