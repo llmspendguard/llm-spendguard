@@ -154,6 +154,12 @@ def _dispatch(argv=None):
     if cmd == "agent-spawn-gate":
         from . import agent_spawn_gate
         return agent_spawn_gate.cmd(rest)
+    if cmd == "residency-gate":                           # PostToolUse context-residency NUDGE (warns, never blocks)
+        from . import residency_gate
+        return residency_gate.cmd(rest)
+    if cmd == "install-residency-gate":
+        from . import residency_gate
+        return residency_gate.install_residency_gate_cli(rest)
     if cmd == "overage":
         from . import overage
         return overage.overage_cli(rest)
