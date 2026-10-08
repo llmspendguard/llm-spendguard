@@ -25,6 +25,14 @@ import tempfile
 import time
 
 TIMEOUT_S = 300               # meta prompts are small; a hung CLI must not stall the daily report
+# MINIMAL COLD START — the claude CLI reloads MCP server schemas + settings sources on EVERY `-p` spawn, which the $0
+# plan pays for. Suppressing them is a MEASURED ~58% cut of the per-call cache-WRITE (2026-10-08 A/B: 18,874 → 7,866
+# tok; total in 48,655 → 37,647) with the OAuth plan login INTACT and the reply unchanged. EXCLUDED on purpose, with
+# evidence: `--bare` cuts more but forces ANTHROPIC_API_KEY/apiKeyHelper auth ("OAuth and keychain are never read"),
+# which breaks the $0 plan lane; `--exclude-dynamic-system-prompt-sections` BUSTED the prompt cache (cache-read
+# 29,771 → 0, so everything became a fresh cache-WRITE → net WORSE). `{"mcpServers":{}}` is the empty-but-VALID config
+# (`{}` is rejected: "mcpServers: Invalid input"). Nothing here touches auth or the cached agent base.
+_MINIMAL_COLD_START = ["--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', "--setting-sources", ""]
 _USAGE_TTL_S = 300            # `claude /usage` is re-read at most this often (the shared cache adds reset-boundary invalidation)
 _usage_cache = {"at": 0.0, "val": None}
 
@@ -157,7 +165,7 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     exe = _bin()
     if not exe:
         return {"error": "claude CLI not found"}
-    cmd = [exe, "-p", prompt, "--output-format", "json", "--max-turns", "1"]
+    cmd = [exe, "-p", prompt, "--output-format", "json", "--max-turns", "1", *_MINIMAL_COLD_START]
     alias = _model_alias(model)
     if alias:
         cmd += ["--model", alias]
