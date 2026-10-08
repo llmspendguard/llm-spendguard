@@ -330,7 +330,7 @@ def _codex_error_status(err_text):
 
 
 def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=None, max_tokens=None,
-               sandbox="read-only", cwd=None):   # max_tokens: protocol-uniform; codex exec has no one-shot output-cap flag
+               sandbox="read-only", cwd=None, recycle_on_timeout=False):   # max_tokens: protocol-uniform; codex exec has no one-shot output-cap flag
     """→ {text, in_tok, out_tok, latency, error} from one headless plan-billed Codex run. `system` is
     prepended to the prompt (codex exec has no separate system slot for one-shot prompt mode). `model` IS
     forwarded to `codex -m` when given (e.g. gpt-5.5), so the recorded model is the one that actually ran —
@@ -353,14 +353,15 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
         else:
             resolved_cwd = os.path.abspath(os.path.expanduser(os.fspath(cwd)))
         return _run_prompt_in_cwd(prompt, system=system, model=model, timeout=timeout, reasoning=reasoning,
-                                  max_tokens=max_tokens, sandbox=sandbox, cwd=resolved_cwd)
+                                  max_tokens=max_tokens, sandbox=sandbox, cwd=resolved_cwd,
+                                  recycle_on_timeout=recycle_on_timeout)
     finally:
         if neutral_cwd:
             shutil.rmtree(neutral_cwd, ignore_errors=True)
 
 
 def _run_prompt_in_cwd(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=None, max_tokens=None,
-                       sandbox="read-only", cwd=None):
+                       sandbox="read-only", cwd=None, recycle_on_timeout=False):
     """Execute after ``run_prompt`` has resolved and, when needed, owned the task working directory."""
     _eff = _codex_effort(reasoning)   # the effort ACTUALLY applied on this lane (Codex's own scale: 'minimal'→'none').
     #                                   Reported on the result so the ledger records what RAN, not the requested tier —
@@ -374,7 +375,8 @@ def _run_prompt_in_cwd(prompt, system=None, model=None, timeout=TIMEOUT_S, reaso
         _full = (f"{system.strip()}\n\n{prompt}" if system else prompt)
         _t0 = time.time()
         try:
-            _r = codex_daemon.run_warm(_full, model=model, reasoning=reasoning, sandbox=sandbox, cwd=cwd)
+            _r = codex_daemon.run_warm(_full, model=model, reasoning=reasoning, sandbox=sandbox, cwd=cwd,
+                                       timeout=timeout, recycle_on_timeout=recycle_on_timeout)
         except Exception as _e:                        # an exception must NEVER bypass the exec/API fallback below
             _r = {"error": f"codex daemon raised: {str(_e)[:150]}"}
         if _r.get("text") and not _r.get("error"):

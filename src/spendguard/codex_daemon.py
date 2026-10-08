@@ -299,10 +299,19 @@ class _CodexDaemon:
                 pass
         self._fail_all_waiters()                      # anything still pending on the dead proc is woken, not hung
 
-    def run_warm(self, prompt, model=None, thread=None, reasoning=None, sandbox="read-only", cwd=None):
+    def run_warm(self, prompt, model=None, thread=None, reasoning=None, sandbox="read-only", cwd=None,
+                 timeout=None, recycle_on_timeout=False):
         """One delegation on the WARM server, CONCURRENCY-SAFE — many callers in flight, each waiting on its OWN
         response by id, holding no lock. A single call that TIMES OUT fails only ITSELF (the caller falls back to
-        the metered API); only a genuinely dead pipe restarts the server, so one slow turn never sinks the others."""
+        the metered API); only a genuinely dead pipe restarts the server, so one slow turn never sinks the others.
+
+        `timeout` (seconds) overrides the per-call deadline when given — a long AGENTIC repo turn needs far more than
+        a meta prompt's default; a caller that passed no timeout keeps the fixed CALL_TIMEOUT_S. `recycle_on_timeout`
+        is for a SINGLE-TENANT caller (an agentic delegation, not the concurrent meta-fan): on a timeout the turn is
+        abandoned but the app-server keeps running it, so the server can no longer be trusted idle — HARD-kill and
+        recycle it (shutdown → respawn next call) so the next delegation gets a fresh server and fails fast instead of
+        stalling behind a wedged turn. The default (False) preserves the fail-only-this-call behavior the meta-fan
+        relies on (one slow turn must not tear down the server other callers are using)."""
         prompt = (prompt or "")
         if sandbox not in ("read-only", "workspace-write"):
             return {"text": None, "thread": thread, "error": f"unsupported codex sandbox {sandbox!r}"}
@@ -312,7 +321,8 @@ class _CodexDaemon:
                 p = self.ensure_running()
                 if p is None:
                     return {"text": None, "thread": None, "error": "codex app-server would not start"}
-                deadline = time.monotonic() + CALL_TIMEOUT_S
+                eff_timeout = timeout if (timeout and timeout > 0) else CALL_TIMEOUT_S   # caller's deadline wins
+                deadline = time.monotonic() + eff_timeout
 
                 def remaining_timeout(call_deadline=deadline):
                     return max(0.0, call_deadline - time.monotonic())
@@ -349,10 +359,13 @@ class _CodexDaemon:
                                          "lane is degrading to the metered API this run (not the advisor breaking)")
                         return {"text": None, "thread": thread, "error": "codex app-server call failed after restart"}
                     continue
-                if msg is None:                                   # THIS call timed out but the pipe is alive → fail only IT
-                    config.warn_once("[spendguard] codex warm daemon: a warm call exceeded %ds — failing that ONE call "
-                                     "to the metered API (the server stays up for the others)" % CALL_TIMEOUT_S)
-                    return {"text": None, "thread": thread, "error": f"codex warm call timeout ({CALL_TIMEOUT_S}s)"}
+                if msg is None:                                   # THIS call timed out; the pipe may still be alive
+                    if recycle_on_timeout:                        # single-tenant agentic delegate: a wedged turn means
+                        self.shutdown()                           # the server can't be trusted idle → HARD-kill + respawn
+                    else:
+                        config.warn_once("[spendguard] codex warm daemon: a warm call exceeded %ds — failing that ONE "
+                                         "call to the metered API (the server stays up for the others)" % eff_timeout)
+                    return {"text": None, "thread": thread, "error": f"codex warm call timeout ({eff_timeout:.0f}s)"}
                 if msg.get("error"):
                     return {"text": None, "thread": thread, "error": str(msg["error"])[:200]}
                 new_thread = ((msg.get("result") or {}).get("thread") or {}).get("id") or thread
@@ -395,8 +408,10 @@ class _CodexDaemon:
                 if turn_msg is not None and turn_msg.get("error"):
                     return {"text": None, "thread": new_thread, "error": str(turn_msg["error"])[:200]}
                 if turn_msg is None or completed_turn is None:
+                    if recycle_on_timeout:                        # the turn wedged (pipe alive, no completion) → recycle
+                        self.shutdown()                           # so the NEXT delegation gets a fresh server, not a stall
                     return {"text": None, "thread": new_thread,
-                            "error": f"codex warm call timeout ({CALL_TIMEOUT_S}s)"}
+                            "error": f"codex warm call timeout ({eff_timeout:.0f}s)"}
                 status = completed_turn.get("status")
                 if status != "completed":
                     error = completed_turn.get("error") or f"codex turn {status or 'failed'}"
