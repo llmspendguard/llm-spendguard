@@ -856,6 +856,9 @@ _rt_lock = _threading.Lock()
 _rt_spent = 0.0          # per-process cumulative real-time $
 _rt_agg = {}             # (day, provider, model) -> [calls, cost]  pending flush
 _rt_since_flush = 0
+MEASUREMENT_EFFORT_DEFAULT = "provider-default"   # the effort sentinel recorded for a MEASUREMENT call that sent no
+#   reasoning_effort (a non-reasoning model has none) — an EXPLICIT 'ran at the provider default', never an ambiguous
+#   NULL, so a replicate is distinguishable from an effort change in the calls corpus.
 _rt_warned = False
 _rt_bypass = False        # interactive "allow rest of run's real-time calls" — bypasses ONLY the RT budget
 
@@ -1369,6 +1372,15 @@ def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, 
     # THE EFFORT TIER ACTUALLY SENT — read off the request body (a fixed field, not a judgement), so the calls
     # corpus can slice cost×quality per (intent, model, effort). None when no reasoning_effort rode the request.
     _effort = kw.get("reasoning_effort") if isinstance(kw, dict) else None
+    if _effort is None:
+        # A MEASUREMENT call that sent NO reasoning_effort (a non-reasoning model has none to send) must not record an
+        # ambiguous NULL — a replicate then can't be told from an effort change. Record the EXPLICIT sentinel: the
+        # model ran at the provider default. Only for a measurement (the context flag); production NULLs are unchanged.
+        try:
+            if (_calls.current() or {}).get("measurement"):
+                _effort = MEASUREMENT_EFFORT_DEFAULT
+        except Exception:
+            pass
     if _meta_intent():                            # meta call → meta ledger only (not workload realtime)
         from . import budget
         budget.record_meta(prov, model, cost)

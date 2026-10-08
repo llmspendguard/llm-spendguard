@@ -1146,6 +1146,10 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     _ctx_before = dict(_sig_ctx.current() or {})
     if sig and not _ctx_before.get("intent"):
         _sig_ctx.set_context(intent=sig)
+    if measurement and not _ctx_before.get("measurement"):
+        # mark the call-class as a MEASUREMENT so gate._record_rt records an explicit effort sentinel (never an
+        # ambiguous NULL) when the model sent no reasoning_effort — restored with the rest of the context after.
+        _sig_ctx.set_context(measurement=True)
     if not _ctx_before.get("who"):
         # Capture the REAL caller ON THIS ENTRY THREAD so it propagates (with intent) into every dispatch/daemon
         # worker below. A worker's own calls.caller() cannot see the app frame across the thread boundary — it lands
@@ -2550,7 +2554,8 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                                               origin_session=_apctx.get("origin_session"),
                                               requested_model=_apctx.get("requested_model"),
                                               redirect_reason=_apctx.get("redirect_reason"),
-                                              resolved_lane=_apctx.get("resolved_lane"))
+                                              resolved_lane=_apctx.get("resolved_lane"),
+                                              measurement=_apctx.get("measurement"))
                         except Exception:
                             pass
                         try:
@@ -2775,7 +2780,8 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                                           origin_session=_opctx.get("origin_session"),
                                           requested_model=_opctx.get("requested_model"),
                                           redirect_reason=_opctx.get("redirect_reason"),
-                                          resolved_lane=_opctx.get("resolved_lane"))
+                                          resolved_lane=_opctx.get("resolved_lane"),
+                                          measurement=_opctx.get("measurement"))
                     except Exception:
                         pass
                     try:
