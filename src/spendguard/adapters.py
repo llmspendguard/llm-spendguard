@@ -522,6 +522,30 @@ def schema_capability(provider):
     return SCHEMA_STRICT if _schema_kind(provider) in ("anthropic", "openai") else SCHEMA_JSON_OBJECT
 
 
+GEN_KNOBS = ("temperature", "top_p", "seed")   # the caller-facing STANDARDIZED determinism surface (measurement-only)
+
+
+def generation_support(provider, model):
+    """The subset of GEN_KNOBS (temperature, top_p, seed) that `provider`/`model`'s METERED API actually honors — the
+    SSOT that maps the caller's ONE standardized determinism surface onto each vendor's real capability, so the same
+    `adapters.call(..., measurement=True, temperature=0, seed=…)` is correct across providers and a knob the vendor
+    cannot take is RECORDED as dropped, never a silent 400 and never silently ignored. A FACT about the vendor API
+    (like schema_capability), not a judgement:
+      • `seed` is an OpenAI (the real 'openai' provider) parameter; anthropic and the other OpenAI-compatible vendors
+        (gemini/zai/moonshot/deepseek) have no seed field, so seed is unsupported there.
+      • `temperature`/`top_p` are sampling knobs a REASONING model rejects or constrains (OpenAI 400s 'temperature
+        does not support 0 with this model'; anthropic ties temperature to the thinking budget), so they are dropped
+        for a reasoning model (reasons_by_default) and determinism there rests on seed where the vendor has it.
+    Returns a set; the caller applies the requested∩supported and records the remainder as gen_params_dropped."""
+    from . import models as _gm
+    support = set()
+    if not _gm.reasons_by_default(model):                 # non-reasoning: sampling knobs are honored
+        support |= {"temperature", "top_p"}
+    if provider == "openai":                              # seed is OpenAI-only (compat/anthropic have no seed param)
+        support.add("seed")
+    return support
+
+
 def _provider_schema(schema):
     """Our contract, stripped to what a provider can actually parse. `nonempty` is a spendguard concept and
     stays local — it is checked against the RESPONSE, never sent as if it were JSON Schema."""
@@ -753,7 +777,7 @@ def _returns_callresult(fn):
 def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,
          sig=None, intent=None, retries=2, files=None, _no_guard=False, no_metered_fallback=False, images=None,
          no_substitution=False, measurement=False, metered_only=False, base_fallback=None, _probe=False, _route=True,
-         _internal_pin=False, _coalesce_eligible=True, **aliases):
+         _internal_pin=False, _coalesce_eligible=True, temperature=None, top_p=None, seed=None, **aliases):
     """Run one prompt against one model. Returns a CallResult (never raises).
 
     A CallResult IS a dict — every `r["text"]` / `r.get(...)` works unchanged — that ALSO exposes its keys as
@@ -818,6 +842,16 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     no_substitution it titrates EFFORT for the named model only. The chosen arm is stamped substituted_from/best_value
     so the saving+decision are booked against the counterfactual (what the named model would have cost).
 
+    `temperature`/`top_p`/`seed` are DETERMINISM knobs honored ONLY on a measurement call (measurement=True) — refused
+    on a production call, where a silently-varying governed result is a wrong-result risk. They exist because without
+    determinism a priced A/B needs n replicates to separate the effect from run noise (MEASURED: the same arm on the
+    same 300 concepts with byte-identical prompts swung 7.7%↔31.8% — a 24-pt nondeterminism band against a 5.6-pt
+    between-arm signal, ~4x the effect, so two single-run comparisons ordered the arms oppositely and both looked
+    clean). A $0 subscription LANE CLI has no temperature/seed channel, so setting any of these FORCES the metered API
+    for that call (and pins the model) — honoring the knobs rather than silently ignoring them on a lane, which would
+    reproduce the very artefact. seed is OpenAI-only (anthropic has no seed); it is dropped with a notice on anthropic.
+    The knobs sent are stamped on the result as `gen_params` so a replicate is distinguishable from an effort change.
+
     PARAMS a consumer commonly passes (all optional): `timeout_s` bounds the request — a client-side cancel that
     actually STOPS the call (and its billing), not merely the wait; it applies to BOTH the lane and the API path.
     `schema` (a JSON Schema) forces STRUCTURED output — a forced tool-call on anthropic, response_format
@@ -879,8 +913,9 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                     "call() got an unexpected keyword %r. Pass: model, prompt, max_tokens (alias "
                     "max_output_tokens/max_completion_tokens), reasoning=minimal|low|medium|high|best-value (alias "
                     "effort/reasoning_effort), intent (alias sig), system, schema, timeout_s, files, images, "
-                    "no_metered_fallback, no_substitution, retries. Generation knobs like temperature/top_p/stop are "
-                    "not surfaced by the governance layer." % _k)
+                    "no_metered_fallback, no_substitution, retries. Generation knobs temperature/top_p/seed are "
+                    "accepted ONLY on a measurement call (measurement=True) — a deterministic A/B path; other knobs "
+                    "(stop, frequency_penalty, …) are not surfaced by the governance layer." % _k)
             _canon[_c] = aliases[_k]
         if "reasoning" in _canon and reasoning is None:
             reasoning = _canon["reasoning"]
@@ -917,6 +952,31 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     # guessing. The bakeoff / titration / recommend paths that ARE measurements already pass no_substitution=True.
     if measurement:
         no_substitution = True
+
+    # DETERMINISM KNOBS (temperature/top_p/seed) — a MEASUREMENT-ONLY path. Default-refused on a production call: a
+    # generation knob that silently varies a governed result is a wrong-result risk, which is why the governance layer
+    # does not surface them generally. For a MEASUREMENT call they are the point — without determinism a priced A/B
+    # needs n replicates to tell the effect from run noise. The gate runs ONCE at the top (skipped on the _no_guard
+    # re-entry _call_guarded makes, which has already validated + forced metered); the knobs then ride **kw down to
+    # _call_once on both entries. Validated as a FLAG decision (is this a measurement?), never from the knob values.
+    _gen_knobs = {k: v for k, v in (("temperature", temperature), ("top_p", top_p), ("seed", seed)) if v is not None}
+    if _gen_knobs and not _no_guard:
+        if not measurement:
+            raise TypeError(
+                "temperature/top_p/seed are refused on a production call (a silently-varying governed result is a "
+                "wrong-result risk). They are honored ONLY for a measurement run, where reproducibility IS the result "
+                "— declare it: adapters.call(model, prompt, intent=..., measurement=True, temperature=0, "
+                "seed=20261008). For a production call, control variance by replication, not by setting these.")
+        # A $0 subscription LANE CLI has no temperature/seed channel — it runs at the plan default, the very
+        # nondeterminism this path removes. Honoring the caller's determinism REQUIRES the metered API, so force it
+        # (and pin the model) rather than silently accept-and-ignore the knobs on a lane (which reproduces the artefact).
+        if not metered_only:
+            metered_only = True
+            no_substitution = True
+            config.warn_once(
+                "[spendguard] measurement determinism (temperature/top_p/seed) is only honorable on the metered API "
+                "— a $0 lane CLI has no such channel. Forcing the metered path for this measurement call so the knobs "
+                "take effect (cost: metered, not $0).")
 
     # Preserve the CALLER'S contract before best-value or another internal routing choice pins its selected arm.
     # Plan admission may redirect an internally pinned discretionary choice, but never a caller's explicit pin.
@@ -1148,7 +1208,11 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     #   • _route=False — the coalescer's OWN realtime re-entry (recursion guard).
     #   • not _probe / not _no_guard / (intent or sig) — skip health probes, internal recursion, and unlabelled calls.
     # storm_route.route returns a result dict, or None when it declines (routing off / no known rate) → fall through.
-    if metered_only and _route and _coalesce_eligible and not _no_guard and not _probe and (intent or sig):
+    if (metered_only and _route and _coalesce_eligible and not _no_guard and not _probe and (intent or sig)
+            and not _gen_knobs):   # a DETERMINISTIC measurement must never be storm-coalesced: the coalescer's
+        #                            realtime/batch executor re-dispatches WITHOUT the gen knobs (they would silently
+        #                            vanish) and a batch divert changes the call's conditions — exactly what a
+        #                            reproducible A/B is controlling for. The knobs force the exact metered call below.
         from . import storm_route as _sr
         _routed_result = _sr.route(model, prompt, intent or sig, system=system, reasoning=reasoning)
         if _routed_result is not None:
@@ -1198,11 +1262,13 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                 r = _call_guarded(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
                                   schema=schema, timeout_s=timeout_s, sig=sig, retries=retries,
                                   no_metered_fallback=no_metered_fallback, images=images, _no_sub=no_substitution,
-                                  metered_only=metered_only, _probe=_probe, _internal_pin=_internal_pin)
+                                  metered_only=metered_only, _probe=_probe, _internal_pin=_internal_pin,
+                                  temperature=temperature, top_p=top_p, seed=seed)
             else:
                 r = _call_once(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
                                schema=schema, timeout_s=timeout_s, no_metered_fallback=no_metered_fallback, images=images,
-                               _no_sub=no_substitution, _skip_lane=metered_only, _internal_pin=_internal_pin)   # metered_only=True → skip the lane
+                               _no_sub=no_substitution, _skip_lane=metered_only, _internal_pin=_internal_pin,
+                               temperature=temperature, top_p=top_p, seed=seed)   # metered_only=True → skip the lane
         finally:
             _sig_ctx._local.ctx = _ctx_before   # restore the caller's context exactly (nested calls keep their own tag)
             if _adm is not None:
@@ -1237,6 +1303,9 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                         timeout_s=timeout_s, sig=sig, intent=intent, retries=retries, files=files,
                         no_metered_fallback=no_metered_fallback, images=images, no_substitution=no_substitution,
                         metered_only=metered_only, base_fallback=base_fallback, _route=_route,
+                        measurement=measurement, temperature=temperature, top_p=top_p, seed=seed,  # carry the
+                        #   measurement contract + its determinism knobs across a 429 retransmit (else the retry would
+                        #   drop them — silently nondeterministic — and trip the production-refusal gate on re-entry)
                         governed=_governed, _conn_tries=_ct - 1, _t_conn0=_t_conn0, **aliases)
         import sys as _sysc   # budget/deadline spent with the 429 UNCLEARED → SIGNAL it (never a silent drop), then surface
         print(f"[spendguard] connection rate-limit on {model} NOT cleared within the retransmit budget "
@@ -2043,7 +2112,8 @@ def _est_call_tokens(prompt, system, out_tokens, model=None, intent=None):
 
 
 def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,
-               _skip_lane=False, no_metered_fallback=False, images=None, _no_sub=False, _internal_pin=False):
+               _skip_lane=False, no_metered_fallback=False, images=None, _no_sub=False, _internal_pin=False,
+               temperature=None, top_p=None, seed=None):
     """One raw request. Everything public goes through `call`, which adds the input and output guards.
 
     NO DEFAULT CAP. This carried `max_tokens=512` — the last place a number nobody chose could still reach a
@@ -2074,6 +2144,26 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
     # as a member with no findings. It is a declared field on every provider's response, so
     # surfacing it is parsing, not inference.
     base = {"provider": prov, "model": raw, "text": None, "in_tok": 0, "out_tok": 0, "latency": 0.0, "cost": None, "finish_reason": None}
+    # MEASUREMENT DETERMINISM KNOBS — caller-supplied, STANDARDIZED across providers through the ONE capability SSOT
+    # (generation_support): the requested knobs are split into what THIS provider/model honors (applied to the metered
+    # request below, identically in both the openai-compat and anthropic branches) and what it cannot (dropped). The
+    # lane path never reaches here with them set — call() forced the metered API when any was given. Stamped on `base`
+    # so EVERY return carries, consistently for every vendor, what was REQUESTED, what was APPLIED, and what was
+    # DROPPED — a replicate is distinguishable from an effort/knob change, and a dropped knob is never silent.
+    _gen_params = {k: v for k, v in (("temperature", temperature), ("top_p", top_p), ("seed", seed)) if v is not None}
+    _gen_applied = {}
+    if _gen_params:
+        _support = generation_support(prov, raw)
+        _gen_applied = {k: v for k, v in _gen_params.items() if k in _support}
+        _gen_dropped = {k: v for k, v in _gen_params.items() if k not in _support}
+        base = {**base, "gen_params": _gen_params, "gen_params_applied": _gen_applied or None,
+                "gen_params_dropped": _gen_dropped or None}
+        if _gen_dropped:
+            config.warn_once(
+                "[spendguard] %s/%s does not honor %s on a measurement call — applied %s, DROPPED %s (recorded on the "
+                "result as gen_params_dropped, never silently lost). seed is OpenAI-only; a reasoning model rejects a "
+                "non-default temperature/top_p." % (prov, raw, sorted(_gen_dropped),
+                                                    sorted(_gen_applied) or "none", sorted(_gen_dropped)))
     # SUBSCRIPTION LANES (advisor.executor = claude-code | codex | pool): spendguard's own meta prompts
     # ride the matching flat-fee plan — $0 on the billed axis (recorded kind='subscription'); plan VALUE
     # is counted by the matching est-value pipeline (claude-code / codex session logs). Needs NO API key.
@@ -2406,6 +2496,11 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 c = anthropic.Anthropic(api_key=key)
             _uc = ([{"type": "text", "text": prompt}] + _image_parts(images, "anthropic")) if images else prompt
             kw = {"model": raw, "max_tokens": max_tokens, "messages": [{"role": "user", "content": _uc}]}
+            # MEASUREMENT DETERMINISM — apply the SAME provider-honored knob set the openai branch applies (decided once
+            # by generation_support): for anthropic that is temperature/top_p, with seed already split into dropped
+            # above (anthropic has no seed param), so the caller's one standardized surface behaves consistently here.
+            for _gk, _gv in _gen_applied.items():
+                kw[_gk] = _gv
             if system:
                 # CACHE the long, stable system prompt: it bills once (a cache WRITE) then reads at a discount on every
                 # repeat — the biggest win for a caller sending an identical *_SYSTEM on each call (honestreview's
@@ -2638,6 +2733,13 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 _mf.apply_call_params(raw, okw, dialect="openai")
             except Exception:
                 pass                                        # a missing fact store must not break the call
+            # MEASUREMENT DETERMINISM — forward the APPLIED (provider-honored) knobs to the OpenAI-compat request, AFTER
+            # apply_call_params so an explicit measurement knob WINS over any model-default param. The applied/dropped
+            # split was decided once by generation_support (SSOT) — the same set the anthropic branch applies — so the
+            # control surface is identical across vendors. Sending temperature=0 (+ seed) collapses the run-to-run band
+            # a lane leaves uncontrolled.
+            for _gk, _gv in _gen_applied.items():
+                okw[_gk] = _gv
             # WALL-CLOCK BOUND for this OpenAI-compat generation. The SDK's httpx timeout is PER-READ, so a long or
             # slow high-reasoning body (kimi-k3 on moonshot, glm on z.ai) trickles under the read window while total
             # elapsed sails past the deadline — wedging the caller's queue with a call `timeout_s` never bounded. Run
