@@ -379,8 +379,29 @@ def guarded_submit(jsonl_path, model, cap_dollars, batch=True, avg_out_tokens=No
     return b.id
 
 
+def _fan_submit_shards(items, shard_size, cap_dollars, submit_one):
+    """Fan a task list into shards of `shard_size` and submit each as its OWN batch, so a STALL in one shard never
+    blocks the others (the partial-settle twin at collect then settles whatever has landed and names the rest).
+    Returns {batch_ids, requests, shards, errors, error}: a LIST of batch ids (one per shard that submitted), the
+    total request count, and per-shard errors NAMED (never a silent partial). The caller's `cap_dollars` is DIVIDED
+    across shards (cap/n) so the whole fan stays within the authorized TOTAL, never n× it. A DELIBERATE stop (a cap
+    refusal raised by a shard's submit) PROPAGATES — the fan halts rather than submitting a partial, surprise-billed set."""
+    shards = [items[i:i + shard_size] for i in range(0, len(items), shard_size)]
+    per_cap = (float(cap_dollars) / len(shards)) if cap_dollars is not None else None
+    batch_ids, errors, total = [], [], 0
+    for idx, shard in enumerate(shards):
+        r = submit_one(shard, per_cap)               # recurses the single-batch submitter (shard_size left None)
+        total += int(r.get("requests") or 0)
+        if r.get("error"):
+            errors.append(f"shard {idx} ({len(shard)} tasks): {r['error']}")
+        if r.get("batch_id"):
+            batch_ids.append(r["batch_id"])
+    return {"batch_ids": batch_ids, "requests": total, "shards": len(shards),
+            "errors": errors, "error": ("; ".join(errors) or None)}
+
+
 def submit_chat_tasks(tasks, model, *, system=None, schema=None, reasoning="minimal", max_out=None,
-                      cap_dollars=None, submit=True, intent=None, metadata=None, preflight=True):
+                      cap_dollars=None, submit=True, intent=None, metadata=None, preflight=True, shard_size=None):
     """Submit a list of CHAT tasks to the OpenAI /v1/chat/completions Batch API (~half realtime, 24h window) — the
     first-class chat BATCH submitter (the chat analogue of adapters.embed_batch), and the callable that wires
     route_economics' / bulk_delegate's BATCH leg to a real submission. Each task is a prompt STRING (custom_id auto
@@ -397,6 +418,10 @@ def submit_chat_tasks(tasks, model, *, system=None, schema=None, reasoning="mini
     import tempfile as _tf
     from . import adapters
     items = list(tasks or [])
+    if shard_size and shard_size > 0 and len(items) > shard_size:   # fan into shards → a LIST of batch ids (not one)
+        return _fan_submit_shards(items, shard_size, cap_dollars, lambda shard, cap: submit_chat_tasks(
+            shard, model, system=system, schema=schema, reasoning=reasoning, max_out=max_out,
+            cap_dollars=cap, submit=submit, intent=intent, metadata=metadata, preflight=preflight))
     base = {"batch_id": None, "jsonl": None, "requests": len(items), "error": None}
     if not items:
         return base
@@ -503,7 +528,7 @@ def build_message_batch_requests(tasks, model, *, system=None, max_out=None, sch
 
 def submit_message_batch(tasks, model, *, system=None, schema=None, max_out=None, expected_out_tokens=None,
                          cap_dollars=None, submit=True, request_cap=_ANTHROPIC_BATCH_REQUEST_CAP, intent=None,
-                         preflight=True):
+                         preflight=True, shard_size=None):
     """Submit a list of tasks to the Anthropic Message Batches API (~half realtime, 29-day result window) — the
     Anthropic twin of submit_chat_tasks, and the Messages-API half of spendguard's batch surface. Each task is a prompt
     STRING (custom_id auto = 'task-<i>') OR a {custom_id, content[, system, schema, schema_name]} dict. Builds the
@@ -530,6 +555,10 @@ def submit_message_batch(tasks, model, *, system=None, schema=None, max_out=None
     exactly-once offload key (batch_tracker) rides each request's custom_id instead — see batch_tracker.submit_offload."""
     from . import adapters
     items = list(tasks or [])
+    if shard_size and shard_size > 0 and len(items) > shard_size:   # fan into shards → a LIST of batch ids (not one)
+        return _fan_submit_shards(items, shard_size, cap_dollars, lambda shard, cap: submit_message_batch(
+            shard, model, system=system, schema=schema, max_out=max_out, expected_out_tokens=expected_out_tokens,
+            cap_dollars=cap, submit=submit, request_cap=request_cap, intent=intent, preflight=preflight))
     base = {"batch_id": None, "requests": len(items), "estimate": None, "error": None}
     if not items:
         return base

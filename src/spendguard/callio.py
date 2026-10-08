@@ -657,15 +657,15 @@ def collect_chat_tasks(batch_ids, intent, model, require_ready=True, record_io=F
     out = {"results": {}, "failed": {}, "anomalies": [], "not_ready": [], "collected": 0, "batches": len(ids)}
     if not ids:
         return out
-    ready = ids
-    if require_ready:
-        st = batch_status(ids)
-        ready = []
-        for b in ids:
-            if (st.get(b) or {}).get("output_ready"):
-                ready.append(b)
-            else:
-                out["not_ready"].append(b)          # output file not ready → poll again later, never a silent empty
+    st = batch_status(ids)
+    ready = []
+    for b in ids:
+        if (st.get(b) or {}).get("output_ready"):
+            ready.append(b)
+        else:
+            out["not_ready"].append(b)              # NAMED in both modes so a caller can settle what landed and re-poll the rest
+    if not require_ready:
+        ready = ids                                 # require_ready=False: still ATTEMPT every id (guarded_collect skips the unready)
     measured = {"in_tok": 0, "out_tok": 0, "cache_read": 0}
     for cid, text, usage in guarded_collect(ready, intent, model, record_io=record_io):
         if cid is None:                             # an anomaly row (no/unparseable custom_id — nothing to key it by)

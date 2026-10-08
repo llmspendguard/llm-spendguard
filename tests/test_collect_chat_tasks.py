@@ -6,7 +6,8 @@ guarded_collect stubbed — no network):
     custom_id-less anomaly row are SURFACED, never silently dropped; collected counts only succeeded rows;
   · require_ready=True SKIPS a batch whose output file isn't ready (it lands in not_ready), and only ready batches
     reach guarded_collect — the async 24h window is never blocked on;
-  · require_ready=False passes every batch through (not_ready empty);
+  · require_ready=False still ATTEMPTS every batch, but not-yet-ready ones are NAMED in not_ready (partial-settle,
+    so a caller can settle what landed and re-poll the rest);
   · record_io flows through to guarded_collect;
   · a string batch_id is normalised to a list; empty ids → a zeroed no-op."""
 import os
@@ -53,11 +54,11 @@ out2 = callio.collect_chat_tasks(["B1", "B_NOTREADY"], "myintent", "gpt-4.1-nano
 ck("the not-ready batch is reported, not collected", out2["not_ready"] == ["B_NOTREADY"])
 ck("only the READY batch was streamed", _gc_calls and _gc_calls[0]["ids"] == ["B1"])
 
-print("-- require_ready=False: every batch passes through (not_ready empty) --")
+print("-- require_ready=False: every batch is ATTEMPTED, and not-ready ones are still NAMED (partial-settle) --")
 _gc_calls.clear()
 out3 = callio.collect_chat_tasks(["B1", "B_NOTREADY"], "myintent", "gpt-4.1-nano", require_ready=False)
-ck("no readiness gate → not_ready empty", out3["not_ready"] == [])
-ck("all batches streamed", _gc_calls and _gc_calls[0]["ids"] == ["B1", "B_NOTREADY"])
+ck("not-ready batch is still NAMED for re-poll (partial-settle contract)", out3["not_ready"] == ["B_NOTREADY"])
+ck("all batches still streamed (require_ready=False attempts every id)", _gc_calls and _gc_calls[0]["ids"] == ["B1", "B_NOTREADY"])
 
 print("-- record_io flows through to guarded_collect --")
 _gc_calls.clear()
