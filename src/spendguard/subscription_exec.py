@@ -32,6 +32,11 @@ TIMEOUT_S = 300               # meta prompts are small; a hung CLI must not stal
 # which breaks the $0 plan lane; `--exclude-dynamic-system-prompt-sections` BUSTED the prompt cache (cache-read
 # 29,771 → 0, so everything became a fresh cache-WRITE → net WORSE). `{"mcpServers":{}}` is the empty-but-VALID config
 # (`{}` is rejected: "mcpServers: Invalid input"). Nothing here touches auth or the cached agent base.
+# There is NO warm-pool path for this lane (unlike codex_daemon / kimi_daemon), BY GROUNDING not omission: the
+# claude CLI's stream-json input mode is ONE growing conversation — the binary (v2.1.270) has no start/reset-session
+# subtype (only fork_conversation=copies history, end_session=kills the process), so it cannot serve INDEPENDENT
+# prompts at a fixed cold-start the way codex thread/start and kimi acp session/new do. The minimal cold-start below
+# is therefore the only honest win here; a warm path was deliberately not faked. See docs/WARM_LANE_POOL.md.
 _MINIMAL_COLD_START = ["--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', "--setting-sources", ""]
 _USAGE_TTL_S = 300            # `claude /usage` is re-read at most this often (the shared cache adds reset-boundary invalidation)
 _usage_cache = {"at": 0.0, "val": None}

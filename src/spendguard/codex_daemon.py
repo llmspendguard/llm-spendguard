@@ -4,34 +4,28 @@ WHY. A one-shot `codex exec` COLD-STARTS every call (writable-workspace sandbox 
 servers) — MEASURED >75s, and intermittently hangs. `codex app-server` pays that setup ONCE at spawn; each request
 is then a warm thread turn. This module holds ONE such server per process and reuses it.
 
-CONCURRENCY. A single background READER thread demuxes request responses by `id` and turn notifications by
-(`threadId`, `turnId`). A caller locks only for the fast stdin WRITE, then waits on its OWN event holding no lock,
-so N turns remain in flight at once over the one warm daemon.
-
-The state lives on ONE `_CodexDaemon` instance (a class, so the concurrency invariants are encapsulated, not module
-globals); the module-level functions are thin delegators kept for the existing callers. `ensure_running()` lazily
-spawns the server (serialised so two threads never create two) and RESTARTS it on death; `atexit` tears it down.
-CONTEXT: `thread/start` returns a thread id; passing it back through `thread/resume` CONTINUES the conversation.
+TRANSPORT + LIFECYCLE is shared with the kimi ACP lane via `warm_stdio_daemon._WarmStdioJsonRpcDaemon` (the sole
+background READER thread that demuxes responses by `id`, the write-lock-only-for-the-write concurrency, the
+serialised spawn, the idle timer, and the dead-pipe fail-all). THIS module adds only what is codex-protocol-specific:
+the `app-server` argv + initialize handshake, the two-phase `thread/start` → `turn/start` flow, and the notification
+demux by (`threadId`, `turnId`) with the race-replay that a tiny turn can complete before its own turn/start
+response is handled. CONTEXT: `thread/start` returns a thread id; passing it back through `thread/resume` CONTINUES
+the conversation; omitting it (the default) starts a FRESH, context-isolated thread per call — that is what makes one
+warm server a POOL of independent prompts rather than one growing conversation.
 """
 import atexit
-import fcntl
-import itertools
-import json
 import os
-import select
-import subprocess
-import tempfile
-import threading
 import time
 
 from . import config
+from .warm_stdio_daemon import _SAFE_CWD, _WarmStdioJsonRpcDaemon
 
+# MODULE-LEVEL constants (not only class attrs): run_warm reads CALL_TIMEOUT_S as a module global so a caller/test
+# can monkeypatch `codex_daemon.CALL_TIMEOUT_S` and have the FALLBACK deadline change (the delegate timeout-kill
+# guard relies on this). The class mirrors them for the shared base's handshake/idle use.
 STARTUP_TIMEOUT_S = 60             # the ONE-TIME server handshake budget
-CALL_TIMEOUT_S = 180              # one warm turn, including setup + streamed completion
+CALL_TIMEOUT_S = 180              # one warm turn, including setup + streamed completion (the fallback when none given)
 IDLE_TIMEOUT_S = 600              # reclaim the persistent subprocess after ten minutes with no completed/new call
-# A FIXED, non-external bootstrap directory for the server process. Each tool call carries its explicit task cwd;
-# keeping the daemon spawn itself here means its startup directory can never be steered by prompt content.
-_SAFE_CWD = tempfile.gettempdir()
 
 
 def _mcp_disable_flags():
@@ -44,86 +38,30 @@ def _mcp_disable_flags():
     return ["-c", "orchestrator.mcp.enabled=false"]
 
 
-class _CodexDaemon:
-    """One warm `codex app-server` + a concurrent JSON-RPC client over it. All mutable state is on the instance
-    (guarded by the instance locks), so N callers run concurrent turns without a serialising round-trip lock."""
+class _CodexDaemon(_WarmStdioJsonRpcDaemon):
+    """One warm `codex app-server` + a concurrent JSON-RPC client over it. The transport/lifecycle is inherited;
+    this subclass owns the codex handshake, the thread/turn flow, and the (threadId, turnId) notification demux."""
+
+    _LANE_LABEL = "codex"
+    STARTUP_TIMEOUT_S = STARTUP_TIMEOUT_S     # mirror the module constants for the shared base (handshake / idle timer)
+    CALL_TIMEOUT_S = CALL_TIMEOUT_S
+    IDLE_TIMEOUT_S = IDLE_TIMEOUT_S
 
     def __init__(self):
-        self._state_lock = threading.Lock()    # guards _proc lifecycle + the _waiters registry
-        self._spawn_lock = threading.Lock()    # serialises SPAWNS (a slow handshake must not run under _state_lock)
-        self._write_lock = threading.Lock()    # serialises stdin WRITES only — never held while awaiting a response
-        self._proc = None
-        self._idle_timer = None
-        self._last_activity = 0.0
-        self._waiters = {}                     # rpc_id -> request waiter
+        super().__init__()
         self._turn_waiters = {}                # (thread_id, turn_id) -> completion waiter
         self._pending_turn_notifications = {}  # notification can race ahead of the turn/start response
-        self._ids = itertools.count(1)         # itertools.count.__next__ is atomic under the GIL
 
-    def _next_id(self):
-        return next(self._ids)
-
-    def _cancel_idle_shutdown(self):
-        with self._state_lock:
-            timer, self._idle_timer = self._idle_timer, None
-        if timer is not None:
-            timer.cancel()
-
-    def _schedule_idle_shutdown(self):
-        """Reset the one-shot idle timer after a call. The timestamp check makes a stale callback harmless."""
-        self._cancel_idle_shutdown()
-        activity = time.monotonic()
-        with self._state_lock:
-            self._last_activity = activity
-
-        def _shutdown_if_still_idle():
-            with self._state_lock:
-                still_idle = self._last_activity == activity
-                if still_idle:
-                    self._idle_timer = None
-            if still_idle:
-                self.shutdown()
-
-        timer = threading.Timer(IDLE_TIMEOUT_S, _shutdown_if_still_idle)
-        timer.daemon = True
-        with self._state_lock:
-            self._idle_timer = timer
-        timer.start()
-
-    def _register_waiter(self, rid, turn_thread_id=None):
-        w = {"event": threading.Event(), "msg": None, "turn_event": threading.Event(),
-             "turn_thread_id": turn_thread_id, "turn_id": None, "texts": [], "turn": None, "dead": False}
-        with self._state_lock:
-            self._waiters[rid] = w
-        return w
-
-    def _drop_waiter(self, rid):
-        with self._state_lock:
-            self._waiters.pop(rid, None)
-
+    # ── codex notification demux (by threadId/turnId), overriding the base no-op ──────────────────────────────
     def _drop_turn_waiter(self, waiter):
         key = (waiter.get("turn_thread_id"), waiter.get("turn_id"))
         with self._state_lock:
             if self._turn_waiters.get(key) is waiter:
                 self._turn_waiters.pop(key, None)
 
-    def _fail_all_waiters(self):
-        """A dead/closed pipe: wake EVERY pending caller with a dead marker so none hangs to its full timeout."""
+    def _extra_waiters_to_fail(self):
         with self._state_lock:
-            pending = list({id(w): w for w in [*self._waiters.values(), *self._turn_waiters.values()]}.values())
-        for w in pending:
-            w["dead"] = True
-            if w["msg"] is None:
-                w["msg"] = {"__dead__": True}
-            w["event"].set()
-            w["turn_event"].set()
-
-    def _write_rpc(self, p, obj):
-        """Write one JSON-RPC message under the write lock (held only for the write, never across the response wait)."""
-        line = (json.dumps(obj) + "\n").encode("utf-8")
-        with self._write_lock:
-            p.stdin.write(line)
-            p.stdin.flush()
+            return list(self._turn_waiters.values())
 
     def _route_notification(self, msg):
         method = msg.get("method")
@@ -148,6 +86,14 @@ class _CodexDaemon:
                 waiter["turn"] = turn
                 waiter["turn_event"].set()
 
+    def _on_response(self, waiter, msg):
+        """A turn/start response reveals the turn id; install correlation and replay notifications that won the race."""
+        if not waiter.get("turn_thread_id"):
+            return
+        turn_id = ((msg.get("result") or {}).get("turn") or {}).get("id")
+        if turn_id:
+            self._correlate_turn_waiter(waiter, waiter["turn_thread_id"], turn_id)
+
     def _correlate_turn_waiter(self, waiter, thread_id, turn_id):
         """Install turn correlation and replay real notifications that won the response/notification race."""
         key = (thread_id, turn_id)
@@ -158,146 +104,30 @@ class _CodexDaemon:
         for notification in pending:
             self._route_notification(notification)
 
-    def _reader_loop(self, p):
-        """SOLE stdout reader: route responses by id and notifications by (threadId, turnId)."""
-        buf = b""
-        try:
-            while True:
-                if p.poll() is not None:
-                    break
-                try:
-                    r, _, _ = select.select([p.stdout], [], [], 0.5)
-                except (OSError, ValueError):
-                    break
-                if not r:
-                    continue
-                try:
-                    chunk = os.read(p.stdout.fileno(), 65536)
-                except (BlockingIOError, InterruptedError):
-                    continue
-                except (OSError, ValueError):
-                    break
-                if chunk == b"":                           # EOF — server closed the pipe
-                    break
-                buf += chunk
-                while b"\n" in buf:
-                    raw, buf = buf.split(b"\n", 1)
-                    raw = raw.strip()
-                    if not raw:
-                        continue
-                    try:
-                        msg = json.loads(raw.decode("utf-8", "replace"))
-                    except ValueError:
-                        continue
-                    mid = msg.get("id")
-                    if mid is None:
-                        self._route_notification(msg)
-                        continue
-                    with self._state_lock:
-                        w = self._waiters.get(mid)
-                        if w is not None:
-                            w["msg"] = msg
-                            turn = (msg.get("result") or {}).get("turn") or {}
-                    if w is not None:
-                        if w["turn_thread_id"] and turn.get("id"):
-                            self._correlate_turn_waiter(w, w["turn_thread_id"], turn["id"])
-                        w["event"].set()
-        finally:
-            self._fail_all_waiters()
-
-    def _spawn(self):
-        """Start `codex app-server`, START THE READER, handshake through the multiplexer; return the live process
-        or None (a startup failure the caller degrades on — the lane may degrade, the advisor may not break). Called
-        only under _spawn_lock, so there is never a concurrent second spawn."""
+    # ── codex spawn + handshake, overriding the base hooks ────────────────────────────────────────────────────
+    def _spawn_cmd(self):
         from . import codex_exec
         exe = codex_exec._bin()
         if not exe:
-            config.warn_once("[spendguard] codex warm daemon: the codex CLI is not found — the codex lane is "
-                             "unavailable this run and callers fall back to the metered API")
             return None
-        # CONTAINMENT: spawn only a real, executable, symlink-RESOLVED binary (config.resolve_cli's pin→PATH→
-        # well-known dirs — the same trusted CLI codex_exec spawns) with a CONSTANT cwd (_SAFE_CWD). Neither the
-        # executable nor the working directory is influenced by any caller's input.
-        exe = os.path.realpath(exe)
-        if not (os.path.isfile(exe) and os.access(exe, os.X_OK)):
-            config.warn_once("[spendguard] codex warm daemon: resolved codex path %r is not an executable file "
-                             "— codex lane unavailable, falling back to the metered API" % exe)
-            return None
-        cmd = [exe, "app-server"] + codex_exec._plugin_disable_flags() + _mcp_disable_flags()
-        try:
-            p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                 bufsize=0, cwd=_SAFE_CWD, env=config.lane_plan_env())   # no metered key in the child
-        except Exception:
-            return None
-        fl = fcntl.fcntl(p.stdout.fileno(), fcntl.F_GETFL)     # non-blocking stdout for the reader's os.read
-        fcntl.fcntl(p.stdout.fileno(), fcntl.F_SETFL, fl | os.O_NONBLOCK)
-        threading.Thread(target=self._reader_loop, args=(p,), daemon=True).start()   # the sole reader for THIS proc
-        rid = self._next_id()                                  # initialize is itself a multiplexed request
+        return [exe, "app-server"] + codex_exec._plugin_disable_flags() + _mcp_disable_flags()
+
+    def _handshake(self, p):
+        """`initialize` (multiplexed through the reader) then the fire-and-forget `initialized`."""
+        rid = self._next_id()
         w = self._register_waiter(rid)
-        ok = False
         try:
             self._write_rpc(p, {"jsonrpc": "2.0", "id": rid, "method": "initialize",
                            "params": {"clientInfo": {"name": "spendguard", "title": "spendguard",
                                                      "version": "1"}}})
-            ok = (w["event"].wait(STARTUP_TIMEOUT_S) and bool(w["msg"])
+            ok = (w["event"].wait(self.STARTUP_TIMEOUT_S) and bool(w["msg"])
                   and not w["msg"].get("__dead__") and not w["msg"].get("error"))
-        except (BrokenPipeError, OSError):
-            ok = False
         finally:
             self._drop_waiter(rid)
         if not ok:
-            config.warn_once("[spendguard] codex warm daemon: no initialize response within %ds — treating the "
-                             "server as unavailable this run (falling back to the metered API)" % STARTUP_TIMEOUT_S)
-            self._terminate(p)
-            return None
-        try:
-            self._write_rpc(p, {"jsonrpc": "2.0", "method": "initialized", "params": {}})
-        except (BrokenPipeError, OSError):
-            self._terminate(p)
-            return None
-        return p
-
-    @staticmethod
-    def _terminate(p):
-        try:
-            p.terminate()
-        except Exception:
-            pass
-
-    def ensure_running(self):
-        """The live server, (re)started if absent or dead. Spawns are SERIALISED under _spawn_lock with a re-check,
-        so two concurrent callers never create two servers (one would leak)."""
-        with self._state_lock:
-            if self._proc is not None and self._proc.poll() is None:
-                return self._proc
-        with self._spawn_lock:                        # only one spawner at a time
-            with self._state_lock:                    # re-check: another thread may have spawned while we waited
-                if self._proc is not None and self._proc.poll() is None:
-                    return self._proc
-            p = self._spawn()                         # slow handshake — outside _state_lock, inside _spawn_lock
-            with self._state_lock:
-                self._proc = p
-            return p
-
-    def running(self):
-        return self._proc is not None and self._proc.poll() is None
-
-    def shutdown(self):
-        self._cancel_idle_shutdown()
-        with self._state_lock:
-            p, self._proc = self._proc, None          # detach under the lock; REAP outside it (wait() can block)
-        if p is None:
-            return
-        self._terminate(p)
-        try:
-            p.wait(timeout=5)                         # terminate() alone leaves a zombie on every restart; escalate
-        except Exception:                             # to kill + reap so repeated crashes don't accumulate children
-            try:
-                p.kill()
-                p.wait(timeout=5)
-            except Exception:
-                pass
-        self._fail_all_waiters()                      # anything still pending on the dead proc is woken, not hung
+            return False
+        self._write_rpc(p, {"jsonrpc": "2.0", "method": "initialized", "params": {}})   # OSError → base _spawn fails it
+        return True
 
     def run_warm(self, prompt, model=None, thread=None, reasoning=None, sandbox="read-only", cwd=None,
                  timeout=None, recycle_on_timeout=False):
@@ -321,7 +151,8 @@ class _CodexDaemon:
                 p = self.ensure_running()
                 if p is None:
                     return {"text": None, "thread": None, "error": "codex app-server would not start"}
-                eff_timeout = timeout if (timeout and timeout > 0) else CALL_TIMEOUT_S   # caller's deadline wins
+                eff_timeout = timeout if (timeout and timeout > 0) else CALL_TIMEOUT_S   # caller's deadline wins; the
+                #   fallback reads the MODULE global so a monkeypatch of codex_daemon.CALL_TIMEOUT_S takes effect
                 deadline = time.monotonic() + eff_timeout
 
                 def remaining_timeout(call_deadline=deadline):
@@ -381,7 +212,8 @@ class _CodexDaemon:
                 if effort:
                     turn_params["effort"] = effort
                 turn_rid = self._next_id()
-                turn_waiter = self._register_waiter(turn_rid, turn_thread_id=new_thread)
+                turn_waiter = self._register_waiter(turn_rid, turn_thread_id=new_thread, turn_id=None,
+                                                    texts=[], turn=None)
                 try:
                     try:
                         self._write_rpc(p, {"jsonrpc": "2.0", "id": turn_rid, "method": "turn/start",
