@@ -39,6 +39,8 @@ TIMEOUT_S = 300               # meta prompts are small; a hung CLI must not stal
 # is therefore the only honest win here; a warm path was deliberately not faked. See docs/WARM_LANE_POOL.md.
 _MINIMAL_COLD_START = ["--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', "--setting-sources", ""]
 _USAGE_TTL_S = 300            # `claude /usage` is re-read at most this often (the shared cache adds reset-boundary invalidation)
+_AUTH_RECHECK_BACKOFF_S = 0.75  # a single `loggedIn: false` is confirmed once (a transient OAuth-refresh flap vs a real
+#                                 logout) before authed=False — mirrors codex_exec, so a refresh blip never false-toasts
 _usage_cache = {"at": 0.0, "val": None}
 
 
@@ -71,13 +73,31 @@ def auth_status(timeout=20):
     exe = _bin()
     if not exe:
         return {"authed": None}
-    try:
+
+    def _logged_in():
+        """The CLI's own loggedIn bool from one `claude auth status`, or None (unparseable/error/absent field)."""
         from . import config
         r = subprocess.run([exe, "auth", "status"], capture_output=True, text=True,
                            timeout=timeout, env=config.lane_plan_env())
-        d = json.loads((r.stdout or "").strip())          # `claude auth status` emits JSON; parse it (a fixed shape)
-        li = d.get("loggedIn")
-        return {"authed": bool(li)} if isinstance(li, bool) else {"authed": None}
+        li = json.loads((r.stdout or "").strip()).get("loggedIn")   # `claude auth status` emits JSON (a fixed shape)
+        return li if isinstance(li, bool) else None
+
+    try:
+        li = _logged_in()
+        if li is True:
+            return {"authed": True}
+        if li is None:
+            return {"authed": None}                        # can't read loggedIn → inconclusive, never a false logout
+        # li is False: a SINGLE loggedIn:false can be a transient flap while the Claude OAuth token refreshes — confirm
+        # ONCE before reporting a logout (mirrors codex_exec.auth_status). A real logout stays false on the re-check; a
+        # refresh blip recovers to True; an unreadable re-check is inconclusive (None), never escalated to the banner.
+        time.sleep(_AUTH_RECHECK_BACKOFF_S)
+        li2 = _logged_in()
+        if li2 is True:
+            return {"authed": True}
+        if li2 is False:
+            return {"authed": False}
+        return {"authed": None}
     except Exception:
         return {"authed": None}
 
