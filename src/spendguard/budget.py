@@ -297,7 +297,7 @@ def reconcile_money_batch_estimate(provider, model, intent, in_tok, out_tok, cos
     return True
 
 
-def snapshot(reason="", keep=None):
+def snapshot(reason="", keep=None, force=False):
     """Copy the ledger database aside BEFORE anything mutates it. Returns the path, or None.
 
     WHY THIS EXISTS. On 2026-08-10 a guard test overwrote ~/.spendguard/config.json — 9KB of settings
@@ -312,19 +312,36 @@ def snapshot(reason="", keep=None):
     `keep` bounds the LOCAL copies. These are RECOVERY snapshots, and the DEEP history lives off-machine in B2
     (spendguard-full, pushed daily), so a large local keep is pure disk bloat: measured 2026-09-15, keep=20 × a
     ~650MB ledger = 12GB of full-db copies in ~/.spendguard/snapshots. Local only needs the window since the last
-    daily B2 push, so the default is small and configurable (safety.snapshot_keep, default 4 ≈ 2 days of the
-    reconcile pair). None → read that config; an explicit keep still wins."""
+    daily B2 push, so the default is small and configurable (safety.snapshot_keep, default 2 ≈ a day or two of
+    recovery points). None → read that config; an explicit keep still wins."""
     import datetime as _dt
     if keep is None:
         try:
-            keep = max(1, int(config._cfg_get("safety", "snapshot_keep", 4)))
+            keep = max(1, int(config._cfg_get("safety", "snapshot_keep", 2)))
         except Exception:
-            keep = 4
+            keep = 2
     import sqlite3 as _sq
+    import time as _time
     try:
         src = config.db_path()
         d = config.HOME / "snapshots"
         d.mkdir(parents=True, exist_ok=True)
+        # THROTTLE — a snapshot is a FULL-DB copy. Before this, the scheduled reconcile's reattribute took one on
+        # EVERY run, so a full backup landed ~every 45 min and keep=4 rotated through in ~3h (measured 2026-10-08:
+        # the snapshot set fully regenerated between two glances). A routine mutation only needs a RECENT recovery
+        # point, not a fresh full copy each time — so reuse the newest snapshot when it is younger than
+        # safety.snapshot_min_interval_hours (default 24 → one per day). force=True (the destructive DELETE ops via
+        # snapshot_once) always takes a fresh one; the invariant 'a mutation has a backup to restore from' holds
+        # either way. The authoritative DEEP history is the daily consistent LIVE-DB copy the B2 job pushes.
+        if not force:
+            try:
+                _recent = max((f.stat().st_mtime for f in d.glob("spend-*.db")), default=0.0)
+                _min_h = float(config._cfg_get("safety", "snapshot_min_interval_hours", 24))
+                if _recent and (_time.time() - _recent) < max(0.0, _min_h) * 3600.0:
+                    _newest = max(d.glob("spend-*.db"), key=lambda f: f.stat().st_mtime)
+                    return str(_newest)                  # a recent snapshot already protects this mutation — reuse it
+            except Exception:
+                pass
         stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         tag = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in (reason or "pre-mutation"))[:40]
         dst = d / f"spend-{stamp}-{tag}.db"
@@ -486,7 +503,7 @@ def snapshot_once(reason):
         return None
     _SNAPPED.add(reason)
     try:
-        p = snapshot(reason=reason)
+        p = snapshot(reason=reason, force=True)      # a destructive DELETE always gets a FRESH pre-op snapshot (not throttled)
     except Exception as e:
         p, err = None, f"{type(e).__name__}: {str(e)[:80]}"
     else:

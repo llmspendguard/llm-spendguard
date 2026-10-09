@@ -2,9 +2,11 @@
 
 Each snapshot is a copy of the WHOLE spend.db (~650MB in production), taken before a destructive reconcile/clear.
 keep=20 × that size measured 12GB of local bloat in ~/.spendguard/snapshots (2026-09-15). Since B2 (spendguard-full,
-daily) holds the deep history, local only needs the window since the last daily push: the default is now 4
-(config safety.snapshot_keep), not 20. This guards: the default keep, an explicit keep, and that a pruned
-snapshot's WAL/SHM companions are removed too (they used to be orphaned).
+daily) holds the deep history, local only needs a day or two of recovery points: the default is now 2
+(config safety.snapshot_keep). This guards: the default keep, an explicit keep, and that a pruned
+snapshot's WAL/SHM companions are removed too (they used to be orphaned). Uses force=True so each call actually
+CREATES a snapshot — a routine call within snapshot_min_interval_hours reuses the newest instead (see
+test_snapshot_throttle.py); retention/pruning applies whenever a new snapshot lands.
 
 Offline + hermetic: a tiny fake ledger in a temp HOME; no network. Cleans up its temp HOME.
 """
@@ -44,10 +46,10 @@ def _n_snaps():
     return len(list(SNAP.glob("spend-*.db")))
 
 
-print("-- default keep is SMALL (4), not the old 20: 6 snapshots → 4 retained --")
+print("-- default keep is SMALL (2), not the old 20: 6 snapshots → 2 retained --")
 for i in range(6):
-    budget.snapshot(reason=f"ret-test-{i}", keep=None)     # keep=None → config safety.snapshot_keep (default 4)
-fails += report_check("default retention keeps 4 (config safety.snapshot_keep), not 20", _n_snaps() == 4)
+    budget.snapshot(reason=f"ret-test-{i}", keep=None, force=True)  # keep=None → config safety.snapshot_keep (default 2)
+fails += report_check("default retention keeps 2 (config safety.snapshot_keep), not 20", _n_snaps() == 2)
 
 print("\n-- an explicit keep wins, and WAL/SHM companions of a pruned snapshot are removed too --")
 # a stale snapshot that will sort FIRST (so keep=1 prunes it), with orphan WAL/SHM companions beside it
@@ -55,7 +57,7 @@ _stale = SNAP / "spend-00000000T000000Z-stale.db"
 _stale.write_text("x")
 (SNAP / "spend-00000000T000000Z-stale.db-wal").write_text("x")
 (SNAP / "spend-00000000T000000Z-stale.db-shm").write_text("x")
-budget.snapshot(reason="ret-final", keep=1)                # keep only the newest → prunes everything else
+budget.snapshot(reason="ret-final", keep=1, force=True)    # keep only the newest → prunes everything else
 fails += report_check("explicit keep=1 retains exactly one snapshot", _n_snaps() == 1)
 fails += report_check("the pruned snapshot's .db-wal companion was removed (not orphaned)",
                       not (SNAP / "spend-00000000T000000Z-stale.db-wal").exists())

@@ -468,12 +468,21 @@ SETTINGS = [
               "went from 9KB of settings to a 26-byte probe value with no copy of it anywhere. Set 0 to keep "
               "only `<file>~`; raise it if you edit settings often and want deeper history."),
     dict(section="safety", key="snapshot_keep", store="config.json", env="SPENDGUARD_SNAPSHOT_KEEP",
-         default="4", kind="int", secret=False,
+         default="2", kind="int", secret=False,
          desc="How many LOCAL full-ledger recovery snapshots (budget.snapshot, taken before a destructive "
               "reconcile/clear) to retain in ~/.spendguard/snapshots. These are copies of the WHOLE spend.db "
               "(~650MB each), so a large keep is pure disk bloat — measured 2026-09-15, keep=20 = 12GB. The DEEP "
-              "history lives off-machine in B2 (spendguard-full, daily), so local only needs the window since the "
-              "last daily push; default 4 ≈ 2 days of the reconcile pair. Raise it only if B2 is not running."),
+              "history lives off-machine in B2 (spendguard-full, the daily consistent LIVE-DB copy), so local only "
+              "needs a day or two of recovery points; with snapshot_min_interval_hours throttling to one/day, "
+              "default 2 ≈ 2 days. Raise it only if B2 is not running."),
+    dict(section="safety", key="snapshot_min_interval_hours", store="config.json",
+         env="SPENDGUARD_SNAPSHOT_MIN_INTERVAL_H", default="24", kind="float", secret=False,
+         desc="Minimum hours between LOCAL full-ledger snapshots (budget.snapshot). A snapshot is a full-DB copy, and "
+              "the scheduled reconcile's reattribute took one on EVERY run — so a full backup landed ~every 45 min "
+              "and keep=4 rotated through in ~3h (measured 2026-10-08). A ROUTINE mutation only needs a recent "
+              "recovery point, so within this window it REUSES the newest snapshot instead of making a fresh copy; "
+              "default 24 → one per day. A destructive DELETE (clear/reattribute via snapshot_once) forces a fresh "
+              "one regardless. Set 0 to snapshot on every mutation (the old behaviour)."),
     dict(section="safety", key="embed_checkpoint_max_age_days", store="config.json",
          env="SPENDGUARD_EMBED_CKPT_MAX_AGE_DAYS", default="7", kind="float", secret=False,
          desc="How long an `embed_<model>_<hash>.jsonl` resume checkpoint (adapters.embed, written for any "
