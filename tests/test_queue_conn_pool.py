@@ -60,18 +60,20 @@ with contextlib.closing(lane_queue._queue_db()) as v:
     n2 = v.execute("SELECT COUNT(*) FROM lane_queue WHERE intent='poolI2'").fetchone()[0]
 ck("queue self-heals after a reset (the next op commits)", n2 == 1)
 
-print("-- a config.db_path() switch reopens the pool on the NEW file (staleness handled) --")
-_orig = config.db_path
+print("-- a queue-db path switch reopens the pool on the NEW file (staleness handled) --")
+# The queue keys its pooled connection on config.lane_queue_db_path() (its OWN file, not the spend.db ledger), so
+# that is the path a staleness switch must change — patching db_path would no longer reach the queue connection.
+_orig = config.lane_queue_db_path
 _newdir = tempfile.mkdtemp(prefix="spendguard-pool2-")
-config.db_path = lambda: os.path.join(_newdir, "other.db")
+config.lane_queue_db_path = lambda: os.path.join(_newdir, "other_lane_queue.db")
 try:
     c_new = lane_queue._queue_conn()
-    ck("a db-path switch reopens a new pooled connection", c_new is not after)
+    ck("a queue-db path switch reopens a new pooled connection", c_new is not after)
     with lane_queue._queue_op() as c:                        # and it works on the new file
         c.execute(_INS, ("poolI3",))
     ck("the reopened pool writes to the new file", True)
 finally:
-    config.db_path = _orig
+    config.lane_queue_db_path = _orig
     lane_queue._reset_queue_conn()
 
 print(f"\n{'[FAIL]' if _fails else 'OK'} test_queue_conn_pool: {len(_fails)} failure(s)")

@@ -429,9 +429,22 @@ def update_json(path, mutate, reason="", keep_backups=None, required=False, quar
                 old.unlink(missing_ok=True)
         except Exception:
             pass                                  # a failed backup must not block a legitimate write
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(_json.dumps(out, indent=2))
-    _os.replace(tmp, path)                        # atomic: readers never see a half-written file
+    # UNIQUE staging file per writer. A FIXED `<name>.tmp` was SHARED by every process writing this path, and these
+    # state files are written CONCURRENTLY across processes (resource_state._save fires on the hot dispatch path from
+    # the scheduled reconcile, lane-drain, MCP servers and hook subprocesses; the per-process threading.Lock does not
+    # reach across them). Two writers open the same `.tmp`, their write_text calls interleave (each open truncates),
+    # and os.replace then promotes the MIXED bytes → a torn JSON the next reader quarantines. That is what produced
+    # 140 resource_state_state.json.corrupt.* copies (2026-10-09). A per-writer staging name (pid + random) makes
+    # every os.replace promote a COMPLETE file — last writer wins, every intermediate state parses.
+    tmp = path.parent / f"{path.name}.{_os.getpid()}.{uid(8)}.tmp"
+    try:
+        tmp.write_text(_json.dumps(out, indent=2))
+        _os.replace(tmp, path)                    # atomic: readers never see a half-written file
+    finally:
+        try:
+            tmp.unlink()                          # only still here if write/replace failed — never leak a staging file
+        except OSError:
+            pass
     return out
 
 
@@ -753,6 +766,17 @@ def db_path():
     return p if p else str(HOME / "spend.db")
 
 
+def lane_queue_db_path():
+    """The lane_queue's OWN database file — deliberately NOT the spend.db money ledger. The queue is transient work
+    state (leased/parked/done/failed task rows with large task/result TEXT), not money-of-record; co-locating it in
+    spend.db made it 63% of a 4.4GB ledger (2.76GB of queue rows), so every drain's purge ran a multi-GB scan under
+    the ledger's write lock, every pre-reconcile snapshot and B2 backup copied 2.76GB of transient data, and the WAL
+    could never find a quiet moment to checkpoint (measured 2026-10-08). Its own file isolates all of that from the
+    ledger. Config budget.lane_queue_db_path overrides; default HOME/lane_queue.db."""
+    p = _cfg_get("budget", "lane_queue_db_path", None)
+    return p if p else str(HOME / "lane_queue.db")
+
+
 def tune_ledger_connection(c):
     """Apply spendguard's shared SQLite tuning to a base-ledger connection. config.db_path() is ONE file opened by
     ~8 subsystems (budget/calls/callio/bulkgate/learn/semcache/lane_queue …); every `_X_db()` opener calls this right
@@ -766,10 +790,14 @@ def tune_ledger_connection(c):
       · temp_store=MEMORY  — sorts / temp b-trees in RAM.
       · cache_size=-64000  — up to 64MB page cache (per connection; pays off most on a REUSED connection).
       · mmap_size=256MB    — memory-mapped reads (per connection).
-    All per-CONNECTION except WAL (which is file-persistent), so tuning one subsystem's connection never disturbs
-    another's on the same file. Best-effort: a PRAGMA a given SQLite build rejects is skipped, never fatal."""
+      · journal_size_limit=64MB — after a checkpoint, TRUNCATE the -wal file back to this instead of leaving it at its
+        high-water mark. Without it a passive autocheckpoint resets the WAL logically but never shrinks the FILE, so a
+        burst of large write txns (the lane-drain's purge used to be one every cycle) left a multi-GB -wal on disk
+        forever: measured spend.db-wal at 1.3GB, 2026-10-08. This caps it; a periodic wal_checkpoint(TRUNCATE) drains it.
+    All per-CONNECTION except WAL + journal_size_limit (file-persistent), so tuning one subsystem's connection never
+    disturbs another's on the same file. Best-effort: a PRAGMA a given SQLite build rejects is skipped, never fatal."""
     for pragma in ("busy_timeout=5000", "journal_mode=WAL", "synchronous=NORMAL", "temp_store=MEMORY",
-                   "cache_size=-64000", "mmap_size=268435456"):
+                   "cache_size=-64000", "mmap_size=268435456", "journal_size_limit=67108864"):
         try:
             c.execute("PRAGMA " + pragma)
         except Exception:
@@ -788,15 +816,17 @@ def tune_ledger_connection(c):
 _LEDGER_POOL = threading.local()
 
 
-def pooled_ledger_conn(key, ensure_schema):
+def pooled_ledger_conn(key, ensure_schema, path=None):
     """The thread-local pooled connection for subsystem `key` (tuned via tune_ledger_connection, schema ensured once
-    at creation by ensure_schema(c)). Reused across that subsystem's ops on this thread; reopened when db_path()
+    at creation by ensure_schema(c)). Reused across that subsystem's ops on this thread; reopened when the path
     changed under us (a test) or the connection was dropped by reset_ledger_conn after an error, so a stale connection
-    never lingers. `key` namespaces one subsystem's connection from another's (same file, different tables)."""
+    never lingers. `key` namespaces one subsystem's connection from another's. `path` defaults to the shared ledger
+    (db_path()); a subsystem on its OWN file (e.g. lane_queue → lane_queue_db_path()) passes it, and the pool keys the
+    connection by its path too, so the same key never returns a connection to the wrong file."""
     conns = getattr(_LEDGER_POOL, "conns", None)
     if conns is None:
         conns = _LEDGER_POOL.conns = {}
-    path = db_path()
+    path = path or db_path()
     got = conns.get(key)
     if got is not None and got[1] == path:
         return got[0]
@@ -845,12 +875,12 @@ def reset_ledger_conn(key):
 
 
 @contextlib.contextmanager
-def ledger_op(key, ensure_schema):
+def ledger_op(key, ensure_schema, path=None):
     """One operation on subsystem `key`'s pooled connection. On success COMMITs (never leaves an open transaction on a
     reused connection); on ANY error ROLLS BACK + drops the pooled connection (reopened next call) and RE-RAISES — so a
     mid-op failure can't strand the write lock on a reused connection, a broken/replaced file self-heals, and the call
-    site's own except still runs. Replaces the per-op `contextlib.closing(_X_db())`."""
-    c = pooled_ledger_conn(key, ensure_schema)
+    site's own except still runs. `path` selects the file (default: the shared ledger). Replaces per-op `_X_db()`."""
+    c = pooled_ledger_conn(key, ensure_schema, path=path)
     try:
         yield c
         c.commit()
@@ -863,12 +893,12 @@ def ledger_op(key, ensure_schema):
         raise
 
 
-def fresh_ledger_conn(ensure_schema):
+def fresh_ledger_conn(ensure_schema, path=None):
     """A FRESH, closeable connection to the ledger — for occasional EXTERNAL/one-off use (a test's manual setup, a CLI
     inspection) opened `with contextlib.closing(...)` and CLOSED. Deliberately NOT the pooled connection, so closing it
-    can never corrupt the pool."""
+    can never corrupt the pool. `path` selects the file (default: the shared ledger, db_path())."""
     import sqlite3
-    c = sqlite3.connect(db_path(), timeout=5, check_same_thread=False)
+    c = sqlite3.connect(path or db_path(), timeout=5, check_same_thread=False)
     tune_ledger_connection(c)
     ensure_schema(c)
     return c

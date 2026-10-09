@@ -350,7 +350,25 @@ SETTINGS = [
          kind="float", secret=False,
          desc="Terminal queue rows (done/failed) older than this are archived to lane_queue_archive.jsonl (a "
               "reviewable log) and removed from the live queue, so it never accumulates forever. Recent terminal "
-              "rows stay for `spendguard lanes --queue`. `--drain` purges each cycle; `--purge` runs it on demand."),
+              "rows stay for `spendguard lanes --queue`. A drain purges at most hourly (queue_purge_min_interval_s); "
+              "`--purge` runs it on demand."),
+    dict(section="advisor", key="queue_purge_min_interval_s", store="config.json:advisor.queue_purge_min_interval_s",
+         default=3600.0, kind="float", secret=False,
+         desc="Minimum seconds between queue purges during draining. Purge is O(terminal rows); leasing is O(batch). "
+              "Running the archive+delete every drain cycle (every 300s) scanned the whole terminal set under the "
+              "queue write lock and was the lane-drain's 4-minute CPU (measured 2026-10-08). Now a drain purges at "
+              "most this often; 0 = every cycle (old behaviour)."),
+    dict(section="advisor", key="queue_purge_chunk", store="config.json:advisor.queue_purge_chunk",
+         default=2000, kind="int", secret=False,
+         desc="Terminal rows purged per transaction. Purge deletes in bounded chunks — each a short BEGIN IMMEDIATE "
+              "that releases the write lock between chunks — so clearing a large backlog never holds the lock for "
+              "minutes or fetches the whole match-set into memory. The (state, updated_ts) index makes each chunk a "
+              "bounded range scan."),
+    dict(section="advisor", key="queue_archive_max_mb", store="config.json:advisor.queue_archive_max_mb",
+         default=64.0, kind="float", secret=False,
+         desc="Cap for lane_queue_archive.jsonl. It is append-only; past this size purge rotates it to "
+              "lane_queue_archive.jsonl.1 (one generation kept) so it cannot grow unbounded (it had reached 820MB, "
+              "2026-10-08). 0 disables rotation."),
     dict(section="callio", key="snip_chars", store="config.json:callio.snip_chars", env="SPENDGUARD_CALLIO_SNIP",
          default=800, kind="int", secret=False,
          desc="Chars kept per recovered prompt / output in the call_io corpus. 800 is sized for the caged JUDGE "
@@ -521,6 +539,13 @@ SETTINGS = [
     dict(section="budget", key="db_path", store="config.json:budget.db_path", env=None, default="~/.spendguard/spend.db",
          kind="path", secret=False,
          desc="Location of the SQLite spend ledger (used when backend=sqlite)."),
+    dict(section="budget", key="lane_queue_db_path", store="config.json:budget.lane_queue_db_path", env=None,
+         default="~/.spendguard/lane_queue.db", kind="path", secret=False,
+         desc="Location of the lane_queue database — deliberately SEPARATE from the spend ledger. The queue is "
+              "transient work state (task/result rows), not money-of-record; co-locating it in spend.db made it 63% "
+              "of a 4.4GB ledger, so every drain's purge scanned multi-GB under the ledger write lock, every snapshot "
+              "and B2 backup copied it, and the WAL could not checkpoint (measured 2026-10-08). Its own file isolates "
+              "all of that. `spendguard lanes --migrate-queue-db` performs the one-time move + reclaim."),
 
     # ── observability ──
     dict(section="emit", key="webhook", store="config.json:emit.webhook", env="SPENDGUARD_WEBHOOK", default=None,

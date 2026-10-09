@@ -55,7 +55,7 @@ try:
 
     # ── (c): every row carries the service class + an SLA deadline ──
     print("\n-- (c) every row carries sla_class + an SLA deadline_ts --")
-    c = sqlite3.connect(config.db_path())
+    c = sqlite3.connect(config.lane_queue_db_path())   # the queue lives in its OWN db, not the spend.db ledger
     rows = c.execute("SELECT sla_class, deadline_ts FROM lane_queue WHERE intent='test:intent'").fetchall()
     ck("every sync row carries sla_class='realtime'", bool(rows) and all(r[0] == "realtime" for r in rows))
     ck("every sync row carries an absolute SLA deadline_ts (sla_s=30 -> a deadline)", all(r[1] for r in rows))

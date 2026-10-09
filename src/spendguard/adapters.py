@@ -1170,9 +1170,14 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                 else:
                     _bv_from, _bv_why, _bv_effort = model, _pick.get("why"), _pick.get("effort")
                     model, reasoning, no_substitution = _cand, _pick.get("effort"), True
-                    print(f"[spendguard] {_bv_why} (was {_bv_from})", file=_sbv.stderr)
+                    # warn_once, not print: this advisory fired on EVERY best-value call, so the lane-drain daemon
+                    # wrote it ~once/call into its log (part of the 15MB lane-drain.log, 2026-10-08). Dedup is per
+                    # distinct message, and the message carries the intent/models, so distinct intents still each show.
+                    from . import config as _cfgbv
+                    _cfgbv.warn_once(f"[spendguard] {_bv_why} (was {_bv_from})")
             elif _pick is not None and _pick.get("why"):
-                print(f"[spendguard] {_pick['why']}", file=_sbv.stderr)   # honest no-pick: keep the named model
+                from . import config as _cfgbv
+                _cfgbv.warn_once(f"[spendguard] {_pick['why']}")           # honest no-pick: keep the named model (once)
     # PLAN-AXIS ADMISSION: billed-$ caps cannot see a $0 subscription call. A labelled, unpinned call is discretionary;
     # when its plan is capped/on paid overage, route only through the pre-confirmed semantic substitute registry. If
     # none is READY, refuse — never fail open onto the exhausted lane. Caller pins remain the hard contract above.

@@ -50,7 +50,15 @@ IDLE_ROUNDS_DEFAULT = 2         # foreground drain stops after this many consecu
 IDLE_SLEEP_DEFAULT = 2.0        # seconds to wait between empty leases / overload re-checks (foreground + daemon)
 RETAIN_DAYS_DEFAULT = 7.0       # terminal rows (done/failed) older than this are archived to a log + removed from the
 #                                 live queue, so it never accumulates forever (recent ones stay for --queue review)
+PURGE_CHUNK_DEFAULT = 2000      # purge deletes terminal rows in bounded chunks — each a SHORT txn that releases the
+#                                 write lock between chunks, so a backlog purge never holds the lock for minutes or
+#                                 fetches the whole match-set into memory (the 2.7GB-under-lock scan, measured 2026-10-08)
+PURGE_MIN_INTERVAL_S_DEFAULT = 3600.0   # purge is O(terminal rows), leasing is O(batch) — so DECOUPLE them: run purge at
+#                                 most once/hour, not every drain cycle (every 300s was the 4-min-CPU cause)
+ARCHIVE_MAX_MB_DEFAULT = 64.0   # lane_queue_archive.jsonl is append-only; rotate (keep one .1 generation) past this so it
+#                                 cannot grow unbounded (it had reached 820MB, 2026-10-08)
 _RESULT_CAP = 4000            # bytes of result JSON retained per row (audit/debug, not the whole payload)
+_last_purge_ts = 0.0          # module-local throttle stamp for purge_due() — decouples purge from the drain cycle
 
 # Priority convention (higher drains first): a delegated task someone is WAITING on jumps ahead of a big backfill,
 # so a 6k-item bulk enqueue never starves interactive work sharing the same queue.
@@ -122,11 +130,16 @@ def _ensure_queue_schema(c):
             pass                                  # already present (or a concurrent racer just added it) — goal holds
     # index the lease hot-path (pick highest-priority oldest pending) so a deep backlog stays cheap to poll.
     c.execute("CREATE INDEX IF NOT EXISTS lane_queue_pick ON lane_queue(state, priority DESC, id)")
+    # index the PURGE path (terminal rows older than a cutoff). Without this, purge narrowed by state then SCANNED
+    # every terminal row comparing updated_ts — on 137k terminal rows in a 2.7GB table that read most of the file
+    # under the write lock every drain cycle (measured 2026-10-08). (state, updated_ts) makes it a bounded range scan.
+    c.execute("CREATE INDEX IF NOT EXISTS lane_queue_purge ON lane_queue(state, updated_ts)")
 
 
 def _queue_conn():
-    """This thread's pooled, tuned, schema-ensured queue connection (reused; see config.pooled_ledger_conn)."""
-    return config.pooled_ledger_conn(_QUEUE_KEY, _ensure_queue_schema)
+    """This thread's pooled, tuned, schema-ensured queue connection (reused; see config.pooled_ledger_conn). Opens the
+    queue's OWN file (config.lane_queue_db_path()), NOT the spend.db money ledger — see lane_queue_db_path for why."""
+    return config.pooled_ledger_conn(_QUEUE_KEY, _ensure_queue_schema, path=config.lane_queue_db_path())
 
 
 def _reset_queue_conn():
@@ -138,14 +151,57 @@ def _queue_op():
     """One queue op on the pooled connection — commit on success, rollback + drop the connection on error, re-raise
     (so each call site's own except still runs, e.g. _enqueue_leased's deliberate-stop propagation). See
     config.ledger_op. Use as `with _queue_op() as c:`."""
-    return config.ledger_op(_QUEUE_KEY, _ensure_queue_schema)
+    return config.ledger_op(_QUEUE_KEY, _ensure_queue_schema, path=config.lane_queue_db_path())
 
 
 def _queue_db():
     """A FRESH, closeable queue connection for EXTERNAL/one-off use (a test's manual setup, a CLI) — never the pooled
     connection, so closing it can't corrupt the pool. The hot internal path uses `_queue_op()` / `_queue_conn()`. See
     config.fresh_ledger_conn."""
-    return config.fresh_ledger_conn(_ensure_queue_schema)
+    return config.fresh_ledger_conn(_ensure_queue_schema, path=config.lane_queue_db_path())
+
+
+def migrate_from_ledger():
+    """ONE-TIME move of the queue out of the spend.db money ledger into its own lane_queue.db (see
+    config.lane_queue_db_path). Copies the NON-TERMINAL rows (pending/leased — the live work) and DROPs the old
+    `lane_queue` table from the ledger, reclaiming its pages (every .backup snapshot + the B2 backup copy only used
+    pages, so they shrink immediately; the live ledger file reuses the freed pages over time or on a later VACUUM).
+
+    Terminal rows (done/failed) are NOT re-imported — they are the archival backlog purge() discards; migrating 137k
+    of them would just recreate the bloat. `id` is NOT copied (the new db assigns fresh ids; a migrated leased row's
+    stale lease simply expires and it is re-leased). Idempotent + re-runnable: once the ledger has no lane_queue table
+    it is a no-op. Run with the drain DISABLED and AFTER the long-lived writers are on this code (so none recreates the
+    table in the ledger via _ensure_queue_schema). Returns {moved, dropped, note} or {error}. Never raises."""
+    import contextlib
+    import sqlite3
+    ledger = config.db_path()
+    if ledger == config.lane_queue_db_path():
+        return {"moved": 0, "dropped": False, "note": "queue db IS the ledger (no separate path configured) — nothing to move"}
+    try:
+        with contextlib.closing(sqlite3.connect(ledger, timeout=30)) as lc:
+            lc.execute("PRAGMA busy_timeout=30000")
+            if not lc.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='lane_queue'").fetchone():
+                return {"moved": 0, "dropped": False, "note": "ledger has no lane_queue table (already migrated)"}
+            src_cols = [r[1] for r in lc.execute("PRAGMA table_info(lane_queue)")]
+            live = lc.execute("SELECT %s FROM lane_queue WHERE state NOT IN ('done','failed')"
+                              % ",".join(src_cols)).fetchall()
+        moved = 0
+        if live:
+            with _queue_op() as c:                               # ensures the new-db schema, then inserts
+                dst_cols = {r[1] for r in c.execute("PRAGMA table_info(lane_queue)")}
+                use = [col for col in src_cols if col in dst_cols and col != "id"]   # fresh ids in the new db
+                idx = [src_cols.index(col) for col in use]
+                c.executemany("INSERT INTO lane_queue (%s) VALUES (%s)" % (",".join(use), ",".join("?" * len(use))),
+                              [[row[i] for i in idx] for row in live])
+                moved = len(live)
+        with contextlib.closing(sqlite3.connect(ledger, timeout=30)) as lc:
+            lc.execute("PRAGMA busy_timeout=30000")
+            lc.execute("DROP TABLE IF EXISTS lane_queue")        # reclaim ~2.7GB of pages → snapshots/backups shrink
+            lc.commit()
+        return {"moved": moved, "dropped": True,
+                "note": "copied %d live row(s) to lane_queue.db; dropped lane_queue from the ledger" % moved}
+    except Exception as e:
+        return {"moved": 0, "dropped": False, "error": str(e)[:160]}
 
 
 def optimize_queue_db():
@@ -717,36 +773,75 @@ def pending_counts(realtime_only=True):
         return {}
 
 
-def purge(retain_days=None, archive_path=None):
+def _bound_archive(path, max_mb=None):
+    """Keep lane_queue_archive.jsonl bounded: when it exceeds max_mb, rotate it to `<path>.1` (replacing a prior .1)
+    and start fresh — one generation retained, never unbounded growth. Best-effort; never raises."""
+    try:
+        cap = float(max_mb if max_mb is not None else _qcfg("queue_archive_max_mb", ARCHIVE_MAX_MB_DEFAULT))
+        if cap <= 0 or not os.path.exists(path) or os.path.getsize(path) <= cap * 1024 * 1024:
+            return
+        os.replace(path, path + ".1")                      # atomic; keeps exactly one prior generation for review
+    except OSError:
+        pass
+
+
+def purge_due(min_interval_s=None):
+    """True if purge should run now — decouples the O(terminal-rows) purge from the O(batch) drain cycle. purge used to
+    run EVERY drain (every 300s), scanning the whole terminal set under the ledger write lock; it only needs to run
+    periodically. Tracks the last run in a module-local stamp (one daemon drives the daemon-mode drain). Config
+    advisor.queue_purge_min_interval_s; default 1h."""
+    import time as _t
+    iv = float(min_interval_s if min_interval_s is not None else _qcfg("queue_purge_min_interval_s", PURGE_MIN_INTERVAL_S_DEFAULT))
+    return (_t.time() - _last_purge_ts) >= max(0.0, iv)
+
+
+def purge(retain_days=None, archive_path=None, chunk=None):
     """Bound the queue so it never accumulates forever: TERMINAL rows (done/failed) older than `retain_days` are
-    APPENDED to an archive jsonl (a reviewable log) and then DELETED from the live table. Recent terminal rows stay
-    in the queue for `--queue` review; pending/leased rows are NEVER touched. Returns {archived, deleted, archive}
-    (or {error}). Never raises. The archive-append happens before the delete commits, so at worst a crash re-logs a
-    row on the next run (harmless dup in an append-only audit) — it can never DELETE without having archived."""
+    APPENDED to an archive jsonl (a reviewable log) and then DELETED from the live table, in BOUNDED CHUNKS. Recent
+    terminal rows stay in the queue for `--queue` review; pending/leased rows are NEVER touched. Returns {archived,
+    deleted, archive} (or {error}). Never raises.
+
+    Each chunk is a SHORT `BEGIN IMMEDIATE` txn (archive-before-delete preserved per chunk) that releases the write
+    lock between chunks, so purging a large backlog never holds the ledger-grade lock for minutes nor fetches the
+    whole match-set into memory — the (state, updated_ts) index makes the per-chunk SELECT a bounded range scan. At
+    worst a crash between a chunk's archive-append and its delete-commit re-logs that chunk next run (a harmless dup in
+    an append-only audit); it can never DELETE without having archived."""
+    import time as _t
+    global _last_purge_ts
     retain_days = float(retain_days if retain_days is not None else _qcfg("queue_retain_days", RETAIN_DAYS_DEFAULT))
     cutoff = _iso(_utcnow() - datetime.timedelta(days=retain_days))
     archive_path = archive_path or str(config.HOME / "lane_queue_archive.jsonl")
+    chunk = max(1, int(chunk if chunk is not None else _qcfg("queue_purge_chunk", PURGE_CHUNK_DEFAULT)))
     cols = ("id", "intent", "task", "state", "attempts", "lane", "billed", "result", "created_ts", "updated_ts")
+    archived = deleted = 0
     try:
-        with _queue_op() as c:
-            c.execute("BEGIN IMMEDIATE")                       # lock before select→delete so a concurrent drainer can't race
-            try:
-                rows = c.execute(f"SELECT {','.join(cols)} FROM lane_queue "
-                                 "WHERE state IN ('done','failed') AND updated_ts < ?", (cutoff,)).fetchall()
-                if not rows:
+        while True:
+            with _queue_op() as c:
+                c.execute("BEGIN IMMEDIATE")                   # lock before select→delete so a concurrent drainer can't race
+                try:
+                    rows = c.execute(f"SELECT {','.join(cols)} FROM lane_queue "
+                                     "WHERE state IN ('done','failed') AND updated_ts < ? "
+                                     "ORDER BY updated_ts LIMIT ?", (cutoff, chunk)).fetchall()
+                    if not rows:
+                        c.execute("COMMIT")
+                        break
+                    with open(archive_path, "a") as f:        # append-only audit log — archive BEFORE delete
+                        for r in rows:
+                            f.write(json.dumps(dict(zip(cols, r))) + "\n")
+                    c.executemany("DELETE FROM lane_queue WHERE id=?", [(r[0],) for r in rows])
                     c.execute("COMMIT")
-                    return {"archived": 0, "deleted": 0}
-                with open(archive_path, "a") as f:            # append-only audit log — archive BEFORE delete
-                    for r in rows:
-                        f.write(json.dumps(dict(zip(cols, r))) + "\n")
-                c.executemany("DELETE FROM lane_queue WHERE id=?", [(r[0],) for r in rows])
-                c.execute("COMMIT")
-                return {"archived": len(rows), "deleted": len(rows), "archive": archive_path}
-            except Exception:
-                c.execute("ROLLBACK")
-                raise
+                except Exception:
+                    c.execute("ROLLBACK")
+                    raise
+            archived += len(rows)
+            deleted += len(rows)
+            _bound_archive(archive_path)                       # keep the audit log bounded as we append
+            if len(rows) < chunk:
+                break                                          # last partial chunk → the backlog is cleared
+        _last_purge_ts = _t.time()
+        return {"archived": archived, "deleted": deleted, "archive": archive_path}
     except Exception as e:
-        return {"archived": 0, "deleted": 0, "error": str(e)[:120]}
+        return {"archived": archived, "deleted": deleted, "error": str(e)[:120]}
 
 
 def _overloaded(ceiling):
@@ -759,6 +854,43 @@ def _overloaded(ceiling):
         return os.getloadavg()[0] > float(ceiling)
     except (OSError, AttributeError):
         return False
+
+
+def _acquire_drain_lock():
+    """NON-BLOCKING single-instance guard so two drains never run at once. launchd single-instances per Label but
+    RELAUNCHES an overrun run on exit (and a manual `--drain` can race the LaunchAgent), so overlap IS possible — two
+    drains each spinning up the lane pool was part of the always-on CPU. Returns: an int fd (lock HELD — close to
+    release), -1 (locking unavailable on this platform / infra error → proceed WITHOUT a guard, fail-open so a lock
+    hiccup never blocks real draining), or None (another drain already holds it → caller returns immediately)."""
+    try:
+        import fcntl as _fcntl
+        import os as _os
+    except ImportError:
+        return -1                                           # non-POSIX → no flock; degrade to unguarded, never block work
+    try:
+        fd = _os.open(str(config.HOME / "lane_queue.drain.lock"), _os.O_CREAT | _os.O_RDWR, 0o644)
+    except OSError:
+        return -1
+    try:
+        _fcntl.flock(fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+    except OSError:
+        try:
+            _os.close(fd)
+        except OSError:
+            pass
+        return None                                         # held by another drain → don't churn a second one
+    return fd
+
+
+def _release_drain_lock(fd):
+    """Release the single-instance lock (closing the fd drops its flock). No-op for the -1/None sentinels."""
+    if fd is None or fd < 0:
+        return
+    try:
+        import os as _os
+        _os.close(fd)
+    except OSError:
+        pass
 
 
 def drain(worker=None, batch=None, lease_s=None, idle_rounds=None, idle_sleep=None,
@@ -780,6 +912,10 @@ def drain(worker=None, batch=None, lease_s=None, idle_rounds=None, idle_sleep=No
     ceiling = load_ceiling if load_ceiling is not None else _qcfg("queue_load_ceiling", 0.0)
     worker = worker or f"drain-{os.getpid()}"
     s = {"ran": 0, "done": 0, "failed": 0, "billed": 0, "by_lane": {}, "rounds": 0}
+    _lock_fd = _acquire_drain_lock()
+    if _lock_fd is None:                                     # another drain already running → don't start a second one
+        s["skipped"] = "another drain is already running (single-instance lock held)"
+        return s
     idle = iters = 0
     _last_poll = 0.0                                                     # throttle for the batch_tracker poll (below)
     while True:
@@ -892,5 +1028,7 @@ def drain(worker=None, batch=None, lease_s=None, idle_rounds=None, idle_sleep=No
                     s["failed"] += 1
                 if res.get("billed"):
                     s["billed"] += 1
-    optimize_queue_db()          # refresh planner stats ONCE at drain completion (periodic, never per-op)
+    optimize_queue_db()          # refresh planner stats ONCE at drain completion (periodic, never per-op) — now on the
+    #                              small lane_queue.db, not the 4.4GB ledger, so ANALYZE is cheap
+    _release_drain_lock(_lock_fd)
     return s

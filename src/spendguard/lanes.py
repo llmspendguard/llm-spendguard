@@ -374,31 +374,39 @@ def main(argv=None):
             print(f"  ⚠ {model!r} is in no advisor.tiers group yet → this lane serves no `--tier` fan. "
                   f"Add it: `spendguard tiers set <group> {model}`.")
         return 0
-    for line in (lane_summary_lines() or ["subscription lanes: none enabled (advisor.executor = api) — set "
-                                     "advisor.executor to claude-code / codex / zai-coding / gemini / pool "
-                                     "to use your plans"]):
-        print(line)
+    # The operator LANE SUMMARY + fallback/eligibility alerts are for a person reading `spendguard lanes`. The
+    # lane-drain DAEMON re-invokes this same main() every cycle with --drain and NO reader (stdout/stderr → a log),
+    # so printing the summary each run wrote the banner + every lane's "ready" line ~11,261 times into a 15MB
+    # lane-drain.log (measured 2026-10-08). Skip the operator chatter entirely in drain/daemon mode; the drain's own
+    # queue + drained lines below are the only output it needs.
+    _operator_view = "--drain" not in argv
+    if _operator_view:
+        for line in (lane_summary_lines() or ["subscription lanes: none enabled (advisor.executor = api) — set "
+                                         "advisor.executor to claude-code / codex / zai-coding / gemini / pool "
+                                         "to use your plans"]):
+            print(line)
     # OPERATOR alert (not a consumer concern): metered $ spent THIS MONTH because a $0 lane was DOWN and its call fell
     # over to the paid API — the "$0 savings lost" recovered by re-logging that lane in. Shown here, where an operator
     # looks at lane state, only when it is material; the full per-lane rollup is `spendguard lanes --fallback-spend`.
-    try:
-        from . import reliability as _rel_fb, config as _cfg_fb
-        _fb_rows = _rel_fb.lane_fallback_spend(since=_cfg_fb.month_start_utc())
-        _fb_total = round(sum(r["metered_usd"] for r in _fb_rows), 2)
-        if _fb_total >= 0.01:
-            _top = ", ".join(f"{r['lane']} ${r['metered_usd']:.2f}" for r in _fb_rows[:4])
-            print(f"⚠ ${_fb_total:.2f} metered this month FELL OVER from lanes the router TRIED and found DOWN ({_top}) "
-                  f"— re-login to restore $0. NB: this is lane-tried-then-down spend ONLY, not all lane-ELIGIBLE metered "
-                  f"(see the next line). Full: spendguard lanes --fallback-spend")
-    except Exception:
-        pass
-    try:                                                  # defect 3: the figure that answers 'is rule #8 in force' —
-        from . import lane_eligibility                     # lane-ELIGIBLE work billed metered anyway ($0, cached verdicts)
-        _le_line = lane_eligibility.summary_line()
-        if _le_line:
-            print("ℹ " + _le_line)
-    except Exception:
-        pass
+    if _operator_view:
+        try:
+            from . import reliability as _rel_fb, config as _cfg_fb
+            _fb_rows = _rel_fb.lane_fallback_spend(since=_cfg_fb.month_start_utc())
+            _fb_total = round(sum(r["metered_usd"] for r in _fb_rows), 2)
+            if _fb_total >= 0.01:
+                _top = ", ".join(f"{r['lane']} ${r['metered_usd']:.2f}" for r in _fb_rows[:4])
+                print(f"⚠ ${_fb_total:.2f} metered this month FELL OVER from lanes the router TRIED and found DOWN ({_top}) "
+                      f"— re-login to restore $0. NB: this is lane-tried-then-down spend ONLY, not all lane-ELIGIBLE metered "
+                      f"(see the next line). Full: spendguard lanes --fallback-spend")
+        except Exception:
+            pass
+        try:                                              # defect 3: the figure that answers 'is rule #8 in force' —
+            from . import lane_eligibility                 # lane-ELIGIBLE work billed metered anyway ($0, cached verdicts)
+            _le_line = lane_eligibility.summary_line()
+            if _le_line:
+                print("ℹ " + _le_line)
+        except Exception:
+            pass
     if "--probe" in argv:
         print("probe (one tiny plan-billed prompt per enabled lane, $0):")
         for r in probe():
@@ -692,7 +700,9 @@ def main(argv=None):
         d0 = lane_queue.queue_depth()
         print(f"queue: {d0.get('pending', 0)} pending · {d0.get('leased', 0)} leased · "
               f"{d0.get('done', 0)} done · {d0.get('failed', 0)} failed")
-        pg = lane_queue.purge()                            # bound the queue every cycle: archive+remove old terminal rows
+        pg = lane_queue.purge() if lane_queue.purge_due() else {}   # DECOUPLED from the cycle: purge is O(terminal rows),
+        #    leasing is O(batch) — running the big archive+delete every 300s was the 4-min-CPU cause. Now at most hourly
+        #    (purge_due); an operator can always force it with `spendguard lanes --purge`.
         if pg.get("archived"):
             print(f"  purged {pg['archived']} old terminal row(s) → {pg.get('archive')}")
         if not d0.get("pending") and not d0.get("leased") and not forever:
@@ -719,4 +729,11 @@ def main(argv=None):
         else:
             print(f"purged {pg.get('archived', 0)} old terminal row(s)"
                   + (f" → {pg['archive']}" if pg.get("archive") else " (none old enough yet)"))
+    if "--migrate-queue-db" in argv:                      # ONE-TIME: move lane_queue out of the spend.db ledger into
+        from . import lane_queue                            # its own lane_queue.db + drop the old table (idempotent)
+        r = lane_queue.migrate_from_ledger()
+        if r.get("error"):
+            print(f"queue-db migration failed: {r['error']}")
+        else:
+            print(f"queue-db migration: {r.get('note')}")
     return 0
