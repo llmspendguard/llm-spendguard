@@ -27,7 +27,7 @@ rather than growing a second copy of them.
 import ast
 import pathlib
 
-from .token_caps import _enclosing, _iter_py
+from .token_caps import _enclosing, _enclosing_range, _iter_py
 
 # The functions that turn token counts into money. A literal reaching one of these is a number nobody
 # measured; whether that MATTERS is the question the model answers.
@@ -54,7 +54,7 @@ def literal_sites(root):
             tree = ast.parse(src)
         except (SyntaxError, OSError):
             continue
-        lines, encl = src.splitlines(), _enclosing(tree)
+        lines, encl, encl_rng = src.splitlines(), _enclosing(tree), _enclosing_range(tree)
         for n in ast.walk(tree):
             if not isinstance(n, ast.Call):
                 continue
@@ -73,10 +73,17 @@ def literal_sites(root):
                      and isinstance(k.value.value, int) and not isinstance(k.value.value, bool) and k.value.value]
             if not lits:
                 continue
+            # The judge decides what the RESULT IS USED FOR, which can sit anywhere in the enclosing function
+            # (e.g. `est = realtime_cost(...)` then `print(f"${est}")` 10 lines later). A fixed ±line window hid
+            # that use — so send the WHOLE enclosing function; only a module-level call (no def around it) falls
+            # back to a local window, where there is no function body to show.
+            _rng = encl_rng.get(n.lineno)
+            code = ("\n".join(lines[_rng[0] - 1:_rng[1]]) if _rng
+                    else "\n".join(lines[max(0, n.lineno - 4):n.lineno + 3])).strip()
             found.append({
                 "file": str(p.relative_to(root)), "symbol": encl.get(n.lineno, "<module>"),
                 "fn": fn, "literals": lits, "line": n.lineno,
-                "code": "\n".join(lines[max(0, n.lineno - 4):n.lineno + 3]).strip(),
+                "code": code,
             })
     return found
 

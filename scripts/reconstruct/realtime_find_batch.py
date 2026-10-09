@@ -25,6 +25,26 @@ QUERY_WINDOW_DAYS = 60                                 # ROLLING window (never a
 SINCE = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=QUERY_WINDOW_DAYS)).date().isoformat()
 FIND_MODEL = "claude-sonnet-4-6"                       # haiku failed recall; sonnet = 3/3 in eval
 CONSOLIDATE_MODEL = "claude-opus-4-8"
+_GROUP_MAX_CHARS = 80000                               # per-call input budget (well under the model window), left as
+#                                                       headroom for the system prompt; bounds input by PACKING, never a cut
+
+
+def _pack_by_chars(items, size_of, max_chars=_GROUP_MAX_CHARS, max_count=25):
+    """Group items so each group's serialized size is <= max_chars AND holds at most max_count items, every item
+    WHOLE. An item bigger than max_chars still goes alone (never a mid-item cut). max_count also bounds the OUTPUT
+    (one tag/run emitted per item). This replaces a `json.dumps(group)[:N]` cut that silently dropped the tail
+    items from a classifier/consolidator's input — the evidence a decision reads must be whole."""
+    groups, cur, cur_sz = [], [], 0
+    for it in items:
+        sz = size_of(it)
+        if cur and (len(cur) >= max_count or cur_sz + sz > max_chars):
+            groups.append(cur)
+            cur, cur_sz = [], 0
+        cur.append(it)
+        cur_sz += sz
+    if cur:
+        groups.append(cur)
+    return groups
 
 
 def gather(tell_only=True):
@@ -126,15 +146,17 @@ def collect():
 
     def consolidate(items, _retry=2):
         with calls.context(intent="spendguard:realtime_find_batch_consolidate"):
-            r = adapters.call(CONSOLIDATE_MODEL, json.dumps(items)[:90000], max_tokens=4000,
-                              system=resources._RT_CONSOLIDATE_SYS)
+            r = adapters.call(CONSOLIDATE_MODEL, json.dumps(items), max_tokens=4000,
+                              system=resources._RT_CONSOLIDATE_SYS)  # WHOLE group — input bounded by _pack_by_chars, not a cut
         out = _parse_runs(r.get("text", ""))            # tolerant parse — never lose a group to truncation
         if (not out or r.get("error")) and _retry > 0:  # zero/error from a group → back off + retry (don't silently lose it)
             _time.sleep(2)
             return consolidate(items, _retry - 1)
         return out
-    GROUP = 25                                          # small groups so each group's run-list fits under max_tokens
-    groups = [frags[i:i + GROUP] for i in range(0, len(frags), GROUP)]
+    # Pack frags so each group's JSON stays under the input budget AND at most 25 items (the old fixed GROUP=25 kept
+    # the run-list under max_tokens — preserved as max_count). This removes the json.dumps(items)[:90000] cut that
+    # silently dropped tail frags from opus's input whenever 25 frags serialized past 90000 chars.
+    groups = _pack_by_chars(frags, lambda f: len(json.dumps(f)), max_count=25)
     group_runs = []
     with _cf.ThreadPoolExecutor(max_workers=6) as ex:  # PARALLEL (6-wide) — ~6× faster than sequential, under rate limits
         for res in ex.map(consolidate, groups):
@@ -218,10 +240,12 @@ def clean():
     res = json.load(open(STATE + ".result"))
     runs = res["runs"]
     tag_by_idx = {}
-    G = 80
-    for i in range(0, len(runs), G):
-        grp = [{"idx": i + j, "name": (r.get("name") or "")[:60], "model": r.get("model"), "usd": r.get("usd"),
-                "basis": r.get("basis"), "reasoning": (r.get("reasoning") or "")[:90]} for j, r in enumerate(runs[i:i + G])]
+    # name + reasoning are the human-meaningful EVIDENCE the lane reclassifier (REALTIME/EMBEDDING/BATCH/META) reads
+    # per run — send them WHOLE (the old [:60]/[:90] cut the rationale the decision rests on). Pack by input budget
+    # AND at most 80 runs (the old fixed G=80 kept the output under max_tokens — preserved as max_count).
+    projected = [{"idx": k, "name": r.get("name") or "", "model": r.get("model"), "usd": r.get("usd"),
+                  "basis": r.get("basis"), "reasoning": r.get("reasoning") or ""} for k, r in enumerate(runs)]
+    for grp in _pack_by_chars(projected, lambda it: len(json.dumps(it)), max_count=80):
         with calls.context(intent="spendguard:realtime_reclassify"):
             rr = adapters.call(CONSOLIDATE_MODEL, json.dumps(grp), max_tokens=4000, system=_RECLASSIFY_SYS)
         for t in _parse_tags(rr.get("text", "")):

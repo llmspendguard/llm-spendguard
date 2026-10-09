@@ -75,6 +75,26 @@ def _enclosing(tree):
     return out
 
 
+def _enclosing_range(tree):
+    """{lineno: (start_line, end_line)} of the INNERMOST enclosing def/class — the sibling of _enclosing (which
+    gives the NAME at each line). Lets a caller hand a judge the WHOLE enclosing function as context instead of a
+    fixed ±N-line window: a result's USE (what makes it a quoted price vs a probe) can sit anywhere in its
+    function, not within a few lines of the call. Innermost wins — a child's lines overwrite its parent's."""
+    out = {}
+    def walk(node):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                start = child.lineno
+                end = getattr(child, "end_lineno", child.lineno) or child.lineno
+                for ln in range(start, end + 1):
+                    out[ln] = (start, end)
+                walk(child)
+            else:
+                walk(child)
+    walk(tree)
+    return out
+
+
 def sites(root):
     """Every hardcoded output-token cap under `root`, as dicts. Complete by construction: an int literal
     bound to a cap keyword is either in the parse tree or it is not."""
