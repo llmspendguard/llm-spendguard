@@ -544,6 +544,14 @@ def generation_support(provider, model):
         support |= {"temperature", "top_p"}
     if provider == "openai":                              # seed is OpenAI-only (compat/anthropic have no seed param)
         support.add("seed")
+    # SUBTRACT knobs the vendor has TOLD us it does not honor — a measured 400 like '`temperature` is deprecated for
+    # this model' recorded as a model fact (models.mark_gen_unsupported), so the SSOT reflects REALITY instead of an
+    # assumption and NEVER advertises a knob that 400s. Claude 5 (e.g. claude-haiku-5-5) deprecated BOTH temperature
+    # and top_p (measured 2026-10-09); the 400 path self-records any future model the same way.
+    try:
+        support -= _gm.unsupported_gen_knobs(model)
+    except Exception:
+        pass
     return support
 
 

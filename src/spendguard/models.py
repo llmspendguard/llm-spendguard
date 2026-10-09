@@ -241,6 +241,30 @@ def mark_ineffective(model, intent, reason, confidence=0.85):
     add_fact(model, f"ineffective:{intent or '*'}", reason, confidence=confidence, source="experiment", verified=True)
 
 
+def mark_gen_unsupported(model, knob, reason="deprecated"):
+    """Record that a vendor's metered API does NOT honor a generation knob (temperature / top_p / seed) for `model`.
+    The vendor SAID SO — a 400 like '`temperature` is deprecated for this model' — so it is a MEASURED fact, not a
+    guess (Claude 5, e.g. claude-haiku-5-5, deprecated both temperature and top_p; measured 2026-10-09). Keyed by the
+    BARE id (strip a provider: prefix) so 'anthropic:claude-haiku-5-5' and 'claude-haiku-5-5' share it. adapters.
+    generation_support subtracts these, so the determinism SSOT reflects REALITY and self-heals for any future model."""
+    mid = model.split(":", 1)[-1] if isinstance(model, str) and ":" in model else model
+    add_fact(mid, f"gen_unsupported:{knob}", reason, confidence=0.99, source="measured-400", verified=True)
+
+
+def unsupported_gen_knobs(model):
+    """The generation knobs a recorded fact says `model` does NOT honor (see mark_gen_unsupported), as a set. Checks the
+    bare id too, so a provider-qualified id resolves the same fact."""
+    out = set()
+    cands = [model]
+    if isinstance(model, str) and ":" in model:
+        cands.append(model.split(":", 1)[-1])
+    for mid in cands:
+        for k in facts(mid):
+            if k.startswith("gen_unsupported:"):
+                out.add(k.split(":", 1)[1])
+    return out
+
+
 def ineffective(model, intent):
     """(reason, confidence, ts) if model is known-ineffective for this intent or globally, else None."""
     f = facts(model)
