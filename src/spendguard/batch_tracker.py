@@ -333,7 +333,8 @@ def _existing_offload_message_batch(offload_key, row_ids):
     return _recover_orphan_message_batch(row_ids, rec.get("created_ts"), client=client)   # 'submitting' → recover or prove-none
 
 
-def submit_offload(intent, rows, batch_model, *, cap_dollars=None, expires_at=None):
+def submit_offload(intent, rows, batch_model, *, cap_dollars=None, expires_at=None,
+                   shard_size=None, force=False):
     """Offload a set of task rows to the Batch API and TRACK the job — the ONE place the submit→record sequence lives
     (used by the drain autobatch path and any explicit offload op). EXACTLY-ONCE: reconcile → (adopt | submit) → mark →
     register. Returns {batch_id, marked, error[, adopted]}.
@@ -361,10 +362,27 @@ def submit_offload(intent, rows, batch_model, *, cap_dollars=None, expires_at=No
     record). Anthropic batches carry NO metadata, so the key lives in a LOCAL pending record written BEFORE the paid
     create, and the create-then-crash window is recovered by scanning the provider for a batch carrying these rows'
     (globally-unique) custom_ids — an in-flight one that can't yet be confirmed is HELD, never resubmitted."""
-    from . import submit as _submit, lane_queue, gate, adapters
+    from . import submit as _submit, lane_queue, gate, adapters, bulk_resilience
     rows = list(rows or [])
     if not rows:
         return {"batch_id": None, "marked": 0, "error": "no rows"}
+    minimum = bulk_resilience._resilience_min_units()
+    if shard_size is None and minimum > 1 and len(rows) >= minimum:
+        shard_size = minimum - 1
+    chunked = shard_size is not None and 0 < shard_size < len(rows)
+    # This is the checkpointed path: every shard recurses through reconcile → create → durable row mark.
+    # The provider sees request counts, not logical units packed upstream into each request.
+    bulk_resilience.require_resilient(len(rows), chunked=chunked, checkpointed=True,
+                                      force=force, where="batch_tracker.submit_offload")
+    if chunked:
+        shards = [rows[i:i + shard_size] for i in range(0, len(rows), shard_size)]
+        per_cap = float(cap_dollars) / len(shards) if cap_dollars is not None else None
+        results = [submit_offload(intent, shard, batch_model, cap_dollars=per_cap,
+                                  expires_at=expires_at, force=force) for shard in shards]
+        ids = [r["batch_id"] for r in results if r.get("batch_id")]
+        return {"batch_ids": ids, "batch_id": None, "marked": sum(r.get("marked", 0) for r in results),
+                "shards": len(shards), "errors": [r["error"] for r in results if r.get("error")],
+                "error": "; ".join(r["error"] for r in results if r.get("error")) or None}
     # The offload RUNS on batch_model; its provider is DERIVED from the model — never taken from the caller — so the key
     # and the submit/collect path always match the ACTUAL vendor (a caller cannot force an OpenAI path onto an Anthropic
     # model). An OpenAI model derives 'openai' (the unchanged path); an Anthropic batch_model routes to the Messages Batch.
@@ -409,10 +427,11 @@ def submit_offload(intent, rows, batch_model, *, cap_dollars=None, expires_at=No
                 if gate.is_deliberate_stop(e):
                     raise
                 return {"batch_id": None, "marked": 0, "error": "pending-note: %s" % (type(e).__name__)}
-            res = _submit.submit_message_batch(tasks, batch_model, intent=intent, cap_dollars=cap_dollars)
+            res = _submit.submit_message_batch(tasks, batch_model, intent=intent, cap_dollars=cap_dollars,
+                                               force=force)
         else:
             res = _submit.submit_chat_tasks(tasks, batch_model, intent=intent, cap_dollars=cap_dollars,
-                                            metadata={_OFFLOAD_KEY_FIELD: key})   # the exactly-once tag on the created batch
+                                            metadata={_OFFLOAD_KEY_FIELD: key}, force=force)
     except Exception as e:
         if gate.is_deliberate_stop(e):
             raise                                      # a cap refusal / deadline HALTS — never a silent partial offload

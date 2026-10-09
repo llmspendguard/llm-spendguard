@@ -1019,23 +1019,28 @@ def _drain_locked(worker, batch, lease_s, idle_rounds, idle_sleep, load_ceiling,
                 _dec = queue_planner.should_offload(intent, len(rows))
                 if _dec:
                     _off = batch_tracker.submit_offload(intent, rows, _dec["batch_model"],
-                                                        provider=_dec.get("provider") or "openai",
                                                         cap_dollars=_qcfg("queue_batch_cap_usd", None))
-                    if _off.get("batch_id"):
-                        # F1 (CRITICAL double-spend): a batch_id means the provider batch was SUBMITTED and BILLED. The
-                        # rows must NEVER then run realtime — that bills a SECOND time. The old guard also required
-                        # `marked`, so a transient mark_batched/reconcile miss (marked=0) FELL THROUGH to realtime. Now
-                        # ANY submitted batch skips realtime: tagged rows are queued_batch (collected later); any
-                        # un-tagged rows stay LEASED and are re-leased on lease-expiry to re-adopt the same batch
-                        # (exactly-once via _offload_key) and retry mark_batched — never run realtime.
+                    if _off.get("batch_id") or _off.get("batch_ids"):
+                        # F1 (CRITICAL double-spend) + SHARDING: a batch_id/batch_ids means the provider batch(es) were
+                        # SUBMITTED and BILLED (batch_ids = chunk-never-single-shot shards). The rows must NEVER then run
+                        # realtime — that bills a SECOND time. The old guard also required `marked`, so a transient
+                        # mark_batched/reconcile miss (marked=0) FELL THROUGH to realtime and double-billed. Now ANY
+                        # submitted batch skips realtime: tagged rows are queued_batch (collected later); any un-tagged
+                        # rows stay LEASED and are re-leased on lease-expiry to re-adopt the same batch (exactly-once via
+                        # _offload_key) and retry mark_batched — never run realtime.
                         s["batched"] = s.get("batched", 0) + (_off.get("marked") or 0)
+                        _bid = _off.get("batch_id") or ("%d shards" % len(_off.get("batch_ids") or []))
                         if not _off.get("marked"):
                             s["offload_unmarked"] = s.get("offload_unmarked", 0) + len(rows)
                             import sys as _sysum
                             print("[spendguard] drain: batch %s submitted for intent %r but mark_batched tagged 0 rows "
                                   "— NOT running realtime (would double-bill); rows stay leased for re-mark next drain."
-                                  % (_off["batch_id"], intent), file=_sysum.stderr, flush=True)
-                        continue                                        # batch exists → skip realtime for these rows
+                                  % (_bid, intent), file=_sysum.stderr, flush=True)
+                        if _off.get("error"):
+                            import sys as _sysob                        # some SHARDS failed; their still-leased rows retry
+                            print("[spendguard] drain: some batch shards failed (%s); remaining leased rows retry"
+                                  % _off["error"], file=_sysob.stderr, flush=True)
+                        continue                                        # batch(es) exist → skip realtime for these rows
                     if _off.get("error"):
                         import sys as _sysob                            # NAMED: offload skipped → running realtime
                         print("[spendguard] drain: batch offload of intent %r skipped (%s) — running realtime instead"

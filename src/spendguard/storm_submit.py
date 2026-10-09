@@ -139,7 +139,7 @@ def durable_batch_executor(model, intent, batch_model=None, poll_interval_s=2.0,
         cid_by_row = {rid: cid for rid, (cid, _p) in zip(row_ids, items)}
         rows = [{"id": rid, "task": p} for rid, (_c, p) in zip(row_ids, items)]
         off = _bt.submit_offload(intent, rows, bm)                   # exactly-once: adopt-or-submit + mark queued_batch
-        if not off.get("batch_id"):
+        if not (off.get("batch_id") or off.get("batch_ids")):
             err = off.get("error") or "offload produced no batch_id"
             for rid in row_ids:
                 _lq.settle(rid, {"error": "offload: %s" % err})      # don't leave rows stuck; surface per-item
