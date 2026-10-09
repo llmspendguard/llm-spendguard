@@ -126,7 +126,8 @@ def _ensure_queue_schema(c):
     # pass the check, the second ALTER raises "duplicate column name: sla_class", and that crashed the enqueue path
     # (observed in the 429 storm replay). Attempt-and-swallow cannot race: the column exists either way.
     for _col, _decl in (("sla_class", "TEXT DEFAULT 'batch'"), ("deadline_ts", "TEXT"),
-                        ("defer_until", "TEXT"), ("parks", "INTEGER DEFAULT 0")):
+                        ("defer_until", "TEXT"), ("parks", "INTEGER DEFAULT 0"),
+                        ("fingerprint", "TEXT")):     # content-address of (intent,task,system,reasoning) — dedup key
         try:
             c.execute(f"ALTER TABLE lane_queue ADD COLUMN {_col} {_decl}")
         except sqlite3.OperationalError:
@@ -137,6 +138,28 @@ def _ensure_queue_schema(c):
     # every terminal row comparing updated_ts — on 137k terminal rows in a 2.7GB table that read most of the file
     # under the write lock every drain cycle (measured 2026-10-08). (state, updated_ts) makes it a bounded range scan.
     c.execute("CREATE INDEX IF NOT EXISTS lane_queue_purge ON lane_queue(state, updated_ts)")
+    # index the DEDUP lookup: enqueue checks "does an identical (fingerprint) task already have a result or sit
+    # in-flight?" and settle coalesces same-fingerprint pending rows. A point lookup on fingerprint, so one commit of
+    # a 6k backfill stays cheap even against a deep table.
+    c.execute("CREATE INDEX IF NOT EXISTS lane_queue_fingerprint ON lane_queue(fingerprint)")
+
+
+def _fingerprint(intent, task, system=None, reasoning=None):
+    """Content-address of the RESULT-DETERMINING inputs — the queue's dedup key. A stable SHA-256 of
+    (intent, task, system, reasoning): the fields that determine the rendered prompt, hence the answer. This is the
+    'plan fingerprint' — HASHING a fixed set of fields (parsing/addressing), NOT a judgement about meaning, so a hash
+    is the correct tool here (two byte-identical prompts ARE the same work; the model/lane is chosen at drain time and
+    is deliberately NOT in the key — the caller wants the task answered, not a specific lane's answer). Length-prefixes
+    each field so no delimiter collision can make distinct inputs hash equal. $0, pure."""
+    import hashlib
+    h = hashlib.sha256()
+    for p in (intent or "", task or "", system or "", reasoning or ""):
+        b = str(p).encode("utf-8", "surrogatepass")
+        h.update(str(len(b)).encode())
+        h.update(b":")
+        h.update(b)
+        h.update(b"|")
+    return h.hexdigest()
 
 
 def _queue_conn():
@@ -218,19 +241,31 @@ def optimize_queue_db():
 
 
 def enqueue(intent, task, system=None, reasoning=None, priority=0, max_attempts=None,
-            sla_class="batch", deadline_ts=None):
+            sla_class="batch", deadline_ts=None, dedup=True):
     """Append ONE task. NEVER blocks and never runs it — that is the point: work is accepted at any utilization and
-    sits `pending` until a drainer has lane capacity. Returns the row id, or None on error."""
+    sits `pending` until a drainer has lane capacity. Returns the row id, or None on error. `dedup` (default True):
+    see enqueue_many — identical work is coalesced instead of re-bought."""
     return (enqueue_many(intent, [task], system=system, reasoning=reasoning, priority=priority,
-                         max_attempts=max_attempts, sla_class=sla_class, deadline_ts=deadline_ts) or [None])[0]
+                         max_attempts=max_attempts, sla_class=sla_class, deadline_ts=deadline_ts, dedup=dedup)
+            or [None])[0]
 
 
 def enqueue_many(intent, tasks, system=None, reasoning=None, priority=0, max_attempts=None,
-                 sla_class="batch", deadline_ts=None):
+                 sla_class="batch", deadline_ts=None, dedup=True):
     """Append many tasks of ONE intent in a single transaction (a 6k-item backfill is one commit). `sla_class`
     ('realtime' | 'batch') and `deadline_ts` (absolute ISO SLA deadline, or None) are stamped on every row so the
-    scheduler/drain can serve tight-deadline realtime work first within capacity. Returns the new row ids in order;
-    [] on error or empty input."""
+    scheduler/drain can serve tight-deadline realtime work first within capacity. Returns the row ids in order; [] on
+    error or empty input.
+
+    CONTENT-ADDRESSED DEDUP (`dedup`, default True): the queue NEVER re-buys work it already has. Before inserting,
+    each task's fingerprint (_fingerprint of intent/task/system/reasoning) is looked up; if a non-FAILED row with the
+    same fingerprint already exists, this task COALESCES onto it — returning that existing id instead of inserting a
+    row that would re-execute — preferring a DONE row (its result is reused for $0) over an in-flight pending/leased
+    one (the single execution serves every caller). Duplicates WITHIN this same call coalesce too. Measured
+    2026-10-09: with no dedup, one intent had ~20x content-duplicate rows (4,698 metered calls for ~239 unique tasks)
+    — draining them would have re-bought finished work. A caller that deliberately wants independent repeats of an
+    identical prompt (e.g. variance sampling) passes dedup=False. The fingerprint is ALWAYS stored so later enqueues
+    and settle-coalescing can dedup against this row regardless of this flag. The returned ids stay 1:1 with `tasks`."""
     tasks = [t for t in (tasks or []) if t is not None]
     if not intent or not tasks:
         return []
@@ -240,11 +275,28 @@ def enqueue_many(intent, tasks, system=None, reasoning=None, priority=0, max_att
         with _queue_op() as c:
             cur = c.cursor()
             ids = []
+            seen_fp = {}                              # fingerprint -> id already inserted/matched in THIS call (intra-batch dedup)
             for t in tasks:
+                fp = _fingerprint(intent, t, system, reasoning)
+                if dedup:
+                    hit = seen_fp.get(fp)
+                    if hit is None:
+                        # Prefer a DONE row (its result is reusable for $0) over an in-flight pending/leased/queued_batch
+                        # one; never coalesce onto a FAILED row (new work deserves a fresh attempt). ORDER BY makes
+                        # 'done' win, then the oldest live row.
+                        row = cur.execute(
+                            "SELECT id FROM lane_queue WHERE fingerprint=? AND state!='failed' "
+                            "ORDER BY (state='done') DESC, id ASC LIMIT 1", (fp,)).fetchone()
+                        hit = row[0] if row else None
+                    if hit is not None:
+                        seen_fp[fp] = hit
+                        ids.append(hit)               # COALESCE — identical work shares one row, never re-executed
+                        continue
                 cur.execute("INSERT INTO lane_queue(intent,task,system,reasoning,priority,state,attempts,"
-                            "max_attempts,sla_class,deadline_ts,created_ts,updated_ts) "
-                            "VALUES(?,?,?,?,?, 'pending', 0, ?,?,?,?,?)",
-                            (intent, t, system, reasoning, int(priority), maxa, sla_class, deadline_ts, now, now))
+                            "max_attempts,sla_class,deadline_ts,fingerprint,created_ts,updated_ts) "
+                            "VALUES(?,?,?,?,?, 'pending', 0, ?,?,?,?,?,?)",
+                            (intent, t, system, reasoning, int(priority), maxa, sla_class, deadline_ts, fp, now, now))
+                seen_fp[fp] = cur.lastrowid
                 ids.append(cur.lastrowid)
             c.commit()
             return ids
@@ -336,11 +388,11 @@ def settle(row_id, result):
     now = _iso(now_dt)
     try:
         with _queue_op() as c:
-            row = c.execute("SELECT attempts, max_attempts, parks, deadline_ts FROM lane_queue WHERE id=?",
+            row = c.execute("SELECT attempts, max_attempts, parks, deadline_ts, fingerprint FROM lane_queue WHERE id=?",
                             (row_id,)).fetchone()
             if not row:
                 return
-            attempts, maxa, parks, deadline_ts = row[0], row[1], (row[2] or 0), row[3]
+            attempts, maxa, parks, deadline_ts, fp = row[0], row[1], (row[2] or 0), row[3], row[4]
             if ok:
                 state, defer_until, new_attempts, new_parks = "done", None, attempts, parks
             elif saturated:
@@ -386,8 +438,18 @@ def settle(row_id, result):
                             "attempts=?, parks=?, updated_ts=? WHERE id=? AND state IN ('leased','queued_batch')",
                             (state, json.dumps(result)[:_RESULT_CAP], result.get("lane"),
                              1 if result.get("billed") else 0, defer_until, new_attempts, new_parks, now, row_id))
+            settled = cur.rowcount > 0                   # True only if THIS call settled it (not an already-settled row)
+            if ok and settled and fp:
+                # CONTENT-ADDRESSED COALESCE: this row produced a result for fingerprint `fp`. Any OTHER PENDING row
+                # with the SAME fingerprint is byte-identical work — settle it FROM THIS result for $0 rather than let
+                # the drain re-execute it. This closes the concurrent-enqueue race (two enqueues both missed the dedup
+                # lookup and inserted) and drains any pre-existing duplicates. Only PENDING rows: a leased dup is being
+                # worked and its own settle + the F2 state guard handle it; billed=0 — a coalesced row incurs no spend.
+                c.execute("UPDATE lane_queue SET state='done', result=?, lane='content-addressed-dedup', billed=0, "
+                          "lease_until=NULL, defer_until=NULL, updated_ts=? WHERE fingerprint=? AND state='pending' AND id!=?",
+                          (json.dumps(result)[:_RESULT_CAP], now, fp, row_id))
             c.commit()
-            return cur.rowcount > 0                     # True only if THIS call settled it (not an already-settled row)
+            return settled
     except Exception as _e:
         from . import provider_tokens as _pt          # the CANONICAL stop-or-locked predicate (same as _enqueue_leased)
         if _pt._stop_or_locked(_e):

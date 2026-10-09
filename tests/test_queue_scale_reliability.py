@@ -98,8 +98,10 @@ def main():
     plan = {}                 # rid -> {"cls":..., "clear_at":...}
     n_ok = n_det = n_ret = 0
     ret_clear_at = []
-    for cls in classes:
-        rid = lq.enqueue("scale-repro", "task")
+    for i, cls in enumerate(classes):
+        # DISTINCT task text per item — these model VOLUME independent work items; identical text would (correctly)
+        # content-address-dedup to a single row (see test_queue_content_addressed_dedup), collapsing the volume.
+        rid = lq.enqueue("scale-repro", "task-%d" % i)
         entry = {"cls": cls, "clear_at": None}
         if cls == vc.OK:
             n_ok += 1

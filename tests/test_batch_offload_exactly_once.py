@@ -102,10 +102,17 @@ class _FakeOpenAI:
         self.chat = type("FakeChat", (), {"completions": _FakeCompletions()})()
 
 
+_seed_counter = [0]
+
+
 def _seed_leased(n):
     """Enqueue n tasks of INTENT and lease them → n rows in 'leased' state (exactly what the drain hands submit_offload).
-    Returns the leased row dicts {id, intent, task, system, reasoning, sla_class}."""
-    lane_queue.enqueue_many(INTENT, ["task-%d" % i for i in range(n)])
+    Each call uses a UNIQUE task-text prefix so repeated seedings across cases are INDEPENDENT rows — identical text
+    would (correctly) content-address-dedup onto a prior case's rows (see test_queue_content_addressed_dedup), which
+    is not what these exactly-once cases model. Returns the leased row dicts {id, intent, task, system, reasoning}."""
+    _seed_counter[0] += 1
+    prefix = _seed_counter[0]
+    lane_queue.enqueue_many(INTENT, ["seed%d-task-%d" % (prefix, i) for i in range(n)])
     return lane_queue.lease(n)
 
 
