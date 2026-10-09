@@ -4,6 +4,34 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.12.14] — 2026-10-09
+
+### Fixed
+- **lane_queue moved OUT of the spend.db money ledger into its own database.** Measured 2026-10-08, the lane_queue
+  table was 2.76GB = 63% of a 4.4GB ledger; the drain's `purge()` ran every cycle inside `BEGIN IMMEDIATE` (exclusive
+  ledger lock) with no index on `updated_ts`, scanning all 137k terminal rows — producing ~4-min 100%+ CPU drains, a
+  1.3GB WAL that never checkpointed, 3.3→4.4GB ledger growth, a 21GB snapshot dir (each snapshot 63% queue), and tool
+  calls stalling on the lock. The queue now uses `config.lane_queue_db_path()` (`~/.spendguard/lane_queue.db`);
+  `config.pooled_ledger_conn`/`fresh_ledger_conn`/`ledger_op` take an optional `path`. `spendguard lanes
+  --migrate-queue-db` moves live rows + drops the old table (reclaims ~2.7GB).
+- **Drain purge is bounded + decoupled.** New `(state, updated_ts)` index; chunked set-wise delete (short txns that
+  release the lock, bounded memory); `purge_due()` runs purge at most hourly (`advisor.queue_purge_min_interval_s`)
+  instead of every drain cycle.
+- **WAL no longer grows unbounded.** `journal_size_limit=64MB` added to `tune_ledger_connection`, so a checkpoint
+  truncates the `-wal` file instead of leaving it at its high-water mark.
+- **Drain non-overlap.** The drain takes a non-blocking single-instance `fcntl` lock; a second drain is refused rather
+  than run concurrently.
+- **Log spam.** The operator lane summary + fallback/eligibility alerts are suppressed in `--drain` (daemon) mode, and
+  the best-value advisory routes through `warn_once` (it had written a 15MB `lane-drain.log`).
+- **`lane_queue_archive.jsonl` is bounded** (rotated past `advisor.queue_archive_max_mb`, default 64MB; was 820MB).
+- **`.corrupt` quarantine copies bounded** (`safety.corrupt_keep`, default 3 per base file; 142 had accumulated), and
+  **`config.update_json` stages each write in a unique per-writer tmp file** — the shared `<name>.tmp` let concurrent
+  processes interleave and promote torn JSON, the root cause of the 140 `resource_state` corruptions.
+- **Embed resume-checkpoint dir bounded** (`gc_embed_checkpoints`, age + total-GB; 19.65GB had accumulated).
+- **Ledger snapshots throttled** to one/day (`safety.snapshot_min_interval_hours`), `safety.snapshot_keep` 4→2.
+- **Evidence-truncation fixes**: `estimate_literals` sends the whole enclosing function to the price adjudicator;
+  `conv.classify_evidence` / `attribution` and `realtime_find_batch` send whole chunks packed by budget, not a head cut.
+
 ## [0.12.13] — 2026-10-07
 
 ### Added
