@@ -33,6 +33,15 @@ os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-scale-")   #
 
 from spendguard import lane_queue as lq, vendor_call as vc   # noqa: E402
 
+# This test models transient RECOVERY by ATTEMPT COUNT (clear_at), driving retries via immediate re-lease in a
+# zero-wait drain loop that exits the instant lease() returns empty. The F4 retry backoff (a transient failure defers
+# re-lease RETRY_BACKOFF_S_DEFAULT seconds) is an ORTHOGONAL wall-clock mechanism — it would strand rows that are still
+# in their backoff window when the loop exits (they are NOT lost: the daemon drain re-leases them once defer_until
+# passes; see lane_queue.lease's `defer_until<=?` readiness filter). The backoff is proven in test_queue_review_fixes;
+# here we neutralise it so the no-loss / class-aware / retry-to-10 properties are measured without that timing variable,
+# exactly as the sibling queue tests (test_lane_queue, test_queue_class_aware_retry, test_queue_park_saturated) do.
+lq.RETRY_BACKOFF_S_DEFAULT = 0.0
+
 VOLUME = 2000                 # tasks driven through the queue (scale)
 LEASE_BATCH = 100             # drain-shaped: lease this many per round
 SEED = 20260927              # fixed → reproducible draw + clear model
