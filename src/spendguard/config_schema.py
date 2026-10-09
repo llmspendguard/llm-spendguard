@@ -474,6 +474,20 @@ SETTINGS = [
               "(~650MB each), so a large keep is pure disk bloat — measured 2026-09-15, keep=20 = 12GB. The DEEP "
               "history lives off-machine in B2 (spendguard-full, daily), so local only needs the window since the "
               "last daily push; default 4 ≈ 2 days of the reconcile pair. Raise it only if B2 is not running."),
+    dict(section="safety", key="embed_checkpoint_max_age_days", store="config.json",
+         env="SPENDGUARD_EMBED_CKPT_MAX_AGE_DAYS", default="7", kind="float", secret=False,
+         desc="How long an `embed_<model>_<hash>.jsonl` resume checkpoint (adapters.embed, written for any "
+              "multi-chunk run) stays before adapters.gc_embed_checkpoints prunes it. A checkpoint is keyed by "
+              "sha256(text), so while it exists a re-run of the same corpus re-pays NOTHING — which is why these "
+              "are kept for a window rather than deleted on success. Nothing pruned them at all until "
+              "2026-10-08, when 1,016 files / 19.65 GiB had built up in ~/.spendguard (1,014 in one month). "
+              "Raise it if you re-run the same corpora on a longer cycle and want the no-re-pay window wider."),
+    dict(section="safety", key="embed_checkpoint_max_gb", store="config.json",
+         env="SPENDGUARD_EMBED_CKPT_MAX_GB", default="5", kind="float", secret=False,
+         desc="Total disk cap for embed resume checkpoints that SURVIVE the age bound. Over it, "
+              "gc_embed_checkpoints evicts oldest-first until under the cap, so a month of heavy embedding cannot "
+              "fill the disk even when every checkpoint is still recent (the age bound alone would not have "
+              "stopped the 19.65 GiB build-up). The in-flight run's own checkpoint is never evicted."),
     dict(section="calibrate", key="pair_horizon_hours", store="(env only)", env="SPENDGUARD_PAIR_HORIZON_H",
          default="24", kind="int", secret=False,        # "number" was a one-off; every other numeric is int/float
          desc="Learned-estimator pairing window: a logged job prediction (`calibrate.record_estimate`) collects "

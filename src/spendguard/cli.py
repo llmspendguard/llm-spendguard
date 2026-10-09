@@ -704,6 +704,35 @@ def _dispatch(argv=None):
                   f"Recent snapshots are never touched.")
             print("  Opt-in periodic cleanup: schedule `spendguard codex-gc --apply` (launchd/cron or `spendguard schedule`).")
         return 0
+    if cmd in ("embed-gc", "embed-prune"):            # prune cold embed resume checkpoints (dry-run default) — $0
+        from . import adapters as _aegc
+        import argparse as _aeg
+        _p = _aeg.ArgumentParser(prog="spendguard embed-gc")
+        _p.add_argument("--max-age-days", type=float, default=None,
+                        help="prune checkpoints older than this (default: safety.embed_checkpoint_max_age_days, 7)")
+        _p.add_argument("--max-total-gb", type=float, default=None,
+                        help="disk cap for checkpoints that survive the age bound; oldest-first eviction over it "
+                             "(default: safety.embed_checkpoint_max_gb, 5)")
+        _p.add_argument("--apply", action="store_true", help="actually delete (default: dry-run report)")
+        _a = _p.parse_args(rest)
+        r = _aegc.gc_embed_checkpoints(max_age_days=_a.max_age_days, max_total_gb=_a.max_total_gb, apply=_a.apply)
+        _gb = r["bytes"] / (1024 ** 3)
+        print(f"embed resume-checkpoint gc — {r['dir']}")
+        if r["error"]:
+            print(f"  🔴 could not scan: {r['error']}")
+            return 2
+        _doomed = r["stale"] + r["over_cap"]
+        print(f"  examined {r['examined']}, cold (>{r['cutoff_days']:g}d) {r['stale']}, "
+              f"over the {r['max_total_gb']:g} GB cap {r['over_cap']} → {_doomed} file(s) = {_gb:.2f} GiB"
+              + (f", skipped {r['skipped']}" if r["skipped"] else ""))
+        if _a.apply:
+            print(f"  DELETED {r['deleted']} file(s), freed ~{_gb:.2f} GiB"
+                  + (f" ({r['skipped']} could not be removed — see perms)" if r["skipped"] else ""))
+        else:
+            print(f"  DRY-RUN — re-run with --apply to delete the {_doomed} file(s) (~{_gb:.2f} GiB). "
+                  f"A re-run of a corpus whose checkpoint is still here re-pays nothing, so recent ones are kept.")
+            print("  embed() also prunes on create, so this is for a manual sweep / a one-off backlog.")
+        return 0
     if cmd == "review":                               # practice audit (smart-vs-wasteful) — caged, estimate-first
         from . import review
         return review.main(rest)

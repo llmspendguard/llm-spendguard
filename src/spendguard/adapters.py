@@ -1597,6 +1597,10 @@ def embed(texts, model=None, *, dimensions=None, max_batch=None, timeout_s=None,
     if checkpoint is None and len(items) > _n:
         _ck = _hl.sha256(f"{raw}|{len(items)}|{keys[0]}|{keys[-1]}".encode()).hexdigest()[:10]
         checkpoint = str(config.HOME / f"embed_{raw}_{_ck}.jsonl")    # durable by default for a multi-request run
+        try:
+            gc_embed_checkpoints(apply=True, keep_path=checkpoint)    # BOUND the dir on create — these are spendguard's
+        except Exception:                                             # OWN temp files (unlike codex's, which is why that
+            pass                                                      # gc is opt-in). A gc failure never breaks the run.
     base["checkpoint"] = checkpoint
     done = {}                                                          # sha(text) -> vector, seeded from the checkpoint
     if checkpoint:
@@ -1686,6 +1690,85 @@ def embed(texts, model=None, *, dimensions=None, max_batch=None, timeout_s=None,
     return {**base, "vectors": out, "dims": dims, "failed": failed,
             "error": (f"{n_missing}/{len(items)} inputs unembedded (see failed[]); re-run to retry only those"
                       if n_missing else None)}
+
+
+def gc_embed_checkpoints(max_age_days=None, max_total_gb=None, apply=False, keep_path=None):
+    """Bound the `embed_<model>_<hash>.jsonl` resume checkpoints that embed() writes under HOME. Measured
+    2026-10-08: 1,016 files / 19.65 GiB had accumulated in ~/.spendguard, 1,014 of them inside one month — embed()
+    created a checkpoint per multi-chunk run and NOTHING ever pruned one.
+
+    Why a RETENTION BOUND and not delete-on-success: a checkpoint is keyed by sha256(text), so re-running the same
+    corpus is served entirely from it and re-pays NOTHING. Deleting on clean completion would hand that saving back
+    (and break the resume guarantee tests/test_embed_surface.py asserts). So a checkpoint stays useful for a window
+    and is pruned once it is COLD — recent ones are never touched.
+
+    TWO bounds, both applied (age first, then total size):
+      • AGE — older than `max_age_days` (safety.embed_checkpoint_max_age_days, default 7) is cold → prune;
+      • SIZE — if what SURVIVES the age bound still exceeds `max_total_gb`
+        (safety.embed_checkpoint_max_gb, default 5), prune OLDEST-FIRST until under the cap, so one month of heavy
+        embedding cannot fill the disk even when every file is recent.
+
+    Unlike codex_exec.gc_shell_snapshots (opt-in, because it deletes in CODEX's dir), this prunes spendguard's OWN
+    temp files, so embed() calls it on create. DRY-RUN by default; deletes only with apply=True. `keep_path` is
+    never pruned — the in-flight run's own checkpoint, which both bounds must ignore.
+
+    `embed_batch_*.jsonl` is EXCLUDED: that is a submitted batch's request envelope, still needed to collect its
+    results — a different artefact that happens to share the prefix. Honest reporting (never masks a failure as a
+    clean sweep): a listing failure sets `error`; a per-file stat/unlink failure is COUNTED in `skipped`. Returns
+    {dir, examined, stale, over_cap, bytes, deleted, skipped, apply, cutoff_days, max_total_gb, error}."""
+    import os as _os
+    if max_age_days is None:
+        max_age_days = float(config._cfg_get("safety", "embed_checkpoint_max_age_days", 7.0))
+    if max_total_gb is None:
+        max_total_gb = float(config._cfg_get("safety", "embed_checkpoint_max_gb", 5.0))
+    out = {"dir": str(config.HOME), "examined": 0, "stale": 0, "over_cap": 0, "bytes": 0, "deleted": 0,
+           "skipped": 0, "apply": bool(apply), "cutoff_days": max_age_days, "max_total_gb": max_total_gb,
+           "error": None}
+    try:
+        names = _os.listdir(str(config.HOME))
+    except OSError as e:                                  # a real scan failure is surfaced, not a false 'empty, clean'
+        out["error"] = f"{type(e).__name__}: {str(e)[:80]}"
+        return out
+    keep = _os.path.abspath(keep_path) if keep_path else None
+    cutoff = time.time() - max(0.0, float(max_age_days)) * 86400.0
+    cold, warm = [], []                                   # (mtime, size, path) — cold = past the age bound
+    for name in names:
+        # FORMAT match on spendguard's own naming, not a judgement: embed_<model>_<hash>.jsonl, excluding the
+        # embed_batch_ envelopes (a submitted batch still needs those to collect).
+        if not (name.startswith("embed_") and name.endswith(".jsonl")) or name.startswith("embed_batch_"):
+            continue
+        p = _os.path.join(str(config.HOME), name)
+        try:
+            if not _os.path.isfile(p):
+                continue
+            st = _os.stat(p)
+        except OSError:
+            out["skipped"] += 1                           # could not stat → COUNTED, never silently ignored
+            continue
+        if keep and _os.path.abspath(p) == keep:
+            continue                                      # the in-flight run's own checkpoint — both bounds skip it
+        out["examined"] += 1
+        (cold if st.st_mtime < cutoff else warm).append((st.st_mtime, int(st.st_size), p))
+    doomed = list(cold)
+    out["stale"] = len(cold)
+    warm.sort()                                           # oldest first — the size bound evicts the coldest survivors
+    _surviving = sum(s for _m, s, _p in warm)
+    _cap = max(0.0, float(max_total_gb)) * (1024 ** 3)
+    for m, s, p in warm:
+        if _surviving <= _cap:
+            break
+        doomed.append((m, s, p))
+        out["over_cap"] += 1
+        _surviving -= s
+    out["bytes"] = sum(s for _m, s, _p in doomed)
+    if apply:
+        for _m, _s, p in doomed:
+            try:
+                _os.unlink(p)
+                out["deleted"] += 1
+            except OSError:
+                out["skipped"] += 1                       # doomed but could not delete (perms/locked) → COUNTED
+    return out
 
 
 def embed_batch(texts, model=None, *, dimensions=None, jsonl_path=None, cap_dollars=None, submit=True,
