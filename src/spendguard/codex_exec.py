@@ -36,6 +36,8 @@ TIMEOUT_S = 300               # meta prompts are small; a hung CLI must not stal
 _USAGE_TTL_S = 300            # the codex rate-limit log is re-read at most this often (shared cache adds reset-boundary)
 _AUTH_RECHECK_BACKOFF_S = 0.75  # a non-zero `codex login status` is confirmed once (transient vs real logout) before False
 _TOKEN_EXPIRY_MARGIN_S = 120    # a token within this of its own exp is not treated as still-valid (leave room to refresh)
+_ABSENT_CONFIRM_TRIES = 3       # a momentarily-ABSENT auth.json (non-atomic refresh rewrite) is confirmed over this many
+#                                 short reads before it is called a real logout — an absent flicker is NOT 'logged out'
 
 
 def _token_unexpired(now=None, margin=None):
@@ -123,19 +125,34 @@ def auth_status(timeout=20):
         r2 = subprocess.run([exe, "login", "status"], capture_output=True, text=True, timeout=timeout, env=env)
         if r2.returncode == 0:
             return {"authed": True}
-        # BOTH the status AND the re-check are non-zero WHILE the token is unreadable. That is NOT a confirmed logout
-        # when auth.json is merely being rewritten: a present-but-unreadable file is a refresh write in flight →
-        # INCONCLUSIVE (None, which NEVER fires the persistent 'logged out' toast — the fix for the recurring hourly
-        # banner that escalated an unreadable token to False on every refresh). Only a genuinely ABSENT file is a real
-        # logout (False). A real logout therefore still surfaces (expired token above, or absent file here, or the
-        # call's own auth error); a token-refresh race no longer toasts.
+        # BOTH the status AND the re-check are non-zero. The token file may be MID-REFRESH: the codex CLI rewrites
+        # ~/.codex/auth.json on its periodic token refresh, and under heavy concurrent codex use (many lane calls /
+        # delegations at once) that rewrite window is hit often, leaving auth.json momentarily UNREADABLE *or* ABSENT
+        # (a non-atomic unlink+write). NEITHER is a confirmed logout — the earlier fix caught 'unreadable' but an
+        # ABSENT flicker still escalated to False and fired the toast (measured 2026-10-09: hourly + under-load false
+        # 'codex lane LOGGED OUT' while the token was valid for ~8 more days). CONFIRM over a short bounded window: a
+        # VALID token that (re)appears → authed; a PRESENT + genuinely EXPIRED token → real logout; a file that stays
+        # ABSENT across the WHOLE window → real logout (a user `codex logout`). A file that merely flickered
+        # absent/unreadable mid-rewrite → INCONCLUSIVE (None), which never fires the 'logged out' toast.
         import os as _os
         _home = _os.environ.get("CODEX_HOME") or _os.path.expanduser("~/.codex")
-        try:
-            _present = _os.path.exists(_os.path.join(_home, "auth.json"))
-        except Exception:
-            _present = True
-        return {"authed": False if not _present else None}
+        _path = _os.path.join(_home, "auth.json")
+        _ever_present = False
+        for _ in range(_ABSENT_CONFIRM_TRIES):
+            t = _token_unexpired(margin=0)
+            if t is True:
+                return {"authed": True}                   # a valid token (re)appeared → authed (the refresh completed)
+            if t is False:
+                return {"authed": False}                  # present + genuinely expired → real logout
+            try:
+                if _os.path.exists(_path):
+                    _ever_present = True                  # there but unreadable this instant → a rewrite in flight
+            except Exception:
+                _ever_present = True
+            time.sleep(_AUTH_RECHECK_BACKOFF_S)
+        # Across the whole confirm window: never a readable token. ABSENT every check → confirmed logout; otherwise the
+        # file was present-but-unreadable (a refresh rewrite) → inconclusive (None), never a false toast.
+        return {"authed": False if not _ever_present else None}
     except Exception:
         return {"authed": None}
 

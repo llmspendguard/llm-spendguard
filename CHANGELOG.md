@@ -21,6 +21,13 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
   truncates the `-wal` file instead of leaving it at its high-water mark.
 - **Drain non-overlap.** The drain takes a non-blocking single-instance `fcntl` lock; a second drain is refused rather
   than run concurrently.
+- **codex lane false "LOGGED OUT" toast closed for the ABSENT-file case.** `codex_exec.auth_status` treated a
+  momentarily-absent `~/.codex/auth.json` as a confirmed logout, firing the macOS toast under heavy concurrent codex
+  use and at the hourly token refresh (the CLI rewrites auth.json non-atomically) while the token was in fact valid
+  for days (measured 2026-10-09; ledger showed codex serving 1458 calls/$0 that day, ~$0.10 real fallback). An absent
+  OR unreadable auth.json is now CONFIRMED over a short bounded window (`_ABSENT_CONFIRM_TRIES`); only a persistently
+  absent file or a present-but-expired token is a real logout. The earlier `margin=0` fix only covered the unreadable
+  case. Guarded by `tests/test_codex_auth_absent_flicker.py`.
 - **`spendguard deploy` is single-instance.** Generalised the drain's lock into reusable
   `config.single_instance_lock(name)` (non-blocking cross-process count-1 semaphore via `flock`, released on fd close
   so a crash leaves no stale lock); the deploy command holds it across the whole gate+promote. Two concurrent gates
