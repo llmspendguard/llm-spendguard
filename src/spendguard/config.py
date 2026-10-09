@@ -383,6 +383,17 @@ def update_json(path, mutate, reason="", keep_backups=None, required=False, quar
                     _os.replace(path, bad)
                     _sys.stderr.write(f"[spendguard] WARN {path} did not parse — moved to {bad.name} and "
                                       f"rebuilding. Nothing was deleted.\n")
+                    # BOUND the quarantine: these are REBUILDABLE caches kept for forensics, not forever. Unpruned,
+                    # 142 `resource_state_state.json.corrupt.*` copies had accumulated (2026-10-09) — a recurring
+                    # corruption leaking disk. Keep the most recent N per base file (stamp sorts lexically); drop
+                    # the rest. Scoped to THIS base name so one cache's churn never prunes another's.
+                    _kc = keep_corrupt_default()
+                    _sibs = sorted(path.parent.glob(path.name + ".corrupt.*"))
+                    for _old in (_sibs[:-_kc] if _kc else _sibs):
+                        try:
+                            _old.unlink()
+                        except OSError:
+                            pass
                 except Exception:
                     _sys.stderr.write(f"[spendguard] WARN {msg}\n")
                     return None
@@ -1098,6 +1109,21 @@ def keep_backups_default():
     v = _os.environ.get("SPENDGUARD_KEEP_BACKUPS")
     if v is None:
         v = _cfg_get("safety", "keep_backups", 3)
+    try:
+        return max(0, int(v))
+    except (TypeError, ValueError):
+        return 3
+
+
+def keep_corrupt_default():
+    """Quarantined `<file>.corrupt.<stamp>` copies retained PER BASE FILE (config `safety.corrupt_keep`, env
+    SPENDGUARD_CORRUPT_KEEP). These are REBUILDABLE caches moved aside on a parse failure (update_json) and kept
+    for forensics — but bounded: 142 `resource_state_state.json.corrupt.*` copies had accumulated unpruned
+    (2026-10-09). Env wins so a corrupt config.json can never wedge the bound; 0 disables pruning."""
+    import os as _os
+    v = _os.environ.get("SPENDGUARD_CORRUPT_KEEP")
+    if v is None:
+        v = _cfg_get("safety", "corrupt_keep", 3)
     try:
         return max(0, int(v))
     except (TypeError, ValueError):

@@ -467,6 +467,14 @@ SETTINGS = [
               "used to be 0 and almost every caller left it there, which is how ~/.spendguard/config.json "
               "went from 9KB of settings to a 26-byte probe value with no copy of it anywhere. Set 0 to keep "
               "only `<file>~`; raise it if you edit settings often and want deeper history."),
+    dict(section="safety", key="corrupt_keep", store="config.json", env="SPENDGUARD_CORRUPT_KEEP",
+         default="3", kind="int", secret=False,
+         desc="How many quarantined `<file>.corrupt.<stamp>` copies to retain PER BASE FILE. When a REBUILDABLE "
+              "cache (resource_state, catalog, balances, lane registries, …) fails to parse, config.update_json "
+              "moves it aside with a timestamp and rebuilds — kept for forensics, but nothing pruned them, so 142 "
+              "`resource_state_state.json.corrupt.*` copies had accumulated (2026-10-09, a recurring corruption "
+              "leaking disk). After each quarantine only the most recent N per base file are kept. Set 0 to keep "
+              "all (the old unbounded behaviour)."),
     dict(section="safety", key="snapshot_keep", store="config.json", env="SPENDGUARD_SNAPSHOT_KEEP",
          default="2", kind="int", secret=False,
          desc="How many LOCAL full-ledger recovery snapshots (budget.snapshot, taken before a destructive "
