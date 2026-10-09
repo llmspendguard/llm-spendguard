@@ -15,6 +15,8 @@ import os, sys, tempfile
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-retry-")   # isolate BEFORE importing spendguard
 
 from spendguard import lane_queue as lq, vendor_call as vc   # noqa: E402
+lq.RETRY_BACKOFF_S_DEFAULT = 0.0   # this test drives retry COUNT/class via immediate re-lease; the F4 retry backoff
+#                                    (defer before re-lease) is guarded separately in test_queue_review_fixes.py
 
 
 class Checks:

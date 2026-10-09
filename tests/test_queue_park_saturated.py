@@ -17,6 +17,8 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-park-")
 
 from spendguard import lane_queue as lq
+lq.RETRY_BACKOFF_S_DEFAULT = 0.0   # this test asserts park vs retry STATE; the F4 retry backoff (defer before re-lease)
+#                                    is guarded separately in test_queue_review_fixes.py
 
 _fails = []
 def ck(label, cond):

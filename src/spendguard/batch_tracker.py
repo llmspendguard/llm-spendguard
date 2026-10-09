@@ -469,7 +469,19 @@ def _fail_over(bid, rows, why, attempts):
     from . import lane_queue
     reason = "batch %s %s after %d attempt(s) — re-queued realtime (batch offload failed over)" % (bid, why, attempts)
     moved = lane_queue.requeue_from_batch([r["id"] for r in rows], reason) if rows else 0
-    _set_status(bid, "failed", last_error=why)
+    # F5: only CLOSE the job (status 'failed', which drops it from _open_jobs) once NO rows remain queued_batch under
+    # it. requeue_from_batch commits per row and can move only SOME on a transient DB error; marking 'failed' then would
+    # STRAND the unmoved queued_batch rows (never requeued, never collected). batched_rows(bid) is the completion
+    # signal: [] = all moved (safe to close); non-empty = still stranded; None = read unknown. Keep 'failing' (re-polled
+    # next tick, where requeue is a no-op on already-moved rows) until it is provably empty.
+    remaining = lane_queue.batched_rows(bid)
+    if remaining:
+        _set_status(bid, "failing", last_error="%s (partial fail-over: moved %d, %d still queued_batch)"
+                    % (why, moved, len(remaining)))
+    elif remaining is None:
+        _set_status(bid, "failing", last_error="%s (fail-over requeue unverified — retry next tick)" % why)
+    else:
+        _set_status(bid, "failed", last_error=why)
     import sys
     print("[spendguard] batch_tracker: batch %s %s — %d row(s) re-queued to REALTIME (batch offload failed over, loud "
           "by design; the drain planner may re-batch them fresh)" % (bid, why, moved), file=sys.stderr, flush=True)

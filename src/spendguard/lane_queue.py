@@ -46,6 +46,9 @@ MAX_ATTEMPTS_DEFAULT = 10       # DURABLE retry budget: re-enqueue a RETRYABLE (
 # park forever) AND by the row's own SLA deadline_ts (parking never pushes a call past the deadline it promised).
 MAX_PARKS_DEFAULT = 50         # give up (→ failed) after this many capacity deferrals — the no-SLA safety ceiling
 PARK_BACKOFF_S_DEFAULT = 10.0  # seconds a rate-blocked task waits before it can be re-leased (capacity-free backpressure)
+RETRY_BACKOFF_S_DEFAULT = 15.0 # seconds a TRANSIENT-failed task waits before re-lease — without it a retryable failure
+#                                re-leased instantly (defer_until=None) and burned max_attempts in milliseconds, churning
+#                                CPU + lane handshakes (and metered fallback) with no pause for the outage to clear (F4)
 IDLE_ROUNDS_DEFAULT = 2         # foreground drain stops after this many consecutive EMPTY leases (queue drained)
 IDLE_SLEEP_DEFAULT = 2.0        # seconds to wait between empty leases / overload re-checks (foreground + daemon)
 RETAIN_DAYS_DEFAULT = 7.0       # terminal rows (done/failed) older than this are archived to a log + removed from the
@@ -322,7 +325,13 @@ def settle(row_id, result):
     # Batch API (the planner's predictive shed): the task neither failed nor finished — it is ASYNC in a batch, so it
     # must NOT retry realtime and must NOT count a failure-attempt. It becomes its own 'queued_batch' state holding the
     # batch handle, settled later by collect_batched. A fixed reason code + a present handle, never prose.
-    batched = (not ok) and result.get("reason") == "queued_batch" and bool(result.get("batch"))
+    # 'queued_batch' reason means bulk_delegate OFFLOADED this task to the Batch API (which BILLS it), so it must NEVER
+    # be retried realtime — doing so bills a SECOND time. The decision rides the REASON alone; whether the `batch` HANDLE
+    # is present only changes HOW we hold it (F7): handle → the normal queued_batch state (collect_batched settles it);
+    # no handle → a broken offload we cannot route, so we PARK for re-mark rather than run realtime (money-safe: at worst
+    # the row waits, never a double-bill).
+    batched = (not ok) and result.get("reason") == "queued_batch"
+    batched_has_handle = batched and bool(result.get("batch"))
     now_dt = _utcnow()
     now = _iso(now_dt)
     try:
@@ -342,8 +351,14 @@ def settle(row_id, result):
                     state, defer_until, new_attempts, new_parks = "failed", None, attempts, parks
                 else:                                                     # PARK: deferred, park counted, attempt REFUNDED
                     state, defer_until, new_attempts, new_parks = "pending", defer, max(0, attempts - 1), parks + 1
-            elif batched:                                                 # OFFLOADED to the Batch API — await collection,
+            elif batched_has_handle:                                      # OFFLOADED to the Batch API — await collection,
                 state, defer_until, new_attempts, new_parks = "queued_batch", None, attempts, parks  # never realtime-retry
+            elif batched:                                                 # F7: queued_batch reason but NO handle — a broken
+                # offload we cannot collect. The batch may already be BILLED, so running realtime would double-bill. PARK
+                # (deferred, attempt REFUNDED) so the next drain re-marks/adopts it; never fall to the realtime retry below.
+                backoff = float(_qcfg("queue_park_backoff_s", PARK_BACKOFF_S_DEFAULT))
+                state, defer_until, new_attempts, new_parks = (
+                    "pending", _iso(now_dt + datetime.timedelta(seconds=backoff)), max(0, attempts - 1), parks + 1)
             else:
                 # CLASS-AWARE durable retry: only a TRANSIENT outcome (vendor_call.RETRYABLE — transport_error /
                 # overloaded) is worth re-enqueuing; re-running it can genuinely get a different answer, and this is
@@ -357,13 +372,22 @@ def settle(row_id, result):
                 oc = result.get("outcome")
                 retryable = (oc is None) or (oc in _vc.RETRYABLE)
                 state = ("pending" if attempts < maxa else "failed") if retryable else "failed"
-                defer_until, new_attempts, new_parks = None, attempts, parks
-            c.execute("UPDATE lane_queue SET state=?, result=?, lane=?, billed=?, lease_until=NULL, defer_until=?, "
-                      "attempts=?, parks=?, updated_ts=? WHERE id=?",
-                      (state, json.dumps(result)[:_RESULT_CAP], result.get("lane"),
-                       1 if result.get("billed") else 0, defer_until, new_attempts, new_parks, now, row_id))
+                new_attempts, new_parks = attempts, parks
+                if state == "pending":                 # F4: a transient-failed retry waits a backoff before re-lease —
+                    rb = float(_qcfg("queue_retry_backoff_s", RETRY_BACKOFF_S_DEFAULT))   # without it the row re-leases
+                    defer_until = _iso(now_dt + datetime.timedelta(seconds=rb)) if rb > 0 else None   # instantly & churns
+                else:
+                    defer_until = None
+            # F2: STATE-GUARD the write — only a row still leased (realtime path) or queued_batch (collect path) may be
+            # settled. Without the guard a late collect_batched result could overwrite a row realtime already settled
+            # `done` (or vice-versa) — a cross-path double-settle/double-deliver. rowcount==0 means another path already
+            # settled it: do NOT overwrite and do NOT let a caller count it again.
+            cur = c.execute("UPDATE lane_queue SET state=?, result=?, lane=?, billed=?, lease_until=NULL, defer_until=?, "
+                            "attempts=?, parks=?, updated_ts=? WHERE id=? AND state IN ('leased','queued_batch')",
+                            (state, json.dumps(result)[:_RESULT_CAP], result.get("lane"),
+                             1 if result.get("billed") else 0, defer_until, new_attempts, new_parks, now, row_id))
             c.commit()
-            return True                                # the row WAS updated + committed — a caller may count it settled
+            return cur.rowcount > 0                     # True only if THIS call settled it (not an already-settled row)
     except Exception as _e:
         from . import provider_tokens as _pt          # the CANONICAL stop-or-locked predicate (same as _enqueue_leased)
         if _pt._stop_or_locked(_e):
@@ -904,6 +928,20 @@ def drain(worker=None, batch=None, lease_s=None, idle_rounds=None, idle_sleep=No
 
     Reuses the whole existing execution path — governor admission, bandit routing, $0 plan-served, API fallback —
     so the queue is PURELY the durability + priority + crash-recovery layer on top."""
+    _lock_fd = _acquire_drain_lock()
+    if _lock_fd is None:                                     # another drain already running → don't start a second one
+        return {"ran": 0, "done": 0, "failed": 0, "billed": 0, "by_lane": {}, "rounds": 0,
+                "skipped": "another drain is already running (single-instance lock held)"}
+    try:
+        return _drain_locked(worker, batch, lease_s, idle_rounds, idle_sleep, load_ceiling, forever, max_iters)
+    finally:
+        _release_drain_lock(_lock_fd)                        # F6: ALWAYS release, even on a propagated deliberate-stop
+
+
+def _drain_locked(worker, batch, lease_s, idle_rounds, idle_sleep, load_ceiling, forever, max_iters):
+    """The drain loop, run by drain() while it holds the single-instance lock. Separated so drain() can release that
+    lock in a `finally` no matter how this exits — a normal return OR a propagated deliberate-stop raise (without this,
+    an exception leaked the lock FD and, in a long-lived daemon, permanently wedged the queue — F6)."""
     from . import dispatch, lane_balance
     batch = int(batch or _qcfg("queue_batch", 0) or dispatch._limit("global_concurrency", 24))
     lease_s = float(lease_s if lease_s is not None else _qcfg("queue_lease_s", LEASE_S_DEFAULT))
@@ -912,10 +950,6 @@ def drain(worker=None, batch=None, lease_s=None, idle_rounds=None, idle_sleep=No
     ceiling = load_ceiling if load_ceiling is not None else _qcfg("queue_load_ceiling", 0.0)
     worker = worker or f"drain-{os.getpid()}"
     s = {"ran": 0, "done": 0, "failed": 0, "billed": 0, "by_lane": {}, "rounds": 0}
-    _lock_fd = _acquire_drain_lock()
-    if _lock_fd is None:                                     # another drain already running → don't start a second one
-        s["skipped"] = "another drain is already running (single-instance lock held)"
-        return s
     idle = iters = 0
     _last_poll = 0.0                                                     # throttle for the batch_tracker poll (below)
     while True:
@@ -987,9 +1021,21 @@ def drain(worker=None, batch=None, lease_s=None, idle_rounds=None, idle_sleep=No
                     _off = batch_tracker.submit_offload(intent, rows, _dec["batch_model"],
                                                         provider=_dec.get("provider") or "openai",
                                                         cap_dollars=_qcfg("queue_batch_cap_usd", None))
-                    if _off.get("batch_id") and _off.get("marked"):
-                        s["batched"] = s.get("batched", 0) + _off["marked"]
-                        continue                                        # rows now queued_batch (tracked) → skip realtime
+                    if _off.get("batch_id"):
+                        # F1 (CRITICAL double-spend): a batch_id means the provider batch was SUBMITTED and BILLED. The
+                        # rows must NEVER then run realtime — that bills a SECOND time. The old guard also required
+                        # `marked`, so a transient mark_batched/reconcile miss (marked=0) FELL THROUGH to realtime. Now
+                        # ANY submitted batch skips realtime: tagged rows are queued_batch (collected later); any
+                        # un-tagged rows stay LEASED and are re-leased on lease-expiry to re-adopt the same batch
+                        # (exactly-once via _offload_key) and retry mark_batched — never run realtime.
+                        s["batched"] = s.get("batched", 0) + (_off.get("marked") or 0)
+                        if not _off.get("marked"):
+                            s["offload_unmarked"] = s.get("offload_unmarked", 0) + len(rows)
+                            import sys as _sysum
+                            print("[spendguard] drain: batch %s submitted for intent %r but mark_batched tagged 0 rows "
+                                  "— NOT running realtime (would double-bill); rows stay leased for re-mark next drain."
+                                  % (_off["batch_id"], intent), file=_sysum.stderr, flush=True)
+                        continue                                        # batch exists → skip realtime for these rows
                     if _off.get("error"):
                         import sys as _sysob                            # NAMED: offload skipped → running realtime
                         print("[spendguard] drain: batch offload of intent %r skipped (%s) — running realtime instead"
@@ -1030,5 +1076,4 @@ def drain(worker=None, batch=None, lease_s=None, idle_rounds=None, idle_sleep=No
                     s["billed"] += 1
     optimize_queue_db()          # refresh planner stats ONCE at drain completion (periodic, never per-op) — now on the
     #                              small lane_queue.db, not the 4.4GB ledger, so ANALYZE is cheap
-    _release_drain_lock(_lock_fd)
-    return s
+    return s                     # the single-instance lock is released in drain()'s finally (F6)

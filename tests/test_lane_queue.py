@@ -16,6 +16,8 @@ os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 from spendguard import lane_queue as q                                                 # noqa: E402
+q.RETRY_BACKOFF_S_DEFAULT = 0.0   # this end-to-end test drives the retry→drain→purge FLOW via immediate re-lease; the
+#                                   F4 retry backoff (defer before re-lease) is guarded in test_queue_review_fixes.py
 from spendguard import lane_balance                                                    # noqa: E402
 
 
@@ -133,9 +135,13 @@ fails += ck("_queue_seg reports the backlog while work waits", "pending" in seg 
 
 print("\n-- purge: OLD terminal rows archived to a log + removed; recent + active rows kept (Phase 4 housekeeping) --")
 rid_old = q.enqueue("purgeI", "old-done")
-q.settle(rid_old, {"text": "done-old", "lane": "gemini"})          # a terminal (done) row
 rid_recent = q.enqueue("purgeI", "recent-done")
-q.settle(rid_recent, {"text": "done-recent", "lane": "codex"})     # a RECENT terminal row (stays)
+# Fixture: make both rows terminal (done). settle() now STATE-GUARDS to leased/queued_batch rows (a real done row only
+# ever comes from lease→settle), so this sets the terminal state directly rather than settle()-ing a pending row.
+with contextlib.closing(q._queue_db()) as _c:
+    _c.execute("UPDATE lane_queue SET state='done', result=?, lane='gemini' WHERE id=?", ('{"text":"done-old"}', rid_old))
+    _c.execute("UPDATE lane_queue SET state='done', result=?, lane='codex' WHERE id=?", ('{"text":"done-recent"}', rid_recent))
+    _c.commit()
 pend_before = q.queue_depth().get("pending", 0)
 with contextlib.closing(q._queue_db()) as _c:                      # backdate the old row past the retain window
     _c.execute("UPDATE lane_queue SET updated_ts='2000-01-01T00:00:00+00:00' WHERE id=?", (rid_old,))
