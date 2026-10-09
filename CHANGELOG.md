@@ -4,6 +4,20 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.12.15] — 2026-10-09
+
+### Added
+- **Content-addressed queue dedup — the lane_queue never re-buys work it already has.** `enqueue`/`enqueue_many` now
+  carry a `fingerprint` = SHA-256 of the result-determining inputs (intent, task, system, reasoning) and, by default
+  (`dedup=True`), COALESCE an identical task onto an existing non-failed row instead of inserting a re-execution —
+  preferring a DONE row (its result is reused for $0) over an in-flight pending/leased one; duplicates within one
+  `enqueue_many` call coalesce too. `settle` then coalesces every other PENDING row of the same fingerprint from the
+  result ($0), closing the concurrent-enqueue race and draining any pre-existing duplicates. A caller that wants
+  independent repeats passes `dedup=False`; a FAILED row is never coalesced onto (new work gets a fresh attempt).
+  Motivated by a measured ~20× content-duplicate backlog (one intent: 4,698 metered calls for ~239 unique tasks,
+  2026-10-09) that, undeduped, would have re-executed finished work on drain. New index `lane_queue_fingerprint`.
+  Guarded by `tests/test_queue_content_addressed_dedup.py`.
+
 ## [0.12.14] — 2026-10-09
 
 ### Fixed
