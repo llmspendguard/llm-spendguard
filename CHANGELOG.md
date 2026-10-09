@@ -21,6 +21,11 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
   truncates the `-wal` file instead of leaving it at its high-water mark.
 - **Drain non-overlap.** The drain takes a non-blocking single-instance `fcntl` lock; a second drain is refused rather
   than run concurrently.
+- **`spendguard deploy` is single-instance.** Generalised the drain's lock into reusable
+  `config.single_instance_lock(name)` (non-blocking cross-process count-1 semaphore via `flock`, released on fd close
+  so a crash leaves no stale lock); the deploy command holds it across the whole gate+promote. Two concurrent gates
+  each spawned a full `chunked_suite` and starved each other's CPU, flaking the receipt/timeout-sensitive tests
+  (measured 2026-10-09); a second invocation now fails fast with a clear message instead of piling on.
 - **Log spam.** The operator lane summary + fallback/eligibility alerts are suppressed in `--drain` (daemon) mode, and
   the best-value advisory routes through `warn_once` (it had written a 15MB `lane-drain.log`).
 - **`lane_queue_archive.jsonl` is bounded** (rotated past `advisor.queue_archive_max_mb`, default 64MB; was 820MB).

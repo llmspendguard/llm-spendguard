@@ -269,6 +269,7 @@ def _dispatch(argv=None):
         # no commit captures). This is the write path; `spendguard release` is the read-only status.
         import pathlib as _pl
         import subprocess as _sp
+        from . import config as _config
         from . import release as _rel
         r = list(rest)
         _no_gate, _allow_dirty = ("--no-gate" in r), ("--allow-dirty" in r)
@@ -276,16 +277,26 @@ def _dispatch(argv=None):
             print("deploy: the working tree has uncommitted changes to tracked files — commit first (the green "
                   "pointer must name committed code), or pass --allow-dirty deliberately.", file=sys.stderr)
             return 2
-        gate_desc = "skipped (--no-gate)"
-        if not _no_gate:
-            suite = _pl.Path(__file__).resolve().parents[2] / "scripts" / "test" / "chunked_suite.py"
-            print(f"deploy: running the full gate ({suite.name}) — a few minutes; the pointer only advances if it passes…")
-            if _sp.run([sys.executable, str(suite)]).returncode != 0:
-                print("deploy: 🔴 the gate FAILED — NOT promoting. Fix the suite, then re-run `spendguard deploy`.",
-                      file=sys.stderr)
-                return 1
-            gate_desc = "chunked_suite green"
-        rec = _rel.promote_release(gate=gate_desc, allow_dirty=_allow_dirty)
+        # SINGLE-INSTANCE: only ONE deploy gate may run on this machine at a time. Two concurrent gates each spawn a
+        # full test suite; they starve each other's CPU and the receipt/timeout-sensitive tests flake (measured
+        # 2026-10-09 — two accidental `deploy` runs raced and both would have flaked). A count-1 semaphore (flock) held
+        # for the whole gate+promote body makes a second invocation fail FAST instead of piling on.
+        with _config.single_instance_lock("deploy") as _got_lock:
+            if not _got_lock:
+                print("deploy: another `spendguard deploy` is already running on this machine — only one gate may run "
+                      "at a time (concurrent suites starve each other's CPU and flake). Wait for it to finish, then "
+                      "re-run `spendguard deploy`.", file=sys.stderr)
+                return 2
+            gate_desc = "skipped (--no-gate)"
+            if not _no_gate:
+                suite = _pl.Path(__file__).resolve().parents[2] / "scripts" / "test" / "chunked_suite.py"
+                print(f"deploy: running the full gate ({suite.name}) — a few minutes; the pointer only advances if it passes…")
+                if _sp.run([sys.executable, str(suite)]).returncode != 0:
+                    print("deploy: 🔴 the gate FAILED — NOT promoting. Fix the suite, then re-run `spendguard deploy`.",
+                          file=sys.stderr)
+                    return 1
+                gate_desc = "chunked_suite green"
+            rec = _rel.promote_release(gate=gate_desc, allow_dirty=_allow_dirty)
         print(f"deploy: 🟢 promoted {rec['short']} ({rec['describe']}) → green pointer  [{rec['gate']}]")
         print("        already-running MCP servers serve it on their next request (they hand off between requests).")
         return 0

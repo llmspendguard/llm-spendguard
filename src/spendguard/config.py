@@ -777,6 +777,47 @@ def lane_queue_db_path():
     return p if p else str(HOME / "lane_queue.db")
 
 
+@contextlib.contextmanager
+def single_instance_lock(name):
+    """NON-BLOCKING cross-process single-instance (mutex / count-1 semaphore) guard, held for the `with` body.
+
+    flock(LOCK_EX|LOCK_NB) on HOME/<name>.lock: the FIRST process into the body holds it and yields True (proceed);
+    a SECOND process finds it held and yields False (do NOT start a duplicate — the caller bails). The OS drops the
+    lock when this process exits (flock is bound to the fd), so a crash leaves NO stale lock to reap. Degrades
+    FAIL-OPEN (yields True) when locking is genuinely unavailable — non-POSIX, or the lockfile can't be opened — so a
+    lock hiccup never blocks legitimate work; on macOS/Linux flock is always present, so that path is Windows-only.
+
+    This is the SSOT for process-singleton locking (e.g. `spendguard deploy`, whose two concurrent gate runs each
+    spawn a full test suite and starve each other's CPU → the flaky-timeout failures). lane_queue's own
+    `_acquire_drain_lock` is the same mechanism specialised to the drain; this is the general, reusable form."""
+    try:
+        import fcntl as _fcntl
+    except ImportError:
+        yield True                                           # non-POSIX → no flock; proceed UNGUARDED, never block
+        return
+    try:
+        fd = os.open(str(HOME / f"{name}.lock"), os.O_CREAT | os.O_RDWR, 0o644)
+    except OSError:
+        yield True                                           # cannot open the lockfile → fail-open, never block work
+        return
+    try:
+        _fcntl.flock(fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+    except OSError:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        yield False                                          # another instance holds it → caller must not start a 2nd
+        return
+    try:
+        yield True
+    finally:
+        try:
+            os.close(fd)                                     # closing the fd drops the flock, even on an exception
+        except OSError:
+            pass
+
+
 def tune_ledger_connection(c):
     """Apply spendguard's shared SQLite tuning to a base-ledger connection. config.db_path() is ONE file opened by
     ~8 subsystems (budget/calls/callio/bulkgate/learn/semcache/lane_queue …); every `_X_db()` opener calls this right
