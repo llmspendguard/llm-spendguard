@@ -64,8 +64,29 @@ DEEP_SCHEMA = ('{"hardcoded_prices": [{"line": 0, "snippet": "...", "model": "..
                '"why_wrong": "how it disagrees with the canonical table", '
                '"confidence": "certain|likely|unsure"}]}')
 
+_DEEP_SCAFFOLD_TOK = 600       # system + schema + fences + margin, so a (file, table-chunk) payload fits the window
 
-def deep(paths, canonical, run=False):
+
+def _price_table_chunks(pricing_table, char_budget):
+    """Split the WHOLE canonical price table into repr'd dict chunks, each <= char_budget characters, so EVERY entry
+    is seen across the chunks — NEVER a prefix slice, and never a mechanical pre-filter that DECIDES which entries are
+    'relevant' (that is entity resolution — a model named in a file vs a canonical key, aliases and all — which is a
+    meaning judgement and stays with the JUDGE, not substring matching here). One chunk when the whole table fits the
+    window; more when it doesn't, with the findings unioned. char_budget is derived from the model's input window
+    minus the file + scaffold. A single entry larger than the budget is still emitted whole (never split mid-entry);
+    if it then overflows the window, adapters.call refuses it LOUDLY (UNREAD), never silently clips."""
+    chunks, cur = [], {}
+    for k, v in pricing_table.items():
+        cur[k] = v
+        if len(repr(cur)) >= char_budget:
+            chunks.append(repr(cur))
+            cur = {}
+    if cur:
+        chunks.append(repr(cur))
+    return chunks or ["{}"]
+
+
+def deep(paths, pricing_table, run=False):
     """The question the pattern scan cannot ask: does this file hardcode a price that disagrees?
 
     The BANNED/ALLOWED patterns match literal tuples next to a known model key. That is one spelling of one
@@ -82,29 +103,51 @@ def deep(paths, canonical, run=False):
     # it. expect() returns the count AND names where it came from, so a quote can say so out loud.
     from . import expected_output as _eo
     _out, _basis = _eo.expect(model, sig="spendguard:audit-deep")
-    est = sum(_p.realtime_cost(model, len(open(p, errors="ignore").read()) // 4 + 400, _out) or 0
-              for p in paths)
+    try:
+        _win = int(_p.max_input_tokens(model) or 0)
+    except Exception:
+        _win = 0
+
+    def _chunks_for(src):
+        # Send the WHOLE canonical table with each file so the judge can resolve EVERY model the file references
+        # (aliases included) — chunked ONLY to fit the window, never a prefix slice and never a relevance pre-filter.
+        # (This replaces repr(PRICING)[:4000] = 0.9% of a 450KB / 3,634-model table, which read any hardcode for a
+        # model past the first 0.9% as clean — a NEVER-TRUNCATE-the-evidence violation three lines from a comment
+        # that insists the whole FILE is sent for exactly this reason.)
+        if not _win:
+            return [repr(pricing_table)]            # unknown window → one payload; adapters refuses it loudly if over
+        budget_chars = max(2000, (_win - _out - _DEEP_SCAFFOLD_TOK - (len(src) // 4)) * 4)
+        return _price_table_chunks(pricing_table, budget_chars)
+
+    plan = [(p, src, _chunks_for(src)) for p, src in ((q, open(q, errors="ignore").read()) for q in paths)]
+    est = sum(_p.realtime_cost(model, (len(src) + len(ch)) // 4 + 400, _out) or 0
+              for _, src, chunks in plan for ch in chunks)
     if not run:
-        ui.estimate_only(action=f"read {len(paths)} file(s) for hardcoded prices in ANY form", cost=est)
+        _ncalls = sum(len(chunks) for _, _, chunks in plan)
+        ui.estimate_only(action=f"read {len(paths)} file(s) against the WHOLE canonical table ({_ncalls} call(s)) "
+                                f"for hardcoded prices in ANY form", cost=est)
         return []
     found = []
-    for i, p in enumerate(paths, 1):
-        src = open(p, errors="ignore").read()
-        with calls.context(intent="spendguard:audit-deep"):
-            r = adapters.call(model, f"CANONICAL PRICES:\n{canonical}\n\nFILE {os.path.basename(p)}:\n"
-                                     f"```python\n{src}\n```\n\nReply JSON only: {DEEP_SCHEMA}",   # WHOLE file — a
-                              # price audit truncated at 12000 chars silently misses a hardcode in the tail; an
-                              # over-window file is refused loudly by adapters.call, never clipped.
-                              sig="probe:audit-deep", system=DEEP_SYS)
-        if r.get("error"):
-            print(f"  {os.path.basename(p)}: UNREAD ({str(r['error'])[:60]}) — not the same as clean")
-            continue
-        try:
-            blob = re.search(r"\{.*\}", r.get("text") or "", re.S)
-            for h in (json.loads(blob.group(0)).get("hardcoded_prices") if blob else []) or []:
-                found.append((os.path.basename(p), h))
-        except Exception:
-            print(f"  {os.path.basename(p)}: reply unparseable — UNREAD, not clean")
+    for i, (p, src, chunks) in enumerate(plan, 1):
+        for canonical in chunks:                    # every chunk → the whole table is seen for this file; findings union
+            with calls.context(intent="spendguard:audit-deep"):
+                r = adapters.call(model, f"CANONICAL PRICES (the rates below are authoritative FOR THE MODELS THEY "
+                                         f"CONTAIN; flag a hardcode only when it disagrees with a rate shown here — "
+                                         f"a model absent from this list is simply covered by another chunk, NOT "
+                                         f"unpriced):\n{canonical}\n\nFILE {os.path.basename(p)}:\n"
+                                         f"```python\n{src}\n```\n\nReply JSON only: {DEEP_SCHEMA}",   # WHOLE file AND
+                                  # the WHOLE canonical table (chunked) — truncating EITHER side silently misses a
+                                  # hardcode; an over-window payload is refused loudly by adapters.call, never clipped.
+                                  sig="probe:audit-deep", system=DEEP_SYS)
+            if r.get("error"):
+                print(f"  {os.path.basename(p)}: UNREAD ({str(r['error'])[:60]}) — not the same as clean")
+                continue
+            try:
+                blob = re.search(r"\{.*\}", r.get("text") or "", re.S)
+                for h in (json.loads(blob.group(0)).get("hardcoded_prices") if blob else []) or []:
+                    found.append((os.path.basename(p), h))
+            except Exception:
+                print(f"  {os.path.basename(p)}: reply unparseable — UNREAD, not clean")
         if i % 20 == 0:
             print(f"    …{i}/{len(paths)} read", flush=True)
     return found
@@ -183,7 +226,7 @@ def main(argv=None):
         # --deep asks the question the patterns cannot. It runs on the SAME files the scan cleared, because
         # those are precisely the ones a clean pattern result would otherwise close the book on.
         print(f"\n--deep: reading {len(scanned)} file(s) for prices in ANY form …")
-        deep_hits = deep(scanned, repr(PRICING)[:4000], run="--run" in argv)
+        deep_hits = deep(scanned, PRICING, run="--run" in argv)   # the WHOLE table; deep() chunks it to fit, never slices
         if not deep_hits:
             print("  no hardcoded price found by reading the code either." if "--run" in argv else "")
             return 0
