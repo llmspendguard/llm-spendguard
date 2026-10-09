@@ -81,17 +81,17 @@ def _enclosing_range(tree):
     fixed ±N-line window: a result's USE (what makes it a quoted price vs a probe) can sit anywhere in its
     function, not within a few lines of the call. Innermost wins — a child's lines overwrite its parent's."""
     out = {}
-    def walk(node):
+    def walk_ranges(node):
         for child in ast.iter_child_nodes(node):
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 start = child.lineno
                 end = getattr(child, "end_lineno", child.lineno) or child.lineno
                 for ln in range(start, end + 1):
                     out[ln] = (start, end)
-                walk(child)
+                walk_ranges(child)
             else:
-                walk(child)
-    walk(tree)
+                walk_ranges(child)
+    walk_ranges(tree)
     return out
 
 
