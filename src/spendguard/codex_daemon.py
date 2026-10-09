@@ -23,7 +23,8 @@ from .warm_stdio_daemon import _SAFE_CWD, _WarmStdioJsonRpcDaemon
 # MODULE-LEVEL constants (not only class attrs): run_warm reads CALL_TIMEOUT_S as a module global so a caller/test
 # can monkeypatch `codex_daemon.CALL_TIMEOUT_S` and have the FALLBACK deadline change (the delegate timeout-kill
 # guard relies on this). The class mirrors them for the shared base's handshake/idle use.
-STARTUP_TIMEOUT_S = 60             # the ONE-TIME server handshake budget
+STARTUP_TIMEOUT_S = int(config._cfg_get("advisor", "lane_handshake_timeout_s", 25))  # one-time handshake budget,
+#    config-gated (was 60): a down codex lane blocked 60s/retry → churn + metered fallback; 25s fails fast.
 CALL_TIMEOUT_S = 180              # one warm turn, including setup + streamed completion (the fallback when none given)
 IDLE_TIMEOUT_S = 600              # reclaim the persistent subprocess after ten minutes with no completed/new call
 

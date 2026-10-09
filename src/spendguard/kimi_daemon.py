@@ -38,7 +38,8 @@ class _KimiAcpDaemon(_WarmStdioJsonRpcDaemon):
     owns the ACP handshake, the session/new → session/prompt flow, and the session/update demux by `sessionId`."""
 
     _LANE_LABEL = "kimi"
-    STARTUP_TIMEOUT_S = 60             # the ONE-TIME ACP initialize budget
+    STARTUP_TIMEOUT_S = int(config._cfg_get("advisor", "lane_handshake_timeout_s", 25))  # one-time ACP init budget,
+    #    config-gated (was 60): a down kimi lane blocked 60s/retry → churn; 25s fails fast (advisor.lane_handshake_timeout_s).
     CALL_TIMEOUT_S = 300             # one warm turn (matches the cold kimi_exec.TIMEOUT_S ceiling for meta prompts)
     IDLE_TIMEOUT_S = 600             # reclaim the persistent subprocess after ten minutes with no completed/new call
 

@@ -369,6 +369,19 @@ SETTINGS = [
          desc="Cap for lane_queue_archive.jsonl. It is append-only; past this size purge rotates it to "
               "lane_queue_archive.jsonl.1 (one generation kept) so it cannot grow unbounded (it had reached 820MB, "
               "2026-10-08). 0 disables rotation."),
+    dict(section="advisor", key="lane_handshake_timeout_s", store="config.json:advisor.lane_handshake_timeout_s",
+         default=25, kind="int", secret=False,
+         desc="One-time warm-daemon startup/initialize handshake budget for a subscription lane CLI (codex / kimi / "
+              "the shared warm_stdio base). Was a hard 60s: a DOWN lane blocked a pool thread for 60s per retry before "
+              "falling back to the metered API, so a drain churned on an unavailable lane. 25s fails an unreachable "
+              "lane ~2.4x faster while a live lane's cold handshake stays well under it. Raise it if a genuinely slow "
+              "cold start needs more."),
+    dict(section="advisor", key="bulk_lanes", store="config.json:advisor.bulk_lanes", env="SPENDGUARD_BULK_LANES",
+         default=None, kind="str|null", secret=False,
+         desc="CSV subset of lanes a bulk `--tier` fan (spendguard lanes --describe / bulk_delegate) is CONFINED to — "
+              "e.g. 'codex,gemini,zai-coding' keeps bulk work OFF the Anthropic (claude-code) lane so it never burns "
+              "the Max plan. The env SPENDGUARD_BULK_LANES or `--lanes` still override per-run; this makes it a "
+              "persistent default instead of an export in every shell/LaunchAgent. null = all enabled lanes."),
     dict(section="callio", key="snip_chars", store="config.json:callio.snip_chars", env="SPENDGUARD_CALLIO_SNIP",
          default=800, kind="int", secret=False,
          desc="Chars kept per recovered prompt / output in the call_io corpus. 800 is sized for the caged JUDGE "

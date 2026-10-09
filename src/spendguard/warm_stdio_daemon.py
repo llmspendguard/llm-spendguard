@@ -59,7 +59,10 @@ class _WarmStdioJsonRpcDaemon:
     """
 
     _LANE_LABEL = "warm"
-    STARTUP_TIMEOUT_S = 60       # the ONE-TIME server handshake budget
+    STARTUP_TIMEOUT_S = int(config._cfg_get("advisor", "lane_handshake_timeout_s", 25))  # one-time handshake budget —
+    #    config-gated (was a hard 60s): a DOWN lane blocked a pool thread for 60s per retry before falling back to
+    #    metered, so a drain churned on an unavailable lane. 25s fails an unreachable lane ~2.4x faster; a live lane's
+    #    cold handshake is well under it. Raise advisor.lane_handshake_timeout_s if a slow cold start needs more.
     CALL_TIMEOUT_S = 180         # one warm turn, including setup + streamed completion
     IDLE_TIMEOUT_S = 600         # reclaim the persistent subprocess after this long with no completed/new call
 

@@ -572,7 +572,10 @@ def main(argv=None):
         #                                                   another healthy $0 lane in the SAME fan (spare-capacity-gated
         #                                                   inside bulk_delegate; the hedge always runs no_fallback, so it
         #                                                   can only cost a free lane miss). Absent → the config default (off).
-        lanes_p = cli_option_value_after(rest, "--lanes") or os.environ.get("SPENDGUARD_BULK_LANES")  # CSV lane subset → CONFINE the fan
+        lanes_p = (cli_option_value_after(rest, "--lanes") or os.environ.get("SPENDGUARD_BULK_LANES")
+                   or config._cfg_get("advisor", "bulk_lanes", None))  # CSV lane subset → CONFINE the fan; now a
+        #    PERSISTENT config (advisor.bulk_lanes) too, not only the env, so 'bulk work skips the Anthropic lane' can
+        #    be set once (e.g. "codex,gemini,zai-coding") instead of exported in every shell/LaunchAgent
                                                           # (bulk_delegate lanes=), fail-closed: a caller picks e.g.
                                                           # "zai-coding,codex,gemini" to keep a job off a lane its
                                                           # output does not suit. --lanes wins; else the env default
