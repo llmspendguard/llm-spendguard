@@ -746,6 +746,28 @@ def _parse_evidence(txt):
     return out
 
 
+_RECALL_BATCH_CHARS = 24000   # ~6K input tok/call: bounds per-call cost by PACKING whole chunks, never by cutting one.
+                              # A session chunk is already <= session_chunks max_chars (14000); the WHOLE chunk is the
+                              # evidence the classifier reads — spend signals live anywhere in it, not just the head.
+
+
+def _pack_by_char_budget(items, max_chars, max_count):
+    """Group items into batches, each with total `text` <= max_chars AND at most max_count items, every item WHOLE.
+    A single item longer than max_chars still goes alone (NEVER sliced) — the upstream chunker bounds item size. This
+    is the cost rail for an evidence classifier: bound per-call input by packing, never by truncating the evidence."""
+    batches, cur, cur_chars = [], [], 0
+    for it in items:
+        t = it.get("text") or ""
+        if cur and (len(cur) >= max_count or cur_chars + len(t) > max_chars):
+            batches.append(cur)
+            cur, cur_chars = [], 0
+        cur.append(it)
+        cur_chars += len(t)
+    if cur:
+        batches.append(cur)
+    return batches
+
+
 def classify_evidence(chunks, run=False, batch_size=20):
     """UNIFIED agentic recall (twin of resolve): is each chunk spend EVIDENCE (+ kind) and/or a cost LESSON? ONE
     RECORDED Haiku pass that BOTH reconcile (cost_lesson) and realtime reconstruction (spend_evidence+kind) consume,
@@ -767,8 +789,11 @@ def classify_evidence(chunks, run=False, batch_size=20):
     if not todo:
         return res
     model = config.recall_model()                     # cheapest capable (nano) — whole-corpus recall ~<10c; caged by caps.meta
-    batches = [todo[i:i + batch_size] for i in range(0, len(todo), batch_size)]
-    bodies = ["\n".join("%d: %s" % (i, (c["text"] or "")[:600]) for i, c in enumerate(b)) for b in batches]
+    # Pack WHOLE chunks into char-budgeted batches — a chunk's spend evidence (printed $/token, an API-call line) can
+    # sit anywhere in its up-to-14000 chars, so the classifier must see all of it; a [:600] head-cut here silently
+    # dropped ~96% of each chunk. Cost stays bounded by the per-batch char budget, not by cutting the evidence.
+    batches = _pack_by_char_budget(todo, _RECALL_BATCH_CHARS, batch_size)
+    bodies = ["\n".join("%d: %s" % (i, (c["text"] or "")) for i, c in enumerate(b)) for b in batches]
     if not run:
         est = sum(pricing.realtime_cost(model, attribution._toklen(_EVIDENCE_SYS + body), 25 * len(b))
                   for b, body in zip(batches, bodies))

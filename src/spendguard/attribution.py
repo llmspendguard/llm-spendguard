@@ -67,7 +67,10 @@ def _prompt(taxo, batch):
     orgs = taxo.get("orgs") or []
     tl = "; ".join(f"{t['name']}({t.get('org')})" for t in (taxo.get("teams") or []))
     pl = "; ".join(f"{p['name']}({p.get('org')}/{p.get('team')})" for p in (taxo.get("projects") or []))
-    lines = [f"{i}: {(it.get('text') or '')[:240]}" for i, it in enumerate(batch)]
+    # WHOLE item text — this is the evidence the org/team/project classifier decides from. A [:240] cut dropped up to
+    # ~1770 chars of a codex session's first user message (bounded at 2000 upstream), truncating that evidence. Item
+    # text is upstream-bounded (<=~2000), so a 25-item batch stays small — no char-packing needed here, just never cut.
+    lines = [f"{i}: {(it.get('text') or '')}" for i, it in enumerate(batch)]
     return (f"ORGS: {orgs}\nTEAMS: {tl}\nPROJECTS: {pl}\n"
             f"If genuinely unclear: org = {taxo.get('default_org') or 'Personal'}.\nITEMS:\n" + "\n".join(lines))
 

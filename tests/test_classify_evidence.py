@@ -78,5 +78,25 @@ ck("broad cut: a bare '$5.50' is a candidate", bool(conv._EVIDENCE_CANDIDATE.sea
 ck("broad cut: 'cancelled the batch' is a candidate (lesson recall)", bool(conv._EVIDENCE_CANDIDATE.search("cancelled the batch")))
 ck("broad cut: pure prose is NOT a candidate", not conv._EVIDENCE_CANDIDATE.search("let us refactor the parser"))
 
+# ── 5. EVIDENCE SENT WHOLE: a chunk's spend signal in the TAIL (past the old 600-char head cut) is still seen ──
+#     session_chunks emits up to 14000-char chunks; the old (c["text"])[:600] fed the classifier only the head, so
+#     a run cost printed late in a chunk was invisible. The $ shape here sits ~5000 chars in — well past 600.
+LONG_TAIL = ("boarding notes and prose " * 220) + " and finally the sharded runner printed $4,210.50 for 500000 tokens"
+assert len(LONG_TAIL) > 5000
+res5 = conv.classify_evidence([{"id": "tail", "text": LONG_TAIL}], run=True)
+ck("spend evidence in the chunk TAIL (past the old 600 cut) is classified — whole chunk reached the LLM",
+   res5["tail"]["spend_evidence"] is True)
+
+# ── 6. COST RAIL: whole chunks are PACKED by char budget, never cut; no chunk split across batches ──
+packed = conv._pack_by_char_budget(
+    [{"id": str(i), "text": "x" * 10000} for i in range(5)], conv._RECALL_BATCH_CHARS, 20)
+ck("every chunk kept WHOLE (no 'text' is shorter than its 10000 chars)",
+   all(len(it["text"]) == 10000 for b in packed for it in b))
+ck("each batch stays within the char budget (packing, not a fixed count of 20)",
+   all(sum(len(it["text"]) for it in b) <= conv._RECALL_BATCH_CHARS or len(b) == 1 for b in packed))
+_oversize = conv._pack_by_char_budget([{"id": "big", "text": "y" * 99999}], conv._RECALL_BATCH_CHARS, 20)
+ck("a single chunk larger than the budget still goes ALONE, un-sliced (never truncated)",
+   len(_oversize) == 1 and len(_oversize[0]) == 1 and len(_oversize[0][0]["text"]) == 99999)
+
 print(("[OK]" if not fails else "[FAIL]") + " classify-evidence: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)

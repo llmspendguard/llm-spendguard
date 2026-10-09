@@ -43,5 +43,19 @@ adapters.call = lambda *a, **k: {"text": 'noise {"items":[{"i":0,"org":"O","team
                                  "cost": 0.0, "error": None}
 ck("classify_items tolerant parse", attribution.classify_items([{"id": "a", "text": "x"}], taxo, run=True).get("a", {}).get("project") == "P2")
 
+# EVIDENCE SENT WHOLE: a long item (e.g. a codex session's first message, bounded at ~2000 upstream) must reach the
+# classifier UNCUT. The old _prompt did (it.get('text'))[:240], dropping ~1770 chars — the org/team/project decision
+# then ran on a 240-char head. Capture the prompt actually sent and assert the tail is present.
+SENT = {}
+def _capture_call(*a, **k):
+    SENT["body"] = next((x for x in list(a) + list(k.values()) if isinstance(x, str) and "TAIL_MARKER" in x), "")
+    return {"text": '{"items":[{"i":0,"org":"O","team":"t","project":"P1","confidence":80}]}', "cost": 0.0, "error": None}
+adapters.call = _capture_call
+LONG = "[repo:codex] " + ("alpha beta gamma " * 120) + " TAIL_MARKER_evidence_at_the_end"
+assert len(LONG) > 1500
+attribution.classify_items([{"id": "c", "text": LONG}], taxo, run=True)
+ck("classify_items sends the WHOLE item text (tail past the old 240 cut reaches the classifier)",
+   "TAIL_MARKER_evidence_at_the_end" in SENT.get("body", ""))
+
 print(("\n[FAIL] " if fails else "\n[OK] ") + f"attribution: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)
