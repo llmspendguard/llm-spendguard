@@ -4,6 +4,23 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.12.16] — 2026-10-10
+
+### Fixed
+- **Content-addressed dedup is now enforced at the DRAIN (consumer side), not only at enqueue.** The 0.12.15 dedup
+  only fired when the ENQUEUING process ran 0.12.15; measured 2026-10-10, the live enqueuers were long-lived
+  pre-0.12.15 processes in other venvs (honestreview, 7thsense) still inserting NULL-fingerprint rows that bypassed
+  it — 371 pending rows, all NULL-fp, 11 already duplicating a done result. New `lane_queue.dedup_pending_against_done()`
+  (1) BACKFILLS a NULL-fingerprint row's fingerprint from its OWN stored columns (intent/task/system/reasoning) and
+  (2) SETTLES any pending row whose fingerprint already has a completed result FROM that result ($0, `content-addressed-dedup`,
+  billed=0) instead of re-executing it. The drain calls it before leasing, throttled (`advisor.queue_dedup_interval_s`,
+  default 60s), so re-buy is prevented regardless of the enqueuer's version — un-regressable at the point of spend.
+  `lease` also claims at most ONE row per fingerprint, leaving same-fingerprint twins pending to be coalesced from the
+  leased row's result ($0) — closing the residual same-batch re-buy for pending-pending duplicates that have no done
+  result yet. The fingerprint is `SHA-256(intent, task, system, reasoning)` — verified to be exactly the content the
+  drain sends to `bulk_delegate` (the full task + system + reasoning), with `intent` kept because it selects the model
+  via routing, so a coalesce can never return a wrong answer. Guarded by `tests/test_queue_dedup_consumer_side.py`.
+
 ## [0.12.15] — 2026-10-09
 
 ### Added
