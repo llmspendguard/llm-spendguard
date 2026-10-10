@@ -369,6 +369,12 @@ SETTINGS = [
          desc="Cap for lane_queue_archive.jsonl. It is append-only; past this size purge rotates it to "
               "lane_queue_archive.jsonl.1 (one generation kept) so it cannot grow unbounded (it had reached 820MB, "
               "2026-10-08). 0 disables rotation."),
+    dict(section="advisor", key="queue_dedup_interval_s", store="config.json:advisor.queue_dedup_interval_s",
+         default=60.0, kind="float", secret=False,
+         desc="Minimum seconds between the drain's consumer-side content-addressed dedup passes "
+              "(dedup_pending_against_done: fingerprint NULL-fp rows from their own columns, then settle dups-of-done "
+              "from cache for $0). Enforced at the DRAIN so re-buy is prevented even when the ENQUEUER runs older code "
+              "that inserts NULL-fingerprint rows bypassing enqueue-time dedup (measured 2026-10-10). 0 = every cycle."),
     dict(section="advisor", key="lane_handshake_timeout_s", store="config.json:advisor.lane_handshake_timeout_s",
          default=25, kind="int", secret=False,
          desc="One-time warm-daemon startup/initialize handshake budget for a subscription lane CLI (codex / kimi / "

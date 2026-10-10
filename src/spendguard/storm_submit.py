@@ -38,8 +38,10 @@ def governed_realtime_executor(model, system, reasoning, intent, timeout_s):
     4b re-entry): a prompt->result callable that rides the REAL admission path (dispatch.admit → the cross-process rate
     window → _call_guarded), metered (skip the $0 lane), never substituted, and OUT of both re-entrant paths —
     `_route=False` (no queue-record recursion) and `_coalesce_eligible=False` (no 4b re-coalescing: the caller IS the
-    explicit fan / the coalescer's own leg). submit_storm sizes `timeout_s` from its deadline, storm_route from its
-    horizon — the only axis that differs, so it is the one parameter."""
+    explicit fan / the coalescer's own leg). submit_storm sizes `timeout_s` from its deadline; storm_route passes None
+    so adapters.call derives the real per-prompt deadline from deadline_for (the urgency horizon sizes realtime CAPACITY,
+    NOT a per-call reply deadline — using it as the timeout choked large replies → NO REPLY). `timeout_s` is the one
+    parameter that differs between the two doors."""
     from . import calls as _cre
     _who = (_cre.current() or {}).get("who")          # the ORIGINATING caller, captured HERE on the submitting thread
     #   (the executor is built during the caller's own adapters.call, where the app frame is on the stack). The

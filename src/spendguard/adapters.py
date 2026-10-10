@@ -1287,7 +1287,30 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
         _routed_result = _sr.route(model, prompt, intent or sig, system=system, reasoning=reasoning)
         if _routed_result is not None:
             _sig_ctx._local.ctx = _ctx_before            # returning early — restore the caller's context exactly
-            return _routed_result
+            # A SUCCESS routes home. A coalescer ERROR ({text:None}/error set — e.g. a NO-REPLY) must NOT be returned as
+            # a COMPLETED call: the coalescer already spent (its realtime leg and/or the batch divert BILLED), so
+            # re-running it below would DOUBLE-SPEND — but returning it with no ledger record is the "failure recorded
+            # NOWHERE" hole (and lets a caller miscount a NO-REPLY as a completed/empty answer). So RECORD it as a FAILED
+            # outcome here (same forensic path as the tail of this function) and return it as the failure it is.
+            if _routed_result.get("text") and not _routed_result.get("error"):
+                return _routed_result                    # genuine success → home
+            if not _no_guard and not _probe and _routed_result.get("error"):
+                try:
+                    from . import vendor_call as _vcr, calls as _rcr
+                    _oc_r, _ = _vcr._classify(_routed_result)
+                    _rcr.record_call(_routed_result.get("provider") or provider_for(model),
+                                     _routed_result.get("model") or model, "realtime",
+                                     float(_routed_result.get("cost") or 0.0), in_tok=_routed_result.get("in_tok") or 0,
+                                     out_tok=_routed_result.get("out_tok") or 0, latency=_routed_result.get("latency"),
+                                     finish=_routed_result.get("finish_reason"), executor=_routed_result.get("executor"),
+                                     effort=_routed_result.get("chosen_effort"), outcome=_oc_r,
+                                     http_status=_routed_result.get("status_code"),
+                                     provider_error=_routed_result.get("provider_error"),
+                                     retry_after=_routed_result.get("retry_after"), attempts=_routed_result.get("attempts"),
+                                     disposition="failed", fell_from=_routed_result.get("fell_from"))
+                except Exception:
+                    pass
+            return _routed_result                        # the error is now RECORDED + surfaced — never a silent completed call
     _managed = (not _governed and not _no_guard and not _probe and bool(intent or sig)
                 and not dispatch.holding() and _manage_all_enabled())
     if (_governed or _managed) and not _no_guard:

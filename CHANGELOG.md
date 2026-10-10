@@ -4,6 +4,36 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.12.16] — 2026-10-10
+
+### Fixed
+- **Storm coalescer no longer chokes large replies into NO-REPLY.** `storm_route` sized the realtime executor's per-call
+  timeout from the 30s urgency HORIZON, so a reply that legitimately took longer was killed, rerouted to batch, and came
+  back `text=None` (measured 2026-10-10 — a graph-vs-text bakeoff's text arm hit NO-REPLY on exactly its large replies).
+  The horizon sizes realtime CAPACITY, not a per-call reply deadline; the executor now gets `timeout_s=None` so
+  `adapters.call` derives the real per-prompt, output-budget-aware deadline from `deadline_for` (which sizes up for a
+  large expected reply).
+- **A coalescer error is no longer returned as a COMPLETED call.** `adapters.call` returned every non-None routed result
+  early, bypassing failure-ledger recording — a NO-REPLY (`text=None`/error) looked like a completed (empty) call and was
+  recorded nowhere. Now a routed SUCCESS returns home; a routed ERROR is recorded as a `disposition='failed'` outcome and
+  returned as the failure it is — never re-run (double-spend-safe: the coalescer already billed), never counted as
+  completed. (The two original "cannot-tell" review flags — `bulk_delegate` metered-on-saturation and `vendor_call`
+  persistent-401-retried — were audited and are NOT bugs: saturation returns an unbilled miss, and 401 is classified
+  permanent `PAYLOAD_REJECTED`.) Guarded by `tests/test_storm_coalescer_timeout_and_failure.py`.
+- **Content-addressed dedup is now enforced at the DRAIN (consumer side), not only at enqueue.** The 0.12.15 dedup
+  only fired when the ENQUEUING process ran 0.12.15; measured 2026-10-10, the live enqueuers were long-lived
+  pre-0.12.15 processes in other venvs (honestreview, 7thsense) still inserting NULL-fingerprint rows that bypassed
+  it — 371 pending rows, all NULL-fp, 11 already duplicating a done result. New `lane_queue.dedup_pending_against_done()`
+  (1) BACKFILLS a NULL-fingerprint row's fingerprint from its OWN stored columns (intent/task/system/reasoning) and
+  (2) SETTLES any pending row whose fingerprint already has a completed result FROM that result ($0, `content-addressed-dedup`,
+  billed=0) instead of re-executing it. The drain calls it before leasing, throttled (`advisor.queue_dedup_interval_s`,
+  default 60s), so re-buy is prevented regardless of the enqueuer's version — un-regressable at the point of spend.
+  `lease` also claims at most ONE row per fingerprint, leaving same-fingerprint twins pending to be coalesced from the
+  leased row's result ($0) — closing the residual same-batch re-buy for pending-pending duplicates that have no done
+  result yet. The fingerprint is `SHA-256(intent, task, system, reasoning)` — verified to be exactly the content the
+  drain sends to `bulk_delegate` (the full task + system + reasoning), with `intent` kept because it selects the model
+  via routing, so a coalesce can never return a wrong answer. Guarded by `tests/test_queue_dedup_consumer_side.py`.
+
 ## [0.12.15] — 2026-10-09
 
 ### Added
