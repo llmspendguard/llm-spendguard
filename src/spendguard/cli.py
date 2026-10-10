@@ -77,6 +77,7 @@ _GROUPS = [
         ("keys-audit", "scan repo .env files for a provider key that would SHADOW the keys.env SSOT (the stale-shadow 401 doctor can't see)"),
         ("deploy", "run the full gate, then promote committed HEAD → green pointer (running MCP servers roll onto latest+best)"),
         ("release", "what THIS process serves vs the green pointer — are the MCP servers on the latest? (--json)"),
+        ("fleet", "the running spendguard consumers + which are STALE vs the green pointer (--restart restarts them, --json)"),
         ("pricing", "print the canonical price table"),
         ("audit", "fail CI if any code hardcodes a disagreeing price"),
         ("token-caps", "list every hardcoded output-token cap; --judge rules on the unjudged ones"),
@@ -299,6 +300,40 @@ def _dispatch(argv=None):
             rec = _rel.promote_release(gate=gate_desc, allow_dirty=_allow_dirty)
         print(f"deploy: 🟢 promoted {rec['short']} ({rec['describe']}) → green pointer  [{rec['gate']}]")
         print("        already-running MCP servers serve it on their next request (they hand off between requests).")
+        # UPDATE PROPAGATION: the MCP fleet self-respawns onto the green commit, but OTHER long-lived consumers
+        # (7thsense/honestreview daemons, the drain) load spendguard ONCE at startup and would keep running stale code
+        # (measured 2026-10-10: pre-fix daemons false-fired the codex toast for days). Restart the launchd-MANAGED
+        # stale consumers now (they respawn onto latest); WARN loudly about any that are NOT supervised (never kill a
+        # process we cannot bring back). `--no-restart` skips this.
+        if "--no-restart" not in r:
+            from . import fleet as _fleet
+            _fr = _fleet.restart_stale(apply=True)
+            for _x in _fr.get("restarted", []):
+                print(f"deploy: fleet — {_x.get('action')} {_x.get('launchd_label')} (pid {_x.get('pid')})")
+            for _w in _fr.get("warn", []):
+                print(f"deploy: ⚠ STALE consumer pid {_w.get('pid')} — {_w.get('why')}: {str(_w.get('cmdline'))[:60]}",
+                      file=sys.stderr)
+            if not _fr.get("restarted") and not _fr.get("warn"):
+                print("deploy: fleet — all tracked consumers already on the green commit.")
+        return 0
+    if cmd == "fleet":                                # the running spendguard consumers + which are STALE vs green
+        import json as _json
+        from . import fleet as _fleet
+        if "--restart" in rest:
+            res = _fleet.restart_stale(apply="--dry-run" not in rest)
+            print(_json.dumps(res, indent=2))
+            return 0
+        summ = _fleet.fleet_summary()
+        if "--json" in rest:
+            print(_json.dumps(summ, indent=2, default=str))
+            return 0
+        print(f"spendguard fleet — green pointer {summ['green']}; {summ['n']} live consumer(s), {summ['stale']} STALE")
+        for c in summ["consumers"]:
+            tag = "STALE" if c.get("stale") else ("?" if c.get("stale") is None else "ok")
+            print(f"  [{tag:<5}] pid {c['pid']:<7} v{c.get('version')} @{c.get('served_short') or '—'}"
+                  f"{' (dirty)' if c.get('dirty') else ''}  {str(c.get('cmdline'))[:60]}")
+        if summ["stale"]:
+            print("  → `spendguard fleet --restart` restarts the launchd-managed stale ones; others need a manual restart.")
         return 0
     if cmd == "release":                              # read-only: what THIS process serves vs the green pointer
         import json as _json
