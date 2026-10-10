@@ -132,7 +132,13 @@ def get_coalescer(vendor, model, intent, system=None, reasoning="minimal", horiz
         c = _REG.get(key)
         if c is None:
             c = StormCoalescer(
-                execute_realtime=governed_realtime_executor(model, system, reasoning, intent, horizon_s),
+                # The urgency HORIZON sizes realtime CAPACITY (rate × horizon) — it is NOT a per-call reply deadline.
+                # Passing it as the executor's timeout_s killed any realtime reply that legitimately took longer than the
+                # horizon (default 30s), which then rerouted to batch and came back text=None — the measured "coalescer
+                # chokes on LARGE replies → NO REPLY" (2026-10-10). Pass None so the executor's adapters.call derives the
+                # real per-prompt deadline from deadline_for (output-budget-aware: it sizes UP for a large expected
+                # reply). Horizon stays below for capacity sizing only.
+                execute_realtime=governed_realtime_executor(model, system, reasoning, intent, None),
                 execute_batch=default_batch_executor(model, intent, system=system, reasoning=reasoning),
                 sustainable_rate_per_s=rate, horizon_s=horizon_s, provider=vendor)
             _REG[key] = c
