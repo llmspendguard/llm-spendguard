@@ -929,6 +929,11 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                     status_code (HTTP status if any), provider_error (the real response BODY, not the one-line
                     str), cause (the underlying error behind a generic wrapper — 'Connection error.' ←
                     'ConnectTimeout'), retry_after (seconds, if the provider sent one)."""
+    try:
+        from . import fleet as _fleet            # UPDATE PROPAGATION: track this consumer's loaded code so a deploy can
+        _fleet.register_consumer()               #   see + restart it if it is stale. Once-per-process (cheap no-op after); never raises.
+    except Exception:
+        pass
     # metered_only FORCES the exact model on the metered API, so it must ALSO pin the model: a substitution (best-value,
     # or a lane-bandit swap) would silently route to a DIFFERENT vendor's $0 lane, defeating BOTH the model choice and
     # the metered intent. That is the measured warden:tag_provenance_xcheck bypass — metered_only=True still yielded

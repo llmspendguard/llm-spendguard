@@ -120,6 +120,28 @@ def should_respawn():
     return bool(g and head and g.get("sha") == head)
 
 
+def exit_if_stale(log=None):
+    """SELF-HEAL for any long-lived spendguard consumer: if this process is running code older than the green pointer
+    AND exiting would land a fresh process on green (should_respawn), EXIT so the process's supervisor (launchd
+    KeepAlive, an MCP client, a run loop) respawns it onto the latest code. The one-liner that generalises the MCP
+    fleet's auto-respawn to any daemon — call it periodically or between units of work. Returns False when NOT stale
+    (so a caller can `if release.exit_if_stale(): ...` defensively); never returns True (it exits first). A daemon that
+    is NOT supervised should NOT call this (nothing would restart it); it appears in `fleet.restart_stale`'s warn list
+    instead. $0, never raises except the deliberate SystemExit."""
+    try:
+        if not should_respawn():
+            return False
+        if log:
+            try:
+                log("[spendguard] exit_if_stale: running %s, green is %s — exiting to respawn on the latest code"
+                    % ((served_sha() or {}).get("short"), (green_pointer() or {}).get("short")))
+            except Exception:
+                pass
+    except Exception:
+        return False
+    raise SystemExit(0)                               # supervisor respawns → fresh process serves the green commit
+
+
 def promote_release(sha=None, *, describe=None, gate="", actor="deploy", allow_dirty=False):
     """Advance the green pointer to `sha` (default: current HEAD). Refuses a dirty working tree unless
     allow_dirty (the pointer must name COMMITTED code), and refuses a sha git cannot resolve. Does NOT run the

@@ -4,6 +4,26 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.12.17] — 2026-10-10
+
+### Added
+- **Update propagation — every long-lived spendguard consumer gets onto the latest code.** A long-lived process loads
+  spendguard once at startup and runs that code until it restarts; a later `pip install` / PyPI release / green-pointer
+  promotion does NOT touch it (measured 2026-10-10: pre-fix 7thsense daemons false-fired the codex "LOGGED OUT" toast
+  for DAYS after the fix shipped, because they had loaded the old `codex_exec` at startup — the real reason "fixed"
+  bugs kept recurring). New `fleet.py` registry built on `release.served_sha()` (the EXACT commit a process imported,
+  not a start-time guess):
+  - `fleet.register_consumer()` — each process self-registers (pid, version, served_sha, cmdline) on its first LLM
+    call (wired into `adapters.call`) and from daemon entrypoints; once per process, never raises.
+  - `fleet.running_consumers()` — the live fleet, each flagged STALE when its served_sha != the green pointer; dead
+    pids pruned on read.
+  - `fleet.restart_stale()` — `launchctl kickstart -k` the stale launchd-MANAGED consumers (they respawn onto latest);
+    an unsupervised stale process is WARNed, never killed.
+  - `spendguard deploy` now calls `restart_stale(apply=True)` after promoting (so one deploy reloads the whole estate,
+    not just the self-respawning MCP fleet); `spendguard fleet [--restart] [--json]` shows/acts on it; and
+    `release.exit_if_stale()` lets any daemon self-exit→respawn (generalises the MCP fleet's auto-respawn).
+  Guarded by `tests/test_fleet_update_propagation.py`.
+
 ## [0.12.16] — 2026-10-10
 
 ### Fixed
