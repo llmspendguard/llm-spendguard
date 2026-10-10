@@ -304,6 +304,56 @@ def enqueue_many(intent, tasks, system=None, reasoning=None, priority=0, max_att
         return []
 
 
+def dedup_pending_against_done(chunk=5000):
+    """CONSUMER-SIDE content-addressed dedup, enforced by the DRAIN (which always runs current code) so it holds even
+    when the ENQUEUER runs OLDER code that inserts NULL-fingerprint rows bypassing enqueue-time dedup. Measured
+    2026-10-10: 371 pending rows were all NULL-fp, enqueued post-restart by long-lived pre-0.12.16 processes in other
+    venvs (honestreview, 7thsense) — so enqueue-time dedup alone could not close the re-buy; 11 already duplicated a
+    done result. The fix does not depend on every enqueuer rolling: the fingerprint is computable from the row's OWN
+    stored columns, so the drain re-derives it and dedups at the point of spend. Two steps, both $0, no LLM:
+      1) BACKFILL — compute each NULL-fingerprint row's fingerprint from (intent, task, system, reasoning) and store it
+         (bounded chunks → short write txns), so dedup/coalescing can address it;
+      2) SETTLE-FROM-DONE — settle any PENDING row whose fingerprint already has a completed DONE result FROM that
+         result (state=done, lane='content-addressed-dedup', billed=0) instead of re-executing it on drain.
+    Returns {fingerprinted, settled}. Best-effort — a dedup hiccup must never block draining; a deliberate spend/lock
+    stop still propagates."""
+    fingerprinted = settled = 0
+    try:
+        # 1) BACKFILL null fingerprints from each row's own columns, in bounded chunks (short write txns)
+        while True:
+            with _queue_op() as c:
+                rows = c.execute("SELECT id, intent, task, system, reasoning FROM lane_queue "
+                                 "WHERE fingerprint IS NULL LIMIT ?", (int(chunk),)).fetchall()
+                if not rows:
+                    break
+                c.executemany("UPDATE lane_queue SET fingerprint=? WHERE id=?",
+                              [(_fingerprint(r[1], r[2], r[3], r[4]), r[0]) for r in rows])
+                c.commit()
+                fingerprinted += len(rows)
+            if len(rows) < int(chunk):
+                break
+        # 2) SETTLE every PENDING row whose fingerprint already has a DONE result — from that result, $0. One set-wise
+        #    UPDATE with a correlated subquery (fingerprint is indexed), so a deep backlog stays cheap.
+        now = _iso(_utcnow())
+        with _queue_op() as c:
+            cur = c.execute(
+                "UPDATE lane_queue SET "
+                "  result=(SELECT d.result FROM lane_queue d WHERE d.fingerprint=lane_queue.fingerprint "
+                "          AND d.state='done' AND d.result IS NOT NULL AND d.result!='' LIMIT 1), "
+                "  state='done', lane='content-addressed-dedup', billed=0, lease_until=NULL, defer_until=NULL, "
+                "  updated_ts=? "
+                "WHERE state='pending' AND fingerprint IS NOT NULL AND EXISTS ("
+                "  SELECT 1 FROM lane_queue d WHERE d.fingerprint=lane_queue.fingerprint AND d.state='done' "
+                "          AND d.result IS NOT NULL AND d.result!='')", (now,))
+            settled = cur.rowcount
+            c.commit()
+    except Exception as _e:
+        from . import provider_tokens as _pt                  # CANONICAL stop-or-locked predicate (same as settle)
+        if _pt._stop_or_locked(_e):
+            raise                                             # spend refusal / ledger LOCK propagates — never swallowed
+    return {"fingerprinted": fingerprinted, "settled": settled}
+
+
 def lease(n, worker=None, lease_s=None):
     """Atomically claim up to `n` pending tasks of the MOST URGENT pending intent — SLA/priority order: highest
     priority, then REALTIME before batch, then the tightest SLA deadline (deadline_ts asc, nulls last), then oldest —
@@ -343,9 +393,22 @@ def lease(n, worker=None, lease_s=None):
                     c.execute("COMMIT")
                     return []
                 intent = top[0]
-                rows = c.execute("SELECT id,intent,task,system,reasoning,sla_class FROM lane_queue "
+                cand = c.execute("SELECT id,intent,task,system,reasoning,sla_class,fingerprint FROM lane_queue "
                                  "WHERE state='pending' AND intent=? AND " + _ready + " ORDER BY " + _ORDER
                                  + " LIMIT ?", (intent, now, n)).fetchall()
+                # DEDUP WITHIN THE BATCH: lease at most ONE row per fingerprint. A same-fingerprint TWIN is left
+                # pending — settle() coalesces it from the leased row's result ($0) — so the drain never executes
+                # byte-identical work twice in one batch (the residual re-buy that pending-pending duplicates would
+                # otherwise cause; enqueue-dedup + settle-from-done close the other paths). A NULL fingerprint (not
+                # yet backfilled) is treated as DISTINCT — never coalesced on uncertainty.
+                rows, _seen_fp = [], set()
+                for r in cand:
+                    fp = r[6]
+                    if fp is not None:
+                        if fp in _seen_fp:
+                            continue
+                        _seen_fp.add(fp)
+                    rows.append(r)
                 for r in rows:
                     c.execute("UPDATE lane_queue SET state='leased', lease_until=?, attempts=attempts+1, "
                               "worker=?, updated_ts=? WHERE id=?", (until, worker, now, r[0]))
@@ -1014,6 +1077,7 @@ def _drain_locked(worker, batch, lease_s, idle_rounds, idle_sleep, load_ceiling,
     s = {"ran": 0, "done": 0, "failed": 0, "billed": 0, "by_lane": {}, "rounds": 0}
     idle = iters = 0
     _last_poll = 0.0                                                     # throttle for the batch_tracker poll (below)
+    _last_dedup = 0.0                                                    # throttle for the consumer-side dedup (below)
     while True:
         iters += 1
         if max_iters is not None and iters > int(max_iters):
@@ -1031,6 +1095,24 @@ def _drain_locked(worker, batch, lease_s, idle_rounds, idle_sleep, load_ceiling,
             if idle_sleep > 0:
                 time.sleep(idle_sleep)                                  # machine thrashing → hold off leasing, re-check
             continue
+        # CONSUMER-SIDE DEDUP (before leasing): fingerprint NULL-fp rows (old-enqueuer inserts) and settle
+        # dups-of-done from cache ($0), so the drain NEVER re-buys finished work regardless of the enqueuer's version.
+        # THROTTLED (queue.dedup_interval_s, default 60s) — cheap when idle (empty backfill + no-match UPDATE), runs on
+        # iteration 1 (covers a bounded foreground drain) and periodically (covers a long daemon's arriving rows). A
+        # deliberate spend/lock stop propagates; any other hiccup never blocks draining.
+        if time.time() - _last_dedup >= float(_qcfg("queue_dedup_interval_s", 60.0)):
+            _last_dedup = time.time()
+            try:
+                _dd = dedup_pending_against_done()
+                if _dd.get("settled") or _dd.get("fingerprinted"):
+                    import sys as _sysdd
+                    print("[spendguard] drain: content-addressed dedup — fingerprinted %d, settled-from-cache %d "
+                          "(no re-buy)" % (_dd.get("fingerprinted", 0), _dd.get("settled", 0)),
+                          file=_sysdd.stderr, flush=True)
+            except Exception as _dde:
+                from . import gate as _gdd
+                if _gdd.is_deliberate_stop(_dde):
+                    raise
         rows = lease(batch, worker=worker, lease_s=lease_s)
         if not rows:
             idle += 1
