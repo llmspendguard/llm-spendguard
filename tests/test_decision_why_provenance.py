@@ -49,5 +49,33 @@ if row2:
     ck("requested=nano, chosen=sol (the failover is visible)",
        row2[2] == "openai:gpt-5.4-nano" and row2[3] == "openai:gpt-5.6-sol")
 
+print("-- decisions_since PROJECTS `why` (dropping it silently blinded shed reporting to zero) --")
+ck("decisions_since rows carry `why` (read projection includes the ALTER-added column)",
+   any("why" in d and d.get("why") for d in guard.decisions_since()))
+
+print("-- shed_summary classifies plan-admission sheds by reason; bandit routes are NOT sheds --")
+# overage shed served FREE → avoided REAL money; a quota + a proactive shed → quota preserved (NOT real money);
+# a bandit route (seeded above) must be EXCLUDED (not a plan-admission shed).
+guard.record_decision(intent="x", requested_model="anthropic:claude-opus-4-8", chosen_model="openai:gpt-5.6-sol",
+                      counterfactual_usd=0.40, actual_usd=0.0, saved_usd=0.0, basis="advisor",
+                      why="plan paid-overage admission → ready lane (substitutable, no confirmed substitute)")
+guard.record_decision(intent="x", requested_model="anthropic:claude-opus-4-8", chosen_model="gemini:gemini-3.8-flash",
+                      counterfactual_usd=0.10, actual_usd=0.0, saved_usd=0.0, basis="advisor",
+                      why="proactive shed (advisor.shed_lanes) → ready lane (substitutable, no confirmed substitute)")
+guard.record_decision(intent="x", requested_model="anthropic:claude-opus-4-8", chosen_model="zai:glm-5.3",
+                      counterfactual_usd=0.05, actual_usd=0.0, saved_usd=0.0, basis="advisor",
+                      why="plan quota admission (3% remaining)")
+s = guard.shed_summary()
+ck("the bandit/lane-balance rows are NOT counted as sheds (only 3 admission sheds)", s["n_sheds"] == 3)
+ck("avoided_overage_usd = ONLY the overage class served free ($0.40), not quota/proactive",
+   abs(s["avoided_overage_usd"] - 0.40) < 1e-9)
+ck("quota_preserved_usd = quota + proactive ($0.15), kept on a SEPARATE axis from avoided_overage",
+   abs(s["quota_preserved_usd"] - 0.15) < 1e-9)
+ck("avoided and preserved are NEVER summed into one number (distinct keys)",
+   "avoided_overage_usd" in s and "quota_preserved_usd" in s and s["avoided_overage_usd"] != s["quota_preserved_usd"])
+ck("by_route shows the shed-from → shed-to lane (claude-code → the ready lane)",
+   all(r["from_lane"] == "claude-code" for r in s["by_route"]) and {r["to_lane"] for r in s["by_route"]} == {"codex", "gemini", "zai-coding"})
+ck("Σ by_route.n == n_sheds (nothing dropped)", sum(r["n"] for r in s["by_route"]) == s["n_sheds"])
+
 print(f"\n{'[FAIL]' if _fails else 'OK'} test_decision_why_provenance: {len(_fails)} failure(s)")
 sys.exit(1 if _fails else 0)

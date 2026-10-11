@@ -139,8 +139,11 @@ def savings_crosscheck(baseline_usd, since=None):
 # per-decision twin: one row per SUBSTITUTION — what the caller WOULD have run vs what spendguard chose, and the $
 # delta at the tokens actually used. It makes the value PROVABLE (every saved dollar traces to intent +
 # requested→chosen model+effort) rather than an anonymous aggregate; it is also exactly the record the learner reads.
+# `why` is LAST because it is an ALTER-added column (older DBs have it after the 12 base columns); the read
+# projection must include it — dropping it blinded every reader to the routing reason (shed classification read None
+# for `why` and reported zero sheds until this was fixed).
 _DECISION_COLS = ("ts", "day", "project", "intent", "basis", "requested_model", "requested_effort",
-                  "chosen_model", "chosen_effort", "counterfactual_usd", "actual_usd", "saved_usd")
+                  "chosen_model", "chosen_effort", "counterfactual_usd", "actual_usd", "saved_usd", "why")
 
 
 def _decisions_db():
@@ -215,3 +218,68 @@ def decisions_summary(since=None):
         b["saved_usd"] = round(b["saved_usd"], 4)
     return {"decisions": len(rows), "saved_usd": round(total, 4),
             "by_intent": sorted(by_intent.values(), key=lambda x: x["saved_usd"], reverse=True)}
+
+
+# ── shed EFFECTIVENESS (read-side) ───────────────────────────────────────────
+# Every plan-admission shed already books a decision row (adapters._book_substitution: substituted_from = the lane's
+# model the caller would have run, chosen = the ready alternative, counterfactual_usd = that baseline priced at the
+# tokens ACTUALLY used, actual_usd = 0 when served free, why = the admission reason). This reads those rows and
+# reports the shed — no new booking in the hot path (no double-count risk). The reason CLASS is parsed from the
+# fixed-format string plan_admission._admission_base_reason emits (mechanical extraction of spendguard's own literal,
+# not a meaning decision): 'paid-overage' = REAL money avoided (the plan would have billed overage); 'quota'/
+# 'proactive' = quota PRESERVED (staying was within plan → $0, so NOT real money — a separate axis, never summed).
+_SHED_CLASS = (("plan paid-overage admission", "overage"),
+               ("proactive shed", "proactive"),
+               ("plan quota admission", "quota"))
+
+
+def _shed_class(why):
+    """The admission class of a decision's `why`, or None if it is not a plan-admission shed (bandit/best-value/tier
+    routing). Prefix-matches the literals _admission_base_reason emits — a fixed format, not a judgement."""
+    w = str(why or "")
+    for prefix, cls in _SHED_CLASS:
+        if w.startswith(prefix):
+            return cls
+    return None
+
+
+def shed_summary(since=None):
+    """Shed effectiveness from the decision ledger: which lanes work was shed OFF, onto which READY lane, how much
+    REAL overage $ that avoided, and how much quota it preserved — the proof the shed is working, per route.
+
+    Returns {n_sheds, avoided_overage_usd, quota_preserved_usd, served_free_n, paid_n, by_route:[{from_lane, to_lane,
+    class, n, served_free_n, counterfactual_usd}]}. avoided_overage_usd sums ONLY the 'overage' class served free (the
+    one case shedding saves REAL money — a plan on paid overage would have billed); quota_preserved_usd sums the
+    'quota'/'proactive' classes (est-value moved to another free lane, NOT real money) — kept on a SEPARATE axis so
+    the two are never blurred (the same split the cost doctrine requires for billed vs est-value)."""
+    from . import adapters
+    def _lane_of(model):
+        try:
+            return adapters._LANES.get(adapters.provider_for(model), (None,))[0] or adapters.provider_for(model)
+        except Exception:
+            return model
+    by_route, n, avoided, preserved, free_n, paid_n = {}, 0, 0.0, 0.0, 0, 0
+    for d in decisions_since(since):
+        cls = _shed_class(d.get("why"))
+        if cls is None:
+            continue
+        n += 1
+        cf = float(d.get("counterfactual_usd") or 0.0)
+        served_free = float(d.get("actual_usd") or 0.0) <= 0.0
+        free_n += 1 if served_free else 0
+        paid_n += 0 if served_free else 1
+        if cls == "overage" and served_free:
+            avoided += cf
+        elif cls in ("quota", "proactive"):
+            preserved += cf
+        key = (_lane_of(d.get("requested_model")), _lane_of(d.get("chosen_model")), cls)
+        b = by_route.setdefault(key, {"from_lane": key[0], "to_lane": key[1], "class": cls,
+                                      "n": 0, "served_free_n": 0, "counterfactual_usd": 0.0})
+        b["n"] += 1
+        b["served_free_n"] += 1 if served_free else 0
+        b["counterfactual_usd"] += cf
+    for b in by_route.values():
+        b["counterfactual_usd"] = round(b["counterfactual_usd"], 6)
+    return {"n_sheds": n, "avoided_overage_usd": round(avoided, 6), "quota_preserved_usd": round(preserved, 6),
+            "served_free_n": free_n, "paid_n": paid_n,
+            "by_route": sorted(by_route.values(), key=lambda x: x["counterfactual_usd"], reverse=True)}

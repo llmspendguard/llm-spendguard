@@ -844,10 +844,10 @@ def _dispatch(argv=None):
         return realized.main()
     if cmd == "savings":                              # the 3rd axis: what spendguard SAVED (measured + counterfactual)
         from . import guard as _g
-        s, ds = _g.saved_since(), _g.decisions_summary()
+        s, ds, shed = _g.saved_since(), _g.decisions_summary(), _g.shed_summary()
         if "--json" in rest:
             import json as _j
-            print(_j.dumps({"saved": s, "decisions": ds}, indent=2, default=str))
+            print(_j.dumps({"saved": s, "decisions": ds, "shed": shed}, indent=2, default=str))
             return 0
         print("spendguard SAVINGS — a THIRD axis, kept SEPARATE from real-$ and est-value (never summed into either):")
         print(f"  certain (measured)     ${s.get('certain', 0):.2f}")
@@ -859,6 +859,14 @@ def _dispatch(argv=None):
         print(f"  decisions booked: {ds.get('decisions', 0)}  (best-value / advisor swaps, each priced vs its counterfactual)")
         for row in (ds.get("by_intent") or [])[:8]:
             print(f"    {str(row.get('intent', '?'))[:44]:44} {row.get('decisions', 0):>5} dec  ${row.get('saved_usd', 0):.2f}")
+        if shed.get("n_sheds"):
+            print(f"\n  SHED — substitutable work routed OFF a capped/overage/shed lane ({shed['n_sheds']} sheds, "
+                  f"{shed.get('served_free_n', 0)} served free · {shed.get('paid_n', 0)} paid):")
+            print(f"    avoided overage  ${shed.get('avoided_overage_usd', 0):.4f}  (REAL money — a plan on paid overage would have billed)")
+            print(f"    quota preserved  ${shed.get('quota_preserved_usd', 0):.4f}  (est-value moved to another free lane — NOT real money, separate axis)")
+            for r in (shed.get("by_route") or [])[:6]:
+                print(f"    {str(r['from_lane'])[:14]:14} → {str(r['to_lane'])[:14]:14} {r['class']:9} "
+                      f"{r['n']:>4} sheds  ${r['counterfactual_usd']:.4f}")
         return 0
     if cmd == "tokens":                               # per-provider token factors: `tokens show` / `tokens calibrate` ($0)
         from . import provider_tokens
