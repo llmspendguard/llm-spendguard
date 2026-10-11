@@ -270,6 +270,19 @@ SETTINGS = [
          env="SPENDGUARD_PLAN_ADMISSION_REMAINING_PCT", default=0.0, kind="float", secret=False,
          desc="Refuse or redirect labelled, substitutable adapters.call traffic when its plan lane has at most this "
               "percentage remaining. Paid overage always activates admission. 0 means enforce at the plan boundary."),
+    dict(section="plan_admission", key="availability_fallback", store="config.json:plan_admission.availability_fallback",
+         default=True, kind="bool", secret=False,
+         desc="When a capped/shed-from plan has NO pre-confirmed substitute for a SUBSTITUTABLE call, serve it on the "
+              "best ready ALTERNATIVE lane (availability-based) instead of refusing. The proven substitute is still "
+              "preferred; this is the fallback. False restores the conservative proven-only posture (a call errors when "
+              "no proven substitute exists). Pinned/measurement calls are unaffected (they never reach plan admission)."),
+    dict(section="advisor", key="shed_lanes", store="config.json:advisor.shed_lanes", env="SPENDGUARD_SHED_LANES",
+         default="", kind="str", secret=False,
+         desc="Comma list of lanes to PROACTIVELY shed substitutable work off — treated as at-risk even when NOT "
+              "capped, so work routes to the other free lanes to preserve this plan's quota (e.g. 'claude-code' to keep "
+              "the weekly window for the agent). Provider-agnostic. A proactively-shed lane that has no ready "
+              "alternative KEEPS serving (it is available — shedding is a preference, not exhaustion). Empty = shed only "
+              "when actually capped/on overage."),
     dict(section="advisor", key="executor", store="config.json:advisor.executor", env="SPENDGUARD_ADVISOR_EXECUTOR",
          default="api", kind="enum:api,claude-code,codex,zai-coding,pool", secret=False,
          desc="Where spendguard's OWN meta prompts run: api = metered API under caps.meta (default); "

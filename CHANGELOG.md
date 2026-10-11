@@ -4,6 +4,26 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.12.18] — 2026-10-10
+
+### Fixed
+- **Shedding a capped/shed-from plan is now availability-based and provider-agnostic — no learning-gate, no bandaid.**
+  `plan_admission.decide()` only redirected a capped plan's SUBSTITUTABLE call to a *pre-confirmed* substitute, so an
+  **unproven** intent on a capped plan **errored** ("no confirmed READY substitute"); and `_ready()` excluded every
+  lane whose CLI has no status probe (gemini/zai/kimi read `auth='unknown'`), leaving only codex able to absorb a shed
+  (measured 2026-10-10 under claude-code paid overage). The proper fix:
+  - `_ready()` is **optimistic**: `'ok'` AND `'unknown'` are try-able; only a confirmed-down / missing / unreadable
+    lane is excluded (an unknown lane that is actually down fails over via the reactive ladder).
+  - `decide()` prefers a proven substitute, but with none it **serves the call on the best ready ALTERNATIVE lane**
+    (shared `_best_ready_alt_lane`, the same availability core `ready_meta_model` uses, ranked by headroom/least-loaded)
+    rather than refusing. It refuses ONLY when nothing ready can serve. Config-gated by
+    `plan_admission.availability_fallback` (default on).
+  - `advisor.shed_lanes` — **proactively** shed off ANY provider (listed lane treated as at-risk even when not capped,
+    to preserve its quota). A proactively-shed lane with no ready alternative **keeps** serving (it is available —
+    shedding is a preference, not exhaustion); a truly capped lane refuses.
+  Pinned / `no_substitution` / measurement calls never reach `decide()` (the `not _caller_model_pin` gate in
+  `adapters.call`), so the exact-model contract is unchanged. Guarded by `tests/test_shed_availability_routing.py`.
+
 ## [0.12.17] — 2026-10-10
 
 ### Added
