@@ -111,10 +111,13 @@ def rank_lanes(rows, cooling=None, now=None, pace_by=None, protect=None):
             pace_by = {}
     if protect is None:
         protect = _protect_policy()
+    from . import config
+    shed = config.shed_lanes()   # SSOT shared with plan_admission — the operator's "route discretionary work OFF these"
     # WATER-FILL normalizer: the largest ABSOLUTE tokens-left across these lanes, so remaining_abs becomes a fraction
     # comparable to remaining_pct. None when no lane has a measured cap yet → every lane falls back to its own %.
     abs_norm = max((float(r["remaining_abs"]) for r in rows if r.get("remaining_abs") is not None), default=None)
     out = []
+    shed_held = []   # refs to entries held ONLY by the proactive shed — re-admittable below (never leaks into the return)
     for r in rows:
         pc = (pace_by or {}).get(r["lane"])
         base = {"lane": r["lane"], "provider": r.get("provider"), "remaining_pct": r.get("remaining_pct"),
@@ -125,6 +128,19 @@ def rank_lanes(rows, cooling=None, now=None, pace_by=None, protect=None):
         if pc is not None and pc < 0 and protect(r["lane"]):
             out.append({**base, "available": False, "score": None,
                         "why": f"protected + ahead of pace ({pc:+.2f}) — held for its own window"})
+            continue
+        # PROACTIVE SHED — the operator marked this lane in advisor.shed_lanes: hold it out of discretionary routing
+        # REGARDLESS of pace, so substitutable work goes to the OTHER free lanes (shed semantics differ from pace-
+        # protect, which only holds a lane that is AHEAD of pace — a behind-pace shed lane was still ranked #1, which
+        # DEFEATED the shed for every fungible/bandit call; this is that fix). It is a PREFERENCE, not a hard cap: the
+        # lane keeps its real score and is re-admitted below iff NO other lane can serve (never force fungible work to
+        # paid metered when a free — if shed — lane could serve). A shed lane that is ALSO cooling/window-capped stays
+        # held by those rules above (it genuinely cannot serve). Window-cap (truly exhausted) still takes precedence.
+        if r["lane"] in shed:
+            entry = {**base, "available": False, "score": lane_score(r, now, abs_norm=abs_norm, pace=pc),
+                     "why": "shed (advisor.shed_lanes) — discretionary work routed to other free lanes"}
+            out.append(entry)
+            shed_held.append(entry)   # tracked locally so the re-admit never needs a key on the returned dict
             continue
         # HARD CAP at the window boundary — the enforcement the pace NUDGE lacks. A lane at/below its reserve of
         # remaining capacity is SHED, so 'use each plan to ~100%, never over' is real: without this an exhausted lane
@@ -151,6 +167,15 @@ def rank_lanes(rows, cooling=None, now=None, pace_by=None, protect=None):
         if pc is not None:
             why += f" · pace {pc:+.2f} ({'behind→fill' if pc >= 0 else 'ahead→ease'})"
         out.append({**base, "available": True, "score": s, "why": why})
+    # NEVER-WEDGE: if the shed hold left NOTHING available, a shed lane is a PREFERENCE not a dead end — re-admit the
+    # shed-held lanes (they alone were held by choice, not by a real cap/cooling) so a fungible call still routes to a
+    # FREE lane rather than being forced to paid metered. Other free lanes are always preferred (they were never held);
+    # this only fires when they are all gone. Mirrors plan_admission.decide()'s "proactive shed is a preference, keep
+    # serving" so the two routers agree end-to-end.
+    if shed_held and not any(d["available"] for d in out):
+        for d in shed_held:
+            d["available"] = True
+            d["why"] = "shed lane re-admitted — no other free lane available (preference, not a cap)"
     # available first; among available, scored (higher better) before unknown-headroom; unavailable (cooling) last
     out.sort(key=lambda d: (not d["available"], d["score"] is None, -(d["score"] if d["score"] is not None else 0.0)))
     return out

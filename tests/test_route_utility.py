@@ -58,6 +58,43 @@ ck("codex (100%) ranks above claude-code (84%) among available", avail.index("co
 ck("unknown-headroom zai-coding sorts LAST among available (proxy decides)", avail[-1] == "zai-coding")
 ck("...and its score is None", next(d for d in ranked if d["lane"] == "zai-coding")["score"] is None)
 
+print("\n-- (c2) rank_lanes HONOURS advisor.shed_lanes (the bandit must not route ONTO a shed lane) --")
+# A lane the operator marked to shed must be held out of discretionary routing REGARDLESS of pace — before this the
+# bandit ranked a behind-pace shed lane #1, defeating the shed for every fungible call (route_utility SSOT fix).
+from spendguard import config as _cfg                                                    # noqa: E402
+_o_shed = _cfg.shed_lanes
+try:
+    _cfg.shed_lanes = lambda: {"claude-code"}
+    # claude-code has the BEST headroom (would rank #1) but is shed; codex/gemini are not.
+    shed_rows = [{"lane": "claude-code", "provider": "anthropic", "known": True, "remaining_pct": 100, "reset_ts": now + 5 * 86400},
+                 {"lane": "codex", "provider": "openai", "known": True, "remaining_pct": 40, "reset_ts": now + 5 * 86400},
+                 {"lane": "gemini", "provider": "google", "known": True, "remaining_pct": 20, "reset_ts": now + 5 * 86400}]
+    rk = ru.rank_lanes(shed_rows, cooling=lambda ln: False, now=now)
+    av = [d["lane"] for d in rk if d["available"]]
+    ck("shed claude-code is HELD OUT despite best headroom (available=False, shed reason)",
+       any(d["lane"] == "claude-code" and d["available"] is False and "shed (advisor.shed_lanes)" in d["why"] for d in rk))
+    ck("the internal _shed_held bookkeeping key does NOT leak into the returned entries",
+       all("_shed_held" not in d for d in rk))
+    ck("fungible work routes to the OTHER free lanes (codex, gemini) instead", set(av) == {"codex", "gemini"})
+    ck("shed lane keeps its real score (re-admittable, not a dead target)",
+       next(d for d in rk if d["lane"] == "claude-code")["score"] is not None)
+    # NEVER-WEDGE: if the shed lane is the ONLY lane, it is re-admitted (a preference, not a cap) — never force a
+    # fungible call to paid metered when a free lane could serve.
+    only = ru.rank_lanes([shed_rows[0]], cooling=lambda ln: False, now=now)
+    ck("shed lane re-admitted when it is the only option (never-wedge)", only[0]["available"] is True)
+finally:
+    _cfg.shed_lanes = _o_shed
+
+# the SSOT PARSER itself (shared by plan_admission + the bandit): comma split, whitespace-trimmed, empties dropped.
+_o_cfgget = _cfg._cfg_get
+try:
+    _cfg._cfg_get = lambda sec, key, default=None: " claude-code , codex ,, " if (sec, key) == ("advisor", "shed_lanes") else default
+    ck("config.shed_lanes parses a comma list, trims whitespace, drops empties", _cfg.shed_lanes() == {"claude-code", "codex"})
+    _cfg._cfg_get = lambda sec, key, default=None: default
+    ck("config.shed_lanes unset → empty set (shed only when actually capped)", _cfg.shed_lanes() == set())
+finally:
+    _cfg._cfg_get = _o_cfgget
+
 print("\n-- (d) rank_metered: cheaper → higher (<1); sunk-pool-can't-pay excluded; on_demand never gated --")
 _costs = {"deepseek:deepseek-v4": 0.002, "moonshot:kimi-k2": 0.010, "openai:gpt-5-nano": 0.001, "gemini:g-flash": 0.05}
 _o_cost, _o_bal, _o_decl = pricing.realtime_cost, balances.vendor_balance, balances._declared

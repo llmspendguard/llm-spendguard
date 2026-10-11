@@ -149,6 +149,23 @@ try:
 finally:
     adapters.call = orig_call
 
+print("-- _admission_base_reason classifies every shed trigger correctly (shed REPORTING keys on this string) --")
+# A proactive shed must NOT be mislabelled a quota admission, and an unknown headroom must NOT render 'None%'
+# (both were real, 2-vendor honestreview findings). paid-overage = real money avoided; quota/proactive = quota
+# preserved — different reporting axes, so the reason class must be exact.
+check("paid-overage trigger → 'plan paid-overage admission'",
+      plan_admission._admission_base_reason({"paid_overage": True, "proactive_shed": False, "capped": False, "remaining_pct": None})
+      == "plan paid-overage admission")
+check("proactive-shed-only trigger → 'proactive shed (advisor.shed_lanes)' (never a quota mislabel, never None%)",
+      plan_admission._admission_base_reason({"paid_overage": False, "proactive_shed": True, "capped": False, "remaining_pct": None})
+      == "proactive shed (advisor.shed_lanes)")
+check("capped trigger → quota admission with the real %",
+      plan_admission._admission_base_reason({"paid_overage": False, "proactive_shed": False, "capped": True, "remaining_pct": 3})
+      == "plan quota admission (3% remaining)")
+check("capped wins over proactive_shed (a capped lane is a real quota admission)",
+      plan_admission._admission_base_reason({"paid_overage": False, "proactive_shed": True, "capped": True, "remaining_pct": 5})
+      == "plan quota admission (5% remaining)")
+
 if failed:
     raise SystemExit("FAILED: " + ", ".join(failed))
 print("ok — plan admission and redirect provenance are fail-closed, durable, and attributable")
