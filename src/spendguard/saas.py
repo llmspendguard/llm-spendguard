@@ -641,8 +641,19 @@ def push_status(dry=False):
                 drift.append({"model": model, "pct": round(100 * abs((oi or 0) - (ri or 0)) / base)})
     except Exception:
         pass
+    shed = None
+    try:                                                    # shed-effectiveness snapshot (scrubbed: lane names + counts
+        from . import guard                                 # + $ only, no prompts/paths/$spend). Powers the org "shed
+        _s = guard.shed_summary()                           # effectiveness" panel. Upserted per member like the rest.
+        if _s.get("n_sheds"):
+            shed = {"n_sheds": _s["n_sheds"], "served_free_n": _s.get("served_free_n"), "paid_n": _s.get("paid_n"),
+                    "avoided_overage_usd": _s.get("avoided_overage_usd"), "quota_preserved_usd": _s.get("quota_preserved_usd"),
+                    "by_route": (_s.get("by_route") or [])[:12]}   # bounded — top routes by counterfactual $
+    except Exception:
+        pass
     payload = {"member_ref": contributor(), "gated": gated,
-               "interpreters": {"gated": total_g, "total": total}, "drift": drift[:50], "client": _client_version()}
+               "interpreters": {"gated": total_g, "total": total}, "drift": drift[:50], "client": _client_version(),
+               "shed": shed}
     if dry:
         return payload
     try:

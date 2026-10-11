@@ -497,13 +497,18 @@ def _tool_savings(args):
     from . import guard
     s = guard.saved_since()
     ds = guard.decisions_summary()
+    shed = guard.shed_summary()
     return {"note": ("what spendguard SAVED — a THIRD axis, kept SEPARATE from real-$ spend and est-value and NEVER "
                      "summed into either. 'certain' is measured (cache / cascade / gate-block avoided-spend); "
                      "'counterfactual' is the est saving from best-value / advisor model swaps, each priced vs what "
-                     "the caller WOULD have run. $0, read-only."),
+                     "the caller WOULD have run. 'shed' is substitutable work routed OFF a capped/overage/shed lane: "
+                     "avoided_overage_usd is REAL money avoided (a plan on paid overage would have billed), "
+                     "quota_preserved_usd is est-value moved to another free lane (NOT real money) — a separate axis, "
+                     "never summed with avoided_overage. $0, read-only."),
             "certain_usd": s.get("certain"), "counterfactual_usd": s.get("counterfactual"),
             "total_guarded_usd": s.get("total"), "by_source": s.get("by_source"),
-            "decisions": ds.get("decisions"), "saved_by_intent": ds.get("by_intent")}
+            "decisions": ds.get("decisions"), "saved_by_intent": ds.get("by_intent"),
+            "shed": shed}
 
 
 def _tool_version(args):
