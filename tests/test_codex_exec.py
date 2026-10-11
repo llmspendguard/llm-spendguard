@@ -59,6 +59,10 @@ ck("the provider key env var is STRIPPED from the child (plan login only)",
 ck("final message read from the file", r["text"] == ANSWER and r["error"] is None)
 ck("usage extracted by field name, max over events", r["in_tok"] == 850 and r["out_tok"] == 97)
 ck("tmp last-message file cleaned up", not os.path.exists(seen["cmd"][seen["cmd"].index("--output-last-message") + 1]))
+# the cold exec path disables MCP orchestration — a headless one-shot needs no mcp_servers, and the app-server does
+# NOT reap the set it spawns per session (the orphaned-MCP-server leak); the warm daemon already did this.
+ck("cold exec disables MCP orchestration (orchestrator.mcp.enabled=false) — no per-session MCP-server leak",
+   "orchestrator.mcp.enabled=false" in seen["cmd"])
 
 print("-- agentic delegation explicitly opts into a writable sandbox; default remains read-only --")
 ce.run_prompt("edit and test", sandbox="workspace-write", cwd=os.path.dirname(__file__))
