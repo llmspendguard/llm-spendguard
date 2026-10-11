@@ -30,13 +30,12 @@ IDLE_TIMEOUT_S = 600              # reclaim the persistent subprocess after ten 
 
 
 def _mcp_disable_flags():
-    """Disable MCP orchestration globally for this headless app-server process.
-
-    Codex 0.160.1's config explicitly gates configured servers on ``orchestrator.mcp.enabled``. Empty-table and
-    per-entry overrides are not equivalent: config layers merge the former, while the latter can replace required
-    transport fields and make app-server exit before the initialize handshake.
-    """
-    return ["-c", "orchestrator.mcp.enabled=false"]
+    """Disable MCP orchestration for this headless app-server process — the ONE definition lives in codex_exec (so the
+    cold `codex exec` path and this warm daemon disable MCP IDENTICALLY and can never drift; the cold path missing it
+    was the orphaned-MCP-server leak). Codex 0.160.1 gates configured servers on the global ``orchestrator.mcp.enabled``
+    key; the global gate is used, not per-entry overrides (those can break the initialize handshake)."""
+    from . import codex_exec
+    return codex_exec._mcp_disable_flags()
 
 
 class _CodexDaemon(_WarmStdioJsonRpcDaemon):
