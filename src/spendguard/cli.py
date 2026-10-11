@@ -273,6 +273,17 @@ def _dispatch(argv=None):
         from . import config as _config
         from . import release as _rel
         r = list(rest)
+        if "--help" in r or "-h" in r:
+            # Help must NEVER acquire the deploy lock or run the gate. Before this, `deploy --help` fell through the
+            # manual arg handling, took the single-instance lock, and RAN the full gate/promote — and a hung --help
+            # then held the lock, blocking real deploys with "another deploy already running" (hit live 2026-10-10).
+            print("usage: spendguard deploy [--no-gate] [--allow-dirty] [--no-restart]\n"
+                  "  Promote the current committed HEAD to the green pointer so running MCP servers + gated consumers\n"
+                  "  roll onto it. Runs the full gate (chunked_suite) first; the pointer only advances if it passes.\n"
+                  "    --no-gate      trust a just-run gate; skip re-running the suite\n"
+                  "    --allow-dirty  promote an uncommitted tree (discouraged — the pointer then names no commit)\n"
+                  "    --no-restart   do not restart stale launchd-managed fleet consumers after promoting")
+            return 0
         _no_gate, _allow_dirty = ("--no-gate" in r), ("--allow-dirty" in r)
         if _rel._tracked_dirty() and not _allow_dirty:
             print("deploy: the working tree has uncommitted changes to tracked files — commit first (the green "
