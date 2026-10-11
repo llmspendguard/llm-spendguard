@@ -359,7 +359,30 @@ def _learn_from_fallback(lane_name, prompt, api_failed, model=None, transient=Fa
         resource_state.set_size_ceiling(resource_state.lane_key(lane_name), n)   # min-ratchet + re-test window
         return "unsuitable"
     if model:                                       # no proven-good baseline (or within it) ⇒ model/content miss,
+        # A REPEAT within the cooldown window is a CONFIRMED miss (the first was already backed off and the window has
+        # not expired, yet the SAME (lane,model) failed again) — promote THIS specific id into the lane's unserved set
+        # so the dispatch PREFLIGHT substitutes it (lane_served_substitute, strong-tier-first — no downgrade) next time
+        # instead of re-attempting + bleeding to metered+unpriced on the ~cooldown cycle forever. maybe_refresh_on_failure
+        # re-measures the lane's CONFIGURED models, so a caller-supplied id that was never a configured lane model (e.g.
+        # glm-5.3-flashx requested on zai-coding, which serves glm-5.3) is otherwise NEVER recorded unserved. First miss
+        # stays retryable (no poison from a fluke); the servability RECOVERY probe un-promotes it if the lane serves it
+        # again. $0 (a cooling read + a catalog merge); never fails over this bookkeeping.
+        _repeat_miss = False
+        try:
+            _repeat_miss = bool(resource_state.cooling(resource_state.lane_model_key(lane_name, model)))
+        except Exception:
+            _repeat_miss = False
         _lane_model_cool(lane_name, model)          # retryable — back off THIS model on THIS lane, NOT a permanent
+        if _repeat_miss:
+            try:
+                from . import catalog as _cat_un
+                # UNION with the lane's existing unserved set — merge_lane_observation REPLACES lane_unserved[lane]
+                # with what we pass (it is written for a full re-measurement), so passing only [model] would clobber
+                # any models already recorded unserved. served=[] keeps the prior served set (minus this model).
+                _rej = sorted(set(_cat_un.lane_unserved_ids(lane_name) or []) | {model})
+                _cat_un.merge_lane_observation(lane_name, [], _rej)
+            except Exception:
+                pass
         try:                                        # a REPEATED model-miss may be a PERMANENT plan drop (codex 0.160.1
             from . import lane_servability as _ls_fb  # dropped gpt-5.6-sol) — re-measure this lane's servability so the
             _ls_fb.maybe_refresh_on_failure(lane_name)  # drop is recorded + shouted within a throttle window, not all day
