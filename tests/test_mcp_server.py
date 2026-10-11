@@ -257,5 +257,24 @@ ck("compaction_candidates returns a candidates list + a ready-to-paste /compact 
    cand.get("isError") is False and isinstance(cand["structuredContent"].get("candidates"), list)
    and str(cand["structuredContent"].get("effective_compact_command", "")).startswith("/compact"))
 
+print("\n-- cmd --http is a WARM-DAEMON SINGLETON (a second start exits, never double-binds) --")
+# The HTTP transport (serve_http) routes POST /mcp through the SAME handle() as stdio, so every session CONNECTS to
+# one warm daemon instead of spawning a `spendguard mcp` stdio copy. --http must be a singleton: a second start with
+# the port's lock held exits without serving (no http.server bind crash), so a supervisor can (re)start it idempotently.
+import contextlib
+from spendguard import config as _cfg
+_served = {"n": 0}
+_orig_serve, _orig_lock = mcp_server.serve_http, _cfg.single_instance_lock
+try:
+    mcp_server.serve_http = lambda host="127.0.0.1", port=4913: _served.__setitem__("n", _served["n"] + 1)
+    _cfg.single_instance_lock = lambda name: contextlib.nullcontext(False)    # lock held by the incumbent
+    mcp_server.cmd(["--http", "--port", "4913"])
+    ck("a second --http start (lock held) does NOT serve a second daemon", _served["n"] == 0)
+    _cfg.single_instance_lock = lambda name: contextlib.nullcontext(True)      # no incumbent
+    mcp_server.cmd(["--http", "--port", "4913"])
+    ck("--http serves when the lock is free", _served["n"] == 1)
+finally:
+    mcp_server.serve_http, _cfg.single_instance_lock = _orig_serve, _orig_lock
+
 print(f"\n{'[FAIL]' if fails else 'OK'} test_mcp_server: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)
