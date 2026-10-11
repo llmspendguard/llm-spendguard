@@ -70,5 +70,28 @@ rc, out = _run(["release"])
 ck("release exits 0", rc == 0)
 ck("release shows served, green, and a STALE status", "aaaaaaa" in out and "bbbbbbb" in out and "STALE" in out)
 
+print("\n-- deploy --help prints usage WITHOUT acquiring the lock or running the gate --")
+# Regression (2026-10-10): `deploy --help` fell through the manual arg handling, took the single-instance lock, and
+# ran the full gate/promote; a hung --help then held the lock and blocked real deploys. Help must short-circuit first.
+from spendguard import config as _config   # noqa: E402
+
+
+def _lock_must_not_be_taken(_name):
+    raise AssertionError("deploy --help acquired the single-instance deploy lock — it must not")
+
+
+_config.single_instance_lock = _lock_must_not_be_taken
+release._tracked_dirty = lambda: True       # even a DIRTY tree must still give help (help is before the dirty check)
+_before = _promoted["n"]
+try:
+    rc, out = _run(["deploy", "--help"])
+    _lock_ok = True
+except AssertionError:
+    rc, out, _lock_ok = 1, "", False
+ck("deploy --help never acquires the deploy lock", _lock_ok)
+ck("deploy --help exits 0", rc == 0)
+ck("deploy --help prints usage (flags shown)", "usage: spendguard deploy" in out and "--no-gate" in out and "--no-restart" in out)
+ck("deploy --help does NOT promote / run the gate", _promoted["n"] == _before)
+
 print(f"\n{'[FAIL]' if fails else 'OK'} test_deploy_release_cli: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)
