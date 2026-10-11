@@ -12,9 +12,9 @@ def _shed_set():
     """Lanes to PROACTIVELY shed from — treated as at-risk even when NOT capped, so substitutable work routes to the
     other free lanes to PRESERVE this plan's quota (e.g. keep the claude-code weekly window for the agent). Provider-
     agnostic + user-controlled via advisor.shed_lanes (comma list of lane names). Empty = shed only when actually
-    capped/on overage."""
-    raw = str(config._cfg_get("advisor", "shed_lanes", "") or "")
-    return {s.strip() for s in raw.split(",") if s.strip()}
+    capped/on overage. Delegates to config.shed_lanes() — the ONE parser of this knob, shared with the bandit
+    (route_utility.rank_lanes) so admission-control and load-balance can never disagree about which lanes are shed."""
+    return config.shed_lanes()
 
 
 def lane_risk(lane):
@@ -75,6 +75,20 @@ def _best_ready_alt_lane(primary, tier="cheap"):
     return pick[0] if pick else None
 
 
+def _admission_base_reason(risk):
+    """The admission reason CLASS for a shed/redirect, correct for EVERY trigger — so a proactive shed is never
+    mislabelled a 'quota admission' and an unknown headroom never renders 'None% remaining'. Shared by both decide()
+    redirect tiers so their reason strings cannot drift, and because the shed REPORTING classifies a shed by this
+    string: paid-overage (real money avoided) vs quota/proactive (quota preserved) are DIFFERENT axes and must not be
+    conflated (surfaced by a 2-vendor honestreview finding, 2026-10-10)."""
+    if risk.get("paid_overage"):
+        return "plan paid-overage admission"
+    if risk.get("proactive_shed") and not risk.get("capped"):
+        return "proactive shed (advisor.shed_lanes)"
+    rp = risk.get("remaining_pct")
+    return f"plan quota admission ({rp}% remaining)" if rp is not None else "plan quota admission"
+
+
 def decide(model, intent):
     """Return a zero-spend routing decision for a labelled, substitutable call.
 
@@ -105,8 +119,7 @@ def decide(model, intent):
         eligible = sorted((item for item in candidates if item[0] in order), key=lambda item: order[item[0]])
         if eligible:
             lane, chosen = eligible[0]
-            why = ("plan paid-overage admission" if risk["paid_overage"] else
-                   f"plan quota admission ({risk['remaining_pct']}% remaining)")
+            why = _admission_base_reason(risk)
             return {"action": "redirect", "model": chosen, "lane": lane, "reason": why,
                     "requested_model": model}
     # AVAILABILITY FALLBACK — the proper shed. No PROVEN substitute exists for this intent, but this is a SUBSTITUTABLE
@@ -119,9 +132,7 @@ def decide(model, intent):
         alt = _best_ready_alt_lane(primary)
         if alt:
             lane, chosen = alt
-            why = ("plan paid-overage admission → ready lane (substitutable, no confirmed substitute)" if risk["paid_overage"]
-                   else ("proactive shed → ready lane (substitutable)" if risk.get("proactive_shed")
-                         else f"plan quota admission ({risk['remaining_pct']}% remaining) → ready lane (substitutable)"))
+            why = _admission_base_reason(risk) + " → ready lane (substitutable, no confirmed substitute)"
             return {"action": "redirect", "model": chosen, "lane": lane, "reason": why, "requested_model": model}
     # No ready alternative. A PROACTIVELY-shed lane (in advisor.shed_lanes but NOT actually capped/on overage) is still
     # AVAILABLE — shedding is a PREFERENCE, so with nowhere to shed to we KEEP using it rather than refuse. Only a truly

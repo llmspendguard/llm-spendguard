@@ -575,6 +575,21 @@ def advisor_num(name, default):
     return _advisor_coerced(name, default, type(default))
 
 
+def shed_lanes():
+    """The SET of lanes the operator marked to PROACTIVELY shed from (`advisor.shed_lanes`, a comma list) — the ONE
+    place this knob is parsed, so EVERY router honours the SAME shed directive and they can never drift. A shed lane
+    is held out of DISCRETIONARY routing (substitutable work goes to the other free lanes) to preserve this plan's
+    quota — provider-agnostic, works for any lane. Empty set = shed only when a lane is actually capped/on overage.
+    Readers: plan_admission._shed_set (the admission-control shed) AND route_utility.rank_lanes (the bandit/load-
+    balance destination ranking) — before this was the SSOT, the bandit ignored the directive and kept routing ONTO a
+    shed lane, defeating the shed for every fungible call. Never raises — a shed read must not break routing."""
+    try:
+        raw = str(_cfg_get("advisor", "shed_lanes", "") or "")
+        return {s.strip() for s in raw.split(",") if s.strip()}
+    except Exception:
+        return set()
+
+
 _GITROOT_CACHE = {}
 
 
