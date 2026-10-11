@@ -53,5 +53,22 @@ fails += ck("api-also-failed = 'down'", kind3 == "down")
 fails += ck("the whole lane is cooled", adapters._lane_cooling("zai-coding"))
 fails += ck("not recorded as a per-model rejection", not adapters._lane_model_cooling("zai-coding", "glm-5.3"))
 
+print("\n-- a REPEATED model-miss PROMOTES the id into lane_unserved so the PREFLIGHT substitutes it (no metered bleed) --")
+# A caller-supplied id a lane never served (glm-5.3-flashx requested on zai-coding, which serves glm-5.3) is otherwise
+# only COOLED on each miss — it bleeds to metered+unpriced on the cooldown cycle forever because lane_served_substitute
+# reads lane_unserved, and the servability re-measure only tests CONFIGURED lane models. A confirmed (repeat) miss now
+# promotes the specific id into lane_unserved so the preflight substitutes it to a served model and stays $0.
+from spendguard import catalog                                                        # noqa: E402
+resource_state.note_proven_good(resource_state.lane_key("zai-coding"), 100_000)       # within-size misses = model-miss
+# seed another unserved id so we can prove the promotion UNIONS (merge_lane_observation replaces, we union at the call)
+catalog.merge_lane_observation("zai-coding", [], ["some-other-dead-id"])
+adapters._learn_from_fallback("zai-coding", "p", api_failed=False, model="glm-5.3-flashx")   # miss #1 — retryable
+fails += ck("first miss does NOT promote (a fluke stays retryable)",
+            "glm-5.3-flashx" not in set(catalog.lane_unserved_ids("zai-coding") or []))
+adapters._learn_from_fallback("zai-coding", "p", api_failed=False, model="glm-5.3-flashx")   # miss #2 — repeat → promote
+_after = set(catalog.lane_unserved_ids("zai-coding") or [])
+fails += ck("the REPEATED miss promotes glm-5.3-flashx into lane_unserved", "glm-5.3-flashx" in _after)
+fails += ck("the pre-existing unserved id is PRESERVED (union, not clobber)", "some-other-dead-id" in _after)
+
 print(f"\n{'[FAIL]' if fails else 'OK'} test_lane_model_backoff: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

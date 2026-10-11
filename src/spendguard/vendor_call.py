@@ -768,7 +768,10 @@ _SYS_SERVED_SUBSTITUTE = (
     "You pick the SERVED model that best delivers what a caller asked for, when the vendor does not serve the exact "
     "id they named. The requested id may be a phantom, a renamed alias, or a base name whose served forms carry "
     "suffixes. Choose the single served id closest in family, tier, and capability to the request — it need NOT be "
-    "identical. If no served id is a reasonable substitute, answer null; never force a bad match.")
+    "identical. Among the candidates that genuinely deliver the request, pick the CHEAPEST (prices are given), and "
+    "prefer one at or below the stated price bound; prefer a PRICED id over an UNPRICED one. If no served id is a "
+    "reasonable substitute, answer null; never force a bad match or trade away the needed capability just to save a "
+    "cent.")
 
 
 def served_substitute(vendor, requested):
@@ -796,10 +799,41 @@ def served_substitute(vendor, requested):
     cands = sorted(set(catalog.live_model_ids(vendor) or []) | set(catalog.lane_model_ids(vendor) or []))
     if not cands:
         return requested, None                        # no served id to choose from → dispatch errors honestly
-    from . import adapters, calls, config, gate, plan_admission
-    prompt = (f"Vendor: {vendor}\nRequested (NOT served by this vendor): {requested}\n\nServed ids to choose from:\n"
-              + "\n".join(f"  {c}" for c in cands)
-              + '\n\nReply JSON only: {"id": "<the best served id, or null>", "reason": "<one short line>"}')
+    from . import adapters, calls, config, gate, plan_admission, pricing
+
+    # ECONOMIC BOUND for the substitute: the requested model's price is the cost the caller implicitly ACCEPTED by
+    # naming it (the ANCHOR). Price every candidate at a nominal (1000 in, 500 out) so the resolver prefers the
+    # CHEAPEST served id that still delivers the capability AND costs <= anchor x 1.25 (strict + a small cushion). An
+    # UNPRICED candidate is deprioritised — resolving to unpriced just moves the problem. When the requested id is
+    # itself unpriced (no anchor), there is no ceiling, so pick the cheapest PRICED id that delivers. Prices are DATA
+    # for the agentic pick (the capability match stays the model's judgement); the bound is enforced below too.
+    def _nom(mid):
+        try:
+            c = pricing.realtime_cost(mid, 1000, 500)
+            return float(c) if c else None
+        except Exception:
+            return None
+
+    _anchor = _nom(requested)
+    _CUSHION = 1.25
+    _ceiling = (_anchor * _CUSHION) if _anchor else None
+    _prices = {c: _nom(c) for c in cands}
+
+    def _price_tag(c):
+        p = _prices.get(c)
+        if p is None:
+            return f"  {c}  (UNPRICED — avoid unless nothing priced delivers)"
+        over = (_ceiling is not None and p > _ceiling)
+        return f"  {c}  (${p:.5f}/1.5k tok{' — OVER the price bound' if over else ''})"
+
+    _econ = (f"Economic bound: the requested model costs ${_anchor:.5f} per ~1.5k tokens; prefer a substitute at or "
+             f"below ${_ceiling:.5f} (that price x1.25)." if _anchor else
+             "The requested model is UNPRICED, so there is no price anchor — pick the CHEAPEST priced id that delivers.")
+    prompt = (f"Vendor: {vendor}\nRequested (NOT served by this vendor): {requested}\n\n"
+              f"{_econ}\nPick the CHEAPEST served id that still delivers what the requested model was for; prefer a "
+              f"PRICED id (never an UNPRICED one if a priced id delivers). Served ids (with nominal price):\n"
+              + "\n".join(_price_tag(c) for c in cands)
+              + '\n\nReply JSON only: {"id": "<the cheapest served id that delivers, or null>", "reason": "<one short line>"}')
     _meta = plan_admission.ready_meta_model(config.advisor_model())   # the resolver itself must ride a READY provider —
     #                                                                    not be refused (or billed on an expensive model) on a
     #                                                                    capped plan. ready_meta_model makes no LLM call, so
@@ -833,6 +867,20 @@ def served_substitute(vendor, requested):
     reason = (obj.get("reason") or "").strip()
     if pick and pick not in set(cands):
         pick = None                                   # a name the model invented is not an answer
+    if pick:
+        # ENFORCE the economic bound (strict + 1.25x cushion = WARN, never block — the substitute still runs). An
+        # over-bound or UNPRICED pick is recorded on the reason (so resolved_from carries the cost context) and
+        # announced once. The capability match was the model's call; this is the economics guardrail around it.
+        _pp = _prices.get(pick)
+        if _pp is None:
+            reason = (reason + " [substitute UNPRICED — spend captured by reconcile, not estimated]").strip()
+            config.warn_once(f"[spendguard] {vendor}: substitute {pick!r} for {requested!r} is UNPRICED — its spend "
+                             f"is not estimated; reconcile will capture it.")
+        elif _ceiling is not None and _pp > _ceiling:
+            reason = (reason + f" [COST UP: ${_pp:.5f} > bound ${_ceiling:.5f}]").strip()
+            config.warn_once(f"[spendguard] {vendor}: {requested!r} is no longer served; the best served substitute "
+                             f"{pick!r} costs ${_pp:.5f}/1.5k tok — ABOVE the ${_ceiling:.5f} bound (requested was "
+                             f"${_anchor:.5f}). Proceeding (strict+1.25x cushion = warn, not block).")
     # Reached ONLY on a SUCCESSFUL parse: a pick=None HERE is a REAL 'no good substitute' verdict and is cached as such;
     # every parse FAILURE returned above, so a failed call can never be recorded as a negative verdict.
     _models.add_fact(requested, "served_substitute", pick or "", confidence=0.9,
