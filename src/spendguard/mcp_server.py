@@ -1026,13 +1026,82 @@ def register_client(remove=False):
     return 0
 
 
+def serve_http(host="127.0.0.1", port=4913):
+    """MCP over HTTP (stdlib, stateless POST /mcp → the SAME handle() the stdio transport uses) — one WARM daemon every
+    session CONNECTS to via urllib instead of spawning a `spendguard mcp` stdio copy per session (the per-session
+    spawn that accumulates). Dependency-free (http.server), matching spendguard's portable surfaces and ccwatch's
+    in-board /mcp. Threaded so concurrent clients are independent; each request is self-contained (no session state).
+    Carries the SAME deploy self-heal as serve_stdio: after a response is flushed (between requests, nothing in
+    flight), if a newer green commit was deployed the process exits so the supervisor respawns it on the latest code."""
+    import os as _os
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from . import release
+
+    class _Handler(BaseHTTPRequestHandler):
+        def log_message(self, *a):            # quiet — no stderr access log per request
+            pass
+
+        def _send(self, body, code=200):
+            data = (body or "").encode("utf-8")
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            if data:
+                self.wfile.write(data)
+
+        def do_POST(self):
+            if self.path.rstrip("/") != "/mcp":
+                self._send(json.dumps(_err(None, -32601, "not found: POST /mcp")), 404)
+                return
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+                req = json.loads(self.rfile.read(n).decode("utf-8")) if n else {}
+            except Exception as e:
+                self._send(json.dumps(_err(None, -32700, f"parse error: {e}")))
+                return
+            resp = handle(req)                 # the ONE shared dispatch (stdio + http in lockstep)
+            self._send(json.dumps(resp, default=str) if resp is not None else "")
+            try:                               # deploy self-heal — exit BETWEEN requests so the supervisor respawns
+                if _auto_respawn_enabled() and release.should_respawn():
+                    self.wfile.flush()
+                    _os._exit(0)
+            except Exception:
+                pass
+
+    ThreadingHTTPServer((host, port), _Handler).serve_forever()
+
+
 def cmd(argv=None):
     import argparse
     ap = argparse.ArgumentParser(prog="spendguard mcp",
-                                 description="spendguard's tools over MCP (stdio JSON-RPC): the model-advisor plus "
-                                             "read-only spend & compaction queries. Point an MCP client at "
-                                             "`spendguard mcp`, or run `spendguard install-mcp` to register it in "
-                                             "Claude Code.")
-    ap.parse_args(argv)
+                                 description="spendguard's tools over MCP: the model-advisor plus read-only spend & "
+                                             "compaction queries. Default stdio JSON-RPC; --http serves one WARM "
+                                             "daemon sessions connect to. Register with `spendguard install-mcp`.")
+    ap.add_argument("--http", action="store_true",
+                    help="serve over HTTP (stdlib, POST /mcp) as one WARM daemon every session CONNECTS to via urllib, "
+                         "instead of spawning a stdio `spendguard mcp` per session.")
+    import os as _os
+    ap.add_argument("--host", default=_os.environ.get("SPENDGUARD_MCP_HOST", "127.0.0.1"))
+    ap.add_argument("--port", type=int, default=int(_os.environ.get("SPENDGUARD_MCP_PORT", "4913")))   # family: 4900 ccwatch · 4910 7thsense · 4911 symgrep · 4912 honestreview · 4913 spendguard
+    args = ap.parse_args(argv)
+    if args.http:
+        # WARM SHARED DAEMON = SINGLETON (one per port): a second start detects the incumbent (flock) and exits 0, so a
+        # supervisor can (re)start it idempotently, never racing http.server into a bind "address already in use".
+        from . import config
+        try:
+            _cm = config.single_instance_lock(f"spendguard-mcp-http-{args.port}")
+        except Exception:
+            _cm = None
+        if _cm is not None:
+            with _cm as _got:
+                if not _got:
+                    sys.stderr.write(f"spendguard mcp: a warm HTTP daemon is already serving on :{args.port} — not "
+                                     f"starting a second (the warm daemon is a singleton; connect to the running one).\n")
+                    return 0
+                serve_http(args.host, args.port)
+        else:
+            serve_http(args.host, args.port)
+        return 0
     serve_stdio()
     return 0
