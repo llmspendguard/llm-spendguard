@@ -15,6 +15,10 @@ or fails *open* with a logged warning (non-interactive), never a crash.
 - :material-shield-check: **[Architecting Win](spendguard_architecting_win.md)** — the enterprise quality playbook: checklists, processes & LLM prompts.
 - :material-rocket-launch: **[60-second quickstart](#quickstart)** — install, gate a call, see it work.
 - :material-sitemap: **[Architecture](ARCHITECTURE.md)** — the gate chokepoint + the extensibility seams.
+- :material-diagram-outline: **[Architecture diagrams](diagrams.md)** — call flow, the three-database state model, release propagation.
+- :material-database-sync: **[Durable lane queue](QUEUE_DURABILITY.md)** — its own db, content-addressed dedup (never re-buy finished work), single-instance drain, bounded housekeeping.
+- :material-swap-horizontal: **[Plan admission & shedding](PLAN_SHEDDING.md)** — route substitutable work off a capped/shed-from plan onto the best ready free lane (any provider); pinned work untouched.
+- :material-update: **[Fleet & update propagation](FLEET_UPDATE_PROPAGATION.md)** — why a fix doesn't reach a long-lived process until it restarts, and how deploy detects + restarts stale consumers.
 - :material-robot: **[Using with Claude & agents](USING-WITH-CLAUDE.md)** — make every assistant session gated.
 - :material-brain: **[Learning advisor](learning-advisor.md)** — recommend *considering* history, not parroting it.
 - :material-scale-balance: **[Accuracy](ACCURACY.md)** — how close these numbers are to your actual invoice, and
