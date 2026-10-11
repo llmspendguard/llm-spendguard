@@ -79,6 +79,39 @@ adapters.call = lambda model, prompt, **kw: {"text": '{"id": "gpt-9-imaginary", 
 _bid, _breason = vendor_call.served_substitute("openai", "gpt-7.0")
 ck("an invented (unserved) pick is NOT accepted → (requested, None)", _bid == "gpt-7.0" and _breason is None)
 
+# ── ECONOMIC BOUND on the substitute (strict + 1.25x cushion): cheapest-that-delivers, flag over-bound / unpriced ──
+from spendguard import pricing
+_FACTS.clear()
+_NOM = {"req-over": 0.010, "req-ok": 0.010, "req-unpriced": 0.010,       # anchors ($0.010 → ceiling $0.0125)
+        "gpt-5.6-luna": 0.008, "gpt-5.6-sol": 0.012, "gpt-5.6-terra": 0.020, "gpt-5.5": None}
+pricing.realtime_cost = lambda mid, i, o: _NOM.get(mid)
+vendor_call.served_check = lambda v, m: "served" if m in SERVED else "stale"   # req-* are unserved → resolve
+catalog.live_model_ids = lambda v: sorted(SERVED)
+
+_captured = {}
+
+
+def _resolver_pick(pick):
+    def _f(model, prompt, **kw):
+        _captured["prompt"] = prompt
+        return {"text": '{"id": "%s", "reason": "agentic pick"}' % pick, "error": None}
+    return _f
+
+
+adapters.call = _resolver_pick("gpt-5.6-terra")                          # the model picks an OVER-bound id
+_oid, _oreason = vendor_call.served_substitute("openai", "req-over")
+ck("the resolver prompt carries candidate prices + the economic bound", "Economic bound" in _captured.get("prompt", "") and "$0." in _captured.get("prompt", ""))
+ck("an OVER-bound pick still substitutes but is flagged [COST UP] (strict+1.25x = warn, not block)",
+   _oid == "gpt-5.6-terra" and "COST UP" in (_oreason or ""))
+
+adapters.call = _resolver_pick("gpt-5.6-luna")                           # an IN-bound cheaper id
+_kid, _kreason = vendor_call.served_substitute("openai", "req-ok")
+ck("an in-bound pick carries NO cost-up flag", _kid == "gpt-5.6-luna" and "COST UP" not in (_kreason or ""))
+
+adapters.call = _resolver_pick("gpt-5.5")                                # an UNPRICED served id
+_uid, _ureason = vendor_call.served_substitute("openai", "req-unpriced")
+ck("an UNPRICED pick is flagged on the reason (spend captured by reconcile)", _uid == "gpt-5.5" and "UNPRICED" in (_ureason or ""))
+
 # ── call() dispatch: the id is respelled BEFORE dispatch and the swap is recorded on the result ──
 _seen_models = []
 
