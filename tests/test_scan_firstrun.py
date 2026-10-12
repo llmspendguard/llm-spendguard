@@ -18,6 +18,13 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-scan-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
+# Point the built-in transcript readers at EMPTY dirs under the temp home — this test asserts the COLD, empty-machine
+# first run (scan.main([]) below), so the real ~/.claude corpus must not be ingested. Without this the cold-ledger
+# scan re-parses the machine's gigabytes of transcripts and blows the suite's 120s budget (surfaced as a failure).
+os.environ["SPENDGUARD_CC_DIR"] = os.path.join(os.environ["SPENDGUARD_HOME"], "projects")
+os.environ["SPENDGUARD_CC_SESSIONS_DIR"] = os.path.join(os.environ["SPENDGUARD_HOME"], "sessions")
+os.environ["SPENDGUARD_CODEX_DIR"] = os.path.join(os.environ["SPENDGUARD_HOME"], "codex")
+
 from spendguard import scan
 
 failures = 0

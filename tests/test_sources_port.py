@@ -20,6 +20,13 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-sources-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
+# Point the built-in transcript readers at EMPTY dirs under the temp home. Otherwise discover_sources()/scan.collect()
+# ingest the machine's REAL ~/.claude transcript corpus (gigabytes) on a cold ledger and blow the suite's 120s budget.
+# This test is about the PORT (FakeSource registration), not the real readers, so an empty corpus is the correct fixture.
+os.environ["SPENDGUARD_CC_DIR"] = os.path.join(os.environ["SPENDGUARD_HOME"], "projects")
+os.environ["SPENDGUARD_CC_SESSIONS_DIR"] = os.path.join(os.environ["SPENDGUARD_HOME"], "sessions")
+os.environ["SPENDGUARD_CODEX_DIR"] = os.path.join(os.environ["SPENDGUARD_HOME"], "codex")
+
 import io
 import contextlib
 import inspect
