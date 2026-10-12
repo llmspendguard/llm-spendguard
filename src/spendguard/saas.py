@@ -641,7 +641,7 @@ def push_status(dry=False):
                 drift.append({"model": model, "pct": round(100 * abs((oi or 0) - (ri or 0)) / base)})
     except Exception:
         pass
-    shed = None
+    shed = decisions = overage_status = None
     try:                                                    # shed-effectiveness snapshot (scrubbed: lane names + counts
         from . import guard                                 # + $ only, no prompts/paths/$spend). Powers the org "shed
         _s = guard.shed_summary()                           # effectiveness" panel. Upserted per member like the rest.
@@ -651,9 +651,31 @@ def push_status(dry=False):
                     "by_route": (_s.get("by_route") or [])[:12]}   # bounded — top routes by counterfactual $
     except Exception:
         pass
+    try:
+        _d = guard.decision_rollup()
+        if _d.get("n"):
+            decisions = _d
+    except Exception:
+        pass
+    try:
+        from . import overage
+        _o = overage.current_overage_status()
+        by_month = [{"month": str(month), "billed_overage_usd": float(dollars)}
+                    for month, dollars in list((_o.get("real_overage_by_month_usd") or {}).items())[:6]]
+        if _o.get("on_overage_now") or by_month:
+            overage_status = {"on_overage_now": bool(_o.get("on_overage_now")),
+                              "observed_windows": int(_o.get("observed_overage_windows") or 0),
+                              "by_month": by_month}
+    except Exception:
+        pass
     payload = {"member_ref": contributor(), "gated": gated,
-               "interpreters": {"gated": total_g, "total": total}, "drift": drift[:50], "client": _client_version(),
-               "shed": shed}
+               "interpreters": {"gated": total_g, "total": total}, "drift": drift[:50], "client": _client_version()}
+    if shed:
+        payload["shed"] = shed
+    if decisions:
+        payload["decisions"] = decisions
+    if overage_status:
+        payload["overage"] = overage_status
     if dry:
         return payload
     try:

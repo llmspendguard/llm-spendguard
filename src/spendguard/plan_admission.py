@@ -89,6 +89,14 @@ def _admission_base_reason(risk):
     return f"plan quota admission ({rp}% remaining)" if rp is not None else "plan quota admission"
 
 
+def _admission_reason_class(risk):
+    if risk.get("paid_overage"):
+        return "paid-overage-admission"
+    if risk.get("proactive_shed") and not risk.get("capped"):
+        return "proactive-shed"
+    return "quota-admission"
+
+
 def decide(model, intent):
     """Return a zero-spend routing decision for a labelled, substitutable call.
 
@@ -121,6 +129,7 @@ def decide(model, intent):
             lane, chosen = eligible[0]
             why = _admission_base_reason(risk)
             return {"action": "redirect", "model": chosen, "lane": lane, "reason": why,
+                    "reason_class": _admission_reason_class(risk),
                     "requested_model": model}
     # AVAILABILITY FALLBACK — the proper shed. No PROVEN substitute exists for this intent, but this is a SUBSTITUTABLE
     # call (a caller model-pin / measurement never reaches decide — the `not _caller_model_pin` gate in adapters.call),
@@ -133,7 +142,8 @@ def decide(model, intent):
         if alt:
             lane, chosen = alt
             why = _admission_base_reason(risk) + " → ready lane (substitutable, no confirmed substitute)"
-            return {"action": "redirect", "model": chosen, "lane": lane, "reason": why, "requested_model": model}
+            return {"action": "redirect", "model": chosen, "lane": lane, "reason": why,
+                    "reason_class": _admission_reason_class(risk), "requested_model": model}
     # No ready alternative. A PROACTIVELY-shed lane (in advisor.shed_lanes but NOT actually capped/on overage) is still
     # AVAILABLE — shedding is a PREFERENCE, so with nowhere to shed to we KEEP using it rather than refuse. Only a truly
     # capped / paid-overage lane cannot serve, so it refuses (never fail open onto the exhausted lane).
