@@ -9,9 +9,8 @@
 
 **Status:** continuously developed; pip-published. **Audience:** an engineer or technical buyer who needs to
 understand *what this is, why it's built this way, and whether it's trustworthy*. **One line:** a zero-dependency,
-on-device cost-governance layer for OpenAI/Anthropic that **gates** spend before it happens, **attributes** it to
-the right project, **reconciles** it against provider billing so the numbers actually add up, and **recommends**
-how to spend less — without your prompts or keys ever leaving the machine.
+on-device spend manager and LLM-use optimizer that **gates, sheds, routes, substitutes, and delegates** work before
+it spends, then **attributes** and **reconciles** the result — without your prompts or keys ever leaving the machine.
 
 ---
 
@@ -33,8 +32,13 @@ originates:
   through one account-anchored loop, surfacing any unattributed remainder instead of hiding it.
 - **Advise** — a *caged* advisor (its own meta-budget, estimate-first) turns your own usage corpus into "which work
   is worth the spend" and "how to spend less."
+- **Optimize** — `plan_admission.py` / `route_utility.py` shed eligible work off capped or overage lanes;
+  `best_value.py` picks the cheapest measured-good `(model, effort)`; `vendor_call.py` substitutes an actually served
+  model within anchor rate ×1.25; and `delegate_router.py` hands capped-plan, self-contained agentic work to another
+  provider CLI (codex/gemini/zai/kimi), never a Claude subagent.
 - **Share (optional)** — it can push *scrubbed aggregates* (never prompts, never keys) to the
-  [SaaS server](https://github.com/llmspendguard/llm-spendguard-server) for an org-wide roll-up.
+  [SaaS server](https://github.com/llmspendguard/llm-spendguard-server) for an org-wide roll-up and pull effective
+  advisory/enforced caps from `GET /v1/policy` for local enforcement (`saas.pull_policy`).
 
 It has **zero required runtime dependencies**, runs entirely on-device, and is governed by a hard rule the
 maintainer applies to their own work: *no LLM code runs ungated*.
@@ -64,8 +68,9 @@ on my own machine, without shipping my prompts anywhere.*"
 | **The security-conscious buyer** | Prompts and keys never leave the device; the server only ever sees scrubbed aggregates; fail-closed enforcement; a published [threat model](https://github.com/llmspendguard/llm-spendguard-server/blob/main/docs/THREAT-MODEL.md). |
 
 The quantified upside is twofold: **avoided overspend** (caps + estimate-first stop the $200-surprise class of bug)
-and **realized savings** (cache/cascade/advisor), both measured — see [§8](#8-reconciliation-proof-it-adds-up) and
-`guard.py`'s savings distribution.
+and **guarded savings** (measured + counterfactual from cache/cascade/routing), both evidenced — see [§8](#8-reconciliation-proof-it-adds-up)
+and `guard.py`. Reporting keeps three axes separate: real $ = named API + flat-plan Subscription + Remote-compute
+components; `::` estimated subscription value; and guarded savings. They are never summed together.
 
 ## 4. Solution overview
 
@@ -74,14 +79,20 @@ CLI. The pieces, by role:
 
 - **Enforce / record:** `gate.py` (SDK interceptors + decide/record), `budget.py` (the SQLite ledger + caps),
   `guard.py` (quantify guarded spend).
+- **Shed / route / delegate:** `plan_admission.py`, `route_utility.py`, `best_value.py`, `vendor_call.py`,
+  `delegate_router.py`, and the warm provider/MCP daemon modules.
 - **Attribute:** `tag.py` (the project cascade), `attribution.py` (the shared org→team×project classifier).
 - **Reconcile:** `reconcile.py` (the one loop + `Source` adapters), `ledger_sync.py` (LLM source),
   `resources.py` (GPU/vast source), `reconcile_openai.py` / `reconcile_anthropic.py` (provider billing readers),
   `pricing.py` (canonical prices).
 - **Advise / learn:** `advise.py`, `advisor.py`, `experiment.py`, `cascade.py`, `semcache.py`, `cacheaudit.py`.
-- **Share:** `saas.py` (the `/v1` push), `schedule.py` (the cross-platform scheduler), `signal.py` (efficiency
+- **Share / govern / fleet:** `saas.py` (status/truth/decision/savings pushes + policy pull), `fleet.py` (green vs
+  stale consumers), `schedule.py` (the cross-platform scheduler), `signal.py` (efficiency
   signal), `workdone.py` (what got done).
 - **Surfaces:** `cli.py` (commands), `chat.py` (the opt-in claude.ai value adapter).
+
+Warm shared tool processes are deliberate: `mcp_server.serve_http` and the provider daemon modules keep one
+long-lived daemon per tool for sessions to connect to; `fleet.py` exposes the loaded green version and stale consumers.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the module-by-module map.
 
@@ -94,20 +105,23 @@ the [server spec](https://github.com/llmspendguard/llm-spendguard-server/blob/ma
    monkey-patched the SDK method (`gate.register` / the interceptor registry), so the call is intercepted first.
 2. **Estimate before spend.** The gate reads the request, counts tokens, and prices it via `pricing.py` (canonical
    rates — never a hardcoded guess). For batches it parses the JSONL/requests to estimate the whole job.
-3. **Decide.** `_decide` checks the estimate against the caps — per-batch cap, daily/monthly caps, and the
-   real-time cumulative budget. Over cap → `SpendGateRefused` (fail-**closed**: the paid call does not happen). A
+3. **Manage.** `_decide` checks the estimate against local and server-pulled caps. Eligible work can then be shed
+   (`plan_admission`), best-value routed (`best_value`), or served by an economically bounded substitute
+   (`vendor_call.served_substitute`); capped-plan self-contained agentic work can be sent through `spendguard delegate`.
+   Per-batch, daily/monthly, and real-time limits still apply.
+4. **Decide.** Over cap → `SpendGateRefused` (fail-**closed**: the paid call does not happen). A
    bug *in the gate itself* → fail-**open** (your call proceeds; governance must never break the call path).
-4. **Record.** The actual cost is written to the local SQLite ledger (`budget.record_charge`) tagged with provider, model,
+5. **Record.** The actual cost is written to the local SQLite ledger (`budget.record_charge`) tagged with provider, model,
    kind (batch/realtime/meta), and a **project** resolved by `tag.py`'s free deterministic cascade (repo/cwd/config;
    `meta` → spendguard's own `llm-spendguard`). Guarded savings (a cache hit, a blocked call, a cascade downgrade) are
    recorded by `guard.py` as a lognormal distribution (cumulants that add).
-5. **Reconcile against truth.** On demand (or on schedule), `reconcile.py` reads each provider's *actual billing*
+6. **Reconcile against truth.** On demand (or on schedule), `reconcile.py` reads each provider's *actual billing*
    (read-only) as `truth_total`, sums what the gate `captured`, and computes `residual = truth − captured −
    attributed`. The unattributed remainder is **surfaced**, never dumped on a project. This is the
    "[does it add up](#8-reconciliation-proof-it-adds-up)" guarantee.
-6. **Push (optional).** `saas.py` sends *scrubbed aggregates* over HTTPS with a Bearer ingest key — `(scope,
-   member, project, day, provider, model, spend, tokens)` and scrubbed insight abstracts. **No prompts, no keys,
-   no PII.** `schedule.py` can run this daily/hourly via the OS-native scheduler. → the server takes over.
+7. **Report and govern (optional).** `saas.py` sends scrubbed roll-ups plus decisions, savings/shed effectiveness,
+   truth and fleet/client status to the server, which drives the website; it also pulls effective caps from
+   `GET /v1/policy` for the client gate to enforce. **No prompts or keys.** `schedule.py` can run the flow on cadence.
 
 ## 6. Key concepts & principles
 

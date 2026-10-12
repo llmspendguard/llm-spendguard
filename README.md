@@ -1,6 +1,6 @@
 # llm-spendguard
 
-**Know what an LLM job will cost before you run it — and prove your ledger matches the provider's bill.**
+**Actively minimize and govern LLM spend before work runs — then prove the result against the provider's bill.**
 
 ```bash
 uvx --from llm-spendguard spendguard scan        # 10 seconds. No key, no config, nothing leaves your machine.
@@ -23,7 +23,7 @@ spendguard submit-jobs jobs.jsonl      # hand it a WHOLE job set + a goal; it pl
 your $0 lanes; `init --all` also wires the gate, MCP tools, receipt, assistant rule and slash-commands (add `--quick`
 for zero prompts). It ends on a status card + the one command that proves the path end-to-end.
 
-Five things it does that the observability and gateway tools don't:
+Six things it does that the observability and gateway tools don't:
 
 1. **Estimates a batch before you submit it** — not after the tokens are billed.
 2. **Refuses to price a model it doesn't know**, loudly, instead of logging $0. (Elsewhere a $0 price can also
@@ -37,6 +37,9 @@ Five things it does that the observability and gateway tools don't:
    the metered API — capability-matched to each call's structured-output needs, runs it, and returns. It estimates
    the whole set first and refuses before spending a cent over your budget. You never hand-tune which path each call
    takes; that's spendguard's job. See **[the whole-job contract](docs/WHOLE-JOB.md)**.
+6. **Manages constrained plans actively** — sheds eligible work from a capped/overage lane to another ready $0 lane,
+   chooses the cheapest measured-good `(model, effort)`, substitutes an actually served model inside a bounded economic
+   envelope, and delegates self-contained agentic work to codex/gemini/zai/kimi CLIs when the current plan is capped.
 
 Zero required dependencies. Fail-open by design: a cost tool must never be the reason your job doesn't run.
 Learn more at https://llmspendguard.com · **[Docs & quickstart →](https://docs.llmspendguard.com/)**
@@ -110,7 +113,7 @@ re-billed every call). spendguard makes those mistakes impossible to ship silent
 it reconstructs *what* you should do cheaper, and won't let "cheaper" cost you quality.
 
 ## What it does
-**Enforce → see → plan → prove → learn.**
+**Enforce → shed → route → delegate → save → prove → learn.**
 - **gate** — overlay on the OpenAI/Anthropic SDKs (armed by `spendguard run --`, by `import spendguard`, or venv-wide via the opt-in hook): estimates every
   batch/real-time call — chat, Responses API, Anthropic messages, **and embeddings** (realtime + batch
   `input` bodies) — **hard-stops** over a cap (per-batch + cross-process daily/monthly) — then *asks* if interactive.
@@ -132,11 +135,20 @@ it reconstructs *what* you should do cheaper, and won't let "cheaper" cost you q
   models on a task sample so they enter the ranking. Exposed as a local MCP server — **`spendguard mcp`** (stdio,
   no SDK dep) — so any MCP client (Claude Code / Desktop, an IDE agent) can call it as tools. See
   [Model-advisor](docs/MODEL_ADVISOR.md).
+- **active routing** — `advisor.shed_lanes` plus live cap/overage state moves eligible work to ready $0 lanes;
+  best-value resolves the cheapest measured-good `(model, effort)`; unserved requests get the best catalog-ranked
+  served substitute within anchor rate ×1.25. Shed results distinguish avoided-overage $ from quota-preserved value.
+- **warm shared MCP + fleet** — one long-lived daemon per tool is shared by sessions; `spendguard fleet` reports the
+  deployed green version and stale consumers instead of leaving long-running processes silently behind.
 - **cost levers** — prompt-caching audit/test, semantic cache + batch dedup, cost-aware cascade routing.
 - **observability** — emits OpenTelemetry GenAI-convention metrics+spans → Langfuse / Helicone / Phoenix / any OTLP backend.
 
 The advisor's own LLM use is itself **caged** (a separate `caps.meta` budget, tagged `spendguard:*`, excluded
 from the corpus it analyzes) so the governor can't overspend governing.
+
+Cost reporting has three axes and never blends them: `Total $X = $A API + $S Subscription (plan) + $R Remote
+(provider)  ::  Est sub value $V`; guarded savings (measured + counterfactual) is a separate third axis, never added
+to real dollars or estimated subscription value.
 
 ## Delegate work to another plan
 
@@ -161,7 +173,11 @@ plan is capped or on overage.
 **Docs:** [Architecture + diagrams](docs/ARCHITECTURE.md) · [Diagrams](docs/diagrams.md) · [Durable queue + dedup](docs/QUEUE_DURABILITY.md) · [Plan shedding](docs/PLAN_SHEDDING.md) · [Fleet / update propagation](docs/FLEET_UPDATE_PROPAGATION.md) · [Model-advisor (MCP)](docs/MODEL_ADVISOR.md) · [Use with Claude/Cursor](docs/USING-WITH-CLAUDE.md) · [Methodology](docs/README.md) · [Roadmap (teams/orgs/SaaS)](docs/ROADMAP.md) · [Module map](src/spendguard/README.md) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md) · [Setup](SETUP.md)
 
 **Use with an AI assistant:** `spendguard install-rule --global` writes a rule into `CLAUDE.md` so **every** Claude/Cursor conversation routes the LLM code it builds through spendguard — then `spendguard install-skills` adds the slash-commands: `/spend` (status), `/spendguard-reconcile` (trust the number), `/spendguard-learn` (advisor), `/spendguard-prompts` (the prompt lab), `/spendguard-close` (monthly close). See [Use with Claude](docs/USING-WITH-CLAUDE.md).
-**Teams & orgs:** each user keeps their own ledger + sets their own caps (partner, not supervisor); opt-in roll-up for shared visibility + pooled learnings via the SaaS (separate repo). The client (this package) is **production-ready and fully standalone**. The team/org dashboard is **live** at [llmspendguard.com](https://llmspendguard.com) — see [ROADMAP.md](docs/ROADMAP.md).
+**Teams & orgs:** each user keeps their own ledger and local caps; the connected server also serves effective advisory
+or enforced caps through `GET /v1/policy`, which the client pulls and enforces (an enforced org cap can only be tightened
+locally). Opt-in roll-ups carry decisions, shed effectiveness, savings, and fleet/client status to the dashboard. The
+client is **production-ready and fully standalone**. The team/org dashboard is **live** at
+[llmspendguard.com](https://llmspendguard.com) — see [ROADMAP.md](docs/ROADMAP.md).
 
 ## Quickstart
 

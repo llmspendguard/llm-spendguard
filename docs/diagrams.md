@@ -1,5 +1,35 @@
 # Architecture diagrams
 
+## Active spend management and org truth flow
+
+The active path acts before dispatch, records the economic outcome on three separate axes, and publishes scrubbed
+operational truth to the website. Effective caps travel the other direction and are enforced locally
+([`src/spendguard/plan_admission.py`](../src/spendguard/plan_admission.py),
+[`src/spendguard/route_utility.py`](../src/spendguard/route_utility.py),
+[`src/spendguard/delegate_router.py`](../src/spendguard/delegate_router.py),
+[`src/spendguard/guard.py`](../src/spendguard/guard.py), [`src/spendguard/saas.py`](../src/spendguard/saas.py)).
+
+```mermaid
+flowchart LR
+    W[eligible work] --> P{plan admission}
+    P -->|capped / overage / shed_lanes| S[shed from lane]
+    P -->|ready| R[route]
+    S --> R
+    R --> BV[best-value: cheapest measured-good model + effort]
+    R --> SS[served substitute: within anchor rate ×1.25]
+    R -->|self-contained agentic subwork| D[delegate: codex / gemini / zai / kimi CLI]
+    BV --> X[execute]
+    SS --> X
+    D --> X
+    X --> SAVE[(ledger + decisions + savings)]
+    SAVE --> AX["3 separate axes:<br/>real $ components :: est sub value :: savings"]
+    SAVE --> SYNC[saas sync]
+    F[fleet: green + stale consumers] --> SYNC
+    SYNC -->|"status · truth · decisions<br/>shed · savings · fleet"| INGEST[server status / truth ingest]
+    INGEST --> DASH[website dashboard]
+    POLICY[server GET /v1/policy] -->|advisory / enforced effective caps| P
+```
+
 ## End-to-end governed call and durable work flow
 
 The synchronous and storm paths share admission and settlement concepts, but queue use is path-dependent: ordinary calls may record an open queue row when `advisor.route_through_queue` is enabled, while storm overflow reaches `lane_queue.db` through the durable batch executor. The explicit branches below avoid implying that every call is always queued ([`src/spendguard/adapters.py:1194`](../src/spendguard/adapters.py#L1194), [`src/spendguard/adapters.py:1271`](../src/spendguard/adapters.py#L1271), [`src/spendguard/adapters.py:1337`](../src/spendguard/adapters.py#L1337), [`src/spendguard/storm_submit.py:120`](../src/spendguard/storm_submit.py#L120)).

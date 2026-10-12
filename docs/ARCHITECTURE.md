@@ -1,9 +1,16 @@
 # Architecture
 
-spendguard sits **between your code and the provider SDKs** and does four things in a loop:
-**enforce → see → plan/prove → learn.** It's a library + CLI, not a service: zero required deps
+spendguard sits **between your code and the provider SDKs** and actively manages work in a loop:
+**enforce → shed → route → delegate → save → report → learn.** It's a library + CLI, not a service: zero required deps
 (the OpenAI/Anthropic SDKs are lazy-imported and optional), all state under `$SPENDGUARD_HOME`
 (default `~/.spendguard`), and **fail-open everywhere** — a bug in the gate must never break your job.
+
+The active pipeline has explicit homes: `plan_admission.py` and `route_utility.py` shed and rank lanes;
+`best_value.py` resolves the cheapest measured-good `(model, effort)`; `vendor_call.served_substitute` resolves an
+unserved model inside its economic bound; `delegate_router.py` hands self-contained work to another provider CLI;
+`guard.py` records decisions, guarded savings, and shed effectiveness; `saas.py` reports the scrubbed results and
+pulls effective caps; and `fleet.py` reports green-version/stale consumers. `mcp_server.serve_http` and the provider
+daemon modules keep one warm shared daemon per tool instead of spawning one copy per session.
 
 It is built to be **extended, not forked.** Like Postgres' access methods or a WSGI stack, every place
 you'd want to plug in — a new SDK, a new event sink, a new price table, a new config knob, a team server —
@@ -294,28 +301,37 @@ calls `install()` so it holds even when run as `spendguard <cmd>`. The advisor m
 ```mermaid
 flowchart LR
     subgraph client ["llm-spendguard — this repo (standalone, production-ready)"]
-      GATE["gate + caps + ledger"] --> SAAS["saas.py<br/>client seam"]
+      GATE["shed → route → delegate<br/>gate + ledger + savings + fleet"] --> SAAS["saas.py<br/>sync + pull_policy"]
     end
-    SAAS -.->|"opt-in · scrubbed · Bearer key"| SERVER["llm-spendguard-server<br/>(SEPARATE repo · llmspendguard.com · in dev)"]
-    SERVER -.->|"pooled learnings / visibility"| SAAS
+    SAAS -->|"opt-in · scrubbed roll-ups<br/>status · truth · decisions · savings · fleet"| SERVER["llm-spendguard-server<br/>(SEPARATE repo · llmspendguard.com)"]
+    SERVER -->|"GET /v1/policy<br/>effective advisory / enforced caps"| SAAS
+    SERVER --> WEB["website dashboard<br/>org truth + shed effectiveness + fleet"]
 ```
 
-- **This repo is the whole product, standalone.** Gate, pricing, ledger, advisor, reconcile, report,
-  slash-commands. Each user keeps their **own** local ledger and sets their **own** caps. It depends on no
+- **This repo is the whole product, standalone.** Gate, pricing, ledger, active routing/delegation, savings,
+  reconcile, report, warm shared MCP daemons, fleet and slash-commands. Each user keeps their **own** local ledger
+  and local caps. It depends on no
   server and works fully offline.
 - **The server is a separate repo (`llm-spendguard-server`, llmspendguard.com — in development).** `saas.py` is only
   the **client seam**: it reads a connection from `~/.spendguard/saas.json` (or env) and speaks a small,
-  versioned `/v1` HTTP contract — `GET /v1/health`, `POST /v1/ledger` (per-day roll-up), `POST/GET
-  /v1/insights` (scrubbed learnings), plus device-link and a pull-model command queue. **One Bearer key is
+  versioned `/v1` HTTP contract — including `GET /v1/health`, `POST /v1/ledger`, `POST /v1/status`, truth and
+  insight flows, command/taxonomy endpoints, and `GET /v1/policy`. **One Bearer key is
   the identity** — the *server* maps it to the user→team→org hierarchy; the client stores no `team_id`/`org_id`.
-- **Partner, not supervisor.** The server is opt-in *visibility + pooled learnings*. It never pushes caps
-  down or blocks a user. `visibility=private` (the default) means **nothing leaves the machine**; `team`/`org`
-  send only **scrubbed abstracts** (reusing `share.py`'s scrub — task class / model / ratios, never
-  $/intent/prompt text). Cadence is configurable (`sync_interval`); `sync(if_due=True)` is cron-safe and
-  no-ops when not due. Every call **degrades gracefully** ("not connected") until the server exists — the
-  client never breaks waiting on it.
+- **Partner with an enforceable policy channel.** The server serves effective org/team caps at `GET /v1/policy`.
+  `saas.pull_policy()` caches them in `config.json`; the gate applies advisory caps as suggestions (the developer's
+  local cap wins) and enforced caps as hard ceilings that local config may tighten but never loosen. With
+  `visibility=private` (the default), nothing is pushed; connected sync sends scrubbed aggregates and status, never
+  prompts or keys. Every network call degrades gracefully when disconnected; local management keeps working.
+- **Client → server → website truth flow.** The client executes shed/route/delegate decisions, records guarded
+  savings and shed effectiveness (`avoided_overage_usd` separate from `quota_preserved_usd`), and reports those with
+  status, provider truth and fleet version/staleness. The server ingests that attested state and presents it; it does
+  not recompute client costs.
 - **Cross-check, not blind trust.** Each pushed row carries a deterministic `uid` (byte-identical to the
   server's), so `spendguard saas crosscheck` diffs local vs server rows for drift / local-only / server-only.
+
+**Cost axes are independent.** Real $ is API (per-token) + Subscription (flat plan fee) + Remote (compute), always
+shown as named components. Estimated subscription value follows separately after `::`. Guarded savings (measured +
+counterfactual) is a third axis. Neither est-value nor savings is added to real dollars, or to each other.
 
 ---
 
