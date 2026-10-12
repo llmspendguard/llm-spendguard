@@ -1500,7 +1500,8 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
             callio.capture_live(_cap_intent, r.get("provider") or "",
                                 r.get("model") or model, prompt, r.get("text"),
                                 in_tok=r.get("in_tok") or 0, out_tok=r.get("out_tok") or 0,
-                                system=system, req_schema=schema, req_max_tokens=max_tokens)
+                                system=system, req_schema=schema, req_max_tokens=max_tokens,
+                                finish_reason=r.get("finish_reason"))
         # FORENSIC — record EVERY FAILED outcome on the ledger. The success path already records (gate._record_rt /
         # the subscription writer); a FAILURE reached the caller as {error} and, until now, was recorded NOWHERE — the
         # exact hole that made a week of "what is going on" unanswerable. adapters.call is the ONE function every
@@ -2483,6 +2484,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 from . import calls, vendor_call as _vc
                 calls.record_call(prov, raw, "subscription", 0.0,
                              in_tok=s.get("in_tok", 0), out_tok=s.get("out_tok", 0), latency=s.get("latency"),
+                             finish=s.get("finish_reason"),
                              executor=lane_name, effort=_applied_eff,   # the plan that served it + the effort it APPLIED
                              outcome=_vc.OK, disposition="served")  # forensic parity: a lane SUCCESS carries its outcome,
                              #   like the chokepoint records a failure's — every call on the ledger with its full fate
@@ -2490,7 +2492,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 pass
             return {**base, "text": s["text"], "in_tok": s.get("in_tok", 0), "out_tok": s.get("out_tok", 0),
                     "latency": s.get("latency", 0.0), "cost": 0.0, "executor": lane_name,
-                    "effort": _applied_eff, "error": None}
+                    "effort": _applied_eff, "finish_reason": s.get("finish_reason"), "error": None}
         # STRUCTURED miss reason — a CODE, not the free-form error string — so a consumer splits shed vs shape vs
         # empty vs quota without parsing prose (the lane twin of the vision runner's reason codes). The branch below
         # ALREADY knows the category; this only names it.
