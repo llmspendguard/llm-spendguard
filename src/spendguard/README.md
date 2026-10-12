@@ -92,7 +92,9 @@ one-liners are read from each module's own top docstring.
 | `semcache.py` | Opt-in response cache (exact + semantic) + batch `dedup` / `dedup-populate` (free re-runs). |
 | `cascade.py` | Cost-aware routing — cheap→verify→escalate, denylist-aware. |
 | `compare.py` / `adapters.py` | Run one prompt across models (cost/latency); provider adapters (OpenAI-compatible + Anthropic) — `adapters.call` is the gated call path (incl. `reasoning="best-value"`). |
-| `sync.py` / `refresh.py` | Sync the price table from LiteLLM's published JSON. |
+| `model_catalog.py` | Curated per-model SSOT, including source-owned row `as_of`; its change-aware helper stamps only tracked price/capability changes and permits explicit undated legacy rows during rollout. |
+| `sync.py` / `refresh.py` | Sync the broad LiteLLM price cache; cache `_fetched` is snapshot time and never curated row freshness. |
+| `sync_capabilities.py` | Deliberate source-tree authoring command; routes capability/limit writes through the catalog helper, dating changed rows and preserving no-op/untouched dates. |
 | `bootstrap.py` | Cold start — chain all the free mining + estimate the caged reasoning. |
 | `prompts.py` | PROMPT-EFFICIENCY lint — mine the call corpus for waste (boilerplate, context stuffing, cheaper-model candidates), then hand each finding to the A/B lab; `spendguard prompts`. |
 | `output_contract.py` | The SHAPE a job's output must arrive in — declared once, checked against a real sample before the bulk run. |
@@ -112,7 +114,7 @@ one-liners are read from each module's own top docstring.
 | `lane_value.py` | Plan VALUE of subscription-lane calls with NO session-log miner (gemini/zai) — priced from the calls ledger; `spendguard lane-value`. |
 | `dispatch.py` | The DISPATCH GOVERNOR — bounded concurrency + optional rate pacing per vendor/lane, so cross-LLM work at scale QUEUES instead of 429-storming. |
 | `route_utility.py` | Routing UTILITY — one comparable score per target (a lane or a metered provider:model): drain the FREE plans first by real headroom, fall to the cheapest metered with prepay only when the lanes can't serve. |
-| `catalog.py` | Live model-catalog CACHE — the served-list store so dispatch pre-flight grounds a model id against what a provider serves RIGHT NOW ($0), catching a stale id before a mystery 404; `spendguard sync-catalog`. |
+| `catalog.py` | Live served-list cache plus curated server overlay pull; preserves embedded source row dates and never relabels local pull time as row freshness; `spendguard sync-catalog`. |
 | `model_preflight.py` | The FIXED, TESTED map that makes a model id CALLABLE-or-not answerable up front — catches a stale/renamed/unpriced id before a batch spends a cent; `spendguard preflight`. |
 
 ### Lane executors

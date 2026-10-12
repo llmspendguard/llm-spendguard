@@ -15,6 +15,7 @@ caller's model). $0 — a local dataset read (no LLM, no network of its own). Th
 config.update_json (atomic + backups), so the SSOT catalog is never truncated.
 """
 import argparse
+import datetime
 import sys
 
 from . import config, model_catalog
@@ -186,6 +187,12 @@ def sync_capabilities(dry_run=False):
     summary dict. dry_run computes the summary and writes NOTHING. The write is atomic + backed up (config.update_json)."""
     models = model_catalog.all_records()
     updates, summary = _updates_for(models)
+    run_date = datetime.datetime.now(datetime.timezone.utc).date()
+    changed = sum(model_catalog.tracked_catalog_payload(models[mid]) !=
+                  model_catalog.tracked_catalog_payload({**models[mid], **u})
+                  for mid, u in updates.items() if mid in models)
+    summary["changed"] = changed
+    summary["no_op"] = len(updates) - changed
     summary["dry_run"] = bool(dry_run)
     if dry_run or not updates:
         return summary
@@ -194,7 +201,7 @@ def sync_capabilities(dry_run=False):
         m = (doc or {}).get("models") or {}
         for mid, u in updates.items():
             if mid in m:
-                m[mid].update(u)                          # merge capability/vision/limit fields into the record
+                model_catalog.merge_row_updates(m[mid], u, today=run_date)
         return doc
 
     config.update_json(model_catalog.DATA_PATH, _merge_capability_updates, reason="sync capabilities + upper bounds from LiteLLM",
@@ -229,5 +236,6 @@ def cmd(argv=None):
     tag = "[DRY-RUN] " if s.get("dry_run") else ""
     print(f"sync-capabilities {tag}: LiteLLM covers {s['covered']}/{s['covered'] + s['uncovered']} catalog models · "
           f"vision true={s['vision_true']} false={s['vision_false']} · filled {s['filled_limits']} missing limit(s)"
+          f" · changed={s['changed']} observed/no-op={s['no_op']}"
           f"{' (nothing written)' if s.get('dry_run') else ' → model_catalog.json'}")
     return 0

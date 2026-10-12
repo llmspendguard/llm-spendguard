@@ -7,7 +7,9 @@ never edit prices.json by hand. Idempotent: writes only when the projection actu
 
 Precedence note: pricing._load already layers the catalog directly, so prices.json is primarily a stable, reviewable,
 externally-consumable PROJECTION (+ the provenance each rate carries). tests/test_model_catalog_ssot.py fails if it
-drifts from the catalog (the freshness guard). $0, no network. Gated: import spendguard; spendguard.require()."""
+drifts from the catalog (the freshness guard). `_meta.generated_at` is artifact-generation time, never per-row
+freshness; row `as_of` deliberately remains outside this price-only projection. $0, no network. Gated:
+import spendguard; spendguard.require()."""
 import datetime
 import json
 import os

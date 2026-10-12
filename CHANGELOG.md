@@ -4,6 +4,15 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+### Added
+- **Honest per-row catalog provenance (client half).** Curated model records accept source-owned `as_of` dates for
+  the last tracked price/capability change; one change-aware writer keeps no-op, untouched, and editorial-only dates
+  stable. Capability sync reports changed vs observed/no-op rows, overlay sync preserves server dates, and a gated,
+  dry-run-first Git-history migration proposes bootstrap dates. Cache `_fetched`, generator time, and server ingest
+  time remain separate. Until the reviewed bootstrap is published, unresolved rows stay explicitly unknown legacy
+  rows rather than receiving a fabricated current date. The public read path is the anonymous `/catalog` page and
+  `/api/public/catalog`; local standalone operation and optional SaaS telemetry remain separate.
+
 ## [0.12.18] — 2026-10-10
 
 ### Fixed

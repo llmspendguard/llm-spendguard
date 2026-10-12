@@ -14,6 +14,7 @@ os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 from spendguard import sync_capabilities as sc, sync
+from spendguard import model_catalog as catalog_contract
 
 _REAL_LR = sc._litellm_record          # captured before section B monkeypatches it — section E needs the real one
 
@@ -61,6 +62,20 @@ ck("a CURATED limit is NEVER overwritten", "output_ceiling" not in updates.get("
 ck("uncovered model → no update (never a guessed flag)", "umodel" not in updates)
 ck("summary counts", summary["covered"] == 2 and summary["uncovered"] == 1
    and summary["vision_true"] == 1 and summary["vision_false"] == 1)
+
+# The shared writer owns freshness: all tracked groups advance; no-op, untouched, and editorial-only changes do not.
+for field, value in [("price", {"in_": 2}), ("vision", True), ("capabilities", {"mode": "chat"}),
+                     ("context_window", {"value": 99}), ("output_ceiling", {"value": 9})]:
+    row = {"id": "x", "provider": "p", "as_of": "2025-01-01"}
+    catalog_contract.merge_row_updates(row, {field: value}, today="2026-10-12")
+    ck(f"tracked {field} change advances as_of", row["as_of"] == "2026-10-12")
+row = {"id": "x", "provider": "p", "vision": True, "as_of": "2025-01-01"}
+catalog_contract.merge_row_updates(row, {"vision": True}, today="2026-10-12")
+ck("no-op tracked observation retains as_of", row["as_of"] == "2025-01-01")
+catalog_contract.merge_row_updates(row, {"aliases": ["editorial"]}, today="2026-10-12")
+ck("routing/editorial-only update retains as_of", row["as_of"] == "2025-01-01")
+untouched = {"id": "y", "provider": "p", "as_of": "2024-02-03"}
+ck("untouched row retains as_of", untouched["as_of"] == "2024-02-03")
 
 # ── C. audit_catalog_completeness — coverage, uncovered, and DISCOVER (provider models not in the catalog) ──
 from spendguard import model_catalog as mc

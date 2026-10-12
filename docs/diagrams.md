@@ -28,6 +28,9 @@ flowchart LR
     SYNC -->|"status · truth · decisions<br/>shed · savings · fleet"| INGEST[server status / truth ingest]
     INGEST --> DASH[website dashboard]
     POLICY[server GET /v1/policy] -->|advisory / enforced effective caps| P
+    CAT["published model_catalog.json<br/>row as_of"] --> CRON["server catalog cron<br/>global table + ingested_at"]
+    CRON --> PUB["anonymous public API + /catalog<br/>no Clerk · no tenant RLS"]
+    CRON -->|"authenticated overlay; preserve as_of"| SYNC
 ```
 
 ## End-to-end governed call and durable work flow

@@ -40,6 +40,11 @@ originates:
   [SaaS server](https://github.com/llmspendguard/llm-spendguard-server) for an org-wide roll-up and pull effective
   advisory/enforced caps from `GET /v1/policy` for local enforcement (`saas.pull_policy`).
 
+The global catalog is a separate public-data flow, not client telemetry: this repo publishes authored model rows on
+GitHub; the server cron ingests them into a global table; anonymous `/api/public/catalog` and `/catalog` expose an
+allowlisted reference. Each row's source-owned `as_of` advances only for tracked price/capability changes, while the
+server's `ingested_at` records when it observed the publication. Neither requires or reveals tenant data.
+
 It has **zero required runtime dependencies**, runs entirely on-device, and is governed by a hard rule the
 maintainer applies to their own work: *no LLM code runs ungated*.
 

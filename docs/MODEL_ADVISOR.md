@@ -9,6 +9,10 @@ repo can ask.
 It is available three ways: the `spendguard advise` / `bakeoff` CLIs, the `spendguard mcp` server (below), and
 directly as Python (`advise.ranked`, `advisor.recommend_models`, `bakeoff.bakeoff`).
 
+For the no-login global model reference, see [llmspendguard.com/catalog](https://llmspendguard.com/catalog). Its
+`as_of` is the authored row price/capability-change date—not this machine's LiteLLM cache fetch time or the server's
+ingest time.
+
 ## The nine MCP tools (`spendguard mcp`)
 
 `spendguard mcp` is a stdlib-only MCP **stdio** server — no SDK dependency (like `serve.py`), client-side and

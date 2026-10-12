@@ -83,8 +83,12 @@ confidence + provenance, never the sample content that produced it.
 - **Class B** aggregates with **consensus + confidence + sample size + recency decay**, and every prior is a *seed*
   the local install re-validates before trusting for spend decisions (the existing lifecycle: insights are
   conditional rules re-validated as data grows). Outlier rejection on submission; a single user cannot move a prior.
-- **Provenance is mandatory** on every datum: `source` (provider-doc / measured / crowd-aggregate), `as_of`,
+- **Provenance is mandatory** on every datum: `source` (provider-doc / measured / crowd-aggregate), row `as_of`,
   `verified` (bool/null), and for Class B `n` (contributors) + `confidence`.
+
+For curated model rows, `as_of` is the source-owned `YYYY-MM-DD` when `price`, `vision`, `capabilities`,
+`context_window`, or `output_ceiling` last changed. Cache `_fetched`, artifact `generated_at`, and server
+`ingested_at` are snapshot/observation times and must never be relabeled as row freshness.
 
 ## 5. Staleness, provenance & conflict resolution
 
@@ -95,7 +99,7 @@ The server is the **reconciler**. Ordering rules when two data points disagree:
 4. Class A conflict never auto-resolves to a crowd value — it queues a re-verification and holds the last verified
    value meanwhile.
 
-Every distributed artifact carries an `as_of` and a content hash; clients cache with that stamp and show it
+Every distributed artifact carries provenance and a content hash; clients preserve each row's `as_of` and show it
 (`spendguard catalog --as-of`), so "the number is stale" is visible, never silent. Offline = serve the last cache +
 the T1 floor, and say so.
 
@@ -105,8 +109,7 @@ Extends existing seams — **no new mechanism where one exists.**
 
 - **Pull canonical (T2):** `spendguard sync-catalog` (EXISTS — today pulls litellm breadth) gains a source: the
   server's canonical catalog layer, written to `~/.spendguard/catalog_synced.json`, layered **above** the shipped
-  `model_catalog.json` floor and **below** any local override. `model_catalog._load_records()` becomes
-  floor→synced→local merge (today it reads only the shipped file).
+  `model_catalog.json` floor. `model_catalog._load_records()` merges whole records, preserving embedded `as_of`.
 - **Pull priors (T3):** `spendguard sync` (EXISTS via `saas sync`) also pulls Class-B priors into the advisor
   `insights` store, tagged `source=crowd`, `n`, `confidence`, `as_of` — read by `advise` / `best-value` as a seed,
   re-validated locally before it governs spend.
@@ -117,9 +120,10 @@ Extends existing seams — **no new mechanism where one exists.**
 
 ## 7. Server contract (llm-spendguard-server)
 
-New/extended endpoints (Bearer auth, the existing account anchor):
-- `GET /v1/catalog?since=<as_of>` → the canonical Class-A layer (delta since a stamp), content-hashed. Read-only,
-  cacheable, no auth required for the *public canonical* layer (it's shippable data); auth only gates org overrides.
+New/extended endpoints:
+- `GET /api/public/catalog` → allowlisted global curated rows, anonymous and cacheable; returns source-owned row
+  `as_of` separately from server `ingested_at`. `/catalog` is the matching no-login human reference.
+- `GET /v1/models?curated=1` → the compatible authenticated `{model_id: record}` overlay map with embedded `as_of`.
 - `POST /v1/measurements` → scrubbed Class-A drift signals + Class-B measurements. Validated, outlier-rejected,
   stored with contributor attribution (for consensus counting, not exposure).
 - `GET /v1/priors?intent=<label>&scope=<self|team|global>` → aggregated Class-B priors (EXTENDS the roadmap's
@@ -142,14 +146,10 @@ Much of the plane is already scaffolded (CLAUDE.md #0). The build is extend-and-
   Columns: model_id, provider, mode, max_input_tokens, max_output_tokens, price, capabilities, source, fetched_at.
 - **Client:** already consumes it — `saas.fetch_models()` (GET /v1/models) + `sync_capabilities._fetch_server_catalog`
   / `_litellm_record` merge the server catalog **first** into the local LiteLLM cache, for CAPABILITIES.
-- **THE GAP:** the server catalog is a **LiteLLM mirror** — it carries NO spendguard-CURATED data (`embed_max_batch`,
-  verified prices, output/reasoning floors, provider_base). So the curated layer — the actual value, including today's
-  embed ceilings — does **not** flow server→client; it reaches pip users only via the shipped `model_catalog.json`
-  floor (0.11.4), i.e. only on a release.
-- **Extension (item 2):** `refreshModelCatalog` also ingests the published curated `model_catalog.json` (from a
-  canonical URL) with `source='spendguard-curated'` + the extra columns; `/v1/models` serves them; the client routes
-  the server-fresh curated fields into `model_catalog` resolution (`embed_batch_ceiling`, …) as the T2 layer above the
-  shipped floor.
+- **Curated overlay:** the server ingests the GitHub-published `model_catalog.json`; the authenticated curated map is
+  stored by `saas.sync_catalog_overlay()` in `catalog_synced.json` and layered above the shipped floor. Embedded row
+  dates survive unchanged. The anonymous `/api/public/catalog` and `/catalog` read the same global data without Clerk
+  or tenant RLS; `ingested_at` remains a separately labeled server observation.
 
 ### Priors (T3 · item 3)
 - **Server:** `POST/GET /v1/insights` already push/pull SCRUBBED learnings (`spendguard.shared.v1`:
@@ -174,8 +174,8 @@ Much of the plane is already scaffolded (CLAUDE.md #0). The build is extend-and-
    provenance, never a raw crowd value.
 4. **No free text leaves.** A push-path test asserts the payload carries only labels + numbers + provenance — never
    sample content — and that the intent-label check runs before any push.
-5. **Provenance is total.** Every distributed datum has `source` + `as_of` (+ `n`/`confidence` for Class B); a test
-   rejects a datum missing it.
+5. **Provenance is honest.** Current rows have source + row `as_of`; unresolved rollout rows remain null and display
+   “Unknown (legacy row)” rather than borrowing a cache, generator, cron, or ingest timestamp.
 6. **Conservative on asymmetric facts.** A test pins that an unverified embed-ceiling drift lowers (never raises) the
    published ceiling until re-verified.
 
@@ -184,12 +184,10 @@ Much of the plane is already scaffolded (CLAUDE.md #0). The build is extend-and-
 Build order (user, 2026-09-30): **tighten spec (this) → client overlay → full build**.
 
 1. **[DONE] Ship the floor.** `model_catalog.json` in the wheel (0.11.4).
-2. **Curated catalog flows server→client (T2 · item 2).**
-   - *Client overlay (safe, first):* `model_catalog` resolution layers a server-synced catalog above the shipped floor
-     (**floor→synced→local**), fed by the EXISTING `/v1/models` pull — zero-risk, and the wiring the next step fills.
-   - *Server curated ingest:* `refreshModelCatalog` also ingests the curated `model_catalog.json`; a migration adds the
-     curated columns (`embed_max_batch`, verified price/ceiling/reasoning, provider_base, `source`); `/v1/models`
-     serves them. → a new embed ceiling reaches pip users on the daily refresh, **no release**.
+2. **Curated catalog flows publication→public/server→client (T2 · item 2).** Publish source-owned per-row dates from
+   Git history; deploy the server's nullable date/ingest schema and compatible reads first; then publish dated rows,
+   ingest them, and finally enforce completeness. The public API/page and authenticated overlay share global facts,
+   while only the latter requires the account seam.
 3. **Global-opt-in priors (T3 · item 3).** Extend `/v1/insights` with a global scope + aggregation (consensus +
    confidence + recency decay); client opts in to push/pull global priors into the advisor `insights` store, read as a
    re-validatable seed. Start with cost×quality-per-intent + wild-measured ceilings (Class-A drift → re-verify).
