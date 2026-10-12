@@ -2465,10 +2465,31 @@ def require(cap: "float | None" = None) -> None:
                                "called require() — refusing to spend ungated. `spendguard on` to re-enable.")
     install(cap=cap)
     if not _any_patched():
-        raise SpendGateRefused(
-            "spendguard is NOT enforcing in this interpreter — no OpenAI/Anthropic SDK was patched (wrong "
-            "python/venv, or the SDK isn't importable here). require() refuses to spend ungated. Fix: run under "
-            "a gated venv, or `pip install llm-spendguard` and `import spendguard` before the SDK is used.")
+        # Nothing is patched — but that has TWO meanings, and only one is a bypass. Mirror the SAME probe
+        # __init__._auto_install's strict path already uses, so the two fail-closed checkers can't disagree:
+        #   • a gated SDK is IMPORTABLE here but was not patched → a real bypass (wrong python/venv): REFUSE.
+        #   • NO gated SDK is importable → no provider can be called from this interpreter, so there is nothing
+        #     to patch and nothing that can spend ungated → enforcement is vacuously satisfied: PASS. This is the
+        #     correct state for a no-provider box (CI runners, offline suites) whose only tie to spendguard is a
+        #     module doing `import spendguard; spendguard.require()` at import. It is a point-in-time check, like
+        #     the rest of require(): if a provider SDK is later installed into this interpreter, call require()
+        #     again after importing it. Refusing here was a false negative that forced callers to install SDKs
+        #     they never use or to weaken the gate — both worse than this exact distinction.
+        import importlib.util
+
+        def _installed(m):
+            try:
+                return importlib.util.find_spec(m) is not None
+            except Exception:                       # a broken parent/namespace edge → treat as "not present"
+                return False
+
+        present = [m for m in gated_sdk_modules() if _installed(m)]
+        if present:
+            raise SpendGateRefused(
+                "spendguard is NOT enforcing in this interpreter — an LLM SDK (" + ", ".join(present) + ") is "
+                "installed yet wasn't patched (wrong python/venv?). require() refuses to spend ungated. Fix: run "
+                "under a gated venv, or `import spendguard` before the SDK is imported/used.")
+        # else: no gated provider SDK importable here — nothing to gate, nothing can spend. Enforcement holds.
 
 
 def _render_key_status_lines(statuses, down):
