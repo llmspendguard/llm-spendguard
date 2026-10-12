@@ -11,6 +11,10 @@ page exists to close:
    `required=`every declared property, so a map (`labels:{<id>:<label>}`) has no allowed keys and the model
    "correctly" returns `{}`. Use an **ARRAY of `{key,value}`** (`results:[{id,label}]`) instead.
 
+This is the vision-specific edge of spendguard's active optimizer: text work may be shed across subscription lanes,
+best-value routed, or delegated, but image-bearing work is capability-routed to a served metered vision model and
+estimate/cap checked before dispatch (`adapters.py`, `lane_balance.py`).
+
 ## One vision call — `adapters.vision`
 
 ```python
@@ -94,6 +98,9 @@ detector is `adapters.strict_map_violation(schema)` → the offending path, or `
 
 Images are priced by **pixels** (`content_tokens`: Anthropic `(w×h)/750`, OpenAI tiles), not the text tokenizer.
 A vision call bills the metered API (`executor="api"`, `cost > 0`) — it is never `$0`-lane-served.
+That charge belongs to the real-$ API component. The full display doctrine remains: real $ = named API + flat-plan
+Subscription + Remote-compute components; estimated subscription value follows separately after `::`; guarded savings
+(measured + counterfactual) is a third axis. They are never summed together.
 
 ## `timeout_s` and the vision transport
 

@@ -1,8 +1,10 @@
 # INTENT — llm-spendguard (client)
 
-**What this is.** llm-spendguard is *agentic forensic accounting for LLM and compute spend*. It runs where the
-work happens — a CLI, an import-time gate, and a local ledger — and answers three questions with **evidence**,
-not numbers you have to take on faith:
+**What this is.** llm-spendguard is an *active spend manager and LLM-use optimizer with agentic forensic
+accounting*. It runs where the work happens — a CLI, an import-time gate, routing/admission controls, and a local
+ledger — and acts before work spends: enforce the cap, choose the least-cost measured-good route, shed work from a
+capped plan, or delegate a self-contained task to another provider's CLI. It also answers three questions with
+**evidence**, not numbers you have to take on faith:
 
 - **ATTRIBUTION** — where did every dollar go? (project · org · conversation · model · intent)
 - **DISCOVERY** — what spend happened that you didn't know about? (ungated calls, remote/GPU compute, pre-ledger history)
@@ -15,8 +17,12 @@ dashboards, org rollups, savings claims — has any value. Every number is cross
 **What it does.**
 1. **Gates every LLM/embeddings call.** `import spendguard; spendguard.require()` fails **closed** — ungoverned code
    can't run silently. Estimate-before-spend on every paid batch; never hardcode a price (only `pricing.py`).
-2. **Routes batchable work across $0 subscription lanes** (claude-code · codex · gemini · zai) instead of paying the
-   metered API — the biggest cost lever when a plan is capped. Each lane↔metered pair is atomic and reasoning-floor pinned.
+2. **Actively optimizes where work runs.** `plan_admission.py` + `route_utility.py` shed eligible work from capped,
+   overage, or operator-selected `advisor.shed_lanes` onto ready $0 subscription lanes; `best_value.py` selects the
+   cheapest `(model, effort)` whose measured quality holds; and `vendor_call.served_substitute` resolves an unserved
+   request to the best served model inside the anchor-rate ×1.25 economic bound, ranked by catalog per-token rate.
+   If capped work needs a real agent, `spendguard delegate` (`delegate_router.py`) hands the self-contained task to
+   codex/gemini/zai/kimi's CLI — never a Claude subagent.
 3. **Reconciles the local ledger to the provider's real bill** across **batch · realtime · GPU**, and **reconstructs
    realtime spend WITHOUT a provider admin key** — agentically, from conversation token records — so you know your
    realtime spend even when the provider offers no cooperation.
@@ -35,6 +41,16 @@ dashboards, org rollups, savings claims — has any value. Every number is cross
    generated, never hand-edited), sourced from LiteLLM's community dataset — a verifiable **FACT**, because an LLM judge
    cannot know models past its cutoff. The org server's daily-refreshed `/v1/models` is the authoritative "first place to
    check"; the client checks it **first** and **FAILS OPEN** to its own local LiteLLM sync when it is unreachable.
+7. **Runs warm shared MCP daemons and reports fleet health.** Long-lived per-tool daemons serve many sessions
+   (`mcp_server.py` and the provider daemon modules); `fleet.py` compares each live consumer's loaded version with the
+   green pointer and reports stale consumers.
+8. **Reports optimization outcomes end to end.** `guard.py` keeps guarded savings (measured + counterfactual) as a
+   third axis and separates shed effectiveness into avoided-overage dollars and quota-preserved value; `saas.py`
+   sends those outcomes and fleet/client status to the server for the website.
+
+**Three cost axes, never one blended total.** Real dollars are named components — API (per-token) + Subscription
+(flat plan fee) + Remote (compute). Estimated subscription value is separate after `::`. Guarded savings (measured +
+counterfactual) is a third, separate axis. None of the three is summed with another.
 
 **What it is NOT.** Not a proxy or gateway (it gates in-process). Not the dashboard — that's the **server**
 (`llm-spendguard-server`), which aggregates what this client pushes and **never recomputes a cost**. Not a heuristic:
