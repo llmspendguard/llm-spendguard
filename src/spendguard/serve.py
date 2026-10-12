@@ -34,7 +34,7 @@ def _requires_token(host):
 
 
 class _AskHTTPHandler(BaseHTTPRequestHandler):
-    def _send(self, code, obj):
+    def _send_json(self, code, obj):
         body = json.dumps(obj).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
@@ -53,32 +53,32 @@ class _AskHTTPHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if not self._authed():
-            return self._send(401, {"error": "unauthorized — Authorization: Bearer <SPENDGUARD_SERVE_TOKEN>"})
+            return self._send_json(401, {"error": "unauthorized — Authorization: Bearer <SPENDGUARD_SERVE_TOKEN>"})
         if self.path == "/health":
             import spendguard
-            return self._send(200, {"ok": True, "version": spendguard.__version__})
+            return self._send_json(200, {"ok": True, "version": spendguard.__version__})
         if self.path == "/metadata":
             from . import metadata_audit
-            return self._send(200, metadata_audit.backbone_health())
-        return self._send(404, {"error": f"no route {self.path} — GET /health · /metadata · POST /ask · /embed"})
+            return self._send_json(200, metadata_audit.backbone_health())
+        return self._send_json(404, {"error": f"no route {self.path} — GET /health · /metadata · POST /ask · /embed"})
 
     def do_POST(self):
         if not self._authed():
-            return self._send(401, {"error": "unauthorized"})
+            return self._send_json(401, {"error": "unauthorized"})
         if self.path not in ("/ask", "/embed"):
-            return self._send(404, {"error": f"no route {self.path} — POST /ask · /embed"})
+            return self._send_json(404, {"error": f"no route {self.path} — POST /ask · /embed"})
         try:
             n = int(self.headers.get("Content-Length") or 0)
             if n > _MAX_BODY:
-                return self._send(413, {"error": f"body too large (> {_MAX_BODY} bytes)"})
+                return self._send_json(413, {"error": f"body too large (> {_MAX_BODY} bytes)"})
             req = json.loads(self.rfile.read(n) or b"{}")
         except Exception as e:
-            return self._send(400, {"error": f"bad JSON body: {e}"})
+            return self._send_json(400, {"error": f"bad JSON body: {e}"})
         return self._handle_ask(req) if self.path == "/ask" else self._handle_embed(req)
 
     def _handle_ask(self, req):
         if not req.get("prompt"):
-            return self._send(400, {"error": "'prompt' is required"})
+            return self._send_json(400, {"error": "'prompt' is required"})
         import spendguard
         try:
             r = spendguard.ask(
@@ -87,17 +87,17 @@ class _AskHTTPHandler(BaseHTTPRequestHandler):
                 deadline_s=req.get("deadline_s"), budget_usd=req.get("budget_usd"),
                 mode=req.get("mode", "all"), require=req.get("require"))
         except spendguard.BudgetRefused as e:
-            return self._send(402, {"error": str(e), "estimate": e.estimate, "budget": e.budget, "detail": e.detail})
+            return self._send_json(402, {"error": str(e), "estimate": e.estimate, "budget": e.budget, "detail": e.detail})
         except ValueError as e:
-            return self._send(400, {"error": str(e)})
+            return self._send_json(400, {"error": str(e)})
         except Exception as e:
-            return self._send(500, {"error": f"{type(e).__name__}: {e}"})
-        return self._send(200, r.as_dict())
+            return self._send_json(500, {"error": f"{type(e).__name__}: {e}"})
+        return self._send_json(200, r.as_dict())
 
     def _handle_embed(self, req):
         texts = req.get("texts")
         if not isinstance(texts, list) or not texts or not all(isinstance(t, str) for t in texts):
-            return self._send(400, {"error": "'texts' must be a non-empty list of strings"})
+            return self._send_json(400, {"error": "'texts' must be a non-empty list of strings"})
         import spendguard
         from . import adapters
         from . import gate as _g
@@ -105,13 +105,13 @@ class _AskHTTPHandler(BaseHTTPRequestHandler):
             r = adapters.embed(texts, model=req.get("model"), dimensions=req.get("dimensions"),
                                max_batch=req.get("max_batch"))
         except spendguard.BudgetRefused as e:                 # estimate-first refusal — carries the breakdown
-            return self._send(402, {"error": str(e), "estimate": e.estimate, "budget": e.budget, "detail": e.detail})
+            return self._send_json(402, {"error": str(e), "estimate": e.estimate, "budget": e.budget, "detail": e.detail})
         except _g.deliberate_stop_types() as e:               # a cap breach / spend stop propagates from embed → 402, never a false 200
-            return self._send(402, {"error": f"spend refused ({type(e).__name__}): {e}"})
+            return self._send_json(402, {"error": f"spend refused ({type(e).__name__}): {e}"})
         except Exception as e:
-            return self._send(500, {"error": f"{type(e).__name__}: {e}"})
+            return self._send_json(500, {"error": f"{type(e).__name__}: {e}"})
         # `checkpoint` is a serve-host local path (a durability detail) — never expose it to the HTTP caller
-        return self._send(200, {k: v for k, v in r.items() if k != "checkpoint"})
+        return self._send_json(200, {k: v for k, v in r.items() if k != "checkpoint"})
 
 
 def make_server(host=DEFAULT_HOST, port=DEFAULT_PORT, token=None):

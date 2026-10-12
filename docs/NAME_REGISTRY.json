@@ -7,11 +7,6 @@
       "verdict": "PROTOCOL",
       "why": "codex_exec._mcp_disable_flags returns the global Codex config override that disables MCP orchestration, and codex_daemon._mcp_disable_flags deliberately delegates to it so cold exec and the warm app-server use the identical flag contract. [PROTOCOL, warm-daemon/MCP work, 2026-10-12.]"
     },
-    "_send": {
-      "n": 2,
-      "verdict": "COLLISION",
-      "why": "mcp_server.serve_http._Handler._send accepts (pre-serialized body, code=200) and can emit an empty response, while serve._AskHTTPHandler._send accepts (code, object) and always JSON-serializes the object; incompatible argument order and payload contracts make these different private jobs wearing one name. [COLLISION, warm-daemon/MCP work, 2026-10-12.]"
-    },
     "do_POST": {
       "n": 2,
       "verdict": "PROTOCOL",
