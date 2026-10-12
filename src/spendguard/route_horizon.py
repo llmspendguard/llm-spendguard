@@ -111,7 +111,12 @@ def plan_horizon(groups, *, lane_binding=None, lane_label=None, batch_model=None
             else:
                 unpriced_tok = rem; rem = 0.0           # no priced realtime model → overflow is UNPRICED, said out loud
             over_rate, over_tok = rt_per_tok, meter_tok
-            method = "realtime" if (meter_tok or not take_eff) else ("lane+realtime" if meter_tok else "lane")
+            if unpriced_tok:
+                method = "unpriced" if not (take_free or take_eff) else "lane+unpriced"
+            elif meter_tok:
+                method = "realtime" if not (take_free or take_eff) else "lane+realtime"
+            else:
+                method = "lane"
         else:
             # can wait: after the free reclaim, take lane-eff ONLY if it undercuts batch; the rest to cheap cap-free BATCH.
             use_eff = (batch_per_tok is None) or (eff < batch_per_tok)

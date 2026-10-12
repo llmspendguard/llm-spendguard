@@ -32,7 +32,7 @@ def rows(since=None):
     return out
 
 
-def push_truth(since=None, dry=False):
+def push_truth(since=None, dry=False, truth_rows=None):
     """Push truth rows → POST /v1/truth. Honors visibility (private = nothing leaves); tolerates a server
     that doesn't implement the endpoint yet (the same forward-compat pattern as push_insights)."""
     from . import saas
@@ -53,7 +53,7 @@ def push_truth(since=None, dry=False):
     ok, why = _reconcile.owner_ok(c)
     if not ok:
         return {"skipped": why}
-    payload = {"truth": rows(since)}
+    payload = {"truth": rows(since) if truth_rows is None else truth_rows}
     if dry:
         return payload
     try:
@@ -79,7 +79,7 @@ def main(argv=None):
     if len(rs) > 14:
         print(f"  … ({len(rs) - 14} earlier rows)")
     if a.push:
-        res = push_truth(a.since)
+        res = push_truth(a.since, truth_rows=rs)
         print(f"  push → {res}")
     else:
         print("  (preview only — pass --push to sync to the org server)")
