@@ -25,7 +25,7 @@ def current_overage_status():
     return {"on_overage_now": any(begin <= now < reset for (begin, reset) in windows),
             "meaning": "true = the weekly plan cap is hit and this account is paying per-token right now",
             "observed_overage_windows": len(windows),
-            "real_overage_by_month_usd": {month_name: dollars for month_name, dollars in month[:6]}}
+            "real_overage_by_month_usd": {month_name: float(dollars or 0.0) for month_name, dollars in month[:6]}}
 
 
 def overage_cli(_argv=None):

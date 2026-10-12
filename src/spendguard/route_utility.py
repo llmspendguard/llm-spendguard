@@ -228,7 +228,7 @@ def rank_metered(candidates, est_in, est_out):
             p["why"] = "unpriced; " + p["why"]
         else:
             norm = (p["cost"] / hi) if hi > 0 else 0.0
-            p["score"] = 1.0 - norm                         # cheapest → ~1.0 (still < any live lane), dearest → ~0
+            p["score"] = max(0.02, 1.0 - norm)              # every priced target outranks the unpriced sentinel
             p["why"] = f"${p['cost']:.4f}/call ({p['why']})"
     rows.sort(key=lambda d: (not d["available"], -(d["score"] if d["score"] is not None else -1.0)))
     return rows
@@ -245,6 +245,8 @@ def rank_targets(lane_rows, metered_candidates, est_in, est_out, cooling=None, n
             "score": l["score"], "why": l["why"]} for l in lanes_ranked]
     out += [{"kind": "metered", "target": m["target"], "provider": m["provider"], "available": m["available"],
              "score": m["score"], "why": m["why"]} for m in metered_ranked]
+    out.sort(key=lambda d: (not d["available"], d["kind"] != "lane",
+                            -(d["score"] if d["score"] is not None else -1.0)))
     return out
 
 
@@ -341,4 +343,6 @@ def rank_for_tier(tier, est_in=0, est_out=0, lane_rows=None, cooling=None, now=N
             "score": l["score"], "why": l["why"]} for l in ranked_lanes]
     out += [{"kind": "metered", "target": m["target"], "provider": m["provider"], "available": m["available"],
              "score": m["score"], "why": m["why"]} for m in ranked_metered]
+    out.sort(key=lambda d: (not d["available"], d["kind"] != "lane",
+                            -(d["score"] if d["score"] is not None else -1.0)))
     return out

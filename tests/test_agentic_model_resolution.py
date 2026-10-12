@@ -84,7 +84,19 @@ from spendguard import pricing
 _FACTS.clear()
 _NOM = {"req-over": 0.010, "req-ok": 0.010, "req-unpriced": 0.010,       # anchors ($0.010 → ceiling $0.0125)
         "gpt-5.6-luna": 0.008, "gpt-5.6-sol": 0.012, "gpt-5.6-terra": 0.020, "gpt-5.5": None}
-pricing.realtime_cost = lambda mid, i, o: _NOM.get(mid)
+
+
+def _fake_price(mid, provider=None):
+    # B: served_substitute ranks by the catalog per-token RATE (pricing.price) — DATA, not a cost from invented
+    # counts. in_==out so the weighted-avg (2*in_ + out)/3 that _nom computes equals the yardstick above; a None
+    # entry raises KeyError (as real pricing.price does for an unknown model), which _nom catches → unpriced.
+    v = _NOM.get(mid)
+    if v is None:
+        raise KeyError(mid)
+    return {"in_": v, "out": v}
+
+
+pricing.price = _fake_price
 vendor_call.served_check = lambda v, m: "served" if m in SERVED else "stale"   # req-* are unserved → resolve
 catalog.live_model_ids = lambda v: sorted(SERVED)
 
