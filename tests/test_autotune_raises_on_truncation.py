@@ -53,7 +53,11 @@ def test_a_truncating_class_gets_its_cap_RAISED():
         gate._autotune(kw, model)
     check("a truncating class gets its cap RAISED", kw["max_tokens"] > cap,
           f"kept {kw['max_tokens']} — the money-losing direction is the one autotune exists to fix")
-    check("...and the REASON is stated, not just the change", "TRUNCATED" in err.getvalue())
+    # The REASON is stated — whether the raise came from the measured truncation history ("TRUNCATED N/M") or,
+    # for a sub-floor cap, from the 32K output floor that subsumes it ("...output floor...truncates for no saving").
+    _v = err.getvalue()
+    check("...and the REASON is stated, not just the change",
+          "TRUNCATED" in _v or "output floor" in _v)
 
 
 def test_a_raise_never_exceeds_the_models_published_ceiling():

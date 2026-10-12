@@ -202,15 +202,27 @@ _orig_mt, _orig_mode = _bg.maxtokens, _gate._autotune_mode
 # a clean SHRINK scenario matching the logged "128000 → 6820, 0 truncations"
 _bg.maxtokens = lambda sig, cap=None, **k: {"recommend": 6820, "n": 46, "n_truncated": 0, "p95": 5000, "p99": 4547}
 _gate._autotune_mode = lambda: "apply"
+from spendguard import pricing as _pr  # noqa: E402
+
+
+def _floored(model, rec=6820):
+    # autotune never emits a SEND cap below the 32K output floor (clamped DOWN to the model's published max when
+    # lower) — the same law output_budget enforces; so a shrink lands at max(recommend, floor), not the raw p99.
+    pub = int(_pr.max_output_tokens(model) or 0)
+    floor = min(int(adapters.TOKEN_FLOOR), pub) if pub else int(adapters.TOKEN_FLOOR)
+    return max(rec, floor)
+
+
 try:
     _kw_cc = {"max_completion_tokens": 128000}
     _gate._autotune(_kw_cc, "gpt-6-luna")
     ck("autotune writes the request's OWN key (max_completion_tokens), never introduces max_tokens",
-       _kw_cc.get("max_completion_tokens") == 6820 and "max_tokens" not in _kw_cc)
+       _kw_cc.get("max_completion_tokens") == _floored("gpt-6-luna") and "max_tokens" not in _kw_cc)
     _gate._autotune_said.clear()
     _kw_mt = {"max_tokens": 128000}
     _gate._autotune(_kw_mt, "legacy-chat-model")
-    ck("autotune on a max_tokens request stays on max_tokens", _kw_mt.get("max_tokens") == 6820 and "max_completion_tokens" not in _kw_mt)
+    ck("autotune on a max_tokens request stays on max_tokens",
+       _kw_mt.get("max_tokens") == _floored("legacy-chat-model") and "max_completion_tokens" not in _kw_mt)
 finally:
     _bg.maxtokens, _gate._autotune_mode = _orig_mt, _orig_mode
 
