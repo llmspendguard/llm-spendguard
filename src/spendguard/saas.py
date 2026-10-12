@@ -641,7 +641,7 @@ def push_status(dry=False):
                 drift.append({"model": model, "pct": round(100 * abs((oi or 0) - (ri or 0)) / base)})
     except Exception:
         pass
-    shed = decisions = overage_status = None
+    shed = decisions = overage_status = lane_usage = None
     try:                                                    # shed-effectiveness snapshot (scrubbed: lane names + counts
         from . import guard                                 # + $ only, no prompts/paths/$spend). Powers the org "shed
         _s = guard.shed_summary()                           # effectiveness" panel. Upserted per member like the rest.
@@ -649,6 +649,20 @@ def push_status(dry=False):
             shed = {"n_sheds": _s["n_sheds"], "served_free_n": _s.get("served_free_n"), "paid_n": _s.get("paid_n"),
                     "avoided_overage_usd": _s.get("avoided_overage_usd"), "quota_preserved_usd": _s.get("quota_preserved_usd"),
                     "by_route": (_s.get("by_route") or [])[:12]}   # bounded — top routes by counterfactual $
+    except Exception:
+        pass
+    try:
+        import datetime as _dt
+        from . import lanes
+        by_lane = []
+        for row in lanes.lane_headroom(do_fetch=False)[:16]:
+            clean = {key: row[key] for key in
+                     ("lane", "provider", "known", "remaining_pct", "reset_ts", "remaining_abs")
+                     if key in row}
+            by_lane.append(clean)
+        if by_lane:
+            lane_usage = {"asof": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
+                          "by_lane": by_lane}
     except Exception:
         pass
     try:
@@ -676,6 +690,8 @@ def push_status(dry=False):
         payload["decisions"] = decisions
     if overage_status:
         payload["overage"] = overage_status
+    if lane_usage:
+        payload["lane_usage"] = lane_usage
     if dry:
         return payload
     try:
