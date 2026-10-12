@@ -651,12 +651,14 @@ RUNAWAY_MIN_SAMPLES = 20         # need at least this many measured outputs befo
 
 def maxtokens(sig, current_max=None, model=None):
     """Data-driven max_tokens bound for a call-class from its OBSERVED output distribution — turns 'guess' into
-    'measure'. Returns {n, p50, p95, p99, max, recommend=p99*1.5, truncations, warn}. warn if current_max < p95
-    (TRUNCATION RISK) or >> p99 (cost-estimate inflation → false cap trips). For packed calls, feed per-ITEM out_tok.
-    `model` (optional): when a class has NO measurements yet AND the model REASONS (models.reasons_by_default), the
-    recommend is seeded with the reasoning-inclusive REASONING_OUT_ESTIMATE instead of None — so a first estimate can
-    never come back naive-low for a reasoning model (the measured p95/p99, which already INCLUDE reasoning tokens,
-    replace it as soon as real calls land)."""
+    'measure'. Returns {n, p50, p95, p99, max, recommend, truncations, warn}, recommend = max(p99*1.5, trunc-floor,
+    reasoning-floor). warn if current_max < p95 (TRUNCATION RISK) or >> p99 (cost-estimate inflation → false cap trips).
+    For packed calls, feed per-ITEM out_tok.
+    `model` (optional but important for reasoning models): gate_calls.out_tok records only the VISIBLE answer, NOT the
+    hidden reasoning tokens that a reasoning model also bills as output — so for such a model the measured percentiles
+    UNDER-count the real generation at every sample count, not only when cold. When `model` reasons_by_default, the
+    recommend is therefore FLOORED at the reasoning-inclusive REASONING_OUT_ESTIMATE always, so a visible-answer p99
+    can never clamp a reasoning reply's budget below what it needs (the gpt-5.5 miss; GUARDRAILS_reasoning_overspend)."""
     with _lock:
         rows = _gate_calls_db().execute("SELECT out_tok,truncated FROM gate_calls WHERE sig=? AND out_tok>0", (sig,)).fetchall()
     # CENSORING: a truncated response was cut AT its cap, so its out_tok measures the CAP, not the work.
@@ -666,20 +668,31 @@ def maxtokens(sig, current_max=None, model=None):
     outs = [r[0] for r in rows if not r[1]]
     trunc_outs = [r[0] for r in rows if r[1]]
     trunc = sum(1 for r in rows if r[1])
+    # REASONING FLOOR — a model that reasons bills HIDDEN reasoning tokens as OUTPUT, but gate_calls.out_tok records
+    # only the VISIBLE answer, so this class's percentiles systematically UNDER-count the real generation and a
+    # recommend sized from them starves a reasoning reply (the gpt-5.5 miss; docs/GUARDRAILS_reasoning_overspend.md).
+    # The learned cap for such a model may NEVER fall below the reasoning-inclusive estimate — otherwise autotune's
+    # SHRINK clamps a safe budget down to a visible-answer p99 (measured: honestreview judges clamped to 7 tokens,
+    # then every reasoning reply truncated, recorded as a tiny 'complete' output, re-firing the cap low forever).
+    # Keyed off the CALL's model (a class's stored rows may be from a DIFFERENT, non-reasoning model — e.g. a judge
+    # just repinned gemini→gpt-5.5), not the rows, so the floor tracks what is actually about to run.
+    _rfloor = 0
+    if model:
+        try:
+            from . import models as _m
+            if _m.reasons_by_default(model):
+                _rfloor = _reasoning_out_estimate()      # env → config → default, shared with expected_output.expect
+        except Exception:
+            _rfloor = 0
     if not outs:
         _rec = int(max(trunc_outs) * 2) if trunc_outs else None
         _warn = ("every observed output was TRUNCATED — the cap is too low to measure the real size"
                  if trunc_outs else None)
-        if _rec is None and model is not None:
-            try:
-                from . import models as _m
-                if _m.reasons_by_default(model):        # a reasoning model with no history → seed reasoning-inclusive
-                    _rec = _reasoning_out_estimate()     # env → config → default, shared with expected_output.expect
-                    _warn = ("%s reasons (hidden reasoning tokens bill as OUTPUT) and this class has no measurements "
-                             "yet — size the estimate at >= %d output tokens, NOT a small visible-answer figure "
-                             "(that under-counts reasoning by ~10x — the measured gpt-5.5 miss)." % (model, _rec))
-            except Exception:
-                pass
+        if _rfloor:                                  # reasoning model → never seed below the reasoning-inclusive floor
+            _rec = max(_rec or 0, _rfloor)
+            _warn = _warn or ("%s reasons (hidden reasoning tokens bill as OUTPUT) and this class has no complete "
+                              "measurements — size at >= %d output tokens, NOT a small visible-answer figure "
+                              "(that under-counts reasoning by ~10x — the measured gpt-5.5 miss)." % (model, _rfloor))
         return {"sig": sig, "n": 0, "n_truncated": trunc, "p90": None,
                 "trunc_rate": (trunc / float(len(rows)) if rows else 0.0),
                 "recommend": _rec, "truncations": trunc, "warn": _warn}
@@ -695,10 +708,10 @@ def maxtokens(sig, current_max=None, model=None):
     rate = trunc / float(len(rows)) if rows else 0.0
     if rate > 0 and not warn:
         warn = "%.1f%% of calls TRUNCATED (%d/%d) — raise max_tokens to >= %d, or omit it entirely" % (
-            rate * 100, trunc, len(rows), max(int(p99 * 1.5), floor))
+            rate * 100, trunc, len(rows), max(int(p99 * 1.5), floor, _rfloor))
     return {"sig": sig, "n": len(outs), "n_truncated": trunc, "trunc_rate": rate,
             "p50": _pctl(outs, 0.50), "p90": p90, "p95": p95, "p99": p99, "max": max(outs),
-            "recommend": max(int(p99 * 1.5), floor), "truncations": trunc, "warn": warn}
+            "recommend": max(int(p99 * 1.5), floor, _rfloor), "truncations": trunc, "warn": warn}
 
 
 def model_outputs(model):

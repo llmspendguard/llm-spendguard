@@ -1721,7 +1721,9 @@ def _autotune(kw, model):
     except Exception:
         pass
     sig = bulkgate.sig(model, template_id=intent or None)
-    b = bulkgate.maxtokens(sig, cap)
+    # Pass `model`: for a reasoning model the recommend is floored at the reasoning-inclusive estimate, so SHRINK can
+    # never clamp its budget down to a visible-answer p99 (the honestreview-judge-to-7-tokens spiral).
+    b = bulkgate.maxtokens(sig, cap, model=model)
     if not b:
         return
     rec = int(b.get("recommend") or 0)
@@ -1729,6 +1731,30 @@ def _autotune(kw, model):
         return
     complete, cut = int(b.get("n") or 0), int(b.get("n_truncated") or 0)
     p95 = int(b.get("p95") or 0)
+
+    # THE 32K OUTPUT FLOOR IS THE LAW (adapters.TOKEN_FLOOR / pricing.OUTPUT_FLOOR) — the SAME floor output_budget
+    # sends on the metered path. A send cap is billed on tokens GENERATED, so raising it is ALWAYS free and the only
+    # failure mode is a cap set too LOW (it truncates). So no autotuned cap — in EITHER direction — may sit below the
+    # floor, clamped DOWN only by the model's OWN published max when that is lower (never past what the endpoint will
+    # accept). This single invariant makes the visible-output p99 spiral impossible: a cap of 7 can never be emitted,
+    # whatever a poisoned class recommends. (The adapters path already sends the ceiling via output_budget; _autotune
+    # mutates the cap on the raw SDK-patch path that bypasses it, so it carries its own copy of the same law.)
+    from . import adapters as _ad, pricing
+    try:
+        _pub = int(pricing.max_output_tokens(model) or 0)
+    except Exception:
+        _pub = 0
+    _send_floor = min(int(_ad.TOKEN_FLOOR), _pub) if _pub else int(_ad.TOKEN_FLOOR)
+    if mode == "apply" and cap < _send_floor:
+        kw[_tok_key] = cap = _send_floor                   # a sub-floor cap truncates for no saving — raise it, always
+        _fkey = (sig, "floor")
+        if _fkey not in _autotune_said:
+            _autotune_said.add(_fkey)
+            print(f"[spend_gate] AUTOTUNE {_tok_key} → {_send_floor} for '{intent or model}' — a cap below the "
+                  f"{_send_floor}-token output floor truncates for no saving (billed on tokens GENERATED; a higher "
+                  f"cap is free, only a too-low one cuts the answer)", file=sys.stderr)
+        _log({"kind": "autotune", "direction": "floor", "sig": sig, "model": model,
+              "intent": intent or None, "to": _send_floor})
 
     # RAISE — the money direction. Evidence is a cap at or below what the class demonstrably produces, or
     # any truncation at all. Truncated samples are censored out of the percentiles (they measure the cap,
@@ -1742,7 +1768,6 @@ def _autotune(kw, model):
         # model known only via a healed fact was clamped to the absolute backstop and a poisoned recommend could be
         # raised OVER its real ceiling → the same 400 _call_guarded avoids. output_ceiling folds in the learned tier
         # AND the backstop, so `ceiling` is always the real per-model cap (or MAX_TOKEN_CEILING when nothing knows it).
-        from . import adapters as _ad, pricing
         _MAX_ABS = int(_ad.MAX_TOKEN_CEILING)
         try:
             ceiling = int(pricing.output_ceiling(_ad.provider_for(model), model, _MAX_ABS))
@@ -1772,20 +1797,23 @@ def _autotune(kw, model):
                   "n_truncated": cut, "p99": b.get("p99"), "ceiling": ceiling})
         return
 
-    # SHRINK — costs nothing either way (billing is on tokens generated). Keeps the conservative vetoes.
-    if complete < AUTOTUNE_MIN_OBS or cut > 0 or cap <= rec * AUTOTUNE_SLACK:
+    # SHRINK — costs nothing either way (billing is on tokens generated), so it may only pull an OVER-LARGE cap down
+    # to the floor, NEVER below it: shrink to max(measured recommend, the 32K output floor). A cap already at or below
+    # the floor is never shrunk. Keeps the conservative vetoes (clean history + enough observations).
+    _shrink_to = max(rec, _send_floor)
+    if complete < AUTOTUNE_MIN_OBS or cut > 0 or cap <= _shrink_to * AUTOTUNE_SLACK:
         return
     key = (sig, mode)
     if mode == "apply":
-        kw[_tok_key] = rec                                    # the model's OWN cap key (never hardcoded max_tokens)
+        kw[_tok_key] = _shrink_to                             # the model's OWN cap key (never hardcoded max_tokens)
         _log({"kind": "autotune", "direction": "shrink", "sig": sig, "model": model,
-              "intent": intent or None, "from": cap, "to": rec, "n_obs": complete, "p99": b.get("p99")})
+              "intent": intent or None, "from": cap, "to": _shrink_to, "n_obs": complete, "p99": b.get("p99")})
         if key not in _autotune_said:
             _autotune_said.add(key)
-            print(f"[spend_gate] AUTOTUNE {_tok_key} {cap} → {rec} for '{intent or model}' "
-                  f"(measured p99 {b.get('p99')}, n={complete}, 0 truncations — sharpens the worst-case "
-                  f"estimate; saves no money, since you are billed on tokens GENERATED — "
-                  f"kw autotune=False to opt out)", file=sys.stderr)
+            print(f"[spend_gate] AUTOTUNE {_tok_key} {cap} → {_shrink_to} for '{intent or model}' "
+                  f"(measured p99 {b.get('p99')}, n={complete}, 0 truncations, floored at {_send_floor} — sharpens "
+                  f"the worst-case estimate without dropping below the output floor; saves no money, since you are "
+                  f"billed on tokens GENERATED — kw autotune=False to opt out)", file=sys.stderr)
     elif key not in _autotune_said:
         _autotune_said.add(key)
         print(f"[spend_gate] autotune(suggest): {_tok_key} {cap} vs measured p99×1.5 = {rec} for "

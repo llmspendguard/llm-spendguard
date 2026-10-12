@@ -1,8 +1,18 @@
-"""gate.autotune — measured max_tokens becomes a default you can't forget, SAFELY:
-only SHRINKS an existing wasteful cap (never raises, never adds), only with ≥30 observations and a
-clean truncation record, per-call opt-out, one truncation after a clamp permanently vetoes the class
-(the recorded truncation counter IS the backoff state), and no counterfactual 'saving' is ever
-recorded. Offline (stubbed SDK), zero spend."""
+"""gate.autotune — the SEND cap it emits is ALWAYS governed by the 32K output floor.
+
+WHY THIS GUARD EXISTS. A max_tokens cap is billed on tokens GENERATED, so a high cap is free and the ONLY failure
+mode is one set too LOW (it truncates a real answer for no saving). autotune used to SHRINK a "wasteful" cap down
+to the class's measured VISIBLE-output p99 — which, for a reasoning model whose hidden reasoning is NOT in that
+p99, collapsed the cap to single digits and truncated every reply (measured 2026-10-12: honestreview judges
+clamped to a 7-token cap, honestreview:coding_router truncated 3,337/10,515). The floor (adapters.TOKEN_FLOOR /
+pricing.OUTPUT_FLOOR — the SAME one output_budget sends on the metered path) is now the law in autotune too:
+
+  * a cap BELOW min(32K, the model's published max) is RAISED to it — unconditionally, no observations needed;
+  * a wasteful OVER-LARGE cap is pulled down ONLY to that floor, NEVER below it;
+  * autotune still never ADDS a cap where the caller set none, still honors suggest/off/opt-out.
+
+Offline (stubbed SDK), zero spend.
+"""
 import os
 import sys
 import tempfile
@@ -14,7 +24,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 
 import types
 from spendguard import gate as spend_gate
-from spendguard import bulkgate, calls
+from spendguard import adapters, bulkgate, calls, pricing
 
 fails = []
 
@@ -28,9 +38,14 @@ def ck(name, cond):
 MODEL = "gpt-5.5"
 INTENT = "edge_cards"
 SIG = bulkgate.sig(MODEL, template_id=INTENT)
-for _ in range(40):                                     # measured clean history: outputs ≈ 300, cap 4000
-    bulkgate.note_response(SIG, MODEL, 300, max_tokens=4000, finish_reason="stop")
-rec = int(bulkgate.maxtokens(SIG, 4000)["recommend"])   # p99×1.5 ≈ 450
+for _ in range(40):                                     # measured clean history: small visible outputs ≈ 300
+    bulkgate.note_response(SIG, MODEL, 300, max_tokens=40000, finish_reason="stop")
+
+# The floor is resolved the SAME way _autotune resolves it (no hardcoded 32000): 32K, clamped DOWN to the model's
+# own published max when that is lower. For gpt-5.5 (published max >= 32K) this is 32000.
+_pub = int(pricing.max_output_tokens(MODEL) or 0)
+FLOOR = min(int(adapters.TOKEN_FLOOR), _pub) if _pub else int(adapters.TOKEN_FLOOR)
+BIG = FLOOR * 5                                          # an over-large wasteful cap, safely above the floor
 
 logged = []
 orig_log = spend_gate._log
@@ -44,62 +59,57 @@ ck("suggest NEVER mutates the call", kw["max_tokens"] == 4000)
 
 os.environ["SPENDGUARD_AUTOTUNE"] = "apply"
 with calls.context(intent=INTENT):
-    kw = dict(model=MODEL, max_tokens=4000)
+    kw = dict(model=MODEL, max_tokens=4000)             # a sub-floor cap: the money-losing setting
     spend_gate._autotune(kw, MODEL)
-ck(f"apply clamps a wasteful cap to the measured bound ({rec})", kw["max_tokens"] == rec)
-ck("every application is LOGGED with from/to/n_obs",
-   logged and logged[-1]["kind"] == "autotune" and logged[-1]["from"] == 4000
-   and logged[-1]["to"] == rec and logged[-1]["n_obs"] == 40)
+ck(f"a sub-floor cap is RAISED to the output floor ({FLOOR}), not left to truncate", kw["max_tokens"] == FLOOR)
+ck("the floor-raise is LOGGED with direction=floor + to",
+   logged and logged[-1]["kind"] == "autotune" and logged[-1]["direction"] == "floor"
+   and logged[-1]["to"] == FLOOR)
 
 with calls.context(intent=INTENT):
-    kw = dict(model=MODEL, max_tokens=rec)              # caller already at the bound
+    kw = dict(model=MODEL, max_tokens=FLOOR)            # already at the floor
     spend_gate._autotune(kw, MODEL)
-    ck("a sane cap is untouched (slack respected)", kw["max_tokens"] == rec)
-    # A cap BELOW the measured p95 is the money-losing setting: the model gets cut off, you are billed for
-    # the input plus a body that does not parse. This used to assert "NEVER raises a cap", which made the
-    # rail one-directional — it acted only where there was nothing to save (shrinking costs nothing; billing
-    # is on tokens GENERATED) and stood down where money was actually burning. Measured before the change:
-    # 978 calls ended at max_tokens and 187 at length, $23.57, 8.3% of realtime spend.
-    kw = dict(model=MODEL, max_tokens=100)              # caller BELOW the measured p95
+    ck("a cap already at the floor is untouched (never shrunk BELOW it)", kw["max_tokens"] == FLOOR)
+
+    kw = dict(model=MODEL, max_tokens=BIG)              # wasteful over-large cap, clean history
     spend_gate._autotune(kw, MODEL)
-    ck("a cap below the measured p95 is RAISED, not left to truncate", kw["max_tokens"] > 100)
-    ck("...and it is raised TO the measured recommendation, not to an invented number",
-       kw["max_tokens"] == rec)
+    ck("a wasteful over-large cap is pulled down ONLY to the floor, never below", kw["max_tokens"] == FLOOR)
+
     kw = dict(model=MODEL)                              # caller set no cap
     spend_gate._autotune(kw, MODEL)
     ck("NEVER adds a cap where the caller set none", "max_tokens" not in kw)
+
     kw = dict(model=MODEL, max_tokens=4000, autotune=False)
     spend_gate._autotune(kw, MODEL)
     ck("per-call opt-out (autotune=False) is honored + stripped", kw["max_tokens"] == 4000 and "autotune" not in kw)
 
-# thin history → no action
+# thin history → no MEASURED shrink (a cap already at/above the floor is left alone)
 SIG2 = bulkgate.sig(MODEL, template_id="thin_class")
 for _ in range(5):
-    bulkgate.note_response(SIG2, MODEL, 300, max_tokens=4000, finish_reason="stop")
+    bulkgate.note_response(SIG2, MODEL, 300, max_tokens=40000, finish_reason="stop")
 with calls.context(intent="thin_class"):
-    kw = dict(model=MODEL, max_tokens=4000)
+    kw = dict(model=MODEL, max_tokens=BIG)
     spend_gate._autotune(kw, MODEL)
-ck("<30 observations → vetoed (no clamp)", kw["max_tokens"] == 4000)
+ck("<30 observations → no measured shrink (cap above the floor left alone)", kw["max_tokens"] == BIG)
 
-# ONE truncation permanently vetoes the class — the self-healing backoff
-bulkgate.note_response(SIG, MODEL, rec, max_tokens=rec, finish_reason="length")
+# a class that has truncated is never clamped DOWN (shrink vetoed; a raise never lowers)
+bulkgate.note_response(SIG, MODEL, 40000, max_tokens=40000, finish_reason="length")
 with calls.context(intent=INTENT):
-    kw = dict(model=MODEL, max_tokens=4000)
+    kw = dict(model=MODEL, max_tokens=BIG)
     spend_gate._autotune(kw, MODEL)
-ck("a truncation on the class permanently vetoes further clamps (backoff via the recorded counter)",
-   kw["max_tokens"] == 4000)
+ck("a class that has truncated is never clamped DOWN", kw["max_tokens"] == BIG)
 
 os.environ["SPENDGUARD_AUTOTUNE"] = "off"
 SIG3 = bulkgate.sig(MODEL, template_id="clean2")
 for _ in range(40):
-    bulkgate.note_response(SIG3, MODEL, 300, max_tokens=4000, finish_reason="stop")
+    bulkgate.note_response(SIG3, MODEL, 300, max_tokens=40000, finish_reason="stop")
 with calls.context(intent="clean2"):
     kw = dict(model=MODEL, max_tokens=4000)
     spend_gate._autotune(kw, MODEL)
 ck("off → untouched", kw["max_tokens"] == 4000)
 spend_gate._log = orig_log
 
-# end-to-end: the wrapper path actually delivers the clamped kw to the SDK call
+# end-to-end: the wrapper path actually delivers the FLOORED cap to the SDK call
 os.environ["SPENDGUARD_AUTOTUNE"] = "apply"
 seen = []
 from openai.resources.chat import completions as _oc
@@ -111,7 +121,8 @@ client = openai.OpenAI(api_key="test-key-not-real")
 os.environ["GATE_RT_BUDGET"] = "1000"
 with calls.context(intent="clean2"):
     client.chat.completions.create(model=MODEL, messages=[{"role": "user", "content": "hi"}], max_tokens=4000)
-ck("end-to-end: the SDK receives the CLAMPED max_tokens", seen and seen[0] == int(bulkgate.maxtokens(SIG3, 4000)["recommend"]))
+ck("end-to-end: the SDK receives the FLOORED max_tokens (a sub-floor caller cap never reaches the provider)",
+   seen and seen[0] == FLOOR)
 
 # honest accounting: autotune records NO counterfactual saving
 import inspect
