@@ -851,7 +851,8 @@ def _returns_callresult(fn):
 def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,
          sig=None, intent=None, retries=2, files=None, _no_guard=False, no_metered_fallback=False, images=None,
          no_substitution=False, measurement=False, metered_only=False, base_fallback=None, _probe=False, _route=True,
-         _internal_pin=False, _coalesce_eligible=True, temperature=None, top_p=None, seed=None, **aliases):
+         _internal_pin=False, _coalesce_eligible=True, temperature=None, top_p=None, seed=None,
+         soft_deadline_s=None, **aliases):
     """Run one prompt against one model. Returns a CallResult (never raises).
 
     A CallResult IS a dict — every `r["text"]` / `r.get(...)` works unchanged — that ALSO exposes its keys as
@@ -937,6 +938,11 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     its requested label. `images=[path | data: URL, …]` sends a VISION request — each image is
     loaded once, priced by the PIXEL rule (content_tokens, not the text tokenizer), and the call rides the
     metered API (the subscription lanes are text-only CLIs, so a vision call skips them: executor='api').
+
+    `soft_deadline_s` requests cancel-on-proven-zero-billable behavior. Current adapter transports are blocking
+    (non-streaming SDK calls and CLI wrappers) and expose neither a first-billable-token event nor a live cancel
+    handle, so they fail safe: run to completion and report `stall_outcome='produced_tokens_ran'`. Transport authors
+    can use escalation_ladder.cancel_on_zero_billable when they add those two capabilities.
 
     RETURNS a dict — NEVER raises — with the SAME keys on success and failure, so a caller never has to guess:
       text          the answer (str), or None on any failure / a reply truncated past its retry
@@ -1425,6 +1431,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                         no_metered_fallback=no_metered_fallback, images=images, no_substitution=no_substitution,
                         metered_only=metered_only, base_fallback=base_fallback, _route=_route,
                         measurement=measurement, temperature=temperature, top_p=top_p, seed=seed,  # carry the
+                        soft_deadline_s=soft_deadline_s,
                         #   measurement contract + its determinism knobs across a 429 retransmit (else the retry would
                         #   drop them — silently nondeterministic — and trip the production-refusal gate on re-entry)
                         governed=_governed, _conn_tries=_ct - 1, _t_conn0=_t_conn0, **aliases)
@@ -1465,6 +1472,9 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     # reach for instead — the metered provider API served it (a lane miss fell through, or there was no lane): executor
     # 'api'/'api-fallback', or (defensively) a cost with no lane executor recorded.
     if isinstance(r, dict):
+        if soft_deadline_s is not None:
+            r["stall_outcome"] = "produced_tokens_ran"
+            r["zero_billable_cancel_feasible"] = False
         if _resolved_from:                            # TRANSPARENCY: the caller asked for one id and a served one
             r["resolved_from"] = _resolved_from       # answered — surface BOTH, so the swap is auditable, never silent
             r["resolution"] = _resolution

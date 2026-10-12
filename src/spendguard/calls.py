@@ -352,6 +352,7 @@ def _ensure_calls_schema(c):
                         ("effort", "TEXT"), ("suspect", "TEXT"),
                         ("outcome", "TEXT"), ("http_status", "INTEGER"), ("provider_error", "TEXT"),
                         ("retry_after", "REAL"), ("attempts", "INTEGER"), ("disposition", "TEXT"),
+                        ("disposition_reason", "TEXT"),
                         ("retry_of", "TEXT"), ("fell_from", "TEXT"),
                         ("call_class", "TEXT"), ("origin_session", "TEXT"),
                         ("requested_model", "TEXT"), ("served_model", "TEXT"),
@@ -448,7 +449,7 @@ def _out_tok_sanity_ceiling(model):
 def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
            prompt=None, output=None, finish=None, intent=None, chain=None, who=None,
            executor=None, project=None, effort=None, *, outcome=None, http_status=None,
-           provider_error=None, retry_after=None, attempts=None, disposition=None, retry_of=None,
+           provider_error=None, retry_after=None, attempts=None, disposition=None, disposition_reason=None, retry_of=None,
            fell_from=None, call_id=None, call_class=None, origin_session=None,
            requested_model=None, served_model=None, resolved_lane=None, redirect_reason=None):
     """Record one call — its full OUTCOME, success OR failure. Returns call_id. Never raises.
@@ -538,9 +539,9 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
             _calls_db().execute(
                 "INSERT INTO calls (id,ts,chain,intent,caller,provider,model,kind,in_tok,out_tok,"
                 "cost,latency,prompt_hash,prompt_snip,output_snip,finish,executor,project,effort,suspect,"
-                "quality,quality_src,quality_conf,outcome,http_status,provider_error,retry_after,attempts,disposition,retry_of,fell_from,"
+                "quality,quality_src,quality_conf,outcome,http_status,provider_error,retry_after,attempts,disposition,disposition_reason,retry_of,fell_from,"
                 "call_class,origin_session,requested_model,served_model,resolved_lane,redirect_reason) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (cid, ts, chain, intent, who or ctx.get("who") or caller(), provider, model, kind,
                  int(in_tok or 0), int(out_tok or 0), float(cost or 0), latency, ph, psnip, osnip, finish,
                  executor, proj, (effort or None), suspect,
@@ -551,7 +552,7 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
                  (provider_error[:1000] if isinstance(provider_error, str) else None),
                  (float(retry_after) if isinstance(retry_after, (int, float)) else None),
                  (int(attempts) if isinstance(attempts, int) else None),
-                 (disposition or None), (retry_of or None), (fell_from or None), call_class, origin_session,
+                 (disposition or None), (disposition_reason or None), (retry_of or None), (fell_from or None), call_class, origin_session,
                  (requested_model or None), (served_model or None), (resolved_lane or None),
                  (redirect_reason or None)))
             _calls_db().commit()

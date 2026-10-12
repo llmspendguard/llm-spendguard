@@ -575,6 +575,30 @@ def advisor_num(name, default):
     return _advisor_coerced(name, default, type(default))
 
 
+def escalation_ratio():
+    """Maximum metered->metered escalation multiple. Env wins over config."""
+    raw = os.getenv("SPENDGUARD_ESCALATION_RATIO")
+    if raw is None:
+        raw = _cfg_get("caps", "escalation_ratio", 3.0)
+    try:
+        value = float(raw)
+        return value if value > 0 else 3.0
+    except (TypeError, ValueError):
+        return 3.0
+
+
+def escalation_baseline_epsilon():
+    """Baseline dollars at or below which the relative gate defers to the absolute cap."""
+    raw = os.getenv("SPENDGUARD_ESCALATION_BASELINE_EPSILON")
+    if raw is None:
+        raw = _cfg_get("caps", "escalation_baseline_epsilon", 0.000001)
+    try:
+        value = float(raw)
+        return value if value >= 0 else 0.000001
+    except (TypeError, ValueError):
+        return 0.000001
+
+
 def shed_lanes():
     """The SET of lanes the operator marked to PROACTIVELY shed from (`advisor.shed_lanes`, a comma list) — the ONE
     place this knob is parsed, so EVERY router honours the SAME shed directive and they can never drift. A shed lane
