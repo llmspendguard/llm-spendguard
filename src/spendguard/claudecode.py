@@ -861,7 +861,7 @@ def compaction_candidates(min_context=None, min_turns=None, min_day=None):
     return out, (k, k_n), {"examined": examined, "flagged": len(out), "too_few_turns": short, "below_threshold": below}
 
 
-_RESIDENCY_SOURCES = ("instructions", "tool_output", "user_prompt", "assistant_output", "system_reminder")
+_RESIDENCY_SOURCES = ("instructions", "tool_result", "conversation")
 _SYSTEM_REMINDER_MARK = "<system-reminder>"   # the FIXED injected wrapper — format detection, never a meaning judgement
 
 
@@ -903,6 +903,19 @@ def _resident_instruction_tokens(paths):
     return total, measured
 
 
+def residency_counterfactual_costs(model, tokens, remaining_turns, return_tokens):
+    """Price a resident block versus delegating its read once and returning a bounded summary.
+
+    The resident path pays the cache-read rate on every remaining main-thread turn. The delegated path pays ONE
+    cache creation/write for the evidence plus ordinary output for the bounded return. These are distinct token
+    classes: passing the evidence as both ordinary input and cache creation would charge the read twice.
+    """
+    from . import pricing
+    resident = pricing.realtime_cost(model, tokens, 0, cached_in_tok=tokens) * remaining_turns
+    delegated = pricing.realtime_cost(model, 0, return_tokens, cache_creation_tok=tokens)
+    return resident, delegated
+
+
 def residency_decomposition(conv_id, instruction_tokens=None, instruction_paths=None):
     """Decompose a conversation's RESIDENT-context cost by SOURCE — the finding that most Claude-Code burn is
     re-reading retained context, not new work, and WHICH retained content is expensive. A resident item costs
@@ -911,7 +924,7 @@ def residency_decomposition(conv_id, instruction_tokens=None, instruction_paths=
     construction (the SHARE answers 'what is expensive'; the measured total is 'how much').
 
     Sources (structural — parsed from block type / role / the fixed system-reminder wrapper, never a meaning call):
-    accumulated tool_output, attributed PER TOOL via tool_use_id→name (the dominant share); instructions (from the
+    accumulated tool_result blocks; instructions (from the
     caller's EXPLICIT instruction_paths / instruction_tokens — resident every turn, small, reported but NOT led with);
     user_prompt; assistant_output; injected system_reminder. Instruction provenance is recorded on the output so the
     number is reproducible, never ambiently sourced from the host. Returns {turns, measured_recurring_usd,
@@ -921,9 +934,10 @@ def residency_decomposition(conv_id, instruction_tokens=None, instruction_paths=
     seq = _cc_conv_rows().get(conv_id) or []
     rate = _cache_read_rate(seq[-1][1]) if seq else None
     measured = (sum(cr for _o, _m, _i, cr, _cw in seq) * rate) if rate is not None else None
-    turn, id2tool, items = 0, {}, []           # items: (source, tool|None, tokens, entry_turn)
-    for r in recs:
-        msg = r.get("message") or {}
+    turn, id2tool, items = 0, {}, []           # items: (source, tool|None, tokens, entry_turn, label)
+    seen_tool_results = set()                   # _conv_transcript_records already dedups records by message.id; a
+    for r in recs:                              # tool_result's USER record carries no message.id, so dedup its replay
+        msg = r.get("message") or {}            # across resume/branch/compaction files by the tool_use_id it answers
         role = r.get("type") or msg.get("role")
         content = msg.get("content")
         blocks = content if isinstance(content, list) else (
@@ -935,40 +949,68 @@ def residency_decomposition(conv_id, instruction_tokens=None, instruction_paths=
             if bt == "tool_use":
                 id2tool[b.get("id")] = b.get("name", "?")
             elif bt == "tool_result":
+                tuid = b.get("tool_use_id")
+                if tuid:
+                    if tuid in seen_tool_results:
+                        continue
+                    seen_tool_results.add(tuid)
                 tc = b.get("content")
                 s = tc if isinstance(tc, str) else (
                     " ".join(x.get("text", "") for x in tc if isinstance(x, dict)) if isinstance(tc, list) else "")
-                items.append(("tool_output", id2tool.get(b.get("tool_use_id"), "?"), _toklen(s or ""), turn))
+                tool = id2tool.get(tuid, "?")
+                items.append(("tool_result", tool, _toklen(s or ""), turn, f"{tool}:{tuid or '?'}"))
             elif bt == "text":
                 s = b.get("text") or ""
                 if role == "assistant" or msg.get("role") == "assistant":
-                    items.append(("assistant_output", None, _toklen(s), turn))
-                elif _SYSTEM_REMINDER_MARK in s:
-                    items.append(("system_reminder", None, _toklen(s), turn))
+                    items.append(("conversation", None, _toklen(s), turn, "assistant"))
                 else:
-                    items.append(("user_prompt", None, _toklen(s), turn))
+                    items.append(("conversation", None, _toklen(s), turn,
+                                  "system-reminder" if _SYSTEM_REMINDER_MARK in s else "user"))
         if msg.get("usage") and msg.get("model"):
             turn += 1
-    total_turns = turn or len(seq) or 1
+    # The MEASURED recurring $ is the ledger's reconciled cache-read for THIS conv, so its turn count (len(seq)) is the
+    # basis the dollars live on — anchor total_turns there. The transcript can carry MORE turns than the ledger
+    # attributes here: resume/compaction REPLAYS messages first counted under another conv (counted_ids is global) —
+    # physically resident here, billed there. Map each item's transcript position onto the ledger basis so entry and
+    # total never mix two turn scales (identity when they agree, as in the offline test).
+    transcript_turns = turn
+    total_turns = len(seq) or turn or 1
+    entry_scale = (total_turns / transcript_turns) if transcript_turns else 1.0
     if instruction_tokens is not None:
         instr, instr_src = int(instruction_tokens), "declared"
     else:
         instr, instr_src = _resident_instruction_tokens(instruction_paths)   # [] when no paths given → unmeasured (honest 0)
     by_source = {c: 0 for c in _RESIDENCY_SOURCES}
     by_tool = {}
-    for src, tool, toks, entry in items:
-        w = toks * max(1, total_turns - entry)     # resident token-turns: re-read on every turn after it landed
+    tool_items = []
+    for src, tool, toks, entry, label in items:
+        remaining = max(1, round(total_turns - entry * entry_scale))   # turns re-read after it landed, on the ledger basis
+        w = toks * remaining
         by_source[src] += w
-        if src == "tool_output":
+        if src == "tool_result":
             by_tool[tool] = by_tool.get(tool, 0) + w
+            tool_items.append((label, tool, toks, remaining, w))
     by_source["instructions"] = instr * total_turns    # system-prompt instructions: resident on EVERY turn
     total_w = sum(by_source.values()) or 1
     usd = (lambda w: (measured * w / total_w) if measured is not None else None)
     src_usd = {c: usd(w) for c, w in by_source.items()}
     tool_usd = {t: usd(w) for t, w in by_tool.items()}
-    top = sorted([("tool:" + t, u) for t, u in tool_usd.items()]
-                 + [(c, src_usd[c]) for c in ("instructions", "user_prompt", "assistant_output", "system_reminder")],
-                 key=lambda kv: (kv[1] or 0), reverse=True)[:8]
+    from .config_schema import SETTINGS as _CONFIG_SETTINGS
+    _res_specs = {s["key"]: s for s in _CONFIG_SETTINGS if s.get("section") == "residency_gate"}
+    top_n = int(config._cfg_get("residency_gate", "receipt_top_n", _res_specs["receipt_top_n"]["default"]))
+    return_tokens = int(config._cfg_get("residency_gate", "subagent_return_tokens",
+                                        _res_specs["subagent_return_tokens"]["default"]))
+    top = []
+    for label, tool, toks, remaining, weight in sorted(tool_items, key=lambda row: row[-1], reverse=True)[:top_n]:
+        allocated = usd(weight)
+        try:
+            resident_direct, subagent = residency_counterfactual_costs(
+                seq[-1][1], toks, remaining, return_tokens)
+        except Exception:
+            resident_direct = subagent = None
+        top.append({"label": label, "tool": tool, "tokens": toks, "remaining_turns": remaining,
+                    "resident_usd": resident_direct, "allocated_measured_usd": allocated,
+                    "subagent_usd": subagent})
     reconciles = measured is None or abs(sum(v for v in src_usd.values() if v) - measured) <= max(1e-9, 0.01 * measured)
     return {"conv_id": conv_id, "turns": total_turns,
             "measured_recurring_usd": (round(measured, 4) if measured is not None else None),
@@ -976,8 +1018,43 @@ def residency_decomposition(conv_id, instruction_tokens=None, instruction_paths=
             "by_source_usd": {k: (round(v, 4) if v is not None else None) for k, v in src_usd.items()},
             "by_tool_usd": {k: (round(v, 4) if v is not None else None)
                             for k, v in sorted(tool_usd.items(), key=lambda kv: (kv[1] or 0), reverse=True)},
-            "top_contributors": [(k, (round(v, 4) if v is not None else None)) for k, v in top],
+            "top_contributors": top,
             "instruction_tokens": instr, "instruction_source": instr_src, "reconciles": reconciles}
+
+
+def residency_summary_lines(conv_id=None):
+    """Bounded receipt/doctor rendering for the newest (or explicitly named) Claude Code conversation."""
+    try:
+        rows = _cc_conv_rows()
+        if not conv_id:
+            candidates = [(seq[-1][0], cid) for cid, seq in rows.items() if seq]
+            conv_id = max(candidates)[1] if candidates else None
+        if not conv_id:
+            return ["residency : no Claude Code transcript data"]
+        # Instruction residency from DETERMINISTIC, home-anchored sources only — never os.getcwd(), whose value would
+        # make the number depend on WHERE the receipt is run (an ambient dependency, and the very thing
+        # residency_decomposition promises not to source ambiently). residency_decomposition records the resolved
+        # paths as provenance (instruction_source). A caller that wants a repo-local CLAUDE.md counted passes it in.
+        paths = [os.path.expanduser("~/.claude/CLAUDE.md")]
+        paths += glob.glob(os.path.expanduser("~/.claude/projects/*/memory/MEMORY.md"))
+        result = residency_decomposition(conv_id, instruction_paths=paths)
+        measured = result.get("measured_recurring_usd")
+        if measured is None:
+            return ["residency : cache-read cost unavailable (model unpriced)"]
+        buckets = result["by_source_usd"]
+        lines = [("residency : cache-read $%.4f = instructions $%.4f + tool_result $%.4f + conversation $%.4f"
+                  % (measured, buckets["instructions"] or 0, buckets["tool_result"] or 0,
+                     buckets["conversation"] or 0))]
+        for item in result["top_contributors"]:
+            resident = item.get("allocated_measured_usd")    # its RECONCILED share of the measured total (header-consistent)
+            alternative = item.get("subagent_usd")
+            comparison = ("$%.4f of the re-read cost vs $%.4f to read once in a subagent" % (resident, alternative)
+                          if resident is not None and alternative is not None else "cost unavailable")
+            lines.append("            %s · %s tok, resident ~%s turns · %s" %
+                         (item["label"], item["tokens"], item["remaining_turns"], comparison))
+        return lines
+    except Exception as exc:
+        return [f"residency : unavailable ({type(exc).__name__})"]
 
 
 def context_cmd(conv_id=None, top=10):
@@ -999,13 +1076,13 @@ def context_cmd(conv_id=None, top=10):
         rd = residency_decomposition(conv_id, instruction_paths=_instr)
         if rd["measured_recurring_usd"] is not None:
             print(f"  residency by source (recurring $/turn ${rd['per_turn_usd']:.4f} × {rd['turns']} turns):")
-            for _k in ("tool_output", "instructions", "assistant_output", "user_prompt", "system_reminder"):
+            for _k in ("instructions", "tool_result", "conversation"):
                 _v = rd["by_source_usd"].get(_k)
                 if _v:
                     print(f"    {_k:<16} ${_v:.4f}")
             if rd["by_tool_usd"]:
                 _tt = " · ".join(f"{t} ${u:.4f}" for t, u in list(rd["by_tool_usd"].items())[:5] if u)
-                print(f"    └ tool_output by tool: {_tt}")
+                print(f"    └ tool_result by tool: {_tt}")
             print("    ↑ instructions (CLAUDE.md/MEMORY.md) are resident but SMALL — trimming them is a rounding error; "
                   "the lever is accumulated tool output. WHETHER a given tool result could have been delegated (read "
                   "once in a subagent, not re-read every turn) is an agentic call about the work's shape, not decided here.")

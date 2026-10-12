@@ -1455,6 +1455,11 @@ def cli(args) -> int:
             _hook_context = None
             try:
                 from . import config as _cfg, compaction
+                from . import claudecode as _cc_residency
+                _sid = info.get("session_id") or info.get("sessionId")
+                _res_lines = _cc_residency.residency_summary_lines(_sid)
+                if _res_lines:
+                    _msg += "\n" + "\n".join(_res_lines)
                 _nud = _compaction_nudge(info, str(_cfg.HOME), once=True)   # debounced: ONE notice per crossing, not per turn
                 if _nud:
                     _compact = compaction.compact_snippet()
@@ -1532,6 +1537,10 @@ def cli(args) -> int:
         if scope and not _est_tree(scope):
             scope = None
         print(render_tree(scope_org=scope))
+        from . import claudecode as _cc_residency
+        print("\nRESIDENCY (latest Claude Code session)")
+        for _res_line in _cc_residency.residency_summary_lines():
+            print("  " + _res_line)
         return 0
     except Exception:
         # A status line / hook must NEVER break the caller. Emit nothing rather than an error.

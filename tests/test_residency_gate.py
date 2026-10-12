@@ -14,6 +14,7 @@ os.environ["SPENDGUARD_NO_AUTOINSTALL"] = "1"
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-resgate-")
 os.environ["SPENDGUARD_RESIDENCY_MIN_RESULT_BYTES"] = "100"
 os.environ["SPENDGUARD_RESIDENCY_MIN_TURNS"] = "10"
+os.environ["SPENDGUARD_RESIDENCY_MIN_RESIDENT_TOKENS"] = "1000"
 os.environ["SPENDGUARD_RESIDENCY_REMAINING_TURNS_EST"] = "100"
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
@@ -27,15 +28,17 @@ def ck(label, cond):
 
 _calls = []
 def _fake_call(model, prompt, **kw):
-    _calls.append(model)
+    _calls.append((model, prompt, kw))
     return {"ok": True}
 adapters.call = _fake_call
 _VERDICT = {"delegable": True, "why": "a log read to extract one number"}
 adapters.structured_reply = lambda r: _VERDICT
 plan_admission.ready_meta_model = lambda m: "gpt-5.6-luna"       # a READY $0-lane model, never the capped plan
-claudecode.context_trajectory = lambda cid: {"turns": 50, "model": "claude-opus-4-8"}
+claudecode.context_trajectory = lambda cid: {"turns": 50, "current": 500, "model": "claude-opus-4-8"}
 claudecode._cache_read_rate = lambda m: 1e-6
 pricing.price = lambda m: {"in_": 3.0}
+pricing.realtime_cost = lambda model, in_tok, out_tok, cached_in_tok=0, cache_creation_tok=0, **kw: (
+    cached_in_tok * 0.000001 + cache_creation_tok * 0.000003 + out_tok * 0.000015)
 
 _big = {"tool_name": "Bash", "session_id": "S1", "tool_input": {"command": "cat big.log"},
         "tool_response": "Y" * 4000}
@@ -49,6 +52,10 @@ ck("the warning names a resident-vs-subagent cost", "re-read" in out["systemMess
 ck("it is a WARNING, not a block (no permissionDecision=deny)",
    "permissionDecision" not in str(out) and out.get("hookSpecificOutput", {}).get("hookEventName") == "PostToolUse")
 ck("exactly ONE gated verdict call — never a session/subagent spawn", len(_calls) == 1)
+ck("judge is minimal, strict-schema, and output-bounded",
+   _calls[0][2].get("reasoning") == "minimal" and _calls[0][2].get("max_tokens") == 120
+   and _calls[0][2].get("schema", {}).get("additionalProperties") is False)
+ck("judge receives the whole tool result", "Y" * 4000 in _calls[0][1])
 
 # ── content-hash cache: the same result is judged ONCE ──
 rg.evaluate_posttooluse(_big)
@@ -61,15 +68,21 @@ ck("a small result is SILENT (below the size gate)", rg.evaluate_posttooluse(sma
 
 # ── silent in an early session (turn gate), even for a large result ──
 _calls.clear()
-claudecode.context_trajectory = lambda cid: {"turns": 2, "model": "claude-opus-4-8"}
+claudecode.context_trajectory = lambda cid: {"turns": 2, "current": 500, "model": "claude-opus-4-8"}
 ck("a large result in an EARLY session is SILENT (turn gate)", rg.evaluate_posttooluse({**_big, "session_id": "S2"}) == {})
 ck("no verdict call wasted on an early-session result", _calls == [])
-claudecode.context_trajectory = lambda cid: {"turns": 50, "model": "claude-opus-4-8"}
+claudecode.context_trajectory = lambda cid: {"turns": 2, "current": 2000, "model": "claude-opus-4-8"}
+_calls.clear()
+ck("resident-context threshold can satisfy the long-session gate without many turns",
+   bool(rg.evaluate_posttooluse({**_big, "session_id": "S-resident"}).get("systemMessage")))
+ck("the resident-context path reuses the content verdict", len(_calls) == 0)
+claudecode.context_trajectory = lambda cid: {"turns": 50, "current": 500, "model": "claude-opus-4-8"}
 
 # ── a NON-delegable result (belongs in the thread) is SILENT ──
 _calls.clear()
 _VERDICT = {"delegable": False, "why": "a file about to be edited"}
-ck("a result judged non-delegable is SILENT (no false alarm)", rg.evaluate_posttooluse({**_big, "session_id": "S3"}) == {})
+_nondelegable = {**_big, "session_id": "S3", "tool_response": "Z" * 4000}
+ck("a result judged non-delegable is SILENT (no false alarm)", rg.evaluate_posttooluse(_nondelegable) == {})
 
 # ── fail-open: a malformed payload never raises, returns silent ──
 ck("a malformed payload degrades to silent (fail-open)", rg.evaluate_posttooluse({"tool_response": None}) == {})
