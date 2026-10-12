@@ -577,8 +577,7 @@ def feedback(call_id: Optional[str], ok: bool = True, source: str = "explicit",
     conf = confidence if confidence is not None else _CONF.get(source, 0.7)
     try:
         with _lock:
-            _calls_db().execute("UPDATE calls SET quality=?, quality_src=?, quality_conf=? "
-                                "WHERE id=? AND COALESCE(quality_src,'') != 'truncation'",
+            _calls_db().execute("UPDATE calls SET quality=?, quality_src=?, quality_conf=? WHERE id=? AND COALESCE(quality_src,'') != 'truncation'",
                           ("good" if ok else "bad", source, conf, call_id))
             _calls_db().commit()
     except Exception:
@@ -638,8 +637,9 @@ def _link_used(chain, current_prompt):
                 # mislabelling unrelated outputs 'used'. Requiring the whole snippet to reappear, and skipping short
                 # boilerplate, keeps the signal specific. (Still a low-confidence 0.6 'used' label, never authoritative.)
                 if out and len(out) >= 40 and out in current_prompt:
-                    _calls_db().execute("UPDATE calls SET quality='good', quality_src='used', quality_conf=0.6 "
-                                        "WHERE id=? AND COALESCE(quality_src,'') != 'truncation'", (cid,))
+                    # NB: single string literal (not concatenated) so the static SQL index audit can see the
+                    # WHERE id=? and read it as the PK seek it is, not a full-table scan (tests/test_sql_index_audit).
+                    _calls_db().execute("UPDATE calls SET quality='good', quality_src='used', quality_conf=0.6 WHERE id=? AND COALESCE(quality_src,'') != 'truncation'", (cid,))
             _calls_db().commit()
     except Exception:
         config.rollback_ledger_conn("calls")   # clear a dangling txn from the failed write on the reused pooled conn
