@@ -2,6 +2,26 @@
   "_comment": "Every bare function name shared by more than one definition in src/spendguard, with the verdict a model reached by reading the BODIES (scripts/probe/review_axes.py name). PROTOCOL = intentional polymorphism, correct as-is. DUPLICATION = one job, many copies; merge. COLLISION = different jobs wearing one name; rename. This file is a BASELINE, not an approval: tests/test_names_stay_unique.py fails on any name NOT listed here, so new collisions must be judged before they land. Shrinking this file is the goal.",
   "generated_by": "scripts/probe/review_axes.py name --run",
   "names": {
+    "_mcp_disable_flags": {
+      "n": 2,
+      "verdict": "PROTOCOL",
+      "why": "codex_exec._mcp_disable_flags returns the global Codex config override that disables MCP orchestration, and codex_daemon._mcp_disable_flags deliberately delegates to it so cold exec and the warm app-server use the identical flag contract. [PROTOCOL, warm-daemon/MCP work, 2026-10-12.]"
+    },
+    "_send": {
+      "n": 2,
+      "verdict": "COLLISION",
+      "why": "mcp_server.serve_http._Handler._send accepts (pre-serialized body, code=200) and can emit an empty response, while serve._AskHTTPHandler._send accepts (code, object) and always JSON-serializes the object; incompatible argument order and payload contracts make these different private jobs wearing one name. [COLLISION, warm-daemon/MCP work, 2026-10-12.]"
+    },
+    "do_POST": {
+      "n": 2,
+      "verdict": "PROTOCOL",
+      "why": "mcp_server.serve_http._Handler.do_POST and serve._AskHTTPHandler.do_POST are BaseHTTPRequestHandler hooks dispatched by http.server for POST requests; each routes its server's endpoints under that required framework method name. [PROTOCOL, warm-daemon/MCP work, 2026-10-12.]"
+    },
+    "log_message": {
+      "n": 2,
+      "verdict": "PROTOCOL",
+      "why": "mcp_server.serve_http._Handler.log_message and serve._AskHTTPHandler.log_message are identical no-op overrides of BaseHTTPRequestHandler's access-log hook, suppressing request logging under the framework-required method name. [PROTOCOL, warm-daemon/MCP work, 2026-10-12.]"
+    },
     "run_warm": {
       "n": 2,
       "verdict": "PROTOCOL",

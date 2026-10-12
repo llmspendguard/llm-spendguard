@@ -634,7 +634,7 @@ def main(argv=None):
                         hedge_ms = -1
                     if hedge_ms < 0:
                         print(f"--hedge-ms must be a non-negative integer (milliseconds); got {hedge_p!r}", file=sys.stderr)
-                        return
+                        return 2
                 if not ck_p:
                     print("  note: no --checkpoint — a crash won't resume; pass --checkpoint <path> for a durable run.")
                 _lanes = [ln.strip() for ln in lanes_p.split(",") if ln.strip()] if lanes_p else None
@@ -645,7 +645,7 @@ def main(argv=None):
                     else:
                         print(f"[bulk {intent}] estimate (ZERO SPEND): {e['n_tasks']} tasks · {e['n_distinct']} distinct "
                               f"call(s) · arms {', '.join(e['arms'])}\n  {e['note']}")
-                    return
+                    return 0
                 _stats = {}
                 try:
                     res = lane_balance.bulk_delegate(tasks, intent, system=system, checkpoint=ck_p,
@@ -654,7 +654,7 @@ def main(argv=None):
                 except lane_balance.BulkResilienceRefused as _e:
                     print(f"\n  ⛔ {_e}\n  → add --checkpoint <path> and/or split into a durable run, or re-run with "
                           f"--force to override.", file=sys.stderr)
-                    return
+                    return 2
                 spread, billed, errs = {}, 0, 0
                 for r in res:
                     spread[r.get("lane")] = spread.get(r.get("lane"), 0) + 1

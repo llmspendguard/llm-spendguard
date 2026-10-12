@@ -423,6 +423,7 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
     from . import dispatch
     _adm = dispatch.admit(vendor, model, deadline_s, no_metered_fallback=no_metered_fallback)
     if not _adm.ok:
+        _adm.release()
         if _ctx is not None:
             try:
                 _ctx.__exit__(None, None, None)
@@ -680,7 +681,8 @@ def list_models(vendor, timeout_s=20):
            else {"Authorization": "Bearer " + key})
     try:
         req = urllib.request.Request(root + "/models", headers=hdr)
-        body = json.loads(urllib.request.urlopen(req, context=config.ssl_context(), timeout=timeout_s).read())
+        with urllib.request.urlopen(req, context=config.ssl_context(), timeout=timeout_s) as response:
+            body = json.loads(response.read())
     except Exception as e:
         return {"vendor": vendor, "models": [], "error": f"{type(e).__name__}: {str(e)[:120]}"}
     rows = body.get("data") if isinstance(body, dict) else body
@@ -801,16 +803,20 @@ def served_substitute(vendor, requested):
         return requested, None                        # no served id to choose from → dispatch errors honestly
     from . import adapters, calls, config, gate, plan_admission, pricing
 
-    # ECONOMIC BOUND for the substitute: the requested model's price is the cost the caller implicitly ACCEPTED by
-    # naming it (the ANCHOR). Price every candidate at a nominal (1000 in, 500 out) so the resolver prefers the
-    # CHEAPEST served id that still delivers the capability AND costs <= anchor x 1.25 (strict + a small cushion). An
-    # UNPRICED candidate is deprioritised — resolving to unpriced just moves the problem. When the requested id is
-    # itself unpriced (no anchor), there is no ceiling, so pick the cheapest PRICED id that delivers. Prices are DATA
-    # for the agentic pick (the capability match stays the model's judgement); the bound is enforced below too.
+    # ECONOMIC BOUND for the substitute: the requested model's RATE is the cost the caller implicitly ACCEPTED by
+    # naming it (the ANCHOR). Rank every candidate by its MEASURED per-token rate from the pricing catalog — a
+    # weighted-average $/Mtok at a representative 2:1 in:out mix ((2*in_ + out)/3) — so the resolver prefers the
+    # CHEAPEST served id that still delivers the capability AND whose rate is <= anchor x 1.25 (strict + a small
+    # cushion). This is a RELATIVE yardstick read from catalog DATA, NEVER a dollar quote built from invented token
+    # counts (a literal count fed to a cost fn is how $34 was quoted for a $380 run); the shared scale cancels in the
+    # candidate/anchor ratio and the bound. An UNPRICED candidate is deprioritised — resolving to unpriced just moves
+    # the problem. When the requested id is itself unpriced (no anchor), there is no ceiling, so pick the cheapest
+    # PRICED id that delivers. The capability match stays the model's judgement; the bound is enforced below too.
     def _nom(mid):
         try:
-            c = pricing.realtime_cost(mid, 1000, 500)
-            return float(c) if c else None
+            row = pricing.price(mid)                       # raw per-token RATE row ($/Mtok) — DATA, not a cost: no counts
+            pin, pout = row.get("in_"), row.get("out")
+            return float((2 * pin + pout) / 3.0) if (pin is not None and pout is not None) else None
         except Exception:
             return None
 
@@ -824,10 +830,10 @@ def served_substitute(vendor, requested):
         if p is None:
             return f"  {c}  (UNPRICED — avoid unless nothing priced delivers)"
         over = (_ceiling is not None and p > _ceiling)
-        return f"  {c}  (${p:.5f}/1.5k tok{' — OVER the price bound' if over else ''})"
+        return f"  {c}  (rate ${p:.2f}/Mtok{' — OVER the rate bound' if over else ''})"
 
-    _econ = (f"Economic bound: the requested model costs ${_anchor:.5f} per ~1.5k tokens; prefer a substitute at or "
-             f"below ${_ceiling:.5f} (that price x1.25)." if _anchor else
+    _econ = (f"Economic bound: the requested model's blended rate is ${_anchor:.2f}/Mtok; prefer a substitute at or "
+             f"below ${_ceiling:.2f}/Mtok (that rate x1.25)." if _anchor else
              "The requested model is UNPRICED, so there is no price anchor — pick the CHEAPEST priced id that delivers.")
     prompt = (f"Vendor: {vendor}\nRequested (NOT served by this vendor): {requested}\n\n"
               f"{_econ}\nPick the CHEAPEST served id that still delivers what the requested model was for; prefer a "
@@ -877,10 +883,10 @@ def served_substitute(vendor, requested):
             config.warn_once(f"[spendguard] {vendor}: substitute {pick!r} for {requested!r} is UNPRICED — its spend "
                              f"is not estimated; reconcile will capture it.")
         elif _ceiling is not None and _pp > _ceiling:
-            reason = (reason + f" [COST UP: ${_pp:.5f} > bound ${_ceiling:.5f}]").strip()
+            reason = (reason + f" [COST UP: rate ${_pp:.2f}/Mtok > bound ${_ceiling:.2f}/Mtok]").strip()
             config.warn_once(f"[spendguard] {vendor}: {requested!r} is no longer served; the best served substitute "
-                             f"{pick!r} costs ${_pp:.5f}/1.5k tok — ABOVE the ${_ceiling:.5f} bound (requested was "
-                             f"${_anchor:.5f}). Proceeding (strict+1.25x cushion = warn, not block).")
+                             f"{pick!r} has a blended rate ${_pp:.2f}/Mtok — ABOVE the ${_ceiling:.2f}/Mtok bound "
+                             f"(requested was ${_anchor:.2f}/Mtok). Proceeding (strict+1.25x cushion = warn, not block).")
     # Reached ONLY on a SUCCESSFUL parse: a pick=None HERE is a REAL 'no good substitute' verdict and is cached as such;
     # every parse FAILURE returned above, so a failed call can never be recorded as a negative verdict.
     _models.add_fact(requested, "served_substitute", pick or "", confidence=0.9,

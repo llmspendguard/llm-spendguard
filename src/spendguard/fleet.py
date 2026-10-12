@@ -20,6 +20,7 @@ never a start-time guess):
 import os
 import sqlite3
 import sys
+from contextlib import closing
 
 from . import config
 
@@ -83,13 +84,13 @@ def register_consumer(label=None):
         from . import release, _version
         s = release.served_sha() or {}
         now = _fleet_iso()
-        with _fleet_db() as c:
-            c.execute("INSERT OR REPLACE INTO consumers "
-                      "(pid,version,served_sha,served_short,dirty,cmdline,launchd_label,registered_ts) "
-                      "VALUES(?,?,?,?,?,?,?,?)",
-                      (os.getpid(), getattr(_version, "__version__", None), s.get("sha"), s.get("short"),
-                       1 if s.get("dirty") else 0, _cmdline(), label, now))
-            c.commit()
+        with closing(_fleet_db()) as c:
+            with c:
+                c.execute("INSERT OR REPLACE INTO consumers "
+                          "(pid,version,served_sha,served_short,dirty,cmdline,launchd_label,registered_ts) "
+                          "VALUES(?,?,?,?,?,?,?,?)",
+                          (os.getpid(), getattr(_version, "__version__", None), s.get("sha"), s.get("short"),
+                           1 if s.get("dirty") else 0, _cmdline(), label, now))
     except Exception:
         pass
 
@@ -124,7 +125,7 @@ def running_consumers(prune=True):
     green_sha = g.get("sha")
     out, dead = [], []
     try:
-        with _fleet_db() as c:
+        with closing(_fleet_db()) as c:
             rows = c.execute("SELECT pid,version,served_sha,served_short,dirty,cmdline,launchd_label,registered_ts "
                              "FROM consumers").fetchall()
             for (pid, ver, sha, short, dirty, cmd, label, reg) in rows:
