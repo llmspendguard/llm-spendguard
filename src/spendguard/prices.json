@@ -4,7 +4,7 @@
     "_generator": "scripts/gen_prices_json.py",
     "_source": "src/spendguard/model_catalog.json (concern 'model_catalog' \u2014 the SSOT for model data)",
     "note": "GENERATED from the model catalog \u2014 DO NOT EDIT BY HAND. Author prices in model_catalog.json, then run `python scripts/gen_prices_json.py --write`. honestreview derived_artifact_integrity flags hand-edits.",
-    "generated_at": "2026-10-12T21:40:59Z"
+    "generated_at": "2026-10-12T22:47:51Z"
   },
   "providers": {
     "anthropic": {
@@ -453,6 +453,14 @@
           "batch_in": 0.7,
           "batch_out": 2.2,
           "_source": "https://venturebeat.com/technology/glm-5-3-hits-the-api-at-1-4-4-4-per-million-tokens"
+        },
+        "glm-5.3-flashx": {
+          "in_": 0.37,
+          "out": 1.25,
+          "cached_in": 0.075,
+          "batch_in": 0.37,
+          "batch_out": 1.25,
+          "_source": "https://docs.z.ai/guides/overview/pricing (fetched 2026-10-12): in $0.37/1M, cached-in $0.075/1M, out $1.25/1M. No published batch discount -> batch = standard."
         }
       }
     }

@@ -2441,6 +2441,42 @@
         }
       },
       "as_of": "2026-09-30"
+    },
+    "glm-5.3-flashx": {
+      "id": "glm-5.3-flashx",
+      "provider": "zai",
+      "metered_id": "glm-5.3-flashx",
+      "aliases": [],
+      "lane_spellings": {},
+      "retired_alias_of": null,
+      "price_error": null,
+      "price": {
+        "in_": 0.37,
+        "out": 1.25,
+        "cached_in": 0.075,
+        "batch_in": 0.37,
+        "batch_out": 1.25,
+        "source": "https://docs.z.ai/guides/overview/pricing (fetched 2026-10-12): in $0.37/1M, cached-in $0.075/1M, out $1.25/1M. No published batch discount -> batch = standard.",
+        "verified": "2026-10-12"
+      },
+      "output_ceiling": {
+        "value": 131072,
+        "source": "https://openrouter.ai/z-ai/glm-5.3-flashx (2026-10-12)"
+      },
+      "context_window": {
+        "value": 1048576,
+        "source": "https://openrouter.ai/z-ai/glm-5.3-flashx (2026-10-12)",
+        "verified": "2026-10-12"
+      },
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "style": "none",
+        "tokens_param": "max_tokens"
+      },
+      "as_of": "2026-10-12"
     }
   }
 }
