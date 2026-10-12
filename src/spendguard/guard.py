@@ -139,11 +139,13 @@ def savings_crosscheck(baseline_usd, since=None):
 # per-decision twin: one row per SUBSTITUTION — what the caller WOULD have run vs what spendguard chose, and the $
 # delta at the tokens actually used. It makes the value PROVABLE (every saved dollar traces to intent +
 # requested→chosen model+effort) rather than an anonymous aggregate; it is also exactly the record the learner reads.
-# `why` is LAST because it is an ALTER-added column (older DBs have it after the 12 base columns); the read
-# projection must include it — dropping it blinded every reader to the routing reason (shed classification read None
-# for `why` and reported zero sheds until this was fixed).
+# `why` and the bounded `reason_class` are additive columns after the 12 base columns. The read projection must keep
+# `why` for local forensics, while only `reason_class` may feed the scrubbed aggregate sent off-device.
 _DECISION_COLS = ("ts", "day", "project", "intent", "basis", "requested_model", "requested_effort",
-                  "chosen_model", "chosen_effort", "counterfactual_usd", "actual_usd", "saved_usd", "why")
+                  "chosen_model", "chosen_effort", "counterfactual_usd", "actual_usd", "saved_usd", "why",
+                  "reason_class")
+_DECISION_REASON_CLASSES = frozenset({"paid-overage-admission", "proactive-shed", "quota-admission",
+                                      "best-value", "substitution", "pinned", "other"})
 
 
 def _decisions_db():
@@ -152,13 +154,15 @@ def _decisions_db():
         db.execute("CREATE TABLE IF NOT EXISTS decisions "
                    "(ts TEXT, day TEXT, project TEXT, intent TEXT, basis TEXT, "
                    "requested_model TEXT, requested_effort TEXT, chosen_model TEXT, chosen_effort TEXT, "
-                   "counterfactual_usd REAL, actual_usd REAL, saved_usd REAL, why TEXT)")
+                   "counterfactual_usd REAL, actual_usd REAL, saved_usd REAL, why TEXT, reason_class TEXT)")
         # forward-only additive column: `why` = the SPECIFIC routing reason ("bandit → codex (gpt-5.6-sol)", "tier-3
         # base fallback", "lane-miss → metered", "best-value") so "why did X run instead of the model requested" is a
         # queryable fact, not only the coarse `basis` (advisor/best-value, which keys the savings tally).
         _have = {r[1] for r in db.execute("PRAGMA table_info(decisions)").fetchall()}
         if "why" not in _have:
             db.execute("ALTER TABLE decisions ADD COLUMN why TEXT")
+        if "reason_class" not in _have:
+            db.execute("ALTER TABLE decisions ADD COLUMN reason_class TEXT")
         db.execute("CREATE INDEX IF NOT EXISTS idx_decisions_day ON decisions(day)")
         db.execute("CREATE INDEX IF NOT EXISTS idx_decisions_intent ON decisions(intent)")
         db.commit()
@@ -166,7 +170,8 @@ def _decisions_db():
 
 
 def record_decision(intent, requested_model, chosen_model, counterfactual_usd, actual_usd, saved_usd,
-                    requested_effort=None, chosen_effort=None, basis="advisor", project=None, why=None):
+                    requested_effort=None, chosen_effort=None, basis="advisor", project=None, why=None,
+                    reason_class=None):
     """Record ONE routing decision (the value proof + the learner's evidence + the ROUTING PROVENANCE). `why` is the
     SPECIFIC reason the chosen model differs from the requested one (bandit/lane/tier-3/best-value/lane-miss → metered),
     so a cheap-intent-ran-on-an-expensive-model event is queryable and we can improve routing. Never raises — booking
@@ -176,12 +181,13 @@ def record_decision(intent, requested_model, chosen_model, counterfactual_usd, a
         now = datetime.datetime.now(datetime.timezone.utc)
         db = _decisions_db()
         with budget._lock:
+            cls = reason_class if reason_class in _DECISION_REASON_CLASSES else None
             db.execute("INSERT INTO decisions (ts,day,project,intent,basis,requested_model,requested_effort,"
-                       "chosen_model,chosen_effort,counterfactual_usd,actual_usd,saved_usd,why) "
-                       "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                       "chosen_model,chosen_effort,counterfactual_usd,actual_usd,saved_usd,why,reason_class) "
+                       "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                        (now.isoformat(timespec="seconds"), now.strftime("%Y-%m-%d"), proj, intent, basis,
                         requested_model, requested_effort, chosen_model, chosen_effort,
-                        float(counterfactual_usd or 0), float(actual_usd or 0), float(saved_usd or 0), why))
+                        float(counterfactual_usd or 0), float(actual_usd or 0), float(saved_usd or 0), why, cls))
             db.commit()
     except Exception:
         try:
@@ -218,6 +224,49 @@ def decisions_summary(since=None):
         b["saved_usd"] = round(b["saved_usd"], 4)
     return {"decisions": len(rows), "saved_usd": round(total, 4),
             "by_intent": sorted(by_intent.values(), key=lambda x: x["saved_usd"], reverse=True)}
+
+
+def _decision_reason_class(d):
+    """Return only the bounded, structurally recorded routing class; never inspect free-form `why`."""
+    if d.get("reason_class") in _DECISION_REASON_CLASSES:
+        return d["reason_class"]
+    if d.get("basis") == "best-value":
+        return "best-value"
+    requested, chosen = d.get("requested_model"), d.get("chosen_model")
+    if requested and chosen and requested == chosen:
+        return "pinned"
+    if requested and chosen and requested != chosen:
+        return "substitution"
+    return "other"
+
+
+def decision_rollup(since=None):
+    """Bounded, scrubbed routing aggregates (by route+reason) for the org push — distinct from decisions_summary,
+    which is the savings-by-intent receipt. No intent/project/time/free-form provenance leaves the client."""
+    fields = ("requested_model", "requested_effort", "chosen_model", "chosen_effort")
+    groups = {}
+    for d in decisions_since(since):
+        cls = _decision_reason_class(d)
+        key = tuple(d.get(f) for f in fields) + (cls,)
+        row = groups.setdefault(key, {**dict(zip(fields, key[:4])), "reason_class": cls, "n": 0,
+                                      "billed_usd": 0.0, "counterfactual_usd": 0.0, "savings_usd": 0.0})
+        row["n"] += 1
+        row["billed_usd"] += float(d.get("actual_usd") or 0.0)
+        row["counterfactual_usd"] += float(d.get("counterfactual_usd") or 0.0)
+        row["savings_usd"] += float(d.get("saved_usd") or 0.0)
+    ordered = sorted(groups.values(), key=lambda r: (-r["n"], str(tuple(r.get(f) for f in fields)),
+                                                     r["reason_class"]))
+    if len(ordered) > 24:
+        kept, remainder = ordered[:23], ordered[23:]
+        rollup = {**{f: None for f in fields}, "reason_class": "other", "n": sum(r["n"] for r in remainder),
+                  "billed_usd": sum(r["billed_usd"] for r in remainder),
+                  "counterfactual_usd": sum(r["counterfactual_usd"] for r in remainder),
+                  "savings_usd": sum(r["savings_usd"] for r in remainder)}
+        ordered = kept + [rollup]
+    for row in ordered:
+        for field in ("billed_usd", "counterfactual_usd", "savings_usd"):
+            row[field] = round(row[field], 6)
+    return {"n": sum(r["n"] for r in groups.values()), "by_route": ordered}
 
 
 # ── shed EFFECTIVENESS (read-side) ───────────────────────────────────────────

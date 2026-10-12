@@ -696,7 +696,7 @@ def _book_substitution(r):
                               requested_model=requested, requested_effort=r.get("requested_effort"),
                               chosen_model=chosen, chosen_effort=r.get("chosen_effort"),
                               counterfactual_usd=base, actual_usd=actual, saved_usd=saved, basis=_basis,
-                              why=r.get("substitution"))   # the SPECIFIC routing reason (bandit/lane/tier-3/best-value)
+                              why=r.get("substitution"), reason_class=r.get("decision_reason_class"))
         if saved > 0:                                    # metered → cheaper metered: a real counterfactual saving
             guard.record_saving(_basis, saved)
     except Exception:
@@ -1457,6 +1457,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     if _plan_redirect and _plan_redirect.get("action") == "redirect" and isinstance(r, dict):
         r = {**r, "substituted_from": r.get("substituted_from") or _plan_redirect["requested_model"],
              "substitution": r.get("substitution") or _plan_redirect["reason"],
+             "decision_reason_class": _plan_redirect.get("reason_class"),
              "resolved_lane": r.get("resolved_lane") or _plan_redirect["lane"]}
     _book_substitution(r)   # book the DECISION (value proof + learner evidence) + any metered→cheaper saving
     # `billed` (cost>0) is NOT "served by the metered API": a per-token key LANE (e.g. zai-coding) costs while still
