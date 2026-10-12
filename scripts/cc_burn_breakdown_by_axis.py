@@ -28,6 +28,7 @@ from collections import defaultdict
 import spendguard.pricing as pricing
 from spendguard import config
 from spendguard.claudecode import _sidebar_titles
+from spendguard.claudecode import residency_decomposition
 
 DEFAULT_PROJECTS_DIR = "~/.claude/projects"
 DEFAULT_WINDOW_DAYS = 2
@@ -220,6 +221,11 @@ def reconcile_class_split(class_cost, total_cost, tolerance=0.01):
         return split == 0, split, 0.0
     err = abs(split - total_cost) / total_cost
     return err <= tolerance, split, err
+
+
+def transcript_residency_axis(session_id, instruction_paths=None):
+    """Expose the canonical three-bucket residency decomposition from this transcript-analysis script."""
+    return residency_decomposition(session_id, instruction_paths=instruction_paths)
 
 
 def _pct(part, whole):

@@ -53,13 +53,32 @@ cc._cache_read_rate = lambda model: 1e-6     # $1 / 1M cached tokens → measure
 d = cc.residency_decomposition("C1")          # no instruction paths → instructions unmeasured (honest 0)
 ck("3 billed turns counted", d["turns"] == 3)
 ck("measured recurring $ = Σ cache_read × rate", abs(d["measured_recurring_usd"] - 0.006) < 1e-9)
-ck("tool_output is the dominant source", max(d["by_source_usd"], key=lambda k: d["by_source_usd"][k] or 0) == "tool_output")
+ck("tool_result is the dominant source", max(d["by_source_usd"], key=lambda k: d["by_source_usd"][k] or 0) == "tool_result")
 ck("tool output attributed PER TOOL (Read and Bash both present)", set(d["by_tool_usd"]) == {"Read", "Bash"})
 ck("the big, earlier Read output outweighs the small, later Bash output", d["by_tool_usd"]["Read"] > d["by_tool_usd"]["Bash"])
-ck("an injected system_reminder is a distinct source", d["by_source_usd"]["system_reminder"] is not None and d["by_source_usd"]["system_reminder"] > 0)
+ck("the only three residency buckets are instructions, tool_result, conversation",
+   set(d["by_source_usd"]) == {"instructions", "tool_result", "conversation"})
 ck("the split RECONCILES with the measured total (share is the finding, total is the size)",
    d["reconciles"] and abs(sum(v for v in d["by_source_usd"].values() if v) - d["measured_recurring_usd"]) < 1e-3)
 ck("instructions are UNMEASURED (0) when no paths given — never ambiently sourced", d["instruction_tokens"] == 0 and d["instruction_source"] == [])
+ck("each top tool result carries resident and subagent counterfactual costs",
+   all(x["resident_usd"] is not None and x["subagent_usd"] is not None for x in d["top_contributors"]))
+
+# Counterfactual is exactly cache-read × remaining turns versus ONE cache-write + the bounded return. In particular,
+# the delegated evidence must not also be charged as ordinary input (which would count the same read twice).
+_price_calls = []
+from spendguard import pricing  # noqa: E402
+_real_realtime_cost = pricing.realtime_cost
+pricing.realtime_cost = lambda model, in_tok, out_tok=0, cached_in_tok=0, provider=None, cache_creation_tok=0: (
+    _price_calls.append((in_tok, out_tok, cached_in_tok, cache_creation_tok)) or
+    cached_in_tok * 2 + cache_creation_tok * 3 + out_tok * 5)
+try:
+    _resident, _delegated = cc.residency_counterfactual_costs("priced-model", 11, 7, 13)
+finally:
+    pricing.realtime_cost = _real_realtime_cost
+ck("resident counterfactual is cache-read tokens × remaining turns", _resident == 11 * 2 * 7)
+ck("subagent counterfactual is one cache-write plus bounded return", _delegated == 11 * 3 + 13 * 5)
+ck("subagent evidence is not double-counted as ordinary input", _price_calls[1] == (0, 13, 0, 11))
 
 # declared instruction tokens → recorded as provenance, resident every turn
 d2 = cc.residency_decomposition("C1", instruction_tokens=500)

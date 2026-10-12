@@ -2613,6 +2613,12 @@ def _cli(cmd="status", live=False):
             pass
         if cmd == "doctor":
             try:
+                from . import claudecode as _cc_residency
+                for _res_line in _cc_residency.residency_summary_lines():
+                    print("  " + _res_line)
+            except Exception:
+                print("  residency : UNKNOWN — transcript analysis could not run")
+            try:
                 from . import delegate_router as _delegate_router
                 print("  " + _delegate_router.delegation_doctor_line())
             except Exception as _delegation_error:

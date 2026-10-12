@@ -9,7 +9,8 @@ Two-stage, exactly as the agent-spawn gate: (1) a MECHANICAL size+turn gate (siz
 legitimate) decides whether to even consider it; (2) an AGENTIC verdict — could this work's SHAPE have been delegated
 (self-contained exploration) vs did it need the thread (a file about to be edited, interactive multi-step) — decided
 by ONE model call on a READY $0 lane (plan_admission.ready_meta_model, so it is never refused/expensive on a capped
-plan), with the verdict CONTENT-HASH cached per session so a repeated pattern is judged once. It must NOT become the
+plan), with the verdict CONTENT-HASH cached (keyed by the evidence, not the session) in a hook-owned store so a
+repeated pattern is judged once across sessions. It must NOT become the
 thing it warns about: never a subagent/session spawn to make this judgement (the symgrep grep-classifier failure —
 166 cold sessions, $70/day). FAIL-OPEN always: a nudge that crashes the hook would be worse than silence."""
 import hashlib
@@ -23,40 +24,17 @@ import sys
 from . import config
 
 _HOOK_SUFFIX = "residency-gate --posttooluse-hook"
-_MIN_RESULT_BYTES_DEFAULT = 10240     # only consider a "large" result (config residency_gate.min_result_bytes)
-_MIN_SESSION_TURNS_DEFAULT = 20       # only nag in a session long enough for residency to matter
-_REMAINING_TURNS_EST_DEFAULT = 100    # conservative HIGH estimate of turns a resident item is re-read (backs a cost → over-estimate)
-_VERDICT_OUT = 120                    # the verdict is a tiny {delegable, why} JSON — a named cap, not a magic literal
-
-
-def _res_int_cfg(key, default):
+def _residency_configured_integer(key):
+    """Resolve a residency setting through the declarative config layer, including its registered default."""
+    from .config_schema import SETTINGS
+    spec = next(s for s in SETTINGS if s.get("section") == "residency_gate" and s.get("key") == key)
     try:
-        v = os.environ.get("SPENDGUARD_RESIDENCY_" + key.upper())
+        v = os.environ.get(spec.get("env") or "")
         if v is None:
-            v = config._cfg_get("residency_gate", key, None)
-        return int(v) if v is not None else int(default)
+            v = config._cfg_get("residency_gate", key, spec["default"])
+        return int(v)
     except (TypeError, ValueError):
-        return int(default)
-
-
-def _residency_state_path(session_id):
-    digest = hashlib.sha256(str(session_id).encode()).hexdigest()
-    return config.HOME / "residency_gate" / f"{digest}.json"
-
-
-def _load_residency_state(session_id):
-    try:
-        return json.loads(_residency_state_path(session_id).read_text())
-    except Exception:
-        return {"verdicts": {}, "nudged": 0}
-
-
-def _save_residency_state(session_id, state):
-    try:
-        config.update_json(_residency_state_path(session_id), lambda _old: state,
-                           reason="residency-gate-session", quarantine_unparseable=True)
-    except Exception:
-        pass                              # state is a throttle/cache bonus; never fail the hook over it
+        return int(spec["default"])
 
 
 def _result_text(payload):
@@ -73,73 +51,91 @@ def _result_text(payload):
             return c
         if isinstance(c, list):
             return " ".join(x.get("text", "") for x in c if isinstance(x, dict))
-        return json.dumps(r)[:200000]
+        return json.dumps(r, ensure_ascii=False)
     if isinstance(r, list):
         return " ".join(x.get("text", "") if isinstance(x, dict) else str(x) for x in r)
     return ""
 
 
-def _session_turns(session_id):
-    """The session's billed turn count from the ledger (claude-code est-value rows), or 0 when unknown. $0."""
+def _verdict_store_path():
+    """The hook-owned delegability-verdict cache. A SINGLE owner — the PostToolUse hook path — writes it, kept apart
+    from resource_state (which the main gate process owns and rewrites wholesale), so a hook subprocess can never
+    clobber lane/cooldown state. Merge-written, so concurrent hook subprocesses never lose each other's verdicts."""
+    return config.HOME / "residency_gate" / "verdicts.json"
+
+
+def _cached_delegability_verdict(key):
+    """A previously recorded {delegable, why} for this evidence hash, or None."""
     try:
-        from . import claudecode
-        return int(claudecode.context_trajectory(session_id).get("turns") or 0)
+        v = (json.loads(_verdict_store_path().read_text()) or {}).get(key)
+        return dict(v) if isinstance(v, dict) else None
     except Exception:
-        return 0
+        return None
 
 
-def _rates():
-    """(cache_read $/tok, metered_input $/tok) for the advisor judge model's family — from pricing only, (None, None)
-    when unpriced so a cost is never invented."""
+def _record_delegability_verdict(key, verdict):
+    """Persist a schema-checked verdict by MERGING it into the hook-owned cache (never a whole-file clobber), trimmed
+    to verdict_cache_max by insertion order so the file stays bounded. Best-effort: a cache miss only re-judges on a
+    $0 lane, so a write failure never fails the hook."""
+    cap = max(1, _residency_configured_integer("verdict_cache_max"))
+
+    def _merge_bounded_verdict(old):
+        store = dict(old) if isinstance(old, dict) else {}
+        store.pop(key, None)                        # re-insert at the end so a trim drops the OLDEST, not this one
+        store[key] = dict(verdict)
+        for stale in list(store)[: max(0, len(store) - cap)]:
+            store.pop(stale, None)
+        return store
+
     try:
-        from . import claudecode, pricing
-        model = config.advisor_model()
-        cr = claudecode._cache_read_rate(model)
-        p = pricing.price(model) or {}
-        inr = (float(p.get("in_")) / 1e6) if p.get("in_") is not None else None
-        return cr, inr
+        _verdict_store_path().parent.mkdir(parents=True, exist_ok=True)
+        config.update_json(_verdict_store_path(), _merge_bounded_verdict, reason="residency-verdict-cache",
+                           quarantine_unparseable=True)
     except Exception:
-        return None, None
+        pass
 
 
-def _residency_verdict(session_id, tool_name, tool_input, result_bytes, head):
-    """Agentic delegability verdict {delegable, why}, CONTENT-HASH cached per session. ONE call on a READY $0 lane
-    (ready_meta_model — never refused on a capped plan); never a subagent/session spawn. None on any failure (→ the
-    nudge stays silent, never a false alarm). The evidence is the work's SHAPE (tool + input + size + a head preview),
-    which is small and passed whole — the full result bytes are NOT the evidence for a shape judgement."""
-    key = hashlib.sha256(json.dumps([tool_name, tool_input, result_bytes], sort_keys=True,
+def _judge_residency_delegability(tool_name, tool_input, result_text):
+    """Agentic delegability verdict {delegable, why}, CONTENT-HASH cached in the hook-owned verdict store. ONE call on
+    a READY $0 lane (ready_meta_model — never refused on a capped plan); never a subagent/session spawn. None on any
+    failure (→ the nudge stays silent, never a false alarm). Tool input and result are both supplied whole; only the
+    response is bounded."""
+    key = "residency:" + hashlib.sha256(json.dumps([tool_name, tool_input, result_text], sort_keys=True,
                                      ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
-    state = _load_residency_state(session_id)
-    cached = (state.get("verdicts") or {}).get(key)
+    cached = _cached_delegability_verdict(key)
     if cached is not None:
-        return cached, key, state
+        return cached
     try:
         from . import adapters, plan_admission, calls
         model = plan_admission.ready_meta_model(config.advisor_judge_model())
-        # SHAPE evidence passed WHOLE: every tool_input key is preserved; only a bulky string VALUE becomes a
-        # '<N chars>' size marker — bounded by CONTAINMENT, never a byte-cut that could drop a shape-relevant field
-        # (a path / command / pattern). A Write's content body is size, not shape, so a marker loses no decision evidence.
-        shape = ({k: (f"<{len(v)} chars>" if isinstance(v, str) and len(v) > 400 else v)
-                  for k, v in tool_input.items()} if isinstance(tool_input, dict) else tool_input)
-        prompt = (f"A tool result from `{tool_name}` ({result_bytes} bytes) landed in the MAIN conversation thread, so "
+        prompt = (f"A tool result from `{tool_name}` ({len(result_text.encode('utf-8', 'ignore'))} bytes) landed in "
+                  f"the MAIN conversation thread, so "
                   f"it is re-read on EVERY following turn. Could the work that produced it have been DELEGATED to a "
                   f"subagent (which reads it once and returns a short summary) — i.e. is it self-contained exploration "
                   f"— or did it need to stay in the thread (a file about to be edited, interactive multi-step work)?\n"
-                  f"Tool: {tool_name}  ·  input (shape, whole): {json.dumps(shape)}  ·  result preview: {head}\n"
+                  f"Tool input (whole): {json.dumps(tool_input, ensure_ascii=False)}\n"
+                  f"Tool result (whole): {result_text}\n"
                   f'Reply JSON only: {{"delegable": true|false, "why": "<one short line>"}}.')
         with calls.context(intent="spendguard:residency-nudge"):
-            r = adapters.call(model, prompt, sig="spendguard:residency-nudge", max_tokens=_VERDICT_OUT,
+            r = adapters.call(model, prompt, sig="spendguard:residency-nudge", reasoning="minimal",
+                              max_tokens=_residency_configured_integer("judge_output_tokens"),
                               schema={"type": "object", "additionalProperties": False, "required": ["delegable"],
                                       "properties": {"delegable": {"type": "boolean"}, "why": {"type": "string"}}})
         j = adapters.structured_reply(r)
     except Exception:
-        return None, key, state                           # degrade to silence — a nudge must never crash the hook (incl. a spend refusal)
+        return None
     if not (isinstance(j, dict) and isinstance(j.get("delegable"), bool)):
-        return None, key, state
-    verdict = {"delegable": bool(j["delegable"]), "why": (j.get("why") or "")[:160]}
-    state.setdefault("verdicts", {})[key] = verdict
-    _save_residency_state(session_id, state)
-    return verdict, key, state
+        return None
+    verdict = {"delegable": bool(j["delegable"]), "why": str(j.get("why") or "")}
+    _record_delegability_verdict(key, verdict)
+    return verdict
+
+
+def residency_nudge_thresholds_met(result_bytes, session_turns, resident_tokens):
+    """Mechanical gate: result is large AND the session is long by turns OR current resident context."""
+    return (result_bytes >= _residency_configured_integer("min_result_bytes")
+            and (session_turns >= _residency_configured_integer("min_turns")
+                 or resident_tokens >= _residency_configured_integer("min_resident_tokens")))
 
 
 def evaluate_posttooluse(payload):
@@ -151,18 +147,23 @@ def evaluate_posttooluse(payload):
         session_id = payload.get("session_id") or "unknown-session"
         text = _result_text(payload)
         nbytes = len(text.encode("utf-8", "ignore"))
-        if nbytes < _res_int_cfg("min_result_bytes", _MIN_RESULT_BYTES_DEFAULT):
-            return silent                                  # mechanical size gate — too small to matter
-        if _session_turns(session_id) < _res_int_cfg("min_turns", _MIN_SESSION_TURNS_DEFAULT):
-            return silent                                  # too early in the session for residency to bite
-        verdict, _key, _state = _residency_verdict(session_id, tool_name, payload.get("tool_input") or {}, nbytes, text[:500])
+        from . import claudecode
+        trajectory = claudecode.context_trajectory(session_id)
+        session_turns = int(trajectory.get("turns") or 0)
+        resident_tokens = int(trajectory.get("current") or 0)
+        if not residency_nudge_thresholds_met(nbytes, session_turns, resident_tokens):
+            return silent
+        verdict = _judge_residency_delegability(tool_name, payload.get("tool_input") or {}, text)
         if not verdict or not verdict.get("delegable"):
             return silent                                  # couldn't judge, or it genuinely belongs in the thread
-        toks = max(1, nbytes // 4)
-        rem = _res_int_cfg("remaining_turns_est", _REMAINING_TURNS_EST_DEFAULT)
-        cr_rate, in_rate = _rates()
-        resident = (toks * rem * cr_rate) if cr_rate is not None else None
-        subagent = (toks * in_rate) if in_rate is not None else None             # read ONCE, returns a short summary
+        toks = max(1, claudecode._toklen(text))
+        rem = _residency_configured_integer("remaining_turns_est")
+        model = trajectory.get("model") or config.advisor_model()
+        try:
+            resident, subagent = claudecode.residency_counterfactual_costs(
+                model, toks, rem, _residency_configured_integer("subagent_return_tokens"))
+        except Exception:
+            resident = subagent = None
         cost = ""
         if resident is not None and subagent is not None:
             cost = (f" ~${resident:.2f} to re-read over ~{rem} more turns as a resident, vs ~${subagent:.4f} read once "
