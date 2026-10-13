@@ -44,6 +44,10 @@ Six things it does that the observability and gateway tools don't:
 Zero required dependencies. Fail-open by design: a cost tool must never be the reason your job doesn't run.
 Learn more at https://llmspendguard.com · **[Docs & quickstart →](https://docs.llmspendguard.com/)**
 
+The global model reference is available without login at **[llmspendguard.com/catalog](https://llmspendguard.com/catalog)**.
+Its row `as_of` is the authored date the row's price/capability payload last changed; “snapshot ingested” is the
+server's separate observation time. Local standalone operation remains complete; SaaS sync and dashboards are optional.
+
 > 📘 **New here? Read the [Solution Specification](docs/SOLUTION-SPEC.md)** — the whole story end to end: why it
 > exists, the value, the journey of a dollar (call → gate → ledger → reconcile → push), the design, and how it's
 > tested, secured, and operated.

@@ -302,10 +302,14 @@ calls `install()` so it holds even when run as `spendguard <cmd>`. The advisor m
 flowchart LR
     subgraph client ["llm-spendguard — this repo (standalone, production-ready)"]
       GATE["shed → route → delegate<br/>gate + ledger + savings + fleet"] --> SAAS["saas.py<br/>sync + pull_policy"]
+      CATALOG["model_catalog.json<br/>tracked row payload + source-owned as_of"]
     end
     SAAS -->|"opt-in · scrubbed roll-ups<br/>status · truth · decisions · savings · fleet"| SERVER["llm-spendguard-server<br/>(SEPARATE repo · llmspendguard.com)"]
     SERVER -->|"GET /v1/policy<br/>effective advisory / enforced caps"| SAAS
     SERVER --> WEB["website dashboard<br/>org truth + shed effectiveness + fleet"]
+    CATALOG -->|"GitHub publication · global facts"| CURATED["server cron<br/>global curated_catalog<br/>as_of + ingested_at"]
+    CURATED --> PUBLIC["anonymous /api/public/catalog<br/>+ /catalog page"]
+    CURATED -->|"authenticated overlay map<br/>dates preserved"| SAAS
 ```
 
 - **This repo is the whole product, standalone.** Gate, pricing, ledger, active routing/delegation, savings,

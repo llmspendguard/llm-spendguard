@@ -2,40 +2,213 @@
   "_doc": "SSOT for per-model data (models) AND per-vendor metered-API data (vendors). Authored here (curated edits welcome); prices.json is GENERATED from this. See docs/CANONICAL_CONCERNS.json concern 'model_catalog'.",
   "_seeded_from": "scripts/migrate/seed_model_catalog.py (current resolved values)",
   "vendors": {
-    "_doc": "Per-vendor metered-API rate limits — the SSOT the dispatch governor reads for its PROACTIVE cold-start cap (the floor applied BEFORE any response header, so a cold burst is paced from call #1 instead of storming). Response headers REFINE these upward to the account's real ceiling (dispatch.learn_rate_limit). Researched 2026-10-04 — anthropic AUTHORITATIVE (platform.claude.com/docs/en/api/rate-limits, full tier tables); openai tier caps (developers.openai.com/api/docs/guides/rate-limits), per-model rpm/tpm ride x-ratelimit headers (this account measured tpm=40000000 rpm=15000); gemini/zai/moonshot not publicly tabulated → conservative floor, refine from headers. units: rpm=requests/min, itpm=INPUT tok/min, otpm=OUTPUT tok/min, tpm=combined where one bucket. SAVED HERE so it is never re-researched.",
+    "_doc": "Per-vendor metered-API rate limits \u2014 the SSOT the dispatch governor reads for its PROACTIVE cold-start cap (the floor applied BEFORE any response header, so a cold burst is paced from call #1 instead of storming). Response headers REFINE these upward to the account's real ceiling (dispatch.learn_rate_limit). Researched 2026-10-04 \u2014 anthropic AUTHORITATIVE (platform.claude.com/docs/en/api/rate-limits, full tier tables); openai tier caps (developers.openai.com/api/docs/guides/rate-limits), per-model rpm/tpm ride x-ratelimit headers (this account measured tpm=40000000 rpm=15000); gemini/zai/moonshot not publicly tabulated \u2192 conservative floor, refine from headers. units: rpm=requests/min, itpm=INPUT tok/min, otpm=OUTPUT tok/min, tpm=combined where one bucket. SAVED HERE so it is never re-researched.",
     "_behaviors": {
       "acceleration_slow_start": "Anthropic (and in practice others) 429 on a SHARP usage increase even BELOW the steady ceiling; documented remedy is to ramp gradually. => the governor must SLOW-START (ramp concurrency/rate from low), not fire full concurrency cold. This is the PRIMARY cause of a cold-burst storm.",
       "cache_aware_itpm": "Anthropic ITPM counts input_tokens + cache_creation_input_tokens but NOT cache_read_input_tokens (except Haiku 3.5). => pace input by fresh+cache_creation, and caching the repeated prompt lowers ITPM pressure.",
       "otpm_realtime": "OTPM meters ACTUAL output as produced; max_tokens does NOT count. => pace output by the learned expected output (expected_output.expect), never by max_tokens.",
       "per_model_buckets": "Limits are PER MODEL-FAMILY (opus separate from haiku). => key tpm/rpm by (vendor, family), via model_family_map below.",
-      "spend_cap_429": "A monthly-spend-cap 429 carries error_code enforced_spend_limit_reached and NO retry-after — not a transient rate limit; do not retry it."
+      "spend_cap_429": "A monthly-spend-cap 429 carries error_code enforced_spend_limit_reached and NO retry-after \u2014 not a transient rate limit; do not retry it."
     },
     "anthropic": {
       "limit_scope": "per_model_family_per_org",
       "cold_tier": "start",
       "note": "New orgs may begin in an 'Evaluation' tier BELOW Start; Start is the safe published floor to assume cold, with SLOW-START on top handling Evaluation + acceleration limits.",
-      "header_names": {"rpm": "anthropic-ratelimit-requests-limit", "itpm": "anthropic-ratelimit-input-tokens-limit", "otpm": "anthropic-ratelimit-output-tokens-limit", "retry_after": "retry-after"},
-      "tiers": {
-        "start": {"monthly_cap_usd": 500, "models": {"opus": {"rpm": 1000, "itpm": 2000000, "otpm": 400000}, "sonnet": {"rpm": 1000, "itpm": 2000000, "otpm": 400000}, "haiku": {"rpm": 1000, "itpm": 2000000, "otpm": 400000}, "fable": {"rpm": 1000, "itpm": 500000, "otpm": 100000}, "haiku-3.5": {"rpm": 1000, "itpm": 100000, "otpm": 20000}}},
-        "build": {"monthly_cap_usd": 1000, "models": {"opus": {"rpm": 5000, "itpm": 5000000, "otpm": 1000000}, "sonnet": {"rpm": 5000, "itpm": 5000000, "otpm": 1000000}, "haiku": {"rpm": 5000, "itpm": 5000000, "otpm": 1000000}, "fable": {"rpm": 2000, "itpm": 1500000, "otpm": 300000}, "haiku-3.5": {"rpm": 2000, "itpm": 200000, "otpm": 40000}}},
-        "scale": {"monthly_cap_usd": 200000, "models": {"opus": {"rpm": 10000, "itpm": 10000000, "otpm": 2000000}, "sonnet": {"rpm": 10000, "itpm": 10000000, "otpm": 2000000}, "haiku": {"rpm": 10000, "itpm": 10000000, "otpm": 2000000}, "fable": {"rpm": 4000, "itpm": 4000000, "otpm": 800000}, "haiku-3.5": {"rpm": 4000, "itpm": 400000, "otpm": 80000}}}
+      "header_names": {
+        "rpm": "anthropic-ratelimit-requests-limit",
+        "itpm": "anthropic-ratelimit-input-tokens-limit",
+        "otpm": "anthropic-ratelimit-output-tokens-limit",
+        "retry_after": "retry-after"
       },
-      "batch_api": {"start": {"rpm": 1000, "max_in_queue": 200000}, "build": {"rpm": 2000, "max_in_queue": 300000}, "scale": {"rpm": 4000, "max_in_queue": 500000}},
-      "cold_floor": {"rpm": 1000, "itpm": 500000, "otpm": 100000},
-      "model_family_map": {"opus": ["claude-opus-4-5", "claude-opus-4-6", "claude-opus-4-7", "claude-opus-4-8"], "opus-5": ["claude-opus-5"], "opus-5.5": ["claude-opus-5-5"], "sonnet": ["claude-sonnet-4-5", "claude-sonnet-4-6"], "haiku": ["claude-haiku-4-5"], "haiku-3.5": ["claude-haiku-3-5"]}
+      "tiers": {
+        "start": {
+          "monthly_cap_usd": 500,
+          "models": {
+            "opus": {
+              "rpm": 1000,
+              "itpm": 2000000,
+              "otpm": 400000
+            },
+            "sonnet": {
+              "rpm": 1000,
+              "itpm": 2000000,
+              "otpm": 400000
+            },
+            "haiku": {
+              "rpm": 1000,
+              "itpm": 2000000,
+              "otpm": 400000
+            },
+            "fable": {
+              "rpm": 1000,
+              "itpm": 500000,
+              "otpm": 100000
+            },
+            "haiku-3.5": {
+              "rpm": 1000,
+              "itpm": 100000,
+              "otpm": 20000
+            }
+          }
+        },
+        "build": {
+          "monthly_cap_usd": 1000,
+          "models": {
+            "opus": {
+              "rpm": 5000,
+              "itpm": 5000000,
+              "otpm": 1000000
+            },
+            "sonnet": {
+              "rpm": 5000,
+              "itpm": 5000000,
+              "otpm": 1000000
+            },
+            "haiku": {
+              "rpm": 5000,
+              "itpm": 5000000,
+              "otpm": 1000000
+            },
+            "fable": {
+              "rpm": 2000,
+              "itpm": 1500000,
+              "otpm": 300000
+            },
+            "haiku-3.5": {
+              "rpm": 2000,
+              "itpm": 200000,
+              "otpm": 40000
+            }
+          }
+        },
+        "scale": {
+          "monthly_cap_usd": 200000,
+          "models": {
+            "opus": {
+              "rpm": 10000,
+              "itpm": 10000000,
+              "otpm": 2000000
+            },
+            "sonnet": {
+              "rpm": 10000,
+              "itpm": 10000000,
+              "otpm": 2000000
+            },
+            "haiku": {
+              "rpm": 10000,
+              "itpm": 10000000,
+              "otpm": 2000000
+            },
+            "fable": {
+              "rpm": 4000,
+              "itpm": 4000000,
+              "otpm": 800000
+            },
+            "haiku-3.5": {
+              "rpm": 4000,
+              "itpm": 400000,
+              "otpm": 80000
+            }
+          }
+        }
+      },
+      "batch_api": {
+        "start": {
+          "rpm": 1000,
+          "max_in_queue": 200000
+        },
+        "build": {
+          "rpm": 2000,
+          "max_in_queue": 300000
+        },
+        "scale": {
+          "rpm": 4000,
+          "max_in_queue": 500000
+        }
+      },
+      "cold_floor": {
+        "rpm": 1000,
+        "itpm": 500000,
+        "otpm": 100000
+      },
+      "model_family_map": {
+        "opus": [
+          "claude-opus-4-5",
+          "claude-opus-4-6",
+          "claude-opus-4-7",
+          "claude-opus-4-8"
+        ],
+        "opus-5": [
+          "claude-opus-5"
+        ],
+        "opus-5.5": [
+          "claude-opus-5-5"
+        ],
+        "sonnet": [
+          "claude-sonnet-4-5",
+          "claude-sonnet-4-6"
+        ],
+        "haiku": [
+          "claude-haiku-4-5"
+        ],
+        "haiku-3.5": [
+          "claude-haiku-3-5"
+        ]
+      }
     },
     "openai": {
       "limit_scope": "per_model_per_org",
       "cold_tier": "tier1",
       "note": "Per-model rpm/tpm are account/dashboard-specific and ride x-ratelimit-limit-{tokens,requests} on every response; this account measured tpm=40000000 rpm=15000 (~tier4-5). cold_floor is a conservative seed used only until a header is seen.",
-      "header_names": {"tpm": "x-ratelimit-limit-tokens", "rpm": "x-ratelimit-limit-requests", "retry_after": "retry-after"},
-      "tier_qualification_usd": {"tier1": 5, "tier2": 50, "tier3": 100, "tier4": 250, "tier5": 1000},
-      "monthly_cap_usd": {"free": 100, "tier1": 100, "tier2": 500, "tier3": 1000, "tier4": 5000, "tier5": 200000},
-      "cold_floor": {"rpm": 500, "tpm": 200000}
+      "header_names": {
+        "tpm": "x-ratelimit-limit-tokens",
+        "rpm": "x-ratelimit-limit-requests",
+        "retry_after": "retry-after"
+      },
+      "tier_qualification_usd": {
+        "tier1": 5,
+        "tier2": 50,
+        "tier3": 100,
+        "tier4": 250,
+        "tier5": 1000
+      },
+      "monthly_cap_usd": {
+        "free": 100,
+        "tier1": 100,
+        "tier2": 500,
+        "tier3": 1000,
+        "tier4": 5000,
+        "tier5": 200000
+      },
+      "cold_floor": {
+        "rpm": 500,
+        "tpm": 200000
+      }
     },
-    "gemini": {"limit_scope": "per_model_per_tier", "note": "Public doc does not tabulate rpm/tpm/rpd (AI Studio dashboard); priority inference = 0.3x standard. Conservative floor; refine from headers.", "cold_floor": {"rpm": 150, "tpm": 1000000}},
-    "zai": {"limit_scope": "per_key", "note": "OpenAI-compatible; no public per-model table transcribed yet. Conservative floor; refine from headers.", "cold_floor": {"rpm": 60, "tpm": 200000}},
-    "moonshot": {"limit_scope": "per_key", "note": "Kimi/Moonshot, OpenAI-compatible; no public per-model table transcribed yet. Conservative floor; refine from headers.", "cold_floor": {"rpm": 60, "tpm": 200000}}
+    "gemini": {
+      "limit_scope": "per_model_per_tier",
+      "note": "Public doc does not tabulate rpm/tpm/rpd (AI Studio dashboard); priority inference = 0.3x standard. Conservative floor; refine from headers.",
+      "cold_floor": {
+        "rpm": 150,
+        "tpm": 1000000
+      }
+    },
+    "zai": {
+      "limit_scope": "per_key",
+      "note": "OpenAI-compatible; no public per-model table transcribed yet. Conservative floor; refine from headers.",
+      "cold_floor": {
+        "rpm": 60,
+        "tpm": 200000
+      }
+    },
+    "moonshot": {
+      "limit_scope": "per_key",
+      "note": "Kimi/Moonshot, OpenAI-compatible; no public per-model table transcribed yet. Conservative floor; refine from headers.",
+      "cold_floor": {
+        "rpm": 60,
+        "tpm": 200000
+      }
+    }
   },
   "models": {
     "Qwen/Qwen2.5-14B-Instruct-AWQ": {
@@ -67,7 +240,8 @@
         "reasons_by_default": false,
         "tokens_param": "max_tokens",
         "style": "none"
-      }
+      },
+      "as_of": "2026-09-25"
     },
     "Qwen/Qwen2.5-32B-Instruct-AWQ": {
       "id": "Qwen/Qwen2.5-32B-Instruct-AWQ",
@@ -98,7 +272,8 @@
         "reasons_by_default": false,
         "tokens_param": "max_tokens",
         "style": "none"
-      }
+      },
+      "as_of": "2026-09-25"
     },
     "Qwen/Qwen2.5-72B-Instruct-AWQ": {
       "id": "Qwen/Qwen2.5-72B-Instruct-AWQ",
@@ -129,7 +304,8 @@
         "reasons_by_default": false,
         "tokens_param": "max_tokens",
         "style": "none"
-      }
+      },
+      "as_of": "2026-09-25"
     },
     "claude-fable-5": {
       "id": "claude-fable-5",
@@ -174,7 +350,8 @@
         "prompt_caching": true,
         "tool_choice": true,
         "mode": "chat"
-      }
+      },
+      "as_of": "2026-09-26"
     },
     "claude-fable-5-1": {
       "id": "claude-fable-5-1",
@@ -219,7 +396,8 @@
         "prompt_caching": true,
         "tool_choice": true,
         "mode": "chat"
-      }
+      },
+      "as_of": "2026-09-26"
     },
     "claude-haiku-4-5": {
       "id": "claude-haiku-4-5",
@@ -269,7 +447,8 @@
         "prompt_caching": true,
         "tool_choice": true,
         "mode": "chat"
-      }
+      },
+      "as_of": "2026-09-26"
     },
     "claude-opus-4-0": {
       "id": "claude-opus-4-0",
@@ -301,7 +480,8 @@
         "reasons_by_default": false,
         "tokens_param": "max_tokens",
         "style": "none"
-      }
+      },
+      "as_of": "2026-09-25"
     },
     "claude-opus-4-1": {
       "id": "claude-opus-4-1",
@@ -333,7 +513,8 @@
         "reasons_by_default": false,
         "tokens_param": "max_tokens",
         "style": "none"
-      }
+      },
+      "as_of": "2026-09-25"
     },
     "claude-opus-4-5": {
       "id": "claude-opus-4-5",
@@ -378,7 +559,8 @@
         "prompt_caching": true,
         "tool_choice": true,
         "mode": "chat"
-      }
+      },
+      "as_of": "2026-09-26"
     },
     "claude-opus-4-6": {
       "id": "claude-opus-4-6",
@@ -423,7 +605,8 @@
         "prompt_caching": true,
         "tool_choice": true,
         "mode": "chat"
-      }
+      },
+      "as_of": "2026-09-26"
     },
     "claude-opus-4-7": {
       "id": "claude-opus-4-7",
@@ -468,7 +651,8 @@
         "prompt_caching": true,
         "tool_choice": true,
         "mode": "chat"
-      }
+      },
+      "as_of": "2026-09-26"
     },
     "claude-opus-4-8": {
       "id": "claude-opus-4-8",
@@ -517,7 +701,8 @@
         "prompt_caching": true,
         "tool_choice": true,
         "mode": "chat"
-      }
+      },
+      "as_of": "2026-09-26"
     },
     "claude-opus-5": {
       "id": "claude-opus-5",
@@ -562,7 +747,8 @@
         "prompt_caching": true,
         "tool_choice": true,
         "mode": "chat"
-      }
+      },
+      "as_of": "2026-09-26"
     },
     "claude-sonnet-4-0": {
       "id": "claude-sonnet-4-0",
@@ -594,7 +780,8 @@
         "reasons_by_default": false,
         "tokens_param": "max_tokens",
         "style": "none"
-      }
+      },
+      "as_of": "2026-09-25"
     },
     "claude-sonnet-4-5": {
       "id": "claude-sonnet-4-5",
@@ -639,7 +826,8 @@
         "prompt_caching": true,
         "tool_choice": true,
         "mode": "chat"
-      }
+      },
+      "as_of": "2026-09-26"
     },
     "claude-sonnet-4-6": {
       "id": "claude-sonnet-4-6",
@@ -684,7 +872,8 @@
         "prompt_caching": true,
         "tool_choice": true,
         "mode": "chat"
-      }
+      },
+      "as_of": "2026-09-26"
     },
     "claude-sonnet-5": {
       "id": "claude-sonnet-5",
@@ -728,7 +917,8 @@
         "prompt_caching": true,
         "tool_choice": true,
         "mode": "chat"
-      }
+      },
+      "as_of": "2026-09-26"
     },
     "deepseek-v4-flash": {
       "id": "deepseek-v4-flash",
@@ -773,7 +963,8 @@
         "parallel_function_calling": true,
         "tool_choice": true,
         "mode": "chat"
-      }
+      },
+      "as_of": "2026-09-26"
     },
     "deepseek-v4-flash-vision-exp": {
       "id": "deepseek-v4-flash-vision-exp",
@@ -817,7 +1008,8 @@
         "parallel_function_calling": true,
         "tool_choice": true,
         "mode": "chat"
-      }
+      },
+      "as_of": "2026-09-26"
     },
     "deepseek-v4-pro": {
       "id": "deepseek-v4-pro",
@@ -861,7 +1053,8 @@
         "parallel_function_calling": true,
         "tool_choice": true,
         "mode": "chat"
-      }
+      },
+      "as_of": "2026-09-26"
     },
     "gemini-3-flash": {
       "id": "gemini-3-flash",
@@ -892,7 +1085,8 @@
         "reasons_by_default": false,
         "tokens_param": "max_completion_tokens",
         "style": "suffix"
-      }
+      },
+      "as_of": "2026-09-25"
     },
     "gemini-3.1-pro": {
       "id": "gemini-3.1-pro",
@@ -923,7 +1117,8 @@
         "reasons_by_default": false,
         "tokens_param": "max_completion_tokens",
         "style": "suffix"
-      }
+      },
+      "as_of": "2026-09-25"
     },
     "gemini-3.6-flash": {
       "id": "gemini-3.6-flash",
@@ -968,7 +1163,8 @@
         "parallel_function_calling": true,
         "tool_choice": true,
         "mode": "chat"
-      }
+      },
+      "as_of": "2026-09-26"
     },
     "gemini-3.7-flash": {
       "id": "gemini-3.7-flash",
@@ -1013,7 +1209,8 @@
         "parallel_function_calling": true,
         "tool_choice": true,
         "mode": "chat"
-      }
+      },
+      "as_of": "2026-09-26"
     },
     "gemini-3.8-flash": {
       "id": "gemini-3.8-flash",
@@ -1064,7 +1261,8 @@
         "parallel_function_calling": true,
         "tool_choice": true,
         "mode": "chat"
-      }
+      },
+      "as_of": "2026-09-26"
     },
     "glm-4.5": {
       "id": "glm-4.5",
@@ -1087,7 +1285,8 @@
         "reasons_by_default": false,
         "tokens_param": "max_tokens",
         "style": "none"
-      }
+      },
+      "as_of": "2026-09-25"
     },
     "glm-4.5-air": {
       "id": "glm-4.5-air",
@@ -1110,7 +1309,8 @@
         "reasons_by_default": false,
         "tokens_param": "max_tokens",
         "style": "none"
-      }
+      },
+      "as_of": "2026-09-25"
     },
     "glm-4.6": {
       "id": "glm-4.6",
@@ -1133,7 +1333,8 @@
         "reasons_by_default": false,
         "tokens_param": "max_tokens",
         "style": "none"
-      }
+      },
+      "as_of": "2026-09-25"
     },
     "glm-4.7": {
       "id": "glm-4.7",
@@ -1156,7 +1357,8 @@
         "reasons_by_default": false,
         "tokens_param": "max_tokens",
         "style": "none"
-      }
+      },
+      "as_of": "2026-09-25"
     },
     "glm-4.7-flashx": {
       "id": "glm-4.7-flashx",
@@ -1187,7 +1389,8 @@
         "reasons_by_default": false,
         "tokens_param": "max_tokens",
         "style": "none"
-      }
+      },
+      "as_of": "2026-09-25"
     },
     "glm-5": {
       "id": "glm-5",
@@ -1210,7 +1413,8 @@
         "reasons_by_default": false,
         "tokens_param": "max_tokens",
         "style": "none"
-      }
+      },
+      "as_of": "2026-09-25"
     },
     "glm-5.1": {
       "id": "glm-5.1",
@@ -1233,7 +1437,8 @@
         "reasons_by_default": false,
         "tokens_param": "max_tokens",
         "style": "none"
-      }
+      },
+      "as_of": "2026-09-25"
     },
     "glm-5.2": {
       "id": "glm-5.2",
@@ -1264,7 +1469,8 @@
         "reasons_by_default": true,
         "tokens_param": "max_tokens",
         "style": "none"
-      }
+      },
+      "as_of": "2026-09-25"
     },
     "glm-5.3": {
       "id": "glm-5.3",
@@ -1304,7 +1510,8 @@
         "tokens_param": "max_tokens",
         "style": "none"
       },
-      "provider_base": true
+      "provider_base": true,
+      "as_of": "2026-09-25"
     },
     "gpt-4.1-mini": {
       "id": "gpt-4.1-mini",
@@ -1349,7 +1556,8 @@
         "parallel_function_calling": true,
         "tool_choice": true,
         "mode": "chat"
-      }
+      },
+      "as_of": "2026-09-26"
     },
     "gpt-4o": {
       "id": "gpt-4o",
@@ -1394,7 +1602,8 @@
         "parallel_function_calling": true,
         "tool_choice": true,
         "mode": "chat"
-      }
+      },
+      "as_of": "2026-09-26"
     },
     "gpt-4o-mini": {
       "id": "gpt-4o-mini",
@@ -1439,7 +1648,8 @@
         "parallel_function_calling": true,
         "tool_choice": true,
         "mode": "chat"
-      }
+      },
+      "as_of": "2026-09-26"
     },
     "gpt-5": {
       "id": "gpt-5",
@@ -1484,7 +1694,8 @@
         "parallel_function_calling": true,
         "tool_choice": true,
         "mode": "chat"
-      }
+      },
+      "as_of": "2026-09-26"
     },
     "gpt-5-mini": {
       "id": "gpt-5-mini",
@@ -1529,7 +1740,8 @@
         "parallel_function_calling": true,
         "tool_choice": true,
         "mode": "chat"
-      }
+      },
+      "as_of": "2026-09-26"
     },
     "gpt-5-nano": {
       "id": "gpt-5-nano",
@@ -1574,7 +1786,8 @@
         "parallel_function_calling": true,
         "tool_choice": true,
         "mode": "chat"
-      }
+      },
+      "as_of": "2026-09-26"
     },
     "gpt-5.4": {
       "id": "gpt-5.4",
@@ -1619,7 +1832,8 @@
         "parallel_function_calling": true,
         "tool_choice": true,
         "mode": "chat"
-      }
+      },
+      "as_of": "2026-09-26"
     },
     "gpt-5.4-mini": {
       "id": "gpt-5.4-mini",
@@ -1664,7 +1878,8 @@
         "parallel_function_calling": true,
         "tool_choice": true,
         "mode": "chat"
-      }
+      },
+      "as_of": "2026-09-26"
     },
     "gpt-5.4-nano": {
       "id": "gpt-5.4-nano",
@@ -1709,7 +1924,8 @@
         "parallel_function_calling": true,
         "tool_choice": true,
         "mode": "chat"
-      }
+      },
+      "as_of": "2026-09-26"
     },
     "gpt-5.5": {
       "id": "gpt-5.5",
@@ -1754,7 +1970,8 @@
         "parallel_function_calling": true,
         "tool_choice": true,
         "mode": "chat"
-      }
+      },
+      "as_of": "2026-09-26"
     },
     "gpt-5.5-pro": {
       "id": "gpt-5.5-pro",
@@ -1799,7 +2016,8 @@
         "parallel_function_calling": true,
         "tool_choice": true,
         "mode": "responses"
-      }
+      },
+      "as_of": "2026-09-26"
     },
     "gpt-5.6-luna": {
       "id": "gpt-5.6-luna",
@@ -1849,7 +2067,8 @@
         "parallel_function_calling": true,
         "tool_choice": true,
         "mode": "chat"
-      }
+      },
+      "as_of": "2026-09-26"
     },
     "gpt-5.6-sol": {
       "id": "gpt-5.6-sol",
@@ -1898,7 +2117,8 @@
         "parallel_function_calling": true,
         "tool_choice": true,
         "mode": "chat"
-      }
+      },
+      "as_of": "2026-09-26"
     },
     "kimi-k2.6": {
       "id": "kimi-k2.6",
@@ -1929,7 +2149,8 @@
         "reasons_by_default": false,
         "tokens_param": "max_tokens",
         "style": "none"
-      }
+      },
+      "as_of": "2026-09-25"
     },
     "kimi-k3": {
       "id": "kimi-k3",
@@ -1961,7 +2182,8 @@
         "tokens_param": "max_tokens",
         "style": "none"
       },
-      "provider_base": true
+      "provider_base": true,
+      "as_of": "2026-09-25"
     },
     "qwen-max": {
       "id": "qwen-max",
@@ -1992,7 +2214,8 @@
         "reasons_by_default": false,
         "tokens_param": "max_tokens",
         "style": "none"
-      }
+      },
+      "as_of": "2026-09-25"
     },
     "qwen-plus": {
       "id": "qwen-plus",
@@ -2024,7 +2247,8 @@
         "tokens_param": "max_tokens",
         "style": "none"
       },
-      "provider_base": true
+      "provider_base": true,
+      "as_of": "2026-09-25"
     },
     "qwen-turbo": {
       "id": "qwen-turbo",
@@ -2055,7 +2279,8 @@
         "reasons_by_default": false,
         "tokens_param": "max_tokens",
         "style": "none"
-      }
+      },
+      "as_of": "2026-09-25"
     },
     "text-embedding-3-large": {
       "id": "text-embedding-3-large",
@@ -2097,7 +2322,8 @@
           "value": 2048,
           "source": "measured: live bisection 2026-09-30 on text-embedding-3-small (2048 ok, 2049 -> HTTP 400); OpenAI /embeddings per-request input cap, API-level (same for text-embedding-3-large)"
         }
-      }
+      },
+      "as_of": "2026-10-12"
     },
     "text-embedding-3-small": {
       "id": "text-embedding-3-small",
@@ -2139,7 +2365,8 @@
           "value": 2048,
           "source": "measured: live bisection 2026-09-30 (2048 ok, 2049 -> HTTP 400); OpenAI /embeddings per-request input cap"
         }
-      }
+      },
+      "as_of": "2026-10-12"
     },
     "gemini-embedding-001": {
       "id": "gemini-embedding-001",
@@ -2181,7 +2408,8 @@
           "value": 100,
           "source": "measured: live bisection 2026-09-30 (100 ok, 101 -> HTTP 400 'BatchEmbedContentsRequest.requests: at most 100 requests')"
         }
-      }
+      },
+      "as_of": "2026-10-12"
     },
     "voyage-3.5": {
       "id": "voyage-3.5",
@@ -2223,7 +2451,44 @@
           "value": 1000,
           "source": "measured: live bisection 2026-09-30 (1000 ok, 1001 -> HTTP 400)"
         }
-      }
+      },
+      "as_of": "2026-09-30"
+    },
+    "glm-5.3-flashx": {
+      "id": "glm-5.3-flashx",
+      "provider": "zai",
+      "metered_id": "glm-5.3-flashx",
+      "aliases": [],
+      "lane_spellings": {},
+      "retired_alias_of": null,
+      "price_error": null,
+      "price": {
+        "in_": 0.37,
+        "out": 1.25,
+        "cached_in": 0.075,
+        "batch_in": 0.37,
+        "batch_out": 1.25,
+        "source": "https://docs.z.ai/guides/overview/pricing (fetched 2026-10-12): in $0.37/1M, cached-in $0.075/1M, out $1.25/1M. No published batch discount -> batch = standard.",
+        "verified": "2026-10-12"
+      },
+      "output_ceiling": {
+        "value": 131072,
+        "source": "https://openrouter.ai/z-ai/glm-5.3-flashx (2026-10-12)"
+      },
+      "context_window": {
+        "value": 1048576,
+        "source": "https://openrouter.ai/z-ai/glm-5.3-flashx (2026-10-12)",
+        "verified": "2026-10-12"
+      },
+      "reasoning": {
+        "floor": null,
+        "effort_ok": false,
+        "reasoning_floor": null,
+        "reasons_by_default": false,
+        "style": "none",
+        "tokens_param": "max_tokens"
+      },
+      "as_of": "2026-10-12"
     }
   }
 }

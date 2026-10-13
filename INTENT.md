@@ -41,6 +41,8 @@ dashboards, org rollups, savings claims — has any value. Every number is cross
    generated, never hand-edited), sourced from LiteLLM's community dataset — a verifiable **FACT**, because an LLM judge
    cannot know models past its cutoff. The org server's daily-refreshed `/v1/models` is the authoritative "first place to
    check"; the client checks it **first** and **FAILS OPEN** to its own local LiteLLM sync when it is unreachable.
+   The authored record owns a row `as_of` that advances only when its tracked price/capability payload changes; cache
+   and server-ingest clocks are distinct. The same global facts have a no-login human surface at `/catalog`.
 7. **Runs warm shared MCP daemons and reports fleet health.** Long-lived per-tool daemons serve many sessions
    (`mcp_server.py` and the provider daemon modules); `fleet.py` compares each live consumer's loaded version with the
    green pointer and reports stale consumers.

@@ -4,32 +4,32 @@
     "_generator": "scripts/gen_prices_json.py",
     "_source": "src/spendguard/model_catalog.json (concern 'model_catalog' \u2014 the SSOT for model data)",
     "note": "GENERATED from the model catalog \u2014 DO NOT EDIT BY HAND. Author prices in model_catalog.json, then run `python scripts/gen_prices_json.py --write`. honestreview derived_artifact_integrity flags hand-edits.",
-    "generated_at": "2026-09-29T23:55:32Z"
+    "generated_at": "2026-10-12T22:47:51Z"
   },
   "providers": {
     "anthropic": {
       "models": {
         "claude-fable-5": {
-          "in_": 10.0,
-          "out": 50.0,
-          "cached_in": 1.0,
-          "batch_in": 5.0,
-          "batch_out": 25.0,
+          "in_": 10,
+          "out": 50,
+          "cached_in": 1,
+          "batch_in": 5,
+          "batch_out": 25,
           "batch_cached_in": 0.5,
           "_source": "https://platform.claude.com/docs/en/about-claude/pricing (fetched 2026-09-14): $10/$50 per 1M in/out, cache-read $1 (0.1x base), batch $5/$25. batch_cached_in = cached_in x 0.5 (caching multipliers stack with the Batch API discount, per the page)."
         },
         "claude-fable-5-1": {
-          "in_": 10.0,
-          "out": 50.0,
+          "in_": 10,
+          "out": 50,
           "cached_in": 0.25,
-          "batch_in": 5.0,
-          "batch_out": 25.0,
+          "batch_in": 5,
+          "batch_out": 25,
           "batch_cached_in": 0.125,
           "_source": "https://platform.claude.com/docs/en/about-claude/pricing (fetched 2026-09-14): $10/$50 per 1M in/out. Cache-read $0.25 = 0.025x base (Fable 5.1 & Mythos 5.1 ONLY; every other model is the standard 0.1x, per the page footnote), NOT the $1 a default in_ x 0.1 would give. Batch $5/$25; batch_cached_in = 0.025x x 0.5 = 0.125."
         },
         "claude-haiku-4-5": {
-          "in_": 1.0,
-          "out": 5.0,
+          "in_": 1,
+          "out": 5,
           "cached_in": 0.1,
           "batch_in": 0.5,
           "batch_out": 2.5,
@@ -37,8 +37,8 @@
           "_source": "https://claude.com/pricing (Anthropic published list price; re-verified 2026-09-12)"
         },
         "claude-opus-4-0": {
-          "in_": 15.0,
-          "out": 75.0,
+          "in_": 15,
+          "out": 75,
           "cached_in": 1.5,
           "batch_in": 7.5,
           "batch_out": 37.5,
@@ -46,8 +46,8 @@
           "_source": "https://claude.com/pricing (Anthropic published list price; re-verified 2026-09-12)"
         },
         "claude-opus-4-1": {
-          "in_": 15.0,
-          "out": 75.0,
+          "in_": 15,
+          "out": 75,
           "cached_in": 1.5,
           "batch_in": 7.5,
           "batch_out": 37.5,
@@ -55,8 +55,8 @@
           "_source": "https://claude.com/pricing (Anthropic published list price; re-verified 2026-09-12)"
         },
         "claude-opus-4-5": {
-          "in_": 5.0,
-          "out": 25.0,
+          "in_": 5,
+          "out": 25,
           "cached_in": 0.5,
           "batch_in": 2.5,
           "batch_out": 12.5,
@@ -64,8 +64,8 @@
           "_source": "https://claude.com/pricing (Anthropic published list price; re-verified 2026-09-12)"
         },
         "claude-opus-4-6": {
-          "in_": 5.0,
-          "out": 25.0,
+          "in_": 5,
+          "out": 25,
           "cached_in": 0.5,
           "batch_in": 2.5,
           "batch_out": 12.5,
@@ -73,8 +73,8 @@
           "_source": "https://claude.com/pricing (Anthropic published list price; re-verified 2026-09-12)"
         },
         "claude-opus-4-7": {
-          "in_": 5.0,
-          "out": 25.0,
+          "in_": 5,
+          "out": 25,
           "cached_in": 0.5,
           "batch_in": 2.5,
           "batch_out": 12.5,
@@ -82,8 +82,8 @@
           "_source": "https://claude.com/pricing (Anthropic published list price; re-verified 2026-09-12)"
         },
         "claude-opus-4-8": {
-          "in_": 5.0,
-          "out": 25.0,
+          "in_": 5,
+          "out": 25,
           "cached_in": 0.5,
           "batch_in": 2.5,
           "batch_out": 12.5,
@@ -91,8 +91,8 @@
           "_source": "https://claude.com/pricing (Anthropic published list price; re-verified 2026-09-12)"
         },
         "claude-opus-5": {
-          "in_": 5.0,
-          "out": 25.0,
+          "in_": 5,
+          "out": 25,
           "cached_in": 0.5,
           "batch_in": 2.5,
           "batch_out": 12.5,
@@ -100,8 +100,8 @@
           "_source": "https://platform.claude.com/docs/en/about-claude/pricing (fetched 2026-09-14): $5/$25 per 1M in/out, cache-read $0.50 (0.1x base), batch $2.50/$12.50 \u2014 identical to Claude Opus 4.5-4.8. batch_cached_in = cached_in x 0.5 (stacking documented on the page). Corroborates the 2026-09-12 vendor-page note (opus 5/25)."
         },
         "claude-sonnet-4-0": {
-          "in_": 3.0,
-          "out": 15.0,
+          "in_": 3,
+          "out": 15,
           "cached_in": 0.3,
           "batch_in": 1.5,
           "batch_out": 7.5,
@@ -109,8 +109,8 @@
           "_source": "https://claude.com/pricing (Anthropic published list price; re-verified 2026-09-12)"
         },
         "claude-sonnet-4-5": {
-          "in_": 3.0,
-          "out": 15.0,
+          "in_": 3,
+          "out": 15,
           "cached_in": 0.3,
           "batch_in": 1.5,
           "batch_out": 7.5,
@@ -118,8 +118,8 @@
           "_source": "https://claude.com/pricing (Anthropic published list price; re-verified 2026-09-12)"
         },
         "claude-sonnet-4-6": {
-          "in_": 3.0,
-          "out": 15.0,
+          "in_": 3,
+          "out": 15,
           "cached_in": 0.3,
           "batch_in": 1.5,
           "batch_out": 7.5,
@@ -127,11 +127,11 @@
           "_source": "https://claude.com/pricing (Anthropic published list price; re-verified 2026-09-12)"
         },
         "claude-sonnet-5": {
-          "in_": 2.0,
-          "out": 10.0,
+          "in_": 2,
+          "out": 10,
           "cached_in": 0.2,
-          "batch_in": 1.0,
-          "batch_out": 5.0,
+          "batch_in": 1,
+          "batch_out": 5,
           "_source": "https://claude.com/pricing (Anthropic published list price; re-verified 2026-09-12)"
         }
       }
@@ -203,11 +203,11 @@
           "_source": "https://pricepertoken.com/pricing-page/model/google-gemini-3-flash-preview"
         },
         "gemini-3.1-pro": {
-          "in_": 2.0,
-          "out": 12.0,
+          "in_": 2,
+          "out": 12,
           "cached_in": 0.2,
-          "batch_in": 1.0,
-          "batch_out": 6.0,
+          "batch_in": 1,
+          "batch_out": 6,
           "_source": "https://pricepertoken.com/pricing-page/model/google-gemini-3.1-pro-preview (VentureBeat/apidog corroborate $2/$12 \u2264200K)"
         },
         "gemini-3.6-flash": {
@@ -236,10 +236,10 @@
         },
         "gemini-embedding-001": {
           "in_": 0.15,
-          "out": 0.0,
+          "out": 0,
           "cached_in": 0.015,
           "batch_in": 0.075,
-          "batch_out": 0.0,
+          "batch_out": 0,
           "_source": "litellm:model_prices_and_context_window.json (synced via seed; NOT provider-verified)"
         }
       }
@@ -248,18 +248,18 @@
       "models": {
         "kimi-k2.6": {
           "in_": 0.95,
-          "out": 4.0,
+          "out": 4,
           "cached_in": 0.095,
           "batch_in": 0.475,
-          "batch_out": 2.0,
+          "batch_out": 2,
           "_source": "https://pricepertoken.com/pricing-page/model/moonshotai-kimi-k2.6 \u2014 Moonshot official $0.95/$4.00 per 1M"
         },
         "kimi-k3": {
-          "in_": 3.0,
-          "out": 15.0,
+          "in_": 3,
+          "out": 15,
           "cached_in": 0.3,
-          "batch_in": 3.0,
-          "batch_out": 15.0,
+          "batch_in": 3,
+          "batch_out": 15,
           "_source": "https://platform.kimi.ai/docs/pricing/chat-k3.md (fetched 2026-08-04): in cache-miss $3.00/1M, cache-hit $0.30/1M, out $15.00/1M. Batch API does NOT support kimi-k3 (batch.md lists only k2.7-code/k2.6/k2.5), so batch rates are set to STANDARD \u2014 never discounted for a mode the model cannot use."
         }
       }
@@ -276,10 +276,10 @@
         },
         "gpt-4o": {
           "in_": 2.5,
-          "out": 10.0,
+          "out": 10,
           "cached_in": 1.25,
           "batch_in": 1.25,
-          "batch_out": 5.0,
+          "batch_out": 5,
           "_source": "https://developers.openai.com/api/docs/pricing"
         },
         "gpt-4o-mini": {
@@ -292,18 +292,18 @@
         },
         "gpt-5": {
           "in_": 1.25,
-          "out": 10.0,
+          "out": 10,
           "cached_in": 0.125,
           "batch_in": 0.625,
-          "batch_out": 5.0,
+          "batch_out": 5,
           "_source": "https://developers.openai.com/api/docs/pricing"
         },
         "gpt-5-mini": {
           "in_": 0.25,
-          "out": 2.0,
+          "out": 2,
           "cached_in": 0.025,
           "batch_in": 0.125,
-          "batch_out": 1.0,
+          "batch_out": 1,
           "_source": "https://developers.openai.com/api/docs/pricing"
         },
         "gpt-5-nano": {
@@ -316,7 +316,7 @@
         },
         "gpt-5.4": {
           "in_": 2.5,
-          "out": 15.0,
+          "out": 15,
           "cached_in": 0.25,
           "batch_in": 1.25,
           "batch_out": 7.5,
@@ -339,19 +339,19 @@
           "_source": "https://developers.openai.com/api/docs/pricing"
         },
         "gpt-5.5": {
-          "in_": 5.0,
-          "out": 30.0,
+          "in_": 5,
+          "out": 30,
           "cached_in": 0.5,
           "batch_in": 2.5,
-          "batch_out": 15.0,
+          "batch_out": 15,
           "_source": "https://developers.openai.com/api/docs/pricing"
         },
         "gpt-5.5-pro": {
-          "in_": 30.0,
-          "out": 180.0,
-          "cached_in": 3.0,
-          "batch_in": 15.0,
-          "batch_out": 90.0,
+          "in_": 30,
+          "out": 180,
+          "cached_in": 3,
+          "batch_in": 15,
+          "batch_out": 90,
           "_source": "https://developers.openai.com/api/docs/pricing"
         },
         "gpt-5.6-luna": {
@@ -363,27 +363,27 @@
           "_source": "https://developers.openai.com/api/docs/pricing"
         },
         "gpt-5.6-sol": {
-          "in_": 4.0,
-          "out": 20.0,
+          "in_": 4,
+          "out": 20,
           "cached_in": 0.4,
-          "batch_in": 2.0,
-          "batch_out": 10.0,
+          "batch_in": 2,
+          "batch_out": 10,
           "_source": "https://developers.openai.com/api/docs/pricing"
         },
         "text-embedding-3-large": {
           "in_": 0.13,
-          "out": 0.0,
-          "cached_in": 0.0,
+          "out": 0,
+          "cached_in": 0,
           "batch_in": 0.065,
-          "batch_out": 0.0,
+          "batch_out": 0,
           "_source": "https://developers.openai.com/api/docs/pricing"
         },
         "text-embedding-3-small": {
           "in_": 0.02,
-          "out": 0.0,
-          "cached_in": 0.0,
+          "out": 0,
+          "cached_in": 0,
           "batch_in": 0.01,
-          "batch_out": 0.0,
+          "batch_out": 0,
           "_source": "https://developers.openai.com/api/docs/pricing"
         }
       }
@@ -420,10 +420,10 @@
       "models": {
         "voyage-3.5": {
           "in_": 0.06,
-          "out": 0.0,
+          "out": 0,
           "cached_in": 0.006,
           "batch_in": 0.03,
-          "batch_out": 0.0,
+          "batch_out": 0,
           "_source": "litellm:model_prices_and_context_window.json (synced via seed; NOT provider-verified)"
         }
       }
@@ -453,6 +453,14 @@
           "batch_in": 0.7,
           "batch_out": 2.2,
           "_source": "https://venturebeat.com/technology/glm-5-3-hits-the-api-at-1-4-4-4-per-million-tokens"
+        },
+        "glm-5.3-flashx": {
+          "in_": 0.37,
+          "out": 1.25,
+          "cached_in": 0.075,
+          "batch_in": 0.37,
+          "batch_out": 1.25,
+          "_source": "https://docs.z.ai/guides/overview/pricing (fetched 2026-10-12): in $0.37/1M, cached-in $0.075/1M, out $1.25/1M. No published batch discount -> batch = standard."
         }
       }
     }

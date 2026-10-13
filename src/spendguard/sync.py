@@ -177,6 +177,8 @@ def sync():
     ok, msgs = _validate(models)
     if not ok:
         raise RuntimeError("LiteLLM data failed validation: " + "; ".join(msgs))
+    # Cache-wide observation time only: _fetched says when this broad LiteLLM snapshot was downloaded. It is never a
+    # curated model row's source-owned as_of, which advances only when that row's tracked payload is authored/changed.
     out = {"_fetched": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
            "_source": LITELLM_URL, "models": models, "providers": provs, "unit_models": unit_models,
            "context": context, "capabilities": _capabilities(raw)}   # capabilities ride the same daily fetch
@@ -227,7 +229,8 @@ def refresh_if_stale():
         # NOTE: capabilities are NOT auto-synced here. sync_capabilities writes the PACKAGED model_catalog.json (the
         # curated SSOT), not the isolated ~/.spendguard cache — auto-running it on every refresh would mutate source
         # at runtime and pollute the tree in tests. `spendguard sync-capabilities` is a DELIBERATE command (run +
-        # commit); daily server-side/cache-based capability freshness is the follow-up (task: server /v1/models cron).
+        # commit), stamping source-owned row as_of only for changed tracked payloads. The cache's global _fetched
+        # snapshot time must never be promoted to row freshness; runtime refresh never mutates the curated SSOT.
         return {"refreshed": True, "models": n, "notes": msgs[:3]}
     except Exception as e:
         from . import gate as _g

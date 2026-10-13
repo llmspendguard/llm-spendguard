@@ -17,20 +17,47 @@ Record schema (the DATA CONTRACT — see validate()):
   metered_id: str                           lane_spellings: {lane: [use-name, ...]}
   price: {in_, out, cached_in, batch_in, batch_out, batch_cached_in?, source, verified} | null   price_error: str | null
   output_ceiling: {value: int|null, source: str|null}     context_window: {value: int|null, source, verified} | null
+  as_of: "YYYY-MM-DD" | null (last tracked price/capability change; nullable legacy during bootstrap rollout)
   provider_base: true (ONLY on the one reliable base model per provider — the tier-3 fallback target; absent else)
   reasoning: {floor: str|null, effort_ok: bool, reasoning_floor: str|null, reasons_by_default: bool,
               tokens_param: str, style: one of REASONING_STYLES}
 
 No dependency on pricing/models (avoids a circular import — pricing reads THIS at load). $0, read-only."""
+import copy
+import datetime
 import functools
 import json
 import os
+import re
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 DATA_PATH = os.path.join(_HERE, "model_catalog.json")
 
 REASONING_STYLES = ("param", "suffix", "thinking", "none")   # enum domain for reasoning.style (DATA_CONTRACT)
 _REQUIRED_TOP = ("id", "provider")                            # a record must at least identify itself + its vendor
+_TRACKED_FIELDS = ("price", "vision", "capabilities", "context_window", "output_ceiling")
+_ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def tracked_catalog_payload(record):
+    """Return a stable snapshot of the five fields that own row freshness."""
+    record = record or {}
+    return {field: copy.deepcopy(record[field]) for field in _TRACKED_FIELDS if field in record}
+
+
+def merge_row_updates(record, updates, today=None):
+    """Merge top-level updates, advancing ``as_of`` only when the tracked payload changed."""
+    before = tracked_catalog_payload(record)
+    record.update(updates)
+    if tracked_catalog_payload(record) != before:
+        stamp = today or datetime.datetime.now(datetime.timezone.utc).date()
+        if isinstance(stamp, datetime.datetime):
+            stamp = stamp.astimezone(datetime.timezone.utc).date()
+        stamp = stamp.isoformat() if isinstance(stamp, datetime.date) else str(stamp)
+        if not _ISO_DATE.fullmatch(stamp):
+            raise ValueError("today must be a YYYY-MM-DD date")
+        record["as_of"] = stamp
+    return record
 
 
 def _overlay_path():
@@ -384,19 +411,36 @@ def as_price_table():
     return out
 
 
-def validate_catalog(models=None):
+def validate_catalog(models=None, allow_legacy_missing_as_of=True):
     """Check the DATA CONTRACT and return a list of human-readable problems ([] = clean). Used by
     tests/test_model_catalog_ssot.py. Verifies: required top fields present; price fields (when a price exists) are
     numeric or explicitly null; output_ceiling.value is int-or-null; reasoning.style is in REASONING_STYLES; a
     retired_alias_of names a real catalog record OR the alias carries its own price (so the reference never dangles
-    into nothing). Pure; no I/O beyond the load."""
+    into nothing). ``as_of`` is a strict, non-future YYYY-MM-DD. Missing/null dates are an explicit temporary legacy
+    rollout exception; pass ``allow_legacy_missing_as_of=False`` after bootstrap to require completeness. Pure; no I/O
+    beyond the load."""
     models = models if models is not None else _load_records()
     problems = []
     ids_present = set(models)
+    today = datetime.datetime.now(datetime.timezone.utc).date()
     for rid, rec in models.items():
         for f in _REQUIRED_TOP:
             if not rec.get(f):
                 problems.append(f"{rid}: missing required field {f!r}")
+        as_of = rec.get("as_of")
+        if as_of is None:
+            if not allow_legacy_missing_as_of:
+                problems.append(f"{rid}: missing as_of (legacy rollout exception disabled)")
+        elif not isinstance(as_of, str) or not _ISO_DATE.fullmatch(as_of):
+            problems.append(f"{rid}: as_of {as_of!r} is not strict YYYY-MM-DD")
+        else:
+            try:
+                parsed_as_of = datetime.date.fromisoformat(as_of)
+            except ValueError:
+                problems.append(f"{rid}: as_of {as_of!r} is not a real calendar date")
+            else:
+                if parsed_as_of > today:
+                    problems.append(f"{rid}: as_of {as_of!r} is in the future")
         p = rec.get("price")
         if p is not None:
             for k in ("in_", "out", "cached_in", "batch_in", "batch_out"):
@@ -436,5 +480,4 @@ def validate_catalog(models=None):
         if len(rids) > 1:
             problems.append(f"provider {prov!r} has {len(rids)} provider_base records {rids}; expected exactly one")
     return problems
-
 

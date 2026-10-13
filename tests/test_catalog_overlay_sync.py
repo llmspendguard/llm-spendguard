@@ -30,6 +30,7 @@ def main():
 
     _real = saas._request
     curated = {"gemini-embedding-001": {"id": "gemini-embedding-001", "provider": "gemini",
+               "as_of": "2026-07-14",
                "capabilities": {"mode": "embedding", "embed_max_batch": {"value": 222}}}}
     try:
         # 1) a successful pull writes catalog_synced.json AND model_catalog reflects it
@@ -40,6 +41,8 @@ def main():
         ck("model_catalog reflects the synced curated fact (gemini embed ceiling 222, not the shipped 100)",
            model_catalog.embed_batch_ceiling("gemini-embedding-001") == 222,
            model_catalog.embed_batch_ceiling("gemini-embedding-001"))
+        ck("server source-owned as_of survives the overlay round trip without local restamping",
+           (model_catalog.model_record("gemini-embedding-001") or {}).get("as_of") == "2026-07-14")
 
         # 2) unreachable server → FAIL OPEN (returns 0), the existing overlay is NOT wiped
         saas._request = lambda method, path, **kw: (_ for _ in ()).throw(RuntimeError("connection refused"))

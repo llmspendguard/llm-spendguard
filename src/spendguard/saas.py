@@ -136,7 +136,8 @@ def sync_catalog_overlay(timeout=8):
     half). A curated fact the server carries — a new embed batch ceiling, a verified price — then reaches THIS install
     with no package release. FAIL-OPEN: server unconfigured / unreachable → returns 0 and LEAVES the existing overlay
     untouched (never wipes a good overlay with nothing); a deliberate spend/deadline stop propagates. Returns the
-    number of curated models written. $0 (a read)."""
+    number of curated models written. Each record's embedded, source-owned as_of is preserved verbatim and never
+    restamped by this client. $0 (a read)."""
     from . import config, model_catalog, gate as _g
     try:
         r = _request("GET", "/v1/models?curated=1", timeout=timeout)
@@ -150,7 +151,7 @@ def sync_catalog_overlay(timeout=8):
     path = model_catalog._overlay_path()
     if not path:
         return 0
-    config.update_json(path, lambda _d: {"models": models}, quarantine_unparseable=True)  # atomic + ~backup, like the other caches
+    config.update_json(path, lambda _d: {"models": models}, quarantine_unparseable=True)  # preserves embedded as_of verbatim
     return len(models)
 
 

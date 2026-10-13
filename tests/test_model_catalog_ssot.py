@@ -34,6 +34,18 @@ print("-- (1) DATA CONTRACT --")
 probs = mc.validate_catalog()
 ck(f"model_catalog.validate_catalog() is clean ({len(probs)} problems)", probs == [])
 ck("the catalog is non-trivial (>= 20 curated models)", len(mc.ids()) >= 20)
+ck("legacy rows may remain undated during the explicit bootstrap rollout",
+   not any("as_of" in p for p in mc.validate_catalog()))
+_dated = {"x": {"id": "x", "provider": "p", "as_of": "2026-01-02"}}
+ck("strict real YYYY-MM-DD as_of is accepted", mc.validate_catalog(_dated) == [])
+ck("malformed as_of is rejected", any("strict YYYY-MM-DD" in p for p in mc.validate_catalog(
+   {"x": {"id": "x", "provider": "p", "as_of": "2026-1-2"}})))
+ck("impossible as_of is rejected", any("real calendar date" in p for p in mc.validate_catalog(
+   {"x": {"id": "x", "provider": "p", "as_of": "2026-02-30"}})))
+ck("future as_of is rejected", any("future" in p for p in mc.validate_catalog(
+   {"x": {"id": "x", "provider": "p", "as_of": "2999-01-01"}})))
+ck("post-bootstrap validation can require every row date", any("missing as_of" in p for p in mc.validate_catalog(
+   {"x": {"id": "x", "provider": "p"}}, allow_legacy_missing_as_of=False)))
 
 # ── (2) the models we depend on are present ──
 print("-- (2) coverage of the models we depend on --")
