@@ -110,15 +110,14 @@ def current_overage_status(max_age_s=None, force=False):
     status = _compute_overage_status()
     _memo_put(now, status)
     if not isolated:
-        try:                                                # atomic write so a concurrent reader never sees a half file
-            path = _status_cache_path()
-            tmp = path + ".tmp.%d" % os.getpid()
-            with open(tmp, "w") as fh:
-                json.dump({"ts": now, "status": status}, fh)
-            os.replace(tmp, path)
-        except Exception as e:                              # write failed → the TTL cache cannot engage for future
-            config.warn_once("[spendguard] could not write overage status cache (%s) — fresh processes will re-pay "
-                             "the ~10s overage scan until this is fixed" % e)
+        # Route the whole-file write through the ONE sanctioned JSON writer (config.update_json): atomic + it refuses
+        # to clobber an unparseable file. A cache is rebuildable, so quarantine_unparseable moves a corrupt file aside
+        # and rewrites, and keep_backups=0 keeps only `path~` (no deep-history clutter for a cache). A declined write
+        # (None) is announced, not swallowed — a cache that cannot persist leaves fresh processes re-paying the scan.
+        if config.update_json(_status_cache_path(), lambda _old: {"ts": now, "status": status},
+                              reason="overage status cache", quarantine_unparseable=True, keep_backups=0) is None:
+            config.warn_once("[spendguard] could not write overage status cache — fresh processes will re-pay the "
+                             "~10s overage scan until this is fixed")
     return _stamp(status, now, cached=False)
 
 
