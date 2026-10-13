@@ -1156,6 +1156,21 @@ def lane_plan_env(keep=()):
     return {k: v for k, v in os.environ.items() if k not in metered}
 
 
+def lane_exec_env(cli_path, keep=()):
+    """Plan-safe child env for a resolved subscription CLI, with its sibling runtime directory first on PATH.
+
+    Node-installed CLIs are commonly shebang scripts whose ``node`` executable lives beside the resolved CLI
+    (not on launchd's minimal PATH). Deriving the directory from the resolver's absolute result keeps both probes
+    and real calls runnable without encoding any version-manager layout. ``lane_plan_env`` remains the credential
+    boundary; this helper changes only PATH and never makes a missing CLI look present.
+    """
+    env = lane_plan_env(keep=keep)
+    if cli_path:
+        cli_dir = os.path.dirname(os.path.abspath(cli_path))
+        env["PATH"] = cli_dir + (os.pathsep + env["PATH"] if env.get("PATH") else "")
+    return env
+
+
 # Load the key files at IMPORT — but at the END of the module (not mid-file): profile resolution reads
 # saas_config()/_project_saas above, which must be defined first. The module body completes before any
 # importer's code runs, so keys are still in the environment before any provider client is constructed.

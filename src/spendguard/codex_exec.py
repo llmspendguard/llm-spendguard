@@ -105,7 +105,7 @@ def auth_status(timeout=20):
         if not exe:                                # SPENDGUARD_CODEX_BIN that points at a missing binary — that must
             return {"authed": None}                # become an honest {"authed": None}, never propagate (docstring: Never raises)
         from . import config
-        env = config.lane_plan_env()
+        env = config.lane_exec_env(exe)
         r = subprocess.run([exe, "login", "status"], capture_output=True, text=True, timeout=timeout, env=env)
         if r.returncode == 0:
             return {"authed": True}
@@ -450,7 +450,7 @@ def _run_prompt_in_cwd(prompt, system=None, model=None, timeout=TIMEOUT_S, reaso
         return {"error": "codex CLI not found"}
     full = (f"{system.strip()}\n\n{prompt}" if system else prompt)
     from . import config
-    env = config.lane_plan_env()      # strip EVERY provider's metered key — the ChatGPT plan login serves it; a codex
+    env = config.lane_exec_env(exe)   # strip EVERY provider's metered key and expose the CLI's co-located runtime; a codex
     #                                   lane must never carry ANTHROPIC_API_KEY (Claude tokens) or any other metered key
     t0 = time.time()
     out_file = None

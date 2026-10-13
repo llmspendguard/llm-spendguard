@@ -240,7 +240,7 @@ class _WarmStdioJsonRpcDaemon:
         cmd = [exe] + list(cmd[1:])
         try:
             p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                 bufsize=0, cwd=_SAFE_CWD, env=config.lane_plan_env())   # no metered key in the child
+                                 bufsize=0, cwd=_SAFE_CWD, env=config.lane_exec_env(exe))  # no metered key; sibling runtime visible
         except Exception:
             return None
         fl = fcntl.fcntl(p.stdout.fileno(), fcntl.F_GETFL)     # non-blocking stdout for the reader's os.read

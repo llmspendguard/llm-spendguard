@@ -178,7 +178,7 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     if alias:
         cmd += ["-m", alias]
     from . import config
-    env = config.lane_plan_env()      # strip EVERY provider's metered key — the Kimi Code OAuth login serves this; a
+    env = config.lane_exec_env(exe)   # strip EVERY provider's metered key and expose the CLI's co-located runtime; a
     #                                   kimi lane must never carry MOONSHOT_API_KEY (that would bill the metered API)
     t0 = time.time()
     tmpdir = None
