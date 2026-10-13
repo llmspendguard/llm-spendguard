@@ -22,6 +22,7 @@ from .bulkgate import (estimate_job, test_job, gated_batch, check_bulk, check_re
                        record_estimate, record_tested, note_response, maxtokens, is_truncated, GateBlocked)
 from .crossllm import ask, AskResult, BudgetRefused
 from .item_ledger import ItemLedger
+from .escalation_ladder import cancel_on_zero_billable, relative_escalation_gate
 from .job_fingerprint import (compute_job_fingerprint, guard_resume, compare_fingerprints, read_fingerprint,
                               write_fingerprint, JobPlanDrift, JobMethodUndecided)
 from .litellm_adapter import install as _install_litellm
@@ -56,6 +57,7 @@ __all__ = ["install", "require", "register", "install_litellm", "install_bedrock
            "estimate_job", "test_job", "gated_batch", "check_bulk", "check_realtime", "check_compute",
            "record_estimate", "record_tested", "note_response", "maxtokens", "is_truncated", "GateBlocked",
            "ask", "AskResult", "BudgetRefused",
+           "cancel_on_zero_billable", "relative_escalation_gate",
            "ItemLedger", "compute_job_fingerprint", "guard_resume", "compare_fingerprints", "read_fingerprint",
            "write_fingerprint", "JobPlanDrift", "JobMethodUndecided"]
 # Version SSOT: src/spendguard/_version.py, read LIVE from source so `__version__` is always the version of the CODE
