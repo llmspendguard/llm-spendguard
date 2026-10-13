@@ -232,7 +232,11 @@ class _WarmStdioJsonRpcDaemon:
             config.warn_once("[spendguard] %s warm daemon: the CLI is not found — the lane is unavailable this run "
                              "and callers fall back to the metered API" % self._LANE_LABEL)
             return None
-        exe = os.path.realpath(cmd[0])
+        launcher = cmd[0]                                      # the RESOLVED CLI as found (often a symlink, e.g. the
+        #   nvm `codex` whose sibling is node). lane_exec_env must prepend THIS dir — realpath() would resolve the
+        #   symlink to .../lib/node_modules/@openai/codex/bin/codex.js, whose dir has NO node, so the `env node`
+        #   shebang then fails under a daemon's minimal PATH and the app-server dies before the handshake.
+        exe = os.path.realpath(launcher)
         if not (os.path.isfile(exe) and os.access(exe, os.X_OK)):
             config.warn_once("[spendguard] %s warm daemon: resolved CLI path %r is not an executable file — the lane "
                              "is unavailable, falling back to the metered API" % (self._LANE_LABEL, exe))
@@ -240,7 +244,8 @@ class _WarmStdioJsonRpcDaemon:
         cmd = [exe] + list(cmd[1:])
         try:
             p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                 bufsize=0, cwd=_SAFE_CWD, env=config.lane_exec_env(exe))  # no metered key; sibling runtime visible
+                                 bufsize=0, cwd=_SAFE_CWD,
+                                 env=config.lane_exec_env(launcher))  # prepend the LAUNCHER's dir (holds node), not realpath's
         except Exception:
             return None
         fl = fcntl.fcntl(p.stdout.fileno(), fcntl.F_GETFL)     # non-blocking stdout for the reader's os.read

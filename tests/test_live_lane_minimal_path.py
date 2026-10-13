@@ -56,5 +56,21 @@ check(r, "codex returned a usable answer containing the expected token",
       isinstance(resp, dict) and bool(_resp_text) and "LANE_OK" in (_resp_text or ""),
       "text=%r" % (_resp_text,))
 
+# THE WARM-DAEMON PROOF: the `codex app-server` warm daemon must HANDSHAKE and serve under the stripped PATH too.
+# The daemon spawns the realpath of the `codex` symlink — a .../node_modules/.../codex.js whose dir has NO node —
+# so lane_exec_env must prepend the LAUNCHER (symlink) dir, not realpath's dir, or the shebang's `env node` dies
+# and the initialize handshake stalls the full STARTUP_TIMEOUT (~25s) on EVERY call. A pass here is a turn served
+# well under that budget, proving the handshake completed (not fell back after a 25s stall).
+import time                                                  # noqa: E402
+from spendguard import codex_daemon                          # noqa: E402
+_t = time.time()
+warm = codex_daemon._CodexDaemon().run_warm("Reply with exactly the token WARM_OK and nothing else.",
+                                            reasoning="low", timeout=60)
+_warm_s = time.time() - _t
+_warm_text = warm.get("text") if isinstance(warm, dict) else None
+check(r, "the WARM codex app-server handshakes + serves under the stripped PATH (no 25s stall)",
+      isinstance(warm, dict) and not warm.get("error") and bool(_warm_text) and _warm_s < 20,
+      "%.1fs err=%r text=%r" % (_warm_s, (warm or {}).get("error"), _warm_text))
+
 print(f"\n{'OK' if all(r) else '[FAIL]'} test_live_lane_minimal_path")
 sys.exit(0 if all(r) else 1)
