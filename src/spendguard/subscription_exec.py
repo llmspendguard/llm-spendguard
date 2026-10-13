@@ -78,7 +78,7 @@ def auth_status(timeout=20):
         """The CLI's own loggedIn bool from one `claude auth status`, or None (unparseable/error/absent field)."""
         from . import config
         r = subprocess.run([exe, "auth", "status"], capture_output=True, text=True,
-                           timeout=timeout, env=config.lane_plan_env())
+                           timeout=timeout, env=config.lane_exec_env(exe))
         li = json.loads((r.stdout or "").strip()).get("loggedIn")   # `claude auth status` emits JSON (a fixed shape)
         return li if isinstance(li, bool) else None
 
@@ -171,7 +171,8 @@ def _fetch_usage():
     if not exe:
         return None
     from . import config
-    r = subprocess.run([exe, "-p", "/usage"], capture_output=True, text=True, timeout=45, env=config.lane_plan_env())
+    r = subprocess.run([exe, "-p", "/usage"], capture_output=True, text=True, timeout=45,
+                       env=config.lane_exec_env(exe))
     return _parse_usage_claude((r.stdout or "") + "\n" + (r.stderr or "")) if r.returncode == 0 else None
 
 
@@ -197,7 +198,7 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     if system:
         cmd += ["--append-system-prompt", system]
     from . import config
-    env = config.lane_plan_env()      # strip EVERY provider's metered key/auth-token/base-url — the Max plan LOGIN
+    env = config.lane_exec_env(exe)   # strip EVERY provider's metered key/auth-token/base-url and expose its runtime
     #                                   serves this; the claude-code lane must never fall back onto a metered
     #                                   ANTHROPIC key (that would bill Claude for "$0 plan" work), nor carry another
     #                                   provider's key. (config.lane_plan_env centralizes what _PLAN_STRIP_ENV did.)

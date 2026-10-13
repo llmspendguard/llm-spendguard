@@ -34,12 +34,12 @@ def _probe_cache_path():
 
 
 def _last_probe_ok(lane):
-    """(True, iso-day) if the last recorded probe of this lane succeeded — the definitive auth evidence on
+    """(True, ISO timestamp) if the last recorded probe of this lane succeeded — the definitive auth evidence on
     macOS, where the claude CLI stores login in the keychain and no credentials file ever appears."""
     import json
     try:
         r = json.loads(_probe_cache_path().read_text()).get(lane) or {}
-        return (bool(r.get("ok")), (r.get("ts") or "")[:10])
+        return (bool(r.get("ok")), r.get("ts") or "")
     except Exception:
         return (False, "")
 

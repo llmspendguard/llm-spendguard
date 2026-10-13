@@ -80,7 +80,10 @@ def model_ids(timeout_s=30):
     if not available():
         return []
     try:
-        p = subprocess.run([_bin(), "models"], capture_output=True, text=True, timeout=timeout_s)
+        from . import config
+        exe = _bin()
+        p = subprocess.run([exe, "models"], capture_output=True, text=True, timeout=timeout_s,
+                           env=config.lane_exec_env(exe))
     except Exception:
         return []
     return _parse_agy_models(p.stdout) if p.returncode == 0 else []
@@ -189,7 +192,7 @@ def _fetch_usage():
         return None
     from . import config
     r = subprocess.run([exe, "-p", "/usage", "--output-format", "text", "--print-timeout", "30s"],
-                       capture_output=True, text=True, timeout=45, env=config.lane_plan_env())
+                       capture_output=True, text=True, timeout=45, env=config.lane_exec_env(exe))
     return _parse_usage(r.stdout) if r.returncode == 0 else None
 
 
@@ -240,7 +243,7 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
         return {"error": "agy (Antigravity CLI) not found"}
     full = (f"{system.strip()}\n\n{prompt}" if system else prompt)
     from . import config
-    env = config.lane_plan_env()      # strip EVERY provider's metered key — the Antigravity OAuth serves this; the
+    env = config.lane_exec_env(exe)   # strip EVERY provider's metered key and expose the CLI's co-located runtime; the
     #                                   gemini lane must never carry ANTHROPIC_API_KEY (Claude tokens) or any other
     cmd = [exe, "-p", full, "--output-format", "json", "--disable-slash-commands"]
     if model:

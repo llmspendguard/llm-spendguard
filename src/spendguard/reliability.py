@@ -537,10 +537,10 @@ def health_reds(since_hours=48):
     try:
         db = _health_db()
         with budget._lock:
-            rows = db.execute("SELECT resource,kind,reason,fix,command,source FROM lane_health WHERE reachable=0 AND ts>=?",
+            rows = db.execute("SELECT resource,kind,reason,fix,command,source,ts FROM lane_health WHERE reachable=0 AND ts>=?",
                               (cutoff,)).fetchall()
-        out, recovered, stale = [], [], []
-        for resource, kind, reason, fix, command, source in rows:
+        out, recovered, stale, stale_lanes = [], [], [], []
+        for resource, kind, reason, fix, command, source, row_ts in rows:
             if source == "event" and kind == "lane":     # an EVENT down is stale once the lane stops cooling: it
                 try:                                      # RECOVERED. Resolve it (below) rather than silently drop it.
                     from . import adapters
@@ -565,6 +565,21 @@ def health_reds(since_hours=48):
                 if _unprobeable:
                     stale.append(resource)
                     continue
+            if source == "sweep" and kind == "lane":
+                # A later successful live probe supersedes a daemon sweep failure. The two verdicts intentionally
+                # live in different stores, so reconcile them here and DELETE the stale red just like metered
+                # residue below. Full timestamps matter: same-day sweep/probe ordering must remain exact. Fail safe
+                # and keep the red if either timestamp is absent/malformed or the probe cache cannot be read.
+                try:
+                    from . import lanes
+                    probe_ok, probe_ts = lanes._last_probe_ok(resource)
+                    sweep_at = datetime.datetime.fromisoformat(row_ts.replace("Z", "+00:00"))
+                    probe_at = datetime.datetime.fromisoformat(probe_ts.replace("Z", "+00:00"))
+                    if probe_ok and probe_at > sweep_at:
+                        stale_lanes.append(resource)
+                        continue
+                except Exception:
+                    pass
             out.append({"resource": resource, "kind": kind, "reason": reason, "fix": fix, "command": command})
         if recovered:                                    # SELF-HEAL, traced (a DB write, not a silent skip): a recovered
             with budget._lock:                            # event-lane is marked reachable so it clears everywhere at once
@@ -575,6 +590,11 @@ def health_reds(since_hours=48):
             with budget._lock:                            # no sweep verdict at all, so its stale 'unreachable' row goes
                 db.executemany("DELETE FROM lane_health WHERE resource=? AND kind='metered' AND source='sweep'",
                                [(r,) for r in stale])
+                db.commit()
+        if stale_lanes:                                  # A newer $0 live probe is the authoritative lane verdict;
+            with budget._lock:                            # remove only the older sweep row, never an event-derived red.
+                db.executemany("DELETE FROM lane_health WHERE resource=? AND kind='lane' AND source='sweep'",
+                               [(r,) for r in stale_lanes])
                 db.commit()
         return out
     except Exception:
