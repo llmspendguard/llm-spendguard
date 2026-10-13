@@ -246,9 +246,27 @@ def delegate(task, system=None, lanes=None, reasoning="low", max_tokens=_DELEGAT
     prov_of = {ln: prov for prov, (ln, _m) in adapters._LANES.items()}
     order = sorted([l for l in viable if isinstance(lm, dict) and lm.get(l) and prov_of.get(l)],
                    key=lambda l: util.get(l, 0.0))
+    # TIER by reasoning: a one-shot delegate at low/minimal effort takes the lane's CHEAP model, else its STRONG one.
+    _tier = "cheap" if str(reasoning or "").strip().lower() in ("low", "minimal", "none", "") else "strong"
     tried = []
+    unresolved = []                                  # configured lanes whose model id could NOT be resolved — RECORDED
+    #                                                  (named, not silently skipped) so a vanished lane is visible
     for lane in order:
-        model = f"{prov_of[lane]}:{lm[lane]}"
+        # lane_models[lane] is EITHER a plain model string (zai) OR a per-tier map {cheap,strong} (codex/claude-code/
+        # gemini). Pick the tier's VALUE VERBATIM. Two things this must NOT do: (1) stringify the whole map into the id
+        # — the old f"{prov}:{lm[lane]}" produced "openai:{'cheap':...}", which codex 400s ("model not supported with a
+        # ChatGPT account") → an ~18s on-lane retry/backoff ladder; (2) strip a reasoning SUFFIX — a suffix lane
+        # (gemini) encodes effort in the id itself ("gemini-3.8-flash-low"), and gemini-HIGH returns EMPTY, so the
+        # verbatim spelling is load-bearing. A map with no entry for `_tier` falls back to strong/default/any.
+        spec = lm.get(lane)
+        if isinstance(spec, dict):
+            base = spec.get(_tier) or spec.get("strong") or spec.get("default") or next(iter(spec.values()), None)
+        else:
+            base = spec
+        if not base:                                 # no resolvable model → record the lane and move on (NEVER a
+            unresolved.append(lane)                  #   silent drop: the caller must see a configured lane disappear)
+            continue
+        model = f"{prov_of[lane]}:{base}"
         tried.append(model)
         with calls.context(intent=intent):
             r = adapters.call(model, task, system=system, reasoning=reasoning, max_tokens=max_tokens, sig=intent,
@@ -260,8 +278,18 @@ def delegate(task, system=None, lanes=None, reasoning="low", max_tokens=_DELEGAT
             return {"text": txt, "lane": lane, "model": model, "cost": r.get("cost"),
                     "billed": bool(r.get("cost")), "executor": r.get("executor"), "tried": tried,
                     "fell_from": r.get("fell_from"), "fallback_notice": r.get("fallback_notice")}
+    # ABSENCE WITH COVERAGE (not a bare zero): `order` is every viable lane that HAD a configured model+provider and
+    # was therefore attempted in the loop above; `tried` records the concrete model dispatched per attempt. A viable
+    # lane that was DROPPED before the loop (no configured model / unknown provider) is a NAMED GAP, not a silent skip
+    # — it is reported in `skipped_unconfigured` so "no lane answered" is distinguishable from "no lane was eligible".
+    skipped_unconfigured = [l for l in viable if l not in order]
     return {"text": None, "lane": None, "model": None, "tried": tried,
-            "error": f"no viable delegation lane answered (tried {tried or 'none — set advisor.lane_models {lane: model}'})"}
+            "coverage": {"viable": list(viable), "attempted": list(order),
+                         "skipped_unconfigured": skipped_unconfigured, "unresolved_model": unresolved},
+            "error": (f"no viable delegation lane answered — attempted {len(tried)}/{len(order)} eligible lane(s) "
+                      f"(tried {tried or 'none'}); unresolved model (lane configured but no base id): "
+                      f"{unresolved or 'none'}; skipped as unconfigured (no model+provider): "
+                      f"{skipped_unconfigured or 'none — set advisor.lane_models {lane: model}'}")}
 
 
 def _bulk_arms(intent, lanes=None):
