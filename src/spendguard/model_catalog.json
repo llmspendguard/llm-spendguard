@@ -2489,6 +2489,171 @@
         "tokens_param": "max_tokens"
       },
       "as_of": "2026-10-12"
+    },
+    "gpt-6.1-sol": {
+      "id": "gpt-6.1-sol",
+      "provider": "openai",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "gpt-6.1-sol",
+      "lane_spellings": {},
+      "price": {
+        "in_": 2.0,
+        "cached_in": 0.1,
+        "batch_in": 2.0,
+        "out": 10.0,
+        "batch_out": 10.0,
+        "source": "https://developers.openai.com/api/docs/pricing (+ https://developers.openai.com/api/docs/models/gpt-6.1-sol) \u2014 fetched 2026-10-13; Standard <=272K tier; sol/luna batch=standard (no published discount), astra batch=50%",
+        "verified": "2026-10-13"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": 128000,
+        "source": "https://developers.openai.com/api/docs/models/gpt-6.1-sol \u2014 fetched 2026-10-13 (max output 128000)"
+      },
+      "context_window": {
+        "value": 1050000,
+        "source": "https://developers.openai.com/api/docs/models/gpt-6.1-sol \u2014 fetched 2026-10-13 (1,050,000 window)",
+        "verified": "2026-10-13"
+      },
+      "reasoning": {
+        "floor": null,
+        "effort_ok": true,
+        "reasoning_floor": null,
+        "reasons_by_default": true,
+        "tokens_param": "max_tokens",
+        "style": "param"
+      },
+      "as_of": "2026-10-13"
+    },
+    "gpt-6-sol": {
+      "id": "gpt-6-sol",
+      "provider": "openai",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "gpt-6-sol",
+      "lane_spellings": {},
+      "price": {
+        "in_": 2.0,
+        "cached_in": 0.2,
+        "batch_in": 2.0,
+        "out": 10.0,
+        "batch_out": 10.0,
+        "source": "https://developers.openai.com/api/docs/pricing (+ https://developers.openai.com/api/docs/models/gpt-6-sol) \u2014 fetched 2026-10-13; Standard <=272K tier; sol/luna batch=standard (no published discount), astra batch=50%; superseded by gpt-6.1-sol (newer Sol, 2026-10-13); kept for the records that still name it",
+        "verified": "2026-10-13"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": 128000,
+        "source": "https://developers.openai.com/api/docs/models/gpt-6-sol \u2014 fetched 2026-10-13 (max output 128000)"
+      },
+      "context_window": {
+        "value": 1050000,
+        "source": "https://developers.openai.com/api/docs/models/gpt-6-sol \u2014 fetched 2026-10-13 (1,050,000 window)",
+        "verified": "2026-10-13"
+      },
+      "reasoning": {
+        "floor": null,
+        "effort_ok": true,
+        "reasoning_floor": null,
+        "reasons_by_default": true,
+        "tokens_param": "max_tokens",
+        "style": "param"
+      },
+      "as_of": "2026-10-13"
+    },
+    "gpt-6-luna": {
+      "id": "gpt-6-luna",
+      "provider": "openai",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "gpt-6-luna",
+      "lane_spellings": {},
+      "price": {
+        "in_": 0.1,
+        "cached_in": 0.01,
+        "batch_in": 0.1,
+        "out": 0.5,
+        "batch_out": 0.5,
+        "source": "https://developers.openai.com/api/docs/pricing (+ https://developers.openai.com/api/docs/models/gpt-6-luna) \u2014 fetched 2026-10-13; Standard <=272K tier; sol/luna batch=standard (no published discount), astra batch=50%",
+        "verified": "2026-10-13"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": 128000,
+        "source": "https://developers.openai.com/api/docs/models/gpt-6-luna \u2014 fetched 2026-10-13 (max output 128000)"
+      },
+      "context_window": {
+        "value": 1050000,
+        "source": "https://developers.openai.com/api/docs/models/gpt-6-luna \u2014 fetched 2026-10-13 (1,050,000 window); max input 922000",
+        "verified": "2026-10-13"
+      },
+      "reasoning": {
+        "floor": null,
+        "effort_ok": true,
+        "reasoning_floor": null,
+        "reasons_by_default": true,
+        "tokens_param": "max_tokens",
+        "style": "param"
+      },
+      "as_of": "2026-10-13"
+    },
+    "gpt-6-astra": {
+      "id": "gpt-6-astra",
+      "provider": "openai",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "gpt-6-astra",
+      "lane_spellings": {},
+      "price": {
+        "in_": 10.0,
+        "cached_in": 1.0,
+        "batch_in": 5.0,
+        "out": 50.0,
+        "batch_out": 25.0,
+        "source": "https://developers.openai.com/api/docs/pricing (+ https://developers.openai.com/api/docs/models/gpt-6-astra) \u2014 fetched 2026-10-13; Standard <=272K tier; sol/luna batch=standard (no published discount), astra batch=50%",
+        "verified": "2026-10-13"
+      },
+      "price_error": null,
+      "output_ceiling": {
+        "value": 128000,
+        "source": "https://developers.openai.com/api/docs/models/gpt-6-astra \u2014 fetched 2026-10-13 (max output 128000)"
+      },
+      "context_window": {
+        "value": 1050000,
+        "source": "https://developers.openai.com/api/docs/models/gpt-6-astra \u2014 fetched 2026-10-13 (1,050,000 window)",
+        "verified": "2026-10-13"
+      },
+      "reasoning": {
+        "floor": null,
+        "effort_ok": true,
+        "reasoning_floor": null,
+        "reasons_by_default": true,
+        "tokens_param": "max_tokens",
+        "style": "param"
+      },
+      "as_of": "2026-10-13"
+    },
+    "gpt-5.6-terra": {
+      "id": "gpt-5.6-terra",
+      "provider": "openai",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "gpt-5.6-terra",
+      "lane_spellings": {
+        "codex": [
+          "gpt-5.6-terra"
+        ]
+      },
+      "price": null,
+      "price_error": "official OpenAI rate not yet fetched (aggregators disagree) \u2014 do not infer",
+      "output_ceiling": {
+        "value": null,
+        "source": null
+      },
+      "context_window": null,
+      "notes": "Codex balanced auto-tier between gpt-5.6-luna (cheap) and gpt-5.6-sol (strong).",
+      "as_of": "2026-10-13"
     }
   }
 }

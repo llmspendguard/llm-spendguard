@@ -64,7 +64,7 @@ def _overlay_path():
     """The SERVER-SYNCED / local-override curated catalog overlay — a {"models": {id: record}} file in SPENDGUARD_HOME,
     the SAME shape as the shipped floor (DATA_PATH). Written by `spendguard sync-catalog` from the server's curated
     catalog (the data-plane T2 layer); a user may also drop it by hand to OVERRIDE the shipped floor locally. Distinct
-    filename from catalog.py's live served-list cache (HOME/model_catalog.json), a different store. None on any error
+    filename from catalog.py's live served-list cache (HOME/served_model_ids.json), a different store. None on any error
     → floor only (config is imported lazily, as elsewhere in this leaf, to avoid a load-time cycle)."""
     try:
         from . import config
@@ -480,4 +480,3 @@ def validate_catalog(models=None, allow_legacy_missing_as_of=True):
         if len(rids) > 1:
             problems.append(f"provider {prov!r} has {len(rids)} provider_base records {rids}; expected exactly one")
     return problems
-
