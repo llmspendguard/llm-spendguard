@@ -4,7 +4,7 @@
     "_generator": "scripts/gen_prices_json.py",
     "_source": "src/spendguard/model_catalog.json (concern 'model_catalog' \u2014 the SSOT for model data)",
     "note": "GENERATED from the model catalog \u2014 DO NOT EDIT BY HAND. Author prices in model_catalog.json, then run `python scripts/gen_prices_json.py --write`. honestreview derived_artifact_integrity flags hand-edits.",
-    "generated_at": "2026-10-12T22:47:51Z"
+    "generated_at": "2026-10-13T01:47:45Z"
   },
   "providers": {
     "anthropic": {
@@ -369,6 +369,38 @@
           "batch_in": 2,
           "batch_out": 10,
           "_source": "https://developers.openai.com/api/docs/pricing"
+        },
+        "gpt-6-astra": {
+          "in_": 10.0,
+          "out": 50.0,
+          "cached_in": 1.0,
+          "batch_in": 5.0,
+          "batch_out": 25.0,
+          "_source": "https://developers.openai.com/api/docs/pricing (+ https://developers.openai.com/api/docs/models/gpt-6-astra) \u2014 fetched 2026-10-13; Standard <=272K tier; sol/luna batch=standard (no published discount), astra batch=50%"
+        },
+        "gpt-6-luna": {
+          "in_": 0.1,
+          "out": 0.5,
+          "cached_in": 0.01,
+          "batch_in": 0.1,
+          "batch_out": 0.5,
+          "_source": "https://developers.openai.com/api/docs/pricing (+ https://developers.openai.com/api/docs/models/gpt-6-luna) \u2014 fetched 2026-10-13; Standard <=272K tier; sol/luna batch=standard (no published discount), astra batch=50%"
+        },
+        "gpt-6-sol": {
+          "in_": 2.0,
+          "out": 10.0,
+          "cached_in": 0.2,
+          "batch_in": 2.0,
+          "batch_out": 10.0,
+          "_source": "https://developers.openai.com/api/docs/pricing (+ https://developers.openai.com/api/docs/models/gpt-6-sol) \u2014 fetched 2026-10-13; Standard <=272K tier; sol/luna batch=standard (no published discount), astra batch=50%; superseded by gpt-6.1-sol (newer Sol, 2026-10-13); kept for the records that still name it"
+        },
+        "gpt-6.1-sol": {
+          "in_": 2.0,
+          "out": 10.0,
+          "cached_in": 0.1,
+          "batch_in": 2.0,
+          "batch_out": 10.0,
+          "_source": "https://developers.openai.com/api/docs/pricing (+ https://developers.openai.com/api/docs/models/gpt-6.1-sol) \u2014 fetched 2026-10-13; Standard <=272K tier; sol/luna batch=standard (no published discount), astra batch=50%"
         },
         "text-embedding-3-large": {
           "in_": 0.13,

@@ -7,7 +7,7 @@ This module is CACHE ONLY. The served-list PRIMITIVE and the pre-flight decision
 fresh so served_check answers a served id from cache without a network call.
 
 Mirrors sync.py (the price-breadth cache): a per-provider list of live model ids is fetched with a short TTL,
-cached in SPENDGUARD_HOME/model_catalog.json, refreshed on the `saas sync` cadence and by `spendguard sync-catalog`.
+cached in SPENDGUARD_HOME/served_model_ids.json, refreshed on the `saas sync` cadence and by `spendguard sync-catalog`.
 The FETCH is not reinvented — it reuses vendor_call.list_models(), which GETs each provider's /models list ($0)
 and returns ids in the DISPATCH form (its own `_dispatch_form` strips Gemini's `models/` listing prefix), so the
 cached ids compare directly against a requested id. live_model_ids(vendor) returns the cached list, or None when
@@ -20,7 +20,7 @@ import datetime
 
 from . import config
 
-CATALOG_CACHE = str(config.HOME / "model_catalog.json")
+CATALOG_CACHE = str(config.HOME / "served_model_ids.json")
 DEFAULT_REFRESH_HOURS = 12          # ids rotate over days/weeks, not hours; 12h keeps it fresh without churn
 
 _CACHE_MEM = {"mtime": None, "data": None}     # in-process memo, invalidated by file mtime (dispatch never re-reads disk needlessly)
