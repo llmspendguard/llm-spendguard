@@ -60,7 +60,8 @@ def _cum_tokens_by_executor():
         con = sqlite3.connect(config.db_path())
         rows = con.execute(
             "SELECT executor, SUM(COALESCE(in_tok,0)+COALESCE(out_tok,0)) FROM calls "
-            "WHERE executor IS NOT NULL AND executor != '' GROUP BY executor").fetchall()
+            # executor='api' is metered, NOT a subscription lane — exclude it from the per-lane rollup.
+            "WHERE executor IS NOT NULL AND executor NOT IN ('', 'api') GROUP BY executor").fetchall()
         con.close()
         return {ex: int(t or 0) for ex, t in rows}
     except Exception:
