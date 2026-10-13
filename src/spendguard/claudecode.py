@@ -278,6 +278,38 @@ def _parse_iso(ts):
         return None
 
 
+_OVERAGE_EVENT_KEYS = ("weekly_resets", "weekly_hits", "blocked", "overage_direct", "five_hour_hits")
+
+
+def _overage_events_cache_path():
+    return os.path.join(os.path.dirname(config.db_path()), "overage_events_cache.json")
+
+
+def _load_overage_events_cache():
+    """The per-file parsed-contribution cache {path: {sig, contrib}}, or {} if absent. A PRESENT-but-broken cache is
+    announced (not a silent miss) so a stuck full-rescan is visible."""
+    try:
+        with open(_overage_events_cache_path()) as fh:
+            blob = json.load(fh)
+        return blob if isinstance(blob, dict) else {}
+    except FileNotFoundError:
+        return {}
+    except Exception as e:
+        config.warn_once("[spendguard] overage-events file cache unreadable (%s) — re-reading ALL transcripts this "
+                         "scan (slow); the incremental cache is not engaging" % e)
+        return {}
+
+
+def _save_overage_events_cache(cache):
+    # Whole-file JSON write goes through the ONE sanctioned writer (config.update_json): atomic + it refuses to
+    # clobber an unparseable file. A rebuildable cache, so quarantine_unparseable moves a corrupt file aside and
+    # rewrites (never wedges the adapter) and keep_backups=0 keeps only `path~`. A declined write is announced.
+    if config.update_json(_overage_events_cache_path(), lambda _old: cache,
+                          reason="overage events file cache", quarantine_unparseable=True, keep_backups=0) is None:
+        config.warn_once("[spendguard] could not write overage-events file cache — the next scan will re-read all "
+                         "transcripts")
+
+
 def _overage_events(min_day=None):
     """Extract the OBSERVABLE plan-limit machinery from the transcripts — from the PROVIDER's own signals — so
     billing_state can be CALCULATED (segmented into subscription vs overage windows) without a guessed cap or the
@@ -291,51 +323,78 @@ def _overage_events(min_day=None):
     five_hour_hits: [{ts,conv,resets_at}]  the 5-hour rolling cap-hits — you continue on PAID overage until each 5h
                                              window resets, so each is a SHORT overage window (folded in _overage_windows).
     seven_day bounds the WEEKLY subscription exhaustion; five_hour adds shorter same-plan overage windows.
-    Read-only, pure parse, $0 — no LLM, no network, no admin API."""
-    out = {"weekly_resets": [], "weekly_hits": [], "blocked": [], "overage_direct": [], "five_hour_hits": []}
+    Read-only, pure parse, $0 — no LLM, no network, no admin API.
+
+    INCREMENTAL: each file's parsed contribution is cached on disk keyed by (mtime_ns, size). claude-code transcripts
+    are APPEND-ONLY, so a changed mtime+size reliably means "the file grew" → re-read it; an unchanged file's
+    contribution is reused verbatim, which removes the ~10s full re-read that otherwise ran on every call (it sits on
+    plan_admission's hot path via overage.current_overage_status). The per-file parse is unchanged and the merged
+    result is IDENTICAL to a full scan, so full-history callers (reconcile_billing_state, attribute_overage) are
+    unaffected. The cache is bypassed when `min_day` filters the parse and under SPENDGUARD_TEST_ISOLATED (hermetic)."""
+    out = {k: [] for k in _OVERAGE_EVENT_KEYS}
     if not os.path.isdir(_projects_dir()):
         return out
+    use_cache = (min_day is None and not os.getenv("SPENDGUARD_TEST_ISOLATED"))
+    old_cache = _load_overage_events_cache() if use_cache else {}
+    fresh_cache = {}
     for path in glob.glob(os.path.join(_projects_dir(), "**", "*.jsonl"), recursive=True):
         conv = os.path.basename(path)[:-6] if path.endswith(".jsonl") else os.path.basename(path)
+        sig = None
         try:
-            for line in open(path, errors="ignore"):
-                line = line.strip()
-                if not line or ("quotaLimits" not in line and "weekly limit" not in line):
-                    continue                                    # cheap pre-filter — only limit-bearing lines are parsed
-                try:
-                    o = json.loads(line)
-                except Exception:
-                    continue
-                ts = o.get("timestamp") or ""
-                if min_day and ts[:10] and ts[:10] < min_day:
-                    continue
-                q = o.get("quotaLimits")
-                if isinstance(q, dict):
-                    rlt = q.get("rateLimitType")
-                    ra = None
-                    if q.get("resetsAt"):
-                        try:
-                            ra = float(q["resetsAt"])
-                        except (TypeError, ValueError):
-                            ra = None
-                    if rlt == "seven_day":
-                        out["weekly_hits"].append({"ts": ts, "conv": conv})   # a WEEKLY cap-hit → boundary B
-                        if ra:
-                            out["weekly_resets"].append(ra)                    # the provider's reset grid anchor
-                    elif rlt == "five_hour":
-                        out["five_hour_hits"].append({"ts": ts, "conv": conv, "resets_at": ra})  # 5h rolling cap-hit → short overage window
-                    if q.get("isUsingOverage") is True:
-                        out["overage_direct"].append({"ts": ts, "conv": conv, "resets_at": q.get("resetsAt")})
-                    elif q.get("overageStatus") == "rejected" or q.get("status") == "rejected":
-                        out["blocked"].append({"ts": ts, "conv": conv, "reason": q.get("overageDisabledReason"),
-                                               "rate_limit_type": rlt})
-                m = o.get("message") or {}
-                c = m.get("content")
-                txt = c if isinstance(c, str) else (json.dumps(c) if c else "")
-                if "hit your weekly limit" in txt:
-                    out["weekly_hits"].append({"ts": ts, "conv": conv})       # the human-facing weekly cap-hit
-        except Exception:
-            continue
+            st = os.stat(path)
+            sig = "%d:%d" % (st.st_mtime_ns, st.st_size)      # append-only → (mtime,size) is a reliable "grew" signal
+        except OSError:
+            sig = None                                        # unstattable → never cached, always parsed (safe)
+        hit = old_cache.get(path) if (use_cache and sig is not None) else None
+        if hit and hit.get("sig") == sig and isinstance(hit.get("contrib"), dict):
+            contrib = hit["contrib"]                          # unchanged file → reuse its parsed contribution verbatim
+        else:
+            contrib = {k: [] for k in _OVERAGE_EVENT_KEYS}    # changed / new / uncacheable → parse it (logic UNCHANGED)
+            try:
+                for line in open(path, errors="ignore"):
+                    line = line.strip()
+                    if not line or ("quotaLimits" not in line and "weekly limit" not in line):
+                        continue                                    # cheap pre-filter — only limit-bearing lines are parsed
+                    try:
+                        o = json.loads(line)
+                    except Exception:
+                        continue
+                    ts = o.get("timestamp") or ""
+                    if min_day and ts[:10] and ts[:10] < min_day:
+                        continue
+                    q = o.get("quotaLimits")
+                    if isinstance(q, dict):
+                        rlt = q.get("rateLimitType")
+                        ra = None
+                        if q.get("resetsAt"):
+                            try:
+                                ra = float(q["resetsAt"])
+                            except (TypeError, ValueError):
+                                ra = None
+                        if rlt == "seven_day":
+                            contrib["weekly_hits"].append({"ts": ts, "conv": conv})   # a WEEKLY cap-hit → boundary B
+                            if ra:
+                                contrib["weekly_resets"].append(ra)                    # the provider's reset grid anchor
+                        elif rlt == "five_hour":
+                            contrib["five_hour_hits"].append({"ts": ts, "conv": conv, "resets_at": ra})  # 5h rolling cap-hit → short overage window
+                        if q.get("isUsingOverage") is True:
+                            contrib["overage_direct"].append({"ts": ts, "conv": conv, "resets_at": q.get("resetsAt")})
+                        elif q.get("overageStatus") == "rejected" or q.get("status") == "rejected":
+                            contrib["blocked"].append({"ts": ts, "conv": conv, "reason": q.get("overageDisabledReason"),
+                                                       "rate_limit_type": rlt})
+                    m = o.get("message") or {}
+                    c = m.get("content")
+                    txt = c if isinstance(c, str) else (json.dumps(c) if c else "")
+                    if "hit your weekly limit" in txt:
+                        contrib["weekly_hits"].append({"ts": ts, "conv": conv})       # the human-facing weekly cap-hit
+            except Exception:
+                contrib = {k: [] for k in _OVERAGE_EVENT_KEYS}   # a mid-file read error → this file contributes nothing (as before)
+        if use_cache and sig is not None:
+            fresh_cache[path] = {"sig": sig, "contrib": contrib}
+        for k in _OVERAGE_EVENT_KEYS:
+            out[k].extend(contrib.get(k, []))
+    if use_cache:
+        _save_overage_events_cache(fresh_cache)               # only files seen this scan persist → deleted files drop out
     out["weekly_resets"] = sorted(set(out["weekly_resets"]))
     return out
 
