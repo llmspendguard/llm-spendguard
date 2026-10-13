@@ -131,7 +131,7 @@ def counts():
 
 
 def record_io_sample(intent, provider, model, batch, custom_id, prompt, output, in_tok=0, out_tok=0, source="batch_io",
-           system=None, req_schema=None, req_max_tokens=0, cap_chars=None):
+           system=None, req_schema=None, req_max_tokens=0, cap_chars=None, finish_reason=None):
     """Insert one sample (idempotent on batch+custom_id). Returns id or None if duplicate.
 
     `cap_chars` overrides the per-body character cap for THIS write (default: snip_chars(), the judge-sized 800). The
@@ -144,6 +144,8 @@ def record_io_sample(intent, provider, model, batch, custom_id, prompt, output, 
     # different task and must be excluded — but a full prompt with a cut OUTPUT stays perfectly replayable (the output
     # is regenerated). Conflating the two would wrongly exclude a usable prompt. The warning still fires on either cut.
     _trunc = 1 if len(prompt or "") > cap else 0
+    from . import bulkgate
+    _reply_truncated = bulkgate.is_truncated(finish_reason)
     if _trunc or len(output or "") > cap:
         config.warn_once("[spendguard] call_io capture for intent %r CUT a body at %d chars — a cut PROMPT excludes the "
                          "row from replay/bakeoff (a partial task); raise callio.snip_chars and re-fetch for full "
@@ -152,14 +154,16 @@ def record_io_sample(intent, provider, model, batch, custom_id, prompt, output, 
         with _lock:
             cur = _callio_db().execute(
                 "INSERT OR IGNORE INTO call_io (id,ts,intent,provider,model,batch,custom_id,prompt,output,"
-                "in_tok,out_tok,source,system,req_schema,req_max_tokens,truncated) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "in_tok,out_tok,source,system,req_schema,req_max_tokens,truncated,quality,quality_src,quality_conf) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (cid, ts, intent, provider, model, batch, str(custom_id),
                  (prompt or "")[:cap], (output or "")[:cap],
                  int(in_tok or 0), int(out_tok or 0), source,
                  (system or "")[:cap],
                  (req_schema if isinstance(req_schema, str) else json.dumps(req_schema or ""))[:cap],
-                 int(req_max_tokens or 0), _trunc))
+                 int(req_max_tokens or 0), _trunc,
+                 ("bad" if _reply_truncated else None), ("truncation" if _reply_truncated else None),
+                 (1.0 if _reply_truncated else None)))
             inserted = cur.rowcount == 1        # 0 → the (batch, custom_id) row already existed (IGNORE) = DUPLICATE
             # INSERT OR IGNORE alone makes a refill a NO-OP: a row captured under a smaller snip cap keeps its
             # truncated prompt forever, and `added: 0` reads as "nothing new to get" rather than "the fidelity
@@ -202,7 +206,7 @@ def record_io_sample(intent, provider, model, batch, custom_id, prompt, output, 
 
 
 def capture_live(intent, provider, model, prompt, output, in_tok=0, out_tok=0,
-                 system=None, req_schema=None, req_max_tokens=0):
+                 system=None, req_schema=None, req_max_tokens=0, finish_reason=None):
     """Capture ONE realtime/lane WORKLOAD call into the call_io replay corpus so bakeoff / effort-titrate / advise
     good% have REAL tasks to sample WITHOUT a batch to fetch. THIS is the path that unblocks measuring realtime/lane-
     only intents: an estate whose work never became an OpenAI/Anthropic batch leaves no provider file for fetch-io to
@@ -238,7 +242,8 @@ def capture_live(intent, provider, model, prompt, output, in_tok=0, out_tok=0,
         # prompt is <= _max (checked above), so it is stored WHOLE — cap_chars is a ceiling that never cuts it here.
         return record_io_sample(intent, provider, model, "live", cid, prompt, output,
                                 in_tok=in_tok, out_tok=out_tok, source="live_io",
-                                system=system, req_schema=req_schema, req_max_tokens=req_max_tokens, cap_chars=_max)
+                                system=system, req_schema=req_schema, req_max_tokens=req_max_tokens, cap_chars=_max,
+                                finish_reason=finish_reason)
     except Exception as e:
         config.warn_once("[spendguard] call_io live-capture FAILED for intent %r (%s) — sample not recorded; capture "
                          "is best-effort and never blocks the call." % (intent, type(e).__name__))
@@ -271,7 +276,8 @@ def set_quality(io_id, ok, src="judge", conf=None):
     c = conf if conf is not None else _CONF.get(src, 0.7)
     try:
         with _lock:
-            _callio_db().execute("UPDATE call_io SET quality=?, quality_src=?, quality_conf=? WHERE id=?",
+            _callio_db().execute("UPDATE call_io SET quality=?, quality_src=?, quality_conf=? "
+                                 "WHERE id=? AND COALESCE(quality_src,'') != 'truncation'",
                           ("good" if ok else "bad", src, c, io_id))
             _callio_db().commit()
     except Exception:
@@ -376,7 +382,8 @@ def fetch_openai(client, batch_id, intent, model, cap, sample_n):
             msg = ((body.get("choices") or [{}])[0].get("message") or {}).get("content")
             if cid and msg is not None:
                 want[cid] = {"output": msg if isinstance(msg, str) else json.dumps(msg),
-                             "out_tok": (body.get("usage") or {}).get("completion_tokens", 0)}
+                             "out_tok": (body.get("usage") or {}).get("completion_tokens", 0),
+                             "finish_reason": (body.get("choices") or [{}])[0].get("finish_reason")}
             if len(want) >= sample_n:
                 break                                   # ← early stop: don't pull the rest of the file
     # pull the matching prompts from the input file (also streamed, stop once all found)
@@ -413,7 +420,8 @@ def fetch_openai(client, batch_id, intent, model, cap, sample_n):
             break
         if record_io_sample(intent, "openai", model, batch_id, cid, d.get("prompt", ""), d["output"],
                   out_tok=d.get("out_tok", 0), system=d.get("system"),
-                  req_schema=d.get("req_schema"), req_max_tokens=d.get("req_max_tokens", 0)):
+                  req_schema=d.get("req_schema"), req_max_tokens=d.get("req_max_tokens", 0),
+                  finish_reason=d.get("finish_reason")):
             added += 1
     return added, None
 
@@ -440,7 +448,8 @@ def fetch_anthropic(client, batch_id, intent, model, cap, sample_n, jsonl_inputs
         except Exception:
             pass
         prompt = (jsonl_inputs or {}).get(res.custom_id, "")
-        if record_io_sample(intent, "anthropic", model, batch_id, res.custom_id, prompt, txt, out_tok=out_tok):
+        if record_io_sample(intent, "anthropic", model, batch_id, res.custom_id, prompt, txt, out_tok=out_tok,
+                            finish_reason=getattr(r.message, "stop_reason", None)):
             added += 1
     return added, None
 

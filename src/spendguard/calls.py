@@ -531,15 +531,21 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
                 raise
             suspect = None                       # a pure catalog-read hiccup never blocks recording the call
         with _lock:
+            # A provider-declared cutoff is authoritative per-call quality evidence. Assign it only while the new
+            # row is written (never migrate/backfill old rows), with a distinct source protected from later feedback.
+            from . import bulkgate
+            _truncation_quality = bulkgate.is_truncated(finish)
             _calls_db().execute(
                 "INSERT INTO calls (id,ts,chain,intent,caller,provider,model,kind,in_tok,out_tok,"
                 "cost,latency,prompt_hash,prompt_snip,output_snip,finish,executor,project,effort,suspect,"
-                "outcome,http_status,provider_error,retry_after,attempts,disposition,retry_of,fell_from,"
+                "quality,quality_src,quality_conf,outcome,http_status,provider_error,retry_after,attempts,disposition,retry_of,fell_from,"
                 "call_class,origin_session,requested_model,served_model,resolved_lane,redirect_reason) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (cid, ts, chain, intent, who or ctx.get("who") or caller(), provider, model, kind,
                  int(in_tok or 0), int(out_tok or 0), float(cost or 0), latency, ph, psnip, osnip, finish,
                  executor, proj, (effort or None), suspect,
+                 ("bad" if _truncation_quality else None), ("truncation" if _truncation_quality else None),
+                 (1.0 if _truncation_quality else None),
                  (outcome or None),
                  (int(http_status) if str(http_status or "").strip().isdigit() else None),
                  (provider_error[:1000] if isinstance(provider_error, str) else None),
@@ -559,7 +565,7 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
 
 
 
-_CONF = {"explicit": 1.0, "judge": 0.95, "used": 0.6, "mined": 0.5}
+_CONF = {"explicit": 1.0, "truncation": 1.0, "judge": 0.95, "used": 0.6, "mined": 0.5}
 
 
 def feedback(call_id: Optional[str], ok: bool = True, source: str = "explicit",
@@ -571,7 +577,7 @@ def feedback(call_id: Optional[str], ok: bool = True, source: str = "explicit",
     conf = confidence if confidence is not None else _CONF.get(source, 0.7)
     try:
         with _lock:
-            _calls_db().execute("UPDATE calls SET quality=?, quality_src=?, quality_conf=? WHERE id=?",
+            _calls_db().execute("UPDATE calls SET quality=?, quality_src=?, quality_conf=? WHERE id=? AND COALESCE(quality_src,'') != 'truncation'",
                           ("good" if ok else "bad", source, conf, call_id))
             _calls_db().commit()
     except Exception:
@@ -631,7 +637,9 @@ def _link_used(chain, current_prompt):
                 # mislabelling unrelated outputs 'used'. Requiring the whole snippet to reappear, and skipping short
                 # boilerplate, keeps the signal specific. (Still a low-confidence 0.6 'used' label, never authoritative.)
                 if out and len(out) >= 40 and out in current_prompt:
-                    _calls_db().execute("UPDATE calls SET quality='good', quality_src='used', quality_conf=0.6 WHERE id=?", (cid,))
+                    # NB: single string literal (not concatenated) so the static SQL index audit can see the
+                    # WHERE id=? and read it as the PK seek it is, not a full-table scan (tests/test_sql_index_audit).
+                    _calls_db().execute("UPDATE calls SET quality='good', quality_src='used', quality_conf=0.6 WHERE id=? AND COALESCE(quality_src,'') != 'truncation'", (cid,))
             _calls_db().commit()
     except Exception:
         config.rollback_ledger_conn("calls")   # clear a dangling txn from the failed write on the reused pooled conn
