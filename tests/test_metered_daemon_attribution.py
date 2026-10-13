@@ -103,13 +103,13 @@ fails += report_check("the daemon thread saw the caller's intent (not None) on E
 fails += report_check("the daemon carries a REAL caller in ctx['who'] (what record_call uses), not threading.py:run",
                       bool(seen) and all(s["who"] and not str(s["who"]).startswith("threading.py:run") for s in seen))
 
-print("\n-- GROUNDED against the LEDGER: every metered row is tagged and no lane executor is recorded --")
+print("\n-- GROUNDED against the LEDGER: every metered row is tagged and stamped executor='api' (never a lane) --")
 rows = _ledger_rows(INTENT)
 fails += report_check("four realtime rows were recorded", len(rows) == 4)
 fails += report_check("EVERY metered row records the caller's intent (not None / '(none)')",
                       bool(rows) and all(r[0] == INTENT for r in rows))
-fails += report_check("every metered row records executor=NULL (metered API, never a lane)",
-                      bool(rows) and all(r[1] is None for r in rows))
+fails += report_check("every metered row records executor='api' (metered API, never a lane)",
+                      bool(rows) and all(r[1] == "api" for r in rows))
 fails += report_check("no metered row records caller=threading.py:run (the wrong-thread stack walk)",
                       bool(rows) and all(r[2] and not str(r[2]).startswith("threading.py:run") for r in rows))
 

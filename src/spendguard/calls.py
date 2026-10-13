@@ -709,10 +709,13 @@ def mean_out_by_executor_model(intent, call_class=None, origin_session=None):
                 predicates.append("origin_session=?")
                 args.append(origin_session)
             rows = _calls_db().execute(
-                "SELECT COALESCE(NULLIF(executor,''), provider), COALESCE(model,'?'), "
+                # metered rows now carry executor='api' (explicit). NULLIF it out too so a metered arm groups by
+                # its PROVIDER (gpt-5 vs claude stay distinct arms), never collapsed into one 'api' bucket; a real
+                # lane keeps its lane name.
+                "SELECT COALESCE(NULLIF(NULLIF(executor,''),'api'), provider), COALESCE(model,'?'), "
                 "COALESCE(AVG(out_tok), 0), COUNT(*) FROM calls "
                 f"WHERE {' AND '.join(predicates)} "
-                "GROUP BY COALESCE(NULLIF(executor,''), provider), model", args).fetchall()
+                "GROUP BY COALESCE(NULLIF(NULLIF(executor,''),'api'), provider), model", args).fetchall()
         for ex, model, avg_out, n in rows:
             out[(ex or "?", model or "?")] = {"mean_out": float(avg_out or 0.0), "n": int(n)}
     except Exception:
@@ -778,7 +781,7 @@ def metered_realtime_by_intent(since):
             rows = _calls_db().execute(
                 "SELECT COALESCE(intent,'(none)'), COALESCE(model,'?'), COUNT(*), COALESCE(SUM(cost),0), "
                 "COALESCE(SUM(in_tok),0), COALESCE(AVG(in_tok),0) FROM calls "
-                "WHERE cost > 0 AND ts >= ? AND COALESCE(NULLIF(executor,''),'')='' AND kind='realtime' "
+                "WHERE cost > 0 AND ts >= ? AND COALESCE(NULLIF(executor,''),'') IN ('','api') AND kind='realtime' "
                 "AND (intent IS NULL OR intent NOT LIKE 'spendguard:%') "
                 "GROUP BY intent, model ORDER BY SUM(cost) DESC", (since,)).fetchall()
         for intent, model, n, usd, in_tok, avg_in in rows:

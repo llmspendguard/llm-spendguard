@@ -795,7 +795,7 @@ def record_accepted_batch_estimate(est):
                    quarantine=bool(est.get("implausible")), basis=budget_basis_estimate())
     if _calls.enabled():                                                          # job-level call-context row
         _calls.record_call(est.get("provider"), est.get("model"), "batch", est["cost"],
-                      in_tok=est.get("in_tok", 0), out_tok=est.get("out_tok", 0))
+                      in_tok=est.get("in_tok", 0), out_tok=est.get("out_tok", 0), executor="api")
 
 
 def _gate_openai_files(kw, args=()):
@@ -1387,7 +1387,7 @@ def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, 
         budget.record_meta(prov, model, cost)
         if _calls.enabled():
             _calls.record_call(prov, model, "realtime", cost, in_tok=in_tok, out_tok=out_tok, latency=latency,
-                          prompt=_prompt_text(kw), output=output, finish=finish, effort=_effort, executor=None)
+                          prompt=_prompt_text(kw), output=output, finish=finish, effort=_effort, executor="api")
         return
     _calls.check_output(output)      # realtime output CONTRACT (no-op unless the flow declared one)
     _rt_record(prov, model, cost, in_tok=in_tok, out_tok=out_tok, cached=cached, basis=basis, per_item_max=per_item_max)
@@ -1402,7 +1402,10 @@ def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, 
     if _calls.enabled():
         _calls.record_call(prov, model, "realtime", cost, in_tok=in_tok, out_tok=out_tok, latency=latency,
                       prompt=_prompt_text(kw), output=output, finish=finish, effort=_effort,
-                      executor=None)   # NULL means metered API; only subscription lanes populate executor
+                      # EXPLICIT 'api' (not NULL): this is the metered realtime path. A lane call records via the
+                      # adapters subscription path with executor=<lane>, so stamping 'api' here makes EVERY row
+                      # classify $0-lane vs cash-metered with no guessing (legacy NULL rows read as metered too).
+                      executor="api")
 
 
 def _stream_out_estimate(model, kw, est_fn):

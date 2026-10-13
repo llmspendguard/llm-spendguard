@@ -50,7 +50,9 @@ def _recent_calls_by_lane(hours=24):
     try:
         import sqlite3
         con = sqlite3.connect(config.db_path())
-        rows = con.execute("SELECT executor, COUNT(*) FROM calls WHERE executor IS NOT NULL AND executor != '' "
+        rows = con.execute("SELECT executor, COUNT(*) FROM calls "
+                           # executor='api' is metered, NOT a subscription lane — keep it out of the per-lane count.
+                           "WHERE executor IS NOT NULL AND executor NOT IN ('', 'api') "
                            "AND ts >= datetime('now', ?) GROUP BY executor", (f"-{int(hours)} hours",)).fetchall()
         con.close()
         return {ex: int(n) for ex, n in rows}
