@@ -47,12 +47,14 @@ check(r, "the codex binary resolves (via resolve_cli, not the stripped PATH)", c
 # THE PROOF: run a real codex prompt under the stripped PATH. Without the fix the shebang's `env node` fails and
 # run_prompt returns {"error": ...}; with the fix node is found next to the binary and codex answers.
 resp = codex_exec.run_prompt("Reply with exactly the token LANE_OK and nothing else.", timeout=150)
+_resp_err = resp.get("error") if isinstance(resp, dict) else resp
+_resp_text = resp.get("text") if isinstance(resp, dict) else None
 check(r, "codex RAN under the stripped PATH — the fix found its co-located node (no 'env: node' failure)",
       isinstance(resp, dict) and not resp.get("error") and bool(resp.get("text")),
-      f"error={resp.get('error') if isinstance(resp, dict) else resp!r}")
+      "error=%r" % (_resp_err,))
 check(r, "codex returned a usable answer containing the expected token",
-      isinstance(resp, dict) and bool(resp.get("text")) and "LANE_OK" in (resp.get("text") or ""),
-      f"text={ (resp.get('text') if isinstance(resp, dict) else resp)!r }")
+      isinstance(resp, dict) and bool(_resp_text) and "LANE_OK" in (_resp_text or ""),
+      "text=%r" % (_resp_text,))
 
 print(f"\n{'OK' if all(r) else '[FAIL]'} test_live_lane_minimal_path")
 sys.exit(0 if all(r) else 1)
