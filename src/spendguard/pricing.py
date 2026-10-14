@@ -22,6 +22,7 @@ USAGE
 Run `python scripts/pricing.py` to print the table and self-check.
 """
 import re, os, json, datetime
+from typing import Optional
 
 # per 1M tokens: realtime in/out, cached input, batch in/out  (batch == 50% of realtime).
 # This dict is the FALLBACK / source-of-record for the shipped prices.json. At runtime
@@ -743,12 +744,61 @@ def _vendor_qualified(m, provider=None, exact_only=False):
         return None
     rates = {_rate_key(v) for v in cands.values()}
     if len(rates) > 1:
-        raise KeyError(
+        raise PriceUnknownError(
             f"Ambiguous price for {m!r}: vendors {sorted(k.split('/')[0] for k in cands)} publish DIFFERENT "
             f"rates. Pass the provider (`provider:{m}` / provider=) so the right one is billed — spendguard "
-            f"will not pick for you."
+            f"will not pick for you. Add an authoritative price to src/spendguard/model_catalog.json (the SSOT)."
         )
     return next(iter(cands.values()))
+
+
+class PriceUnknownError(KeyError):
+    """No authoritative catalog price or unambiguous breadth price exists."""
+
+
+def _semantic_catalog_map(model: str) -> Optional[str]:
+    """Hook for a future cached semantic catalog mapping; never calls an LLM in the hot path."""
+    return None
+
+
+def _catalog_price(model: str) -> Optional[dict]:
+    """Resolve exact, common variant, then alias ids using only catalog rates and providers. Returns the
+    pricing-layer dict shape — provenance under `_source` (the key the breadth layer and every consumer read),
+    provider from the catalog record — or None when the catalog has no USABLE rate for the id (a price_error /
+    ceiling-only entry has no `in_`), so the caller falls through to the breadth/fallback path unchanged."""
+    from . import model_catalog
+
+    def _norm_price_row(p, provider):
+        if not p or p.get("in_") is None:          # catalog entry with no usable rate (price_error/ceiling-only)
+            return None
+        row = dict(p)
+        if row.get("source") and not row.get("_source"):
+            row["_source"] = row.pop("source")      # catalog authors `source`; the pricing layer reads `_source`
+        row["provider"] = provider
+        return row
+
+    candidate = model
+    while True:
+        row = _norm_price_row(model_catalog.model_price(candidate),
+                              (model_catalog.model_record(candidate) or {}).get("provider"))
+        if row:
+            return row
+        base = re.sub(r"-(?:\d{4}-\d{2}-\d{2}|\d{8}|preview|latest|v\d+)$", "", candidate)
+        if base == candidate:
+            break
+        candidate = base
+    for mid, rec in model_catalog.all_records().items():
+        if model in (rec.get("aliases") or []):
+            row = _norm_price_row(model_catalog.model_price(mid), rec["provider"])
+            if row:
+                return row
+    mapped = _semantic_catalog_map(model)
+    if mapped:
+        row = _norm_price_row(model_catalog.model_price(mapped),
+                              (model_catalog.model_record(mapped) or {}).get("provider"))
+        if row:
+            return row
+    return None
 
 
 def price(model: str, provider: str = None) -> dict:
@@ -770,6 +820,9 @@ def price(model: str, provider: str = None) -> dict:
     # total is built from, and nothing about it looks wrong.
     if ":" in model and not model.startswith("ft:"):
         provider, model = model.split(":", 1)     # 'provider:model' form carries its own answer — KEEP it
+    catalog = _catalog_price(model)
+    if catalog and (not provider or catalog["provider"] == provider):
+        return catalog
     if provider:
         v = _vendor_qualified(model, provider, exact_only=True)
         if v:
@@ -796,15 +849,15 @@ def price(model: str, provider: str = None) -> dict:
         for k in PRICING:
             if k.startswith(m + "-"):
                 return PRICING[k]
-        raise KeyError(
+        raise PriceUnknownError(
             f"No price for fine-tuned model {model!r} (looked for {m!r} and dated variants). "
             f"Run `spendguard sync-prices` (the LiteLLM layer carries ft rates) or add it with a source — "
             f"the BASE price is NOT a substitute (ft inference bills above base)."
         )
-    raise KeyError(
-        f"No canonical price for model {model!r} (normalized {m!r}, vendor-qualified lookups tried). "
-        f"Run `spendguard sync-prices` (2,400+ models incl. most vendor-hosted ids), or add it to prices.json "
-        f"WITH A SOURCE — DO NOT guess a price."
+    raise PriceUnknownError(
+        f"cannot price {model!r}: not in the model_catalog SSOT, no variant/alias match, and no unambiguous "
+        f"fallback price. Add it to src/spendguard/model_catalog.json (the SSOT) WITH A SOURCE — DO NOT guess a "
+        f"price — or run `spendguard sync-prices` if it is a vendor-hosted breadth id the LiteLLM layer carries."
     )
 
 
