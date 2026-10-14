@@ -63,7 +63,8 @@ def _finish(result):
         ch = getattr(result, "choices", None)
         if ch:
             return getattr(ch[0], "finish_reason", None)
-        return getattr(result, "stop_reason", None)
+        details = getattr(result, "incomplete_details", None)
+        return getattr(result, "stop_reason", None) or getattr(details, "reason", None)
     except Exception:
         return None
 
@@ -1048,6 +1049,21 @@ def _rt_precheck(provider, model, in_tok, est_out):
     try:
         # pass provider: a bare model id hosted by several vendors prices to the WRONG vendor without it (pricing._vendor_qualified)
         est = pricing.realtime_cost(model, in_tok, est_out, provider=provider) if model else 0.0
+    except pricing.PriceUnknownError as e:
+        if not _allow():
+            _emit({"kind": "realtime", "provider": provider, "model": model, "cost": None,
+                   "decision": "refused_unpriced"})
+            raise SpendGateRefused(
+                f"Model {model!r} is not in the model_catalog SSOT and could not be mapped to a known model. "
+                "An unknown unmappable model hard-fails rather than spending an unknown amount. "
+                "Add it to src/spendguard/model_catalog.json WITH A SOURCE (or alias / semantic-map it to a "
+                "known id), or set GATE_ALLOW=1 to proceed UNPRICED."
+            ) from e
+        import warnings as _w
+        _w.warn("[spend_gate] realtime precheck could NOT price %r — proceeding UNPRICED under GATE_ALLOW=1 "
+                "(budget precheck skipped; actual usage recorded UNPRICED post-call by _record_rt)."
+                % model, stacklevel=2)
+        est = 0.0
     except Exception as e:
         if is_deliberate_stop(e):
             raise                                  # a spend refusal is never downgraded to a silent $0 estimate
@@ -1090,7 +1106,8 @@ def _rt_precheck_usd(provider, model, est):
     try:                                              # REALTIME BURST test-first gate — a loop of realtime calls is the
         from . import bulkgate                        # discouraged alternative to Batch; same estimate+test-first rule.
         if not intent.startswith("spendguard:"):
-            bulkgate.check_realtime(bulkgate.sig(model or "", template_id=intent or None), model or "", est)
+            bulkgate.check_realtime(bulkgate.sig(model or "", template_id=intent or None), model or "", est,
+                                    batch_eligible=bool((_calls.current() or {}).get("batch_eligible")))
     except bulkgate.GateBlocked:
         raise                                         # untested burst in block mode → stop the loop
     except Exception:
@@ -1141,6 +1158,23 @@ def _usage_bearer(result):
         except Exception:
             return result
     return result
+
+
+def _rt_reasoning_report(result):
+    """Only provider-reported counts; absent thinking usage stays unknown, never estimated."""
+    bearer = _usage_bearer(result)
+    usage = getattr(bearer, "usage", None) or getattr(bearer, "usage_metadata", None)
+    def read_reasoning_field(obj, name):
+        return obj.get(name) if isinstance(obj, dict) else getattr(obj, name, None)
+    for detail in ("output_tokens_details", "completion_tokens_details"):
+        value = read_reasoning_field(read_reasoning_field(usage, detail), "reasoning_tokens")
+        if value is not None:
+            return int(value)
+    for field in ("reasoning_tokens", "thinking_tokens", "thoughts_token_count", "thoughtsTokenCount"):
+        value = read_reasoning_field(usage, field)
+        if value is not None:
+            return int(value)
+    return None
 
 
 def _act_oai_chat(result):
@@ -1320,7 +1354,7 @@ def _provider_of(model):
 
 
 def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, finish=None, cost=None,
-               provider=None, basis=None, per_item_max=None, cache_creation=0):
+               provider=None, basis=None, per_item_max=None, cache_creation=0, reasoning_tokens=None):
     """Record ONE realtime call's usage → cost · cross-process ledger · max_tokens truncation telemetry · call log.
     Shared by _rt_account (non-stream), the streaming proxy (ACTUAL usage as the stream is consumed), and the
     provider-breadth adapters (LiteLLM / Bedrock / Vertex). `cost` lets a caller supply an authoritative price (e.g.
@@ -1396,7 +1430,10 @@ def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, 
         _intent = (_calls.current().get("intent") or "").strip()
         if not _intent.startswith("spendguard:"):
             bulkgate.note_response(bulkgate.sig(model or "", template_id=_intent or None),
-                                   model or "", out_tok, kw.get("max_tokens"), finish)
+                                   model or "", out_tok,
+                                   kw.get("max_tokens") or kw.get("max_completion_tokens") or kw.get("max_output_tokens"),
+                                   finish, reasoning_tokens=reasoning_tokens,
+                                   visible_tokens=max(0, out_tok - reasoning_tokens) if reasoning_tokens is not None else None)
     except Exception:
         pass
     if _calls.enabled():
@@ -1449,7 +1486,7 @@ def _rt_account(model, kw, result, est_fn, act_fn, latency=None):
         # input so the impossibility rail checks per-item, not the sum (a 1000-string batch is legitimate).
         pim = _embed_per_item_max(kw) if est_fn is _est_oai_embeddings else None
         _record_rt(model, kw, in_tok, out_tok, _cached_in(result), latency, _output_text(result), _finish(result),
-                   basis=basis, per_item_max=pim, cache_creation=_cache_creation(result))
+                   basis=basis, per_item_max=pim, cache_creation=_cache_creation(result), reasoning_tokens=_rt_reasoning_report(result))
         _record_tool_fees(model, kw, result)
     except Exception as e:
         print(f"[spend_gate] WARN real-time accounting failed ({e})", file=sys.stderr)
@@ -1501,6 +1538,12 @@ def _pull_usage(chunk, acc):
     include_usage), OpenAI Responses' `.response.usage`, Anthropic's message_start (input) + message_delta (output) —
     plus the finish/stop reason. Best-effort: unknown chunk shapes are ignored (fail-open)."""
     try:
+        reported = _rt_reasoning_report(getattr(chunk, "response", None) or chunk)
+        if reported is not None:
+            acc["reasoning_tokens"] = reported
+        response = getattr(chunk, "response", None)
+        if response is not None and _finish(response):
+            acc["finish"] = _finish(response)
         u = getattr(chunk, "usage", None)                    # OpenAI chat final chunk / Anthropic message_delta
         if u is not None:
             for src, dst in (("prompt_tokens", "in"), ("input_tokens", "in"),
@@ -1556,7 +1599,7 @@ def _observe_stream(stream, model, kw, est_fn, t0, is_async):
             if acc.get("in") or acc.get("out"):
                 _record_rt(model, kw, acc.get("in", 0), acc.get("out", 0), acc.get("cached", 0),
                            time.time() - t0, finish=acc.get("finish"), basis=budget_basis_billed(),
-                           cache_creation=acc.get("cache_creation", 0))
+                           cache_creation=acc.get("cache_creation", 0), reasoning_tokens=acc.get("reasoning_tokens"))
             else:                                            # usage not emitted (e.g. include_usage off) → estimate
                 in_tok, out_tok = _stream_out_estimate(model, kw, est_fn)
                 _record_rt(model, kw, in_tok, out_tok, 0, time.time() - t0, basis=budget_basis_estimate())

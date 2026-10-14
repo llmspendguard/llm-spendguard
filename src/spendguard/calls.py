@@ -54,8 +54,10 @@ def set_context(intent: Optional[str] = None, chain: Optional[str] = None, who: 
                 call_class: Optional[str] = None, origin_session: Optional[str] = None,
                 defer_batch_booking: Optional[bool] = None, requested_model: Optional[str] = None,
                 redirect_reason: Optional[str] = None, resolved_lane: Optional[str] = None,
-                measurement: Optional[bool] = None, gen_params: Optional[dict] = None) -> None:
+                measurement: Optional[bool] = None, gen_params: Optional[dict] = None, batch_eligible: Optional[bool] = None) -> None:
     c = dict(current())
+    if batch_eligible is not None:
+        c["batch_eligible"] = bool(batch_eligible)
     if intent is not None:
         c["intent"] = intent
     if measurement is not None:
@@ -172,19 +174,22 @@ def recorded_intents(min_calls=1, limit=200):
 
 
 @contextlib.contextmanager
-def context(intent: Optional[str] = None, chain: Optional[str] = None, contract=None):
+def context(intent: Optional[str] = None, chain: Optional[str] = None, contract=None, *, batch_eligible=False):
     """`with spendguard.context(intent='loinc-typing', chain='run-42'): ...` tags the calls inside.
 
     On exit it emits a per-FLOW spend receipt (what ran · tokens · est→actual · running tally) — see receipt.py.
     The receipt is verbosity-gated, goes to stderr, and is fully guarded: it NEVER raises into your code.
 
+    `batch_eligible=True` explicitly declares non-interactive, independent one-shot work; the burst guard
+    offers the existing Batch dry-run/approval path. Model-specific signatures keep distinct models separate.
     `contract` gives a REALTIME loop the check a batch already gets: every response is validated against the
     declared shape as it is recorded, and the flow reports how many parsed. The batch gate could refuse before
     spending; a realtime loop cannot — the money is gone call by call — so this reports EARLY and LOUDLY rather
     than gating. The failure it catches is the one that costs: call 1 parses, call 400 comes back with a
     sentence before the JSON, and the loop keeps paying. See output_contract for the accepted forms."""
     prev = getattr(_local, "ctx", None)
-    set_context(intent=intent, chain=chain)
+    set_context(intent=intent, chain=chain, batch_eligible=batch_eligible)
+    _local.ctx["bounded_structured"] = contract is not None
     prev_contract = getattr(_local, "contract", None)
     prev_tally = getattr(_local, "contract_tally", None)
     _local.contract = contract
