@@ -1026,6 +1026,30 @@ def register_client(remove=False):
     return 0
 
 
+def _prewarm_codex_daemon():
+    try:
+        import threading
+
+        from . import codex_daemon, codex_exec
+
+        if not codex_exec._daemon_enabled():
+            return
+
+        def _run():
+            try:
+                codex_daemon.ensure_running()
+                print("[spendguard] codex app-server daemon pre-warmed", file=sys.stderr, flush=True)
+            except Exception as err:
+                print(f"[spendguard] codex daemon pre-warm failed (non-fatal): {str(err)[:80]}",
+                      file=sys.stderr, flush=True)
+
+        print("[spendguard] pre-warming codex app-server daemon (background)…", file=sys.stderr, flush=True)
+        threading.Thread(target=_run, daemon=True).start()
+    except Exception as err:
+        print(f"[spendguard] codex daemon pre-warm failed (non-fatal): {str(err)[:80]}",
+              file=sys.stderr, flush=True)
+
+
 def serve_http(host="127.0.0.1", port=4913):
     """MCP over HTTP (stdlib, stateless POST /mcp → the SAME handle() the stdio transport uses) — one WARM daemon every
     session CONNECTS to via urllib instead of spawning a `spendguard mcp` stdio copy per session (the per-session
@@ -1069,6 +1093,7 @@ def serve_http(host="127.0.0.1", port=4913):
             except Exception:
                 pass
 
+    _prewarm_codex_daemon()
     ThreadingHTTPServer((host, port), _Handler).serve_forever()
 
 
