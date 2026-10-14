@@ -2454,6 +2454,13 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             if not isinstance(_s, dict):               # a non-dict is also a broken contract → treat it as an error
                 _s = {"error": f"{lane_name} lane returned {type(_s).__name__}, not a result dict"}
             return _s
+        try:                                          # count once per logical lane call, never on the transient retry
+            from . import bulkgate, calls
+            intent = (calls.current().get("intent") or "")
+            if not intent.startswith("spendguard:"):
+                bulkgate.check_realtime(bulkgate.sig(raw or "", template_id=intent or None), raw or "", never_block=True)
+        except Exception:
+            pass                                      # fail-open — a burst nudge must never break a legit lane call
         s = _call_lane()
         # ON-LANE TRANSIENT RETRY before spilling to PAID metered: a lane that has PROVEN it can answer a prompt this
         # SIZE (a watermark FACT, never the error string) but failed THIS time is likely a momentary blip (plan

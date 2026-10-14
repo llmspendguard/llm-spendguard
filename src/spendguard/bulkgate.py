@@ -1003,7 +1003,7 @@ def rt_window_sec():
     return _gate_setting("rt_window_sec", 600.0, float)   # rolling window (default 10 min) for "a burst of same-sig calls"
 
 
-def check_realtime(sig, model, est_usd=0.0, force=False):
+def check_realtime(sig, model, est_usd=0.0, force=False, never_block=False):
     """Realtime BURST gate — a LOOP of realtime calls is the discouraged alternative to the Batch API and must obey the
     same estimate+test-first rule. Track per-sig calls in a rolling in-process window; the first `preview_max` are the
     allowed TEST sample, beyond that the burst needs a FRESH estimate + verified test (delegates to check_bulk on the
@@ -1018,6 +1018,14 @@ def check_realtime(sig, model, est_usd=0.0, force=False):
         n = len(w)
     if n <= preview_max():
         return "preview"                                         # still within the allowed test sample
+    if never_block:                                              # $0 lanes count, but only nudge — never block
+        if now - _rt_warned.get(sig, 0) >= rt_window_sec():
+            import sys
+            _rt_warned[sig] = now
+            print(f"[bulkgate] REALTIME BURST on {sig} ({model}): {n} realtime calls in {rt_window_sec():.0f}s "
+                  "on a $0 lane — a loop of realtime calls is the discouraged alternative to the Batch API; "
+                  "use the Batch API or bulkgate.gated_batch / bulk_delegate for a job this size.", file=sys.stderr)
+        return "allow:lane-warn"
     if mode() == "warn":                                         # warn-mode dedup: log/record the burst ONCE per window
         last = _rt_warned.get(sig, 0)
         if now - last < rt_window_sec():
