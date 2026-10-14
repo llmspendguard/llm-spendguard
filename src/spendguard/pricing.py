@@ -768,7 +768,7 @@ def _catalog_price(model: str) -> Optional[dict]:
     ceiling-only entry has no `in_`), so the caller falls through to the breadth/fallback path unchanged."""
     from . import model_catalog
 
-    def _norm(p, provider):
+    def _norm_price_row(p, provider):
         if not p or p.get("in_") is None:          # catalog entry with no usable rate (price_error/ceiling-only)
             return None
         row = dict(p)
@@ -779,8 +779,8 @@ def _catalog_price(model: str) -> Optional[dict]:
 
     candidate = model
     while True:
-        row = _norm(model_catalog.model_price(candidate),
-                    (model_catalog.model_record(candidate) or {}).get("provider"))
+        row = _norm_price_row(model_catalog.model_price(candidate),
+                              (model_catalog.model_record(candidate) or {}).get("provider"))
         if row:
             return row
         base = re.sub(r"-(?:\d{4}-\d{2}-\d{2}|\d{8}|preview|latest|v\d+)$", "", candidate)
@@ -789,13 +789,13 @@ def _catalog_price(model: str) -> Optional[dict]:
         candidate = base
     for mid, rec in model_catalog.all_records().items():
         if model in (rec.get("aliases") or []):
-            row = _norm(model_catalog.model_price(mid), rec["provider"])
+            row = _norm_price_row(model_catalog.model_price(mid), rec["provider"])
             if row:
                 return row
     mapped = _semantic_catalog_map(model)
     if mapped:
-        row = _norm(model_catalog.model_price(mapped),
-                    (model_catalog.model_record(mapped) or {}).get("provider"))
+        row = _norm_price_row(model_catalog.model_price(mapped),
+                              (model_catalog.model_record(mapped) or {}).get("provider"))
         if row:
             return row
     return None
