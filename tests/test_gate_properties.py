@@ -10,6 +10,7 @@ properties no matter what:
 Hypothesis drives random kwargs, random injected helper failures, and random stream shapes through the real
 wrappers (`_wrap_rt` realtime + `_wrap` batch), sync and async. Offline, mocked, zero spend."""
 import os, sys, tempfile, asyncio
+from unittest import mock
 
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
@@ -72,7 +73,11 @@ def p_passthrough(kw, is_async):
     if is_async:
         async def orig(self, *a, **k): return sentinel  # noqa: F811
     w = gate._wrap_rt(orig, est_ok, act_ok, is_async)
-    assert run(w, is_async, **dict(kw)) is sentinel, "gate altered the non-stream result"
+    # The "" / "weird/model:1" fuzz ids are unpriceable, which now triggers a DELIBERATE pricing refusal
+    # (SpendGateRefused) — permitted by invariant #2 and covered by p_enforcement_propagates +
+    # test_gate_unpriced_hardfail. This property asserts PASSTHROUGH for a PERMITTED call, so allow spend.
+    with mock.patch.dict(os.environ, {"GATE_ALLOW": "1"}):
+        assert run(w, is_async, **dict(kw)) is sentinel, "gate altered the non-stream result"
 
 # ── 2. FAIL-OPEN pre-call: a bug in est_fn / precheck must NOT break the call ──
 @given(kw=kw_strat(), is_async=st.booleans(), where=st.sampled_from(["est", "precheck"]))
@@ -109,7 +114,10 @@ def p_failopen_postcall(kw, is_async, where):
         else:
             gate._record_rt = boom
         w = gate._wrap_rt(orig, est_ok, act_ok, is_async)
-        assert run(w, is_async, **dict(kw)) is sentinel, "a post-call gate bug broke the call"
+        # Reach the post-call stage for every fuzz id: an unpriceable model would otherwise refuse PRE-call
+        # (a deliberate, separately-tested decision), never exercising the post-call fail-open this asserts.
+        with mock.patch.dict(os.environ, {"GATE_ALLOW": "1"}):
+            assert run(w, is_async, **dict(kw)) is sentinel, "a post-call gate bug broke the call"
     finally:
         gate._rt_account, gate._record_rt = saved_acc, saved_rec
 
