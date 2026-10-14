@@ -1048,6 +1048,21 @@ def _rt_precheck(provider, model, in_tok, est_out):
     try:
         # pass provider: a bare model id hosted by several vendors prices to the WRONG vendor without it (pricing._vendor_qualified)
         est = pricing.realtime_cost(model, in_tok, est_out, provider=provider) if model else 0.0
+    except pricing.PriceUnknownError as e:
+        if not _allow():
+            _emit({"kind": "realtime", "provider": provider, "model": model, "cost": None,
+                   "decision": "refused_unpriced"})
+            raise SpendGateRefused(
+                f"Model {model!r} is not in the model_catalog SSOT and could not be mapped to a known model. "
+                "An unknown unmappable model hard-fails rather than spending an unknown amount. "
+                "Add it to src/spendguard/model_catalog.json WITH A SOURCE (or alias / semantic-map it to a "
+                "known id), or set GATE_ALLOW=1 to proceed UNPRICED."
+            ) from e
+        import warnings as _w
+        _w.warn("[spend_gate] realtime precheck could NOT price %r — proceeding UNPRICED under GATE_ALLOW=1 "
+                "(budget precheck skipped; actual usage recorded UNPRICED post-call by _record_rt)."
+                % model, stacklevel=2)
+        est = 0.0
     except Exception as e:
         if is_deliberate_stop(e):
             raise                                  # a spend refusal is never downgraded to a silent $0 estimate
