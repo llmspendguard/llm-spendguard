@@ -3246,7 +3246,12 @@ MAX_TOKEN_CEILING = 128_000      # OUTPUT: absolute stop for the doubling retry 
 _MIN_LEARNED_MAX_OUTPUT = 1_024
 
 
-def output_budget(model, requested=None, internal_tiny=False, vendor=None):
+REASONING_VISIBLE_RESERVE = 1024
+BOUNDED_REASONING_OUTPUT_FLOOR = TOKEN_FLOOR   # the bounded-reasoning floor IS the output floor; reuse the skew-safe
+#                                                constant above (never a bare pricing.OUTPUT_FLOOR — it crashes a stale import)
+
+
+def output_budget(model, requested=None, internal_tiny=False, vendor=None, bounded_structured=False):
     """CANONICAL HOME for the OUTPUT max_tokens SENT on a call (docs/CANONICAL_CONCERNS.json: output_budget). No caller
     decides this — spendguard does. The budget IS the model's CEILING (pricing.output_ceiling: the real published max, or
     the 32K OUTPUT_FLOOR when unknown). Why: max_output is a CEILING billed on ACTUAL tokens generated — a high ceiling
@@ -3270,6 +3275,17 @@ def output_budget(model, requested=None, internal_tiny=False, vendor=None):
     # conservative, no-truncation-below-floor default that is also safe for a no-heal lane (which can't recover a 400 on
     # an over-large budget). Publishing the real max (the price data) is how an unknown model earns a higher ceiling.
     ceiling = int(pricing.output_ceiling(vendor, model, TOKEN_FLOOR))
+    from . import calls as _budget_context
+    bounded_structured = bounded_structured or bool(_budget_context.current().get("bounded_structured"))
+    if bounded_structured and not internal_tiny:
+        from . import models
+        if models.reasons_by_default(model) or models.profile(model.split(":")[-1]).get("reasoning_effort_ok"):
+            floor = int(config._cfg_get("bulkgate", "bounded_reasoning_output_floor", BOUNDED_REASONING_OUTPUT_FLOOR))
+            from . import bulkgate
+            required = max(floor, bulkgate._reasoning_out_estimate() + REASONING_VISIBLE_RESERVE)
+            if ceiling < required:
+                raise ValueError(f"{model}: output ceiling {ceiling} cannot reserve bounded reasoning budget {required}; "
+                                 "use a model with more output headroom or lower reasoning effort")
     if internal_tiny and requested is not None:
         try:
             return max(1, min(int(requested), ceiling))   # a deliberate tiny probe: respect it, never exceed the ceiling
@@ -3510,7 +3526,11 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
     # reasoning-floor / clamp branches all collapse into this one call. An internal tiny probe keeps its deliberate value.
     if _explicit and not _internal_tiny:
         _warn_once_caller_maxtokens(sig or model, int(max_tokens))    # caller cap IGNORED — spendguard sets the ceiling
-    max_tokens = output_budget(model, requested=max_tokens, internal_tiny=_internal_tiny)
+    from . import calls as _bounded_context
+    if (kw.get("schema") or _bounded_context.current().get("bounded_structured")) and kw.get("reasoning") is None and not _internal_tiny:
+        kw["reasoning"] = "minimal"  # bounded structured work uses the provider-normalized lowest effort
+    max_tokens = output_budget(model, requested=max_tokens, internal_tiny=_internal_tiny,
+                               bounded_structured=bool(kw.get("schema") or kw.get("contract")))
     _cap = output_budget(model)                     # the doubling ladder's upper bound == the ceiling; a truncation AT it
     #                                                 means the output genuinely exceeds the model max (the jumbo case)
     attempt, budget = 0, int(max_tokens)

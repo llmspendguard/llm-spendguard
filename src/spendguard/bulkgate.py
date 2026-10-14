@@ -344,6 +344,10 @@ def _gate_calls_db():
     # entirely while three other vendors reported on it.
     if "in_chars" not in [r[1] for r in db.execute("PRAGMA table_info(gate_latency)")]:
         db.execute("ALTER TABLE gate_latency ADD COLUMN in_chars INTEGER DEFAULT 0")
+    for column, dtype in (("reasoning_tokens", "INTEGER"), ("visible_tokens", "INTEGER"),
+                          ("disposition", "TEXT")):
+        if column not in [r[1] for r in db.execute("PRAGMA table_info(gate_calls)")]:
+            db.execute(f"ALTER TABLE gate_calls ADD COLUMN {column} {dtype}")
     return db
 
 
@@ -441,7 +445,13 @@ def latency(sig=None, model=None, near_chars=None):
             "floor": max(hits) if hits else None}
 
 
-def note_response(sig, model, out_tok, max_tokens=None, finish_reason=None, n_items=1):
+REASONING_VISIBLE_MINIMUM = 32
+REASONING_BUDGET_SHARE = 0.5
+REASONING_VISIBLE_RATIO = 8
+
+
+def note_response(sig, model, out_tok, max_tokens=None, finish_reason=None, n_items=1,
+                  reasoning_tokens=None, visible_tokens=None):
     """Record one response's output size + whether it TRUNCATED, keyed by call-class sig. Truncation → loud warning
     (you paid for input + a cut-off output and got corrupt data) + a per-sig count; the sizes feed maxtokens() bounds.
     The single place that sees both sides of every call → every repo protected automatically.
@@ -454,13 +464,27 @@ def note_response(sig, model, out_tok, max_tokens=None, finish_reason=None, n_it
     n = max(1, int(n_items or 1))
     per_item = int(int(out_tok or 0) / n)
     trunc = is_truncated(finish_reason, per_item, max_tokens)
+    visible = per_item if visible_tokens is None else int(visible_tokens)
+    starved = ((finish_reason or "").lower() in ("length", "max_tokens")
+               and visible < REASONING_VISIBLE_MINIMUM and bool(max_tokens)
+               and (reasoning_tokens is None or
+                    (reasoning_tokens >= int(max_tokens) * REASONING_BUDGET_SHARE
+                     and reasoning_tokens > visible * REASONING_VISIBLE_RATIO)))
     try:
         with _lock:
-            _gate_calls_db().execute("INSERT INTO gate_calls (sig,model,out_tok,max_tokens,truncated,ts) VALUES (?,?,?,?,?,?)",
-                                (sig, model, per_item, int(max_tokens or 0), int(trunc), time.time()))
+            _gate_calls_db().execute("INSERT INTO gate_calls (sig,model,out_tok,max_tokens,truncated,ts,reasoning_tokens,visible_tokens,disposition) "
+                                    "VALUES (?,?,?,?,?,?,?,?,?)",
+                                (sig, model, per_item, int(max_tokens or 0), int(trunc), time.time(),
+                                 reasoning_tokens, visible, "reasoning_starved" if starved else None))
             _gate_db().commit()
     except Exception:
         pass
+    if starved:
+        from .gate import _warn_once
+        evidence = "provider did not report reasoning tokens; weaker truncation signal" if reasoning_tokens is None else "reported"
+        _warn_once(f"[spendguard] REASONING_STARVED {model}: visible={visible}, reasoning={reasoning_tokens}, "
+                   f"output budget={max_tokens}, finish={finish_reason} ({evidence}). INCOMPLETE answer: "
+                   "raise the output budget / lower reasoning effort for this intent.")
     if trunc:
         _warn_truncated(sig, model, per_item, max_tokens)
     return trunc
@@ -1003,7 +1027,7 @@ def rt_window_sec():
     return _gate_setting("rt_window_sec", 600.0, float)   # rolling window (default 10 min) for "a burst of same-sig calls"
 
 
-def check_realtime(sig, model, est_usd=0.0, force=False, never_block=False):
+def check_realtime(sig, model, est_usd=0.0, force=False, never_block=False, *, batch_eligible=False):
     """Realtime BURST gate — a LOOP of realtime calls is the discouraged alternative to the Batch API and must obey the
     same estimate+test-first rule. Track per-sig calls in a rolling in-process window; the first `preview_max` are the
     allowed TEST sample, beyond that the burst needs a FRESH estimate + verified test (delegates to check_bulk on the
@@ -1031,6 +1055,14 @@ def check_realtime(sig, model, est_usd=0.0, force=False, never_block=False):
         if now - last < rt_window_sec():
             return "allow:warn"                                  # already flagged this burst — enforce silently
         _rt_warned[sig] = now
+    if batch_eligible:
+        from . import config
+        config.warn_once(f"[spendguard] BATCH HAND-OFF: burst of {n} independent calls on {model}; "
+                         f"realtime estimate ${float(est_usd or 0) * n:.6f} API. "
+                         "Persist the complete task list with ordinals/custom_id='task-<ordinal>' (Anthropic-safe). "
+                         "Run submit.submit_chat_tasks(tasks, model, submit=False) for the exact Batch estimate "
+                         "(Anthropic: submit.submit_message_batch); APPROVE before submit=True. "
+                         "Use batch_tracker.submit_offload for exactly-once submission; collect via callio.")
     return check_bulk(sig, model, n, (float(est_usd or 0.0)) * n, force=force)   # cumulative burst est (block mode stops at the cap)
 
 
