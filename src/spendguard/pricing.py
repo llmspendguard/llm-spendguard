@@ -762,29 +762,42 @@ def _semantic_catalog_map(model: str) -> Optional[str]:
 
 
 def _catalog_price(model: str) -> Optional[dict]:
-    """Resolve exact, common variant, then alias ids using only catalog rates and providers."""
+    """Resolve exact, common variant, then alias ids using only catalog rates and providers. Returns the
+    pricing-layer dict shape — provenance under `_source` (the key the breadth layer and every consumer read),
+    provider from the catalog record — or None when the catalog has no USABLE rate for the id (a price_error /
+    ceiling-only entry has no `in_`), so the caller falls through to the breadth/fallback path unchanged."""
     from . import model_catalog
+
+    def _norm(p, provider):
+        if not p or p.get("in_") is None:          # catalog entry with no usable rate (price_error/ceiling-only)
+            return None
+        row = dict(p)
+        if row.get("source") and not row.get("_source"):
+            row["_source"] = row.pop("source")      # catalog authors `source`; the pricing layer reads `_source`
+        row["provider"] = provider
+        return row
 
     candidate = model
     while True:
-        p = model_catalog.model_price(candidate)
-        if p:
-            rec = model_catalog.model_record(candidate)
-            return dict(p, provider=rec["provider"])
+        row = _norm(model_catalog.model_price(candidate),
+                    (model_catalog.model_record(candidate) or {}).get("provider"))
+        if row:
+            return row
         base = re.sub(r"-(?:\d{4}-\d{2}-\d{2}|\d{8}|preview|latest|v\d+)$", "", candidate)
         if base == candidate:
             break
         candidate = base
     for mid, rec in model_catalog.all_records().items():
         if model in (rec.get("aliases") or []):
-            p = model_catalog.model_price(mid)
-            if p:
-                return dict(p, provider=rec["provider"])
+            row = _norm(model_catalog.model_price(mid), rec["provider"])
+            if row:
+                return row
     mapped = _semantic_catalog_map(model)
     if mapped:
-        p = model_catalog.model_price(mapped)
-        if p:
-            return dict(p, provider=model_catalog.model_record(mapped)["provider"])
+        row = _norm(model_catalog.model_price(mapped),
+                    (model_catalog.model_record(mapped) or {}).get("provider"))
+        if row:
+            return row
     return None
 
 
@@ -842,8 +855,9 @@ def price(model: str, provider: str = None) -> dict:
             f"the BASE price is NOT a substitute (ft inference bills above base)."
         )
     raise PriceUnknownError(
-        f"cannot price {model!r}: not in the model_catalog SSOT, no variant/alias match, and no "
-        f"unambiguous fallback price — add it to src/spendguard/model_catalog.json (the SSOT) before calling it."
+        f"cannot price {model!r}: not in the model_catalog SSOT, no variant/alias match, and no unambiguous "
+        f"fallback price. Add it to src/spendguard/model_catalog.json (the SSOT) WITH A SOURCE — DO NOT guess a "
+        f"price — or run `spendguard sync-prices` if it is a vendor-hosted breadth id the LiteLLM layer carries."
     )
 
 
