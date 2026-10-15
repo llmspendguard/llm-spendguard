@@ -6,7 +6,7 @@ it, a serial caller (or a consumer's own thread pool) blows a provider's tokens/
       paid API to escape a busy lane) and a positive est_tokens (input+output, for TPM pacing);
   (2) a call ALREADY holding a dispatch slot (a bulk_delegate runner acquired first) does NOT re-admit — one admission
       per logical call;
-  (3) governed=True still admits with shed=True (the fan wants throughput — unchanged);
+  (3) governed=True also uses shed=False (paid recovery requires ladder proof);
   (4) an UNLABELLED call (no intent/sig) is not managed-admitted;
   (5) dispatch.manage_all OFF → a serial call is not admitted (the kill switch works).
 Hermetic: dispatch.admit + _call_guarded + the resolver stubbed; routing off; no network."""
@@ -68,7 +68,7 @@ try:
     print("-- (3) governed=True still admits with shed=True (a fan wants shed-to-metered throughput) --")
     _admits.clear()
     adapters.call("openai:gpt-x", "p", sig="adm:test", governed=True)
-    ck("governed=True admits with shed=True", len(_admits) == 1 and _admits[0]["shed"] is True)
+    ck("governed=True waits on free lanes; paid recovery requires proof", len(_admits) == 1 and _admits[0]["shed"] is False)
 
     # ── (4) unlabelled call → not managed-admitted ──
     print("-- (4) an UNLABELLED call (no intent/sig) is not managed-admitted --")

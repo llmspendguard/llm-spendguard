@@ -61,6 +61,9 @@ def test_script(script):
     env = dict(os.environ)
     env["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-pytest-")
     env["SPENDGUARD_TEST_ISOLATED"] = "1"            # tests skip their own re-exec; use this isolated home
+    # Deterministic short recovery schedules in the offline tier; chaos sets its own timing explicitly.
+    env["SPENDGUARD_LANE_BACKOFF_S"] = "0"
+    env["SPENDGUARD_LANE_QUEUE_DEADLINE_S"] = "0"
     # OFFLINE, ENFORCED: the suite once inherited real provider keys and `doctor`'s leak check silently
     # pulled 30 days of LIVE provider billing inside a "offline" test — 213s of network in one file.
     # A dead proxy makes any accidental external call fail in milliseconds (loud, not slow); localhost

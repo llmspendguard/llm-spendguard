@@ -421,7 +421,7 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
     # destination a lane ERROR reaches in _call_once — burst behaves like isolation); a saturated METERED vendor, or
     # no_metered_fallback, is an honest DEADLINE, never a silent success. It sits at the attribution chokepoint.
     from . import dispatch
-    _adm = dispatch.admit(vendor, model, deadline_s, no_metered_fallback=no_metered_fallback)
+    _adm = dispatch.admit(vendor, model, deadline_s, no_metered_fallback=no_metered_fallback, shed=False)
     if not _adm.ok:
         _adm.release()
         if _ctx is not None:

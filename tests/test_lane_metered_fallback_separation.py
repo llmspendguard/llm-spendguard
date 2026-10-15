@@ -145,7 +145,7 @@ ck("...and nothing was answered or charged (a refusal row, not an answer)", r.ge
 adapters._lane_for = lambda prov: ("deadlane", _DeadLane())    # a failing lane → the reactive different-model path
 r = _run(no_substitution=False, no_metered_fallback=False)
 ck("unpinned (no_substitution=False): measured-quality substitutes are consulted before metered",
-   len(_substitute_queries) == 1)
+   len(_substitute_queries) == 2)  # initial shed and fresh availability check immediately before paid admission
 ck("...and with no confirmed substitute it STILL reaches the same-model metered API", _metered_calls == ["deepseek-v4-flash"] and r.get("executor") == "api")
 
 print(("[OK]" if not fails else "[FAIL]") + " lane/metered fallback separation: %d failure(s)" % len(fails))

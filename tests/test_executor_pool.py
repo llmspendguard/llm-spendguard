@@ -59,8 +59,9 @@ ck("failed lane falls back to the API path (its error, not the lane's; tagged ex
    r.get("executor") == "api" and r.get("error") and "plan window" not in (r.get("error") or ""))
 n = calls_made["codex"]
 r2 = adapters.call("openai:gpt-5.5", "classify…", sig="test:executor-pool")
-ck("cooling lane is SKIPPED (no second lane attempt) → served by the API path",
-   calls_made["codex"] == n and r2.get("executor") == "api")
+ck("cooling lane still confirms recovery before a paid fallback",
+   calls_made["codex"] > n and r2.get("executor") == "api"
+   and any(e["rung"] == "metered_authorized" for e in r2.get("lane_recovery", [])))
 ck("the OTHER lane is unaffected by the cooldown",
    adapters.call("claude-haiku-4-5-20251001", "x", sig="test:executor-pool").get("executor") == "claude-code")
 resource_state._reset()
