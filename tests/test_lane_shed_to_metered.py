@@ -82,10 +82,9 @@ try:
                            purpose="test:shed")
 finally:
     dispatch.release("anthropic", "claude-haiku-4-5")
-ck("a saturated $0 lane did NOT hard-fail with a deadline", res.kind != vendor_call.DEADLINE_EXCEEDED)
-ck("...it SHED to metered and the call completed", res.ok)
-ck("...and the shed forced the metered path (adapters.call metered_only=True)",
-   len(_calls_seen) == 1 and _calls_seen[0]["metered_only"] is True)
+ck("a saturated $0 lane returns a deliberate deadline after waiting", res.kind == vendor_call.DEADLINE_EXCEEDED)
+ck("...it did not silently bill to escape saturation", not res.ok)
+ck("...no paid attempt bypassed the recovery ladder", len(_calls_seen) == 0)
 
 # ── 3. no_metered_fallback is the $0-only contract: a saturated lane stays an HONEST failure, no metered charge ─
 print("\n-- no_metered_fallback: a saturated lane is an honest deadline, never a surprise metered charge --")
