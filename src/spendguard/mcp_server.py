@@ -130,7 +130,9 @@ def _tool_recommend(args):
     if budget is not None and est.get("cost", 0.0) > float(budget):
         return {**est, "refused": True,
                 "note": f"estimate ~${est['cost']:.4f} exceeds budget_usd ${float(budget):.4f} — not run. Raise budget_usd."}
-    return advisor.recommend_models(intent=intent, k=k, quality_bar=qbar, run=True)
+    from . import config
+    with config.scoped_intent_cap((f"{advisor.META}:recommend", f"{advisor.META}:cold-prior"), budget):
+        return advisor.recommend_models(intent=intent, k=k, quality_bar=qbar, run=True)
 
 
 def _tool_bakeoff(args):

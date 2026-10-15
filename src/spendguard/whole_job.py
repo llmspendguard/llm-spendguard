@@ -28,7 +28,7 @@ CONTRACT
 
 Estimate-first, fail-closed on unknown cost, no silent loss, decisions are economics (not regex) — the doctrines apply.
 """
-from . import route_economics
+from . import route_economics, config
 
 
 _REALTIME, _BATCH = "realtime", "batch"
@@ -201,32 +201,33 @@ def run_jobs(jobs, goal=None, checkpoint=None):
     pending_path = checkpoint + ".pending.jsonl"       # durable batch handles (see _persist_pending / load_pending)
     results, pending, batch_failures, persist_failures, ran = {}, [], [], [], 0
     remaining = (float(budget) if budget is not None else None)
-    for entry in planned["plan"]:
-        intent = entry["intent"]
-        items = planned["groups"][intent]
-        did_realtime = False
-        if entry["method"] == _BATCH:
-            pend = _run_batch_group(intent, items, goal, remaining)
-            if pend.get("batch_id"):
-                if not _persist_pending(pending_path, pend):
-                    # the DURABLE-write of this PAID handle failed. It is STILL in `pending` (returned to the caller)
-                    # and in the ledger (submit_chat_tasks recorded the batch), but the file copy did not land — TRACK
-                    # it in the receipt (counted + loud), never swallowed, so the loss is visible and recoverable.
-                    persist_failures.append(pend)
-                pending.append(pend)
-            elif pend.get("eligible"):
-                # batch was ELIGIBLE but the SUBMISSION FAILED (e.g. Batch API outage) — record the failure (never
-                # discard it) AND still get the caller a result by running the group realtime.
-                batch_failures.append({"intent": intent, "error": pend.get("error"), "n": len(items)})
-                did_realtime = True
-            else:
-                did_realtime = True                   # not batch-eligible (non-OpenAI) → realtime is the correct path
-        if entry["method"] != _BATCH or did_realtime:
-            _res = _run_realtime_group(intent, items, goal, remaining, checkpoint)
-            results.update(_res)
-            ran += len(_res)
-        if remaining is not None and entry["est_usd"] is not None:
-            remaining = max(0.0, remaining - entry["est_usd"])
+    with config.scoped_intent_cap(tuple(entry["intent"] for entry in planned["plan"]), budget):
+        for entry in planned["plan"]:
+            intent = entry["intent"]
+            items = planned["groups"][intent]
+            did_realtime = False
+            if entry["method"] == _BATCH:
+                pend = _run_batch_group(intent, items, goal, remaining)
+                if pend.get("batch_id"):
+                    if not _persist_pending(pending_path, pend):
+                        # the DURABLE-write of this PAID handle failed. It is STILL in `pending` (returned to the caller)
+                        # and in the ledger (submit_chat_tasks recorded the batch), but the file copy did not land — TRACK
+                        # it in the receipt (counted + loud), never swallowed, so the loss is visible and recoverable.
+                        persist_failures.append(pend)
+                    pending.append(pend)
+                elif pend.get("eligible"):
+                    # batch was ELIGIBLE but the SUBMISSION FAILED (e.g. Batch API outage) — record the failure (never
+                    # discard it) AND still get the caller a result by running the group realtime.
+                    batch_failures.append({"intent": intent, "error": pend.get("error"), "n": len(items)})
+                    did_realtime = True
+                else:
+                    did_realtime = True                   # not batch-eligible (non-OpenAI) → realtime is the correct path
+            if entry["method"] != _BATCH or did_realtime:
+                _res = _run_realtime_group(intent, items, goal, remaining, checkpoint)
+                results.update(_res)
+                ran += len(_res)
+            if remaining is not None and entry["est_usd"] is not None:
+                remaining = max(0.0, remaining - entry["est_usd"])
     return {"results": results, "pending": pending, "plan": planned["plan"],
             "receipt": {"est_usd": planned["priced_est_usd"], "groups": len(planned["plan"]), "ran": ran,
                         "pending": len(pending), "batch_failures": batch_failures,

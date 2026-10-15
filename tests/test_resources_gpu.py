@@ -9,6 +9,10 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 
 from spendguard import resources
 
+# Offline tests must never scan the operator's real conversation archive.
+from spendguard import conv as _offline_conv
+_offline_conv._DEFAULT_TDIR = tempfile.mkdtemp(prefix="sg-offline-transcripts-")
+
 _REAL_GPU_EXCERPTS = resources._gpu_session_excerpts   # keep a handle: a later test stubs the module attribute
 
 fails = []

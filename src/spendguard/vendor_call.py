@@ -1268,7 +1268,7 @@ def fan_out(vendors, prompt, *, deadline_s, purpose="", system=None, schema=None
 
 
 def first_ok(vendors, prompt, *, deadline_s, need=1, purpose="", system=None, schema=None, max_tokens=None,
-             no_metered_fallback=False, budget_usd=None):
+             no_metered_fallback=False, budget_usd=None, wait_for_inflight=False):
     """Ask all vendors at once; return as soon as `need` of them have ANSWERED. For timeliness, not agreement.
 
     fan_out waits for everybody, so its latency is the SLOWEST vendor's — and one vendor timing out at 180s
@@ -1305,12 +1305,25 @@ def first_ok(vendors, prompt, *, deadline_s, need=1, purpose="", system=None, sc
             results.append(r)
             if r.ok:
                 got.append(r)
-                if len(got) >= max(1, int(need)):
+                if len(got) >= max(1, int(need)) and not wait_for_inflight:
                     break
     except cf.TimeoutError:
         pass
     finally:
-        pool.shutdown(wait=False)                      # stragglers finish and self-record; we stop WAITING
+        # An authorized outer scope must stay installed until queued dispatches finish.
+        # Waiting drains paid work; it never cancels a request.
+        pool.shutdown(wait=wait_for_inflight)
+        if wait_for_inflight:
+            from . import gate
+            for future in futs:
+                try:
+                    outcome = future.result()
+                except gate.deliberate_stop_types():
+                    raise
+                except Exception:
+                    continue
+                if outcome.kind == GATE_REFUSED:
+                    raise gate.SpendGateRefused(outcome.error)
     return {"results": results, "ok": got, "failed": [r for r in results if not r.ok],
             "n": len(vendors), "n_ok": len(got), "need": int(need),
             "complete": len(got) >= max(1, int(need)),
