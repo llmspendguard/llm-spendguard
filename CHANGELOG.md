@@ -13,6 +13,27 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
   rows rather than receiving a fabricated current date. The public read path is the anonymous `/catalog` page and
   `/api/public/catalog`; local standalone operation and optional SaaS telemetry remain separate.
 
+## [0.12.20] — 2026-10-15
+
+### Changed
+- **Structured-output routing is capability-aware — callers no longer set `metered_only=True` for strict schemas.**
+  A strict (`needs_enforcement`) schema picked for a prompt-only lane whose vendor is strict-capable (anthropic/openai)
+  now proactively routes to that vendor's strict metered path — vendor preserved — instead of churning on the lane and
+  then reactively falling back. Compat vendors (zai/moonshot/deepseek/gemini), which have no strict meter, keep the $0
+  lane with `json_object` + local validation and are never silently swapped; a vendor-pinned miss records an honest
+  coverage miss. `schema_capability` is one SSOT read by both `json_schema_request` and the router so they cannot
+  drift. (#72)
+
+### Added
+- **Lenient-JSON lane-side corrective re-ask.** A lenient-schema lane reply that fails local validation (off-shape or
+  unparseable JSON) now gets one same-lane corrective re-ask — the whole prompt and schema re-sent — before any
+  metered failover. The count is config (`recovery_setting("lane_json_reask", 1)`); `0` preserves the prior behavior
+  exactly. The attempt is recorded (a `json_reask` rung), never a silent retry. (#72)
+- **Fault-injection chaos tier extended to the EXACTLY-ONCE and NEVER-LOSE-WORK P0 guarantees**, mutation-proven to go
+  red when the guarantee breaks. (#70)
+- **`scripts/reap_leaked_mcp_servers.py`** — a backstop reaper for leaked stdio MCP-server strays: exact kernel-argv
+  identity match, launchd-PID protection, keep-newest / min-age holds, fail-closed on an unreadable config. (#71)
+
 ## [0.12.18] — 2026-10-10
 
 ### Fixed
