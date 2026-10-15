@@ -7,6 +7,7 @@ resolve from the environment first, then SPENDGUARD_ENV or ./.env.
 import pathlib as _pathlib
 import contextlib
 import datetime
+import math
 import os
 import threading
 from pathlib import Path
@@ -708,12 +709,60 @@ def meta_cap():
     return float(v) if v is not None else float(_cfg_get("caps", "meta", 2.0))
 
 
+# Process-local, visible to dispatch worker threads. Each scope owns a token so overlapping
+# same-intent runs can exit in either order without restoring another run's stale value.
+_scoped_intent_cap_overrides = {}
+_scoped_intent_cap_lock = threading.RLock()
+
+
+@contextlib.contextmanager
+def scoped_intent_cap(intent, usd):
+    """Tighten the existing door ceiling for one intent (or a shared set of phase intents).
+
+    Flow/chain receipts are opt-in and are not reliably propagated through every batch/lane
+    executor. Conservatively include prior same-intent spend in the configured window instead
+    of subtracting a receipt baseline that could omit paid work. No in-flight work is cancelled.
+    """
+    if usd is None:
+        yield
+        return
+    intents = tuple(dict.fromkeys((intent,) if isinstance(intent, str) else (intent or ())))
+    intents = tuple(label for label in intents if label)
+    budget = float(usd)
+    if not math.isfinite(budget) or budget < 0:
+        raise ValueError("budget_usd must be finite and nonnegative")
+    token = object()
+    with _scoped_intent_cap_lock:
+        for label in intents:
+            existing = intent_cap(label)
+            effective = budget if existing is None else min(budget, existing)
+            _scoped_intent_cap_overrides.setdefault(label, {})[token] = (effective, budget, intents)
+    try:
+        yield
+    finally:
+        with _scoped_intent_cap_lock:
+            for label in intents:
+                entries = _scoped_intent_cap_overrides[label]
+                del entries[token]
+                if not entries:
+                    del _scoped_intent_cap_overrides[label]
+
+
+def scoped_intent_authorizations(intent):
+    """Snapshot active (effective cap, authorized budget, shared phase intents) at the door."""
+    with _scoped_intent_cap_lock:
+        return tuple(_scoped_intent_cap_overrides.get(intent, {}).values())
+
+
 def intent_cap(intent):
     """The per-intent running-$ ceiling (guardrail D, enforced at the CALL DOOR so it holds on EVERY path — a single
-    call, a hand-rolled fan, or bulk_delegate), or None when none is set for this intent. Resolution: env
+    call, a hand-rolled fan, or bulk_delegate), or None when none is set for this intent. Resolution: scoped → env
     $GATE_INTENT_CAP_<INTENT> (uppercased, non-alnum→_) → caps.intent_caps[intent] (a {intent: usd} map in config).
     None means no per-intent cap (the global daily/monthly + RT caps still apply). This is what turns 'budget_usd only
     inside bulk_delegate' into a control every metered caller is subject to."""
+    scoped = scoped_intent_authorizations(intent)
+    if scoped:
+        return min(entry[0] for entry in scoped)
     if not intent:
         return None
     env = os.getenv("GATE_INTENT_CAP_" + "".join(c if c.isalnum() else "_" for c in intent).upper())

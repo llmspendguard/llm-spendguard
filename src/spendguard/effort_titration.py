@@ -300,7 +300,7 @@ def titrate(intent, model=None, efforts=None, sample_n=_MAX_SAMPLE, run=False, b
     verdict = None
     stopped_early = False
     target = _PILOT
-    with calls.context(intent=intent):                          # the A/B runs are this intent's WORKLOAD (recorded)
+    with config.scoped_intent_cap((intent, "spendguard:requirement-extract", "spendguard:requirement-screen", "spendguard:requirement-adjudicate"), budget_usd), calls.context(intent=intent):                          # the A/B runs are this intent's WORKLOAD (recorded)
         while True:
             for e in efforts:
                 while acc[e]["consumed"] < min(target, cap):

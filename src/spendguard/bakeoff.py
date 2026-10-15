@@ -208,120 +208,124 @@ def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget
                     note=f"estimate ~${est:.4f} exceeds budget_usd ${float(budget_usd):.4f} — not run. Raise budget_usd "
                          "or shrink the slate/sample/efforts.")
 
-    from . import adapters
-    results = {}
-    req_seen = []                                                   # requirement-aware: the union of criteria the judge applied (for the receipt rubric)
-    for c in candidates:
-        for eff in efforts_list:                                    # the REASONING axis — one arm per (model, effort)
-            arm = c + ("@" + eff if eff else "")
-            n_good = n_lab = n_run = n_err = 0
-            spent, last_error = 0.0, None
-            for p in prompts:
-                txt, imgs = _task_parts(p)              # (prompt_text, images_or_None) — a vision task sends images= through
-                # no_substitution PINS the candidate: a bakeoff MEASURES this exact model, so the lane/bandit must
-                # never swap it — else the arm records ANOTHER model's cost×quality under c's name (the corruption
-                # that feeds advise/recommend). Still $0 on c's OWN lane where available (pinning suppresses
-                # cross-model substitution, not same-provider lane use). images= is passed ONLY for a vision task,
-                # so a text run is byte-for-byte the prior call (a vision call skips the lane by construction).
-                # DETERMINISM (optional): when the caller passes temperature/top_p/seed, run each arm as a MEASUREMENT
-                # with those knobs — one deterministic pass per arm instead of n replicates to separate the effect from
-                # run noise. This FORCES the metered API (a $0 lane has no knob channel), so it is opt-in per the caller.
-                # Unset (the default) → arms stay on their $0 lane where available (the production-settings behaviour).
-                _det = {k: v for k, v in (("temperature", temperature), ("top_p", top_p), ("seed", seed)) if v is not None}
-                r = adapters.call(c, txt, sig=intent, timeout_s=120, reasoning=eff, no_substitution=True,
-                                  **({"measurement": True} if _det else {}), **_det,
-                                  **({"images": imgs} if imgs else {}))
-                if r.get("error"):
-                    n_err += 1                                      # a dropped run is COUNTED + surfaced, never silent —
-                    last_error = (r.get("error") or "")[:140]      # a candidate/effort that fails every prompt is visible,
-                    continue                                       # not read as a clean zero-run bakeoff
-                if not (r.get("text") or "").strip():              # a SUCCESSFUL call that produced NO usable text is a
-                    n_err += 1                                      # FAILED arm, not a clean run — count + skip, never hand
-                    last_error = "empty reply (no text)"           # an empty output to the judge as if it were an answer
-                    continue
-                n_run += 1
-                cost = float(r.get("cost") or 0.0)
-                spent += cost
-                # THE JUDGE MUST NOT ABORT THE SLATE. A judge that RAISES (an unparseable verdict, a transport error, a
-                # requirement_judge exception) would otherwise crash the whole bakeoff mid-loop and discard every arm
-                # already measured. Contain it: the run is counted as UNLABELED (verdict=None), the error is surfaced in
-                # last_error, and the loop continues — the same counted-and-skipped discipline a failed ARM gets.
-                try:
-                    if requirement_aware:                           # judge by the PROMPT'S OWN requirements, two-tier (screen→opus)
-                        from . import requirement_judge
-                        _v = requirement_judge.judge_requirements(txt, r.get("text"), screen_model=judge_model,
-                                                                  adjudicator_model=adjudicator_model,
-                                                                  **({"images": imgs} if imgs else {}))
-                        verdict = _v.get("good")                    # same True/False/None contract as _judge_one
-                        spent += float(_v.get("cost") or 0.0)      # the judge's own meta-cost, folded into the arm's spend
-                        for _rq in (_v.get("requirements") or []): # collect the applied rubric (deduped) for the receipt
-                            if _rq not in req_seen:
-                                req_seen.append(_rq)
-                    else:
-                        verdict = _judge_one(txt, r.get("text"), judge_model,
-                                             **({"images": imgs} if imgs else {}))  # generic LLM judge — the quality signal
-                except Exception as _je:
-                    verdict = None                                  # UNLABELED, not a crash — the arm's output still counts as a run
-                    last_error = f"judge error: {type(_je).__name__}: {str(_je)[:100]}"
-                q = None if verdict is None else ("good" if verdict else "bad")
-                if q is not None:
-                    n_lab += 1
-                    n_good += 1 if verdict else 0
-                # RECORD per (intent, model, EFFORT) into the corpus advise/best_value read — this is the learning.
-                calls.insert(adapters.provider_for(c), c.split(":", 1)[-1], "realtime", cost,
-                             in_tok=int(r.get("in_tok") or 0), out_tok=int(r.get("out_tok") or 0),
-                             intent=intent, quality=q, quality_conf=(_JUDGE_CONF if q else None),
-                             who="bakeoff", effort=eff)
-            results[arm] = dict(model=c, effort=eff, runs=n_run, failed=n_err, last_error=last_error,
-                                labeled=n_lab, good=n_good, good_rate=(n_good / n_lab if n_lab else None),
-                                spent=round(spent, 6), per_good=(spent / n_good if n_good else None))
+    with config.scoped_intent_cap((intent, "spendguard:bakeoff-judge", "spendguard:requirement-extract", "spendguard:requirement-screen", "spendguard:requirement-adjudicate"), budget_usd):
+        from . import adapters
+        results = {}
+        req_seen = []                                                   # requirement-aware: the union of criteria the judge applied (for the receipt rubric)
+        for c in candidates:
+            for eff in efforts_list:                                    # the REASONING axis — one arm per (model, effort)
+                arm = c + ("@" + eff if eff else "")
+                n_good = n_lab = n_run = n_err = 0
+                spent, last_error = 0.0, None
+                for p in prompts:
+                    txt, imgs = _task_parts(p)              # (prompt_text, images_or_None) — a vision task sends images= through
+                    # no_substitution PINS the candidate: a bakeoff MEASURES this exact model, so the lane/bandit must
+                    # never swap it — else the arm records ANOTHER model's cost×quality under c's name (the corruption
+                    # that feeds advise/recommend). Still $0 on c's OWN lane where available (pinning suppresses
+                    # cross-model substitution, not same-provider lane use). images= is passed ONLY for a vision task,
+                    # so a text run is byte-for-byte the prior call (a vision call skips the lane by construction).
+                    # DETERMINISM (optional): when the caller passes temperature/top_p/seed, run each arm as a MEASUREMENT
+                    # with those knobs — one deterministic pass per arm instead of n replicates to separate the effect from
+                    # run noise. This FORCES the metered API (a $0 lane has no knob channel), so it is opt-in per the caller.
+                    # Unset (the default) → arms stay on their $0 lane where available (the production-settings behaviour).
+                    _det = {k: v for k, v in (("temperature", temperature), ("top_p", top_p), ("seed", seed)) if v is not None}
+                    r = adapters.call(c, txt, sig=intent, timeout_s=120, reasoning=eff, no_substitution=True,
+                                      **({"measurement": True} if _det else {}), **_det,
+                                      **({"images": imgs} if imgs else {}))
+                    if r.get("error"):
+                        n_err += 1                                      # a dropped run is COUNTED + surfaced, never silent —
+                        last_error = (r.get("error") or "")[:140]      # a candidate/effort that fails every prompt is visible,
+                        continue                                       # not read as a clean zero-run bakeoff
+                    if not (r.get("text") or "").strip():              # a SUCCESSFUL call that produced NO usable text is a
+                        n_err += 1                                      # FAILED arm, not a clean run — count + skip, never hand
+                        last_error = "empty reply (no text)"           # an empty output to the judge as if it were an answer
+                        continue
+                    n_run += 1
+                    cost = float(r.get("cost") or 0.0)
+                    spent += cost
+                    # THE JUDGE MUST NOT ABORT THE SLATE. A judge that RAISES (an unparseable verdict, a transport error, a
+                    # requirement_judge exception) would otherwise crash the whole bakeoff mid-loop and discard every arm
+                    # already measured. Contain it: the run is counted as UNLABELED (verdict=None), the error is surfaced in
+                    # last_error, and the loop continues — the same counted-and-skipped discipline a failed ARM gets.
+                    try:
+                        if requirement_aware:                           # judge by the PROMPT'S OWN requirements, two-tier (screen→opus)
+                            from . import requirement_judge
+                            _v = requirement_judge.judge_requirements(txt, r.get("text"), screen_model=judge_model,
+                                                                      adjudicator_model=adjudicator_model,
+                                                                      **({"images": imgs} if imgs else {}))
+                            verdict = _v.get("good")                    # same True/False/None contract as _judge_one
+                            spent += float(_v.get("cost") or 0.0)      # the judge's own meta-cost, folded into the arm's spend
+                            for _rq in (_v.get("requirements") or []): # collect the applied rubric (deduped) for the receipt
+                                if _rq not in req_seen:
+                                    req_seen.append(_rq)
+                        else:
+                            verdict = _judge_one(txt, r.get("text"), judge_model,
+                                                 **({"images": imgs} if imgs else {}))  # generic LLM judge — the quality signal
+                    except Exception as _je:
+                        from . import gate
+                        if gate.is_deliberate_stop(_je):
+                            raise
+                        verdict = None                                  # UNLABELED, not a crash — the arm's output still counts as a run
+                        last_error = f"judge error: {type(_je).__name__}: {str(_je)[:100]}"
+                    q = None if verdict is None else ("good" if verdict else "bad")
+                    if q is not None:
+                        n_lab += 1
+                        n_good += 1 if verdict else 0
+                    # RECORD per (intent, model, EFFORT) into the corpus advise/best_value read — this is the learning.
+                    calls.insert(adapters.provider_for(c), c.split(":", 1)[-1], "realtime", cost,
+                                 in_tok=int(r.get("in_tok") or 0), out_tok=int(r.get("out_tok") or 0),
+                                 intent=intent, quality=q, quality_conf=(_JUDGE_CONF if q else None),
+                                 who="bakeoff", effort=eff)
+                results[arm] = dict(model=c, effort=eff, runs=n_run, failed=n_err, last_error=last_error,
+                                    labeled=n_lab, good=n_good, good_rate=(n_good / n_lab if n_lab else None),
+                                    spent=round(spent, 6), per_good=(spent / n_good if n_good else None))
 
-    # LOUD ON ZERO LABELS: a bakeoff whose runs produced NO quality labels measured nothing — good_rate=null across
-    # every arm reads downstream as 'no findings', not 'the judge failed'. runs>0 with labeled==0 means the JUDGE
-    # could not rule on a single output (unreachable / unparseable verdict), NOT that the candidates failed (those
-    # are counted in `failed`). Surface it as a first-class `warning` (and on stderr) so it can never pass as clean.
-    _tot_run = sum(results[a]["runs"] for a in results)
-    _tot_lab = sum(results[a]["labeled"] for a in results)
-    _zero_label_warn = None
-    if _tot_run > 0 and _tot_lab == 0:
-        _zero_label_warn = (
-            "ZERO quality labels across %d run(s) in %d arm(s): the judge (%s) ruled on NOTHING, so every good_rate "
-            "is null — this bakeoff measured no quality. Verify the judge is reachable and returns a parseable "
-            "verdict (`spendguard health --run`)." % (_tot_run, len(results), judge_model))
-        import sys as _sys
-        _sys.stderr.write("[spendguard] bakeoff WARNING: %s\n" % _zero_label_warn)
+        # LOUD ON ZERO LABELS: a bakeoff whose runs produced NO quality labels measured nothing — good_rate=null across
+        # every arm reads downstream as 'no findings', not 'the judge failed'. runs>0 with labeled==0 means the JUDGE
+        # could not rule on a single output (unreachable / unparseable verdict), NOT that the candidates failed (those
+        # are counted in `failed`). Surface it as a first-class `warning` (and on stderr) so it can never pass as clean.
+        _tot_run = sum(results[a]["runs"] for a in results)
+        _tot_lab = sum(results[a]["labeled"] for a in results)
+        _zero_label_warn = None
+        if _tot_run > 0 and _tot_lab == 0:
+            _zero_label_warn = (
+                "ZERO quality labels across %d run(s) in %d arm(s): the judge (%s) ruled on NOTHING, so every good_rate "
+                "is null — this bakeoff measured no quality. Verify the judge is reachable and returns a parseable "
+                "verdict (`spendguard health --run`)." % (_tot_run, len(results), judge_model))
+            import sys as _sys
+            _sys.stderr.write("[spendguard] bakeoff WARNING: %s\n" % _zero_label_warn)
 
-    from . import advise, measurement
-    import time as _time
-    ranked = advise.ranked(intent=intent)                          # per-model re-rank (existing shape)
-    frontier = advise.ranked(intent=intent, by_effort=True)        # the (model, effort) frontier advise/titration read
-    # MEASUREMENT RECEIPT: stamp WHAT produced these good_rates — judge, sample, rubric — so the number is
-    # reproducible + comparable later (docs/MEASUREMENT_RECEIPTS.md). Candidates are the ARM labels (model@effort)
-    # so effort is part of the instrument identity and two efforts of one model never collapse in the receipt.
-    _values = {arm: {"good": results[arm]["good"], "labeled": results[arm]["labeled"],
-                     "good_rate": results[arm]["good_rate"]} for arm in results}
-    reading_id = None
-    try:
-        reading_id = measurement.record_reading(
-            intent=intent, kind="bakeoff", judge_mix=[judge_model], judge_basis="configured",
-            judge_pinned=_judge_pinned, parent_id=parent_reading,
-            sample_ids=[measurement.item_id(_task_sample_key(p)) for p in prompts],   # image ref folded in → distinct vision samples
-            rubric=({"mode": "requirement-aware", "screen": judge_model,
-                     "adjudicator": adjudicator_model or config.advisor_adjudicator_model(), "requirements": req_seen}
-                    if requirement_aware else {"system": _JUDGE_SYS, "schema": _JUDGE_SCHEMA}),
-            candidates=list(results.keys()),
-            values=_values, aggregation="single",
-            spend_usd=sum((results[a]["spent"] or 0.0) for a in results), ts=_time.time())
-    except Exception as _e:
-        import sys as _sys
-        _sys.stderr.write("[spendguard] bakeoff: measurement receipt NOT recorded (%s: %s) — the bakeoff "
-                          "result stands\n" % (type(_e).__name__, str(_e)[:80]))
-    return dict(intent=intent, sample=len(prompts), efforts=efforts_list, judged_by=judge_model,
-                reading_id=reading_id, per_candidate=results, warning=_zero_label_warn,
-                ranking=ranked["models"], frontier_by_effort=frontier["models"],
-                pick=ranked["pick"], ranked_by=ranked["metric"],
-                note="recorded per (intent, model, effort) to the corpus + a measurement receipt — "
-                     "`spendguard measurement inspect %s` shows the judge mix / sample / rubric." % reading_id)
+        from . import advise, measurement
+        import time as _time
+        ranked = advise.ranked(intent=intent)                          # per-model re-rank (existing shape)
+        frontier = advise.ranked(intent=intent, by_effort=True)        # the (model, effort) frontier advise/titration read
+        # MEASUREMENT RECEIPT: stamp WHAT produced these good_rates — judge, sample, rubric — so the number is
+        # reproducible + comparable later (docs/MEASUREMENT_RECEIPTS.md). Candidates are the ARM labels (model@effort)
+        # so effort is part of the instrument identity and two efforts of one model never collapse in the receipt.
+        _values = {arm: {"good": results[arm]["good"], "labeled": results[arm]["labeled"],
+                         "good_rate": results[arm]["good_rate"]} for arm in results}
+        reading_id = None
+        try:
+            reading_id = measurement.record_reading(
+                intent=intent, kind="bakeoff", judge_mix=[judge_model], judge_basis="configured",
+                judge_pinned=_judge_pinned, parent_id=parent_reading,
+                sample_ids=[measurement.item_id(_task_sample_key(p)) for p in prompts],   # image ref folded in → distinct vision samples
+                rubric=({"mode": "requirement-aware", "screen": judge_model,
+                         "adjudicator": adjudicator_model or config.advisor_adjudicator_model(), "requirements": req_seen}
+                        if requirement_aware else {"system": _JUDGE_SYS, "schema": _JUDGE_SCHEMA}),
+                candidates=list(results.keys()),
+                values=_values, aggregation="single",
+                spend_usd=sum((results[a]["spent"] or 0.0) for a in results), ts=_time.time())
+        except Exception as _e:
+            import sys as _sys
+            _sys.stderr.write("[spendguard] bakeoff: measurement receipt NOT recorded (%s: %s) — the bakeoff "
+                              "result stands\n" % (type(_e).__name__, str(_e)[:80]))
+        return dict(intent=intent, sample=len(prompts), efforts=efforts_list, judged_by=judge_model,
+                    reading_id=reading_id, per_candidate=results, warning=_zero_label_warn,
+                    ranking=ranked["models"], frontier_by_effort=frontier["models"],
+                    pick=ranked["pick"], ranked_by=ranked["metric"],
+                    note="recorded per (intent, model, effort) to the corpus + a measurement receipt — "
+                         "`spendguard measurement inspect %s` shows the judge mix / sample / rubric." % reading_id)
 
 
 def main(argv=None):

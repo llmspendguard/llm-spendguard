@@ -14,6 +14,10 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 import json
 from spendguard import ledger_sync as LS, budget
 
+# Offline tests must never scan the operator's real conversation archive.
+from spendguard import conv as _offline_conv
+_offline_conv._DEFAULT_TDIR = tempfile.mkdtemp(prefix="sg-offline-transcripts-")
+
 failures = 0
 
 

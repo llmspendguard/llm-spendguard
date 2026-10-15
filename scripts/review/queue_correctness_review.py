@@ -9,7 +9,6 @@ Runs UNDER the gate. ESTIMATE-FIRST: `--estimate` (default) counts tokens + prin
 and SPENDS NOTHING; `--run` executes the four calls. Each reviewer's whole answer is written to
 scripts/review/out/ for synthesis. Models are resolved from the catalog (priced); no hardcoded prices.
 """
-import os
 import sys
 import json
 import argparse
@@ -17,7 +16,7 @@ import pathlib
 
 import spendguard
 spendguard.require()
-from spendguard import adapters, calls, pricing, config  # noqa: E402
+from spendguard import adapters, calls, pricing  # noqa: E402
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 SRC = REPO / "src" / "spendguard"

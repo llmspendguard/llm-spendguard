@@ -818,6 +818,8 @@ def _gate_openai_files(kw, args=()):
     except Exception as e:
         print(f"[spend_gate] WARN openai estimate failed ({e}); allowing (fail-open)", file=sys.stderr)
         return
+    if _intent:
+        _intent_door_gate(_intent, est["cost"], est.get("provider"), est.get("model"))
     _decide_and_account(est)  # per-batch cap + daily/monthly + the separate worst-case ceiling guard
 
 
@@ -843,6 +845,8 @@ def _gate_anthropic(kw, args=()):
     except Exception as e:
         print(f"[spend_gate] WARN anthropic estimate failed ({e}); allowing (fail-open)", file=sys.stderr)
         return
+    if _intent:
+        _intent_door_gate(_intent, est["cost"], est.get("provider"), est.get("model"))
     _decide_and_account(est)  # per-batch cap + daily/monthly + the separate worst-case ceiling guard
 
 
@@ -961,7 +965,17 @@ def _intent_door_gate(intent, est, provider, model):
         spent = calls.intent_spend(intent, config.intent_cap_window_s())
     except Exception:
         return                                            # ledger hiccup → do not break the call
-    if spent + est > float(cap):
+    authorization_note = ""
+    exceeded = spent + est > float(cap)
+    for effective, authorized, phase_intents in config.scoped_intent_authorizations(intent):
+        cumulative = sum(calls.intent_spend(label, config.intent_cap_window_s()) for label in phase_intents)
+        if cumulative + est > authorized:
+            exceeded = True
+        if exceeded:
+            authorization_note = (f" Authorized budget_usd=${authorized:g}; cumulative spend ${cumulative:.6f}. "
+                                  "Raise budget_usd or re-approve the run to continue.")
+            break
+    if exceeded:
         with _intent_lock:
             _intent_cap_refusals[intent] = _intent_cap_refusals.get(intent, 0) + 1
         _emit({"kind": "intent_cap", "intent": intent, "provider": provider, "model": model, "cost": est,
@@ -969,7 +983,7 @@ def _intent_door_gate(intent, est, provider, model):
         raise SpendGateRefused(
             f"per-intent running cap for {intent!r}: spent ${spent:.2f} + next ~${est:.2f} would exceed "
             f"${float(cap):.2f} in the last {max(1, config.intent_cap_window_s() // 3600)}h "
-            f"(caps.intent_caps / GATE_INTENT_CAP_*). Raise the cap or set GATE_ALLOW=1.")
+            f"(caps.intent_caps / GATE_INTENT_CAP_*). Raise the cap or set GATE_ALLOW=1.{authorization_note}")
 
 
 def _now_day():
@@ -1086,6 +1100,11 @@ def _rt_precheck_usd(provider, model, est):
     global _rt_warned, _rt_bypass
     if _refuse_metered_active():                       # 'prove $0' switch → NO metered call proceeds (lanes bypass this)
         raise MeteredCallRefused("metered call refused (refuse_metered active): %s %s" % (provider, model))
+    if _meta_intent():
+        from . import calls as _scoped_calls, config as _scoped_config
+        _scoped_label = _scoped_calls.current().get("intent")
+        if _scoped_config.scoped_intent_authorizations(_scoped_label):
+            _intent_door_gate(_scoped_label, est, provider, model)
     if _meta_intent():                                # spendguard's own use → separate meta cap, skip workload
         if not _allow():
             from . import budget, config

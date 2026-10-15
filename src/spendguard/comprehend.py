@@ -186,7 +186,7 @@ def comprehend_corpus(patterns, intent, question=None, model=None, run=False, bu
         checkpoint = default_checkpoint(intent)  # result is appended before the next chunk, so a crash resumes
     prompts = [t["prompt"] for t in live]
     keys = [t["key"] for t in live]            # unique per task (file or file#part) → pair results by MEANING
-    with calls.context(intent=intent):
+    with config.scoped_intent_cap(intent, budget_usd), calls.context(intent=intent):
         keyed = lane_balance.bulk_delegate(prompts, intent=intent, lanes=lanes, checkpoint=checkpoint,
                                            task_key=keys, return_keyed=True, refuse_billed=refuse_billed)
     rows = keyed if isinstance(keyed, dict) else {}

@@ -28,7 +28,7 @@ Concurrency/rate limiting is automatic: every call routes through the dispatch g
     for text in r.answers:                          # only OK results; failures are never in here
         ...
 """
-from . import vendor_call, pricing, gate
+from . import vendor_call, pricing, gate, config, calls
 
 # Named defaults (a value with a name, overridable per call) — never a literal at a call site.
 _DEFAULT_DEADLINE_S = 200.0        # per-vendor default when the caller names none; time_budget refines it per model
@@ -315,18 +315,24 @@ def ask(prompt, *, vendors=None, n=None, schema=None, system=None, purpose="ask"
         # Refuse on EITHER an over-budget estimate OR an unpriceable metered vendor: a vendor whose price we
         # cannot look up estimates to $0, and a $0 estimate would sail past any budget and then spend unbounded.
         raise BudgetRefused(estimate, float(budget_usd), detail)
-    dl = float(deadline_s or _DEFAULT_DEADLINE_S)
-    if mode == "first":
-        fan = vendor_call.first_ok(vlist, prompt, deadline_s=dl, need=int(require or 1), purpose=purpose,
-                                   system=system, schema=schema, max_tokens=max_tokens,
-                                   no_metered_fallback=refuse_billed)
-    elif mode == "all":
-        fan = vendor_call.fan_out(vlist, prompt, deadline_s=dl, purpose=purpose, system=system,
-                                  schema=schema, max_tokens=max_tokens,
-                                  no_metered_fallback=refuse_billed)
-    else:
-        raise ValueError(f"mode must be 'all' or 'first', not {mode!r}")
-    return AskResult(_inject_unmet(fan, unmet), mode, estimate=estimate)
+    with config.scoped_intent_cap(purpose or calls.current().get("intent"), budget_usd):
+        dl = float(deadline_s or _DEFAULT_DEADLINE_S)
+        if mode == "first":
+            fan = vendor_call.first_ok(vlist, prompt, deadline_s=dl, need=int(require or 1), purpose=purpose,
+                                       system=system, schema=schema, max_tokens=max_tokens,
+                                       no_metered_fallback=refuse_billed,
+                                       **({"wait_for_inflight": True} if budget_usd is not None else {}))
+        elif mode == "all":
+            fan = vendor_call.fan_out(vlist, prompt, deadline_s=dl, purpose=purpose, system=system,
+                                      schema=schema, max_tokens=max_tokens,
+                                      no_metered_fallback=refuse_billed)
+        else:
+            raise ValueError(f"mode must be 'all' or 'first', not {mode!r}")
+        if budget_usd is not None:
+            for result in fan.get("results", []):
+                if result.kind == vendor_call.GATE_REFUSED:
+                    raise gate.SpendGateRefused(result.error)
+        return AskResult(_inject_unmet(fan, unmet), mode, estimate=estimate)
 
 
 _ASK_VISION_MAX_TOTAL_IMAGE_BYTES = 48 * 1024 * 1024   # bound total image bytes before load so the estimate can't OOM
@@ -391,10 +397,11 @@ def ask_vision(prompt, images, vendors, *, schema=None, system=None, budget_usd=
         # $0, sails past any budget, then spends unbounded (unpriced != free). Mirrors ask()'s guard. Deliberate stop, BEFORE any spend.
         raise BudgetRefused(est, float(budget_usd), {p["vendor"]: p["estimate_usd"] for p in per})
     # DURABLE panel: one task per vendor (keyed per-vendor via model_for), same prompt+images, checkpointed/resumable
-    rows = lane_balance.bulk_delegate(
-        list(vlist), intent, images_for=lambda t: imgs, model_for=lambda t: t, prompt_for=lambda t: prompt,
-        schema=schema, system=system, checkpoint=checkpoint, chunk_size=max(1, len(vlist)),
-        deadline_s=float(deadline_s or 120.0), force=True)   # budget_usd is the spend gate; force skips the bulk test-gate
+    with config.scoped_intent_cap(intent, budget_usd):
+        rows = lane_balance.bulk_delegate(
+            list(vlist), intent, images_for=lambda t: imgs, model_for=lambda t: t, prompt_for=lambda t: prompt,
+            schema=schema, system=system, checkpoint=checkpoint, chunk_size=max(1, len(vlist)),
+            deadline_s=float(deadline_s or 120.0), force=True)   # budget_usd is the spend gate; force skips the bulk test-gate
     results = [{"vendor": vlist[i], "text": r.get("text"), "cost": r.get("cost"),
                 "executor": r.get("executor"), "error": r.get("error"), "reason": r.get("reason")}
                for i, r in enumerate(rows)]
