@@ -877,6 +877,42 @@ def record_close(rid, result):
               "row stays open for a later lease, never crashing this caller.", file=_sys.stderr)
 
 
+def hold_free_recovery(intent, task, invoke, *, deadline_s, poll_s):
+    """Hold a synchronous recovery in the existing durable queue until success or deadline.
+
+    The active caller owns its lease; the drainer must not duplicate in-flight work. A deadline bounds
+    admission of another attempt, never cancels an attempt already running.
+    """
+    import time
+    rid = record_open(intent, task, sla_s=deadline_s)
+    end = time.monotonic() + deadline_s
+    from . import vendor_call
+    result = {"error": "free lane recovery deadline exhausted", "outcome": vendor_call.DEADLINE_EXCEEDED}
+    polls = 0
+    started = time.monotonic()
+    try:
+        while time.monotonic() < end:
+            time.sleep(min(poll_s, max(0.0, end - time.monotonic())))
+            if time.monotonic() >= end:
+                break
+            result = invoke()
+            polls += 1
+            if result.get("text") and not result.get("error"):
+                break
+        succeeded = bool(result.get("text") and not result.get("error"))
+        result = {**result, "_free_hold": {"deadline_s": deadline_s, "elapsed_s": time.monotonic() - started,
+                                           "polls": polls, "deadline_exhausted": not succeeded}}
+        if not succeeded:
+            # This caller will now either stop or take its explicitly gated paid leg. A pending
+            # queue retry would duplicate that same work in a later drain.
+            result["outcome"] = vendor_call.DEADLINE_EXCEEDED
+        return result
+    finally:
+        if result.get("error") or not result.get("text"):
+            result = {**result, "outcome": vendor_call.DEADLINE_EXCEEDED}
+        record_close(rid, result)
+
+
 def queue_depth():
     """{pending, leased, done, failed, parked} counts — the 'is anything queued' view (parallel to
     dispatch.queue_state). `parked` is the SUBSET of pending currently DEFERRED for capacity (defer_until in the

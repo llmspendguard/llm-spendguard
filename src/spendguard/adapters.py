@@ -1353,7 +1353,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
             model, intent=intent or sig, in_chars=len(prompt or ""), default_s=LANE_MIN_TIMEOUT_S)[0] or LANE_MIN_TIMEOUT_S)
         _adm = dispatch.admit(_gprov, model, _gov_dl, no_metered_fallback=no_metered_fallback,
                               est_tokens=_est_call_tokens(prompt, system, max_tokens, model=model, intent=intent or sig),
-                              shed=_governed,                 # output-aware: unpinned max_tokens paces on the LEARNED
+                              shed=False,                     # busy free lanes wait; only recovery may authorize paid
                               skip_lane=bool(metered_only))   # per-intent output, so OTPM isn't under-counted. metered_only → pace on the vendor RPM/TPM
         if not _adm.ok:
             _sig_ctx._local.ctx = _ctx_before
@@ -2023,9 +2023,6 @@ LANE_MIN_TIMEOUT_S = 150.0   # a subscription LANE (CLI cold-start + ~14K contex
                              # metered call's tight 30s floor just times it out and churns it to the paid API it
                              # exists to avoid. Floor lane deadlines here; a hung lane is still bounded by its own
                              # TIMEOUT_S. MEASURED: codex timed out at exactly 30s on a real panel file and fell back.
-_LANE_RETRY_BACKOFF_S = 1.2  # ON-LANE TRANSIENT RETRY wait: a lane that PROVED it can answer a prompt this size but
-#                              failed THIS time is likely a momentary blip (plan throttle / at-capacity) — pause this
-#                              long and retry the $0 lane ONCE before spilling to PAID metered. Named, not a literal.
 
 
 def _http_timeout(timeout_s):
@@ -2329,13 +2326,15 @@ def _est_call_tokens(prompt, system, out_tokens, model=None, intent=None):
 
 def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,
                _skip_lane=False, no_metered_fallback=False, images=None, _no_sub=False, _internal_pin=False,
-               temperature=None, top_p=None, seed=None):
+               temperature=None, top_p=None, seed=None, _recovery_proof=None):
     """One raw request. Everything public goes through `call`, which adds the input and output guards.
 
     NO DEFAULT CAP. This carried `max_tokens=512` — the last place a number nobody chose could still reach a
     provider. _call_guarded always resolves a real budget before calling here, so a None arriving at this
     function means someone reached the raw path directly and never picked a budget; that is refused rather
     than silently given the smallest cap in the codebase."""
+    if _recovery_proof is not None:
+        _recovery_proof.assert_metered_recovery()
     if max_tokens is None:
         raise ValueError(
             "_call_once needs an explicit max_tokens. It is the raw path — the measured budget lives in "
@@ -2387,6 +2386,13 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
     # VISION rides the metered API, never a subscription lane — the lane executors are text-only print-mode CLIs
     # (agy/codex/claude-code) with no image channel, so an images= call skips the lane by construction.
     _lane = None if (_skip_lane or images) else _lane_for(prov)
+    if _lane is None and not (_skip_lane or images):
+        # A cooldown is a retry schedule, not permission to bill. The recovery ladder owns the
+        # final paid transition even when a previous caller cooled the shared lane.
+        _configured_lane, _configured_module = _LANES.get(prov, (None, None))
+        if _configured_lane and _executor() in ("pool", _configured_lane):
+            import importlib
+            _lane = (_configured_lane, importlib.import_module(f".{_configured_module}", __package__))
     if _lane and (_lane_too_big(_lane[0], prompt) or _lane_model_cooling(_lane[0], raw)):
         _lane = None                                 # prompt too big for this lane, OR this MODEL was rejected here
         #                                              recently (the API served it) → straight to API, don't re-intercept
@@ -2450,9 +2456,14 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 from . import gate as _glane
                 if _glane.is_deliberate_stop(_le):     # a DELIBERATE stop (deadline / refusal / containment) HALTS —
                     raise                              # never swallowed into an error dict and then retried below
-                _s = {"error": f"{lane_name} lane raised: {str(_le)[:120]}"}   # a genuine lane bug degrades, not crash
+                _s = {"error": f"{lane_name} lane raised {type(_le).__name__}: {str(_le)[:120]}",
+                      "transport_error": isinstance(_le, (TimeoutError, ConnectionError))}
             if not isinstance(_s, dict):               # a non-dict is also a broken contract → treat it as an error
                 _s = {"error": f"{lane_name} lane returned {type(_s).__name__}, not a result dict"}
+            if not _s.get("error") and schema is not None:
+                from . import output_contract as _recovery_contract
+                if not _recovery_contract.check_item((_s.get("text") or "").strip(), schema)[0]:
+                    _s = {**_s, "error": "lane output did not satisfy requested shape"}
             return _s
         try:                                          # count once per logical lane call, never on the transient retry
             from . import bulkgate, calls
@@ -2461,19 +2472,9 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 bulkgate.check_realtime(bulkgate.sig(raw or "", template_id=intent or None), raw or "", never_block=True)
         except Exception:
             pass                                      # fail-open — a burst nudge must never break a legit lane call
-        s = _call_lane()
-        # ON-LANE TRANSIENT RETRY before spilling to PAID metered: a lane that has PROVEN it can answer a prompt this
-        # SIZE (a watermark FACT, never the error string) but failed THIS time is likely a momentary blip (plan
-        # throttle / at-capacity) — retry the $0 lane ONCE after a short backoff, keeping the work FREE. Skipped for a
-        # lane with no proven-good history (an ambiguous first miss → fast degrade to API) or one already cooling.
-        # FACT-based, so no error-prose parsing (the doctrine); a genuine miss simply fails the retry and falls back.
-        if (s.get("error") or not (s.get("text") or "").strip()) \
-                and resource_state.proven_good(resource_state.lane_key(lane_name)) >= len(prompt or "") \
-                and not _lane_cooling(lane_name):
-            time.sleep(_LANE_RETRY_BACKOFF_S)
-            _s2 = _call_lane()
-            if not _s2.get("error") and (_s2.get("text") or "").strip():
-                s = _s2                                # the retry answered — stay on the $0 lane, no metered spill
+        from . import lane_recovery
+        _recovery = lane_recovery.LaneRecoveryProof(lane_name)
+        s = lane_recovery.retry_free_lane(_call_lane, _recovery)
         # A "$0 plan reply" is only a real answer if it has CONTENT and — when a shape was requested — SATISFIES it.
         # WHITESPACE-only counts as empty; a non-empty reply that fails the requested schema is a lane MISS, not a
         # success. Either way, name it an error so the call FALLS BACK to the metered API instead of handing the
@@ -2507,7 +2508,8 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                              #   like the chokepoint records a failure's — every call on the ledger with its full fate
             except Exception:
                 pass
-            return {**base, "text": s["text"], "in_tok": s.get("in_tok", 0), "out_tok": s.get("out_tok", 0),
+            _recovery.recovery_event("served", executor=lane_name)
+            return {**base, "lane_recovery": _recovery.events, "text": s["text"], "in_tok": s.get("in_tok", 0), "out_tok": s.get("out_tok", 0),
                     "latency": s.get("latency", 0.0), "cost": 0.0, "executor": lane_name,
                     "effort": _applied_eff, "finish_reason": s.get("finish_reason"), "error": None}
         # STRUCTURED miss reason — a CODE, not the free-form error string — so a consumer splits shed vs shape vs
@@ -2543,20 +2545,22 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 _astat = None
             if isinstance(_astat, dict) and _astat.get("authed") is False:
                 _lane_reason = "auth"
+                _recovery.classification = "permanent"
+                _recovery.recovery_event("classified", classification="permanent", evidence=_astat)
                 _surface_lane_auth(lane_name, _astat.get("cmd") or "")
                 try:
                     from . import reliability as _rel_auth
                     _rel_auth.note_lane_auth_down(lane_name, _astat.get("cmd") or "")
                 except Exception:
                     pass
-        if no_metered_fallback:
+        if no_metered_fallback and getattr(_sub_guard, "on", False):
             # EXPLICIT $0-ONLY caller (--refuse-billed): EVERY lane miss stays a free error, including an executor/auth
             # outage. This is deliberately the rare exception to ensure-success; without this opt-in, the ladder below
             # exhausts quality-proven free lanes and then uses the metered twin. The structured reason is preserved so
             # a caller can distinguish task-unsuitable from infrastructure-down without parsing prose.
             return {**base, "text": None, "cost": None, "executor": lane_name, "reason": _lane_reason,   # MISS is an
                     "error": f"refused: would bill metered API ({s.get('error')})"}   # error row, NOT a paid retry — $0
-        if _lane_reason == "lane_error":                 # the lane could not serve → tell the user ONCE (never a silent
+        if _lane_reason == "lane_error" and not no_metered_fallback:
             _surface_lane_down(lane_name, s.get("error"))  # empty); the ladder below reroutes + cools via _learn_from_fallback
         # LANE FAILED. REACTIVE FAILOVER FIRST: before paying the metered API, exhaust every $0 arm whose measured
         # bandit quality holds for this intent, best measured headroom first. Each substitute is itself free-only, so a
@@ -2565,17 +2569,27 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         # `_no_sub` (caller's no_substitution=True) pins the vendor: the requested model answers or errors, never a
         # silent swap — for calls where the vendor IS the measurement (a cross-vendor panel / adjudication).
         _failed_free_lanes = [lane_name]
-        if not _no_sub and not getattr(_sub_guard, "on", False):
+        _recovery.shed_checked = True
+        _recovery.recovery_event("shed", pinned=bool(_no_sub))
+        def _shed_free_recovery():
+            if _no_sub or getattr(_sub_guard, "on", False):
+                return None
             try:
                 from . import lane_balance, calls as _calls
                 _intent = (_calls.current() or {}).get("intent")
                 _free_subs = lane_balance.quality_equivalent_free_substitutes(_intent, model,
-                                                                              excluded=_failed_free_lanes)
+                                                                              excluded=[lane_name])
+                if not _free_subs and _intent:
+                    from . import plan_admission as _recovery_admission
+                    _ready_alt = _recovery_admission._best_ready_alt_lane(lane_name)
+                    if _ready_alt:
+                        _free_subs = [_ready_alt[1]]
             except Exception as _quality_error:
                 from . import gate as _quality_gate
                 if _quality_gate.is_deliberate_stop(_quality_error):
                     raise
-                _free_subs = []
+                _recovery.recovery_event("bug", decision="shed evidence unavailable", error=str(_quality_error))
+                raise lane_recovery.LaneRecoveryViolation("cannot establish free substitute availability") from _quality_error
             for _rsub in _free_subs:
                 _rsub_lane = _LANES.get(provider_for(_rsub), (None,))[0]
                 _rwhy = "measured quality holds; $0 lane before metered fallback"
@@ -2589,10 +2603,44 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 finally:
                     _sub_guard.on = False
                 if not _rr.get("error"):
+                    _recovery.recovery_event("served", executor=_rsub_lane)
                     _lane_cool(lane_name, reason="failover")   # primary failed → back off; the substitute carried it
-                    return {**_rr, "substituted_from": model, "substitution": _rwhy}
-                if _rsub_lane:
+                    return {**_rr, "lane_recovery": _recovery.events, "substituted_from": model, "substitution": _rwhy}
+                if _rsub_lane and _rsub_lane not in _failed_free_lanes:
                     _failed_free_lanes.append(_rsub_lane)
+            return None
+        _shed_result = _shed_free_recovery()
+        if _shed_result is not None:
+            return _shed_result
+
+        def _poll_free_recovery():
+            _primary_result = _call_lane()
+            if not _primary_result.get("error") and (_primary_result.get("text") or "").strip():
+                return _primary_result
+            return _shed_free_recovery() or _primary_result
+        # Reuse the durable synchronous queue. Re-probe the primary directly so its cooldown cannot
+        # turn a recoverable transport failure into a paid skip. No running invocation is cancelled.
+        from . import lane_queue, calls as _recovery_calls
+        _recovery.recovery_event("queue")
+        _held = lane_queue.hold_free_recovery(
+            (_recovery_calls.current() or {}).get("intent") or "lane-recovery", prompt, _poll_free_recovery,
+            deadline_s=lane_recovery.recovery_setting("queue_deadline_s", 15.0),
+            poll_s=lane_recovery.recovery_setting("queue_poll_s", 1.0))
+        _recovery.queue_checked = bool(_held.get("_free_hold", {}).get("deadline_exhausted"))
+        _recovery.recovery_event("queue_outcome", **_held.get("_free_hold", {}))
+        if not _held.get("error") and (_held.get("text") or "").strip():
+            if _held.get("substituted_from"):
+                return _held
+            # Record locally; never mutate the executor shared by concurrent callers.
+            _lane_note_ok(lane_name, prompt)
+            _recovery.recovery_event("served", executor=lane_name)
+            _recovery_calls.record_call(prov, raw, "subscription", 0.0,
+                                        in_tok=_held.get("in_tok", 0), out_tok=_held.get("out_tok", 0),
+                                        executor=lane_name, outcome="ok", disposition="served")
+            return {**base, **_held, "cost": 0.0, "executor": lane_name, "lane_recovery": _recovery.events}
+        if no_metered_fallback:
+            return {**base, "text": None, "cost": None, "executor": lane_name, "reason": _lane_reason,
+                    "lane_recovery": _recovery.events, "error": "refused: free recovery exhausted; metered forbidden"}
         # No substitute (or it also failed) → fall back to the API on the SAME prompt (this recurses with the lane
         # disabled, so the existing API path runs once, unchanged) and let its OUTCOME settle whether the lane was
         # unsuitable for this prompt (keep it) or genuinely down (cool it).
@@ -2611,6 +2659,12 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 _fb_model = f"{prov}:{_cell['metered_model']}"         # the SERVED equal-model id (resolves stale alias)
         except Exception:
             _fb_model, _fb_reasoning = model, reasoning                # map unavailable → prior behaviour, never break
+        _last_ready = _shed_free_recovery()
+        if _last_ready is not None:
+            return _last_ready
+        _gate_model = _fb_model.split(":", 1)[-1]
+        _recovery.authorize_metered_recovery(prov, _gate_model, prompt, system, max_tokens)
+        _recovery.assert_metered_recovery()
         # ITEM 4 — the metered twin is about to serve BECAUSE this $0 lane went down: stamp the lane it fell FROM on the
         # ledger, so `SUM(cost) WHERE fell_from=lane` is the metered $ spent (the $0 savings lost) while that lane was
         # down. The SUCCESS row is written by gate._record_rt DURING this dispatch (on this thread), so scope it via the
@@ -2620,21 +2674,25 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         with _calls_ff.fell_from_context(lane_name), _calls_ff.redirect_context(
                 model, "lane-unavailable: metered fallback", "api"):
             out = _call_once(_fb_model, prompt, max_tokens=max_tokens, system=system, reasoning=_fb_reasoning,
-                             schema=schema, timeout_s=timeout_s, _skip_lane=True, _no_sub=_no_sub, _internal_pin=_internal_pin)
+                             schema=schema, timeout_s=timeout_s, _skip_lane=True, _no_sub=_no_sub, _internal_pin=_internal_pin,
+                             _recovery_proof=_recovery)
         out = out if isinstance(out, dict) else {"error": "metered fallback returned no result dict", "cost": None}
         out["fell_from"] = lane_name
+        _recovery.recovery_event("metered_outcome", outcome="failed" if out.get("error") else "served")
+        out["lane_recovery"] = _recovery.events
         _fallback_cost = out.get("cost")
         _fallback_cost_text = (f"${float(_fallback_cost):.4f}" if _fallback_cost is not None else "cost unavailable")
         _fallback_notice = (f"fell over to metered {_fallback_cost_text} — lanes "
                             f"{', '.join(_failed_free_lanes)} unavailable")
         print(f"[spendguard] ⚠ {_fallback_notice}", file=sys.stderr)
         out["fallback_notice"] = _fallback_notice
-        _kind = _learn_from_fallback(lane_name, prompt, bool(out.get("error", False)), model=raw, transient=bool(_ra))
+        _kind = _learn_from_fallback(lane_name, prompt, bool(out.get("error", False)), model=raw,
+                                     transient=bool(_ra) or _recovery.classification == "transient")
         # OPERATOR-only (opt-in) commentary on WHY the lane missed + that the API served — off by default so a CONSUMER
         # never sees a lane on the call path. The call already SUCCEEDED on the metered fallback (`out`, returned below);
         # the operator's durable record is reliability.note_lane_* (via _learn_from_fallback / _lane_cool) + `doctor`.
         if _kind == "transient":                       # quota/rate — cooled until reset (capped), re-tested; NOT size
-            _cool = int(min(float(_ra), _max_quota_cool_s()))
+            _cool = int(min(float(_ra or lane_recovery.recovery_setting("queue_poll_s", 1.0)), _max_quota_cool_s()))
             _lane_chatter(f"[spendguard] {lane_name} lane hit a quota/rate limit — cooled {_cool}s then re-tested (NOT a "
                           f"size limit); the API served this call ({str(s['error'])[:60]})")
         elif _kind == "unsuitable":                    # a genuine size limit ABOVE the lane's proven-good size

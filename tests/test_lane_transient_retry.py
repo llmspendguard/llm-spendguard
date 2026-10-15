@@ -4,7 +4,7 @@ free + resilient. Uses the proven-good watermark FACT, never the error string (t
 (deadline/refusal) still HALTS — it is never swallowed into an error dict and retried.
 
 Pins: (1) a proven-good lane's transient blip retries and recovers on the lane; (2) a lane with NO proven-good
-history does NOT retry (fast degrade); (3) a deliberate stop from the lane propagates, never retried.
+history also confirms the miss before paid recovery; (3) a deliberate stop propagates, never retried.
 
 Hermetic: adapters._lane_for stubbed to fake lanes; no network."""
 import os
@@ -66,11 +66,11 @@ r = adapters._call_once("anthropic:claude-x", "hi", max_tokens=100)
 ck("retried once (2 lane calls) and recovered on the lane — no metered spill",
    _n["flaky"] == 2 and r.get("text") == "recovered" and r.get("executor") == "claude-code")
 
-print("\n-- a lane with NO proven-good history does NOT retry (ambiguous first miss → fast degrade) --")
+print("\n-- a lane with NO proven-good history still confirms a miss before metered --")
 adapters._lane_for = lambda prov: ("codexfake", _AlwaysFail) if prov == "openai" else None
 _n["fail"] = 0
-adapters._call_once("openai:gpt-x", "hi", max_tokens=100)      # no watermark for codexfake → no on-lane retry
-ck("no proven-good history → exactly ONE lane attempt (no retry)", _n["fail"] == 1)
+adapters._call_once("openai:gpt-5.5", "hi", max_tokens=100)
+ck("no proven-good history → bounded confirmation attempts", _n["fail"] == 2)
 
 print("\n-- a DELIBERATE stop from the lane PROPAGATES (halts), never swallowed + retried --")
 adapters._lane_for = lambda prov: ("claude-code", _DeadlineLane) if prov == "anthropic" else None

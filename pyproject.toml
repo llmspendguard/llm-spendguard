@@ -65,7 +65,8 @@ version = { attr = "spendguard._version.__version__" }
 testpaths = ["tests"]
 # only the runner is a pytest module; it subprocess-runs the script-style tests (some os.execv at import,
 # which would hijack pytest if collected directly).
-python_files = ["test_runner.py"]
+python_files = ["test_runner.py", "test_chaos_runner.py"]
+markers = ["chaos: concurrent fault injection and mandatory mutation proof (zero spend)"]
 addopts = "-q"
 
 [tool.ruff]

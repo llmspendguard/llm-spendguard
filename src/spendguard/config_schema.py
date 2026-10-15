@@ -18,6 +18,16 @@ SETTINGS = [
          kind="path", secret=False,
          desc="Directory for logs, kill-switch flag, price cache, spend db, and config files."),
 
+    *[dict(section="lane_recovery", key=key, store="config.json:lane_recovery." + key,
+           env="SPENDGUARD_LANE_" + key.upper(), default=default, kind=kind, secret=False, desc=desc)
+      for key, default, kind, desc in (
+          ("attempts", 2, "int", "Bounded lane attempts before confirming unavailable."),
+          ("backoff_s", 1.2, "float", "Initial free lane retry delay in seconds."),
+          ("backoff_multiplier", 2.0, "float", "Multiplier between bounded retry delays."),
+          ("queue_deadline_s", 15.0, "float", "Free recovery hold deadline; never cancels in-flight work."),
+          ("queue_poll_s", 1.0, "float", "Delay between queued free recovery probes."),
+          ("chaos_callers", 2, "int", "Concurrent callers for the explicitly approved live-fidelity probe."),
+      )],
     # ── caps (per-call / cumulative) ──
     dict(section="caps", key="per_batch", store="config.json:caps.per_batch", env="GATE_CAP", default=75,
          kind="float", secret=False,

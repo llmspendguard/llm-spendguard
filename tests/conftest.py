@@ -13,7 +13,7 @@ import pytest
 
 def pytest_collectstart(collector):
     name = os.path.basename(getattr(collector, "name", "") or "")
-    if name.startswith("test_") and name.endswith(".py") and name != "test_runner.py":
+    if name.startswith("test_") and name.endswith(".py") and name not in ("test_runner.py", "test_chaos_runner.py"):
         raise pytest.UsageError(
             f"{name} is a script-style test — never collect it directly (its isolation re-exec "
             f"hijacks pytest). Run `pytest` bare (the runner picks it up), or run the script itself: "
