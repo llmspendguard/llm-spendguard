@@ -111,10 +111,11 @@ ck("_est_oai_resp: handles list input items", i2 > 0)
 
 # ── git-root bucketing: a repo SUBDIR collapses to the repo (matches actual-$), not the cwd basename ──
 from spendguard import config as _cfg
-_repo_sub = os.path.dirname(os.path.abspath(__file__))     # .../llm-spendguard/tests  → git root = llm-spendguard
-ck("git_root_project: a repo subdir → the repo name, not the subdir", _cfg.git_root_project(_repo_sub) == "llm-spendguard")
+_repo_sub = os.path.dirname(os.path.abspath(__file__))
+_checkout_name = os.path.basename(os.path.dirname(_repo_sub)).lower()
+ck("git_root_project: a repo subdir → the repo name, not the subdir", _cfg.git_root_project(_repo_sub) == _checkout_name)
 ck("git_root_project: non-repo path → None (caller falls back to basename)", _cfg.git_root_project("/nope/x/y") is None)
-ck("codex._project_of: buckets a real repo subdir at the repo", codex._project_of(_repo_sub) == "llm-spendguard")
+ck("codex._project_of: buckets a real repo subdir at the repo", codex._project_of(_repo_sub) == _checkout_name)
 
 print(f"\n{'PASS' if not fails else 'FAIL'} — {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)
