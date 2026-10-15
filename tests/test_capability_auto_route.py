@@ -61,8 +61,10 @@ def main():
        _lane_called("anthropic:claude-opus-4-8", LENIENT) is True)
     ck(results, "LENIENT schema on zai → lane USED (compat $0 comprehension untouched)",
        _lane_called("zai:glm-5.2", LENIENT) is True)
-    ck(results, "STRICT schema on zai (compat) → lane SKIPPED (→ json_object meter; CLI prose-wraps, meter can't)",
-       _lane_called("zai:glm-5.2", STRICT) is False)
+    for vendor, model in (("zai", "glm-5.2"), ("moonshot", "kimi-k2"),
+                          ("deepseek", "deepseek-chat"), ("gemini", "gemini-2.5-flash")):
+        ck(results, f"STRICT schema on {vendor} → lane USED (no strict meter)",
+           _lane_called(f"{vendor}:{model}", STRICT) is True)
 
     n_fail = results.count(False)
     print(f"\n{'[FAIL]' if n_fail else 'OK'} test_capability_auto_route: {n_fail} failure(s)")

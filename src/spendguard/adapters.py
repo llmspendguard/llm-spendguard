@@ -485,12 +485,12 @@ def json_schema_request(kind, schema, name="result"):
     shape, because the compat path told them "return JSON" and never told them WHICH json."""
     if not isinstance(schema, dict):
         return {}
-    if kind == "anthropic":
+    if schema_capability(kind) == SCHEMA_STRICT and kind == "anthropic":
         return {"tools": [{"name": name, "description": "Return the result in this exact shape.",
                            "input_schema": _provider_schema(schema)},
                           ],
                 "tool_choice": {"type": "tool", "name": name}}
-    if kind == "openai":
+    if schema_capability(kind) == SCHEMA_STRICT and kind == "openai":
         _v = strict_map_violation(schema)
         if _v:
             raise SchemaNotStrictExpressible(
@@ -2396,25 +2396,16 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
     if _lane and (_lane_too_big(_lane[0], prompt) or _lane_model_cooling(_lane[0], raw)):
         _lane = None                                 # prompt too big for this lane, OR this MODEL was rejected here
         #                                              recently (the API served it) → straight to API, don't re-intercept
-    # CAPABILITY-AWARE AUTO-ROUTE (#1): a STRICT schema — one that DECLARES required/nonempty — cannot be reliably
-    # produced by a prompt-only LANE. A lane is a print-mode CLI with NO response_format/forced-tool param, so the shape
-    # only rides the prompt and the CLI wraps its JSON in prose → output_contract rejects it → the call churns to the
-    # metered API REACTIVELY (the honestreview panel's measured backoffs). The vendor's METERED path is strictly more
-    # capable for shape than its CLI lane — anthropic forced-tool / openai strict ENFORCE it; every compat vendor's
-    # metered API runs response_format=json_object, which GUARANTEES parseable JSON (the CLI cannot) with the schema in
-    # the prompt + local validate. So for a strict schema on a lane, skip the lane and use the vendor's meter: the
-    # vendor is preserved, only lane→meter changes, and churn is removed by construction (Ash 2026-09-26: "lane cannot
-    # satisfy but a meter can → straight to meter" — and the json_object meter CAN where the prose-wrapping CLI cannot).
-    # A LENIENT schema (no required/nonempty) STAYS on the lane (a lane CAN satisfy it, with the lane-down failover as
-    # the net) — so bulk $0 comprehension is untouched; only strict-schema calls pay the meter. Deterministic (no
-    # cost/quality judgement), so a once-per-vendor notice makes it auditable without a per-call ledger row.
-    if _lane and schema is not None:
+    # Only a strict-capable meter improves enforcement; compat vendors retain their free lane.
+    if _lane and schema is not None and schema_capability(prov) == SCHEMA_STRICT:
         from . import output_contract as _oc_cap
         if _oc_cap.needs_enforcement(schema):
-            _cap = "strict" if schema_capability(prov) == SCHEMA_STRICT else "json_object"
-            config.warn_once(f"[spendguard] strict schema on {prov}: routing lane→metered {_cap} path (a prompt-only "
-                             f"CLI lane cannot reliably return required/nonempty JSON) — #1 capability-aware auto-route")
-            _lane = None                             # → the vendor's metered path below (strict, or json_object for compat)
+            from . import guard, calls as _schema_calls
+            guard.record_decision(intent=(_schema_calls.current() or {}).get("intent"),
+                                  requested_model=model, chosen_model=model,
+                                  counterfactual_usd=None, actual_usd=None, saved_usd=0,
+                                  basis="capability", why="strict-schema→enforce")
+            _lane = None
     if _lane is None and prov == "gemini":           # METERED namespace: effort is a PARAMETER, not an id suffix.
         _bare, _tier = metered_fallback_id(prov, raw)  # an agy id (…-medium) 404s on the metered API — the ONE
         if _tier:                                    # equivalence fn splits it so the bare id rides the request and
@@ -2447,24 +2438,35 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         # runs its default. Non-gemini lanes take the id unchanged.
         _lane_model = _compose_gemini_reasoning(raw, reasoning) if prov == "gemini" else raw
 
+        _json_reasks_used = 0
+
         def _call_lane():
-            try:
-                _s = lane_mod.run_prompt(prompt, system=_lane_sys, model=_lane_model, timeout=_lane_timeout,
-                                         reasoning=reasoning, max_tokens=max_tokens)   # hand the lane the guarded budget
-                #                                                                        so the escalation ladder can RAISE its cap
-            except Exception as _le:                   # a lane MUST return an {error} dict, never raise — but a lane
-                from . import gate as _glane
-                if _glane.is_deliberate_stop(_le):     # a DELIBERATE stop (deadline / refusal / containment) HALTS —
-                    raise                              # never swallowed into an error dict and then retried below
-                _s = {"error": f"{lane_name} lane raised {type(_le).__name__}: {str(_le)[:120]}",
-                      "transport_error": isinstance(_le, (TimeoutError, ConnectionError))}
-            if not isinstance(_s, dict):               # a non-dict is also a broken contract → treat it as an error
-                _s = {"error": f"{lane_name} lane returned {type(_s).__name__}, not a result dict"}
-            if not _s.get("error") and schema is not None:
-                from . import output_contract as _recovery_contract
-                if not _recovery_contract.check_item((_s.get("text") or "").strip(), schema)[0]:
-                    _s = {**_s, "error": "lane output did not satisfy requested shape"}
-            return _s
+            nonlocal _json_reasks_used
+            while True:
+                try:
+                    _corrected_sys = _lane_sys
+                    if _json_reasks_used:
+                        _corrected_sys = (_lane_sys or "") + "\n\nReturn ONLY a single valid JSON value matching the schema; no prose, no code fence."
+                    _s = lane_mod.run_prompt(prompt, system=_corrected_sys, model=_lane_model, timeout=_lane_timeout,
+                                             reasoning=reasoning, max_tokens=max_tokens)   # hand the lane the guarded budget
+                    #                                                                        so the escalation ladder can RAISE its cap
+                except Exception as _le:                   # a lane MUST return an {error} dict, never raise — but a lane
+                    from . import gate as _glane
+                    if _glane.is_deliberate_stop(_le):     # a DELIBERATE stop (deadline / refusal / containment) HALTS —
+                        raise                              # never swallowed into an error dict and then retried below
+                    _s = {"error": f"{lane_name} lane raised {type(_le).__name__}: {str(_le)[:120]}",
+                          "transport_error": isinstance(_le, (TimeoutError, ConnectionError))}
+                if not isinstance(_s, dict):               # a non-dict is also a broken contract → treat it as an error
+                    _s = {"error": f"{lane_name} lane returned {type(_s).__name__}, not a result dict"}
+                if not _s.get("error") and schema is not None:
+                    from . import output_contract as _recovery_contract
+                    if not _recovery_contract.check_item((_s.get("text") or "").strip(), schema)[0]:
+                        if _json_reasks_used < lane_recovery.recovery_setting("lane_json_reask", 1):
+                            _json_reasks_used += 1
+                            _recovery.recovery_event("json_reask", attempt=_json_reasks_used)
+                            continue
+                        _s = {**_s, "error": "lane output did not satisfy requested shape", "shape_miss": True}
+                return _s
         try:                                          # count once per logical lane call, never on the transient retry
             from . import bulkgate, calls
             intent = (calls.current().get("intent") or "")
@@ -2519,6 +2521,8 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             _lane_reason = "empty" if not _txt else "shape_miss"
             s = {**s, "error": (f"{lane_name} lane returned no usable text (empty/whitespace)" if not _txt
                                 else f"{lane_name} lane output did not satisfy the requested shape → API")}
+        elif s.get("shape_miss"):
+            _lane_reason = "shape_miss"
         else:
             _lane_reason = "lane_error"                # the lane set its OWN error upstream (raised / non-dict / envelope)
         _ra = s.get("retry_after_s") if isinstance(s, dict) else None
@@ -2679,6 +2683,8 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         out = out if isinstance(out, dict) else {"error": "metered fallback returned no result dict", "cost": None}
         out["fell_from"] = lane_name
         _recovery.recovery_event("metered_outcome", outcome="failed" if out.get("error") else "served")
+        if _no_sub and out.get("error"):
+            _recovery.recovery_event("coverage_miss", provider=prov, model=raw, reason=_lane_reason, pinned=True)
         out["lane_recovery"] = _recovery.events
         _fallback_cost = out.get("cost")
         _fallback_cost_text = (f"${float(_fallback_cost):.4f}" if _fallback_cost is not None else "cost unavailable")
