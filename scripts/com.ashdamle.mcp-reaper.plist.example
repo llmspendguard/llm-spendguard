@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.ashdamle.mcp-reaper</string>
+    <!-- Replace /ABSOLUTE/REPO and /Users/YOUR_USER before installing.
+         Prefer /ABSOLUTE/REPO/.venv.nosync/bin/python when it exists (3.11+).
+         Otherwise replace the interpreter with the absolute path to system
+         python3, which MUST be 3.11+ (tomllib required).
+         launchd expands neither ~ nor shell variables in these paths. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/ABSOLUTE/REPO/.venv.nosync/bin/python</string>
+        <string>/ABSOLUTE/REPO/scripts/reap_leaked_mcp_servers.py</string>
+        <string>--apply</string>
+    </array>
+    <key>StartInterval</key>
+    <integer>600</integer>
+    <!-- Optional EnvironmentVariables: CODEX_HOME, SPENDGUARD_MCP_REAP_SERVERS
+         (comma-separated), SPENDGUARD_MCP_REAP_MAX_KEEP,
+         SPENDGUARD_MCP_REAP_MIN_AGE_S. Defaults live in the script. -->
+    <key>StandardOutPath</key>
+    <string>/Users/YOUR_USER/Library/Logs/mcp-reaper.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/YOUR_USER/Library/Logs/mcp-reaper.log</string>
+</dict>
+</plist>
