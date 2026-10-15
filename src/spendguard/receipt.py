@@ -328,6 +328,80 @@ def _truncated_lines():
         return []
 
 
+#: What a truncation can actually be DONE about, keyed by the cap it truncated at. Not cosmetic: each
+#: class has a different remedy and only one of the three is the cap-raise the receipt used to promise.
+AT_CEILING, NO_CAP, RAISABLE = "AT CEILING", "NO CAP SET", "RAISABLE"
+
+
+def truncation_remedy(c, model):
+    """How THIS model's truncations can actually be fixed, read from the caps it truncated AT.
+
+    THE HINT THIS REPLACES WAS WRONG TWICE OVER, both times in the expensive direction. It printed
+    `spendguard maxtokens --model <m>` — a flag that does not exist, since `maxtokens` takes a call-class
+    SIG (an opaque hash of model+intent), so there is no path from a model name to the thing the command
+    wants. And it promised `gate.autotune=apply raises the cap automatically`, which is false for nearly
+    every row it was printed beside. Measured on this ledger, 8,574 truncations split:
+
+        4,299  cap AT the model's published ceiling  autotune computes a target, sees target <= cap,
+                                                     and returns. There is no higher cap to move to.
+        3,179  NO cap set (max_tokens 0)             autotune never adds a cap where the caller set none.
+          586  cap genuinely below the ceiling       autotune acts. ~7% of the total.
+
+    So the headline remediation addressed about a fourteenth of what it was attached to, and the largest
+    class is not a cap problem at all: gemini-3.8-flash truncated 4,299 times with its cap already at the
+    published 65,536 and a VISIBLE answer of 0-9 tokens, which is reasoning consuming the whole output
+    budget. Raising a cap that is already at the ceiling is not an available move; lowering reasoning
+    effort for that intent is. A remediation that cannot run, attached to a diagnosis that does not hold,
+    is worse than no hint — it reads as a closed loop and the leak keeps billing.
+
+    Inputs: an open connection to the spend db (`calls` and `gate_calls` share one file) and a model name.
+    Output: `(label, advice, command)` — `command` is built from a sig taken from this model's OWN rows, so
+    what gets printed is runnable. Failure: returns a bare fallback rather than raising, because a receipt
+    that crashes hides the whole tally to report one hint.
+    """
+    try:
+        from . import pricing
+        ceiling = int(pricing.max_output_tokens(model) or 0)
+    except Exception:
+        ceiling = 0
+    # THE TWO TABLES DO NOT SPELL A MODEL THE SAME WAY, and joining on equality silently lost the largest
+    # class there is. `calls.model` holds a bare name (`gemini-3.8-flash`); `gate_calls.model` may hold it
+    # PROVIDER-PREFIXED (`gemini:gemini-3.8-flash`), because the recorder is handed whatever the adapter
+    # resolved. An `=` join therefore matched zero of gemini-3.8-flash's 4,191 truncated rows and reported
+    # "no observed cap for this model" — a RAISABLE label on the one class that is already at its ceiling,
+    # which is the opposite of the truth and the exact wrong-direction answer this whole function exists to
+    # stop. Both sides are normalised to the bare name, and the prefixed spelling is matched explicitly.
+    bare = str(model).rsplit(":", 1)[-1]
+    try:
+        caps = c.execute(
+            "SELECT COALESCE(max_tokens, 0), COUNT(*), sig FROM gate_calls "
+            "WHERE truncated = 1 AND (model = ? OR model = ? OR model LIKE '%:' || ?) "
+            "GROUP BY 1, 3 ORDER BY 2 DESC", (model, bare, bare)).fetchall()
+    except Exception:
+        caps = []
+    if not caps:
+        # Truncations recorded in `calls` with no matching `gate_calls` row: the class was never observed
+        # through the gate's response recorder, so nothing here knows its cap. Say so instead of guessing.
+        return (RAISABLE, "no observed cap for this model — `spendguard maxtokens <sig>` once it has run "
+                          "through the gate's response recorder", "")
+    cap, _count, sig = caps[0]
+    command = f"spendguard maxtokens {sig} {cap or ''} {model}".replace("  ", " ").strip()
+    if ceiling and cap >= ceiling:
+        return (AT_CEILING,
+                f"cap {cap:,} IS the published max — not a cap problem. The budget went to reasoning, not "
+                f"the answer; lower reasoning effort for this intent or pin a non-reasoning model",
+                command)
+    if not cap:
+        return (NO_CAP,
+                "no cap was set, so autotune will not add one (it only tunes a cap the caller already "
+                "sent) — either the caller must set one, or the provider's own default is cutting it",
+                command)
+    return (RAISABLE,
+            f"cap {cap:,} is below the {ceiling:,} published max — gate.autotune=apply raises this one"
+            if ceiling else f"cap {cap:,} is below this model's ceiling — gate.autotune=apply raises this one",
+            command)
+
+
 def _truncation_rows(c):
     try:
         since = _windows()[2]
@@ -354,10 +428,14 @@ def _truncation_rows(c):
            f"${usd:,.2f} on the call log (pre-reconcile). You were billed for the input and a body that "
            f"does not parse:"]
     for m, k, c_ in rows[:3]:
-        out.append(f"    {str(m):<28} {k:>4} cut off   ${c_:>8.2f}   "
-                   f"spendguard maxtokens --model {m}   (gate.autotune=apply raises the cap automatically)")
+        label, advice, command = truncation_remedy(c, m)
+        out.append(f"    {str(m):<28} {k:>4} cut off   ${c_:>8.2f}   {label}")
+        out.append(f"        {advice}")
+        if command:
+            out.append(f"        {command}")
     if len(rows) > 3:
-        out.append(f"    … {len(rows) - 3} more model(s) — `spendguard maxtokens` for the measured bound")
+        out.append(f"    … {len(rows) - 3} more model(s) — `spendguard maxtokens <sig>` for the measured "
+                   f"bound; the sig comes from a TRUNCATED warning, never from a model name")
     return out
 
 
