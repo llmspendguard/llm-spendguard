@@ -53,8 +53,11 @@ _lock = threading.RLock()
 def _ensure_batch_jobs_schema(c):
     c.execute("""CREATE TABLE IF NOT EXISTS batch_jobs(
         batch_id TEXT PRIMARY KEY, provider TEXT, model TEXT, intent TEXT, n_rows INTEGER,
-        status TEXT, attempts INTEGER, submitted_ts REAL, updated_ts REAL, expires_at REAL, last_error TEXT)""")
+        status TEXT, attempts INTEGER, submitted_ts REAL, updated_ts REAL, expires_at REAL, last_error TEXT,
+        task_ids TEXT)""")
     c.execute("CREATE INDEX IF NOT EXISTS idx_batch_jobs_status ON batch_jobs(status)")
+    if "task_ids" not in {r[1] for r in c.execute("PRAGMA table_info(batch_jobs)")}:
+        c.execute("ALTER TABLE batch_jobs ADD COLUMN task_ids TEXT")
     # offload_pending — the LOCAL half of exactly-once for a provider whose batch list carries NO metadata to reconcile
     # against (Anthropic Message Batches). OpenAI stamps the deterministic offload key into batch metadata and reconciles
     # purely from the provider's list (no local record needed — see _existing_offload_batch). Anthropic has no such slot,
@@ -73,7 +76,7 @@ def _jobs_db():
     return config.pooled_ledger_conn("batch_jobs", _ensure_batch_jobs_schema)
 
 
-def register_batch(batch_id, provider, model, intent, n_rows, *, expires_at=None, attempts=1):
+def register_batch(batch_id, provider, model, intent, n_rows, *, expires_at=None, attempts=1, task_ids=None):
     """Record a submitted batch job (status 'open') — the DURABLE record of the PAID handle, written by the SUBMITTER
     right AFTER submit_chat_tasks returns a batch_id + lane_queue.mark_batched points the rows. REPLAY-SAFE: INSERT OR
     IGNORE, so re-registering an already-known batch_id is a NO-OP that preserves its lifecycle (never resets status/
@@ -84,11 +87,20 @@ def register_batch(batch_id, provider, model, intent, n_rows, *, expires_at=None
     now = time.time()
     exp = float(expires_at) if expires_at is not None else now + _DEFAULT_WINDOW_S
     try:
+        if task_ids is None:
+            from . import lane_queue
+            rows = lane_queue.batched_rows(batch_id)
+            if rows is not None and len(rows) == int(n_rows or 0):
+                task_ids = [r["id"] for r in rows]
         with _lock:
             _jobs_db().execute(
                 "INSERT OR IGNORE INTO batch_jobs (batch_id,provider,model,intent,n_rows,status,attempts,"
                 "submitted_ts,updated_ts,expires_at,last_error) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (batch_id, provider, model, intent, int(n_rows or 0), "open", int(attempts), now, now, exp, None))
+            if task_ids is not None:
+                import json
+                _jobs_db().execute("UPDATE batch_jobs SET task_ids=COALESCE(task_ids, ?) WHERE batch_id=?",
+                                   (json.dumps(list(task_ids)), batch_id))
             _jobs_db().commit()
         return batch_id
     except Exception as e:
@@ -411,7 +423,8 @@ def submit_offload(intent, rows, batch_model, *, cap_dollars=None, expires_at=No
         return {"batch_id": None, "marked": 0, "error": "reconcile: %s" % (type(e).__name__)}
     if existing:
         marked = lane_queue.mark_batched(row_ids, existing, batch_model)   # idempotent (re-points queued_batch rows too)
-        register_batch(existing, provider, batch_model, intent, marked, expires_at=expires_at)   # INSERT OR IGNORE
+        register_batch(existing, provider, batch_model, intent, len(row_ids), expires_at=expires_at,
+                       task_ids=row_ids)   # INSERT OR IGNORE; manifest is submitted rows, not successful marks
         return {"batch_id": existing, "marked": marked, "error": None, "adopted": True}
 
     # step 2 — first attempt: submit (estimate-first + $-capped), then mark + register. The exactly-once tag differs by
@@ -446,7 +459,7 @@ def submit_offload(intent, rows, batch_model, *, cap_dollars=None, expires_at=No
     if provider == "anthropic":
         _pending_confirm(key, bid)                     # pending → confirmed (a crash-retry now adopts by local lookup)
     marked = lane_queue.mark_batched(row_ids, bid, batch_model)   # per-row durable; custom_id = row id
-    register_batch(bid, provider, batch_model, intent, marked, expires_at=expires_at)
+    register_batch(bid, provider, batch_model, intent, len(row_ids), expires_at=expires_at, task_ids=row_ids)
     return {"batch_id": bid, "marked": marked, "error": None}
 
 
@@ -540,6 +553,7 @@ def poll(limit=200, now=None):
             out["jobs_resumed"] += 1
             continue
         if not remaining:                              # every row settled → the job is done
+            assert_batch_terminal_manifest(bid)
             _set_status(bid, "settled")
             out["jobs_settled"] += 1
             continue
@@ -562,6 +576,32 @@ def poll(limit=200, now=None):
         _fail_over(bid, remaining, why, job["attempts"])
         out["jobs_failed"] += 1
     return out
+
+
+def assert_batch_terminal_manifest(batch_id):
+    """A tracked offload cannot commit 'settled' merely because its queue rows disappeared.
+
+    Legacy registrations without a recoverable manifest fail closed rather than inventing
+    completeness. New offloads record all submitted ids, including failed marks.
+    """
+    import json
+    from . import lane_queue
+    from .work_integrity import WorkIntegrityProof
+    with _lock:
+        row = _jobs_db().execute("SELECT task_ids FROM batch_jobs WHERE batch_id=?", (batch_id,)).fetchone()
+    if row is None or row[0] is None:
+        WorkIntegrityProof("batch-manifest-missing").assert_work_partition([batch_id], [[]])
+    try:
+        expected = json.loads(row[0])
+        if not isinstance(expected, list) or not expected:
+            raise ValueError("empty or malformed batch manifest")
+    except (ValueError, TypeError):
+        WorkIntegrityProof("batch-manifest-corrupt").assert_work_partition([batch_id], [[]])
+    recorded = lane_queue.row_results(expected)
+    outcomes = [rid for rid, value in recorded.items()
+                if value["state"] in ("done", "failed", "pending")
+                and (value["result"].get("text") or value["result"].get("error"))]
+    WorkIntegrityProof("batch-terminal-manifest").assert_work_partition(expected, [outcomes])
 
 
 def status():

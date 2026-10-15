@@ -372,6 +372,11 @@ def lease(n, worker=None, lease_s=None):
         with _queue_op() as c:
             c.execute("BEGIN IMMEDIATE")                       # take the write lock BEFORE selecting → cross-process safe
             try:
+                # A dead synchronous hold may never become a later purchase, even if its
+                # cleanup write failed. Deadline is durable admission evidence.
+                c.execute("UPDATE lane_queue SET state='failed', result=?, lease_until=NULL, updated_ts=? "
+                          "WHERE state IN ('leased','pending') AND deadline_ts IS NOT NULL AND deadline_ts<=?",
+                          (json.dumps({"error": "queue deadline expired", "outcome": "deadline_exceeded"}), now, now))
                 # reclaim expired leases: exhausted → failed, else → pending (retryable). attempts was already
                 # incremented at lease time, so `attempts>=max_attempts` here means every allowed try is spent.
                 c.execute("UPDATE lane_queue SET state='failed', updated_ts=? "
@@ -681,6 +686,12 @@ def collect_batched(limit=2000, model=None):
         # without this, real offloaded rows never settle (they sit queued_batch forever). Coerce both maps once.
         results = {str(k): v for k, v in (res.get("results") or {}).items()}
         failed = {str(k): v for k, v in (res.get("failed") or {}).items()}
+        from .work_integrity import WorkIntegrityProof
+        proof = WorkIntegrityProof("exactly-once-collect")
+        # Partial output stays durably queued; overlapping terminal outcomes are a bug.
+        proof.assert_work_partition(ids, [[rid for rid in ids if str(rid) in results],
+                                         [rid for rid in ids if str(rid) in failed],
+                                         [rid for rid in ids if str(rid) not in results and str(rid) not in failed]])
         for rid in ids:
             _k = str(rid)
             if _k in results:
@@ -688,6 +699,9 @@ def collect_batched(limit=2000, model=None):
                 # falsy, and counting it would report the row collected while it stays queued_batch (F1). An un-settled
                 # row is NAMED and stays queued_batch → re-collected next round (never lost, never over-reported).
                 if settle(rid, {"text": results[_k], "lane": "batch"}):   # → done(text)
+                    recorded = row_results([rid])
+                    proof.assert_work_partition([rid], [[r for r, value in recorded.items()
+                                                        if value["state"] == "done" and value["result"].get("text")]])
                     out["done"] += 1
                     out["collected"] += 1
                 else:
@@ -911,6 +925,11 @@ def hold_free_recovery(intent, task, invoke, *, deadline_s, poll_s):
         if result.get("error") or not result.get("text"):
             result = {**result, "outcome": vendor_call.DEADLINE_EXCEEDED}
         record_close(rid, result)
+        # A failed terminal write must not turn a completed/expired hold into a future purchase.
+        from .work_integrity import WorkIntegrityProof
+        states = row_results([rid]) if rid is not None else {}
+        terminal = [r for r, value in states.items() if value["state"] in ("done", "failed")]
+        WorkIntegrityProof("free-hold-terminal").assert_work_partition([rid], [terminal])
 
 
 def queue_depth():

@@ -410,6 +410,17 @@ def guarded_submit(jsonl_path, model, cap_dollars, batch=True, avg_out_tokens=No
     return b.id
 
 
+def _assign_batch_ordinals(tasks):
+    """Assign identity before sharding, so each shard preserves the whole-set ordinal."""
+    from .work_integrity import WorkIntegrityProof
+    items = [{**task, "custom_id": str(task.get("custom_id", "task-%d" % i))}
+             if isinstance(task, dict) else {"custom_id": "task-%d" % i, "content": task}
+             for i, task in enumerate(tasks or [])]
+    ids = [task["custom_id"] for task in items]
+    WorkIntegrityProof("batch-custom-id-uniqueness").assert_work_partition(ids, [ids])
+    return items
+
+
 def _fan_submit_shards(items, shard_size, cap_dollars, submit_one):
     """Fan a task list into shards of `shard_size` and submit each as its OWN batch, so a STALL in one shard never
     blocks the others (the partial-settle twin at collect then settles whatever has landed and names the rest).
@@ -449,7 +460,7 @@ def submit_chat_tasks(tasks, model, *, system=None, schema=None, reasoning="mini
     import os as _os
     import tempfile as _tf
     from . import adapters
-    items = list(tasks or [])
+    items = _assign_batch_ordinals(tasks)
     if submit and items:
         bulk_resilience.require_resilient(len(items), chunked=shard_size is not None and 0 < shard_size < len(items),
                                           checkpointed=False, force=force, where="submit_chat_tasks")
@@ -590,7 +601,7 @@ def submit_message_batch(tasks, model, *, system=None, schema=None, max_out=None
     Unlike OpenAI there is NO `metadata` parameter: Anthropic batches carry no server-side metadata, so the
     exactly-once offload key (batch_tracker) rides each request's custom_id instead — see batch_tracker.submit_offload."""
     from . import adapters
-    items = list(tasks or [])
+    items = _assign_batch_ordinals(tasks)
     if submit and items:
         bulk_resilience.require_resilient(len(items), chunked=shard_size is not None and 0 < shard_size < len(items),
                                           checkpointed=False, force=force, where="submit_message_batch")

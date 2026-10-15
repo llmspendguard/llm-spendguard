@@ -100,7 +100,7 @@ with patch.object(bakeoff, '_plan', return_value=(1, {'offline:model': 1}, 1, 1)
 assert config.intent_cap('bakeoff-budget') is None
 
 # Multiple whole-job groups keep the same shared scope until all groups are finished.
-planned = {'bad_jobs': [], 'unpriced': [], 'priced_est_usd': 2, 'groups': {'group-a': [], 'group-b': []}, 'plan': [{'intent': label, 'method': 'realtime', 'est_usd': 1} for label in ('group-a', 'group-b')]}
+planned = {'bad_jobs': [], 'unpriced': [], 'priced_est_usd': 2, 'groups': {label: [{'id': label}] for label in ('group-a', 'group-b')}, 'plan': [{'intent': label, 'method': 'realtime', 'est_usd': 1} for label in ('group-a', 'group-b')]}
 def scoped_budget_fake_group(intent, *args):
     assert config.intent_cap(intent) == 5
     assert config.scoped_intent_authorizations(intent)[0][2] == ('group-a', 'group-b')
