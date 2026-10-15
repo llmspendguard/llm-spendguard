@@ -197,6 +197,10 @@ def run_jobs(jobs, goal=None, checkpoint=None):
                     "receipt": {"refused_code": "budget_exceeded",
                                 "refused": "estimate $%.4f exceeds budget_usd $%.4f (no spend)"
                                 % (planned["priced_est_usd"], float(budget)), "est_usd": planned["priced_est_usd"]}}
+    from .work_integrity import WorkIntegrityProof
+    expected = [j["id"] for items in planned["groups"].values() for j in items]
+    proof = WorkIntegrityProof("never-lose-work")
+    proof.assert_work_partition(expected, [expected])   # duplicate ids must stop BEFORE any paid execution
     checkpoint = checkpoint or _default_checkpoint()
     pending_path = checkpoint + ".pending.jsonl"       # durable batch handles (see _persist_pending / load_pending)
     results, pending, batch_failures, persist_failures, ran = {}, [], [], [], 0
@@ -228,10 +232,15 @@ def run_jobs(jobs, goal=None, checkpoint=None):
                 ran += len(_res)
             if remaining is not None and entry["est_usd"] is not None:
                 remaining = max(0.0, remaining - entry["est_usd"])
+    pending_ids = [jid for handle in pending for jid in handle["job_ids"]]
+    named_gaps = {jid: "executor returned no terminal result" for jid in expected
+                  if jid not in results and jid not in pending_ids}
+    proof.assert_work_partition(expected, [results, pending_ids, named_gaps])
     return {"results": results, "pending": pending, "plan": planned["plan"],
             "receipt": {"est_usd": planned["priced_est_usd"], "groups": len(planned["plan"]), "ran": ran,
                         "pending": len(pending), "batch_failures": batch_failures,
-                        "persist_failures": persist_failures, "refused_code": None, "refused": None,
+                        "persist_failures": persist_failures, "named_gaps": named_gaps,
+                        "work_integrity": proof.events, "refused_code": None, "refused": None,
                         "checkpoint": checkpoint, "pending_path": (pending_path if pending else None)}}
 
 
@@ -355,6 +364,14 @@ def collect_jobs(pending):
             out[bid] = {"status": "pending", "intent": intent}
         if res.get("anomalies"):                       # rows with a missing/unparseable custom_id — surfaced, not dropped
             out["%s-anomalies" % bid] = {"kind": "anomalies", "anomalies": res["anomalies"], "intent": intent}
+        if h.get("job_ids") is not None and not res.get("not_ready"):
+            from .work_integrity import WorkIntegrityProof
+            succeeded, failed = res.get("results") or {}, res.get("failed") or {}
+            missing = [jid for jid in h["job_ids"] if jid not in succeeded and jid not in failed]
+            for jid in missing:
+                out[jid] = {"kind": "missing_batch_result", "error": "no terminal batch result returned",
+                            "batch_id": bid, "intent": intent}
+            WorkIntegrityProof("whole-job-collect").assert_work_partition(h["job_ids"], [succeeded, failed, missing])
     return out
 
 
