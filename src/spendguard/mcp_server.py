@@ -579,9 +579,11 @@ def _tool_delegate(args):
 
 _TOOLS = {
     "spendguard_delegate": (
-        "Offloads a SELF-CONTAINED subtask to another provider's plan; it does NOT reroute the calling agent's "
-        "own turns. Dry-run is the default (execute=false): it classifies and returns the structured plan plus "
-        "the est $ saved vs overage without running hop 2. Set execute=true to run the delegated task.",
+        "Offloads a SELF-CONTAINED AGENTIC workspace-write subtask to another provider plan; it does NOT reroute the "
+        "calling agent's own turns. Dry-run is default; execute=true needs a trusted cwd. For a one-shot "
+        "classification/gate/doctrine verdict use the one-shot router or spendguard ask with an intent. Codex is ~5s "
+        "warm; >75s is cold codex exec only. Get model ids from advisor.lane_models/lanes --catalog, not guesses; "
+        "see README.md's routing cheat-sheet.",
         {"type": "object", "properties": {
             "task": {"type": "string", "description": "the complete self-contained task"},
             "files": {"type": "array", "items": {"type": "string"},

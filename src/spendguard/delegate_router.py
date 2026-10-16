@@ -270,6 +270,11 @@ def _worktree_changed_files(cwd, before_dirty):
 
 
 def _route_agentic(plan, prompt, model, timeout, cwd):
+    """Run a self-contained AGENTIC subtask in a trusted workspace, using workspace-write where supported.
+
+    This is not the one-shot verdict/classification path: use
+    ``adapters.call(..., reasoning="best-value", intent=...)`` for that (see README.md's routing cheat-sheet).
+    Codex uses its default-on warm daemon; >75s is cold ``codex exec``, not the measured ~5s warm lane turn."""
     if cwd is None:
         return {"error": "agentic workspace-write delegation requires cwd (the explicit target repo path)"}
     if not os.path.isabs(os.path.expanduser(os.fspath(cwd))):
@@ -296,7 +301,12 @@ def _route_agentic(plan, prompt, model, timeout, cwd):
 
 
 def delegate_task(task, files=None, intent=None, provider="auto", execute=False, timeout=None, cwd=None):
-    """Classify, estimate, and optionally execute one delegated task. Default is zero-execution dry-run."""
+    """Classify, estimate, and optionally execute one self-contained AGENTIC workspace-write subtask.
+
+    Default is zero-execution dry-run; execution requires a trusted absolute ``cwd`` and has a 1,800-second default
+    agentic budget. For a one-shot classification, gate, or doctrine verdict, instead use
+    ``adapters.call(..., reasoning="best-value", intent=...)`` or ``spendguard ask``. Codex is ~5s warm; >75s is
+    cold ``codex exec`` only. See README.md's routing cheat-sheet."""
     intent = intent or DEFAULT_DELEGATE_INTENT
     resolved_provider = None if provider == "auto" else _resolve_plan_name(provider)
     classification = classify_task(task, files=files, provider=(resolved_provider or provider))
@@ -366,12 +376,14 @@ def delegate_cli(argv=None):
     import argparse
     parser = argparse.ArgumentParser(
         prog="spendguard delegate",
-        description="Classify and offload one SELF-CONTAINED subtask to another configured provider plan. "
+        description="Offload one SELF-CONTAINED AGENTIC workspace-write subtask to another configured provider plan. "
                     "Dry-run is the default: classify + estimate only, with est $ saved vs Claude overage.",
         epilog=("examples:\n"
-                "  spendguard delegate 'summarize this design' --files docs/design.md\n"
                 "  spendguard delegate 'fix and test this module' --provider codex --files src/app.py --yes\n"
-                "  spendguard delegate 'analyze these logs' --intent incident-review --yes"),
+                "  spendguard delegate 'repair these docs' --intent docs-repair --cwd /trusted/repo --yes\n\n"
+                "For a one-shot classification/gate/doctrine verdict, use `spendguard ask` or\n"
+                "adapters.call(..., reasoning='best-value', intent=...). Name an intent, not a guessed model id;\n"
+                "see README.md's routing cheat-sheet. Codex is ~5s warm; >75s is cold `codex exec` only."),
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("task", help="complete, self-contained task to classify and delegate")
     parser.add_argument("--files", help="comma-separated supporting files; every file is read in full")

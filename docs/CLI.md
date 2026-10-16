@@ -70,7 +70,7 @@ spendguard optimize --intent X [--plan M]     # caged LLM recommendation (cheape
 spendguard mine                               # caged: synthesize confidence-scored insights + graph from the evidence
 spendguard reconstruct                        # caged: judge recovered call I/O → real good% / $/good
 spendguard review                             # caged: practice audit (was the usage SMART, not just what it cost)
-spendguard models [show <model>]              # per-model learnings, auto-applied (reasoning/cache/tokens)
+spendguard models [show <model>]              # model families + stored per-model learnings (not lane served-id SSOT)
 spendguard insights list|export|import        # living insights; opt-in scrubbed collective learning
 
 # prove / run cheaper  (estimate-first, caged by caps.meta)
@@ -87,8 +87,10 @@ spendguard reliability [--run] [--remediate] [--notify] [--json]   # sweep every
 #   --remediate: for each DOWN resource, the exact FIX (issue/fix/command — which login/quota/API) decided AGENTICALLY + cached (only a NEW failure costs). e.g. claude-code down → `claude auth login`.
 #   --notify: fire a macOS notification on any red (for a scheduled/headless run). The result is CACHED, so a down lane also surfaces in the receipt EVERY turn — and a lane that fails mid-use surfaces INSTANTLY (event-driven) + auto-clears on recovery.
 #   Schedule it: a launchd agent running `reliability --run --remediate --notify` daily = a standing lane-health watch (see docs/SUBSCRIPTION_VALUE.md).
-# Make spendguard PICK the model+effort for you on a REAL call (not just advise): the API takes reasoning="best-value" —
-#   spendguard.adapters.call(prompt, reasoning="best-value", intent="X")  → cheapest (model,effort) whose quality holds for X; books the saving vs the counterfactual.
+# One-shot verdict/classification: pass an INTENT (not a guessed model id) with reasoning="best-value" —
+#   spendguard.adapters.call(model, prompt, reasoning="best-value", intent="X") → cheapest measured-good (model,effort), $0 lane first, metered fallback.
+# Batch comprehension → `spendguard comprehend`; self-contained workspace-write → `spendguard delegate --cwd … --yes`.
+# Full API/job chooser and cold-vs-warm facts: README.md "Routing cheat-sheet".
 
 # OpenAI Batch-API job  (the gated, human-run halves — you supply TASKS, spendguard builds each request; Batch = 50% of realtime)
 spendguard batch-submit --tasks t.jsonl --model M [--system … | --system-file f] [--max-out N] [--cap $] [--avg-out T] [--dry-run]
@@ -209,4 +211,3 @@ Claude Code to apply.
 and render that: `receipts.sinks` / `SPENDGUARD_RECEIPTS_SINK` = `stderr` (default) | `stdout` | `file:<path>`
 (comma-separated). e.g. `spendguard config set receipts.sinks 'stderr,file:~/.spendguard/receipt.log'`, then
 `tail -f ~/.spendguard/receipt.log` in a pane.
-

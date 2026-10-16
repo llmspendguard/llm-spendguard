@@ -2,7 +2,8 @@
 
 WHY. A one-shot `kimi -p` COLD-STARTS every call (the Kimi Code CLI reloads its agent base + config each spawn).
 `kimi acp` runs kimi-code as an Agent Client Protocol (ACP) server over stdio: the setup is paid ONCE at spawn, and
-each prompt is then a warm turn. CRITICALLY, ACP `session/new` begins a BRAND-NEW, context-isolated session (spec:
+    each prompt is then a warm turn; cold-start latency is therefore not operative after the default-on daemon is
+    resident. CRITICALLY, ACP `session/new` begins a BRAND-NEW, context-isolated session (spec:
 "a new session starts clean; only session/load restores prior history"), so one warm server is a POOL of INDEPENDENT
 prompts — not one growing conversation that would contaminate independent comprehension prompts and grow in cost.
 This is the exact property that makes codex's `thread/start` a warm pool; `session/new` is its ACP analogue.
@@ -117,7 +118,8 @@ class _KimiAcpDaemon(_WarmStdioJsonRpcDaemon):
         server, so one slow turn never sinks the others. `model`/`reasoning` are accepted for a uniform lane contract
         but NOT used to select — `kimi acp` answers on the plan default, and the caller only routes here when that is
         the requested model (see module docstring). `recycle_on_timeout` HARD-kills the server on a timeout for a
-        single-tenant caller, matching the codex lane."""
+        single-tenant caller, matching the codex lane. This warm turn is the normal daemon path, not a fresh CLI
+        cold-start. See README.md's routing cheat-sheet."""
         import os
         import time
 

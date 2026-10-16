@@ -94,6 +94,11 @@ The gate (every call caged + estimated), estimate-first (a zero-spend projection
 caching, the cheapest model that passes, and record-once. We spend on intelligence deliberately; we never trade
 correctness for $0.
 
+Caller routing is defined in the [README routing cheat-sheet](../README.md#routing-cheat-sheet): one-shot meaning work
+uses `adapters.call(..., reasoning="best-value", intent=...)`/`spendguard ask`, corpus-scale independent work uses
+`spendguard comprehend`, and only self-contained workspace-write work uses `spendguard delegate --cwd …`. Callers name
+an intent and consult `advisor.lane_models`/`spendguard lanes --catalog` for served ids; they do not guess model names.
+
 ## 6. The enforcement contract (anti-amnesia)
 Every doctrine point has a guard so it cannot silently regress — this is how we stop re-learning:
 - *no regex attribution* → `tests/test_segment_attribution.py` (the regex fn is deleted; evidenced spend can never
