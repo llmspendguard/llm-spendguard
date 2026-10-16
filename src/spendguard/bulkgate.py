@@ -331,6 +331,7 @@ def _gate_calls_db():
                "(sig TEXT, model TEXT, out_tok INTEGER, max_tokens INTEGER, truncated INTEGER, ts REAL)")
     db.execute("CREATE INDEX IF NOT EXISTS idx_gatecalls_sig ON gate_calls(sig)")
     db.execute("CREATE INDEX IF NOT EXISTS idx_gatecalls_model ON gate_calls(model)")  # model-level fill obs (calibrate)
+    db.execute("CREATE INDEX IF NOT EXISTS idx_gatecalls_truncated_model ON gate_calls(truncated, model)")
     # TIME is the second termination bound, and it had no measurement at all. Same shape as out_tok: record
     # what actually happened per call-class so a deadline can be sized rather than guessed.
     db.execute("CREATE TABLE IF NOT EXISTS gate_latency "
