@@ -154,23 +154,44 @@ Cost reporting has three axes and never blends them: `Total $X = $A API + $S Sub
 (provider)  ::  Est sub value $V`; guarded savings (measured + counterfactual) is a separate third axis, never added
 to real dollars or estimated subscription value.
 
-## Delegate work to another plan
+## Routing cheat-sheet
 
-When the current plan is capped or on paid overage, `spendguard delegate` can hand a self-contained subtask to a
+- **One-shot verdict, classification, or extraction:** use `adapters.call(model, prompt,
+  reasoning="best-value", intent="stable-job-name")`, `vendor_call`, or `spendguard ask`. The explicit intent lets
+  measured quality choose the cheapest qualifying model/effort. A matching $0 subscription lane is tried first; the
+  metered API is the fallback.
+- **Many independent comprehension items:** use `spendguard comprehend <globs> --intent <stable-job-name>` so the
+  batch can be spread across eligible subscription lanes.
+- **Self-contained agentic workspace edit:** use
+  `spendguard delegate "<task>" --provider <plan> --cwd /trusted/repo --yes`. This is the workspace-write, multi-step
+  path, with a 1,800-second default budget—not the path for a hot one-shot verdict.
+
+Name an **intent**, not a guessed model id, and let routing select the model and lane. The configured/served model-id
+source of truth is `advisor.lane_models`, exposed by `spendguard lanes --catalog`; `spendguard models` profiles known
+models but does not declare what a lane serves. Do not invent or pin ids that can go stale. The
+$0-on-the-billed-axis lanes are subscription-plan executors: Codex, Gemini/`agy`, Kimi, Claude Code, and Z.AI Coding.
+Codex and Kimi use default-on persistent warm daemons; Gemini and Claude Code use their plan CLIs, while Z.AI Coding
+uses its plan-key endpoint. OpenAI-compatible endpoints in `adapters.PROVIDERS` are metered API routes, not $0 merely
+because they speak plain HTTP. For Codex, the measured operative warm turn is ~5s; >75s applies only to a cold
+one-shot `codex exec` fallback.
+
+## Delegate agentic work to another plan
+
+When the current plan is capped or on paid overage, `spendguard delegate` can hand a self-contained agentic subtask to a
 configured $0 or cheaper subscription plan. It is a two-hop flow: a plan-covered classifier decides whether the
 task is a one-shot, an agentic workspace task, or needs the current Claude context; then the selected provider CLI
 runs it. The default is a dry-run that returns the classification, route, separate real-$ and est-value estimate,
 and estimated dollars saved versus measured Claude overage:
 
 ```bash
-spendguard delegate "summarize this design" --files docs/design.md
-spendguard delegate "fix and test this module" --provider codex --files src/app.py --yes
+spendguard delegate "fix and test this module" --provider codex --files src/app.py --cwd /trusted/repo --yes
 ```
 
 MCP clients can use the same engine with `spendguard_delegate` (`execute=false` by default). The honest boundary:
 this offloads a **SELF-CONTAINED subtask to another provider's plan; it does NOT reroute the calling agent's own
 turns.** Use it for bounded work you can describe completely; keep live-context conversational work in the current
-agent. This implements the packaged assistant guidance in §8 of the installed `spendguard:rule`: batchable
+agent. For one-shot verdicts use the routing cheat-sheet above. This implements the packaged assistant guidance in
+§8 of the installed `spendguard:rule`: batchable
 comprehension goes through lane routing, while agentic subwork can be handed to another provider CLI when the current
 plan is capped or on overage.
 

@@ -2,7 +2,9 @@
 
 **Problem.** Every CLI-based subscription lane that spawns the provider CLI FRESH per call pays a full cold-start each
 time (the CLI reloads its MCP schemas / plugins / agent base). Measured: a claude-code lane call cold-starts ~197K
-cache-write tokens in production; codex cold `exec` measured >75s vs ~5s warm.
+cache-write tokens in production; codex cold `exec` measured >75s vs ~5s warm. The ~5s warm turn is the operative
+Codex lane latency because its daemon is default-on; >75s is only the cold one-shot fallback, not normal lane routing.
+See the [README routing cheat-sheet](../README.md#routing-cheat-sheet) for the caller-facing API choice.
 
 **The decisive requirement for a warm POOL.** Lane calls are *independent one-shot* prompts (classify file A, then
 file B, …). A warm pool is only correct if it can start a FRESH, context-ISOLATED conversation per prompt inside ONE
@@ -50,7 +52,10 @@ contaminate answers and grow cost per turn.
 
 ## SCOPE
 
-This makes the $0 subscription lanes genuinely cheap (valuable for batch/comprehension volume). It is NOT the lever
+This makes the Codex and Kimi $0 subscription lanes warm (valuable for batch/comprehension volume). Other $0 plan
+lanes remain honest plan executors rather than being mislabeled as warm: Gemini/`agy` and Claude Code use CLI paths,
+and Z.AI Coding uses its plan-key endpoint. Plain OpenAI-compatible provider endpoints are metered fallbacks, not $0
+lanes. It is NOT the lever
 for overall "burning too fast": a prior reconciliation found the lane is only ~0.7% of total Claude-plan burn;
 ~99% is interactive context residency. Kept proportionate accordingly.
 

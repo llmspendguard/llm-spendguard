@@ -2,7 +2,9 @@
 
 WHY THIS EXISTS. A one-shot provider-CLI spawn (`codex exec`, `kimi -p`, …) COLD-STARTS every call — the CLI
 reloads its plugins / MCP servers / agent base each time (MEASURED: codex >75s cold → ~5s warm). A persistent
-server mode (`codex app-server`, `kimi acp`) pays that setup ONCE at spawn; each subsequent request is a warm turn.
+    server mode (`codex app-server`, `kimi acp`) pays that setup ONCE at spawn; each subsequent request is a warm turn.
+    Thus ~5s is the operative measured Codex lane latency once the default-on daemon is enabled; >75s describes only
+    the cold one-shot fallback, not normal warm lane routing. See README.md's routing cheat-sheet.
 `codex_daemon._CodexDaemon` proved the concurrent-multiplexing pattern; this module LIFTS that transport + lifecycle
 out so a second lane (kimi ACP) reuses it rather than carrying a drifting copy of ~180 lines of race-handling.
 

@@ -853,7 +853,14 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
          no_substitution=False, measurement=False, metered_only=False, base_fallback=None, _probe=False, _route=True,
          _internal_pin=False, _coalesce_eligible=True, temperature=None, top_p=None, seed=None,
          soft_deadline_s=None, **aliases):
-    """Run one prompt against one model. Returns a CallResult (never raises).
+    """Run one one-shot prompt through the governed model/lane router. Returns a CallResult (never raises).
+
+    For a classification, gate, or doctrine verdict, pass a stable caller ``intent`` and explicit
+    ``reasoning="best-value"``: measured quality evidence chooses the cheapest qualifying (model, effort), the matching
+    configured subscription lane is tried first, and its metered API twin is the fallback unless disabled. The caller
+    names the job intent rather than inventing a model id; configured lane ids come from ``advisor.lane_models`` and
+    are exposed by ``spendguard lanes --catalog``. Codex/Kimi use default-on warm daemons (Codex measured ~5s
+    warm; >75s is cold ``codex exec`` only). See README.md's routing cheat-sheet.
 
     A CallResult IS a dict — every `r["text"]` / `r.get(...)` works unchanged — that ALSO exposes its keys as
     ATTRIBUTES, so `r.text` / `getattr(r, "text")` returns the text. The bare-dict version had no `.text` attribute,

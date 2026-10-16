@@ -135,6 +135,9 @@ class _CodexDaemon(_WarmStdioJsonRpcDaemon):
         response by id, holding no lock. A single call that TIMES OUT fails only ITSELF (the caller falls back to
         the metered API); only a genuinely dead pipe restarts the server, so one slow turn never sinks the others.
 
+        This is the operative default-on Codex lane path: measured at ~5s warm. The >75s measurement applies only to
+        a cold one-shot ``codex exec`` process, not to a request served here. See README.md's routing cheat-sheet.
+
         `timeout` (seconds) overrides the per-call deadline when given — a long AGENTIC repo turn needs far more than
         a meta prompt's default; a caller that passed no timeout keeps the fixed CALL_TIMEOUT_S. `recycle_on_timeout`
         is for a SINGLE-TENANT caller (an agentic delegation, not the concurrent meta-fan): on a timeout the turn is
