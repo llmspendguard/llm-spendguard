@@ -13,21 +13,59 @@ one canonical, verifiable price table.
 # measure-then-project path was unreachable by its obvious import, which is part of why a cost was quoted
 # from invented token counts instead. A module and a function cannot share a name in one namespace; the
 # function is the one that moves, since the module's name says exactly what it is.
-from .pricing import (batch_cost, realtime_cost, estimate as estimate_cost, price, normalize,
-                      PRICING, PRICING_VERIFIED, PRICING_SOURCE)
-from .gate import install, require, register, SpendGateRefused, gate_external, refuse_metered, MeteredCallRefused
-from .emit import on_event
-from .calls import context, set_context, feedback
-from .bulkgate import (estimate_job, test_job, gated_batch, check_bulk, check_realtime, check_compute,
-                       record_estimate, record_tested, note_response, maxtokens, is_truncated, GateBlocked)
-from .crossllm import ask, AskResult, BudgetRefused
-from .item_ledger import ItemLedger
-from .escalation_ladder import cancel_on_zero_billable, relative_escalation_gate
-from .job_fingerprint import (compute_job_fingerprint, guard_resume, compare_fingerprints, read_fingerprint,
-                              write_fingerprint, JobPlanDrift, JobMethodUndecided)
-from .litellm_adapter import install as _install_litellm
-from .bedrock_adapter import install as _install_bedrock
-from .vertex_adapter import install as _install_vertex
+def _cli_submodule_is_being_imported():
+    """True only while importlib is resolving ``spendguard.cli`` or ``spendguard.__main__``.
+
+    A package initializer runs before the requested submodule, so the CLI cannot set an environment flag before
+    this code executes.  Importlib does, however, carry the fully-qualified requested module in its loader frame.
+    Ordinary ``import spendguard`` has no such frame and keeps the historical eager auto-gate behaviour.
+    """
+    import sys
+    frame = sys._getframe()
+    while frame is not None:
+        requested = frame.f_locals.get("name")
+        if requested in ("spendguard.cli", "spendguard.__main__"):
+            return True
+        frame = frame.f_back
+    return False
+
+
+_CLI_BOOTSTRAP_IS_LAZY = _cli_submodule_is_being_imported()
+
+
+def _load_public_api_and_install_gate():
+    """Load the public API and preserve import-time auto-gating after CLI help has been ruled out."""
+    global batch_cost, realtime_cost, estimate_cost, price, normalize
+    global PRICING, PRICING_VERIFIED, PRICING_SOURCE
+    global install, require, register, SpendGateRefused, gate_external, refuse_metered, MeteredCallRefused
+    global on_event, context, set_context, feedback
+    global estimate_job, test_job, gated_batch, check_bulk, check_realtime, check_compute
+    global record_estimate, record_tested, note_response, maxtokens, is_truncated, GateBlocked
+    global ask, AskResult, BudgetRefused, ItemLedger
+    global cancel_on_zero_billable, relative_escalation_gate
+    global compute_job_fingerprint, guard_resume, compare_fingerprints, read_fingerprint
+    global write_fingerprint, JobPlanDrift, JobMethodUndecided
+    global _install_litellm, _install_bedrock, _install_vertex
+
+    if "install" in globals():
+        return
+    from .pricing import (batch_cost, realtime_cost, estimate as estimate_cost, price, normalize,
+                          PRICING, PRICING_VERIFIED, PRICING_SOURCE)
+    from .gate import (install, require, register, SpendGateRefused, gate_external, refuse_metered,
+                       MeteredCallRefused)
+    from .emit import on_event
+    from .calls import context, set_context, feedback
+    from .bulkgate import (estimate_job, test_job, gated_batch, check_bulk, check_realtime, check_compute,
+                           record_estimate, record_tested, note_response, maxtokens, is_truncated, GateBlocked)
+    from .crossllm import ask, AskResult, BudgetRefused
+    from .item_ledger import ItemLedger
+    from .escalation_ladder import cancel_on_zero_billable, relative_escalation_gate
+    from .job_fingerprint import (compute_job_fingerprint, guard_resume, compare_fingerprints, read_fingerprint,
+                                  write_fingerprint, JobPlanDrift, JobMethodUndecided)
+    from .litellm_adapter import install as _install_litellm
+    from .bedrock_adapter import install as _install_bedrock
+    from .vertex_adapter import install as _install_vertex
+    _auto_install()
 
 
 def install_litellm() -> bool:
@@ -150,4 +188,5 @@ def _auto_install():
                 f"no-op import here.")
 
 
-_auto_install()
+if not _CLI_BOOTSTRAP_IS_LAZY:
+    _load_public_api_and_install_gate()
