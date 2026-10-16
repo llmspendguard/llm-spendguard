@@ -12,6 +12,8 @@ from . import config, config_schema
 # ours to overwrite. A distinctive marker we emit ourselves is the only honest test of authorship, and
 # deleting someone else's interpreter hook is not something they can recover from here.
 _SENTINEL = "spendguard-gate-hook/v1"
+_PTH_NAME = "spendguard_gate_hook.pth"
+_GATED_SDKS = ("openai", "anthropic", "httpx")
 
 _HOOK = '''# Auto-installs the spendguard cost gate for every process in this venv (the `spendguard` package).
 # spendguard-gate-hook/v1 — this marker is how `install-hook --uninstall` knows the file is ours.
@@ -27,6 +29,13 @@ if os.environ.get("GATE_DISABLE") != "1" and not os.path.exists(os.path.join(_ho
     except Exception as _e:  # never let the gate break a process
         sys.stderr.write(f"[sitecustomize] spendguard not installed: {_e}\\n")
 '''
+
+# A .pth executable line is the shadow-proof fallback when an earlier stdlib/site entry owns the
+# ``sitecustomize`` import. Keep the kill switches identical to _HOOK and carry the same ownership marker.
+_PTH_HOOK = ("import os;exec(\"from pathlib import Path\\n"
+             "_h=os.environ.get('SPENDGUARD_HOME') or str(Path.home() / '.spendguard')\\n"
+             "if os.environ.get('GATE_DISABLE') != '1' and not os.path.exists(os.path.join(_h, 'disabled')):\\n"
+             " import spendguard\\n spendguard.install()\")  # " + _SENTINEL + "\n")
 
 # A portable rule for any AI coding assistant (Claude Code, Cursor, etc.). `install-rule` drops it into a
 # CLAUDE.md so EVERY conversation in that project automatically wires spendguard into whatever it builds.
@@ -267,10 +276,85 @@ def cmd_coverage(argv=None):
     return coverage(list(argv or []))
 
 
-def _site_packages(venv):
-    import glob
-    c = glob.glob(os.path.join(venv, "lib", "python*", "site-packages"))
-    return c[0] if c else None
+def _interpreter_purelib(target, timeout=10):
+    """Ask *target* for the directory it actually imports pure Python packages from; never infer its version."""
+    import subprocess
+    try:
+        r = subprocess.run([target, "-c", "import sysconfig;print(sysconfig.get_path('purelib'))"],
+                           capture_output=True, text=True, check=True, timeout=timeout)
+        path = r.stdout.strip()
+        return path or None
+    except Exception:
+        return None
+
+
+def _startup_gate_active(target, timeout=10):
+    """True only when startup itself loaded spendguard's existing public install path (no probe-side import)."""
+    import subprocess
+    code = ("import sys;"
+            "m=sys.modules.get('spendguard');"
+            "print(int(m is not None and callable(getattr(m,'install',None)) "
+            "and 'spendguard.gate' in sys.modules))")
+    try:
+        r = subprocess.run([target, "-c", code], capture_output=True, text=True,
+                           check=True, timeout=timeout)
+        return r.stdout.strip() == "1"
+    except Exception:
+        return False
+
+
+def _sdk_gate_states(target, timeout=10):
+    """Return each gated SDK's target-interpreter state from a fixed JSON machine response."""
+    import subprocess
+    code = (
+        "import importlib, importlib.util, json\n"
+        f"sdk_names = {_GATED_SDKS!r}\n"
+        "sdk_gate_states = {}\n"
+        "for sdk_name in sdk_names:\n"
+        "    if importlib.util.find_spec(sdk_name) is None:\n"
+        "        sdk_gate_states[sdk_name] = 'absent'\n"
+        "        continue\n"
+        "    sdk_patched = False\n"
+        "    try:\n"
+        "        if sdk_name == sdk_names[0]:\n"
+        "            m = importlib.import_module('openai.resources.files')\n"
+        "            sdk_patched = bool(getattr(m.Files.create, '_spend_gated', False))\n"
+        "        elif sdk_name == sdk_names[1]:\n"
+        "            m = importlib.import_module('anthropic.resources.messages.batches')\n"
+        "            sdk_patched = bool(getattr(m.Batches.create, '_spend_gated', False))\n"
+        "        else:\n"
+        "            m = importlib.import_module(sdk_name)\n"
+        "            sdk_patched = all(getattr(fn, '_spend_gated', False) for fn in\n"
+        "                              (m.Client.send, m.AsyncClient.send))\n"
+        "    except Exception:\n"
+        "        sdk_patched = False\n"
+        "    sdk_gate_states[sdk_name] = 'patched' if sdk_patched else 'present_ungated'\n"
+        "print(json.dumps(sdk_gate_states, sort_keys=True, separators=(',', ':')))\n"
+    )
+    result = subprocess.run([target, "-c", code], capture_output=True, text=True,
+                            check=True, timeout=timeout)
+    import json
+    sdk_gate_states = json.loads(result.stdout)
+    valid_states = {"patched", "present_ungated", "absent"}
+    if (set(sdk_gate_states) != set(_GATED_SDKS)
+            or any(value not in valid_states for value in sdk_gate_states.values())):
+        raise ValueError("target returned an invalid SDK gate-state response")
+    return sdk_gate_states
+
+
+def _render_sdk_gate_states(sdk_gate_states):
+    labels = {"patched": "ENFORCING", "present_ungated": "NOT gated", "absent": "SDK not installed"}
+    return " · ".join(f"{name}: {labels[sdk_gate_states[name]]}" for name in _GATED_SDKS)
+
+
+def _resolved_sitecustomize(target, timeout=10):
+    import subprocess
+    try:
+        r = subprocess.run([target, "-c", "import sitecustomize,inspect;print(inspect.getfile(sitecustomize))"],
+                           capture_output=True, text=True, check=True, timeout=timeout)
+        return r.stdout.strip() or None
+    except Exception:
+        return None
 
 
 def _pkg_src():
@@ -300,10 +384,12 @@ def install_hook(venv=None, uninstall=False, install_pkg=True, user=False, pytho
         target = os.path.join(venv, "bin", "python")
         if not os.path.exists(target):
             print(f"  ✗ not a venv (no {target}). Create one: python -m venv {venv}"); return 1
-        sp = _site_packages(venv)
+        sp = _interpreter_purelib(target)
         if not sp:
-            print(f"  ✗ no site-packages under {venv}"); return 1
+            print(f"  ✗ couldn't resolve {target}'s active purelib; refusing to guess from lib/python*/site-packages.")
+            return 1
         hook = os.path.join(sp, "sitecustomize.py")
+    pth_hook = os.path.join(sp, _PTH_NAME)
 
     # OWNERSHIP IS A SENTINEL WE WROTE, NOT THE WORD "spendguard" APPEARING SOMEWHERE. A user's own
     # sitecustomize that merely mentions spendguard in a comment satisfied the substring test — so
@@ -318,15 +404,17 @@ def install_hook(venv=None, uninstall=False, install_pkg=True, user=False, pytho
             return ""
 
     if uninstall:
-        if os.path.exists(hook) and _SENTINEL in _reads(hook):
-            os.remove(hook); print(f"  ✓ removed gate hook: {hook}")
-        elif os.path.exists(hook):
-            print(f"  ✗ {hook} exists but carries no spendguard marker — NOT removing someone else's hook. "
-                  f"Delete it by hand if you are sure it is ours.")
-            return 1
-        else:
-            print(f"  (no spendguard hook at {hook})")
-        return 0
+        refused = False
+        for owned_hook in (hook, pth_hook):
+            if os.path.exists(owned_hook) and _SENTINEL in _reads(owned_hook):
+                os.remove(owned_hook); print(f"  ✓ removed gate hook: {owned_hook}")
+            elif os.path.exists(owned_hook):
+                print(f"  ✗ {owned_hook} exists but carries no spendguard marker — NOT removing someone else's "
+                      "hook. Delete it by hand if you are sure it is ours.")
+                refused = True
+            else:
+                print(f"  (no spendguard hook at {owned_hook})")
+        return 1 if refused else 0
     if os.path.exists(hook) and _SENTINEL not in _reads(hook):
         print(f"  ✗ {hook} exists and isn't ours — not overwriting. Merge the spendguard.install() snippet manually.")
         return 1
@@ -345,28 +433,36 @@ def install_hook(venv=None, uninstall=False, install_pkg=True, user=False, pytho
                 print("  ✗ pip install failed:\n" + (r.stderr or r.stdout)[-600:]); return 1
         open(hook, "w").write(_HOOK)
 
-    # PROBE EACH PROVIDER INDEPENDENTLY. This imported openai unconditionally, so an environment with only
-    # the Anthropic SDK — a completely normal setup — got a raw ImportError traceback from `install-hook`
-    # and no answer about whether the gate was enforcing. Worse than ugly: it reports nothing about the SDK
-    # that IS installed, so a correctly gated Anthropic-only machine looks broken.
-    _probe = (
-        "import importlib\n"
-        "res = []\n"
-        "for name, mod, attr in (('openai', 'openai.resources', 'Files'),\n"
-        "                        ('anthropic', 'anthropic.resources.messages.batches', 'Batches')):\n"
-        "    try:\n"
-        "        m = importlib.import_module(mod)\n"
-        "    except ImportError:\n"
-        "        res.append(f'{name}: SDK not installed')\n"          # absent is not ungated
-        "        continue\n"
-        "    obj = getattr(m, attr, None) or getattr(m, 'files', None)\n"
-        "    fn = getattr(getattr(obj, 'create', None), '_spend_gated', None)\n"
-        "    res.append(f'{name}: ' + ('ENFORCING' if fn else 'NOT gated'))\n"
-        "print(' · '.join(res))\n"
-    )
-    v = subprocess.run([target, "-c", _probe], capture_output=True, text=True)
     print(f"  ✓ hook → {hook}")
-    print(f"  verify ({target}): {v.stdout.strip() or v.stderr.strip()[-160:]}")
+    active = _startup_gate_active(target)
+    if not active and not cross:
+        resolved = _resolved_sitecustomize(target)
+        if resolved and os.path.realpath(resolved) != os.path.realpath(hook):
+            if os.path.exists(pth_hook) and _SENTINEL not in _reads(pth_hook):
+                print(f"  ✗ startup gate INACTIVE: {resolved} shadows {hook}, and {pth_hook} is not ours; "
+                      "refusing to overwrite it.")
+                return 1
+            Path(pth_hook).write_text(_PTH_HOOK)
+            print(f"  ! {resolved} shadows {hook}; installed shadow-proof fallback → {pth_hook}")
+            active = _startup_gate_active(target)
+    if not active:
+        resolved = _resolved_sitecustomize(target)
+        why = (f"sitecustomize resolves to {resolved}, not {hook}" if resolved and
+               os.path.realpath(resolved) != os.path.realpath(hook)
+               else f"the startup hook at {hook} did not load spendguard.install()")
+        print(f"  ✗ startup gate INACTIVE: {why}. Fix the interpreter's site configuration or conflicting "
+              "sitecustomize, then rerun install-hook.")
+        return 1
+    try:
+        sdk_gate_states = _sdk_gate_states(target)
+    except Exception as e:
+        print(f"  ✗ couldn't verify SDK gate state in {target}: {e}")
+        return 1
+    print(f"  verify ({target}): {_render_sdk_gate_states(sdk_gate_states)}")
+    if "present_ungated" in sdk_gate_states.values():
+        print("  ✗ gate hook fired, but a present LLM SDK is NOT gated; refusing to claim this interpreter "
+              "is enforcing. Run `spendguard doctor` and repair the SDK gate before use.")
+        return 1
     # ensure setup is actually USABLE, not just installed: keys must resolve in this interpreter (the repo-move
     # break was silent because nothing checked this). Reconcile/report are dead without them.
     kk = subprocess.run([target, "-c", "from spendguard import config as c;"
@@ -374,7 +470,12 @@ def install_hook(venv=None, uninstall=False, install_pkg=True, user=False, pytho
                          "', anthropic='+('ok' if c.api_key('ANTHROPIC_API_KEY') else 'MISSING'))"],
                         capture_output=True, text=True)
     print(kk.stdout.strip() or ("  keys: (check failed) " + kk.stderr.strip()[-120:]))
-    print("  that interpreter is now gated (kill switch: GATE_DISABLE=1 or `spendguard off`).")
+    if "patched" in sdk_gate_states.values():
+        print("  that interpreter is now gated (kill switch: GATE_DISABLE=1 or `spendguard off`).")
+    else:
+        print(f"  gate hook wired; no LLM SDK ({'/'.join(_GATED_SDKS)}) present here yet, so there is nothing "
+              "to patch — `spendguard doctor` will show NOT ENFORCING until an SDK is installed, at which "
+              "point this hook gates it.")
     print(f"  next: `spendguard doctor` — verifies keys + SaaS push readiness for this repo. Add keys to "
           f"{config.KEYS_ENV} (cwd-independent) if MISSING; add a per-repo .spendguard.json to push this repo to the server.")
     return 0

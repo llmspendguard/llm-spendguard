@@ -24,7 +24,9 @@ def mk_venv(root, name, llm=(), gated=False):
         os.makedirs(os.path.join(sp, p), exist_ok=True)
     if gated:
         with open(os.path.join(sp, "sitecustomize.py"), "w") as f:
-            f.write("import spendguard\nspendguard.install()\n")
+            f.write("# spendguard-gate-hook/v1\nimport spendguard\nspendguard.install()\n")
+    os.makedirs(os.path.join(root, name, "bin"), exist_ok=True)
+    open(os.path.join(root, name, "bin", "python"), "a").close()
     return os.path.join(root, name)
 
 
@@ -34,6 +36,10 @@ mk_venv(tmp, "ungated-llm", llm=("anthropic",), gated=False)
 mk_venv(tmp, "no-llm-tool", llm=(), gated=False)              # no LLM SDK → not a realtime source
 mk_venv(tmp, "llm-spendguard-dev", llm=("openai",), gated=False)   # spendguard's OWN → self-gates, not a gap
 ROOTS = [os.path.join(tmp, "*")]
+
+# The audit asks each target interpreter for its real purelib. These are fabricated venvs, so provide that answer
+# at the subprocess boundary rather than running them.
+coverage._purelib = lambda venv: os.path.join(venv, "lib", "python3.11", "site-packages")
 
 rows = coverage.audit_gating_coverage(roots=ROOTS)
 by = {os.path.basename(r["venv"]): r for r in rows}
