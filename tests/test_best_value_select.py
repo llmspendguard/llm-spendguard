@@ -70,7 +70,7 @@ def _raise_stop(*a, **k):
     raise _Stop("planted spend refusal")
 advisor.recommend_models = _raise_stop
 try:
-    best_value.select_model_effort(INTENT, "openai:gpt-5.5")
+    best_value.select_model_effort(INTENT + ":deliberate-stop", "openai:gpt-5.5")
     check("deliberate stop was (wrongly) swallowed", False)
 except gate.deliberate_stop_types():
     check("deliberate stop propagated out of best_value.select", True)
