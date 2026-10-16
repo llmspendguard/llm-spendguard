@@ -258,12 +258,15 @@ class _CodexDaemon(_WarmStdioJsonRpcDaemon):
             self._schedule_idle_shutdown()
 
 
-# ── ONE per-process daemon instance; the module API is the singleton's BOUND METHODS (assignment, not a second
-# `def` — so the public names delegate without duplicating the class methods' definitions) ──
-_DAEMON = _CodexDaemon()
-run_warm = _DAEMON.run_warm            # the existing lane/callers' API (codex_exec.run_prompt → codex_daemon.run_warm)
-ensure_running = _DAEMON.ensure_running
-running = _DAEMON.running
-shutdown = _DAEMON.shutdown
+# ── ONE host-broker facade per process.  Its owner proxies into the existing private-stdio daemon; clients attach
+# over the Unix socket.  The module API remains the singleton's BOUND METHODS (assignment, not duplicate definitions). ──
+from .codex_daemon_broker import _CodexDaemonBroker
+
+_LOCAL_DAEMON = _CodexDaemon()
+_DAEMON = _CodexDaemonBroker(_LOCAL_DAEMON)
+run_warm = _DAEMON.broker_run_warm      # existing lane/callers' API (codex_exec.run_prompt → codex_daemon.run_warm)
+ensure_running = _DAEMON.broker_ensure_running
+running = _DAEMON.broker_running
+shutdown = _DAEMON.broker_shutdown
 
 atexit.register(shutdown)
