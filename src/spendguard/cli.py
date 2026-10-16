@@ -130,6 +130,20 @@ def _dispatch(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     cmd = argv[0] if argv else "status"
     rest = argv[1:]
+    # Package import normally auto-installs the gate.  CLI bootstrap alone defers that expensive public surface so
+    # help can remain a pure parser/introspection path; every real command hydrates the same API and installs the
+    # same gate immediately below.  This mirrors the command handlers' established local-import pattern.
+    if cmd in ("--help", "-h", "help", "--commands"):
+        print(help_text())
+        return 0
+    if any(arg in ("--help", "-h") for arg in rest):
+        descriptions = {command: description for _group, items in _GROUPS for command, description in items}
+        option_hint = ("\n\noptions: --no-gate --allow-dirty --no-restart"
+                       if cmd == "deploy" else "")
+        print(f"usage: spendguard {cmd} [args]\n\n{descriptions.get(cmd, 'spendguard command')}{option_hint}")
+        return 0
+    from . import _load_public_api_and_install_gate
+    _load_public_api_and_install_gate()
     # ensure the gate is installed for this process so the advisor's OWN LLM calls (optimize/experiment/
     # reconstruct/mine/review/promote/cascade/brief --llm) are caged by caps.meta even when run via the CLI
     # outside a gated venv. Idempotent + fail-open.
@@ -998,9 +1012,6 @@ def _dispatch(argv=None):
         return 2 if stale else 0
     # An explicit help request EXITS 0 and prints the real, grouped surface. Before this, `--help`, `-h`, `help`,
     # `--version` and a typo all printed the same 9-line module docstring — 10 of 60+ commands — and exited 1.
-    if cmd in ("--help", "-h", "help", "--commands"):
-        print(help_text())
-        return 0
     if cmd in ("--version", "-V", "version"):
         from . import __version__, release as _rel
         _s = _rel.served_sha()
