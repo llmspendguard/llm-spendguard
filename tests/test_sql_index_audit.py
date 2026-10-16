@@ -17,8 +17,11 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-idx-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
+
 import re
 import glob
+import ast
 import sqlite3
 
 fails = []
@@ -72,7 +75,7 @@ def indexed_cols(table):
 # ── guard 1: the required index inventory (drift-proof) ──
 REQUIRED = {
     "calls": {"chain", "intent", "ts"},
-    "gate_calls": {"sig", "model"},
+    "gate_calls": {"sig", "model", "truncated"},
     "graph_edges": {"rel", "src"},
     "cost_predictions": {"paired_ts", "job_id"},
     "savings": {"day"},
@@ -101,17 +104,24 @@ ALLOWED_SCAN_SNIPPETS = (
     "FROM spend_events",         # reconcile/report period aggregates roll the window up
     "FROM charges",              # by_day month aggregates
     "UPDATE charges SET project=",   # one-shot meta-project backfill (maintenance, not a hot path)
+    "UPDATE call_io SET truncated=1",  # one-shot legacy-body truncation backfill must inspect every stored body
+    "UPDATE spend_events SET project_primary=",  # one-shot primary-project attribution backfill
     "FROM call_io",              # corpus-wide lint/backfill passes
     "FROM semcache",             # cache stats
     "FROM graph_edges GROUP BY rel",
 )
-SQL_RE = re.compile(r'"((?:SELECT|DELETE FROM|UPDATE)\s[^"]{10,400})"', re.I | re.S)
 queries = set()
 for path in glob.glob(os.path.join(os.path.dirname(calls.__file__), "*.py")):
-    src = open(path).read().replace('"""', '"').replace("\n", " ")
-    for m in SQL_RE.finditer(src):
-        q = re.sub(r"\{[^}]*\}", "1", m.group(1)).strip()      # f-string holes → harmless literal
+    tree = ast.parse(open(path).read(), filename=path)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+            continue
+        literal = node.value.strip()
+        if not re.match(r"(?:SELECT|DELETE FROM|UPDATE)\s", literal, re.I):
+            continue
+        q = re.sub(r"\{[^}]*\}", "1", literal).strip()          # f-string holes → harmless literal
         q = re.sub(r"\s+", " ", q)
+        q = q.replace("?", "1")                                  # bind slots → harmless EXPLAIN literals
         if " FROM " in q.upper() or q.upper().startswith(("DELETE", "UPDATE")):
             queries.add(q)
 
