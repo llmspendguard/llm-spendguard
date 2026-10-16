@@ -8,6 +8,7 @@ to gate them at the source (`spendguard install-hook --venv <v>`); this audit ma
 """
 import os
 import glob
+import subprocess
 
 
 # Defaults: the iCloud-safe venv home + venvs sitting inside repos near the cwd (1–2 levels up's siblings). Generic
@@ -36,15 +37,28 @@ def _roots():
     return _default_roots()
 
 
-def _is_gated(sp):
-    """A venv is gated iff its site-packages carries a sitecustomize/usercustomize that loads spendguard (what
-    install-hook writes) — so the gate is active for EVERY interpreter in that venv, even bare scripts."""
-    for hook in ("sitecustomize.py", "usercustomize.py"):
+def _purelib(venv):
+    """The venv interpreter's real purelib, or None. Never guess from stale versioned directories."""
+    target = os.path.join(venv, "bin", "python")
+    try:
+        r = subprocess.run([target, "-c", "import sysconfig;print(sysconfig.get_path('purelib'))"],
+                           capture_output=True, text=True, check=True, timeout=5)
+        return r.stdout.strip() or None
+    except Exception:
+        return None
+
+
+def _is_gated(venv, purelib=None):
+    """A venv is gated only when its interpreter's real purelib carries an owned startup hook."""
+    sp = purelib or _purelib(venv)
+    if not sp:
+        return False
+    for hook in ("sitecustomize.py", "usercustomize.py", "spendguard_gate_hook.pth"):
         hp = os.path.join(sp, hook)
         try:
             if os.path.exists(hp):
                 with open(hp, errors="ignore") as _fh:        # closed deterministically (was a leaked handle)
-                    if "spendguard" in _fh.read():
+                    if "spendguard-gate-hook/v1" in _fh.read():
                         return True
         except Exception:
             pass
@@ -79,15 +93,15 @@ def audit_gating_coverage(roots=None):
     seen, out = set(), []
     for pat in pats:
         for venv in glob.glob(os.path.expanduser(pat)):
-            for sp in glob.glob(os.path.join(venv, "lib", "python*", "site-packages")):
-                if sp in seen:
-                    continue
-                seen.add(sp)
-                llm = [p for p in ("openai", "anthropic") if os.path.isdir(os.path.join(sp, p))]
-                if not llm:
-                    continue
-                out.append({"venv": venv, "llm": llm, "gated": _is_gated(sp),
-                            "own": _is_own(sp, venv)})
+            sp = _purelib(venv)
+            if not sp or sp in seen:
+                continue
+            seen.add(sp)
+            llm = [p for p in ("openai", "anthropic") if os.path.isdir(os.path.join(sp, p))]
+            if not llm:
+                continue
+            out.append({"venv": venv, "llm": llm, "gated": _is_gated(venv, sp),
+                        "own": _is_own(sp, venv)})
     return out
 
 

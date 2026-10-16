@@ -517,12 +517,13 @@ _setup_src = (SRC / "setup.py").read_text()
 # THIS CHECK WAS TOO BROAD AT FIRST and failed on correct code. It searched the whole file for the openai
 # import string, which also matches a DIFFERENT probe that already wraps each provider in its own
 # try/except and falls through to anthropic. A guard that fires on the fixed version of the code teaches
-# people to delete guards. The assertion is now about the verification snippet specifically, and about the
-# behaviour that was actually wrong: an absent SDK must report as absent rather than as ungated.
-check("...it probes each provider independently", "'anthropic'" in _setup_src and "'openai'" in _setup_src)
+# people to delete guards. The structured _sdk_gate_states probe now enumerates the fixed _GATED_SDKS list,
+# and find_spec is the guarantee that each SDK's presence is checked before any provider-specific import.
+check("...it probes each provider independently",
+      "_GATED_SDKS" in _setup_src and '"openai"' in _setup_src and '"anthropic"' in _setup_src)
 check("...and an absent SDK reports as absent, not as ungated", "SDK not installed" in _setup_src)
 check("the verification snippet no longer assumes openai is importable",
-      "_probe" in _setup_src and "importlib.import_module(mod)" in _setup_src)
+      "_sdk_gate_states" in _setup_src and "importlib.util.find_spec(" in _setup_src)
 
 # expected_output promised "never 0" in two docstrings while deliberately returning 0 with basis='unknown'.
 # The 0 is the right number to hand back — a caller doing arithmetic needs one — but a reader trusting the
