@@ -1062,7 +1062,10 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     _best_value_selects = (isinstance(_effective_reasoning, str)
                            and _effective_reasoning.strip().lower() == "best-value" and bool(intent or sig))
     if model is None and not _best_value_selects:
-        model = _chat_default_model(metered_only=metered_only)
+        # No metered_only forward: _chat_default_model only ever returns a priced (metered-capable) model, so a
+        # metered_only=True caller is satisfied by construction — threading the flag would imply a filter that
+        # does not exist, and would read as a paid-routing edge it is not.
+        model = _chat_default_model()
 
     # DETERMINISM KNOBS (temperature/top_p/seed) — resolved from THREE precedence levels so the same capability is
     # usable per-call AND broadly: an explicit per-call arg WINS over a SCOPED default (`with adapters.generation(...)`
@@ -1623,10 +1626,11 @@ _DEFAULT_EMBED_MODEL = "text-embedding-3-small"   # LAST-RESORT fail-safe ONLY i
 #                                                   model (a broken catalog) — never the normal path (see below).
 
 
-def _chat_default_model(metered_only=False):
+def _chat_default_model():
     """The chat model for an unnamed call: config ``advisor.default_model`` if set, else the CATALOG's cheapest priced
-    chat model. Catalog prices denote direct metered APIs, so priced chat rows are metered-capable and the same
-    candidate set honestly serves ``metered_only=True``. A broken/empty catalog is NOT papered over with a hardcoded
+    chat model. Catalog prices denote direct metered APIs, so every candidate is metered-capable and no $0 lane is ever
+    returned here — an unnamed call made under ``metered_only=True`` is satisfied by construction, which is why the
+    caller forwards no flag. A broken/empty catalog is NOT papered over with a hardcoded
     id: catalog errors propagate, and an absent priced chat model with no ``advisor.default_model`` raises
     ModelSelectionContractRefused (a deliberate SpendGateRefused, never a silent fallback) so a broken pricing/routing
     SSOT is loud rather than masking a model nobody chose."""
