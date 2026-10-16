@@ -48,6 +48,8 @@ def provider_for(model):
     """Resolve provider from a model id. Accepts explicit 'provider:model' too. When several providers' prefixes
     match, the LONGEST (most specific) prefix wins — DETERMINISTIC, independent of PROVIDERS insertion order, so a
     plugin whose prefix overlaps a built-in can't resolve by dict order and silently bill the wrong vendor."""
+    if not isinstance(model, str) or not model.strip():
+        raise ValueError(f"model must be a non-empty id or 'provider:model' — got {model!r}")
     if ":" in model:
         return model.split(":", 1)[0]
     best_name, best_len = None, -1
@@ -970,6 +972,15 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
         _fleet.register_consumer()               #   see + restart it if it is stale. Once-per-process (cheap no-op after); never raises.
     except Exception:
         pass
+    _model_defaulted = not model
+    if _model_defaulted:
+        model = _chat_default_model()
+        if not model:
+            return {"provider": None, "model": None, "text": None, "parsed": None,
+                    "in_tok": 0, "out_tok": 0, "cost": None, "latency": 0.0, "finish_reason": None,
+                    "executor": None, "error_type": "ModelDefaultUnavailable", "reason": "model_default_unavailable",
+                    "error": "no chat model default is configured and the catalog contains no priced chat model",
+                    "model_defaulted": True}
     # metered_only FORCES the exact model on the metered API, so it must ALSO pin the model: a substitution (best-value,
     # or a lane-bandit swap) would silently route to a DIFFERENT vendor's $0 lane, defeating BOTH the model choice and
     # the metered intent. That is the measured warden:tag_provenance_xcheck bypass — metered_only=True still yielded
@@ -1479,6 +1490,9 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     # reach for instead — the metered provider API served it (a lane miss fell through, or there was no lane): executor
     # 'api'/'api-fallback', or (defensively) a cost with no lane executor recorded.
     if isinstance(r, dict):
+        if _model_defaulted:
+            r["model_defaulted"] = True
+            r["model_default_reason"] = "advisor.default_model or catalog cheapest chat model"
         if soft_deadline_s is not None:
             r["stall_outcome"] = "produced_tokens_ran"
             r["zero_billable_cancel_feasible"] = False
@@ -1602,6 +1616,21 @@ _EMBED_MAX_INPUT_CHARS = 32000    # ~8k-token per-input ceiling (OpenAI) as a co
 #                                   text is marked failed for THAT item, never sent to 400 the whole chunk it rides in.
 _DEFAULT_EMBED_MODEL = "text-embedding-3-small"   # LAST-RESORT fail-safe ONLY if the catalog curates no OpenAI embedding
 #                                                   model (a broken catalog) — never the normal path (see below).
+
+
+def _chat_default_model():
+    """The chat model to use when a caller passes none: config `advisor.default_model` if set, else the CATALOG's
+    cheapest chat model (model_catalog.chat_models — the SSOT for "which models chat"). No chat-model id is hardcoded;
+    an empty catalog and no override returns None so call() can surface a typed failure."""
+    try:
+        ov = config._cfg_get("advisor", "default_model", None)
+        if ov:
+            return ov
+        from . import model_catalog
+        chat = model_catalog.chat_models()
+        return chat[0][1] if chat else None                 # (provider, model_id), cheapest input first
+    except Exception:
+        return None
 
 
 def _embed_default_model():
