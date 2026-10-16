@@ -22,7 +22,6 @@ import hashlib
 import pathlib
 import sqlite3
 import sys
-import tomllib
 from contextlib import closing
 
 from . import config
@@ -194,6 +193,10 @@ _INSTALL_FINGERPRINT_MARKER = ".spendguard_dep_fingerprint"
 def _dependency_fingerprint(pyproject_path=None):
     """Stable hash of the declared dependency set (base + named optional groups). Pure TOML parsing: ordering and
     formatting do not affect it, while adding/removing/moving a requirement does."""
+    try:
+        import tomllib
+    except ModuleNotFoundError:
+        import tomli as tomllib
     path = pathlib.Path(pyproject_path) if pyproject_path else pathlib.Path(__file__).resolve().parents[2] / "pyproject.toml"
     with path.open("rb") as fh:
         project = tomllib.load(fh).get("project") or {}
