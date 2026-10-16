@@ -13,6 +13,26 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
   rows rather than receiving a fabricated current date. The public read path is the anonymous `/catalog` page and
   `/api/public/catalog`; local standalone operation and optional SaaS telemetry remain separate.
 
+## [0.12.21] — 2026-10-15
+
+### Added
+- **Weekly cap-guard.** Fast offline PreToolUse check that catches plan-cap spawn leaks before they bill. (#76)
+
+### Changed
+- **Lane→metered crosswalk consolidated into the catalog SSOT.** The model catalog is now the single authoring source
+  for the static lane→metered crosswalk; runtime only adds the live dated-alias upgrade and the Gemini reasoning
+  parameter. A lane model must be catalogued; an uncatalogued lane model is now refused. (#75)
+- **Truthful caller-facing routing/cost docs and docstrings.** Documentation only; no behavior change. (#77)
+- **Best-value model-pick verdict cache persists across interpreters.** A durable L2 store behind the existing
+  in-process `_verdict_cache`, keyed by `(intent, quality_target, evidence_fingerprint)`, prevents a fresh-interpreter
+  hook from re-paying the advisor ranker on every call; bounded retention prunes stale-fingerprint rows. No new paid
+  LLM call. (#78)
+
+### Fixed
+- **Three pre-existing test failures.** Added a real WHERE clause and `idx_gatecalls_truncated_model` on
+  `gate_calls(truncated, model)` for the truncation-remedy path, AST-based SQL extraction in the SQL index audit, and
+  scoped recovery-ladder test isolation. (#74)
+
 ## [0.12.20] — 2026-10-15
 
 ### Changed
