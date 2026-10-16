@@ -68,6 +68,8 @@ def provider_for(model):
     """Resolve provider from a model id. Accepts explicit 'provider:model' too. When several providers' prefixes
     match, the LONGEST (most specific) prefix wins — DETERMINISTIC, independent of PROVIDERS insertion order, so a
     plugin whose prefix overlaps a built-in can't resolve by dict order and silently bill the wrong vendor."""
+    if not isinstance(model, str) or not model.strip():
+        raise ValueError(f"model must be a non-empty id or 'provider:model' — got {model!r}")
     if ":" in model:
         return model.split(":", 1)[0]
     best_name, best_len = None, -1
@@ -1048,6 +1050,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
         _fleet.register_consumer()               #   see + restart it if it is stale. Once-per-process (cheap no-op after); never raises.
     except Exception:
         pass
+    _model_defaulted = not model
     # metered_only FORCES the exact model on the metered API, so it must ALSO pin the model: a substitution (best-value,
     # or a lane-bandit swap) would silently route to a DIFFERENT vendor's $0 lane, defeating BOTH the model choice and
     # the metered intent. That is the measured warden:tag_provenance_xcheck bypass — metered_only=True still yielded
@@ -1616,6 +1619,9 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
         if not _no_guard and not _probe:
             r["call_id"] = r.get("call_id") or _retained_call_id
         _book_substitution(r)   # linked call_id is now present; book the value proof + learner evidence
+        if _model_defaulted:
+            r["model_defaulted"] = True
+            r["model_default_reason"] = "advisor.default_model or catalog cheapest chat model"
         if soft_deadline_s is not None:
             r["stall_outcome"] = "produced_tokens_ran"
             r["zero_billable_cancel_feasible"] = False

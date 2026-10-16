@@ -371,6 +371,26 @@ def embedding_models(provider=None):
     return [(p, m) for _in, p, m in rows]
 
 
+def chat_models(provider=None):
+    """Every curated CHAT model (capabilities.mode == 'chat'), optionally filtered to one provider — the SSOT for
+    "which models chat", so NO caller hardcodes a chat model id. Returns [(provider, metered_id)] sorted by input price
+    ascending (cheapest first). Embedding-only and every other non-chat mode are excluded by the authored catalog mode;
+    empty when the catalog curates no chat model for the filter."""
+    prov = (provider or "").strip().lower() or None
+    rows = []
+    for rid, rec in _load_records().items():
+        caps = rec.get("capabilities")
+        if not isinstance(caps, dict) or caps.get("mode") != "chat":
+            continue
+        rp = (rec.get("provider") or "").strip().lower()
+        if prov and rp != prov:
+            continue
+        price_in = (rec.get("price") or {}).get("in_")
+        rows.append(((price_in if price_in is not None else 1e9), rec.get("provider"), rec.get("metered_id") or rid))
+    rows.sort(key=lambda t: (t[0], str(t[2])))
+    return [(p, m) for _in, p, m in rows]
+
+
 def embed_batch_ceiling(model_id):
     """The PROVIDER-ENFORCED maximum number of inputs per /embeddings request for an embedding model, or None when the
     catalog doesn't record one (caller then uses its own default, no clamp). Reads `capabilities.embed_max_batch.value`
