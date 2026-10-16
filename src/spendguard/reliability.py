@@ -395,14 +395,23 @@ def note_lane_ok(lane):
         pass
 
 
-def note_lane_auth_down(lane, cmd=""):
-    """A lane is CONFIRMED LOGGED OUT (its OWN auth-status command said so — see lanes.lane_auth_status) → record it +
-    alarm IMMEDIATELY. Unlike note_lane_down (a generic miss, alarmed only when SUSTAINED to avoid flapping under
-    load), a positive logout is NOT a blip: the lane keeps FALLING BACK to the METERED API (silently billing) until
-    re-login, so it warrants a prompt, actionable alert the FIRST time it is seen — this is the exact 'silent empty'
-    the user hit. Writes the persistent lane_health row (source 'event-auth', so note_lane_ok CLEARS it on the lane's
-    next successful call → re-login self-heals the banner) carrying the exact re-login COMMAND, and fires a macOS
-    notification (throttled by notified_ts). $0, no LLM. NEVER raises — this rides the call path."""
+def note_lane_auth_down(lane, cmd="", sustained_only=True):
+    """A lane's OWN auth-status command reported LOGGED OUT on the call path (lanes.lane_auth_status). That signal
+    RACES the plan CLI's periodic auth.json refresh-rewrite: under concurrent lane load (bulk fan-outs) the file is
+    momentarily absent/unreadable and the status check returns a FALSE logout while the long-lived ACCESS token is in
+    fact valid — measured 2026-10-16: codex's id_token expires hourly but `codex exec`/`login status` keep succeeding
+    on the 10-day access token, and the 231 metered fallovers since 2026-10-01 cluster in tight same-minute bursts
+    during honestreview concurrent fan-outs, never a real logout. Firing the user toast on the FIRST such dip was the
+    recurring false 'codex lane LOGGED OUT (re-login)' banner.
+
+    So a LONE auth-down is a SUSPECTED refresh-race blip: we RECORD it (the receipt surfaces it; source 'event-auth',
+    so note_lane_ok CLEARS it on the lane's next successful call) but do NOT notify the user. We ALARM only on a
+    SUSTAINED logout — the row was ALREADY an unresolved event-auth down (reachable=0) and the lane reported logged-out
+    AGAIN with no success clearing it between, i.e. a real logout that keeps billing the metered API until re-login.
+    This mirrors note_lane_down's proven anti-flap rule: a pure STATE read of the SHARED row (cross-process correct),
+    never a clock. `sustained_only=False` lets an AUTHORITATIVE, non-racy caller (a deliberate sweep) notify on first
+    detection; the sole event-path caller (adapters._call_once) uses the default. Throttled by notified_ts. $0, no
+    LLM. NEVER raises — this rides the call path."""
     try:
         import datetime
         from . import budget, lane_registry
@@ -411,16 +420,24 @@ def note_lane_auth_down(lane, cmd=""):
         fix = "re-login to restore the $0 plan lane (its calls bill the metered API until you do)" + (f": {cmd}" if cmd else "")
         db = _health_db()
         with budget._lock:
-            prev = db.execute("SELECT notified_ts FROM lane_health WHERE resource=?", (lane,)).fetchone()
+            prev = db.execute("SELECT reachable, source, notified_ts FROM lane_health WHERE resource=?",
+                              (lane,)).fetchone()
+        # SUSTAINED = the row is ALREADY an unresolved auth-down (a real success via note_lane_ok, or a sweep, would
+        # have cleared it) -> the lane reported logged-out AGAIN without recovering = a real logout, not a refresh-race
+        # blip. A pure STATE read of the shared row, not a time/magnitude cutoff - identical to note_lane_down.
+        sustained = bool(prev and prev[0] == 0 and (prev[1] or "") == "event-auth")
+        with budget._lock:                               # RECORD always - the operator receipt surfaces even a lone auth-down
             db.execute("INSERT OR REPLACE INTO lane_health "
                        "(resource,kind,reachable,reason,fix,command,ts,source,notified_ts) VALUES (?,?,?,?,?,?,?,?,?)",
                        (lane, "lane", 0, "logged out (auth/token expired)", fix, cmd,
-                        now.isoformat(timespec="seconds"), "event-auth", prev[0] if prev else None))
+                        now.isoformat(timespec="seconds"), "event-auth", prev[2] if prev else None))
             db.commit()
+        if sustained_only and not sustained:
+            return                                       # a LONE auth-down = suspected refresh-race blip -> recorded, NOT alarmed
         last = None
-        if prev and prev[0]:
+        if prev and prev[2]:
             try:
-                last = datetime.datetime.fromisoformat(prev[0])
+                last = datetime.datetime.fromisoformat(prev[2])
             except Exception:
                 last = None
         if last is None or (now - last).total_seconds() >= _EVENT_NOTIFY_THROTTLE_S:

@@ -32,6 +32,14 @@ def _fell_from_of(call_id):
     return row[0] if row else "<<no row>>"
 
 
+def _fallover_of(call_id):
+    """Read the complete durable lane-fallover provenance for one metered twin."""
+    con = sqlite3.connect(config.db_path())
+    row = con.execute("SELECT fell_from, fell_reason FROM calls WHERE id=?", (call_id,)).fetchone()
+    con.close()
+    return row if row else ("<<no row>>", "<<no row>>")
+
+
 def main():
     results = []
 
@@ -48,6 +56,14 @@ def main():
     ck(results, "fell_from read from context when the recorder passes no arg", _fell_from_of(cid_codex_2) == "codex",
        extra=_fell_from_of(cid_codex_2))
 
+    # F1 guard: a SUCCESSFUL metered twin has no provider_error explaining why the lane missed, so BOTH the lane and
+    # its already-classified reason must survive through the real context → record_call → SQLite path.
+    with calls.fell_from_context("codex", reason="auth"):
+        cid_reason = calls.record_call("openai", "gpt-x", "realtime", 0.04, in_tok=60, out_tok=12,
+                                       intent="fell-from-test")
+    ck(results, "fallover row persists BOTH fell_from and the lane's own fell_reason",
+       _fallover_of(cid_reason) == ("codex", "auth"), extra=str(_fallover_of(cid_reason)))
+
     # another lane, and a plain (no-fallback) call that must stay NULL
     with calls.fell_from_context("gemini"):
         calls.record_call("openai", "gpt-x", "realtime", 0.02, in_tok=40, out_tok=8, intent="fell-from-test")
@@ -58,13 +74,13 @@ def main():
     # ── the reader: per-lane rollup, ordered by $ DESC, and the plain call NEVER appears ──
     rows = reliability.lane_fallback_spend()
     by_lane = {r["lane"]: r for r in rows}
-    ck(results, "rollup groups codex: 2 calls, $0.08", by_lane.get("codex", {}).get("n_calls") == 2
-       and abs(by_lane.get("codex", {}).get("metered_usd", 0) - 0.08) < 1e-6, extra=str(by_lane.get("codex")))
+    ck(results, "rollup groups codex: 3 calls, $0.12", by_lane.get("codex", {}).get("n_calls") == 3
+       and abs(by_lane.get("codex", {}).get("metered_usd", 0) - 0.12) < 1e-6, extra=str(by_lane.get("codex")))
     ck(results, "rollup groups gemini: 1 call, $0.02", by_lane.get("gemini", {}).get("n_calls") == 1
        and abs(by_lane.get("gemini", {}).get("metered_usd", 0) - 0.02) < 1e-6, extra=str(by_lane.get("gemini")))
     ck(results, "the plain call's provider is NOT a lane in the rollup (no NULL/empty key)",
        None not in by_lane and "" not in by_lane, extra=str(list(by_lane)))
-    ck(results, "ordered by $ DESC — codex ($0.08) before gemini ($0.02)",
+    ck(results, "ordered by $ DESC — codex ($0.12) before gemini ($0.02)",
        [r["lane"] for r in rows][:2] == ["codex", "gemini"], extra=str([r["lane"] for r in rows]))
 
     # ── `since` filter is honored (a far-future lower bound excludes everything) ──
