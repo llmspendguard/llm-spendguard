@@ -12,6 +12,13 @@ reading the repo — enumerate exactly what's configurable, what the valid optio
 Environment variable (`env`) always overrides the file when set.
 """
 
+from .weekly_cap_guard import (
+    WEEKLY_CAP_GUARD_BLOCKED_SPAWN_TOOLS_DEFAULT,
+    WEEKLY_CAP_GUARD_ENABLED_DEFAULT,
+    WEEKLY_CAP_GUARD_ON_UNKNOWN_DEFAULT,
+    WEEKLY_CAP_GUARD_THRESHOLD_DEFAULT,
+)
+
 SETTINGS = [
     # ── core ──
     dict(section="core", key="home", store="env", env="SPENDGUARD_HOME", default="~/.spendguard",
@@ -173,6 +180,22 @@ SETTINGS = [
               "probe, or an UNLABELLED call; degrades to the caller's own model when there is no measured evidence, "
               "so it can only ever pick a measured-equal-or-better arm — never a blind swap. Opt-in per repo/agent, "
               "reversible; watch `spendguard savings` (did it save?) and `spendguard advise` good% (did quality hold?)."),
+    dict(section="advisor", key="weekly_cap_guard.enabled",
+         store="config.json:advisor.weekly_cap_guard.enabled", env=None,
+         default=WEEKLY_CAP_GUARD_ENABLED_DEFAULT, kind="bool", secret=False,
+         desc="Enable the Claude Code weekly-cap PreToolUse guard. The global GATE_DISABLE kill switch also disables it."),
+    dict(section="advisor", key="weekly_cap_guard.block_below_frac_left",
+         store="config.json:advisor.weekly_cap_guard.block_below_frac_left", env=None,
+         default=WEEKLY_CAP_GUARD_THRESHOLD_DEFAULT, kind="float", secret=False,
+         desc="Deny configured on-plan spawn tools and raw codex exec below this Anthropic weekly fraction-left (0..1)."),
+    dict(section="advisor", key="weekly_cap_guard.on_unknown",
+         store="config.json:advisor.weekly_cap_guard.on_unknown", env=None,
+         default=WEEKLY_CAP_GUARD_ON_UNKNOWN_DEFAULT, kind="enum:block,warn", secret=False,
+         desc="Whether an unavailable Anthropic weekly quota reading blocks guarded spawns or only warns."),
+    dict(section="advisor", key="weekly_cap_guard.blocked_spawn_tools",
+         store="config.json:advisor.weekly_cap_guard.blocked_spawn_tools", env=None,
+         default=WEEKLY_CAP_GUARD_BLOCKED_SPAWN_TOOLS_DEFAULT, kind="json", secret=False,
+         desc="Claude Code tool names that create on-plan subagents and are eligible for weekly-cap denial."),
     dict(section="advisor", key="route_through_queue", store="config.json:advisor.route_through_queue",
          env="SPENDGUARD_ROUTE_THROUGH_QUEUE", default=True, kind="bool", secret=False,
          desc="Route EVERY labelled synchronous adapters.call through the durable lane_queue: each call gets a leased "

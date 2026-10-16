@@ -64,6 +64,7 @@ _GROUPS = [
         ("config", "`config` show all · `config set <section.key> <value>`"),
         ("install-hook", "gate EVERY process in a venv (opt-in; --uninstall removes)"),
         ("install-agent-gate", "hard-route reroutable Agent/Task spawns off a near-cap hosting plan"),
+        ("install-capguard", "guard Claude subagent and raw codex-exec spawns at low weekly headroom"),
         ("install-rule", "teach Claude/Cursor to route generated code through the gate"),
         ("install-skills", "add the /spend, /spendguard-* slash commands"),
         ("schedule", "OS-native daily sync (launchd / cron / schtasks)"),
@@ -159,6 +160,9 @@ def _dispatch(argv=None):
     if cmd == "residency-gate":                           # PostToolUse context-residency NUDGE (warns, never blocks)
         from . import residency_gate
         return residency_gate.cmd(rest)
+    if cmd == "capguard":
+        from . import weekly_cap_guard
+        return weekly_cap_guard.cmd(rest)
     if cmd == "install-residency-gate":
         from . import residency_gate
         return residency_gate.install_residency_gate_cli(rest)
@@ -552,6 +556,9 @@ def _dispatch(argv=None):
     if cmd == "install-agent-gate":
         from . import agent_spawn_gate
         return agent_spawn_gate.install_agent_gate_cli(rest)
+    if cmd == "install-capguard":
+        from . import weekly_cap_guard
+        return weekly_cap_guard.install_weekly_cap_guard_cli(rest)
     if cmd == "schedule":                             # install the OS-native scheduler (launchd/cron/schtasks)
         from . import schedule
         return schedule.main(rest)
