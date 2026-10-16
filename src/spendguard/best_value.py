@@ -15,28 +15,97 @@ WHY IT MAY SPEND. Choosing the model is a judgement, so it uses a small meta-cag
 refused over its cap) — the caller opted into best-value; the effort lookup is $0. That model pick is CACHED per
 (intent, quality_target), invalidated by an EVIDENCE FINGERPRINT (a $0 hash of the intent's measured cost/quality
 rows): while the evidence is unchanged the pick is reused with NO LLM call, so a caller running the same intent
-many times pays ~one pick, not one per call; the moment a bakeoff/judgement changes the evidence the fingerprint
-moves and the pick is re-derived. The EFFORT is always re-applied live (a $0 titration lookup), so a titration
-change lands immediately without waiting on the fingerprint. A transient advisor failure is NEVER cached.
+many times — even across fresh interpreters — pays ~one pick, not one per call; the moment a bakeoff/judgement changes
+the evidence the fingerprint moves and the pick is re-derived. The EFFORT is always re-applied live (a $0 titration
+lookup), so a titration change lands immediately without waiting on the fingerprint. A transient advisor failure is
+NEVER cached.
 
 DIVERSITY / PINNING. pin_model=True (a caller that also set no_substitution — e.g. a cross-vendor panel member)
 keeps the named model and only supplies its learned effort, so a member is titrated, never swapped — the collapse
 a global "pick the best model" would cause is impossible. No measured basis → model=None and the caller keeps its
 named model (the honest unresolved path). Never raises except to PROPAGATE a deliberate stop (a spend refusal).
 """
+import datetime
 import hashlib
+import json
 
-from . import advisor, gate, models, calls
+from . import advisor, calls, config, gate, models
 
 _INFER_OUT = 80          # the intent classifier returns one tiny JSON label ({"intent": "<known-label>"|null}); a small,
 #                          named output cap (not a call-site magic number) — and adapters.call self-heals a truncation anyway
 
 # (intent, quality_target, evidence_fingerprint) -> {"model","considered","why"} — the recommend_models-derived model
-# pick ONLY (effort is re-applied live, never cached). IN-PROCESS + IDEMPOTENT: two threads that miss compute the same
-# verdict for the same fingerprint and the last write stores an equal value. It NEVER poisons — only a RETURNED advisor
-# verdict is cached (a transient advisor failure returns without writing), and it is fingerprint-INVALIDATED, so a new
-# measurement/bakeoff moves the key and the stale entry is simply never read again (no explicit eviction needed).
+# pick ONLY (effort is re-applied live, never cached). This dict is L1; the ledger-backed L2 below preserves the same
+# verdict across interpreters. IDEMPOTENT: two threads that miss compute the same verdict for the same fingerprint and
+# the last write stores an equal value. It NEVER poisons — only a RETURNED advisor verdict is cached (a transient
+# advisor failure returns without writing), and it is fingerprint-INVALIDATED, so new evidence moves the key.
 _verdict_cache = {}
+
+_VERDICT_CACHE_POOL_KEY = "bestvalue_verdict"
+_NO_QUALITY_TARGET = "__spendguard_none__"
+
+
+def _ensure_bestvalue_verdict_schema(c):
+    """Create the durable model-pick cache once per pooled ledger connection."""
+    c.execute("""CREATE TABLE IF NOT EXISTS bestvalue_verdict(
+        intent TEXT, quality_target TEXT, evidence_fp TEXT, verdict_json TEXT, ts TEXT,
+        PRIMARY KEY (intent, quality_target, evidence_fp))""")
+    c.commit()
+
+
+def _bestvalue_verdict_db():
+    """The durable verdict cache on the shared, tuned, fork-safe ledger pool."""
+    return config.pooled_ledger_conn(_VERDICT_CACHE_POOL_KEY, _ensure_bestvalue_verdict_schema)
+
+
+def _quality_target_key(quality_target):
+    return _NO_QUALITY_TARGET if quality_target is None else str(quality_target)
+
+
+def _recall_bestvalue_verdict(intent, quality_target, evidence_fp):
+    """Return a durable verdict for the exact evidence key, or None. Cache failures never escape."""
+    try:
+        row = _bestvalue_verdict_db().execute(
+            "SELECT verdict_json FROM bestvalue_verdict "
+            "WHERE intent=? AND quality_target=? AND evidence_fp=?",
+            (intent, _quality_target_key(quality_target), evidence_fp),
+        ).fetchone()
+        if row and row[0]:
+            verdict = json.loads(row[0])
+            if (isinstance(verdict, dict) and isinstance(verdict.get("considered"), dict)
+                    and "model" in verdict and "why_base" in verdict):
+                return verdict
+    except Exception as e:
+        if gate.is_deliberate_stop(e):
+            raise
+        config.warn_once("[spendguard] best-value: durable verdict cache read failed (%s) — re-deriving" %
+                         type(e).__name__)
+    return None
+
+
+def _store_bestvalue_verdict(intent, quality_target, evidence_fp, verdict):
+    """Mirror a returned advisor verdict durably. Cache failures never escape."""
+    try:
+        c = _bestvalue_verdict_db()
+        quality_key = _quality_target_key(quality_target)
+        ts = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+        c.execute(
+            "INSERT OR REPLACE INTO bestvalue_verdict"
+            "(intent,quality_target,evidence_fp,verdict_json,ts) VALUES(?,?,?,?,?)",
+            (intent, quality_key, evidence_fp, json.dumps(verdict), ts),
+        )
+        # Retention: keep only the live-evidence row for each (intent, quality target); evidence changes re-key it.
+        c.execute(
+            "DELETE FROM bestvalue_verdict WHERE intent=? AND quality_target=? AND evidence_fp!=?",
+            (intent, quality_key, evidence_fp),
+        )
+        c.commit()
+    except Exception as e:
+        config.rollback_ledger_conn(_VERDICT_CACHE_POOL_KEY)
+        if gate.is_deliberate_stop(e):
+            raise
+        config.warn_once("[spendguard] best-value: durable verdict cache write failed (%s) — continuing uncached" %
+                         type(e).__name__)
 
 
 def _evidence_fingerprint(intent):
@@ -116,6 +185,12 @@ def select_model_effort(intent, requested_model, pin_model=False, quality_target
         hit = _verdict_cache.get(ckey)                         # can never collide two evidence states and serve stale
         if hit is not None:                                   # evidence unchanged → reuse the pick, NO advisor LLM call
             return _render(hit, from_cache=True)
+        hit = _recall_bestvalue_verdict(intent, quality_target, fp)
+        if hit is not None:
+            hit["considered"] = dict(hit["considered"])
+            hit["considered"]["l2"] = True                    # STRUCTURED: durable cross-process cache provenance
+            _verdict_cache[ckey] = hit
+            return _render(hit, from_cache=True)
     try:
         rec = advisor.recommend_models(intent, k=1, quality_bar=quality_target, run=True)
     except Exception as e:
@@ -135,6 +210,7 @@ def select_model_effort(intent, requested_model, pin_model=False, quality_target
                    "why_base": top[0].get("why") or "advisor's cheapest that meets the intent's measured quality"}
     if ckey is not None:                                      # cache only a RETURNED advisor verdict under a REAL
         _verdict_cache[ckey] = verdict                        # fingerprint (never a transient failure, never fp=None)
+        _store_bestvalue_verdict(intent, quality_target, fp, verdict)  # same discipline, durable mirror only
     return _render(verdict, from_cache=False)
 
 
