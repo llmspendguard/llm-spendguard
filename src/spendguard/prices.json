@@ -195,12 +195,12 @@
     "gemini": {
       "models": {
         "gemini-3-flash": {
-          "in_": 0.25,
-          "out": 1.5,
-          "cached_in": 0.025,
-          "batch_in": 0.125,
-          "batch_out": 0.75,
-          "_source": "https://pricepertoken.com/pricing-page/model/google-gemini-3-flash-preview"
+          "in_": 0.5,
+          "out": 3.0,
+          "cached_in": 0.05,
+          "batch_in": 0.25,
+          "batch_out": 1.5,
+          "_source": "https://ai.google.dev/gemini-api/docs/pricing#gemini-3-flash-preview"
         },
         "gemini-3.1-pro": {
           "in_": 2.0,

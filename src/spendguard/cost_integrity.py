@@ -79,7 +79,7 @@ def audit_metered_cost_vs_tokens(since_days=7):
         since = f"-{int(since_days)} days"
         sql = ("SELECT model, date(ts) d, kind, COUNT(*) n, SUM(COALESCE(cost,0)) c, "
                "SUM(COALESCE(in_tok,0)) i, SUM(COALESCE(out_tok,0)) o FROM calls "
-               "WHERE ts >= strftime('%s','now',?) AND kind IN ('realtime','batch') "
+               "WHERE datetime(ts) >= datetime('now',?) AND kind IN ('realtime','batch') "
                "AND cost IS NOT NULL AND suspect IS NULL "
                "GROUP BY model, date(ts), kind")
         with contextlib.closing(sqlite3.connect(config.db_path())) as c:

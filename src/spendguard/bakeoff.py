@@ -229,9 +229,17 @@ def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget
                     # run noise. This FORCES the metered API (a $0 lane has no knob channel), so it is opt-in per the caller.
                     # Unset (the default) → arms stay on their $0 lane where available (the production-settings behaviour).
                     _det = {k: v for k, v in (("temperature", temperature), ("top_p", top_p), ("seed", seed)) if v is not None}
-                    r = adapters.call(c, txt, sig=intent, timeout_s=120, reasoning=eff, no_substitution=True,
-                                      **({"measurement": True} if _det else {}), **_det,
-                                      **({"images": imgs} if imgs else {}))
+                    import uuid as _uuid
+                    _measurement_call_id = _uuid.uuid4().hex
+                    _prior_call_context = dict(calls.current() or {})
+                    calls.set_context(intent=intent, who="bakeoff", root_call=_measurement_call_id, attempt=1,
+                                      requested_model=c, measurement=True)
+                    try:
+                        r = adapters.call(c, txt, sig=intent, timeout_s=120, reasoning=eff, no_substitution=True,
+                                          **({"measurement": True} if _det else {}), **_det,
+                                          **({"images": imgs} if imgs else {}))
+                    finally:
+                        calls._local.ctx = _prior_call_context
                     if r.get("error"):
                         n_err += 1                                      # a dropped run is COUNTED + surfaced, never silent —
                         last_error = (r.get("error") or "")[:140]      # a candidate/effort that fails every prompt is visible,
@@ -272,10 +280,11 @@ def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget
                         n_lab += 1
                         n_good += 1 if verdict else 0
                     # RECORD per (intent, model, EFFORT) into the corpus advise/best_value read — this is the learning.
-                    calls.insert(adapters.provider_for(c), c.split(":", 1)[-1], "realtime", cost,
-                                 in_tok=int(r.get("in_tok") or 0), out_tok=int(r.get("out_tok") or 0),
-                                 intent=intent, quality=q, quality_conf=(_JUDGE_CONF if q else None),
-                                 who="bakeoff", effort=eff)
+                    _served_model = r.get("model") or c.split(":", 1)[-1]
+                    calls.finalize_bakeoff_measurement(
+                        _measurement_call_id, r.get("provider") or adapters.provider_for(_served_model),
+                        c, _served_model, cost, int(r.get("in_tok") or 0), int(r.get("out_tok") or 0),
+                        intent, q, eff, r.get("executor") or "api")
                 results[arm] = dict(model=c, effort=eff, runs=n_run, failed=n_err, last_error=last_error,
                                     labeled=n_lab, good=n_good, good_rate=(n_good / n_lab if n_lab else None),
                                     spent=round(spent, 6), per_good=(spent / n_good if n_good else None))
