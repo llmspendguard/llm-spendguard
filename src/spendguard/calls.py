@@ -50,7 +50,8 @@ def current():
 
 def set_context(intent: Optional[str] = None, chain: Optional[str] = None, who: Optional[str] = None,
                 root_call: Optional[str] = None, attempt: Optional[int] = None,
-                fell_from: Optional[str] = None, batch_expected_out: Optional[int] = None,
+                fell_from: Optional[str] = None, fell_reason: Optional[str] = None,
+                batch_expected_out: Optional[int] = None,
                 call_class: Optional[str] = None, origin_session: Optional[str] = None,
                 defer_batch_booking: Optional[bool] = None, requested_model: Optional[str] = None,
                 redirect_reason: Optional[str] = None, resolved_lane: Optional[str] = None,
@@ -86,6 +87,8 @@ def set_context(intent: Optional[str] = None, chain: Optional[str] = None, who: 
         c["attempt"] = attempt            # 1-based try number; record_call stamps retry_of/attempts from it
     if fell_from is not None:
         c["fell_from"] = fell_from        # the $0 lane a METERED fallback fell over FROM — read by the success recorder
+    if fell_reason is not None:
+        c["fell_reason"] = fell_reason    # the lane's OWN classified miss reason — the paid twin may itself succeed
     if call_class is not None:
         if call_class not in _CALL_CLASSES:
             raise ValueError(f"call_class must be one of {sorted(_CALL_CLASSES)}; got {call_class!r}")
@@ -113,22 +116,31 @@ def clear_retry_context() -> None:
 
 
 @contextlib.contextmanager
-def fell_from_context(lane_name: str):
-    """Scope `fell_from=lane_name` on the thread-local context to exactly one metered-fallback dispatch, then restore
+def fell_from_context(lane_name: str, reason=None):
+    """Scope fallover provenance on the thread-local context to exactly one metered-fallback dispatch, then restore
     the prior value. The SUCCESS recorder for a metered call is gate._record_rt (the SDK-patch), which fires
     SYNCHRONOUSLY DURING the .create() call on THIS thread and reads the context via record_call — so a lane's metered
     twin, dispatched inside this block after the $0 lane went down, lands on the ledger stamped with the lane it fell
     from. Save/restore (not a bare pop) so a nested fallback never erases an outer one."""
-    prev = current().get("fell_from")
-    set_context(fell_from=lane_name)
+    prev_from = current().get("fell_from")
+    prev_reason = current().get("fell_reason")
+    set_context(fell_from=lane_name, fell_reason=reason)
+    if reason is None:
+        c = dict(current())
+        c.pop("fell_reason", None)
+        _local.ctx = c
     try:
         yield
     finally:
         c = dict(current())
-        if prev is None:
+        if prev_from is None:
             c.pop("fell_from", None)
         else:
-            c["fell_from"] = prev
+            c["fell_from"] = prev_from
+        if prev_reason is None:
+            c.pop("fell_reason", None)
+        else:
+            c["fell_reason"] = prev_reason
         _local.ctx = c
 
 
@@ -348,9 +360,10 @@ def _ensure_calls_schema(c):
     #                      first try + every retry, on whatever provider/lane/meter each landed — is reconstructable
     #                      by `WHERE id=X OR retry_of=X ORDER BY ts`. Attempts are never collapsed into one row.
     #   `fell_from`      = the $0 SUBSCRIPTION LANE this METERED call fell over FROM, when a down/unsuitable lane forced
-    #                      the paid twin (the mirror of `executor`, which names the lane that SERVED a $0 hit). It records
-    #                      the plain FACT — the lane name — never a judgement about WHY (the reason is the row's own
-    #                      outcome/provider_error and the lane_health record). `SUM(cost) WHERE fell_from='codex'` is then
+    #                      the paid twin (the mirror of `executor`, which names the lane that SERVED a $0 hit).
+    #   `fell_reason`    = that lane's OWN classified failure reason. This is separate because the metered twin may
+    #                      succeed, leaving its own outcome/provider_error unable to explain the fallover.
+    #                      `SUM(cost) WHERE fell_from='codex'` is then
     #                      the metered $ this install spent BECAUSE codex was down — the "$0 savings lost while a lane was
     #                      down" an operator restores by re-logging that lane in. NULL on a $0-lane hit or a direct call.
     for _col, _decl in (("quality_conf", "REAL"), ("executor", "TEXT"), ("project", "TEXT"),
@@ -358,7 +371,7 @@ def _ensure_calls_schema(c):
                         ("outcome", "TEXT"), ("http_status", "INTEGER"), ("provider_error", "TEXT"),
                         ("retry_after", "REAL"), ("attempts", "INTEGER"), ("disposition", "TEXT"),
                         ("disposition_reason", "TEXT"),
-                        ("retry_of", "TEXT"), ("fell_from", "TEXT"),
+                        ("retry_of", "TEXT"), ("fell_from", "TEXT"), ("fell_reason", "TEXT"),
                         ("call_class", "TEXT"), ("origin_session", "TEXT"),
                         ("requested_model", "TEXT"), ("served_model", "TEXT"),
                         ("resolved_lane", "TEXT"), ("redirect_reason", "TEXT")):
@@ -455,7 +468,7 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
            prompt=None, output=None, finish=None, intent=None, chain=None, who=None,
            executor=None, project=None, effort=None, *, outcome=None, http_status=None,
            provider_error=None, retry_after=None, attempts=None, disposition=None, disposition_reason=None, retry_of=None,
-           fell_from=None, call_id=None, call_class=None, origin_session=None,
+           fell_from=None, fell_reason=None, call_id=None, call_class=None, origin_session=None,
            requested_model=None, served_model=None, resolved_lane=None, redirect_reason=None):
     """Record one call — its full OUTCOME, success OR failure. Returns call_id. Never raises.
 
@@ -478,6 +491,8 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
       fell_from      — the $0 lane this METERED call fell over FROM (a down/unsuitable lane forced the paid twin); the
                        mirror of `executor`. A plain fact, never a why. Passed explicitly by the failure recorder, or
                        read from the thread-local context (set by calls.fell_from_context) for the success recorder.
+      fell_reason    — the lane's OWN classified miss reason; separate from the metered twin's provider_error, which
+                       is NULL when that fallback succeeds. Read from the same scoped context when not explicit.
 
     `executor` names the SUBSCRIPTION LANE that served the call (claude-code / codex / gemini / zai-coding) when it
     rode a flat-fee plan instead of the metered API. Storing it makes "which lane worked" a recorded fact the receipt
@@ -508,6 +523,8 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
         # call on this thread, so read the lane from the context calls.fell_from_context scoped around that dispatch.
         if fell_from is None:
             fell_from = ctx.get("fell_from")
+        if fell_reason is None:
+            fell_reason = ctx.get("fell_reason")
         requested_model = requested_model or ctx.get("requested_model")
         served_model = served_model or model
         resolved_lane = resolved_lane or ctx.get("resolved_lane") or executor
@@ -544,9 +561,9 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
             _calls_db().execute(
                 "INSERT INTO calls (id,ts,chain,intent,caller,provider,model,kind,in_tok,out_tok,"
                 "cost,latency,prompt_hash,prompt_snip,output_snip,finish,executor,project,effort,suspect,"
-                "quality,quality_src,quality_conf,outcome,http_status,provider_error,retry_after,attempts,disposition,disposition_reason,retry_of,fell_from,"
+                "quality,quality_src,quality_conf,outcome,http_status,provider_error,retry_after,attempts,disposition,disposition_reason,retry_of,fell_from,fell_reason,"
                 "call_class,origin_session,requested_model,served_model,resolved_lane,redirect_reason) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (cid, ts, chain, intent, who or ctx.get("who") or caller(), provider, model, kind,
                  int(in_tok or 0), int(out_tok or 0), float(cost or 0), latency, ph, psnip, osnip, finish,
                  executor, proj, (effort or None), suspect,
@@ -557,7 +574,8 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
                  (provider_error[:1000] if isinstance(provider_error, str) else None),
                  (float(retry_after) if isinstance(retry_after, (int, float)) else None),
                  (int(attempts) if isinstance(attempts, int) else None),
-                 (disposition or None), (disposition_reason or None), (retry_of or None), (fell_from or None), call_class, origin_session,
+                 (disposition or None), (disposition_reason or None), (retry_of or None), (fell_from or None),
+                 (fell_reason or None), call_class, origin_session,
                  (requested_model or None), (served_model or None), (resolved_lane or None),
                  (redirect_reason or None)))
             _calls_db().commit()

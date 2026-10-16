@@ -2736,13 +2736,14 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         # thread-local context; ALSO stamp the returned dict so a FAILED fallback (recorded later in the outer call) and
         # any consumer reading the result carry the same fact. A plain fact (the lane name), never a judgement about why.
         from . import calls as _calls_ff
-        with _calls_ff.fell_from_context(lane_name), _calls_ff.redirect_context(
+        with _calls_ff.fell_from_context(lane_name, reason=_lane_reason), _calls_ff.redirect_context(
                 model, "lane-unavailable: metered fallback", "api"):
             out = _call_once(_fb_model, prompt, max_tokens=max_tokens, system=system, reasoning=_fb_reasoning,
                              schema=schema, timeout_s=timeout_s, _skip_lane=True, _no_sub=_no_sub, _internal_pin=_internal_pin,
                              _recovery_proof=_recovery)
         out = out if isinstance(out, dict) else {"error": "metered fallback returned no result dict", "cost": None}
         out["fell_from"] = lane_name
+        out["fell_reason"] = _lane_reason
         _recovery.recovery_event("metered_outcome", outcome="failed" if out.get("error") else "served")
         if _no_sub and out.get("error"):
             _recovery.recovery_event("coverage_miss", provider=prov, model=raw, reason=_lane_reason, pinned=True)
