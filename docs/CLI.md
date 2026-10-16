@@ -13,12 +13,23 @@ spendguard install-hook --user [--python P]  # gate a python's per-USER site (sy
 spendguard install-rule [--global|--project DIR]  # drop the spendguard rule into CLAUDE.md → every AI chat wires it in
 spendguard install-skills                    # deploy the 5 slash-commands (/spend, /spendguard-{reconcile,learn,prompts,close})
 spendguard install-receipts --host claude-code|codex   # surface the always-on tally in a host (statusline + per-turn + compaction hooks)
-spendguard install-mcp [--remove]            # register `spendguard mcp` in ~/.claude.json → 9 MCP tools in every repo (model-advisor + spend/compaction)
+spendguard install-mcp [--remove]            # register `spendguard mcp` in ~/.claude.json → current MCP tool surface in every repo
 spendguard mcp                               # stdio MCP server: model-advisor + read-only spend/compaction tools (point any MCP client here)
 spendguard coverage                          # which LLM-calling VENVS aren't gated (ungated realtime spend sources)
 spendguard gate-coverage                     # per-INTERPRETER gate check across EVERY python on the machine (3.11/3.14/…)
 spendguard remote onstart|verify|sync        # enforce the gate on remote/distributed compute (vast.ai / any SSH host)
 # in code, fail-closed:  import spendguard; spendguard.require()   # refuses to run if NOT actually gated
+
+# startup: --help and every subcommand --help resolve before package hydration, gate install, SDK imports,
+# ledger access, or dispatch. Plain `import spendguard` still eagerly auto-installs the gate.
+
+# route work
+spendguard comprehend <files-or-globs...> --intent X [--question Q] [--run --budget-usd N] [--refuse-billed] [--lanes a,b]
+#   independent per-file comprehension across configured lanes; default is a zero-spend estimate; checkpointed/resumable
+spendguard delegate "<self-contained task>" [--files a,b] [--provider auto|PLAN] [--cwd DIR] [--yes]
+#   agentically classify then offload workspace work to a configured provider plan; dry-run unless --yes
+spendguard deploy [--no-gate] [--allow-dirty] [--no-restart]
+#   run the full gate, promote committed HEAD to the green pointer, then restart launchd-managed stale consumers
 
 # teams / orgs (client seam → future server repo, llmspendguard.com)
 spendguard saas [status|ping|link|push|pull|sync|reconcile|audit|crosscheck|commands]
@@ -88,7 +99,7 @@ spendguard reliability [--run] [--remediate] [--notify] [--json]   # sweep every
 #   --notify: fire a macOS notification on any red (for a scheduled/headless run). The result is CACHED, so a down lane also surfaces in the receipt EVERY turn — and a lane that fails mid-use surfaces INSTANTLY (event-driven) + auto-clears on recovery.
 #   Schedule it: a launchd agent running `reliability --run --remediate --notify` daily = a standing lane-health watch (see docs/SUBSCRIPTION_VALUE.md).
 # One-shot verdict/classification: pass an INTENT (not a guessed model id) with reasoning="best-value" —
-#   spendguard.adapters.call(model, prompt, reasoning="best-value", intent="X") → cheapest measured-good (model,effort), $0 lane first, metered fallback.
+#   spendguard.adapters.call(None, prompt, reasoning="best-value", intent="X") → cheapest measured-good (model,effort), $0 lane first, metered fallback.
 # Batch comprehension → `spendguard comprehend`; self-contained workspace-write → `spendguard delegate --cwd … --yes`.
 # Full API/job chooser and cold-vs-warm facts: README.md "Routing cheat-sheet".
 

@@ -241,21 +241,44 @@ r = spendguard.adapters.call("claude-opus-4-8", "Find the bug in these:", files=
 ```
 
 ### Let spendguard choose the model + effort — `reasoning="best-value"`
-Pass `reasoning="best-value"` with an `intent`, and spendguard resolves the cheapest `(model, effort)` whose
+Pass `model=None`, `reasoning="best-value"`, and an `intent`, and spendguard resolves the cheapest `(model, effort)` whose
 **measured** quality holds for that intent (from `advise.ranked` — $0, no LLM), swaps to it, **pins** it (the
-utilisation bandit can't re-swap), and **books the saving** against the counterfactual (what the named model would
-have cost). With no measured evidence for the intent it keeps your model — honestly. Learn the per-intent effort
+utilisation bandit can't re-swap), and tries the matching configured $0 subscription lane before its metered API
+twin (unless metered fallback is disabled). With no measured basis for a selection, the resolver reports that in
+its provenance rather than inventing evidence. Learn the per-intent effort
 first with `spendguard effort-titrate <intent>` (estimate-first); apply it fleet-wide via the same call path.
 ```python
 import spendguard
-r = spendguard.adapters.call("claude-opus-4-8", "Adjudicate this edge case …",
+r = spendguard.adapters.call(None, "Adjudicate this edge case …",
                              reasoning="best-value", intent="edge-adjudicate")
-# r["substituted_from"] / r["best_value"] record what it WOULD have run vs what best-value chose.
+# r["best_value"] records the measured selection and its provenance.
 ```
 No `intent` (or `sig`) at all? best-value INFERS one agentically from the prompt — it classifies the prompt against
 your known recorded intents (never a fresh invented label, since only a known intent has evidence to rank on) and
 proceeds on that; a genuinely novel prompt honestly keeps your named model. The choice records `intent_inferred` in
 its `considered` provenance.
+
+When `advisor.default_reasoning="best-value"` (or `SPENDGUARD_DEFAULT_REASONING=best-value`) is configured, a
+labelled, unpinned call with no explicit `reasoning` takes the same best-value path. Every other `model=None` call —
+plain, `metered_only`, or `no_substitution` — resolves to `advisor.default_model` when configured, otherwise to the
+catalog's cheapest **priced chat** model (currently `gpt-5-nano`). Because that candidate set is priced, this is a
+metered-capable API default, not a subscription-lane or Codex-daemon shortcut. An empty/broken catalog with no
+configured default raises `ModelSelectionContractRefused`; there is no hardcoded fallback model.
+
+Pins are orthogonal: `metered_only=True` skips every lane and uses the named metered API model;
+`no_substitution=True` prevents changing the named model; `measurement=True` pins `(model, effort)` for a measurement
+and implies `no_substitution`. Consequently `measurement=True, model=None` raises
+`ModelSelectionContractRefused`: an unnamed arm cannot be measured. This is also the deliberate exception to
+`call()`'s normal result contract: it returns a `CallResult` (a `dict` whose keys are also attributes) on success and
+ordinary failure, but intentional `SpendGateRefused` subclasses propagate instead of being converted into a result.
+
+Lane model ids are configuration, not constants in the router. The current catalog/configured families are Codex
+`gpt-5.6-luna` / `gpt-5.6-sol`, Claude Code `claude-haiku-4-5` / `claude-opus-4-8`, Gemini
+`gemini-3.8-flash-low` / `gemini-3.8-flash-high`, and Z.AI Coding `glm-5.3`; verify the live declaration with
+`spendguard lanes --catalog` because `advisor.lane_models` is the runtime source of truth.
+
+Pricing remains catalog-owned. In the current generated tables, `gemini-3-flash` is $0.50 input / $3.00 output per
+million realtime tokens and $0.25 / $1.50 in batch; do not copy these rates into code—query `pricing.py`.
 **Ensure-success input** — `call()` accepts the kwargs you naturally reach for and translates them, instead of a
 cryptic `TypeError`: `intent=` (alias for `sig`, the job-type tag advise/best-value/attribution key on),
 `effort=` / `reasoning_effort=` (alias `reasoning=`), `max_output_tokens=` / `max_completion_tokens=` (alias
@@ -460,4 +483,3 @@ private-key blocks become typed tags (`<EMAIL>`, `<API_KEY>`, …) — while the
 De-id is local, fails **open toward privacy** (on any error the floor still runs), and is a tool *toward* HIPAA
 Safe Harbor — not compliance by itself (you still need a BAA). It's a safety/extraction step, so it's regex + NER,
 not an LLM — the agentic decisions (project / intent / quality) stay with the model.
-

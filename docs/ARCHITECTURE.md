@@ -3,20 +3,43 @@
 spendguard sits **between your code and the provider SDKs** and actively manages work in a loop:
 **enforce → shed → route → delegate → save → report → learn.** It's a library + CLI, not a service: zero required deps
 (the OpenAI/Anthropic SDKs are lazy-imported and optional), all state under `$SPENDGUARD_HOME`
-(default `~/.spendguard`), and **fail-open everywhere** — a bug in the gate must never break your job.
+(default `~/.spendguard`), and fail-open for incidental internal faults — a bug in accounting must not break your
+job — while deliberate `SpendGateRefused` controls propagate and stop the spend.
 
 The active pipeline has explicit homes: `plan_admission.py` and `route_utility.py` shed and rank lanes;
 `best_value.py` resolves the cheapest measured-good `(model, effort)`; `vendor_call.served_substitute` resolves an
 unserved model inside its economic bound; `delegate_router.py` hands self-contained work to another provider CLI;
 `guard.py` records decisions, guarded savings, and shed effectiveness; `saas.py` reports the scrubbed results and
-pulls effective caps; and `fleet.py` reports green-version/stale consumers. `mcp_server.serve_http` and the provider
-daemon modules keep one warm shared daemon per tool instead of spawning one copy per session.
+pulls effective caps; and `fleet.py` reports green-version/stale consumers. `mcp_server.serve_stdio` provides the
+newline-delimited JSON-RPC MCP surface, while the provider daemon modules keep warm executors shared across sessions.
 
 It is built to be **extended, not forked.** Like Postgres' access methods or a WSGI stack, every place
 you'd want to plug in — a new SDK, a new event sink, a new price table, a new config knob, a team server —
 is a documented seam with a one-call or one-entry extension point. Section 2 is the headline: it walks each
 seam. Everything below is grounded in the code under [`src/spendguard/`](https://github.com/llmspendguard/llm-spendguard/tree/main/src/spendguard) (file +
 function names are exact so you can jump straight to them).
+
+The governed one-shot API has a separate model-selection contract before dispatch. `model=None` plus a labelled
+best-value request enters `best_value.py`; otherwise it resolves `advisor.default_model` or the cheapest priced chat
+row in `model_catalog.json`. `measurement=True` requires a named arm. `metered_only` skips subscription lanes,
+`no_substitution` prevents a model swap, and `measurement` implies that pin. Only deliberate
+`SpendGateRefused` subclasses escape `adapters.call`; ordinary failures return a `CallResult` and remain observable.
+
+```mermaid
+flowchart TD
+    C["adapters.call(model, prompt)"] --> M{"model is None?"}
+    M -->|no| P[use named model]
+    M -->|yes + measurement| R[ModelSelectionContractRefused]
+    M -->|yes + labelled best-value| B[cheapest measured-qualifying model + effort]
+    M -->|every other unnamed call| D[advisor.default_model or cheapest priced chat catalog row]
+    B --> L{matching configured lane available?}
+    L -->|yes| Z[$0 subscription lane first]
+    L -->|miss and fallback allowed| A[metered API twin]
+    D --> A
+    P --> X{pins / capability / admission}
+    X --> Z
+    X --> A
+```
 
 ---
 
