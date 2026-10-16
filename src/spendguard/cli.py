@@ -138,7 +138,7 @@ def _dispatch(argv=None):
         return 0
     if any(arg in ("--help", "-h") for arg in rest):
         descriptions = {command: description for _group, items in _GROUPS for command, description in items}
-        option_hint = ("\n\noptions: --no-gate --allow-dirty --no-restart"
+        option_hint = ("\n\noptions: --no-gate --allow-dirty --no-restart --no-refresh"
                        if cmd == "deploy" else "")
         print(f"usage: spendguard {cmd} [args]\n\n{descriptions.get(cmd, 'spendguard command')}{option_hint}")
         return 0
@@ -295,12 +295,13 @@ def _dispatch(argv=None):
             # Help must NEVER acquire the deploy lock or run the gate. Before this, `deploy --help` fell through the
             # manual arg handling, took the single-instance lock, and RAN the full gate/promote — and a hung --help
             # then held the lock, blocking real deploys with "another deploy already running" (hit live 2026-10-10).
-            print("usage: spendguard deploy [--no-gate] [--allow-dirty] [--no-restart]\n"
+            print("usage: spendguard deploy [--no-gate] [--allow-dirty] [--no-restart] [--no-refresh]\n"
                   "  Promote the current committed HEAD to the green pointer so running MCP servers + gated consumers\n"
                   "  roll onto it. Runs the full gate (chunked_suite) first; the pointer only advances if it passes.\n"
                   "    --no-gate      trust a just-run gate; skip re-running the suite\n"
                   "    --allow-dirty  promote an uncommitted tree (discouraged — the pointer then names no commit)\n"
-                  "    --no-restart   do not restart stale launchd-managed fleet consumers after promoting")
+                  "    --no-restart   do not restart stale launchd-managed fleet consumers after promoting\n"
+                  "    --no-refresh   do not refresh stale editable-install dependency metadata after promoting")
             return 0
         _no_gate, _allow_dirty = ("--no-gate" in r), ("--allow-dirty" in r)
         if _rel._tracked_dirty() and not _allow_dirty:
@@ -344,6 +345,19 @@ def _dispatch(argv=None):
                       file=sys.stderr)
             if not _fr.get("restarted") and not _fr.get("warn"):
                 print("deploy: fleet — all tracked consumers already on the green commit.")
+        if "--no-refresh" not in r:
+            from . import fleet as _fleet
+            _ir = _fleet.refresh_stale_installs(apply=True)
+            for _venv in _ir.get("refreshed", []):
+                print(f"deploy: install — refreshed editable metadata in {_venv}")
+            for _failure in _ir.get("failed", []):
+                print(f"deploy: ⚠ install refresh failed for {_failure.get('venv')}: {_failure.get('error')}",
+                      file=sys.stderr)
+            if not _ir.get("refreshed") and not _ir.get("failed"):
+                if _ir.get("no_consumers"):
+                    print("deploy: install — no registered consumer venvs to refresh.")
+                else:
+                    print("deploy: install — all registered consumer venvs already have current dependency metadata.")
         return 0
     if cmd == "fleet":                                # the running spendguard consumers + which are STALE vs green
         import json as _json

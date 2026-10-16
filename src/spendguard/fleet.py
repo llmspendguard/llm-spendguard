@@ -18,6 +18,8 @@ never a start-time guess):
 `spendguard deploy` calls restart_stale() after promoting; `spendguard fleet` shows running(); and
 `release.exit_if_stale()` lets any daemon self-exit→respawn. $0, no LLM. Nothing here ever raises onto a call path."""
 import os
+import hashlib
+import pathlib
 import sqlite3
 import sys
 from contextlib import closing
@@ -37,7 +39,14 @@ def _fleet_db():
     c.execute("PRAGMA busy_timeout=5000")
     c.execute("""CREATE TABLE IF NOT EXISTS consumers(
         pid INTEGER PRIMARY KEY, version TEXT, served_sha TEXT, served_short TEXT, dirty INTEGER,
-        cmdline TEXT, launchd_label TEXT, registered_ts TEXT)""")
+        cmdline TEXT, launchd_label TEXT, registered_ts TEXT, venv_root TEXT, python_executable TEXT)""")
+    # Existing registries predate install-refresh metadata. Keep migration additive so every consumer can continue
+    # registering while a newer spendguard gradually rolls through the fleet.
+    columns = {row[1] for row in c.execute("PRAGMA table_info(consumers)").fetchall()}
+    for name in ("venv_root", "python_executable"):
+        if name not in columns:
+            c.execute("ALTER TABLE consumers ADD COLUMN %s TEXT" % name)
+    c.commit()
     return c
 
 
@@ -87,10 +96,10 @@ def register_consumer(label=None):
         with closing(_fleet_db()) as c:
             with c:
                 c.execute("INSERT OR REPLACE INTO consumers "
-                          "(pid,version,served_sha,served_short,dirty,cmdline,launchd_label,registered_ts) "
-                          "VALUES(?,?,?,?,?,?,?,?)",
+                          "(pid,version,served_sha,served_short,dirty,cmdline,launchd_label,registered_ts,"
+                          "venv_root,python_executable) VALUES(?,?,?,?,?,?,?,?,?,?)",
                           (os.getpid(), getattr(_version, "__version__", None), s.get("sha"), s.get("short"),
-                           1 if s.get("dirty") else 0, _cmdline(), label, now))
+                           1 if s.get("dirty") else 0, _cmdline(), label, now, sys.prefix, sys.executable))
     except Exception:
         pass
 
@@ -176,6 +185,85 @@ def restart_stale(apply=False):
         except Exception as e:
             restarted.append({"pid": c["pid"], "launchd_label": label, "action": "kickstart error: %s" % str(e)[:80]})
     return {"restarted": restarted, "warn": warn, "dry_run": not apply}
+
+
+_INSTALL_FINGERPRINT_MARKER = ".spendguard_dep_fingerprint"
+
+
+def _dependency_fingerprint(pyproject_path=None):
+    """Stable hash of the declared dependency set (base + named optional groups). Pure TOML parsing: ordering and
+    formatting do not affect it, while adding/removing/moving a requirement does."""
+    try:
+        import tomllib
+    except ModuleNotFoundError:
+        import tomli as tomllib
+    path = pathlib.Path(pyproject_path) if pyproject_path else pathlib.Path(__file__).resolve().parents[2] / "pyproject.toml"
+    with path.open("rb") as fh:
+        project = tomllib.load(fh).get("project") or {}
+    normalized = ["project:" + "".join(str(dep).split()) for dep in project.get("dependencies", [])]
+    for group, dependencies in (project.get("optional-dependencies") or {}).items():
+        normalized.extend("optional:%s:%s" % (group, "".join(str(dep).split())) for dep in dependencies)
+    return hashlib.sha256("\n".join(sorted(normalized)).encode("utf-8")).hexdigest()
+
+
+def _refresh_editable_install(python_executable, repo_root, timeout=180):
+    """The pip boundary, kept small so offline tests can replace it without ever invoking a real installer."""
+    import subprocess
+    result = subprocess.run([str(python_executable), "-m", "pip", "install", "-e", str(repo_root)],
+                            capture_output=True, text=True, timeout=timeout)
+    if result.returncode:
+        raise RuntimeError((result.stderr or result.stdout or "pip install failed").strip()[:500])
+
+
+def refresh_stale_installs(apply=False):
+    """Refresh editable install metadata for each distinct registered consumer venv whose dependency marker differs
+    from this checkout. Dry-run only classifies. Failures are isolated per venv and returned, never raised."""
+    refreshed, skipped_current, failed = [], [], []
+    consumers = []
+    try:
+        with closing(_fleet_db()) as c:
+            consumers = c.execute(
+                "SELECT venv_root,python_executable FROM consumers WHERE venv_root IS NOT NULL "
+                "AND venv_root != '' ORDER BY venv_root"
+            ).fetchall()
+    except Exception:
+        return {"refreshed": [], "skipped_current": [],
+                "failed": [{"venv": None, "error": "could not read fleet registry"}], "no_consumers": True}
+
+    distinct = {}
+    for venv_root, python_executable in consumers:
+        distinct.setdefault(str(pathlib.Path(venv_root)), python_executable)
+    if not distinct:
+        return {"refreshed": [], "skipped_current": [], "failed": [], "no_consumers": True}
+
+    repo_root = pathlib.Path(__file__).resolve().parents[2]
+    try:
+        current = _dependency_fingerprint(repo_root / "pyproject.toml")
+    except Exception as exc:
+        return {"refreshed": [], "skipped_current": [],
+                "failed": [{"venv": v, "error": "dependency fingerprint: %s" % str(exc)[:300]}
+                           for v in distinct], "no_consumers": False}
+
+    for venv, registered_python in distinct.items():
+        marker = pathlib.Path(venv) / _INSTALL_FINGERPRINT_MARKER
+        try:
+            if marker.read_text().strip() == current:
+                skipped_current.append(venv)
+                continue
+        except (OSError, UnicodeError):
+            pass
+        if not apply:
+            refreshed.append(venv)                    # would refresh; result shape stays identical for dry-run
+            continue
+        try:
+            python_executable = pathlib.Path(registered_python) if registered_python else pathlib.Path(venv) / "bin" / "python"
+            _refresh_editable_install(python_executable, repo_root)
+            marker.write_text(current + "\n")
+            refreshed.append(venv)
+        except Exception as exc:
+            failed.append({"venv": venv, "error": str(exc)[:500]})
+    return {"refreshed": refreshed, "skipped_current": skipped_current,
+            "failed": failed, "no_consumers": False}
 
 
 def fleet_summary():
