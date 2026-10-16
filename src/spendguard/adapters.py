@@ -818,6 +818,18 @@ def _apply_best_value_default(reasoning, intent, sig, no_substitution, probe):
     return "best-value" if _default_reasoning_is_best_value() else reasoning
 
 
+def _model_selection_contract_error(model, reasoning, intent, sig, metered_only, no_substitution, measurement, probe):
+    """Return the caller-contract error for an unnamed model, or None for valid best-value delegation."""
+    effective = _apply_best_value_default(reasoning, intent, sig, no_substitution, probe)
+    best_value = isinstance(effective, str) and effective.strip().lower() == "best-value"
+    pinned = bool(metered_only or no_substitution or measurement)
+    if model is None and (pinned or not (best_value and (intent or sig))):
+        return ("model is unset. To let spendguard choose, pass reasoning='best-value' with an intent label; "
+                "that form cannot be combined with metered_only, no_substitution, or measurement because those "
+                "arguments pin the model.")
+    return None
+
+
 class CallResult(dict):
     """The result of `adapters.call` — a dict (every existing `r["text"]` / `r.get(...)` keeps working unchanged) that
     ALSO exposes its keys as ATTRIBUTES, so `r.text` / `getattr(r, "text")` returns the text instead of silently None.
@@ -975,8 +987,6 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     # the metered intent. That is the measured warden:tag_provenance_xcheck bypass — metered_only=True still yielded
     # gpt-5-nano → claude-opus-4-8 via the claude-code lane. metered_only ⟹ no_substitution closes it; there is no
     # legitimate metered_only-WITH-substitution case (every metered_only caller wants that exact model, metered).
-    if metered_only:
-        no_substitution = True
     # ENSURE-SUCCESS INPUT NORMALISATION — accept the kwargs a caller NATURALLY reaches for and translate them to the
     # canonical parameter, instead of a cryptic TypeError (the "users try to use it and fail" class, caught by a live
     # run: a caller wrote reasoning="best-value", intent=… and got `unexpected keyword argument 'intent'`). Aliases are
@@ -1044,6 +1054,12 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     # guessing. The bakeoff / titration / recommend paths that ARE measurements already pass no_substitution=True.
     if measurement:
         no_substitution = True
+
+    _model_contract_error = _model_selection_contract_error(
+        model, reasoning, intent, sig, metered_only, no_substitution, measurement, _probe)
+    if _model_contract_error:
+        from .gate import ModelSelectionContractRefused
+        raise ModelSelectionContractRefused(_model_contract_error)
 
     # DETERMINISM KNOBS (temperature/top_p/seed) — resolved from THREE precedence levels so the same capability is
     # usable per-call AND broadly: an explicit per-call arg WINS over a SCOPED default (`with adapters.generation(...)`

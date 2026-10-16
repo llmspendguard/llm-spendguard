@@ -1064,13 +1064,13 @@
       "metered_id": "gemini-3-flash",
       "lane_spellings": {},
       "price": {
-        "in_": 0.25,
-        "out": 1.5,
-        "cached_in": 0.025,
-        "batch_in": 0.125,
-        "batch_out": 0.75,
-        "source": "https://pricepertoken.com/pricing-page/model/google-gemini-3-flash-preview",
-        "verified": "2026-09-12"
+        "in_": 0.5,
+        "out": 3.0,
+        "cached_in": 0.05,
+        "batch_in": 0.25,
+        "batch_out": 1.5,
+        "source": "https://ai.google.dev/gemini-api/docs/pricing#gemini-3-flash-preview",
+        "verified": "2026-10-16"
       },
       "price_error": null,
       "output_ceiling": {

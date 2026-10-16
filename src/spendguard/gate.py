@@ -129,6 +129,14 @@ class EffortNotHonored(SpendGateRefused):
     explicitly (pin the floor value instead of 'minimal'). A SUBSTITUTABLE call never raises this — it routes away."""
 
 
+class ModelSelectionContractRefused(SpendGateRefused):
+    """The caller omitted ``model`` without selecting the unpinned best-value routing contract.
+
+    This is a caller-contract refusal, not a provider-resolution failure, and therefore deliberately propagates
+    through every fail-open handler as a SpendGateRefused subtype.
+    """
+
+
 import threading as _threading
 _rm_local = _threading.local()           # per-thread nesting depth of refuse_metered() blocks — a CM's natural scope is
 #                                          its own thread's dynamic extent (no shared global to race); env covers process

@@ -590,6 +590,23 @@ def feedback(call_id: Optional[str], ok: bool = True, source: str = "explicit",
         config.rollback_ledger_conn("calls")   # clear a dangling txn from the failed write on the reused pooled conn
 
 
+def finalize_bakeoff_measurement(call_id, provider, requested_model, served_model, cost, in_tok, out_tok, intent,
+                                 quality, effort, resolved_lane):
+    """Attach a bakeoff verdict to its gate-recorded physical call, inserting only when no recorder produced a row."""
+    confidence = _CONF["judge"] if quality is not None else None
+    with _lock:
+        con = _calls_db()
+        changed = con.execute(
+            "UPDATE calls SET quality=?, quality_src=?, quality_conf=?, caller='bakeoff' WHERE id=?",
+            (quality, "judge" if quality is not None else None, confidence, call_id)).rowcount
+        con.commit()
+    if changed:
+        return call_id
+    return record_call(provider, served_model, "realtime", cost, in_tok=in_tok, out_tok=out_tok, intent=intent,
+                       who="bakeoff", effort=effort, call_id=call_id, requested_model=requested_model,
+                       served_model=served_model, resolved_lane=resolved_lane)
+
+
 def insert(provider, model, kind, cost, in_tok=0, out_tok=0, ts=None, intent=None, chain=None,
            quality=None, quality_src=None, quality_conf=None, who="backfill", effort=None, project=None,
            call_class=None, origin_session=None):
