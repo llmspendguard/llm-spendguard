@@ -156,7 +156,7 @@ to real dollars or estimated subscription value.
 
 ## Routing cheat-sheet
 
-- **One-shot verdict, classification, or extraction:** use `adapters.call(model, prompt,
+- **One-shot verdict, classification, or extraction:** use `adapters.call(None, prompt,
   reasoning="best-value", intent="stable-job-name")`, `vendor_call`, or `spendguard ask`. The explicit intent lets
   measured quality choose the cheapest qualifying model/effort. A matching $0 subscription lane is tried first; the
   metered API is the fallback.
@@ -174,6 +174,12 @@ Codex and Kimi use default-on persistent warm daemons; Gemini and Claude Code us
 uses its plan-key endpoint. OpenAI-compatible endpoints in `adapters.PROVIDERS` are metered API routes, not $0 merely
 because they speak plain HTTP. For Codex, the measured operative warm turn is ~5s; >75s applies only to a cold
 one-shot `codex exec` fallback.
+
+Set `advisor.default_reasoning="best-value"` to make every labelled, unpinned call with omitted reasoning take that
+measured best-value route. Otherwise, `model=None` is deliberately conservative: it uses
+`advisor.default_model`, or the catalog's cheapest priced chat model (currently `gpt-5-nano`) when no default is set.
+That is a metered API model, never the Codex warm daemon. `metered_only` skips lanes, `no_substitution` pins a named
+model, and `measurement` pins a named `(model, effort)`; an unnamed measurement is refused.
 
 ## Delegate agentic work to another plan
 

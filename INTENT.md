@@ -23,6 +23,10 @@ dashboards, org rollups, savings claims — has any value. Every number is cross
    request to the best served model inside the anchor-rate ×1.25 economic bound, ranked by catalog per-token rate.
    If capped work needs a real agent, `spendguard delegate` (`delegate_router.py`) hands the self-contained task to
    codex/gemini/zai/kimi's CLI — never a Claude subagent.
+   At the API boundary, an unnamed labelled best-value call delegates `(model, effort)` selection to that measured
+   frontier. Every other `model=None` call resolves to the configured default or the catalog's cheapest priced chat
+   model; an unnamed measurement, or a catalog with no priced chat default, is deliberately refused rather than
+   guessed. `metered_only`, `no_substitution`, and `measurement` are explicit pins, not routing hints.
 3. **Reconciles the local ledger to the provider's real bill** across **batch · realtime · GPU**, and **reconstructs
    realtime spend WITHOUT a provider admin key** — agentically, from conversation token records — so you know your
    realtime spend even when the provider offers no cooperation.

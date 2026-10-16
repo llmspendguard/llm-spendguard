@@ -39,7 +39,13 @@ The synchronous and storm paths share admission and settlement concepts, but que
 
 ```mermaid
 flowchart LR
-    A[adapters.call] --> B{plan admission}
+    A[adapters.call] --> MS{model selection}
+    MS -->|unnamed measurement| MR[ModelSelectionContractRefused]
+    MS -->|labelled best-value| BV[cheapest measured-good model + effort]
+    MS -->|other model=None| CD[configured default or cheapest priced chat]
+    MS -->|named model| B{plan admission}
+    BV --> B
+    CD --> B
     B -->|healthy / proactive shed with no alternative| C[keep primary]
     B -->|ready alternative| D[redirect model and lane]
     B -->|capped or overage; no ready alternative| X[typed refusal]
