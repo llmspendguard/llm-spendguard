@@ -2278,17 +2278,20 @@ def _served_dated_id(provider, model_id):
 
 
 def metered_fallback_id(provider, use_name):
-    """The metered-API model id equivalent to a lane's USE-NAME — the mapping that lets a lane call fall BACK to the
-    provider's paid API when the lane is down/exhausted, WITHOUT the lane's own naming breaking the call. This is the
-    ONE place that equivalence lives, so the live fallback (_call_once) and the lane-fallback audit can never drift.
-    For gemini/agy the reasoning level rides the id as a SUFFIX (gemini-3.7-flash-medium) while the metered API wants
-    the BARE id + a reasoning PARAMETER, so the suffix is split off. Every other provider's lane id IS its metered id,
-    EXCEPT a bare alias the metered API dates: claude-haiku-4-5 (the CLI's alias) → claude-haiku-4-5-20251001 (the
-    served id), resolved $0 from the served-list cache so a pinned claude-haiku call never strands its own fallback.
-    Returns (metered_id, reasoning_level_or_None)."""
-    if provider == "gemini":
-        return _split_gemini_reasoning(use_name)
-    return _served_dated_id(provider, use_name), None
+    """The metered-API equivalent of a lane USE-NAME. The catalog is the authoring SSOT for the STATIC crosswalk:
+    model_catalog.model_record resolves a lane spelling to its base record, whose ``metered_id`` (or own ``id``) is
+    authoritative. This reader then layers only runtime facts on top: Gemini's fixed-format reasoning suffix becomes
+    a parameter, and the live served-list may upgrade a bare metered alias to its dated form. Unknown compatibility
+    ids degrade to the pre-catalog behavior instead of breaking. Returns (metered_id, reasoning_level_or_None)."""
+    from . import model_catalog
+    rec = model_catalog.model_record(use_name)
+    if rec is None:
+        if provider == "gemini":
+            return _split_gemini_reasoning(use_name)
+        return _served_dated_id(provider, use_name), None
+    metered_base = rec.get("metered_id") or rec["id"]
+    reasoning = _split_gemini_reasoning(use_name)[1] if provider == "gemini" else None
+    return _served_dated_id(provider, metered_base), reasoning
 
 
 def _cacheable_system(system):

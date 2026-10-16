@@ -338,9 +338,9 @@ def main(argv=None):
     argv = list(argv or [])
     if argv and argv[0] == "set-model":
         # Declare the model a subscription LANE calls with (advisor.lane_models[lane]), VALIDATED at declaration: the
-        # lane must be real and the model must be priced. `set-model <lane> <model>` sets the lane's single model;
+        # lane must be real and the model must be catalogued + priced. `set-model <lane> <model>` sets its single model;
         # `set-model <lane> <tier> <model>` sets ONE tier of its per-tier map, preserving the others (no clobber).
-        from . import lane_catalog, config as _cfg, tier_config, route_utility
+        from . import lane_catalog, config as _cfg, model_catalog, tier_config, route_utility
         rest = argv[1:]
         if len(rest) == 2:
             lane, tier, model = rest[0], None, rest[1]
@@ -353,6 +353,11 @@ def main(argv=None):
             return 2
         if lane not in lane_catalog.lanes():
             print(f"unknown lane {lane!r} — known lanes: {', '.join(lane_catalog.lanes())}")
+            return 2
+        if model_catalog.model_record(model) is None:
+            print(f"refusing: {model!r} is not in model_catalog.json — a lane model must be catalogued so its "
+                  f"lane→metered crosswalk has one authoring SSOT. Add the model and its lane_spellings there, "
+                  f"then re-run.")
             return 2
         if not tier_config._model_is_priced(model):
             print(f"refusing: {model!r} is not priced — a lane model must be priced (so lane VALUE + metered fallback "
