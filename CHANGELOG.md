@@ -4,6 +4,34 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.12.22] — 2026-10-16
+
+### Fixed
+- **Recurring false "codex lane LOGGED OUT (re-login)" banner — root-caused and fixed.** The banner was a false
+  positive: codex authenticates on a ~10-day `access_token` and `codex exec` / `login status` keep returning rc=0 even
+  with the hourly `id_token` long expired, so the lane is never actually logged out. `reliability.note_lane_auth_down`
+  alarmed on the *first* transient auth-status miss, and that miss is a race — under concurrent fan-outs codex's
+  periodic `auth.json` refresh-rewrite leaves the file momentarily unreadable, so a concurrent lane check reads a false
+  logout. **F2:** `note_lane_auth_down` now alarms only on a *sustained* logout (the row was already an unresolved
+  `event-auth` down and reported logged-out again with no success clearing it between), reusing `note_lane_down`'s
+  proven shared-row state-read anti-flap rule; a lone blip is recorded but not alarmed. `sustained_only=False` lets an
+  authoritative sweep notify on first detection. **F1:** a durable `fell_reason` column on `calls`, stamped with the
+  lane's own classified miss reason at the fallover site — the metered twin succeeds so `provider_error` is NULL, so
+  the lane's reason was previously discarded; the fallover is now self-diagnosing. Guards:
+  `test_lane_auth_sustained_guard.py`, `test_fell_from_ledger.py`. (A host-wide `codex app-server` singleton — F3 — is
+  tracked separately; it needs a new IPC broker.) (#83)
+- **Four cost/routing defects closed, each with an enforcing guard.** From the 2026-10-16 defect sweep. (#80)
+
+### Changed
+- **`model=None` resolution made explicit and safe.** An unnamed call resolves to the cheapest priced chat model
+  (metered-capable by construction, so $0 lane CLIs are excluded and `metered_only` is honoured); only an unnamed
+  *measurement* is refused (`ModelSelectionContractRefused`). No hardcoded model id. (#82)
+
+### Performance
+- **Lazy CLI startup.** `--help` and every subcommand `--help` resolve before package hydration, gate install, SDK
+  imports, and ledger access; cold `--help` / `scan` / `doctor` no longer pay the heavy startup. `import spendguard`
+  still eagerly installs the gate. (#81)
+
 ### Added
 - **Honest per-row catalog provenance (client half).** Curated model records accept source-owned `as_of` dates for
   the last tracked price/capability change; one change-aware writer keeps no-op, untouched, and editorial-only dates
