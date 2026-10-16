@@ -24,7 +24,7 @@ os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 import openai                                                    # noqa: E402
-from spendguard import adapters, vendor_call, config, pricing, lane_balance   # noqa: E402
+from spendguard import adapters, vendor_call, config, pricing, lane_balance, lane_queue   # noqa: E402
 
 fails = []
 
@@ -111,6 +111,10 @@ def _spy_quality_substitutes(intent, model, excluded=None):
 
 
 lane_balance.quality_equivalent_free_substitutes = _spy_quality_substitutes
+# The durable recovery queue's repeated polling is covered by its own suite. This test owns the ordering boundary
+# between substitute consultation and the metered leg, so make the intervening queue rung finish immediately.
+lane_queue.hold_free_recovery = lambda *args, **kwargs: {
+    "error": "isolated recovery queue exhausted", "_free_hold": {"deadline_exhausted": True}}
 
 
 def _run(**kw):

@@ -16,7 +16,7 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from spendguard import adapters, resource_state, dispatch   # noqa: E402
+from spendguard import adapters, resource_state, dispatch, lane_balance, lane_queue   # noqa: E402
 
 fails = []
 
@@ -69,7 +69,18 @@ ck("retried once (2 lane calls) and recovered on the lane — no metered spill",
 print("\n-- a lane with NO proven-good history still confirms a miss before metered --")
 adapters._lane_for = lambda prov: ("codexfake", _AlwaysFail) if prov == "openai" else None
 _n["fail"] = 0
-adapters._call_once("openai:gpt-5.5", "hi", max_tokens=100)
+_original_quality_substitutes = lane_balance.quality_equivalent_free_substitutes
+_original_hold_free_recovery = lane_queue.hold_free_recovery
+try:
+    # This test owns the confirmation-retry rung. The complete substitute→queue→metered ladder is exercised by
+    # test_ensure_success_routing.py; do not let its additional primary probes inflate this rung's attempt count.
+    lane_balance.quality_equivalent_free_substitutes = lambda *args, **kwargs: []
+    lane_queue.hold_free_recovery = lambda *args, **kwargs: {
+        "error": "isolated recovery queue exhausted", "_free_hold": {"deadline_exhausted": True}}
+    adapters._call_once("openai:gpt-5.5", "hi", max_tokens=100, no_metered_fallback=True)
+finally:
+    lane_balance.quality_equivalent_free_substitutes = _original_quality_substitutes
+    lane_queue.hold_free_recovery = _original_hold_free_recovery
 ck("no proven-good history → bounded confirmation attempts", _n["fail"] == 2)
 
 print("\n-- a DELIBERATE stop from the lane PROPAGATES (halts), never swallowed + retried --")
