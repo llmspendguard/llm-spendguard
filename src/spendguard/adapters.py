@@ -819,14 +819,10 @@ def _apply_best_value_default(reasoning, intent, sig, no_substitution, probe):
 
 
 def _model_selection_contract_error(model, reasoning, intent, sig, metered_only, no_substitution, measurement, probe):
-    """Return the caller-contract error for an unnamed model, or None for valid best-value delegation."""
-    effective = _apply_best_value_default(reasoning, intent, sig, no_substitution, probe)
-    best_value = isinstance(effective, str) and effective.strip().lower() == "best-value"
-    pinned = bool(metered_only or no_substitution or measurement)
-    if model is None and (pinned or not (best_value and (intent or sig))):
-        return ("model is unset. To let spendguard choose, pass reasoning='best-value' with an intent label; "
-                "that form cannot be combined with metered_only, no_substitution, or measurement because those "
-                "arguments pin the model.")
+    """Refuse only a measurement whose required named (model, effort) is absent; otherwise return None."""
+    if model is None and measurement:
+        return ("a measurement needs a named (model, effort); an unnamed model cannot be measured. Pass an explicit "
+                "model, or drop measurement to let spendguard choose a default.")
     return None
 
 
@@ -1060,6 +1056,13 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     if _model_contract_error:
         from .gate import ModelSelectionContractRefused
         raise ModelSelectionContractRefused(_model_contract_error)
+
+    # Unnamed measurement → refused above; labelled best-value → router picks; every other unnamed call → cheap chat.
+    _effective_reasoning = _apply_best_value_default(reasoning, intent, sig, no_substitution, _probe)
+    _best_value_selects = (isinstance(_effective_reasoning, str)
+                           and _effective_reasoning.strip().lower() == "best-value" and bool(intent or sig))
+    if model is None and not _best_value_selects:
+        model = _chat_default_model(metered_only=metered_only)
 
     # DETERMINISM KNOBS (temperature/top_p/seed) — resolved from THREE precedence levels so the same capability is
     # usable per-call AND broadly: an explicit per-call arg WINS over a SCOPED default (`with adapters.generation(...)`
@@ -1618,6 +1621,34 @@ _EMBED_MAX_INPUT_CHARS = 32000    # ~8k-token per-input ceiling (OpenAI) as a co
 #                                   text is marked failed for THAT item, never sent to 400 the whole chunk it rides in.
 _DEFAULT_EMBED_MODEL = "text-embedding-3-small"   # LAST-RESORT fail-safe ONLY if the catalog curates no OpenAI embedding
 #                                                   model (a broken catalog) — never the normal path (see below).
+
+
+def _chat_default_model(metered_only=False):
+    """The chat model for an unnamed call: config ``advisor.default_model`` if set, else the CATALOG's cheapest priced
+    chat model. Catalog prices denote direct metered APIs, so priced chat rows are metered-capable and the same
+    candidate set honestly serves ``metered_only=True``. A broken/empty catalog is NOT papered over with a hardcoded
+    id: catalog errors propagate, and an absent priced chat model with no ``advisor.default_model`` raises
+    ModelSelectionContractRefused (a deliberate SpendGateRefused, never a silent fallback) so a broken pricing/routing
+    SSOT is loud rather than masking a model nobody chose."""
+    ov = config._cfg_get("advisor", "default_model", None)
+    if ov:
+        return ov
+    from . import model_catalog
+    embedding_ids = {model_id for _provider, model_id in model_catalog.embedding_models(None)}
+    rows = []
+    for record_id, record in model_catalog.all_records().items():
+        capabilities = record.get("capabilities") or {}
+        model_id = record.get("metered_id") or record_id
+        price_in = (record.get("price") or {}).get("in_")
+        if capabilities.get("mode") == "chat" and model_id not in embedding_ids and price_in is not None:
+            rows.append((price_in, model_id))
+    if not rows:
+        from .gate import ModelSelectionContractRefused
+        raise ModelSelectionContractRefused(
+            "no priced chat model in the model catalog and no advisor.default_model configured — cannot choose a "
+            "default for an unnamed call. Set advisor.default_model or repair the model catalog (the pricing SSOT).")
+    rows.sort(key=lambda row: (row[0], str(row[1])))
+    return rows[0][1]
 
 
 def _embed_default_model():

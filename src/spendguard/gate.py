@@ -130,8 +130,10 @@ class EffortNotHonored(SpendGateRefused):
 
 
 class ModelSelectionContractRefused(SpendGateRefused):
-    """The caller omitted ``model`` without selecting the unpinned best-value routing contract.
+    """A ``measurement=True`` call omitted ``model``: an unnamed (model, effort) cannot be measured.
 
+    This is the sole model-contract refusal. Every other unnamed call defaults — a labelled best-value call lets
+    the router choose, and any other unnamed call resolves to the cheapest priced chat model (``_chat_default_model``).
     This is a caller-contract refusal, not a provider-resolution failure, and therefore deliberately propagates
     through every fail-open handler as a SpendGateRefused subtype.
     """
