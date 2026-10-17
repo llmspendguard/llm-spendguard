@@ -296,7 +296,7 @@ def reconcile_money_batch_estimate(provider, model, intent, in_tok, out_tok, cos
     return True
 
 
-def snapshot(reason="", keep=None, force=False):
+def snapshot(reason="", keep=None, force=False, *, compact_source=None, compact_target=None):
     """Copy the ledger database aside BEFORE anything mutates it. Returns the path, or None.
 
     WHY THIS EXISTS. On 2026-08-10 a guard test overwrote ~/.spendguard/config.json — 9KB of settings
@@ -313,6 +313,13 @@ def snapshot(reason="", keep=None, force=False):
     ~650MB ledger = 12GB of full-db copies in ~/.spendguard/snapshots. Local only needs the window since the last
     daily B2 push, so the default is small and configurable (safety.snapshot_keep, default 2 ≈ a day or two of
     recovery points). None → read that config; an explicit keep still wins."""
+    # Offline reclaim extends this copy boundary, but MUST NOT reuse/prune a
+    # snapshot or swallow an error. The caller owns locking and verification.
+    if compact_source is not None or compact_target is not None:
+        if compact_source is None or compact_target is None:
+            raise ValueError("compact snapshot requires both source handle and target")
+        compact_source.execute("VACUUM INTO ?", (str(compact_target),))
+        return str(compact_target)
     import datetime as _dt
     if keep is None:
         try:

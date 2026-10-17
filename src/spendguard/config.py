@@ -1080,6 +1080,19 @@ def tune_ledger_connection(c, ceiling=None):
 _LEDGER_POOL = threading.local()
 
 
+def open_ledger_maintenance_connection(path=None, *, read_only=True, timeout=0):
+    """Unpooled maintenance handle; inspection never sets persistent pragmas.
+
+    Normal tune_ledger_connection sets WAL and tolerates pragma failures. Offline
+    maintenance must instead control locks explicitly and fail closed.
+    """
+    import sqlite3
+    ledger = Path(path or db_path()).resolve(strict=True)
+    mode = "ro" if read_only else "rw"
+    return sqlite3.connect(f"{ledger.as_uri()}?mode={mode}", uri=True, timeout=timeout,
+                           isolation_level=None)
+
+
 def pooled_ledger_conn(key, ensure_schema, path=None):
     """The thread-local pooled connection for subsystem `key` (tuned via tune_ledger_connection, schema fully ensured
     on every new connection). Reused across that subsystem's ops on this thread; reopened when the path
