@@ -33,6 +33,7 @@ import tempfile
 import time
 
 TIMEOUT_S = 300               # meta prompts are small; a hung CLI must not stall the daily report
+CODEX_AGENTIC_APPROVAL_FLAG = "--approve-for-me"
 _USAGE_TTL_S = 300            # the codex rate-limit log is re-read at most this often (shared cache adds reset-boundary)
 _AUTH_RECHECK_BACKOFF_S = 0.75  # a non-zero `codex login status` is confirmed once (transient vs real logout) before False
 _TOKEN_EXPIRY_MARGIN_S = 120    # a token within this of its own exp is not treated as still-valid (leave room to refresh)
@@ -211,14 +212,14 @@ def _plugin_disable_flags():
 
 def _mcp_disable_flags():
     """Disable MCP orchestration for a headless, one-shot `codex exec` — the OTHER half of the cold-start load the
-    plugin disable above addresses. A delegated completion (build / classify / refactor) needs NONE of the user's
-    configured mcp_servers (node_repl, 7thsense, ccwatch, honestreview, symgrep, spendguard, …), yet every codex
+    plugin disable above addresses. Read-only comprehension does not need the user's configured mcp_servers,
+    while workspace-write agentic runs retain them for tools such as symgrep. Every MCP-enabled codex
     session STARTS all of them and the app-server does NOT reap the set when the session ends — measured 2026-10-11:
     at --workers 4 × ~53s/call a long delegation run abandoned ~12 full 7-server sets/min (~1.5 GB/min, hundreds of
     orphaned procs). Codex 0.160.1 gates configured servers on ONE global key; the global gate is used, NOT per-entry
     `mcp_servers."x".enabled=false` overrides — a config layer can replace a per-entry's required transport fields and
     make the app-server exit before the initialize handshake (the warm-daemon path proved this). The warm daemon
-    (codex_daemon) already applies this; the cold `codex exec` path was missing it, which is where the leak came from."""
+    (codex_daemon) also applies this; cold read-only runs use it to avoid the same leak."""
     return ["-c", "orchestrator.mcp.enabled=false"]
 
 
@@ -459,16 +460,13 @@ def _run_prompt_in_cwd(prompt, system=None, model=None, timeout=TIMEOUT_S, reaso
         os.close(fd)
         cmd = [exe, "exec", "--json", "--skip-git-repo-check", "--output-last-message", out_file]
         if sandbox == "workspace-write":
-            cmd += ["--approve-for-me"]                    # IMPLIES the workspace-write sandbox AND auto-approves each
-            #                                                action; codex REFUSES -s/--sandbox combined with it, so the
-            #                                                writable path passes --approve-for-me ALONE (never -s).
+            # Automatic review covers ALL gated actions, including shell commands and MCP tools, within
+            # workspace-write. The flag implies that sandbox and conflicts with -s/--sandbox.
+            cmd += [CODEX_AGENTIC_APPROVAL_FLAG]
         else:
             cmd += ["-s", sandbox]                         # read-only: explicit sandbox, no approval policy needed
-        cmd += _plugin_disable_flags() + _mcp_disable_flags()   # the TWO per-call cold-start costs a headless completion
-        #                                                    needs NEITHER: enabled PLUGINS and configured MCP SERVERS.
-        #                                                    Both off: >75s → ~5s, and no orphaned MCP-server leak (the
-        #                                                    app-server does not reap its MCP set per session). The warm
-        #                                                    daemon already disabled MCP; this closes the cold path too.
+            cmd += _mcp_disable_flags()                    # one-shot comprehension avoids MCP startup and leaks
+        cmd += _plugin_disable_flags()
         if _eff:
             cmd += ["-c", f"model_reasoning_effort={_eff}"]   # Codex's OWN scale (none|low|…); 'minimal'→'none' (computed above)
         if model:

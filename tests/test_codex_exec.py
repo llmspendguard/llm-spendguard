@@ -67,9 +67,12 @@ ck("cold exec disables MCP orchestration (orchestrator.mcp.enabled=false) — no
 print("-- agentic delegation explicitly opts into a writable sandbox; default remains read-only --")
 ce.run_prompt("edit and test", sandbox="workspace-write", cwd=os.path.dirname(__file__))
 ck("workspace-write uses --approve-for-me alone (it implies the writable sandbox; codex forbids combining it with -s)",
-   "--approve-for-me" in seen["cmd"] and "-s" not in seen["cmd"])
+   "--approve-for-me" in seen["cmd"] and "-s" not in seen["cmd"] and "--sandbox" not in seen["cmd"])
+ck("workspace-write preserves configured MCP tools for agentic delegation",
+   "orchestrator.mcp.enabled=false" not in seen["cmd"])
 ce.run_prompt("read only")
-ck("existing callers retain the read-only default", "read-only" in seen["cmd"] and "--approve-for-me" not in seen["cmd"])
+ck("existing callers retain explicit -s read-only without automatic approval",
+   seen["cmd"][seen["cmd"].index("-s") + 1] == "read-only" and "--approve-for-me" not in seen["cmd"])
 ck("unknown sandbox is refused before execution", "unsupported codex sandbox" in ce.run_prompt("x", sandbox="danger-full-access")["error"])
 
 print("-- degrade paths: every mismatch is an {error}, never an exception --")
