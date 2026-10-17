@@ -1,4 +1,4 @@
-"""Plan VALUE of subscription-lane calls that have NO session-log miner — priced from the calls ledger.
+"""Plan VALUE of every subscription lane, priced uniformly from the calls ledger.
 
 WHY THIS EXISTS. The claude-code and codex lanes get their est-value from session-log miners (`spendguard cc`,
 `spendguard codex`): those CLIs write transcripts we mine, capturing ALL plan usage, not just spendguard's own
@@ -7,13 +7,11 @@ advisor delegates to them, the call is recorded ($0 billed, kind='subscription',
 VALUE was invisible: $0 on the est-value axis, which also blinded the load-balancer's utilization brain to them.
 
 WHAT IT DOES. Every subscription call already carries its token counts and its lane in the `calls` ledger. This
-module prices those tokens at API-equivalent rates (`pricing.realtime_cost`) and stamps the per-lane est-value
-windows (`receipt.stamp_est_value`, billed=False) — the same cache the session miners feed. So `spendguard receipt`
-and the in-chat footer show plan value for these lanes too.
+module prices those tokens at API-equivalent rates (`pricing.realtime_cost`) and stamps a dedicated routed-value
+cache for the receipt's per-lane view. It does not write the session miners' broader transcript-value cache.
 
-WHICH LANES. Exactly the lanes with no session miner, DERIVED: every executor in `adapters._LANES` minus the ones a
-miner already values (`receipt._SOURCE_REFRESH` is that registry). A new lane with no miner is valued automatically;
-a lane that later gains a miner drops out — nothing to edit here (the no-hardcoding rule, held structurally).
+WHICH LANES. Every executor in `adapters._LANES`, DERIVED from the lane registry. Session-mined transcript value is a
+separate concept and is neither compared with nor merged into this routed ledger value.
 
 HONEST SCOPE. This values the calls spendguard DELEGATED through the lane (the ones in our ledger) — not other,
 non-spendguard usage of that CLI, for which we have no log source. It is the value of the work spendguard sent,
@@ -29,7 +27,7 @@ import time
 
 from . import config
 
-_WINDOW_DAYS = 40           # scan this far back so stamp_est_value has the per-day detail to re-bucket a month window
+_WINDOW_DAYS = 40           # retain per-day detail long enough to re-bucket a current-month view
 _REFRESH_MAX_AGE_S = 180    # the receipt path calls refresh_lane_value_if_stale(); only re-price when older than this
 
 # The SERVER CHANNEL a lane executor's est-value pushes under. Identity for most; the ONE quirk is the zai-coding
@@ -43,13 +41,9 @@ def _channel_for(executor: str) -> str:
 
 
 def ledger_valued_lanes() -> set:
-    """Lane executors whose plan value is priced HERE from the ledger — every subscription lane EXCEPT those a
-    session-log miner already values. Derived from the lane registry and the miner registry, never a hardcoded list,
-    so adding/removing a lane or a miner needs no edit in this file."""
-    from . import adapters, receipt
-    lanes = {name for name, _mod in adapters._LANES.values()}
-    session_mined = set(receipt._SOURCE_REFRESH)          # claude-code / codex / claude-ai — mined from transcripts
-    return {ln for ln in lanes if ln not in session_mined}
+    """Every active subscription-lane executor, derived from the routing registry."""
+    from . import adapters
+    return {name for name, _mod in adapters._LANES.values()}
 
 
 def _subscription_rows(since: str, valued: set):
@@ -69,8 +63,11 @@ def _subscription_rows(since: str, valued: set):
 
 
 def stamp_from_ledger(window_days: int = _WINDOW_DAYS) -> dict:
-    """Price the valued lanes' subscription calls at API rates and stamp each lane's est-value windows. Returns
-    {executor: month_value_usd_stamped} for a caller/report. Best-effort; never raises."""
+    """Price active lanes' subscription calls at API rates and replace the routed-value cache.
+
+    Returns {executor: month_value_usd}, with None when a lane has current-month activity containing an unpriceable
+    call. This store is deliberately separate from the miners' transcript-value cache. Best-effort; never raises.
+    """
     out = {}
     try:
         from . import receipt
@@ -81,18 +78,30 @@ def stamp_from_ledger(window_days: int = _WINDOW_DAYS) -> dict:
         by_lane = {}
         from . import lane_catalog
         for ex, ts, prov, model, in_tok, out_tok, project in _subscription_rows(since, valued):
+            day = (ts or "")[:10]
             try:
                 # price through the CATALOG (base + the lane's provider, reasoning-suffix aware) — not a raw
                 # realtime_cost that leans on the global suffix-strip and can hit the gemini/vertex ambiguity.
-                val = lane_catalog.use_name_cost(model, int(in_tok or 0), int(out_tok or 0), lane=ex) or 0.0
+                val = lane_catalog.use_name_cost(model, int(in_tok or 0), int(out_tok or 0), lane=ex)
             except Exception:
-                val = 0.0                                 # an unpriced model contributes 0, never a guess (chunk-safe)
-            by_lane.setdefault(ex, []).append(
-                {"day": (ts or "")[:10], "spend_micros": round(val * 1_000_000), "billed": False,
-                 "org": "", "team": "", "project": project or ""})
-        for ex, rows in by_lane.items():
-            receipt.stamp_est_value(rows, source=ex)      # billed=False → the est-value axis, per-source (per-lane)
-            out[ex] = sum(r["spend_micros"] for r in rows) / 1_000_000
+                val = None
+            rec = by_lane.setdefault(ex, {"by_day": {}, "activity_by_day": {}, "unpriced_by_day": {}})
+            rec["activity_by_day"][day] = rec["activity_by_day"].get(day, 0) + 1
+            if val is None:
+                rec["unpriced_by_day"][day] = rec["unpriced_by_day"].get(day, 0) + 1
+            else:
+                rec["by_day"][day] = rec["by_day"].get(day, 0.0) + val
+        month_start = receipt._windows()[2]
+        for ex, rec in by_lane.items():
+            rec["asof"] = receipt._windows()[0]
+            if not any(day >= month_start and n for day, n in rec["activity_by_day"].items()):
+                continue
+            has_unpriced = any(day >= month_start and n for day, n in rec["unpriced_by_day"].items())
+            out[ex] = None if has_unpriced else sum(
+                usd for day, usd in rec["by_day"].items() if day >= month_start)
+        p = receipt._cache_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        config.update_json(p, lambda d: d.update({"routed_lane_value": by_lane}), reason="lane-value")
         return out                                        # SUCCESS (out may be {} = no valued lanes / no rows)
     except Exception:
         return None                                       # ERROR — a distinct signal so refresh_lane_value_if_stale
@@ -111,7 +120,7 @@ def _mark_stamped() -> None:
 
 
 def refresh_lane_value_if_stale(max_age_s: int = _REFRESH_MAX_AGE_S) -> None:
-    """Re-price the ledger-valued lanes only when the last stamp is older than `max_age_s`. Called from the every-turn
+    """Re-price every registered lane when the last stamp is older than `max_age_s`. Called from the every-turn
     receipt path — the staleness gate keeps that path a single cache read on the common case. Best-effort; the mark is
     set even when there was nothing to stamp, so an idle machine does not re-scan every turn."""
     try:
@@ -170,7 +179,7 @@ def day_totals(member_ref, window_days: int = _WINDOW_DAYS):
 
 
 def sync(dry=False):
-    """Push the ledger-valued lanes' (gemini/zai) plan VALUE (billed=False, channel=<lane>) to the server, so the org
+    """Push the registered lanes' ledger-derived plan VALUE (billed=False, channel=<lane>) to the server, so the org
     dashboard's work-done / unit-economics count them (the client twin of the server's EST_VALUE_CHANNELS). Filters to
     THIS connection's owned projects (no cross-attribution); declares a per-channel replace so re-syncs never stack.
     Runs inside `saas sync` (hourly via launchd). Best-effort; never raises out."""
@@ -216,23 +225,25 @@ def main(argv=None) -> int:
             chans = sorted({x["channel"] for x in rows})
             print(f"lanevalue --sync --dry: {len(rows)} est-value row(s) → channels {chans or '—'} (billed=false, NOT pushed)")
         else:
-            print(f"lanevalue --sync: pushed gemini/zai plan value (billed=false) → {r}")
+            print(f"lanevalue --sync: pushed lane plan value (billed=false) → {r}")
         return 0
     stamped = stamp_from_ledger()
     if stamped is not None:                            # only reset freshness on success; None = error (don't mask it)
         _mark_stamped()
     stamped = stamped or {}
     valued = sorted(ledger_valued_lanes())
-    print("Ledger-valued subscription lanes (no session-log miner) — plan VALUE priced from the calls ledger:")
+    print("Registered subscription lanes — plan VALUE priced from the calls ledger:")
     if not valued:
         print("  (no such lanes configured)")
         return 0
     for ln in valued:
         v = stamped.get(ln)
-        if v is None:
+        if ln not in stamped:
             print(f"  {ln:<16} —        (no subscription calls in the last {_WINDOW_DAYS}d)")
+        elif v is None:
+            print(f"  {ln:<16} unknown  (in-window activity includes an unpriceable model)")
         else:
-            print(f"  {ln:<16} ${v:,.2f}  (est value stamped; window {_WINDOW_DAYS}d)")
+            print(f"  {ln:<16} ${v:,.2f}  (routed ledger value; window {_WINDOW_DAYS}d)")
     print("  ⚠ USAGE VALUE (tokens × API pricing), NOT $ billed — a flat-fee plan served these. Shown on the")
     print("    est-value axis of `spendguard receipt`, never added into real spend.")
     return 0

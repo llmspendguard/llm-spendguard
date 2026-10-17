@@ -20,9 +20,8 @@ Each row (a plain dict — pure data, no imports of adapters/lanes so this stays
                 interactive-only CLI). Distinct from `login` (the full first-time activation prose): this is what a
                 logged-out surface shows so the user fixes it in one line. Authored here so the fix lives in ONE place.
 
-(Which lanes are SESSION-mined for plan value is NOT here — that truth lives once in the miner registry
-receipt._SOURCE_REFRESH, and lane_value derives 'ledger-valued' as this lane set minus that; duplicating it would
-be the very drift this table exists to end.) A test isolates artifacts by repointing a row's `creds` at a temp path
+(Which lanes are SESSION-mined for broader plan value is NOT here — receipt._SOURCE_REFRESH only maps optional
+miner commands; lane_value prices every lane in this registry from calls.) A test isolates artifacts by repointing a row's `creds` at a temp path
 — lane_registry.lane_spec(name)["creds"] = (tmp,) — so no suite reads the host's real login.
 """
 from pathlib import Path
