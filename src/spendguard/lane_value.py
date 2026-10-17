@@ -120,19 +120,22 @@ def _mark_stamped() -> None:
 
 
 def refresh_lane_value_if_stale(max_age_s: int = _REFRESH_MAX_AGE_S) -> None:
-    """Re-price every registered lane when the last stamp is older than `max_age_s`. Called from the every-turn
-    receipt path — the staleness gate keeps that path a single cache read on the common case. Best-effort; the mark is
-    set even when there was nothing to stamp, so an idle machine does not re-scan every turn."""
+    """Re-price registered lanes when stale or when cached lane values are absent. Called from the every-turn
+    receipt path; fresh, populated caches stay on the single-read fast path. Best-effort."""
     try:
         from . import receipt
         p = receipt._cache_path()
         last = 0
+        lane_values = None
         if p.exists():
             try:
-                last = json.loads(p.read_text()).get("lane_value_asof") or 0
+                cache = json.loads(p.read_text())
+                last = cache.get("lane_value_asof") or 0
+                lane_values = cache.get("routed_lane_value")
             except Exception:
                 last = 0
-        if (time.time() - float(last or 0)) < max_age_s:
+                lane_values = None
+        if (time.time() - float(last or 0)) < max_age_s and lane_values:
             return
     except Exception:
         return
