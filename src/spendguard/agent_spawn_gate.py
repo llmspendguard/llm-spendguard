@@ -15,6 +15,8 @@ _OVERRIDE_REASON = "SPENDGUARD_ALLOW_SUBAGENT_REASON"
 
 
 def _hosting_lane():
+    if os.getenv("SPENDGUARD_HOOK_HOST") == "codex":
+        return "codex"
     configured = config._cfg_get("agent_spawn_gate", "plan_lane", None)
     if configured:
         return configured
@@ -25,7 +27,7 @@ def _hosting_lane():
 
 
 def _plan_in_band():
-    if overage.current_overage_status().get("on_overage_now"):
+    if _hosting_lane() != "codex" and overage.current_overage_status().get("on_overage_now"):
         return True
     from . import config_schema
     declared = next(item for item in config_schema.SETTINGS
@@ -62,7 +64,8 @@ def _hook_result(decision, message):
 
 def _spawn_fields(payload):
     tool_input = payload.get("tool_input") or {}
-    return str(tool_input.get("prompt") or ""), str(tool_input.get("subagent_type") or "")
+    return (str(tool_input.get("prompt") or tool_input.get("message") or ""),
+            str(tool_input.get("subagent_type") or tool_input.get("task_name") or ""))
 
 
 def _verdict_cache_key(prompt, subagent_type):

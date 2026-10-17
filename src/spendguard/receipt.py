@@ -1553,10 +1553,20 @@ def cli(args) -> int:
                 from . import config as _cfg, compaction
                 from . import claudecode as _cc_residency
                 _sid = info.get("session_id") or info.get("sessionId")
-                _res_lines = _cc_residency.residency_summary_lines(_sid)
+                _codex_host = os.getenv("SPENDGUARD_HOOK_HOST") == "codex"
+                if _codex_host:
+                    from .codex import codex_hook_context_trajectory
+                    try:
+                        _trajectory = codex_hook_context_trajectory(info)
+                        _res_lines = [f"Codex residency: {_trajectory['current']:,} current input tokens; "
+                                      f"{_trajectory['turns']} turns ({_trajectory['model']})."]
+                    except (OSError, ValueError) as _residency_error:
+                        _res_lines = [f"Codex residency unavailable: {_residency_error}"]
+                else:
+                    _res_lines = _cc_residency.residency_summary_lines(_sid)
                 if _res_lines:
                     _msg += "\n" + "\n".join(_res_lines)
-                _nud = _compaction_nudge(info, str(_cfg.HOME), once=True)   # debounced: ONE notice per crossing, not per turn
+                _nud = None if _codex_host else _compaction_nudge(info, str(_cfg.HOME), once=True)
                 if _nud:
                     _compact = compaction.compact_snippet()
                     _msg = _line + "\n" + _nud + "\n→ paste to compact well:  " + _compact
