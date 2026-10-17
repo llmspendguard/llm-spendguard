@@ -41,10 +41,7 @@ def _ledger_path():
 #     usage (a different kind of spend from these metered API calls). Excluding it means a plan-covered row on the
 #     same (intent,model,day) never masks a real metered gap — and, since the baseline == what the headline counts,
 #     the fill genuinely lifts spent_dec (the honestreview finding this resolves).
-from .ledger import LLM_USD_COLS, SpendLedger   # SSOT: the countable filter + LLM $ columns, never re-implemented
-_REPRESENTED_SUM = (f"COALESCE(SUM(CASE WHEN {SpendLedger._COUNTABLE} THEN "
-                    + "+".join(f"COALESCE({c},0)" for c in LLM_USD_COLS)
-                    + " ELSE 0 END),0) represented")
+from . import ledger_read
 
 
 def recording_gaps(intent_like=None, min_usd=0.05):
@@ -54,36 +51,20 @@ def recording_gaps(intent_like=None, min_usd=0.05):
     baseline IS the headline's own filter, the delta is precisely what spent_dec under-reports, the fill lifts it, and
     a re-run is idempotent. Read-only. Only usage-backed calls (in+out tokens > 0) qualify — a $ with no token record
     is not provider-usage-derived and must not be booked as basis='billed'."""
-    import sqlite3
-    con = sqlite3.connect(f"file:{_ledger_path()}?mode=ro", uri=True)
-    con.row_factory = sqlite3.Row
-    # A missing spend_events table is not an error: it is the STRONGEST gap — a money ledger that was never written
-    # (a fresh install, an isolated/CI home, or a fully non-gated context) means every billed `calls` row is
-    # unrecorded spend. Detect it once and treat represented=$0 for every cell, rather than letting the per-cell
-    # query raise. (When the table exists we read it normally below.)
-    _has_se = bool(con.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='spend_events'").fetchone())
-    where = ("WHERE intent IS NOT NULL AND cost>0 AND suspect IS NULL "
-             "AND (COALESCE(in_tok,0)+COALESCE(out_tok,0))>0")   # usage-backed only → honest basis='billed'
-    args = []
-    if intent_like:
-        where += " AND intent LIKE ?"
-        args.append(f"%{intent_like}%")
+    path = _ledger_path()
+    # An absent money table explicitly means no recorded spend in this gap audit.
+    _has_se = ledger_read.ledger_read_table_exists(ledger_read.LEDGER_EVENTS_TABLE, path)
     out = []
-    for r in con.execute(f"""SELECT intent, provider, model, date(ts) day, SUM(cost) calls_billed
-                             FROM calls {where} GROUP BY intent, provider, model, date(ts)""", args):
+    for r in ledger_read.read_recording_gap_cells(intent_like, path):
         represented = 0.0
         if _has_se:
-            se = con.execute(f"""SELECT {_REPRESENTED_SUM}
-                                 FROM spend_events WHERE intent=? AND model=? AND day=?""",
-                             (r["intent"], r["model"], r["day"])).fetchone()
-            represented = float(se["represented"] or 0.0)
+            represented = float(ledger_read.read_represented_call_cell(
+                r["intent"], r["model"], r["day"], path) or 0.0)
         delta = float(r["calls_billed"] or 0.0) - represented
         if delta >= min_usd:
             out.append({"intent": r["intent"], "provider": r["provider"] or "?", "model": r["model"],
                         "day": r["day"], "calls_billed": float(r["calls_billed"] or 0.0),
                         "ledger_represented": represented, "delta": delta})
-    con.close()
     return out
 
 

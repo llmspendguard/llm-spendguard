@@ -8,20 +8,15 @@ can check it would have caught known-good decisions (pack it, Opus-cheaper, don'
 This is the evidence layer. The reasoning/LLM "learning advisor" (Layer 2) sits on top of this.
 """
 import argparse
-from . import calls
+from pathlib import Path
+from . import config, ledger_read
 
 
 def _rows(as_of=None, intent=None):
-    q = "SELECT provider, model, intent, cost, in_tok, out_tok, quality, quality_conf, effort FROM calls"
-    cond, args = ["(intent IS NULL OR intent NOT LIKE 'spendguard:%')"], []  # never analyze our own meta calls
-    if as_of:
-        cond.append("substr(ts,1,10) <= ?"); args.append(as_of)
-    if intent:
-        cond.append("intent = ?"); args.append(intent)
-    if cond:
-        q += " WHERE " + " AND ".join(cond)
-    with calls._lock:
-        return calls._calls_db().execute(q, args).fetchall()
+    if (not Path(config.db_path()).exists()
+            or not ledger_read.ledger_read_table_exists(ledger_read.LEDGER_CALLS_TABLE)):
+        return []
+    return ledger_read.read_advisor_evidence(as_of=as_of, intent=intent)
 
 
 # Weight given to a quality label from a row that never recorded a confidence at all (legacy rows, written
@@ -54,7 +49,8 @@ def evidence(as_of=None, intent=None, by_effort=False):
     per (vendor:model). The default (per-model, effort summed) is unchanged, so the advise CLI + recommend keep their
     shape; only a caller that asks for the effort split gets the finer rows."""
     agg = {}
-    for prov, model, _intent, cost, intok, outtok, qual, qconf, effort in _rows(as_of, intent):
+    for row in _rows(as_of, intent):
+        prov, model, _intent, cost, intok, outtok, qual, qconf, effort = row.values
         # KEYED BY VENDOR AND MODEL. A bare model key merges two vendors' rows into one recommendation —
         # the same collision fixed in pricing.py, where 17 ids resolved to another vendor's rate. Here it
         # would blend a cheap host's cost with an expensive one's and rank the average. by_effort adds effort

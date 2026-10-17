@@ -19,7 +19,6 @@ estimate-first — because those spend.
 import contextlib
 import datetime
 import random
-import sqlite3
 
 from . import config
 
@@ -38,7 +37,7 @@ def _bcfg(name, default):
 
 
 def _bandit_db():
-    c = sqlite3.connect(config.db_path(), timeout=15)
+    c = config.open_ledger_connection(config.db_path(), timeout=15, tune=False)
     c.execute("""CREATE TABLE IF NOT EXISTS lane_bandit(
         intent TEXT, lane TEXT, use_name TEXT,
         trials REAL DEFAULT 0, wins REAL DEFAULT 0, last_ts TEXT,

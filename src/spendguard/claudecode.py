@@ -463,13 +463,12 @@ def reconcile_billing_state(dry=False):
     Boundaries OBSERVED: B = seven_day cap-hit; the weekly reset grid = the provider's `resetsAt` + 7d. Plan-covered
     est-value = total est_chat − overage (est-value is subscription-windows-only). The two axes are NEVER summed.
     Idempotent (delete+rebook). Pure parse + arithmetic, $0."""
-    import sqlite3
     import datetime as _dt
     from collections import Counter
     from . import budget
     ev = _overage_events()
     windows, anchor = _overage_windows(ev)
-    con = sqlite3.connect(config.db_path())
+    con = config.open_ledger_connection(config.db_path(), tune=False)
     try:
         rows = con.execute("SELECT occurred_at, conv_id, model, est_chat_usd FROM spend_events "
                            "WHERE source='claude-code' AND est_chat_usd IS NOT NULL").fetchall()
@@ -646,14 +645,9 @@ def overflow_by_conversation():
     """{conv_id: overage paid $ (UNRECONCILED upper bound)} from the source='claude-code-overflow' rows — the turns
     that fell inside an observed overage window [weekly-cap hit → reset], booked at their full est-value. Read-only;
     empty until `claude-code overflow` has run (and empty when no overage window was observed)."""
-    import sqlite3
-    con = sqlite3.connect(config.db_path())
-    try:
-        rows = con.execute("SELECT conv_id, SUM(CAST(realtime_usd AS REAL)) FROM spend_events "
-                           "WHERE source='claude-code-overflow' GROUP BY conv_id").fetchall()
-    finally:
-        con.close()
-    return {c or "": float(v or 0.0) for c, v in rows}
+    from .ledger_read import read_cc_overflow_conversations
+    return {r[0] or "": float(r[1] or 0.0) for r in read_cc_overflow_conversations()}
+
 
 
 def ingest_invoices(csv_path=None, dry=False):
@@ -751,17 +745,10 @@ def attribute_overage(top=12):
     observed overage window that month, PROPORTIONAL to their observable overage est-value. The invoice gives the
     TOTAL truth per month; the observable window detector gives the per-conversation SHAPE. Months with real overage
     but no observed window can't be attributed (surfaced, not hidden). Read-only, $0."""
-    import sqlite3
-    con = sqlite3.connect(config.db_path())
-    try:
-        real = con.execute("SELECT substr(occurred_at,1,7) mo, SUM(CAST(realtime_usd AS REAL)) FROM spend_events "
-                           "WHERE source='anthropic-invoice' AND intent LIKE 'anthropic-invoice:cc-overage%' "
-                           "GROUP BY mo").fetchall()
-        real_by_month = {m: float(v or 0.0) for m, v in real}
-        rows = con.execute("SELECT occurred_at, conv_id, est_chat_usd FROM spend_events "
-                           "WHERE source='claude-code' AND est_chat_usd IS NOT NULL").fetchall()
-    finally:
-        con.close()
+    from .ledger_read import read_cc_attribution_evidence
+    real, evidence, fallback = read_cc_attribution_evidence()
+    real_by_month = {r[0]: float(r[1] or 0.0) for r in real}
+    rows = [r.values for r in evidence]
     windows, _anchor = _overage_windows(_overage_events())
     obs = {}                                                # (month, conv) -> observable overage est-value
     obs_month = {}                                          # month -> total observable overage
@@ -788,13 +775,7 @@ def attribute_overage(top=12):
     fb_months = [mo for mo in real_by_month if real_by_month[mo] > 0 and obs_month.get(mo, 0.0) <= 0]
     fb_total = 0.0
     if fb_months:
-        con2 = sqlite3.connect(config.db_path())
-        try:
-            allrows = con2.execute("SELECT substr(occurred_at,1,7) mo, conv_id, SUM(CAST(est_chat_usd AS REAL)) "
-                                   "FROM spend_events WHERE source='claude-code' AND est_chat_usd IS NOT NULL "
-                                   "GROUP BY mo, conv_id").fetchall()
-        finally:
-            con2.close()
+        allrows = [r.values for r in fallback]
         by_mo = {}
         for mo, conv_id, v in allrows:
             if mo in fb_months:
@@ -820,18 +801,8 @@ def attribute_overage(top=12):
 def _cc_conv_rows(min_day=None):
     """{conv_id: [(occurred_at, model, in_tok, cache_read, cache_write), …] ordered by ts} from the claude-code
     est-value rows. One focused SELECT; read-only. context per turn = in_tok + cache_read + cache_write."""
-    import sqlite3
-    q = ("SELECT conv_id, occurred_at, model, COALESCE(in_tok,0), COALESCE(cache_read_tok,0), "
-         "COALESCE(cache_write_tok,0) FROM spend_events WHERE source='claude-code'")
-    args = []
-    if min_day:
-        q += " AND occurred_at >= ?"; args.append(min_day)
-    q += " ORDER BY conv_id, occurred_at"
-    con = sqlite3.connect(config.db_path())
-    try:
-        rows = con.execute(q, args).fetchall()
-    finally:
-        con.close()
+    from .ledger_read import read_cc_conversation_turns
+    rows = [r.values for r in read_cc_conversation_turns(min_day)]
     out = {}
     for conv_id, occ, model, i, cr, cw in rows:            # conv_id: don't shadow the module-level `conv` import
         out.setdefault(conv_id or "", []).append((occ, model or "?", int(i or 0), int(cr or 0), int(cw or 0)))
@@ -1208,15 +1179,8 @@ def conversations_cmd(top=15):
     """`claude-code conversations` — the unified per-conversation view: top conversations by est-value, each labeled by
     its human SIDEBAR TITLE, with turns, current max re-read context, and (when reconciled) the REAL $ that overflowed
     the weekly cap. The est-value and the real-overflow axes are shown SEPARATELY, never summed."""
-    import sqlite3
-    con = sqlite3.connect(config.db_path())
-    try:
-        rows = con.execute(
-            "SELECT conv_id, ROUND(SUM(CAST(est_chat_usd AS REAL)),2), COUNT(*), "
-            "MAX(COALESCE(in_tok,0)+COALESCE(cache_read_tok,0)+COALESCE(cache_write_tok,0)) "
-            "FROM spend_events WHERE source='claude-code' GROUP BY conv_id").fetchall()
-    finally:
-        con.close()
+    from .ledger_read import read_cc_top_conversations
+    rows = [r.values for r in read_cc_top_conversations()]
     titles = _sidebar_titles()
     over = overflow_by_conversation()
     data = [{"conv": c or "", "est": float(e or 0.0), "turns": int(n or 0), "maxctx": int(mx or 0),

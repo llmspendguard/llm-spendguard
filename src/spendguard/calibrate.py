@@ -60,7 +60,7 @@ def _pair_horizon_s():
 
 def _con():
     from . import config
-    c = sqlite3.connect(config.db_path(), timeout=10)
+    c = config.open_ledger_connection(config.db_path(), timeout=10, tune=False)
     c.execute("""CREATE TABLE IF NOT EXISTS cost_predictions(
         job_id TEXT PRIMARY KEY, ts TEXT, label TEXT, model TEXT, transport TEXT,
         n_req INTEGER, est_in INTEGER, est_out_max INTEGER, predicted_usd REAL,
@@ -135,7 +135,7 @@ def _fill_obs(label, model, as_of=None):
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=datetime.timezone.utc)
         epoch_cut = dt.timestamp()
-    con = sqlite3.connect(config.db_path(), timeout=10)
+    con = config.open_ledger_connection(config.db_path(), timeout=10, tune=False)
     try:
         def grab(where, args):
             q = ("SELECT CAST(out_tok AS REAL)/max_tokens FROM gate_calls "
@@ -159,31 +159,25 @@ def _fill_obs(label, model, as_of=None):
 def _calls_rows(label, model, transport, as_of=None):
     """calls rows for a cell (workload only, priced, tokenized). model matched post-normalize in python
     because the corpus stores raw ids (e.g. dated snapshots) while callers pass canonical names."""
-    from . import config
-    con = sqlite3.connect(config.db_path(), timeout=10)
+    from . import ledger_read
+    want = pricing.normalize(model) if model else None
+    rows = []
     try:
-        q = ("SELECT intent, model, kind, in_tok, out_tok, cost, ts FROM calls "
-             "WHERE cost > 0 AND in_tok > 0 AND out_tok > 0 AND model IS NOT NULL "
-             "AND (intent IS NULL OR intent NOT LIKE ?)")
-        args = [META_PREFIX + "%"]
-        if as_of:
-            q += " AND ts <= ?"
-            args.append(as_of)
-        want = pricing.normalize(model) if model else None
-        rows = []
-        for it, m, kind, itok, otok, cost, ts in con.execute(q, args).fetchall():
-            if want and pricing.normalize(m) != want:
-                continue
-            if label is not None and it != label:
-                continue
-            if transport is not None and kind != transport:
-                continue
-            rows.append((it, m, kind, itok, otok, cost, ts))
-        return rows
-    except sqlite3.OperationalError:
+        evidence = ledger_read.read_calibration_calls(META_PREFIX + "%", as_of=as_of)
+    except ledger_read.LedgerReadOpenError:
+        raise
+    except (sqlite3.OperationalError, ledger_read.LedgerReadSchemaError):
         return []
-    finally:
-        con.close()
+    for row in evidence:
+        it, m, kind, itok, otok, cost, ts = row.values
+        if want and pricing.normalize(m) != want:
+            continue
+        if label is not None and it != label:
+            continue
+        if transport is not None and kind != transport:
+            continue
+        rows.append((it, m, kind, itok, otok, cost, ts))
+    return rows
 
 
 def _opi_obs(label, model, as_of=None):
@@ -386,28 +380,25 @@ def pair(now=None):
     (calls.chain == job_id, any age); else label+model calls inside [pred_ts, pred_ts+horizon].
     A closed window with no actuals is marked expired (actual_calls=0) — UNKNOWN stays visible,
     it never reads as $0 spent. Idempotent. Returns {paired, expired, pending}."""
-    from . import config
     now = time.time() if now is None else now
     horizon = _pair_horizon_s()
     con = _con()
-    ccon = sqlite3.connect(config.db_path(), timeout=10)
+    from . import ledger_read
     paired = expired = pending = 0
     try:
         preds = con.execute("SELECT job_id, ts, label, model FROM cost_predictions "
                             "WHERE paired_ts IS NULL").fetchall()
         for job_id, ts, label, model in preds:
             t0 = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
-            rows = ccon.execute("SELECT in_tok, out_tok, cost, ts, model FROM calls WHERE chain = ?",
-                                (job_id,)).fetchall()
+            rows = [row.values for row in ledger_read.read_calibration_actuals(chain=job_id)]
             exact = bool(rows)
             if not exact:
                 want = pricing.normalize(model) if model else None
                 t_end = datetime.datetime.fromtimestamp(t0 + horizon, tz=datetime.timezone.utc) \
                     .isoformat(timespec="seconds")
-                rows = [r for r in ccon.execute(
-                    "SELECT in_tok, out_tok, cost, ts, model FROM calls "
-                    "WHERE intent = ? AND ts >= ? AND ts <= ?", (label, ts, t_end)).fetchall()
-                    if not want or pricing.normalize(r[4] or "") == want]
+                rows = [row.values for row in ledger_read.read_calibration_actuals(
+                    intent=label, since=ts, until=t_end)
+                    if not want or pricing.normalize(row[4] or "") == want]
             if now < t0 + horizon and not exact:
                 pending += 1                     # window still open — actuals may still arrive
                 continue
@@ -426,7 +417,6 @@ def pair(now=None):
         con.commit()
     finally:
         con.close()
-        ccon.close()
     return {"paired": paired, "expired": expired, "pending": pending}
 
 
@@ -439,18 +429,13 @@ def backtest(as_json=False, min_cell=MIN_CELL_BACKTEST):
       calibrated = estimate(…, as_of=train end) with the SAME inputs.
     The deck is stacked FOR naive on input; the learned win must come from output-fill, transport
     and residual — exactly the claimed error sources. Ship gate: calibrated beats naive overall."""
-    from . import config
-    con = sqlite3.connect(config.db_path(), timeout=10)
+    from . import ledger_read
     try:
-        raw = con.execute(
-            "SELECT intent, model, kind, in_tok, out_tok, cost, ts FROM calls "
-            "WHERE cost > 0 AND in_tok > 0 AND out_tok > 0 AND intent IS NOT NULL "
-            "AND model IS NOT NULL AND kind IN ('batch','realtime') AND intent NOT LIKE ?",
-            (META_PREFIX + "%",)).fetchall()
-    except sqlite3.OperationalError:
+        raw = [row.values for row in ledger_read.read_calibration_calls(META_PREFIX + "%", backtest=True)]
+    except ledger_read.LedgerReadOpenError:
+        raise
+    except (sqlite3.OperationalError, ledger_read.LedgerReadSchemaError):
         raw = []
-    finally:
-        con.close()
     cells, skipped_unpriced = {}, 0
     for it, m, kind, itok, otok, cost, ts in raw:
         try:
@@ -522,7 +507,6 @@ def cell_stats(as_of=None):
     """This install's calibration as SUFFICIENT STATISTICS — per (label, model, transport, quantity)
     only {n, p50, p90}. No prompts, no outputs, no raw calls, no $ amounts; labels ride through de-id
     like every text egress. Largest-n cells first, capped at MAX_SHARE_CELLS (logged, never silent)."""
-    from . import config
 
     def scrub(label):
         try:
@@ -543,16 +527,13 @@ def cell_stats(as_of=None):
                           "transport": transport or "", "quantity": quantity, "n": len(vals),
                           "p50": round(_quantile(vals, P_LO), 6), "p90": round(_quantile(vals, P_HI), 6)})
 
-    con = sqlite3.connect(config.db_path(), timeout=10)
+    from . import ledger_read
     try:
-        pairs = con.execute(
-            "SELECT DISTINCT intent, model, kind FROM calls WHERE intent IS NOT NULL AND model IS NOT NULL "
-            "AND cost > 0 AND in_tok > 0 AND out_tok > 0 AND intent NOT LIKE ?",
-            (META_PREFIX + "%",)).fetchall()
-    except sqlite3.OperationalError:
+        pairs = [row.values for row in ledger_read.read_calibration_calls(META_PREFIX + "%", distinct_cells=True)]
+    except ledger_read.LedgerReadOpenError:
+        raise
+    except (sqlite3.OperationalError, ledger_read.LedgerReadSchemaError):
         pairs = []
-    finally:
-        con.close()
     for label, model in sorted({(la, mo) for la, mo, _k in pairs}):
         add_cell(label, model, "", "opi",
              [o / i for _it, _m, _k, i, o, _c, _ts in _calls_rows(label, model, None, as_of)])
@@ -600,7 +581,7 @@ def calibration_summary_lines(max_lines=4):
     lines = []
     try:
         from . import config
-        con = sqlite3.connect(config.db_path(), timeout=10)
+        con = config.open_ledger_connection(config.db_path(), timeout=10, tune=False)
         q = ("SELECT model, COUNT(*), AVG(CAST(out_tok AS REAL)/max_tokens) FROM gate_calls "
              "WHERE max_tokens > 0 GROUP BY model ORDER BY 2 DESC LIMIT ?")
         for m, cnt, fill in con.execute(q, (max_lines,)).fetchall():
@@ -616,27 +597,23 @@ def calibration_summary_lines(max_lines=4):
 def show(label=None):
     """Print the calibration state — what has been learned, at what confidence."""
     from . import config
-    con = sqlite3.connect(config.db_path(), timeout=10)
+    from . import ledger_read
     try:
-        try:
-            cells = con.execute(
-                "SELECT intent, model, kind, COUNT(*), SUM(cost) FROM calls "
-                "WHERE cost > 0 AND in_tok > 0 AND out_tok > 0 AND intent IS NOT NULL "
-                "AND intent NOT LIKE ? " + ("AND intent = ? " if label else "") +
-                "GROUP BY 1,2,3 ORDER BY 5 DESC LIMIT 20",
-                ((META_PREFIX + "%",) + ((label,) if label else ()))).fetchall()
-        except sqlite3.OperationalError:
-            cells = []
-        print("calibration corpus — per-cell history the estimator learns from "
-              "(level+n_obs are returned with every prediction)\n")
-        if not cells:
-            print("  nothing labeled yet — run `spendguard backfill`, or set calls.context(intent=…) in your jobs.")
-        else:
-            print(f"{'activity':<28}{'model':<24}{'kind':<9}{'rows':>5}{'$ hist':>10}")
-            for it, m, k, n, usd in cells:
-                print(f"{(it or '—')[:27]:<28}{m[:23]:<24}{k:<9}{n:>5}{usd:>10,.2f}")
-    finally:
-        con.close()
+        cells = ledger_read.read_calibration_summary(META_PREFIX + "%", label)
+    except ledger_read.LedgerReadOpenError:
+        raise
+    except (sqlite3.OperationalError, ledger_read.LedgerReadSchemaError):
+        cells = []
+    print("calibration corpus — per-cell history the estimator learns from "
+          "(level+n_obs are returned with every prediction)\n")
+    if not cells:
+        print("  nothing labeled yet — run `spendguard backfill`, or set calls.context(intent=…) in your jobs.")
+    else:
+        from . import receipt
+        print(f"{'activity':<28}{'model':<24}{'kind':<9}{'rows':>5}{'$ hist':>10}")
+        for row in cells:
+            it, m, k, n, usd = row.values
+            print(f"{(it or '—')[:27]:<28}{m[:23]:<24}{k:<9}{n:>5}{receipt._money(usd):>10}")
     pcon = _con()
     try:
         n_pred, n_paired = pcon.execute(

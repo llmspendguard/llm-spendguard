@@ -265,16 +265,9 @@ def _lane_activity(since=None):
     served these prompts ($0 billed), and now the receipt can name it instead of it being invisible. Cheap indexed
     read; {} on any error or on an older db written before the executor column existed (guarded, never raises)."""
     since = since or _windows()[2]
+    from . import ledger_read
     try:
-        import sqlite3
-        import contextlib as _cl
-        with _cl.closing(sqlite3.connect(config.db_path())) as c:
-            cols = {r[1] for r in c.execute("PRAGMA table_info(calls)").fetchall()}
-            if "executor" not in cols:               # pre-migration db: no lane column to group on
-                return {}
-            rows = c.execute(
-                "SELECT executor, COUNT(*), COALESCE(SUM(in_tok),0), COALESCE(SUM(out_tok),0) FROM calls "
-                "WHERE kind='subscription' AND ts >= ? GROUP BY executor ORDER BY 2 DESC", (since,)).fetchall()
+        rows = ledger_read.read_receipt_lane_activity(since)
         return {r[0]: {"calls": r[1], "in_tok": r[2], "out_tok": r[3]} for r in rows if r[0]}
     except Exception:
         return {}
@@ -340,13 +333,12 @@ def _truncated_lines():
     because it sits inside a legitimate-looking total."""
     try:
         from . import config
-        import sqlite3
         # CLOSED ON EVERY PATH. This connection leaked on the success path AND the exception path, and the
         # receipt runs on every turn — so a long session accumulated open handles against the ledger it is
         # reading. contextlib.closing works on a raw connection; `with sqlite3.connect(...)` would only
         # manage the TRANSACTION and still leave the handle open.
         import contextlib as _cl
-        with _cl.closing(sqlite3.connect(config.db_path())) as c:
+        with _cl.closing(config.open_ledger_connection(config.db_path(), tune=False)) as c:
             return _truncation_rows(c)
     except Exception:
         return []
@@ -427,13 +419,12 @@ def truncation_remedy(c, model):
 
 
 def _truncation_rows(c):
+    from . import ledger_read
     try:
         since = _windows()[2]
-        rows = c.execute(
-            "SELECT model, COUNT(*), COALESCE(SUM(cost),0) FROM calls "
-            "WHERE finish IN ('max_tokens','length') AND ts >= ? GROUP BY model ORDER BY 3 DESC", (since,)
-        ).fetchall()
-        allrows = c.execute("SELECT COUNT(*) FROM calls WHERE ts >= ?", (since,)).fetchone()
+        rows = ledger_read.read_receipt_truncation_groups(since)
+        allrows = (ledger_read.read_ledger_count(ledger_read.LedgerReadRequest(
+            table=ledger_read.LEDGER_CALLS_TABLE, columns=("id",), where_sql="ts>=?", parameters=(since,))),)
     except Exception:
         return []
     rows = [r for r in rows if r[1]]
@@ -451,7 +442,8 @@ def _truncation_rows(c):
     out = [f"⚠ IN THE TOTAL, BUT WASTED: {n} call(s) ended at max_tokens/length{share}, "
            f"${usd:,.2f} on the call log (pre-reconcile). You were billed for the input and a body that "
            f"does not parse:"]
-    for m, k, c_ in rows[:3]:
+    for row in rows[:3]:
+        m, k, c_ = row.values
         label, advice, command = truncation_remedy(c, m)
         out.append(f"    {str(m):<28} {k:>4} cut off   ${c_:>8.2f}   {label}")
         out.append(f"        {advice}")

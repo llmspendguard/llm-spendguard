@@ -50,9 +50,8 @@ def cmd(argv=None):
 def ambiguous_count():
     """Rows a human/LLM might still need to disambiguate — untagged after the free pass (should be ~0 once
     deterministic runs, but non-repo or mixed-context charges can remain). Zero-spend."""
-    from . import budget
-    with budget._lock:
-        return int(budget._ledger().count_events(filt=_EMPTY_PROJECT) or 0)
+    from . import ledger_read
+    return ledger_read.read_ledger_count(ledger_read.LedgerReadRequest(where_sql=_EMPTY_PROJECT))
 
 
 def estimate_llm_retag():

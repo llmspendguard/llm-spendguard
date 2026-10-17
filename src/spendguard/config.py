@@ -10,6 +10,8 @@ import datetime
 import math
 import os
 import threading
+import sqlite3
+import gc
 from pathlib import Path
 
 HOME = Path(os.getenv("SPENDGUARD_HOME") or (Path.home() / ".spendguard"))
@@ -906,7 +908,140 @@ def single_instance_lock(name):
             pass
 
 
-def tune_ledger_connection(c):
+# Nine pooled subsystems + one SpendLedger per worker, at dispatch.py's 24-worker
+# default: 24 * 10 = 240, plus 16 coordinator/singleton/fresh connections = 256.
+LEDGER_MAX_CONNECTIONS_DEFAULT = 256
+LEDGER_CACHE_BUDGET_KIB = 256 * 1024
+LEDGER_MMAP_BUDGET_BYTES = 512 * 1024 * 1024
+LEDGER_CONNECT_TIMEOUT_S = 5
+LEDGER_WRITE_TIMEOUT_S = 10
+LEDGER_BUSY_TIMEOUT_MS = 5000
+LEDGER_JOURNAL_LIMIT_BYTES = 64 * 1024 * 1024
+
+
+class _LedgerAdmissionGeneration:
+    """Process-owned synchronization and exactly-once admission accounting."""
+
+    def __init__(self):
+        self.lock = threading.RLock()
+        self.owner_pid = os.getpid()
+        self.abandoned_inherited_count = 0
+        self.live_count = 0
+        self.active_ceiling = None
+
+
+_LEDGER_ADMISSION = _LedgerAdmissionGeneration()
+
+
+class LedgerConnectionLimitError(BaseException):
+    """Process resource refusal, deliberately outside best-effort Exception catches.
+
+    Telemetry readers routinely swallow database errors. Exhausting this hard
+    control must propagate through those readers instead of becoming empty data.
+    """
+
+
+def ledger_connection_limit():
+    """Read the live ceiling; invalid configuration fails closed."""
+    value = _cfg_get("ledger", "max_connections_per_process", LEDGER_MAX_CONNECTIONS_DEFAULT)
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError("ledger.max_connections_per_process must be a positive integer")
+    return value
+
+
+def ledger_connection_count():
+    """Open managed connections in THIS process generation, including fresh ones.
+
+    Pre-fork handles are abandoned and uncounted in a child by design; their
+    count is retained as _LEDGER_ADMISSION.abandoned_inherited_count.
+    """
+    with _LEDGER_ADMISSION.lock:
+        return _LEDGER_ADMISSION.live_count
+
+
+def budget_ledger_connection_memory(c, ceiling=None):
+    """Share named process cache/mmap budgets across the configured ceiling."""
+    ceiling = ledger_connection_limit() if ceiling is None else ceiling
+    # ceiling * floor(budget / ceiling) <= budget: 256 MiB cache, 512 MiB mmap.
+    for pragma in (f"cache_size={-(LEDGER_CACHE_BUDGET_KIB // ceiling)}",
+                   f"mmap_size={LEDGER_MMAP_BUDGET_BYTES // ceiling}"):
+        c.execute("PRAGMA " + pragma)
+
+
+class _CountedLedgerConnection(sqlite3.Connection):
+    def close(self):
+        generation = getattr(self, "_ledger_generation", None)
+        if generation is not _LEDGER_ADMISSION:
+            return  # inherited handles never acquire an inherited lock
+        with generation.lock:
+            super().close()
+            if not self._ledger_released:
+                self._ledger_released = True
+                generation.live_count -= 1
+
+    def __del__(self, _close=sqlite3.Connection.close, _error=sqlite3.Error):
+        generation = getattr(self, "_ledger_generation", None)
+        if generation is None or generation is not _LEDGER_ADMISSION:
+            return
+        with generation.lock:
+            try:
+                _close(self)
+            except _error:
+                pass
+            finally:
+                if not self._ledger_released:
+                    self._ledger_released = True
+                    generation.live_count -= 1
+
+
+def open_ledger_connection(path=None, timeout=LEDGER_CONNECT_TIMEOUT_S, *, tune=True, **options):
+    """Atomically admit, open and tune a connection; callers own its close."""
+    with _LEDGER_ADMISSION.lock:
+        ceiling = ledger_connection_limit()
+        current = ledger_connection_count()
+        if current >= ceiling or (current and ceiling != _LEDGER_ADMISSION.active_ceiling):
+            # sqlite statements can form cycles. Reclaim unreachable connections
+            # from expired workers before refusing; never evict a live reference.
+            gc.collect()
+            current = ledger_connection_count()
+        if current and ceiling != _LEDGER_ADMISSION.active_ceiling:
+            raise LedgerConnectionLimitError(
+                f"Ledger connection ceiling cannot change from {_LEDGER_ADMISSION.active_ceiling} "
+                f"to {ceiling} with current live count {current}; close connections first")
+        if current >= ceiling:
+            raise LedgerConnectionLimitError(
+                f"Ledger connection ceiling {ceiling} reached: current live count {current}")
+        options.setdefault("check_same_thread", False)
+        c = sqlite3.connect(path or db_path(), timeout=timeout,
+                            factory=_CountedLedgerConnection, **options)
+        c._ledger_generation = _LEDGER_ADMISSION
+        c._ledger_released = False
+        _LEDGER_ADMISSION.live_count += 1
+        _LEDGER_ADMISSION.active_ceiling = ceiling
+        try:
+            if tune:
+                tune_ledger_connection(c, ceiling=ceiling)
+            else:
+                budget_ledger_connection_memory(c, ceiling=ceiling)
+        except BaseException:
+            c.close()
+            raise
+        return c
+
+
+def ensure_ledger_schema(c, schema):
+    """Run complete idempotent setup on every open, including same-file DDL repair.
+
+    File identity cannot prove tables, additive columns or indexes still exist.
+    Serialize local migrations; callbacks retain their cross-process race safety.
+    """
+    with _LEDGER_ADMISSION.lock:
+        result = schema(c)
+        c.commit()
+        return result
+
+
+def tune_ledger_connection(c, ceiling=None):
     """Apply spendguard's shared SQLite tuning to a base-ledger connection. config.db_path() is ONE file opened by
     ~8 subsystems (budget/calls/callio/bulkgate/learn/semcache/lane_queue …); every `_X_db()` opener calls this right
     after connect(), replacing a bare `PRAGMA journal_mode=WAL`, so the whole shared ledger takes one tuned posture:
@@ -917,20 +1052,20 @@ def tune_ledger_connection(c):
       · busy_timeout=5000  — wait up to 5s for the single shared-file writer lock, then fail; callers degrade a busy
         write, never crash.
       · temp_store=MEMORY  — sorts / temp b-trees in RAM.
-      · cache_size=-64000  — up to 64MB page cache (per connection; pays off most on a REUSED connection).
-      · mmap_size=256MB    — memory-mapped reads (per connection).
+      · cache_size/mmap_size — process budgets divided by the configured connection ceiling.
       · journal_size_limit=64MB — after a checkpoint, TRUNCATE the -wal file back to this instead of leaving it at its
         high-water mark. Without it a passive autocheckpoint resets the WAL logically but never shrinks the FILE, so a
         burst of large write txns (the lane-drain's purge used to be one every cycle) left a multi-GB -wal on disk
         forever: measured spend.db-wal at 1.3GB, 2026-10-08. This caps it; a periodic wal_checkpoint(TRUNCATE) drains it.
     All per-CONNECTION except WAL + journal_size_limit (file-persistent), so tuning one subsystem's connection never
     disturbs another's on the same file. Best-effort: a PRAGMA a given SQLite build rejects is skipped, never fatal."""
-    for pragma in ("busy_timeout=5000", "journal_mode=WAL", "synchronous=NORMAL", "temp_store=MEMORY",
-                   "cache_size=-64000", "mmap_size=268435456", "journal_size_limit=67108864"):
+    for pragma in (f"busy_timeout={LEDGER_BUSY_TIMEOUT_MS}", "journal_mode=WAL", "synchronous=NORMAL", "temp_store=MEMORY",
+                   f"journal_size_limit={LEDGER_JOURNAL_LIMIT_BYTES}"):
         try:
             c.execute("PRAGMA " + pragma)
         except Exception:
             pass
+    budget_ledger_connection_memory(c, ceiling=ceiling)
     return c
 
 
@@ -945,9 +1080,22 @@ def tune_ledger_connection(c):
 _LEDGER_POOL = threading.local()
 
 
+def open_ledger_maintenance_connection(path=None, *, read_only=True, timeout=0):
+    """Unpooled maintenance handle; inspection never sets persistent pragmas.
+
+    Normal tune_ledger_connection sets WAL and tolerates pragma failures. Offline
+    maintenance must instead control locks explicitly and fail closed.
+    """
+    import sqlite3
+    ledger = Path(path or db_path()).resolve(strict=True)
+    mode = "ro" if read_only else "rw"
+    return sqlite3.connect(f"{ledger.as_uri()}?mode={mode}", uri=True, timeout=timeout,
+                           isolation_level=None)
+
+
 def pooled_ledger_conn(key, ensure_schema, path=None):
-    """The thread-local pooled connection for subsystem `key` (tuned via tune_ledger_connection, schema ensured once
-    at creation by ensure_schema(c)). Reused across that subsystem's ops on this thread; reopened when the path
+    """The thread-local pooled connection for subsystem `key` (tuned via tune_ledger_connection, schema fully ensured
+    on every new connection). Reused across that subsystem's ops on this thread; reopened when the path
     changed under us (a test) or the connection was dropped by reset_ledger_conn after an error, so a stale connection
     never lingers. `key` namespaces one subsystem's connection from another's. `path` defaults to the shared ledger
     (db_path()); a subsystem on its OWN file (e.g. lane_queue → lane_queue_db_path()) passes it, and the pool keys the
@@ -964,10 +1112,7 @@ def pooled_ledger_conn(key, ensure_schema, path=None):
             got[0].close()
         except Exception:
             pass
-    import sqlite3
-    c = sqlite3.connect(path, timeout=5, check_same_thread=False)
-    tune_ledger_connection(c)
-    ensure_schema(c)
+    c = fresh_ledger_conn(ensure_schema, path)
     conns[key] = (c, path)
     return c
 
@@ -1026,18 +1171,32 @@ def fresh_ledger_conn(ensure_schema, path=None):
     """A FRESH, closeable connection to the ledger — for occasional EXTERNAL/one-off use (a test's manual setup, a CLI
     inspection) opened `with contextlib.closing(...)` and CLOSED. Deliberately NOT the pooled connection, so closing it
     can never corrupt the pool. `path` selects the file (default: the shared ledger, db_path())."""
-    import sqlite3
-    c = sqlite3.connect(path or db_path(), timeout=5, check_same_thread=False)
-    tune_ledger_connection(c)
-    ensure_schema(c)
+    path = path or db_path()
+    c = open_ledger_connection(path)
+    try:
+        ensure_ledger_schema(c, ensure_schema)
+    except BaseException:
+        c.close()
+        raise
     return c
 
 
-def _reset_ledger_pool_after_fork():
+def _abandon_inherited_ledger_generation_in_fork_child():
     """A forked child must NOT reuse the parent's pooled connections — the sqlite fds and their POSIX locks belong to
     the parent, so a child that inherits them gets 'database is locked' or silent corruption. Clear this thread's pool
     (a fork keeps only the forking thread) WITHOUT closing — closing a fd the parent still owns would break the parent;
-    the child reopens fresh on next use. Mirrors budget._reset_after_fork for the shared pool."""
+    the child reopens fresh on next use. This register_at_fork(after_in_child) callback
+    only transitions a NEW child: owner-PID equality makes same-process calls no-ops.
+    The new generation exposes abandoned_inherited_count without taking the inherited lock."""
+    global _LEDGER_ADMISSION
+    if _LEDGER_ADMISSION.owner_pid == os.getpid():
+        return  # Same-process calls cannot reset live admission slots.
+    # POSIX after_in_child is single-threaded; no parent execution context survives.
+    # Admission reads the current lock at entry, never a cached lock alias.
+    # Old connections retain their generation and cannot release child slots.
+    inherited_generation = _LEDGER_ADMISSION
+    _LEDGER_ADMISSION = _LedgerAdmissionGeneration()
+    _LEDGER_ADMISSION.abandoned_inherited_count = inherited_generation.live_count
     try:
         _LEDGER_POOL.conns = {}
     except Exception:
@@ -1046,7 +1205,7 @@ def _reset_ledger_pool_after_fork():
 
 try:
     import os as _os_at_fork
-    _os_at_fork.register_at_fork(after_in_child=_reset_ledger_pool_after_fork)
+    _os_at_fork.register_at_fork(after_in_child=_abandon_inherited_ledger_generation_in_fork_child)
 except (AttributeError, ValueError, ImportError):   # register_at_fork is POSIX-only — elsewhere a no-op
     pass
 
