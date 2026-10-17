@@ -1,5 +1,6 @@
 """Offline mechanical checks for realized-routing aggregation."""
 
+import math
 import os
 import sys
 import tempfile
@@ -70,8 +71,9 @@ def main():
           report["shares"]["metered_share_jobs"] == 0.5
           and report["shares"]["zero_lane_share_jobs"] == 2 / 6
           and report["shares"]["unknown_share_jobs"] == 1 / 6
-          and sum((report["shares"][key] for key in
-                   ("metered_share_jobs", "zero_lane_share_jobs", "unknown_share_jobs"))) == 1.0,
+          and math.isclose(sum(report["shares"][key] for key in
+                               ("metered_share_jobs", "zero_lane_share_jobs", "unknown_share_jobs")),
+                           1.0, rel_tol=0.0, abs_tol=1e-15),
           failures)
 
     print("-- honest unknown bucket, falloff, and drift --")

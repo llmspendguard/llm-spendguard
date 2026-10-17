@@ -12,7 +12,7 @@ _LANE = "COALESCE(NULLIF(resolved_lane,''),'unknown')"
 _SERVED = "COALESCE(NULLIF(served_model,''),'unknown')"
 
 
-def _where(intent, since=None, as_of=None):
+def _route_realized_where_clause(intent, since=None, as_of=None):
     predicates = ["intent=?"]
     args = [intent]
     if since is not None:
@@ -24,15 +24,15 @@ def _where(intent, since=None, as_of=None):
     return " AND ".join(predicates), args
 
 
-def _rows(sql, args):
+def _fetch_route_realized_rows(sql, args):
     return calls._route_realized_fetchall(sql, args)
 
 
 def route_realized_report(intent, *, since=None, as_of=None, limit=20):
     """Aggregate exact stored routing outcomes for one intent and optional ``ts`` window."""
-    where, args = _where(intent, since, as_of)
+    where, args = _route_realized_where_clause(intent, since, as_of)
     limit = max(0, int(limit))
-    totals_row = _rows(
+    totals_row = _fetch_route_realized_rows(
         f"""SELECT COUNT(*),
                    COALESCE(SUM(CASE WHEN {_METERED} THEN cost ELSE 0 END),0),
                    COALESCE(SUM(CASE WHEN {_METERED} THEN 1 ELSE 0 END),0),
@@ -52,7 +52,7 @@ def route_realized_report(intent, *, since=None, as_of=None, limit=20):
         totals["positive_cost_jobs"] = int(positive_cost_jobs)
         totals["positive_cost"] = float(positive_cost)
 
-    grouped = _rows(
+    grouped = _fetch_route_realized_rows(
         f"""SELECT {_EXECUTOR}, {_LANE}, COUNT(*),
                    COALESCE(SUM(CASE WHEN {_METERED} THEN cost ELSE 0 END),0),
                    COALESCE(SUM(CASE WHEN {_METERED} THEN 1 ELSE 0 END),0),
@@ -70,7 +70,7 @@ def route_realized_report(intent, *, since=None, as_of=None, limit=20):
         for ex, lane, n, cost, billed, zero, models, requested in grouped
     ]
 
-    model_rows = _rows(
+    model_rows = _fetch_route_realized_rows(
         f"""SELECT {_SERVED}, COUNT(*),
                    COALESCE(SUM(CASE WHEN {_METERED} THEN cost ELSE 0 END),0),
                    COALESCE(SUM(CASE WHEN {_METERED} THEN 1 ELSE 0 END),0),
@@ -83,7 +83,7 @@ def route_realized_report(intent, *, since=None, as_of=None, limit=20):
         for model, n, cost, billed, zero in model_rows
     ]
 
-    drift_rows = _rows(
+    drift_rows = _fetch_route_realized_rows(
         f"""SELECT requested_model, served_model, COUNT(*) FROM calls WHERE {where}
             AND NULLIF(requested_model,'') IS NOT NULL AND NULLIF(served_model,'') IS NOT NULL
             AND requested_model != served_model
@@ -92,16 +92,16 @@ def route_realized_report(intent, *, since=None, as_of=None, limit=20):
                    for req, served, n in drift_rows]
 
     fell_where = f"{where} AND (NULLIF(fell_from,'') IS NOT NULL OR NULLIF(fell_reason,'') IS NOT NULL)"
-    total_fell = _rows(f"SELECT COUNT(*) FROM calls WHERE {fell_where}", args)[0][0]
-    fell_reason_rows = _rows(
+    total_fell = _fetch_route_realized_rows(f"SELECT COUNT(*) FROM calls WHERE {fell_where}", args)[0][0]
+    fell_reason_rows = _fetch_route_realized_rows(
         f"""SELECT COALESCE(NULLIF(fell_reason,''),'unknown'), COUNT(*),
                    COALESCE(SUM(CASE WHEN {_METERED} THEN cost ELSE 0 END),0)
             FROM calls WHERE {fell_where}
             GROUP BY COALESCE(NULLIF(fell_reason,''),'unknown') ORDER BY COUNT(*) DESC, 1""", args)
-    fell_from_rows = _rows(
+    fell_from_rows = _fetch_route_realized_rows(
         f"""SELECT COALESCE(NULLIF(fell_from,''),'unknown'), COUNT(*) FROM calls WHERE {fell_where}
             GROUP BY COALESCE(NULLIF(fell_from,''),'unknown') ORDER BY COUNT(*) DESC, 1""", args)
-    redirect_rows = _rows(
+    redirect_rows = _fetch_route_realized_rows(
         f"""SELECT COALESCE(NULLIF(redirect_reason,''),'unknown'), COUNT(*) FROM calls WHERE {fell_where}
             GROUP BY COALESCE(NULLIF(redirect_reason,''),'unknown') ORDER BY COUNT(*) DESC, 1""", args)
     fell = {
@@ -112,7 +112,7 @@ def route_realized_report(intent, *, since=None, as_of=None, limit=20):
         "by_redirect_reason": [{"redirect_reason": reason, "jobs": int(n)} for reason, n in redirect_rows],
     }
 
-    sample_rows = _rows(
+    sample_rows = _fetch_route_realized_rows(
         f"""SELECT ts, {_EXECUTOR}, {_LANE}, requested_model, served_model, cost,
                    redirect_reason, fell_reason FROM calls WHERE {where}
             ORDER BY ts DESC LIMIT ?""", args + [limit])
