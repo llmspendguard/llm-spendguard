@@ -20,6 +20,10 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-pace-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
+# This legacy scorer test isolates headroom/pace ordering. The dedicated quota-preflight acceptance script covers
+# the default-on Anthropic avoidance policy and its authorization behavior.
+os.environ["SPENDGUARD_AVOID_CLAUDE_LANE"] = "off"
+
 from spendguard import route_utility as ru, lane_economics as le, config
 
 fails = []

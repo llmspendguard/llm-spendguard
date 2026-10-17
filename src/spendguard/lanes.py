@@ -423,17 +423,26 @@ def main(argv=None):
                 print(f"  {r['lane']:<12} 🔴 {r['error']}")
     if "--usage" in argv:                                 # per-lane PLAN QUOTA headroom (provider truth where exposed)
         import datetime
+        from . import lane_quota_cost
+        token_costs = lane_quota_cost.measured_lane_token_cost()
         print("\nplan quota headroom (provider truth where the plan exposes it; 'unknown' = no quota surface yet):")
         for h in lane_headroom():
+            token_cost = token_costs.get(h["lane"], {"tokens_per_call": None, "samples": 0,
+                                                     "basis": "unmeasured"})
+            cost_text = (f" · quota cost {token_cost['tokens_per_call']:.0f} tok/call "
+                         f"({token_cost['basis']}, n={token_cost['samples']})"
+                         if token_cost["tokens_per_call"] is not None else
+                         f" · quota cost {token_cost['basis']} (n={token_cost['samples']})")
             if not h["known"]:
                 print(f"  {h['lane']:<12} ({h['provider']} plan): quota not exposed by this plan (no quota API) — "
-                      f"usage is recorded in the ledger (`spendguard receipt`), not as a plan-side headroom %")
+                      f"usage is recorded in the ledger (`spendguard receipt`), not as a plan-side headroom %"
+                      f"{cost_text}")
                 continue
             rem = int(h["remaining_pct"])
             bar = "█" * (rem // 10) + "░" * (10 - rem // 10)
             when = (" · resets " + datetime.datetime.fromtimestamp(h["reset_ts"]).strftime("%b %d %H:%M")) if h.get("reset_ts") else ""
             flag = "🟢" if rem >= _QUOTA_WARN_PCT else ("🟡" if rem > 0 else "🔴")
-            print(f"  {h['lane']:<12} ({h['provider']} plan): {flag} {rem:3}% left {bar}{when}")
+            print(f"  {h['lane']:<12} ({h['provider']} plan): {flag} {rem:3}% left {bar}{when}{cost_text}")
     if "--reprobe" in argv:                               # RECOVERY: re-probe each lane's measured-unserved models ($0
         from . import lane_servability                     # lane calls); a model that came back self-heals out of unserved
         _any = False

@@ -13,6 +13,9 @@ import tempfile
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-lanesub-")
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
+# This test isolates proactive and reactive lane substitution through stubbed lanes. The dedicated quota-preflight
+# acceptance script covers the default-on Anthropic avoidance policy and its authorization behavior.
+os.environ["SPENDGUARD_AVOID_CLAUDE_LANE"] = "off"
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 from spendguard import lane_balance, adapters, calls                                   # noqa: E402

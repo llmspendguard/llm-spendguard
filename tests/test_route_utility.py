@@ -15,10 +15,17 @@ import tempfile
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-routil-")
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
+# This legacy scorer test isolates headroom/pace ordering. The dedicated quota-preflight acceptance script covers
+# the default-on Anthropic avoidance policy and its authorization behavior.
+os.environ["SPENDGUARD_AVOID_CLAUDE_LANE"] = "off"
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 from spendguard import route_utility as ru, pricing, balances                           # noqa: E402
 
+_base_cfg_get = ru.config._cfg_get
+ru.config._cfg_get = lambda section, key, default=None: (
+    "" if (section, key) == ("advisor", "shed_lanes") else _base_cfg_get(section, key, default)
+)
 fails = []
 
 
@@ -50,7 +57,7 @@ rows = [{"lane": "claude-code", "provider": "anthropic", "known": True, "remaini
         {"lane": "codex", "provider": "openai", "known": True, "remaining_pct": 100, "reset_ts": now + 5 * 86400},
         {"lane": "gemini", "provider": "google", "known": True, "remaining_pct": 0, "reset_ts": now + 5 * 86400},
         {"lane": "zai-coding", "provider": "zai", "known": False, "remaining_pct": None, "reset_ts": None}]
-ranked = ru.rank_lanes(rows, cooling=lambda ln: ln == "gemini", now=now)
+ranked = ru.rank_lanes(rows, cooling=lambda ln: ln == "gemini", now=now, pace_by={}, protect=lambda lane: False)
 avail = [d["lane"] for d in ranked if d["available"]]
 ck("cooling gemini is SURFACED but not available (not silently dropped)",
    any(d["lane"] == "gemini" and d["available"] is False for d in ranked) and "gemini" not in avail)

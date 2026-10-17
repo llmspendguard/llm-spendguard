@@ -450,7 +450,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
                   model_for=None, prompt_for=None, task_key=None, return_keyed=False,
                   on_miss=None, batch_submit=None, batch_model=None, batch_cap=None,
                   hedge_ms=None, strategy=None, metered_only=False, sla_class=None, record_route=True,
-                  budget_usd=None):
+                  budget_usd=None, auth_over_quota=False):
     """Fan a LIST of similar tasks across ALL viable idle lanes CONCURRENTLY — the right shape for a BULK job (e.g.
     symgrep's ~6k one-sentence symbol descriptions) that the per-call bandit would trickle one at a time. Each task
     runs on a lane (round-robin across the lanes the bandit rates GOOD for this intent), each admission BOUNDED by
@@ -772,6 +772,14 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
                          "error": f"every viable lane is reserved ({', '.join(_reserved)}: self-use cap reached — "
                                   f"its prompt budget is held for real coding, not discretionary bulk). Re-run when "
                                   f"a lane frees up, or widen advisor.delegate_lanes."} for _ in tasks])
+
+        from . import lane_quota_cost as _lane_quota_cost
+        allowed_names = _lane_quota_cost.apply_anthropic_avoidance(
+            [arm[0] for arm in arms], auth_over_quota=auth_over_quota)
+        arms = [arm for arm in arms if arm[0] in allowed_names]
+        _lane_quota_cost.quota_preflight(
+            _lane_quota_cost.planned_round_robin_lane_calls(len(tasks), [arm[0] for arm in arms]),
+            intent=intent, auth_over_quota=auth_over_quota, emit=_bulk_notify)
 
     import hashlib as _hl
 
@@ -1341,8 +1349,13 @@ def estimate_fan(tasks, intent, system=None, lanes=None, tier=None, out_est=None
             est += float(pricing.realtime_cost(model, in_tok, out_tok, provider=prov) or 0.0)   # metered fallback price
         except (KeyError, TypeError, ValueError):        # no price card → count it, exclude from the ceiling (never $0-hide)
             n_unpriced += 1
+    from . import lane_quota_cost
+    quota = lane_quota_cost.quota_preflight(
+        lane_quota_cost.planned_round_robin_lane_calls(n_distinct, [arm[0] for arm in arms]),
+        intent=intent, auth_over_quota=True)
     return {"viable": True, "reason": None, "intent": intent, "n_tasks": n_tasks, "n_distinct": n_distinct,
             "arms": [f"{lane_catalog.lane_provider(ln)}:{m}" for ln, m in arms],
+            "quota": quota,
             "est_metered_usd_worst": round(est, 6), "n_unpriced": n_unpriced, "out_tok": out_tok, "out_basis": out_basis,
             "note": f"$0 on the {len(arms)} plan lane(s); worst case ${round(est, 4)} if all {n_distinct} distinct "
                     f"tasks fell to the metered API (out={out_tok} tok, {out_basis})"

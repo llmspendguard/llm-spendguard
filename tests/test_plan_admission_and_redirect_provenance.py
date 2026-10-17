@@ -78,7 +78,7 @@ orig_guarded = adapters._call_guarded
 orig_served_substitute = vendor_call.served_substitute
 seen_models = []
 try:
-    plan_admission.decide = lambda model, intent: {
+    plan_admission.decide = lambda model, intent, **_kwargs: {
         "action": "redirect", "requested_model": model, "model": "openai:gpt-6.1-sol",
         "lane": "codex", "reason": "plan paid-overage admission"}
     vendor_call.served_substitute = lambda _provider, model: (model, None)
@@ -113,7 +113,7 @@ orig_decide = plan_admission.decide
 orig_guarded = adapters._call_guarded
 orig_served_substitute = vendor_call.served_substitute
 try:
-    plan_admission.decide = lambda model, intent: decide_calls.append((model, intent)) or {"action": "refuse"}
+    plan_admission.decide = lambda model, intent, **_kwargs: decide_calls.append((model, intent)) or {"action": "refuse"}
     vendor_call.served_substitute = lambda _provider, model: (model, None)
     adapters._call_guarded = lambda model, _prompt, **_kwargs: {
         "provider": "anthropic", "model": model, "text": "pinned", "error": None, "cost": 0.0,
