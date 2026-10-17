@@ -234,6 +234,31 @@ def _est_by_source():
     return out
 
 
+def _routed_lane_value():
+    """Current-month routed value by active lane from the calls ledger.
+
+    Values are floats when every in-window call was priced and None when any such call was unpriceable. The separate
+    cache namespace is intentional: transcript miners continue to own `est_value_by_source` and the footer total.
+    """
+    out = {}
+    try:
+        data = json.loads(_cache_path().read_text()).get("routed_lane_value") or {}
+        month = _windows()[2]
+        from . import adapters
+        active = {name for name, _module in adapters._LANES.values()}
+        for lane in active:
+            rec = data.get(lane) or {}
+            activity = sum(n for day, n in (rec.get("activity_by_day") or {}).items() if day >= month)
+            if not activity:
+                continue
+            unpriced = sum(n for day, n in (rec.get("unpriced_by_day") or {}).items() if day >= month)
+            out[lane] = None if unpriced else sum(
+                usd for day, usd in (rec.get("by_day") or {}).items() if day >= month)
+    except Exception:
+        pass
+    return out
+
+
 def _lane_activity(since=None):
     """Which SUBSCRIPTION LANE actually served spendguard's own work, from the calls ledger since `since` (default
     month start): {executor: {calls, in_tok, out_tok}}. This is the thing the user asked to see inline — a plan
@@ -255,9 +280,8 @@ def _lane_activity(since=None):
         return {}
 
 
-# Which command re-stamps each source's est-value cache. The remedy printed on a stale receipt must be the
-# command that ACTUALLY refreshes that source — a plausible-but-wrong fix is worse than none, because the reader
-# runs it, sees no change, and stops believing the warning. Unknown source → no invented command.
+# Optional commands that broaden a lane's ledger-derived floor with all host CLI usage. This is not an exclusion
+# registry: every active lane is refreshed from calls on the receipt path, whether or not it has a miner.
 _SOURCE_REFRESH = {"claude-code": "spendguard cc", "codex": "spendguard codex", "claude-ai": "spendguard chat"}
 
 
@@ -999,12 +1023,14 @@ def _two_axis_table(t: dict) -> list:
     if assumed:
         out.append(f"* subscription is an ASSUMED default ({_money(sub)}), not a measured charge — set yours with "
                    f"`spendguard config set subscription.plan_usd <amount>`")
-    # WHICH plan delivered the est-value (the per-lane split behind the single Plan-usage number), then WHICH lanes
-    # actually served spendguard's own work this month. The user asked to see the lane, not just the summed value.
-    lanes_ev = sorted(((s, (w.get("month") or 0)) for s, w in _est_by_source().items()), key=lambda x: -x[1])
-    lanes_ev = [(s, m) for s, m in lanes_ev if m > 0]
-    if len(lanes_ev) > 1:
-        out.append("Plan value by lane (mo): " + " · ".join(f"{s} {_money(m)}" for s, m in lanes_ev))
+    # Routed ledger value per active lane, then WHICH lanes actually served spendguard's own work this month. This
+    # view is deliberately independent of the broader transcript-mined Plan-usage total above.
+    activity = _lane_activity()
+    by_lane = _routed_lane_value()
+    lanes_ev = sorted(by_lane.items(), key=lambda x: (x[1] is None, -(x[1] or 0), x[0]))
+    if lanes_ev:
+        out.append("Plan value by lane (mo): " + " · ".join(
+            f"{s} {_money(m)}" if m is not None else f"{s} unknown" for s, m in lanes_ev))
     seg = _lane_seg(t)
     if seg:
         out.append(f"lanes serving spendguard's work (mo): {seg}  ($0 billed — plan-served, not the metered API)")
