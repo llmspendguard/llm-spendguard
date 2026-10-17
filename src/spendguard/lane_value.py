@@ -19,7 +19,6 @@ priced at what the metered API would have charged; $0 billed, because a flat-fee
 """
 from __future__ import annotations
 
-import contextlib
 import datetime as _dt
 import json
 import time
@@ -50,13 +49,9 @@ def _subscription_rows(since: str, valued: set):
     lanes since `since`. Read-only, its own short-lived connection (closed on every path). [] on any error."""
     if not valued:
         return []
+    from . import ledger_read
     try:
-        qmarks = ",".join("?" for _ in valued)
-        sql = ("SELECT executor, ts, provider, model, in_tok, out_tok, project FROM calls "
-               f"WHERE kind='subscription' AND executor IN ({qmarks}) AND ts >= ?")
-        params = (*sorted(valued), since)
-        with contextlib.closing(config.open_ledger_connection(config.db_path(), tune=False)) as c:
-            return c.execute(sql, params).fetchall()
+        return [row.values for row in ledger_read.read_lane_subscription_calls(since, valued)]
     except Exception:
         return []
 

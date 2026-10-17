@@ -21,7 +21,7 @@ checked too.
 A symmetric |cost - list| check (what the hmmviz prompt proposed) fires on every cache-read-discounted day — it is
 what misread a legitimate ~5x cache discount as a capture bug. This does not: it flags only the impossible.
 """
-from . import config, pricing
+from . import ledger_read, pricing
 
 _CEIL_EPS = 1e-6     # relative float-rounding tolerance comparing cost to the ceiling — NOT a 'suspicious' band
 
@@ -73,19 +73,11 @@ def audit_metered_cost_vs_tokens(since_days=7):
     cost recorded, not suspect). Returns {ok, findings, unpriced, checked[, error]}. ok=False means the LEDGER READ
     ITSELF FAILED — a distinct, honest UNKNOWN that callers must NOT render as clean (a missing column or locked db
     is not 'no findings'). Read-only; own short-lived connection."""
-    import contextlib
     try:
-        since = f"-{int(since_days)} days"
-        sql = ("SELECT model, date(ts) d, kind, COUNT(*) n, SUM(COALESCE(cost,0)) c, "
-               "SUM(COALESCE(in_tok,0)) i, SUM(COALESCE(out_tok,0)) o FROM calls "
-               "WHERE datetime(ts) >= datetime('now',?) AND kind IN ('realtime','batch') "
-               "AND cost IS NOT NULL AND suspect IS NULL "
-               "GROUP BY model, date(ts), kind")
-        with contextlib.closing(config.open_ledger_connection(config.db_path(), tune=False)) as c:
-            rows = c.execute(sql, (since,)).fetchall()
+        rows = ledger_read.read_cost_integrity_buckets(since_days)
     except Exception as e:
         return {"ok": False, "error": str(e)[:200], "findings": [], "unpriced": 0, "checked": 0}
-    findings, unpriced = classify_impossible_cost_buckets(rows)
+    findings, unpriced = classify_impossible_cost_buckets(row.values for row in rows)
     return {"ok": True, "findings": findings, "unpriced": unpriced, "checked": len(rows)}
 
 

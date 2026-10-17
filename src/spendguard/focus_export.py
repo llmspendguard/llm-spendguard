@@ -105,7 +105,9 @@ def focus_row(ev):
 
 def export_rows(since=None, until=None):
     """Every spend_events row in the window, projected to FOCUS. Read-only, through the shared ledger connection."""
-    return [focus_row(ev) for ev in budget._ledger().query(since=since, until=until)]
+    from . import ledger_read
+    from .ledger import SpendLedger
+    return [focus_row(SpendLedger._row(ev)) for ev in ledger_read.read_spend_events(since=since, until=until)]
 
 
 def reconciliation_summary(rows):

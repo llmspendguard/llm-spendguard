@@ -1,0 +1,746 @@
+"""Bounded, admission-counted, read-only ledger requests shared by every skin."""
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
+from dataclasses import dataclass
+from pathlib import Path
+import sqlite3
+import time
+
+from . import config
+
+# A complete result must fit ordinary interactive consumers; larger consumers must
+# narrow their window or use count/aggregates, never silently consume a head.
+# Long enough for local reporting, bounded independently of connection lock waits.
+
+
+LEDGER_EVENTS_TABLE = "spend_events"
+LEDGER_CALLS_TABLE = "calls"
+LEDGER_INSIGHTS_TABLE = "insights"
+DEFAULT_LEDGER_READ_ROW_CAP = 10000
+DEFAULT_LEDGER_READ_TIME_BUDGET_S = 5.0
+# sqlite3.set_progress_handler fires the callback every N SQLite virtual-machine instructions
+# (opcodes), NOT N "progress steps" — this is that instruction interval, the wall-clock budget's
+# polling granularity. Smaller = more frequent timeout checks at a small per-instruction cost.
+DEFAULT_LEDGER_READ_PROGRESS_VM_INSTRUCTIONS = 100
+LEDGER_READ_DECIMAL_ARITY = 1
+LEDGER_READ_COUNT_EXPRESSION = "COUNT(*)"
+SPEND_EVENT_READ_COLUMNS = tuple("""id dedup_key source content_hash schema_version ts_utc occurred_at recorded_at tz local_datetime day period eligibility_window window_start window_end currency batch_usd realtime_usd est_chat_usd remote_compute_usd subscription_usd external_usd cost_type billed is_meta cost_basis amount_confidence rate_in rate_out fx_rate base_usd provider model model_kind finish in_tok out_tok cache_read_tok cache_write_tok reasoning_tok num_calls num_items latency org team projects project_primary member_ref key_fp account_id customer_id cost_center engagement billable invoice_id conv_id seg_id call_id cwd batch_id from_message_ids prior_message_ids post_message_ids script repo host prompt_hash prompt_snip output_snip evidence_uri intent actor chain attr_what attr_why attr_how attr_reason attr_confidence attr_source attr_model attr_ts attr_version recorded_by ingest_version status revision locked locked_at lock_reason reverses_id adjusts_id superseded_by reconciled reconciled_vs reconciled_at reconciliation_id gap_flag period_closed recon_marker quality quality_src quality_conf cache_hit savings_cv tags""".split())
+RECENT_CALL_READ_COLUMNS = tuple("id ts chain intent caller provider model kind in_tok out_tok cost latency finish quality executor project effort outcome disposition".split())
+LEDGER_READ_ALLOWED_TABLES = (LEDGER_EVENTS_TABLE, LEDGER_CALLS_TABLE, LEDGER_INSIGHTS_TABLE)
+LEDGER_READ_AGGREGATE_DIMENSIONS = (("provider", "day"), ("intent",), ("model",))
+ADVISOR_EVIDENCE_COLUMNS = tuple("provider model intent cost in_tok out_tok quality quality_conf effort".split())
+ADVISOR_INTERNAL_INTENT_PATTERN = "spendguard:%"
+INVOICE_OVERAGE_SOURCE = "anthropic-invoice"
+INVOICE_OVERAGE_INTENT_PATTERN = "anthropic-invoice:cc-overage%"
+DELEGATE_INVOICED_MONTHS_SQL = """SELECT substr(occurred_at,1,7) AS month,
+SUM(CAST(realtime_usd AS REAL)) AS dollars FROM spend_events
+WHERE source=? AND intent LIKE ? GROUP BY month"""
+DELEGATE_PLAN_SOURCE = "claude-code"
+INVOICE_OVERAGE_MONTH_SQL = """SELECT substr(occurred_at,1,7) AS mo,
+ROUND(SUM(CAST(realtime_usd AS REAL)),2) AS amount FROM spend_events
+WHERE source=? AND intent LIKE ? GROUP BY mo ORDER BY mo DESC"""
+COST_INTEGRITY_BUCKET_SQL = """SELECT model,date(ts) AS d,kind,COUNT(*) AS n,
+SUM(COALESCE(cost,0)) AS c,SUM(COALESCE(in_tok,0)) AS i,
+SUM(COALESCE(out_tok,0)) AS o FROM calls
+WHERE datetime(ts)>=datetime('now',?) AND kind IN ('realtime','batch')
+AND cost IS NOT NULL AND suspect IS NULL GROUP BY model,date(ts),kind"""
+RECEIPT_LANE_ACTIVITY_SQL = """SELECT executor,COUNT(*) AS n,
+COALESCE(SUM(in_tok),0) AS in_tok,COALESCE(SUM(out_tok),0) AS out_tok
+FROM calls WHERE kind='subscription' AND ts>=? GROUP BY executor ORDER BY n DESC"""
+RECEIPT_TRUNCATION_GROUPS_SQL = """SELECT model,COUNT(*) AS n,
+COALESCE(SUM(cost),0) AS cost FROM calls WHERE finish IN ('max_tokens','length')
+AND ts>=? GROUP BY model ORDER BY cost DESC"""
+CC_SPEND_OVERVIEW_SQL = """SELECT
+COALESCE(SUM(CASE WHEN source='claude-code' THEN CAST(est_chat_usd AS REAL) ELSE 0 END),0) AS est,
+COALESCE(SUM(CASE WHEN source='anthropic-invoice' AND intent LIKE 'anthropic-invoice:cc-overage%' THEN CAST(realtime_usd AS REAL) ELSE 0 END),0) AS over,
+COALESCE(SUM(CASE WHEN source='anthropic-invoice' THEN CAST(subscription_usd AS REAL) ELSE 0 END),0) AS sub,
+COALESCE(SUM(CASE WHEN source='anthropic-invoice-api' THEN CAST(realtime_usd AS REAL) ELSE 0 END),0) AS api
+FROM spend_events"""
+CC_TOP_CONVERSATIONS_SQL = """SELECT conv_id,ROUND(SUM(CAST(est_chat_usd AS REAL)),2) AS v,COUNT(*) AS n,
+MAX(COALESCE(in_tok,0)+COALESCE(cache_read_tok,0)+COALESCE(cache_write_tok,0)) AS mx
+FROM spend_events WHERE source='claude-code' GROUP BY conv_id ORDER BY v DESC"""
+CC_CONVERSATION_COST_SQL = """SELECT
+COALESCE(SUM(CASE WHEN source='claude-code' THEN CAST(est_chat_usd AS REAL) ELSE 0 END),0) AS est,
+COUNT(CASE WHEN source='claude-code' THEN 1 END) AS n,
+COALESCE(SUM(CASE WHEN source='claude-code-overflow' THEN CAST(realtime_usd AS REAL) ELSE 0 END),0) AS over
+FROM spend_events WHERE conv_id=?"""
+CALL_INTENTS_SQL = "SELECT intent,COUNT(*) AS c FROM calls WHERE intent IS NOT NULL AND intent!='' GROUP BY intent HAVING c>=? ORDER BY c DESC"
+CALL_MAX_ROWID_SQL = "SELECT COALESCE(MAX(rowid),0) AS maximum FROM calls"
+CALL_FLOW_COLUMNS = ("COUNT(*) AS n", "COALESCE(SUM(in_tok),0) AS in_tok", "COALESCE(SUM(out_tok),0) AS out_tok", "COALESCE(SUM(cost),0.0) AS cost", "MAX(caller) AS caller")
+CALL_COST_COLUMNS = ("COALESCE(intent,'(none)') AS intent", "COALESCE(model,'?') AS model", "COUNT(*) AS n", "COALESCE(SUM(cost),0) AS cost", "SUM(CASE WHEN quality='good' THEN 1 ELSE 0 END) AS good", "SUM(CASE WHEN quality='bad' THEN 1 ELSE 0 END) AS bad")
+CALL_EXECUTOR_EXPRESSION = "COALESCE(NULLIF(NULLIF(executor,''),'api'), provider)"
+CALL_MODEL_EXPRESSION = "COALESCE(model,'?')"
+CALL_OUTCOME_EXPRESSION = "COALESCE(outcome,'')"
+CALL_METERED_COLUMNS = ("COALESCE(intent,'(none)') AS intent", "COALESCE(model,'?') AS model", "COUNT(*) AS n", "COALESCE(SUM(cost),0) AS cost", "COALESCE(SUM(in_tok),0) AS in_tok", "COALESCE(AVG(in_tok),0) AS avg_in")
+LANE_SUBSCRIPTION_READ_COLUMNS = ("executor", "ts", "provider", "model", "in_tok", "out_tok", "project")
+CALL_KNOWN_INTENT_COLUMN = ("DISTINCT intent",)
+LANE_TOKEN_METRIC_COLUMNS = ("COUNT(*) AS n", "SUM(COALESCE(in_tok,0)+COALESCE(out_tok,0)) AS total", "SUM(COALESCE(in_tok,0)) AS input", "SUM(COALESCE(out_tok,0)) AS output")
+PROMPT_LINT_READ_COLUMNS = ("intent", "model", "in_tok", "out_tok", "cost", "finish", "prompt_snip", "kind")
+LEDGER_ROUTING_METERED_SQL = "cost > 0 AND COALESCE(NULLIF(executor,''),'') IN ('','api')"
+LEDGER_ROUTING_EXECUTOR_SQL = "COALESCE(NULLIF(executor,''),'unknown')"
+LEDGER_ROUTING_LANE_SQL = "COALESCE(NULLIF(resolved_lane,''),'unknown')"
+LEDGER_ROUTING_SERVED_SQL = "COALESCE(NULLIF(served_model,''),'unknown')"
+CALIBRATION_CALL_COLUMNS = ("intent", "model", "kind", "in_tok", "out_tok", "cost", "ts")
+CALIBRATION_ACTUAL_COLUMNS = ("in_tok", "out_tok", "cost", "ts", "model")
+CALIBRATION_CORPUS_PREDICATE = "cost > 0 AND in_tok > 0 AND out_tok > 0 AND model IS NOT NULL"
+CC_OVERFLOW_COLUMNS = ("conv_id", "SUM(CAST(realtime_usd AS REAL)) AS billed")
+CC_ATTRIBUTION_MONTH_COLUMNS = ("substr(occurred_at,1,7) AS mo", "SUM(CAST(realtime_usd AS REAL)) AS billed")
+CC_ATTRIBUTION_EVIDENCE_COLUMNS = ("occurred_at", "conv_id", "est_chat_usd")
+CC_ATTRIBUTION_FALLBACK_COLUMNS = ("substr(occurred_at,1,7) AS mo", "conv_id", "SUM(CAST(est_chat_usd AS REAL)) AS est")
+CC_CONVERSATION_TURN_COLUMNS = ("conv_id", "occurred_at", "model", "COALESCE(in_tok,0)", "COALESCE(cache_read_tok,0)", "COALESCE(cache_write_tok,0)")
+CC_ESTIMATE_PREDICATE = "source='claude-code' AND est_chat_usd IS NOT NULL"
+READ_CALL_INTENT_COST_COLUMNS = ("COALESCE(SUM(cost),0) AS cost",)
+COUNT_RECENT_CALL_TESTS_COLUMNS = ("id",)
+READ_LANE_RECENT_COUNTS_COLUMNS = ("executor", "COUNT(*) AS n")
+READ_INTENT_MODEL_USAGE_COLUMNS = ("model", "COUNT(*) AS n")
+READ_BAKEOFF_MEASUREMENTS_COLUMNS = ("model", "quality", "ts")
+READ_LANE_FALLBACK_COSTS_COLUMNS = ("fell_from", "COUNT(*) AS n", "COALESCE(SUM(cost),0) AS cost")
+READ_LANE_CUMULATIVE_TOKENS_COLUMNS = ("executor", "SUM(COALESCE(in_tok,0)+COALESCE(out_tok,0)) AS tokens")
+READ_DELEGATE_OVERAGE_EVIDENCE_COLUMNS = ("SUM(CAST(est_chat_usd AS REAL)) AS value",)
+READ_REALIZED_ADOPTIONS_COLUMNS = ("intent", "MIN(ts) AS adopted_ts")
+READ_REALIZED_CALL_RATES_COLUMNS = ("AVG(CASE WHEN ts < ? THEN cost END) AS before_rate", "SUM(ts < ?) AS before_n",
+         "AVG(CASE WHEN ts >= ? THEN cost END) AS after_rate", "SUM(ts >= ?) AS after_n")
+READ_RECORDING_GAP_CELLS_COLUMNS = ("intent", "provider", "model", "date(ts) AS day", "SUM(cost) AS calls_billed")
+READ_CALIBRATION_SUMMARY_COLUMNS = ("intent", "model", "kind", "COUNT(*) AS n", "SUM(cost) AS cost")
+
+
+class LedgerReadError(RuntimeError):
+    """A ledger consumer could not obtain a complete answer."""
+
+
+class LedgerReadTooLarge(LedgerReadError):
+    """The complete matching result exceeds its explicitly named bound."""
+
+    def __init__(self, cap, total_at_least):
+        self.cap = cap
+        self.total_at_least = total_at_least
+        super().__init__(f"Ledger read exceeds row cap {cap}: total at least {total_at_least}; narrow filters or count")
+
+
+class LedgerReadTimeout(LedgerReadError):
+    """SQLite exhausted the consumer's wall-clock budget."""
+
+    def __init__(self, budget):
+        self.budget = budget
+        super().__init__(f"Ledger read exceeded wall-clock budget {budget} seconds")
+
+
+class LedgerReadSchemaError(LedgerReadError):
+    """An existing ledger lacks the requested schema; reads never migrate it."""
+
+
+class LedgerReadOpenError(LedgerReadSchemaError):
+    """The ledger could not be opened before any consumer query ran."""
+
+
+@dataclass(frozen=True)
+class LedgerReadRow(Mapping):
+    """Immutable named values; SQLite cursor/Row objects never escape."""
+
+    columns: tuple[str, ...]
+    values: tuple[object, ...]
+
+    def __getitem__(self, key):
+        return self.values[key] if isinstance(key, int) else self.values[self.columns.index(key)]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.columns)
+
+    def __len__(self):
+        return len(self.columns)
+
+
+@dataclass(frozen=True)
+class LedgerReadRequest:
+    table: str = LEDGER_EVENTS_TABLE
+    columns: tuple[str, ...] = SPEND_EVENT_READ_COLUMNS
+    where_sql: str = ""
+    parameters: tuple = ()
+    order_by: tuple[str, ...] = ()
+    group_by: tuple[str, ...] = ()
+    row_cap: int = DEFAULT_LEDGER_READ_ROW_CAP
+    time_budget: float = DEFAULT_LEDGER_READ_TIME_BUDGET_S
+
+
+@dataclass(frozen=True)
+class LedgerSQLReadRequest:
+    """Internal compatibility request for existing projected reporting queries."""
+
+    sql: str
+    parameters: tuple = ()
+    row_cap: int = DEFAULT_LEDGER_READ_ROW_CAP
+    time_budget: float = DEFAULT_LEDGER_READ_TIME_BUDGET_S
+
+
+@contextmanager
+def _ledger_read_connection(path=None, time_budget=DEFAULT_LEDGER_READ_TIME_BUDGET_S):
+    if time_budget <= 0:
+        raise ValueError("Ledger read time budget must be positive")
+    ledger_path = Path(path if path is not None else config.db_path()).expanduser().resolve()
+    started = time.monotonic()
+    try:
+        connection = config.open_ledger_connection(ledger_path.as_uri() + "?mode=ro", uri=True,
+            timeout=min(config.LEDGER_CONNECT_TIMEOUT_S, time_budget), tune=False)
+    except sqlite3.OperationalError as exc:
+        if time.monotonic() - started >= time_budget:
+            raise LedgerReadTimeout(time_budget) from exc
+        raise LedgerReadOpenError(f"Ledger read cannot open existing database: {exc}") from exc
+    expired = False
+
+    def ledger_read_progress():
+        nonlocal expired
+        expired = time.monotonic() - started >= time_budget
+        return int(expired)
+
+    try:
+        from .ledger import _DecSum
+        connection.create_aggregate("dec_sum", LEDGER_READ_DECIMAL_ARITY, _DecSum)
+        connection.set_progress_handler(ledger_read_progress, DEFAULT_LEDGER_READ_PROGRESS_VM_INSTRUCTIONS)
+        yield connection
+        if time.monotonic() - started >= time_budget:
+            raise LedgerReadTimeout(time_budget)
+    except sqlite3.OperationalError as exc:
+        if expired or time.monotonic() - started >= time_budget:
+            raise LedgerReadTimeout(time_budget) from exc
+        if exc.sqlite_errorcode == sqlite3.SQLITE_ERROR:
+            raise LedgerReadSchemaError(f"Ledger read schema unavailable: {exc}") from exc
+        raise
+    finally:
+        connection.close()
+
+
+def read_ledger_sql(request: LedgerSQLReadRequest, path=None) -> tuple[LedgerReadRow, ...]:
+    """Execute one complete bounded projected report, or raise without returning rows."""
+    if request.row_cap <= 0:
+        raise ValueError("Ledger read row cap must be positive")
+    # SQL lexical validation is parsing, not a semantic/meaning classification.
+    tokens = request.sql.upper().split()
+    if not tokens or tokens[0] not in ("SELECT", "WITH"):
+        raise ValueError("Ledger read requests require SELECT")
+    if "*" in "".join(request.sql.upper().split()).replace(LEDGER_READ_COUNT_EXPRESSION, ""):
+        raise ValueError("Ledger reads require explicit column projections")
+    with _ledger_read_connection(path, request.time_budget) as connection:
+        cursor = connection.execute(request.sql, request.parameters)
+        columns = tuple(item[0] for item in cursor.description)
+        rows = cursor.fetchmany(request.row_cap + 1)
+        if len(rows) > request.row_cap:
+            raise LedgerReadTooLarge(request.row_cap, len(rows))
+        return tuple(LedgerReadRow(columns, tuple(row)) for row in rows)
+
+
+def read_filtered_ledger_count(table=LEDGER_EVENTS_TABLE, since=None, until=None, where=None, path=None):
+    """Count every matching record without materializing it or applying a row cap."""
+    if table not in LEDGER_READ_ALLOWED_TABLES:
+        raise ValueError(f"Unsupported ledger table {table!r}")
+    columns = SPEND_EVENT_READ_COLUMNS if table == LEDGER_EVENTS_TABLE else RECENT_CALL_READ_COLUMNS
+    time_column = "day" if table == LEDGER_EVENTS_TABLE else "ts"
+    predicates, parameters = [], []
+    for operator, value in ((">=", since), ("<=", until)):
+        if value is not None:
+            predicates.append(f"{time_column} {operator} ?")
+            parameters.append(value)
+    for column, value in (where or {}).items():
+        if column not in columns:
+            raise ValueError(f"Unknown ledger count filter {column!r}")
+        predicates.append(f"{column} = ?")
+        parameters.append(value)
+    return read_ledger_count(LedgerReadRequest(table=table, columns=columns,
+        where_sql=" AND ".join(predicates), parameters=tuple(parameters)), path)
+
+
+def _ledger_request_sql(request):
+    if request.table not in LEDGER_READ_ALLOWED_TABLES:
+        raise ValueError(f"Unsupported ledger table {request.table!r}")
+    sql = f"SELECT {', '.join(request.columns)} FROM {request.table}"
+    if request.where_sql:
+        sql += " WHERE " + request.where_sql
+    if request.group_by:
+        sql += " GROUP BY " + ", ".join(request.group_by)
+    if request.order_by:
+        sql += " ORDER BY " + ", ".join(request.order_by)
+    return sql
+
+
+def read_ledger_rows(request: LedgerReadRequest, path=None) -> tuple[LedgerReadRow, ...]:
+    return read_ledger_sql(LedgerSQLReadRequest(_ledger_request_sql(request), request.parameters,
+                                             request.row_cap, request.time_budget), path)
+
+
+def read_ledger_count(request: LedgerReadRequest | None = None, path=None) -> int:
+    request = request if request is not None else LedgerReadRequest()
+    sql = "SELECT COUNT(*) AS total FROM (" + _ledger_request_sql(request) + ")"
+    result = read_ledger_sql(LedgerSQLReadRequest(sql, request.parameters,
+                                               time_budget=request.time_budget), path)
+    return int(result[0]["total"])
+
+
+def read_spend_events(since=None, until=None, where=None, category_column=None, limit=None, path=None):
+    from .ledger import USD_COLS
+    predicates, parameters = [], []
+    for column, operator, value in (("day", ">=", since), ("day", "<=", until)):
+        if value is not None:
+            predicates.append(f"{column} {operator} ?")
+            parameters.append(value)
+    for column, value in (where or {}).items():
+        if column not in SPEND_EVENT_READ_COLUMNS:
+            raise ValueError(f"Unknown ledger filter column {column!r}")
+        predicates.append(f"{column} = ?")
+        parameters.append(value)
+    if category_column is not None:
+        if category_column not in USD_COLS:
+            raise ValueError(f"Unknown ledger category column {category_column!r}")
+        predicates.append(f"{category_column} IS NOT NULL")
+    request = LedgerReadRequest(where_sql=" AND ".join(predicates), parameters=tuple(parameters),
+                                order_by=("day", "id"),
+                                row_cap=limit if limit is not None else DEFAULT_LEDGER_READ_ROW_CAP)
+    return read_ledger_rows(request, path)
+
+
+def read_ledger_event(event_id, path=None):
+    rows = read_ledger_rows(LedgerReadRequest(where_sql="id = ?", parameters=(event_id,)), path)
+    return rows[0] if rows else None
+
+
+def read_recent_calls(since=None, until=None, where=None, limit=None, path=None):
+    predicates, parameters = [], []
+    for operator, value in ((">=", since), ("<=", until)):
+        if value is not None:
+            predicates.append(f"ts {operator} ?")
+            parameters.append(value)
+    for column, value in (where or {}).items():
+        if column not in RECENT_CALL_READ_COLUMNS:
+            raise ValueError(f"Unknown call filter column {column!r}")
+        predicates.append(f"{column} = ?")
+        parameters.append(value)
+    return read_ledger_rows(LedgerReadRequest(LEDGER_CALLS_TABLE, RECENT_CALL_READ_COLUMNS,
+        " AND ".join(predicates), tuple(parameters), ("ts DESC", "id"),
+        row_cap=limit if limit is not None else DEFAULT_LEDGER_READ_ROW_CAP), path)
+
+
+def read_spend_aggregates(group_by=("provider", "day"), since=None, until=None, path=None):
+    from .ledger import USD_COLS
+    dimensions = tuple(group_by)
+    if dimensions not in LEDGER_READ_AGGREGATE_DIMENSIONS:
+        raise ValueError(f"Unsupported ledger aggregate dimensions {dimensions!r}")
+    predicates, parameters = [], []
+    for operator, value in ((">=", since), ("<=", until)):
+        if value is not None:
+            predicates.append(f"day {operator} ?")
+            parameters.append(value)
+    projections = dimensions + tuple(f"dec_sum({column}) AS {column}" for column in USD_COLS) + ("COUNT(*) AS n",)
+    return read_ledger_rows(LedgerReadRequest(columns=projections, where_sql=" AND ".join(predicates),
+        parameters=tuple(parameters), group_by=dimensions, order_by=dimensions), path)
+
+
+def read_advisor_evidence(as_of=None, intent=None, path=None):
+    predicates = ["(intent IS NULL OR intent NOT LIKE ?)"]
+    parameters = [ADVISOR_INTERNAL_INTENT_PATTERN]
+    if as_of is not None:
+        predicates.append("substr(ts,1,10)<=?")
+        parameters.append(as_of)
+    if intent is not None:
+        predicates.append("intent=?")
+        parameters.append(intent)
+    return read_ledger_rows(LedgerReadRequest(LEDGER_CALLS_TABLE, ADVISOR_EVIDENCE_COLUMNS,
+        " AND ".join(predicates), tuple(parameters)), path)
+
+
+def read_invoice_overage_months(path=None):
+    return read_ledger_sql(LedgerSQLReadRequest(INVOICE_OVERAGE_MONTH_SQL,
+        (INVOICE_OVERAGE_SOURCE, INVOICE_OVERAGE_INTENT_PATTERN)), path)
+
+
+def read_cost_integrity_buckets(since_days, path=None):
+    return read_ledger_sql(LedgerSQLReadRequest(COST_INTEGRITY_BUCKET_SQL,
+        (f"-{int(since_days)} days",)), path)
+
+
+def read_receipt_lane_activity(since, path=None):
+    return read_ledger_sql(LedgerSQLReadRequest(RECEIPT_LANE_ACTIVITY_SQL, (since,)), path)
+
+
+def read_receipt_truncation_groups(since, path=None):
+    return read_ledger_sql(LedgerSQLReadRequest(RECEIPT_TRUNCATION_GROUPS_SQL, (since,)), path)
+
+
+def read_cc_spend_overview(path=None):
+    return read_ledger_sql(LedgerSQLReadRequest(CC_SPEND_OVERVIEW_SQL), path)[0]
+
+
+def read_cc_top_conversations(limit=DEFAULT_LEDGER_READ_ROW_CAP, path=None):
+    return read_ledger_sql(LedgerSQLReadRequest(CC_TOP_CONVERSATIONS_SQL, row_cap=limit), path)
+
+
+def read_cc_conversation_cost(conv, path=None):
+    return read_ledger_sql(LedgerSQLReadRequest(CC_CONVERSATION_COST_SQL, (conv,)), path)[0]
+
+
+def read_recorded_call_intents(min_calls, limit, path=None):
+    return read_ledger_sql(LedgerSQLReadRequest(CALL_INTENTS_SQL, (int(min_calls),), row_cap=int(limit)), path)
+
+
+def read_call_max_rowid(path=None):
+    return int(read_ledger_sql(LedgerSQLReadRequest(CALL_MAX_ROWID_SQL), path)[0][0])
+
+
+def read_call_flow(since_rowid=0, chain=None, path=None):
+    where = "rowid > ?" + (" AND chain=?" if chain else "")
+    parameters = (int(since_rowid or 0),) + ((chain,) if chain else ())
+    return read_ledger_rows(LedgerReadRequest(LEDGER_CALLS_TABLE, CALL_FLOW_COLUMNS, where, parameters), path)[0]
+
+
+def read_call_intent_cost(intent, since, path=None):
+    return read_ledger_rows(LedgerReadRequest(LEDGER_CALLS_TABLE, READ_CALL_INTENT_COST_COLUMNS,
+        "intent=? AND ts>=?", (intent, since)), path)[0][0]
+
+
+def read_call_cost_summary(intent=None, path=None):
+    where = "(intent IS NULL OR intent NOT LIKE ?)" + (" AND intent=?" if intent else "")
+    parameters = (ADVISOR_INTERNAL_INTENT_PATTERN,) + ((intent,) if intent else ())
+    return read_ledger_rows(LedgerReadRequest(LEDGER_CALLS_TABLE, CALL_COST_COLUMNS, where, parameters,
+        ("SUM(cost) DESC",), ("intent", "model")), path)
+
+
+def read_call_output_means(intent, call_class=None, origin_session=None, path=None):
+    predicates = ["intent=?", "out_tok IS NOT NULL", "out_tok > 0", "suspect IS NULL"]
+    parameters = [intent]
+    for column, value in (("call_class", call_class), ("origin_session", origin_session)):
+        if value is not None:
+            predicates.append(f"{column}=?")
+            parameters.append(value)
+    columns = (CALL_EXECUTOR_EXPRESSION + " AS executor", CALL_MODEL_EXPRESSION + " AS model",
+               "COALESCE(AVG(out_tok),0) AS avg_out", "COUNT(*) AS n")
+    return read_ledger_rows(LedgerReadRequest(LEDGER_CALLS_TABLE, columns, " AND ".join(predicates),
+        tuple(parameters), group_by=(CALL_EXECUTOR_EXPRESSION, "model")), path)
+
+
+def read_call_lane_outcomes(executor, since=None, call_class=None, path=None):
+    predicates, parameters = ["COALESCE(NULLIF(executor,''), provider)=?"], [executor]
+    for column, operator, value in (("ts", ">=", since), ("call_class", "=", call_class)):
+        if value is not None:
+            predicates.append(f"{column}{operator}?")
+            parameters.append(value)
+    columns = (CALL_MODEL_EXPRESSION + " AS model", CALL_OUTCOME_EXPRESSION + " AS outcome", "COUNT(*) AS n", "MAX(ts) AS last_ts")
+    return read_ledger_rows(LedgerReadRequest(LEDGER_CALLS_TABLE, columns, " AND ".join(predicates),
+        tuple(parameters), group_by=(CALL_MODEL_EXPRESSION, CALL_OUTCOME_EXPRESSION)), path)
+
+
+def read_call_metered_intents(since, path=None):
+    where = "cost > 0 AND ts >= ? AND COALESCE(NULLIF(executor,''),'') IN ('','api') AND kind='realtime' AND (intent IS NULL OR intent NOT LIKE ?)"
+    return read_ledger_rows(LedgerReadRequest(LEDGER_CALLS_TABLE, CALL_METERED_COLUMNS, where,
+        (since, ADVISOR_INTERNAL_INTENT_PATTERN), ("SUM(cost) DESC",), ("intent", "model")), path)
+
+
+def count_recent_call_tests(intent, since, kinds, model=None, path=None):
+    where = "intent=? AND ts>=? AND kind IN (" + ",".join("?" for _ in kinds) + ")"
+    parameters = (intent, since, *kinds)
+    if model:
+        where += " AND model=?"
+        parameters += (model,)
+    return read_ledger_count(LedgerReadRequest(LEDGER_CALLS_TABLE, COUNT_RECENT_CALL_TESTS_COLUMNS, where, parameters), path)
+
+
+def read_known_call_intents(include_internal=False, path=None, include_empty=False):
+    where = "intent IS NOT NULL" + (" AND intent != ''" if not include_empty else "")
+    parameters = ()
+    if not include_internal:
+        where += " AND intent NOT LIKE ?"
+        parameters = (ADVISOR_INTERNAL_INTENT_PATTERN,)
+    return read_ledger_rows(LedgerReadRequest(LEDGER_CALLS_TABLE, CALL_KNOWN_INTENT_COLUMN,
+        where, parameters), path)
+
+
+def read_lane_subscription_calls(since, valued, path=None):
+    if not valued:
+        return ()
+    where = "kind='subscription' AND executor IN (" + ",".join("?" for _ in valued) + ") AND ts >= ?"
+    return read_ledger_rows(LedgerReadRequest(LEDGER_CALLS_TABLE, LANE_SUBSCRIPTION_READ_COLUMNS,
+        where, (*sorted(valued), since)), path)
+
+
+def read_lane_recent_counts(hours, path=None):
+    return read_ledger_rows(LedgerReadRequest(LEDGER_CALLS_TABLE, READ_LANE_RECENT_COUNTS_COLUMNS,
+        "executor IS NOT NULL AND executor NOT IN ('', 'api') AND ts >= datetime('now', ?)",
+        (f"-{int(hours)} hours",), group_by=("executor",)), path)
+
+
+def read_intent_model_usage(intent, path=None):
+    return read_ledger_rows(LedgerReadRequest(LEDGER_CALLS_TABLE, READ_INTENT_MODEL_USAGE_COLUMNS,
+        "intent=? AND model IS NOT NULL", (intent,), order_by=("n DESC",), group_by=("model",)), path)
+
+
+def read_bakeoff_measurements(intent, path=None):
+    return read_ledger_rows(LedgerReadRequest(LEDGER_CALLS_TABLE, READ_BAKEOFF_MEASUREMENTS_COLUMNS,
+        "caller='bakeoff' AND intent IS ? AND quality IS NOT NULL", (intent,)), path)
+
+
+def read_lane_fallback_costs(since=None, path=None):
+    where = "fell_from IS NOT NULL AND fell_from != ''" + (" AND ts >= ?" if since else "")
+    return read_ledger_rows(LedgerReadRequest(LEDGER_CALLS_TABLE,
+        READ_LANE_FALLBACK_COSTS_COLUMNS, where,
+        (str(since),) if since else (), order_by=("cost DESC",), group_by=("fell_from",)), path)
+
+
+def read_lane_token_metrics(lane, path=None):
+    return read_ledger_rows(LedgerReadRequest(LEDGER_CALLS_TABLE, LANE_TOKEN_METRIC_COLUMNS,
+        "executor=?", (lane,)), path)[0]
+
+
+def read_lane_cumulative_tokens(path=None):
+    return read_ledger_rows(LedgerReadRequest(LEDGER_CALLS_TABLE,
+        READ_LANE_CUMULATIVE_TOKENS_COLUMNS,
+        "executor IS NOT NULL AND executor NOT IN ('','api')", group_by=("executor",)), path)
+
+
+def count_lane_prompts(lane, window_days, path=None):
+    return read_ledger_count(LedgerReadRequest(LEDGER_CALLS_TABLE, COUNT_RECENT_CALL_TESTS_COLUMNS,
+        "executor=? AND ts>=datetime('now',?)", (lane, f"-{float(window_days)} days")), path)
+
+
+def read_prompt_lint_evidence(intent=None, since=None, path=None):
+    predicates, parameters = ["intent IS NOT NULL"], []
+    for column, operator, value in (("intent", "=", intent), ("ts", ">=", since)):
+        if value:
+            predicates.append(f"{column}{operator}?")
+            parameters.append(value)
+    return read_ledger_rows(LedgerReadRequest(LEDGER_CALLS_TABLE, PROMPT_LINT_READ_COLUMNS,
+        " AND ".join(predicates), tuple(parameters)), path)
+
+
+def read_delegate_overage_evidence(path=None):
+    invoices = read_ledger_sql(LedgerSQLReadRequest(DELEGATE_INVOICED_MONTHS_SQL,
+        (INVOICE_OVERAGE_SOURCE, INVOICE_OVERAGE_INTENT_PATTERN)), path)
+    months = tuple(row["month"] for row in invoices if float(row["dollars"] or 0) > 0)
+    if not months:
+        return invoices, None
+    placeholders = ",".join("?" for _ in months)
+    value = read_ledger_rows(LedgerReadRequest(LEDGER_EVENTS_TABLE,
+        READ_DELEGATE_OVERAGE_EVIDENCE_COLUMNS,
+        f"source=? AND substr(occurred_at,1,7) IN ({placeholders})",
+        (DELEGATE_PLAN_SOURCE, *months)), path)[0]["value"]
+    return invoices, value
+
+
+
+
+def _route_realized_where_clause(intent, since=None, as_of=None):
+    predicates = ["intent=?"]
+    args = [intent]
+    if since is not None:
+        predicates.append("ts>=?")
+        args.append(since)
+    if as_of is not None:
+        predicates.append("ts<=?")
+        args.append(as_of)
+    return " AND ".join(predicates), args
+
+
+def _fetch_route_realized_rows(sql, args):
+    return tuple(row.values for row in read_ledger_sql(LedgerSQLReadRequest(sql, tuple(args))))
+
+
+def read_realized_adoptions(intent=None, path=None):
+    predicates = "intent IS NOT NULL AND (status IS NULL OR status != 'refuted')"
+    if intent:
+        predicates += " AND intent=?"
+    return read_ledger_rows(LedgerReadRequest(LEDGER_INSIGHTS_TABLE, READ_REALIZED_ADOPTIONS_COLUMNS,
+        predicates, (intent,) if intent else (), group_by=("intent",)), path)
+
+
+def read_realized_call_rates(intent, adopted_ts, path=None):
+    return read_ledger_rows(LedgerReadRequest(LEDGER_CALLS_TABLE,
+        READ_REALIZED_CALL_RATES_COLUMNS,
+        "intent=? AND cost>0", (adopted_ts, adopted_ts, adopted_ts, adopted_ts, intent)), path)[0]
+
+
+def ledger_read_table_exists(table, path=None):
+    return bool(read_ledger_sql(LedgerSQLReadRequest(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,)), path))
+
+
+def read_recording_gap_cells(intent_like=None, path=None):
+    where = ("intent IS NOT NULL AND cost>0 AND suspect IS NULL "
+             "AND (COALESCE(in_tok,0)+COALESCE(out_tok,0))>0")
+    if intent_like:
+        where += " AND intent LIKE ?"
+    return read_ledger_rows(LedgerReadRequest(LEDGER_CALLS_TABLE,
+        READ_RECORDING_GAP_CELLS_COLUMNS,
+        where, (f"%{intent_like}%",) if intent_like else (),
+        group_by=("intent", "provider", "model", "date(ts)")), path)
+
+
+def read_represented_call_cell(intent, model, day, path=None):
+    from .ledger import LLM_USD_COLS, SpendLedger
+    represented = (f"COALESCE(SUM(CASE WHEN {SpendLedger._COUNTABLE} THEN "
+                   + "+".join(f"COALESCE({column},0)" for column in LLM_USD_COLS)
+                   + " ELSE 0 END),0) AS represented")
+    return read_ledger_rows(LedgerReadRequest(LEDGER_EVENTS_TABLE, (represented,),
+        "intent=? AND model=? AND day=?", (intent, model, day)), path)[0][0]
+
+
+def read_routing_history_report(intent, *, since=None, as_of=None, limit=20):
+    """Aggregate exact stored routing outcomes for one intent and optional ``ts`` window."""
+    where, args = _route_realized_where_clause(intent, since, as_of)
+    limit = max(0, int(limit))
+    totals_row = _fetch_route_realized_rows(
+        f"""SELECT COUNT(*),
+                   COALESCE(SUM(CASE WHEN {LEDGER_ROUTING_METERED_SQL} THEN cost ELSE 0 END),0),
+                   COALESCE(SUM(CASE WHEN {LEDGER_ROUTING_METERED_SQL} THEN 1 ELSE 0 END),0),
+                   COALESCE(SUM(CASE WHEN COALESCE(cost,0)<=0 THEN 1 ELSE 0 END),0),
+                   COALESCE(SUM(CASE WHEN {LEDGER_ROUTING_EXECUTOR_SQL}='unknown' OR {LEDGER_ROUTING_LANE_SQL}='unknown' THEN 1 ELSE 0 END),0),
+                   COALESCE(SUM(CASE WHEN cost>0 THEN 1 ELSE 0 END),0),
+                   COALESCE(SUM(CASE WHEN cost>0 THEN cost ELSE 0 END),0),
+                   COALESCE(SUM(CASE WHEN COALESCE(cost,0)<=0
+                                     AND {LEDGER_ROUTING_EXECUTOR_SQL} NOT IN ('unknown','api') THEN 1 ELSE 0 END),0)
+            FROM calls WHERE {where}""", args)[0]
+    (jobs, billed_cost, billed_jobs, zero_jobs, unknown_jobs, positive_cost_jobs,
+     positive_cost, zero_lane_jobs) = totals_row
+    totals = {"jobs": int(jobs), "billed_cost": float(billed_cost or 0),
+              "billed_jobs": int(billed_jobs), "zero_cost_jobs": int(zero_jobs),
+              "unknown_routing_jobs": int(unknown_jobs)}
+    if int(positive_cost_jobs) != int(billed_jobs):
+        totals["positive_cost_jobs"] = int(positive_cost_jobs)
+        totals["positive_cost"] = float(positive_cost)
+
+    grouped = _fetch_route_realized_rows(
+        f"""SELECT {LEDGER_ROUTING_EXECUTOR_SQL}, {LEDGER_ROUTING_LANE_SQL}, COUNT(*),
+                   COALESCE(SUM(CASE WHEN {LEDGER_ROUTING_METERED_SQL} THEN cost ELSE 0 END),0),
+                   COALESCE(SUM(CASE WHEN {LEDGER_ROUTING_METERED_SQL} THEN 1 ELSE 0 END),0),
+                   COALESCE(SUM(CASE WHEN COALESCE(cost,0)<=0 THEN 1 ELSE 0 END),0),
+                   GROUP_CONCAT(DISTINCT NULLIF(served_model,'')),
+                   GROUP_CONCAT(DISTINCT NULLIF(requested_model,''))
+            FROM calls WHERE {where}
+            GROUP BY {LEDGER_ROUTING_EXECUTOR_SQL}, {LEDGER_ROUTING_LANE_SQL}
+            ORDER BY COUNT(*) DESC, {LEDGER_ROUTING_EXECUTOR_SQL}, {LEDGER_ROUTING_LANE_SQL}""", args)
+    by_executor_lane = [
+        {"executor": ex, "resolved_lane": lane, "jobs": int(n), "billed_cost": float(cost or 0),
+         "billed_jobs": int(billed), "zero_cost_jobs": int(zero),
+         "served_models": sorted(models.split(",")) if models else [],
+         "requested_models": sorted(requested.split(",")) if requested else []}
+        for ex, lane, n, cost, billed, zero, models, requested in grouped
+    ]
+
+    model_rows = _fetch_route_realized_rows(
+        f"""SELECT {LEDGER_ROUTING_SERVED_SQL}, COUNT(*),
+                   COALESCE(SUM(CASE WHEN {LEDGER_ROUTING_METERED_SQL} THEN cost ELSE 0 END),0),
+                   COALESCE(SUM(CASE WHEN {LEDGER_ROUTING_METERED_SQL} THEN 1 ELSE 0 END),0),
+                   COALESCE(SUM(CASE WHEN COALESCE(cost,0)<=0 THEN 1 ELSE 0 END),0)
+            FROM calls WHERE {where} GROUP BY {LEDGER_ROUTING_SERVED_SQL}
+            ORDER BY COUNT(*) DESC, {LEDGER_ROUTING_SERVED_SQL}""", args)
+    by_served_model = [
+        {"served_model": model, "jobs": int(n), "billed_cost": float(cost or 0),
+         "billed_jobs": int(billed), "zero_cost_jobs": int(zero)}
+        for model, n, cost, billed, zero in model_rows
+    ]
+
+    drift_rows = _fetch_route_realized_rows(
+        f"""SELECT requested_model, served_model, COUNT(*) FROM calls WHERE {where}
+            AND NULLIF(requested_model,'') IS NOT NULL AND NULLIF(served_model,'') IS NOT NULL
+            AND requested_model != served_model
+            GROUP BY requested_model, served_model ORDER BY COUNT(*) DESC, requested_model, served_model""", args)
+    model_drift = [{"requested_model": req, "served_model": served, "jobs": int(n)}
+                   for req, served, n in drift_rows]
+
+    fell_where = f"{where} AND (NULLIF(fell_from,'') IS NOT NULL OR NULLIF(fell_reason,'') IS NOT NULL)"
+    total_fell = _fetch_route_realized_rows(f"SELECT COUNT(*) FROM calls WHERE {fell_where}", args)[0][0]
+    fell_reason_rows = _fetch_route_realized_rows(
+        f"""SELECT COALESCE(NULLIF(fell_reason,''),'unknown'), COUNT(*),
+                   COALESCE(SUM(CASE WHEN {LEDGER_ROUTING_METERED_SQL} THEN cost ELSE 0 END),0)
+            FROM calls WHERE {fell_where}
+            GROUP BY COALESCE(NULLIF(fell_reason,''),'unknown') ORDER BY COUNT(*) DESC, 1""", args)
+    fell_from_rows = _fetch_route_realized_rows(
+        f"""SELECT COALESCE(NULLIF(fell_from,''),'unknown'), COUNT(*) FROM calls WHERE {fell_where}
+            GROUP BY COALESCE(NULLIF(fell_from,''),'unknown') ORDER BY COUNT(*) DESC, 1""", args)
+    redirect_rows = _fetch_route_realized_rows(
+        f"""SELECT COALESCE(NULLIF(redirect_reason,''),'unknown'), COUNT(*) FROM calls WHERE {fell_where}
+            GROUP BY COALESCE(NULLIF(redirect_reason,''),'unknown') ORDER BY COUNT(*) DESC, 1""", args)
+    fell = {
+        "total_fell_jobs": int(total_fell),
+        "by_fell_reason": [{"fell_reason": reason, "jobs": int(n), "billed_cost": float(cost or 0)}
+                           for reason, n, cost in fell_reason_rows],
+        "by_fell_from": [{"fell_from": lane, "jobs": int(n)} for lane, n in fell_from_rows],
+        "by_redirect_reason": [{"redirect_reason": reason, "jobs": int(n)} for reason, n in redirect_rows],
+    }
+
+    # The bounded reader sees the complete projection before the report selects
+    # its explicitly labelled display samples; SQL never hides an oversized set.
+    sample_rows = _fetch_route_realized_rows(
+        f"""SELECT ts, {LEDGER_ROUTING_EXECUTOR_SQL}, {LEDGER_ROUTING_LANE_SQL}, requested_model, served_model, cost,
+                   redirect_reason, fell_reason FROM calls WHERE {where}
+            ORDER BY ts DESC""", args) if limit else ()
+    samples = [dict(zip(("ts", "executor", "resolved_lane", "requested_model", "served_model", "cost",
+                         "redirect_reason", "fell_reason"), row)) for row in sample_rows[:limit]]
+
+    caveats = []
+    if unknown_jobs:
+        caveats.append(f"{int(unknown_jobs)} rows have NULL/empty executor or resolved_lane (legacy) → bucketed as 'unknown'")
+    if not jobs:
+        caveats.append("no calls found for this intent in the requested ts window")
+    if int(positive_cost_jobs) != int(billed_jobs):
+        caveats.append("positive-cost rows outside the metered executor predicate are counted separately as positive_cost_jobs")
+    shares = {"metered_share_jobs": (int(billed_jobs) / int(jobs)) if jobs else None,
+              "metered_share_cost": (float(billed_cost) / float(positive_cost)) if positive_cost else (0.0 if jobs else None),
+              "zero_lane_share_jobs": (int(zero_lane_jobs) / int(jobs)) if jobs else None,
+              "unknown_share_jobs": (int(unknown_jobs) / int(jobs)) if jobs else None}
+    return {"intent": intent, "window": {"since": since, "as_of": as_of, "field": "ts"}, "totals": totals,
+            "by_executor_lane": by_executor_lane, "by_served_model": by_served_model,
+            "model_drift": model_drift, "fell": fell, "shares": shares, "samples": samples, "caveats": caveats}
+
+
+
+def read_calibration_calls(meta_pattern, as_of=None, backtest=False, distinct_cells=False, path=None):
+    where = CALIBRATION_CORPUS_PREDICATE
+    where += " AND intent IS NOT NULL AND intent NOT LIKE ?" if backtest or distinct_cells else " AND (intent IS NULL OR intent NOT LIKE ?)"
+    parameters = (meta_pattern,)
+    if backtest:
+        where += " AND kind IN ('batch','realtime')"
+    if as_of:
+        where += " AND ts<=?"
+        parameters += (as_of,)
+    columns = ("DISTINCT intent", "model", "kind") if distinct_cells else CALIBRATION_CALL_COLUMNS
+    return read_ledger_rows(LedgerReadRequest(LEDGER_CALLS_TABLE, columns, where, parameters), path)
+
+
+def read_calibration_actuals(chain=None, intent=None, since=None, until=None, path=None):
+    if chain is not None:
+        where, parameters = "chain=?", (chain,)
+    else:
+        where, parameters = "intent=? AND ts>=? AND ts<=?", (intent, since, until)
+    return read_ledger_rows(LedgerReadRequest(LEDGER_CALLS_TABLE, CALIBRATION_ACTUAL_COLUMNS, where, parameters), path)
+
+
+def read_calibration_summary(meta_pattern, label=None, path=None):
+    where = CALIBRATION_CORPUS_PREDICATE + " AND intent IS NOT NULL AND intent NOT LIKE ?"
+    parameters = (meta_pattern,)
+    if label:
+        where += " AND intent=?"
+        parameters += (label,)
+    return read_ledger_rows(LedgerReadRequest(LEDGER_CALLS_TABLE,
+        READ_CALIBRATION_SUMMARY_COLUMNS, where,
+        parameters, order_by=("cost DESC",), group_by=("intent", "model", "kind")), path)
+
+
+
+
+def read_cc_overflow_conversations(path=None):
+    return read_ledger_rows(LedgerReadRequest(LEDGER_EVENTS_TABLE, CC_OVERFLOW_COLUMNS,
+        "source='claude-code-overflow'", group_by=("conv_id",)), path)
+
+
+def read_cc_attribution_evidence(path=None):
+    real = read_ledger_rows(LedgerReadRequest(LEDGER_EVENTS_TABLE, CC_ATTRIBUTION_MONTH_COLUMNS,
+        "source='anthropic-invoice' AND intent LIKE 'anthropic-invoice:cc-overage%'", group_by=("mo",)), path)
+    evidence = read_ledger_rows(LedgerReadRequest(LEDGER_EVENTS_TABLE, CC_ATTRIBUTION_EVIDENCE_COLUMNS,
+        CC_ESTIMATE_PREDICATE), path)
+    fallback = read_ledger_rows(LedgerReadRequest(LEDGER_EVENTS_TABLE, CC_ATTRIBUTION_FALLBACK_COLUMNS,
+        CC_ESTIMATE_PREDICATE, group_by=("mo", "conv_id")), path)
+    return real, evidence, fallback
+
+
+def read_cc_conversation_turns(min_day=None, path=None):
+    where, parameters = "source='claude-code'", ()
+    if min_day:
+        where += " AND occurred_at>=?"
+        parameters = (min_day,)
+    return read_ledger_rows(LedgerReadRequest(LEDGER_EVENTS_TABLE, CC_CONVERSATION_TURN_COLUMNS,
+        where, parameters, order_by=("conv_id", "occurred_at")), path)

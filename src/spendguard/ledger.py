@@ -640,7 +640,8 @@ class SpendLedger:
         return [{k: r[k] for k in r.keys()}
                 for r in self._conn.execute("SELECT * FROM spend_audit WHERE event_id=? ORDER BY id", (eid,))]
 
-    def _row(self, r):
+    @staticmethod
+    def _row(r):
         d = {k: r[k] for k in r.keys()}
         for jc in _JSON_COLS:
             if d.get(jc):
@@ -664,11 +665,14 @@ class SpendLedger:
 
     # ── S: search / query ──
     def query(self, since=None, until=None, where=None, limit=None):
-        w, args = self._where(since, until, where)
-        sql = "SELECT * FROM spend_events WHERE 1=1" + w + " ORDER BY day"
-        if limit:
-            sql += f" LIMIT {int(limit)}"
-        return [self._row(r) for r in self._conn.execute(sql, args).fetchall()]
+        """Compatibility dictionaries from the bounded, read-only consumer surface.
+
+        ``limit`` is a fail-loud completeness cap, never a truncated head. Reads
+        observe committed data; lifecycle/correction reads stay on the writer.
+        """
+        from .ledger_read import read_spend_events
+        return [self._row(row) for row in read_spend_events(
+            since=since, until=until, where=where, limit=limit, path=self.db_path)]
 
     def category_col(self, kind):
         """The money column for a spend category (batch→batch_usd, …), from the canonical _KIND_TO_USD map.
@@ -683,9 +687,9 @@ class SpendLedger:
         """Rows with spend in `kind` — identified by that category's money COLUMN being populated (the schema's
         own definition, via category_col), so there is no derived type field to mis-map. Newest day first."""
         col = self.category_col(kind)
-        w, args = self._where(since, until, where)
-        return [self._row(r) for r in self._conn.execute(
-            f"SELECT * FROM spend_events WHERE {col} IS NOT NULL{w} ORDER BY day", args).fetchall()]
+        from .ledger_read import read_spend_events
+        return [self._row(row) for row in read_spend_events(
+            since=since, until=until, where=where, category_column=col, path=self.db_path)]
 
     # ── rollup: cost breakdown, billed vs est-value split (exact micros + usd; voided/reversed excluded) ──
     def rollup(self, group_by=None, since=None, until=None, where=None, include_meta=False):
@@ -697,9 +701,9 @@ class SpendLedger:
         if not include_meta:
             w += " AND COALESCE(is_meta,0)=0"
         w += " AND COALESCE(status,'') NOT IN ('void')"       # void excluded; a reversed pair nets to 0 via its negation
-        sums = ", ".join(f"dec_sum({c})" for c in USD_COLS)      # EXACT decimal sum, not SQL SUM (float coercion)
-        sel = (", ".join(cols) + ", " if cols else "") + sums + ", COUNT(*)"
-        sql = f"SELECT {sel} FROM spend_events WHERE 1=1" + w + (" GROUP BY " + ", ".join(cols) if cols else "")
+        from .ledger_read import LedgerReadRequest, read_ledger_rows
+        request = LedgerReadRequest(columns=tuple(cols) + tuple(f"dec_sum({c}) AS {c}" for c in USD_COLS)
+            + ("COUNT(*) AS n",), where_sql="1=1" + w, parameters=tuple(args), group_by=tuple(cols))
 
         def pack(row):
             vals = {c: to_dec(row[len(cols) + i]) for i, c in enumerate(USD_COLS)}   # exact Decimal per category
@@ -707,7 +711,7 @@ class SpendLedger:
             out = {c: float(vals[c]) for c in USD_COLS}
             out.update(billed_usd=float(billed), est_value_usd=float(vals["est_chat_usd"]), n=row[-1])
             return out
-        rows = self._conn.execute(sql, args).fetchall()
+        rows = [row.values for row in read_ledger_rows(request, path=self.db_path)]
         empty = {**{c: 0.0 for c in USD_COLS}, "billed_usd": 0.0, "est_value_usd": 0.0, "n": 0}
         if not cols:
             return pack(rows[0]) if rows and rows[0][-1] else empty
@@ -829,12 +833,13 @@ class SpendLedger:
             w += " AND " + self._NOT_VOID
         if filt:
             w += " AND " + filt
-        sums = ", ".join(f"dec_sum({c})" for c in allcols)
-        isum = "".join(f", COALESCE(SUM({c}),0)" for c in icols)
-        sel = ", ".join(gcols)
+        from .ledger_read import LedgerReadRequest, read_ledger_rows
+        projections = tuple(gcols) + tuple(f"dec_sum({c}) AS {c}" for c in allcols)
+        projections += tuple(f"COALESCE(SUM({c}),0) AS {c}" for c in icols) + ("COUNT(*) AS n",)
         out = {}
         base = len(gcols)
-        for row in self._conn.execute(f"SELECT {sel}, {sums}{isum}, COUNT(*) FROM spend_events WHERE 1=1{w} GROUP BY {sel}", args):
+        for row in read_ledger_rows(LedgerReadRequest(columns=projections, where_sql="1=1" + w,
+                parameters=tuple(args), group_by=tuple(gcols)), path=self.db_path):
             key = tuple(row[i] for i in range(len(gcols))) if len(gcols) > 1 else row[0]
             total = sum((to_dec(row[base + i]) for i in range(len(allcols))), Decimal(0))
             rec = {"usd": str(total), "n": row[-1]}
@@ -850,7 +855,9 @@ class SpendLedger:
         w, args = self._where(since, None, where)
         if filt:
             w += " AND " + filt
-        rows = self._conn.execute(f"SELECT DISTINCT {col} FROM spend_events WHERE 1=1{w}", args).fetchall()
+        from .ledger_read import LedgerReadRequest, read_ledger_rows
+        rows = read_ledger_rows(LedgerReadRequest(columns=(f"DISTINCT {col}",),
+            where_sql="1=1" + w, parameters=tuple(args)), path=self.db_path)
         return sorted(r[0] for r in rows if r[0] not in (None, ""))
 
     def source_rows(self, source, cols=("id",), only_billed=None, intent_like=None, source_is_like=False):
@@ -863,20 +870,24 @@ class SpendLedger:
         for c in cols:
             if c != "month" and c not in self._cols:
                 raise ValueError(f"unknown column {c!r}")
-        sel = ", ".join("substr(occurred_at,1,7)" if c == "month" else c for c in cols)
+        projections = tuple("substr(occurred_at,1,7) AS month" if c == "month" else c for c in cols)
         w, args = ("source LIKE ?" if source_is_like else "source=?"), [source]
         if intent_like is not None:
             w += " AND intent LIKE ?"; args.append(intent_like)
         if only_billed is not None:
             w += " AND COALESCE(billed,1)=?"; args.append(1 if only_billed else 0)
-        return self._conn.execute(f"SELECT {sel} FROM spend_events WHERE {w} AND {self._NOT_VOID}", args).fetchall()
+        from .ledger_read import LedgerReadRequest, read_ledger_rows
+        return [row.values for row in read_ledger_rows(LedgerReadRequest(columns=projections,
+            where_sql=f"{w} AND {self._NOT_VOID}", parameters=tuple(args)), path=self.db_path)]
 
     def min_day(self, where=None, filt=""):
         """Earliest accounting `day` present (the pre-ledger cutoff for the leak check)."""
         w, args = self._where(None, None, where)
         if filt:
             w += " AND " + filt
-        r = self._conn.execute(f"SELECT MIN(day) FROM spend_events WHERE 1=1{w}", args).fetchone()
+        from .ledger_read import LedgerReadRequest, read_ledger_rows
+        r = read_ledger_rows(LedgerReadRequest(columns=("MIN(day) AS first_day",),
+            where_sql="1=1" + w, parameters=tuple(args)), path=self.db_path)[0]
         return r[0] if r and r[0] else None
 
     def meta_dec(self, since=None, until=None, where=None):
@@ -891,7 +902,9 @@ class SpendLedger:
         w, args = self._where(since, None, where)
         if filt:
             w += " AND " + filt
-        return self._conn.execute(f"SELECT COUNT(*) FROM spend_events WHERE 1=1{w}", args).fetchone()[0]
+        from .ledger_read import LedgerReadRequest, read_ledger_count
+        return read_ledger_count(LedgerReadRequest(where_sql="1=1" + w,
+            parameters=tuple(args)), path=self.db_path)
 
     def bulk_retag_project(self, new_project, filt="", args=(), where=None, actor="tag", reason=""):
         """Bulk-set project_primary → `new_project` on rows matching `where`/`filt` — the DETERMINISTIC re-tag

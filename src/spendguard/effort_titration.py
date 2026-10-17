@@ -246,10 +246,9 @@ def _pilot_estimate(intent, model, efforts, prompts, judge_model, requirement_aw
 
 def _most_used_model(intent):
     """The model with the most recorded rows for this intent — its de-facto default, the cheapest to titrate."""
-    with calls._lock:
-        r = calls._calls_db().execute(
-            "SELECT model, COUNT(*) FROM calls WHERE intent=? AND model IS NOT NULL "
-            "GROUP BY model ORDER BY 2 DESC LIMIT 1", (intent,)).fetchone()
+    from . import ledger_read
+    rows = ledger_read.read_intent_model_usage(intent)
+    r = rows[0] if rows else None
     if not r:
         return None
     m = r[0]

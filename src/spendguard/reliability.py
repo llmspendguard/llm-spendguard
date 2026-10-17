@@ -285,17 +285,9 @@ def lane_fallback_spend(since=None):
     was down lives in each row's outcome/provider_error and in lane_health; this answers only "how much did it cost."
     `since` is an inclusive ISO-timestamp lower bound on ts (e.g. the week's start). Returns
     [{lane, n_calls, metered_usd}]; [] on any error or a ledger not yet carrying the column. $0, read-only."""
+    from . import ledger_read
     try:
-        con = config.open_ledger_connection(config.db_path(), tune=False)
-        q = ("SELECT fell_from, COUNT(*), COALESCE(SUM(cost), 0) FROM calls "
-             "WHERE fell_from IS NOT NULL AND fell_from != ''")
-        args = []
-        if since:
-            q += " AND ts >= ?"
-            args.append(str(since))
-        q += " GROUP BY fell_from ORDER BY 3 DESC"
-        rows = con.execute(q, args).fetchall()
-        con.close()
+        rows = ledger_read.read_lane_fallback_costs(since)
         return [{"lane": r[0], "n_calls": int(r[1]), "metered_usd": round(float(r[2] or 0.0), 4)} for r in rows]
     except Exception:
         return []

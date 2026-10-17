@@ -175,11 +175,8 @@ def recorded_intents(min_calls=1, limit=200):
     """Distinct job-type intents in the ledger with >= min_calls recorded calls, most-used first — the known label
     set an untagged prompt can be classified against (best_value's intent inference). $0, read-only; [] on any error."""
     try:
-        con = config.open_ledger_connection(config.db_path(), tune=False)
-        rows = con.execute(
-            "SELECT intent, COUNT(*) c FROM calls WHERE intent IS NOT NULL AND intent != '' "
-            "GROUP BY intent HAVING c >= ? ORDER BY c DESC LIMIT ?", (int(min_calls), int(limit))).fetchall()
-        con.close()
+        from . import ledger_read
+        rows = ledger_read.read_recorded_call_intents(min_calls, limit)
         return [r[0] for r in rows]
     except Exception:
         return []
@@ -266,9 +263,12 @@ def _max_rowid() -> int:
     if not enabled():
         return 0
     try:
-        with _lock:
-            r = _calls_db().execute("SELECT COALESCE(MAX(rowid),0) FROM calls").fetchone()
-        return int(r[0] or 0)
+        from . import ledger_read
+        # A flow watermark before the first logged call is zero; this observer never creates schema.
+        from pathlib import Path
+        if not Path(config.db_path()).exists() or not ledger_read.ledger_read_table_exists(ledger_read.LEDGER_CALLS_TABLE):
+            return 0
+        return ledger_read.read_call_max_rowid()
     except Exception:
         return 0
 
@@ -279,14 +279,8 @@ def flow_agg(since_rowid: int = 0, chain: Optional[str] = None):
     if not enabled():
         return None
     try:
-        q = ("SELECT COUNT(*), COALESCE(SUM(in_tok),0), COALESCE(SUM(out_tok),0), "
-             "COALESCE(SUM(cost),0.0), MAX(caller) FROM calls WHERE rowid > ?")
-        a = [int(since_rowid or 0)]
-        if chain:
-            q += " AND chain = ?"
-            a.append(chain)
-        with _lock:
-            row = _calls_db().execute(q, a).fetchone()
+        from . import ledger_read
+        row = ledger_read.read_call_flow(since_rowid, chain)
         if not row or not row[0]:
             return None
         return {"n": int(row[0]), "in_tok": int(row[1] or 0), "out_tok": int(row[2] or 0),
@@ -698,10 +692,8 @@ def intent_spend(intent, window_s=86400):
     cut = (datetime.datetime.now(datetime.timezone.utc)
            - datetime.timedelta(seconds=max(1, int(window_s)))).isoformat(timespec="seconds")
     try:
-        with _lock:
-            r = _calls_db().execute("SELECT COALESCE(SUM(cost),0) FROM calls WHERE intent=? AND ts>=?",
-                                    (intent, cut)).fetchone()
-        return float(r[0] or 0.0) if r else 0.0
+        from . import ledger_read
+        return float(ledger_read.read_call_intent_cost(intent, cut) or 0.0)
     except Exception:
         config.rollback_ledger_conn("calls")
         return 0.0
@@ -709,20 +701,8 @@ def intent_spend(intent, window_s=86400):
 
 def cost_summary(intent=None):
     """Per (intent, model): calls, $ total, %good, and cost-per-good-result."""
-    cond = ["(intent IS NULL OR intent NOT LIKE 'spendguard:%')"]   # exclude spendguard's own meta calls
-    args = []
-    if intent:
-        cond.append("intent=?"); args.append(intent)
-    # SQLi-safe (scanner false positive): `cond` holds only STATIC predicate strings ("intent=?"); every VALUE is bound
-    # via `args` as a `?` parameter. The f-string below interpolates this fixed WHERE clause, never user data.
-    where, args = ("WHERE " + " AND ".join(cond), tuple(args))
-    with _lock:
-        rows = _calls_db().execute(
-            f"""SELECT COALESCE(intent,'(none)'), COALESCE(model,'?'), COUNT(*), COALESCE(SUM(cost),0),
-                   SUM(CASE WHEN quality='good' THEN 1 ELSE 0 END),
-                   SUM(CASE WHEN quality='bad'  THEN 1 ELSE 0 END)
-                FROM calls {where} GROUP BY intent, model ORDER BY SUM(cost) DESC""", args).fetchall()
-    return rows
+    from . import ledger_read
+    return [row.values for row in ledger_read.read_call_cost_summary(intent)]
 
 
 def mean_out_by_executor_model(intent, call_class=None, origin_session=None):
@@ -739,24 +719,10 @@ def mean_out_by_executor_model(intent, call_class=None, origin_session=None):
     if not intent:
         return out
     try:
-        with _lock:
-            predicates = ["intent=?", "out_tok IS NOT NULL", "out_tok > 0", "suspect IS NULL"]
-            args = [intent]
-            if call_class is not None:
-                predicates.append("call_class=?")
-                args.append(call_class)
-            if origin_session is not None:
-                predicates.append("origin_session=?")
-                args.append(origin_session)
-            rows = _calls_db().execute(
-                # metered rows now carry executor='api' (explicit). NULLIF it out too so a metered arm groups by
-                # its PROVIDER (gpt-5 vs claude stay distinct arms), never collapsed into one 'api' bucket; a real
-                # lane keeps its lane name.
-                "SELECT COALESCE(NULLIF(NULLIF(executor,''),'api'), provider), COALESCE(model,'?'), "
-                "COALESCE(AVG(out_tok), 0), COUNT(*) FROM calls "
-                f"WHERE {' AND '.join(predicates)} "
-                "GROUP BY COALESCE(NULLIF(NULLIF(executor,''),'api'), provider), model", args).fetchall()
-        for ex, model, avg_out, n in rows:
+        from . import ledger_read
+        rows = ledger_read.read_call_output_means(intent, call_class, origin_session)
+        for row in rows:
+            ex, model, avg_out, n = row.values
             out[(ex or "?", model or "?")] = {"mean_out": float(avg_out or 0.0), "n": int(n)}
     except Exception:
         pass
@@ -774,18 +740,10 @@ def lane_model_outcomes(executor, since=None, call_class=None):
     if not executor:
         return out
     try:
-        predicates = ["COALESCE(NULLIF(executor,''), provider)=?"]
-        args = [executor]
-        if since is not None:
-            predicates.append("ts>=?"); args.append(since)
-        if call_class is not None:
-            predicates.append("call_class=?"); args.append(call_class)
-        with _lock:
-            rows = _calls_db().execute(
-                "SELECT COALESCE(model,'?'), COALESCE(outcome,''), COUNT(*), MAX(ts) FROM calls "
-                f"WHERE {' AND '.join(predicates)} "
-                "GROUP BY COALESCE(model,'?'), COALESCE(outcome,'')", args).fetchall()
-        for model, outcome, n, last_ts in rows:
+        from . import ledger_read
+        rows = ledger_read.read_call_lane_outcomes(executor, since, call_class)
+        for row in rows:
+            model, outcome, n, last_ts = row.values
             rec = out.setdefault(model or "?", {"ok": 0, "fail": 0, "last_ok": None,
                                                 "last_fail": None, "by_outcome": {}})
             n = int(n or 0)
@@ -817,34 +775,15 @@ def metered_realtime_by_intent(since):
     if not since:
         return out
     try:
-        with _lock:
-            rows = _calls_db().execute(
-                "SELECT COALESCE(intent,'(none)'), COALESCE(model,'?'), COUNT(*), COALESCE(SUM(cost),0), "
-                "COALESCE(SUM(in_tok),0), COALESCE(AVG(in_tok),0) FROM calls "
-                "WHERE cost > 0 AND ts >= ? AND COALESCE(NULLIF(executor,''),'') IN ('','api') AND kind='realtime' "
-                "AND (intent IS NULL OR intent NOT LIKE 'spendguard:%') "
-                "GROUP BY intent, model ORDER BY SUM(cost) DESC", (since,)).fetchall()
-        for intent, model, n, usd, in_tok, avg_in in rows:
+        from . import ledger_read
+        rows = ledger_read.read_call_metered_intents(since)
+        for row in rows:
+            intent, model, n, usd, in_tok, avg_in = row.values
             out.append({"intent": intent, "model": model, "calls": int(n), "usd": float(usd or 0.0),
                         "in_tok": int(in_tok or 0), "avg_in": int(avg_in or 0)})
     except Exception:
         config.rollback_ledger_conn("calls")
     return out
-
-
-def _route_realized_fetchall(sql, args=()):
-    """Run one read-only realized-routing query on the shared calls connection.
-
-    Kept here so route_realized never opens a second SQLite connection: every calls-table
-    read uses the module lock, pooled connection, and the standard rollback-on-error path.
-    ``sql`` is package-owned static SQL; all report inputs are bound through ``args``.
-    """
-    try:
-        with _lock:
-            return _calls_db().execute(sql, tuple(args)).fetchall()
-    except Exception:
-        config.rollback_ledger_conn("calls")
-        raise
 
 
 def tested_recently(intent, model=None, days=14, kinds=("realtime",)):
@@ -864,14 +803,11 @@ def tested_recently(intent, model=None, days=14, kinds=("realtime",)):
         # into the past and stale evidence passes the test-first gate; east of it, real recent tests
         # vanish. Either way the comparison succeeds and returns a confident wrong answer.
         since = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=int(days))).isoformat()
-        # SQLi-safe (scanner false positive): `%s` is filled with the right COUNT of `?` placeholders, NOT values;
-        # the kind values go through `args`. (Parameterized — no user data is concatenated into the SQL string.)
-        q = "SELECT COUNT(*) FROM calls WHERE intent=? AND ts>=? AND kind IN (%s)" % ",".join("?" * len(kinds))
-        args = [intent, since, *kinds]
-        if model:
-            q += " AND model=?"; args.append(model)
-        with _lock:
-            return _calls_db().execute(q, args).fetchone()[0] > 0
+        from . import ledger_read
+        from pathlib import Path
+        if not Path(config.db_path()).exists() or not ledger_read.ledger_read_table_exists(ledger_read.LEDGER_CALLS_TABLE):
+            return False
+        return ledger_read.count_recent_call_tests(intent, since, kinds, model=model) > 0
     except Exception:
         return False
 
