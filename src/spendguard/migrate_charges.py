@@ -26,7 +26,7 @@ def to_spend_events(led=None, src_path=None, since=None):
     # `src` is only read in this prologue (schema probe + the one SELECT); the rest of the migration works off
     # the fetched `rows`. Close it deterministically — including on the raise below — so the migration doesn't
     # leak the charges-db connection (sqlite3's context manager commits but does NOT close, hence try/finally).
-    src = sqlite3.connect(src_path or config.db_path())
+    src = config.open_ledger_connection(src_path or config.db_path(), tune=False)
     try:
         src.row_factory = sqlite3.Row
         if not src.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='charges'").fetchone():
@@ -133,7 +133,7 @@ def run_cutover(db_path=None):
     # and re-running would be catastrophic: the rename step below moves the LIVE spend_events aside (and DROPs the
     # real pre-cutover backup first), then to_spend_events crashes on the missing `charges`, leaving an EMPTY
     # ledger. This is the "old path made impossible" — the migration is a no-op after its source is gone.
-    _probe = sqlite3.connect(path)
+    _probe = config.open_ledger_connection(path, tune=False)
     _has_charges = bool(_probe.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='charges'").fetchone())
     _probe.close()
@@ -143,7 +143,7 @@ def run_cutover(db_path=None):
 
     # Whole-file snapshot FIRST — the lossless recovery path (holds every prior row, incl. non-charges ones).
     snap = _budget.snapshot_once("cutover") if not db_path else _budget.snapshot(reason="cutover")
-    con = sqlite3.connect(path)
+    con = config.open_ledger_connection(path, tune=False)
     if [r[1] for r in con.execute("PRAGMA table_info(spend_events)")]:
         # Move any existing table aside so the rebuild is CLEAN — it never dedup-appends onto stale rows. One
         # fixed name (no provenance guess); the file snapshot above is what guarantees nothing is lost.
@@ -156,7 +156,7 @@ def run_cutover(db_path=None):
     stats = to_spend_events(led=led, src_path=path)
 
     # PROVE Σ EXACTLY, both sides in Decimal (charges is float text → Decimal per row, summed exactly).
-    con = sqlite3.connect(path)
+    con = config.open_ledger_connection(path, tune=False)
     src_dec = sum((Decimal(str(r[0])) for r in con.execute("SELECT cost FROM charges WHERE cost!=0")), Decimal(0))
     con.close()
     # include_void=True: the proof is "did EVERY charge dollar arrive", and quarantined-impossible rows arrive

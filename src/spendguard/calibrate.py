@@ -60,7 +60,7 @@ def _pair_horizon_s():
 
 def _con():
     from . import config
-    c = sqlite3.connect(config.db_path(), timeout=10)
+    c = config.open_ledger_connection(config.db_path(), timeout=10, tune=False)
     c.execute("""CREATE TABLE IF NOT EXISTS cost_predictions(
         job_id TEXT PRIMARY KEY, ts TEXT, label TEXT, model TEXT, transport TEXT,
         n_req INTEGER, est_in INTEGER, est_out_max INTEGER, predicted_usd REAL,
@@ -135,7 +135,7 @@ def _fill_obs(label, model, as_of=None):
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=datetime.timezone.utc)
         epoch_cut = dt.timestamp()
-    con = sqlite3.connect(config.db_path(), timeout=10)
+    con = config.open_ledger_connection(config.db_path(), timeout=10, tune=False)
     try:
         def grab(where, args):
             q = ("SELECT CAST(out_tok AS REAL)/max_tokens FROM gate_calls "
@@ -160,7 +160,7 @@ def _calls_rows(label, model, transport, as_of=None):
     """calls rows for a cell (workload only, priced, tokenized). model matched post-normalize in python
     because the corpus stores raw ids (e.g. dated snapshots) while callers pass canonical names."""
     from . import config
-    con = sqlite3.connect(config.db_path(), timeout=10)
+    con = config.open_ledger_connection(config.db_path(), timeout=10, tune=False)
     try:
         q = ("SELECT intent, model, kind, in_tok, out_tok, cost, ts FROM calls "
              "WHERE cost > 0 AND in_tok > 0 AND out_tok > 0 AND model IS NOT NULL "
@@ -390,7 +390,7 @@ def pair(now=None):
     now = time.time() if now is None else now
     horizon = _pair_horizon_s()
     con = _con()
-    ccon = sqlite3.connect(config.db_path(), timeout=10)
+    ccon = config.open_ledger_connection(config.db_path(), timeout=10, tune=False)
     paired = expired = pending = 0
     try:
         preds = con.execute("SELECT job_id, ts, label, model FROM cost_predictions "
@@ -440,7 +440,7 @@ def backtest(as_json=False, min_cell=MIN_CELL_BACKTEST):
     The deck is stacked FOR naive on input; the learned win must come from output-fill, transport
     and residual — exactly the claimed error sources. Ship gate: calibrated beats naive overall."""
     from . import config
-    con = sqlite3.connect(config.db_path(), timeout=10)
+    con = config.open_ledger_connection(config.db_path(), timeout=10, tune=False)
     try:
         raw = con.execute(
             "SELECT intent, model, kind, in_tok, out_tok, cost, ts FROM calls "
@@ -543,7 +543,7 @@ def cell_stats(as_of=None):
                           "transport": transport or "", "quantity": quantity, "n": len(vals),
                           "p50": round(_quantile(vals, P_LO), 6), "p90": round(_quantile(vals, P_HI), 6)})
 
-    con = sqlite3.connect(config.db_path(), timeout=10)
+    con = config.open_ledger_connection(config.db_path(), timeout=10, tune=False)
     try:
         pairs = con.execute(
             "SELECT DISTINCT intent, model, kind FROM calls WHERE intent IS NOT NULL AND model IS NOT NULL "
@@ -600,7 +600,7 @@ def calibration_summary_lines(max_lines=4):
     lines = []
     try:
         from . import config
-        con = sqlite3.connect(config.db_path(), timeout=10)
+        con = config.open_ledger_connection(config.db_path(), timeout=10, tune=False)
         q = ("SELECT model, COUNT(*), AVG(CAST(out_tok AS REAL)/max_tokens) FROM gate_calls "
              "WHERE max_tokens > 0 GROUP BY model ORDER BY 2 DESC LIMIT ?")
         for m, cnt, fill in con.execute(q, (max_lines,)).fetchall():
@@ -616,7 +616,7 @@ def calibration_summary_lines(max_lines=4):
 def show(label=None):
     """Print the calibration state — what has been learned, at what confidence."""
     from . import config
-    con = sqlite3.connect(config.db_path(), timeout=10)
+    con = config.open_ledger_connection(config.db_path(), timeout=10, tune=False)
     try:
         try:
             cells = con.execute(

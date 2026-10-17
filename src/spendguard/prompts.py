@@ -92,7 +92,7 @@ def lint(intent=None, since=None, min_calls=MIN_CALLS, judge_batchable=False):
     and that is a MEANING judgement, not a threshold. So it is emitted ONLY under `judge_batchable=True`, which asks a
     small meta-caged LLM to rule packability per candidate (never a free $0 threshold-verdict). Default off → $0."""
     from . import config
-    con = sqlite3.connect(config.db_path(), timeout=10)
+    con = config.open_ledger_connection(config.db_path(), timeout=10, tune=False)
     try:
         q = "SELECT intent, model, in_tok, out_tok, cost, finish, prompt_snip, kind FROM calls WHERE intent IS NOT NULL"
         args = []

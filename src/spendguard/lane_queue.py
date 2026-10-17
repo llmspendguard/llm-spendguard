@@ -60,6 +60,7 @@ PURGE_MIN_INTERVAL_S_DEFAULT = 3600.0   # purge is O(terminal rows), leasing is 
 #                                 most once/hour, not every drain cycle (every 300s was the 4-min-CPU cause)
 ARCHIVE_MAX_MB_DEFAULT = 64.0   # lane_queue_archive.jsonl is append-only; rotate (keep one .1 generation) past this so it
 #                                 cannot grow unbounded (it had reached 820MB, 2026-10-08)
+QUEUE_MIGRATION_TIMEOUT_S = 30
 _RESULT_CAP = 4000            # bytes of result JSON retained per row (audit/debug, not the whole payload)
 _last_purge_ts = 0.0          # module-local throttle stamp for purge_due() — decouples purge from the drain cycle
 
@@ -107,8 +108,7 @@ _QUEUE_KEY = "lane_queue"
 
 def _ensure_queue_schema(c):
     """Create the lane_queue table + its forward-only additive columns + the lease index (idempotent, cross-process
-    safe). Run ONCE per pooled connection — at connection creation, and again whenever the pool reopens — so schema
-    setup is tied to the connection's lifetime, not a module flag that could go stale against a replaced file."""
+    safe). Every new connection runs the full ensure, including after same-file table drops."""
     c.execute("""CREATE TABLE IF NOT EXISTS lane_queue(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         intent TEXT NOT NULL, task TEXT NOT NULL, system TEXT, reasoning TEXT,
@@ -199,13 +199,12 @@ def migrate_from_ledger():
     it is a no-op. Run with the drain DISABLED and AFTER the long-lived writers are on this code (so none recreates the
     table in the ledger via _ensure_queue_schema). Returns {moved, dropped, note} or {error}. Never raises."""
     import contextlib
-    import sqlite3
     ledger = config.db_path()
     if ledger == config.lane_queue_db_path():
         return {"moved": 0, "dropped": False, "note": "queue db IS the ledger (no separate path configured) — nothing to move"}
     try:
-        with contextlib.closing(sqlite3.connect(ledger, timeout=30)) as lc:
-            lc.execute("PRAGMA busy_timeout=30000")
+        with contextlib.closing(config.open_ledger_connection(ledger, timeout=QUEUE_MIGRATION_TIMEOUT_S)) as lc:
+            lc.execute(f"PRAGMA busy_timeout={QUEUE_MIGRATION_TIMEOUT_S * 1000}")
             if not lc.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='lane_queue'").fetchone():
                 return {"moved": 0, "dropped": False, "note": "ledger has no lane_queue table (already migrated)"}
             src_cols = [r[1] for r in lc.execute("PRAGMA table_info(lane_queue)")]
@@ -220,8 +219,8 @@ def migrate_from_ledger():
                 c.executemany("INSERT INTO lane_queue (%s) VALUES (%s)" % (",".join(use), ",".join("?" * len(use))),
                               [[row[i] for i in idx] for row in live])
                 moved = len(live)
-        with contextlib.closing(sqlite3.connect(ledger, timeout=30)) as lc:
-            lc.execute("PRAGMA busy_timeout=30000")
+        with contextlib.closing(config.open_ledger_connection(ledger, timeout=QUEUE_MIGRATION_TIMEOUT_S)) as lc:
+            lc.execute(f"PRAGMA busy_timeout={QUEUE_MIGRATION_TIMEOUT_S * 1000}")
             lc.execute("DROP TABLE IF EXISTS lane_queue")        # reclaim ~2.7GB of pages → snapshots/backups shrink
             lc.commit()
         return {"moved": moved, "dropped": True,

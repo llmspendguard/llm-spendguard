@@ -266,9 +266,8 @@ def _lane_activity(since=None):
     read; {} on any error or on an older db written before the executor column existed (guarded, never raises)."""
     since = since or _windows()[2]
     try:
-        import sqlite3
         import contextlib as _cl
-        with _cl.closing(sqlite3.connect(config.db_path())) as c:
+        with _cl.closing(config.open_ledger_connection(config.db_path(), tune=False)) as c:
             cols = {r[1] for r in c.execute("PRAGMA table_info(calls)").fetchall()}
             if "executor" not in cols:               # pre-migration db: no lane column to group on
                 return {}
@@ -340,13 +339,12 @@ def _truncated_lines():
     because it sits inside a legitimate-looking total."""
     try:
         from . import config
-        import sqlite3
         # CLOSED ON EVERY PATH. This connection leaked on the success path AND the exception path, and the
         # receipt runs on every turn — so a long session accumulated open handles against the ledger it is
         # reading. contextlib.closing works on a raw connection; `with sqlite3.connect(...)` would only
         # manage the TRANSACTION and still leave the handle open.
         import contextlib as _cl
-        with _cl.closing(sqlite3.connect(config.db_path())) as c:
+        with _cl.closing(config.open_ledger_connection(config.db_path(), tune=False)) as c:
             return _truncation_rows(c)
     except Exception:
         return []

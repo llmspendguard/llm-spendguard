@@ -74,7 +74,6 @@ def audit_metered_cost_vs_tokens(since_days=7):
     ITSELF FAILED — a distinct, honest UNKNOWN that callers must NOT render as clean (a missing column or locked db
     is not 'no findings'). Read-only; own short-lived connection."""
     import contextlib
-    import sqlite3
     try:
         since = f"-{int(since_days)} days"
         sql = ("SELECT model, date(ts) d, kind, COUNT(*) n, SUM(COALESCE(cost,0)) c, "
@@ -82,7 +81,7 @@ def audit_metered_cost_vs_tokens(since_days=7):
                "WHERE datetime(ts) >= datetime('now',?) AND kind IN ('realtime','batch') "
                "AND cost IS NOT NULL AND suspect IS NULL "
                "GROUP BY model, date(ts), kind")
-        with contextlib.closing(sqlite3.connect(config.db_path())) as c:
+        with contextlib.closing(config.open_ledger_connection(config.db_path(), tune=False)) as c:
             rows = c.execute(sql, (since,)).fetchall()
     except Exception as e:
         return {"ok": False, "error": str(e)[:200], "findings": [], "unpriced": 0, "checked": 0}

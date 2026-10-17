@@ -20,7 +20,7 @@ SAFETY (this writes the money-of-record, so every property is deliberate):
   • suspect rows (part 3a — impossible per-call out_tok) are EXCLUDED from calls_billed.
 No admin key, no provider call — local ledger only.
 """
-from . import budget
+from . import budget, config
 
 _SOURCE = "reconcile-calls"
 
@@ -55,7 +55,7 @@ def recording_gaps(intent_like=None, min_usd=0.05):
     a re-run is idempotent. Read-only. Only usage-backed calls (in+out tokens > 0) qualify — a $ with no token record
     is not provider-usage-derived and must not be booked as basis='billed'."""
     import sqlite3
-    con = sqlite3.connect(f"file:{_ledger_path()}?mode=ro", uri=True)
+    con = config.open_ledger_connection(f"file:{_ledger_path()}?mode=ro", uri=True, tune=False)
     con.row_factory = sqlite3.Row
     # A missing spend_events table is not an error: it is the STRONGEST gap — a money ledger that was never written
     # (a fresh install, an isolated/CI home, or a fully non-gated context) means every billed `calls` row is

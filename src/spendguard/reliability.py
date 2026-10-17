@@ -285,9 +285,8 @@ def lane_fallback_spend(since=None):
     was down lives in each row's outcome/provider_error and in lane_health; this answers only "how much did it cost."
     `since` is an inclusive ISO-timestamp lower bound on ts (e.g. the week's start). Returns
     [{lane, n_calls, metered_usd}]; [] on any error or a ledger not yet carrying the column. $0, read-only."""
-    import sqlite3
     try:
-        con = sqlite3.connect(config.db_path())
+        con = config.open_ledger_connection(config.db_path(), tune=False)
         q = ("SELECT fell_from, COUNT(*), COALESCE(SUM(cost), 0) FROM calls "
              "WHERE fell_from IS NOT NULL AND fell_from != ''")
         args = []

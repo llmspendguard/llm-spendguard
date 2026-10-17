@@ -10,7 +10,7 @@ That powers cost-per-GOOD-result per intent (`spendguard calls`) and, later, an 
 Shares the SQLite db with budget (config.db_path()), table `calls`. RLock — reentrant (record/query
 hold it and call _calls_db() which re-acquires).
 """
-import os, sqlite3, datetime, threading, hashlib, inspect, contextlib, uuid
+import os, datetime, threading, hashlib, inspect, contextlib, uuid
 from typing import Optional
 
 from . import config
@@ -175,7 +175,7 @@ def recorded_intents(min_calls=1, limit=200):
     """Distinct job-type intents in the ledger with >= min_calls recorded calls, most-used first — the known label
     set an untagged prompt can be classified against (best_value's intent inference). $0, read-only; [] on any error."""
     try:
-        con = sqlite3.connect(config.db_path())
+        con = config.open_ledger_connection(config.db_path(), tune=False)
         rows = con.execute(
             "SELECT intent, COUNT(*) c FROM calls WHERE intent IS NOT NULL AND intent != '' "
             "GROUP BY intent HAVING c >= ? ORDER BY c DESC LIMIT ?", (int(min_calls), int(limit))).fetchall()

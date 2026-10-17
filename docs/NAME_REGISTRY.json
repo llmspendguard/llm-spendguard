@@ -2,6 +2,11 @@
   "_comment": "Every bare function name shared by more than one definition in src/spendguard, with the verdict a model reached by reading the BODIES (scripts/probe/review_axes.py name). PROTOCOL = intentional polymorphism, correct as-is. DUPLICATION = one job, many copies; merge. COLLISION = different jobs wearing one name; rename. This file is a BASELINE, not an approval: tests/test_names_stay_unique.py fails on any name NOT listed here, so new collisions must be judged before they land. Shrinking this file is the goal.",
   "generated_by": "scripts/probe/review_axes.py name --run",
   "names": {
+    "close": {
+      "n": 2,
+      "verdict": "PROTOCOL",
+      "why": "Reviewed both bodies: _CountedLedgerConnection.close overrides sqlite3.Connection.close to release its owned resource and accounting; StormCoalescer.close releases its owned worker resources. Both implement the standard idempotent resource-close lifecycle protocol; SQLite callers require the inherited method name. [Adjudicated by Codex from complete bodies, ledger connection Part B.]"
+    },
     "_mcp_disable_flags": {
       "n": 2,
       "verdict": "PROTOCOL",

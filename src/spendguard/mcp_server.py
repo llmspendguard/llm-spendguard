@@ -306,9 +306,8 @@ def _tool_vision(args):
 # ── Claude Code spend + compaction tools (read-only, $0). spendguard's own functions PRINT human text, which would
 #    corrupt JSON-RPC on stdout — so any handler that calls one wraps it in redirect_stdout(). ─────────────────────
 def _cc_db():
-    import sqlite3
     from . import config
-    return sqlite3.connect(config.db_path())
+    return config.open_ledger_connection(config.db_path(), tune=False)
 
 
 def _cc_titles():

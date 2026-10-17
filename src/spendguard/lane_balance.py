@@ -48,8 +48,7 @@ def _recent_calls_by_lane(hours=24):
     every overflow onto the cheapest-$ lane. Best-effort → {} on any error (the caller then falls back to the
     $-value order, never breaks)."""
     try:
-        import sqlite3
-        con = sqlite3.connect(config.db_path())
+        con = config.open_ledger_connection(config.db_path(), tune=False)
         rows = con.execute("SELECT executor, COUNT(*) FROM calls "
                            # executor='api' is metered, NOT a subscription lane — keep it out of the per-lane count.
                            "WHERE executor IS NOT NULL AND executor NOT IN ('', 'api') "
@@ -1416,7 +1415,7 @@ def bandit_list_coverage():
     import sqlite3
     seen, read_ok = [], True
     try:
-        con = sqlite3.connect(config.db_path(), timeout=10)
+        con = config.open_ledger_connection(config.db_path(), timeout=10, tune=False)
         seen = [r[0] for r in con.execute(
             "SELECT DISTINCT intent FROM calls WHERE intent IS NOT NULL AND intent != ''").fetchall()]
         con.close()

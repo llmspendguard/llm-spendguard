@@ -22,7 +22,6 @@ from __future__ import annotations
 import contextlib
 import datetime as _dt
 import json
-import sqlite3
 import time
 
 from . import config
@@ -56,7 +55,7 @@ def _subscription_rows(since: str, valued: set):
         sql = ("SELECT executor, ts, provider, model, in_tok, out_tok, project FROM calls "
                f"WHERE kind='subscription' AND executor IN ({qmarks}) AND ts >= ?")
         params = (*sorted(valued), since)
-        with contextlib.closing(sqlite3.connect(config.db_path())) as c:
+        with contextlib.closing(config.open_ledger_connection(config.db_path(), tune=False)) as c:
             return c.execute(sql, params).fetchall()
     except Exception:
         return []

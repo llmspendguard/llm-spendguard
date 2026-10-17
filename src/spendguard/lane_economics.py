@@ -56,8 +56,7 @@ def _cum_tokens_by_executor():
     between two samples of this within one window, so an all-time baseline is fine (it cancels). Best-effort → {} on
     any error (the caller then simply records no fresh sample; it never breaks the headroom refresh)."""
     try:
-        import sqlite3
-        con = sqlite3.connect(config.db_path())
+        con = config.open_ledger_connection(config.db_path(), tune=False)
         rows = con.execute(
             "SELECT executor, SUM(COALESCE(in_tok,0)+COALESCE(out_tok,0)) FROM calls "
             # executor='api' is metered, NOT a subscription lane — exclude it from the per-lane rollup.
@@ -375,8 +374,7 @@ def _prompts_consumed(lane, window_days):
     """Count of prompts SPENDGUARD sent to `lane` in the trailing window_days (one call = one prompt). This is a LOWER
     BOUND on true quota use — the user's direct coding on the same plan is invisible here. Best-effort → 0 on error."""
     try:
-        import sqlite3
-        con = sqlite3.connect(config.db_path())
+        con = config.open_ledger_connection(config.db_path(), tune=False)
         n = con.execute("SELECT COUNT(*) FROM calls WHERE executor = ? AND ts >= datetime('now', ?)",
                         (lane, f"-{float(window_days)} days")).fetchone()[0]
         con.close()
@@ -389,8 +387,7 @@ def _tokens_per_prompt(lane):
     """Measured mean (in+out) tokens per prompt for this lane's calls, or None if it has run none. Reflects the SIZE of
     the prompts spendguard sent — which is exactly the number that turns a $/prompt into a $/token."""
     try:
-        import sqlite3
-        con = sqlite3.connect(config.db_path())
+        con = config.open_ledger_connection(config.db_path(), tune=False)
         n, t = con.execute("SELECT COUNT(*), SUM(COALESCE(in_tok,0)+COALESCE(out_tok,0)) FROM calls "
                           "WHERE executor = ?", (lane,)).fetchone()
         con.close()
@@ -449,8 +446,7 @@ def _used_split(lane):
     cross-check prices the SAME shape of traffic it actually served. (0.5, 0.5) when nothing is recorded yet (a
     neutral split, never a fabricated skew)."""
     try:
-        import sqlite3
-        con = sqlite3.connect(config.db_path())
+        con = config.open_ledger_connection(config.db_path(), tune=False)
         i, o = con.execute("SELECT SUM(COALESCE(in_tok,0)), SUM(COALESCE(out_tok,0)) FROM calls "
                            "WHERE executor = ?", (lane,)).fetchone()
         con.close()

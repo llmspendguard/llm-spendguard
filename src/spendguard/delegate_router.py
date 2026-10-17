@@ -7,7 +7,6 @@ code contains no keyword router. Provider/model choices are derived from advisor
 import importlib
 import json
 import os
-import sqlite3
 
 from . import config, guard, lane_balance, lane_registry, pricing, provider_tokens
 
@@ -176,7 +175,7 @@ def _estimated_tokens(task, files, provider, model, intent):
 
 def _measured_claude_overage_ratio():
     """Invoice overage $ / Claude plan est-value in the same invoiced months; None means insufficient evidence."""
-    con = sqlite3.connect(config.db_path())
+    con = config.open_ledger_connection(config.db_path(), tune=False)
     try:
         invoice_rows = con.execute(
             "SELECT substr(occurred_at,1,7), SUM(CAST(realtime_usd AS REAL)) FROM spend_events "

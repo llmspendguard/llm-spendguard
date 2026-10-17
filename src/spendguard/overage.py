@@ -3,7 +3,6 @@ import contextlib
 import io
 import json
 import os
-import sqlite3
 import threading
 import time
 
@@ -64,7 +63,7 @@ def _compute_overage_status():
     with contextlib.redirect_stdout(io.StringIO()):
         windows, _anchor = claudecode._overage_windows(claudecode._overage_events())
     now = time.time()
-    con = sqlite3.connect(config.db_path())
+    con = config.open_ledger_connection(config.db_path(), tune=False)
     try:
         has_events = con.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='spend_events'").fetchone()

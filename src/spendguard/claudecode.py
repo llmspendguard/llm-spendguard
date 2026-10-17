@@ -463,13 +463,12 @@ def reconcile_billing_state(dry=False):
     Boundaries OBSERVED: B = seven_day cap-hit; the weekly reset grid = the provider's `resetsAt` + 7d. Plan-covered
     est-value = total est_chat − overage (est-value is subscription-windows-only). The two axes are NEVER summed.
     Idempotent (delete+rebook). Pure parse + arithmetic, $0."""
-    import sqlite3
     import datetime as _dt
     from collections import Counter
     from . import budget
     ev = _overage_events()
     windows, anchor = _overage_windows(ev)
-    con = sqlite3.connect(config.db_path())
+    con = config.open_ledger_connection(config.db_path(), tune=False)
     try:
         rows = con.execute("SELECT occurred_at, conv_id, model, est_chat_usd FROM spend_events "
                            "WHERE source='claude-code' AND est_chat_usd IS NOT NULL").fetchall()
@@ -646,8 +645,7 @@ def overflow_by_conversation():
     """{conv_id: overage paid $ (UNRECONCILED upper bound)} from the source='claude-code-overflow' rows — the turns
     that fell inside an observed overage window [weekly-cap hit → reset], booked at their full est-value. Read-only;
     empty until `claude-code overflow` has run (and empty when no overage window was observed)."""
-    import sqlite3
-    con = sqlite3.connect(config.db_path())
+    con = config.open_ledger_connection(config.db_path(), tune=False)
     try:
         rows = con.execute("SELECT conv_id, SUM(CAST(realtime_usd AS REAL)) FROM spend_events "
                            "WHERE source='claude-code-overflow' GROUP BY conv_id").fetchall()
@@ -751,8 +749,7 @@ def attribute_overage(top=12):
     observed overage window that month, PROPORTIONAL to their observable overage est-value. The invoice gives the
     TOTAL truth per month; the observable window detector gives the per-conversation SHAPE. Months with real overage
     but no observed window can't be attributed (surfaced, not hidden). Read-only, $0."""
-    import sqlite3
-    con = sqlite3.connect(config.db_path())
+    con = config.open_ledger_connection(config.db_path(), tune=False)
     try:
         real = con.execute("SELECT substr(occurred_at,1,7) mo, SUM(CAST(realtime_usd AS REAL)) FROM spend_events "
                            "WHERE source='anthropic-invoice' AND intent LIKE 'anthropic-invoice:cc-overage%' "
@@ -788,7 +785,7 @@ def attribute_overage(top=12):
     fb_months = [mo for mo in real_by_month if real_by_month[mo] > 0 and obs_month.get(mo, 0.0) <= 0]
     fb_total = 0.0
     if fb_months:
-        con2 = sqlite3.connect(config.db_path())
+        con2 = config.open_ledger_connection(config.db_path(), tune=False)
         try:
             allrows = con2.execute("SELECT substr(occurred_at,1,7) mo, conv_id, SUM(CAST(est_chat_usd AS REAL)) "
                                    "FROM spend_events WHERE source='claude-code' AND est_chat_usd IS NOT NULL "
@@ -820,14 +817,13 @@ def attribute_overage(top=12):
 def _cc_conv_rows(min_day=None):
     """{conv_id: [(occurred_at, model, in_tok, cache_read, cache_write), …] ordered by ts} from the claude-code
     est-value rows. One focused SELECT; read-only. context per turn = in_tok + cache_read + cache_write."""
-    import sqlite3
     q = ("SELECT conv_id, occurred_at, model, COALESCE(in_tok,0), COALESCE(cache_read_tok,0), "
          "COALESCE(cache_write_tok,0) FROM spend_events WHERE source='claude-code'")
     args = []
     if min_day:
         q += " AND occurred_at >= ?"; args.append(min_day)
     q += " ORDER BY conv_id, occurred_at"
-    con = sqlite3.connect(config.db_path())
+    con = config.open_ledger_connection(config.db_path(), tune=False)
     try:
         rows = con.execute(q, args).fetchall()
     finally:
@@ -1208,8 +1204,7 @@ def conversations_cmd(top=15):
     """`claude-code conversations` — the unified per-conversation view: top conversations by est-value, each labeled by
     its human SIDEBAR TITLE, with turns, current max re-read context, and (when reconciled) the REAL $ that overflowed
     the weekly cap. The est-value and the real-overflow axes are shown SEPARATELY, never summed."""
-    import sqlite3
-    con = sqlite3.connect(config.db_path())
+    con = config.open_ledger_connection(config.db_path(), tune=False)
     try:
         rows = con.execute(
             "SELECT conv_id, ROUND(SUM(CAST(est_chat_usd AS REAL)),2), COUNT(*), "

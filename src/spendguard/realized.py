@@ -36,7 +36,7 @@ def measure(intent=None, min_each=MIN_EACH):
     # adoption point per intent = the EARLIEST non-refuted insight ts. insights_full() doesn't expose ts,
     # so read it straight from the insights table (same sqlite as the rest of the learning layer).
     adopted = {}
-    lcon = sqlite3.connect(config.db_path(), timeout=10)
+    lcon = config.open_ledger_connection(config.db_path(), timeout=10, tune=False)
     try:
         q = ("SELECT intent, MIN(ts) FROM insights "
              "WHERE intent IS NOT NULL AND (status IS NULL OR status != 'refuted') ")
@@ -53,7 +53,7 @@ def measure(intent=None, min_each=MIN_EACH):
 
     if not adopted:
         return []
-    con = sqlite3.connect(config.db_path(), timeout=10)
+    con = config.open_ledger_connection(config.db_path(), timeout=10, tune=False)
     try:
         rows = []
         for it, ts in sorted(adopted.items()):

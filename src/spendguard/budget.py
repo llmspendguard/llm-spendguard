@@ -5,7 +5,7 @@ spend across ALL processes before allowing more. Default `backend = memory` keep
 real-time cap only (this module is then never touched). Per-call SQLite I/O is fine for moderate
 real-time volume; very high-volume loops should stay on the in-process cap.
 """
-import contextlib, sqlite3, datetime, threading
+import contextlib, datetime, threading
 from . import config
 
 _conn = None
@@ -22,8 +22,7 @@ def _ledger_db():
     if _conn is None:
         with _lock:
             if _conn is None:
-                c = sqlite3.connect(config.db_path(), timeout=10, check_same_thread=False)
-                config.tune_ledger_connection(c)     # WAL + synchronous=NORMAL + the shared ledger PRAGMA posture
+                c = config.open_ledger_connection(timeout=config.LEDGER_WRITE_TIMEOUT_S)
                 c.commit()
                 _conn = c
     return _conn

@@ -308,13 +308,16 @@ class SpendLedger:
 
     def __init__(self, db_path=None):
         self.db_path = db_path or config.db_path()
-        self._conn = sqlite3.connect(self.db_path, timeout=10, check_same_thread=False)
-        config.tune_ledger_connection(self._conn)    # WAL + synchronous=NORMAL + the shared ledger PRAGMA posture (the money-of-record writes)
+        self._conn = config.open_ledger_connection(self.db_path, timeout=config.LEDGER_WRITE_TIMEOUT_S)
         self._conn.row_factory = sqlite3.Row
         self._conn.create_aggregate("dec_sum", 1, _DecSum)   # exact decimal SUM for the TEXT money columns
         self._defer = False                              # bulk(): defer per-row commits (still audits every row)
         self._total_memo = None                          # (freshness_token, decimal-str) for running_llm_total_dec — see below
-        self._cols = self._ensure_schema()
+        try:
+            self._cols = self._ensure_schema()
+        except BaseException:
+            self._conn.close()
+            raise
 
     @contextlib.contextmanager
     def bulk(self):
@@ -339,6 +342,11 @@ class SpendLedger:
         self._conn.commit()
 
     def _ensure_schema(self):
+        return config.ensure_ledger_schema(
+            self._conn,
+            lambda c: self._initialize_spend_schema())
+
+    def _initialize_spend_schema(self):
         for ddl in (_DDL_EVENTS, _DDL_AUDIT, _DDL_LOCKS):
             self._conn.execute(ddl)
         # Forward-only additive migration: CREATE TABLE IF NOT EXISTS leaves an existing table's columns as
@@ -348,6 +356,7 @@ class SpendLedger:
         for col, decl in _ADDITIVE_COLUMNS:
             if col not in have:
                 self._conn.execute(f"ALTER TABLE spend_events ADD COLUMN {col} {decl}")
+                have.add(col)
         # Secondary indexes on spend_events. A NAME check is not enough here: the charges→spend_events cutover
         # left a vestigial `spend_events_precutover` table whose indexes still hold the canonical `idx_se_*`
         # NAMES. `CREATE INDEX IF NOT EXISTS idx_se_day …` keys off the index name across the WHOLE schema, so
@@ -367,7 +376,7 @@ class SpendLedger:
                 self._conn.execute(f"CREATE INDEX IF NOT EXISTS idx_spendevents_{ix} ON spend_events({ix})")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_event ON spend_audit(event_id)")
         self._conn.commit()
-        return [r[1] for r in self._conn.execute("PRAGMA table_info(spend_events)")]
+        return tuple(have)
 
     @staticmethod
     def _evidence_id(ev):
