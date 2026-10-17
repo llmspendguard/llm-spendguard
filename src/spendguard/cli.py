@@ -190,6 +190,9 @@ def _dispatch(argv=None):
     if cmd in ("route-cost", "route_cost"):           # $0: TRUE-cost batch-vs-lane-vs-combo split for an intent at volume N
         from . import route_economics
         return route_economics.cmd(rest)
+    if cmd in ("route-realized", "route_realized"):   # $0: realized history from calls, not a routing projection
+        from . import route_realized
+        return route_realized.cmd(rest)
     if cmd in ("route-horizon", "route_horizon"):     # $0 (C): horizon plan for a job SET — urgency + the shared lane budget
         from . import route_horizon
         return route_horizon.cmd(rest)

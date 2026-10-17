@@ -148,9 +148,13 @@ def ranked(intent=None, as_of=None, by_effort=False):
                        good_rate=cheapest_tok["good_rate"], per_good=cheapest_tok["per_good"],
                        pick=pick, pick_good_rate=(pick_row or {}).get("good_rate"),
                        pick_per_good=(pick_row or {}).get("per_good"))
-    return dict(scope=(f"intent '{intent}'" if intent else "all intents"), as_of=as_of, labeled=labeled_any,
-                metric=("$/good-result" if labeled_any else "$/M output (quality not labeled yet)"),
-                pick=pick, cheapest_per_token=cpt, models=models)
+    result = dict(scope=(f"intent '{intent}'" if intent else "all intents"), as_of=as_of, labeled=labeled_any,
+                  metric=("$/good-result" if labeled_any else "$/M output (quality not labeled yet)"),
+                  pick=pick, cheapest_per_token=cpt, models=models)
+    if intent:
+        from . import route_realized
+        result["routing"] = route_realized.routing_summary(intent, as_of=as_of)
+    return result
 
 
 def advise(intent=None, plan=None, as_of=None):

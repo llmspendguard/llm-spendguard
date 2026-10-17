@@ -56,7 +56,11 @@ def _tool_advise(args):
             if r["labeled"] and pick["per_good"] is not None and best["per_good"]:
                 caveats.append(f"your plan {pick['id']}: {(pick['per_good']-best['per_good'])/best['per_good']*100:.0f}% "
                                f"costlier per good result than {best['id']}.")
-    return {"scope": r["scope"], "ranked_by": r["metric"], "pick": r["pick"], "models": r["models"], "caveats": caveats}
+    result = {"scope": r["scope"], "ranked_by": r["metric"], "pick": r["pick"],
+              "models": r["models"], "caveats": caveats}
+    if args.get("intent"):
+        result["routing"] = r["routing"]
+    return result
 
 
 def _catalogue():
@@ -529,6 +533,13 @@ def _tool_route_cost(args):
                                         lane=args.get("lane"), batch_model=args.get("batch_model"))
 
 
+def _tool_route_realized(args):
+    """REALIZED routing history from the calls ledger; read-only and $0, not a projection."""
+    from . import route_realized
+    return route_realized.route_realized_report(args["intent"], since=args.get("since"),
+                                                  as_of=args.get("as_of"), limit=args.get("limit", 20))
+
+
 def _tool_route_horizon(args):
     """HORIZON plan (item C) for a whole job SET — allocate groups across lane / batch / metered-realtime over the
     plan's reset-window horizon, honouring each group's URGENCY and the SHARED lane budget. Wraps
@@ -635,6 +646,17 @@ _TOOLS = {
             "batch_model": {"type": "string", "description": "metered model for the batch leg (default: config advisor.batch_model)"}},
          "required": ["intent", "n"], "additionalProperties": False},
         _tool_route_cost),
+    "spendguard_route_realized": (
+        "REALIZED routing history from the calls ledger for an intent: $0 subscription lanes vs metered API, "
+        "billed cost, served-model drift, falloff reasons, and recent samples. $0 and read-only; unlike route_cost "
+        "and route_horizon, this reports actual stored history rather than projecting a hypothetical job.",
+        {"type": "object", "properties": {
+            "intent": {"type": "string", "description": "the exact calls.intent label"},
+            "since": {"type": "string", "description": "inclusive lower ts bound (ISO date/timestamp string)"},
+            "as_of": {"type": "string", "description": "inclusive upper ts bound (ISO date/timestamp string)"},
+            "limit": {"type": "integer", "description": "maximum recent sample rows (default 20)"}},
+         "required": ["intent"], "additionalProperties": False},
+        _tool_route_realized),
     "spendguard_route_horizon": (
         "HORIZON plan (item C) for a whole job SET: given groups [{intent, n, urgency?}], allocate each across the "
         "subscription LANE (~free/waste capacity that would expire at reset reclaimed FIRST), the metered BATCH API, "
@@ -880,6 +902,8 @@ def handle(req):
                              "• spendguard_savings() — the THIRD axis: what spendguard SAVED (certain measured + "
                              "counterfactual from best-value/advisor swaps), by source. Kept SEPARATE from real-$ and "
                              "est-value, never summed. $0.\n"
+                             "• spendguard_route_realized(intent, since?, as_of?, limit?) — REALIZED calls-ledger "
+                             "routing history; $0/read-only, distinct from route_cost/route_horizon projections.\n"
                              "• spendguard_health(run?, timeout_s?) — BOUNDED reachability of every $0 subscription "
                              "lane + every metered provider; one hung endpoint fails fast (timeout_s), never wedges. "
                              "Lanes $0, metered pings ~pennies.\n"

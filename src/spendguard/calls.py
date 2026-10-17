@@ -832,6 +832,21 @@ def metered_realtime_by_intent(since):
     return out
 
 
+def _route_realized_fetchall(sql, args=()):
+    """Run one read-only realized-routing query on the shared calls connection.
+
+    Kept here so route_realized never opens a second SQLite connection: every calls-table
+    read uses the module lock, pooled connection, and the standard rollback-on-error path.
+    ``sql`` is package-owned static SQL; all report inputs are bound through ``args``.
+    """
+    try:
+        with _lock:
+            return _calls_db().execute(sql, tuple(args)).fetchall()
+    except Exception:
+        config.rollback_ledger_conn("calls")
+        raise
+
+
 def tested_recently(intent, model=None, days=14, kinds=("realtime",)):
     """True iff there's a recent SMALL test for this intent — a realtime call (a batch-1 / PROMPT-CHECK on a
     handful of items) within `days`. The signal the batch-1 gate uses to tell "you tested this prompt shape before
