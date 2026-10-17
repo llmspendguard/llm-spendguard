@@ -19,7 +19,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: System :: Monitoring",
 ]
-dependencies = ['tomli>=1.1.0 ; python_version < "3.11"']   # stdlib tomllib backport for supported Python 3.9/3.10
+dependencies = ['tomli>=1.1.0 ; python_version < "3.11"', 'psutil']
 # openai / anthropic / tiktoken are OPTIONAL extras ([openai]/[anthropic]/[all]). With no SDK present
 #                     the PASSIVE auto-gate simply no-ops (there is nothing to patch), but spendguard.require() FAILS
 #                     CLOSED (raises SpendGateRefused) — a require()-guarded script never spends ungated. A consumer that

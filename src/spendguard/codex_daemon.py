@@ -31,8 +31,9 @@ IDLE_TIMEOUT_S = 600              # reclaim the persistent subprocess after ten 
 
 def _mcp_disable_flags():
     """Disable MCP orchestration for this headless app-server process — the ONE definition lives in codex_exec (so the
-    cold `codex exec` path and this warm daemon disable MCP IDENTICALLY and can never drift; the cold path missing it
-    was the orphaned-MCP-server leak). Codex 0.160.1 gates configured servers on the global ``orchestrator.mcp.enabled``
+    cold read-only `codex exec` path and this warm daemon share the setting to avoid orphaned MCP servers).
+    MCP-tool use in delegation is available only on the cold workspace-write path; exec's --approve-for-me
+    does not apply to this app-server. Codex 0.160.1 gates configured servers on ``orchestrator.mcp.enabled``
     key; the global gate is used, not per-entry overrides (those can break the initialize handshake)."""
     from . import codex_exec
     return codex_exec._mcp_disable_flags()
