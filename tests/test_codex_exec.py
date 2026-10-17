@@ -13,15 +13,19 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 
 import json
 import types
+from functools import partial
 import shutil     # patch shutil.which directly — the shared module config.resolve_cli() uses (codex_exec no
 #                  longer imports shutil; it delegates the PATH lookup to config.resolve_cli)
 from spendguard import codex_exec as ce
 
 fails = []
-def ck(name, cond):
+def codex_exec_assert_check(failures, name, cond):
     print(("  [OK] " if cond else "  [FAIL] ") + name)
     if not cond:
-        fails.append(name)
+        failures.append(name)
+
+
+ck = partial(codex_exec_assert_check, fails)
 
 
 KEY_ENV = "OPENAI" + "_API_KEY"
@@ -29,8 +33,8 @@ seen = {}
 ANSWER = "META JUDGMENT: keep"
 
 
-def fake_run(cmd, capture_output=None, text=None, timeout=None, env=None, stdin=None, cwd=None):
-    seen["cmd"], seen["env"] = cmd, env
+def codex_exec_record_run(observations, cmd, capture_output=None, text=None, timeout=None, env=None, stdin=None, cwd=None):
+    observations["cmd"], observations["env"] = cmd, env
     out_file = cmd[cmd.index("--output-last-message") + 1]
     open(out_file, "w").write(ANSWER)
     events = [
@@ -42,8 +46,10 @@ def fake_run(cmd, capture_output=None, text=None, timeout=None, env=None, stdin=
     return types.SimpleNamespace(returncode=0, stdout="\n".join(json.dumps(e) for e in events), stderr="")
 
 
+fake_run = partial(codex_exec_record_run, seen)
 shutil.which = lambda name: "/usr/local/bin/codex"
 ce.subprocess.run = fake_run
+ce._run_cold_codex_with_reaper = lambda cmd, **kw: fake_run(cmd, **kw)
 os.environ[KEY_ENV] = "sk-test-not-real"
 os.environ["SPENDGUARD_CODEX_DAEMON"] = "0"   # this file exercises the cold exec contract; daemon tests cover warm
 
@@ -76,10 +82,11 @@ ck("existing callers retain explicit -s read-only without automatic approval",
 ck("unknown sandbox is refused before execution", "unsupported codex sandbox" in ce.run_prompt("x", sandbox="danger-full-access")["error"])
 
 print("-- degrade paths: every mismatch is an {error}, never an exception --")
-def run_empty(cmd, **kw):
-    seen["cmd"] = cmd
+def codex_exec_record_empty(observations, cmd, **kw):
+    observations["cmd"] = cmd
     open(cmd[cmd.index("--output-last-message") + 1], "w").write("")
     return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+run_empty = partial(codex_exec_record_empty, seen)
 ce.subprocess.run = run_empty
 ck("empty final message → error (no silent empty answer)",
    ce.run_prompt("x")["error"] == "codex produced no final message")

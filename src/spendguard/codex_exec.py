@@ -31,6 +31,146 @@ import shutil
 import subprocess
 import tempfile
 import time
+import logging
+import threading
+
+CODEX_MCP_SCAN_INTERVAL_S = 0.05
+CODEX_MCP_EXIT_WAIT_S = 1.0
+CODEX_ORPHAN_PARENT_PID = 1
+CODEX_CONFIG_FILENAME = "config.toml"
+CODEX_DEFAULT_HOME = "~/.codex"
+CODEX_MCP_DEFAULT_URL_PORTS = {"http": 80, "https": 443}
+
+
+def _codex_stdio_reap_policy(env, cwd=None):
+    """Read transport boundaries from the same config home as the child. Fail closed."""
+    try:
+        import tomllib
+    except ImportError:
+        import tomli as tomllib
+    from urllib.parse import urlparse
+    home = env.get("CODEX_HOME") or os.path.expanduser(CODEX_DEFAULT_HOME)
+    with open(os.path.join(home, CODEX_CONFIG_FILENAME), "rb") as stream:
+        servers = tomllib.load(stream).get("mcp_servers", {})
+    signatures, ports = [], set()
+    launch_cwd = cwd or os.getcwd()
+    search_path = os.pathsep.join(os.path.join(launch_cwd, entry) if not os.path.isabs(entry) else entry
+                                 for entry in env.get("PATH", os.defpath).split(os.pathsep))
+    for server in servers.values():
+        if server.get("url"):
+            url = urlparse(server["url"])
+            ports.add(url.port or CODEX_MCP_DEFAULT_URL_PORTS[url.scheme])
+        elif server.get("command"):
+            command = server["command"]
+            if os.path.dirname(command) and not os.path.isabs(command):
+                command = os.path.join(launch_cwd, command)
+            executable = shutil.which(command, path=search_path) or command
+            signatures.append((os.path.realpath(executable), tuple(server.get("args", []))))
+    return signatures, ports
+
+
+def _captured_codex_stdio_is_reapable(proc, birth, policy):
+    """Mechanical identity, exact configured transport signature, sockets and parent guard."""
+    import psutil
+    signatures, ports = policy
+    argv = proc.cmdline()
+    if proc.create_time() != birth or not argv:
+        return False
+    if not any(os.path.realpath(argv[0]) == exe and tuple(argv[1:]) == args
+               for exe, args in signatures):
+        return False
+    sockets = proc.net_connections(kind="inet")
+    if any(conn.status == psutil.CONN_LISTEN or
+           (conn.laddr and conn.laddr.port in ports) for conn in sockets):
+        return False
+    return proc.ppid() == CODEX_ORPHAN_PARENT_PID and proc.create_time() == birth
+
+
+def _reap_captured_codex_stdio(captured, policy):
+    """Only signal identity-checked, captured STDIO descendants now adopted by init.
+
+    A live parent of ANY kind is protected, stronger than checking Codex names.
+    Socket inspection must succeed; all listeners are protected, including URL services.
+    psutil's terminate additionally guards against PID reuse at signal time.
+    """
+    import psutil
+    reaped = 0
+    for pid, birth in captured.items():
+        try:
+            proc = psutil.Process(pid)
+            if not _captured_codex_stdio_is_reapable(proc, birth, policy):
+                continue
+            proc.terminate()
+            try:
+                proc.wait(timeout=CODEX_MCP_EXIT_WAIT_S)
+            except psutil.TimeoutExpired:
+                # A TERM-resistant server still gets EVERY safety check before escalation.
+                if not _captured_codex_stdio_is_reapable(proc, birth, policy):
+                    continue
+                proc.kill()
+                proc.wait(timeout=CODEX_MCP_EXIT_WAIT_S)
+            reaped += 1
+        except psutil.Error:
+            continue
+    logging.getLogger(__name__).info("cold codex MCP cleanup: captured=%d reaped=%d", len(captured), reaped)
+    return reaped
+
+
+def _run_cold_codex_with_reaper(cmd, timeout, env, cwd):
+    """Observe only this Popen's descendants; cleanup cannot alter the run result.
+
+    Polling never guesses attribution: descendants missed before reparenting are
+    deliberately left alone. There is no global signature-based sweep.
+    """
+    import psutil
+    captured = {}
+    stop = threading.Event()
+    logger = logging.getLogger(__name__)
+    try:
+        policy = _codex_stdio_reap_policy(env, cwd=cwd)
+    except Exception:
+        logger.warning("cold codex MCP cleanup: config unavailable; cleanup disabled", exc_info=True)
+        policy = ([], set())
+    with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                          env=env, stdin=subprocess.DEVNULL, cwd=cwd) as child:
+        def _capture_cold_codex_descendants(root):
+            try:
+                while not stop.is_set():
+                    for descendant in root.children(recursive=True):
+                        try:
+                            captured[descendant.pid] = descendant.create_time()
+                        except psutil.Error:
+                            continue
+                    stop.wait(CODEX_MCP_SCAN_INTERVAL_S)
+            except Exception:
+                logger.warning("cold codex MCP descendant capture stopped", exc_info=True)
+
+        tracker = None
+        try:
+            # Construct before communicate can reap the root, preventing PID-reuse attribution.
+            root = psutil.Process(child.pid)
+            tracker = threading.Thread(target=_capture_cold_codex_descendants, args=(root,), daemon=True)
+            tracker.start()
+        except Exception:
+            tracker = None
+            logger.warning("cold codex MCP capture unavailable", exc_info=True)
+        try:
+            stdout, stderr = child.communicate(timeout=timeout)
+            return subprocess.CompletedProcess(cmd, child.returncode, stdout, stderr)
+        except subprocess.TimeoutExpired:
+            child.kill()
+            # Don't drain inherited pipes before cleanup: an orphan may hold stderr open.
+            child.wait()
+            raise
+        finally:
+            try:
+                stop.set()
+                if tracker is not None:
+                    tracker.join()
+                if child.poll() is not None:
+                    _reap_captured_codex_stdio(captured, policy)
+            except Exception:
+                logger.warning("cold codex MCP cleanup failed", exc_info=True)
 
 TIMEOUT_S = 300               # meta prompts are small; a hung CLI must not stall the daily report
 CODEX_AGENTIC_APPROVAL_FLAG = "--approve-for-me"
@@ -213,8 +353,9 @@ def _plugin_disable_flags():
 def _mcp_disable_flags():
     """Disable MCP orchestration for a headless, one-shot `codex exec` — the OTHER half of the cold-start load the
     plugin disable above addresses. Read-only comprehension does not need the user's configured mcp_servers,
-    while workspace-write agentic runs retain them for tools such as symgrep. Every MCP-enabled codex
-    session STARTS all of them and the app-server does NOT reap the set when the session ends — measured 2026-10-11:
+    while workspace-write agentic runs retain them for tools such as symgrep. MCP-enabled codex sessions
+    CONNECT to shared URL services and SPAWN configured STDIO command servers. The app-server does not reap
+    those command children when the session ends — measured 2026-10-11:
     at --workers 4 × ~53s/call a long delegation run abandoned ~12 full 7-server sets/min (~1.5 GB/min, hundreds of
     orphaned procs). Codex 0.160.1 gates configured servers on ONE global key; the global gate is used, NOT per-entry
     `mcp_servers."x".enabled=false` overrides — a config layer can replace a per-entry's required transport fields and
@@ -473,8 +614,11 @@ def _run_prompt_in_cwd(prompt, system=None, model=None, timeout=TIMEOUT_S, reaso
             cmd += ["-m", model.split(":", 1)[-1]]     # forward the requested id; a bad one fails → API fallback
         cmd += ["--", full]      # `--` end-of-options: a prompt/system beginning with '-' is a positional, not a flag
         try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env,
-                               stdin=subprocess.DEVNULL, cwd=cwd)
+            if sandbox == "workspace-write":
+                r = _run_cold_codex_with_reaper(cmd, timeout=timeout, env=env, cwd=cwd)
+            else:
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env,
+                                   stdin=subprocess.DEVNULL, cwd=cwd)
         except subprocess.TimeoutExpired:
             return {"error": f"codex lane timeout ({timeout}s)"}
         except Exception as e:
