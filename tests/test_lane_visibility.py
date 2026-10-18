@@ -89,9 +89,9 @@ by_lane_line = next(line for line in table.splitlines() if line.startswith("Plan
 active_with_calls = set(receipt._lane_activity()) & lane_value.ledger_valued_lanes()
 fails += ck("every active registry lane with in-window ledger calls appears in by-lane value",
             all(lane in by_lane_line for lane in active_with_calls))
-fails += ck("priceable lanes, including codex and claude-code, show ledger value and never silent $0",
-            all(f"{lane} $0.16" in by_lane_line and f"{lane} $0.00" not in by_lane_line
-                for lane in ("gemini", "claude-code", "codex")))
+fails += ck("full-ledger miner values override routed subsets; other lanes retain routed value",
+            all(f"{lane} ${value:.2f}" in by_lane_line and f"{lane} $0.00" not in by_lane_line
+                for lane, value in (("gemini", 0.16), ("claude-code", 10.0), ("codex", 20.0))))
 fails += ck("activity on an unpriceable lane is explicit unknown", "zai-coding unknown" in by_lane_line)
 print(next(line for line in table.splitlines() if line.startswith("Plan value by lane")))
 print("footer before:", footer_before)
