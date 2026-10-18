@@ -2,7 +2,7 @@
 
 WHY. A one-shot `codex exec` COLD-STARTS every call (writable-workspace sandbox + loading all enabled plugins/MCP
 servers) — MEASURED >75s, and intermittently hangs. `codex app-server` pays that setup ONCE at spawn; each request
-is then a warm thread turn. This module holds ONE such server per process and reuses it.
+is then a warm thread turn. The host broker owns a configured pool of these reusable servers.
 
 TRANSPORT + LIFECYCLE is shared with the kimi ACP lane via `warm_stdio_daemon._WarmStdioJsonRpcDaemon` (the sole
 background READER thread that demuxes responses by `id`, the write-lock-only-for-the-write concurrency, the
@@ -15,6 +15,7 @@ warm server a POOL of independent prompts rather than one growing conversation.
 """
 import atexit
 import os
+import threading
 import time
 
 from . import config
@@ -27,6 +28,25 @@ STARTUP_TIMEOUT_S = int(config._cfg_get("advisor", "lane_handshake_timeout_s", 2
 #    config-gated (was 60): a down codex lane blocked 60s/retry → churn + metered fallback; 25s fails fast.
 CALL_TIMEOUT_S = 180              # one warm turn, including setup + streamed completion (the fallback when none given)
 IDLE_TIMEOUT_S = 600              # reclaim the persistent subprocess after ten minutes with no completed/new call
+_POOL_SLOT_KEY = "codex-daemon-workers"
+_CODEX_AUTH_HTTP_STATUSES = (401, 403)
+_CODEX_AUTH_ERROR_CODES = ("unauthorized", "authenticationError", "authentication_error")
+
+
+def _codex_rpc_auth_failure(error):
+    """Parse structured protocol error codes; never infer authentication from prose."""
+    if not isinstance(error, dict):
+        return False
+    if (error.get("httpStatusCode") in _CODEX_AUTH_HTTP_STATUSES
+            or error.get("code") in _CODEX_AUTH_ERROR_CODES
+            or error.get("codexErrorInfo") in _CODEX_AUTH_ERROR_CODES):
+        return True
+    return any(_codex_rpc_auth_failure(value) for value in error.values() if isinstance(value, dict))
+
+
+def _codex_pool_error_result(error, thread, **extra):
+    return {"text": None, "thread": thread, "error": str(error)[:200],
+            "auth_error": _codex_rpc_auth_failure(error), **extra}
 
 
 def _mcp_disable_flags():
@@ -46,6 +66,7 @@ class _CodexDaemon(_WarmStdioJsonRpcDaemon):
     _LANE_LABEL = "codex"
     STARTUP_TIMEOUT_S = STARTUP_TIMEOUT_S     # mirror the module constants for the shared base (handshake / idle timer)
     CALL_TIMEOUT_S = CALL_TIMEOUT_S
+    STARTUP_TIMEOUT_S = STARTUP_TIMEOUT_S
     IDLE_TIMEOUT_S = IDLE_TIMEOUT_S
 
     def __init__(self):
@@ -200,9 +221,10 @@ class _CodexDaemon(_WarmStdioJsonRpcDaemon):
                     else:
                         config.warn_once("[spendguard] codex warm daemon: a warm call exceeded %ds — failing that ONE "
                                          "call to the metered API (the server stays up for the others)" % eff_timeout)
-                    return {"text": None, "thread": thread, "error": f"codex warm call timeout ({eff_timeout:.0f}s)"}
+                    return {"text": None, "thread": thread, "error": f"codex warm call timeout ({eff_timeout:.0f}s)",
+                            "timed_out": True}
                 if msg.get("error"):
-                    return {"text": None, "thread": thread, "error": str(msg["error"])[:200]}
+                    return _codex_pool_error_result(msg["error"], thread)
                 new_thread = ((msg.get("result") or {}).get("thread") or {}).get("id") or thread
 
                 from . import codex_exec
@@ -242,16 +264,16 @@ class _CodexDaemon(_WarmStdioJsonRpcDaemon):
                                 "error": "codex app-server turn failed after restart"}
                     continue
                 if turn_msg is not None and turn_msg.get("error"):
-                    return {"text": None, "thread": new_thread, "error": str(turn_msg["error"])[:200]}
+                    return _codex_pool_error_result(turn_msg["error"], new_thread)
                 if turn_msg is None or completed_turn is None:
                     if recycle_on_timeout:                        # the turn wedged (pipe alive, no completion) → recycle
                         self.shutdown()                           # so the NEXT delegation gets a fresh server, not a stall
                     return {"text": None, "thread": new_thread,
-                            "error": f"codex warm call timeout ({eff_timeout:.0f}s)"}
+                            "error": f"codex warm call timeout ({eff_timeout:.0f}s)", "timed_out": True}
                 status = completed_turn.get("status")
                 if status != "completed":
                     error = completed_turn.get("error") or f"codex turn {status or 'failed'}"
-                    return {"text": None, "thread": new_thread, "error": str(error)[:200], "tool_error": True}
+                    return _codex_pool_error_result(error, new_thread, tool_error=True)
                 text = "".join(turn_waiter["texts"]).strip()
                 return {"text": text or None, "thread": new_thread,
                         "error": None if text else "empty codex reply"}
@@ -261,9 +283,182 @@ class _CodexDaemon(_WarmStdioJsonRpcDaemon):
 
 # ── ONE host-broker facade per process.  Its owner proxies into the existing private-stdio daemon; clients attach
 # over the Unix socket.  The module API remains the singleton's BOUND METHODS (assignment, not duplicate definitions). ──
+class _CodexDaemonPool:
+    """Exclusive worker leases behind the existing host broker and dispatch admission bucket.
+
+    Workers retain sole ownership of spawn, polling and reap. The pool only leases instances and
+    keeps the configured floor warm; no process lifecycle or semaphore implementation lives here.
+    """
+
+    CALL_TIMEOUT_S = CALL_TIMEOUT_S
+    STARTUP_TIMEOUT_S = STARTUP_TIMEOUT_S
+
+    def __init__(self, worker_factory, size=None):
+        from .dispatch import _Bucket
+        settings = config.codex_daemon_pool_settings()
+        self._size = settings["size"] if size is None else int(size)
+        if self._size < 1:
+            raise ValueError("codex daemon pool size must be positive")
+        self._workers = [worker_factory() for _ in range(self._size)]
+        for index, worker in enumerate(self._workers):
+            worker._keep_warm = True
+            home = config.codex_daemon_worker_home(index) if settings["isolate_homes"] else None
+            if home is not None:
+                worker._environment_overrides = {"CODEX_HOME": str(home)}
+        self._slots = _Bucket(_POOL_SLOT_KEY, self._size, rpm=0)
+        self._pool_lock = threading.Condition()
+        self._idle_workers = list(self._workers)
+        self._pool_stopping = threading.Event()
+        self._pool_monitor = None
+        self._pool_recoveries = set()
+
+    def pool_ensure_running(self):
+        # Warm concurrently; the inherited per-instance spawn lock also makes concurrent callers safe.
+        results = [None] * self._size
+
+        def warm_pool_child(index, worker):
+            try:
+                results[index] = worker.ensure_running()
+            except Exception as exc:
+                config.warn_once(f"[spendguard] codex pool startup: {exc}")
+
+        starters = [threading.Thread(target=warm_pool_child, args=(index, worker), daemon=True)
+                    for index, worker in enumerate(self._workers)]
+        for starter in starters:
+            starter.start()
+        for starter in starters:
+            starter.join()
+        with self._pool_lock:
+            if self._pool_monitor is None or not self._pool_monitor.is_alive():
+                self._pool_stopping.clear()
+                self._pool_monitor = threading.Thread(target=self._pool_maintain_warmth, daemon=True)
+                self._pool_monitor.start()
+        return next((result for result in results if result is not None), None)
+
+    def _pool_maintain_warmth(self):
+        interval = config.codex_daemon_pool_settings()["health_interval_s"]
+        while not self._pool_stopping.wait(interval):
+            # Lease through the same bucket: maintenance must never restart a checked-out child.
+            from .dispatch import DispatchTimeout
+            try:
+                self._slots.acquire(0)
+            except DispatchTimeout:
+                continue
+            worker = None
+            try:
+                with self._pool_lock:
+                    if self._idle_workers:
+                        worker = self._idle_workers.pop(0)
+                if worker is not None and not worker.running():
+                    worker.ensure_running()
+                    if self._pool_stopping.is_set():
+                        worker.shutdown()
+            except Exception as exc:
+                config.warn_once(f"[spendguard] codex pool health: {exc}")
+            finally:
+                with self._pool_lock:
+                    if worker is not None:
+                        self._idle_workers.append(worker)
+                        self._pool_lock.notify_all()
+                self._slots.release()
+
+    def _pool_checkin_worker(self, worker):
+        with self._pool_lock:
+            self._idle_workers.append(worker)
+            self._pool_lock.notify_all()
+        self._slots.release()
+
+    def _pool_recover_worker(self, worker):
+        """Keep a failed child's lease until its own lifecycle has reaped and replaced it."""
+        try:
+            worker.shutdown()
+            if not self._pool_stopping.is_set():
+                worker.ensure_running()
+                if self._pool_stopping.is_set():
+                    worker.shutdown()
+        except Exception as exc:
+            config.warn_once(f"[spendguard] codex pool recycle: {exc}")
+        finally:
+            self._pool_checkin_worker(worker)
+            with self._pool_lock:
+                self._pool_recoveries.discard(threading.current_thread())
+
+    def pool_run_warm(self, prompt, **kwargs):
+        from .dispatch import DispatchTimeout
+        kwargs = {"prompt": prompt, **kwargs}
+        deadline_s = kwargs.get("timeout") or self.CALL_TIMEOUT_S
+        if deadline_s <= 0:
+            deadline_s = self.CALL_TIMEOUT_S
+        deadline = time.monotonic() + deadline_s
+        result = None
+        attempted_workers = set()
+        for _ in range(self._size):
+            result = None
+            recycle = retry_auth = False
+            try:
+                self._slots.acquire(max(0, deadline - time.monotonic()))
+            except DispatchTimeout as exc:
+                return {"text": None, "thread": kwargs.get("thread"), "error": str(exc)}
+            with self._pool_lock:
+                available = self._pool_lock.wait_for(
+                    lambda: any(id(candidate) not in attempted_workers for candidate in self._idle_workers),
+                    timeout=max(0, deadline - time.monotonic()))
+                if not available:
+                    self._slots.release()
+                    return {"text": None, "thread": kwargs.get("thread"), "error": "codex pool checkout timeout"}
+                worker = next(candidate for candidate in self._idle_workers
+                              if id(candidate) not in attempted_workers)
+                self._idle_workers.remove(worker)
+                attempted_workers.add(id(worker))
+            try:
+                if self._size > 1 and time.monotonic() >= deadline:
+                    return {"text": None, "thread": kwargs.get("thread"), "error": "codex pool checkout timeout"}
+                call_kwargs = kwargs if self._size == 1 else {
+                    **kwargs, "timeout": max(0, deadline - time.monotonic())}
+                result = worker.run_warm(**call_kwargs)
+                recycle = bool(result.get("error"))
+                retry_auth = bool(result.get("auth_error"))
+            except BaseException:
+                recycle = True
+                raise
+            finally:
+                # Recovery retains this lease, but never delays the response or healthy-child failover.
+                if recycle:
+                    recovery = threading.Thread(target=self._pool_recover_worker, args=(worker,), daemon=True)
+                    with self._pool_lock:
+                        self._pool_recoveries.add(recovery)
+                    try:
+                        recovery.start()
+                    except BaseException:
+                        with self._pool_lock:
+                            self._pool_recoveries.discard(recovery)
+                        self._pool_checkin_worker(worker)
+                        raise
+                else:
+                    self._pool_checkin_worker(worker)
+            if not retry_auth:
+                break
+        if result is not None and ("auth_error" in result or "timed_out" in result):
+            result = {key: value for key, value in result.items() if key not in ("auth_error", "timed_out")}
+        return result
+
+    def pool_running(self):
+        return any(worker.running() for worker in self._workers)
+
+    def pool_shutdown(self):
+        self._pool_stopping.set()
+        for worker in self._workers:
+            worker.shutdown()
+
+    ensure_running = pool_ensure_running
+    run_warm = pool_run_warm
+    running = pool_running
+    shutdown = pool_shutdown
+
+
 from .codex_daemon_broker import _CodexDaemonBroker
 
-_LOCAL_DAEMON = _CodexDaemon()
+_LOCAL_DAEMON = _CodexDaemonPool(_CodexDaemon)
 _DAEMON = _CodexDaemonBroker(_LOCAL_DAEMON)
 run_warm = _DAEMON.broker_run_warm      # existing lane/callers' API (codex_exec.run_prompt → codex_daemon.run_warm)
 ensure_running = _DAEMON.broker_ensure_running

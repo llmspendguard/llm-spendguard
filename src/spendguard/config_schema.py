@@ -347,6 +347,23 @@ SETTINGS = [
               "the weekly window for the agent). Provider-agnostic. A proactively-shed lane that has no ready "
               "alternative KEEPS serving (it is available — shedding is a preference, not exhaustion). Empty = shed only "
               "when actually capped/on overage."),
+    dict(section="advisor", key="codex_daemon_socket_path", store="config.json:advisor.codex_daemon_socket_path",
+         env=None, default=None, kind="str|null", secret=False,
+         desc="Override the single host-wide Codex broker socket path."),
+    dict(section="advisor", key="codex_daemon_pool_size", store="config.json:advisor.codex_daemon_pool_size",
+         env="SPENDGUARD_CODEX_DAEMON_POOL_SIZE", default=3, kind="int", secret=False,
+         desc="Always-warm exclusive Codex workers behind the single host broker; one restores single-child capacity."),
+    dict(section="advisor", key="codex_daemon_pool_isolate_homes",
+         store="config.json:advisor.codex_daemon_pool_isolate_homes",
+         env="SPENDGUARD_CODEX_DAEMON_POOL_ISOLATE_HOMES", default=False, kind="enum:true,false", secret=False,
+         desc="Give each Codex worker a private home with copied auth/config; default shares the existing Codex home."),
+    dict(section="advisor", key="codex_daemon_pool_health_interval_s",
+         store="config.json:advisor.codex_daemon_pool_health_interval_s",
+         env="SPENDGUARD_CODEX_DAEMON_POOL_HEALTH_INTERVAL_S", default=25.0, kind="float", secret=False,
+         desc="Positive interval between poll-only worker health checks and independent restarts."),
+    dict(section="advisor", key="codex_daemon_pool_home_root", store="config.json:advisor.codex_daemon_pool_home_root",
+         env="SPENDGUARD_CODEX_DAEMON_POOL_HOME_ROOT", default=None, kind="str|null", secret=False,
+         desc="Optional root for isolated worker homes; otherwise stored under the spendguard home."),
     dict(section="advisor", key="executor", store="config.json:advisor.executor", env="SPENDGUARD_ADVISOR_EXECUTOR",
          default="api", kind="enum:api,claude-code,codex,zai-coding,pool", secret=False,
          desc="Where spendguard's OWN meta prompts run: api = metered API under caps.meta (default); "

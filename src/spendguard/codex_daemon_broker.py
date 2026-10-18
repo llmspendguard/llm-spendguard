@@ -121,6 +121,7 @@ class _CodexDaemonBroker:
             self._lock_context = lock_context
             self._listener = listener
             self._stopping.clear()
+            self._local.ensure_running()
             threading.Thread(target=self._serve_connections, name="codex-daemon-broker", daemon=True).start()
             return True
 
@@ -163,7 +164,8 @@ class _CodexDaemonBroker:
                 connection.connect(str(_socket_path()))
                 call_timeout = kwargs.get("timeout")
                 connection.settimeout((float(call_timeout) if call_timeout and call_timeout > 0
-                                       else float(self._local.CALL_TIMEOUT_S)) + _RESPONSE_GRACE_S)
+                                       else float(self._local.CALL_TIMEOUT_S)) + _RESPONSE_GRACE_S
+                                      + getattr(self._local, "STARTUP_TIMEOUT_S", 0))
                 with contextlib.closing(connection):
                     _send_frame(connection, {"version": _PROTOCOL_VERSION, "method": "run_warm", "kwargs": kwargs})
                     response = _receive_frame(connection)

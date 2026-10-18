@@ -29,6 +29,19 @@ RT_LOG = HOME / "realtime_log.jsonl"          # real-time spend log (per-day-per
 CONFIG_JSON = HOME / "config.json"             # operational (non-secret) config: caps, budget, emit
 KEYS_ENV = HOME / "keys.env"                    # SECRETS: LLM/compute/org keys (KEY=value lines), loaded at import
 
+CODEX_POOL_SIZE_DEFAULT = 3
+CODEX_POOL_ISOLATE_DEFAULT = False
+CODEX_POOL_HEALTH_INTERVAL_DEFAULT_S = 25.0
+CODEX_POOL_DIRECTORY = "codex-daemon-workers"
+CODEX_POOL_WORKER_PREFIX = "worker-"
+CODEX_POOL_AUTH_FILENAME = "auth.json"
+CODEX_POOL_CONFIG_FILENAME = "config.toml"
+CODEX_POOL_PRIVATE_FILE_MODE = 0o600
+CODEX_POOL_PRIVATE_DIRECTORY_MODE = 0o700
+CODEX_POOL_CREDENTIAL_STORE_KEY = "cli_auth_credentials_store"
+CODEX_POOL_CREDENTIAL_STORE_VALUE = "file"
+CODEX_POOL_TRUE_VALUES = frozenset(("1", "true", "yes", "on"))
+
 
 def _iter_env_file(path):
     """Yield (key, value) from a KEY=value dotenv file — tolerant of comments, blanks, `export `, and quotes.
@@ -550,6 +563,87 @@ def _cfg():
 
 def _cfg_get(section, key, default=None):
     return (_cfg().get(section) or {}).get(key, default)
+
+
+def codex_daemon_pool_settings():
+    """Pool settings, with explicit environment overrides taking precedence over advisor config."""
+    size = int(os.getenv("SPENDGUARD_CODEX_DAEMON_POOL_SIZE",
+                         _cfg_get("advisor", "codex_daemon_pool_size", CODEX_POOL_SIZE_DEFAULT)))
+    if size <= 0:
+        raise ValueError("advisor.codex_daemon_pool_size must be positive")
+    isolated = os.getenv("SPENDGUARD_CODEX_DAEMON_POOL_ISOLATE_HOMES")
+    if isolated is None:
+        isolated = _cfg_get("advisor", "codex_daemon_pool_isolate_homes", CODEX_POOL_ISOLATE_DEFAULT)
+    if isinstance(isolated, str):
+        isolated = isolated.lower() in CODEX_POOL_TRUE_VALUES
+    health_interval_s = float(os.getenv(
+        "SPENDGUARD_CODEX_DAEMON_POOL_HEALTH_INTERVAL_S",
+        _cfg_get("advisor", "codex_daemon_pool_health_interval_s", CODEX_POOL_HEALTH_INTERVAL_DEFAULT_S)))
+    if not math.isfinite(health_interval_s) or health_interval_s <= 0:
+        raise ValueError("advisor.codex_daemon_pool_health_interval_s must be positive and finite")
+    return {"size": size, "isolate_homes": bool(isolated), "health_interval_s": health_interval_s}
+
+
+def _codex_pool_file_store_toml(source_text):
+    """Set the root credential-store assignment using TOML parsing, preserving all other config evidence."""
+    import json
+    try:
+        import tomllib
+    except ImportError:
+        import tomli as tomllib
+    parsed = tomllib.loads(source_text)
+    assignment = (f"{CODEX_POOL_CREDENTIAL_STORE_KEY} = "
+                  f"{json.dumps(CODEX_POOL_CREDENTIAL_STORE_VALUE)}\n")
+    if CODEX_POOL_CREDENTIAL_STORE_KEY not in parsed:
+        return assignment + source_text
+    # A complete parsed prefix identifies the assignment's syntactic span, including multiline values;
+    # no keyword/regex approximation can silently rewrite an unrelated table or comment.
+    prefix = ""
+    previous_complete_end = 0
+    for source_line in source_text.splitlines(keepends=True):
+        prefix += source_line
+        try:
+            partial = tomllib.loads(prefix)
+        except tomllib.TOMLDecodeError:
+            continue
+        if CODEX_POOL_CREDENTIAL_STORE_KEY in partial:
+            result = source_text[:previous_complete_end] + assignment + source_text[len(prefix):]
+            assert tomllib.loads(result)[CODEX_POOL_CREDENTIAL_STORE_KEY] == CODEX_POOL_CREDENTIAL_STORE_VALUE
+            return result
+        previous_complete_end = len(prefix)
+    raise ValueError("could not locate parsed Codex credential-store assignment")
+
+
+def codex_daemon_worker_home(index):
+    """Prepare an isolated worker home only when requested; shared mode leaves the environment untouched."""
+    if not codex_daemon_pool_settings()["isolate_homes"]:
+        return None
+    from . import codex_exec
+    import tempfile
+    configured_root = os.getenv("SPENDGUARD_CODEX_DAEMON_POOL_HOME_ROOT")
+    if configured_root is None:
+        configured_root = _cfg_get("advisor", "codex_daemon_pool_home_root", None)
+    root = Path(configured_root).expanduser() if configured_root else HOME / CODEX_POOL_DIRECTORY
+    worker_home = (root / f"{CODEX_POOL_WORKER_PREFIX}{index}").resolve()
+    worker_home.mkdir(parents=True, exist_ok=True, mode=CODEX_POOL_PRIVATE_DIRECTORY_MODE)
+    worker_home.chmod(CODEX_POOL_PRIVATE_DIRECTORY_MODE)
+    source_home = Path(codex_exec._codex_home()).expanduser().resolve()
+    payloads = {
+        CODEX_POOL_AUTH_FILENAME: (source_home / CODEX_POOL_AUTH_FILENAME).read_bytes(),
+        CODEX_POOL_CONFIG_FILENAME: _codex_pool_file_store_toml(
+            (source_home / CODEX_POOL_CONFIG_FILENAME).read_text()).encode(),
+    }
+    for filename, payload in payloads.items():
+        descriptor, temporary_name = tempfile.mkstemp(dir=worker_home, prefix=filename)
+        temporary_path = Path(temporary_name)
+        try:
+            with os.fdopen(descriptor, "wb") as output:
+                os.fchmod(output.fileno(), CODEX_POOL_PRIVATE_FILE_MODE)
+                output.write(payload)
+            os.replace(temporary_path, worker_home / filename)
+        finally:
+            temporary_path.unlink(missing_ok=True)
+    return worker_home
 
 
 def _advisor_coerced(name, default, coerce):
