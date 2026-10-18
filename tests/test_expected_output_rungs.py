@@ -47,3 +47,10 @@ def test_model_outputs_excludes_truncated_samples():
     maxtokens() — otherwise the more a model truncated, the lower its expectation would go."""
     src = __import__("inspect").getsource(bulkgate.model_outputs)
     assert "if not r[1]" in src, "model_outputs must drop truncated rows before taking percentiles"
+
+
+if __name__ == "__main__":
+    import os as _os, sys as _sys
+    _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+    from _pytest_fixture_bridge import run_pytest_style
+    _sys.exit(run_pytest_style(globals()))

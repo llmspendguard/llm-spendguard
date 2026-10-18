@@ -11,9 +11,11 @@ before/after measurement, not an estimate), so the org dashboard's "≥ certain"
 Sync is INCREMENTAL and idempotent: state in ~/.spendguard/realized_state.json tracks the calls already
 counted per intent, so re-running never double-records. Zero LLM spend — pure corpus arithmetic.
 """
-import sqlite3
+import logging
+from pathlib import Path
 
 MIN_EACH = 5   # need ≥5 calls on BOTH sides of the adoption point to claim a measurement
+REALIZED_LOGGER = logging.getLogger(__name__)
 
 
 def _state_path():
@@ -32,47 +34,42 @@ def _load_state():
 def measure(intent=None, min_each=MIN_EACH):
     """[{intent, adopted_ts, before_rate, after_rate, delta_per_call, after_calls, realized_usd}] —
     adoption point = the EARLIEST non-refuted insight recorded for that intent."""
-    from . import config
+    import sqlite3
+    from . import config, ledger_read
     # adoption point per intent = the EARLIEST non-refuted insight ts. insights_full() doesn't expose ts,
     # so read it straight from the insights table (same sqlite as the rest of the learning layer).
-    adopted = {}
-    lcon = sqlite3.connect(config.db_path(), timeout=10)
+    if not Path(config.db_path()).exists():
+        return []
     try:
-        q = ("SELECT intent, MIN(ts) FROM insights "
-             "WHERE intent IS NOT NULL AND (status IS NULL OR status != 'refuted') ")
-        args = []
-        if intent:
-            q += "AND intent = ? "; args.append(intent)
-        for it, ts in lcon.execute(q + "GROUP BY intent", args).fetchall():
-            if it and ts:
-                adopted[it] = ts
-    except sqlite3.OperationalError:
-        return []                                   # no insights table yet → nothing adopted
-    finally:
-        lcon.close()
+        if not ledger_read.ledger_read_table_exists(ledger_read.LEDGER_INSIGHTS_TABLE):
+            return []                                # no adoption evidence has been recorded yet
+        adopted = {row[0]: row[1] for row in ledger_read.read_realized_adoptions(intent)
+                   if row[0] and row[1]}
+    except ledger_read.LedgerReadOpenError:
+        raise
+    except (sqlite3.OperationalError, ledger_read.LedgerReadSchemaError):
+        return []
 
     if not adopted:
         return []
-    con = sqlite3.connect(config.db_path(), timeout=10)
-    try:
-        rows = []
-        for it, ts in sorted(adopted.items()):
-            got = con.execute(
-                "SELECT AVG(CASE WHEN ts < ? THEN cost END), SUM(ts < ?), "
-                "       AVG(CASE WHEN ts >= ? THEN cost END), SUM(ts >= ?) "
-                "FROM calls WHERE intent = ? AND cost > 0", (ts, ts, ts, ts, it)).fetchone()
-            b_rate, b_n, a_rate, a_n = got[0], got[1] or 0, got[2], got[3] or 0
-            if b_n < min_each or a_n < min_each or not b_rate or a_rate is None:
-                continue
-            delta = b_rate - a_rate
-            rows.append({"intent": it, "adopted_ts": ts,
-                         "before_rate": round(b_rate, 6), "after_rate": round(a_rate, 6),
-                         "delta_per_call": round(delta, 6), "after_calls": int(a_n),
-                         "realized_usd": round(delta * a_n, 4)})
-        rows.sort(key=lambda r: -r["realized_usd"])
-        return rows
-    finally:
-        con.close()
+    rows = []
+    for it, ts in sorted(adopted.items()):
+        got = ledger_read.read_realized_call_rates(it, ts)
+        b_rate, b_n, a_rate, a_n = got[0], got[1] or 0, got[2], got[3] or 0
+        if b_n < min_each or a_n < min_each or not b_rate or a_rate is None:
+            REALIZED_LOGGER.debug(
+                "Rejected realized intent=%r: before_calls=%s after_calls=%s min_each=%s; "
+                "before_below_min=%s after_below_min=%s no_before_rate=%s after_rate_none=%s",
+                it, b_n, a_n, min_each, b_n < min_each, a_n < min_each,
+                not b_rate, a_rate is None)
+            continue
+        delta = b_rate - a_rate
+        rows.append({"intent": it, "adopted_ts": ts,
+                     "before_rate": round(b_rate, 6), "after_rate": round(a_rate, 6),
+                     "delta_per_call": round(delta, 6), "after_calls": int(a_n),
+                     "realized_usd": round(delta * a_n, 4)})
+    rows.sort(key=lambda r: -r["realized_usd"])
+    return rows
 
 
 def sync_to_guarded(rows=None):

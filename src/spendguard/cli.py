@@ -29,6 +29,7 @@ _GROUPS = [
         ("install-mcp", "register `spendguard mcp` in Claude Code (~/.claude.json); --remove to undo"),
     ]),
     ("see the money", [
+        ("ledger-read", "bounded read-only events, calls and exact counts; oversized reads fail loud"),
         ("receipt", "running tally: today / 7d / month, two axes"),
         ("report", "daily · weekly · monthly, per provider (+ leak alert)"),
         ("reconcile", "`reconcile all|openai|anthropic` — ledger vs the provider's BILL"),
@@ -110,6 +111,26 @@ def help_text():
     return "\n".join(out)
 
 
+def ledger_read_cli(argv):
+    """Parse the CLI skin of the same read operations exposed over MCP."""
+    import argparse
+    import json
+    from .mcp_server import LEDGER_READ_OPERATIONS, _tool_ledger_read
+    parser = argparse.ArgumentParser(prog="spendguard ledger-read")
+    parser.add_argument("operation", choices=LEDGER_READ_OPERATIONS)
+    parser.add_argument("--table", choices=("calls", "spend_events"), default="spend_events")
+    parser.add_argument("--event-id")
+    parser.add_argument("--since")
+    parser.add_argument("--until")
+    parser.add_argument("--path")
+    parser.add_argument("--group-by", nargs="+")
+    args = vars(parser.parse_args(argv))
+    if args["operation"] == "event" and not args["event_id"]:
+        parser.error("event requires --event-id")
+    print(json.dumps(_tool_ledger_read(args), default=str))
+    return 0
+
+
 def main(argv=None):
     """CLI entry. Wraps the dispatch so a MISSING PREREQUISITE (no provider key, no config) exits with one clean
     line instead of a raw traceback: `spendguard report` on a fresh install used to dump 14 lines ending in
@@ -168,6 +189,8 @@ def _dispatch(argv=None):
     if cmd == "delegate":
         from . import delegate_router
         return delegate_router.delegate_cli(rest)
+    if cmd == "ledger-read":
+        return ledger_read_cli(rest)
     if cmd == "agent-spawn-gate":
         from . import agent_spawn_gate
         return agent_spawn_gate.cmd(rest)

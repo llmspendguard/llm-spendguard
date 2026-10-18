@@ -3,11 +3,11 @@ import contextlib
 import io
 import json
 import os
-import sqlite3
+from pathlib import Path
 import threading
 import time
 
-from . import claudecode, config
+from . import claudecode, config, ledger_read
 
 # In-process TTL memo. The underlying probe (_compute_overage_status → claudecode._overage_events) re-reads EVERY
 # claude-code transcript on each call (~10s on a large history), and it sits on plan_admission's hot path: a
@@ -64,20 +64,16 @@ def _compute_overage_status():
     with contextlib.redirect_stdout(io.StringIO()):
         windows, _anchor = claudecode._overage_windows(claudecode._overage_events())
     now = time.time()
-    con = sqlite3.connect(config.db_path())
-    try:
-        has_events = con.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='spend_events'").fetchone()
-        month = [] if not has_events else con.execute(
-            "SELECT substr(occurred_at,1,7) mo, ROUND(SUM(CAST(realtime_usd AS REAL)),2) FROM spend_events "
-            "WHERE source='anthropic-invoice' AND intent LIKE 'anthropic-invoice:cc-overage%' "
-            "GROUP BY mo ORDER BY mo DESC").fetchall()
-    finally:
-        con.close()
+    path = config.db_path()
+    if (not Path(path).exists()
+            or not ledger_read.ledger_read_table_exists(ledger_read.LEDGER_EVENTS_TABLE, path)):
+        month = []
+    else:
+        month = ledger_read.read_invoice_overage_months(path)
     return {"on_overage_now": any(begin <= now < reset for (begin, reset) in windows),
             "meaning": "true = the weekly plan cap is hit and this account is paying per-token right now",
             "observed_overage_windows": len(windows),
-            "real_overage_by_month_usd": {month_name: float(dollars or 0.0) for month_name, dollars in month[:6]}}
+            "real_overage_by_month_usd": {row[0]: float(row[1] or 0.0) for row in month[:6]}}
 
 
 def current_overage_status(max_age_s=None, force=False):

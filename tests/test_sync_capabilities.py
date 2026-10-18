@@ -6,9 +6,9 @@ capabilities + fills only MISSING limits (never overwrites curated); (C) audit_c
 import json
 import os
 import sys
-import tempfile
+from _pytest_fixture_bridge import align_test_startup_home
 
-os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-synccaps-")
+align_test_startup_home(prefix="spendguard-synccaps-")
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))

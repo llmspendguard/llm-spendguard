@@ -9,9 +9,9 @@ import sys
 import atexit
 import shutil
 import tempfile
+from _pytest_fixture_bridge import align_test_startup_home
 
-_HOME = tempfile.mkdtemp(prefix="sg-comprehend-")
-os.environ["SPENDGUARD_HOME"] = _HOME
+_HOME = align_test_startup_home(prefix="sg-comprehend-")
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 atexit.register(shutil.rmtree, _HOME, ignore_errors=True)

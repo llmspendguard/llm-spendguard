@@ -86,8 +86,16 @@ ck("the uncommitted row was rolled back, not persisted",
 ck("rollback_ledger_conn on an unknown key is a harmless no-op", config.rollback_ledger_conn("no-such-key") is None)
 
 print("-- the after-fork handler clears the whole pool --")
-config._reset_ledger_pool_after_fork()
-ck("after-fork clears the pool (subA reopens fresh)", config.pooled_ledger_conn("subA", _noschema) is not ca)
+config._abandon_inherited_ledger_generation_in_fork_child()
+ck("same-process hook preserves the pool", config.pooled_ledger_conn("subA", _noschema) is ca)
+sys.stdout.flush()
+pool_child_pid = os.fork()
+if not pool_child_pid:
+    ck("after-fork clears the pool (subA reopens fresh)", config.pooled_ledger_conn("subA", _noschema) is not ca)
+    sys.stdout.flush()
+    os._exit(bool(_fails))
+_, pool_child_status = os.waitpid(pool_child_pid, 0)
+ck("real fork pool checks pass", os.waitstatus_to_exitcode(pool_child_status) == 0)
 
 print(f"\n{'[FAIL]' if _fails else 'OK'} test_ledger_pool: {len(_fails)} failure(s)")
 sys.exit(1 if _fails else 0)

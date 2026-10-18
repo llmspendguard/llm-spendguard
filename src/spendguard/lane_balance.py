@@ -47,15 +47,10 @@ def _recent_calls_by_lane(hours=24):
     being worked' proxy when the provider's true quota isn't API-exposed — it is what stops the router piling
     every overflow onto the cheapest-$ lane. Best-effort → {} on any error (the caller then falls back to the
     $-value order, never breaks)."""
+    from . import ledger_read
     try:
-        import sqlite3
-        con = sqlite3.connect(config.db_path())
-        rows = con.execute("SELECT executor, COUNT(*) FROM calls "
-                           # executor='api' is metered, NOT a subscription lane — keep it out of the per-lane count.
-                           "WHERE executor IS NOT NULL AND executor NOT IN ('', 'api') "
-                           "AND ts >= datetime('now', ?) GROUP BY executor", (f"-{int(hours)} hours",)).fetchall()
-        con.close()
-        return {ex: int(n) for ex, n in rows}
+        rows = ledger_read.read_lane_recent_counts(hours)
+        return {row[0]: int(row[1]) for row in rows}
     except Exception:
         return {}
 
@@ -1427,13 +1422,11 @@ def bandit_list_coverage():
     once sat in a live config and nothing said so — axis-4). {list_key: {entries, unmatched, seen_n, read_ok}} per
     configured list; unmatched is None when the ledger could not be read. Read-only, $0 — surfaced by `spendguard doctor`."""
     import sqlite3
+    from . import ledger_read
     seen, read_ok = [], True
     try:
-        con = sqlite3.connect(config.db_path(), timeout=10)
-        seen = [r[0] for r in con.execute(
-            "SELECT DISTINCT intent FROM calls WHERE intent IS NOT NULL AND intent != ''").fetchall()]
-        con.close()
-    except sqlite3.Error:
+        seen = [row[0] for row in ledger_read.read_known_call_intents(include_internal=True)]
+    except (sqlite3.Error, ledger_read.LedgerReadError):
         # ONLY a sqlite read failure is handled here (a config deliberate-stop from db_path() propagates). A read
         # FAILURE is not "no intents recorded" — flagging every entry DEAD then would cry wolf. 'cannot tell' !=
         # 'all dead': report read_ok=False, dead=None, and let the surface say "could not check", not invent a finding.

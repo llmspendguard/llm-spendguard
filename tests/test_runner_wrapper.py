@@ -12,6 +12,9 @@ stealer at every interpreter start. Same mechanism class, same product category.
 Offline: no network, no model calls; the child is a plain python -c.
 """
 import os, subprocess, sys, tempfile
+import atexit
+import shutil
+import venv
 
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
@@ -54,20 +57,32 @@ e2 = runner.child_env({"PATH": "/usr/bin"})
 check("no prior PYTHONPATH → just the bootstrap dir", e2["PYTHONPATH"] == d)
 
 print("-- END-TO-END: a child process is armed BEFORE its own code runs, only under the wrapper --")
+# The suite interpreter can already have a gate hook. Use a clean interpreter
+# fixture so the negative control really exercises an unhooked host.
+_wrapper_venv = tempfile.mkdtemp(prefix="sg-wrapper-venv-")
+atexit.register(shutil.rmtree, _wrapper_venv, ignore_errors=True)
+_wrapper_builder = venv.EnvBuilder(with_pip=False, system_site_packages=True)
+_wrapper_context = _wrapper_builder.ensure_directories(_wrapper_venv)
+_wrapper_builder.create(_wrapper_venv)
+_wrapper_python = _wrapper_context.env_exec_cmd
+_wrapper_probe_env = dict(os.environ)
+_wrapper_probe_env["PYTHONNOUSERSITE"] = "1"
+_wrapper_probe_env["PYTHONPATH"] = os.path.dirname(os.path.dirname(runner.__file__))
 PROBE = "import sys; print('ARMED' if 'spendguard' in sys.modules else 'BARE')"
-bare = subprocess.run([sys.executable, "-c", PROBE], capture_output=True, text=True,
-                      env={**os.environ, "PYTHONPATH": ""})
+bare = subprocess.run([_wrapper_python, "-c", PROBE], capture_output=True, text=True,
+                      env=_wrapper_probe_env)
 check("without the wrapper the child is NOT gated", bare.stdout.strip() == "BARE")
-wrapped = subprocess.run([sys.executable, "-c", PROBE], capture_output=True, text=True, env=runner.child_env())
+wrapped = subprocess.run([_wrapper_python, "-c", PROBE], capture_output=True, text=True,
+                         env=runner.child_env(_wrapper_probe_env))
 check("with the wrapper the gate is armed before user code", wrapped.stdout.strip() == "ARMED")
 check("the wrapper adds no stderr noise on a clean run", wrapped.stderr.strip() == "")
 
 print("-- the child's own sitecustomize still runs (we chain, never shadow) --")
 host = tempfile.mkdtemp(prefix="host-site-")
 open(os.path.join(host, "sitecustomize.py"), "w").write("print('HOST-SITECUSTOMIZE-RAN')\n")
-env = runner.child_env()
+env = runner.child_env(_wrapper_probe_env)
 env["PYTHONPATH"] = env["PYTHONPATH"] + os.pathsep + host
-r = subprocess.run([sys.executable, "-c", PROBE], capture_output=True, text=True, env=env)
+r = subprocess.run([_wrapper_python, "-c", PROBE], capture_output=True, text=True, env=env)
 check("host sitecustomize executed", "HOST-SITECUSTOMIZE-RAN" in r.stdout)
 check("and the gate is still armed", "ARMED" in r.stdout)
 
@@ -101,7 +116,7 @@ finally:
 check("a missing key exits 1 cleanly rather than raising", rc == 1)
 
 print("-- a missing command names the one this host DOES have (macOS has no bare `python`) --")
-import io, contextlib, shutil
+import io, contextlib
 from spendguard import runner as _rn
 buf = io.StringIO()
 with contextlib.redirect_stderr(buf):

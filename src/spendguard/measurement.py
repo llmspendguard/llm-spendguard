@@ -148,16 +148,13 @@ def reconstruct_reading(intent):
     candidates, good_rate, N and the date range — but the JUDGE is 'unknown': it was never stamped before receipts
     existed, and an unstamped judge is an absence of evidence, NEVER a guessed model. This is the RECONSTRUCT
     identity applied to a measurement; going forward, record_reading stamps the real judge so inspect shows it."""
-    from . import calls
-    con = calls._calls_db()
-    # `who="bakeoff"` in calls.insert is stored in the `caller` column (see calls schema) — query by that.
-    rows = con.execute(
-        "SELECT model, quality, ts FROM calls WHERE caller='bakeoff' AND intent IS ? AND quality IS NOT NULL",
-        (intent,)).fetchall()
+    from . import ledger_read
+    rows = ledger_read.read_bakeoff_measurements(intent)
     if not rows:
         return None
     per, tmin, tmax = {}, None, None
-    for model, quality, ts in rows:
+    for row in rows:
+        model, quality, ts = row.values
         d = per.setdefault(model, {"good": 0, "labeled": 0})
         d["labeled"] += 1
         if quality == "good":

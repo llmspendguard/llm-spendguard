@@ -20,7 +20,6 @@ import contextlib
 import datetime
 import hashlib
 import json
-import sqlite3
 
 from . import config, gate, model_catalog, pricing
 
@@ -46,7 +45,7 @@ _PRIOR_SCHEMA = {
 
 
 def _intent_prior_db():
-    c = sqlite3.connect(config.db_path(), timeout=15)
+    c = config.open_ledger_connection(config.db_path(), timeout=15, tune=False)
     c.execute("""CREATE TABLE IF NOT EXISTS intent_model_prior(
         intent TEXT, catalog_fp TEXT, ranking_json TEXT, ts TEXT,
         PRIMARY KEY (intent, catalog_fp))""")

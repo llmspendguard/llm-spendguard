@@ -1,7 +1,299 @@
 {
   "_comment": "Every bare function name shared by more than one definition in src/spendguard, with the verdict a model reached by reading the BODIES (scripts/probe/review_axes.py name). PROTOCOL = intentional polymorphism, correct as-is. DUPLICATION = one job, many copies; merge. COLLISION = different jobs wearing one name; rename. This file is a BASELINE, not an approval: tests/test_names_stay_unique.py fails on any name NOT listed here, so new collisions must be judged before they land. Shrinking this file is the goal.",
   "generated_by": "scripts/probe/review_axes.py name --run",
+  "ledger_partc_public_names": {
+    "read_cc_attribution_evidence": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Single projected read of Claude Code attribution evidence."
+    },
+    "read_cc_conversation_turns": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Single bounded projected read of Claude Code conversation turns."
+    },
+    "read_cc_overflow_conversations": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Single bounded projected read of overflow conversation records."
+    },
+    "read_realized_adoptions": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Single bounded typed ledger read adapter; semantic name distinguishes its consumer evidence or schema metadata operation."
+    },
+    "read_realized_call_rates": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Single bounded typed ledger read adapter; semantic name distinguishes its consumer evidence or schema metadata operation."
+    },
+    "ledger_read_table_exists": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Single bounded typed ledger read adapter; semantic name distinguishes its consumer evidence or schema metadata operation."
+    },
+    "read_recording_gap_cells": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Single bounded typed ledger read adapter; semantic name distinguishes its consumer evidence or schema metadata operation."
+    },
+    "read_represented_call_cell": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Single bounded typed ledger read adapter; semantic name distinguishes its consumer evidence or schema metadata operation."
+    },
+    "read_calibration_calls": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Single bounded typed ledger read adapter; semantic name distinguishes its consumer evidence or schema metadata operation."
+    },
+    "read_calibration_actuals": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Single bounded typed ledger read adapter; semantic name distinguishes its consumer evidence or schema metadata operation."
+    },
+    "read_calibration_summary": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Single bounded typed ledger read adapter; semantic name distinguishes its consumer evidence or schema metadata operation."
+    },
+    "read_routing_history_report": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Single bounded typed read adapter for routing history reports."
+    },
+    "read_delegate_overage_evidence": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Single projected bounded read of delegate overage evidence used by the delegation consumer."
+    },
+    "LedgerReadError": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "LedgerReadTooLarge": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "LedgerReadTimeout": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "LedgerReadSchemaError": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "LedgerReadRow": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "LedgerReadRequest": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "LedgerSQLReadRequest": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "read_ledger_sql": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "read_filtered_ledger_count": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "read_ledger_rows": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "read_ledger_count": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "read_spend_events": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "read_ledger_event": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "read_recent_calls": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "read_spend_aggregates": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "read_advisor_evidence": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "read_invoice_overage_months": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "read_cost_integrity_buckets": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "read_receipt_lane_activity": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "read_receipt_truncation_groups": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "read_cc_spend_overview": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "read_cc_top_conversations": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "read_cc_conversation_cost": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "read_recorded_call_intents": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "read_call_max_rowid": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "read_call_flow": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "read_call_intent_cost": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "read_call_cost_summary": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "read_call_output_means": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "read_call_lane_outcomes": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "read_call_metered_intents": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "count_recent_call_tests": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "read_known_call_intents": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "read_lane_subscription_calls": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "read_lane_recent_counts": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "read_intent_model_usage": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "read_bakeoff_measurements": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "read_lane_fallback_costs": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "read_lane_token_metrics": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "read_lane_cumulative_tokens": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "count_lane_prompts": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "read_prompt_lint_evidence": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Explicit bounded ledger consumer request/result/error or read operation; semantic name distinguishes its single implementation."
+    },
+    "ledger_read_cli": {
+      "module": "cli",
+      "verdict": "UNIQUE",
+      "why": "CLI-only parser/render skin over the shared ledger read API."
+    },
+    "LedgerReadOpenError": {
+      "module": "ledger_read",
+      "verdict": "UNIQUE",
+      "why": "Distinct typed ledger-open failure preserves query-only consumers original connect-versus-query exception contract."
+    }
+  },
   "names": {
+    "close": {
+      "n": 2,
+      "verdict": "PROTOCOL",
+      "why": "Reviewed both bodies: _CountedLedgerConnection.close overrides sqlite3.Connection.close to release its owned resource and accounting; StormCoalescer.close releases its owned worker resources. Both implement the standard idempotent resource-close lifecycle protocol; SQLite callers require the inherited method name. [Adjudicated by Codex from complete bodies, ledger connection Part B.]"
+    },
     "_mcp_disable_flags": {
       "n": 2,
       "verdict": "PROTOCOL",
@@ -20,7 +312,7 @@
     "run_warm": {
       "n": 2,
       "verdict": "PROTOCOL",
-      "why": "The uniform WARM-LANE entrypoint: one delegation on a persistent server → {text, error}. _CodexDaemon.run_warm drives codex app-server (thread/start → turn/start); _KimiAcpDaemon.run_warm drives kimi acp (session/new → session/prompt). Same contract, deliberately parallel bodies over different protocols; callers (codex_exec/kimi_exec) invoke it identically. [Adjudicated PROTOCOL while building the warm-lane exec pool, 2026-10-08.]"
+      "why": "The uniform WARM-LANE entrypoint: one delegation on a persistent server \u2192 {text, error}. _CodexDaemon.run_warm drives codex app-server (thread/start \u2192 turn/start); _KimiAcpDaemon.run_warm drives kimi acp (session/new \u2192 session/prompt). Same contract, deliberately parallel bodies over different protocols; callers (codex_exec/kimi_exec) invoke it identically. [Adjudicated PROTOCOL while building the warm-lane exec pool, 2026-10-08.]"
     },
     "_route_notification": {
       "n": 3,
@@ -50,7 +342,7 @@
     "_daemon_enabled": {
       "n": 2,
       "verdict": "PROTOCOL",
-      "why": "Per-lane toggle for the warm daemon path (env SPENDGUARD_<LANE>_DAEMON → config advisor.<lane>_daemon, default on); codex_exec and kimi_exec each own their lane's switch, read by that lane's run_prompt before trying the warm path. Same contract per lane, mirroring the _bin protocol. [PROTOCOL, warm-lane exec pool, 2026-10-08.]"
+      "why": "Per-lane toggle for the warm daemon path (env SPENDGUARD_<LANE>_DAEMON \u2192 config advisor.<lane>_daemon, default on); codex_exec and kimi_exec each own their lane's switch, read by that lane's run_prompt before trying the warm path. Same contract per lane, mirroring the _bin protocol. [PROTOCOL, warm-lane exec pool, 2026-10-08.]"
     },
     "_bin": {
       "n": 4,
@@ -65,17 +357,17 @@
     "_cost": {
       "n": 2,
       "verdict": "DUPLICATION",
-      "why": "Both compute the same thing — dollar cost of token usage via pricing table, cache-aware, with the identical batch-cache-read rate logic. The comments in both explicitly call out that this is the same "
+      "why": "Both compute the same thing \u2014 dollar cost of token usage via pricing table, cache-aware, with the identical batch-cache-read rate logic. The comments in both explicitly call out that this is the same "
     },
     "_digest": {
       "n": 2,
       "verdict": "PROTOCOL",
-      "why": "Both parse one session file into a digest dict/row for their respective provider format (claudecode's jsonl vs codex's jsonl). Same contract — 'one session → digest' — over different formats, dispatch"
+      "why": "Both parse one session file into a digest dict/row for their respective provider format (claudecode's jsonl vs codex's jsonl). Same contract \u2014 'one session \u2192 digest' \u2014 over different formats, dispatch"
     },
     "_fetch_usage": {
       "n": 3,
       "verdict": "PROTOCOL",
-      "why": "Each _fetch_usage lives in a different exec module (antigravity/codex/subscription) and implements the same contract — return usage buckets or None — for a different backend (agy CLI, codex sqlite logs, claude CLI). They are the raw fetch behind each lane's usage(), wrapped uniformly by lane_quota.cached_usage. Same interface, deliberately parallel, dispatched per-lane. [Adjudicated PROTOCOL by honestreview name --run, 2026-08-27.]"
+      "why": "Each _fetch_usage lives in a different exec module (antigravity/codex/subscription) and implements the same contract \u2014 return usage buckets or None \u2014 for a different backend (agy CLI, codex sqlite logs, claude CLI). They are the raw fetch behind each lane's usage(), wrapped uniformly by lane_quota.cached_usage. Same interface, deliberately parallel, dispatched per-lane. [Adjudicated PROTOCOL by honestreview name --run, 2026-08-27.]"
     },
     "_fire": {
       "n": 2,
@@ -90,7 +382,7 @@
     "_load_state": {
       "n": 5,
       "verdict": "PROTOCOL",
-      "why": "Each adapter's _load_state loads its OWN namespaced state with its OWN empty shape via the shared config.load_state helper. The docstring notes the FOUR duplicated bare-except copies were already refa[ctored]. n 4→5: resource_state._load_state (the unified per-resource cooldown/state store) added — same role, same shared config.load_state helper, its own namespace ('resource_state') and shape (per-key axes, with an expiry prune), read and confirmed as protocol."
+      "why": "Each adapter's _load_state loads its OWN namespaced state with its OWN empty shape via the shared config.load_state helper. The docstring notes the FOUR duplicated bare-except copies were already refa[ctored]. n 4\u21925: resource_state._load_state (the unified per-resource cooldown/state store) added \u2014 same role, same shared config.load_state helper, its own namespace ('resource_state') and shape (per-key axes, with an expiry prune), read and confirmed as protocol."
     },
     "_one": {
       "n": 2,
@@ -160,12 +452,12 @@
     "acquire": {
       "n": 3,
       "verdict": "PROTOCOL",
-      "why": "A deliberate three-layer admission facade dispatched by name: module-level `acquire` delegates to `Governor.acquire`, which acquires the global slot then delegates to `_Bucket.acquire` for per-key concurrency+RPM pacing — nested delegation of one contract, not two answers to one question."
+      "why": "A deliberate three-layer admission facade dispatched by name: module-level `acquire` delegates to `Governor.acquire`, which acquires the global slot then delegates to `_Bucket.acquire` for per-key concurrency+RPM pacing \u2014 nested delegation of one contract, not two answers to one question."
     },
     "as_dict": {
       "n": 2,
       "verdict": "PROTOCOL",
-      "why": "Both are per-class `as_dict()` serialization methods scoped to distinct classes (AskResult vs Result), each returning its own object's fields — the standard 'render me as a plain dict' contract dispatched by instance type, so no grep/import can pick the wrong one and neither is doing the other's job."
+      "why": "Both are per-class `as_dict()` serialization methods scoped to distinct classes (AskResult vs Result), each returning its own object's fields \u2014 the standard 'render me as a plain dict' contract dispatched by instance type, so no grep/import can pick the wrong one and neither is doing the other's job."
     },
     "attribute_gap": {
       "n": 5,
@@ -200,7 +492,7 @@
     "cmd": {
       "n": 32,
       "verdict": "PROTOCOL",
-      "why": "Every module exposes `cmd(argv=None)` as its uniform CLI subcommand entrypoint (parse argv → run that subcommand → return an int exit code), dispatched by name by the top-level `spendguard <subcommand>` router. The bodies differ because each implements a different subcommand, but that is the point of the shared contract, not drift or a name clash. mcp_server.cmd runs the `spendguard mcp` stdio server; model_preflight.cmd and verify.cmd are the 18th and 19th members (parse argv → run the `spendguard preflight` / `spendguard verify` subcommand → return an int exit code) — same contract, re-confirmed PROTOCOL by a full honestreview name adjudication of src/spendguard on 2026-09-01. measurement.cmd is the 20th member (parse argv → run the `spendguard measurement inspect|list|reconstruct` subcommand → return an int exit code) — same contract, body-read and adjudicated PROTOCOL 2026-09-05. provider_tokens.cmd is the 21st member (parse argv -> run the `spendguard tokens show|calibrate` subcommand -> return an int exit code) -- same contract, added 2026-09-12. comprehend.cmd is the 22nd member (parse argv -> run the `spendguard comprehend` subcommand -> return an int exit code) -- same contract, body-read and added 2026-09-15. route_economics.cmd is the 23rd member (parse argv -> run the `spendguard route-cost` subcommand: the TRUE-cost batch-vs-lane-vs-combo split for an intent at volume N -> return an int exit code) -- same contract, body-read and added 2026-09-22. whole_job.cmd is the 24th member (parse argv -> run the `spendguard submit-jobs` subcommand: PLAN+estimate the whole job set ($0) by default, or --execute it (needs --budget), or --collect a prior run's durable batch handles -> return an int exit code) -- same contract, body-read and adjudicated PROTOCOL 2026-09-26. sync_capabilities.cmd is the 25th member (parse argv -> run the `spendguard sync-capabilities` subcommand: sync per-model capabilities + upper bounds from LiteLLM into the catalog -> return an int exit code) -- same contract, body-read and added 2026-09-26. keys_audit.cmd is the 26th member (parse argv -> run the `spendguard keys-audit` subcommand: static .env scan for a repo provider key that would shadow the keys.env SSOT -> return an int exit code) -- same contract, body-read and adjudicated PROTOCOL 2026-10-01. route_horizon.cmd is the 27th member (parse argv -> run the `spendguard route-horizon` subcommand: the item-C HORIZON batch/lane/meter plan for a job SET under caller-declared urgency + the ONE shared lane budget -> return an int exit code) -- same contract, body-read and added 2026-10-03 (authored to mirror route_economics.cmd's CLI-entrypoint contract; not re-run through honestreview name). agent_spawn_gate.cmd is the 28th member (parse argv -> run the `spendguard agent-spawn-gate --pretooluse-hook` subcommand -> return an int exit code), explicitly specified by the agent-spawn-gate plan as the same sanctioned CLI protocol name and body-read 2026-10-06. residency_gate.cmd is the 29th member (parse argv -> run the `spendguard residency-gate --posttooluse-hook` subcommand: the PostToolUse context-residency nudge, which WARNS and never blocks -> return an int exit code) -- same contract, body-read and adjudicated PROTOCOL 2026-10-08. stability.cmd is the 30th member (parse argv -> run the `spendguard stability` subcommand: measure a model/lane's run-to-run variance at production settings over k replicates -> return an int exit code) -- same CLI-entrypoint contract, body-read and adjudicated PROTOCOL 2026-10-08. weekly_cap_guard.cmd is the 31st member (parse argv -> run the `spendguard capguard --pretooluse-hook` subcommand -> return an int exit code) -- same CLI-entrypoint protocol, body-read 2026-10-15. route_realized.cmd is the 32nd member (parse argv -> run the read-only `spendguard route-realized` report -> return an int exit code) -- same CLI-entrypoint protocol, body-read 2026-10-16."
+      "why": "Every module exposes `cmd(argv=None)` as its uniform CLI subcommand entrypoint (parse argv \u2192 run that subcommand \u2192 return an int exit code), dispatched by name by the top-level `spendguard <subcommand>` router. The bodies differ because each implements a different subcommand, but that is the point of the shared contract, not drift or a name clash. mcp_server.cmd runs the `spendguard mcp` stdio server; model_preflight.cmd and verify.cmd are the 18th and 19th members (parse argv \u2192 run the `spendguard preflight` / `spendguard verify` subcommand \u2192 return an int exit code) \u2014 same contract, re-confirmed PROTOCOL by a full honestreview name adjudication of src/spendguard on 2026-09-01. measurement.cmd is the 20th member (parse argv \u2192 run the `spendguard measurement inspect|list|reconstruct` subcommand \u2192 return an int exit code) \u2014 same contract, body-read and adjudicated PROTOCOL 2026-09-05. provider_tokens.cmd is the 21st member (parse argv -> run the `spendguard tokens show|calibrate` subcommand -> return an int exit code) -- same contract, added 2026-09-12. comprehend.cmd is the 22nd member (parse argv -> run the `spendguard comprehend` subcommand -> return an int exit code) -- same contract, body-read and added 2026-09-15. route_economics.cmd is the 23rd member (parse argv -> run the `spendguard route-cost` subcommand: the TRUE-cost batch-vs-lane-vs-combo split for an intent at volume N -> return an int exit code) -- same contract, body-read and added 2026-09-22. whole_job.cmd is the 24th member (parse argv -> run the `spendguard submit-jobs` subcommand: PLAN+estimate the whole job set ($0) by default, or --execute it (needs --budget), or --collect a prior run's durable batch handles -> return an int exit code) -- same contract, body-read and adjudicated PROTOCOL 2026-09-26. sync_capabilities.cmd is the 25th member (parse argv -> run the `spendguard sync-capabilities` subcommand: sync per-model capabilities + upper bounds from LiteLLM into the catalog -> return an int exit code) -- same contract, body-read and added 2026-09-26. keys_audit.cmd is the 26th member (parse argv -> run the `spendguard keys-audit` subcommand: static .env scan for a repo provider key that would shadow the keys.env SSOT -> return an int exit code) -- same contract, body-read and adjudicated PROTOCOL 2026-10-01. route_horizon.cmd is the 27th member (parse argv -> run the `spendguard route-horizon` subcommand: the item-C HORIZON batch/lane/meter plan for a job SET under caller-declared urgency + the ONE shared lane budget -> return an int exit code) -- same contract, body-read and added 2026-10-03 (authored to mirror route_economics.cmd's CLI-entrypoint contract; not re-run through honestreview name). agent_spawn_gate.cmd is the 28th member (parse argv -> run the `spendguard agent-spawn-gate --pretooluse-hook` subcommand -> return an int exit code), explicitly specified by the agent-spawn-gate plan as the same sanctioned CLI protocol name and body-read 2026-10-06. residency_gate.cmd is the 29th member (parse argv -> run the `spendguard residency-gate --posttooluse-hook` subcommand: the PostToolUse context-residency nudge, which WARNS and never blocks -> return an int exit code) -- same contract, body-read and adjudicated PROTOCOL 2026-10-08. stability.cmd is the 30th member (parse argv -> run the `spendguard stability` subcommand: measure a model/lane's run-to-run variance at production settings over k replicates -> return an int exit code) -- same CLI-entrypoint contract, body-read and adjudicated PROTOCOL 2026-10-08. weekly_cap_guard.cmd is the 31st member (parse argv -> run the `spendguard capguard --pretooluse-hook` subcommand -> return an int exit code) -- same CLI-entrypoint protocol, body-read 2026-10-15. route_realized.cmd is the 32nd member (parse argv -> run the read-only `spendguard route-realized` report -> return an int exit code) -- same CLI-entrypoint protocol, body-read 2026-10-16."
     },
     "configured": {
       "n": 4,
@@ -210,7 +502,7 @@
     "conn": {
       "n": 5,
       "verdict": "PROTOCOL",
-      "why": "The 5 remaining conn(self) are a uniform Source-connection accessor protocol: each reconcile Source-like class (ledger_sync x2, gpu_port, resources, reconcile) exposes .conn returning its connection/identity metadata, dispatched uniformly by the reconcile framework. The odd module-level saas.conn (a different job — the SaaS server connection) was renamed to saas_connection. [conn methods = protocol; saas.conn renamed 2026-08-29.]"
+      "why": "The 5 remaining conn(self) are a uniform Source-connection accessor protocol: each reconcile Source-like class (ledger_sync x2, gpu_port, resources, reconcile) exposes .conn returning its connection/identity metadata, dispatched uniformly by the reconcile framework. The odd module-level saas.conn (a different job \u2014 the SaaS server connection) was renamed to saas_connection. [conn methods = protocol; saas.conn renamed 2026-08-29.]"
     },
     "consensus": {
       "n": 2,
@@ -220,12 +512,12 @@
     "day_totals": {
       "n": 4,
       "verdict": "PROTOCOL",
-      "why": "Four source-specific implementations of one server contract: each aggregates its own channel's est-value into per-(project,day,model) /v1/ledger rows (billed=False) — chat=claude-ai, claudecode=claude-code, codex=codex, lane_value=gemini/zai (ledger-valued lanes, no session miner). Same shape, dispatched by each source's own sync."
+      "why": "Four source-specific implementations of one server contract: each aggregates its own channel's est-value into per-(project,day,model) /v1/ledger rows (billed=False) \u2014 chat=claude-ai, claudecode=claude-code, codex=codex, lane_value=gemini/zai (ledger-valued lanes, no session miner). Same shape, dispatched by each source's own sync."
     },
     "install": {
       "n": 5,
       "verdict": "PROTOCOL",
-      "why": "A name-DISPATCHED patch/activate protocol: gate.install is the public `spendguard.install()` entrypoint (re-exported in __init__, baked into the usercustomize hook template, asserted verbatim by tests) AND the orchestrator that loops registered SDK modules calling `.install(force=False)` on each BY NAME (gate.py). The four adapters (bedrock, litellm, vertex, http_capture) implement that per-surface `install(force=...) -> bool` idempotent-patch contract it dispatches to. Renaming any of them — especially gate.install — would silently un-gate every already-installed user hook, so the shared name IS the contract. The one true outlier, schedule.install (OS scheduler task, dict return, unrelated semantics), was renamed to install_schedule, leaving this a clean 5-member protocol."
+      "why": "A name-DISPATCHED patch/activate protocol: gate.install is the public `spendguard.install()` entrypoint (re-exported in __init__, baked into the usercustomize hook template, asserted verbatim by tests) AND the orchestrator that loops registered SDK modules calling `.install(force=False)` on each BY NAME (gate.py). The four adapters (bedrock, litellm, vertex, http_capture) implement that per-surface `install(force=...) -> bool` idempotent-patch contract it dispatches to. Renaming any of them \u2014 especially gate.install \u2014 would silently un-gate every already-installed user hook, so the shared name IS the contract. The one true outlier, schedule.install (OS scheduler task, dict return, unrelated semantics), was renamed to install_schedule, leaving this a clean 5-member protocol."
     },
     "instances": {
       "n": 5,
@@ -240,22 +532,22 @@
     "main": {
       "n": 51,
       "verdict": "PROTOCOL",
-      "why": "Every definition is a per-module CLI entrypoint with the uniform `main(argv=None)` contract — parse args, dispatch to that module's command, return an exit code — dispatched by name from the top-level CLI router. This is the canonical subcommand-facade protocol, not two implementations of one job. [n 40→41: lane_value.main added. n 41→43: lane_catalog.main (`spendguard lanes --catalog` prints the lane model catalog) and lane_bandit.main (`spendguard lanes --learn` prints the learned per-intent lane winners) added — each is the same read-args→dispatch→exit-code CLI-entrypoint contract as codex.main/chat.main, read and confirmed as protocol, not new jobs. n 43→44: bakeoff.main (`spendguard bakeoff <intent> --candidates …`) added — same read-args→dispatch→exit-code contract. n 44→45: catalog.main (`spendguard sync-catalog` refreshes the live model-catalog cache and prints a per-provider summary) added — same read-args→dispatch→exit-code CLI-entrypoint contract, read and confirmed as protocol, not a new job. n 45→46: balances.main (`spendguard balances` prints per-vendor metered prepay balance) added — same read-args→dispatch→exit-code contract. n 46→47: reliability.main (`spendguard reliability [--run]` sweeps every lane + metered provider for reachability) added — same read-args→dispatch→exit-code CLI-entrypoint contract. n 47→48: focus_export.main (`spendguard focus-export` emits the ledger as FinOps FOCUS 1.2 rows, json|csv, for any FinOps stack) added — same read-args→dispatch→exit-code CLI-entrypoint contract. n 48→49: otel_ingest.main (`spendguard otel-ingest` imports an OTel GenAI trace into spend_events) added — same read-args→dispatch→exit-code CLI-entrypoint contract. n 49→50: tier_config.main (`spendguard tiers` shows/validates the bulk-lane routing groups and `tiers set <group> <model…>` declares one) added — same read-args→dispatch→exit-code CLI-entrypoint contract, not a new job. n 50→51: effort_titration.main (`spendguard effort-titrate <intent>` A/Bs the reasoning-effort ladder and records the cheapest effort that holds quality) added — same read-args→dispatch→exit-code CLI-entrypoint contract, not a new job.]"
+      "why": "Every definition is a per-module CLI entrypoint with the uniform `main(argv=None)` contract \u2014 parse args, dispatch to that module's command, return an exit code \u2014 dispatched by name from the top-level CLI router. This is the canonical subcommand-facade protocol, not two implementations of one job. [n 40\u219241: lane_value.main added. n 41\u219243: lane_catalog.main (`spendguard lanes --catalog` prints the lane model catalog) and lane_bandit.main (`spendguard lanes --learn` prints the learned per-intent lane winners) added \u2014 each is the same read-args\u2192dispatch\u2192exit-code CLI-entrypoint contract as codex.main/chat.main, read and confirmed as protocol, not new jobs. n 43\u219244: bakeoff.main (`spendguard bakeoff <intent> --candidates \u2026`) added \u2014 same read-args\u2192dispatch\u2192exit-code contract. n 44\u219245: catalog.main (`spendguard sync-catalog` refreshes the live model-catalog cache and prints a per-provider summary) added \u2014 same read-args\u2192dispatch\u2192exit-code CLI-entrypoint contract, read and confirmed as protocol, not a new job. n 45\u219246: balances.main (`spendguard balances` prints per-vendor metered prepay balance) added \u2014 same read-args\u2192dispatch\u2192exit-code contract. n 46\u219247: reliability.main (`spendguard reliability [--run]` sweeps every lane + metered provider for reachability) added \u2014 same read-args\u2192dispatch\u2192exit-code CLI-entrypoint contract. n 47\u219248: focus_export.main (`spendguard focus-export` emits the ledger as FinOps FOCUS 1.2 rows, json|csv, for any FinOps stack) added \u2014 same read-args\u2192dispatch\u2192exit-code CLI-entrypoint contract. n 48\u219249: otel_ingest.main (`spendguard otel-ingest` imports an OTel GenAI trace into spend_events) added \u2014 same read-args\u2192dispatch\u2192exit-code CLI-entrypoint contract. n 49\u219250: tier_config.main (`spendguard tiers` shows/validates the bulk-lane routing groups and `tiers set <group> <model\u2026>` declares one) added \u2014 same read-args\u2192dispatch\u2192exit-code CLI-entrypoint contract, not a new job. n 50\u219251: effort_titration.main (`spendguard effort-titrate <intent>` A/Bs the reasoning-effort ladder and records the cheapest effort that holds quality) added \u2014 same read-args\u2192dispatch\u2192exit-code CLI-entrypoint contract, not a new job.]"
     },
     "project_of": {
       "n": 2,
       "verdict": "PROTOCOL",
-      "why": "resources.project_of is a thin convenience wrapper that delegates to gpu_port.project_of, supplying a default label_map. Not a duplicate implementation—it's a bound/defaulted adapter over the single c"
+      "why": "resources.project_of is a thin convenience wrapper that delegates to gpu_port.project_of, supplying a default label_map. Not a duplicate implementation\u2014it's a bound/defaulted adapter over the single c"
     },
     "record": {
       "n": 2,
       "verdict": "PROTOCOL",
-      "why": "Resolved: the four module-level 'record' functions — each a distinct job writing a different store — were renamed to their store-specific verbs (budget.record->record_charge [money charge], callio.record->record_io_sample [prompt/output capture], calls.record->record_call [token/latency/feedback call log], ledger.SpendLedger.record->record_event [normalize+post a spend event]). What remains is the genuine protocol pair: the two gate stream-manager `.record(self, msg)` finalizers (sync + async), byte-identical bodies that finalize streamed real-time accounting on close — a uniform contract dispatched by the streaming wrapper as `self.record(...)`/`_owner.record(...)`. Kept shared by design. (The test-local tests/wire_recorder.record and the _Boom SpendLedger stub are out of the src/spendguard guard scope; the stub was tracked to record_event to keep implementing the renamed interface.)"
+      "why": "Resolved: the four module-level 'record' functions \u2014 each a distinct job writing a different store \u2014 were renamed to their store-specific verbs (budget.record->record_charge [money charge], callio.record->record_io_sample [prompt/output capture], calls.record->record_call [token/latency/feedback call log], ledger.SpendLedger.record->record_event [normalize+post a spend event]). What remains is the genuine protocol pair: the two gate stream-manager `.record(self, msg)` finalizers (sync + async), byte-identical bodies that finalize streamed real-time accounting on close \u2014 a uniform contract dispatched by the streaming wrapper as `self.record(...)`/`_owner.record(...)`. Kept shared by design. (The test-local tests/wire_recorder.record and the _Boom SpendLedger stub are out of the src/spendguard guard scope; the stub was tracked to record_event to keep implementing the renamed interface.)"
     },
     "release": {
       "n": 6,
       "verdict": "PROTOCOL",
-      "why": "Module-level `release(vendor, model)` is a facade delegating to `Governor.release`, which orchestrates by calling the uniform `.release()` contract on its held resources (`_XPSlot` unlocks the cross-process flock, `_Bucket` returns its semaphore slot, `_global` releases the global cap; `_NoopAdmit.release()` is the no-op release for the gating-off handle `try_admit()` returns when cross-process admission is disabled); each does a distinct layer's job under one deliberate release-the-slot interface, so they cannot drift into disagreeing answers and none is a wrong-pick hazard. `_Admission.release()` (the handle `dispatch.admit()` returns to vendor_call.call and adapters.call(governed=True)) is the same member — it frees the held governor slot via the module `release` facade, idempotently."
+      "why": "Module-level `release(vendor, model)` is a facade delegating to `Governor.release`, which orchestrates by calling the uniform `.release()` contract on its held resources (`_XPSlot` unlocks the cross-process flock, `_Bucket` returns its semaphore slot, `_global` releases the global cap; `_NoopAdmit.release()` is the no-op release for the gating-off handle `try_admit()` returns when cross-process admission is disabled); each does a distinct layer's job under one deliberate release-the-slot interface, so they cannot drift into disagreeing answers and none is a wrong-pick hazard. `_Admission.release()` (the handle `dispatch.admit()` returns to vendor_call.call and adapters.call(governed=True)) is the same member \u2014 it frees the held governor slot via the module `release` facade, idempotently."
     },
     "render": {
       "n": 2,
@@ -270,7 +562,7 @@
     "show": {
       "n": 4,
       "verdict": "PROTOCOL",
-      "why": "Each show() is a per-source reporting entry point (calibration, claude.ai chat, claude-code, codex) invoked polymorphically by the CLI dispatch — same 'render this source's report' contract, different"
+      "why": "Each show() is a per-source reporting entry point (calibration, claude.ai chat, claude-code, codex) invoked polymorphically by the CLI dispatch \u2014 same 'render this source's report' contract, different"
     },
     "source": {
       "n": 3,
@@ -280,7 +572,7 @@
     "story": {
       "n": 2,
       "verdict": "DUPLICATION",
-      "why": "Both are 'caged synth over a period → narrative STORY + private WORK INSIGHTS, estimate-first, capped under caps.meta' with identical signatures. They differ only in data source (chat conversations vs"
+      "why": "Both are 'caged synth over a period \u2192 narrative STORY + private WORK INSIGHTS, estimate-first, capped under caps.meta' with identical signatures. They differ only in data source (chat conversations vs"
     },
     "stream": {
       "n": 2,
@@ -290,7 +582,7 @@
     "sync": {
       "n": 9,
       "verdict": "PROTOCOL",
-      "why": "One adapter contract `sync(dry=False)` pushing a channel's spend/value rows → the server, org-routed, honoring visibility/contributor: chat/claudecode/codex/resources/lane_value.sync (per source) plus saas/remote.sync. Intentional polymorphism, one per source."
+      "why": "One adapter contract `sync(dry=False)` pushing a channel's spend/value rows \u2192 the server, org-routed, honoring visibility/contributor: chat/claudecode/codex/resources/lane_value.sync (per source) plus saas/remote.sync. Intentional polymorphism, one per source."
     },
     "truth_total": {
       "n": 5,

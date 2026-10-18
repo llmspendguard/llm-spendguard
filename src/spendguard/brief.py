@@ -18,11 +18,8 @@ def _slug(task):
 
 
 def _known_intents():
-    from . import calls
-    with calls._lock:
-        return [r[0] for r in calls._calls_db().execute(
-            "SELECT DISTINCT intent FROM calls WHERE intent IS NOT NULL "
-            "AND intent NOT LIKE 'spendguard:%'").fetchall()]
+    from . import ledger_read
+    return [row[0] for row in ledger_read.read_known_call_intents(include_empty=True)]
 
 
 def _match_intent(task):
