@@ -138,6 +138,21 @@ def estimate_cap(lane, bucket_name):
     return _median(est), len(est)
 
 
+def measured_lane_caps(lane):
+    """Measured cap rows retained for a lane even when its provider exposes no live headroom surface."""
+    state = config.load_state(_SAMPLES_STATE, {}) or {}
+    prefix = f"{lane}\x1f"
+    rows = []
+    for key in (state.get("keys") or {}):
+        if not key.startswith(prefix):
+            continue
+        bucket_name = key[len(prefix):]
+        cap, n_pairs = estimate_cap(lane, bucket_name)
+        if cap is not None:
+            rows.append({"bucket": bucket_name, "cap": cap, "n_pairs": n_pairs})
+    return rows
+
+
 def _observed_period_days(samples):
     """Window length in DAYS from an OBSERVED reset-to-reset delta (two distinct reset_ts in the series), or None.
     This is the truth when we have it — it beats any name-keyword guess."""

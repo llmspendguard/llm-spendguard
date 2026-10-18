@@ -11,6 +11,10 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-subexec-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
+# This test isolates the Claude subscription executor and its metered fallback. The dedicated quota-preflight
+# acceptance script covers the default-on Anthropic avoidance policy and its authorization behavior.
+os.environ["SPENDGUARD_AVOID_CLAUDE_LANE"] = "off"
+
 import json
 import shutil     # patch shutil.which directly — the shared config.resolve_cli() uses it (subscription_exec no
 #                  longer imports shutil; it delegates the PATH lookup to config.resolve_cli, like codex/antigravity)

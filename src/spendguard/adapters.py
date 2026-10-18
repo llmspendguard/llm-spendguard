@@ -860,7 +860,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
          sig=None, intent=None, retries=2, files=None, _no_guard=False, no_metered_fallback=False, images=None,
          no_substitution=False, measurement=False, metered_only=False, base_fallback=None, _probe=False, _route=True,
          _internal_pin=False, _coalesce_eligible=True, temperature=None, top_p=None, seed=None,
-         soft_deadline_s=None, **aliases):
+         soft_deadline_s=None, auth_over_quota=False, **aliases):
     """Run one one-shot prompt through the governed model/lane router. Returns a CallResult (never raises).
 
     For a classification, gate, or doctrine verdict, pass a stable caller ``intent`` and explicit
@@ -1255,7 +1255,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     _plan_redirect = None
     if (intent or sig) and not _caller_model_pin and not _probe and not images:
         from . import plan_admission as _pa
-        _plan_redirect = _pa.decide(model, intent or sig)
+        _plan_redirect = _pa.decide(model, intent or sig, auth_over_quota=auth_over_quota)
         if _plan_redirect.get("action") == "refuse":
             return {"provider": provider_for(model), "model": model, "text": None, "parsed": None,
                     "in_tok": 0, "out_tok": 0, "cost": None, "latency": 0.0, "finish_reason": None,
@@ -1419,12 +1419,14 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                                   schema=schema, timeout_s=timeout_s, sig=sig, retries=retries,
                                   no_metered_fallback=no_metered_fallback, images=images, _no_sub=no_substitution,
                                   metered_only=metered_only, _probe=_probe, _internal_pin=_internal_pin,
-                                  temperature=temperature, top_p=top_p, seed=seed)
+                                  temperature=temperature, top_p=top_p, seed=seed, intent=intent,
+                                  auth_over_quota=auth_over_quota)
             else:
                 r = _call_once(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
                                schema=schema, timeout_s=timeout_s, no_metered_fallback=no_metered_fallback, images=images,
                                _no_sub=no_substitution, _skip_lane=metered_only, _internal_pin=_internal_pin,
-                               temperature=temperature, top_p=top_p, seed=seed)   # metered_only=True → skip the lane
+                               temperature=temperature, top_p=top_p, seed=seed, intent=intent,
+                               auth_over_quota=auth_over_quota)   # metered_only=True → skip the lane
         finally:
             _sig_ctx._local.ctx = _ctx_before   # restore the caller's context exactly (nested calls keep their own tag)
             if _adm is not None:
@@ -2387,7 +2389,8 @@ def _est_call_tokens(prompt, system, out_tokens, model=None, intent=None):
 
 def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,
                _skip_lane=False, no_metered_fallback=False, images=None, _no_sub=False, _internal_pin=False,
-               temperature=None, top_p=None, seed=None, _recovery_proof=None):
+               temperature=None, top_p=None, seed=None, _recovery_proof=None, intent=None,
+               auth_over_quota=False):
     """One raw request. Everything public goes through `call`, which adds the input and output guards.
 
     NO DEFAULT CAP. This carried `max_tokens=512` — the last place a number nobody chose could still reach a
@@ -2473,6 +2476,13 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             raw, base["model"], reasoning = _bare, _bare, (reasoning or _tier)   # the tier rides `reasoning` below
     if _lane:
         lane_name, lane_mod = _lane
+        from . import lane_quota_cost as _lane_quota_cost
+        _lane_quota_cost.apply_anthropic_avoidance([lane_name], auth_over_quota=auth_over_quota)
+        _token_cost = _lane_quota_cost.measured_lane_token_cost(intent).get(lane_name) or {}
+        _projected_tokens = _token_cost.get("tokens_per_call")
+        if _projected_tokens is not None:
+            _lane_quota_cost.enforce_single_call_plan_fraction(
+                lane_name, _projected_tokens, auth_over_quota=auth_over_quota, token_costs={lane_name: _token_cost})
         # THE SHAPE MUST RIDE THE PROMPT ON A LANE, AND THE DEADLINE MUST BE THE CALLER'S. A CLI completion
         # takes no response_format / forced-tool parameter, so a caller's `schema` was silently dropped here —
         # the model returned prose, output_contract rejected it, and the lane looked "unreliable" when it was

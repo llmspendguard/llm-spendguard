@@ -53,7 +53,7 @@ def _urgency(reset_ts, now=None):
     return 1.0 + frac_near * (umax - 1.0)
 
 
-def lane_score(row, now=None, abs_norm=None, pace=None):
+def lane_score(row, now=None, abs_norm=None, pace=None, quota_cost=None, quota_cost_floor=None):
     """Utility of routing one unit to this subscription lane, or None when its headroom is UNKNOWN (the caller then
     falls back to the call-volume proxy — a can't-know is not a zero). `row` is a lanes.lane_headroom() entry.
     Always >= 1.0 (free), so it outranks any metered target; more headroom × urgency → higher.
@@ -78,6 +78,16 @@ def lane_score(row, now=None, abs_norm=None, pace=None):
     score = 1.0 + rf * _urgency(row.get("reset_ts"), now)
     if pace is not None:
         score += max(0.0, float(pace)) * _cfg_num("lane_pace_weight", 2.0)
+    # No quota_cost argument preserves the low-level scorer's historical contract. Unmeasured quota cost cannot
+    # justify a measured-only discount; admission/preflight separately fails closed when evidence is required.
+    if quota_cost is None:
+        return score
+    if quota_cost.get("basis") != "measured" or not quota_cost.get("tokens_per_call"):
+        return score
+    if quota_cost_floor:
+        # Keep subscription lanes in the free tier (>=1) while discounting only their headroom/pace bonus.
+        score = 1.0 + ((score - 1.0) /
+                       max(1.0, float(quota_cost["tokens_per_call"]) / float(quota_cost_floor)))
     return score
 
 
@@ -92,7 +102,7 @@ def _protect_policy():
     return _p
 
 
-def rank_lanes(rows, cooling=None, now=None, pace_by=None, protect=None):
+def rank_lanes(rows, cooling=None, now=None, pace_by=None, protect=None, auth_over_quota=False):
     """EVERY enabled lane ordered BEST-first by utility — nothing is silently dropped: a cooling lane appears with
     available=False and a reason, so 'why isn't it routing to lane X' is answerable from the output. `rows` from
     lanes.lane_headroom(); `cooling(lane)->bool` defaults to resource_state. Each entry: {lane, provider, available,
@@ -113,6 +123,11 @@ def rank_lanes(rows, cooling=None, now=None, pace_by=None, protect=None):
         protect = _protect_policy()
     from . import config
     shed = config.shed_lanes()   # SSOT shared with plan_admission — the operator's "route discretionary work OFF these"
+    from . import lane_quota_cost
+    quota_costs = lane_quota_cost.measured_lane_token_cost()
+    measured_costs = [v["tokens_per_call"] for v in quota_costs.values()
+                      if v.get("basis") == "measured" and v.get("tokens_per_call")]
+    quota_cost_floor = min(measured_costs) if measured_costs else None
     # WATER-FILL normalizer: the largest ABSOLUTE tokens-left across these lanes, so remaining_abs becomes a fraction
     # comparable to remaining_pct. None when no lane has a measured cap yet → every lane falls back to its own %.
     abs_norm = max((float(r["remaining_abs"]) for r in rows if r.get("remaining_abs") is not None), default=None)
@@ -137,7 +152,9 @@ def rank_lanes(rows, cooling=None, now=None, pace_by=None, protect=None):
         # paid metered when a free — if shed — lane could serve). A shed lane that is ALSO cooling/window-capped stays
         # held by those rules above (it genuinely cannot serve). Window-cap (truly exhausted) still takes precedence.
         if r["lane"] in shed:
-            entry = {**base, "available": False, "score": lane_score(r, now, abs_norm=abs_norm, pace=pc),
+            entry = {**base, "available": False,
+                     "score": lane_score(r, now, abs_norm=abs_norm, pace=pc,
+                                         quota_cost=quota_costs.get(r["lane"], {}), quota_cost_floor=quota_cost_floor),
                      "why": "shed (advisor.shed_lanes) — discretionary work routed to other free lanes"}
             out.append(entry)
             shed_held.append(entry)   # tracked locally so the re-admit never needs a key on the returned dict
@@ -157,7 +174,8 @@ def rank_lanes(rows, cooling=None, now=None, pace_by=None, protect=None):
                             "why": f"at window cap ({int(_rp)}% left ≤ reserve {_reserve*100:.0f}%) — held so the "
                                    f"plan is not pushed past 100% of its window"})
                 continue
-        s = lane_score(r, now, abs_norm=abs_norm, pace=pc)
+        s = lane_score(r, now, abs_norm=abs_norm, pace=pc, quota_cost=quota_costs.get(r["lane"], {}),
+                       quota_cost_floor=quota_cost_floor)
         if s is None:
             why = "unknown headroom (proxy orders it)"
         elif r.get("remaining_abs") is not None and abs_norm:
@@ -167,6 +185,16 @@ def rank_lanes(rows, cooling=None, now=None, pace_by=None, protect=None):
         if pc is not None:
             why += f" · pace {pc:+.2f} ({'behind→fill' if pc >= 0 else 'ahead→ease'})"
         out.append({**base, "available": True, "score": s, "why": why})
+    if lane_quota_cost.avoid_anthropic_lane_enabled():
+        anthropic_lanes = lane_quota_cost.anthropic_lane_names()
+        alternatives = [d for d in out if d["available"] and d["lane"] not in anthropic_lanes]
+        for entry in out:
+            if entry["available"] and entry["lane"] in anthropic_lanes and alternatives:
+                entry["available"] = False
+                entry["why"] = "avoided anthropic lane — another ready lane can serve"
+            elif entry["available"] and entry["lane"] in anthropic_lanes and not auth_over_quota:
+                entry["available"] = False
+                entry["why"] = "anthropic is sole ready lane — explicit quota authorization required"
     # NEVER-WEDGE: if the shed hold left NOTHING available, a shed lane is a PREFERENCE not a dead end — re-admit the
     # shed-held lanes (they alone were held by choice, not by a real cap/cooling) so a fungible call still routes to a
     # FREE lane rather than being forced to paid metered. Other free lanes are always preferred (they were never held);
@@ -174,6 +202,9 @@ def rank_lanes(rows, cooling=None, now=None, pace_by=None, protect=None):
     # serving" so the two routers agree end-to-end.
     if shed_held and not any(d["available"] for d in out):
         for d in shed_held:
+            if lane_quota_cost.avoid_anthropic_lane_enabled() \
+                    and d["lane"] in lane_quota_cost.anthropic_lane_names() and not auth_over_quota:
+                continue
             d["available"] = True
             d["why"] = "shed lane re-admitted — no other free lane available (preference, not a cap)"
     # available first; among available, scored (higher better) before unknown-headroom; unavailable (cooling) last

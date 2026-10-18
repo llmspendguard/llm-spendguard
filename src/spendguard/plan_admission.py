@@ -97,7 +97,7 @@ def _admission_reason_class(risk):
     return "quota-admission"
 
 
-def decide(model, intent):
+def decide(model, intent, auth_over_quota=False):
     """Return a zero-spend routing decision for a labelled, substitutable call.
 
     Alternatives come only from the existing propose→confirm registry: the agentic meaning decision has already

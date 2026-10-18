@@ -13,6 +13,10 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-pool-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
+# This test isolates provider-respecting executor-pool routing. The dedicated quota-preflight acceptance script
+# covers the default-on Anthropic avoidance policy and its authorization behavior.
+os.environ["SPENDGUARD_AVOID_CLAUDE_LANE"] = "off"
+
 from spendguard import adapters, subscription_exec, codex_exec, resource_state
 
 fails = []
