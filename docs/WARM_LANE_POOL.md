@@ -4,7 +4,7 @@
 time (the CLI reloads its MCP schemas / plugins / agent base). Measured: a claude-code lane call cold-starts ~197K
 cache-write tokens in production; codex cold `exec` measured >75s vs ~5s warm. The ~5s warm turn is the operative
 Codex lane latency because its daemon is default-on; >75s is only the cold one-shot fallback, not normal lane routing.
-See the [README routing cheat-sheet](../README.md#routing-cheat-sheet) for the caller-facing API choice.
+See the [README routing cheat-sheet](https://github.com/llmspendguard/llm-spendguard/blob/main/README.md#routing-cheat-sheet) for the caller-facing API choice.
 
 **The decisive requirement for a warm POOL.** Lane calls are *independent one-shot* prompts (classify file A, then
 file B, …). A warm pool is only correct if it can start a FRESH, context-ISOLATED conversation per prompt inside ONE
