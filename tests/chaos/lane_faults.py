@@ -17,6 +17,8 @@ os.environ["SPENDGUARD_LANE_QUEUE_POLL_S"] = "0.002"
 
 from spendguard import adapters, calls, gate, lane_balance, lane_queue, lane_recovery, plan_admission  # noqa: E402
 
+CHAOS_RECOVERY_POLICY = {"SPENDGUARD_AVOID_CLAUDE_LANE": "off"}
+
 
 class RecoveringFaultLane:
     TIMEOUT_S = 30
@@ -77,7 +79,10 @@ def run_lane_chaos_contract():
                 return adapters._call_once(primary_model, f"fault-{n}", max_tokens=32)
 
         substitutes = [alternate_model] if alternate and mutation != "disable_shed" else []
-        with patch.object(adapters, "_lane_for", side_effect=lambda p: mapping.get(p)), \
+        # The fake alternate must be eligible to prove shedding. Quota-policy acceptance tests separately
+        # prove default-on Anthropic refusal; scope this fixture to the mocked wave rather than leaking state.
+        with patch.dict(os.environ, CHAOS_RECOVERY_POLICY), \
+                patch.object(adapters, "_lane_for", side_effect=lambda p: mapping.get(p)), \
                 patch.object(adapters, "_call_once", side_effect=simulate_gated_metered_send), \
                 patch.object(plan_admission, "_best_ready_alt_lane", return_value=None), \
                 patch.object(adapters, "_lane_too_big", return_value=False), \
