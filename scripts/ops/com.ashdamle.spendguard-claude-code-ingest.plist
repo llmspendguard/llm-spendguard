@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.ashdamle.spendguard-claude-code-ingest</string>
+
+    <!-- WHY THIS EXISTS: claudecode.ingest_events is correct, $0 (pure parse + arithmetic), idempotent
+         (dedup_key "cc:<message.id>") and incremental via its own watermark — but it had NO TRIGGER. It was last
+         run by hand on 2026-09-02, and the six-week hole that opened made context_trajectory() return
+         turns=0/current=0 for every session created after that date. residency_gate's long-session gate reads
+         exactly that, so the wired PostToolUse residency nudge was structurally silent: measured 0 of the 25
+         most-recently-active sessions could open it. The same hole left est-value blind to the claude-code lane.
+         A working ingest with no scheduler is indistinguishable from a broken one, so the schedule IS the fix. -->
+
+    <!-- /bin/sh is the job's executable ON PURPOSE, not for convenience. Naming the venv's `spendguard` console
+         script directly made launchd's RESPONSIBLE PROCESS the interpreter it shebangs to, and Homebrew's
+         bin/python3.14 is a 34 KB stub that re-execs Python.app — a BUNDLE, which carries its own TCC identity that
+         has no Documents access. The job then died on startup with
+             PermissionError: [Errno 1] Operation not permitted: '<venv>/pyvenv.cfg'
+         (EPERM, not EACCES, on a file that is -rw-r--r-- and readable interactively — the signature of a TCC
+         denial rather than a filesystem one). `launchctl list` still reported last-exit 0 at that moment, so the
+         failure was visible ONLY in StandardErrorPath. With /bin/sh as the job, TCC attributes the children to the
+         shell, which inherits launchd's own granted identity.
+         The sibling com.ashdamle.honestreview-value agent does name its interpreter directly and works — because
+         python.org's /Library/Frameworks build is a plain executable, not an .app bundle. The difference is the
+         interpreter's packaging, not the path it reads. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/sh</string>
+        <string>-c</string>
+        <string>exec /Users/ashdamle/Documents/claude/llm-spendguard/.venv.nosync/bin/spendguard claude-code ingest</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/ashdamle/Documents/claude/llm-spendguard</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- The ingest never calls an LLM; skip installing the call gate it does not need. -->
+        <key>SPENDGUARD_NO_AUTOINSTALL</key>
+        <string>1</string>
+    </dict>
+
+    <!-- MEASURED, not guessed: a warm incremental run is 2.5s wall (35,137 transcripts skipped by the watermark,
+         only the ~24 sessions active since the last run are parsed). At 300s that is a 0.8% duty cycle.
+         A Stop hook was the other candidate and was rejected on measurement: it would spend the same ~2.5s on
+         EVERY turn of every session, and 557ms of that is the fixed glob+stat over all 35,158 transcripts
+         before --limit can narrow anything. Interval beats per-turn here. -->
+    <key>StartInterval</key>
+    <integer>300</integer>
+
+    <!-- No overlap guard is needed and none is used ON PURPOSE: launchd will not start a second instance of a job
+         whose previous run has not exited. The `pgrep -qf '<cmd>' || <cmd>` idiom would SELF-MATCH here, because the
+         guarding shell's own argv contains the pattern it greps for — it would read as "already running", forever. -->
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- A sweep over ~9.6 GB of transcripts must never compete with interactive work for IO. -->
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>LowPriorityIO</key>
+    <true/>
+    <key>Nice</key>
+    <integer>5</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/ashdamle/.spendguard/logs/claude_code_ingest.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/ashdamle/.spendguard/logs/claude_code_ingest.err.log</string>
+</dict>
+</plist>
