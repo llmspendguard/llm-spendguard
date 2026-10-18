@@ -50,6 +50,8 @@ def economics_fixture(headroom_rows=None):
     return rows
 
 
+original_quota_snapshot_reader = quota.lanes.lane_headroom
+quota_snapshot_fetches = []
 original_economics = quota.lane_economics.economics
 original_anthropic_lanes = quota.anthropic_lane_names
 original_max_fraction = os.environ.get(MAX_FRACTION_ENV)
@@ -115,6 +117,20 @@ try:
     )
     check("one oversized call allows with explicit authorization", override["cap_tokens"] == MEASURED_CAP_TOKENS)
 
+    # Default single-call enforcement must use the snapshot and still enforce its cap.
+    quota.lanes.lane_headroom = lambda do_fetch=True: (quota_snapshot_fetches.append(do_fetch) or headroom)
+    expect_refusal(
+        "snapshot-backed oversized single call still refuses",
+        lambda: quota.enforce_single_call_plan_fraction(
+            INCIDENT_LANE, OVER_LIMIT_CALL_TOKENS, token_costs=small_cost),
+        (INCIDENT_LANE, "above"),
+    )
+    check("single call never refreshes unrelated host lanes", quota_snapshot_fetches == [False])
+    quota_snapshot_fetches.clear()
+    quota.quota_preflight({INCIDENT_LANE: SMALL_CALL_COUNT}, token_costs=small_cost)
+    check("explicit fan preflight retains live quota refresh", quota_snapshot_fetches == [True])
+    quota.lanes.lane_headroom = original_quota_snapshot_reader
+
     fan_size = quota.UNMEASURED_FANOUT_REFUSE_SIZE + 1
     unmeasured_cost = {
         INCIDENT_LANE: {
@@ -161,6 +177,7 @@ try:
         quota.apply_anthropic_avoidance([INCIDENT_LANE], auth_over_quota=True) == [INCIDENT_LANE],
     )
 finally:
+    quota.lanes.lane_headroom = original_quota_snapshot_reader
     quota.lane_economics.economics = original_economics
     quota.anthropic_lane_names = original_anthropic_lanes
     if original_max_fraction is None:

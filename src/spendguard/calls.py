@@ -291,17 +291,23 @@ def flow_agg(since_rowid: int = 0, chain: Optional[str] = None):
 
 def caller():
     """Return the first real application frame, never a worker-thread trampoline."""
+    fr = None
     try:
-        for fr in inspect.stack()[2:]:
-            fn = fr.filename
+        # Keep admission bounded: frame metadata avoids source lookups across the stack.
+        fr = inspect.currentframe().f_back.f_back
+        while fr is not None:
+            fn = fr.f_code.co_filename
             base = os.path.basename(fn)
             trampoline = (base in ("thread.py", "threading.py") or
                           "concurrent/futures" in fn.replace("\\", "/"))
             if (not trampoline and not fn.startswith(_PKG) and "site-packages" not in fn
                     and fn not in ("<string>", "<stdin>")):
-                return f"{os.path.basename(fn)}:{fr.function}:{fr.lineno}"
+                return f"{os.path.basename(fn)}:{fr.f_code.co_name}:{fr.f_lineno}"
+            fr = fr.f_back
     except Exception:
         pass
+    finally:
+        del fr
     return None
 
 
