@@ -77,6 +77,8 @@ class _WarmStdioJsonRpcDaemon:
         self._last_activity = 0.0
         self._waiters = {}                      # rpc_id -> request waiter
         self._ids = itertools.count(1)          # itertools.count.__next__ is atomic under the GIL
+        self._keep_warm = False
+        self._environment_overrides = {}
 
     # ── id + idle-timer primitives ────────────────────────────────────────────────────────────────────────────
     def _next_id(self):
@@ -91,6 +93,8 @@ class _WarmStdioJsonRpcDaemon:
     def _schedule_idle_shutdown(self):
         """Reset the one-shot idle timer after a call. The timestamp check makes a stale callback harmless."""
         self._cancel_idle_shutdown()
+        if self._keep_warm:
+            return
         activity = time.monotonic()
         with self._state_lock:
             self._last_activity = activity
@@ -247,7 +251,7 @@ class _WarmStdioJsonRpcDaemon:
         try:
             p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                  bufsize=0, cwd=_SAFE_CWD,
-                                 env=config.lane_exec_env(launcher))  # prepend the LAUNCHER's dir (holds node), not realpath's
+                                 env={**config.lane_exec_env(launcher), **self._environment_overrides})
         except Exception:
             return None
         fl = fcntl.fcntl(p.stdout.fileno(), fcntl.F_GETFL)     # non-blocking stdout for the reader's os.read

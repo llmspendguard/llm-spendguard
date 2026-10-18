@@ -276,8 +276,8 @@ def _route_agentic(plan, prompt, model, timeout, cwd):
         kwargs["sandbox"] = "workspace-write"
         kwargs["cwd"] = cwd
         # Honor an explicit caller timeout; otherwise give the agentic turn its generous config'd budget rather than
-        # the warm lane's short meta default, and HARD-kill + recycle the daemon on timeout so a wedged turn fails
-        # fast instead of stalling every later delegation.
+        # the warm lane's short meta default. Pool checkout makes this worker exclusive, so recycling a wedged
+        # child cannot interrupt another delegation on a sibling worker.
         if timeout is None:
             kwargs["timeout"] = float(config._cfg_get("delegate", "agentic_timeout_s", AGENTIC_DELEGATE_TIMEOUT_S)
                                       or AGENTIC_DELEGATE_TIMEOUT_S)

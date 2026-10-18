@@ -11,6 +11,7 @@ import time
 os.environ.setdefault("SPENDGUARD_HOME", tempfile.mkdtemp(prefix="sg-codex-host-singleton-", dir="/tmp"))
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
+os.environ["SPENDGUARD_CODEX_DAEMON_POOL_SIZE"] = "1"
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 FAKE_CODEX = pathlib.Path(__file__).with_name("fake_codex_app_server.py").resolve()
