@@ -3,14 +3,18 @@ import os
 import pathlib
 import subprocess
 import sys
+import tempfile
 
 
 def lane_mutation_matrix():
     script = pathlib.Path(__file__).with_name("lane_faults.py")
     matrix = []
     for mutation in ("intact", "disable_retry", "disable_shed", "disable_queue", "allow_ungated_metered"):
-        env = dict(os.environ, SPENDGUARD_CHAOS_MUTATION=mutation)
-        proc = subprocess.run([sys.executable, str(script)], env=env, text=True, capture_output=True, timeout=60)
+        # config.HOME is frozen by the gate at interpreter startup.
+        with tempfile.TemporaryDirectory() as scenario_home:
+            env = dict(os.environ, SPENDGUARD_CHAOS_MUTATION=mutation,
+                       SPENDGUARD_HOME=scenario_home, SPENDGUARD_TEST_ISOLATED="1")
+            proc = subprocess.run([sys.executable, str(script)], env=env, text=True, capture_output=True, timeout=60)
         state = "GREEN" if proc.returncode == 0 else "RED"
         print(f"{mutation:26} {state}", flush=True)
         matrix.append((mutation, state))
@@ -29,9 +33,11 @@ def work_mutation_matrix():
                                     "disable_disposition_assertion")),
     ):
         for mutation in mutations:
-            env = dict(os.environ, SPENDGUARD_CHAOS_MUTATION=mutation)
             script = pathlib.Path(__file__).with_name(contract + ".py")
-            proc = subprocess.run([sys.executable, str(script)], env=env, text=True, capture_output=True, timeout=60)
+            with tempfile.TemporaryDirectory() as scenario_home:
+                env = dict(os.environ, SPENDGUARD_CHAOS_MUTATION=mutation,
+                           SPENDGUARD_HOME=scenario_home, SPENDGUARD_TEST_ISOLATED="1")
+                proc = subprocess.run([sys.executable, str(script)], env=env, text=True, capture_output=True, timeout=60)
             state = "GREEN" if proc.returncode == 0 else "RED"
             print(f"{contract:26} {mutation:26} {state}", flush=True)
             matrix.append((contract, mutation, state))
