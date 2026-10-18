@@ -15,3 +15,10 @@ def test_lane_ladder_mutation_contract():
 def test_work_integrity_mutation_contracts():
     harness = runpy.run_path(str(pathlib.Path(__file__).with_name("mutation_proof.py")))
     harness["work_mutation_matrix"]()
+
+
+@pytest.mark.chaos
+def test_chaos_mutation_contracts_share_interpreter_safely():
+    """Exercise the leaking order explicitly, independent of pytest scheduling."""
+    test_lane_ladder_mutation_contract()
+    test_work_integrity_mutation_contracts()
