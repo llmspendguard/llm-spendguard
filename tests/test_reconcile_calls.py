@@ -8,9 +8,9 @@ safety property is guarded here because this WRITES the money-of-record:
 Offline: an isolated ledger; no network, no admin key, no provider call."""
 import os
 import sys
-import tempfile
+from _pytest_fixture_bridge import align_test_startup_home
 
-os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-reconcalls-")
+align_test_startup_home(prefix="sg-reconcalls-")
 os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
 os.environ["SPENDGUARD_CALLS"] = "1"
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")

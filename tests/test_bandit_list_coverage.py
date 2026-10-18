@@ -7,11 +7,11 @@ prints it. This guards that a dead entry is flagged AND that a live PREFIX entry
 """
 import os
 import sys
-import tempfile
+from _pytest_fixture_bridge import align_test_startup_home
 import json
 import pathlib
 
-os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-denylist-")
+align_test_startup_home(prefix="sg-denylist-")
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 # a denylist with ONE prefix that WILL match a recorded intent, and two dead exact names (the warden incident)

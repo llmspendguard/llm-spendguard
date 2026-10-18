@@ -15,11 +15,25 @@ and returns a nonzero exit code on any failure. An UNKNOWN fixture is a loud fai
 """
 import inspect
 import itertools
+import os
 import pathlib
+import sys
 import tempfile
 import traceback
 
 from _pytest.monkeypatch import MonkeyPatch
+
+
+def align_test_startup_home(prefix):
+    """Preserve runner isolation; re-exec when startup imported config before isolation."""
+    test_home = os.environ.get("SPENDGUARD_HOME")
+    if not test_home:
+        test_home = tempfile.mkdtemp(prefix=prefix)
+        os.environ["SPENDGUARD_HOME"] = test_home
+    cached_config = sys.modules.get("spendguard.config")
+    if cached_config is not None and cached_config.HOME != pathlib.Path(test_home):
+        os.execv(sys.executable, [sys.executable, *sys.argv])
+    return test_home
 
 
 def _parametrizations(fn):

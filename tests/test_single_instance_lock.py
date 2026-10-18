@@ -5,9 +5,12 @@ two accidental `deploy` runs raced). flock is per-open-file-description, so a se
 contends — the contention is real, not a same-process artefact. Offline, isolated HOME, no network, no LLM."""
 import os
 import sys
+import pathlib
+import subprocess
 import tempfile
+from _pytest_fixture_bridge import align_test_startup_home
 
-os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-silock-")
+align_test_startup_home(prefix="sg-silock-")
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
@@ -21,6 +24,40 @@ def ck(label, cond):
         fails.append(label)
 
 NAME = "test_deploy_singleton"
+
+# Exercise the bridge against the gated interpreter's real startup import, including
+# the standalone case where a test selects its HOME after sitecustomize has run.
+with tempfile.TemporaryDirectory(prefix="sg-startup-home-probe-") as startup_probe_dir:
+    startup_probe_root = pathlib.Path(startup_probe_dir)
+    startup_probe_script = startup_probe_root / "probe.py"
+    startup_probe_script.write_text('''import os
+from pathlib import Path
+from spendguard import config
+from _pytest_fixture_bridge import align_test_startup_home
+requested = os.environ["SPENDGUARD_HOME_PROBE_TARGET"]
+if "SPENDGUARD_HOME_PROBE_REEXEC" not in os.environ:
+    assert config.HOME != Path(requested)
+    os.environ["SPENDGUARD_HOME_PROBE_REEXEC"] = "1"
+    os.environ["SPENDGUARD_HOME"] = requested
+assert align_test_startup_home(prefix="sg-home-probe-") == requested
+assert config.HOME == Path(requested)
+assert os.environ["SPENDGUARD_HOME_PROBE_REEXEC"] == "1"
+''')
+    startup_probe_env = dict(os.environ)
+    startup_probe_env["SPENDGUARD_HOME"] = str(startup_probe_root / "initial")
+    startup_probe_env["SPENDGUARD_HOME_PROBE_TARGET"] = str(startup_probe_root / "requested")
+    startup_probe_env["PYTHONPATH"] = os.pathsep.join([
+        str(pathlib.Path(__file__).resolve().parent),
+        str(pathlib.Path(config.__file__).resolve().parent.parent),
+        startup_probe_env.get("PYTHONPATH", ""),
+    ])
+    startup_probe_result = subprocess.run(
+        [sys.executable, str(startup_probe_script)], env=startup_probe_env,
+        capture_output=True, text=True, check=False)
+    ck("startup HOME mismatch reexecs and preserves the requested HOME",
+       startup_probe_result.returncode == 0)
+    if startup_probe_result.returncode:
+        print(startup_probe_result.stdout, startup_probe_result.stderr)
 
 # ── 1. a single acquire holds the lock and proceeds ──
 with config.single_instance_lock(NAME) as got_outer:

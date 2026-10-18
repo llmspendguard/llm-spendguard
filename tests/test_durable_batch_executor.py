@@ -9,10 +9,10 @@ import json
 import os
 import subprocess
 import sys
-import tempfile
+from _pytest_fixture_bridge import align_test_startup_home
 import time
 
-os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-3-")
+align_test_startup_home(prefix="sg-3-")
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 _HERE = os.path.dirname(os.path.abspath(__file__))

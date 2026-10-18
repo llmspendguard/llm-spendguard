@@ -38,7 +38,8 @@ finally:
     _cx._bin, _cx._plugin_disable_flags = _o_bin, _o_flags
 
 print("\n-- daemon is default-on, opt-out works, and a workspace-write daemon failure falls back to cold exec --")
-_o_daemon, _o_runwarm, _o_bin2, _o_run = _cx._daemon_enabled, cd.run_warm, _cx._bin, _cx.subprocess.run
+_o_daemon, _o_runwarm, _o_bin2, _o_cold = (
+    _cx._daemon_enabled, cd.run_warm, _cx._bin, _cx._run_cold_codex_with_reaper)
 _old_env = os.environ.pop("SPENDGUARD_CODEX_DAEMON", None)
 try:
     fails += ck("daemon is enabled by default", _cx._daemon_enabled())
@@ -56,12 +57,14 @@ try:
         with open(out_file, "w") as destination:
             destination.write("cold answer")
         return type("ColdResult", (), {"returncode": 0, "stdout": "", "stderr": ""})()
-    _cx.subprocess.run = _cold_ok
+    # Workspace-write cold execution now owns descendant cleanup through this boundary.
+    _cx._run_cold_codex_with_reaper = lambda cmd, **kwargs: _cold_ok(cmd, **kwargs)
     _out = _cx.run_prompt("hi", model="openai:gpt-5.5", sandbox="workspace-write", cwd=os.path.dirname(__file__))
     fails += ck("workspace-write daemon exception degrades cleanly to cold exec",
                 _out.get("text") == "cold answer" and not _out.get("error"))
 finally:
-    _cx._daemon_enabled, cd.run_warm, _cx._bin, _cx.subprocess.run = _o_daemon, _o_runwarm, _o_bin2, _o_run
+    _cx._daemon_enabled, cd.run_warm, _cx._bin, _cx._run_cold_codex_with_reaper = (
+        _o_daemon, _o_runwarm, _o_bin2, _o_cold)
     if _old_env is not None:
         os.environ["SPENDGUARD_CODEX_DAEMON"] = _old_env
     else:

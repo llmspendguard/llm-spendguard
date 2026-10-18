@@ -18,6 +18,11 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 from spendguard import brief, deid        # noqa: E402
+from spendguard import calls, learn      # noqa: E402
+
+# Read-only consumers require an existing, empty schema; they never initialize it.
+calls._calls_db()
+learn._insights_db()
 
 fails = 0
 
