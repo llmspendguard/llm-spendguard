@@ -155,6 +155,10 @@ def planned_round_robin_lane_calls(call_count, lane_names):
 
 def enforce_single_call_plan_fraction(lane, projected_tokens, *, auth_over_quota=False, headroom_rows=None,
                                       token_costs=None):
+    # Single-call admission reads the routing snapshot; live multi-lane probes belong
+    # to explicit preflights, outside the dispatch hot path.
+    if headroom_rows is None:
+        headroom_rows = lanes.lane_headroom(do_fetch=False)
     row = estimate_lane_quota({lane: 1}, headroom_rows=headroom_rows, token_costs=token_costs)[0]
     if not row["quota_known"]:
         return row
