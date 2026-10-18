@@ -167,8 +167,8 @@ def test_lock_refuses_update_and_new_post_then_reverse(tmp_path):
                     "occurred_at": "2026-05-11T00:00:00+00:00", "attr_what": "late"})   # no posting into a closed period
     rid = led.reverse(a, actor="ash", reason="wrong")  # correction = reversal into the open period
     rev = led.get(rid)
-    assert rev["realtime_micros"] == -10_000_000 and rev["reverses_id"] == a
-    assert led.get(a)["realtime_micros"] == 10_000_000  # original untouched
+    assert to_dec(rev["realtime_usd"]) == Decimal("-10") and rev["reverses_id"] == a
+    assert to_dec(led.get(a)["realtime_usd"]) == Decimal("10")  # original untouched
 
 
 def test_reversed_pair_nets_to_zero(tmp_path):
@@ -221,3 +221,10 @@ def test_attribute_pass_posts_and_logs(tmp_path):
     assert ev["org"] == "Healiom" and ev["team"] == "lmm" and ev["projects"] == ["lmm"]
     assert ev["status"] == "posted" and ev["attr_how"] == "cwd-match" and ev["attr_confidence"] == 0.95
     assert any(h["pass"] == "attribute" and h["field"] == "org" and h["actor"] == "attr-v1" for h in led.history(a))
+
+
+if __name__ == "__main__":
+    import os as _os, sys as _sys
+    _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+    from _pytest_fixture_bridge import run_pytest_style
+    _sys.exit(run_pytest_style(globals()))

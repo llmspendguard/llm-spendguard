@@ -46,3 +46,10 @@ def test_a_billed_row_with_zero_output_is_not_scored_as_perfect():
     tok, usd, gradeable = calib.score(pred_out=100, act_out=0, pred_usd=0.10, act_usd=0.05,
                                       seeding=False, unbilled_but_priced=False)
     assert (tok, usd, gradeable) == (None, None, False)
+
+
+if __name__ == "__main__":
+    import os as _os, sys as _sys
+    _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+    from _pytest_fixture_bridge import run_pytest_style
+    _sys.exit(run_pytest_style(globals()))

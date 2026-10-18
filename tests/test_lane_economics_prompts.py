@@ -78,3 +78,10 @@ def test_economics_appends_prompt_row(monkeypatch):
     out = le.economics(headroom_rows=rows, fee_by_lane={"zai-coding": 80.0})
     zai = [e for e in out if e["lane"] == "zai-coding"]
     assert len(zai) == 1 and zai[0]["meter"] == "prompts" and zai[0]["remaining_prompts"] == 1900
+
+
+if __name__ == "__main__":
+    import os as _os, sys as _sys
+    _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+    from _pytest_fixture_bridge import run_pytest_style
+    _sys.exit(run_pytest_style(globals()))

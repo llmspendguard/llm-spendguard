@@ -91,3 +91,10 @@ def test_lane_score_stays_free_tier_above_metered():
     # Even the smallest lane headroom scores >= 1.0 (a plan token is free), so it outranks any metered target (<1).
     row = {"lane": "L", "provider": "p", "known": True, "remaining_pct": 1, "reset_ts": None, "remaining_abs": 10}
     assert ru.lane_score(row, abs_norm=1_000_000) >= 1.0
+
+
+if __name__ == "__main__":
+    import os as _os, sys as _sys
+    _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+    from _pytest_fixture_bridge import run_pytest_style
+    _sys.exit(run_pytest_style(globals()))
