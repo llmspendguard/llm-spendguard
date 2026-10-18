@@ -35,11 +35,12 @@ ck("conv dedup: highest-score event ranks first", top[0]["text"] == "the user sa
 ck("conv dedup: caps at k", len(conv._dedup_top(events, k=1)) == 1)
 
 # ── claudecode._row_cost: $ from a usage dict. Returns (cost, in, out, cached) — the token split is HONEST:
-#    in = new input + cache CREATION (full-priced), cached = cache READ (discounted). COST is unchanged (full breakdown). ──
+#    in = new input + cache CREATION (display split), cached = cache READ (discounted). COST bills cache
+#    creation via pricing's cache_creation_tok (1.25x base), not folded into in_tok at 1.0x. ──
 u = {"input_tokens": 1000, "output_tokens": 500, "cache_read_input_tokens": 200, "cache_creation_input_tokens": 100}
 cost, tin, tout, tcached = claudecode._row_cost("claude-opus-4-8", u)
-exp = pricing.realtime_cost("claude-opus-4-8", 1000 + 100 + 200, 500, 200)
-ck("claudecode cost: matches pricing.realtime_cost (cost still uses the full cache breakdown)", abs(cost - exp) < 1e-12)
+exp = pricing.realtime_cost("claude-opus-4-8", 1000 + 200, 500, 200, cache_creation_tok=100)
+ck("claudecode cost: matches pricing.realtime_cost with cache_creation billed at its own rate", abs(cost - exp) < 1e-12)
 ck("claudecode tokens: in = input + cache_creation (1100), cached = cache_read (200) — NOT lumped; out passthrough",
    tin == 1100 and tcached == 200 and tout == 500)
 cost0, tin0, _, tcached0 = claudecode._row_cost("totally-unknown-model", u)

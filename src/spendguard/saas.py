@@ -26,6 +26,9 @@ The HTTP contract the server repo will implement (versioned under {url}/v1); ide
 All requests send `Authorization: Bearer <api_key>` and `X-Spendguard-Client: <version>`.
 """
 import json
+import math
+import numbers
+import sys
 import time
 import urllib.request
 import urllib.error
@@ -34,6 +37,9 @@ import urllib.parse
 from . import config
 
 _INTERVAL_SECONDS = {"off": None, "hourly": 3600, "daily": 86400, "weekly": 604800}
+_LEDGER_NONNEGATIVE_NUMBER_FIELDS = (
+    "spend_micros", "calls", "in_tokens", "out_tokens", "cached_in_tokens",
+)
 
 
 def saas_connection():
@@ -74,9 +80,46 @@ def _require_safe_url(base):
                            f"https:// (http is allowed only for a loopback host: localhost / 127.0.0.1 / ::1)")
 
 
+def _sanitize_ledger_day_totals_for_server(payload):
+    """Exclude invalid ledger rows using the server's exact non-negative, finite-number contract.
+
+    This is deliberately loud and row-granular: one corrupt row must not make the strict server reject every good
+    row in the push, while the excluded evidence (especially real billed spend) must never disappear silently.
+    """
+    if not isinstance(payload, dict) or not isinstance(payload.get("day_totals"), list):
+        return payload
+    valid_rows = []
+    excluded = 0
+    for row in payload["day_totals"]:
+        violations = []
+        if isinstance(row, dict):
+            for field in _LEDGER_NONNEGATIVE_NUMBER_FIELDS:
+                value = row.get(field)
+                if value is not None and (isinstance(value, bool) or not isinstance(value, numbers.Real)
+                                          or not math.isfinite(value) or value < 0):
+                    violations.append(f"{field}={value!r}")
+        if not violations:
+            valid_rows.append(row)
+            continue
+        excluded += 1
+        identity = "/".join(str(row.get(k) or "?") for k in
+                            ("day", "provider", "model", "channel", "project"))
+        consequence = ("this may drop REAL billed spend from this sync" if row.get("billed") is not False
+                       else "this drops estimated subscription value from this sync")
+        print(f"[spendguard] WARNING: EXCLUDED invalid /v1/ledger row {identity}: "
+              f"{', '.join(violations)}; {consequence}. Fix the source data and retry.", file=sys.stderr)
+    if not excluded:
+        return payload
+    sanitized = dict(payload)
+    sanitized["day_totals"] = valid_rows
+    return sanitized
+
+
 def _request(method, path, payload=None, timeout=15):
     """Speak the contract. Raises RuntimeError with a clear message if not ready or the server is unreachable.
     Returns parsed JSON on success."""
+    if method == "POST" and path == "/v1/ledger":
+        payload = _sanitize_ledger_day_totals_for_server(payload)
     ok, reason = ready()
     if not ok:
         raise RuntimeError(f"spendguard SaaS not connected: {reason}")
