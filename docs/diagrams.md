@@ -4,10 +4,10 @@
 
 The active path acts before dispatch, records the economic outcome on three separate axes, and publishes scrubbed
 operational truth to the website. Effective caps travel the other direction and are enforced locally
-([`src/spendguard/plan_admission.py`](../src/spendguard/plan_admission.py),
-[`src/spendguard/route_utility.py`](../src/spendguard/route_utility.py),
-[`src/spendguard/delegate_router.py`](../src/spendguard/delegate_router.py),
-[`src/spendguard/guard.py`](../src/spendguard/guard.py), [`src/spendguard/saas.py`](../src/spendguard/saas.py)).
+([`src/spendguard/plan_admission.py`](https://github.com/llmspendguard/llm-spendguard/blob/main/src/spendguard/plan_admission.py),
+[`src/spendguard/route_utility.py`](https://github.com/llmspendguard/llm-spendguard/blob/main/src/spendguard/route_utility.py),
+[`src/spendguard/delegate_router.py`](https://github.com/llmspendguard/llm-spendguard/blob/main/src/spendguard/delegate_router.py),
+[`src/spendguard/guard.py`](https://github.com/llmspendguard/llm-spendguard/blob/main/src/spendguard/guard.py), [`src/spendguard/saas.py`](https://github.com/llmspendguard/llm-spendguard/blob/main/src/spendguard/saas.py)).
 
 ```mermaid
 flowchart LR
@@ -35,7 +35,7 @@ flowchart LR
 
 ## End-to-end governed call and durable work flow
 
-The synchronous and storm paths share admission and settlement concepts, but queue use is path-dependent: ordinary calls may record an open queue row when `advisor.route_through_queue` is enabled, while storm overflow reaches `lane_queue.db` through the durable batch executor. The explicit branches below avoid implying that every call is always queued ([`src/spendguard/adapters.py:1194`](../src/spendguard/adapters.py#L1194), [`src/spendguard/adapters.py:1271`](../src/spendguard/adapters.py#L1271), [`src/spendguard/adapters.py:1337`](../src/spendguard/adapters.py#L1337), [`src/spendguard/storm_submit.py:120`](../src/spendguard/storm_submit.py#L120)).
+The synchronous and storm paths share admission and settlement concepts, but queue use is path-dependent: ordinary calls may record an open queue row when `advisor.route_through_queue` is enabled, while storm overflow reaches `lane_queue.db` through the durable batch executor. The explicit branches below avoid implying that every call is always queued ([`src/spendguard/adapters.py:1194`](https://github.com/llmspendguard/llm-spendguard/blob/main/src/spendguard/adapters.py#L1194), [`src/spendguard/adapters.py:1271`](https://github.com/llmspendguard/llm-spendguard/blob/main/src/spendguard/adapters.py#L1271), [`src/spendguard/adapters.py:1337`](https://github.com/llmspendguard/llm-spendguard/blob/main/src/spendguard/adapters.py#L1337), [`src/spendguard/storm_submit.py:120`](https://github.com/llmspendguard/llm-spendguard/blob/main/src/spendguard/storm_submit.py#L120)).
 
 ```mermaid
 flowchart LR
@@ -64,7 +64,7 @@ flowchart LR
 
 ## Three-database state model
 
-`spend.db` is money-of-record, `lane_queue.db` is transient durable work state, and `fleet.db` is a pruned live-process registry. Queue connections receive WAL tuning and bounded archive maintenance; deploy and drain use separate process locks ([`src/spendguard/config.py:764`](../src/spendguard/config.py#L764), [`src/spendguard/lane_queue.py:925`](../src/spendguard/lane_queue.py#L925), [`src/spendguard/fleet.py:29`](../src/spendguard/fleet.py#L29)).
+`spend.db` is money-of-record, `lane_queue.db` is transient durable work state, and `fleet.db` is a pruned live-process registry. Queue connections receive WAL tuning and bounded archive maintenance; deploy and drain use separate process locks ([`src/spendguard/config.py:764`](https://github.com/llmspendguard/llm-spendguard/blob/main/src/spendguard/config.py#L764), [`src/spendguard/lane_queue.py:925`](https://github.com/llmspendguard/llm-spendguard/blob/main/src/spendguard/lane_queue.py#L925), [`src/spendguard/fleet.py:29`](https://github.com/llmspendguard/llm-spendguard/blob/main/src/spendguard/fleet.py#L29)).
 
 ```mermaid
 flowchart TB
@@ -91,7 +91,7 @@ flowchart TB
 
 ## Release propagation
 
-The comparison uses a process's frozen loaded SHA against the live green pointer. Managed consumers can be kickstarted; unsupervised consumers are warned, and supervised daemons can self-exit only when a fresh process is proven to land on green ([`src/spendguard/fleet.py:117`](../src/spendguard/fleet.py#L117), [`src/spendguard/fleet.py:149`](../src/spendguard/fleet.py#L149), [`src/spendguard/release.py:109`](../src/spendguard/release.py#L109), [`src/spendguard/cli.py:300`](../src/spendguard/cli.py#L300)).
+The comparison uses a process's frozen loaded SHA against the live green pointer. Managed consumers can be kickstarted; unsupervised consumers are warned, and supervised daemons can self-exit only when a fresh process is proven to land on green ([`src/spendguard/fleet.py:117`](https://github.com/llmspendguard/llm-spendguard/blob/main/src/spendguard/fleet.py#L117), [`src/spendguard/fleet.py:149`](https://github.com/llmspendguard/llm-spendguard/blob/main/src/spendguard/fleet.py#L149), [`src/spendguard/release.py:109`](https://github.com/llmspendguard/llm-spendguard/blob/main/src/spendguard/release.py#L109), [`src/spendguard/cli.py:300`](https://github.com/llmspendguard/llm-spendguard/blob/main/src/spendguard/cli.py#L300)).
 
 ```mermaid
 sequenceDiagram

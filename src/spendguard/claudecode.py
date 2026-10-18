@@ -60,15 +60,17 @@ def _row_cost(model, u):
     out = int(u.get("output_tokens") or 0)
     cr = int(u.get("cache_read_input_tokens") or 0)
     cc = int(u.get("cache_creation_input_tokens") or 0)
-    # COST uses the full breakdown (cache_read priced at the discounted cached rate). The RETURNED token split is
-    # HONEST and un-lumped: in = new input + cache CREATION (both full-priced), cached = cache READ (discounted).
-    # Claude Code re-reads the whole context every turn, so cr dominates — lumping it into `in` would report a
-    # misleadingly huge "input" (20B+) when it's mostly cheap cache reads. Returns (cost, in, out, cached_read).
+    # COST uses the full breakdown (cache_read at the discounted rate; cache CREATION is a separately
+    # billed class — 1.25x base at 5min, 2x at 1h — passed via cache_creation_tok, NOT folded into
+    # in_tok at 1.0x). The RETURNED token split stays un-lumped for display: in = new input + cache
+    # CREATION, cached = cache READ (discounted). Claude Code re-reads the whole context every turn, so
+    # cr dominates — lumping it into `in` would report a misleadingly huge "input" (20B+) when it's
+    # mostly cheap cache reads. Returns (cost, in, out, cached_read).
     try:
         # realtime_cost returns None for a model with no price — not an exception, so a surrounding
         # try/except never sees it and the None reaches the caller's arithmetic. Unknown contributes
         # nothing to a total rather than taking the scan down; the unpriced model is surfaced elsewhere.
-        return (pricing.realtime_cost(model, inp + cc + cr, out, cr) or 0.0), inp + cc, out, cr
+        return (pricing.realtime_cost(model, inp + cr, out, cr, cache_creation_tok=cc) or 0.0), inp + cc, out, cr
     except Exception:
         return 0.0, inp + cc, out, cr
 
@@ -235,7 +237,7 @@ def ingest_events(days=None, limit=None, reset=False, dry=False):
                     continue
                 intok, outtok, cr, cc = _turn_usage(msg)
                 try:                                     # realtime_cost RETURNS None for some unpriced models but RAISES
-                    cost = pricing.realtime_cost(model, intok + cc + cr, outtok, cr) or 0.0   # KeyError for others (the
+                    cost = pricing.realtime_cost(model, intok + cr, outtok, cr, cache_creation_tok=cc) or 0.0   # KeyError for others (the
                 except Exception:                        # '<synthetic>' marker conv-synth writes) — treat any as unpriced,
                     cost = 0.0                           # PER TURN, so it never drops the whole session
                 if cost <= 0:                            # unpriced/zero-token turn: a $0 est_chat row is illegal AND

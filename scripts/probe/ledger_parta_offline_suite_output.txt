@@ -1,0 +1,87 @@
+[lint] ok: ruff check src tests
+[chunk 1/6] FAIL: 92/94 passed (397s)
+    ✗ test_durable_batch_executor.py (exit 1)
+  [RED]  B: ALL N requests recovered from the durable store after the crash (no dropped request)  — recovered=2/6 states={1: 'done', 2: 'done', 3: None, 4: None, 5: None, 6: None}
+  [OK]   B: EXACTLY-ONCE — no second batch created during recovery (no double-spend)
+  [OK]   C: row_results returns the result AND the originating task (prompt) together
+  [OK]   C: the ORDINAL reply is parseable against the candidate list recovered from the row (→ 'gamma')
+
+RED: test_durable_batch_executor — 1 checks RED
+    stderr: 
+    ✗ test_runner_wrapper.py (exit 1)
+  [OK] it suggests python3 rather than dead-ending
+  [OK] the suggestion carries the user's own args through
+  [OK] but it NEVER substitutes a binary the user didn't name (suggestion only)
+  [OK] a genuinely unknown command gets no invented suggestion
+
+[FAIL] test_runner_wrapper: 1 failure(s)
+    stderr: spendguard run: command not found: definitely-not-a-real-binary-xyz
+spendguard: OPENAI_API_KEY not found (set it in the environment, or add it to /x/keys.env)
+[chunk 2/6] FAIL: 93/94 passed (153s)
+    ✗ test_bandit_list_coverage.py (exit 1)
+  [OK] the live PREFIX entry 'warden:gold*' is NOT unmatched (it matches warden:gold_adjudicate)
+  [FAIL] the two entries matching NO recorded intent are flagged UNMATCHED
+  [FAIL] coverage reports the seen-intent count it judged against
+  [FAIL] a ledger read failure → read_ok=False, unmatched=None (never invents 'all unmatched')
+  [FAIL] an unmatched entry becomes matched once a matching intent is recorded
+[FAIL] bandit list coverage: 5 failure(s)
+    stderr: 
+[chunk 3/6] FAIL: 92/93 passed (176s)
+    ✗ test_comprehend.py (exit 1)
+  [OK] no matching files → a clear error, not a phantom success
+-- default_checkpoint: STABLE per-intent (so a re-run RESUMES), safe filename under the home --
+  [OK] stable across calls (same intent → same path → resume, never re-pay)
+  [FAIL] path is under the spendguard home and safely named
+
+[FAIL] test_comprehend: 1 failure(s)
+    stderr: 
+[chunk 4/6] FAIL: 92/93 passed (153s)
+    ✗ test_catalog_overlay.py (exit 1)
+  [OK] rewriting the overlay is reflected (content-keyed cache): gemini now 300
+  [OK] corrupt overlay degrades to floor-only: gemini back to shipped 100
+  [OK] corrupt overlay does NOT wipe the floor (catalog still non-empty)
+  [OK] absent overlay: floor-only restored (gemini 100 + count back to floor)
+
+[FAIL] test_catalog_overlay: 1 failure(s)
+    stderr: 
+[chunk 5/6] FAIL: 91/93 passed (103s)
+    ✗ test_lane_queue.py (exit 1)
+  [OK] old terminal row removed from the live queue
+  [OK] recent terminal row kept (within retain window)
+  [OK] pending/active rows untouched by purge
+  [FAIL] archived row is in the reviewable log
+
+[FAIL] test_lane_queue: 1 failure(s)
+    stderr: [spendguard] drain: max_iters=1 ceiling reached with work REMAINING (1 pending, 0 queued_batch) — stopping this drain; the durable rows persist for the next drain.
+    ✗ test_sync_capabilities.py (exit 1)
+  [OK] _server_row_to_litellm maps capabilities + mode + upper bounds to the litellm shape
+  [OK] _litellm_record returns the SERVER record first (server-authoritative)
+  [OK] a server MISS falls through (server_cat lacks it → None here, no local/pkg match)
+  [OK] _fetch_server_catalog → {} when saas is unconfigured (no server to check)
+  [OK] _fetch_server_catalog → {} (fail-open) when a CONFIGURED server is unreachable
+[FAIL] sync capabilities: 2 failure(s)
+    stderr: 
+[chunk 6/6] FAIL: 90/93 passed (150s)
+    ✗ test_catalog_ssot_single_source.py (exit 1)
+  [OK] exactly one Python path literal has basename model_catalog.json
+  [FAIL] the sole literal is model_catalog.DATA_PATH — [(PosixPath('/Users/ashdamle/Documents/claude/llm-spendguard-ledgerconn/src/spendguard/model_catalog.py'), 34, 'model_catalog.json')]
+  [OK] catalog.py's live cache uses a different basename
+  [OK] exactly one model_catalog.json file exists under src
+
+[FAIL] test_catalog_ssot_single_source: 1 failure(s)
+    stderr: 
+    ✗ test_reconcile_calls.py (exit 1)
+
+    stderr: [spendguard] calls: suspect per-call out_tok 1000000 for gpt-5-nano (output_ceiling 128000) — flagged, not trusted as a per-call fact
+Traceback (most recent call last):
+  File "/Users/ashdamle/Documen
+    ✗ test_single_instance_lock.py (exit 1)
+  [OK] second acquire WHILE held yields False (duplicate refused)
+  [OK] acquire after release yields True (OS dropped the flock on fd close)
+  [OK] acquire after an exception in the body yields True (lock released in finally)
+  [FAIL] lockfile path is HOME/<name>.lock
+
+[FAIL] test_single_instance_lock: 1 failure(s)
+    stderr: 
+
+FAIL: 550/560 files passed — test_durable_batch_executor.py, test_runner_wrapper.py, test_bandit_list_coverage.py, test_comprehend.py, test_catalog_overlay.py, test_lane_queue.py, test_sync_capabilities.py, test_catalog_ssot_single_source.py, test_reconcile_calls.py, test_single_instance_lock.py
