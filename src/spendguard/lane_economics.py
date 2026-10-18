@@ -55,15 +55,10 @@ def _cum_tokens_by_executor():
     """{executor: cumulative in+out tokens over ALL recorded calls}. The cap estimate only ever uses the DIFFERENCE
     between two samples of this within one window, so an all-time baseline is fine (it cancels). Best-effort → {} on
     any error (the caller then simply records no fresh sample; it never breaks the headroom refresh)."""
+    from . import ledger_read
     try:
-        import sqlite3
-        con = sqlite3.connect(config.db_path())
-        rows = con.execute(
-            "SELECT executor, SUM(COALESCE(in_tok,0)+COALESCE(out_tok,0)) FROM calls "
-            # executor='api' is metered, NOT a subscription lane — exclude it from the per-lane rollup.
-            "WHERE executor IS NOT NULL AND executor NOT IN ('', 'api') GROUP BY executor").fetchall()
-        con.close()
-        return {ex: int(t or 0) for ex, t in rows}
+        rows = ledger_read.read_lane_cumulative_tokens()
+        return {row[0]: int(row[1] or 0) for row in rows}
     except Exception:
         return {}
 
@@ -374,13 +369,9 @@ def _prompt_budget(lane):
 def _prompts_consumed(lane, window_days):
     """Count of prompts SPENDGUARD sent to `lane` in the trailing window_days (one call = one prompt). This is a LOWER
     BOUND on true quota use — the user's direct coding on the same plan is invisible here. Best-effort → 0 on error."""
+    from . import ledger_read
     try:
-        import sqlite3
-        con = sqlite3.connect(config.db_path())
-        n = con.execute("SELECT COUNT(*) FROM calls WHERE executor = ? AND ts >= datetime('now', ?)",
-                        (lane, f"-{float(window_days)} days")).fetchone()[0]
-        con.close()
-        return int(n or 0)
+        return ledger_read.count_lane_prompts(lane, window_days)
     except Exception:
         return 0
 
@@ -388,12 +379,10 @@ def _prompts_consumed(lane, window_days):
 def _tokens_per_prompt(lane):
     """Measured mean (in+out) tokens per prompt for this lane's calls, or None if it has run none. Reflects the SIZE of
     the prompts spendguard sent — which is exactly the number that turns a $/prompt into a $/token."""
+    from . import ledger_read
     try:
-        import sqlite3
-        con = sqlite3.connect(config.db_path())
-        n, t = con.execute("SELECT COUNT(*), SUM(COALESCE(in_tok,0)+COALESCE(out_tok,0)) FROM calls "
-                          "WHERE executor = ?", (lane,)).fetchone()
-        con.close()
+        row = ledger_read.read_lane_token_metrics(lane)
+        n, t = row["n"], row["total"]
         return (int(t or 0) / int(n)) if n else None
     except Exception:
         return None
@@ -448,12 +437,10 @@ def _used_split(lane):
     """(in_frac, out_frac) — this lane's real input/output token mix from the calls it has run, so the metered
     cross-check prices the SAME shape of traffic it actually served. (0.5, 0.5) when nothing is recorded yet (a
     neutral split, never a fabricated skew)."""
+    from . import ledger_read
     try:
-        import sqlite3
-        con = sqlite3.connect(config.db_path())
-        i, o = con.execute("SELECT SUM(COALESCE(in_tok,0)), SUM(COALESCE(out_tok,0)) FROM calls "
-                           "WHERE executor = ?", (lane,)).fetchone()
-        con.close()
+        row = ledger_read.read_lane_token_metrics(lane)
+        i, o = row["input"], row["output"]
         i, o = int(i or 0), int(o or 0)
         tot = i + o
         return (i / tot, o / tot) if tot else (0.5, 0.5)

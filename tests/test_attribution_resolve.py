@@ -93,3 +93,10 @@ def test_self_analysis_session_detected_for_contam_exclusion(monkeypatch):
     assert conv._is_spendguard_session("sgconv") is True       # spendguard's own analysis → echoes, exclude as evidence
     assert conv._is_spendguard_session("lmconv") is False      # a real workload session → valid evidence, keep
     assert conv._is_spendguard_session("") is False            # no session → not self-analysis
+
+
+if __name__ == "__main__":
+    import os as _os, sys as _sys
+    _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+    from _pytest_fixture_bridge import run_pytest_style
+    _sys.exit(run_pytest_style(globals()))

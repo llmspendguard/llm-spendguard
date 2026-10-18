@@ -78,6 +78,26 @@ def _isolation_facts(src):
                 if _is_home_target(t):
                     home_assigns.append((node.lineno, node.value))
     tempdir_home_lines = []
+    # The shared startup bridge preserves the runner's isolated HOME and reexecs
+    # when the gate has already cached another HOME. Recognize its actual imported
+    # binding and top-level invocation, never a comment, string, or lookalike stub.
+    startup_home_bindings = set()
+    for statement in tree.body:
+        if isinstance(statement, ast.ImportFrom) and statement.module == "_pytest_fixture_bridge":
+            for binding in statement.names:
+                if binding.name == "align_test_startup_home":
+                    startup_home_bindings.add(binding.asname or binding.name)
+            continue
+        startup_call = statement.value if isinstance(statement, (ast.Expr, ast.Assign)) else None
+        if (isinstance(startup_call, ast.Call) and isinstance(startup_call.func, ast.Name)
+                and startup_call.func.id in startup_home_bindings):
+            tempdir_home_lines.append(statement.lineno)
+        # Rebinding a recognized import invalidates the proof for later calls.
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            startup_home_bindings.discard(statement.name)
+        for bound_node in ast.walk(statement):
+            if isinstance(bound_node, ast.Name) and isinstance(bound_node.ctx, ast.Store):
+                startup_home_bindings.discard(bound_node.id)
     for lineno, val in home_assigns:
         bound_to_temp = _is_mkdtemp_call(val) or (
             isinstance(val, ast.Name) and val.id in tempdir_vars and tempdir_vars[val.id] < lineno)
@@ -112,6 +132,24 @@ def check(label, cond, extra=""):
     if not cond:
         failures += 1
     print(f"  [{'OK' if cond else 'FAIL'}] {label}{('  — ' + extra) if extra and not cond else ''}")
+
+
+_startup_bridge_import = "from _pytest_fixture_bridge import align_test_startup_home\n"
+_startup_bridge_call = "align_test_startup_home(prefix=__name__)\n"
+_startup_package_import = "from spendguard import config\n"
+check("shared startup bridge is recognized before package import",
+      _isolated_before_import(_startup_bridge_import + _startup_bridge_call + _startup_package_import))
+check("assigned shared startup bridge result is recognized",
+      _isolated_before_import(_startup_bridge_import + "home = " + _startup_bridge_call + _startup_package_import))
+for startup_unproven_source in (
+        _startup_bridge_import + "# " + _startup_bridge_call + _startup_package_import,
+        _startup_bridge_import + repr(_startup_bridge_call) + "\n" + _startup_package_import,
+        _startup_bridge_call + _startup_package_import,
+        _startup_bridge_import + "def align_test_startup_home(**kwargs): pass\n"
+        + _startup_bridge_call + _startup_package_import,
+        _startup_bridge_import + _startup_package_import + _startup_bridge_call):
+    check("unexecuted, unbound, rebound, or late bridge calls do not prove isolation",
+          not _isolated_before_import(startup_unproven_source))
 
 
 # The writes that reach real user state. These are attribute/callable references, not arbitrary paths:

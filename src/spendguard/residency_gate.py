@@ -148,7 +148,14 @@ def evaluate_posttooluse(payload):
         text = _result_text(payload)
         nbytes = len(text.encode("utf-8", "ignore"))
         from . import claudecode
-        trajectory = claudecode.context_trajectory(session_id)
+        if os.getenv("SPENDGUARD_HOOK_HOST") == "codex":
+            from .codex import codex_hook_context_trajectory
+            try:
+                trajectory = codex_hook_context_trajectory(payload)
+            except (OSError, ValueError) as exc:
+                return {"systemMessage": f"spendguard Codex residency unavailable: {exc}"}
+        else:
+            trajectory = claudecode.context_trajectory(session_id)
         session_turns = int(trajectory.get("turns") or 0)
         resident_tokens = int(trajectory.get("current") or 0)
         if not residency_nudge_thresholds_met(nbytes, session_turns, resident_tokens):

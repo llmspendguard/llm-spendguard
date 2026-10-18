@@ -10,6 +10,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 import sqlite3
+import unittest
 from spendguard import realized, config, learn, guard
 
 fails = []
@@ -19,6 +20,7 @@ def ck(name, cond):
         fails.append(name)
 
 ADOPT = "2026-06-15T00:00:00"
+REALIZED_THIN_AFTER_CALLS = 100
 con = sqlite3.connect(config.db_path())
 con.execute("""CREATE TABLE IF NOT EXISTS calls(
     id TEXT PRIMARY KEY, ts TEXT, chain TEXT, intent TEXT, caller TEXT, provider TEXT, model TEXT, kind TEXT,
@@ -35,8 +37,10 @@ for i in range(6):
     call(i, "summarize", f"2026-06-0{i+1}T00:00:00", 0.02)
 for i in range(8):
     call(100 + i, "summarize", f"2026-06-2{i % 10}T00:00:00", 0.05)  # REGRESSED: −$0.03/call
-for i in range(3):
+for i in range(realized.MIN_EACH - 1):
     call(i, "thin", f"2026-06-0{i+1}T00:00:00", 0.10)            # <5 before-calls → not judged
+for i in range(REALIZED_THIN_AFTER_CALLS):
+    call(REALIZED_THIN_AFTER_CALLS + i, "thin", ADOPT, 0.04)
 con.commit(); con.close()
 learn.add_insight("typing", "pack 30/req", evidence="test", confidence=0.8)
 learn.add_insight("summarize", "use nano", evidence="test", confidence=0.8)
@@ -52,7 +56,12 @@ for db in glob.glob(str(config.HOME / "*.db")):
         pass
     c.close()
 
-rows = realized.measure()
+with unittest.TestCase().assertLogs(realized.__name__, level="DEBUG") as realized_skip_logs:
+    rows = realized.measure()
+ck("thin intent rejection names intent and below-minimum before count",
+   any(record.args == ("thin", realized.MIN_EACH - 1, REALIZED_THIN_AFTER_CALLS,
+                       realized.MIN_EACH, True, False, False, False)
+       for record in realized_skip_logs.records))
 by = {r["intent"]: r for r in rows}
 ck("improved intent measured (+$0.06/call × 10 = $0.60)",
    "typing" in by and abs(by["typing"]["realized_usd"] - 0.60) < 1e-6 and by["typing"]["after_calls"] == 10)

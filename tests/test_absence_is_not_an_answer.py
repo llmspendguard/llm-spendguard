@@ -121,12 +121,13 @@ if row:
 # feeds a LEGITIMATE zero and asserts it survives — the behaviour, not the expression that produces it.
 print("  present-but-zero:")
 from spendguard import advise, close                                        # noqa: E402
+from spendguard.ledger_read import ADVISOR_EVIDENCE_COLUMNS, LedgerReadRow    # noqa: E402
 
 # A labeller that recorded confidence 0.0 said something. `qconf or 0.7` promoted it to a normal label.
 _real_rows = advise._rows
 advise._rows = lambda as_of=None, intent=None: [
-    ("openai", "m-zero-conf", "i", 1.0, 100, 100, "good", 0.0, None),   # trailing None = effort column
-    ("openai", "m-no-conf", "i", 1.0, 100, 100, "good", None, None),
+    LedgerReadRow(ADVISOR_EVIDENCE_COLUMNS, ("openai", "m-zero-conf", "i", 1.0, 100, 100, "good", 0.0, None)),
+    LedgerReadRow(ADVISOR_EVIDENCE_COLUMNS, ("openai", "m-no-conf", "i", 1.0, 100, 100, "good", None, None)),
 ]
 try:
     agg = advise.evidence()
@@ -143,7 +144,8 @@ finally:
 # A $/M-output of exactly 0.00 is the BEST row in the table (served entirely from cache), and it rendered
 # as '—', which reads as "could not be computed".
 _real_rows = advise._rows
-advise._rows = lambda as_of=None, intent=None: [("openai", "m-free", "i", 0.0, 100, 500_000, "good", 0.9, None)]
+advise._rows = lambda as_of=None, intent=None: [
+    LedgerReadRow(ADVISOR_EVIDENCE_COLUMNS, ("openai", "m-free", "i", 0.0, 100, 500_000, "good", 0.9, None))]
 buf, real_stdout = io.StringIO(), sys.stdout
 try:
     sys.stdout = buf

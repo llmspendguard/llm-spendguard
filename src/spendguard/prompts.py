@@ -10,7 +10,6 @@ Findings are MEASURED from the calls table (opt-in corpus: `calls.enabled` + `ca
 snippet-based checks), never guessed; prices come from pricing.py only. Each finding carries the exact
 next command to run. Zero LLM spend — pure corpus analysis.
 """
-import sqlite3
 
 MIN_CALLS = 5          # fewer samples than this → not judged (law of small numbers)
 LCP_MIN_CHARS = 60     # a shared prefix shorter than this isn't worth restructuring
@@ -91,24 +90,18 @@ def lint(intent=None, since=None, min_calls=MIN_CALLS, judge_batchable=False):
     money if they are PACKABLE (independent items of one job), not if they are latency-sensitive interactive turns —
     and that is a MEANING judgement, not a threshold. So it is emitted ONLY under `judge_batchable=True`, which asks a
     small meta-caged LLM to rule packability per candidate (never a free $0 threshold-verdict). Default off → $0."""
-    from . import config
-    con = sqlite3.connect(config.db_path(), timeout=10)
+    import sqlite3
+    from . import ledger_read
     try:
-        q = "SELECT intent, model, in_tok, out_tok, cost, finish, prompt_snip, kind FROM calls WHERE intent IS NOT NULL"
-        args = []
-        if intent:
-            q += " AND intent = ?"; args.append(intent)
-        if since:
-            q += " AND ts >= ?"; args.append(since)
-        try:
-            rows = con.execute(q, args).fetchall()
-        except sqlite3.OperationalError:
-            rows = []          # `calls` table not created yet (first run / empty corpus) → no findings, not a crash
-    finally:
-        con.close()
+        rows = ledger_read.read_prompt_lint_evidence(intent, since)
+    except ledger_read.LedgerReadOpenError:
+        raise
+    except (sqlite3.OperationalError, ledger_read.LedgerReadSchemaError):
+        rows = []
 
     by_intent = {}
-    for it, model, in_tok, out_tok, cost, finish, snip, kind in rows:
+    for row in rows:
+        it, model, in_tok, out_tok, cost, finish, snip, kind = row.values
         by_intent.setdefault(it, []).append((model or "", in_tok or 0, out_tok or 0, cost or 0.0, finish or "", snip or "", kind or ""))
 
     findings = []

@@ -33,6 +33,36 @@ import json
 import sys
 
 PROTOCOL_VERSION = "2024-11-05"     # echoed back to the client if it names one; this is the safe default
+LEDGER_READ_OPERATIONS = ("events", "event", "calls", "count", "aggregate")
+
+
+def _tool_ledger_read(args):
+    """Read the local ledger through the bounded library; never open or migrate it."""
+    from . import ledger_read, receipt
+    from .ledger import USD_COLS
+    operation = args.get("operation", LEDGER_READ_OPERATIONS[0])
+    path = args.get("path")
+    if operation not in LEDGER_READ_OPERATIONS:
+        raise ValueError(f"expected operation in {LEDGER_READ_OPERATIONS}")
+    if operation == "count":
+        return {"count": ledger_read.read_filtered_ledger_count(
+            table=args.get("table", ledger_read.LEDGER_EVENTS_TABLE),
+            since=args.get("since"), until=args.get("until"), path=path)}
+    if operation == "event":
+        event = ledger_read.read_ledger_event(args["event_id"], path=path)
+        rows = () if event is None else (event,)
+    elif operation == "calls":
+        rows = ledger_read.read_recent_calls(since=args.get("since"), until=args.get("until"), path=path)
+    elif operation == "aggregate":
+        rows = ledger_read.read_spend_aggregates(group_by=tuple(args.get("group_by") or ("provider", "day")),
+            since=args.get("since"), until=args.get("until"), path=path)
+    else:
+        rows = ledger_read.read_spend_events(since=args.get("since"), until=args.get("until"), path=path)
+    money_columns = frozenset(USD_COLS) | {"cost"}
+    rendered = [{key: receipt._money(float(value)) if key in money_columns and value is not None else value
+                 for key, value in row.items()} for row in rows]
+    return {"complete": True, "returned": len(rendered), "rows": rendered,
+            "note": "Actual money and estimated subscription value are separate fields; never summed."}
 
 
 # ── tool implementations (each returns a JSON-able dict; the dispatcher wraps it in MCP content) ──
@@ -305,12 +335,6 @@ def _tool_vision(args):
 
 # ── Claude Code spend + compaction tools (read-only, $0). spendguard's own functions PRINT human text, which would
 #    corrupt JSON-RPC on stdout — so any handler that calls one wraps it in redirect_stdout(). ─────────────────────
-def _cc_db():
-    import sqlite3
-    from . import config
-    return sqlite3.connect(config.db_path())
-
-
 def _cc_titles():
     try:
         from . import claudecode
@@ -324,21 +348,15 @@ def _cc_label(conv, titles):
 
 
 def _tool_spend_overview(_args):
-    con = _cc_db()
-    try:
-        # A fresh install has no spend_events table yet — the real-$ axis is then legitimately 0. Detect ONLY that
-        # one case from the schema; any OTHER failure (corrupt db, schema drift) must still propagate, never be
-        # masked as a valid-looking $0 (which would hide real spend). This is not a broad except-and-zero.
-        _has = con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='spend_events'").fetchone()
-        if not _has:
-            est = over = sub = api = 0
-        else:
-            est = con.execute("SELECT COALESCE(SUM(CAST(est_chat_usd AS REAL)),0) FROM spend_events WHERE source='claude-code'").fetchone()[0]
-            over = con.execute("SELECT COALESCE(SUM(CAST(realtime_usd AS REAL)),0) FROM spend_events WHERE source='anthropic-invoice' AND intent LIKE 'anthropic-invoice:cc-overage%'").fetchone()[0]
-            sub = con.execute("SELECT COALESCE(SUM(CAST(subscription_usd AS REAL)),0) FROM spend_events WHERE source='anthropic-invoice'").fetchone()[0]
-            api = con.execute("SELECT COALESCE(SUM(CAST(realtime_usd AS REAL)),0) FROM spend_events WHERE source='anthropic-invoice-api'").fetchone()[0]
-    finally:
-        con.close()
+    from pathlib import Path
+    from . import config, ledger_read
+    path = config.db_path()
+    if (not Path(path).exists()
+            or not ledger_read.ledger_read_table_exists(ledger_read.LEDGER_EVENTS_TABLE, path)):
+        est = over = sub = api = 0
+    else:
+        overview = ledger_read.read_cc_spend_overview(path)
+        est, over, sub, api = (overview[key] for key in ("est", "over", "sub", "api"))
     # THIRD AXIS: guarded savings (avoided $) + the per-decision value proof. Kept separate — NEVER summed into
     # real-$ or est-value. `counterfactual` (best-value/advisor/compaction) is held apart from `certain` (measured).
     # No except-and-zero here: both readers create their tables if absent, so a fresh install returns real zeros;
@@ -374,33 +392,22 @@ def _tool_top_conversations(args):
         rows = sorted((real or {}).items(), key=lambda x: -x[1])[:limit]
         return {"ranked_by": "real Claude Code overage $ (reconciled to invoices)",
                 "conversations": [{"title": _cc_label(c, titles), "overage_usd": round(v, 2)} for c, v in rows]}
-    con = _cc_db()
-    try:
-        rows = con.execute("SELECT conv_id, ROUND(SUM(CAST(est_chat_usd AS REAL)),2) v, COUNT(*) n, "
-                          "MAX(COALESCE(in_tok,0)+COALESCE(cache_read_tok,0)+COALESCE(cache_write_tok,0)) mx "
-                          "FROM spend_events WHERE source='claude-code' GROUP BY conv_id ORDER BY v DESC LIMIT ?", (limit,)).fetchall()
-    finally:
-        con.close()
+    from . import ledger_read
+    rows = ledger_read.read_cc_top_conversations(limit=limit)
     return {"ranked_by": "est-value $ (what the usage is worth at API rates)",
             "conversations": [{"title": _cc_label(c, titles), "est_value_usd": v, "turns": n, "max_context_tokens": mx}
-                              for c, v, n, mx in rows]}
+                              for c, v, n, mx in (row.values for row in rows)]}
 
 
 def _tool_conversation_cost(args):
     conv = str(args.get("conversation_id") or "").strip()
     if not conv:
         return {"error": "pass conversation_id (a transcript uuid — from spendguard_top_conversations)"}
-    con = _cc_db()
-    try:
-        est = con.execute("SELECT COALESCE(SUM(CAST(est_chat_usd AS REAL)),0), COUNT(*) FROM spend_events "
-                         "WHERE source='claude-code' AND conv_id=?", (conv,)).fetchone()
-        over = con.execute("SELECT COALESCE(SUM(CAST(realtime_usd AS REAL)),0) FROM spend_events "
-                          "WHERE source='claude-code-overflow' AND conv_id=?", (conv,)).fetchone()[0]
-    finally:
-        con.close()
+    from . import ledger_read
+    costs = ledger_read.read_cc_conversation_cost(conv)
     return {"conversation_id": conv, "title": _cc_label(conv, _cc_titles()),
-            "est_value_usd_plan_covered": round(est[0], 2), "turns": est[1],
-            "observed_overage_usd_upper_bound": round(over, 2),
+            "est_value_usd_plan_covered": round(costs["est"], 2), "turns": costs["n"],
+            "observed_overage_usd_upper_bound": round(costs["over"], 2),
             "note": "est-value and overage are separate axes; overage here is the observable upper bound"}
 
 
@@ -589,6 +596,17 @@ def _tool_delegate(args):
 
 
 _TOOLS = {
+    "spendguard_ledger_read": (
+        "Read-only bounded typed ledger reads. Oversize, timeout and missing schema are loud errors; "
+        "count returns the true total without materializing rows. No model calls.",
+        {"type": "object", "properties": {
+            "operation": {"type": "string", "enum": list(LEDGER_READ_OPERATIONS)},
+            "table": {"type": "string", "enum": ["calls", "spend_events"]},
+            "group_by": {"type": "array", "items": {"type": "string"}},
+            "event_id": {"type": "string"}, "since": {"type": "string"},
+            "until": {"type": "string"}, "path": {"type": "string"}},
+         "additionalProperties": False},
+        _tool_ledger_read),
     "spendguard_delegate": (
         "Offloads a SELF-CONTAINED AGENTIC workspace-write subtask to another provider plan; it does NOT reroute the "
         "calling agent's own turns. Dry-run is default; execute=true needs a trusted cwd. For a one-shot "

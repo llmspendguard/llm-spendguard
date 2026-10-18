@@ -23,6 +23,42 @@ def _sessions_dir():
     return os.environ.get("SPENDGUARD_CODEX_DIR") or str(pathlib.Path.home() / ".codex" / "sessions")
 
 
+def codex_hook_context_trajectory(payload):
+    """Read the current hook's native transcript only; never attribute a different session."""
+    transcript = payload.get("transcript_path") or payload.get("transcriptPath")
+    if not transcript:
+        raise ValueError("Codex hook did not supply transcript_path; residency is unavailable")
+    expected_session = payload.get("session_id") or payload.get("sessionId")
+    turn_ids = set()
+    anonymous_turns = 0
+    current = None
+    model = None
+    with open(transcript, encoding="utf-8") as stream:
+        for line in stream:
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            detail = record.get("payload") or {}
+            if record.get("type") == "session_meta":
+                actual_session = detail.get("id")
+                if expected_session and actual_session and actual_session != expected_session:
+                    raise ValueError("Codex hook transcript session does not match session_id")
+            elif record.get("type") == "turn_context":
+                model = detail.get("model") or model
+                turn_id = detail.get("turn_id")
+                if turn_id:
+                    turn_ids.add(turn_id)
+                else:
+                    anonymous_turns += 1
+            elif record.get("type") == "event_msg" and detail.get("type") == "token_count":
+                usage = (detail.get("info") or {}).get("last_token_usage") or {}
+                if usage.get("input_tokens") is not None:
+                    current = int(usage["input_tokens"])
+    if current is None or model is None:
+        raise ValueError("Codex transcript has no current token usage/model; residency is unavailable")
+    return {"turns": len(turn_ids) + anonymous_turns, "current": current, "model": model}
+
+
 def _state_path():
     return config.state_path("codex")     # one naming rule for every adapter
 
