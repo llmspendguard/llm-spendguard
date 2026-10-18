@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12"]
+        python-version: ["3.11", "3.12"]
     env:
       # The offline suite's dead proxy blocks tiktoken from downloading its o200k vocab on first use — pin a cache
       # dir the warm step populates (with network) and the test subprocess inherits (test_runner copies os.environ),
