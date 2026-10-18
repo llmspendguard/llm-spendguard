@@ -9,8 +9,8 @@ TWO AXES, NEVER SUMMED (the invariant the whole system enforces):
   • ACTUAL-$   — billed workload (batch + realtime + GPU). Reconciles to provider truth. Source: the gate ledger
                  (`budget.spent_since`) — always-on, no admin key, zero LLM.
   • EST-VALUE  — Claude Code / claude.ai usage value: what it WOULD cost at API rates, NOT money billed. Source:
-                 a small cache the heavier `cc`/`chat`/`sync` runs stamp (they already compute it), read here with
-                 an "as-of" date so it stays honest.
+                 the ledger's est_chat_usd axis; cached transcript miners cover sources without ledger rows,
+                 with an "as-of" date so their freshness stays visible.
 
 Verbosity (config `receipts` / env `SPENDGUARD_RECEIPTS`): off | footer | flow | verbose.
   off     — emit nothing.
@@ -33,6 +33,7 @@ import time
 from typing import Optional
 
 from . import config
+from .sources import CLAUDE_CODE_SOURCE, CLAUDE_CHAT_SOURCE, CODEX_SOURCE
 
 LEVELS = ("off", "footer", "flow", "verbose")
 _CACHE = "receipt_cache.json"          # under SPENDGUARD_HOME — est-value windows stamped by cc/chat/sync
@@ -110,7 +111,7 @@ def _rewindow(rec):
     return frozen, (rec.get("asof") or "") >= today
 
 
-def stamp_est_value(rows, source: str = "claude-code") -> None:
+def stamp_est_value(rows, source: str = CLAUDE_CODE_SOURCE) -> None:
     """Persist this SOURCE's est-value (billed=False) windows so the footer can show them without a heavy recompute.
     `rows` are day_totals-shaped dicts (day + spend_micros + billed). Stored per-source so claude-code and claude.ai
     sum instead of clobbering each other. Best-effort; never raises into the caller. Pass the FULL (unfiltered)
@@ -152,12 +153,54 @@ def stamp_est_value(rows, source: str = "claude-code") -> None:
         pass
 
 
+def _receipt_est_records():
+    """Ledger values supersede cached miners for each source family; caches cover unmined lanes.
+
+    Open the ledger read-only: receipt rendering must never create, migrate, or checkpoint it.
+    Numeric TEXT is cast per row before aggregation, independently of every real-dollar column.
+    """
+    import contextlib
+    import sqlite3
+    from .sources import receipt_source_family
+    from .ledger import SpendLedger
+
+    records = {}
+    try:
+        records = json.loads(_cache_path().read_text()).get("est_value_by_source") or {}
+    except (OSError, ValueError):
+        pass
+    ledger_records = {}
+    today, week, month = _windows()
+    try:
+        uri = pathlib.Path(config.db_path()).resolve().as_uri() + "?mode=ro"
+        with contextlib.closing(sqlite3.connect(uri, uri=True)) as conn:
+            rows = conn.execute(
+                "SELECT source, day, org, team, project_primary, "
+                "SUM(COALESCE(CAST(est_chat_usd AS REAL), 0)) FROM spend_events "
+                "WHERE day >= ? AND est_chat_usd IS NOT NULL "
+                f"AND {SpendLedger._LIVE_FILTER} "
+                "GROUP BY source, day, org, team, project_primary", (min(week, month),)).fetchall()
+        for source, day, org, team, project, usd in rows:
+            family = receipt_source_family(source)
+            rec = ledger_records.setdefault(family, {"asof": today, "by_day": {}, "cells": {}})
+            rec["by_day"][day] = rec["by_day"].get(day, 0) + usd
+            org, team, project = ((value or "").strip().lower() for value in (org, team, project))
+            cell = rec["cells"].setdefault((org, team, project),
+                                          {"org": org, "team": team, "project": project, "by_day": {}})
+            cell["by_day"][day] = cell["by_day"].get(day, 0) + usd
+    except sqlite3.Error:
+        pass
+    # Remove aliases together with their canonical source, otherwise an overflow cache would double count.
+    return {**{key: value for key, value in records.items()
+               if receipt_source_family(key) not in ledger_records}, **ledger_records}
+
+
 def _est_cells():
     """All est-value cells across sources: [{org, team, project, today, week, month}]. The flat store the tree is
     built from."""
     out = []
     try:
-        for s in (json.loads(_cache_path().read_text()).get("est_value_by_source") or {}).values():
+        for s in _receipt_est_records().values():
             for c in (s.get("cells") or {}).values():
                 w, _fresh = _rewindow(c)               # today's windows, not the ones frozen at stamp time
                 out.append(dict(c, **w))
@@ -174,8 +217,7 @@ def _est_tally(org=None, team=None, project=None, repo=None):
     GLOBAL plan value, so every repo line showed the whole plan total (and `_sum_repos` added it once PER repo — an
     N× over-count). No filter = global. None if never stamped."""
     try:
-        data = json.loads(_cache_path().read_text())
-        srcs = data.get("est_value_by_source")
+        srcs = _receipt_est_records()
         if srcs:
             rew = [(k, s, _rewindow(s)) for k, s in srcs.items()]
             stale_srcs = [(k, s) for k, s, (_w, fresh) in rew if not fresh]   # frozen records, stamped earlier
@@ -212,6 +254,7 @@ def _est_tally(org=None, team=None, project=None, repo=None):
             agg["stale"] = stale
             agg["stale_sources"] = names
             return agg
+        data = json.loads(_cache_path().read_text())
         d = data.get("est_value")                     # back-compat: older single-blob stamp (global only)
         if org is None and team is None and project is None and repo is None and isinstance(d, dict) and "today" in d:
             return d
@@ -226,7 +269,7 @@ def _est_by_source():
     single collapsed number. None of the sources are summed here; the caller decides."""
     out = {}
     try:
-        for k, s in (json.loads(_cache_path().read_text()).get("est_value_by_source") or {}).items():
+        for k, s in _receipt_est_records().items():
             w, _fresh = _rewindow(s)
             out[k] = w
     except Exception:
@@ -275,7 +318,8 @@ def _lane_activity(since=None):
 
 # Optional commands that broaden a lane's ledger-derived floor with all host CLI usage. This is not an exclusion
 # registry: every active lane is refreshed from calls on the receipt path, whether or not it has a miner.
-_SOURCE_REFRESH = {"claude-code": "spendguard cc", "codex": "spendguard codex", "claude-ai": "spendguard chat"}
+_SOURCE_REFRESH = {CLAUDE_CODE_SOURCE: "spendguard cc", CODEX_SOURCE: "spendguard codex",
+                   CLAUDE_CHAT_SOURCE: "spendguard chat"}
 
 
 def _basis_line():
@@ -873,8 +917,7 @@ def _all_repos():
     except Exception:
         pass
     try:
-        data = json.loads(_cache_path().read_text())
-        for srec in (data.get("est_value_by_source") or {}).values():
+        for srec in _receipt_est_records().values():
             # stamp_est_value writes "cells" (keyed org|team|project), NEVER a "repos" key — so the old
             # srec.get("repos") was always empty and every repo tracked ONLY via plan value silently vanished from
             # the --all rollups. A repo is a cell's TEAM or PROJECT (same axis convention as _est_tally(repo=)).
@@ -1015,10 +1058,12 @@ def _two_axis_table(t: dict) -> list:
     if assumed:
         out.append(f"* subscription is an ASSUMED default ({_money(sub)}), not a measured charge — set yours with "
                    f"`spendguard config set subscription.plan_usd <amount>`")
-    # Routed ledger value per active lane, then WHICH lanes actually served spendguard's own work this month. This
-    # view is deliberately independent of the broader transcript-mined Plan-usage total above.
+    # Full est-value per lane, followed by WHICH lanes served spendguard's own routed work this month.
     activity = _lane_activity()
     by_lane = _routed_lane_value()
+    # Routed calls are only the work spendguard dispatched, not the host lane's full ledger value.
+    # The est-value source family total owns this display, including the explicit other bucket.
+    by_lane.update({source: windows["month"] for source, windows in _est_by_source().items()})
     lanes_ev = sorted(by_lane.items(), key=lambda x: (x[1] is None, -(x[1] or 0), x[0]))
     if lanes_ev:
         out.append("Plan value by lane (mo): " + " · ".join(
@@ -1747,16 +1792,16 @@ def _install_claude_code(remove=False):
 def install_cli(args):
     """`spendguard install-receipts [--host claude-code|codex] [--remove]` — manage the always-on in-chat tally."""
     args = list(args or [])
-    host = "claude-code"
+    host = CLAUDE_CODE_SOURCE
     if "--host" in args:
         try:
             host = args[args.index("--host") + 1]
         except IndexError:
             pass
     remove = "--remove" in args
-    if host in ("claude-code", "claude", "cc"):
+    if host in (CLAUDE_CODE_SOURCE, "claude", "cc"):
         return _install_claude_code(remove=remove)
-    if host == "codex":
+    if host == CODEX_SOURCE:
         # Codex has no in-chat hook: its `notify` runs a program but does NOT render output in the transcript
         # (and is usually already taken). Use the inline receipt + a file sink any pane/editor can show.
         print("Codex has no Claude-Code-style in-chat hook. spendguard already TRACKS Codex (channel=codex, "

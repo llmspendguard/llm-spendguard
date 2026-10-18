@@ -34,6 +34,26 @@ the others or the command.
 """
 import sys
 
+CLAUDE_CODE_SOURCE = "claude-code"
+CODEX_SOURCE = "codex"
+CLAUDE_CHAT_SOURCE = "claude-ai"
+UNATTRIBUTED_EST_SOURCE = "other"
+OVERFLOW_SOURCE_SUFFIX = "-overflow"
+
+
+def receipt_source_family(source):
+    """Resolve ledger source identifiers, including the overflow suffix protocol, to a plan lane.
+
+    Overflow producers append ``-overflow`` and optional hyphen-separated tags to the lane identifier.
+    Unknown identifiers retain their value in the explicit other bucket.
+    """
+    from . import lane_registry
+    for lane in (*lane_registry.all_lanes(), CLAUDE_CHAT_SOURCE):
+        overflow = lane + OVERFLOW_SOURCE_SUFFIX
+        if source == lane or source == overflow or (source or "").startswith(overflow + "-"):
+            return lane
+    return UNATTRIBUTED_EST_SOURCE
+
 _SOURCES = {}          # name → zero-arg factory returning a source object/module
 _BUILTINS_DONE = False
 
