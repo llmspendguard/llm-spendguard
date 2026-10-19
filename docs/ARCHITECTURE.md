@@ -1,441 +1,395 @@
-# Architecture
-
-spendguard sits **between your code and the provider SDKs** and actively manages work in a loop:
-**enforce → shed → route → delegate → save → report → learn.** It's a library + CLI, not a service: zero required deps
-(the OpenAI/Anthropic SDKs are lazy-imported and optional), all state under `$SPENDGUARD_HOME`
-(default `~/.spendguard`), and fail-open for incidental internal faults — a bug in accounting must not break your
-job — while deliberate `SpendGateRefused` controls propagate and stop the spend.
-
-The active pipeline has explicit homes: `plan_admission.py` and `route_utility.py` shed and rank lanes;
-`best_value.py` resolves the cheapest measured-good `(model, effort)`; `vendor_call.served_substitute` resolves an
-unserved model inside its economic bound; `delegate_router.py` hands self-contained work to another provider CLI;
-`guard.py` records decisions, guarded savings, and shed effectiveness; `saas.py` reports the scrubbed results and
-pulls effective caps; and `fleet.py` reports green-version/stale consumers. `mcp_server.serve_stdio` provides the
-newline-delimited JSON-RPC MCP surface, while the provider daemon modules keep warm executors shared across sessions.
-
-It is built to be **extended, not forked.** Like Postgres' access methods or a WSGI stack, every place
-you'd want to plug in — a new SDK, a new event sink, a new price table, a new config knob, a team server —
-is a documented seam with a one-call or one-entry extension point. Section 2 is the headline: it walks each
-seam. Everything below is grounded in the code under [`src/spendguard/`](https://github.com/llmspendguard/llm-spendguard/tree/main/src/spendguard) (file +
-function names are exact so you can jump straight to them).
-
-The governed one-shot API has a separate model-selection contract before dispatch. `model=None` plus a labelled
-best-value request enters `best_value.py`; otherwise it resolves `advisor.default_model` or the cheapest priced chat
-row in `model_catalog.json`. `measurement=True` requires a named arm. `metered_only` skips subscription lanes,
-`no_substitution` prevents a model swap, and `measurement` implies that pin. Only deliberate
-`SpendGateRefused` subclasses escape `adapters.call`; ordinary failures return a `CallResult` and remain observable.
-
-```mermaid
-flowchart TD
-    C["adapters.call(model, prompt)"] --> M{"model is None?"}
-    M -->|no| P[use named model]
-    M -->|yes + measurement| R[ModelSelectionContractRefused]
-    M -->|yes + labelled best-value| B[cheapest measured-qualifying model + effort]
-    M -->|every other unnamed call| D[advisor.default_model or cheapest priced chat catalog row]
-    B --> L{matching configured lane available?}
-    L -->|yes| Z[$0 subscription lane first]
-    L -->|miss and fallback allowed| A[metered API twin]
-    D --> A
-    P --> X{pins / capability / admission}
-    X --> Z
-    X --> A
-```
-
----
-
-## 1. The chokepoint — request flow (estimate → cap-check → allow/refuse → record → emit)
-
-The gate attaches by **monkeypatching the SDK methods** that actually spend money, so every call in the
-interpreter runs the same gauntlet with zero per-script edits.
-
-```mermaid
-flowchart LR
-    S["your script / agent"] -->|"client.batches.create(...)<br/>chat.completions.create(...)"| G
-    subgraph venv ["gated interpreter"]
-      H["sitecustomize.py / usercustomize.py<br/>(auto-loads per venv or per-user)"] -->|"spendguard.install()"| G["gate.py<br/>_wrap / _wrap_rt patch SDK methods"]
-    end
-    G -->|"estimate cost (pricing.py)"| EST{"_decide_and_account"}
-    EST -->|"meta intent? → meta cap"| MC[("budget.meta_*")]
-    EST -->|"daily / monthly (sqlite)"| BC[("budget.exceeded")]
-    EST -->|"per-batch cap"| DC["_decide"]
-    DC -->|"under cap / allowed"| OAI["OpenAI / Anthropic SDK"]
-    DC -.->|"over cap (interactive: ask 'allow?')"| X["SpendGateRefused"]
-    EST -->|"record charge"| L[("budget.py<br/>SQLite ledger")]
-    G -->|"event"| E["emit.py → callback / webhook / OTel"]
-    P["pricing.py<br/>canonical table"] --- EST
-```
-
-**The loop, step by step (`gate.py`):**
-
-1. **Intercept.** `install()` (idempotent) patches four batch surfaces (`INTERCEPTORS`) and four real-time
-   surfaces (`RT_INTERCEPTORS`) via `_apply`/`_apply_rt`. Each wrapper is tagged `_spend_gated=True` so a
-   second `install()` is a no-op. A missing SDK is silently skipped (`ModuleNotFoundError`); any other patch
-   failure logs a warning and still installs the rest.
-2. **Estimate (zero paid calls).** Batch: `_estimate_openai_jsonl` / `_estimate_anthropic_requests` count
-   input tokens (tiktoken `o200k_base`, falling back to `len/4`) and sum each request's `max_tokens` as a
-   **conservative output ceiling** — over-estimate, fail safe. Real-time: `_est_oai_chat` / `_est_anth_msg`
-   estimate before the call; `_rt_account` reconciles against the response's actual `usage` after.
-3. **Cap-check + account** (`_decide_and_account`), in order:
-   - **Meta** — if the call's context intent is `spendguard:*`, route to the separate meta cap + meta ledger
-     (`_meta_gate`) and stop. The governor governs its own spend (§5).
-   - **Cross-process daily/monthly** — `_budget_check` → `budget.exceeded` (only when
-     `budget.backend=sqlite`).
-   - **Per-batch** — `_decide` compares the estimate to `config.cap()` (`GATE_CAP`, default $75).
-   - **Record** — `_budget_record` writes the charge to the SQLite ledger; `calls.record_call` adds a corpus row
-     if call-logging is on.
-4. **Allow / refuse / ask** (`_decide`): under cap → log `under_cap`, proceed. Over cap → if a TTY, **ask**
-   "allow this $X anyway?" (override + learn); if non-interactive, raise `SpendGateRefused` unless
-   `GATE_ALLOW=1`. A refusal records the prevented spend via `guard.record_saving("block", …)`.
-5. **Emit.** Every decision flows to `emit.py` sinks (callback / webhook / OTel), best-effort, never blocking.
-
-**Real-time is gated too, with a twist:** output tokens aren't known until the call returns, so the
-real-time layer (`_rt_precheck` → call → `_rt_account`) *pre-checks* an estimate against a **per-process
-cumulative budget** (`GATE_RT_BUDGET`, default $50 — the runaway-loop guard) and the daily/monthly caps,
-then *records actual usage after* (closing the "real-time spend is invisible to reconcile" gap). It
-normalizes Anthropic's `input_tokens` (which excludes cache reads) back to OpenAI semantics before pricing
-so cached calls aren't under-billed ~2×.
-
-**Two batch chokepoints, same discipline.** The monkeypatch gates the SDK transparently; `submit.py`'s
-`guarded_submit()` is the *explicit* alternative a script calls instead of `client.batches.create(...)` —
-estimate → enforce `cap_dollars` **and** a `request_cap` (default 25k, OpenAI's limit + blast-radius) →
-audit-log → submit. It also refuses if the projection is >20% over a caller-supplied `expected_cost`,
-catching bad token assumptions before they bill.
-
----
-
-## 2. Extensibility seams — built to be extended
-
-This is the headline. Each seam is a stable, documented extension point; adding to it never requires editing
-gate logic. If you only read one section, read this one.
-
-### 2a. Gate any SDK — `spendguard.register(...)`
-
-The set of gated SDK methods is a plain list of tuples (`INTERCEPTORS` in `gate.py`); a registry
-(`_EXTRA`) holds runtime additions. To gate a **new provider or surface**, write a `gate_fn(kw, args)` that
-estimates from the call's arguments and either returns (allow) or raises `SpendGateRefused` (block), then
-register it:
-
-```python
-import spendguard
-
-def _gate_cohere(kw, args=()):
-    est = my_estimate(kw)                 # build {provider, model, requests, in_tok, out_tok, cost}
-    spendguard.gate._decide_and_account(est)   # reuse the full cap/record/emit pipeline
-
-spendguard.register("cohere.client", "Client", "chat", _gate_cohere, is_async=False)
-spendguard.install()                      # patches your surface alongside the built-ins
-```
-
-`register()` appends to `_EXTRA`; the next `install()` patches it through the same `_wrap` → `_guard`
-machinery, which means your `gate_fn` inherits **fail-open** automatically (only `SpendGateRefused`
-propagates; any other exception logs and lets the call through). No other code changes — the built-in
-OpenAI/Anthropic entries use exactly this shape.
-
-### 2b. The adapter pattern — `adapters.register_provider(...)`
-
-`adapters.py` is the provider seam for the `compare` harness (run one prompt across models). Most providers
-expose an **OpenAI-compatible** API, so adding one is a single registry entry — name, base URL, key env var,
-model-id prefixes, and `kind` (`openai`-compatible or `anthropic`):
-
-```python
-from spendguard import adapters
-adapters.register_provider("mistral", base_url="https://api.mistral.ai/v1",
-                           key_env="MISTRAL_API_KEY", prefixes=("mistral", "codestral"))
-```
-
-`provider_for(model)` then resolves `mistral-large` (or explicit `mistral:foo`) to that provider. Because
-adapter calls go through the real OpenAI/Anthropic SDKs, **the gate already meters and budgets them** — the
-adapter is purely about *which endpoint to hit*, not about bypassing enforcement.
-
-### 2c. Emit sinks — `spendguard.on_event(fn)` / webhook / OTel
-
-`emit.py` fans every gate decision out to three optional, best-effort sinks (none ever blocks or breaks the
-gate). spendguard stays the *enforcement* layer; your existing observability stays the dashboard.
-
-- **In-process callback** — register a function (also usable as a decorator):
-  ```python
-  @spendguard.on_event
-  def watch(ev):  # ev = {ts, kind, provider, model, cost, decision, in_tok, out_tok, ...}
-      if ev["decision"].startswith("refused"):
-          alert(ev)
-  ```
-  Callbacks run inline — keep them fast.
-- **Webhook** — set `emit.webhook` (config) or `$SPENDGUARD_WEBHOOK`; each event is POSTed as JSON on a
-  background daemon thread (drop-if-flooded, so high-volume real-time calls are never slowed).
-- **OpenTelemetry** — set `emit.otel=true` / `$SPENDGUARD_OTEL`. Emits a `spendguard.cost_usd` counter, a
-  `gen_ai.client.token.usage` counter, and a span per call using **OTel GenAI semantic conventions**
-  (`gen_ai.system`, `gen_ai.request.model`, `gen_ai.usage.*`). Point your own OTel SDK's OTLP exporter at
-  whatever you run — **Langfuse, Helicone, Arize Phoenix, Honeycomb** all ingest OTLP — and events flow there
-  with no bespoke per-vendor code.
-
-### 2d. The pricing table — layered override
-
-`pricing.py` resolves a `$/token` number for any model from a layered table, lowest→highest precedence, so
-you can correct or extend prices **without touching code and without ever hardcoding a number**:
-
-```mermaid
-flowchart TD
-    D["built-in _FALLBACK<br/>(verified flagship + legacy)"] --> M
-    A["LiteLLM cache litellm_prices.json<br/>(2700+ models · spendguard sync-prices)"] --> M
-    B["prices.json (shipped, curated)"] --> M
-    C["~/.spendguard/prices.json|.yaml<br/>or $SPENDGUARD_PRICES (user override)"] --> M
-    M["pricing.PRICING<br/>+ PROVIDERS"] --> AUDIT["audit.py: fail CI if any code<br/>hardcodes a disagreeing price"]
-    M --> XCHK["cross_check_openrouter (drift)"]
-```
-
-Precedence: **user override > curated `prices.json` > LiteLLM cache > built-in `_FALLBACK`.** Cost is
-computed by `_cost()`, which clamps cached tokens to the input count and applies batch (50%-off) vs real-time
-rates and the cache-read discount. To add or fix a model, drop it into `~/.spendguard/prices.json`:
-
-```json
-{ "providers": { "openai": { "models": {
-    "gpt-5.5": { "in_": 5.0, "out": 30.0, "cached_in": 0.5, "batch_in": 2.5, "batch_out": 15.0 } } } },
-  "_meta": { "source": "https://…", "verified": "2026-06-13", "stale_after_days": 45 } }
-```
-
-`freshness()` flags a stale table; `cross_check_openrouter()` is a free read-only drift check against
-OpenRouter's public prices; `audit.py` is a CI guard that fails the build if any script hardcodes a price
-that disagrees with this table (the original sin that 3–4×-undercounted estimates and burned real money).
-
-### 2e. Config schema — declare a knob, get setup + docs for free
-
-`config_schema.py` holds `SETTINGS`, the **declarative registry of every setting**. Each entry names its
-`section`, `key`, `store` (`env` | `config.json:<dotpath>` | `email.json:<key>`), default, `kind` (incl.
-enums like `enum:memory,sqlite`), and whether it's `secret`. Adding one dict makes the knob appear
-automatically in `spendguard config`, the `spendguard init` setup interview, `SETUP.md`, and validation —
-the single source of truth a human *or* an LLM reading the repo can enumerate. Resolution is always **env >
-file > default** (`config.py`). Secrets live in env or gitignored files (`email.json`, `saas.json`), never in
-the repo or `config.json`.
-
-### 2f. SaaS server seam — `saas.py` (opt-in, see §6)
-
-The team/org roll-up is a clean client seam pointed at a *separate* server repo: a documented `/v1` HTTP
-contract, one Bearer key as identity, scrubbed data only, fail-safe until the server exists. Covered in §6.
-
-### 2g. `fetch → transform → load` — the pure-core seam (decoupling the I/O modules)
-
-The modules that talk to the outside world (provider billing in `report.py`, the claude.ai adapter in `chat.py`,
-the `/v1` push in `saas.py`, the transcript parsers in `conv.py`/`claudecode.py`) are structured — or being
-restructured — as three thin layers so the **logic lives in the unit-tested core, not behind the network**:
-
-- **fetch** — a thin shell that does the I/O and returns plain data (e.g. `report.openai_by_day()` → a
-  `{day: $}` map). Mockable; not where correctness lives.
-- **transform** — a **pure** function over that data: no network, no printing, no DB. This is where the arithmetic
-  / shaping / scrubbing lives, so it's directly unit-testable. `report.build_rows(...)` is the reference example
-  (the report's subtotal/total roll-up — `test/test_report_build.py` proves it with zero network).
-- **load** — a thin shell that emits (print / HTTP push / DB write).
-
-This is the **same map/reduce shape as reconcile** (`Source` adapters *map* each source → records; the portfolio
-residual *reduces* them) and it composes with the coverage strategy: the pure middle is what the **78% money-core
-gate** measures; the I/O shells stay thin and integration-tested. **Status:** applied across the heavy I/O modules
-— `report.build_rows`, `saas.build_rollup_rows`/`build_guarded_rows`, and the (already-separated) pure transforms
-in `chat.py` (`_value_breakdown`/`_digest_conv`/`_day_rows`), `conv.py` (`_project_of`/`_dedup_top`), and
-`claudecode.py` (`_row_cost`/`_project_of`) are each pure + offline-tested, with the network/file reads in thin
-shells. (Several were already cleanly structured by design — the gap there was test coverage, now closed.)
-
----
-
-## 3. Enforcement levels — per-batch / daily / monthly / meta · real-time vs batch
-
-Caps are layered. The gate checks them in the order shown in §1; each can be set via env (per-process) or
-`config.json` (persistent), resolved by `config.class_cap()` / `cap()` / `meta_cap()`.
-
-| Cap | Scope | Default | Backend | Source |
-|---|---|---|---|---|
-| **Per-batch** (`GATE_CAP`) | one batch submission | $75 | always on | `config.cap()` |
-| **Real-time cumulative** (`GATE_RT_BUDGET`) | per-process running total | $50 | always on (in-memory) | `config.rt_budget()` |
-| **Daily / monthly — total** (`GATE_TOTAL_DAILY/MONTHLY`) | LLM + compute ceiling, all processes | off | `budget.backend=sqlite` | `config.class_cap("total", …)` |
-| **Daily / monthly — LLM sub-cap** (`GATE_LLM_DAILY/MONTHLY`) | OpenAI + Anthropic only, **hard** | off | sqlite | `config.class_cap("llm", …)` |
-| **Daily / monthly — compute sub-cap** (`GATE_COMPUTE_DAILY/MONTHLY`) | remote GPU (vast.ai), **alert/soft** | off | sqlite | `config.class_cap("compute", …)` |
-| **Meta** (`GATE_META_BUDGET`) | spendguard's own LLM use | $2/day | sqlite | `config.meta_cap()` |
-
-- **Split caps** (`budget.exceeded`): a class sub-cap (LLM vs compute) is checked first, then the total
-  ceiling, daily then monthly. This lets you set a *tight LLM limit under a higher overall ceiling.* LLM caps
-  are hard (gate-enforced); compute caps are alert/soft because vast.ai launches don't pass through the gate
-  (enforced separately in `resources.py`).
-- **Real-time vs batch:** the gate patches **both** surfaces — `files`/`batches.create` (batch) and
-  `chat.completions`/`messages.create` (real-time). Batch cost is fully known pre-flight (capped before
-  submit); real-time cost is pre-checked on an estimate, then trued-up post-call. So the bypass risk is the
-  *interpreter*, not the call type.
-- **Override paths:** over a per-batch or daily/monthly cap, an interactive run *asks* and a `yes` proceeds;
-  non-interactive runs need `GATE_ALLOW=1` (for deliberate big jobs) or a raised cap. The real-time budget
-  has its own one-time "allow the rest of this run" bypass (`_rt_bypass`) that loosens **only** the RT
-  budget, never the batch/daily/monthly caps.
-
-### Making sure nothing bypasses it
-The in-process gate only enforces **where it's installed**. A different interpreter/venv, a different
-machine, or raw HTTP (not via the SDK) is **not** gated. Defend in layers, weakest→strongest:
-
-1. **Ubiquitous install (resistant).** Auto-load in every venv (`sitecustomize.py`, what `install-hook`
-   writes) **and** the per-user site of system python (`install-hook --user` → `usercustomize.py`, so
-   `python3 …` is gated for that interpreter).
-2. **See it (detect).** `spendguard doctor` prints **ENFORCING HERE: YES/NO** for the *current* interpreter
-   (via `_any_patched()` — checks that at least one SDK method is actually `_spend_gated`). Run it before
-   trusting a run; it's what reveals "I'm under un-gated system python."
-3. **Fail-closed (refuse).** `spendguard.require()` at the top of a script calls `install()`, then **raises**
-   if the gate isn't actually enforcing (wrong venv) or is disabled — instead of silently spending ungated.
-   This is the fix for the #1 bypass.
-4. **Catch it after (reconcile).** `reconcile-ledger` (and the daily report's leak alert) compares provider
-   billing to the local ledger; any ungoverned spend shows up as a **leak** within a day. The net for what
-   the in-process layers miss.
-5. **True no-bypass (proxy + key custody — roadmap).** The only *guarantee* across any language/machine:
-   route all traffic through a spendguard **proxy** that holds the provider keys and enforces server-side.
-   This is the natural home of the separate SaaS/server repo (§6, [ROADMAP](ROADMAP.md)). The in-process gate
-   stays the zero-infra default; the proxy is the opt-in hard guarantee.
-
----
-
-## 4. The fail-OPEN safety model
-
-A cost governor on a live submit path must never break a legitimate job. The whole gate is built around that.
-
-- **Only a deliberate refusal blocks.** `_guard()` runs every `gate_fn` so that `SpendGateRefused` (the one
-  intentional stop) propagates, while **any other exception** — an estimation bug, a `database is locked`
-  under fleet concurrency, a misbehaving third-party `register()`'d fn — is logged and the call proceeds.
-- **Fail-open at every layer:** estimation failures in `_gate_openai_files`/`_gate_anthropic` print a WARN
-  and allow; `install()` skips a missing or changed SDK rather than crashing import; real-time accounting
-  swallows its own errors; `emit.emit()` never raises (observability must not break enforcement).
-- **Kill switch, checked before the package even imports.** `GATE_DISABLE=1` (env) or `spendguard off`
-  (touches `~/.spendguard/disabled`) disables enforcement; `config.disabled()` is honored by every wrapper,
-  and the launcher checks it in `sitecustomize.py` *before* importing the package — so disabling works even
-  if the package itself is broken. `spendguard on` / removing the flag re-enables.
-- **The deliberate exception to fail-open is `require()`.** A script that *must not* spend ungated opts into
-  fail-**closed**: it raises if the gate isn't live. Fail-open is the default so bugs don't break jobs;
-  fail-closed is opt-in for spend you refuse to let leak.
-
----
-
-## 5. The meta cage — the governor governs its own spend
-
-spendguard's own LLM calls (`optimize` / `experiment` / `reconstruct` / `mine` / `review` / `brief --llm`)
-run inside `calls.context(intent="spendguard:*")`. The gate detects that intent (`_meta_intent`) and routes
-the call to a **separate `caps.meta` budget** ($2/day default) and a `kind='meta'` ledger
-(`budget.record_meta`, tagged project `llm-spendguard`) — both for batch (`_meta_gate`) and real-time
-(`_rt_precheck` / `_rt_account`). The advisor also **excludes** `spendguard:*` from the corpus it analyzes,
-so the governor can't overspend governing or pollute its own learning. Same gate patches enforce it; the CLI
-calls `install()` so it holds even when run as `spendguard <cmd>`. The advisor models themselves
-(`advisor.model`, `advisor.judge_model`) are configurable but **must be priced** in `pricing.py`
-(`config.validate_advisor()`), so the meta estimate and cap can always be computed.
-
----
-
-## 6. The two-repo split — client (this repo) vs SaaS server (opt-in)
-
-```mermaid
-flowchart LR
-    subgraph client ["llm-spendguard — this repo (standalone, production-ready)"]
-      GATE["shed → route → delegate<br/>gate + ledger + savings + fleet"] --> SAAS["saas.py<br/>sync + pull_policy"]
-      CATALOG["model_catalog.json<br/>tracked row payload + source-owned as_of"]
-    end
-    SAAS -->|"opt-in · scrubbed roll-ups<br/>status · truth · decisions · savings · fleet"| SERVER["llm-spendguard-server<br/>(SEPARATE repo · llmspendguard.com)"]
-    SERVER -->|"GET /v1/policy<br/>effective advisory / enforced caps"| SAAS
-    SERVER --> WEB["website dashboard<br/>org truth + shed effectiveness + fleet"]
-    CATALOG -->|"GitHub publication · global facts"| CURATED["server cron<br/>global curated_catalog<br/>as_of + ingested_at"]
-    CURATED --> PUBLIC["anonymous /api/public/catalog<br/>+ /catalog page"]
-    CURATED -->|"authenticated overlay map<br/>dates preserved"| SAAS
-```
-
-- **This repo is the whole product, standalone.** Gate, pricing, ledger, active routing/delegation, savings,
-  reconcile, report, warm shared MCP daemons, fleet and slash-commands. Each user keeps their **own** local ledger
-  and local caps. It depends on no
-  server and works fully offline.
-- **The server is a separate repo (`llm-spendguard-server`, llmspendguard.com — in development).** `saas.py` is only
-  the **client seam**: it reads a connection from `~/.spendguard/saas.json` (or env) and speaks a small,
-  versioned `/v1` HTTP contract — including `GET /v1/health`, `POST /v1/ledger`, `POST /v1/status`, truth and
-  insight flows, command/taxonomy endpoints, and `GET /v1/policy`. **One Bearer key is
-  the identity** — the *server* maps it to the user→team→org hierarchy; the client stores no `team_id`/`org_id`.
-- **Partner with an enforceable policy channel.** The server serves effective org/team caps at `GET /v1/policy`.
-  `saas.pull_policy()` caches them in `config.json`; the gate applies advisory caps as suggestions (the developer's
-  local cap wins) and enforced caps as hard ceilings that local config may tighten but never loosen. With
-  `visibility=private` (the default), nothing is pushed; connected sync sends scrubbed aggregates and status, never
-  prompts or keys. Every network call degrades gracefully when disconnected; local management keeps working.
-- **Client → server → website truth flow.** The client executes shed/route/delegate decisions, records guarded
-  savings and shed effectiveness (`avoided_overage_usd` separate from `quota_preserved_usd`), and reports those with
-  status, provider truth and fleet version/staleness. The server ingests that attested state and presents it; it does
-  not recompute client costs.
-- **Cross-check, not blind trust.** Each pushed row carries a deterministic `uid` (byte-identical to the
-  server's), so `spendguard saas crosscheck` diffs local vs server rows for drift / local-only / server-only.
-
-**Cost axes are independent.** Real $ is API (per-token) + Subscription (flat plan fee) + Remote (compute), always
-shown as named components. Estimated subscription value follows separately after `::`. Guarded savings (measured +
-counterfactual) is a third axis. Neither est-value nor savings is added to real dollars, or to each other.
-
----
-
-## 7. Pricing resolution & the learning loop
-
-(Pricing precedence is detailed in §2d.) Cost = `_cost()` with cached tokens clamped to input and provider
-semantics normalized (OpenAI input includes cached; Anthropic excludes it, so the gate adds it back before
-pricing). The learning loop turns recorded spend into advice:
-
-```mermaid
-flowchart LR
-    subgraph capture
-      CALLS["calls.py<br/>per-call cost+quality (opt-in)"]
-      FETCH["fetch-io / backfill<br/>recover real I/O + ledgers (free)"]
-      MINE["mine-history / mine-conv<br/>intents + playbook"]
-    end
-    CALLS --> CORPUS[("SQLite: calls / call_io /<br/>insights / graph / spend_events")]
-    FETCH --> CORPUS
-    MINE --> CORPUS
-    CORPUS --> RECON["reconstruct (judge) /<br/>review (practice audit)"]
-    RECON --> INS["learn.py insights<br/>(conditional, lifecycle)"]
-    INS --> VAL["validate<br/>re-check vs corpus"]
-    VAL --> INS
-    CORPUS --> ADV["advise / optimize / brief"]
-    INS --> ADV
-    ADV --> EXP["experiment (A/B, graded equivalence)"]
-    EXP --> PROM["promote (keep output) → production"]
-    PROM --> CORPUS
-```
-
-**brief** pre-fills a plan → **optimize** recommends the cheapest config that held quality → **experiment**
-proves it (cost↓ **and** output-equivalence) → **promote** runs it and keeps the output → the gate enforces,
-**reconcile-ledger** catches leaks, **report** emails it, **validate** keeps the learnings true as data
-grows → they feed the next **brief**. See [learning-advisor.md](learning-advisor.md) for the advisor's
-internals.
-
----
-
-## 8. Data & isolation
-
-One SQLite file under `$SPENDGUARD_HOME` holds `spend_events` (+ its `spend_audit` chain) — the single
-money-of-record — plus `calls`, `call_io`, `insights`, `graph_*`, `model_facts`, `semcache`. (The legacy flat
-`charges` table is retired: no live path writes it; it survives only as the one-time migration source that
-`spendguard migrate` rebuilds `spend_events` from. See [MONEY-FLOW.md](MONEY-FLOW.md) §4.) Each writer module keeps
-its own WAL connection; writes that span two connections to the same file commit in phases to avoid self-deadlock.
-The ledger tags every event with a `project` (env > repo-local `.spendguard.json` > git repo basename > cwd) and a
-`conv_id` (the chat/session that spawned it), so spend is attributable per repo and traceable back to its conversation — and a stable
-anonymous `usr_<hex>` identity means spend is **never** unattributed. Operational config is `config.json`;
-secrets are `email.json` / `saas.json` (gitignored). Nothing is written into the host project.
-
-### Module map
-See [`src/spendguard/README.md`](https://github.com/llmspendguard/llm-spendguard/blob/main/src/spendguard/README.md) for a one-line description of every module,
-grouped by role (enforcement & pricing · subscription lanes & executors · reconcile, realtime & attribution · learning advisor · client surfaces).
-
----
-
-## 9. Known limitations — honest tradeoffs
-
-- **Caps are check-then-record, not transactional.** Under heavy concurrency, N processes can each pass the
-  daily/monthly check before any of them records — so cross-process caps are **near-hard, not
-  transactional-hard.** A small overshoot is possible at high fan-out.
-- **Real-time has no *verified-provider* cross-check without an Admin key** (Admin is a dev-only cross-check, never
-  the main path) — but it is NOT unknown. spendguard reconstructs real-time spend AGENTICALLY from conversation token
-  records, **admin-free**, and `reconcile all` surfaces it as a clearly-labelled reconstructed **estimate**
-  (`ESTIMATED (reconstructed)`), refreshed by the periodic find (`scripts/reconstruct/realtime_find_batch.py`); a stale
-  cache reads an accurate "run the find" note. `reconcile-ledger` reconciles **batch** spend against provider billing;
-  the gate's inline true-up records real-time `usage` at call time as the exact floor. See `docs/AGENTIC.md` §1c.
-- **The in-process gate is interpreter-scoped.** It cannot gate a different python, a different machine, or
-  raw HTTP that skips the SDK. The layered defenses (§3) mitigate this; only the roadmap proxy *guarantees*
-  it.
-- **Estimates are conservative by design.** Output is priced at each request's `max_tokens` ceiling, so the
-  pre-flight number over-estimates (fails safe) — pass a measured `avg_out_tokens` to `guarded_submit` for a
-  tighter figure.
-- **Token counting falls back to a heuristic.** Without `tiktoken`, input is estimated at `len/4`; flagged in
-  `submit.py` output. Install `tiktoken` for accuracy.
-- **Quality judging of an isolated `(prompt, output)` pair is unreliable** without ground truth — the advisor
-  prefers conversation-outcome and approach-quality signals, and `validate`'s cost-gap / `cascade`'s default
-  verifier are deliberately labeled coarse heuristics.
-- **Very high-volume real-time loops** add per-call SQLite I/O when `backend=sqlite`; keep such loops on the
-  in-process memory cap if the ledger write becomes a bottleneck.
+# Capability architecture
+
+Spendguard governs and records model use across metered APIs and subscription CLI lanes, routes work, measures quality and economics, and reconciles captured activity against available provider evidence. **Read this map before designing a feature.** Each entry below is source-read and built-and-verified unless marked **PARTIAL**, **STUB**, or **VISION**; verification here means implementation inspection, not a live-provider integration test. PARTIAL names a missing guarantee or wiring limit, not an absent module. Paths are relative to this repository; entry-point citations are navigable source locations. Billed API dollars, flat subscription fees, and remote compute are real costs; subscription usage's estimated value is a separate axis and must never be added to them.
+
+## Routing and contracts
+
+### Provider registration contract
+
+`adapters.register_provider(name, base_url, key_env, prefixes, kind="openai")` adds an endpoint/key/prefix specification; `kind` selects the OpenAI-compatible or Anthropic SDK path. For example, an application can call `adapters.register_provider(provider_name, base_url=endpoint, key_env=credential_env, prefixes=model_prefixes)` using its configuration. `provider_for` accepts explicit `provider:model` IDs; otherwise the longest matching registered prefix wins, and unknown providers raise (`src/spendguard/adapters.py:42`, `src/spendguard/adapters.py:47`). Registration supplies routing metadata, not a new enforcement implementation: the selected SDK surface still needs the installed gate described below.
+
+| Module | Status and capability | Primary entry points |
+|---|---|---|
+| adapters | BUILT — Common API/lane routing, pins, best-value selection, schema capability, generation controls, input fitting, retry provenance and governed recovery. Images force API execution; eligible labelled metered text calls enter storm routing. Published output ceilings generally replace caller token caps; a soft deadline records telemetry rather than cancelling work. | `call` (`src/spendguard/adapters.py:859`); `json_schema_request` (`src/spendguard/adapters.py:468`); `schema_capability` (`src/spendguard/adapters.py:539`); `structured_reply` (`src/spendguard/adapters.py:1574`) |
+| vendor_call | PARTIAL — Typed facade, contracts, deadlines, transient retries, fan-out and model-serving discovery. A timed-out worker can finish and bill later; fan cost checks do not reserve all in-flight cost. `consensus` counts successful replies, not semantic agreement. | `call` (`src/spendguard/vendor_call.py:320`); `fan_out` (`src/spendguard/vendor_call.py:1228`); `first_ok` (`src/spendguard/vendor_call.py:1270`); `consensus` (`src/spendguard/vendor_call.py:1333`); `JobLock` (`src/spendguard/vendor_call.py:611`) |
+| output_contract | BUILT — Contract hashing, JSON parsing, supported schema-subset validation, item IDs and complete envelope/arity checks. This is not a full JSON Schema implementation; callable hashes exclude closure contents. | `describe` (`src/spendguard/output_contract.py:71`); `check_item` (`src/spendguard/output_contract.py:346`); `check_envelope` (`src/spendguard/output_contract.py:392`) |
+| best_value | BUILT — Pin-aware model/effort selection from fingerprinted measured quality frontiers, with an explicitly distinguished cold prior. | `select_model_effort` (`src/spendguard/best_value.py:141`) |
+| intent_model_prior | BUILT — Cached agentic ranking of the whole priced catalog for an intent; supplies cold-start priors, not measured quality evidence. | `rank_models_for_intent` (`src/spendguard/intent_model_prior.py:134`) |
+| requirement_judge | BUILT — Whole prompt/output requirement judging, cheap judge followed by stronger adjudication on uncertainty; both failures remain unknown. | `requirements_for` (`src/spendguard/requirement_judge.py:84`); `judge_requirements` (`src/spendguard/requirement_judge.py:119`) |
+| llm_files | BUILT — Whole decoded-text attachments with hashes, line counts and reconstruction checks; invalid UTF-8 is replacement-decoded rather than byte-preserved. | `attach_whole` (`src/spendguard/llm_files.py:43`); `attach_many` (`src/spendguard/llm_files.py:81`) |
+| source_compact | BUILT — AST/token-aware removal of source prose with preservation checks and original-source fallback. | `compact` (`src/spendguard/source_compact.py:92`) |
+
+## Prospective coalescing, durable queues and admission
+
+Adapter queue registration also tracks foreground calls; it does not mean every adapter call executes through the queue drainer.
+
+**These are different existing mechanisms, not names for one queue.** `storm_coalescer` is the prospective accumulation queue: it waits for arrivals before choosing realtime versus batch. `lane_queue` persists work and leases ownership across attempts and processes. `dispatch` and `xp_rate_window` admit calls against concurrency and RPM/TPM capacity. `whole_job` plans an already-known set of jobs across a horizon. `queue_planner` forecasts an existing backlog; it does not collect future arrivals.
+
+| Module | Status and capability | Primary entry points |
+|---|---|---|
+| storm_coalescer | PARTIAL — In-memory Future-based prospective queue. Cohorts flush at realtime budget, maximum wait, or idle gap; rolling reservations and pacing determine realtime versus Batch execution. Failed/missing keyed items alone retry; a batch submission failure is not bisected into repeated purchases. Bounded close warns about abandoned work. Coalescing is deterministic and has no per-call deadline/SLA flush. | `StormCoalescer` (`src/spendguard/storm_coalescer.py:73`) |
+| storm_route | BUILT — Default-on registry connecting eligible adapter calls to shared coalescers. Registry keys include vendor/model/intent/reasoning/system hash, not horizon; unknown rates decline coalescing. Pre-enqueue failure can fall through; post-enqueue ownership is authoritative to avoid rebuying. Busy registry capacity is soft and Future waiting has no separate timeout. | `coalescing_enabled` (`src/spendguard/storm_route.py:38`); `get_coalescer` (`src/spendguard/storm_route.py:119`); `route` (`src/spendguard/storm_route.py:149`) |
+| storm_submit | BUILT — Explicit storm submission plus default governed realtime and OpenAI/Anthropic batch executors, keyed collection and bounded polling. Optional durable batch executor adopts handles through the tracker; it is not the default and does not carry system/reasoning parameters. | `submit_storm` (`src/spendguard/storm_submit.py:171`); `governed_realtime_executor` (`src/spendguard/storm_submit.py:36`); `default_batch_executor` (`src/spendguard/storm_submit.py:60`); `durable_batch_executor` (`src/spendguard/storm_submit.py:120`) |
+| whole_job | PARTIAL — Shared-horizon, urgency-aware whole-job planning and execution, priced budget checks, checkpointed realtime bulk delegation and persisted batch handles. Batch leg is OpenAI only; submission failure/unsupported vendors fall back to realtime with reporting. Per-intent grouping takes the first nonempty system/schema rather than partitioning heterogeneous contracts. | `plan_jobs` (`src/spendguard/whole_job.py:126`); `run_jobs` (`src/spendguard/whole_job.py:162`); `load_pending` (`src/spendguard/whole_job.py:280`); `collect_jobs` (`src/spendguard/whole_job.py:334`) |
+| route_horizon | BUILT — Common urgency and horizon allocation, urgent-first realtime capacity, batch recommendation and batch chunk sizing. Plans known work rather than predicting future arrivals. | `plan_horizon` (`src/spendguard/route_horizon.py:67`); `should_batch_fan` (`src/spendguard/route_horizon.py:178`); `chunk_for_batch` (`src/spendguard/route_horizon.py:202`) |
+| queue_planner | BUILT — Read-only backlog/rate forecasting, offload plans and batch chunk calculation; used by drainer and MCP planning. Unknown throughput remains a risk rather than invented capacity. | `forecast` (`src/spendguard/queue_planner.py:34`); `offload_plan` (`src/spendguard/queue_planner.py:168`); `plan_loop` (`src/spendguard/queue_planner.py:268`) |
+| dispatch | BUILT — Global/provider/lane concurrency, cross-process slots, RPM/TPM admission, learned limits, Retry-After and connection-window AIMD. Metered admission precedes slot acquisition; oversized token requests can incur debt instead of deadlocking. Infrastructure failure can visibly run ungoverned. Adapter management defaults on; vendor facade does not enable shedding. | `Governor` (`src/spendguard/dispatch.py:674`); `admit` (`src/spendguard/dispatch.py:973`); `holding` (`src/spendguard/dispatch.py:938`); `try_admit` (`src/spendguard/dispatch.py:1150`); `shrink_connection_window` (`src/spendguard/dispatch.py:274`); `grow_connection_window` (`src/spendguard/dispatch.py:314`) |
+| xp_rate_window | PARTIAL — SQLite cross-process second/minute request/token reservations and deadlines; oversized requests run alone. Some SQLite infrastructure errors fail open. This is admission accounting, not durable job ownership. | `reserve` (`src/spendguard/xp_rate_window.py:99`); `limits_for` (`src/spendguard/xp_rate_window.py:47`); `RateDeadline` (`src/spendguard/xp_rate_window.py:30`) |
+| lane_queue | PARTIAL — Separate SQLite durable lease queue: fingerprint deduplication, completed-result reuse, priority/deadline/retry/lease expiry, batch ownership and adoption, pause/recovery, archival purge and migration. Saturation parks without burning attempts. Predictive batch offload defaults off. Stored result JSON is capped at 4,000 bytes and can become unparsable, yielding an empty result. | `enqueue` (`src/spendguard/lane_queue.py:242`); `lease` (`src/spendguard/lane_queue.py:356`); `settle` (`src/spendguard/lane_queue.py:429`); `submit` (`src/spendguard/lane_queue.py:819`); `drain` (`src/spendguard/lane_queue.py:1099`); `mark_batched` (`src/spendguard/lane_queue.py:560`); `collect_batched` (`src/spendguard/lane_queue.py:597`) |
+| work_integrity | BUILT — Exact multiset partition proof: expected work appears once, without missing, duplicate or unexpected IDs. Not a scheduler. | `WorkIntegrityProof` (`src/spendguard/work_integrity.py:16`) |
+| item_ledger | BUILT — Caller-owned JSONL item settlement, attempts, reopening and completeness assertions. Flushes without fsync; malformed records are ignored. | `ItemLedger` (`src/spendguard/item_ledger.py:77`) |
+| job_fingerprint | PARTIAL — Persisted plan/prompt/model fingerprints and resume drift refusal; agentic method-change decisions choose reuse/revalidate/rebuy. A revalidate decision stamps state but does not execute a validation sample itself. | `compute_job_fingerprint` (`src/spendguard/job_fingerprint.py:76`); `guard_resume` (`src/spendguard/job_fingerprint.py:141`) |
+
+## Lane identity, readiness and recovery
+
+| Module | Status and capability | Primary entry points |
+|---|---|---|
+| lane_registry | BUILT — Canonical lane specs and provider mapping for Claude Code, Codex, Gemini, Z.ai coding and Kimi coding. Adding a lane requires a registry specification and an executor, not just config. | `all_lanes` (`src/spendguard/lane_registry.py:75`); `lane_spec` (`src/spendguard/lane_registry.py:80`); `provider_lane_map` (`src/spendguard/lane_registry.py:85`) |
+| lane_catalog | BUILT — Tier aliases, lane catalog and candidate arms, plus fallback auditing. Candidate-arm construction alone does not enforce pricing. | `catalog` (`src/spendguard/lane_catalog.py:117`); `arms` (`src/spendguard/lane_catalog.py:131`); `audit_lane_fallback` (`src/spendguard/lane_catalog.py:145`) |
+| lanes | BUILT — Own-CLI auth status, probe persistence, cached headroom, lane status and configuration commands. Installed binary is not proof of authentication; unknown is not READY. | `lane_auth_status` (`src/spendguard/lanes.py:99`); `lanes_status` (`src/spendguard/lanes.py:135`); `probe` (`src/spendguard/lanes.py:176`); `lane_headroom` (`src/spendguard/lanes.py:238`) |
+| lane_quota | BUILT — TTL/reset-aware cached usage and bucket headroom. | `cached_usage` (`src/spendguard/lane_quota.py:24`); `bucket_headroom` (`src/spendguard/lane_quota.py:47`) |
+| lane_quota_cost | PARTIAL — Measured per-call quota cost, overage avoidance and plan-fraction preflight. Unknown quota can skip checks, so this is not universal fail-closed quota enforcement. | `estimate_lane_quota` (`src/spendguard/lane_quota_cost.py:83`); `quota_preflight` (`src/spendguard/lane_quota_cost.py:113`); `enforce_single_call_plan_fraction` (`src/spendguard/lane_quota_cost.py:156`) |
+| lane_servability | BUILT — Measured lane/model readiness, served-model shifts, refresh on rejection and compatible substitutions; protects caller pins. Distinguishes declared models from observed service. | `lane_readiness` (`src/spendguard/lane_servability.py:59`); `detect_served_shift` (`src/spendguard/lane_servability.py:166`); `lane_served_substitute` (`src/spendguard/lane_servability.py:219`); `refresh_lane_servability` (`src/spendguard/lane_servability.py:349`) |
+| lane_eligibility | BUILT — Cached agentic intent eligibility classification; estimate/read-only operation leaves unjudged intents explicit. | `classify_intent` (`src/spendguard/lane_eligibility.py:53`); `lane_eligible_report` (`src/spendguard/lane_eligibility.py:74`) |
+| lane_recovery | BUILT — Typed recovery proof, bounded free retry and authorization before paid fallback. Existing failure-shape interpretation uses error-text rules. | `LaneRecoveryProof` (`src/spendguard/lane_recovery.py:47`); `LaneRecoveryProof.authorize_metered_recovery` (`src/spendguard/lane_recovery.py:67`); `retry_free_lane` (`src/spendguard/lane_recovery.py:86`) |
+| plan_admission | PARTIAL — Cached quota/overage risk, health/auth/cooldown-aware alternatives and confirmed substitutes. Actual cap refusal does not invent an alternate; unknown auth is not always rejected, and an auth-over-quota setting is unused. | `lane_risk` (`src/spendguard/plan_admission.py:20`); `decide` (`src/spendguard/plan_admission.py:108`); `ready_meta_model` (`src/spendguard/plan_admission.py:165`) |
+| overage | BUILT — Cached observed invoice/window overage status and CLI display; not a fresh provider oracle. | `current_overage_status` (`src/spendguard/overage.py:79`); `overage_cli` (`src/spendguard/overage.py:120`) |
+| resource_state | BUILT — Persisted reasoned cooldowns and expiring prompt-character ceilings, retaining proven-good watermarks with distinct lane/model keys. Header-mentioned output-ceiling axis is not implemented. | `set_cooldown` (`src/spendguard/resource_state.py:94`); `set_size_ceiling` (`src/spendguard/resource_state.py:149`); `note_proven_good` (`src/spendguard/resource_state.py:172`) |
+
+## Lane balancing, bandits and economics
+
+| Module | Status and capability | Primary entry points |
+|---|---|---|
+| lane_balance | PARTIAL — Confirmed substitutes, load balancing, prompt adaptations, optional bandit routing and checkpointed bulk delegation. Bulk supports keyed results, schemas, governor capacity, pins, vision API calls, free-lane hedging and batch-on-miss. Caps are checked between chunks; in-flight chunks can overshoot. Empty confined arms widen defaults; estimate deduplicates identical inputs while fresh bulk execution does not. Checkpoint keys omit schema/reasoning/images. | `delegate` (`src/spendguard/lane_balance.py:190`); `bulk_delegate` (`src/spendguard/lane_balance.py:444`); `estimate_fan` (`src/spendguard/lane_balance.py:1268`); `route_decision` (`src/spendguard/lane_balance.py:1478`); `confirm_substitute` (`src/spendguard/lane_balance.py:176`); `adapt_system` (`src/spendguard/lane_balance.py:1660`) |
+| lane_bandit | BUILT — Decayed trial/win learning, exploration and idle/headroom-aware arm selection; whole-output bakeoff judges preserve unknown failures rather than false ties. Its judge-cost estimate is not an upper bound for arbitrary whole evidence. | `choose_arm` (`src/spendguard/lane_bandit.py:166`); `run_bakeoff` (`src/spendguard/lane_bandit.py:306`); `bandit_call` (`src/spendguard/lane_bandit.py:377`) |
+| lane_economics | BUILT — Observed quota/token deltas, measured capacity, pacing, plan economics and prompt-budget reservations; unknown capacity remains unknown. | `record_samples` (`src/spendguard/lane_economics.py:66`); `measured_lane_caps` (`src/spendguard/lane_economics.py:141`); `economics` (`src/spendguard/lane_economics.py:180`); `prompt_economics` (`src/spendguard/lane_economics.py:415`) |
+| lane_value | BUILT — Priced ledger-derived subscription-value stamps and daily sync, excluding transcript-mined duplicate sources. Unknowns and private ownership remain explicit; read failure is not proof of zero activity. | `stamp_from_ledger` (`src/spendguard/lane_value.py:59`); `day_totals` (`src/spendguard/lane_value.py:140`); `sync` (`src/spendguard/lane_value.py:178`) |
+| route_utility | BUILT — Lane and metered rankings using headroom/reset/urgency/pacing/quota efficiency, prepaid balance and prices; default breach policy refuses silent downgrades. | `rank_lanes` (`src/spendguard/route_utility.py:105`); `rank_metered` (`src/spendguard/route_utility.py:234`); `breach_decision` (`src/spendguard/route_utility.py:297`); `rank_for_tier` (`src/spendguard/route_utility.py:345`) |
+| tier_config | BUILT — Tier configuration/pricing validation and optional pinned reachability probes without fallback. | `tier_config_report` (`src/spendguard/tier_config.py:51`); `reachability_probe` (`src/spendguard/tier_config.py:90`) |
+| route_economics | BUILT — Route cost, lane marginal economics, reservation/amortization and batch overflow reporting, with unknown costs explicit. | `route_cost` (`src/spendguard/route_economics.py:92`); `route_report` (`src/spendguard/route_economics.py:209`) |
+| route_realized | BUILT — Read-only realized routing history and served-model drift summaries. | `route_realized_report` (`src/spendguard/route_realized.py:10`); `routing_summary` (`src/spendguard/route_realized.py:26`) |
+
+## CLI executors and warm brokers
+
+Codex Phase-1 admission hardening is implemented: bounded `max_waiters`, checkout-inclusive timeout, `recycle_on_timeout`, and retirement that retains/quarantines slots until safe. Cold fallbacks honor capacity refusal. The broker's socket-failure fallback to a local pool means host-wide coordination is not an unconditional guarantee.
+
+| Module | Status and capability | Primary entry points |
+|---|---|---|
+| warm_stdio_daemon | BUILT — Shared serialized startup/handshake, request waiters, reader lifecycle, idle cleanup, terminate/wait/kill/reap and retired-instance protection. Admission policy belongs to specialized daemons. | `_WarmStdioJsonRpcDaemon` (`src/spendguard/warm_stdio_daemon.py:49`) |
+| codex_daemon | BUILT — Persistent Codex **app-server stdio** workers, per-prompt thread isolation, optional worker homes, exclusive pool checkout and bounded admission/recycling. | `_CodexDaemon` (`src/spendguard/codex_daemon.py:62`); `_CodexDaemonPool` (`src/spendguard/codex_daemon.py:286`) |
+| codex_daemon_broker | PARTIAL — Unix-socket broker shares the pool across local clients; connection failure can use a local pool rather than preserving a single host-wide cap. | `_CodexDaemonBroker` (`src/spendguard/codex_daemon_broker.py:63`) |
+| codex_exec | BUILT — Auth/usage and warm or cold Codex execution, credential scrubbing, safety modes and shell-snapshot GC. CLI has no forwarded max-token flag; warm usage may use character estimates. | `auth_status` (`src/spendguard/codex_exec.py:232`); `usage` (`src/spendguard/codex_exec.py:507`); `run_prompt` (`src/spendguard/codex_exec.py:528`) |
+| subscription_exec | PARTIAL — Claude CLI execution with neutral cwd, sanitized environment and usage accounting. Accepted reasoning/max-token arguments are not forwarded. | `auth_status` (`src/spendguard/subscription_exec.py:67`); `run_prompt` (`src/spendguard/subscription_exec.py:187`) |
+| antigravity_exec | PARTIAL — Gemini `agy` JSON execution and cached quota/reset handling. Binary availability does not establish auth; reasoning/max-token controls are not enforced. | `usage` (`src/spendguard/antigravity_exec.py:199`); `run_prompt` (`src/spendguard/antigravity_exec.py:237`) |
+| kimi_exec | PARTIAL — Default warm ACP execution with cold CLI handling for known pinned aliases. Reasoning/max-token arguments are ignored; usage can be estimated or unknown. | `usage` (`src/spendguard/kimi_exec.py:31`); `run_prompt` (`src/spendguard/kimi_exec.py:145`) |
+| kimi_daemon | BUILT — Warm multiplexed ACP with an isolated session per prompt, declined authentication requests, explicit tool failures and transient cold fallback. | `_KimiAcpDaemon` (`src/spendguard/kimi_daemon.py:37`) |
+| zai_exec | BUILT — Coding-plan HTTP executor with owned accounting, thinking-aware unsupported-option recovery and bounded rate-limit retries; quota can remain unknown. | `usage` (`src/spendguard/zai_exec.py:45`); `run_prompt` (`src/spendguard/zai_exec.py:89`) |
+| delegate_router | BUILT — Whole-task/file classification into one-shot, agentic or needs-Codex work; selects ready/authenticated external CLI lanes, supports estimate/execute and does not fail open into unavailable paid work. | `delegation_lanes_ready` (`src/spendguard/delegate_router.py:57`); `classify_task` (`src/spendguard/delegate_router.py:124`); `delegate_task` (`src/spendguard/delegate_router.py:289`); `delegate_cli` (`src/spendguard/delegate_router.py:361`) |
+
+## Batch submission, collection and bulk safety
+
+`submit` and `callio` are provider Batch API legs, not prospective queues. They are called by storm executors, OpenAI whole-job execution, the durable tracker/offload path, bulk delegation's batch-on-miss path, and experiment/history workflows. Anthropic support exists in submit/collect but is not wired uniformly into every higher-level caller.
+
+### Explicit submission contract
+
+`guarded_submit` estimates first, refuses a count above `request_cap` (default 25,000), enforces `cap_dollars`, and refuses a projection above `expected_cost * overrun_tolerance`; the default tolerance is 1.2 (20% over expected; `src/spendguard/submit.py:64`). Its estimate-only path (`submit=False`) checks and writes an audit without submitting; normal submission also applies resilience checks and a live first-request preflight, which can itself bill. Accepted-batch booking is deferred until provider acceptance (`src/spendguard/submit.py:307`). Use separate estimate and approval stages before execution.
+
+Pass a **measured per-request** `avg_out_tokens` to override output projection; a ceiling is a worst-case send limit, not evidence of typical output. The estimate reports both output and token-count bases, so inspect them before approving. Without tiktoken, the local counter warns about its `len(text)/4` approximation and recommends installing tiktoken in the gated venv before trusting a batch estimate (`src/spendguard/submit.py:31`). Provider-aware counting also exposes proxy/normalization bases: calibrate provider factors where appropriate rather than treating a character estimate as exact (`src/spendguard/submit.py:47`, `src/spendguard/provider_tokens.py:177`, `src/spendguard/content_tokens.py:317`). This does not imply that every estimator uses `max_tokens` or that every estimate is conservative.
+
+| Module | Status and capability | Primary entry points |
+|---|---|---|
+| submit | BUILT — OpenAI JSONL and Anthropic message batch construction, estimates, unique IDs, schema/sharding checks, guarded submission and accepted-batch booking. Submission normally includes a small live preflight; adapter ceilings can replace caller max-token values. | `guarded_submit` (`src/spendguard/submit.py:307`); `submit_chat_tasks` (`src/spendguard/submit.py:445`); `submit_message_batch` (`src/spendguard/submit.py:576`) |
+| callio | PARTIAL — Captured prompt/output samples, provider-history recovery, batch status and keyed OpenAI/Anthropic collection. Live oversized prompts are explicitly skipped; historical snippets may lack replayable system/schema evidence. `batch_status` is OpenAI-only. | `record_io_sample` (`src/spendguard/callio.py:133`); `capture_live` (`src/spendguard/callio.py:208`); `batch_status` (`src/spendguard/callio.py:511`); `collect_chat_tasks` (`src/spendguard/callio.py:646`); `collect_message_batch` (`src/spendguard/callio.py:707`) |
+| batch_tracker | PARTIAL — Durable pre-submit manifests, lease IDs, orphan adoption and terminal completeness proofs, preventing accepted batch rebuy. Provider acceptance and local persistence are not atomic. Polling calls the OpenAI-only status helper even for Anthropic, leaving that path erroneous until expiry. | `register_batch` (`src/spendguard/batch_tracker.py:79`); `submit_offload` (`src/spendguard/batch_tracker.py:348`); `poll` (`src/spendguard/batch_tracker.py:523`); `assert_batch_terminal_manifest` (`src/spendguard/batch_tracker.py:581`) |
+| openai_batch_cli | BUILT — Guarded JSONL submission with estimate/cap/dry-run and output download with overwrite protection. Failed terminal batches return before downloading error files. | `submit_batch_jsonl` (`src/spendguard/openai_batch_cli.py:26`); `fetch_batch_output` (`src/spendguard/openai_batch_cli.py:100`) |
+| bulkgate | PARTIAL — Fresh estimate/test/eval evidence tied to contract and data signatures, realtime checks, latency/output learning and runaway checks. Default mode warns rather than blocks. Evaluation clips evidence to its first 12,000 characters with notice, so is not whole-evidence judging. | `check_bulk` (`src/spendguard/bulkgate.py:285`); `estimate_job` (`src/spendguard/bulkgate.py:915`); `test_job` (`src/spendguard/bulkgate.py:921`); `eval_job` (`src/spendguard/bulkgate.py:992`); `gated_batch` (`src/spendguard/bulkgate.py:1071`) |
+| bulk_resilience | BUILT — Structural gate requires large lane/provider submissions to be chunked and checkpointed; unknown shape refuses unless explicitly forced. Provider requests, rather than packed logical units, determine the door count. | `require_resilient` (`src/spendguard/bulk_resilience.py:30`) |
+| comprehend | BUILT — Corpus resolution, whole contiguous chunks, separate estimates and checkpointed bulk comprehension; unread inputs are named rather than silently cut. | `estimate_corpus` (`src/spendguard/comprehend.py:110`); `comprehend_corpus` (`src/spendguard/comprehend.py:152`) |
+
+## Config, installation and gate
+
+`config.py` is the runtime resolver; `config_schema.py` describes settings for surfaces/onboarding. `_cfg_get` reads literal section/key pairs. **Environment override support is individually implemented, not a universal dotted-key convention.** In particular advisor numeric accessors are config-only and preserve zero; schema metadata alone does not prove an environment override is wired. Pool settings and selected other controls have explicit environment handling.
+
+### Enforcement order and cap scopes
+
+For a batch estimate, `_decide_and_account` first routes a `spendguard:*` intent to the meta cage and returns. Ordinary work then passes batch-1 discipline and bulk-evidence checks, cross-process daily/monthly checks, the per-batch cap on the realistic projection, and a **separate worst-case ceiling check**, before recording. Submitters can defer recording until provider acceptance; otherwise the final step books a provisional estimate and an optional call-corpus row (`src/spendguard/gate.py:790`, `src/spendguard/gate.py:803`). Estimation is not a guarantee of known final batch cost.
+
+| Control | Default and scope | Configuration / backend |
+|---|---|---|
+| Per-batch | $75 per submission | `GATE_CAP` → `caps.per_batch`; `config.cap` (`src/spendguard/config.py:746`) |
+| Realtime cumulative | $50 per process | `GATE_RT_BUDGET` → `caps.realtime`; in-memory running total (`src/spendguard/config.py:752`) |
+| Daily/monthly class caps | Off unless configured; `llm`, `compute`, `total` | `GATE_LLM_DAILY`, `GATE_LLM_MONTHLY`, `GATE_COMPUTE_DAILY`, `GATE_COMPUTE_MONTHLY`, `GATE_TOTAL_DAILY`, `GATE_TOTAL_MONTHLY`; `class_cap` also reads flat/nested config and server policy (`src/spendguard/config.py:777`) |
+| Meta | $2/day for the governor's own model use | `GATE_META_BUDGET` → `caps.meta`; persisted meta ledger accounting (`src/spendguard/config.py:809`) |
+
+The gate's daily/monthly check and workload ledger recording require `budget.backend=sqlite` (`src/spendguard/gate.py:615`, `src/spendguard/gate.py:654`). `budget.exceeded` checks the resource class's daily then monthly sub-caps **before** total daily then monthly caps. Its local total currently sees the LLM ledger; combined LLM/compute reporting is composed elsewhere, so this is not a transactional combined-resource hard ceiling (`src/spendguard/budget.py:1187`). Compute controls are alert/soft checks and never kill running jobs (`src/spendguard/resources.py:256`).
+
+Over-cap per-batch and daily/monthly work can prompt on a TTY; affirmative approval proceeds, while noninteractive work refuses unless deliberately authorized with `GATE_ALLOW=1` or appropriately raised caps. That override does not establish that every other independent bulk/intent control is waived (`src/spendguard/gate.py:515`, `src/spendguard/gate.py:615`). Realtime prechecks test estimated spend before execution, then account actual returned usage; their one-time `_rt_bypass` permits the rest of the process's realtime budget only, without skipping daily/monthly checks (`src/spendguard/gate.py:1107`, `src/spendguard/gate.py:1493`). Anthropic cache reads are added back into input before pricing, with cache-creation tokens passed separately (`src/spendguard/gate.py:1385`).
+
+### Kill switch and recovery
+
+`GATE_DISABLE=1` or the persistent `$SPENDGUARD_HOME/disabled` flag disables enforcement; the default flag location is `~/.spendguard/disabled` (`src/spendguard/config.py:23`, `src/spendguard/config.py:1435`). `spendguard off` writes the flag; `spendguard on` removes it. Clear the environment override too when recovering (`src/spendguard/gate.py:2626`). The generated startup hook checks both switches **before importing spendguard**, providing an escape hatch even if package import is broken; both the site/user hook and `.pth` bootstrap contain that check (`src/spendguard/setup.py:20`, `src/spendguard/setup.py:37`). Re-enabling the switches still requires installation in the interpreter actually used; the inventory's `require()` and SDK-coverage caveats apply.
+
+### Registering an SDK gate
+
+`spendguard.register(module_path, class_name, method, gate_fn, is_async=False)` appends a surface; the next `spendguard.install()` patches it alongside built-ins. For example, `spendguard.register(sdk_module, sdk_class, sdk_method, check_request)` followed by `spendguard.install()` uses application-supplied configuration and a callback. `gate_fn(kw, args)` returns to allow or raises `SpendGateRefused` (including its subclasses) to stop; an estimator can explicitly reuse `_decide_and_account` with the pipeline's estimate shape (`provider`, `model`, `requests`, `in_tok`, `out_tok`, `cost`, and any additional estimate basis fields). Registration itself does not invent estimation or post-call actual-usage accounting (`src/spendguard/gate.py:2416`, `src/spendguard/gate.py:2440`).
+
+`_guard` propagates deliberate refusal but warns and permits on other callback errors. `install` is idempotent at patched methods and contains per-surface installation failures; its optional `cap` argument sets `GATE_CAP` for this process (`src/spendguard/gate.py:2421`, `src/spendguard/gate.py:2451`). Extension authors inherit this fail-open boundary and must not mistake successful registration for comprehensive fail-closed SDK coverage.
+
+| Module | Status and capability | Primary entry points |
+|---|---|---|
+| config | BUILT — Key provenance/shadowing, CLI resolution, mtime-cached config, atomic state updates, policy/local/org cap resolution, scoped intent authorizations, queue paths, lane environment scrubbing and worker settings. Owns counted/memory-budgeted thread-local ledger connections, fresh transaction handling, rollback/reset and separate maintenance connections. | `load_key_files` (`src/spendguard/config.py:83`); `resolve_cli` (`src/spendguard/config.py:262`); `advisor_num` (`src/spendguard/config.py:674`); `codex_daemon_pool_settings` (`src/spendguard/config.py:570`); `open_ledger_connection` (`src/spendguard/config.py:1098`); `pooled_ledger_conn` (`src/spendguard/config.py:1197`); `ledger_op` (`src/spendguard/config.py:1253`) |
+| config_schema | BUILT — Declarative settings catalog and sections used by configuration surfaces. Not all declared override metadata is implemented by runtime accessors. | `sections` (`src/spendguard/config_schema.py:786`) |
+| keys_audit | BUILT — Key-source and shadowing audit with masked suffixes and optional strict duplicate reporting. | `cmd` (`src/spendguard/keys_audit.py:40`) |
+| gate | PARTIAL — SDK interception for OpenAI/Anthropic realtime, Responses, embeddings, batches and streaming, plus budgets, explicit refusals, external-cost gate and accepted-batch booking. Incidental errors can fail open. `require()` proves at least one patch when SDKs are present, not every surface; no installed SDK passes vacuously. Unknown prices are loudly recorded as unpriced zero, not invented. Abandoned streams and fine-tuning training cost are not fully captured. | `install` (`src/spendguard/gate.py:2451`); `require` (`src/spendguard/gate.py:2531`); `SpendGateRefused` (`src/spendguard/gate.py:102`); `MeteredCallRefused` (`src/spendguard/gate.py:114`); `record_accepted_batch_estimate` (`src/spendguard/gate.py:803`); `gate_external` (`src/spendguard/gate.py:687`) |
+| setup | BUILT — Managed repo rules, venv/user startup hooks, interpreter coverage, skill installation and schema-driven setup. Startup bootstrap catches installation failure, making explicit `require()` important. Skill installation copies instructions rather than all supporting assets. | `install_rule` (`src/spendguard/setup.py:166`); `install_hook` (`src/spendguard/setup.py:365`); `install_skills` (`src/spendguard/setup.py:484`); `cmd_init` (`src/spendguard/setup.py:975`) |
+| runner | PARTIAL — Scoped bootstrap directory and child environment for executing commands with startup injection. Bootstrap catches errors; explicit require remains necessary for fail-closed callers. | `child_env` (`src/spendguard/runner.py:67`); `main` (`src/spendguard/runner.py:90`) |
+| coverage | BUILT — Startup-hook coverage audit across configured interpreters; structural coverage is not runtime enforcement proof. | `audit_gating_coverage` (`src/spendguard/coverage.py:88`); `gaps` (`src/spendguard/coverage.py:108`) |
+| weekly_cap_guard | PARTIAL — PreToolUse protection for recognized raw Codex shell execution and Agent/Task invocations, using cached weekly headroom. Unknown cap blocks absent override; internal errors fail open. | `weekly_cap_guard_pretooluse` (`src/spendguard/weekly_cap_guard.py:118`); `install_weekly_cap_guard` (`src/spendguard/weekly_cap_guard.py:189`) |
+| agent_spawn_gate | PARTIAL — Whole-task cached agentic near-cap spawn judgment, denial and delegation guidance; visible fail-open on internal failure. | `evaluate_pretooluse` (`src/spendguard/agent_spawn_gate.py:90`); `install_agent_gate` (`src/spendguard/agent_spawn_gate.py:166`) |
+
+## Canonical money ledger and capture
+
+### Storage, identity and isolation
+
+`SPENDGUARD_HOME` selects state storage, defaulting to `~/.spendguard`; operational `config.json` and credential `keys.env` are separate files (`src/spendguard/config.py:17`, `src/spendguard/config.py:28`). Email/server credentials use dedicated `email.json`/`saas.json`, gitignored configuration files or environment variables rather than tracked project config (`src/spendguard/config.py:1330`, `src/spendguard/config.py:1374`). The canonical money ledger coexists with call, I/O and learning tables; the queue has its own database, as described below. This is not a claim that every subsystem shares one database.
+
+Charge project resolution is `SPENDGUARD_PROJECT` → repository `.spendguard.json` SaaS project → git-root basename → cwd basename. Conversation identity checks `SPENDGUARD_CONV` → `SPENDGUARD_CHAT` → `CLAUDE_SESSION_ID` → process fallback (`src/spendguard/budget.py:162`, `src/spendguard/budget.py:194`). Contributor resolution uses explicit configuration, then git email, then a persisted anonymous machine identity (`usr_<hex>`); anonymous identity is attribution fallback, not proof of a resolved human/org owner (`src/spendguard/saas.py:200`, `src/spendguard/config.py:1401`).
+
+Ledger connections use WAL and thread-local pooling. Cross-connection work must commit in phases to avoid holding one writer while another connection attempts to write the same file; history reconstruction documents this ordering explicitly (`src/spendguard/config.py:1151`, `src/spendguard/config.py:1203`, `src/spendguard/history.py:146`). These phases are not an atomic multi-module transaction. Daily/monthly caps remain **check-then-record**: concurrent processes can each pass before another records, allowing overshoot. High-volume realtime usage also incurs per-call ledger writes and shared SQLite writer contention; pooling reduces connection overhead but does not remove these limits (`src/spendguard/gate.py:615`, `src/spendguard/gate.py:790`, `src/spendguard/gate.py:1493`).
+
+| Module | Status and capability | Primary entry points |
+|---|---|---|
+| ledger | BUILT — Canonical v6 event ledger, decimal-text money, separate cost axes, UTC event timestamps and configured reporting timezone, repaired indexes, deduplication, adjustments/reversals, period locks and hash-chained audit. Compatibility totals can include multiple axes; bulk retag uses summary audit rather than per-row lock checks. | `SpendLedger` (`src/spendguard/ledger.py:306`); `live_dedup_key` (`src/spendguard/ledger.py:298`) |
+| budget | BUILT — Charge recording into canonical events, snapshots, reconciliation corrections, intent/job/provider/day dimensions, unpriced records/repricing and separate meta/external spend. Write failures produce loud dead letters. Batch-estimate reconciliation matches provider/model/intent, not a unique batch ID. | `record_charge` (`src/spendguard/budget.py:241`); `snapshot` (`src/spendguard/budget.py:299`); `spent_since` (`src/spendguard/budget.py:649`); `record_unpriced` (`src/spendguard/budget.py:800`); `record_external_cost` (`src/spendguard/budget.py:1007`) |
+| ledger_read | BUILT — Fresh read-only committed reads, allowlisted SQL/report access, wall-clock budgets and explicit oversize failures rather than clipped rows. | `read_ledger_sql` (`src/spendguard/ledger_read.py:212`); `read_ledger_rows` (`src/spendguard/ledger_read.py:264`); `read_routing_history_report` (`src/spendguard/ledger_read.py:581`) |
+| ledger_sync | PARTIAL — Capture completeness, batch true-down and realtime reconstruction/sync. Realtime evidence is cached/forensic with representative project attribution, not comprehensive provider billing truth. Some fetch failures lack full completeness flags; correction clearing can precede failed-provider skips. | `audit_completeness` (`src/spendguard/ledger_sync.py:90`); `true_down` (`src/spendguard/ledger_sync.py:132`); `reconcile_realtime` (`src/spendguard/ledger_sync.py:450`); `sync` (`src/spendguard/ledger_sync.py:660`) |
+| http_capture | PARTIAL — Best-effort httpx/requests/urllib response capture with SDK duplicate suppression. **Capture only, no pre-spend enforcement**; streams and some oversized/unknown-length bodies are skipped. | `install` (`src/spendguard/http_capture.py:305`) |
+| calls | BUILT — Physical-call and retry-root metadata, actual executor/model/effort, contract feedback, quality measurements and routing summaries. Metadata can survive prompt logging being disabled; some recording errors are swallowed. | `context` (`src/spendguard/calls.py:186`); `record_call` (`src/spendguard/calls.py:467`); `feedback` (`src/spendguard/calls.py:595`); `cost_summary` (`src/spendguard/calls.py:708`) |
+| guard | BUILT — Savings and routing-decision accounting, distinguishing measured savings from counterfactual distribution; prevents duplicate plan-reserved source counting. Savings are not billed money. | `record_saving` (`src/spendguard/guard.py:40`); `record_decision` (`src/spendguard/guard.py:172`); `savings_crosscheck` (`src/spendguard/guard.py:121`) |
+| migrate_charges | BUILT — Idempotent decimal-conservation cutover from legacy charges, with snapshot rather than destructive table removal. | `to_spend_events` (`src/spendguard/migrate_charges.py:22`); `run_cutover` (`src/spendguard/migrate_charges.py:112`) |
+| otel_ingest | PARTIAL — Stable trace/span deduplicated exported-cost or priced-token ingestion. Cache token metadata affects price but is not fully forwarded; candidate counts can include deduplicated rows. | `span_to_charge` (`src/spendguard/otel_ingest.py:110`); `ingest` (`src/spendguard/otel_ingest.py:144`) |
+| focus_export | PARTIAL — FOCUS-shaped CSV/JSON and reconciliation export. Subscription-covered rows lack numeric EffectiveCost/allocated flat plan fee. | `focus_row` (`src/spendguard/focus_export.py:60`); `export_rows` (`src/spendguard/focus_export.py:106`) |
+
+Ledger storage maintenance is separate from charge semantics: `migrate_from_ledger` (`src/spendguard/lane_queue.py:190`) copies live queue rows into the queue database and drops the old money-ledger queue table. Freed pages become reusable; the live file need not shrink until a later VACUUM. It does not perform that VACUUM itself. `optimize_queue_db` (`src/spendguard/lane_queue.py:232`) refreshes query-planner statistics after drains rather than on every operation.
+
+## Prices, catalogs and model parameters
+
+### Price resolution and cache semantics
+
+Lowest to highest precedence is built-in `_FALLBACK` → `$SPENDGUARD_HOME/litellm_prices.json` → `model_catalog.as_price_table()` rates → shipped `src/spendguard/prices.json` → `$SPENDGUARD_HOME/prices.json` → `$SPENDGUARD_HOME/prices.yaml` → the file selected by `SPENDGUARD_PRICES`. The home defaults to `~/.spendguard`; later layers merge per-model fields over earlier values (`src/spendguard/pricing.py:166`, `src/spendguard/pricing.py:185`, `src/spendguard/pricing.py:222`). Supply provider/model rates in these data layers instead of embedding prices in application code; catalog capabilities and price provenance remain separate concerns.
+
+`_cost` clamps cached input into `[0, in_tok]`. Realtime prices uncached input and cache reads separately, falling back to the full input rate when a cache-read price is absent. Batch uses explicit batch input/output rates and `batch_cached_in` when provided; without that cache-specific batch rate, cached input receives the ordinary batch-input rate. There is **no universal stacking of cache and 50% batch discounts** (`src/spendguard/pricing.py:864`). Anthropic usage must be normalized because its ordinary `input_tokens` excludes cache-read/cache-creation tokens, while OpenAI's input count includes cached tokens; the gate adds cache reads before costing and passes cache creation separately (`src/spendguard/gate.py:1385`).
+
+`cross_check_openrouter(run=False)` fetches public prices and performs exact-ID comparisons for free, returning unresolved identity and judgment work explicitly. Its default is a zero-spend, read-only drift check, not a semantic all-model price certification. `run=True` enables agentic identity and price-gap judgments and may spend; it does not silently rewrite the table (`src/spendguard/pricing.py:573`).
+
+| Module | Status and capability | Primary entry points |
+|---|---|---|
+| pricing | PARTIAL — Layered curated/user/synced pricing, provenance, normalization, token/unit/batch cost, catalog/live/learned ceilings and freshness checks. Unknown cost produces zero plus explicit unpriced tracking. Automatic semantic catalog mapping is a STUB returning None. | `price` (`src/spendguard/pricing.py:804`); `cost_or_unpriced` (`src/spendguard/pricing.py:908`); `estimate` (`src/spendguard/pricing.py:938`); `max_output_tokens` (`src/spendguard/pricing.py:372`); `verify_pricing` (`src/spendguard/pricing.py:943`) |
+| model_catalog | BUILT — Curated floor plus overlays, provider/pricing/rate/vision/embedding/capability queries and validation. Unknown capabilities are tri-state; row as-of dates differ from fetch timestamps. | `model_record` (`src/spendguard/model_catalog.py:131`); `rate_limit_for` (`src/spendguard/model_catalog.py:211`); `model_capability` (`src/spendguard/model_catalog.py:377`); `validate_catalog` (`src/spendguard/model_catalog.py:414`) |
+| models | PARTIAL — Shared generation/reasoning parameter authority, effort observations and confirmed error healing. Persisted facts can be applied before verification; family-pattern seeds are existing implementation, not measured proof. | `apply_call_params` (`src/spendguard/models.py:177`); `resolve_effort` (`src/spendguard/models.py:471`); `record_effort` (`src/spendguard/models.py:281`); `heal_reasoning` (`src/spendguard/models.py:402`); `confirm_reasoning` (`src/spendguard/models.py:460`) |
+| catalog | BUILT — Live model-ID discovery, measured lane serving overlays, ceilings and stale refresh. Live membership does not establish price/capability; TTL is not strict usage refusal. | `pull_live_catalog` (`src/spendguard/catalog.py:30`); `merge_lane_observation` (`src/spendguard/catalog.py:143`); `served` (`src/spendguard/catalog.py:172`); `refresh_catalog_if_stale` (`src/spendguard/catalog.py:222`) |
+| sync | BUILT — Validated atomic pricing refresh from LiteLLM with curated overrides taking precedence; does not author model capabilities. | `sync` (`src/spendguard/sync.py:172`); `refresh_if_stale` (`src/spendguard/sync.py:206`) |
+| sync_capabilities | BUILT — Explicit SaaS/GitHub/LiteLLM capability/limit refresh with provenance, as-of dates and completeness audit. | `audit_catalog_completeness` (`src/spendguard/sync_capabilities.py:151`); `sync_capabilities` (`src/spendguard/sync_capabilities.py:185`) |
+| refresh | PARTIAL — Optional paid web-assisted pricing lookup and explicit write mode; rejects truncated lookup replies. Direct SDK use relies on the installed gate rather than a local explicit require. | `diff` (`src/spendguard/refresh.py:60`); `main` (`src/spendguard/refresh.py:101`) |
+| expected_output | BUILT — Class/model measured p90 and declared/seed/catalog expected-output estimates, with unknown basis explicit. Estimates are not automatically wire limits. | `expect` (`src/spendguard/expected_output.py:85`); `batch_output_estimate` (`src/spendguard/expected_output.py:177`) |
+| provider_tokens | BUILT — Token estimates using encoding/factors with explicit proxy fallback, agentic factor calibration and confidence/provenance. Process factor cache reload is explicit. | `count_text` (`src/spendguard/provider_tokens.py:177`); `calibrate` (`src/spendguard/provider_tokens.py:302`); `reload_factors` (`src/spendguard/provider_tokens.py:145`) |
+| content_tokens | BUILT — Text/media token accounting and image dimensions with provider-specific formulas and named fallback assumptions. | `count_tokens` (`src/spendguard/content_tokens.py:317`); `count_detail` (`src/spendguard/content_tokens.py:325`); `image_tokens` (`src/spendguard/content_tokens.py:238`) |
+| model_preflight | BUILT — Per-spec served/priced checks and cached agentic stale-ID correction, returning every input status. Priced unchecked IDs remain usable; corrections are reported rather than applied. | `preflight_models` (`src/spendguard/model_preflight.py:87`); `configured_specs` (`src/spendguard/model_preflight.py:113`) |
+| reasoning_equivalence | BUILT — Bidirectional same-provider lane/metered identity-and-effort mapping. Lesser reasoning needs affirmative judge/sample evidence; availability distinguishes yes/unverified/no. Candidate generation exists here, not bakeoff execution. | `record_equivalence` (`src/spendguard/reasoning_equivalence.py:133`); `resolve_metered` (`src/spendguard/reasoning_equivalence.py:198`); `resolve_lane` (`src/spendguard/reasoning_equivalence.py:272`) |
+
+## Measurement, estimates and experiments
+
+| Module | Status and capability | Primary entry points |
+|---|---|---|
+| measurement | BUILT — Separate sample/rubric/instrument/judge/candidate provenance and readings, reconstruction and comparisons. Rerun pins the first judge rather than replaying an entire multi-judge mixture. | `record_reading` (`src/spendguard/measurement.py:81`); `compare` (`src/spendguard/measurement.py:184`); `rerun` (`src/spendguard/measurement.py:241`) |
+| estimate | BUILT — Fit measured sample distributions and project workload costs. | `fit_from_sample` (`src/spendguard/estimate.py:33`); `project` (`src/spendguard/estimate.py:68`) |
+| realized | BUILT — Before/after adoption measurement and positive-increment savings sync; negative results remain visible. | `measure` (`src/spendguard/realized.py:34`); `sync_to_guarded` (`src/spendguard/realized.py:75`) |
+| experiment | PARTIAL — Stored-I/O A/B pilot/equivalence experiments and guarded OpenAI/Anthropic batch promotion. Realtime exceptions can be silently skipped; effort variants are internal rather than a public axis. | `experiment` (`src/spendguard/experiment.py:119`); `promote` (`src/spendguard/experiment.py:371`) |
+| equivalence | BUILT — Structural/scalar/text comparisons and optional embedding, rubric or custom grading. | `structural` (`src/spendguard/equivalence.py:65`); `grade` (`src/spendguard/equivalence.py:123`) |
+| effort_titration | BUILT — Pilot/chunk/checkpoint effort experiments; only confident outcomes update learned effort, tentative outcomes remain receipts. | `titrate` (`src/spendguard/effort_titration.py:258`) |
+| bakeoff | BUILT — Model-by-effort trials with actual served models, estimated caps, quality/requirements judges and replay checks. | `bakeoff` (`src/spendguard/bakeoff.py:161`) |
+| calibrate | BUILT — Prediction/actual pairing, held-out backtests, quantile/hierarchical calibration and optional shared exchange. Does not automatically ship new gate policy. | `predict_cost` (`src/spendguard/calibrate.py:276`); `record_prediction` (`src/spendguard/calibrate.py:357`); `backtest` (`src/spendguard/calibrate.py:424`) |
+| stability | PARTIAL — Repeated-label consistency measurement including errors; not semantic answer quality. CLI has no separate mandatory estimate stage. | `measure_stability` (`src/spendguard/stability.py:21`) |
+| estimate_divergence | BUILT — Agentic quote-versus-actual grounding adjudication; failed/unknown judgment refuses enforcement approval. | `adjudicate_grounding` (`src/spendguard/estimate_divergence.py:62`); `enforce` (`src/spendguard/estimate_divergence.py:91`) |
+| estimate_literals | BUILT — AST literal-cost sites with whole-enclosing-context adjudication and cached verdicts. | `literal_sites` (`src/spendguard/estimate_literals.py:44`); `adjudicate_literal` (`src/spendguard/estimate_literals.py:114`) |
+| token_caps | BUILT — AST output-cap site discovery and whole-context adjudication; missing certification is not approval. | `sites` (`src/spendguard/token_caps.py:98`); `adjudicate_cap` (`src/spendguard/token_caps.py:200`) |
+| verdict_ledger | BUILT — Durable adjudication registry and stale/unjudged/failed/cleared comparison. | `load_verdicts` (`src/spendguard/verdict_ledger.py:27`); `compare_to_verdicts` (`src/spendguard/verdict_ledger.py:44`) |
+| cachetest | BUILT — Estimate-first OpenAI/Anthropic cold/write/warm cache experiment and break-even, preserving partial/unknown warm results. Intent suffixes are capped at 400 characters; direct SDK calls rely on installed gate. | `cache_test` (`src/spendguard/cachetest.py:98`) |
+
+## Learning and optimization
+
+### Connected feedback loop
+
+Opt-in physical-call capture and provider/history I/O recovery feed the call corpus; history mining, reconstruction and practice review create conditional insights. `brief`/`advise` and model recommendations consume that evidence; `experiment` tests cost and equivalence, and `promote` executes the selected path while retaining outputs for subsequent learning. Validation revisits insights as evidence changes; the gate enforces execution, reconciliation identifies capture gaps, and reporting surfaces results (`src/spendguard/calls.py:467`, `src/spendguard/callio.py:133`, `src/spendguard/backfill.py:73`, `src/spendguard/advisor.py:114`, `src/spendguard/learn.py:88`, `src/spendguard/brief.py:79`, `src/spendguard/advise.py:156`, `src/spendguard/experiment.py:119`, `src/spendguard/experiment.py:371`, `src/spendguard/validate.py:140`). This is a connected workflow, with the evidence-clipping, heuristic validation and partial-execution limits in the inventory below; a recommendation alone is not experimental proof. See [learning-advisor.md](learning-advisor.md), [MONEY-FLOW.md](MONEY-FLOW.md), [DATA_PLANE.md](DATA_PLANE.md), and [ROADMAP.md](ROADMAP.md).
+
+### The governor governs its own spend
+
+Internal calls labelled through `calls.context(intent="spendguard:…")` are recognized by the `spendguard:` prefix. Batch `_meta_gate` and realtime precheck/accounting route them to the separate daily meta cap and `kind='meta'` accounting, rather than workload caps. `budget.record_meta` tags project `llm-spendguard` in the canonical ledger: “separate meta ledger” means a separate accounting axis, not a separate database (`src/spendguard/gate.py:664`, `src/spendguard/gate.py:672`, `src/spendguard/gate.py:1107`, `src/spendguard/budget.py:1002`). `GATE_ALLOW` is an explicit meta-cap override too. This contract depends on labelling; it does not prove every internal call site is labelled.
+
+Advisor corpus reads exclude `spendguard:%` intents so the governor's own analysis does not train its workload recommendations (`src/spendguard/ledger_read.py:335`). Advisor and judge models are configurable and must have pricing for reliable meta estimates. `validate_advisor` checks the configured `advisor.model` and `advisor.judge_model` against pricing and **returns problems**; that validator is not by itself proof every entry point refuses an unpriced model (`src/spendguard/config.py:938`).
+
+| Module | Status and capability | Primary entry points |
+|---|---|---|
+| learn | BUILT — Conditional insight lifecycle and temporal graph in SQLite. | `add_insight` (`src/spendguard/learn.py:88`); `update_insight` (`src/spendguard/learn.py:146`); `add_node` (`src/spendguard/learn.py:167`); `add_edge` (`src/spendguard/learn.py:176`) |
+| advise | BUILT — Confidence-weighted quality/cost recommendation, including zero-valued measurements, amortization and as-of evidence. | `evidence` (`src/spendguard/advise.py:46`); `ranked` (`src/spendguard/advise.py:76`); `advise` (`src/spendguard/advise.py:156`) |
+| advisor | PARTIAL — Replay reconstruction, aggregate mining and model recommendations from measured frontiers/cold priors. Reconstruction judges are realtime despite older batch prose; broad exception handling can swallow deliberate stops. Mining selects bounded aggregate insights. | `reconstruct` (`src/spendguard/advisor.py:114`); `mine` (`src/spendguard/advisor.py:172`); `recommend_models` (`src/spendguard/advisor.py:290`) |
+| validate | PARTIAL — Mechanical model-name and aggregate-cost support/contradiction/decay checks. Semantic validation of freeform insights remains unimplemented. | `validate` (`src/spendguard/validate.py:140`) |
+| review | PARTIAL — High-cost insight review/freshness. Evidence bundling clips prompt/output/notes; freshness can advance on failed review. | `review` (`src/spendguard/review.py:102`); `auto_fresh` (`src/spendguard/review.py:175`) |
+| bootstrap | PARTIAL — History and optional estimate-caged mining/review/reconstruction orchestration. Stage failures print and skip, so final readiness is not proof all stages succeeded. | `bootstrap` (`src/spendguard/bootstrap.py:23`) |
+| backfill | PARTIAL — OpenAI completed/cancelled and Anthropic history backfill with intent linkage/dedup. Later model groups in a multi-model Anthropic batch can be skipped. | `backfill` (`src/spendguard/backfill.py:73`) |
+| history | PARTIAL — Artifact/git history linkage and optional paid agentic relevance mining. Execution can spend on classification even without applying results. | `reconstruct_intents` (`src/spendguard/history.py:124`); `enrich_graph` (`src/spendguard/history.py:171`); `mine_git` (`src/spendguard/history.py:218`) |
+| brief | PARTIAL — Structured historical brief and cheap non-denied recommendations; deterministic overlap matching does not establish measured quality. Optional ready-lane refinement. | `brief` (`src/spendguard/brief.py:79`) |
+| prompts | BUILT — Default zero-spend structural prompt-waste lint and candidate cheaper routes; optional agentic packability assessment recommends rather than applies. | `lint` (`src/spendguard/prompts.py:85`) |
+| cacheaudit | BUILT — Shared-prefix savings, script system-prompt candidates and realized cached-input-rate audit. Samples at most 30 prompts per intent/provider/model with heuristic candidate filtering; not exhaustive semantic analysis. | `audit_cache_opportunities` (`src/spendguard/cacheaudit.py:155`) |
+| semcache | PARTIAL — Opt-in exact/embedding-similarity cache and JSONL dedup/population; no TTL or universal call interception. JSONL keys omit much of a full request. | `get_cached` (`src/spendguard/semcache.py:104`); `cached_call` (`src/spendguard/semcache.py:157`); `dedup_jsonl` (`src/spendguard/semcache.py:207`) |
+| share | BUILT — Opt-in deidentified insight generalization/export/import; imported abstractions remain untrusted priors. | `generalize_insight` (`src/spendguard/share.py:30`); `cmd_export` (`src/spendguard/share.py:78`); `cmd_import` (`src/spendguard/share.py:105`) |
+
+## Diagnostics and reliability
+
+| Module | Status and capability | Primary entry points |
+|---|---|---|
+| reliability | PARTIAL — Estimate-first probes, cached health/auth/model shifts, remediation and alerts. Some failures become down-state observations; remediation consumes shortened errors. | `sweep_estimate` (`src/spendguard/reliability.py:90`); `sweep` (`src/spendguard/reliability.py:142`); `remediate` (`src/spendguard/reliability.py:251`); `health_reds` (`src/spendguard/reliability.py:537`) |
+| balances | BUILT — Provider balance fetching and whole-response agentic extraction, hash cache and declared-balance-minus-ledger fallback; unknown remains unknown. | `vendor_balance` (`src/spendguard/balances.py:204`); `refresh_balances` (`src/spendguard/balances.py:240`); `all_balances` (`src/spendguard/balances.py:286`) |
+| anomaly | BUILT — Median/MAD daily-spend anomaly heuristic, not semantic cause attribution. | `robust_z` (`src/spendguard/anomaly.py:20`); `flag_today` (`src/spendguard/anomaly.py:40`) |
+| cost_integrity | BUILT — Impossible cost/token bucket ceiling audit; a result below the ceiling is not proof of correct pricing. | `audit_metered_cost_vs_tokens` (`src/spendguard/cost_integrity.py:71`) |
+| metadata_audit | BUILT — Cached metadata age/breadth and measured-output-versus-published-limit audit, with unknown limits separate. Optional sync refreshes before inspection. | `backbone_health` (`src/spendguard/metadata_audit.py:108`) |
+| audit | PARTIAL — AST gating/known-model audit and optional estimated whole-file deep chunks. Unread files can yield no findings, so absence alone is not complete coverage proof. | `deep` (`src/spendguard/audit.py:89`); `main` (`src/spendguard/audit.py:161`) |
+| verify | BUILT — Structural verification, optional live probes and economics convergence; not an overall requirement proof or served-identity guarantee. | `verify_system` (`src/spendguard/verify.py:65`) |
+| signal | BUILT — Scrubbed cost/quality/waste signals and scoped SaaS upload; cancelled billed batches appear separately. Heuristic recommendations and whole-batch allocation to multiple intent/model groups mean totals are not necessarily additive. | `build_signals` (`src/spendguard/signal.py:10`); `push_signal` (`src/spendguard/signal.py:117`) |
+
+## Conversation imports and attribution
+
+| Module | Status and capability | Primary entry points |
+|---|---|---|
+| claudecode | PARTIAL — Incremental transcript usage, classification, invoice/overage ingestion, window attribution and context trajectories. Covered chat has billed zero and separate estimated value; inferred overage is provisional until invoices replace it. Story classification uses clipped excerpts. | `ingest_events` (`src/spendguard/claudecode.py:169`); `ingest_invoices` (`src/spendguard/claudecode.py:655`); `attribute_overage` (`src/spendguard/claudecode.py:744`); `sync` (`src/spendguard/claudecode.py:1351`); `context_trajectory` (`src/spendguard/claudecode.py:848`) |
+| codex | PARTIAL — Codex usage import, project classification, daily value and sync; final session model can misprice mixed-model usage. | `update` (`src/spendguard/codex.py:147`); `classify` (`src/spendguard/codex.py:193`); `sync` (`src/spendguard/codex.py:251`) |
+| chat | PARTIAL — Browser-cookie/internal-API chat import, estimated text/image value, classification and consented sync/loop. Estimates are proxies; classifications use snippets, and watermark advancement after failures can omit retries. | `update` (`src/spendguard/chat.py:342`); `classify` (`src/spendguard/chat.py:859`); `sync` (`src/spendguard/chat.py:546`); `loop` (`src/spendguard/chat.py:937`) |
+| attribution | BUILT — Shared taxonomy/team mapping and chunked agentic item classification with estimates; successful partial replies survive while omissions remain failures. | `taxonomy` (`src/spendguard/attribution.py:38`); `classify_items` (`src/spendguard/attribution.py:78`) |
+| conv | PARTIAL — Canonical org/team/project resolution, human precedence, batch links, session chunks, segments and realtime/GPU attribution. Whole contiguous session chunks coexist with legacy clipped classifiers/index/synthesis. Segmentation uses every user record rather than an ask classifier; realtime tallies are explicit lower bounds. | `resolve` (`src/spendguard/conv.py:622`); `session_chunks` (`src/spendguard/conv.py:859`); `segments` (`src/spendguard/conv.py:354`); `attribute_segments` (`src/spendguard/conv.py:454`); `realtime_token_tally` (`src/spendguard/conv.py:940`) |
+| tag | PARTIAL — Deterministic retag and explicit project moves. Residual LLM retag has an estimate surface but no execution implementation. | `retag_deterministic` (`src/spendguard/tag.py:14`); `move_project` (`src/spendguard/tag.py:27`); `estimate_llm_retag` (`src/spendguard/tag.py:57`) |
+| workdone | PARTIAL — Git/intent work summaries and rollups; optional summarization uses bounded intent/commit excerpts rather than whole evidence. | `build_workdone` (`src/spendguard/workdone.py:71`); `summarize` (`src/spendguard/workdone.py:174`) |
+
+## Residency, compaction and receipts
+
+The residency axis and PostToolUse nudge are **implemented**, despite older repository instructions describing them as future work. They estimate attribution of observed context cost; they do not recover exact historical compaction boundaries.
+
+| Module | Status and capability | Primary entry points |
+|---|---|---|
+| residency_gate | BUILT — Size/session-length-triggered, whole-tool-result, cached ready-lane agentic delegability judgment and cost warning. PostToolUse warns only; it cannot remove already-resident evidence and fails open. | `evaluate_posttooluse` (`src/spendguard/residency_gate.py:141`); `install_residency_gate` (`src/spendguard/residency_gate.py:213`) |
+| compaction | PARTIAL — Preservation guidance, precompact/session-start records, digest and measured compaction ratios. Agentic advice uses bounded tails/snippets rather than whole session evidence. | `agentic_advise` (`src/spendguard/compaction.py:165`); `record_precompact` (`src/spendguard/compaction.py:239`); `preservation_digest` (`src/spendguard/compaction.py:256`); `record_sessionstart` (`src/spendguard/compaction.py:268`) |
+| receipt | PARTIAL — Separate real-cost and subscription-value axes, savings, health, queue/risk/residency and unpriced warnings, terminal renderers and installation. Project filtering scopes API/value but flat fees, remote and external costs can remain global; default CLI is a global table plus value tree, not complete proportional per-repo allocation. Assumed fees are labelled. | `tally` (`src/spendguard/receipt.py:630`); `render_tally` (`src/spendguard/receipt.py:839`); `render_tree` (`src/spendguard/receipt.py:1118`); `cli` (`src/spendguard/receipt.py:1554`); `install_cli` (`src/spendguard/receipt.py:1792`) |
+
+Residency decomposition and subagent counterfactual calculations live in `claudecode.py`: `residency_decomposition` (`src/spendguard/claudecode.py:951`), `residency_counterfactual_costs` (`src/spendguard/claudecode.py:938`) and `residency_summary_lines` (`src/spendguard/claudecode.py:1057`). These feed receipt/diagnostic surfaces; there is no separate missing residency subsystem to invent.
+
+## Reconciliation, truth and close
+
+### Fetch → transform → load
+
+The data-plane design keeps external fetches and output/DB/HTTP loads around a directly testable transformation core. `report.build_rows` is the pure roll-up reference (`src/spendguard/report.py:142`; offline tests: `tests/test_report_build.py:1`). Other named offline-tested transforms include chat `_value_breakdown`, `_digest_conv`, `_day_rows`, transcript `_row_cost`/`_project_of`, and conversation `_dedup_top` (`src/spendguard/chat.py:267`, `src/spendguard/chat.py:304`, `src/spendguard/chat.py:418`, `src/spendguard/claudecode.py:52`, `src/spendguard/claudecode.py:58`, `src/spendguard/conv.py:1109`; `tests/test_chat_value.py:1`, `tests/test_transcript_pure.py:1`). Their existing attribution/heuristic limits remain as recorded above; the removed `conv._project_of` is not part of this contract.
+
+SaaS `build_rollup_rows` and `build_guarded_rows` shape plain data separately from the I/O shell `_rollup_rows`, but now print exclusion diagnostics, so they are **not strictly pure/no-print** transforms (`src/spendguard/saas.py:392`, `src/spendguard/saas.py:434`, `src/spendguard/saas.py:482`). Reconciliation follows a compatible map/reduce pattern: `Source` adapters produce comparable records and portfolio reduction computes residuals (`src/spendguard/reconcile.py:106`, `src/spendguard/reconcile.py:228`).
+
+CI isolates offline correctness tests from provider I/O and configures two coverage floors: 40% whole-package and 78% for its explicitly listed money-critical modules. These are **configured requirements**, not a claim of currently measured achieved coverage; no historical achieved percentage is restored (`.github/workflows/ci.yml:37`, `.github/workflows/ci.yml:47`, `.github/workflows/ci.yml:48`). See [DATA_PLANE.md](DATA_PLANE.md) for seams and [MONEY-FLOW.md](MONEY-FLOW.md) for conservation/accounting boundaries.
+
+| Module | Status and capability | Primary entry points |
+|---|---|---|
+| reconcile | PARTIAL — Source protocol and unified truth/captured/residual report, with unknown/completeness explicit; not every cost category has a truth adapter. | `Source` (`src/spendguard/reconcile.py:106`); `all_sources` (`src/spendguard/reconcile.py:123`); `completeness` (`src/spendguard/reconcile.py:162`); `run` (`src/spendguard/reconcile.py:228`) |
+| reconcile_openai | BUILT — Completed/cancelled batch billing retrieval for reconciliation. | `fetch_batches` (`src/spendguard/reconcile_openai.py:92`) |
+| reconcile_anthropic | BUILT — Cached ended-period Anthropic cost retrieval with malformed-row skipping. | `refresh_cache` (`src/spendguard/reconcile_anthropic.py:98`); `cost_by_day` (`src/spendguard/reconcile_anthropic.py:152`) |
+| realtime_oracle | BUILT — Admin hourly usage and project/day attribution; requires provider evidence and access. | `openai_hourly` (`src/spendguard/realtime_oracle.py:45`); `anthropic_hourly` (`src/spendguard/realtime_oracle.py:67`); `by_project_day` (`src/spendguard/realtime_oracle.py:132`) |
+| reconcile_calls | BUILT — Dry-run-first stable recording-gap repair. | `recording_gaps` (`src/spendguard/reconcile_calls.py:47`); `reconcile` (`src/spendguard/reconcile_calls.py:71`) |
+| truth | PARTIAL — Owner-scoped provider/GPU daily truth upload respecting privacy; client implementation does not verify remote server behavior. | `rows` (`src/spendguard/truth.py:17`); `push_truth` (`src/spendguard/truth.py:35`) |
+| trust | BUILT — Comparability-aware local/provider/server trust report; unknown is not clean and mirrored/meta rows are excluded appropriately. | `provider_truth` (`src/spendguard/trust.py:38`); `trust_report` (`src/spendguard/trust.py:84`) |
+| close | BUILT — Monthly truth/captured close, unusable-source gaps and CSV; empirical current-month run-rate requires observed days. | `build_close` (`src/spendguard/close.py:22`); `to_csv` (`src/spendguard/close.py:73`) |
+| report | PARTIAL — Daily/weekly/monthly billing/usage report with unpriced visibility. Failed admin retrieval can leave partial totals; automatic review freshness can invoke LLM work despite older zero-call prose. | `build_rows` (`src/spendguard/report.py:142`); `generate_report` (`src/spendguard/report.py:248`) |
+
+## Remote compute and provider extension
+
+| Module | Status and capability | Primary entry points |
+|---|---|---|
+| gpu_port | BUILT — Provider contract, runtime/day slicing, bill-or-rate accounting and source registry; unknown prices remain explicit. Label mapping uses existing substring rules. | `GPUProvider` (`src/spendguard/gpu_port.py:33`); `ProviderGPUSource` (`src/spendguard/gpu_port.py:219`); `register_source` (`src/spendguard/gpu_port.py:254`); `sources` (`src/spendguard/gpu_port.py:284`) |
+| resources | PARTIAL — Vast inventory/history, disappeared-instance recovery, GPU attribution, alert-only compute caps and ledger sync. Forensic remote reconstruction is bounded/heuristic, not complete truth; account top-ups proxy consumed compute and residuals remain unattributed. Never kills jobs. | `instances` (`src/spendguard/resources.py:69`); `gpu_rows` (`src/spendguard/resources.py:150`); `compute_exceeded` (`src/spendguard/resources.py:256`); `reconstruct_remote_llm` (`src/spendguard/resources.py:583`); `sync` (`src/spendguard/resources.py:857`) |
+| remote | BUILT — SSH startup enforcement verification and remote ledger sync; unknown is not verified. Single-target errors can still exit successfully. | `onstart_snippet` (`src/spendguard/remote.py:68`); `verify_remote_enforcement` (`src/spendguard/remote.py:87`); `sync` (`src/spendguard/remote.py:134`); `sync_all` (`src/spendguard/remote.py:173`) |
+| lambda_adapter | PARTIAL — Lambda inventory provider; untimed records and no account billing oracle. | `LambdaProvider` (`src/spendguard/lambda_adapter.py:43`); `source` (`src/spendguard/lambda_adapter.py:75`) |
+| runpod_adapter | PARTIAL — RunPod inventory/rates; stopped/untimed gaps, no account truth, API failure can return empty inventory. | `RunPodProvider` (`src/spendguard/runpod_adapter.py:51`); `source` (`src/spendguard/runpod_adapter.py:100`) |
+| modal_adapter | PARTIAL — Modal SDK daily billed source; no SDK is unconfigured and account truth can be unknown. | `ModalProvider` (`src/spendguard/modal_adapter.py:34`); `source` (`src/spendguard/modal_adapter.py:105`) |
+| provider_plugins | BUILT — Entry-point plugin loading, success-once registration, retry after failures and contained plugin exceptions/SystemExit. | `load_plugins` (`src/spendguard/provider_plugins.py:19`); `loaded` (`src/spendguard/provider_plugins.py:55`) |
+| provider_kit | BUILT — Offline conformance checks for registration, pricing, idempotence and failure containment. | `run_conformance` (`src/spendguard/provider_kit.py:22`); `assert_conformance` (`src/spendguard/provider_kit.py:84`) |
+| litellm_adapter | PARTIAL — Success-callback accounting, skipping already-gated SDK paths; capture only, not pre-spend enforcement. | `record_litellm` (`src/spendguard/litellm_adapter.py:31`); `install` (`src/spendguard/litellm_adapter.py:56`) |
+| bedrock_adapter | PARTIAL — boto3 response capture; streams are not consumed and unknowns remain unpriced. No admission gate. | `install` (`src/spendguard/bedrock_adapter.py:65`) |
+| vertex_adapter | PARTIAL — Sync/async generation and embedding capture; no streaming capture or pre-spend enforcement, with best-effort failure handling. | `install` (`src/spendguard/vertex_adapter.py:67`) |
+
+## Organization sync, discovery and operations
+
+### Standalone client and server contract
+
+Local gating, pricing, ledger, routing and local analysis require no team server; provider execution and fresh remote evidence still require their own connectivity. The opt-in SaaS seam uses a versioned `/v1` HTTP contract and a Bearer key; the server maps identity to its hierarchy rather than requiring callers to attach a trusted team/org identity to every request (`src/spendguard/saas.py:135`, `src/spendguard/saas.py:283`). `visibility=private` is the default. Normal upload paths return without pushing in that mode; enabled roll-ups select aggregate fields rather than prompts, outputs or keys. Connection does not authorize unresolved org ownership, and additional trust/privacy caveats remain in the inventory (`src/spendguard/config.py:1391`, `src/spendguard/saas.py:392`, `src/spendguard/saas.py:525`).
+
+`pull_policy` caches server caps in local config. Advisory caps are displayed suggestions and do not replace local limits; enforced caps resolve to the server ceiling or the smaller local cap, so local config can tighten but cannot loosen the effective policy (`src/spendguard/saas.py:786`, `src/spendguard/config.py:777`). This resolution contract does not erase the gate's explicit override and fail-open boundaries. Sync reports client-computed ledger/status, truth, decisions and savings; estimated subscription value and guarded savings remain separate from real-cost totals.
+
+Aggregate rows carry deterministic `uid`s; `saas crosscheck` compares local and server rows and reports matching, local-only, server-only and drift states. It excludes estimated-value rows and retains provider/GPU verification gaps rather than treating missing evidence as clean (`src/spendguard/saas.py:1041`). Server implementation and byte-for-byte compatibility cannot be independently established from this client tree.
+
+The **documented external catalog flow** is publication of this repository's `model_catalog.json` → server ingestion into a global curated catalog → anonymous `/api/public/catalog` and `/catalog`, plus authenticated `/v1/models?curated=1` overlays. Source-owned `as_of` dates are distinct from ingestion timestamps ([DATA_PLANE.md](DATA_PLANE.md), `docs/DATA_PLANE.md:149`). The client pull persists overlays above the shipped floor, preserves row dates and leaves existing data intact when unavailable (`src/spendguard/saas.py:176`, `src/spendguard/model_catalog.py:109`). The server/publication legs are contract documentation, not locally verified server capabilities.
+
+### Event consumers and observability
+
+`spendguard.on_event(callback)` registers `callback(event: dict)` and is also a decorator. The payload includes `kind`, provider/model, cost, decision and available `in_tok`/`out_tok`/`cached_in_tok`; `envelope` preserves it and fills `v`, `type`, unique `id`, UTC `ts`, and, when attribution resolves, `conv_id`/`project` (`src/spendguard/emit.py:31`, `src/spendguard/emit.py:152`). For example, `spendguard.on_event(event_sink)` connects an application's existing sink. **Callbacks run inline:** keep them fast; swallowed exceptions do not make a slow callback asynchronous (`src/spendguard/emit.py:173`).
+
+Set `emit.webhook` or `SPENDGUARD_WEBHOOK` for JSON POSTs, and `emit.otel` or `SPENDGUARD_OTEL` for OpenTelemetry. These environment controls override config and accept explicit off values (`src/spendguard/emit.py:37`). Webhook/OTel delivery uses a bounded daemon-thread queue and drops events when flooded; it is best-effort telemetry, not a durable audit transport (`src/spendguard/emit.py:68`, `src/spendguard/emit.py:80`, `src/spendguard/emit.py:173`). OTel uses the application's global meter/tracer and exporter: counters are `spendguard.cost_usd` (USD) and `gen_ai.client.token.usage` (token), token type is input/output, and spans carry `gen_ai.system`, `gen_ai.request.model`, `gen_ai.operation.name`, available `gen_ai.usage.*_tokens`, and `spendguard.decision` (`src/spendguard/emit.py:106`, `src/spendguard/emit.py:117`).
+
+| Module | Status and capability | Primary entry points |
+|---|---|---|
+| saas | PARTIAL — Aggregate client linking, owned scopes, privacy, catalog/calibration/insight/work/status sync, taxonomy, commands and advisory/enforced policy retrieval. Server implementation is outside this tree. GPU sync precedes trust alarm; alarm blocks later ledger upload but unknown/error can continue. Unresolved org ownership uploads nothing. | `link` (`src/spendguard/saas.py:283`); `push_rollup` (`src/spendguard/saas.py:525`); `pull_policy` (`src/spendguard/saas.py:786`); `run_commands` (`src/spendguard/saas.py:818`); `sync` (`src/spendguard/saas.py:894`) |
+| sources | BUILT — Transcript/plugin/interpreter discovery and receipt source-family classification without exposing secrets. | `register_transcript_source` (`src/spendguard/sources.py:61`); `discover_sources` (`src/spendguard/sources.py:177`) |
+| scan | BUILT — Local source inventory, zero LLM/network. | `collect` (`src/spendguard/scan.py:22`); `render` (`src/spendguard/scan.py:52`) |
+| schedule | BUILT — Idempotent OS scheduler installation/removal; GPU stamping precedes upload. | `install_schedule` (`src/spendguard/schedule.py:24`) |
+| fleet | BUILT — Loaded-SHA consumer registration, dead-PID pruning, supervised stale restarts and install refresh. Unsupervised consumers are warned rather than killed. | `register_consumer` (`src/spendguard/fleet.py:82`); `running_consumers` (`src/spendguard/fleet.py:127`); `restart_stale` (`src/spendguard/fleet.py:159`); `refresh_stale_installs` (`src/spendguard/fleet.py:218`) |
+| release | BUILT — Loaded-SHA/green-pointer lifecycle and promotion checks. Promotion consumes supplied gate evidence; it does not run the suite itself. CLI deployment orchestrates validation separately. | `served_sha` (`src/spendguard/release.py:70`); `should_respawn` (`src/spendguard/release.py:109`); `promote_release` (`src/spendguard/release.py:145`) |
+| notify | BUILT — Configured Resend/SMTP notification transport. | `is_configured` (`src/spendguard/notify.py:73`); `send_email` (`src/spendguard/notify.py:86`) |
+| emit | BUILT — Best-effort event callbacks and bounded asynchronous webhook/OTel emission. | `on_event` (`src/spendguard/emit.py:31`); `emit` (`src/spendguard/emit.py:173`) |
+| deid | PARTIAL — Regex redaction floor plus optional Presidio, explicit degraded/off modes; not a complete PII guarantee. | `redact` (`src/spendguard/deid.py:177`) |
+
+## Public surfaces and entry modules
+
+| Module | Status and capability | Primary entry points |
+|---|---|---|
+| cli | BUILT — Lazy console dispatch including ask/delegate, lane/config/gate, ledger/reconcile/receipt, diagnostics, experiments, corpus work and operational commands. Whole-job aliases are submit-jobs/run-jobs/whole-job; queue planning is read-only. Deployment can run validation/promote/restart but was not invoked for this inventory. | `main` (`src/spendguard/cli.py:134`); `help_text` (`src/spendguard/cli.py:98`); `ledger_read_cli` (`src/spendguard/cli.py:114`) |
+| mcp_server | PARTIAL — Stdio JSON-RPC and threaded HTTP MCP, client registration and 23 tools. Some tools can spend without mandatory budget staging; vision cache keys use path strings rather than image bytes and can become stale after file replacement. | `handle` (`src/spendguard/mcp_server.py:887`); `serve_stdio` (`src/spendguard/mcp_server.py:987`); `serve_http` (`src/spendguard/mcp_server.py:1099`); `register_client` (`src/spendguard/mcp_server.py:1033`) |
+| crossllm | PARTIAL — Stable ask/vision facade, budgetless estimate, priced-model preflight, vendor fan/first execution and durable vision delegation. Multiple models from the same vendor can collide in vendor-keyed result maps. | `ask` (`src/spendguard/crossllm.py:272`); `ask_vision` (`src/spendguard/crossllm.py:342`) |
+| serve | BUILT — HTTP ask/embed/metadata/health surface with body limits, refusal responses and token requirement off loopback. `serve` requires enforcement; constructing a server alone does not. | `make_server` (`src/spendguard/serve.py:117`); `serve` (`src/spendguard/serve.py:128`) |
+| compare | PARTIAL — Immediate paid comparison command with no separate local estimate stage. | `main` (`src/spendguard/compare.py:14`) |
+| cascade | PARTIAL — Cheap-to-strong verification ladder. Default verification is nonempty/JSON syntax, not semantic correctness; final output can still fail verification. | `cascade` (`src/spendguard/cascade.py:38`); `default_verify` (`src/spendguard/cascade.py:22`) |
+| escalation_ladder | PARTIAL — Relative escalation and confirmed zero-billable cancellation helpers; not wired as an active soft-deadline observer. | `relative_escalation_gate` (`src/spendguard/escalation_ladder.py:15`); `cancel_on_zero_billable` (`src/spendguard/escalation_ladder.py:46`) |
+| __init__ | BUILT — Lazy package API, optional adapter installers and automatic gate bootstrap; bootstrap can fail open unless required mode is set. Cost function is exported as estimate_cost to avoid shadowing estimate module. | `install_litellm` (`src/spendguard/__init__.py:71`); `which_package` (`src/spendguard/__init__.py:108`) |
+| __main__ | BUILT — `python -m spendguard` forwards to CLI main; no independent function definition. | src/spendguard/__main__.py:1 |
+| _version | BUILT — Package version constant source. | src/spendguard/_version.py:1 |
+| cli_arguments | BUILT — Shared fixed-format option-value parsing helper. | `cli_option_value_after` (`src/spendguard/cli_arguments.py:4`) |
+| ui | BUILT — Shared estimate-only banner. | `estimate_only` (`src/spendguard/ui.py:11`) |
+
+MCP tool names (all prefixed `spendguard_`): `ledger_read`, `delegate`, `version`, `health`, `savings`, `route_cost`, `route_realized`, `route_horizon`, `plan_queue`, `run_jobs`, `advise`, `models`, `recommend`, `bakeoff`, `stability`, `vision`, `spend_overview`, `overage_status`, `top_conversations`, `conversation_cost`, `compaction_candidates`, `dispatch_state`, `config`. `run_jobs` plans without its execution budget; delegate supports estimate; bakeoff/vision estimate absent a budget. Health can probe/remediate, recommend can invoke meta work, and stability can run paid trials.
+
+Vision and embeddings are adapter capabilities: `vision` (`src/spendguard/adapters.py:1595`), `embed` (`src/spendguard/adapters.py:1698`), `embed_batch` (`src/spendguard/adapters.py:1915`), `embed_compare` (`src/spendguard/adapters.py:1964`). Embedding work supports chunk/checkpoint recovery and named oversize-item gaps. Native embedding Batch is OpenAI-only; Gemini's native batch leg is unwired. Embedding comparison measures vector similarity/correlation rather than retrieval quality.
+
+The console entry declared by `pyproject.toml` is `spendguard = spendguard.cli:main`; there is no separate repository-root Python CLI/MCP implementation. The package has required dependencies, including psutil (and conditional tomli); it is not dependency-free.
+
+## Non-Python package artifacts and coverage boundary
+
+All **173 Python modules** under `src/spendguard/` are catalogued above, including implementation helpers and entry modules. The five other non-cache package files were also inspected:
+
+- `src/spendguard/model_catalog.json`: curated runtime model records; packaged catalog SSOT.
+- `src/spendguard/prices.json`: generated pricing projection, packaged for runtime use.
+- `src/spendguard/model_catalog.json~`: backup snapshot; not runtime SSOT or packaged data.
+- `src/spendguard/README.md`: historical module map; some counts/descriptions are stale, so source takes precedence.
+- `src/spendguard/py.typed`: empty packaged typing marker.
+
+## Known gaps / design in flight
+
+- Prospective coalescing already exists. Its missing pieces are agentic coalescing policy and per-call deadline/SLA flush, not the accumulation queue itself.
+- Durable queues, admission windows and whole-job planning are separate built mechanisms. Queue result truncation and mixed-contract whole-job grouping need explicit design attention.
+- Anthropic submit/collect exists, but whole-job batch execution is OpenAI-only and tracker polling is not provider-correct throughout. Optional durable storm execution is not default wiring.
+- Codex pool admission hardening exists; broker failure/local fallback weakens a strict host-wide-cap guarantee.
+- Gate enforcement is not universal fail-closed coverage. Raw HTTP, LiteLLM, Bedrock and Vertex capture must not be mistaken for pre-spend admission; abandoned streams and fine-tuning cost have gaps.
+- Several judgment paths still clip evidence or use mechanical meaning proxies, as identified in their entries. This map records existing behavior rather than asserting compliance with repository rules.
+- Bulk/checkpoint budgeting and schema/image/reasoning identity have the limitations listed above; timeout does not imply cancellation or zero bill.
+- Semantic pricing-name mapping is a stub; semantic freeform insight validation and residual LLM retag execution remain absent. Soft-deadline cancellation/escalation helpers are not integrated into an active observer.
+- Residency measurement and live warning are built. Exact historical context attribution, complete project-proportional receipt allocation, provider truth for every category and independently verified server behavior are not established by this tree.
