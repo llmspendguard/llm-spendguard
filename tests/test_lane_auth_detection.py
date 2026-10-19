@@ -29,15 +29,15 @@ def ck(name, cond):
 
 
 def _fake_run_json(payload, returncode=0):
-    def _run(cmd, capture_output=None, text=None, timeout=None, env=None):
+    def _auth_json_process_result(cmd, capture_output=None, text=None, timeout=None, env=None):
         return types.SimpleNamespace(returncode=returncode, stdout=json.dumps(payload), stderr="")
-    return _run
+    return _auth_json_process_result
 
 
 def _fake_run_exit(returncode, out="", err=""):
-    def _run(cmd, capture_output=None, text=None, timeout=None, env=None):
+    def _auth_exit_process_result(cmd, capture_output=None, text=None, timeout=None, env=None):
         return types.SimpleNamespace(returncode=returncode, stdout=out, stderr=err)
-    return _run
+    return _auth_exit_process_result
 
 
 # ── 1. subscription_exec.auth_status: reads the STRUCTURAL `loggedIn` bool from `claude auth status` JSON ──

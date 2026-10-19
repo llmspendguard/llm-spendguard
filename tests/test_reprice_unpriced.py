@@ -40,20 +40,20 @@ ck("both models start in the cannot-price view", {PRICED, UNPRICED} <= _unpriced
 
 # Deterministic pricing (hermetic — no dependence on the synced price table): PRICED resolves to $1/1M in + $2/1M
 # out; UNPRICED raises like a genuinely-unpriceable model. reprice_unpriced re-imports pricing, so it sees these.
-def _stub_rc(m, in_t, out_t=0, provider=None, **k):
+def repricing_realtime_cost_oracle(m, in_t, out_t=0, provider=None, **k):
     if m == PRICED:
         return in_t / 1e6 * 1.0 + out_t / 1e6 * 2.0
     raise KeyError(m)
 
 
-def _stub_price(m, provider=None):
+def repricing_rate_table_oracle(m, provider=None):
     if m == PRICED:
         return {"in_": 1.0, "out": 2.0}
     raise KeyError(m)
 
 
-pricing.realtime_cost = _stub_rc
-pricing.price = _stub_price
+pricing.realtime_cost = repricing_realtime_cost_oracle
+pricing.price = repricing_rate_table_oracle
 
 print("\n-- DRY-RUN plans the reprice but changes nothing --")
 plan = budget.reprice_unpriced(PRICED, apply=False)

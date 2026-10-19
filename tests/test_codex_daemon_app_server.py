@@ -36,7 +36,7 @@ def test_concurrent_turns_are_demultiplexed():
         daemon.shutdown()
 
 
-def test_failed_turn_is_a_hard_error():
+def test_codex_failed_turn_is_error():
     daemon = new_daemon()
     try:
         result = daemon.run_warm("fail")
@@ -72,7 +72,7 @@ def test_dead_pipe_wakes_every_waiter():
 if __name__ == "__main__":
     tests = [test_agent_message, test_concurrent_turns_are_demultiplexed,
              test_real_notifications_racing_before_turn_response_are_replayed,
-             test_failed_turn_is_a_hard_error, test_dead_pipe_wakes_every_waiter]
+             test_codex_failed_turn_is_error, test_dead_pipe_wakes_every_waiter]
     for test in tests:
         test()
         print(f"PASS {test.__name__}")

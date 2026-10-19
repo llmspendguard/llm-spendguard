@@ -47,7 +47,7 @@ def _fake_cfg(*a, **k):
         return {"claude-code": "claude-opus-4-8", "codex": "gpt-5.6-sol",
                 "gemini": "gemini-3.7-flash-medium", "zai-coding": "totally-not-a-real-model-xyz-000"}
     return _orig_cfg(*a, **k)
-def _fake_price(spec, in_tok, out_tok):
+def lane_normalized_cost_oracle(spec, in_tok, out_tok):
     # hermetic pricing: the three real lane models price; anything else (the BOGUS id) raises KeyError exactly as a
     # genuinely unpriced id would, so the audit's priced=False path is exercised without depending on sync state.
     if str(spec).split(":", 1)[-1] in _PRICED:
@@ -55,7 +55,7 @@ def _fake_price(spec, in_tok, out_tok):
     raise KeyError(spec)
 config._cfg_get = _fake_cfg
 vendor_call.served_check = lambda prov, mid: "unchecked"   # hermetic: no catalog cache read, no network
-pricing.realtime_cost = _fake_price                        # hermetic: no dependence on the synced price table
+pricing.realtime_cost = lane_normalized_cost_oracle                        # hermetic: no dependence on the synced price table
 try:
     rows = lane_catalog.audit_lane_fallback()
     by = {}

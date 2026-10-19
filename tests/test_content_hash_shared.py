@@ -24,7 +24,7 @@ def _orig_chash(text):                                # conv._chash BEFORE the r
     return hashlib.sha256((text or "").encode()).hexdigest()[:20]
 
 
-def _orig_meas_sha(*parts):                           # measurement._meas_sha BEFORE: \x00-domain-sep, replace, full hex
+def _original_measurement_key_oracle(*parts):                           # measurement._meas_sha BEFORE: \x00-domain-sep, replace, full hex
     h = hashlib.sha256()
     for p in parts:
         h.update(("\x00" + str(p)).encode("utf-8", "replace"))
@@ -32,7 +32,7 @@ def _orig_meas_sha(*parts):                           # measurement._meas_sha BE
 
 
 def _orig_item_id(text):                              # measurement.item_id BEFORE: _meas_sha[:16]
-    return _orig_meas_sha(text)[:16]
+    return _original_measurement_key_oracle(text)[:16]
 
 
 def main():
@@ -59,8 +59,8 @@ def main():
 
     print("\n-- measurement._meas_sha (multi-part, used for instrument/sample/reading ids) is unchanged --")
     for parts in [("intent", "kind", "judge-mix"), ("one",), (), ("a", None, 3, "b")]:
-        ck("_meas_sha%r" % (parts,), measurement._meas_sha(*parts) == _orig_meas_sha(*parts),
-           (measurement._meas_sha(*parts), _orig_meas_sha(*parts)))
+        ck("_meas_sha%r" % (parts,), measurement._meas_sha(*parts) == _original_measurement_key_oracle(*parts),
+           (measurement._meas_sha(*parts), _original_measurement_key_oracle(*parts)))
     ck("_meas_sha returns the full 64-char hex", len(measurement._meas_sha("x")) == 64)
 
     print("\n-- the two id families are DISTINCT (domain separation matters: they must NOT collide) --")

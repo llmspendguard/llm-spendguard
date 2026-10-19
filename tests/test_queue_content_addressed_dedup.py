@@ -26,7 +26,7 @@ def ck(label, cond):
     if not cond:
         fails.append(label)
 
-def _state(rid):
+def _queue_dedup_status(rid):
     with lq._queue_op() as c:
         r = c.execute("SELECT state, lane, billed FROM lane_queue WHERE id=?", (rid,)).fetchone()
     return (r[0], r[1], r[2]) if r else (None, None, None)
@@ -48,10 +48,10 @@ ck("different task/system/reasoning get distinct ids", len({a, c_task, c_sys, c_
 # ── 3. dedup against a DONE row: reuse its result for $0, no new pending row ──
 lease = lq.lease(1)                                  # lease the oldest pending (id a)
 lq.settle(a, OK)
-ck("leased row settled to done", _state(a)[0] == "done")
+ck("leased row settled to done", _queue_dedup_status(a)[0] == "done")
 d = lq.enqueue("intent-x", "do the thing", system="S", reasoning="r")   # same fingerprint as the now-DONE row
 ck("enqueue of an already-DONE task returns the done row's id (reuse, $0)", d == a)
-ck("no new pending row was created for the done-duplicate", d == a and _state(d)[0] == "done")
+ck("no new pending row was created for the done-duplicate", d == a and _queue_dedup_status(d)[0] == "done")
 
 # ── 4. intra-batch dedup: duplicate tasks within ONE enqueue_many coalesce ──
 ids = lq.enqueue_many("intent-y", ["p", "q", "p", "p", "q"], system=None, reasoning=None)
@@ -68,8 +68,8 @@ ck("dedup=False created two distinct rows", e1 != e2)
 leased = lq.lease(1)                                 # highest priority (100) → e1 (oldest of that tier); e2 stays pending
 ck("lease targeted e1 (the high-priority row)", leased and leased[0]["id"] == e1)
 lq.settle(e1, {"text": "shared answer", "lane": "codex", "billed": True})
-st1, _, _ = _state(e1)
-st2, lane2, billed2 = _state(e2)
+st1, _, _ = _queue_dedup_status(e1)
+st2, lane2, billed2 = _queue_dedup_status(e2)
 ck("the leased row settled done", st1 == "done")
 ck("the OTHER same-fingerprint pending row was coalesced to done", st2 == "done")
 ck("the coalesced row is tagged content-addressed-dedup and billed=0", lane2 == "content-addressed-dedup" and billed2 == 0)
@@ -79,9 +79,9 @@ f1 = lq.enqueue("intent-f", "will fail", max_attempts=1, priority=200)
 leased_f = lq.lease(1)                               # highest priority (200) → f1
 ck("lease targeted f1", leased_f and leased_f[0]["id"] == f1)
 lq.settle(f1, {"error": "payload_rejected", "outcome": "payload_rejected"})   # deterministic → fails fast
-ck("row failed fast", _state(f1)[0] == "failed")
+ck("row failed fast", _queue_dedup_status(f1)[0] == "failed")
 f2 = lq.enqueue("intent-f", "will fail")             # same fingerprint as the FAILED row
-ck("new enqueue does NOT coalesce onto a failed row (fresh attempt)", f2 != f1 and _state(f2)[0] == "pending")
+ck("new enqueue does NOT coalesce onto a failed row (fresh attempt)", f2 != f1 and _queue_dedup_status(f2)[0] == "pending")
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_queue_content_addressed_dedup: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

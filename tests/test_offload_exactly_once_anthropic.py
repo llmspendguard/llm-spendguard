@@ -42,7 +42,7 @@ def _install(monkey):
         calls["last_msg_tasks"] = list(tasks)
         return {"batch_id": "msgbatch_fresh", "requests": len(list(tasks)), "estimate": {"cost": 0.0}, "error": None}
 
-    def _fake_chat(tasks, model, *, intent=None, cap_dollars=None, metadata=None, **kw):
+    def submit_transient_redirect_chat(tasks, model, *, intent=None, cap_dollars=None, metadata=None, **kw):
         calls["chat"] += 1
         return {"batch_id": "batch_openai_fresh", "jsonl": None, "requests": len(list(tasks)), "error": None}
 
@@ -51,7 +51,7 @@ def _install(monkey):
         return len(list(row_ids))
 
     monkey(submit, "submit_message_batch", _fake_msg)
-    monkey(submit, "submit_chat_tasks", _fake_chat)
+    monkey(submit, "submit_chat_tasks", submit_transient_redirect_chat)
     monkey(lane_queue, "mark_batched", _fake_mark)
     monkey(callio, "_anthropic_client", lambda: FakeAnthropic(_state["fb"]))
     # The OpenAI reconcile path is UNCHANGED and not under test here; stub it to 'no existing batch' so the OpenAI

@@ -39,7 +39,7 @@ adapters.provider_for = lambda m: "openai" if str(m).startswith("gpt") else "ant
 
 # ── Test A: submit_chat_tasks UNIT (build + guarded_submit stubbed; a build stub reads the written tasks file) ──
 _seen = {}
-def _stub_build_reading_tasks(tasks_path, model, system=None, max_out=None, reasoning="minimal",
+def observe_submit_reading_tasks(tasks_path, model, system=None, max_out=None, reasoning="minimal",
                               schema=None, schema_name="result"):
     _seen["rows"] = [json.loads(ln) for ln in open(tasks_path) if ln.strip()]
     _seen["build_model"] = model
@@ -51,7 +51,7 @@ def _stub_guarded_capture(jsonl_path, model, cap_dollars, batch=True, submit=Tru
     _seen["endpoint"] = endpoint
     _seen["submit"] = submit
     return "batch_STUB" if submit else None
-submit.build_chat_batch_jsonl = _stub_build_reading_tasks
+submit.build_chat_batch_jsonl = observe_submit_reading_tasks
 submit.guarded_submit = _stub_guarded_capture
 
 print("-- string tasks: custom_id 'task-<i>' + content round-trip; cap/endpoint/submit reach guarded_submit --")
@@ -97,7 +97,7 @@ def _stub_build_raises(*a, **k):
 submit.build_chat_batch_jsonl = _stub_build_raises
 r5 = submit.submit_chat_tasks(["q"], "gpt-4.1-nano")
 ck("build failure → error dict, batch_id None", r5["batch_id"] is None and "build blew up" in (r5["error"] or ""))
-submit.build_chat_batch_jsonl = _stub_build_reading_tasks
+submit.build_chat_batch_jsonl = observe_submit_reading_tasks
 
 print("-- a DELIBERATE spend-stop from guarded_submit PROPAGATES (never swallowed into an error dict) --")
 def _stub_guarded_refuses(*a, **k):

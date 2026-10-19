@@ -25,7 +25,7 @@ def ck(label, cond):
     if not cond:
         fails.append(label)
 
-def _state(rid):
+def _queue_retry_status(rid):
     c = sqlite3.connect(lq.config.lane_queue_db_path())
     try:
         r = c.execute("SELECT state, attempts, parks, defer_until FROM lane_queue WHERE id=?", (rid,)).fetchone()
@@ -46,17 +46,17 @@ def _lease_one(intent):
 rid = lq.enqueue("f2", "t")
 r = _lease_one("f2")
 ck("F2 first settle (leased→done) succeeds", lq.settle(r["id"], {"text": "ok", "lane": "codex"}) is True)
-ck("F2 row is done", _state(rid)[0] == "done")
+ck("F2 row is done", _queue_retry_status(rid)[0] == "done")
 ck("F2 a SECOND settle on the now-done row is refused (no overwrite/double-count)",
    lq.settle(rid, {"text": "STALE", "lane": "gemini"}) is False)
-ck("F2 the done row was NOT overwritten by the stale settle", _result(rid).get("text") == "ok" and _state(rid)[0] == "done")
+ck("F2 the done row was NOT overwritten by the stale settle", _result(rid).get("text") == "ok" and _queue_retry_status(rid)[0] == "done")
 
 # ── F4: transient-failed retry backs off (defer_until set), not an instant re-lease ──
 lq.RETRY_BACKOFF_S_DEFAULT = 30.0                     # ensure a real backoff for this check
 rid = lq.enqueue("f4", "t")
 r = _lease_one("f4")
 lq.settle(r["id"], {"error": "boom", "outcome": vc.OVERLOADED})   # transient → retry
-st = _state(rid)
+st = _queue_retry_status(rid)
 ck("F4 transient failure → pending (retry)", st[0] == "pending")
 ck("F4 the retry has a defer_until backoff (not instantly re-leasable)", bool(st[3]))
 ck("F4 lease() does NOT immediately return the deferred row", _lease_one("f4") is None)
@@ -64,9 +64,9 @@ ck("F4 lease() does NOT immediately return the deferred row", _lease_one("f4") i
 # ── F7: 'queued_batch' reason with NO handle → PARK (pending+defer, attempt refunded), never realtime-retry ──
 rid = lq.enqueue("f7", "t")
 r = _lease_one("f7")
-before_attempts = _state(rid)[1]
+before_attempts = _queue_retry_status(rid)[1]
 lq.settle(r["id"], {"error": "offload glitch", "reason": "queued_batch"})   # queued_batch reason, NO 'batch' handle
-st = _state(rid)
+st = _queue_retry_status(rid)
 ck("F7 parked to pending (not failed, not realtime-retried as transient)", st[0] == "pending")
 ck("F7 a defer_until was set (await re-mark)", bool(st[3]))
 ck("F7 the attempt was REFUNDED (not burned on a billed batch)", st[1] <= before_attempts)

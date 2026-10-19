@@ -102,7 +102,7 @@ def test_shrink_still_refuses_a_class_that_has_ever_truncated():
           str(kw["max_tokens"]))
 
 
-def test_autotune_never_invents_a_cap_where_the_caller_set_none():
+def test_runtime_autotune_preserves_absent_cap():
     """Omitting max_tokens is a deliberate choice — the caller wants the model's own ceiling."""
     os.environ["SPENDGUARD_AUTOTUNE"] = "apply"
     kw = {}
@@ -114,7 +114,7 @@ def test_autotune_never_invents_a_cap_where_the_caller_set_none():
 for _fn in (test_a_truncating_class_gets_its_cap_RAISED,
             test_a_raise_never_exceeds_the_models_published_ceiling,
             test_shrink_still_refuses_a_class_that_has_ever_truncated,
-            test_autotune_never_invents_a_cap_where_the_caller_set_none):
+            test_runtime_autotune_preserves_absent_cap):
     _fn()
 
 print(f"\n{'[FAIL]' if failures else 'OK'} test_autotune_raises_on_truncation: {failures} failure(s)")

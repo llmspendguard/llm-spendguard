@@ -89,7 +89,7 @@ def test_wedged_turn_fails_only_itself_others_survive():
         daemon.shutdown()
 
 
-def test_refusal_is_a_hard_tool_error():
+def test_kimi_refusal_is_tool_error():
     daemon = new_daemon()
     try:
         r = daemon.run_warm("refuse")
@@ -123,7 +123,7 @@ def test_dead_pipe_wakes_every_waiter():
 
 if __name__ == "__main__":
     for test in (test_agent_message, test_concurrent_turns_are_demultiplexed, test_n_prompts_one_cold_start,
-                 test_wedged_turn_fails_only_itself_others_survive, test_refusal_is_a_hard_tool_error,
+                 test_wedged_turn_fails_only_itself_others_survive, test_kimi_refusal_is_tool_error,
                  test_server_initiated_request_is_declined_not_hung, test_dead_pipe_wakes_every_waiter):
         test()
     print(f"\n{'[FAIL]' if fails else 'OK'} test_kimi_daemon_acp_server: {len(fails)} failure(s)")

@@ -39,11 +39,11 @@ _priced = {"gemini-real", "gemini-fixed", "gpt-uncheck"}      # 'gpt-unpriced' d
 _orig = (vendor_call.served_check, vendor_call.closest_served, pricing.realtime_cost)
 vendor_call.served_check = lambda prov, mid: _served.get(f"{prov}:{mid}", "served")
 vendor_call.closest_served = lambda prov, mid: (("gemini-fixed", []) if mid == "gemini-stale" else (None, []))
-def _fake_price(model, in_tok, out_tok=0, **k):
+def preflight_catalog_price_oracle(model, in_tok, out_tok=0, **k):
     if model in _priced:
         return 0.001
     raise KeyError(model)                                    # the UNPRICED signal preflight catches narrowly
-pricing.realtime_cost = _fake_price
+pricing.realtime_cost = preflight_catalog_price_oracle
 try:
     specs = ["gemini:gemini-real", "gemini:gemini-stale", "openai:gpt-unpriced", "openai:gpt-uncheck", "", ":orphan"]
     rows = mp.preflight_models(specs)

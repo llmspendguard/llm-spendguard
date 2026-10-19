@@ -65,11 +65,11 @@ footer_before = next(line for line in receipt.render_tally(receipt.tally()).spli
                      if "est sub value" in line)
 try:
     # deterministic $/token so the test is independent of the synced price cache (the value, not the rate, is the point)
-    def fixture_price(model, in_tok, out_tok=0, **kw):
+    def visibility_token_cost_oracle(model, in_tok, out_tok=0, **kw):
         if model == "unpriceable-fixture-model":
             raise KeyError(model)
         return in_tok * 1e-6 + out_tok * 2e-6
-    pricing.realtime_cost = fixture_price
+    pricing.realtime_cost = visibility_token_cost_oracle
     stamped = lane_value.stamp_from_ledger()
 finally:
     pricing.realtime_cost = _orig_price

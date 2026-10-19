@@ -179,7 +179,7 @@ def case_a_cap_below_the_ceiling_is_the_one_autotune_can_fix(checks: Checks) -> 
     checks.that("and THIS is where autotune is offered", "autotune=apply" in advice, advice)
 
 
-def case_no_cap_at_all_is_not_offered_a_cap_raise(checks: Checks) -> None:
+def case_uncapped_receipt_has_no_cap_raise(checks: Checks) -> None:
     # max_tokens 0 — autotune's documented contract is that it never adds a cap the caller did not send.
     seed("sig-no-cap", NO_CAP_MODEL, 0, [17] * 40, "length")
     with contextlib.closing(connection()) as c:
@@ -252,7 +252,7 @@ def main() -> int:
     for case in (case_a_cap_at_the_published_ceiling_is_not_called_raisable,
                  case_a_provider_prefixed_recording_still_finds_its_cap,
                  case_a_cap_below_the_ceiling_is_the_one_autotune_can_fix,
-                 case_no_cap_at_all_is_not_offered_a_cap_raise,
+                 case_uncapped_receipt_has_no_cap_raise,
                  case_every_command_the_receipt_prints_actually_runs,
                  case_the_block_renders_with_a_remedy_for_every_model_it_lists):
         case(checks)

@@ -82,9 +82,9 @@ ck("output basis is the MEASURED p99 (not a literal)", est["out_tok"] == 200 and
 ck("makes no spend claim beyond the ceiling (note names $0 on lanes)", "$0 on the" in est["note"])
 
 print("-- estimate_fan: an unpriced model is counted + EXCLUDED from the ceiling, never $0-hidden --")
-def _raise_unpriced(model, i, o, provider=None):
+def reject_all_estimate_prices(model, i, o, provider=None):
     raise KeyError(model)
-pricing.realtime_cost = _raise_unpriced
+pricing.realtime_cost = reject_all_estimate_prices
 est2 = lane_balance.estimate_fan(["x", "y"], "t-intent")
 ck("unpriced models counted", est2["n_unpriced"] == 2)
 ck("ceiling excludes unpriced (stays 0, with a note)", est2["est_metered_usd_worst"] == 0.0 and "unpriced" in est2["note"])
