@@ -523,9 +523,9 @@ class _Bucket:
     buckets. Thread-safe. Both buckets refill continuously from monotonic time — no background thread, no cron."""
 
     __slots__ = ("key", "limit", "rpm", "tpm", "reserve", "_sem", "_sem_batch", "_lock", "_tokens", "_last",
-                 "_tpm_tokens", "_tpm_last", "in_flight", "waiting")
+                 "_tpm_tokens", "_tpm_last", "in_flight", "waiting", "_bounded_fifo", "_waiter_limit")
 
-    def __init__(self, key, limit, rpm, reserve=0, tpm=0):
+    def __init__(self, key, limit, rpm, reserve=0, tpm=0, max_waiters=None):
         self.key = key
         self.limit = max(1, int(limit))
         # REALTIME RESERVE: hold back `reserve` of this key's slots for interactive/realtime work so a batch fan can
@@ -540,6 +540,10 @@ class _Bucket:
         # hold _sem and ≥ reserve of _sem's permits stay reachable by realtime. None when reserve==0 (no gate at all).
         self._sem_batch = threading.BoundedSemaphore(self.limit - self.reserve) if self.reserve > 0 else None
         self._lock = threading.Lock()
+        self._waiter_limit = max_waiters
+        self._bounded_fifo = (threading.Condition(self._lock), []) if max_waiters is not None else None
+        if max_waiters is not None and (max_waiters < 0 or self.reserve or self.rpm or self.tpm):
+            raise ValueError("bounded FIFO admission requires a nonnegative bound and unpaced, unreserved slots")
         self._tokens = float(self.rpm)     # start full so the first burst up to rpm is not paced
         self._last = time.monotonic()
         self._tpm_tokens = float(self.tpm)  # token/minute bucket, same continuous refill; starts full
@@ -588,6 +592,8 @@ class _Bucket:
         (the default) is realtime and uses the full limit. Lock order is fixed (batch: _sem_batch → _sem; realtime:
         _sem only), so the two paths cannot deadlock."""
         t0 = time.monotonic()
+        if self._bounded_fifo is not None:
+            return self._acquire_codex_fifo(deadline_s)
         _batch = (sla_class == "batch" and self._sem_batch is not None)
         with self._lock:
             self.waiting += 1
@@ -654,7 +660,43 @@ class _Bucket:
             self.in_flight += 1
         return time.monotonic() - t0
 
+    def _acquire_codex_fifo(self, deadline_s):
+        """Bound unpaced pool waiters and prevent later arrivals overtaking queued leases."""
+        started = time.monotonic()
+        condition, queue = self._bounded_fifo
+        with condition:
+            if not queue and self._sem.acquire(blocking=False):
+                self.in_flight += 1
+                return time.monotonic() - started
+            if len(queue) >= self._waiter_limit:
+                raise DispatchTimeout(f"'{self.key}' waiter limit {self._waiter_limit} reached")
+            ticket = object()
+            queue.append(ticket)
+            self.waiting += 1
+            condition.notify_all()
+            try:
+                while True:
+                    remaining = float(deadline_s) - (time.monotonic() - started)
+                    if remaining <= 0:
+                        raise DispatchTimeout(f"'{self.key}' FIFO admission deadline exhausted")
+                    if queue[0] is ticket and self._sem.acquire(blocking=False):
+                        self.in_flight += 1
+                        return time.monotonic() - started
+                    condition.wait(remaining)
+            finally:
+                queue.remove(ticket)
+                self.waiting -= 1
+                condition.notify_all()
+
     def release(self, sla_class=None):
+        if self._bounded_fifo is not None:
+            condition, _ = self._bounded_fifo
+            with condition:
+                if self.in_flight > 0:
+                    self.in_flight -= 1
+                    self._sem.release()
+                condition.notify_all()
+            return
         with self._lock:
             if self.in_flight > 0:
                 self.in_flight -= 1

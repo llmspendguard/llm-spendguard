@@ -1,7 +1,7 @@
 """Codex lane honours a selectable reasoning effort — mapped to the Codex plan model's OWN scale
 (none|low|medium|high|xhigh|max), which has NO 'minimal' (MEASURED: 'minimal' is a hard 400 on that model). So the
-standard ordinal 'minimal' → 'none'; the rest pass through. run_prompt threads it as `-c model_reasoning_effort=<v>`.
-Offline: subprocess + the codex binary are stubbed, so no real (slow) codex call runs.
+standard ordinal 'minimal' → 'none'; the rest pass through. run_prompt forwards reasoning to warm admission
+and reports the applied effort. Offline: warm admission is stubbed, so no codex process runs.
 """
 import os
 import sys
@@ -12,7 +12,7 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from spendguard import codex_exec                                                       # noqa: E402
+from spendguard import codex_exec, codex_daemon                                         # noqa: E402
 
 
 def ck(name, cond):
@@ -32,43 +32,32 @@ fails += ck("xhigh passes through (Codex-specific tier)", ce("xhigh") == "xhigh"
 fails += ck("empty / None → None (leave codex's own default)", ce("") is None and ce(None) is None)
 
 
-class _R:
-    returncode = 0
-    stdout = "{}"
-    stderr = ""
-
-
 seen = {}
 
 
-def _fake_run(cmd, **kw):
-    seen["cmd"] = list(cmd)
-    try:                                                # write the out-file so run_prompt reads a body, not an error
-        i = cmd.index("--output-last-message")
-        open(cmd[i + 1], "w").write("ok")
-    except Exception:
-        pass
-    return _R()
+def _fake_run(prompt, **kw):
+    seen.update(kw)
+    return {"text": prompt, "error": None}
 
 
-print("\n-- run_prompt threads the effort as `-c model_reasoning_effort=<v>`; none set → no flag --")
-_obin, _orun = codex_exec._bin, codex_exec.subprocess.run
+print("\n-- run_prompt forwards reasoning through warm admission and reports the applied effort --")
+_obin, _orun = codex_exec._daemon_enabled, codex_daemon.run_warm
 try:
-    codex_exec._bin = lambda: "/fake/codex"
-    codex_exec.subprocess.run = _fake_run
-    codex_exec.run_prompt("hi", reasoning="minimal", model="openai:gpt-5.5")
-    cmd = seen.get("cmd", [])
-    fails += ck("reasoning='minimal' → cmd carries `-c model_reasoning_effort=none`",
-                "-c" in cmd and "model_reasoning_effort=none" in cmd)
+    codex_exec._daemon_enabled = lambda: True
+    codex_daemon.run_warm = _fake_run
+    result = codex_exec.run_prompt("hi", reasoning="minimal", model="openai:gpt-5.5")
+    fails += ck("reasoning='minimal' is forwarded and reports applied effort none",
+                seen.get("reasoning") == "minimal" and result.get("effort") == "none")
     seen.clear()
-    codex_exec.run_prompt("hi", reasoning="high")
-    fails += ck("reasoning='high' → `model_reasoning_effort=high`", "model_reasoning_effort=high" in seen.get("cmd", []))
+    result = codex_exec.run_prompt("hi", reasoning="high")
+    fails += ck("reasoning='high' is forwarded and reports high",
+                seen.get("reasoning") == "high" and result.get("effort") == "high")
     seen.clear()
-    codex_exec.run_prompt("hi")
-    fails += ck("no reasoning → NO model_reasoning_effort flag (codex default untouched)",
-                not any("model_reasoning_effort" in str(x) for x in seen.get("cmd", [])))
+    result = codex_exec.run_prompt("hi")
+    fails += ck("no reasoning leaves the warm model default untouched",
+                seen.get("reasoning") is None and result.get("effort") is None)
 finally:
-    codex_exec._bin, codex_exec.subprocess.run = _obin, _orun
+    codex_exec._daemon_enabled, codex_daemon.run_warm = _obin, _orun
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_codex_reasoning: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

@@ -281,7 +281,7 @@ def _route_agentic(plan, prompt, model, timeout, cwd):
         if timeout is None:
             kwargs["timeout"] = float(config._cfg_get("delegate", "agentic_timeout_s", AGENTIC_DELEGATE_TIMEOUT_S)
                                       or AGENTIC_DELEGATE_TIMEOUT_S)
-        kwargs["recycle_on_timeout"] = True
+        kwargs["recycle_on_timeout"] = config.codex_daemon_admission_settings()["recycle_on_timeout"]
         prompt = prompt + _WORKTREE_AUTHOR_CONSTRAINTS    # bake the sandbox/git/hook contract into what codex actually receives
     return module.run_prompt(prompt, **kwargs)
 

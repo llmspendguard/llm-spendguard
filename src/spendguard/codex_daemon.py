@@ -152,7 +152,7 @@ class _CodexDaemon(_WarmStdioJsonRpcDaemon):
         return True
 
     def run_warm(self, prompt, model=None, thread=None, reasoning=None, sandbox="read-only", cwd=None,
-                 timeout=None, recycle_on_timeout=False):
+                 timeout=None, recycle_on_timeout=None):
         """One delegation on the WARM server, CONCURRENCY-SAFE — many callers in flight, each waiting on its OWN
         response by id, holding no lock. A single call that TIMES OUT fails only ITSELF (the caller falls back to
         the metered API); only a genuinely dead pipe restarts the server, so one slow turn never sinks the others.
@@ -165,8 +165,10 @@ class _CodexDaemon(_WarmStdioJsonRpcDaemon):
         is for a SINGLE-TENANT caller (an agentic delegation, not the concurrent meta-fan): on a timeout the turn is
         abandoned but the app-server keeps running it, so the server can no longer be trusted idle — HARD-kill and
         recycle it (shutdown → respawn next call) so the next delegation gets a fresh server and fails fast instead of
-        stalling behind a wedged turn. The default (False) preserves the fail-only-this-call behavior the meta-fan
-        relies on (one slow turn must not tear down the server other callers are using)."""
+        stalling behind a wedged turn. The advisor/env default enables recycling for exclusive pool leases;
+        callers sharing a raw daemon can explicitly opt out."""
+        if recycle_on_timeout is None:
+            recycle_on_timeout = config.codex_daemon_admission_settings()["recycle_on_timeout"]
         prompt = (prompt or "")
         if sandbox not in ("read-only", "workspace-write"):
             return {"text": None, "thread": thread, "error": f"unsupported codex sandbox {sandbox!r}"}
@@ -306,7 +308,8 @@ class _CodexDaemonPool:
             home = config.codex_daemon_worker_home(index) if settings["isolate_homes"] else None
             if home is not None:
                 worker._environment_overrides = {"CODEX_HOME": str(home)}
-        self._slots = _Bucket(_POOL_SLOT_KEY, self._size, rpm=0)
+        self._slots = _Bucket(_POOL_SLOT_KEY, self._size, rpm=0,
+                              max_waiters=config.codex_daemon_admission_settings()["max_waiters"])
         self._pool_lock = threading.Condition()
         self._idle_workers = list(self._workers)
         self._pool_stopping = threading.Event()
@@ -432,6 +435,8 @@ class _CodexDaemonPool:
     def pool_run_warm(self, prompt, **kwargs):
         from .dispatch import DispatchTimeout
         kwargs = {"prompt": prompt, **kwargs}
+        if kwargs.get("recycle_on_timeout") is None:
+            kwargs["recycle_on_timeout"] = config.codex_daemon_admission_settings()["recycle_on_timeout"]
         deadline_s = kwargs.get("timeout") or self.CALL_TIMEOUT_S
         if deadline_s <= 0:
             deadline_s = self.CALL_TIMEOUT_S

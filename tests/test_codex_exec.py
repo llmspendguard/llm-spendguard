@@ -1,115 +1,61 @@
-"""Codex subscription lane (codex_exec) — headless `codex exec` on the ChatGPT plan, mirroring the
-claude-code lane's guarantees: OPENAI_API_KEY stripped from the child (plan login only, never silently
-metered), final message via --output-last-message, defensive field-name usage parse from the --json
-event stream, and {error} on ANY mismatch so the caller falls back. Offline (stubbed subprocess+which);
-the CLI is not installed on the dev machine, so these stubs encode the documented interface and the
-fallback path is what guarantees safety against interface drift.
-"""
-import os, sys, tempfile
-if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
-    os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
-    os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-codex-")
-    os.execv(sys.executable, [sys.executable] + sys.argv)
-
+"""Offline Codex entrypoint: warm broker only, no cold process after refusal."""
 import json
-import types
-from functools import partial
-import shutil     # patch shutil.which directly — the shared module config.resolve_cli() uses (codex_exec no
-#                  longer imports shutil; it delegates the PATH lookup to config.resolve_cli)
-from spendguard import codex_exec as ce
+import os
+import tempfile
+from unittest.mock import patch
 
-fails = []
-def codex_exec_assert_check(failures, name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        failures.append(name)
+from spendguard import codex_daemon, codex_exec, config
 
+CODEX_ENTRY_PROMPT = "entrypoint fixture"
+CODEX_ENTRY_SYSTEM = "system fixture"
+CODEX_ENTRY_REPLY = "broker reply"
+CODEX_ENTRY_USAGE_INPUT = 850
+CODEX_ENTRY_USAGE_OUTPUT = 97
+CODEX_ENTRY_EXECUTABLE_MODE = 0o700
+CODEX_ENTRY_FAILURES = (
+    {"error": "broker unavailable"},
+    {"error": "waiter limit reached"},
+    {"error": "model rejected", "tool_error": True},
+    {"text": ""},
+    RuntimeError("warm admission exception"),
+)
 
-ck = partial(codex_exec_assert_check, fails)
+with patch.object(codex_exec.subprocess, "Popen") as spawn, \
+        patch.object(codex_exec.subprocess, "run") as cold_run, \
+        patch.object(codex_exec, "_daemon_enabled", return_value=True), \
+        patch.object(codex_daemon, "run_warm", return_value={"text": CODEX_ENTRY_REPLY}) as warm:
+    result = codex_exec.run_prompt(CODEX_ENTRY_PROMPT, system=CODEX_ENTRY_SYSTEM)
+    assert result["text"] == CODEX_ENTRY_REPLY and result["error"] is None
+    assert warm.call_args.args == (f"{CODEX_ENTRY_SYSTEM}\n\n{CODEX_ENTRY_PROMPT}",)
+    assert warm.call_args.kwargs["sandbox"] == "read-only"
+    assert not os.path.exists(warm.call_args.kwargs["cwd"])
+    with tempfile.TemporaryDirectory() as trusted_cwd:
+        codex_exec.run_prompt(CODEX_ENTRY_PROMPT, sandbox="workspace-write", cwd=trusted_cwd)
+        assert warm.call_args.kwargs["sandbox"] == "workspace-write"
+        assert warm.call_args.kwargs["cwd"] == trusted_cwd
+    for failure in CODEX_ENTRY_FAILURES:
+        warm.side_effect = failure if isinstance(failure, Exception) else None
+        warm.return_value = failure
+        for sandbox in ("read-only", "workspace-write"):
+            result = codex_exec.run_prompt(CODEX_ENTRY_PROMPT, sandbox=sandbox, cwd=os.getcwd())
+            assert result.get("error") and not result.get("text"), result
+    warm.reset_mock()
+    with patch.object(codex_exec, "_daemon_enabled", return_value=False):
+        assert "refused" in codex_exec.run_prompt(CODEX_ENTRY_PROMPT)["error"]
+        warm.assert_not_called()
+    spawn.assert_not_called()
+    cold_run.assert_not_called()
 
-
-KEY_ENV = "OPENAI" + "_API_KEY"
-seen = {}
-ANSWER = "META JUDGMENT: keep"
-
-
-def codex_exec_record_run(observations, cmd, capture_output=None, text=None, timeout=None, env=None, stdin=None, cwd=None):
-    observations["cmd"], observations["env"] = cmd, env
-    out_file = cmd[cmd.index("--output-last-message") + 1]
-    open(out_file, "w").write(ANSWER)
-    events = [
-        {"type": "turn.started"},
-        {"type": "token_count", "info": {"input_tokens": 850, "output_tokens": 40}},   # cumulative events:
-        {"type": "token_count", "info": {"input_tokens": 850, "output_tokens": 97}},   # keep the LARGEST
-        {"type": "turn.completed"},
-    ]
-    return types.SimpleNamespace(returncode=0, stdout="\n".join(json.dumps(e) for e in events), stderr="")
-
-
-fake_run = partial(codex_exec_record_run, seen)
-shutil.which = lambda name: "/usr/local/bin/codex"
-ce.subprocess.run = fake_run
-ce._run_cold_codex_with_reaper = lambda cmd, **kw: fake_run(cmd, **kw)
-os.environ[KEY_ENV] = "sk-test-not-real"
-os.environ["SPENDGUARD_CODEX_DAEMON"] = "0"   # this file exercises the cold exec contract; daemon tests cover warm
-
-print("-- happy path: exec + json + last-message file; usage = max over cumulative events --")
-r = ce.run_prompt("judge this insight…", system="You are the advisor.")
-ck("cmd is `codex exec … --json --output-last-message <file>`",
-   seen["cmd"][0].endswith("codex") and seen["cmd"][1] == "exec"
-   and "--json" in seen["cmd"] and "--output-last-message" in seen["cmd"])
-ck("system prompt is PREPENDED into the prompt arg, passed after `--` (no separate slot; '-'-prefix safe)",
-   seen["cmd"][-2] == "--" and seen["cmd"][-1].startswith("You are the advisor.") and "judge this insight…" in seen["cmd"][-1])
-ck("the provider key env var is STRIPPED from the child (plan login only)",
-   KEY_ENV not in seen["env"] and "PATH" in seen["env"])
-ck("final message read from the file", r["text"] == ANSWER and r["error"] is None)
-ck("usage extracted by field name, max over events", r["in_tok"] == 850 and r["out_tok"] == 97)
-ck("tmp last-message file cleaned up", not os.path.exists(seen["cmd"][seen["cmd"].index("--output-last-message") + 1]))
-# the cold exec path disables MCP orchestration — a headless one-shot needs no mcp_servers, and the app-server does
-# NOT reap the set it spawns per session (the orphaned-MCP-server leak); the warm daemon already did this.
-ck("cold exec disables MCP orchestration (orchestrator.mcp.enabled=false) — no per-session MCP-server leak",
-   "orchestrator.mcp.enabled=false" in seen["cmd"])
-
-print("-- agentic delegation explicitly opts into a writable sandbox; default remains read-only --")
-ce.run_prompt("edit and test", sandbox="workspace-write", cwd=os.path.dirname(__file__))
-ck("workspace-write uses --approve-for-me alone (it implies the writable sandbox; codex forbids combining it with -s)",
-   "--approve-for-me" in seen["cmd"] and "-s" not in seen["cmd"] and "--sandbox" not in seen["cmd"])
-ck("workspace-write preserves configured MCP tools for agentic delegation",
-   "orchestrator.mcp.enabled=false" not in seen["cmd"])
-ce.run_prompt("read only")
-ck("existing callers retain explicit -s read-only without automatic approval",
-   seen["cmd"][seen["cmd"].index("-s") + 1] == "read-only" and "--approve-for-me" not in seen["cmd"])
-ck("unknown sandbox is refused before execution", "unsupported codex sandbox" in ce.run_prompt("x", sandbox="danger-full-access")["error"])
-
-print("-- degrade paths: every mismatch is an {error}, never an exception --")
-def codex_exec_record_empty(observations, cmd, **kw):
-    observations["cmd"] = cmd
-    open(cmd[cmd.index("--output-last-message") + 1], "w").write("")
-    return types.SimpleNamespace(returncode=0, stdout="", stderr="")
-run_empty = partial(codex_exec_record_empty, seen)
-ce.subprocess.run = run_empty
-ck("empty final message → error (no silent empty answer)",
-   ce.run_prompt("x")["error"] == "codex produced no final message")
-ce.subprocess.run = lambda cmd, **kw: types.SimpleNamespace(returncode=2, stdout="", stderr="login required")
-ck("non-zero exit → error with stderr", "login required" in ce.run_prompt("x")["error"])
-ce.subprocess.run = fake_run
-ck("no usage events at all → 0 tokens, never a guess",
-   (lambda: (ce.__dict__.__setitem__("_probe", None),))
-   and ce._usage_from_events("not json\n{\"type\":\"noise\"}") == (0, 0))
-shutil.which = lambda name: None
-os.environ["SPENDGUARD_CODEX_BIN"] = "/nonexistent/codex"     # missing pin = fail LOUD (see claude twin test)
-ck("CLI absent → error (pool skips the lane)", ce.run_prompt("x")["error"] == "codex CLI not found")
-del os.environ["SPENDGUARD_CODEX_BIN"]
-
-print("-- resolver: an explicit env pin wins over PATH when it exists --")
-import tempfile as _tf
-_pin = os.path.join(_tf.mkdtemp(prefix="sg-pin-"), "codex")
-open(_pin, "w").write("#!/bin/sh\n")
-os.chmod(_pin, 0o755)
-os.environ["SPENDGUARD_CODEX_BIN"] = _pin
-from spendguard import config as _cfg
-ck("pinned binary resolves", _cfg.resolve_cli("codex", "SPENDGUARD_CODEX_BIN") == _pin)
-del os.environ["SPENDGUARD_CODEX_BIN"]
-
-print(f"\n{'[FAIL]' if fails else 'OK'} test_codex_exec: {len(fails)} failure(s)")
-sys.exit(1 if fails else 0)
+assert "unsupported" in codex_exec.run_prompt(CODEX_ENTRY_PROMPT, sandbox="invalid")["error"]
+assert "explicit trusted cwd" in codex_exec.run_prompt(CODEX_ENTRY_PROMPT, sandbox="workspace-write")["error"]
+events = [
+    {"info": {"input_tokens": CODEX_ENTRY_USAGE_INPUT, "output_tokens": CODEX_ENTRY_USAGE_OUTPUT}},
+    {"info": {"input_tokens": CODEX_ENTRY_USAGE_INPUT, "output_tokens": 0}},
+]
+assert codex_exec._usage_from_events("\n".join(map(json.dumps, events))) == (
+    CODEX_ENTRY_USAGE_INPUT, CODEX_ENTRY_USAGE_OUTPUT)
+assert codex_exec._usage_from_events("not json") == (0, 0)
+with tempfile.NamedTemporaryFile() as pinned, patch.dict(os.environ, {"SPENDGUARD_CODEX_BIN": pinned.name}):
+    os.chmod(pinned.name, CODEX_ENTRY_EXECUTABLE_MODE)
+    assert config.resolve_cli("codex", "SPENDGUARD_CODEX_BIN") == pinned.name
+print("OK test_codex_exec")
