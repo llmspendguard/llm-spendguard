@@ -842,8 +842,8 @@ class RealtimeSource:
         self.estimate = None
         self.note = None
         if os.environ.get("SPENDGUARD_ADMIN_ORACLE"):         # DEV cross-check only — never the shipped-client path
-            from .report import admin_realtime_total
-            return admin_realtime_total(since)                # None unless an admin key is also set
+            from .report import admin_billed_realtime_total
+            return admin_billed_realtime_total(since)                # None unless an admin key is also set
         est = realtime_reconstruction_estimate(since)
         if est is None:
             self.note = "no realtime reconstruction yet — run scripts/reconstruct/realtime_find_batch.py (admin-free)"

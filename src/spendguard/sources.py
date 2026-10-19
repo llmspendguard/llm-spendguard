@@ -69,15 +69,15 @@ def _register_builtins():
         return
     _BUILTINS_DONE = True
 
-    def _mk(mod_name, display):
+    def _mk(mod_name, display, state_writer_name):
         def _factory():
             import importlib
             mod = importlib.import_module(f".{mod_name}", __package__)
-            return _LedgerSource(display, mod)
+            return _LedgerSource(display, mod, getattr(mod, state_writer_name))
         return _factory
 
-    register("claude-code", _mk("claudecode", "Claude Code"))
-    register("codex", _mk("codex", "Codex"))
+    register("claude-code", _mk("claudecode", "Claude Code", "_save_claudecode_state"))
+    register("codex", _mk("codex", "Codex", "_save_state"))
     # third-party sources: same entry-point group the GPU adapters use.
     try:
         from . import provider_plugins
@@ -90,9 +90,10 @@ class _LedgerSource:
     """Adapts the built-in transcript readers (claudecode / codex) to the port. They already parse, dedup and
     accumulate into a per-(project, model, day) ledger — this only shapes their state, it never re-parses."""
 
-    def __init__(self, name, mod):
+    def __init__(self, name, mod, persist_state):
         self.NAME = name
         self._mod = mod
+        self._persist_source_state = persist_state
 
     def detect(self):
         try:
@@ -106,7 +107,7 @@ class _LedgerSource:
         import datetime
         st, _pass = self._mod.update()
         try:
-            self._mod._save_state(st)                     # keep the watermark: the next scan is incremental
+            self._persist_source_state(st)               # keep the watermark: the next scan is incremental
         except Exception:
             pass
         cutoff = ((datetime.date.today() - datetime.timedelta(days=int(days))).isoformat() if days else None)

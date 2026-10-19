@@ -3,7 +3,7 @@
 Answers three questions against the REAL ledger, on real rows:
   1. COVERAGE — of the FOCUS 1.2 columns an LLM charge needs, how many already have a spendguard source column,
      and how populated are they in practice?
-  2. PROJECTION — map real spend_events rows to FOCUS 1.2 rows (focus_row); print a billed row, an est-value
+  2. PROJECTION — map real spend_events rows to FOCUS 1.2 rows (historical_probe_focus_row); print a billed row, an est-value
      (subscription-covered) row, and a true-down CORRECTION row, to show the mapping is a projection, not a rebuild.
   3. THE TWO SPENDGUARD-SPECIFIC SEMANTICS that FOCUS expresses natively:
      - subscription_usd (a Purchase / covering charge) → est_chat_usd usage (BilledCost 0, EffectiveCost = a share
@@ -44,7 +44,7 @@ FOCUS_TO_SPENDGUARD = {
     "ConsumedUnit":        None,                 # constant "requests"
     # money
     "BillingCurrency":     "currency",
-    "BilledCost":          None,                 # derived from the axis column + cost_basis (see focus_row)
+    "BilledCost":          None,                 # derived from the axis column + cost_basis (see historical_probe_focus_row)
     "EffectiveCost":       None,                 # derived: est_chat covered by subscription → a share, else == Billed
     "ListCost":            None,                 # derived: estimate axis / rate*tokens
     # charge classification
@@ -77,7 +77,7 @@ def _axis_and_amount(ev):
     return None, None, None
 
 
-def focus_row(ev):
+def historical_probe_focus_row(ev):
     """Project ONE spend_events dict to a FOCUS-1.2 charge row. Pure mapping — the real exporter is this plus a
     provider→publisher maker map and currency normalisation. Demonstrates the projection is thin."""
     kind, _col, amt = _axis_and_amount(ev)
@@ -148,7 +148,7 @@ def main():
         r = con.execute(f"SELECT * FROM spend_events WHERE {where} LIMIT 1").fetchone()
         print(f"\n[3:{label}] " + ("no such row in this ledger" if not r else ""))
         if r:
-            fr = focus_row(dict(r))
+            fr = historical_probe_focus_row(dict(r))
             for k, v in fr.items():
                 if v not in (None, {}, ""):
                     print(f"     {k:20s} {v}")
@@ -161,7 +161,7 @@ def main():
         sample(f"conv_id = '{tdc}'", "true-down CORRECTION (FOCUS Ledger style)")
     con.close()
     print("\nverdict: the ledger is a SUPERSET of FOCUS 1.2's LLM-charge columns; a FOCUS export is a thin "
-          "projection (focus_row above), not a schema change. est-value and true-down map to FOCUS's "
+          "projection (historical_probe_focus_row above), not a schema change. est-value and true-down map to FOCUS's "
           "EffectiveCost/covering-charge and Ledger-correction semantics respectively.")
 
 

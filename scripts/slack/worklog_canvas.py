@@ -21,7 +21,7 @@ PLAN_SEAT = float(config._cfg_get("chat", "plan_seat_max", 200) or 200) + float(
 _CODE_DIGESTS = None
 
 
-def _fmt(v):
+def _canvas_money_label(v):
     return f"${v:,.0f}" if abs(v) >= 100 else f"${v:,.2f}"
 
 
@@ -31,7 +31,7 @@ def _months(since, today):
 
 
 def _chat_signals(org, since):
-    st = chat._load_state()
+    st = config.load_state("chat", {"orgs": {}, "convs": {}})
     sig = collections.defaultdict(lambda: collections.defaultdict(list))
     for c in st.get("convs", {}).values():
         if c.get("org") != org or max((c.get("days") or {"x": ""}).keys()) < since:
@@ -47,7 +47,7 @@ def _chat_signals(org, since):
 def _code_signals(org, since):
     global _CODE_DIGESTS
     try:
-        cls = claudecode.load_cls()
+        cls = config.load_state("claudecode", {"sessions": {}, "ledger": {}}).get("cls", {})
     except Exception:
         cls = {}
     if _CODE_DIGESTS is None:
@@ -130,26 +130,26 @@ def generate(org, period, label, today, scope_label="org", run=True):
     o.append("## Part 1 · Spend & value")
     o.append("_For finance / admin._\n")
     o.append("### Hard $ — real money")
-    o.append(f"**① LLM API costs: {_fmt(LLM)}** _(provider × model)_")
+    o.append(f"**① LLM API costs: {_canvas_money_label(LLM)}** _(provider × model)_")
     o.append("| Provider · model | $ |\n|---|---:|")
     for x in llm:
         nm = "batch (model-unattributed)" if x["model"] in ("(provider-batch)", "?") else f"{x['provider']} · {x['model']}"
-        o.append(f"| {nm} | {_fmt(x['usd'])} |")
-    o.append(f"\n**② Remote compute: {_fmt(GPU)}** _(provider × machine)_")
+        o.append(f"| {nm} | {_canvas_money_label(x['usd'])} |")
+    o.append(f"\n**② Remote compute: {_canvas_money_label(GPU)}** _(provider × machine)_")
     if gpu:
         o.append("| Provider · machine | $ |\n|---|---:|")
         for x in gpu:
-            o.append(f"| {x['provider']} · {x['machine'] if x['machine']!='?' else '(machine untracked)'} | {_fmt(x['usd'])} |")
+            o.append(f"| {x['provider']} · {x['machine'] if x['machine']!='?' else '(machine untracked)'} | {_canvas_money_label(x['usd'])} |")
     else:
         o.append("_(none this period)_")
-    o.append(f"\n**⑥ Infra / storage (B2): {_fmt(B2)}** — _no B2 adapter yet; set `chat.infra_b2_usd` or wire B2 billing (attributes by bucket→project)._")
-    o.append(f"\n**Subscription you pay ≈ {_fmt(sub)}** this {period} — _{members} seat(s) × ${PLAN_SEAT:.0f}/mo (Max $200 + ChatGPT Pro $100) × {months:.1f} mo. The denominator the est. value sits against._\n")
+    o.append(f"\n**⑥ Infra / storage (B2): {_canvas_money_label(B2)}** — _no B2 adapter yet; set `chat.infra_b2_usd` or wire B2 billing (attributes by bucket→project)._")
+    o.append(f"\n**Subscription you pay ≈ {_canvas_money_label(sub)}** this {period} — _{members} seat(s) × ${PLAN_SEAT:.0f}/mo (Max $200 + ChatGPT Pro $100) × {months:.1f} mo. The denominator the est. value sits against._\n")
     o.append("### Estimated value — plan-covered (what it would cost at API rates, not money out)")
-    o.append(f"**③ est chat value: {_fmt(CHAT)}** _(claude.ai / desktop)_   ·   **④ est code-chat value: {_fmt(CODE)}** _(Claude Code)_")
+    o.append(f"**③ est chat value: {_canvas_money_label(CHAT)}** _(claude.ai / desktop)_   ·   **④ est code-chat value: {_canvas_money_label(CODE)}** _(Claude Code)_")
     o.append("| Team | est chat value | est code-chat value |\n|---|---:|---:|")
     for t in sorted(set(chat_val) | set(code_val), key=lambda t: -(chat_val.get(t, 0) + code_val.get(t, 0))):
-        o.append(f"| {t} | {_fmt(chat_val.get(t,0)) if chat_val.get(t) else '—'} | {_fmt(code_val.get(t,0)) if code_val.get(t) else '—'} |")
-    o.append(f"| **Total** | **{_fmt(CHAT)}** | **{_fmt(CODE)}** |")
+        o.append(f"| {t} | {_canvas_money_label(chat_val.get(t,0)) if chat_val.get(t) else '—'} | {_canvas_money_label(code_val.get(t,0)) if code_val.get(t) else '—'} |")
+    o.append(f"| **Total** | **{_canvas_money_label(CHAT)}** | **{_canvas_money_label(CODE)}** |")
     o.append("_⑤ est cowork value: no data source yet (no Cowork adapter)._\n")
     o.append("## Part 2 · Work done")
     o.append("_For the team — what shipped, by team → project (chat + code)._\n")

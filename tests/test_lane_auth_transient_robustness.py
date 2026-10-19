@@ -8,6 +8,8 @@ import os
 import sys
 import tempfile
 import time
+from types import SimpleNamespace
+from _script_checks import scripted_process_results
 
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-auth-robust-")
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
@@ -25,51 +27,34 @@ def ck(name, ok):
     return [] if ok else [name]
 
 
-class _Proc:
-    def __init__(self, rc):
-        self.returncode = rc
-        self.stdout = ""
-        self.stderr = ""
-
-
-def _scripted_run(return_codes):
-    """A subprocess.run stand-in yielding the given returncodes in order; counts calls."""
-    seq = list(return_codes)
-    calls = {"n": 0}
-
-    def _run(*a, **k):
-        rc = seq[calls["n"]] if calls["n"] < len(seq) else seq[-1]
-        calls["n"] += 1
-        return _Proc(rc)
-
-    return _run, calls
-
-
 # --- (A) token-exp is authoritative: a non-zero status with a VALID token is NOT a logout ----------------------
 _orig_run, _orig_bin, _orig_sleep = codex_exec.subprocess.run, codex_exec._bin, codex_exec.time.sleep
 _orig_tok = codex_exec._token_unexpired
 codex_exec._bin = lambda: "/usr/bin/true"              # a resolvable exe so auth_status runs the (patched) subprocess
 codex_exec.time.sleep = lambda *_: None                # don't actually wait the re-check backoff in a test
 try:
-    run_ok, _ = _scripted_run([0])
+    run_ok, _ = scripted_process_results([SimpleNamespace(returncode=0, stdout="", stderr="")])
     codex_exec.subprocess.run = run_ok
     codex_exec._token_unexpired = lambda *a, **k: None   # a clean status never consults the token
     fails += ck("a clean status (rc 0) is authed with no token check", codex_exec.auth_status() == {"authed": True})
 
-    run_valid, calls_v = _scripted_run([1, 1])           # status would say down on every call...
+    run_valid, calls_v = scripted_process_results([
+        SimpleNamespace(returncode=rc, stdout="", stderr="") for rc in [1, 1]])  # status always down...
     codex_exec.subprocess.run = run_valid
     codex_exec._token_unexpired = lambda *a, **k: True   # ...but the token on disk is VALID → authoritative
     fails += ck("a non-zero status with a VALID token is NOT a logout (the hourly false-toast fix)",
                 codex_exec.auth_status() == {"authed": True})
     fails += ck("...and it short-circuits BEFORE any re-check (one status call only)", calls_v["n"] == 1)
 
-    run_exp, _ = _scripted_run([1, 1])
+    run_exp, _ = scripted_process_results([
+        SimpleNamespace(returncode=rc, stdout="", stderr="") for rc in [1, 1]])
     codex_exec.subprocess.run = run_exp
     codex_exec._token_unexpired = lambda *a, **k: False  # token genuinely expired → a real logout
     fails += ck("a non-zero status with an EXPIRED token is reported authed=False",
                 codex_exec.auth_status() == {"authed": False})
 
-    run_transient, calls_t = _scripted_run([1, 0])       # token unreadable → fall back to the confirming re-check
+    run_transient, calls_t = scripted_process_results([
+        SimpleNamespace(returncode=rc, stdout="", stderr="") for rc in [1, 0]])  # confirming re-check
     codex_exec.subprocess.run = run_transient
     codex_exec._token_unexpired = lambda *a, **k: None
     fails += ck("token unreadable + transient (1 then 0) recovers to authed via the re-check",
@@ -86,12 +71,14 @@ try:
         codex_exec._token_unexpired = lambda *a, **k: None
         with open(os.path.join(_ah, "auth.json"), "w") as _fh:
             _fh.write("{}")                                  # auth.json PRESENT but token unreadable → mid-refresh write
-        run_mid, _ = _scripted_run([1, 1])
+        run_mid, _ = scripted_process_results([
+            SimpleNamespace(returncode=rc, stdout="", stderr="") for rc in [1, 1]])
         codex_exec.subprocess.run = run_mid
         fails += ck("unreadable token + status down + auth.json PRESENT (mid-refresh) → None (inconclusive, no toast)",
                     codex_exec.auth_status() == {"authed": None})
         os.remove(os.path.join(_ah, "auth.json"))            # auth.json ABSENT → a real logout
-        run_gone, _ = _scripted_run([1, 1])
+        run_gone, _ = scripted_process_results([
+            SimpleNamespace(returncode=rc, stdout="", stderr="") for rc in [1, 1]])
         codex_exec.subprocess.run = run_gone
         fails += ck("unreadable token + status down + auth.json ABSENT → authed False (a real logout still reports)",
                     codex_exec.auth_status() == {"authed": False})
@@ -139,7 +126,7 @@ try:
     # end-to-end: a flaky non-zero status + a near-exp VALID token → auth_status is authed True (no banner)
     _sr, _sb = codex_exec.subprocess.run, codex_exec._bin
     codex_exec._bin = lambda: "/usr/bin/true"
-    codex_exec.subprocess.run = (lambda *a, **k: _Proc(1))
+    codex_exec.subprocess.run = (lambda *a, **k: SimpleNamespace(returncode=1, stdout="", stderr=""))
     try:
         fails += ck("auth_status: non-zero status + near-exp valid token → authed True (the screenshot banner is gone)",
                     codex_exec.auth_status() == {"authed": True})

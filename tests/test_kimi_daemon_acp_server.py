@@ -9,6 +9,7 @@ import sys
 import tempfile
 import pathlib
 from concurrent.futures import ThreadPoolExecutor
+from _script_checks import collect_daemon_concurrent_turns, collect_daemon_dead_pipe_waiters
 
 os.environ.setdefault("SPENDGUARD_HOME", tempfile.mkdtemp(prefix="sg-kacp-"))
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
@@ -48,16 +49,9 @@ def test_agent_message():
 
 
 def test_concurrent_turns_are_demultiplexed():
-    daemon = new_daemon()
-    try:
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            a = pool.submit(daemon.run_warm, "first")
-            b = pool.submit(daemon.run_warm, "second")
-            results = [a.result(timeout=10), b.result(timeout=10)]
-        ck("concurrent turns demuxed to their own text",
-           sorted(x["text"] for x in results) == ["reply:first", "reply:second"])
-    finally:
-        daemon.shutdown()
+    results = collect_daemon_concurrent_turns(new_daemon, ("first", "second"), timeout=10)
+    ck("concurrent turns demuxed to their own text",
+       sorted(x["text"] for x in results) == ["reply:first", "reply:second"])
 
 
 def test_n_prompts_one_cold_start():
@@ -89,7 +83,7 @@ def test_wedged_turn_fails_only_itself_others_survive():
         daemon.shutdown()
 
 
-def test_refusal_is_a_hard_tool_error():
+def test_kimi_refusal_is_tool_error():
     daemon = new_daemon()
     try:
         r = daemon.run_warm("refuse")
@@ -109,21 +103,14 @@ def test_server_initiated_request_is_declined_not_hung():
 
 
 def test_dead_pipe_wakes_every_waiter():
-    daemon = new_daemon()
-    try:
-        process = daemon.ensure_running()
-        waiters = [daemon._register_waiter(10_000 + index) for index in range(2)]
-        process.terminate()
-        process.wait(timeout=5)
-        ck("every pending waiter is woken on a dead pipe",
-           all(w["event"].wait(3) for w in waiters) and all(w["dead"] for w in waiters))
-    finally:
-        daemon.shutdown()
+    awakened, dead = collect_daemon_dead_pipe_waiters(
+        new_daemon, range(10_000, 10_002), process_timeout=5, event_timeout=3)
+    ck("every pending waiter is woken on a dead pipe", awakened and dead)
 
 
 if __name__ == "__main__":
     for test in (test_agent_message, test_concurrent_turns_are_demultiplexed, test_n_prompts_one_cold_start,
-                 test_wedged_turn_fails_only_itself_others_survive, test_refusal_is_a_hard_tool_error,
+                 test_wedged_turn_fails_only_itself_others_survive, test_kimi_refusal_is_tool_error,
                  test_server_initiated_request_is_declined_not_hung, test_dead_pipe_wakes_every_waiter):
         test()
     print(f"\n{'[FAIL]' if fails else 'OK'} test_kimi_daemon_acp_server: {len(fails)} failure(s)")

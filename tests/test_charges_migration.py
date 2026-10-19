@@ -27,7 +27,7 @@ def ck(name, cond):
         fails.append(name)
 
 # isolated home has no taxonomy/transcripts → pin the repo→org map + make resolve hermetic (no real transcript reads)
-conv._prior_index = lambda: {"lmm": ("healiom", "lmm"), "manga2anime": ("ensight", "manga2anime"),
+conv._conversation_prior_index = lambda: {"lmm": ("healiom", "lmm"), "manga2anime": ("ensight", "manga2anime"),
                              "llm-spendguard": ("ensight", "llm-spendguard")}
 conv.segments = lambda *a, **k: []
 conv._seg_get_all = lambda: {}

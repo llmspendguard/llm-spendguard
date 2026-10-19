@@ -18,11 +18,9 @@ from spendguard import mcp_server, advise, calls
 fails = []
 
 
-def ck(name, cond):
-    ok = bool(cond)
-    print(("  [OK] " if ok else "  [FAIL] ") + name)
-    if not ok:
-        fails.append(name)
+from functools import partial
+from _script_checks import record_script_check
+ck = partial(record_script_check, fails, coerce_condition=True)
 
 
 def rpc(method, params=None, rid=1, notification=False):

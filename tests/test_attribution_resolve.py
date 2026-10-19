@@ -73,7 +73,7 @@ def test_resolve_cwd_prior_maps_repo_to_org_not_untagged(monkeypatch):
     which surfaced real lmm runs as false '(untagged)'. The repo prior 'lmm' → org 'healiom'."""
     seg = {**_SEG, "seg_id": "S9", "sid": "conv9", "project_prior": "lmm", "batch_ids": []}
     _patch(monkeypatch, [seg], {})                              # segment matched but not LLM-classified → cwd-prior path
-    monkeypatch.setattr(conv, "_prior_index", lambda: {"lmm": ("healiom", "lmm")})   # taxonomy-derived repo→org
+    monkeypatch.setattr(conv, "_conversation_prior_index", lambda: {"lmm": ("healiom", "lmm")})   # taxonomy-derived repo→org
     r = conv.resolve({"conv_id": "conv9", "cwd": "/x/lmm"})
     assert r["how"] == "cwd-prior" and r["source"] == "prior"
     assert r["org"] == "healiom" and r["team"] == "lmm" and r["project"] == "lmm"   # org no longer blank

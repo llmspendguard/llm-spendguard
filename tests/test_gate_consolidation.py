@@ -17,7 +17,7 @@ no network, zero spend."""
 import os
 import sys
 import tempfile
-import asyncio
+from _script_checks import execute_gate_test_call as run, raise_gate_test_error as _boom
 
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-gateconsol-")
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
@@ -43,10 +43,6 @@ def ck(name, cond):
     print(("  [OK] " if cond else "  [FAIL] ") + name)
     if not cond:
         fails.append(name)
-
-
-def run(w, is_async, **kw):
-    return asyncio.run(w(None, **kw)) if is_async else w(None, **kw)
 
 
 # ───────────────────────────── 1. fire-once ─────────────────────────────
@@ -175,10 +171,6 @@ for name in ("gate", "rt", "units"):
 
 def _refuse(*a, **k):
     raise SpendGateRefused("blocked")
-
-
-def _boom(*a, **k):
-    raise ValueError("injected gate bug")
 
 
 print("\n-- deliberate refusal in the pre-hook PROPAGATES; a non-refusal pre-hook bug FAILS OPEN (all three) --")

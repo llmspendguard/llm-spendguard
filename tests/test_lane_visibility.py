@@ -60,21 +60,21 @@ receipt.stamp_est_value([{"day": receipt._windows()[0], "spend_micros": 10_000_0
                         source="claude-code")
 receipt.stamp_est_value([{"day": receipt._windows()[0], "spend_micros": 20_000_000, "billed": False}],
                         source="codex")
-miner_before = json.loads(receipt._cache_path().read_text())["est_value_by_source"]
+miner_before = json.loads(receipt._receipt_aggregate_cache_path().read_text())["est_value_by_source"]
 footer_before = next(line for line in receipt.render_tally(receipt.tally()).splitlines()
                      if "est sub value" in line)
 try:
     # deterministic $/token so the test is independent of the synced price cache (the value, not the rate, is the point)
-    def fixture_price(model, in_tok, out_tok=0, **kw):
+    def visibility_token_cost_oracle(model, in_tok, out_tok=0, **kw):
         if model == "unpriceable-fixture-model":
             raise KeyError(model)
         return in_tok * 1e-6 + out_tok * 2e-6
-    pricing.realtime_cost = fixture_price
+    pricing.realtime_cost = visibility_token_cost_oracle
     stamped = lane_value.stamp_from_ledger()
 finally:
     pricing.realtime_cost = _orig_price
 
-cache = json.loads(receipt._cache_path().read_text())
+cache = json.loads(receipt._receipt_aggregate_cache_path().read_text())
 fails += ck("stamp_from_ledger valued every lane with in-window activity",
             set(stamped) == {"gemini", "zai-coding", "claude-code", "codex"})
 fails += ck("all priceable active lanes receive their exact ledger-priced value",

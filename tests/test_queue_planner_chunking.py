@@ -17,16 +17,7 @@ pathlib.Path(os.environ["SPENDGUARD_HOME"], "config.json").write_text(
     json.dumps({"batch": {"max_enqueued_tokens": {"moonshot": 90000}}}))
 
 from spendguard import queue_planner   # noqa: E402
-
-
-class Checks:
-    def __init__(self):
-        self.fails = 0
-
-    def ck(self, label, cond, extra=""):
-        if not cond:
-            self.fails += 1
-        print(f"  [{'OK' if cond else 'FAIL'}] {label}{('  — ' + extra) if extra and not cond else ''}")
+from _script_checks import ScriptCheckAccumulator as Checks  # noqa: E402
 
 
 def main():

@@ -16,6 +16,8 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 
 from spendguard import budget, ledger_sync
 from spendguard.budget import _RECONCILED
+from functools import partial
+from _script_checks import seed_test_spend_event
 
 fails = []
 def ck(name, cond):
@@ -24,15 +26,8 @@ def ck(name, cond):
         fails.append(name)
 
 
-def _ins(day, provider, model, kind, cost):
-    # Seed the money-of-record (spend_events) directly, on the test's chosen DAY, through the SAME charge→event
-    # mapping production uses — so reconciliation markers, kinds and dates land exactly as a real charge would.
-    ev = budget.charge_to_event(provider, model, kind, float(cost))
-    ev["project_primary"] = "demo"; ev["projects"] = ["demo"]
-    ev["occurred_at"] = ev["ts_utc"] = day + "T00:00:00+00:00"
-    ev["source"] = ev["recorded_by"] = "test"
-    ev["dedup_key"] = "test:%s:%s:%s:%s:%s" % (day, provider, model, kind, cost)
-    budget._ledger().record_event(ev)
+_ins = partial(seed_test_spend_event, project="demo", timestamp_suffix="T00:00:00+00:00",
+               source="test", dedup_fields=("day", "provider", "model", "kind", "cost"))
 
 # realtime since April → the GLOBAL ledger_start is realtime-driven (the trap: it predates batch recording)
 _ins("2026-04-25", "openai", "gpt-5.5", "realtime", 12.0)

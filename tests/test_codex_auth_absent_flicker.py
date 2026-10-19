@@ -7,6 +7,7 @@ token, or a PERSISTENTLY absent file) must still surface. Offline, no network, n
 import os
 import sys
 import tempfile
+from types import SimpleNamespace
 
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-codexauth-")
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
@@ -22,12 +23,6 @@ def ck(label, cond):
         fails.append(label)
 
 
-class _R:                                   # a fake subprocess result: a NON-ZERO status forces the token-based tail
-    def __init__(self, rc):
-        self.returncode = rc
-        self.stdout = self.stderr = ""
-
-
 # isolate CODEX_HOME + make the confirm window instant for the test
 _codex_home = tempfile.mkdtemp(prefix="codex-home-")
 os.environ["CODEX_HOME"] = _codex_home
@@ -35,7 +30,7 @@ _auth = os.path.join(_codex_home, "auth.json")
 codex_exec._AUTH_RECHECK_BACKOFF_S = 0.0    # no real sleeping in the confirm loop
 codex_exec._ABSENT_CONFIRM_TRIES = 3
 codex_exec._bin = lambda: "/usr/bin/true"   # a present (fake) binary so auth_status reaches the status call
-codex_exec.subprocess.run = lambda *a, **k: _R(1)   # status + re-check both NON-ZERO → drive the token-based tail
+codex_exec.subprocess.run = lambda *a, **k: SimpleNamespace(returncode=1, stdout="", stderr="")   # status + re-check both NON-ZERO → drive the token-based tail
 
 
 def _set_token(result_seq):

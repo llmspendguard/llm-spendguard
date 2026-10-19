@@ -20,11 +20,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 from spendguard import config, conv, measurement    # noqa: E402
 
 
-def _orig_chash(text):                                # conv._chash BEFORE the refactor: raw UTF-8, strict, 20 hex
+def _original_conversation_key_oracle(text):                                # conv._chash BEFORE the refactor: raw UTF-8, strict, 20 hex
     return hashlib.sha256((text or "").encode()).hexdigest()[:20]
 
 
-def _orig_meas_sha(*parts):                           # measurement._meas_sha BEFORE: \x00-domain-sep, replace, full hex
+def _original_measurement_key_oracle(*parts):                           # measurement._meas_sha BEFORE: \x00-domain-sep, replace, full hex
     h = hashlib.sha256()
     for p in parts:
         h.update(("\x00" + str(p)).encode("utf-8", "replace"))
@@ -32,7 +32,7 @@ def _orig_meas_sha(*parts):                           # measurement._meas_sha BE
 
 
 def _orig_item_id(text):                              # measurement.item_id BEFORE: _meas_sha[:16]
-    return _orig_meas_sha(text)[:16]
+    return _original_measurement_key_oracle(text)[:16]
 
 
 def main():
@@ -48,7 +48,7 @@ def main():
     print("-- conv._chash is byte-identical to the original raw/strict/20-hex formula --")
     for t in cases:
         ck("_chash(%r)" % (t if not isinstance(t, str) or len(t) < 20 else t[:12] + "…",),
-           conv._chash(t) == _orig_chash(t), (conv._chash(t), _orig_chash(t)))
+           conv._chash(t) == _original_conversation_key_oracle(t), (conv._chash(t), _original_conversation_key_oracle(t)))
         ck("_chash length is 20", len(conv._chash(t)) == 20)
 
     print("\n-- measurement.item_id is byte-identical to the original \\x00/replace/16-hex formula --")
@@ -59,8 +59,8 @@ def main():
 
     print("\n-- measurement._meas_sha (multi-part, used for instrument/sample/reading ids) is unchanged --")
     for parts in [("intent", "kind", "judge-mix"), ("one",), (), ("a", None, 3, "b")]:
-        ck("_meas_sha%r" % (parts,), measurement._meas_sha(*parts) == _orig_meas_sha(*parts),
-           (measurement._meas_sha(*parts), _orig_meas_sha(*parts)))
+        ck("_meas_sha%r" % (parts,), measurement._meas_sha(*parts) == _original_measurement_key_oracle(*parts),
+           (measurement._meas_sha(*parts), _original_measurement_key_oracle(*parts)))
     ck("_meas_sha returns the full 64-char hex", len(measurement._meas_sha("x")) == 64)
 
     print("\n-- the two id families are DISTINCT (domain separation matters: they must NOT collide) --")

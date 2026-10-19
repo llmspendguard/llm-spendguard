@@ -29,13 +29,12 @@ def turn(model, intok, outtok, tools=None, cwd="/x/lmm"):
 
 open(SESS, "w").write(turn("claude-opus-4-8", 1000, 500, ["Edit", "Bash"]) + "\n")
 
-from spendguard import claudecode, pricing                      # noqa: E402
+from spendguard import claudecode, config, pricing              # noqa: E402
 
-fail = 0
-def ck(label, cond):
-    global fail
-    ok = bool(cond); fail += (not ok)
-    print(f"  [{'OK' if ok else 'FAIL'}] {label}")
+from functools import partial
+from _script_checks import record_script_check
+fail = []
+ck = partial(record_script_check, fail, coerce_condition=True, record_before_print=True)
 
 exp = pricing.realtime_cost("claude-opus-4-8", 1000, 500, 0)
 st, info = claudecode.update()
@@ -44,17 +43,17 @@ work = [v for v in st["ledger"].values() if v.get("_work")]
 ck("1 spend row, project=lmm (from cwd)", len(spend) == 1 and spend[0]["project"] == "lmm")
 ck(f"cost == realtime_cost (${exp:.4f})", abs(spend[0]["cost"] - exp) < 1e-9)
 ck("work: Edit×1 + Bash×1 + 1 file", work and work[0]["tools"].get("Edit") == 1 and work[0]["tools"].get("Bash") == 1 and len(work[0]["files"]) == 1)
-claudecode._save_state(st)
+claudecode._save_claudecode_state(st)
 
-st2, info2 = claudecode.update(claudecode._load_state())         # re-run, nothing new
+st2, info2 = claudecode.update(config.load_state("claudecode", {"sessions": {}, "ledger": {}}))         # re-run, nothing new
 spend2 = [v for v in st2["ledger"].values() if not v.get("_work")]
 ck("watermark: re-run, no new lines → no double-count", abs(spend2[0]["cost"] - exp) < 1e-9 and info2["new_lines"] == 0)
-claudecode._save_state(st2)
+claudecode._save_claudecode_state(st2)
 
 open(SESS, "a").write(turn("claude-opus-4-8", 2000, 1000, ["Write"]) + "\n")
 os.utime(SESS, (9_999_999_999, 9_999_999_999))                  # force mtime ahead so the watermark re-reads
 exp2 = exp + pricing.realtime_cost("claude-opus-4-8", 2000, 1000, 0)
-st3, info3 = claudecode.update(claudecode._load_state())
+st3, info3 = claudecode.update(config.load_state("claudecode", {"sessions": {}, "ledger": {}}))
 spend3 = [v for v in st3["ledger"].values() if not v.get("_work")]
 ck("append a turn → accumulated (only the new line read)", abs(spend3[0]["cost"] - exp2) < 1e-9 and info3["new_lines"] == 1)
 
@@ -97,12 +96,12 @@ _attr.classify_items = lambda items, taxo, run: {
     "S1": {"org": "Healiom", "team": "lmm", "project": "lmm", "confidence": 88},
     "S2": {"org": "manga2anime", "team": "engineering", "project": "manga2anime", "confidence": 76}}
 # seed S1 with a STALE 0-confidence cache entry (the bug's signature) — it must be re-done, not skipped
-_s = claudecode._load_state(); _s.setdefault("cls", {})["S1"] = {"org": "Healiom", "project": "lmm", "confidence": 0}
-claudecode._save_state(_s)
+_s = config.load_state("claudecode", {"sessions": {}, "ledger": {}}); _s.setdefault("cls", {})["S1"] = {"org": "Healiom", "project": "lmm", "confidence": 0}
+claudecode._save_claudecode_state(_s)
 claudecode.classify(run=True)
-_cls = claudecode._load_state().get("cls", {})
+_cls = config.load_state("claudecode", {"sessions": {}, "ledger": {}}).get("cls", {})
 ck("classify: stores the LLM confidence (S2 fresh → 76, not 0)", _cls.get("S2", {}).get("confidence") == 76)
 ck("classify: RE-does a stale 0-confidence session (S1 0 → 88), never leaves it at 0", _cls.get("S1", {}).get("confidence") == 88)
 
-print(f"\n{'[FAIL]' if fail else 'OK'} claudecode: {fail} failure(s)")
+print(f"\n{'[FAIL]' if fail else 'OK'} claudecode: {len(fail)} failure(s)")
 sys.exit(1 if fail else 0)

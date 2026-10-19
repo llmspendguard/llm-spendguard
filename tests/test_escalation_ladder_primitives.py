@@ -9,20 +9,11 @@ os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-ladder-")
 
 from spendguard import calls  # noqa: E402
 from spendguard.escalation_ladder import cancel_on_zero_billable, relative_escalation_gate  # noqa: E402
-
-
-class Checks:
-    def __init__(self):
-        self.fails = 0
-
-    def ck(self, label, condition, extra=""):
-        if not condition:
-            self.fails += 1
-        print(f"  [{'OK' if condition else 'FAIL'}] {label}{(' — ' + extra) if extra and not condition else ''}")
+from _script_checks import ScriptCheckAccumulator as Checks  # noqa: E402
 
 
 def main():
-    c = Checks()
+    c = Checks(detail_prefix=" — ")
     stopped = threading.Event()
 
     def stalled():

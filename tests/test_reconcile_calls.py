@@ -21,10 +21,9 @@ import sqlite3  # noqa: E402
 from spendguard import budget, calls, reconcile_calls  # noqa: E402
 
 _fails = []
-def ck(label, cond):
-    if not cond:
-        _fails.append(label)
-    print(f"  [{'OK' if cond else 'FAIL'}] {label}")
+from functools import partial
+from _script_checks import record_script_check
+ck = partial(record_script_check, _fails, record_before_print=True)
 
 
 INTENT = "warden:describe"

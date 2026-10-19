@@ -2,9 +2,9 @@
 from spendguard import cascade
 
 
-def check(name, cond):
-    print(f"  [{'OK' if cond else 'FAIL'}] {name}")
-    assert cond
+from functools import partial
+from _script_checks import record_script_check
+check = partial(record_script_check, None, assert_condition=True)
 
 
 # stub caller: returns (cost, output) per model; cheap models give "bad", strong gives "good"

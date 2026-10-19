@@ -25,14 +25,10 @@ def ck(name, cond):
     return [] if ok else [name]
 
 
-def _raises(fn, exc):
-    try:
-        fn()
-        return False
-    except exc:
-        return True
-    except Exception:
-        return False
+from functools import partial
+from _script_checks import callable_raises_exception
+
+_raises = partial(callable_raises_exception, unexpected_returns_false=True)
 
 
 fails = []

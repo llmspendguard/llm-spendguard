@@ -4,7 +4,7 @@ Guards:
   • codex._digest reads the FINAL cumulative token_count + the model from turn_context, prices it, project=cwd;
   • day_totals emits channel=codex, billed=false, provider=openai (est-value, never actual-$) — server contract
     identical to claudecode;
-  • show() stamps est-value under source=codex so the receipt SUMS claude-code + claude-ai + codex;
+  • show_codex_report() stamps est-value under source=codex so the receipt SUMS claude-code + claude-ai + codex;
   • the gate's Responses-API estimator/actual read input/output_tokens + input_tokens_details.cached_tokens
     (the modern OpenAI surface Codex and newer SDK code use — previously an un-gated realtime gap).
 """
@@ -20,12 +20,12 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 from spendguard import codex, pricing, gate, receipt
+from functools import partial
+from types import SimpleNamespace as _Obj
+from _script_checks import record_script_check
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
+ck = partial(record_script_check, fails)
 
 # ── build a synthetic Codex session in the real on-disk layout (sessions/YYYY/MM/DD/rollout-*.jsonl) ──
 # Date it TODAY (not a fixed date) so its est-value lands in the CURRENT day/month bucket no matter when CI
@@ -79,12 +79,12 @@ ck("day_totals: project from cwd", r0.get("project") == "myproj")
 ck("day_totals: spend_micros = cost×1e6", r0.get("spend_micros") == round(exp_cost * 1_000_000))
 ck("day_totals: token breakdown carried", r0.get("in_tokens") == 3000 and r0.get("out_tokens") == 600 and r0.get("cached_in_tokens") == 1500)
 
-# ── show() stamps est-value under source=codex → receipt SUMS it ─────────────
+# ── show_codex_report() stamps est-value under source=codex → receipt SUMS it ─────────────
 with contextlib.redirect_stdout(io.StringIO()):
-    codex.show()
+    codex.show_codex_report()
 ev = json.loads((pathlib.Path(os.environ["SPENDGUARD_HOME"]) / "receipt_cache.json").read_text())
-ck("show(): stamps est_value_by_source['codex']", "codex" in ev.get("est_value_by_source", {}))
-ck("show(): codex est-value month = the session cost", abs(ev["est_value_by_source"]["codex"]["month"] - exp_cost) < 1e-6)
+ck("show_codex_report(): stamps est_value_by_source['codex']", "codex" in ev.get("est_value_by_source", {}))
+ck("show_codex_report(): codex est-value month = the session cost", abs(ev["est_value_by_source"]["codex"]["month"] - exp_cost) < 1e-6)
 # prove the receipt sums sources (add a fake claude-code stamp, then the tally adds both). Stamp it on the SAME UTC day
 # as the session (_iso) — receipt windows in UTC, so a LOCAL date.today() stamp would miss the month at the boundary.
 receipt.stamp_est_value([{"day": _iso, "spend_micros": 5_000_000, "billed": False}], source="claude-code")
@@ -92,8 +92,6 @@ t = receipt._est_tally()
 ck("receipt._est_tally SUMS codex + claude-code", t and abs(t["month"] - (exp_cost + 5.0)) < 1e-6)
 
 # ── the gate's OpenAI Responses-API estimator/actual (the modern surface) ─────
-class _Obj:
-    def __init__(self, **k): self.__dict__.update(k)
 
 # actual: Responses usage = input_tokens / output_tokens (not prompt/completion)
 res = _Obj(usage=_Obj(input_tokens=1000, output_tokens=200))

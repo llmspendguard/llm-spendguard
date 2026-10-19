@@ -22,7 +22,7 @@ def ck(name, cond):
         fails.append(name)
 
 # Anchor to a FIXED UTC midnight so the per-UTC-day split is exact regardless of wall-clock time or the host's
-# timezone. gpu_rows_by_day buckets on UTC-midnight boundaries — with a real `time.time()` a 24h instance straddles
+# timezone. vast_gpu_accounting_rows_by_day buckets on UTC-midnight boundaries — with a real `time.time()` a 24h instance straddles
 # two UTC days (no single $48 day) UNLESS `now` happens to be near UTC midnight. That made this test pass locally
 # and FAIL on CI's clock. Whole-UTC-day instances off a midnight anchor are deterministic everywhere.
 now = datetime.datetime(2026, 6, 10, 0, 0, 0, tzinfo=datetime.timezone.utc).timestamp()
@@ -30,8 +30,8 @@ inst1 = {"id": 1, "gpu_name": "H100", "dph_total": 2.0, "start_date": now - 3 * 
 inst2 = {"id": 2, "gpu_name": "A100", "dph_total": 1.0, "start_date": now - 1 * 86400, "end_date": now, "label": "train-b"}
 resources.instances = lambda: [inst1, inst2]
 
-rows = resources.gpu_rows_by_day(since_ts=now - 5 * 86400, now=now)
-ck("gpu_rows_by_day → per-day rows", len(rows) >= 2)
+rows = resources.vast_gpu_accounting_rows_by_day(since_ts=now - 5 * 86400, now=now)
+ck("vast_gpu_accounting_rows_by_day → per-day rows", len(rows) >= 2)
 ck("cost = dph × hours (inst1 ~ $48 over its 24h)", any(abs(r["cost"] - 2.0 * 24) < 2.0 for r in rows))
 total = sum(r["cost"] for r in rows)
 ck("total ≈ inst1 $48 + inst2 $24", abs(total - (48 + 24)) < 3.0)
@@ -41,7 +41,7 @@ resources.record_instance_history()
 resources.instances = lambda: [inst2]
 ids = {str(i.get("id")) for i in resources._all_instances()}
 ck("destroyed instance reconstructed from snapshot history", ids == {"1", "2"})
-rows2 = resources.gpu_rows_by_day(since_ts=now - 5 * 86400, now=now)
+rows2 = resources.vast_gpu_accounting_rows_by_day(since_ts=now - 5 * 86400, now=now)
 ck("destroyed instance still in per-day rows", abs(sum(r["cost"] for r in rows2) - 72) < 3.0)
 
 # label_map (config-driven) — empty default means no mis-attribution
@@ -123,7 +123,7 @@ _hist = {"7777": {"id": 7777, "gpu_name": "H100", "dph_total": 2.0,
                   "start_date": now - 3 * 86400, "end_date": now + 300 * 86400,   # far-future contract end
                   "last_seen": now - 2 * 86400, "status": "running"}}
 resources._history_path().write_text(_json.dumps(_hist))
-_cost = sum(r["cost"] for r in resources.gpu_rows_by_day(since_ts=now - 5 * 86400, now=now))
+_cost = sum(r["cost"] for r in resources.vast_gpu_accounting_rows_by_day(since_ts=now - 5 * 86400, now=now))
 # real runtime = start (−3d) → last_seen (−2d) = 24h × $2 = $48; NOT capped-at-now (48h=$96) or contract-end (huge)
 ck("destroyed running box capped at last_seen (no phantom spend)", abs(_cost - 48.0) < 2.0)
 
@@ -166,7 +166,7 @@ resources.project_of = lambda label, label_map=None: ("manga2anime" if "m2a" in 
 from spendguard import conv as _conv
 _conv.instance_attributions = lambda insts: {"901": {"project": "lmm", "org": "Healiom"},      # timing-match says lmm…
                                              "902": {"project": "lmm", "org": "Healiom"}}      # …for BOTH boxes
-_pr = {r["project"] for r in resources.gpu_rows_by_day(since_ts=_nn - 5 * 86400, now=_nn)}
+_pr = {r["project"] for r in resources.vast_gpu_accounting_rows_by_day(since_ts=_nn - 5 * 86400, now=_nn)}
 ck("GPU LABEL wins over timing-match: m2a-labeled box → manga2anime (NOT the lmm it timing-matched)", "manga2anime" in _pr)
 ck("GPU timing-match is the FALLBACK: an UNLABELED box still uses it → lmm", "lmm" in _pr)
 

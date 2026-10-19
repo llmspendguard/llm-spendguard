@@ -55,7 +55,7 @@ def _record_probe(lane, ok):
         reason="lane-probe")
 
 
-def _exec_mod(spec):
+def _import_executor_module(spec):
     """The `<name>_exec` module that drives a lane, imported lazily by its registry `exec` name (never at load)."""
     import importlib
     return importlib.import_module("." + spec["exec"], __package__)
@@ -70,7 +70,7 @@ def _lane_auth(spec):
                    app's, not the CLI's login — the honesty rule from 2026-07-16); else 'missing'.
     A new lane needs no auth code — just its row (kind + creds + optional keychain)."""
     if spec["kind"] == "key":
-        return "ok" if _exec_mod(spec).available() else "missing"
+        return "ok" if _import_executor_module(spec).available() else "missing"
     ok, _ = _last_probe_ok(spec["lane"])
     if ok:
         return "ok"                       # a successful live probe is the definitive evidence
@@ -112,7 +112,7 @@ def lane_auth_status(lane, ttl=_AUTH_STATUS_TTL_S):
             return hit[1]
         authed = None
         try:
-            fn = getattr(_exec_mod(spec), "auth_status", None)
+            fn = getattr(_import_executor_module(spec), "auth_status", None)
             if fn:
                 r = fn()
                 a = r.get("authed") if isinstance(r, dict) else None
@@ -145,7 +145,7 @@ def lanes_status():
         # A lane is CLI-based (its exec exposes _bin → a host binary to find + a login artifact) or KEY-based (an
         # HTTP endpoint + key, no binary). The module DECLARES which by whether it defines _bin; readiness for both
         # is _lane_auth (login artifact / probe for CLI lanes, key presence for key lanes).
-        mod = _exec_mod(spec)
+        mod = _import_executor_module(spec)
         has_bin = hasattr(mod, "_bin")
         cli = mod._bin() if has_bin else None
         try:
@@ -170,7 +170,7 @@ def _lane_mods():
     """lane name → its executor module, DERIVED from the ONE lane registry (add a lane's row and it appears here).
     The single source for 'which module runs and reports this lane', shared by probe() (run_prompt) and
     lane_headroom() (usage())."""
-    return {ln: _exec_mod(lane_registry.lane_spec(ln)) for ln in lane_registry.all_lanes()}
+    return {ln: _import_executor_module(lane_registry.lane_spec(ln)) for ln in lane_registry.all_lanes()}
 
 
 def probe(timeout_s=None):

@@ -8,13 +8,14 @@ produced the reasoning_effort batch bug. Guards:
     input is marked failed (not sent); one chunk's failure is ISOLATED (the rest still embed); a deliberate spend
     stop PROPAGATES; it routes cross-provider by the model id (openai default, gemini/voyage by id);
   • embed_batch() builds a /v1/embeddings JSONL and gates it; a provider without the `batch` capability errors LOUDLY;
-  • submit.estimate_jsonl_cost prices an embeddings batch by input tokens (out=0);
+  • submit.estimate_submission_jsonl_cost prices an embeddings batch by input tokens (out=0);
   • embed_compare() A/Bs two models and reports pairwise neighbourhood-structure agreement.
 Offline: the embeddings client is stubbed; embed_batch runs submit=False (no network).
 """
 import os
 import sys
 import tempfile
+from types import SimpleNamespace
 
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-embed-")
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
@@ -32,14 +33,9 @@ def ck(name, cond):
         fails.append(name)
 
 
-class _Row:
-    def __init__(self, index, embedding):
-        self.index, self.embedding = index, embedding
-
-
 class _Resp:
     def __init__(self, vecs):
-        self.data = [_Row(i, v) for i, v in enumerate(vecs)]
+        self.data = [SimpleNamespace(index=i, embedding=v) for i, v in enumerate(vecs)]
 
 
 class _FakeClient:
@@ -119,8 +115,8 @@ ck("embed_batch JSONL lines address /v1/embeddings with an `input` body",
 rg = adapters.embed_batch(["x"], "gemini-embedding-001", submit=False)
 ck("embed_batch on a non-batch provider errors and points to embed()", rg["error"] and "embed()" in rg["error"] and rg["batch_id"] is None)
 
-# ── submit.estimate_jsonl_cost prices an embeddings batch by INPUT tokens, out=0 (not $0) ──
-est = submit.estimate_jsonl_cost(rb["jsonl"], "text-embedding-3-small", batch=True)
+# ── submit.estimate_submission_jsonl_cost prices an embeddings batch by INPUT tokens, out=0 (not $0) ──
+est = submit.estimate_submission_jsonl_cost(rb["jsonl"], "text-embedding-3-small", batch=True)
 ck("estimate prices the embeddings batch by input (out_tok=0, cost>0)", est["out_tok"] == 0 and est["cost"] > 0 and est["requests"] == 3)
 
 # ── Voyage registered (OpenAI-compatible /embeddings) → a voyage-* id routes to the voyage provider ──

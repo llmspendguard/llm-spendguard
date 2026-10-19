@@ -24,7 +24,7 @@ def _now_iso():
     return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
 
 
-def _load_verdict_cache():
+def _load_intent_eligibility_cache():
     d = config.load_state(_CACHE_KEY, default=None)
     return dict(d) if isinstance(d, dict) else {}
 
@@ -55,7 +55,7 @@ def classify_intent(intent, model, n, avg_in, execute=False):
     False. A cache hit is $0. With execute=True an unjudged intent is judged ONCE (prompts._batchable_verdict — a
     meta-capped agentic call) and the verdict cached. A deliberate spend refusal propagates (never a silent skip)."""
     key = intent or "(none)"
-    cache = _load_verdict_cache()
+    cache = _load_intent_eligibility_cache()
     hit = cache.get(key)
     if isinstance(hit, dict) and isinstance(hit.get("eligible"), bool):
         return hit

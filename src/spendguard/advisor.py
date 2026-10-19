@@ -192,7 +192,7 @@ def mine(run=False, intent=None):
     if r["error"]:
         print(f"  ERROR: {r['error']}")
         return dict(error=r["error"])
-    added = _persist_insights(r["text"])
+    added = _persist_mined_insights(r["text"])
     print(f"  synthesized {added} insight(s) → learn.insights + graph. Cost ${r['cost']:.4f}.")
     return dict(insights=added, cost=r["cost"], model=model)
 
@@ -222,7 +222,7 @@ def _parse_insights(text):
     return None
 
 
-def _persist_insights(text):
+def _persist_mined_insights(text):
     data = _parse_insights(text)
     if data is None:
         learn.add_insight(None, text.strip()[:500], source="mined", confidence=0.4)

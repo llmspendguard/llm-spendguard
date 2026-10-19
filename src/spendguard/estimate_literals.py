@@ -31,7 +31,7 @@ from .token_caps import _enclosing, _enclosing_range, _iter_py
 
 # The functions that turn token counts into money. A literal reaching one of these is a number nobody
 # measured; whether that MATTERS is the question the model answers.
-COST_FUNCS = ("realtime_cost", "batch_cost", "_cost", "estimate_jsonl_cost", "cost_of")
+COST_FUNCS = ("realtime_cost", "batch_cost", "_cost", "_anthropic_batch_reconciliation_cost", "estimate_submission_jsonl_cost", "cost_of")
 
 LEDGER_NAME = "estimate_literal_verdicts.json"
 

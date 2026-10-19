@@ -14,16 +14,7 @@ import os, sys, tempfile
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-gaterefuse-")
 
 from spendguard import vendor_call as vc, gate   # noqa: E402
-
-
-class Checks:
-    def __init__(self):
-        self.fails = 0
-
-    def ck(self, label, cond, extra=""):
-        if not cond:
-            self.fails += 1
-        print(f"  [{'OK' if cond else 'FAIL'}] {label}{('  — ' + extra) if extra and not cond else ''}")
+from _script_checks import ScriptCheckAccumulator as Checks  # noqa: E402
 
 
 def main():

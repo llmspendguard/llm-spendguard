@@ -11,17 +11,14 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 from spendguard import gate
+from functools import partial
+from types import SimpleNamespace as O
+from _script_checks import record_script_check
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
+ck = partial(record_script_check, fails)
 
 
-class O:                                              # generic attr bag for mock chunks/usage
-    def __init__(self, **k):
-        self.__dict__.update(k)
 
 
 # capture what the gate records (no ledger I/O)

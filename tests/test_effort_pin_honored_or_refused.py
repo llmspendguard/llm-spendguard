@@ -11,6 +11,8 @@ import os
 import sys
 import tempfile
 import types
+from functools import partial
+from _script_checks import last_test_wire_effort
 
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-effortpin-")
@@ -62,9 +64,7 @@ vendor_call.served_check = lambda prov, raw: "unchecked"   # skip the live-catal
 openai.OpenAI = lambda **kw: _CaptureClient()
 
 
-def _wire_effort():
-    """The reasoning_effort on the LAST wire call (None if none was sent)."""
-    return (_WIRE[-1] or {}).get("reasoning_effort") if _WIRE else None
+_wire_effort = partial(last_test_wire_effort, _WIRE)
 
 
 # ── ground the facts the guardrail reads (real models.py, not mocks) — the condition must discriminate on TRUTH ──

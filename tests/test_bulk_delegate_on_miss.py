@@ -11,6 +11,8 @@ path wants: lanes first, batch the remainder. Pins (with an always-missing mocke
   · an invalid on_miss raises at the door.
 Offline: arms / adapters.call / dispatch are monkeypatched — no lanes, no network, no spend."""
 import os, sys, tempfile
+from functools import partial
+from _script_checks import raise_test_exception
 
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
@@ -74,8 +76,7 @@ except gate.SpendGateRefused:
     ck("deliberate stop raised (SpendGateRefused)", True)
 
 print("-- a PLAIN batch_submit failure leaves misses batch_eligible (not falsely queued) --")
-def _boom(_m):
-    raise RuntimeError("submit endpoint down")
+_boom = partial(raise_test_exception, exception_factory=partial(RuntimeError, "submit endpoint down"))
 rows3 = lane_balance.bulk_delegate(TASKS, "t", on_miss="batch", batch_submit=_boom, force=True)
 ck("a failed submit → misses are batch_eligible, never queued_batch",
    all(r.get("reason") == "batch_eligible" for r in rows3))

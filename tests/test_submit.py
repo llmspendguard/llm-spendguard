@@ -25,8 +25,8 @@ with open(path, "w") as f:
                             "body": {"model": "gpt-5.5", "messages": [{"role": "user", "content": "classify " + x}],
                                      "max_tokens": 100}}) + "\n")
 
-print("-- estimate_jsonl_cost --")
-est = submit.estimate_jsonl_cost(path, "gpt-5.5")
+print("-- estimate_submission_jsonl_cost --")
+est = submit.estimate_submission_jsonl_cost(path, "gpt-5.5")
 check("counts 3 requests", est["requests"] == 3)
 check("batch mode + positive cost", est["mode"] == "batch" and est["cost"] > 0)
 check("out ceiling = 3 × max_tokens (conservative)", est["out_tok"] == 300)

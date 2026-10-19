@@ -1,5 +1,5 @@
 """Design item (P9, caller-intent): GPUSource.truth_total/captured DROPPED the reconcile `since` window — the readers
-(account_gpu_total / gpu_rows_by_day) then applied their own month-start default, so a reconcile for ANY period always
+(account_gpu_total / vast_gpu_accounting_rows_by_day) then applied their own month-start default, so a reconcile for ANY period always
 returned the WHOLE MONTH (truth AND captured), silently wrong for a non-month window. Both now convert the 'YYYY-MM-DD'
 since to the epoch since_ts and pass it, so truth and captured cover the SAME requested window.
 
@@ -22,14 +22,14 @@ def main():
         print(f"  [{'OK' if cond else 'FAIL'}] {name}{('  — ' + str(extra)) if extra and not cond else ''}")
 
     # the converter: a 'YYYY-MM-DD' date string → UTC-midnight epoch; None → None (readers apply their month default)
-    ck("_since_date_to_ts(None) → None", resources._since_date_to_ts(None) is None)
+    ck("_strict_reconcile_date_timestamp(None) → None", resources._strict_reconcile_date_timestamp(None) is None)
     exp = datetime.datetime(2026, 6, 1, tzinfo=datetime.timezone.utc).timestamp()
-    ck("_since_date_to_ts('2026-06-01') → the UTC-midnight epoch", resources._since_date_to_ts("2026-06-01") == exp)
+    ck("_strict_reconcile_date_timestamp('2026-06-01') → the UTC-midnight epoch", resources._strict_reconcile_date_timestamp("2026-06-01") == exp)
 
     seen = []
-    _real_acct, _real_rows = resources.account_gpu_total, resources.gpu_rows_by_day
+    _real_acct, _real_rows = resources.account_gpu_total, resources.vast_gpu_accounting_rows_by_day
     resources.account_gpu_total = lambda since_ts=None: (seen.append(("truth", since_ts)), 12.5)[1]
-    resources.gpu_rows_by_day = lambda since_ts=None, **k: (seen.append(("cap", since_ts)),
+    resources.vast_gpu_accounting_rows_by_day = lambda since_ts=None, **k: (seen.append(("cap", since_ts)),
                                                             [{"cost": 3.0, "project": "lmm"}])[1]
     try:
         src = resources.GPUSource(conn={"owns_account": True})
@@ -49,7 +49,7 @@ def main():
         ck("truth_total(None) → since_ts None (the reader applies its own month-start default), never a crash",
            seen == [("truth", None)], seen)
     finally:
-        resources.account_gpu_total, resources.gpu_rows_by_day = _real_acct, _real_rows
+        resources.account_gpu_total, resources.vast_gpu_accounting_rows_by_day = _real_acct, _real_rows
 
     print(f"\n{'[FAIL]' if fails else '[OK]'} test_gpu_source_since_scoping: {fails} failure(s)")
     return 1 if fails else 0

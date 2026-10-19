@@ -42,12 +42,10 @@ def check(label, cond):
     print(f"  [{'OK' if ok else 'FAIL'}] {label}")
 
 
-def refuses(fn):
-    try:
-        fn()
-        return False
-    except spend_gate.SpendGateRefused:
-        return True
+from functools import partial
+from _script_checks import callable_raises_exception
+
+refuses = partial(callable_raises_exception, exc=spend_gate.SpendGateRefused)
 
 
 # ── require(): the fail-closed guard ───────────────────────────────────────────────────────────────────────

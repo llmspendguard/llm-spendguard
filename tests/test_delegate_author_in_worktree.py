@@ -19,10 +19,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 from spendguard import delegate_router as dr, codex_exec, lane_registry  # noqa: E402
 
 fails = []
-def ck(label, cond):
-    print(f"  [{'OK' if cond else 'FAIL'}] {label}")
-    if not cond:
-        fails.append(label)
+from functools import partial
+from _script_checks import record_script_check
+ck = partial(record_script_check, fails)
 
 
 # ── (a) warm daemon is the default agentic codex route, opt-out to cold exec ───────────────────────────────────

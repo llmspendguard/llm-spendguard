@@ -27,14 +27,13 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 # this test self-re-execs OR the pytest runner pre-isolated it via SPENDGUARD_TEST_ISOLATED (which skips the block).
 os.environ["SPENDGUARD_CC_DIR"] = os.path.join(os.environ["SPENDGUARD_HOME"], "projects")
 
-from spendguard import claudecode, budget
+from spendguard import claudecode, budget, config
 from spendguard import ledger as L
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
+from functools import partial
+from _script_checks import record_script_check
+ck = partial(record_script_check, fails)
 
 # ── deterministic, hermetic pricing: cost = (in+out)/1000; '<synthetic>' is unpriceable (RAISES, like the real one) ──
 def _fake_price(model, in_tok, out_tok, cached=0, provider=None, cache_creation_tok=0):
@@ -94,7 +93,7 @@ ck("spent_dec == $0 — est_chat NEVER enters the real billed total", Decimal(le
 
 # IDEMPOTENCY — the correctness mechanism is the dedup_key, not the watermark. Clear the watermark and re-scan:
 n1 = len(rows)
-st = claudecode._load_state(); st["ledger_sessions"] = {}; claudecode._save_state(st)
+st = config.load_state("claudecode", {"sessions": {}, "ledger": {}}); st["ledger_sessions"] = {}; claudecode._save_claudecode_state(st)
 claudecode.ingest_events()
 rows2 = [r for r in led.query(since=SINCE) if r.get("source") == "claude-code"]
 ck("re-scan with the watermark CLEARED does NOT double-count — dedup_key holds", len(rows2) == n1)

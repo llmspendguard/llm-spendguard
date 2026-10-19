@@ -9,6 +9,8 @@ not one per call. Pins:
   · a TRANSIENT advisor failure is NOT cached (the next call retries), and a DELIBERATE stop PROPAGATES.
 Offline: advisor / calls / models are monkeypatched — no network, no spend."""
 import os, sys, tempfile
+from functools import partial
+from _script_checks import raise_test_exception
 
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
@@ -77,8 +79,8 @@ ck("failure returns no-pick (keeps named model)", rb1["model"] is None and rb2["
 ck("failure NOT cached — advisor retried on the 2nd call", _calls["n"] == _before + 2)
 
 print("-- a DELIBERATE stop PROPAGATES (never swallowed, never cached) --")
-def _refuse(*a, **k):
-    raise gate.SpendGateRefused.__new__(gate.SpendGateRefused)
+_refuse = partial(raise_test_exception, exception_factory=partial(
+    gate.SpendGateRefused.__new__, gate.SpendGateRefused))
 advisor.recommend_models = _refuse
 try:
     best_value.select_model_effort("intentC", "openai:gpt-5.5")

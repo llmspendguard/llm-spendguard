@@ -24,10 +24,9 @@ from spendguard import pricing  # noqa: E402
 _SRC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src", "spendguard")
 
 _fails = []
-def ck(label, cond):
-    if not cond:
-        _fails.append(label)
-    print(f"  [{'OK' if cond else 'FAIL'}] {label}")
+from functools import partial
+from _script_checks import record_script_check
+ck = partial(record_script_check, _fails, record_before_print=True)
 
 # ── (1) the catalog satisfies its DATA CONTRACT ──
 print("-- (1) DATA CONTRACT --")

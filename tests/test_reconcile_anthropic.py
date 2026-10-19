@@ -1,4 +1,4 @@
-"""Offline tests for reconcile_anthropic PARSERS — _cost() cache-aware pricing, _h() headers,
+"""Offline tests for reconcile_anthropic PARSERS — _anthropic_batch_reconciliation_cost() cache-aware pricing, _h() headers,
 and cost_by_day() per-day aggregation from a SEEDED cache. NO network: _get/list_batches/
 refresh_cache are never hit (refresh_cache is monkeypatched to a no-op; _key reads env).
 """
@@ -26,30 +26,30 @@ check("x-api-key set", h.get("x-api-key") == "sk-ant-OFFLINE")
 check("anthropic-version pinned", h.get("anthropic-version") == "2023-06-01")
 check("exactly two headers", set(h) == {"x-api-key", "anthropic-version"})
 
-print("-- _cost(model, u): cache-aware, batch rates, cross-checked vs pricing.py --")
+print("-- _anthropic_batch_reconciliation_cost(model, u): cache-aware, batch rates, cross-checked vs pricing.py --")
 u = {"input_tokens": 1000, "cache_read_input_tokens": 500,
      "cache_creation_input_tokens": 200, "output_tokens": 100}
 p = pricing.price("claude-opus-4-8")
 expect = (1000 * p["batch_in"] + 500 * p["cached_in"] * 0.5
           + 200 * p["batch_in"] * 1.25 + 100 * p["batch_out"]) / 1e6
-got = ra._cost("claude-opus-4-8", u)
+got = ra._anthropic_batch_reconciliation_cost("claude-opus-4-8", u)
 check(f"opus-4-8 cost ${got:.6f} == ${expect:.6f}", abs(got - expect) < 1e-12)
 
 # no-cache usage: fresh-in + out only
 u2 = {"input_tokens": 2000, "output_tokens": 800}
 expect2 = (2000 * p["batch_in"] + 800 * p["batch_out"]) / 1e6
-check("no-cache usage cost", abs(ra._cost("claude-opus-4-8", u2) - expect2) < 1e-12)
+check("no-cache usage cost", abs(ra._anthropic_batch_reconciliation_cost("claude-opus-4-8", u2) - expect2) < 1e-12)
 
 # different priced model (haiku) routes through its own rates
 ph = pricing.price("claude-haiku-4-5")
 expect_h = (2000 * ph["batch_in"] + 800 * ph["batch_out"]) / 1e6
-check("haiku routes to its own price", abs(ra._cost("claude-haiku-4-5", u2) - expect_h) < 1e-12)
+check("haiku routes to its own price", abs(ra._anthropic_batch_reconciliation_cost("claude-haiku-4-5", u2) - expect_h) < 1e-12)
 
-print("-- _cost(): unknown model -> record in UNKNOWN_MODELS, return 0 (never guess/crash) --")
+print("-- _anthropic_batch_reconciliation_cost(): unknown model -> record in UNKNOWN_MODELS, return 0 (never guess/crash) --")
 ra.UNKNOWN_MODELS.clear()
-check("unknown -> 0.0", ra._cost("made-up-model", u) == 0.0)
+check("unknown -> 0.0", ra._anthropic_batch_reconciliation_cost("made-up-model", u) == 0.0)
 check("unknown recorded once", ra.UNKNOWN_MODELS.get("made-up-model") == 1)
-ra._cost("made-up-model", u)
+ra._anthropic_batch_reconciliation_cost("made-up-model", u)
 check("unknown recorded twice", ra.UNKNOWN_MODELS.get("made-up-model") == 2)
 
 print("-- cost_by_day(): seed the cache file, no-op the network refresh, assert per-day aggregation --")
@@ -141,7 +141,7 @@ check("created_at sliced to YYYY-MM-DD", rec.get("created_at") == "2026-06-14")
 bm = rec.get("by_model", {}).get("claude-opus-4-8", {})
 check("summed input across 2 results", bm.get("in") == 2000)
 check("summed output across 2 results", bm.get("out") == 1000)
-exp_cost = 2 * ra2._cost("claude-opus-4-8", {"input_tokens": 1000, "output_tokens": 500})
+exp_cost = 2 * ra2._anthropic_batch_reconciliation_cost("claude-opus-4-8", {"input_tokens": 1000, "output_tokens": 500})
 check("per-result cost summed", abs(rec.get("cost", 0) - exp_cost) < 1e-12)
 check("cache file written", os.path.exists(ra2.CACHE_PATH))
 # already-cached batch is skipped on a second pass (no re-fetch)

@@ -83,7 +83,7 @@ def _since_iso(hours):
     return (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=int(hours))).isoformat()
 
 
-def _lanes():
+def _servability_provider_lanes():
     """The configured subscription lanes and each one's metered PROVIDER (for a /models cross-check), derived from
     adapters._LANES ({provider: (lane, model)}) — never a hardcoded list."""
     try:
@@ -131,7 +131,7 @@ def observed_lane_models(lane, window_hours=None):
     return out
 
 
-def _provider_models_now(provider):
+def _served_provider_model_ids(provider):
     """The provider's live METERED /models ids right now — a free GET via the catalog's own fetch primitive. None on
     any failure (cannot-check, never read as 'gone')."""
     try:
@@ -173,14 +173,14 @@ def detect_served_shift(lane, announce=True):
     try:
         shift_fail = _int_cfg("shift_fail", _SHIFT_FAIL_DEFAULT, "SPENDGUARD_LANE_SERVABILITY_SHIFT_FAIL")
         obs = observed_lane_models(lane)
-        provider = _lanes().get(lane)
+        provider = _servability_provider_lanes().get(lane)
         metered = None
         for model in obs.get("shifted", []):
             rec = obs["detail"].get(model, {})
             if rec.get("recent_fail", 0) < shift_fail:
                 continue                                   # a real shift but below the loud-alert floor — recorded by refresh, not shouted
             if metered is None and provider:
-                metered = _provider_models_now(provider)   # pull once per lane, only when a loud shift is present
+                metered = _served_provider_model_ids(provider)   # pull once per lane, only when a loud shift is present
             why = _classify_drop(provider, model, metered)
             shift = {"lane": lane, "model": model, "provider": provider,
                      "recent_fail": rec.get("recent_fail", 0), "total_ok": rec.get("total_ok", 0), **why}
@@ -281,7 +281,7 @@ _PROBE_PROMPT = "reply with the single word: ok"       # a tiny $0 recovery prob
 _PROBE_TIMEOUT_S = 60                                   # a lane recovery probe is bounded; a hung probe must not wedge
 
 
-def _lane_module(lane):
+def _resolve_servability_lane_module(lane):
     """The executor module for a lane (codex → codex_exec, …), from adapters._LANES — never a hardcoded map. None if
     the lane is unknown or its module cannot be imported."""
     try:
@@ -309,11 +309,11 @@ def reprobe_rejected(lane):
         rejected = list(catalog.lane_unserved_ids(lane) or [])
         if not rejected:
             return out
-        mod = _lane_module(lane)
+        mod = _resolve_servability_lane_module(lane)
         if mod is None or not hasattr(mod, "run_prompt"):
             return out
         recovered, still = [], []
-        provider = _lanes().get(lane)
+        provider = _servability_provider_lanes().get(lane)
         for m in rejected:
             out["probed"] += 1
             try:
@@ -355,7 +355,7 @@ def refresh_lane_servability(lane=None, announce=True, reprobe=False):
     out = {}
     try:
         from . import catalog
-        lanes = [lane] if lane else list(_lanes().keys())
+        lanes = [lane] if lane else list(_servability_provider_lanes().keys())
         for ln in lanes:
             obs = observed_lane_models(ln)
             if obs["served"] or obs["rejected"]:

@@ -28,7 +28,7 @@ saas.saas_connection = lambda: {"enabled": True, "owns_account": True, "visibili
 ledger_sync._provider_total = lambda since: 800.0
 ledger_sync._gate_captured_rows = lambda since: [{"cost": 600.0, "project": "lmm"}]
 resources.account_gpu_total = lambda since_ts=None: 1000.0   # real sig is account_gpu_total(since_ts=…); truth_total now forwards it
-resources.gpu_rows_by_day = lambda *a, **k: [{"cost": 250.0, "project": "lmm"}, {"cost": 300.0, "project": "manga2anime"}]
+resources.vast_gpu_accounting_rows_by_day = lambda *a, **k: [{"cost": 250.0, "project": "lmm"}, {"cost": 300.0, "project": "manga2anime"}]
 ptmap = {"lmm": ("Healiom", "clinical-ai"), "manga2anime": ("Ensight", "")}
 
 res = reconcile.all_sources(ptmap, since="2026-06-01")

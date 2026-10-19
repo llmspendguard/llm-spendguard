@@ -28,13 +28,7 @@ def check(label, cond, extra=""):
     print(f"  [{'OK' if ok else 'FAIL'}] {label}{('  — ' + extra) if extra and not ok else ''}")
 
 
-def _try(fn):
-    """True iff `fn` RAISES. Refusal is a behaviour to assert, not an accident to tolerate."""
-    try:
-        fn()
-        return False
-    except Exception:
-        return True
+from _script_checks import callable_raises_exception as _try
 
 
 def proves(req, label, probe, break_it, restore):

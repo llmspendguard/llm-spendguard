@@ -28,17 +28,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 from spendguard import lane_bandit as lb, config  # noqa: E402
 
 
-class Checks:
-    def __init__(self):
-        self.fails = []
+from functools import partial
+from _script_checks import record_script_check
 
-    def __call__(self, label, cond, extra=""):
-        if not cond:
-            self.fails.append(label)
-        print(f"  [{'OK' if cond else 'FAIL'}] {label}{('  — ' + extra) if extra and not cond else ''}")
-
-
-ck = Checks()
+fails = []
+ck = partial(record_script_check, fails, record_before_print=True)
 lb._idle_bonus = lambda lane: 1.0                     # neutralize the capacity tilt — isolate the value-reward
 
 # ── A. arm_score is a PURE value-reward (winrate × idle), with NO cost term / NO realized-cost argument ───────────────
@@ -121,5 +115,5 @@ try:
 finally:
     lb._run_arm, lb._intent_realized_costs, lb.bakeoff_judge, lb._arm_cooling, _lc.arms, lb.arm_stats = _o_wire
 
-print(f"\n{'OK' if not ck.fails else 'FAIL'} test_bandit_value_judge_weighs_cost: {len(ck.fails)} failure(s)")
-sys.exit(1 if ck.fails else 0)
+print(f"\n{'OK' if not fails else 'FAIL'} test_bandit_value_judge_weighs_cost: {len(fails)} failure(s)")
+sys.exit(1 if fails else 0)

@@ -23,16 +23,14 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-robust-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
-from spendguard import schedule, realized, resources, brief, guard   # noqa: E402
+from spendguard import schedule, realized, resources, brief, config, guard   # noqa: E402
 
-fails = 0
+fails = []
 
 
-def ck(label, cond, extra=""):
-    global fails
-    if not cond:
-        fails += 1
-    print(f"  [{'OK' if cond else 'FAIL'}] {label}{('  — ' + extra) if extra and not cond else ''}")
+from functools import partial
+from _script_checks import record_script_check
+ck = partial(record_script_check, fails, record_before_print=True)
 
 
 # ── 1. schedule: a real crontab -l failure must NOT wipe the user's crontab ──────────────────────────────────
@@ -69,20 +67,22 @@ ck("a genuine 'no crontab' user still proceeds to install (crontab - IS run)", [
 # ── 2. realized: a changed adoption window credits nothing (no over-credit) ───────────────────────────────────
 saved = []
 guard.record_saving = lambda src, amount, project=None: saved.append((src, round(amount, 6)))
-realized._load_state = lambda: {"intentX": {"counted_calls": 100, "adopted_ts": 1000}}
+original_robustness_load_state = config.load_state
+config.load_state = lambda name, default=None: {"intentX": {"counted_calls": 100, "adopted_ts": 1000}}
 realized.sync_to_guarded(rows=[{"intent": "intentX", "delta_per_call": 0.01, "after_calls": 300, "adopted_ts": 2000}])
 ck("a CHANGED adoption window credits NOTHING (rebaseline, never over-credit)", saved == [], str(saved))
 
 saved.clear()
-realized._load_state = lambda: {"intentY": {"counted_calls": 100, "adopted_ts": 1000}}
+config.load_state = lambda name, default=None: {"intentY": {"counted_calls": 100, "adopted_ts": 1000}}
 realized.sync_to_guarded(rows=[{"intent": "intentY", "delta_per_call": 0.01, "after_calls": 300, "adopted_ts": 1000}])
 ck("the SAME window credits only the NEW calls (200 × $0.01 = $2.00)",
    len(saved) == 1 and abs(saved[0][1] - 2.0) < 1e-9, str(saved))
+config.load_state = original_robustness_load_state
 
 
 # ── 3. resources: mixed-type end_date/last_seen does not crash ───────────────────────────────────────────────
 resources.instances = lambda: []
-resources._load_history = lambda: {"box1": {"last_seen": 1000.0, "end_date": "2026-08-01", "id": "box1"}}
+resources._load_resource_history = lambda: {"box1": {"last_seen": 1000.0, "end_date": "2026-08-01", "id": "box1"}}
 crashed = False
 try:
     resources._all_instances()
@@ -104,5 +104,5 @@ except TypeError:
 ck("brief() with a per=None recommendation does not crash formatting None", not crashed2)
 ck("...and shows the cost as n/a", "cost n/a" in out, out[-120:])
 
-print(f"\n{'[FAIL]' if fails else 'OK'} test_robustness_fixes: {fails} failure(s)")
+print(f"\n{'[FAIL]' if fails else 'OK'} test_robustness_fixes: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

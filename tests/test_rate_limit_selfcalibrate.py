@@ -12,6 +12,7 @@ Hermetic: fake response objects + direct dispatch calls; XP flock off; no networ
 import os
 import sys
 import tempfile
+from types import SimpleNamespace
 
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-learn-")   # isolate learned_limits.json
@@ -33,19 +34,15 @@ def _times_out(vendor, deadline_s, est_tokens):
     except dispatch.DispatchTimeout:
         return True
 
-class _FakeResp:
-    def __init__(self, headers):
-        self.headers = headers
-
 # ── (1) header parsing — OpenAI + Anthropic, and empty ──
 print("-- (1) _ratelimit_from_resp: parse OpenAI + Anthropic per-minute limit headers --")
-tpm, rpm = adapters._ratelimit_from_resp(_FakeResp({"x-ratelimit-limit-tokens": "2000000",
+tpm, rpm = adapters._ratelimit_from_resp(SimpleNamespace(headers={"x-ratelimit-limit-tokens": "2000000",
                                                     "x-ratelimit-limit-requests": "10000"}))
 ck("OpenAI x-ratelimit-limit-tokens/-requests parsed", tpm == 2000000 and rpm == 10000)
-tpm2, rpm2 = adapters._ratelimit_from_resp(_FakeResp({"anthropic-ratelimit-tokens-limit": "400000",
+tpm2, rpm2 = adapters._ratelimit_from_resp(SimpleNamespace(headers={"anthropic-ratelimit-tokens-limit": "400000",
                                                       "anthropic-ratelimit-requests-limit": "4000"}))
 ck("Anthropic anthropic-ratelimit-*-limit parsed", tpm2 == 400000 and rpm2 == 4000)
-ck("no rate-limit headers → (None, None)", adapters._ratelimit_from_resp(_FakeResp({})) == (None, None))
+ck("no rate-limit headers → (None, None)", adapters._ratelimit_from_resp(SimpleNamespace(headers={})) == (None, None))
 
 # ── (2) learn → dispatch paces to the learned tpm (no config), and it persists ──
 print("-- (2) learn_rate_limit(tpm) → the vendor is paced to the LEARNED tpm (no config), and persisted to disk --")
@@ -85,10 +82,7 @@ os.environ.pop("SPENDGUARD_DISPATCH_TPM_PRECVENDOR", None)
 
 # ── (5) SUCCESS-HEADER learning: the limit rides every SUCCESSFUL response → paced BEFORE the first 429 ──
 print("-- (5) _learn_success_limits: a successful response's headers teach the limit (no 429 needed) --")
-class _FakeResp2:
-    def __init__(self, headers):
-        self.headers = headers
-adapters._learn_success_limits("succvendor", _FakeResp2({"x-ratelimit-limit-tokens": "1200000",
+adapters._learn_success_limits("succvendor", SimpleNamespace(headers={"x-ratelimit-limit-tokens": "1200000",
                                                          "x-ratelimit-limit-requests": "5000"}))
 ll5 = dispatch.learned_limits("succvendor")
 ck("a success response teaches tpm/rpm with source='success-header'",

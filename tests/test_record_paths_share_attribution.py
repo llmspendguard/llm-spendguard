@@ -71,7 +71,7 @@ legacy.execute("""CREATE TABLE calls(id TEXT PRIMARY KEY, ts TEXT, chain TEXT, i
  prompt_hash TEXT, prompt_snip TEXT, output_snip TEXT, finish TEXT, quality TEXT, quality_src TEXT)""")
 legacy.execute("INSERT INTO calls (id,ts,model,kind,cost) VALUES ('old','2020-01-01','old-model','realtime',0)")
 legacy.commit()
-calls._ensure_calls_schema(legacy)
+calls._ensure_call_observation_schema(legacy)
 old = legacy.execute("SELECT call_class, origin_session FROM calls WHERE id='old'").fetchone()
 ck("additive migration leaves both new columns NULL on the legacy row", old == (None, None))
 legacy.close()

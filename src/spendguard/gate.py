@@ -240,7 +240,7 @@ def _content_tokens(content, provider=None, model=None):
         # better than crashing a caller mid-run, but it is NOT a quieter version of the right answer: it is
         # the wrong answer, in the expensive direction, and silence here is what made the original bug take
         # so long to find. Say it once, per model.
-        _warn_once(f"[spendguard] image/PDF token counting FAILED for {model or 'this model'} "
+        _gate_warn_once(f"[spendguard] image/PDF token counting FAILED for {model or 'this model'} "
                    f"({type(e).__name__}: {str(e)[:60]}) — falling back to counting the raw content as TEXT, "
                    f"which over-states vision payloads by roughly 25x and can make the cap refuse valid work.")
         return _ct(str(content))
@@ -249,7 +249,7 @@ def _content_tokens(content, provider=None, model=None):
 _warned_once = set()
 
 
-def _warn_once(msg):
+def _gate_warn_once(msg):
     """One line per distinct problem. An 800-request batch that warns 800 times is a warning nobody reads."""
     from . import config
     config.warn_once(msg)                                # one registry; deid.py had its own copy + own set
@@ -330,7 +330,7 @@ def _warn_implausible(model, in_tok, requests, per_item_max=None):
     bad, facts = _implausible_estimate(model, in_tok, requests, per_item_max=per_item_max)
     if not bad:
         return {}
-    _warn_once(f"[spend_gate] IMPOSSIBLE ESTIMATE — {facts['message']}\n"
+    _gate_warn_once(f"[spend_gate] IMPOSSIBLE ESTIMATE — {facts['message']}\n"
                f"  Recorded but QUARANTINED: excluded from every total, kept for audit. "
                f"See it with `spendguard quarantine --list`.")
     return facts
@@ -420,7 +420,7 @@ def _estimate_anthropic_requests(requests, intent=None, declared_out=None):
                                                         ceiling=per_req_ceiling) if model else (0, "unknown"))
     out = int(per_req_out) * counted
     if skipped:
-        _warn_once(f"[spendguard] anthropic batch estimate: {skipped} of {n} request(s) had no params and were "
+        _gate_warn_once(f"[spendguard] anthropic batch estimate: {skipped} of {n} request(s) had no params and were "
                    f"counted as zero tokens — the estimate may understate this batch.")
     cost = pricing.batch_cost(model, in_tok, out, provider="anthropic") if model else 0.0   # this estimator is Anthropic-specific — pin the vendor
     # WORST CASE — every request runs to its SEND ceiling. Priced for the SEPARATE ceiling guard (_worst_case_check), a
@@ -720,7 +720,7 @@ def _batch1_check(est):
     Knobs: GATE_BATCH1_MIN (req count that counts as 'large', default 50) · GATE_BATCH1_USD (or ≥ this $, default 5)
     · GATE_BATCH1_DAYS (look-back, default 14) · GATE_REQUIRE_BATCH1 (refuse non-interactive) · GATE_NO_BATCH1 (off).
     GATE_ALLOW=1 bypasses (like the cost cap). Needs the calls corpus + an intent to reason about 'shape'."""
-    if _on("GATE_NO_BATCH1") or _allow() or not _calls.enabled():
+    if _on("GATE_NO_BATCH1") or _allow() or not _calls.call_recording_consent_enabled():
         return
     try:
         intent = (_calls.current().get("intent") or "").strip()
@@ -804,7 +804,7 @@ def record_accepted_batch_estimate(est):
     """Book a provisional batch estimate only after the provider accepted the submission."""
     _budget_record(est["cost"], est.get("model"), est.get("provider"), "batch",   # ledger (sqlite)
                    quarantine=bool(est.get("implausible")), basis=budget_basis_estimate())
-    if _calls.enabled():                                                          # job-level call-context row
+    if _calls.call_recording_consent_enabled():                                                          # job-level call-context row
         _calls.record_call(est.get("provider"), est.get("model"), "batch", est["cost"],
                       in_tok=est.get("in_tok", 0), out_tok=est.get("out_tok", 0), executor="api")
 
@@ -1027,7 +1027,7 @@ def _rt_flush():
                 else:
                     for i in range(min(len(cur), len(v))):
                         cur[i] += v[i]
-        _warn_once(f"[spendguard] realtime spend log could not be written ({type(e).__name__}: "
+        _gate_warn_once(f"[spendguard] realtime spend log could not be written ({type(e).__name__}: "
                    f"{str(e)[:60]}) — {len(items)} aggregated row(s) HELD for the next flush, not dropped.")
 
 
@@ -1409,7 +1409,7 @@ def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, 
                 budget.record_unpriced(prov, model, "realtime", in_tok=in_tok, out_tok=out_tok)
             except Exception:
                 pass
-            _warn_once(f"[spend_gate] NO PRICE for '{model}' — {in_tok}+{out_tok} tok recorded as UNPRICED "
+            _gate_warn_once(f"[spend_gate] NO PRICE for '{model}' — {in_tok}+{out_tok} tok recorded as UNPRICED "
                        f"(NOT $0, and excluded from totals so it cannot read as free). Fix it with:\n"
                        f"  spendguard price {model} --in <$/1M> --out <$/1M> --source '<url or invoice>'")
             return
@@ -1448,7 +1448,7 @@ def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, 
     if _meta_intent():                            # meta call → meta ledger only (not workload realtime)
         from . import budget
         budget.record_meta(prov, model, cost)
-        if _calls.enabled():
+        if _calls.call_recording_consent_enabled():
             _calls.record_call(prov, model, "realtime", cost, in_tok=in_tok, out_tok=out_tok, latency=latency,
                           prompt=_prompt_text(kw), output=output, finish=finish, effort=_effort, executor="api")
         return
@@ -1465,7 +1465,7 @@ def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, 
                                    visible_tokens=max(0, out_tok - reasoning_tokens) if reasoning_tokens is not None else None)
     except Exception:
         pass
-    if _calls.enabled():
+    if _calls.call_recording_consent_enabled():
         _calls.record_call(prov, model, "realtime", cost, in_tok=in_tok, out_tok=out_tok, latency=latency,
                       prompt=_prompt_text(kw), output=output, finish=finish, effort=_effort,
                       # EXPLICIT 'api' (not NULL): this is the metered realtime path. A lane call records via the
@@ -1536,7 +1536,7 @@ def _tool_fee_count(result):
         # RETURNING THE PARTIAL COUNT UNDERSTATES A BILL. These are per-call fees the token usage never
         # includes, so a count that stops early is not "roughly right" — it is money the gate silently did
         # not charge, surfacing later only as an unexplained reconcile residual. None means UNKNOWN.
-        _warn_once(f"[spendguard] per-call tool fees could not be counted on a response "
+        _gate_warn_once(f"[spendguard] per-call tool fees could not be counted on a response "
                    f"({type(e).__name__}) — the fee count is UNKNOWN for it, not zero.")
         return None
     return n

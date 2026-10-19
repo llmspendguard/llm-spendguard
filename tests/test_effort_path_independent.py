@@ -12,6 +12,8 @@ import os
 import sys
 import tempfile
 import types
+from functools import partial
+from _script_checks import last_test_wire_effort
 
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-pathindep-")
@@ -65,8 +67,7 @@ dispatch.acquire_or_none = lambda *a, **k: object()
 dispatch.release = lambda *a, **k: None
 
 
-def _last_wire_effort():
-    return (_WIRE[-1] or {}).get("reasoning_effort") if _WIRE else "<no-call>"
+_last_wire_effort = partial(last_test_wire_effort, _WIRE, missing_call="<no-call>")
 
 
 def _plain(model, reasoning):

@@ -94,7 +94,7 @@ def _run_ids():
         return {r[0] for r in learn._insights_db().execute("SELECT id FROM graph_nodes WHERE type='run'").fetchall()}
 
 
-def build_index(tdir=None, rebuild=False):
+def build_conversation_event_index(tdir=None, rebuild=False):
     """Scan transcripts → cached event index. Reuses cached per-file events when mtime+size unchanged."""
     tdir = tdir or _DEFAULT_TDIR
     files = sorted(glob.glob(os.path.join(tdir, "**", "*.jsonl"), recursive=True)) if os.path.isdir(tdir) else [tdir]
@@ -189,7 +189,7 @@ def attribute_cmd(argv=None):
 def batch_links(tdir=None):
     """{batch_id: {conv, path, snippet, ts}} — which conversation (transcript = a Claude Code session id)
     references each batch id. The bridge from a recovered per-request call (call_io.batch) to its chat context."""
-    index, _ = build_index(tdir)
+    index, _ = build_conversation_event_index(tdir)
     links = {}
     for path, rec in index.items():
         conv = os.path.splitext(os.path.basename(path))[0]    # transcript filename = the session/conversation id
@@ -568,11 +568,11 @@ def _canon(s):
 
 
 @functools.lru_cache(maxsize=1)
-def _prior_index():
+def _conversation_prior_index():
     """{name(lower): (org, team)} derived FROM THE TAXONOMY (orgs < teams < projects, most-specific wins) — the lookup
     that turns a bare repo/cwd PRIOR ('lmm', 'manga2anime') into its org+team WITHOUT re-classifying. Taxonomy-derived,
     not a hardcoded repo→org table: a repo only maps if the taxonomy names it (else it stays unattributed, never a
-    guess). Cached; call `_prior_index.cache_clear()` if the taxonomy changes in-process (tests)."""
+    guess). Cached; call `_conversation_prior_index.cache_clear()` if the taxonomy changes in-process (tests)."""
     from . import attribution
     taxo, _ = attribution.taxonomy()
     idx = {}
@@ -593,7 +593,7 @@ def _prior_org_team(prior):
     """Map a repo/cwd PRIOR to (org, team) via the taxonomy index; ('', '') when the repo isn't in the taxonomy
     (genuinely ambiguous → stays untagged rather than a regex guess). Fixes the cwd-prior path setting project but
     leaving org blank (which surfaced lmm runs as false '(untagged)')."""
-    return _prior_index().get(_canon(prior), ("", ""))
+    return _conversation_prior_index().get(_canon(prior), ("", ""))
 
 
 def _is_spendguard_session(sid, segs=None, store=None):
@@ -1028,7 +1028,7 @@ def instance_attributions(instances, tdir=None):
 def batch_contexts(tdir=None, turns=10, maxchars=3500):
     """{batch_id: {conv, before, at, after}} for every batch referenced in a transcript — ONE pass over the files
     (one pass over the transcripts, for linking the whole corpus). ~`turns` turns before/after each."""
-    index, _ = build_index(tdir)
+    index, _ = build_conversation_event_index(tdir)
     run_ids = _run_ids()
     out = {}
     fmt = lambda chunk: "\n".join(f"[{r}] {t}" for r, t in chunk)[-maxchars:]
@@ -1069,7 +1069,7 @@ def _score(ev):
 
 
 def index_cmd(tdir=None, apply=False, rebuild=False):
-    index, scanned = build_index(tdir, rebuild=rebuild)
+    index, scanned = build_conversation_event_index(tdir, rebuild=rebuild)
     events = list(_all_events(index))
     mentioned = set(r for ev in events for r in ev.get("runs", []))
     print(f"mine-conv index — {len(index)} transcripts ({scanned} (re)scanned, rest cached)")
@@ -1125,7 +1125,7 @@ def _dedup_top(events, k):
 def synth(tdir=None, run=False, limit=40):
     from .submit import _count_tokens
     model = config.advisor_model()
-    index, _ = build_index(tdir)
+    index, _ = build_conversation_event_index(tdir)
     events = _dedup_top(list(_all_events(index)), limit)
     print(f"mine-conv synth — reasoner = {model} (realtime), caged by intent spendguard:*")
     if not events:
@@ -1152,12 +1152,12 @@ def synth(tdir=None, run=False, limit=40):
     if r["error"]:
         print(f"  ERROR: {r['error']}")
         return dict(error=r["error"])
-    added = _persist_insights_conv(r["text"])
+    added = _persist_conversation_synthesis_insights(r["text"])
     print(f"  synthesized {added} conversation-sourced insight(s). Cost ${r['cost']:.4f}.")
     return dict(insights=added, cost=r["cost"], model=model)
 
 
-def _persist_insights_conv(text):
+def _persist_conversation_synthesis_insights(text):
     from .advisor import _parse_insights
     data = _parse_insights(text)
     if data is None:

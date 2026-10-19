@@ -63,7 +63,7 @@ _SYS = (
     '{"items":[{"i":<i>,"org":"<org>","team":"<team>","project":"<slug>","confidence":<0-100>}]}.')
 
 
-def _prompt(taxo, batch):
+def _item_attribution_prompt(taxo, batch):
     orgs = taxo.get("orgs") or []
     tl = "; ".join(f"{t['name']}({t.get('org')})" for t in (taxo.get("teams") or []))
     pl = "; ".join(f"{p['name']}({p.get('org')}/{p.get('team')})" for p in (taxo.get("projects") or []))
@@ -84,7 +84,7 @@ def classify_items(items, taxo, run, batch_size=25):
         return {}
     batches = [items[i:i + batch_size] for i in range(0, len(items), batch_size)]
     model = config.advisor_model()
-    est = sum(pricing.realtime_cost(model, _toklen(_SYS + _prompt(taxo, b)), 45 * len(b)) for b in batches)
+    est = sum(pricing.realtime_cost(model, _toklen(_SYS + _item_attribution_prompt(taxo, b)), 45 * len(b)) for b in batches)
     if not run:
         ui.estimate_only(action=f"classify {len(items)} work items into org→team×project", cost=est)
         return {}
@@ -92,7 +92,7 @@ def classify_items(items, taxo, run, batch_size=25):
     import re
     for b in batches:
         with calls.context(intent="spendguard:categorize"):
-            r = adapters.call(model, _prompt(taxo, b), max_tokens=45 * len(b) + 250, system=_SYS)
+            r = adapters.call(model, _item_attribution_prompt(taxo, b), max_tokens=45 * len(b) + 250, system=_SYS)
         if r.get("error"):
             continue
         m = re.search(r"\{.*\}", (r.get("text") or ""), re.S)

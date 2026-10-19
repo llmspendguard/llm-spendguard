@@ -78,7 +78,7 @@ def run_surface_guards(failures):
                             and grouped_total[SURFACE_SEED_PROVIDER]["realtime_usd"] == expected_total
                             and grouped_total[SURFACE_SEED_PROVIDER]["est_chat_usd"] == SURFACE_SEED_COUNT * float(SURFACE_ESTIMATED_VALUE)
                             and grouped_total[SURFACE_SEED_PROVIDER]["billed_usd"] == expected_total, failures)
-        calls._ensure_calls_schema(writer._conn)
+        calls._ensure_call_observation_schema(writer._conn)
         writer._conn.execute("INSERT INTO calls(ts,intent,provider,model,cost) VALUES (?,?,?,?,?)",
                              (SURFACE_SEED_DAY, SURFACE_SEED_INTENT, SURFACE_SEED_PROVIDER, SURFACE_SEED_SOURCE, SURFACE_ESTIMATED_VALUE))
         writer._conn.commit()

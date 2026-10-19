@@ -25,7 +25,7 @@ def ck(name, cond):
     if not cond:
         fails.append(name)
 
-conv._prior_index = lambda: {"lmm": ("healiom", "lmm"), "manga2anime": ("ensight", "manga2anime")}
+conv._conversation_prior_index = lambda: {"lmm": ("healiom", "lmm"), "manga2anime": ("ensight", "manga2anime")}
 conv.segments = lambda *a, **k: []
 conv._seg_get_all = lambda: {}
 

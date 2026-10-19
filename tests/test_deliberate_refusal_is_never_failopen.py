@@ -14,6 +14,13 @@ CONSTRUCTION. The rogue-subclass case below is the real guard: it never mentions
 
 Offline, isolated home, zero spend, no network."""
 import os, sys, tempfile, asyncio
+from functools import partial
+from _script_checks import (
+    GATE_TEST_ERROR_MESSAGE,
+    async_return_value,
+    callable_raises_exception as raises_out,
+    raise_test_exception,
+)
 
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
@@ -31,14 +38,6 @@ def ck(name, cond):
     print(("  [OK] " if cond else "  [FAIL] ") + name)
     if not cond:
         fails.append(name)
-
-def raises_out(fn, exc):
-    """True iff calling fn() lets `exc` (or a subclass) propagate OUT — i.e. the gate BLOCKED."""
-    try:
-        fn()
-        return False
-    except exc:
-        return True
 
 SENTINEL = object()
 
@@ -81,8 +80,7 @@ ck("_guard FAILS OPEN on a non-refusal Exception subclass (only the refusal CONC
 # ── 5. THE REAL SDK BOUNDARY (_gate_wrap, sync + async): the path the live batch actually took ──
 def orig_sync(self, *a, **k):
     return SENTINEL
-async def orig_async(self, *a, **k):
-    return SENTINEL
+orig_async = partial(async_return_value, return_value=SENTINEL)
 
 for is_async in (False, True):
     tag = "async" if is_async else "sync"
@@ -97,8 +95,7 @@ for is_async in (False, True):
        raises_out(lambda w_blk=w_blk: run(w_blk), bulkgate.GateBlocked))
 
     # a bug in the gate_fn must fail open: the wrapped call still returns its real result
-    def _bug(kw, a):
-        raise ValueError("injected gate bug")
+    _bug = partial(raise_test_exception, exception_factory=partial(ValueError, GATE_TEST_ERROR_MESSAGE))
     w_bug = G._gate_wrap(orig, _bug, is_async)
     got = None
     try:

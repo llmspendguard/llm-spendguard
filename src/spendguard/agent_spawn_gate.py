@@ -68,7 +68,7 @@ def _spawn_fields(payload):
             str(tool_input.get("subagent_type") or tool_input.get("task_name") or ""))
 
 
-def _verdict_cache_key(prompt, subagent_type):
+def _agent_spawn_verdict_cache_key(prompt, subagent_type):
     whole = json.dumps([prompt, subagent_type], ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(whole.encode()).hexdigest()
 
@@ -108,7 +108,7 @@ def evaluate_pretooluse(payload):
         return _hook_result("allow", "spendguard agent gate: hosting plan has headroom")
 
     state = _load_session_state(session_id)
-    key = _verdict_cache_key(prompt, subagent_type)
+    key = _agent_spawn_verdict_cache_key(prompt, subagent_type)
     verdict = (state.get("verdicts") or {}).get(key)
     if verdict is None:
         try:
@@ -159,7 +159,7 @@ def _settings_path():
     return pathlib.Path.home() / ".claude" / "settings.json"
 
 
-def _managed_hook(command):
+def _agent_gate_managed_hook(command):
     return command.endswith(_HOOK_SUFFIX)
 
 
@@ -175,11 +175,11 @@ def install_agent_gate(settings_path=None, uninstall=False, executable=None):
         cfg = {}
     hooks = cfg.get("hooks") or {}
     groups = list(hooks.get("PreToolUse") or [])
-    found = any(_managed_hook(h.get("command", "")) for group in groups for h in (group.get("hooks") or []))
+    found = any(_agent_gate_managed_hook(h.get("command", "")) for group in groups for h in (group.get("hooks") or []))
     if uninstall:
         revised = []
         for group in groups:
-            kept = [h for h in (group.get("hooks") or []) if not _managed_hook(h.get("command", ""))]
+            kept = [h for h in (group.get("hooks") or []) if not _agent_gate_managed_hook(h.get("command", ""))]
             if kept:
                 revised.append({**group, "hooks": kept})
         if not found:

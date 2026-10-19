@@ -53,7 +53,7 @@ print("\n-- truncation cannot be read as a short answer; the caller's cap is IGN
 _calls = {"n": 0, "budgets": []}
 
 
-def _fake_once(model, prompt, max_tokens=512, **kw):
+def always_truncated_token_control_response(model, prompt, max_tokens=512, **kw):
     """A provider that always hits the cap — the shape that produced every silent wrong answer."""
     _calls["n"] += 1
     _calls["budgets"].append(max_tokens)
@@ -62,7 +62,7 @@ def _fake_once(model, prompt, max_tokens=512, **kw):
 
 
 _orig_once, _orig_fits = adapters._call_once, adapters._input_fits
-adapters._call_once = _fake_once
+adapters._call_once = always_truncated_token_control_response
 adapters._input_fits = lambda *a, **k: (True, "stubbed")
 try:
     _ceil = adapters.output_budget("fake-model")

@@ -15,7 +15,7 @@ cache_path = Path(tempfile.mkdtemp(prefix="sg-lane-value-refresh-")) / "receipt-
 stamp_calls = []
 mark_calls = []
 
-receipt._cache_path = lambda: cache_path
+receipt._receipt_aggregate_cache_path = lambda: cache_path
 lane_value.stamp_from_ledger = lambda: stamp_calls.append(True) or {}
 lane_value._mark_stamped = lambda: mark_calls.append(True)
 

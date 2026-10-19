@@ -13,9 +13,8 @@ import os
 import sys
 import tempfile
 import threading
-import json
-import urllib.request
-import urllib.error
+from functools import partial
+from _script_checks import request_test_json
 
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-serve-embed-")
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
@@ -34,14 +33,8 @@ def ck(label, cond, extra=""):
         fails.append(label)
 
 
-def _req(port, method, path, body=None, headers=None):
-    data = json.dumps(body).encode() if body is not None else None
-    r = urllib.request.Request(f"http://127.0.0.1:{port}{path}", data=data, method=method, headers=headers or {})
-    try:
-        with urllib.request.urlopen(r, timeout=30) as resp:
-            return resp.status, json.loads(resp.read() or b"{}")
-    except urllib.error.HTTPError as e:
-        return e.code, json.loads(e.read() or b"{}")
+REQUEST_TIMEOUT_S = 30
+_req = partial(request_test_json, base_url="http://127.0.0.1:{port}", timeout=REQUEST_TIMEOUT_S)
 
 
 # a canned embed result shaped exactly like adapters.embed's contract — INCLUDING the host-local checkpoint we must NOT leak

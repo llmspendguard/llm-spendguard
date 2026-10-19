@@ -11,6 +11,8 @@ Hypothesis drives random kwargs, random injected helper failures, and random str
 wrappers (`_wrap_rt` realtime + `_wrap` batch), sync and async. Offline, mocked, zero spend."""
 import os, sys, tempfile, asyncio
 from unittest import mock
+from functools import partial
+from _script_checks import async_return_value, execute_gate_test_call as run, raise_gate_test_error as boom
 
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
@@ -38,8 +40,6 @@ def est_ok(kw):
     return (kw.get("model") or "m", 10, 20)
 def act_ok(_r):
     return (10, 20)
-def boom(*a, **k):
-    raise ValueError("injected gate bug")
 
 class Chunk:
     def __init__(self, i): self.i = i; self.choices = []; self.usage = None
@@ -52,9 +52,6 @@ class AStream:
         async def g():
             for c in self._c: yield c
         return g()
-
-def run(w, is_async, **kw):
-    return asyncio.run(w(None, **kw)) if is_async else w(None, **kw)
 
 def kw_strat(stream=False):
     return st.fixed_dictionaries({
@@ -71,7 +68,7 @@ def p_passthrough(kw, is_async):
     sentinel = object()
     orig = (lambda self, *a, **k: sentinel)
     if is_async:
-        async def orig(self, *a, **k): return sentinel  # noqa: F811
+        orig = partial(async_return_value, return_value=sentinel)
     w = gate._wrap_rt(orig, est_ok, act_ok, is_async)
     # The "" / "weird/model:1" fuzz ids are unpriceable, which now triggers a DELIBERATE pricing refusal
     # (SpendGateRefused) — permitted by invariant #2 and covered by p_enforcement_propagates +
@@ -85,7 +82,7 @@ def p_passthrough(kw, is_async):
 def p_failopen_precall(kw, is_async, where):
     sentinel = object()
     if is_async:
-        async def orig(self, *a, **k): return sentinel
+        orig = partial(async_return_value, return_value=sentinel)
     else:
         orig = lambda self, *a, **k: sentinel
     est = boom if where == "est" else est_ok
@@ -180,7 +177,7 @@ def p_stream_failopen(n, where):
 def p_batch(is_async, mode):
     sentinel = object()
     if is_async:
-        async def orig(self, *a, **k): return sentinel
+        orig = partial(async_return_value, return_value=sentinel)
     else:
         orig = lambda self, *a, **k: sentinel
     def gate_fn(kw, a):

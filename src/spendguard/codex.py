@@ -59,17 +59,6 @@ def codex_hook_context_trajectory(payload):
     return {"turns": len(turn_ids) + anonymous_turns, "current": current, "model": model}
 
 
-def _state_path():
-    return config.state_path("codex")     # one naming rule for every adapter
-
-
-def _load_state():
-    """This adapter's persisted state, or its own empty shape. FOUR copies of this existed, each a bare
-    `except: return {...}` — which is also how a TRUNCATED state file (from the non-atomic writes that used
-    to sit opposite them) presented as "nothing saved yet" rather than as damage."""
-    return config.load_state("codex", {"sessions": {}, "cls": {}})
-
-
 def _save_state(st):
     """Persist this adapter's state. THREE byte-identical copies of this existed (chat, claudecode, codex),
     each non-atomic and each swallowing its own failure — so a crash mid-write left a TRUNCATED state file
@@ -77,11 +66,6 @@ def _save_state(st):
     looked exactly like one that did. config.save_state writes atomically, keeps an Emacs-style `~` backup,
     quarantines a corrupt file instead of wedging on it, and says so when it cannot write."""
     return config.save_state("codex", st)
-
-
-def load_cls():
-    """Per-session classifications {sid: {org, team, project}} — public accessor (parity with claudecode.load_cls)."""
-    return _load_state().get("cls", {})
 
 
 def _project_of(cwd):
@@ -147,7 +131,7 @@ def _digest(path):
 def update(st=None):
     """Re-digest only the session files whose mtime changed (the incremental watermark), and PRUNE cached digests
     whose session file no longer exists. Returns (state, n_changed)."""
-    st = st or _load_state()
+    st = st or config.load_state("codex", {"sessions": {}, "cls": {}})
     sess = st.setdefault("sessions", {})
     changed = 0
     sessions_dir = _sessions_dir()
@@ -273,7 +257,7 @@ def sync(dry=False):
         raise
 
 
-def show(days=None):
+def show_codex_report(days=None):
     """Local Codex USAGE-VALUE report by project, and stamp the est-value windows so `spendguard receipt` / the
     in-chat footer sum claude-code + claude-ai + codex."""
     digs = _session_digests(days)
@@ -285,7 +269,7 @@ def show(days=None):
     # stamp from ALL digests (not the day-filtered view) so the month window is complete. billed=false → est-value.
     try:
         from . import receipt
-        _cls = _load_state().get("cls", {})        # ORG → TEAM → PROJECT, the agentic classification
+        _cls = config.load_state("codex", {"sessions": {}, "cls": {}}).get("cls", {})        # ORG → TEAM → PROJECT, the agentic classification
         receipt.stamp_est_value(
             [{"day": d["day"], "spend_micros": round(d["cost"] * 1_000_000), "billed": False,
               "org": (_cls.get(d["sid"]) or {}).get("org") or "",
@@ -312,7 +296,7 @@ def show(days=None):
 def main(argv=None):
     argv = argv or []
     if "--rebuild" in argv:                        # re-bucket existing sessions after the git-root _project_of change
-        st = _load_state(); st["sessions"] = {}; _save_state(st)
+        st = config.load_state("codex", {"sessions": {}, "cls": {}}); st["sessions"] = {}; _save_state(st)
         print("codex: digest cache cleared — re-mining all sessions with repo-level (git-root) buckets")
         argv = [a for a in argv if a != "--rebuild"]
     sub = argv[0] if argv else "show"
@@ -327,4 +311,4 @@ def main(argv=None):
             pass
     if sub == "classify":
         return classify(run="--run" in argv, days=days, recls="--reclassify" in argv)
-    return show(days=days)
+    return show_codex_report(days=days)

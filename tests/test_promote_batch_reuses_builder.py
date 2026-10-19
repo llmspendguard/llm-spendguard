@@ -35,7 +35,7 @@ def main():
 
     seen = {"builds": [], "submits": []}
 
-    def _fake_build(tasks_path, model, **kw):
+    def observe_promote_reading_tasks(tasks_path, model, **kw):
         with open(tasks_path) as f:                     # capture the TASKS _promote_batch wrote (proves it feeds the builder)
             tasks = [json.loads(ln) for ln in f if ln.strip()]
         seen["builds"].append({"n": len(tasks), "kw": kw,
@@ -47,7 +47,7 @@ def main():
         return "batch_%d" % len(seen["submits"]) if submit else None
 
     _saved = (submit.build_chat_batch_jsonl, submit.guarded_submit, ui.estimate_only, gate._estimate_anthropic_requests)
-    submit.build_chat_batch_jsonl = _fake_build
+    submit.build_chat_batch_jsonl = observe_promote_reading_tasks
     submit.guarded_submit = _fake_guarded
     ui.estimate_only = lambda *a, **k: None             # silence the estimate-only UX (no side effects in the test)
     try:

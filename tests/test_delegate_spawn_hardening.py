@@ -18,10 +18,9 @@ from spendguard import antigravity_exec, codex_daemon, codex_exec, delegate_rout
 failed = []
 
 
-def check(label, condition):
-    print(f"  [{'OK' if condition else 'FAIL'}] {label}")
-    if not condition:
-        failed.append(label)
+from functools import partial
+from _script_checks import record_script_check
+check = partial(record_script_check, failed)
 
 
 def exercise_cold(module, stdout, poison_cwd, output_file=False):

@@ -11,10 +11,9 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 from spendguard import chat
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
+from functools import partial
+from _script_checks import record_script_check
+ck = partial(record_script_check, fails)
 
 # _content_toks: human text → input; assistant text+tool_use+thinking → output; tool_result → input; images → input
 i, o = chat._content_toks({"sender": "human", "content": [{"type": "text", "text": "x" * 400}]})

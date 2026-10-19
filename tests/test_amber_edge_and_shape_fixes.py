@@ -5,7 +5,7 @@
     · conv._dedup_top(events, 0) → [] (k<=0 means none; the loop appended one before the len>=k check)
     · advisor._judge_sample(per, limit=0) → [] (limit=0 asks for zero samples)
   P6 JSON-shape (a valid-but-non-object file must read as empty, not AttributeError/TypeError on .items()/led[k]=v):
-    · workdone.load_summaries · verdict_ledger.load_verdicts · resources._load_history — all return {} for a non-dict file
+    · workdone.load_summaries · verdict_ledger.load_verdicts · resources._load_resource_history — all return {} for a non-dict file
 
 Isolation: SPENDGUARD_HOME → mkdtemp before importing spendguard.
 """
@@ -14,13 +14,7 @@ import os, sys, json, tempfile, pathlib
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-amber-")
 
 from spendguard import resource_state, conv, advisor, workdone, verdict_ledger, resources   # noqa: E402
-
-
-class Checks:
-    def __init__(self): self.fails = 0
-    def ck(self, name, cond, extra=""):
-        if not cond: self.fails += 1
-        print(f"  [{'OK' if cond else 'FAIL'}] {name}{('  — ' + extra) if extra and not cond else ''}")
+from _script_checks import ScriptCheckAccumulator as Checks  # noqa: E402
 
 
 def main():
@@ -53,7 +47,7 @@ def main():
 
     _hist = resources._history_path()
     _write(_hist, [1, 2, 3])
-    chk.ck("resources._load_history → {} for a non-dict file", resources._load_history() == {})
+    chk.ck("resources._load_resource_history → {} for a non-dict file", resources._load_resource_history() == {})
 
     _repo = tempfile.mkdtemp()
     _vp = verdict_ledger.verdict_path(_repo, "amber-ledger")

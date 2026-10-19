@@ -173,8 +173,8 @@ with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as fh:
     fh.write(json.dumps({"body": {"model": REAL, "messages": MSG}}) + chr(10))
     _jsonl = fh.name
 with contextlib.redirect_stderr(io.StringIO()):
-    se = submit.estimate_jsonl_cost(_jsonl, REAL)
-check("submit.estimate_jsonl_cost: an absent cap does not mean zero output", se["out_tok"] > 0,
+    se = submit.estimate_submission_jsonl_cost(_jsonl, REAL)
+check("submit.estimate_submission_jsonl_cost: an absent cap does not mean zero output", se["out_tok"] > 0,
       str(se["out_tok"]))
 check("…and never above the model's published output ceiling", se["out_tok"] <= 64_000, str(se["out_tok"]))
 check("…and it NAMES the rung it used, so a reader can tell a measurement from a ceiling",

@@ -55,14 +55,14 @@ def gpu_by_day(since):
         from . import resources
         since_ts = datetime.datetime.strptime(since, "%Y-%m-%d").replace(tzinfo=datetime.timezone.utc).timestamp()
         bd = defaultdict(float)
-        for r in resources.gpu_rows_by_day(since_ts=since_ts):
+        for r in resources.vast_gpu_accounting_rows_by_day(since_ts=since_ts):
             bd[r["day"]] += r["cost"]
         return dict(bd), None
     except Exception as e:
         return {}, str(e)[:80]
 
 
-def admin_realtime_total(since=None):
+def admin_billed_realtime_total(since=None):
     """AUTHORITATIVE realtime LLM $ (OpenAI + Anthropic) via the providers' ADMIN USAGE APIs, priced by pricing.py
     (cache-discounted; usage×pricing — the cost APIs are unreliable). DEV-ONLY cross-check: needs OPENAI_ADMIN_KEY /
     ANTHROPIC_ADMIN_KEY. Returns the total $, or None if NEITHER admin key is set (the shipped client has none → its

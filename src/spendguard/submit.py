@@ -64,7 +64,7 @@ def _count_tokens(text, model):
 DEFAULT_OVERRUN_TOLERANCE = 1.2
 
 
-def estimate_jsonl_cost(jsonl_path, model, batch=True, avg_out_tokens=None, provider="openai", intent=None):
+def estimate_submission_jsonl_cost(jsonl_path, model, batch=True, avg_out_tokens=None, provider="openai", intent=None):
     """Project cost of a /v1/chat/completions batch .jsonl. No paid calls.
 
     Image blocks are counted by their PIXELS via content_tokens, not by the length of their base64 — measuring
@@ -320,7 +320,7 @@ def guarded_submit(jsonl_path, model, cap_dollars, batch=True, avg_out_tokens=No
     `metadata` (an OpenAI batch metadata dict, keys/values ≤64/512 chars, ≤16 pairs) is attached to the created batch.
     batch_tracker.submit_offload uses it to stamp a DETERMINISTIC offload key on the batch so a crashed-then-retried
     offload is de-duplicated against the provider's own batch list (exactly-once) instead of double-submitting."""
-    est = estimate_jsonl_cost(jsonl_path, model, batch=batch, avg_out_tokens=avg_out_tokens, intent=intent)
+    est = estimate_submission_jsonl_cost(jsonl_path, model, batch=batch, avg_out_tokens=avg_out_tokens, intent=intent)
     if submit:
         bulk_resilience.require_resilient(est["requests"], chunked=False, checkpointed=False,
                                           force=force, where="guarded_submit")
@@ -690,7 +690,7 @@ def main():
     ap.add_argument("--avg-out", type=float, help="measured avg output tokens/item (else uses max_tokens ceiling)")
     ap.add_argument("--realtime", action="store_true")
     a = ap.parse_args()
-    est = estimate_jsonl_cost(a.jsonl, a.model, batch=not a.realtime, avg_out_tokens=a.avg_out)
+    est = estimate_submission_jsonl_cost(a.jsonl, a.model, batch=not a.realtime, avg_out_tokens=a.avg_out)
     print(json.dumps(est, indent=2))
     # `is not None`, NOT truthiness: `--cap 0` is the STRICTEST cap a user can express ("refuse any spend"),
     # and `if a.cap` read it as "no cap set" and passed everything. guarded_submit() a few lines up already

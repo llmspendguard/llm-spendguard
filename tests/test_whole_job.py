@@ -9,6 +9,8 @@ of an error message. Offline: route_report, bulk_delegate, submit_chat_tasks, pr
 import os
 import sys
 import tempfile
+from functools import partial
+from _script_checks import raise_test_exception
 
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-wholejob-")
 os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
@@ -79,8 +81,7 @@ def main():
     # 3. unpriced group UNDER a budget → fail-CLOSED (never a $0-estimate slip-through). Structural: refused_code.
     # On the 'auto' path the UNPRICED signal comes from the horizon planner (usd None); route_report also raises to
     # prove the fallback path is unpriced too (deterministic either way).
-    def _raise(*a, **k):
-        raise RuntimeError("pricing unavailable")
+    _raise = partial(raise_test_exception, exception_factory=partial(RuntimeError, "pricing unavailable"))
     route_economics.route_report = _raise
     route_horizon.horizon_report = _stub_horizon(None)
     _bulk_calls.clear()
@@ -135,8 +136,8 @@ def main():
     ck(results, "collect: a not-ready batch is reported pending under its batch_id (not lost)",
        out2.get("B9", {}).get("status") == "pending")
 
-    def _raise_ds(*a, **k):
-        raise gate.SpendGateRefused("budget hit mid-collect")
+    _raise_ds = partial(raise_test_exception, exception_factory=partial(
+        gate.SpendGateRefused, "budget hit mid-collect"))
     callio.collect_chat_tasks = _raise_ds
     raised = False
     try:

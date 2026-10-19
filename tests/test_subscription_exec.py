@@ -35,7 +35,7 @@ KEY_ENV = "ANTHROPIC" + "_API_KEY"                     # the env var the child m
 seen = {}
 
 
-def fake_run(cmd, capture_output=None, text=None, timeout=None, env=None, stdin=None, cwd=None):
+def subscription_invocation_result(cmd, capture_output=None, text=None, timeout=None, env=None, stdin=None, cwd=None):
     seen["cmd"], seen["env"] = cmd, env
     out = json.dumps({"type": "result", "is_error": False, "result": "SYNTHESIZED INSIGHT",
                       "usage": {"input_tokens": 900, "output_tokens": 120}})
@@ -43,7 +43,7 @@ def fake_run(cmd, capture_output=None, text=None, timeout=None, env=None, stdin=
 
 
 shutil.which = lambda name: "/usr/local/bin/claude"
-se.subprocess.run = fake_run
+se.subprocess.run = subscription_invocation_result
 os.environ[KEY_ENV] = "sk-test-not-real"
 
 r = se.run_prompt("evidence table…", system="You are the advisor.")
@@ -88,7 +88,7 @@ del os.environ["SPENDGUARD_CLAUDE_BIN"]
 
 # ── adapters.call routing: plan first, corpus row at $0 billed, API fallback on error ──
 os.environ["SPENDGUARD_ADVISOR_EXECUTOR"] = "claude-code"
-se.subprocess.run = fake_run
+se.subprocess.run = subscription_invocation_result
 recorded = []
 calls.record_call = lambda provider, model, kind, cost, **k: recorded.append((provider, model, kind, cost))
 out = adapters.call("claude-opus-4-8", "prompt", max_tokens=400, system="sys")

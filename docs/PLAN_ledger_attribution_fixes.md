@@ -12,7 +12,7 @@ session's work — because all three inherit the same `intent` via `calls.set_co
 retracted findings in one day. Fixing #1 makes the other three answerable/auditable.
 
 ## #1 — attribution dimensions on the `calls` ledger  (the root cause; do this first)
-Files: `calls.py` (schema in `_ensure_calls_schema`; `set_context` L49; `_resolve_attribution` L313; `record_call`
+Files: `calls.py` (schema in `_ensure_call_observation_schema`; `set_context` L49; `_resolve_attribution` L313; `record_call`
 L376 + the `insert` writer L500 — BOTH INSERT paths must stay in step, they already share `_resolve_attribution`).
 
 Add **two** additive columns to the `calls` table (NULL on legacy rows), threaded through `set_context` (new optional

@@ -16,6 +16,7 @@ import os, sys, tempfile
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-redtier-")
 
 from spendguard import output_contract, claudecode, bulkgate, pricing, saas   # noqa: E402
+from _script_checks import ScriptCheckAccumulator as C  # noqa: E402
 
 # P1 fixture, inserted at MODULE SETUP (not mutated mid-main): a cross-vendor model priced under BOTH vendors at
 # DIFFERENT rates, so batch_cost(provider=…) must resolve the PINNED vendor's card, not the other. This test runs as
@@ -23,13 +24,6 @@ from spendguard import output_contract, claudecode, bulkgate, pricing, saas   # 
 _P1_MODEL = "xbatch-shared-redtier"
 pricing.PRICING[f"openai/{_P1_MODEL}"] = {"in_": 1.0, "out": 2.0, "batch_in": 0.5, "batch_out": 1.0, "provider": "openai"}
 pricing.PRICING[f"anthropic/{_P1_MODEL}"] = {"in_": 9.0, "out": 9.0, "batch_in": 4.5, "batch_out": 4.5, "provider": "anthropic"}
-
-
-class C:
-    def __init__(self): self.f = 0
-    def ck(self, name, cond, extra=""):
-        if not cond: self.f += 1
-        print(f"  [{'OK' if cond else 'FAIL'}] {name}{('  — ' + extra) if extra and not cond else ''}")
 
 
 def main():

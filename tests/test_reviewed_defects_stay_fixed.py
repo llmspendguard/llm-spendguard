@@ -28,14 +28,12 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 
 from spendguard import expected_output as eo, reconcile
 
-failures = 0
+failures = []
 
 
-def check(label, ok, extra=""):
-    global failures
-    if not ok:
-        failures += 1
-    print(f"  [{'OK' if ok else 'FAIL'}] {label}" + (f"  — {extra}" if not ok and extra else ""))
+from functools import partial
+from _script_checks import record_script_check
+check = partial(record_script_check, failures, record_before_print=True)
 
 
 def test_expected_output_never_returns_a_SILENT_zero():
@@ -411,8 +409,8 @@ check("the ask decider is agentic and lives in ONE place", callable(getattr(conv
 check("claudecode does not keep its own copy of the ask rules",
       '"tool_result" not in t[:40]' not in (SRC / "claudecode.py").read_text())
 
-# claudecode.work could not tell an unreadable session directory from a period with no work.
-check("claudecode.work distinguishes an unreadable dir from no work",
+# claudecode.show_claudecode_work could not tell an unreadable session directory from a period with no work.
+check("claudecode.show_claudecode_work distinguishes an unreadable dir from no work",
       "nothing could be READ, which is not" in (SRC / "claudecode.py").read_text())
 
 
@@ -535,5 +533,5 @@ check("the module docstring no longer promises 'never 0'", "and never 0." not in
 check("...and says to check the basis instead", "CHECK THE BASIS" in _eo.__doc__)
 
 
-print(f"\n{'[FAIL]' if failures else 'OK'} test_reviewed_defects_stay_fixed: {failures} failure(s)")
+print(f"\n{'[FAIL]' if failures else 'OK'} test_reviewed_defects_stay_fixed: {len(failures)} failure(s)")
 sys.exit(1 if failures else 0)

@@ -8,20 +8,12 @@ DELIBERATE stop from tick OR from the observer PROPAGATES, never swallowed into 
 Offline + deterministic ($0). Isolation: SPENDGUARD_HOME → tempfile.mkdtemp before importing spendguard.
 """
 import os, sys, tempfile, threading
+from functools import partial
+from _script_checks import raise_test_exception, ScriptCheckAccumulator as Checks
 
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-planloop-")
 
 from spendguard import queue_planner as qp, lane_queue as lq, gate   # noqa: E402
-
-
-class Checks:
-    def __init__(self):
-        self.fails = 0
-
-    def ck(self, label, cond, extra=""):
-        if not cond:
-            self.fails += 1
-        print(f"  [{'OK' if cond else 'FAIL'}] {label}{('  — ' + extra) if extra and not cond else ''}")
 
 
 def main():
@@ -51,8 +43,8 @@ def main():
          res2.get("ticks") == 1 and res2.get("stopped_by") == "stop_event", str(res2))
 
     # 4. a DELIBERATE stop from the observer PROPAGATES (never swallowed → 'keep polling')
-    def _refuse(_t):
-        raise gate.SpendGateRefused("budget cap hit during observe")
+    _refuse = partial(raise_test_exception, exception_factory=partial(
+        gate.SpendGateRefused, "budget cap hit during observe"))
     propagated = False
     try:
         qp.plan_loop(iterations=5, interval_s=0.05, on_tick=_refuse)

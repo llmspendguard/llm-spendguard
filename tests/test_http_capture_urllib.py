@@ -37,6 +37,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from spendguard import gate as spend_gate
 from spendguard import http_capture, budget
+from spendguard.serve import _AskHTTPHandler
 
 fails = []
 
@@ -72,12 +73,7 @@ class H(BaseHTTPRequestHandler):
         self.wfile.write(b)
 
     def do_GET(self):
-        b = json.dumps({"data": []}).encode()            # a list/reconcile read — carries no usage, never bills
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(b)))
-        self.end_headers()
-        self.wfile.write(b)
+        _AskHTTPHandler._send_json(self, 200, {"data": []})  # list/reconcile carries no usage, never bills
 
     def log_message(self, *a):
         pass

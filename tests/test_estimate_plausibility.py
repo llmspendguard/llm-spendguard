@@ -26,13 +26,10 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 import io, contextlib, json, pathlib
 from spendguard import gate, budget, pricing, receipt, config
 
-failures = 0
-def check(label, cond, extra=""):
-    global failures
-    ok = bool(cond)
-    if not ok:
-        failures += 1
-    print(f"  [{'OK' if ok else 'FAIL'}] {label}{('  — ' + extra) if extra and not ok else ''}")
+from functools import partial
+from _script_checks import record_script_check
+failures = []
+check = partial(record_script_check, failures, coerce_condition=True, record_before_print=True)
 
 
 # The rail reads limits from the synced price cache; seed one so the test never depends on a network fetch.
@@ -266,5 +263,5 @@ check("the recovered row is POSTED with the (impossible-estimate) label cleared"
 check("re-running recover is a no-op (idempotent — nothing left to recover)",
       budget.unquarantine_charge(row=_recid) == 0)
 
-print(f"\n{'[FAIL]' if failures else 'OK'} test_estimate_plausibility: {failures} failure(s)")
+print(f"\n{'[FAIL]' if failures else 'OK'} test_estimate_plausibility: {len(failures)} failure(s)")
 sys.exit(1 if failures else 0)

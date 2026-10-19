@@ -39,10 +39,10 @@ ck("guidance_text names decisions+rationale and paths/ids", "rationale" in gt.lo
 g = compaction.record_precompact({"session_id": "s1", "transcript_path": pre, "trigger": "auto"})
 ck("record_precompact returns the persisted guidance", gt == g)
 ck("event recorded with its trigger (auto)", compaction.event_summary()["by_trigger"].get("auto") == 1)
-ck("k× not measured until a post-compaction context arrives", compaction.measured_k() == (None, 0))
+ck("k× not measured until a post-compaction context arrives", compaction.measured_explicit_compaction_ratio() == (None, 0))
 
 compaction.record_sessionstart({"session_id": "s1", "source": "compact", "transcript_path": post})
-k, n = compaction.measured_k()
+k, n = compaction.measured_explicit_compaction_ratio()
 ck("real per-event k× = pre/post = 500K/45K ≈ 11.1 (measured, not a heuristic)", round(k, 1) == 11.1 and n == 1)
 compaction.record_sessionstart({"session_id": "sX", "source": "startup", "transcript_path": post})
 ck("a NON-compact SessionStart is ignored (still 1 event)", compaction.event_summary()["events"] == 1)

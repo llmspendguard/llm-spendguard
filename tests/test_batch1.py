@@ -42,11 +42,10 @@ def check(label, cond):
 def submit():
     return ac.messages.batches.create(requests=reqs)
 
-def refuses(fn):
-    try:
-        fn(); return False
-    except spend_gate.SpendGateRefused:
-        return True
+from functools import partial
+from _script_checks import callable_raises_exception
+
+refuses = partial(callable_raises_exception, exc=spend_gate.SpendGateRefused)
 
 # 1) untested intent + strict → REFUSE
 os.environ["GATE_REQUIRE_BATCH1"] = "1"

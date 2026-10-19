@@ -22,6 +22,7 @@ which the fake is not. Isolated SPENDGUARD_HOME.
 import os
 import sys
 import tempfile
+from types import SimpleNamespace
 
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-embedcap-")
 os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
@@ -29,17 +30,6 @@ os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 from spendguard import adapters, model_catalog   # noqa: E402
-
-
-class _Emb:
-    def __init__(self, index, embedding):
-        self.index = index
-        self.embedding = embedding
-
-
-class _Resp:
-    def __init__(self, data):
-        self.data = data
 
 
 class _RecordingEmbeddings:
@@ -56,7 +46,7 @@ class _RecordingEmbeddings:
         self.sizes.append(n)
         if self.ceiling is not None and n > self.ceiling:
             raise RuntimeError(self.msg or f"400 - at most {self.ceiling} requests can be in one batch")
-        return _Resp([_Emb(j, [float(int(s[1:]))] * 3) for j, s in enumerate(input)])  # "x<n>" -> [n,n,n]
+        return SimpleNamespace(data=[SimpleNamespace(index=j, embedding=[float(int(s[1:]))] * 3) for j, s in enumerate(input)])  # "x<n>" -> [n,n,n]
 
 
 class _Client:

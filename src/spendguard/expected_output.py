@@ -40,7 +40,7 @@ BASES = ("learned", "declared", "model-history", "caller-cap", "reasoning-floor"
 
 # The BATCH estimate's basis vocabulary. batch_output_estimate remaps expect()'s rungs ('measured:<intent>' /
 # 'measured:model' / 'declared' / 'reasoning-floor' / 'ceiling') for a reader who must tell a MEASUREMENT from a
-# DECLARATION from a CEILING at a glance; submit.estimate_jsonl_cost also emits 'measured avg' for a caller-supplied
+# DECLARATION from a CEILING at a glance; submit.estimate_submission_jsonl_cost also emits 'measured avg' for a caller-supplied
 # avg_out_tokens. 'measured:<intent>' carries the intent, so membership is a predicate, not a flat set — use is_batch_basis().
 BATCH_BASES = ("measured:model", "measured avg", "declared", "reasoning-floor", "ceiling")
 

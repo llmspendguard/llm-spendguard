@@ -2,7 +2,7 @@
 reconcile to (Σ attributed ≤ this, batch diff ≈ $0). Zero spend (provider GETs are free).
 
   BATCH    = the provider batch APIs   — openai_by_day() + reconcile_anthropic.cost_by_day()  (derivation source)
-  REALTIME = the ADMIN usage APIs      — report.admin_realtime_total()  (admin cross-check only; needs admin keys)
+  REALTIME = the ADMIN usage APIs      — report.admin_billed_realtime_total()  (admin cross-check only; needs admin keys)
   GPU      = vast.ai                   — report.gpu_by_day()
 
 Usage: python scripts/audit/provider_truth.py [SINCE=2026-06-01]
@@ -22,7 +22,7 @@ def main():
     anth_by_day = anth[0] if isinstance(anth, tuple) else anth
     anth_b = sum(v for d, v in anth_by_day.items() if d >= since)
 
-    rt = report.admin_realtime_total(since=since)        # AUTHORITATIVE realtime via admin keys (cross-check)
+    rt = report.admin_billed_realtime_total(since=since)        # AUTHORITATIVE realtime via admin keys (cross-check)
 
     gpu, note = report.gpu_by_day(since)
     gpu_m = report.sum_window(gpu, since)

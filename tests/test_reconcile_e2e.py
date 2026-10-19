@@ -96,7 +96,7 @@ ck("LLM loop @ future: truth 0 / captured 0 / residual 0 / no warning",
 
 # ── 4) GPU source (account-anchored, owner only) reconciles in the SAME shape ──────────────────────────────
 resources.account_gpu_total = lambda since_ts=None: 600.0   # real sig is account_gpu_total(since_ts=…); truth_total now forwards it
-resources.gpu_rows_by_day = lambda *a, **k: [{"cost": 250.0, "project": "lmm"}, {"cost": 300.0, "project": "manga2anime"}]
+resources.vast_gpu_accounting_rows_by_day = lambda *a, **k: [{"cost": 250.0, "project": "lmm"}, {"cost": 300.0, "project": "manga2anime"}]
 rg = reconcile.run(resources.GPUSource(conn={"owns_account": True}), ptmap)
 ck("GPU loop: truth 600 − captured 550 == residual 50", rg["residual"] == 50.0 and rg["captured"] == 550.0)
 ck("GPU loop: by_org closes (Healiom 250 + Ensight 300 == captured)",

@@ -13,10 +13,9 @@ from spendguard import guard, overage, pricing, saas, setup  # noqa: E402
 fails = []
 
 
-def ck(label, condition):
-    if not condition:
-        fails.append(label)
-    print(f"  [{'OK' if condition else 'FAIL'}] {label}")
+from functools import partial
+from _script_checks import record_script_check
+ck = partial(record_script_check, fails, record_before_print=True)
 
 
 def decision(requested, chosen, cls=None, basis="advisor", n=1, actual=1.0, counterfactual=3.0, saved=2.0):

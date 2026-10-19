@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import os
 import pathlib
-from concurrent.futures import ThreadPoolExecutor
+from _script_checks import collect_daemon_concurrent_turns, collect_daemon_dead_pipe_waiters
 
 from spendguard import codex_daemon
 
@@ -24,19 +24,12 @@ def test_agent_message():
 
 
 def test_concurrent_turns_are_demultiplexed():
-    daemon = new_daemon()
-    try:
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            first = pool.submit(daemon.run_warm, "first")
-            second = pool.submit(daemon.run_warm, "second")
-            results = [first.result(timeout=5), second.result(timeout=5)]
-        assert [result["text"] for result in results] == ["reply:first", "reply:second"], results
-        assert results[0]["thread"] != results[1]["thread"], results
-    finally:
-        daemon.shutdown()
+    results = collect_daemon_concurrent_turns(new_daemon, ("first", "second"), timeout=5)
+    assert [result["text"] for result in results] == ["reply:first", "reply:second"], results
+    assert results[0]["thread"] != results[1]["thread"], results
 
 
-def test_failed_turn_is_a_hard_error():
+def test_codex_failed_turn_is_error():
     daemon = new_daemon()
     try:
         result = daemon.run_warm("fail")
@@ -57,22 +50,16 @@ def test_real_notifications_racing_before_turn_response_are_replayed():
 
 
 def test_dead_pipe_wakes_every_waiter():
-    daemon = new_daemon()
-    try:
-        process = daemon.ensure_running()
-        waiters = [daemon._register_waiter(10_000 + index) for index in range(2)]
-        process.terminate()
-        process.wait(timeout=5)
-        assert all(waiter["event"].wait(2) for waiter in waiters)
-        assert all(waiter["dead"] for waiter in waiters)
-    finally:
-        daemon.shutdown()
+    awakened, dead = collect_daemon_dead_pipe_waiters(
+        new_daemon, range(10_000, 10_002), process_timeout=5, event_timeout=2)
+    assert awakened
+    assert dead
 
 
 if __name__ == "__main__":
     tests = [test_agent_message, test_concurrent_turns_are_demultiplexed,
              test_real_notifications_racing_before_turn_response_are_replayed,
-             test_failed_turn_is_a_hard_error, test_dead_pipe_wakes_every_waiter]
+             test_codex_failed_turn_is_error, test_dead_pipe_wakes_every_waiter]
     for test in tests:
         test()
         print(f"PASS {test.__name__}")

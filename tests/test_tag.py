@@ -9,6 +9,8 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 
 from spendguard import tag, budget
 from spendguard import ledger as L
+from functools import partial
+from _script_checks import seed_test_spend_event
 
 fails = []
 def ck(name, cond):
@@ -16,19 +18,14 @@ def ck(name, cond):
     if not cond:
         fails.append(name)
 
-def _insert(day, kind, cost, project, model="gpt-5.5"):
-    # seed the money-of-record (spend_events) via the production charge→event mapping (tag reads/writes it now)
-    ev = budget.charge_to_event("openai", model, kind, float(cost))
-    ev["project_primary"] = project; ev["projects"] = [project] if project else []
-    ev["occurred_at"] = ev["ts_utc"] = day + "T00:00:00+00:00"
-    ev["source"] = ev["recorded_by"] = "test"
-    ev["dedup_key"] = "test:%s:%s:%s:%s" % (day, kind, cost, project)
-    budget._ledger().record_event(ev)
+_insert = partial(seed_test_spend_event, provider="openai", model="gpt-5.5",
+                  timestamp_suffix="T00:00:00+00:00", source="test",
+                  dedup_fields=("day", "kind", "cost", "project"))
 
 # ── retag_deterministic: meta → 'llm-spendguard'; empty workload → the repo project; existing tags untouched ──
-_insert("2026-06-01", "meta", 1.0, "")          # → llm-spendguard
-_insert("2026-06-01", "batch", 2.0, "")         # → repo project (budget._project())
-_insert("2026-06-02", "batch", 3.0, "already")  # must NOT be overridden
+_insert(day="2026-06-01", kind="meta", cost=1.0, project="")          # → llm-spendguard
+_insert(day="2026-06-01", kind="batch", cost=2.0, project="")         # → repo project (budget._project())
+_insert(day="2026-06-02", kind="batch", cost=3.0, project="already")  # must NOT be overridden
 proj = budget._project()
 changed = tag.retag_deterministic()
 ck("retag_deterministic changed exactly the 2 empty rows", changed == 2)
@@ -47,12 +44,12 @@ ck("re-running is a no-op (nothing empty left)", tag.retag_deterministic() == 0)
 
 # ── ambiguous_count: untagged rows remaining (0 after the free pass when everything had context) ──
 ck("ambiguous_count is 0 after the deterministic pass", tag.ambiguous_count() == 0)
-_insert("2026-06-03", "batch", 4.0, "")         # a fresh untagged row
+_insert(day="2026-06-03", kind="batch", cost=4.0, project="")         # a fresh untagged row
 ck("ambiguous_count counts a fresh untagged row", tag.ambiguous_count() == 1)
 
 # ── move_project: case-insensitive re-tag across the ledger ──
-_insert("2026-06-04", "batch", 5.0, "Documents")
-_insert("2026-06-04", "batch", 6.0, "documents")
+_insert(day="2026-06-04", kind="batch", cost=5.0, project="Documents")
+_insert(day="2026-06-04", kind="batch", cost=6.0, project="documents")
 moved = tag.move_project("DOCUMENTS", "vision-pipeline")   # case-insensitive match
 ck("move_project re-tags both case variants (case-insensitive)", moved == 2)
 n_vp = budget._ledger().count_events(where={"project_primary": "vision-pipeline"})
