@@ -367,8 +367,8 @@ def _mcp_disable_flags():
 def _daemon_enabled():
     """Use the WARM `codex mcp-server` (codex_daemon) instead of cold-starting `codex exec` per call? Env
     SPENDGUARD_CODEX_DAEMON wins, else config advisor.codex_daemon. Default ON so agentic delegation pays the daemon
-    startup once and subsequent turns are warm; either setting can opt out. A daemon failure still falls through to
-    the cold exec path, so enabling it changes latency, never availability."""
+    startup once and subsequent turns are warm. Disabling it refuses execution: cold processes cannot honor
+    the broker's global worker cap."""
     from . import config
     v = os.getenv("SPENDGUARD_CODEX_DAEMON")
     if v is not None:
@@ -526,7 +526,7 @@ def _codex_error_status(err_text):
 
 
 def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=None, max_tokens=None,
-               sandbox="read-only", cwd=None, recycle_on_timeout=False):   # max_tokens: protocol-uniform; codex exec has no one-shot output-cap flag
+               sandbox="read-only", cwd=None, recycle_on_timeout=None):   # max_tokens: protocol-uniform; codex exec has no one-shot output-cap flag
     """→ {text, in_tok, out_tok, latency, error} from one headless plan-billed Codex run. `system` is
     prepended to the prompt (codex exec has no separate system slot for one-shot prompt mode). `model` IS
     forwarded to `codex -m` when given (e.g. gpt-5.5), so the recorded model is the one that actually ran —
@@ -557,15 +557,12 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
 
 
 def _run_prompt_in_cwd(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=None, max_tokens=None,
-                       sandbox="read-only", cwd=None, recycle_on_timeout=False):
+                       sandbox="read-only", cwd=None, recycle_on_timeout=None):
     """Execute after ``run_prompt`` has resolved and, when needed, owned the task working directory."""
     _eff = _codex_effort(reasoning)   # the effort ACTUALLY applied on this lane (Codex's own scale: 'minimal'→'none').
     #                                   Reported on the result so the ledger records what RAN, not the requested tier —
     #                                   letting a caller VERIFY the lane matched its metered fallback's applied reasoning.
-    # WARM DAEMON PATH (default-on, explicit opt-out): reuse a persistent codex mcp-server instead of cold-starting
-    # `codex exec` each call
-    # (>75s → ~5s, reliable). Falls THROUGH to the exec path on any daemon failure — degrade, never break. Stateless
-    # here (the lane carries no thread); persistent context is a higher-level feature (codex_daemon.run(thread=…)).
+    # The broker is the sole admission point. Failure must never start an uncounted cold process.
     if _daemon_enabled():
         from . import codex_daemon
         _full = (f"{system.strip()}\n\n{prompt}" if system else prompt)
@@ -573,71 +570,12 @@ def _run_prompt_in_cwd(prompt, system=None, model=None, timeout=TIMEOUT_S, reaso
         try:
             _r = codex_daemon.run_warm(_full, model=model, reasoning=reasoning, sandbox=sandbox, cwd=cwd,
                                        timeout=timeout, recycle_on_timeout=recycle_on_timeout)
-        except Exception as _e:                        # an exception must NEVER bypass the exec/API fallback below
+        except Exception as _e:
             _r = {"error": f"codex daemon raised: {str(_e)[:150]}"}
         if _r.get("text") and not _r.get("error"):
             _txt = _r["text"]
             return {"text": _txt, "in_tok": len(_full) // 4, "out_tok": len(_txt) // 4,   # est: the tool returns no usage
                     "latency": round(time.time() - _t0, 2), "effort": _eff, "error": None}
-        if _r.get("tool_error"):
-            # HARD request rejection (model not served on the plan, etc.). A cold `codex exec` would fail the same
-            # way, so return the error NOW and let the adapter fall back to the metered API + back off this
-            # (lane, model). NEVER surface the rejection text as `text` — that is the very bug that recorded a codex
-            # 400 as content. (A merely TRANSIENT daemon problem — would-not-start / dead pipe — has no tool_error,
-            # so it still falls through to one cold `codex exec` below.)
-            _derr = _r.get("error") or "codex rejected the request"
-            return {"error": _derr[:200], "status_code": _codex_error_status(_derr)}
-    exe = _bin()
-    if not exe:
-        return {"error": "codex CLI not found"}
-    full = (f"{system.strip()}\n\n{prompt}" if system else prompt)
-    from . import config
-    env = config.lane_exec_env(exe)   # strip EVERY provider's metered key and expose the CLI's co-located runtime; a codex
-    #                                   lane must never carry ANTHROPIC_API_KEY (Claude tokens) or any other metered key
-    t0 = time.time()
-    out_file = None
-    try:
-        fd, out_file = tempfile.mkstemp(prefix="spendguard-codex-", suffix=".txt")
-        os.close(fd)
-        cmd = [exe, "exec", "--json", "--skip-git-repo-check", "--output-last-message", out_file]
-        if sandbox == "workspace-write":
-            # Automatic review covers ALL gated actions, including shell commands and MCP tools, within
-            # workspace-write. The flag implies that sandbox and conflicts with -s/--sandbox.
-            cmd += [CODEX_AGENTIC_APPROVAL_FLAG]
-        else:
-            cmd += ["-s", sandbox]                         # read-only: explicit sandbox, no approval policy needed
-            cmd += _mcp_disable_flags()                    # one-shot comprehension avoids MCP startup and leaks
-        cmd += _plugin_disable_flags()
-        if _eff:
-            cmd += ["-c", f"model_reasoning_effort={_eff}"]   # Codex's OWN scale (none|low|…); 'minimal'→'none' (computed above)
-        if model:
-            cmd += ["-m", model.split(":", 1)[-1]]     # forward the requested id; a bad one fails → API fallback
-        cmd += ["--", full]      # `--` end-of-options: a prompt/system beginning with '-' is a positional, not a flag
-        try:
-            if sandbox == "workspace-write":
-                r = _run_cold_codex_with_reaper(cmd, timeout=timeout, env=env, cwd=cwd)
-            else:
-                r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env,
-                                   stdin=subprocess.DEVNULL, cwd=cwd)
-        except subprocess.TimeoutExpired:
-            return {"error": f"codex lane timeout ({timeout}s)"}
-        except Exception as e:
-            return {"error": str(e)[:200]}
-        if r.returncode != 0:
-            _cerr = (r.stderr or r.stdout or "codex exited non-zero").strip()
-            return {"error": _cerr[:200], "status_code": _codex_error_status(_cerr)}
-        try:
-            text = open(out_file).read().strip()
-        except Exception:
-            text = ""
-        if not text:
-            return {"error": "codex produced no final message"}
-        in_tok, out_tok = _usage_from_events(r.stdout)
-        return {"text": text, "in_tok": in_tok, "out_tok": out_tok,
-                "latency": time.time() - t0, "effort": _eff, "error": None}
-    finally:
-        if out_file:
-            try:
-                os.unlink(out_file)
-            except Exception:
-                pass
+        _derr = _r.get("error") or "codex warm admission returned no final message"
+        return {"error": _derr, "status_code": _codex_error_status(_derr)}
+    return {"error": "codex broker admission disabled; uncounted cold execution refused"}

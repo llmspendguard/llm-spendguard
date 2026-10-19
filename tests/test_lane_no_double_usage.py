@@ -5,6 +5,7 @@ that structural guarantee; every subprocess lane builds its child env from it. O
 captures the env the codex lane hands its subprocess — no real subprocess spawn, no LLM, no network.
 """
 import os
+import subprocess
 import sys
 import tempfile
 
@@ -45,30 +46,28 @@ fails += ck("...but ANTHROPIC_API_KEY is STILL stripped (Claude tokens still pro
 fails += ck("...and OPENAI_API_KEY is still stripped", "OPENAI_API_KEY" not in zenv)
 
 print("\n-- FUNCTIONAL: the codex lane hands its subprocess a scrubbed env (captured at the subprocess boundary) --")
-from spendguard import codex_exec                                                      # noqa: E402
-
-
-class _FakeCompleted:
-    returncode, stdout, stderr = 0, "", ""
+from spendguard import codex_daemon, warm_stdio_daemon                                  # noqa: E402
 
 
 captured = {}
-_o_run, _o_bin, _o_daemon = codex_exec.subprocess.run, codex_exec._bin, codex_exec._daemon_enabled
+_o_run = warm_stdio_daemon.subprocess.Popen
+worker = codex_daemon._CodexDaemon()
+worker._spawn_cmd = lambda: [sys.executable]  # verified local executable; Popen is intercepted below
 try:
-    codex_exec._daemon_enabled = lambda: False        # force the exec path, not the warm daemon
-    codex_exec._bin = lambda: "/bin/true"             # a resolvable exe so run_prompt reaches subprocess.run
-
     def _cap_run(cmd, **kw):
-        captured["env"] = dict(kw.get("env") or {})
-        return _FakeCompleted()
-    codex_exec.subprocess.run = _cap_run
-    codex_exec.run_prompt("hi", model="openai:gpt-5.5")   # ANTHROPIC_API_KEY is in os.environ (seeded above)
+        captured.update(kw)
+        raise OSError()  # stop before protocol startup; no live process is created
+    warm_stdio_daemon.subprocess.Popen = _cap_run
+    worker._spawn()
     cenv = captured.get("env", {})
+    fails += ck("warm subprocess boundary was reached", bool(cenv))
     fails += ck("the env actually passed to the codex subprocess has NO ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY" not in cenv)
     fails += ck("...and NO OPENAI_API_KEY (it rides the ChatGPT plan login, not the metered key)", "OPENAI_API_KEY" not in cenv)
     fails += ck("...yet still carries the non-key vars it needs", cenv.get("SG_NONKEY_MARKER") == "keepme")
+    fails += ck("warm subprocess stdin is a private RPC pipe", captured.get("stdin") is subprocess.PIPE)
+    fails += ck("warm subprocess uses its fixed safe cwd", captured.get("cwd") == warm_stdio_daemon._SAFE_CWD)
 finally:
-    codex_exec.subprocess.run, codex_exec._bin, codex_exec._daemon_enabled = _o_run, _o_bin, _o_daemon
+    warm_stdio_daemon.subprocess.Popen = _o_run
 
 for k in list(_KEYS) + ["SG_NONKEY_MARKER"]:
     os.environ.pop(k, None)

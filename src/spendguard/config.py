@@ -30,6 +30,9 @@ CONFIG_JSON = HOME / "config.json"             # operational (non-secret) config
 KEYS_ENV = HOME / "keys.env"                    # SECRETS: LLM/compute/org keys (KEY=value lines), loaded at import
 
 CODEX_POOL_SIZE_DEFAULT = 3
+CODEX_DAEMON_MAX_WAITERS_DEFAULT = 32
+CODEX_DAEMON_REQUEST_READ_TIMEOUT_DEFAULT_S = 5.0
+CODEX_DAEMON_RECYCLE_ON_TIMEOUT_DEFAULT = True
 CODEX_POOL_ISOLATE_DEFAULT = False
 CODEX_POOL_HEALTH_INTERVAL_DEFAULT_S = 25.0
 CODEX_POOL_RESPAWN_BACKOFF_DEFAULT_S = 1.0
@@ -589,6 +592,24 @@ def codex_daemon_pool_settings():
         raise ValueError("advisor.codex_daemon_pool_respawn_backoff_s must be positive and finite")
     return {"size": size, "isolate_homes": bool(isolated), "health_interval_s": health_interval_s,
             "respawn_backoff_s": respawn_backoff_s}
+
+
+def codex_daemon_admission_settings():
+    """Bound admission and enable deadline recovery; environment overrides advisor settings."""
+    max_waiters = int(os.getenv("SPENDGUARD_CODEX_DAEMON_MAX_WAITERS", _cfg_get(
+        "advisor", "codex_daemon_max_waiters", CODEX_DAEMON_MAX_WAITERS_DEFAULT)))
+    read_timeout = float(os.getenv("SPENDGUARD_CODEX_DAEMON_REQUEST_READ_TIMEOUT_S", _cfg_get(
+        "advisor", "codex_daemon_request_read_timeout_s", CODEX_DAEMON_REQUEST_READ_TIMEOUT_DEFAULT_S)))
+    if max_waiters < 0:
+        raise ValueError("advisor.codex_daemon_max_waiters must be nonnegative")
+    if not math.isfinite(read_timeout) or read_timeout <= 0:
+        raise ValueError("advisor.codex_daemon_request_read_timeout_s must be positive and finite")
+    recycle = os.getenv("SPENDGUARD_CODEX_DAEMON_RECYCLE_ON_TIMEOUT", _cfg_get(
+        "advisor", "codex_daemon_recycle_on_timeout", CODEX_DAEMON_RECYCLE_ON_TIMEOUT_DEFAULT))
+    if isinstance(recycle, str):
+        recycle = recycle.lower() in CODEX_POOL_TRUE_VALUES
+    return {"max_waiters": max_waiters, "request_read_timeout_s": read_timeout,
+            "recycle_on_timeout": bool(recycle)}
 
 
 def _codex_pool_file_store_toml(source_text):

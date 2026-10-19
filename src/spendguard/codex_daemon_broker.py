@@ -31,10 +31,15 @@ def _socket_path():
     return path if path.is_absolute() else config.HOME / path
 
 
-def _receive_exact(connection, size):
+def _receive_exact(connection, size, deadline=None):
     chunks = []
     remaining = size
     while remaining:
+        if deadline is not None:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise TimeoutError("codex broker request-read deadline expired")
+            connection.settimeout(left)
         chunk = connection.recv(remaining)
         if not chunk:
             raise ConnectionError("broker connection closed mid-frame")
@@ -43,11 +48,11 @@ def _receive_exact(connection, size):
     return b"".join(chunks)
 
 
-def _receive_frame(connection):
-    size = _FRAME_HEADER.unpack(_receive_exact(connection, _FRAME_HEADER.size))[0]
+def _receive_frame(connection, deadline=None):
+    size = _FRAME_HEADER.unpack(_receive_exact(connection, _FRAME_HEADER.size, deadline))[0]
     if size > _MAX_FRAME_BYTES:
         raise ValueError("broker frame exceeds configured limit")
-    value = json.loads(_receive_exact(connection, size).decode("utf-8"))
+    value = json.loads(_receive_exact(connection, size, deadline).decode("utf-8"))
     if not isinstance(value, dict):
         raise ValueError("broker frame is not an object")
     return value
@@ -70,6 +75,8 @@ class _CodexDaemonBroker:
         self._lock_context = None
         self._listener = None
         self._stopping = threading.Event()
+        self._handler_slots = threading.BoundedSemaphore(
+            config.codex_daemon_pool_settings()["size"] + config.codex_daemon_admission_settings()["max_waiters"])
         if hasattr(os, "register_at_fork"):
             os.register_at_fork(after_in_child=self._reset_in_forked_child)
 
@@ -84,6 +91,8 @@ class _CodexDaemonBroker:
         self._lock_context = None
         self._listener = None
         self._stopping = threading.Event()
+        self._handler_slots = threading.BoundedSemaphore(
+            config.codex_daemon_pool_settings()["size"] + config.codex_daemon_admission_settings()["max_waiters"])
 
     def _become_owner_if_available(self):
         pid = os.getpid()
@@ -114,7 +123,7 @@ class _CodexDaemonBroker:
                 if listener is not None:
                     listener.close()
                 lock_context.__exit__(None, None, None)
-                config.warn_once("[spendguard] codex daemon broker: owner socket unavailable (%s); degrading locally"
+                config.warn_once("[spendguard] codex daemon broker: owner socket unavailable (%s); refusing local fallback"
                                  % str(exc)[:160])
                 return False
             self._owner_pid = pid
@@ -133,27 +142,53 @@ class _CodexDaemonBroker:
                 continue
             except OSError:
                 break
-            threading.Thread(target=self._serve_one, args=(connection,), daemon=True).start()
+            if not self._handler_slots.acquire(blocking=False):
+                with contextlib.closing(connection):
+                    try:
+                        connection.settimeout(config.codex_daemon_admission_settings()["request_read_timeout_s"])
+                        _send_frame(connection, {"version": _PROTOCOL_VERSION,
+                                                "result": {"error": "codex broker waiter limit reached"}})
+                    except OSError:
+                        pass
+                continue
+            try:
+                threading.Thread(target=self._serve_one, args=(connection,), daemon=True).start()
+            except BaseException:
+                connection.close()
+                self._handler_slots.release()
+                raise
 
     def _serve_one(self, connection):
         with contextlib.closing(connection):
             try:
-                request = _receive_frame(connection)
+                read_timeout = config.codex_daemon_admission_settings()["request_read_timeout_s"]
+                request = _receive_frame(connection, time.monotonic() + read_timeout)
+                connection.settimeout(read_timeout)
                 if request.get("version") != _PROTOCOL_VERSION or request.get("method") != "run_warm":
                     _send_frame(connection, {"version": _PROTOCOL_VERSION, "protocol_error": True})
                     return
                 kwargs = request.get("kwargs")
                 if not isinstance(kwargs, dict):
                     raise ValueError("run_warm kwargs are not an object")
+                connection.settimeout(None)
                 result = self._local.run_warm(**kwargs)
+                connection.settimeout(read_timeout)
                 _send_frame(connection, {"version": _PROTOCOL_VERSION, "result": result})
+            except ValueError as exc:
+                connection.settimeout(config.codex_daemon_admission_settings()["request_read_timeout_s"])
+                _send_frame(connection, {"version": _PROTOCOL_VERSION,
+                                         "result": {"error": f"codex broker invalid request refused: {exc}"}})
             except Exception as exc:
-                config.warn_once("[spendguard] codex daemon broker: request failed (%s); client will degrade locally"
+                config.warn_once("[spendguard] codex daemon broker: request failed (%s); refusing request"
                                  % str(exc)[:160])
                 try:
-                    _send_frame(connection, {"version": _PROTOCOL_VERSION, "protocol_error": True})
+                    connection.settimeout(config.codex_daemon_admission_settings()["request_read_timeout_s"])
+                    _send_frame(connection, {"version": _PROTOCOL_VERSION,
+                                            "result": {"error": f"codex broker request refused: {exc}"}})
                 except Exception:
                     pass
+            finally:
+                self._handler_slots.release()
 
     def _call_owner(self, kwargs):
         deadline = time.monotonic() + _CONNECT_TIMEOUT_S
@@ -173,6 +208,9 @@ class _CodexDaemonBroker:
                     return None
                 result = response["result"]
                 return result if isinstance(result, dict) else None
+            except ValueError as exc:
+                connection.close()
+                return {"error": f"codex broker invalid response refused: {exc}"}
             except Exception:
                 try:
                     connection.close()
@@ -183,21 +221,22 @@ class _CodexDaemonBroker:
                 time.sleep(min(0.02, max(0.0, deadline - time.monotonic())))
 
     def broker_run_warm(self, prompt, model=None, thread=None, reasoning=None, sandbox="read-only", cwd=None,
-                        timeout=None, recycle_on_timeout=False):
+                        timeout=None, recycle_on_timeout=None):
         kwargs = {"prompt": prompt, "model": model, "thread": thread, "reasoning": reasoning,
                   "sandbox": sandbox, "cwd": os.fspath(cwd) if cwd is not None else None, "timeout": timeout,
                   "recycle_on_timeout": recycle_on_timeout}
         if self._become_owner_if_available():
             return self._local.run_warm(**kwargs)
         result = self._call_owner(kwargs)
-        return result if result is not None else self._local.run_warm(**kwargs)
+        return result if result is not None else {"error": "codex broker unavailable; uncounted local fallback refused"}
 
     def broker_ensure_running(self):
         if self._become_owner_if_available():
             return self._local.ensure_running()
         if self.broker_running():
             return True
-        return self._local.ensure_running()
+        config.warn_once("[spendguard] codex broker unavailable; uncounted local startup refused")
+        return False
 
     def broker_running(self):
         if self._owner_pid == os.getpid():

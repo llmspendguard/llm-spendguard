@@ -3,8 +3,8 @@
   A spend/trust: guard.record_saving warns (not silent) on a failed write; ledger_sync._warn_fetch surfaces a
     failed provider pull (not a silent $0); reconcile.completeness does NOT call a $0-truth source with a residual
     "reconciled"; tag.estimate_llm_retag keeps a small batch's estimate honestly nonzero.
-  B lane/exec: subscription lane strips ANTHROPIC_API_KEY + AUTH_TOKEN + BASE_URL from the child; codex lane puts
-    `--` before the prompt so a '-'-prefixed prompt is a positional, not a flag.
+  B lane/exec: subscription lane strips ANTHROPIC_API_KEY + AUTH_TOKEN + BASE_URL from the child; codex lane
+    forwards a '-'-prefixed prompt verbatim through warm admission, never as a command flag.
   C crash-guards: lambda_adapter._dph / sync._rate_or safe on non-numeric; resources.instances returns [] on an
     error payload (not the payload itself).
 
@@ -23,6 +23,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 from spendguard import guard, ledger_sync, reconcile, tag, resources, config   # noqa: E402
 from spendguard import lambda_adapter as la, sync                              # noqa: E402
 from spendguard import subscription_exec as se, codex_exec as ce               # noqa: E402
+from spendguard import codex_daemon                                          # noqa: E402
 
 fails = 0
 warns = []
@@ -76,13 +77,13 @@ ck("subscription lane strips API_KEY + AUTH_TOKEN + BASE_URL from the child env"
    str([k for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL") if k in cap.get("env", {})]))
 
 cap2 = {}
-ce._bin = lambda: "codex"
-ce.subprocess.run = lambda cmd, **kw: (cap2.__setitem__("cmd", list(cmd)),
-                                       types.SimpleNamespace(returncode=1, stdout="", stderr=""))[1]
-ce.run_prompt("-weird prompt")
-_cmd = cap2.get("cmd", [])
-ck("codex cmd puts `--` immediately before the prompt (a '-'-prefixed prompt is a positional)",
-   "--" in _cmd and _cmd[-2:] == ["--", "-weird prompt"], str(_cmd[-4:]))
+CODEX_FLAG_PREFIXED_PROMPT = "-weird prompt"
+ce._daemon_enabled = lambda: True
+codex_daemon.run_warm = lambda prompt, **kw: (cap2.__setitem__("prompt", prompt),
+                                             {"text": "accepted", "error": None})[1]
+ce.run_prompt(CODEX_FLAG_PREFIXED_PROMPT)
+ck("codex forwards a flag-prefixed prompt verbatim through warm admission",
+   cap2.get("prompt") == CODEX_FLAG_PREFIXED_PROMPT)
 
 # ── C: crash-guards ──────────────────────────────────────────────────────────────────────────────────────────
 ck("_dph is safe on non-numeric / None / empty, correct on a number",

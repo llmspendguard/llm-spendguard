@@ -54,7 +54,6 @@ def exercise_cold(module, stdout, poison_cwd, output_file=False):
 print("-- every cold provider run disconnects stdin and uses a removed neutral cwd --")
 poison = os.path.join(tempfile.gettempdir(), "SPENDGUARD-AMBIENT-CWD-POISON")
 cases = [
-    (codex_exec, "", True),
     (antigravity_exec, json.dumps({"status": "SUCCESS", "response": "answer", "usage": {}}), False),
     (subscription_exec, json.dumps({"result": "answer", "usage": {"input_tokens": 1, "output_tokens": 1}}), False),
     (kimi_exec, json.dumps({"role": "assistant", "content": "answer"}), False),

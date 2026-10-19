@@ -104,14 +104,17 @@ with tempfile.TemporaryDirectory() as config_home:
     root.children.side_effect = partial(reaper_fixture_descendants, observed, owned)
     child.communicate.side_effect = partial(reaper_fixture_communicate, observed)
     with patch.dict(os.environ, {"CODEX_HOME": config_home}), \
-            patch.object(ce, "_daemon_enabled", return_value=False), \
             patch.object(ce, "_bin", return_value=REAPER_TEST_COMMAND), \
             patch.object(ce, "_plugin_disable_flags", return_value=[]), \
             patch.object(ce.subprocess, "Popen", side_effect=partial(reaper_fixture_spawn, child, REAPER_TEST_ANSWER)), \
             patch.object(psutil, "Process", return_value=root), \
             patch.object(ce, "_reap_captured_codex_stdio", side_effect=RuntimeError("offline cleanup fault")) as cleanup:
-        result = ce._run_prompt_in_cwd("offline fixture", sandbox="workspace-write", cwd=config_home)
-        reaper_assert_safety("reaper exception preserves successful delegation result", result.get("text") == REAPER_TEST_ANSWER)
+        with tempfile.TemporaryDirectory() as output_home:
+            output_path = str(Path(output_home) / "answer")
+            result = ce._run_cold_codex_with_reaper(
+                [REAPER_TEST_COMMAND, "--output-last-message", output_path],
+                timeout=REAPER_TEST_WAIT_S, env={"CODEX_HOME": config_home}, cwd=config_home)
+        reaper_assert_safety("reaper exception preserves successful utility result", result.returncode == 0)
         reaper_assert_safety("run captures descendant identities before cleanup", cleanup.call_args.args[0] == {owned.pid: REAPER_TEST_BIRTH})
 
 print("OK test_codex_stdio_reaper")
