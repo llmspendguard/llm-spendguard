@@ -32,6 +32,8 @@ KEYS_ENV = HOME / "keys.env"                    # SECRETS: LLM/compute/org keys 
 CODEX_POOL_SIZE_DEFAULT = 3
 CODEX_POOL_ISOLATE_DEFAULT = False
 CODEX_POOL_HEALTH_INTERVAL_DEFAULT_S = 25.0
+CODEX_POOL_RESPAWN_BACKOFF_DEFAULT_S = 1.0
+CODEX_POOL_RESPAWN_BACKOFF_MULTIPLIER = 2
 CODEX_POOL_DIRECTORY = "codex-daemon-workers"
 CODEX_POOL_WORKER_PREFIX = "worker-"
 CODEX_POOL_AUTH_FILENAME = "auth.json"
@@ -581,7 +583,12 @@ def codex_daemon_pool_settings():
         _cfg_get("advisor", "codex_daemon_pool_health_interval_s", CODEX_POOL_HEALTH_INTERVAL_DEFAULT_S)))
     if not math.isfinite(health_interval_s) or health_interval_s <= 0:
         raise ValueError("advisor.codex_daemon_pool_health_interval_s must be positive and finite")
-    return {"size": size, "isolate_homes": bool(isolated), "health_interval_s": health_interval_s}
+    respawn_backoff_s = float(_cfg_get("advisor", "codex_daemon_pool_respawn_backoff_s",
+                                     CODEX_POOL_RESPAWN_BACKOFF_DEFAULT_S))
+    if not math.isfinite(respawn_backoff_s) or respawn_backoff_s <= 0:
+        raise ValueError("advisor.codex_daemon_pool_respawn_backoff_s must be positive and finite")
+    return {"size": size, "isolate_homes": bool(isolated), "health_interval_s": health_interval_s,
+            "respawn_backoff_s": respawn_backoff_s}
 
 
 def _codex_pool_file_store_toml(source_text):

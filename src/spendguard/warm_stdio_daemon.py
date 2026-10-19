@@ -31,6 +31,7 @@ uniform warm-lane contract, each daemon its own body — not a collision.
 import fcntl
 import itertools
 import json
+import math
 import os
 import select
 import subprocess
@@ -73,6 +74,7 @@ class _WarmStdioJsonRpcDaemon:
         self._spawn_lock = threading.Lock()    # serialises SPAWNS (a slow handshake must not run under _state_lock)
         self._write_lock = threading.Lock()    # serialises stdin WRITES only — never held while awaiting a response
         self._proc = None
+        self._retired_from_pool = False
         self._idle_timer = None
         self._last_activity = 0.0
         self._waiters = {}                      # rpc_id -> request waiter
@@ -148,11 +150,31 @@ class _WarmStdioJsonRpcDaemon:
 
     # ── the one writer + the one reader ───────────────────────────────────────────────────────────────────────
     def _write_rpc(self, p, obj):
-        """Write one JSON-RPC message under the write lock (held only for the write, never across a response wait)."""
+        """Bound lock acquisition and partial writes to the unbuffered child pipe."""
+        budget = float(config._cfg_get("advisor", "lane_write_timeout_s", self.STARTUP_TIMEOUT_S))
+        if not math.isfinite(budget) or budget <= 0:
+            raise ValueError("advisor.lane_write_timeout_s must be positive and finite")
+        write_deadline = time.monotonic() + budget
         line = (json.dumps(obj) + "\n").encode("utf-8")
-        with self._write_lock:
-            p.stdin.write(line)
-            p.stdin.flush()
+        if not self._write_lock.acquire(timeout=budget):
+            raise TimeoutError("warm stdin write lock deadline expired")
+        try:
+            descriptor = p.stdin.fileno()
+            os.set_blocking(descriptor, False)
+            pending = memoryview(line)
+            while pending:
+                remaining = write_deadline - time.monotonic()
+                if remaining <= 0 or not select.select([], [descriptor], [], remaining)[1]:
+                    raise TimeoutError("warm stdin write deadline expired")
+                try:
+                    written = os.write(descriptor, pending)
+                except (BlockingIOError, InterruptedError):
+                    continue
+                if not written:
+                    raise BrokenPipeError("warm stdin closed during write")
+                pending = pending[written:]
+        finally:
+            self._write_lock.release()
 
     def _route_notification(self, msg):
         """Consume one server message that is NOT a response to our request — i.e. anything carrying a ``method``:
@@ -273,15 +295,24 @@ class _WarmStdioJsonRpcDaemon:
         """The live server, (re)started if absent or dead. Spawns are SERIALISED under _spawn_lock with a re-check,
         so two concurrent callers never create two servers (one would leak)."""
         with self._state_lock:
+            if self._retired_from_pool:
+                return None
             if self._proc is not None and self._proc.poll() is None:
                 return self._proc
         with self._spawn_lock:                        # only one spawner at a time
             with self._state_lock:                    # re-check: another thread may have spawned while we waited
+                if self._retired_from_pool:
+                    return None
                 if self._proc is not None and self._proc.poll() is None:
                     return self._proc
             p = self._spawn()                         # slow handshake — outside _state_lock, inside _spawn_lock
             with self._state_lock:
+                retired = self._retired_from_pool
                 self._proc = p
+            if retired:
+                # Retirement may race the slow handshake; use the normal kill/reap path.
+                self.shutdown()
+                return None
             return p
 
     def running(self):
