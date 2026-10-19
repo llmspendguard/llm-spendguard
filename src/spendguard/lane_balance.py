@@ -31,7 +31,7 @@ ROUTE_EST_IN_DEFAULT = 2000
 ROUTE_EST_OUT_DEFAULT = 500
 
 
-def _util_ratio_cfg(name, default):
+def _utilization_ratio_setting(name, default):
     # Delegates to the ONE advisor-float reader (config.advisor_float), which uses `v is None` (NOT `v or default`) so
     # an explicit 0 is honored — a configured margin/ratio of 0 must not be silently replaced by the default.
     return config.advisor_float(name, default)
@@ -73,17 +73,17 @@ def lane_utilization():
     subscription plans are HOT and which are IDLE.
 
     Returns {"lanes": [{lane, provider, est_value_month, plan_fee, utilization, fee_exact, state, fresh}], "total_fee",
-    "fee_is_default", "asof"}, state ∈ {idle, warm, hot}. Reuses receipt._cache_path / _rewindow / _plan_usd so the
+    "fee_is_default", "asof"}, state ∈ {idle, warm, hot}. Reuses receipt._receipt_aggregate_cache_path / _rewindow / _plan_usd so the
     figures equal the receipt's (and inherit its stale-cache guard: `fresh=False` means the number could be a frozen
     earlier-month value and must be refreshed, never shown as current)."""
     from . import receipt
     import json
     try:
-        data = json.loads(receipt._cache_path().read_text()).get("est_value_by_source") or {}
+        data = json.loads(receipt._receipt_aggregate_cache_path().read_text()).get("est_value_by_source") or {}
     except Exception:
         data = {}                                         # no cache yet → every lane reads as idle (nothing recorded)
     total_fee, fee_default = receipt._plan_usd()
-    idle_r, hot_r = _util_ratio_cfg("lane_idle_ratio", IDLE_RATIO_DEFAULT), _util_ratio_cfg("lane_hot_ratio", HOT_RATIO_DEFAULT)
+    idle_r, hot_r = _utilization_ratio_setting("lane_idle_ratio", IDLE_RATIO_DEFAULT), _utilization_ratio_setting("lane_hot_ratio", HOT_RATIO_DEFAULT)
     # LANE -> provider from the ONE source of truth (adapters._LANES); the est-value SOURCE string is the lane name.
     lane_prov = {lane: prov for prov, (lane, _mod) in adapters._LANES.items()}
     lanes = sorted(lane_prov)
@@ -1554,7 +1554,7 @@ def route_decision(intent, model, reactive=False):
     _cr, su, spec, slane = ranked[0]
     if reactive:
         return spec, f"primary lane {primary_lane} FAILED → {spec} on {slane} ({su:.1f}x used)"
-    margin = _util_ratio_cfg("lane_balance_margin", 0.5)
+    margin = _utilization_ratio_setting("lane_balance_margin", 0.5)
     if pu - su >= margin:
         return spec, f"balance: {primary_lane} {pu:.1f}x vs idle {slane} {su:.1f}x → {spec} (fill idle plan)"
     return None, f"plans already balanced ({primary_lane} {pu:.1f}x vs best {slane} {su:.1f}x, margin {margin})"

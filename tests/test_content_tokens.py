@@ -186,14 +186,14 @@ from spendguard import gate, submit
 for name, fn in (("gate._content_tokens", gate._content_tokens),
                  ("gate._estimate_openai_jsonl", gate._estimate_openai_jsonl),
                  ("gate._estimate_anthropic_requests", gate._estimate_anthropic_requests),
-                 ("submit.estimate_jsonl_cost", submit.estimate_jsonl_cost)):
+                 ("submit.estimate_submission_jsonl_cost", submit.estimate_submission_jsonl_cost)):
     s = inspect.getsource(fn)
     check(f"{name} no longer json.dumps content into a token count",
           "json.dumps(c)" not in s and "json.dumps(content" not in s)
 check("gate._content_tokens delegates to content_tokens",
       "content_tokens" in inspect.getsource(gate._content_tokens))
-check("submit.estimate_jsonl_cost delegates to content_tokens",
-      "content_tokens" in inspect.getsource(submit.estimate_jsonl_cost))
+check("submit.estimate_submission_jsonl_cost delegates to content_tokens",
+      "content_tokens" in inspect.getsource(submit.estimate_submission_jsonl_cost))
 
 print("-- end to end through the real gate estimators --")
 line = json.dumps({"body": {"model": "gpt-5.5", "max_tokens": 100,
@@ -220,7 +220,7 @@ check("Anthropic batch requests: the panel adds exactly (448·448)/750",
 with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as fh:
     fh.write(line + "\n")
     jsonl = fh.name
-sest = submit.estimate_jsonl_cost(jsonl, "gpt-5.5")
+sest = submit.estimate_submission_jsonl_cost(jsonl, "gpt-5.5")
 check("the submit gate agrees with the in-process gate EXACTLY (one counter, one answer)",
       sest["in_tok"] == est["in_tok"], f"{sest['in_tok']:,} vs {est['in_tok']:,}")
 check("and reports that the count included images", sest.get("media") is True)

@@ -33,7 +33,7 @@ cache = {"est_value_by_source": {
     "gemini":      {"by_day": {today: 20.0},   "asof": today},
     # "zai-coding" (and "kimi-code") intentionally ABSENT — a never-used lane must read as idle, not crash
 }}
-p = receipt._cache_path()
+p = receipt._receipt_aggregate_cache_path()
 p.parent.mkdir(parents=True, exist_ok=True)
 p.write_text(json.dumps(cache))
 

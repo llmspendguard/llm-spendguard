@@ -55,7 +55,7 @@ def gpu_by_day(since):
         from . import resources
         since_ts = datetime.datetime.strptime(since, "%Y-%m-%d").replace(tzinfo=datetime.timezone.utc).timestamp()
         bd = defaultdict(float)
-        for r in resources.gpu_rows_by_day(since_ts=since_ts):
+        for r in resources.vast_gpu_accounting_rows_by_day(since_ts=since_ts):
             bd[r["day"]] += r["cost"]
         return dict(bd), None
     except Exception as e:

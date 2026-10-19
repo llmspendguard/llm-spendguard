@@ -68,7 +68,7 @@ def project_of(label, label_map=None):
 
 def instances():
     # Live vast.ai fetch. NEVER raises: a network/API flake returns [] so every caller (snapshot, _all_instances,
-    # gpu_rows_by_day, sync, crosscheck) falls back to RECORDED HISTORY instead of erroring out. A transient outage
+    # vast_gpu_accounting_rows_by_day, sync, crosscheck) falls back to RECORDED HISTORY instead of erroring out. A transient outage
     # must not zero the GPU set — that's what produced false `server_only`/in_sync=False in the cross-check.
     try:
         d = _vast_get("instances/")
@@ -83,7 +83,7 @@ def _history_path():
     return config.HOME / "resources_history.json"
 
 
-def _load_history():
+def _load_resource_history():
     try:
         data = json.loads(_history_path().read_text())
     except Exception:
@@ -98,7 +98,7 @@ def record_instance_history():
     instances stay reconstructable per-day. vast.ai exposes NO per-day consumption AND drops destroyed instances
     from the API (the invoice/CSV export is top-ups only) — so we must persist their state while they're live.
     Idempotent (latest state per id). Runs on every `saas sync` + can be cron'd (`resources snapshot`)."""
-    hist = _load_history()
+    hist = _load_resource_history()
     now = time.time()
     rec = 0
     for i in instances():
@@ -122,7 +122,7 @@ def _all_instances():
     their last snapshot. Live state overrides history; a destroyed instance's runtime is capped at last_seen."""
     live = {str(i.get("id")): i for i in instances() if i.get("id")}
     merged = []
-    hist = _load_history()
+    hist = _load_resource_history()
     for iid, h in hist.items():
         if iid in live:
             continue
@@ -191,7 +191,7 @@ def _month_start_ts():
     return gpu_port.month_start_ts()                       # shared default window (all GPU providers)
 
 
-def gpu_rows_by_day(since_ts=None, now=None, label_map=None):
+def vast_gpu_accounting_rows_by_day(since_ts=None, now=None, label_map=None):
     """Per (project, gpu, day) GPU cost — each instance's cost SPLIT across the UTC days it ran (dph × hours that
     day), not lumped on today. Attributed by label → project. since_ts defaults to the start of this month."""
     now = now or time.time()
@@ -241,9 +241,9 @@ def account_gpu_total(since_ts=None):
                      if not i.get("is_credit") and (i.get("timestamp") or 0) >= since_ts), 2)
 
 
-def _since_date_to_ts(since):
+def _strict_reconcile_date_timestamp(since):
     """A reconcile `since` — a 'YYYY-MM-DD' date string (the ledger/reconcile window boundary), or None — as the epoch
-    `since_ts` the GPU cost readers (account_gpu_total / gpu_rows_by_day) take. None → None so those readers apply their
+    `since_ts` the GPU cost readers (account_gpu_total / vast_gpu_accounting_rows_by_day) take. None → None so those readers apply their
     own month-start default. This is FORMAT parsing on a fixed contract (a date the reconcile framework produces), not a
     meaning decision. A non-date `since` is a caller-contract error, surfaced by strptime's raise rather than silently
     ignored — which is exactly how GPUSource.truth_total/captured used to DROP the requested window and always return
@@ -269,7 +269,7 @@ def compute_exceeded():
         try:
             import datetime as _dt
             today = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
-            st = round(sum(r["cost"] for r in gpu_rows_by_day() if r["day"] == today), 2)
+            st = round(sum(r["cost"] for r in vast_gpu_accounting_rows_by_day() if r["day"] == today), 2)
             if st > cd:
                 return ("compute-daily", cd, st)
         except Exception:
@@ -803,7 +803,7 @@ def record_recovered(box):
     it flows through the normal reconcile. Same shape as a live instance + `source:"recovered"` (id, gpu_name,
     dph_total, start_date, end_date, label). Idempotent by id. The runtime is an ESTIMATE — the durable fix is
     continuous `record_instance_history()` so boxes are captured live, not reconstructed after the fact."""
-    hist = _load_history()
+    hist = _load_resource_history()
     b = dict(box)
     b["source"] = "recovered"
     b.setdefault("last_seen", b.get("end_date"))
@@ -842,13 +842,13 @@ class GPUSource:
     def truth_total(self, since=None):
         # pass the requested window through (was account_gpu_total() — the `since` was DROPPED, so a reconcile for any
         # period always returned the whole MONTH). None → account_gpu_total's own month-start default.
-        return account_gpu_total(since_ts=_since_date_to_ts(since)) if self._conn.get("owns_account") else 0.0
+        return account_gpu_total(since_ts=_strict_reconcile_date_timestamp(since)) if self._conn.get("owns_account") else 0.0
 
     def captured(self, since=None):
-        # scope the captured rows to the SAME window as truth_total (was gpu_rows_by_day() — window dropped): truth and
+        # scope the captured rows to the SAME window as truth_total (was vast_gpu_accounting_rows_by_day() — window dropped): truth and
         # captured must cover the same period, or the reconcile residual mixes a whole-month capture with a scoped truth.
-        _ts = _since_date_to_ts(since)
-        return [{"cost": r["cost"], "project": r.get("project") or ""} for r in gpu_rows_by_day(since_ts=_ts) if r["cost"] > 0]
+        _ts = _strict_reconcile_date_timestamp(since)
+        return [{"cost": r["cost"], "project": r.get("project") or ""} for r in vast_gpu_accounting_rows_by_day(since_ts=_ts) if r["cost"] > 0]
 
     def attribute_gap(self, gap, since=None):
         return []                                          # recovery is explicit: discover --agentic / record_recovered
@@ -867,7 +867,7 @@ def sync(dry=False):
     from . import attribution
     _ptmap = attribution.project_team_map(attribution.taxonomy()[0])
     _meta = lambda p: _ptmap.get((p or "").lower(), ("", ""))      # (org, team) for a project
-    allrows = gpu_rows_by_day()
+    allrows = vast_gpu_accounting_rows_by_day()
     try:                                                   # stamp the machine's billed REMOTE windows so the receipt
         from . import receipt                              # can show the Remote component (API + Subs + Remote) fast
         receipt.stamp_remote([{"day": r["day"], "spend_micros": round(r["cost"] * 1_000_000), "billed": True} for r in allrows])
@@ -927,7 +927,7 @@ def cmd(argv=None):
             print(f"discover: by project {r['by_project']}; {len(r['uncaptured'])} uncaptured; recorded {len(r['recorded'])}")
         return 0
     # show: per-project attributed + the account reconcile gap
-    rows = gpu_rows_by_day()
+    rows = vast_gpu_accounting_rows_by_day()
     byproj = {}
     for r in rows:
         byproj[r["project"] or "(untagged)"] = byproj.get(r["project"] or "(untagged)", 0) + r["cost"]

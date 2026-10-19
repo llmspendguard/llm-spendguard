@@ -113,8 +113,8 @@ def estimate_only(model, cap, n):
     if res.get("error"):
         print("ESTIMATE ERROR: %s" % res["error"], file=sys.stderr)
         return 2
-    from spendguard.submit import estimate_jsonl_cost
-    est = estimate_jsonl_cost(res["jsonl"], model, batch=True)
+    from spendguard.submit import estimate_submission_jsonl_cost
+    est = estimate_submission_jsonl_cost(res["jsonl"], model, batch=True)
     print(json.dumps({"phase": "estimate", "model": model, "cap_usd": cap, "requests": est["requests"],
                       "in_tok": est["in_tok"], "out_tok_ceiling": est["out_tok"], "out_basis": est["out_basis"],
                       "est_cost_usd_worstcase": round(est["cost"], 6), "mode": est["mode"],

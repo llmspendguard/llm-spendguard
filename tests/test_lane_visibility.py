@@ -60,7 +60,7 @@ receipt.stamp_est_value([{"day": receipt._windows()[0], "spend_micros": 10_000_0
                         source="claude-code")
 receipt.stamp_est_value([{"day": receipt._windows()[0], "spend_micros": 20_000_000, "billed": False}],
                         source="codex")
-miner_before = json.loads(receipt._cache_path().read_text())["est_value_by_source"]
+miner_before = json.loads(receipt._receipt_aggregate_cache_path().read_text())["est_value_by_source"]
 footer_before = next(line for line in receipt.render_tally(receipt.tally()).splitlines()
                      if "est sub value" in line)
 try:
@@ -74,7 +74,7 @@ try:
 finally:
     pricing.realtime_cost = _orig_price
 
-cache = json.loads(receipt._cache_path().read_text())
+cache = json.loads(receipt._receipt_aggregate_cache_path().read_text())
 fails += ck("stamp_from_ledger valued every lane with in-window activity",
             set(stamped) == {"gemini", "zai-coding", "claude-code", "codex"})
 fails += ck("all priceable active lanes receive their exact ledger-priced value",

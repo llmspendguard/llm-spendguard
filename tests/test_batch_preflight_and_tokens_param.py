@@ -99,10 +99,10 @@ _orig_preflight = submit._preflight_first_request
 _orig_openai = openai.OpenAI
 _orig_anthropic = anthropic.Anthropic
 _orig_record = gate.record_accepted_batch_estimate
-_orig_estimate_jsonl = submit.estimate_jsonl_cost
+_orig_estimate_jsonl = submit.estimate_submission_jsonl_cost
 _bookings = []
 gate.record_accepted_batch_estimate = lambda est: _bookings.append(est)
-submit.estimate_jsonl_cost = lambda *args, **kwargs: {
+submit.estimate_submission_jsonl_cost = lambda *args, **kwargs: {
     "requests": 1, "in_tok": 1, "out_tok": 16, "cost": 0.01, "media": False,
     "media_units": 0, "out_basis": "test", "token_basis": "test", "mode": "batch",
     "model": "gpt-6.1-sol",
@@ -170,7 +170,7 @@ finally:
     openai.OpenAI = _orig_openai
     anthropic.Anthropic = _orig_anthropic
     gate.record_accepted_batch_estimate = _orig_record
-    submit.estimate_jsonl_cost = _orig_estimate_jsonl
+    submit.estimate_submission_jsonl_cost = _orig_estimate_jsonl
 
 print("\nPASS — 0 failure(s)" if not _fails else f"\nFAIL — {len(_fails)} failure(s): " + "; ".join(_fails))
 sys.exit(1 if _fails else 0)

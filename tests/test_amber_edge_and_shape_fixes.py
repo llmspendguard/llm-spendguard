@@ -5,7 +5,7 @@
     · conv._dedup_top(events, 0) → [] (k<=0 means none; the loop appended one before the len>=k check)
     · advisor._judge_sample(per, limit=0) → [] (limit=0 asks for zero samples)
   P6 JSON-shape (a valid-but-non-object file must read as empty, not AttributeError/TypeError on .items()/led[k]=v):
-    · workdone.load_summaries · verdict_ledger.load_verdicts · resources._load_history — all return {} for a non-dict file
+    · workdone.load_summaries · verdict_ledger.load_verdicts · resources._load_resource_history — all return {} for a non-dict file
 
 Isolation: SPENDGUARD_HOME → mkdtemp before importing spendguard.
 """
@@ -53,7 +53,7 @@ def main():
 
     _hist = resources._history_path()
     _write(_hist, [1, 2, 3])
-    chk.ck("resources._load_history → {} for a non-dict file", resources._load_history() == {})
+    chk.ck("resources._load_resource_history → {} for a non-dict file", resources._load_resource_history() == {})
 
     _repo = tempfile.mkdtemp()
     _vp = verdict_ledger.verdict_path(_repo, "amber-ledger")

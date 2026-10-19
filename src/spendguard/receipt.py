@@ -88,7 +88,7 @@ def _windows():
 _BY_DAY_KEEP = 40      # days of per-day detail kept so a later read can re-bucket (a month window spans ≤31)
 
 
-def _cache_path():
+def _receipt_aggregate_cache_path():
     return config.HOME / _CACHE
 
 
@@ -143,7 +143,7 @@ def stamp_est_value(rows, source: str = CLAUDE_CODE_SOURCE) -> None:
                 if day >= lo:
                     acc[k] += usd
                     ca[k] += usd
-        p = _cache_path()
+        p = _receipt_aggregate_cache_path()
         p.parent.mkdir(parents=True, exist_ok=True)
         # THROUGH THE ONE WRITER: an unreadable cache used to discard every other source's est-value.
         from . import config as _c
@@ -166,7 +166,7 @@ def _receipt_est_records():
 
     records = {}
     try:
-        records = json.loads(_cache_path().read_text()).get("est_value_by_source") or {}
+        records = json.loads(_receipt_aggregate_cache_path().read_text()).get("est_value_by_source") or {}
     except (OSError, ValueError):
         pass
     ledger_records = {}
@@ -254,7 +254,7 @@ def _est_tally(org=None, team=None, project=None, repo=None):
             agg["stale"] = stale
             agg["stale_sources"] = names
             return agg
-        data = json.loads(_cache_path().read_text())
+        data = json.loads(_receipt_aggregate_cache_path().read_text())
         d = data.get("est_value")                     # back-compat: older single-blob stamp (global only)
         if org is None and team is None and project is None and repo is None and isinstance(d, dict) and "today" in d:
             return d
@@ -285,7 +285,7 @@ def _routed_lane_value():
     """
     out = {}
     try:
-        data = json.loads(_cache_path().read_text()).get("routed_lane_value") or {}
+        data = json.loads(_receipt_aggregate_cache_path().read_text()).get("routed_lane_value") or {}
         month = _windows()[2]
         from . import adapters
         active = {name for name, _module in adapters._LANES.values()}
@@ -587,7 +587,7 @@ def stamp_remote(rows) -> None:
             for k, lo in (("today", today), ("week", week), ("month", month)):
                 if day >= lo:
                     acc[k] += usd
-        p = _cache_path()
+        p = _receipt_aggregate_cache_path()
         p.parent.mkdir(parents=True, exist_ok=True)
         try:
             data = json.loads(p.read_text())
@@ -602,7 +602,7 @@ def stamp_remote(rows) -> None:
 def _remote_tally():
     """Billed remote-compute windows {today, week, month, asof}, or None if resources.sync never stamped it."""
     try:
-        d = json.loads(_cache_path().read_text()).get("remote")
+        d = json.loads(_receipt_aggregate_cache_path().read_text()).get("remote")
         if isinstance(d, dict) and "month" in d:
             return d
     except Exception:

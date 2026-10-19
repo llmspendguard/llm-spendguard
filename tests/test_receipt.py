@@ -262,13 +262,13 @@ _rows = [{"day": _today.strftime("%Y-%m-%d"), "spend_micros": 5_000_000, "billed
          {"day": _prev.strftime("%Y-%m-%d"), "spend_micros": 90_000_000, "billed": False, "project": "old"}]
 receipt.stamp_est_value(_rows, source="test-src")
 _ev = receipt._est_tally()
-_mine = _json.loads(receipt._cache_path().read_text())["est_value_by_source"]["test-src"]
+_mine = _json.loads(receipt._receipt_aggregate_cache_path().read_text())["est_value_by_source"]["test-src"]
 ck("month window counts only THIS month's days ($5, not $95)",
    round(receipt._rewindow(_mine)[0]["month"], 2) == 5.0)
 ck("a fresh stamp is not flagged stale", _ev.get("stale") is not True)
 ck("its caption is a plain as-of, no alarm", "STALE" not in receipt._asof_label(_ev))
 
-_p = receipt._cache_path()                                     # simulate a pre-0.8.3 record: frozen, no by_day
+_p = receipt._receipt_aggregate_cache_path()                                     # simulate a pre-0.8.3 record: frozen, no by_day
 _d = _json.loads(_p.read_text())
 _rec = _d["est_value_by_source"]["test-src"]
 _rec.pop("by_day", None)

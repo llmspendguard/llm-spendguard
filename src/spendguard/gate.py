@@ -240,7 +240,7 @@ def _content_tokens(content, provider=None, model=None):
         # better than crashing a caller mid-run, but it is NOT a quieter version of the right answer: it is
         # the wrong answer, in the expensive direction, and silence here is what made the original bug take
         # so long to find. Say it once, per model.
-        _warn_once(f"[spendguard] image/PDF token counting FAILED for {model or 'this model'} "
+        _gate_warn_once(f"[spendguard] image/PDF token counting FAILED for {model or 'this model'} "
                    f"({type(e).__name__}: {str(e)[:60]}) — falling back to counting the raw content as TEXT, "
                    f"which over-states vision payloads by roughly 25x and can make the cap refuse valid work.")
         return _ct(str(content))
@@ -249,7 +249,7 @@ def _content_tokens(content, provider=None, model=None):
 _warned_once = set()
 
 
-def _warn_once(msg):
+def _gate_warn_once(msg):
     """One line per distinct problem. An 800-request batch that warns 800 times is a warning nobody reads."""
     from . import config
     config.warn_once(msg)                                # one registry; deid.py had its own copy + own set
@@ -330,7 +330,7 @@ def _warn_implausible(model, in_tok, requests, per_item_max=None):
     bad, facts = _implausible_estimate(model, in_tok, requests, per_item_max=per_item_max)
     if not bad:
         return {}
-    _warn_once(f"[spend_gate] IMPOSSIBLE ESTIMATE — {facts['message']}\n"
+    _gate_warn_once(f"[spend_gate] IMPOSSIBLE ESTIMATE — {facts['message']}\n"
                f"  Recorded but QUARANTINED: excluded from every total, kept for audit. "
                f"See it with `spendguard quarantine --list`.")
     return facts
@@ -420,7 +420,7 @@ def _estimate_anthropic_requests(requests, intent=None, declared_out=None):
                                                         ceiling=per_req_ceiling) if model else (0, "unknown"))
     out = int(per_req_out) * counted
     if skipped:
-        _warn_once(f"[spendguard] anthropic batch estimate: {skipped} of {n} request(s) had no params and were "
+        _gate_warn_once(f"[spendguard] anthropic batch estimate: {skipped} of {n} request(s) had no params and were "
                    f"counted as zero tokens — the estimate may understate this batch.")
     cost = pricing.batch_cost(model, in_tok, out, provider="anthropic") if model else 0.0   # this estimator is Anthropic-specific — pin the vendor
     # WORST CASE — every request runs to its SEND ceiling. Priced for the SEPARATE ceiling guard (_worst_case_check), a
@@ -1027,7 +1027,7 @@ def _rt_flush():
                 else:
                     for i in range(min(len(cur), len(v))):
                         cur[i] += v[i]
-        _warn_once(f"[spendguard] realtime spend log could not be written ({type(e).__name__}: "
+        _gate_warn_once(f"[spendguard] realtime spend log could not be written ({type(e).__name__}: "
                    f"{str(e)[:60]}) — {len(items)} aggregated row(s) HELD for the next flush, not dropped.")
 
 
@@ -1409,7 +1409,7 @@ def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, 
                 budget.record_unpriced(prov, model, "realtime", in_tok=in_tok, out_tok=out_tok)
             except Exception:
                 pass
-            _warn_once(f"[spend_gate] NO PRICE for '{model}' — {in_tok}+{out_tok} tok recorded as UNPRICED "
+            _gate_warn_once(f"[spend_gate] NO PRICE for '{model}' — {in_tok}+{out_tok} tok recorded as UNPRICED "
                        f"(NOT $0, and excluded from totals so it cannot read as free). Fix it with:\n"
                        f"  spendguard price {model} --in <$/1M> --out <$/1M> --source '<url or invoice>'")
             return
@@ -1536,7 +1536,7 @@ def _tool_fee_count(result):
         # RETURNING THE PARTIAL COUNT UNDERSTATES A BILL. These are per-call fees the token usage never
         # includes, so a count that stops early is not "roughly right" — it is money the gate silently did
         # not charge, surfacing later only as an unexplained reconcile residual. None means UNKNOWN.
-        _warn_once(f"[spendguard] per-call tool fees could not be counted on a response "
+        _gate_warn_once(f"[spendguard] per-call tool fees could not be counted on a response "
                    f"({type(e).__name__}) — the fee count is UNKNOWN for it, not zero.")
         return None
     return n

@@ -82,7 +82,7 @@ ck("the SAME window credits only the NEW calls (200 × $0.01 = $2.00)",
 
 # ── 3. resources: mixed-type end_date/last_seen does not crash ───────────────────────────────────────────────
 resources.instances = lambda: []
-resources._load_history = lambda: {"box1": {"last_seen": 1000.0, "end_date": "2026-08-01", "id": "box1"}}
+resources._load_resource_history = lambda: {"box1": {"last_seen": 1000.0, "end_date": "2026-08-01", "id": "box1"}}
 crashed = False
 try:
     resources._all_instances()

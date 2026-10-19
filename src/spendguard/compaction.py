@@ -33,7 +33,7 @@ def _iso_now():
     return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
 
 
-def _load_events():
+def _load_compaction_events():
     try:
         return list(config.load_state(_STATE, {"events": []}).get("events") or [])
     except Exception:
@@ -242,7 +242,7 @@ def record_precompact(info):
     try:
         tp = info.get("transcript_path") or info.get("transcriptPath") or ""
         ctx, cr, model = _tail_context(tp) if tp and os.path.exists(tp) else (0, 0, None)
-        evs = _load_events()
+        evs = _load_compaction_events()
         evs.append({"ts": _iso_now(), "session": info.get("session_id") or info.get("sessionId") or "",
                     "trigger": info.get("trigger") or info.get("compaction_type") or "unknown", "model": model,
                     "pre_context": ctx, "pre_cache_read": cr, "post_context": None, "k": None,
@@ -257,7 +257,7 @@ def preservation_digest(info):
     """The last WHOLE digest persisted for this session, or the short honest fallback. Never raises."""
     try:
         sid = info.get("session_id") or info.get("sessionId") or ""
-        for ev in reversed(_load_events()):
+        for ev in reversed(_load_compaction_events()):
             if ev.get("session") == sid and ev.get("preservation_digest"):
                 return ev["preservation_digest"]
     except Exception:
@@ -275,7 +275,7 @@ def record_sessionstart(info):
         if post <= 0:
             return
         sid = info.get("session_id") or info.get("sessionId") or ""
-        evs = _load_events()
+        evs = _load_compaction_events()
         for ev in reversed(evs):                            # the most recent open event for this session
             if ev.get("session") == sid and ev.get("post_context") is None:
                 ev["post_context"] = post
@@ -310,7 +310,7 @@ def _credit_compaction_saving(ev, post):
 def measured_explicit_compaction_ratio():
     """(k, n) — the MEDIAN real compaction ratio from RECORDED events that have both pre and post (k = pre/post),
     or (None, 0) if none yet. This is the measured-from-events k× the nudge prefers over the ledger-drop heuristic."""
-    ks = sorted(float(ev["k"]) for ev in _load_events() if ev.get("k"))
+    ks = sorted(float(ev["k"]) for ev in _load_compaction_events() if ev.get("k"))
     if not ks:
         return None, 0
     n = len(ks)
@@ -319,7 +319,7 @@ def measured_explicit_compaction_ratio():
 
 def event_summary():
     """Compaction stats for a report: counts by trigger + the measured k×. Read-only."""
-    evs = _load_events()
+    evs = _load_compaction_events()
     by_trigger = {}
     for ev in evs:
         t = ev.get("trigger") or "unknown"

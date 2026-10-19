@@ -72,7 +72,7 @@ def fake_build_chat(tasks_path, model, **kwargs):
 
 
 submit.build_chat_batch_jsonl = fake_build_chat
-submit.estimate_jsonl_cost = lambda path, model, **kwargs: {
+submit.estimate_submission_jsonl_cost = lambda path, model, **kwargs: {
     "requests": sum(1 for _ in open(path)), "mode": "batch", "in_tok": 1, "out_tok": 1,
     "out_basis": "test", "token_basis": "test", "cost": 0.0, "model": model}
 

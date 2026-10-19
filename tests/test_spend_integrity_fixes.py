@@ -1,6 +1,6 @@
 """Five verified-high SPEND-INTEGRITY defects from the 4-LLM self-review, each pinned:
 
-  budget._reset_after_fork  — a child of os.fork() must not reuse the parent's sqlite connection (_conn) or its
+  budget._reset_budget_after_fork  — a child of os.fork() must not reuse the parent's sqlite connection (_conn) or its
                               thread-local ledger; both are dropped so the child reconnects fresh.
   budget._record_spend_event— a failed ledger write is the SOLE money-of-record's loss; it is now DURABLY
                               captured to a dead-letter file, not just warned to stderr (a daemon discards stderr).
@@ -37,7 +37,7 @@ def ck(label, cond, extra=""):
 # ── 1. fork reset drops both sqlite connections ──────────────────────────────────────────────────────────────
 budget._conn = "SENTINEL_CONN"
 budget._LEDGER_TL.led = "SENTINEL_LEDGER"
-budget._reset_after_fork()
+budget._reset_budget_after_fork()
 ck("fork reset drops the shared _conn", budget._conn is None, repr(budget._conn))
 ck("fork reset drops the thread-local ledger", getattr(budget._LEDGER_TL, "led", "x") is None)
 

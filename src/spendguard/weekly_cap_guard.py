@@ -182,7 +182,7 @@ def _weekly_cap_guard_settings_path():
     return pathlib.Path.home() / ".claude" / "settings.json"
 
 
-def _weekly_cap_guard_managed_hook(command):
+def _weekly_cap_owned_hook(command):
     return command.endswith(WEEKLY_CAP_GUARD_HOOK_SUFFIX)
 
 
@@ -198,7 +198,7 @@ def install_weekly_cap_guard(settings_path=None, uninstall=False, executable=Non
         settings = {}
     hooks = settings.get("hooks") or {}
     groups = list(hooks.get("PreToolUse") or [])
-    found = any(_weekly_cap_guard_managed_hook(hook.get("command", ""))
+    found = any(_weekly_cap_owned_hook(hook.get("command", ""))
                 for group in groups for hook in (group.get("hooks") or []))
     if uninstall:
         if not found:
@@ -206,7 +206,7 @@ def install_weekly_cap_guard(settings_path=None, uninstall=False, executable=Non
         revised = []
         for group in groups:
             kept = [hook for hook in (group.get("hooks") or [])
-                    if not _weekly_cap_guard_managed_hook(hook.get("command", ""))]
+                    if not _weekly_cap_owned_hook(hook.get("command", ""))]
             if kept:
                 revised.append({**group, "hooks": kept})
         if revised:

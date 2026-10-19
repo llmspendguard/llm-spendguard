@@ -43,7 +43,7 @@ class GPUProvider(Protocol):
     def instances(self, since_ts=None) -> list: ...
 
 
-# ── the ONE per-UTC-day splitting math (vast.ai's, extracted — resources.gpu_rows_by_day calls this) ──────────
+# ── the ONE per-UTC-day splitting math (vast.ai's, extracted — resources.vast_gpu_accounting_rows_by_day calls this) ──────────
 
 def day_slices(start_ts, end_ts, since_ts=None):
     """Split the run window [max(start_ts, since_ts), end_ts) across UTC days → [(YYYY-MM-DD, hours_that_day)].
@@ -173,7 +173,7 @@ def project_of(label, lmap):
 
 
 def rows_by_day(provider, since=None, now=None):
-    """Per (project, gpu, day) $ rows for a port adapter — the SAME row shape resources.gpu_rows_by_day emits
+    """Per (project, gpu, day) $ rows for a port adapter — the SAME row shape resources.vast_gpu_accounting_rows_by_day emits
     for vast ({project, gpu, day, cost, hours, instances}), so provider rows flow through reconcile/rollups
     identically. Attribution: instance label → project via `resources.<provider>.label_map`. Unpriced/untimed
     rows are EXCLUDED from $ (unknown ≠ $0) but stay visible via the adapter's instances()."""

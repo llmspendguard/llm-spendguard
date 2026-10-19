@@ -63,7 +63,7 @@ def _reset_ledger():
     _LEDGER_TL.led = None
 
 
-def _reset_after_fork():
+def _reset_budget_after_fork():
     """A child of os.fork() must NOT reuse the parent's sqlite connections. sqlite forbids sharing a connection
     across processes — the fd and its POSIX locks belong to the parent — so a child that inherits `_conn` (the
     shared module connection) or the parent's thread-local ledger gets `database is locked`, silent corruption, or
@@ -79,7 +79,7 @@ def _reset_after_fork():
 
 try:
     import os as _os
-    _os.register_at_fork(after_in_child=_reset_after_fork)
+    _os.register_at_fork(after_in_child=_reset_budget_after_fork)
 except (AttributeError, ValueError, ImportError):   # register_at_fork is POSIX-only — elsewhere this is a no-op
     pass
 

@@ -77,8 +77,8 @@ ck("metered list unavailable (None) → UNKNOWN, never a false 'gone'",
 
 # ── 3. detect_served_shift: raises LOUD (through reliability) only for a shift at/above the shift_fail floor ──
 vendor_call.closest_served = lambda vendor, m: None
-ls._provider_models_now = lambda prov: ["dropped-model", "served-model"]   # stub /models: dropped-model STILL metered → lane-drop
-ls._lanes = lambda: {"codex": "openai"}
+ls._served_provider_model_ids = lambda prov: ["dropped-model", "served-model"]   # stub /models: dropped-model STILL metered → lane-drop
+ls._servability_provider_lanes = lambda: {"codex": "openai"}
 _alerts = []
 reliability.note_lane_model_shift = lambda lane, model, diag: _alerts.append((lane, model, diag))
 shifts = ls.detect_served_shift("codex")
@@ -142,7 +142,7 @@ def _fake_mod():
     m.run_prompt = lambda prompt, system=None, model=None, timeout=None, reasoning=None, max_tokens=None: \
         dict(_PROBE_RESULT[model])
     return m
-ls._lane_module = lambda lane: _fake_mod()
+ls._resolve_servability_lane_module = lambda lane: _fake_mod()
 reliability.note_lane_model_ok = lambda lane, model: None
 import spendguard.calls as _calls_spy
 _recorded = []

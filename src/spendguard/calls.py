@@ -312,7 +312,7 @@ def caller():
 
 
 # ── storage ──
-def _ensure_calls_schema(c):
+def _ensure_call_observation_schema(c):
     """Create the calls table + its indexes + forward-only additive columns. Idempotent; run once per pooled
     connection by config.pooled_ledger_conn."""
     c.execute("""CREATE TABLE IF NOT EXISTS calls(
@@ -388,7 +388,7 @@ def _ensure_calls_schema(c):
 def _calls_db():
     """The calls table, on the shared pooled ledger connection (config.pooled_ledger_conn, keyed 'calls') — reused,
     tuned, fork-safe. `_lock` still serializes the module's read-modify-write sites."""
-    return config.pooled_ledger_conn("calls", _ensure_calls_schema)
+    return config.pooled_ledger_conn("calls", _ensure_call_observation_schema)
 
 
 def _uuid():

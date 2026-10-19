@@ -56,7 +56,7 @@ ck("cost_by_day: running instance (end None) capped at now, split across days",
    abs(cbd.get("2026-06-08", 0) - 3.61 * 12) < 1e-6 and abs(cbd.get("2026-06-09", 0) - 3.61 * 24) < 1e-6)
 ck("cost_by_day: since accepts YYYY-MM-DD", gpu_port.gpu_cost_by_day(port_rows, since="2026-06-05", now=now) == cbd)
 
-# EQUIVALENCE with vast.ai — the math was EXTRACTED from resources.gpu_rows_by_day; identical instances must
+# EQUIVALENCE with vast.ai — the math was EXTRACTED from resources.vast_gpu_accounting_rows_by_day; identical instances must
 # land identical per-day $ through both paths (guards the refactor: vast behavior unchanged, one math for all).
 from spendguard import resources
 resources.instances = lambda: [
@@ -64,9 +64,9 @@ resources.instances = lambda: [
     {"id": 2, "gpu_name": "A100", "dph_total": 3.61, "start_date": now - 1.5 * 86400, "end_date": None, "label": "train-b"},
 ]
 vast_by_day = {}
-for r in resources.gpu_rows_by_day(since_ts=now - 5 * 86400, now=now):
+for r in resources.vast_gpu_accounting_rows_by_day(since_ts=now - 5 * 86400, now=now):
     vast_by_day[r["day"]] = round(vast_by_day.get(r["day"], 0.0) + r["cost"], 6)
-ck("EQUIVALENCE: vast gpu_rows_by_day per-day $ == shared cost_by_day on the same instances",
+ck("EQUIVALENCE: vast_gpu_accounting_rows_by_day per-day $ == shared cost_by_day on the same instances",
    set(vast_by_day) == set(cbd) and all(abs(vast_by_day[d] - cbd[d]) < 1e-6 for d in cbd))
 
 # ── honesty markers: UNKNOWN stays visible, never becomes $0 rows ────────────────────────────────────────────
@@ -230,7 +230,7 @@ saas.saas_connection = lambda: {"enabled": True, "owns_account": True, "visibili
 ledger_sync._provider_total = lambda since: 800.0
 ledger_sync._gate_captured_rows = lambda since: [{"cost": 600.0, "project": "lmm"}]
 resources.account_gpu_total = lambda since_ts=None: 1000.0   # real sig is account_gpu_total(since_ts=…); truth_total now forwards it
-resources.gpu_rows_by_day = lambda *a, **k: [{"cost": 250.0, "project": "lmm"}]
+resources.vast_gpu_accounting_rows_by_day = lambda *a, **k: [{"cost": 250.0, "project": "lmm"}]
 ptmap = {"lmm": ("Healiom", "clinical-ai"), "manga2anime": ("Ensight", "")}
 res = reconcile.all_sources(ptmap, since="2026-06-01")
 ck("all_sources: configured runpod appears as gpu:runpod; unconfigured modal/lambda are ABSENT (not errors)",

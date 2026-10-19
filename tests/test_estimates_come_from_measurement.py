@@ -31,7 +31,7 @@ REPO = pathlib.Path(__file__).resolve().parents[1]
 
 # The functions that turn token counts into money. A literal reaching any of them is a quoted price nobody
 # measured. Named here so adding a new cost function is one edit rather than a new blind spot.
-COST_FUNCS = {"realtime_cost", "batch_cost", "_cost", "estimate_jsonl_cost", "cost_of"}
+COST_FUNCS = {"realtime_cost", "batch_cost", "_cost", "estimate_submission_jsonl_cost", "cost_of"}
 
 # Token-count parameter positions/names on those functions.
 TOKEN_ARGS = {"in_tok", "out_tok", "cached_in_tok", "avg_in", "avg_out", "prompt_tokens", "completion_tokens"}

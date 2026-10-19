@@ -15,7 +15,7 @@ from spendguard import calls, model_catalog as mc  # noqa: E402
 
 
 def main():
-    db = calls._calls_db()                       # pooled ledger conn; _ensure_calls_schema has added `suspect`
+    db = calls._calls_db()                       # pooled ledger conn; _ensure_call_observation_schema has added `suspect`
     with calls._lock:
         models = [r[0] for r in db.execute(
             "SELECT DISTINCT model FROM calls WHERE out_tok IS NOT NULL AND model IS NOT NULL").fetchall()]
