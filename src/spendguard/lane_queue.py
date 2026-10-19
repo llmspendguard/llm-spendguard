@@ -62,7 +62,7 @@ ARCHIVE_MAX_MB_DEFAULT = 64.0   # lane_queue_archive.jsonl is append-only; rotat
 #                                 cannot grow unbounded (it had reached 820MB, 2026-10-08)
 QUEUE_MIGRATION_TIMEOUT_S = 30
 _RESULT_CAP = 4000            # bytes of result JSON retained per row (audit/debug, not the whole payload)
-_last_purge_ts = 0.0          # module-local throttle stamp for purge_due() — decouples purge from the drain cycle
+QUEUE_PURGE_STAMP_KEY = "last_purge_ts"
 
 # Priority convention (higher drains first): a delegated task someone is WAITING on jumps ahead of a big backfill,
 # so a 6k-item bulk enqueue never starves interactive work sharing the same queue.
@@ -109,6 +109,7 @@ _QUEUE_KEY = "lane_queue"
 def _ensure_queue_schema(c):
     """Create the lane_queue table + its forward-only additive columns + the lease index (idempotent, cross-process
     safe). Every new connection runs the full ensure, including after same-file table drops."""
+    c.execute("CREATE TABLE IF NOT EXISTS lane_queue_meta(key TEXT PRIMARY KEY, value TEXT)")
     c.execute("""CREATE TABLE IF NOT EXISTS lane_queue(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         intent TEXT NOT NULL, task TEXT NOT NULL, system TEXT, reasoning TEXT,
@@ -942,7 +943,7 @@ def queue_depth():
             rows = c.execute("SELECT state, COUNT(*) FROM lane_queue GROUP BY state").fetchall()
             parked = c.execute("SELECT COUNT(*) FROM lane_queue WHERE state='pending' AND defer_until IS NOT NULL "
                                "AND defer_until>?", (now,)).fetchone()
-        out = {"pending": 0, "leased": 0, "done": 0, "failed": 0}
+        out = {"pending": 0, "leased": 0, "queued_batch": 0, "done": 0, "failed": 0}
         for st, n in rows:
             out[st] = n
         out["parked"] = int(parked[0]) if parked else 0
@@ -988,14 +989,61 @@ def _bound_archive(path, max_mb=None):
         pass
 
 
+def _queue_meta_get(key, default=None):
+    """Read durable queue metadata; a store hiccup returns the caller's safe default."""
+    try:
+        with _queue_op() as c:
+            row = c.execute("SELECT value FROM lane_queue_meta WHERE key=?", (key,)).fetchone()
+        return row[0] if row else default
+    except Exception:
+        return default
+
+
+def _queue_meta_set(key, value):
+    """Persist queue metadata, reporting failure without raising into a caller."""
+    try:
+        with _queue_op() as c:
+            c.execute("INSERT OR REPLACE INTO lane_queue_meta(key,value) VALUES(?,?)", (key, str(value)))
+        return True
+    except Exception:
+        return False
+
+
+def _append_durable_queue_archive(archive_path, records):
+    """Copy and verify a chunk on stable storage before its live rows may be deleted.
+
+    Errors deliberately propagate to purge's rollback. Directory fsync also makes a newly
+    created archive's name durable. A retry may append duplicates, but never loses live data.
+    """
+    payload = "".join(json.dumps(record) + "\n" for record in records)
+    with open(archive_path, "a+", encoding="utf-8") as archive:
+        archive.seek(0, os.SEEK_END)
+        start = archive.tell()
+        archive.write(payload)
+        archive.flush()
+        os.fsync(archive.fileno())
+        archive.seek(start)
+        if archive.read() != payload:
+            raise OSError("queue archive readback verification failed")
+        directory_fd = os.open(os.path.dirname(os.path.abspath(archive_path)), os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+
+
 def purge_due(min_interval_s=None):
     """True if purge should run now — decouples the O(terminal-rows) purge from the O(batch) drain cycle. purge used to
     run EVERY drain (every 300s), scanning the whole terminal set under the ledger write lock; it only needs to run
-    periodically. Tracks the last run in a module-local stamp (one daemon drives the daemon-mode drain). Config
+    periodically. Tracks the last run in durable queue metadata across processes and restarts. Config
     advisor.queue_purge_min_interval_s; default 1h."""
     import time as _t
     iv = float(min_interval_s if min_interval_s is not None else _qcfg("queue_purge_min_interval_s", PURGE_MIN_INTERVAL_S_DEFAULT))
-    return (_t.time() - _last_purge_ts) >= max(0.0, iv)
+    try:
+        stamp = float(_queue_meta_get(QUEUE_PURGE_STAMP_KEY, 0.0))
+        return not (_t.time() - stamp < max(0.0, iv))
+    except (TypeError, ValueError, OverflowError):
+        return True
 
 
 def purge(retain_days=None, archive_path=None, chunk=None):
@@ -1008,9 +1056,8 @@ def purge(retain_days=None, archive_path=None, chunk=None):
     lock between chunks, so purging a large backlog never holds the ledger-grade lock for minutes nor fetches the
     whole match-set into memory — the (state, updated_ts) index makes the per-chunk SELECT a bounded range scan. At
     worst a crash between a chunk's archive-append and its delete-commit re-logs that chunk next run (a harmless dup in
-    an append-only audit); it can never DELETE without having archived."""
+    an append-only audit); it can never DELETE before its archive copy is fsynced and verified."""
     import time as _t
-    global _last_purge_ts
     retain_days = float(retain_days if retain_days is not None else _qcfg("queue_retain_days", RETAIN_DAYS_DEFAULT))
     cutoff = _iso(_utcnow() - datetime.timedelta(days=retain_days))
     archive_path = archive_path or str(config.HOME / "lane_queue_archive.jsonl")
@@ -1028,9 +1075,7 @@ def purge(retain_days=None, archive_path=None, chunk=None):
                     if not rows:
                         c.execute("COMMIT")
                         break
-                    with open(archive_path, "a") as f:        # append-only audit log — archive BEFORE delete
-                        for r in rows:
-                            f.write(json.dumps(dict(zip(cols, r))) + "\n")
+                    _append_durable_queue_archive(archive_path, [dict(zip(cols, r)) for r in rows])
                     c.executemany("DELETE FROM lane_queue WHERE id=?", [(r[0],) for r in rows])
                     c.execute("COMMIT")
                 except Exception:
@@ -1041,7 +1086,8 @@ def purge(retain_days=None, archive_path=None, chunk=None):
             _bound_archive(archive_path)                       # keep the audit log bounded as we append
             if len(rows) < chunk:
                 break                                          # last partial chunk → the backlog is cleared
-        _last_purge_ts = _t.time()
+        if not _queue_meta_set(QUEUE_PURGE_STAMP_KEY, _t.time()):
+            return {"archived": archived, "deleted": deleted, "error": "purge throttle stamp could not be persisted"}
         return {"archived": archived, "deleted": deleted, "archive": archive_path}
     except Exception as e:
         return {"archived": archived, "deleted": deleted, "error": str(e)[:120]}
@@ -1102,7 +1148,9 @@ def drain(worker=None, batch=None, lease_s=None, idle_rounds=None, idle_sleep=No
     `idle_rounds` consecutive empty leases (the queue is drained). DAEMON (forever=True): keep waiting for new work.
     Respects a local load ceiling (pauses leasing while the machine is overloaded). `max_iters` hard-caps total loop
     passes (a safety stop for bounded drains / tests / a persistently-overloaded box that would otherwise spin).
-    Returns a summary {ran, done, failed, billed, by_lane, rounds} (rounds = passes that actually ran work). Never
+    Returns a summary {ran, done, failed, billed, by_lane, rounds} (rounds = passes that actually ran work).
+    A capped stop with unfinished or unknown work also returns capped=True and remaining_at_cap counts
+    (None means the status read was unavailable). Never
     raises out.
 
     Reuses the whole existing execution path — governor admission, bandit routing, $0 plan-served, API fallback —
@@ -1139,11 +1187,16 @@ def _drain_locked(worker, batch, lease_s, idle_rounds, idle_sleep, load_ceiling,
             # persist for the next drain / lease-recovery (never lost), but a caller must not read a capped stop as "all
             # done". Quiet when nothing remains (a bounded drain that finished cleanly).
             _qd = queue_depth()
-            if _qd.get("pending", 0) or _qd.get("queued_batch", 0):
+            remaining = {state: _qd.get(state) for state in ("pending", "leased", "queued_batch")}
+            if any(value is None or value > 0 for value in remaining.values()):
+                s["capped"] = True
+                s["remaining_at_cap"] = remaining
                 import sys as _sysd
-                print("[spendguard] drain: max_iters=%d ceiling reached with work REMAINING (%d pending, %d "
-                      "queued_batch) — stopping this drain; the durable rows persist for the next drain."
-                      % (int(max_iters), _qd.get("pending", 0), _qd.get("queued_batch", 0)), file=_sysd.stderr, flush=True)
+                print("[spendguard] drain: max_iters=%d ceiling reached with work REMAINING "
+                      "(pending=%s, leased=%s, queued_batch=%s; None=unknown) — stopping this drain; "
+                      "the durable rows persist for the next drain."
+                      % (int(max_iters), remaining["pending"], remaining["leased"], remaining["queued_batch"]),
+                      file=_sysd.stderr, flush=True)
             break                                                       # hard stop (bounded drains / tests / wedged pause)
         if _overloaded(ceiling):
             if idle_sleep > 0:
