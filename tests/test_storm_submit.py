@@ -8,6 +8,8 @@ import sys
 import tempfile
 import threading
 import time
+from functools import partial
+from _script_checks import delayed_batch_results
 
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-storm-submit-")
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
@@ -39,11 +41,9 @@ fp = H.FakeProvider(cap=1000, window_s=1.0).install()      # realtime wall (gene
 gate = threading.Event()
 
 
-def _hang_batch(items):
-    """A batch that does NOT finish within the collect window (simulates a multi-hour Batch-API ETA). Released at the
-    end only, so the worker thread exits cleanly."""
-    gate.wait(timeout=30)
-    return {cid: {"text": "late %s" % H._extract_canary(p), "status_code": 200} for cid, p in items}
+BATCH_RELEASE_TIMEOUT_S = 30
+_hang_batch = partial(delayed_batch_results, event=gate, timeout=BATCH_RELEASE_TIMEOUT_S,
+                      response_for=lambda prompt: {"text": "late %s" % H._extract_canary(prompt), "status_code": 200})
 
 
 try:

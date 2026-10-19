@@ -18,6 +18,8 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 
 from spendguard import budget, focus_export
 from spendguard import ledger_sync as LS
+from functools import partial
+from _script_checks import seed_test_spend_event
 
 fails = []
 def ck(name, cond):
@@ -40,13 +42,9 @@ def rows_where(**pred):
 
 # ── seed on a FIXED day with distinct dedup keys (same-second record_charge() calls would collide on dedup_key and
 #    merge). Seeds the ORIGINAL rows; the reconcile writers add the stamped correction/reconciled rows below. ──
-def seed(model, kind, cost, basis=""):
-    ev = budget.charge_to_event("anthropic", model, kind, float(cost), basis=basis)
-    ev["project_primary"] = "lmm"; ev["projects"] = ["lmm"]
-    ev["occurred_at"] = ev["ts_utc"] = D1 + "T12:00:00+00:00"          # noon UTC → no reporting-tz day shift
-    ev["source"] = ev["recorded_by"] = "test"
-    ev["dedup_key"] = "test:%s:%s:%s:%s" % (D1, model, kind, cost)
-    budget._ledger().record_event(ev)
+seed = partial(seed_test_spend_event, D1, "anthropic", project="lmm", basis="",
+               timestamp_suffix="T12:00:00+00:00", source="test",
+               dedup_fields=("day", "model", "kind", "cost"))
 
 seed(OPUS, "realtime", 0.50, basis=budget.BASIS_BILLED)               # actual spend → BilledCost
 seed(OPUS, "batch", 100.0, basis=budget.BASIS_ESTIMATE)              # pre-submit projection → ListCost

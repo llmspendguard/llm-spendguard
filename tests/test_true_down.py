@@ -14,6 +14,8 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 from spendguard import budget
 from spendguard import ledger_sync as LS
 from spendguard import trust
+from functools import partial
+from _script_checks import seed_test_spend_event
 
 failures = 0
 def check(label, cond):
@@ -27,15 +29,8 @@ SINCE, D1, D2 = "2026-06-01", "2026-06-03", "2026-06-04"
 SONNET, OPUS, G55 = "claude-sonnet-5", "claude-opus-4-8", "gpt-5.5"
 
 
-def seed(day, provider, model, kind, cost, project, conv="conv-x"):
-    # Seed the money-of-record (spend_events) on a chosen DAY via the production charge→event mapping, so marker
-    # models, kinds, dates and the conv sentinel land exactly as a real charge would (readers read spend_events).
-    ev = budget.charge_to_event(provider, model, kind, float(cost), conv_id=conv)
-    ev["project_primary"] = project; ev["projects"] = [project] if project else []
-    ev["occurred_at"] = ev["ts_utc"] = day + "T00:00:00+00:00"
-    ev["source"] = ev["recorded_by"] = "test"
-    ev["dedup_key"] = "test:%s:%s:%s:%s:%s:%s" % (day, provider, model, kind, cost, conv)
-    budget._ledger().record_event(ev)
+seed = partial(seed_test_spend_event, conv="conv-x", timestamp_suffix="T00:00:00+00:00",
+               source="test", dedup_fields=("day", "provider", "model", "kind", "cost", "conv"))
 
 
 def reset_ledger():

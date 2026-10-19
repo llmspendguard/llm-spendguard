@@ -14,6 +14,7 @@ OpenAI-compat client is faked, so no key and no spend; the gate patches the real
 import os
 import sys
 import tempfile
+from types import SimpleNamespace
 
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-embedidx-")
 os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
@@ -29,11 +30,6 @@ class _Emb:
         self.embedding = embedding
 
 
-class _Resp:
-    def __init__(self, data):
-        self.data = data
-
-
 class _Embeddings:
     """A fake /embeddings endpoint. `mode` chooses how it stamps index + orders data — the provider behaviours we must
     survive. Each input at position j gets the DISTINCT sentinel vector [j, j, j], so a misalignment is detectable."""
@@ -43,10 +39,10 @@ class _Embeddings:
     def create(self, model, input, **kw):
         n = len(input)
         if self.mode == "none":                       # gemini / voyage: no index, data in input order
-            return _Resp([_Emb(None, [float(j)] * 3) for j in range(n)])
+            return SimpleNamespace(data=[_Emb(None, [float(j)] * 3) for j in range(n)])
         if self.mode == "reversed_indexed":           # index stamped, data returned OUT OF ORDER (why index exists)
-            return _Resp([_Emb(j, [float(j)] * 3) for j in reversed(range(n))])
-        return _Resp([_Emb(j, [float(j)] * 3) for j in range(n)])   # openai: index in order
+            return SimpleNamespace(data=[_Emb(j, [float(j)] * 3) for j in reversed(range(n))])
+        return SimpleNamespace(data=[_Emb(j, [float(j)] * 3) for j in range(n)])   # openai: index in order
 
 
 class _Client:

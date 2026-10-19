@@ -16,19 +16,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 from spendguard import queue_planner, dispatch   # noqa: E402
-
-
-class Checks:
-    """A pass/fail collector — the tally lives on the instance (self), not module-global state, so each check records
-    its result without the shared-mutation the coding doctrine flags."""
-
-    def __init__(self):
-        self.fails = 0
-
-    def ck(self, label, cond, extra=""):
-        if not cond:
-            self.fails += 1
-        print(f"  [{'OK' if cond else 'FAIL'}] {label}{('  — ' + extra) if extra and not cond else ''}")
+from _script_checks import ScriptCheckAccumulator as Checks  # noqa: E402
 
 
 def _with_state(state):

@@ -11,9 +11,8 @@ import os
 import sys
 import tempfile
 import threading
-import json
-import urllib.request
-import urllib.error
+from functools import partial
+from _script_checks import request_test_json
 
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
@@ -40,14 +39,8 @@ adapters.call = lambda model, prompt, **kw: dict(_MIX[model.split(":", 1)[0]])
 PANEL = ["anthropic:claude-opus-4-8", "openai:gpt-5.5", "moonshot:kimi-k3", "zai:glm-5.3"]
 
 
-def _req(port, method, path, body=None, headers=None):
-    data = json.dumps(body).encode() if body is not None else None
-    r = urllib.request.Request(f"http://127.0.0.1:{port}{path}", data=data, method=method, headers=headers or {})
-    try:
-        with urllib.request.urlopen(r, timeout=30) as resp:
-            return resp.status, json.loads(resp.read() or b"{}")
-    except urllib.error.HTTPError as e:
-        return e.code, json.loads(e.read() or b"{}")
+REQUEST_TIMEOUT_S = 30
+_req = partial(request_test_json, base_url="http://127.0.0.1:{port}", timeout=REQUEST_TIMEOUT_S)
 
 
 # ── the localhost server: honest /ask + /health ─────────────────────────────────────────────────────────────

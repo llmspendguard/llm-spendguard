@@ -13,6 +13,7 @@ guard GREEN, 5 runs in a row, in CI. Offline + $0: the real planner/governor pri
 import os
 import sys
 import tempfile
+from types import SimpleNamespace
 
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-429-")
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
@@ -135,15 +136,10 @@ _reset_governor()
 from spendguard import adapters  # noqa: E402
 
 
-class _Resp:
-    def __init__(self, headers):
-        self.headers = headers
-
-
 _lsl = getattr(adapters, "_learn_success_limits", None)
 if _lsl:
     try:
-        _lsl(VENDOR, _Resp({"anthropic-ratelimit-input-tokens-limit": "2000000",
+        _lsl(VENDOR, SimpleNamespace(headers={"anthropic-ratelimit-input-tokens-limit": "2000000",
                             "anthropic-ratelimit-requests-limit": "1000"}))
     except Exception:
         pass

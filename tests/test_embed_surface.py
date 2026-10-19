@@ -15,6 +15,7 @@ Offline: the embeddings client is stubbed; embed_batch runs submit=False (no net
 import os
 import sys
 import tempfile
+from types import SimpleNamespace
 
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-embed-")
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
@@ -32,14 +33,9 @@ def ck(name, cond):
         fails.append(name)
 
 
-class _Row:
-    def __init__(self, index, embedding):
-        self.index, self.embedding = index, embedding
-
-
 class _Resp:
     def __init__(self, vecs):
-        self.data = [_Row(i, v) for i, v in enumerate(vecs)]
+        self.data = [SimpleNamespace(index=i, embedding=v) for i, v in enumerate(vecs)]
 
 
 class _FakeClient:

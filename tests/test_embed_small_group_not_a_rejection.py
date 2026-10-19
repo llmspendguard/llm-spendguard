@@ -8,6 +8,7 @@ import os
 import pathlib
 import sys
 import tempfile
+from types import SimpleNamespace
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 os.environ.setdefault("OPENAI_API_KEY", "sk-test-offline-embed")  # offline tests carry their own fake key
@@ -23,16 +24,6 @@ def check(name, cond, detail=""):
         _fails.append(name)
 
 
-class _FakeEmbItem:
-    def __init__(self, index, embedding):
-        self.index, self.embedding = index, embedding
-
-
-class _FakeResp:
-    def __init__(self, data):
-        self.data = data
-
-
 class _FakeEmbeddings:
     """Succeeds for any request up to `cap` inputs; raises (like a 400) above it — so the ONLY way a sub-group size
     comes back smaller than the one attempted is a genuine rejection + bisection."""
@@ -43,7 +34,7 @@ class _FakeEmbeddings:
         self.sizes.append(len(input))
         if self.cap is not None and len(input) > self.cap:
             raise RuntimeError(f"400: requested {len(input)} inputs exceeds the cap {self.cap}")
-        return _FakeResp([_FakeEmbItem(i, [0.01, 0.02, 0.03]) for i in range(len(input))])
+        return SimpleNamespace(data=[SimpleNamespace(index=i, embedding=[0.01, 0.02, 0.03]) for i in range(len(input))])
 
 
 class _FakeClient:

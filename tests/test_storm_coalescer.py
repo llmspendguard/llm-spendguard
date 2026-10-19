@@ -14,6 +14,8 @@ import sys
 import tempfile
 import threading
 import time
+from functools import partial
+from _script_checks import delayed_batch_results
 
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-coalescer-")
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
@@ -256,9 +258,9 @@ ck("I4b realtime raise + error both reroute to batch, all 20 served, siblings fi
 print("-- close() bounded: a hung batch is abandoned VISIBLY (close_abandoned), not a silent hang --")
 fp = H.FakeProvider(cap=100000, window_s=1.0)
 _hang_gate = threading.Event()
-def _hang_batch(items):
-    _hang_gate.wait(timeout=30)                          # released at the end; simulates a batch that never finishes in time
-    return {cid: {"text": "late", "status_code": 200} for cid, _ in items}
+BATCH_RELEASE_TIMEOUT_S = 30
+_hang_batch = partial(delayed_batch_results, event=_hang_gate, timeout=BATCH_RELEASE_TIMEOUT_S,
+                      response_for=lambda prompt: {"text": "late", "status_code": 200})
 c = StormCoalescer(execute_realtime=_rt(fp), execute_batch=_hang_batch,
                    sustainable_rate_per_s=5, horizon_s=1.0, provider="anthropic")   # budget 5, N 20 → 15 overflow hangs
 c.submit_all(["do %s" % H.canary(i) for i in range(20)])
