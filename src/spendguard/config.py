@@ -46,6 +46,12 @@ CODEX_POOL_PRIVATE_DIRECTORY_MODE = 0o700
 CODEX_POOL_CREDENTIAL_STORE_KEY = "cli_auth_credentials_store"
 CODEX_POOL_CREDENTIAL_STORE_VALUE = "file"
 CODEX_POOL_TRUE_VALUES = frozenset(("1", "true", "yes", "on"))
+EXPLICIT_TRUE_VALUES = (True, "true", "1", 1)
+
+
+def is_explicit_true(value):
+    """The calls-ledger config rule: only canonical explicit values enable a switch."""
+    return value in EXPLICIT_TRUE_VALUES
 
 
 def _iter_env_file(path):
