@@ -15,7 +15,6 @@ from . import config, guard, lane_balance, lane_registry, pricing, provider_toke
 
 CLASSIFY_INTENT = "spendguard:classify"
 DEFAULT_DELEGATE_INTENT = "spendguard:delegate-task"
-CLASSIFY_OUTPUT_TOKENS = 800
 # An agentic repo delegation is a single-tenant, multi-step turn — far longer than a meta prompt — so it gets its own
 # generous default deadline (operator-overridable via config `delegate.agentic_timeout_s`), NOT the warm lane's short
 # meta default. A caller's explicit `timeout` still wins; this is only the floor when none was supplied, so a wedged
@@ -179,7 +178,7 @@ def classify_task(task, files=None, provider="auto", exclude_plans=None):
     from . import calls
     with calls.gate_internal():
         response = lane_balance.delegate(prompt, system=_CLASSIFY_SYSTEM, intent=CLASSIFY_INTENT,
-                                         max_tokens=CLASSIFY_OUTPUT_TOKENS, schema=_CLASSIFY_SCHEMA)
+                                         schema=_CLASSIFY_SCHEMA)
     if response.get("error") or not response.get("text"):
         return {"error": response.get("error") or "classifier returned no result"}
     try:
