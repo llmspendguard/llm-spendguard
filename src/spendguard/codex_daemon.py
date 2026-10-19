@@ -300,6 +300,7 @@ class _CodexDaemonPool:
         if self._size < 1:
             raise ValueError("codex daemon pool size must be positive")
         self._workers = [worker_factory() for _ in range(self._size)]
+        self._pool_worker_factory = worker_factory
         for index, worker in enumerate(self._workers):
             worker._keep_warm = True
             home = config.codex_daemon_worker_home(index) if settings["isolate_homes"] else None
@@ -311,6 +312,7 @@ class _CodexDaemonPool:
         self._pool_stopping = threading.Event()
         self._pool_monitor = None
         self._pool_recoveries = set()
+        self._pool_degraded = {}
 
     def pool_ensure_running(self):
         # Warm concurrently; the inherited per-instance spawn lock also makes concurrent callers safe.
@@ -338,29 +340,31 @@ class _CodexDaemonPool:
     def _pool_maintain_warmth(self):
         interval = config.codex_daemon_pool_settings()["health_interval_s"]
         while not self._pool_stopping.wait(interval):
-            # Lease through the same bucket: maintenance must never restart a checked-out child.
+            # Idle health work leases through the same bucket. Agentic leases have an independent
+            # deadline in pool_run_warm, so even an invocation that never returns is reclaimed.
             from .dispatch import DispatchTimeout
             try:
                 self._slots.acquire(0)
             except DispatchTimeout:
                 continue
             worker = None
+            transferred = False
             try:
                 with self._pool_lock:
                     if self._idle_workers:
                         worker = self._idle_workers.pop(0)
                 if worker is not None and not worker.running():
-                    worker.ensure_running()
-                    if self._pool_stopping.is_set():
-                        worker.shutdown()
+                    self._pool_start_recovery(worker)
+                    transferred = True
             except Exception as exc:
                 config.warn_once(f"[spendguard] codex pool health: {exc}")
             finally:
                 with self._pool_lock:
-                    if worker is not None:
+                    if worker is not None and not transferred:
                         self._idle_workers.append(worker)
                         self._pool_lock.notify_all()
-                self._slots.release()
+                if not transferred:
+                    self._slots.release()
 
     def _pool_checkin_worker(self, worker):
         with self._pool_lock:
@@ -368,16 +372,58 @@ class _CodexDaemonPool:
             self._pool_lock.notify_all()
         self._slots.release()
 
-    def _pool_recover_worker(self, worker):
-        """Keep a failed child's lease until its own lifecycle has reaped and replaced it."""
+    def _pool_start_recovery(self, worker, retire=False):
+        """Transfer exactly one existing lease to the existing asynchronous recovery path."""
+        recovery = threading.Thread(target=self._pool_recover_worker, args=(worker, retire), daemon=True)
+        with self._pool_lock:
+            self._pool_recoveries.add(recovery)
         try:
-            worker.shutdown()
-            if not self._pool_stopping.is_set():
-                worker.ensure_running()
-                if self._pool_stopping.is_set():
-                    worker.shutdown()
-        except Exception as exc:
-            config.warn_once(f"[spendguard] codex pool recycle: {exc}")
+            recovery.start()
+        except BaseException:
+            with self._pool_lock:
+                self._pool_recoveries.discard(recovery)
+            raise
+
+    def _pool_recover_worker(self, worker, retire=False):
+        """Keep a failed child's lease until its own lifecycle has reaped and replaced it."""
+        with self._pool_lock:
+            slot_index = self._workers.index(worker)
+        settings = config.codex_daemon_pool_settings()
+        backoff = settings["respawn_backoff_s"]
+        ceiling = max(backoff, settings["health_interval_s"])
+        reaped = False
+        try:
+            while not self._pool_stopping.is_set():
+                try:
+                    if not reaped:
+                        if retire:
+                            worker._retired_from_pool = True
+                        worker.shutdown()
+                        reaped = True
+                    if retire:
+                        # A late return must not mutate the next lease's daemon/process registries.
+                        replacement = self._pool_worker_factory()
+                        replacement._keep_warm = True
+                        replacement._environment_overrides = getattr(worker, "_environment_overrides", {})
+                        with self._pool_lock:
+                            self._workers[slot_index] = replacement
+                        worker = replacement
+                        retire = False
+                    if worker.ensure_running() is not None:
+                        with self._pool_lock:
+                            self._pool_degraded.pop(slot_index, None)
+                        break
+                    failure = "worker spawn returned no process"
+                except Exception as exc:
+                    failure = str(exc)
+                with self._pool_lock:
+                    self._pool_degraded[slot_index] = failure
+                config.warn_once(f"[spendguard] DEGRADED codex pool slot {slot_index}: {failure}; retrying respawn")
+                if self._pool_stopping.wait(backoff):
+                    break
+                backoff = min(ceiling, backoff * config.CODEX_POOL_RESPAWN_BACKOFF_MULTIPLIER)
+            if self._pool_stopping.is_set():
+                worker.shutdown()
         finally:
             self._pool_checkin_worker(worker)
             with self._pool_lock:
@@ -394,7 +440,7 @@ class _CodexDaemonPool:
         attempted_workers = set()
         for _ in range(self._size):
             result = None
-            recycle = retry_auth = False
+            recycle = retry_auth = retire = False
             try:
                 self._slots.acquire(max(0, deadline - time.monotonic()))
             except DispatchTimeout as exc:
@@ -415,7 +461,30 @@ class _CodexDaemonPool:
                     return {"text": None, "thread": kwargs.get("thread"), "error": "codex pool checkout timeout"}
                 call_kwargs = kwargs if self._size == 1 else {
                     **kwargs, "timeout": max(0, deadline - time.monotonic())}
-                result = worker.run_warm(**call_kwargs)
+                if kwargs.get("recycle_on_timeout"):
+                    completed = threading.Event()
+                    outcome = {}
+
+                    def invoke_pool_lease(leased_worker=worker, options=call_kwargs,
+                                          completion=completed, reply=outcome):
+                        try:
+                            reply["result"] = leased_worker.run_warm(**options)
+                        except BaseException as exc:
+                            reply["exception"] = exc
+                        finally:
+                            completion.set()
+
+                    threading.Thread(target=invoke_pool_lease, daemon=True).start()
+                    if not completed.wait(max(0, deadline - time.monotonic())):
+                        retire = True
+                        result = {"text": None, "thread": kwargs.get("thread"),
+                                  "error": "codex pool leased turn deadline expired", "timed_out": True}
+                    elif "exception" in outcome:
+                        raise outcome["exception"]
+                    else:
+                        result = outcome["result"]
+                else:
+                    result = worker.run_warm(**call_kwargs)
                 recycle = bool(result.get("error"))
                 retry_auth = bool(result.get("auth_error"))
             except BaseException:
@@ -424,14 +493,9 @@ class _CodexDaemonPool:
             finally:
                 # Recovery retains this lease, but never delays the response or healthy-child failover.
                 if recycle:
-                    recovery = threading.Thread(target=self._pool_recover_worker, args=(worker,), daemon=True)
-                    with self._pool_lock:
-                        self._pool_recoveries.add(recovery)
                     try:
-                        recovery.start()
+                        self._pool_start_recovery(worker, retire)
                     except BaseException:
-                        with self._pool_lock:
-                            self._pool_recoveries.discard(recovery)
                         self._pool_checkin_worker(worker)
                         raise
                 else:
