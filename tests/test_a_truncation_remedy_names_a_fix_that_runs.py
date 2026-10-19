@@ -37,6 +37,8 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 import contextlib, io, sqlite3, subprocess                                      # noqa: E402
+from functools import partial
+from _script_checks import record_script_check
 
 from spendguard import bulkgate, config, expected_output, receipt               # noqa: E402
 
@@ -76,13 +78,7 @@ class Checks:
         self.failures = 0
         self.ran = 0
         self.unposed: list = []
-
-    def that(self, label: str, ok: bool, extra: str = "") -> bool:
-        self.ran += 1
-        if not ok:
-            self.failures += 1
-        print(f"  [{'OK' if ok else 'FAIL'}] {label}" + (f"  — {extra}" if not ok and extra else ""))
-        return ok
+        self.that = partial(record_script_check, None, counters=self, return_condition=True)
 
     def cannot_pose(self, case: str, why: str) -> None:
         """A case whose PRECONDITION is absent — reported as its own outcome, never as a pass or a fail.

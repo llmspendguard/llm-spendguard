@@ -22,14 +22,12 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 
 from spendguard import gate, token_caps        # noqa: E402
 
-fails = 0
+fails = []
 
 
-def ck(label, cond, extra=""):
-    global fails
-    if not cond:
-        fails += 1
-    print(f"  [{'OK' if cond else 'FAIL'}] {label}{('  — ' + extra) if extra and not cond else ''}")
+from functools import partial
+from _script_checks import record_script_check
+ck = partial(record_script_check, fails, record_before_print=True)
 
 
 # ── REQUIRE probe covers every gatable SDK, and excludes boto3 ─────────────────────────────────────────────────
@@ -48,5 +46,5 @@ posonly = [s for s in found
            if s["kwarg"] == "max_tokens" and s["value"] == 500 and s["kind"] == "signature-default"]
 ck("a positional-only max_tokens default is now found by the scan", len(posonly) == 1, f"got {found}")
 
-print(f"\n{'[FAIL]' if fails else 'OK'} test_cat7_guard_completeness: {fails} failure(s)")
+print(f"\n{'[FAIL]' if fails else 'OK'} test_cat7_guard_completeness: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

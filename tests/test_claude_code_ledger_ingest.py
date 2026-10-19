@@ -31,10 +31,9 @@ from spendguard import claudecode, budget
 from spendguard import ledger as L
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
+from functools import partial
+from _script_checks import record_script_check
+ck = partial(record_script_check, fails)
 
 # ── deterministic, hermetic pricing: cost = (in+out)/1000; '<synthetic>' is unpriceable (RAISES, like the real one) ──
 def _fake_price(model, in_tok, out_tok, cached=0, provider=None, cache_creation_tok=0):

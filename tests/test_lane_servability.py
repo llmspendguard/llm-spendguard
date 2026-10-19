@@ -20,10 +20,9 @@ from spendguard import lane_servability as ls, catalog, calls, vendor_call, reli
 fails = []
 
 
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
+from functools import partial
+from _script_checks import record_script_check
+ck = partial(record_script_check, fails)
 
 
 # Deterministic thresholds for the test, independent of any config default (set the env knobs the module reads).

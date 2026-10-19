@@ -31,11 +31,10 @@ open(SESS, "w").write(turn("claude-opus-4-8", 1000, 500, ["Edit", "Bash"]) + "\n
 
 from spendguard import claudecode, pricing                      # noqa: E402
 
-fail = 0
-def ck(label, cond):
-    global fail
-    ok = bool(cond); fail += (not ok)
-    print(f"  [{'OK' if ok else 'FAIL'}] {label}")
+from functools import partial
+from _script_checks import record_script_check
+fail = []
+ck = partial(record_script_check, fail, coerce_condition=True, record_before_print=True)
 
 exp = pricing.realtime_cost("claude-opus-4-8", 1000, 500, 0)
 st, info = claudecode.update()
@@ -104,5 +103,5 @@ _cls = claudecode._load_state().get("cls", {})
 ck("classify: stores the LLM confidence (S2 fresh → 76, not 0)", _cls.get("S2", {}).get("confidence") == 76)
 ck("classify: RE-does a stale 0-confidence session (S1 0 → 88), never leaves it at 0", _cls.get("S1", {}).get("confidence") == 88)
 
-print(f"\n{'[FAIL]' if fail else 'OK'} claudecode: {fail} failure(s)")
+print(f"\n{'[FAIL]' if fail else 'OK'} claudecode: {len(fail)} failure(s)")
 sys.exit(1 if fail else 0)

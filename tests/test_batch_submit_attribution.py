@@ -16,16 +16,14 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 from spendguard import submit, http_capture, calls   # noqa: E402
+from functools import partial
+from _script_checks import record_script_check
 
 
 class Checks:
     def __init__(self):
-        self.fails = 0
-
-    def ck(self, label, cond, extra=""):
-        if not cond:
-            self.fails += 1
-        print(f"  [{'OK' if cond else 'FAIL'}] {label}{('  — ' + extra) if extra and not cond else ''}")
+        self.fails = []
+        self.ck = partial(record_script_check, self.fails, record_before_print=True)
 
 
 def _write_batch_jsonl(n=2):
@@ -123,7 +121,7 @@ def main():
     c.ck("context RESTORED after submit_chat_tasks", (calls.current() or {}).get("intent") is None,
          str(calls.current()))
 
-    print(f"\n{'[FAIL]' if c.fails else 'OK'} test_batch_submit_attribution: {c.fails} failure(s)")
+    print(f"\n{'[FAIL]' if c.fails else 'OK'} test_batch_submit_attribution: {len(c.fails)} failure(s)")
     return 1 if c.fails else 0
 
 

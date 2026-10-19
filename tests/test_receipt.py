@@ -25,10 +25,9 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 from spendguard import receipt, calls, budget
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
+from functools import partial
+from _script_checks import record_script_check
+ck = partial(record_script_check, fails)
 
 TODAY, WEEK, MONTH = receipt._windows()
 

@@ -25,14 +25,12 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 
 from spendguard import schedule, realized, resources, brief, guard   # noqa: E402
 
-fails = 0
+fails = []
 
 
-def ck(label, cond, extra=""):
-    global fails
-    if not cond:
-        fails += 1
-    print(f"  [{'OK' if cond else 'FAIL'}] {label}{('  — ' + extra) if extra and not cond else ''}")
+from functools import partial
+from _script_checks import record_script_check
+ck = partial(record_script_check, fails, record_before_print=True)
 
 
 # ── 1. schedule: a real crontab -l failure must NOT wipe the user's crontab ──────────────────────────────────
@@ -104,5 +102,5 @@ except TypeError:
 ck("brief() with a per=None recommendation does not crash formatting None", not crashed2)
 ck("...and shows the cost as n/a", "cost n/a" in out, out[-120:])
 
-print(f"\n{'[FAIL]' if fails else 'OK'} test_robustness_fixes: {fails} failure(s)")
+print(f"\n{'[FAIL]' if fails else 'OK'} test_robustness_fixes: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

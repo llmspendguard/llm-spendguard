@@ -50,11 +50,9 @@ TIMEOUT_S = 1.0                                                     # the wall-c
 
 def main():
     fails = []
-
-    def ck(name, cond):
-        print(("  [OK] " if cond else "  [FAIL] ") + name)
-        if not cond:
-            fails.append(name)
+    from functools import partial
+    from _script_checks import record_script_check
+    ck = partial(record_script_check, fails)
 
     init_kwargs = []                                               # what each fake Anthropic client was constructed with
 

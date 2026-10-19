@@ -20,12 +20,12 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 from spendguard import codex, pricing, gate, receipt
+from functools import partial
+from types import SimpleNamespace as _Obj
+from _script_checks import record_script_check
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
+ck = partial(record_script_check, fails)
 
 # ── build a synthetic Codex session in the real on-disk layout (sessions/YYYY/MM/DD/rollout-*.jsonl) ──
 # Date it TODAY (not a fixed date) so its est-value lands in the CURRENT day/month bucket no matter when CI
@@ -92,8 +92,6 @@ t = receipt._est_tally()
 ck("receipt._est_tally SUMS codex + claude-code", t and abs(t["month"] - (exp_cost + 5.0)) < 1e-6)
 
 # ── the gate's OpenAI Responses-API estimator/actual (the modern surface) ─────
-class _Obj:
-    def __init__(self, **k): self.__dict__.update(k)
 
 # actual: Responses usage = input_tokens / output_tokens (not prompt/completion)
 res = _Obj(usage=_Obj(input_tokens=1000, output_tokens=200))

@@ -24,10 +24,9 @@ from spendguard import antigravity_exec, catalog, vendor_call
 fails = []
 
 
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
+from functools import partial
+from _script_checks import record_script_check
+ck = partial(record_script_check, fails)
 
 
 # ── _parse_agy_models: id = column 1 of each '<id>\t<display>' row; the 'Fetching…' banner (no TAB) is skipped ──

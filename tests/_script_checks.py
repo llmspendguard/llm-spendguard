@@ -8,6 +8,29 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 
 
+def record_script_check(failures, label, cond, extra="", *, prefix="  ",
+                        detail_prefix="  — ", coerce_condition=False,
+                        assert_condition=False, return_condition=False, counters=None,
+                        record_before_print=False):
+    """Report a script assertion with caller-owned failure and assertion state."""
+    if coerce_condition:
+        cond = bool(cond)
+    if counters is not None:
+        counters.ran += 1
+        if not cond:
+            counters.failures += 1
+    if record_before_print and failures is not None and not cond:
+        failures.append(label)
+    print(f"{prefix}[{'OK' if cond else 'FAIL'}] {label}" +
+          (detail_prefix + extra if extra and not cond else ""))
+    if not record_before_print and failures is not None and not cond:
+        failures.append(label)
+    if assert_condition:
+        assert cond
+    if return_condition:
+        return cond
+
+
 def callable_raises_exception(fn, exc=Exception, *, unexpected_returns_false=False):
     """Observe the expected exception, preserving the caller's unrelated-error policy."""
     try:

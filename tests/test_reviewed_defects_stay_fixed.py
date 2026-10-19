@@ -28,14 +28,12 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 
 from spendguard import expected_output as eo, reconcile
 
-failures = 0
+failures = []
 
 
-def check(label, ok, extra=""):
-    global failures
-    if not ok:
-        failures += 1
-    print(f"  [{'OK' if ok else 'FAIL'}] {label}" + (f"  — {extra}" if not ok and extra else ""))
+from functools import partial
+from _script_checks import record_script_check
+check = partial(record_script_check, failures, record_before_print=True)
 
 
 def test_expected_output_never_returns_a_SILENT_zero():
@@ -535,5 +533,5 @@ check("the module docstring no longer promises 'never 0'", "and never 0." not in
 check("...and says to check the basis instead", "CHECK THE BASIS" in _eo.__doc__)
 
 
-print(f"\n{'[FAIL]' if failures else 'OK'} test_reviewed_defects_stay_fixed: {failures} failure(s)")
+print(f"\n{'[FAIL]' if failures else 'OK'} test_reviewed_defects_stay_fixed: {len(failures)} failure(s)")
 sys.exit(1 if failures else 0)
