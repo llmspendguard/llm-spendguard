@@ -280,10 +280,11 @@ def lane_headroom(do_fetch=True):
 
 
 def lane_summary_lines():
-    """Doctor/init block: one line per lane. Empty list when the executor is plain `api` (nothing to say)."""
+    """Doctor/init/overview block: lane readiness plus attributed metered fallback spend."""
     s = lanes_status()
+    fallback_line = lane_metered_fallback_summary_line()
     if not any(ln["enabled"] for ln in s["lanes"]):
-        return []
+        return [fallback_line] if fallback_line else []
     lines = [f"subscription lanes (advisor.executor = {s['executor']}):"]
     for ln in s["lanes"]:
         if not ln["enabled"]:
@@ -307,7 +308,22 @@ def lane_summary_lines():
             state = f"🔴 inactive — {ln['activate']}"
         lines.append(f"  {ln['lane']:<12} ({ln['provider']} plan): {state}")
     lines.append("  (until a lane is active its prompts fall back to the metered API — no breakage, just billed)")
+    if fallback_line:
+        lines.append(fallback_line)
     return lines
+
+
+def lane_metered_fallback_summary_line():
+    """Name the monthly metered API subset using the existing fell_from ledger rollup, without adding it again."""
+    from . import reliability
+    rows = reliability.lane_fallback_spend(since=config.month_start_utc())
+    if not rows:
+        return None
+    total = sum(row["metered_usd"] for row in rows)
+    count = sum(row["n_calls"] for row in rows)
+    attribution = ", ".join(f"{row['lane']} ${row['metered_usd']:.4f} ({row['n_calls']} calls)" for row in rows)
+    return (f"$0→metered fallback this month (install-wide): ${total:.4f} across {count} calls "
+            f"— included in API spend, not added again; from {attribution}")
 
 
 def overage_nudge_line(do_fetch=False):
@@ -390,21 +406,7 @@ def main(argv=None):
                                          "advisor.executor to claude-code / codex / zai-coding / gemini / pool "
                                          "to use your plans"]):
             print(line)
-    # OPERATOR alert (not a consumer concern): metered $ spent THIS MONTH because a $0 lane was DOWN and its call fell
-    # over to the paid API — the "$0 savings lost" recovered by re-logging that lane in. Shown here, where an operator
-    # looks at lane state, only when it is material; the full per-lane rollup is `spendguard lanes --fallback-spend`.
     if _operator_view:
-        try:
-            from . import reliability as _rel_fb, config as _cfg_fb
-            _fb_rows = _rel_fb.lane_fallback_spend(since=_cfg_fb.month_start_utc())
-            _fb_total = round(sum(r["metered_usd"] for r in _fb_rows), 2)
-            if _fb_total >= 0.01:
-                _top = ", ".join(f"{r['lane']} ${r['metered_usd']:.2f}" for r in _fb_rows[:4])
-                print(f"⚠ ${_fb_total:.2f} metered this month FELL OVER from lanes the router TRIED and found DOWN ({_top}) "
-                      f"— re-login to restore $0. NB: this is lane-tried-then-down spend ONLY, not all lane-ELIGIBLE metered "
-                      f"(see the next line). Full: spendguard lanes --fallback-spend")
-        except Exception:
-            pass
         try:                                              # defect 3: the figure that answers 'is rule #8 in force' —
             from . import lane_eligibility                 # lane-ELIGIBLE work billed metered anyway ($0, cached verdicts)
             _le_line = lane_eligibility.summary_line()
