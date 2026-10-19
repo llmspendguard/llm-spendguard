@@ -31,12 +31,7 @@ def ck(label, cond, extra=""):
     print(f"  [{'OK' if cond else 'FAIL'}] {label}{('  — ' + extra) if extra and not cond else ''}")
 
 
-def _raises(fn):
-    try:
-        fn()
-        return False
-    except Exception:
-        return True
+from _script_checks import callable_raises_exception as _raises
 
 
 # ── adapters._exc_detail pulls structured fields off an SDK-style exception ─────────────────────────────────────

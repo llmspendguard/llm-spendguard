@@ -95,12 +95,10 @@ ck("est > budget → BudgetRefused BEFORE any spend", refused is not None and no
 ck("...BudgetRefused is a DELIBERATE stop (a SpendGateRefused)", isinstance(refused, sg.SpendGateRefused))
 
 # ── input guards raise (a bug, not a silent no-op) ──
-def _raises(fn):
-    try:
-        fn()
-        return False
-    except ValueError:
-        return True
+from functools import partial
+from _script_checks import callable_raises_exception
+
+_raises = partial(callable_raises_exception, exc=ValueError)
 
 
 ck("no vendors → ValueError", _raises(lambda: crossllm.ask_vision("p", IMG, [])))

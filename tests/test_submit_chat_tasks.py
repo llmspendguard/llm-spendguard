@@ -20,6 +20,8 @@ import os
 import sys
 import json
 import tempfile
+from functools import partial
+from _script_checks import raise_test_exception
 
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_HOME", tempfile.mkdtemp(prefix="spendguard-chatbatch-"))
@@ -100,8 +102,8 @@ ck("build failure → error dict, batch_id None", r5["batch_id"] is None and "bu
 submit.build_chat_batch_jsonl = observe_submit_reading_tasks
 
 print("-- a DELIBERATE spend-stop from guarded_submit PROPAGATES (never swallowed into an error dict) --")
-def _stub_guarded_refuses(*a, **k):
-    raise gate.SpendGateRefused.__new__(gate.SpendGateRefused)
+_stub_guarded_refuses = partial(raise_test_exception, exception_factory=partial(
+    gate.SpendGateRefused.__new__, gate.SpendGateRefused))
 submit.guarded_submit = _stub_guarded_refuses
 try:
     submit.submit_chat_tasks(["q"], "gpt-4.1-nano")

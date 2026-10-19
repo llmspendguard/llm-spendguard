@@ -10,6 +10,8 @@ LATENCY, never AVAILABILITY.
 import os
 import sys
 import tempfile
+from functools import partial
+from _script_checks import raise_test_exception
 
 os.environ.setdefault("SPENDGUARD_HOME", tempfile.mkdtemp(prefix="sg-kimid-"))
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
@@ -46,8 +48,7 @@ try:
     fails += ck("SPENDGUARD_KIMI_DAEMON=0 opts out", not _kx._daemon_enabled())
     os.environ.pop("SPENDGUARD_KIMI_DAEMON")
 
-    def _boom(*a, **k):
-        raise RuntimeError("boom")
+    _boom = partial(raise_test_exception, exception_factory=partial(RuntimeError, "boom"))
     kd.run_warm = _boom                         # the warm path raises → run_prompt must catch + fall to cold `kimi -p`
     _kx._warm_model_eligible = lambda model: True   # force the warm path to be attempted (so the raise is exercised)
     _kx._bin = lambda: "/fake/kimi"

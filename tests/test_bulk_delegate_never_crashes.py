@@ -23,6 +23,8 @@ network, no spend. Drives the PINNED runner (model_for callable → _run_task_on
 import os
 import sys
 import tempfile
+from functools import partial
+from _script_checks import raise_test_exception
 
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-crashproof-")
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
@@ -81,8 +83,8 @@ try:
     print("\n-- (b) an unexpected per-task raise is contained by the result-loop belt, never crashes the fan --")
     dispatch.acquire_or_none = lambda *a, **k: 0.0    # admission succeeds; the raise comes from elsewhere in the runner
 
-    def _boom(_m):
-        raise RuntimeError("simulated unexpected failure before the guarded call")
+    _boom = partial(raise_test_exception, exception_factory=partial(
+        RuntimeError, "simulated unexpected failure before the guarded call"))
 
     adapters.provider_for = _boom                      # provider_for runs BEFORE the runner's try → escapes → belt
     adapters.call = _served_call
