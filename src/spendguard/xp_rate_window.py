@@ -12,9 +12,8 @@ MULTI-WINDOW (panel I17): a reservation must satisfy EVERY (window_s, max_count,
 1s sub-cap bounds the instantaneous stampede (the thing that 429'd 931× in the replay) AND a 60s cap bounds sustained
 rpm/tpm. The shared store is the ledger db (same cross-process BEGIN IMMEDIATE lane_queue.lease relies on).
 
-FAIL-OPEN ON INFRA, NOT ON RATE: if the shared store is unreadable/locked beyond the deadline we ADMIT (the in-process
-bucket is still the per-process backstop) — we never block a caller because our own rate db broke. But being OVER the
-rate is not an infra error: that WAITS (bounded by the deadline), which is the whole point.
+REFUSE ON INFRA AND RATE: an unavailable shared store cannot prove admission and raises RateDeadline with the
+infrastructure reason. Operational errors retry within the deadline; exhausted capacity also refuses at the deadline.
 """
 import math
 import os
@@ -28,7 +27,7 @@ _MIN_WAIT_S = 0.02        # floor on a recomputed wait so an over-limit boundary
 
 
 class RateDeadline(Exception):
-    """The shared rate window could not admit this call within its deadline (aggregate vendor rate is saturated)."""
+    """The shared rate window could not admit this call: deadline exhausted or shared-store infrastructure failed."""
 
 
 def _xp_rate_off():
@@ -99,8 +98,7 @@ def _try_reserve(c, key, limits, est, now):
 def reserve(key, limits, est_tokens=0, deadline_s=30.0, clock=time.time, sleep=time.sleep):
     """Reserve one admission for `key` under the multi-window `limits`, waiting (bounded by deadline_s) until the
     shared window has room. Returns seconds waited. Raises RateDeadline if the aggregate rate stays saturated past the
-    deadline. Degrades to ADMIT (returns 0.0) on an INFRA failure of the shared store — never blocks a call because the
-    rate db broke; the in-process bucket remains the per-process backstop. `clock`/`sleep` are injectable for tests."""
+    deadline. A shared-store infrastructure failure raises RateDeadline with the complete reason. `clock`/`sleep` are injectable for tests."""
     if _xp_rate_off() or not limits:
         return 0.0
     t0 = clock()
@@ -117,8 +115,9 @@ def reserve(key, limits, est_tokens=0, deadline_s=30.0, clock=time.time, sleep=t
         except sqlite3.OperationalError:                 # C: transient lock/busy — RETRY within the deadline, do NOT
             sleep(min(_MIN_WAIT_S, max(0.0, remaining)))  #    silently admit (a momentary contention must not bypass the rate)
             continue
-        except sqlite3.Error:
-            return clock() - t0                          # a REAL db/infra failure → fail-open admit (in-process bucket backstops)
+        except sqlite3.Error as error:
+            raise RateDeadline(f"xp_rate_window.reserve: '{key}' shared rate store failed "
+                               f"({type(error).__name__}: {error})") from error
         if ok:
             return clock() - t0
         sleep(min(wait + 0.001, remaining))
