@@ -31,7 +31,7 @@ def _months(since, today):
 
 
 def _chat_signals(org, since):
-    st = chat._load_state()
+    st = config.load_state("chat", {"orgs": {}, "convs": {}})
     sig = collections.defaultdict(lambda: collections.defaultdict(list))
     for c in st.get("convs", {}).values():
         if c.get("org") != org or max((c.get("days") or {"x": ""}).keys()) < since:
@@ -47,7 +47,7 @@ def _chat_signals(org, since):
 def _code_signals(org, since):
     global _CODE_DIGESTS
     try:
-        cls = claudecode.load_cls()
+        cls = config.load_state("claudecode", {"sessions": {}, "ledger": {}}).get("cls", {})
     except Exception:
         cls = {}
     if _CODE_DIGESTS is None:

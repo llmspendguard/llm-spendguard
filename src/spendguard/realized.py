@@ -18,19 +18,6 @@ MIN_EACH = 5   # need ≥5 calls on BOTH sides of the adoption point to claim a 
 REALIZED_LOGGER = logging.getLogger(__name__)
 
 
-def _state_path():
-    from . import config
-    return config.state_path("realized")     # one naming rule for every adapter
-
-
-def _load_state():
-    """This adapter's persisted state, or its own empty shape. FOUR copies of this existed, each a bare
-    `except: return {...}` — which is also how a TRUNCATED state file (from the non-atomic writes that used
-    to sit opposite them) presented as "nothing saved yet" rather than as damage."""
-    from . import config
-    return config.load_state("realized", {})
-
-
 def measure(intent=None, min_each=MIN_EACH):
     """[{intent, adopted_ts, before_rate, after_rate, delta_per_call, after_calls, realized_usd}] —
     adoption point = the EARLIEST non-refuted insight recorded for that intent."""
@@ -76,9 +63,9 @@ def sync_to_guarded(rows=None):
     """Record POSITIVE realized deltas into the guarded pipeline (source='realized'), incrementally:
     only calls not yet counted for an intent contribute, so re-runs never double-record. Returns
     {synced_usd, intents}. Regressions (negative delta) are reported by measure() but never 'saved'."""
-    from . import guard
+    from . import config, guard
     rows = measure() if rows is None else rows
-    state = _load_state()
+    state = config.load_state("realized", {})
     synced, intents = 0.0, 0
     for r in rows:
         if r["delta_per_call"] <= 0:
@@ -112,7 +99,7 @@ def sync_to_guarded(rows=None):
     from . import config
     persisted = True
     try:
-        if config.update_json(_state_path(), lambda _d: state) is None:
+        if config.update_json(config.state_path("realized"), lambda _d: state) is None:
             persisted = False
     except Exception as e:
         persisted = False
@@ -120,7 +107,7 @@ def sync_to_guarded(rows=None):
     if not persisted and intents:
         config.warn_once(
             f"[spendguard] realized sync credited ${synced:.4f} across {intents} intent(s) but could NOT "
-            f"persist its watermark to {_state_path()} — the NEXT run will credit those same calls again. "
+            f"persist its watermark to {config.state_path('realized')} — the NEXT run will credit those same calls again. "
             f"Fix the write (disk space / permissions) before re-running, or the savings figure will inflate.")
     return {"synced_usd": round(synced, 4), "intents": intents, "persisted": persisted}
 

@@ -27,7 +27,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 # this test self-re-execs OR the pytest runner pre-isolated it via SPENDGUARD_TEST_ISOLATED (which skips the block).
 os.environ["SPENDGUARD_CC_DIR"] = os.path.join(os.environ["SPENDGUARD_HOME"], "projects")
 
-from spendguard import claudecode, budget
+from spendguard import claudecode, budget, config
 from spendguard import ledger as L
 
 fails = []
@@ -93,7 +93,7 @@ ck("spent_dec == $0 — est_chat NEVER enters the real billed total", Decimal(le
 
 # IDEMPOTENCY — the correctness mechanism is the dedup_key, not the watermark. Clear the watermark and re-scan:
 n1 = len(rows)
-st = claudecode._load_state(); st["ledger_sessions"] = {}; claudecode._save_claudecode_state(st)
+st = config.load_state("claudecode", {"sessions": {}, "ledger": {}}); st["ledger_sessions"] = {}; claudecode._save_claudecode_state(st)
 claudecode.ingest_events()
 rows2 = [r for r in led.query(since=SINCE) if r.get("source") == "claude-code"]
 ck("re-scan with the watermark CLEARED does NOT double-count — dedup_key holds", len(rows2) == n1)
