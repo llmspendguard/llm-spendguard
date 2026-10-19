@@ -259,4 +259,3 @@ def measure_codex_demand_from_ledger():
 
 if __name__ == "__main__":
     measure_codex_demand_from_ledger()
-

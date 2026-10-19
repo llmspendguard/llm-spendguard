@@ -110,4 +110,3 @@ report_check("no NameError escaped into the accounting warning", "NameError" not
 print(("[OK]" if not failures else "[FAIL]")
       + f" realtime partial-overlay accounting: {len(failures)} failure(s)")
 sys.exit(1 if failures else 0)
-
