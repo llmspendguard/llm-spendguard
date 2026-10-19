@@ -28,6 +28,7 @@ literal at a call site.
 """
 import datetime
 import json
+import logging
 import os
 import sqlite3
 import time
@@ -62,6 +63,7 @@ ARCHIVE_MAX_MB_DEFAULT = 64.0   # lane_queue_archive.jsonl is append-only; rotat
 #                                 cannot grow unbounded (it had reached 820MB, 2026-10-08)
 QUEUE_MIGRATION_TIMEOUT_S = 30
 _RESULT_CAP = 4000            # bytes of result JSON retained per row (audit/debug, not the whole payload)
+_QUEUE_RESULT_GAP = "lane_queue_result_invalid_json"
 _last_purge_ts = 0.0          # module-local throttle stamp for purge_due() — decouples purge from the drain cycle
 
 # Priority convention (higher drains first): a delegated task someone is WAITING on jumps ahead of a big backfill,
@@ -127,7 +129,9 @@ def _ensure_queue_schema(c):
     # (observed in the 429 storm replay). Attempt-and-swallow cannot race: the column exists either way.
     for _col, _decl in (("sla_class", "TEXT DEFAULT 'batch'"), ("deadline_ts", "TEXT"),
                         ("defer_until", "TEXT"), ("parks", "INTEGER DEFAULT 0"),
-                        ("fingerprint", "TEXT")):     # content-address of (intent,task,system,reasoning) — dedup key
+                        ("fingerprint", "TEXT"), ("batch_handle", "TEXT"), ("batch_model", "TEXT"),
+                        ("result_payload", "TEXT"), ("result_gap", "TEXT"),
+                        ("result_migrated", "INTEGER DEFAULT 0")):
         try:
             c.execute(f"ALTER TABLE lane_queue ADD COLUMN {_col} {_decl}")
         except sqlite3.OperationalError:
@@ -142,6 +146,59 @@ def _ensure_queue_schema(c):
     # in-flight?" and settle coalesces same-fingerprint pending rows. A point lookup on fingerprint, so one commit of
     # a 6k backfill stays cheap even against a deep table.
     c.execute("CREATE INDEX IF NOT EXISTS lane_queue_fingerprint ON lane_queue(fingerprint)")
+    for rid, payload in c.execute("SELECT id,result FROM lane_queue WHERE result_migrated=0").fetchall():
+        parsed = _decode_queue_audit(rid, payload)
+        c.execute("UPDATE lane_queue SET batch_handle=?,batch_model=?,result_payload=?,"
+                  "lane=COALESCE(lane,?),result_gap=?,result_migrated=1 WHERE id=? AND result_migrated=0",
+                  (parsed.get("batch"), parsed.get("batch_model"), payload, parsed.get("lane"),
+                   parsed.get("_gap"), rid))
+
+
+def _decode_queue_audit(row_id, payload):
+    """Corrupt legacy evidence is a named, counted gap, never a successful empty result."""
+    try:
+        parsed = json.loads(payload) if payload else {}
+        if not isinstance(parsed, dict):
+            raise ValueError("queue result must be an object")
+        return parsed
+    except (ValueError, TypeError):
+        logging.getLogger(__name__).warning("%s row=%s", _QUEUE_RESULT_GAP, row_id)
+        return {"_gap": _QUEUE_RESULT_GAP, "_row_id": row_id}
+
+
+def _queue_result_gap_count():
+    """Derive affected-row count from durable evidence, never from process read history."""
+    with _queue_op() as c:
+        return c.execute("SELECT COUNT(*) FROM lane_queue WHERE result_gap IS NOT NULL OR "
+                         "(result IS NOT NULL AND NOT json_valid(result)) OR "
+                         "CASE WHEN json_valid(result) THEN json_extract(result,'$._truncated')=1 ELSE 0 END").fetchone()[0]
+
+
+def _queue_result_storage(result):
+    """Validate bounded audit before entering best-effort DB handling; retain the entire answer."""
+    audit = _serialize_queue_audit(result)
+    assert isinstance(json.loads(audit), dict), "lane queue audit must be a JSON object"
+    return audit, json.dumps(result), result.get("batch"), result.get("batch_model")
+
+
+def _read_queue_result(row_id, audit, payload, recorded_gap):
+    """Expose audit gaps explicitly while recovering full answer evidence independently."""
+    parsed = _decode_queue_audit(row_id, audit)
+    answer = _decode_queue_audit(row_id, payload) if payload else {}
+    answer.update(parsed)
+    if recorded_gap:
+        answer.update({"_gap": recorded_gap, "_row_id": row_id})
+    return answer
+
+
+def _serialize_queue_audit(result):
+    """Bound audit storage structurally; executable control and answer text live separately."""
+    payload = json.dumps(result)
+    size = len(payload.encode("utf-8"))
+    if size > _RESULT_CAP:
+        payload = json.dumps({"_truncated": True, "_orig_bytes": size})
+    assert json.loads(payload) is not None, "lane queue audit must be valid JSON"
+    return payload
 
 
 def _fingerprint(intent, task, system=None, reasoning=None):
@@ -365,6 +422,8 @@ def lease(n, worker=None, lease_s=None):
     n = max(1, int(n))
     lease_s = float(lease_s if lease_s is not None else _qcfg("queue_lease_s", LEASE_S_DEFAULT))
     worker = worker or f"drain-{os.getpid()}"
+    deadline_result = {"error": "queue deadline expired", "outcome": "deadline_exceeded"}
+    deadline_audit, deadline_payload, _, _ = _queue_result_storage(deadline_result)
     now_dt = _utcnow()
     now, until = _iso(now_dt), _iso(now_dt + datetime.timedelta(seconds=lease_s))
     try:
@@ -373,9 +432,9 @@ def lease(n, worker=None, lease_s=None):
             try:
                 # A dead synchronous hold may never become a later purchase, even if its
                 # cleanup write failed. Deadline is durable admission evidence.
-                c.execute("UPDATE lane_queue SET state='failed', result=?, lease_until=NULL, updated_ts=? "
+                c.execute("UPDATE lane_queue SET state='failed', result=?, result_payload=?, batch_handle=NULL, batch_model=NULL,  result_gap=NULL, result_migrated=1, lease_until=NULL, updated_ts=? "
                           "WHERE state IN ('leased','pending') AND deadline_ts IS NOT NULL AND deadline_ts<=?",
-                          (json.dumps({"error": "queue deadline expired", "outcome": "deadline_exceeded"}), now, now))
+                          (deadline_audit, deadline_payload, now, now))
                 # reclaim expired leases: exhausted → failed, else → pending (retryable). attempts was already
                 # incremented at lease time, so `attempts>=max_attempts` here means every allowed try is spent.
                 c.execute("UPDATE lane_queue SET state='failed', updated_ts=? "
@@ -436,6 +495,7 @@ def settle(row_id, result):
     remain, else `failed`; a DETERMINISTIC outcome fails FAST (no wasted retries). A spend refusal / ledger LOCK
     propagates; any other hiccup is best-effort (the lease reclaims the row)."""
     result = result if isinstance(result, dict) else {}
+    audit, full_payload, batch_handle, batch_model = _queue_result_storage(result)
     ok = bool(result.get("text")) and not result.get("error")
     # 'dispatch_saturated' is the STRUCTURED reason the runner emits when the governor had no slot within the deadline
     # (a fixed status code, not a meaning judgement) — the one outcome that is retryable-LATER rather than a failure.
@@ -501,9 +561,9 @@ def settle(row_id, result):
             # settled. Without the guard a late collect_batched result could overwrite a row realtime already settled
             # `done` (or vice-versa) — a cross-path double-settle/double-deliver. rowcount==0 means another path already
             # settled it: do NOT overwrite and do NOT let a caller count it again.
-            cur = c.execute("UPDATE lane_queue SET state=?, result=?, lane=?, billed=?, lease_until=NULL, defer_until=?, "
+            cur = c.execute("UPDATE lane_queue SET state=?, result=?, result_payload=?, batch_handle=?, batch_model=?,  result_gap=NULL, result_migrated=1, lane=?, billed=?, lease_until=NULL, defer_until=?, "
                             "attempts=?, parks=?, updated_ts=? WHERE id=? AND state IN ('leased','queued_batch')",
-                            (state, json.dumps(result)[:_RESULT_CAP], result.get("lane"),
+                            (state, audit, full_payload, batch_handle, batch_model, result.get("lane"),
                              1 if result.get("billed") else 0, defer_until, new_attempts, new_parks, now, row_id))
             settled = cur.rowcount > 0                   # True only if THIS call settled it (not an already-settled row)
             if ok and settled and fp:
@@ -512,9 +572,9 @@ def settle(row_id, result):
                 # the drain re-execute it. This closes the concurrent-enqueue race (two enqueues both missed the dedup
                 # lookup and inserted) and drains any pre-existing duplicates. Only PENDING rows: a leased dup is being
                 # worked and its own settle + the F2 state guard handle it; billed=0 — a coalesced row incurs no spend.
-                c.execute("UPDATE lane_queue SET state='done', result=?, lane='content-addressed-dedup', billed=0, "
+                c.execute("UPDATE lane_queue SET state='done', result=?, result_payload=?, batch_handle=?, batch_model=?,  result_gap=NULL, result_migrated=1, lane='content-addressed-dedup', billed=0, "
                           "lease_until=NULL, defer_until=NULL, updated_ts=? WHERE fingerprint=? AND state='pending' AND id!=?",
-                          (json.dumps(result)[:_RESULT_CAP], now, fp, row_id))
+                          (audit, full_payload, batch_handle, batch_model, now, fp, row_id))
             c.commit()
             return settled
     except Exception as _e:
@@ -539,20 +599,16 @@ def row_results(row_ids):
     here lets the result and its parsing context travel together — the durable read is self-describing.
 
     A read failure PROPAGATES (not swallowed to {}) — a swallowed DB error would be indistinguishable from 'row not yet
-    settled' and could become a FALSE poll-ceiling; the caller must see the failure and retry. Only a corrupt result
-    JSON is tolerated (that one row's result is {}), since that is per-row, not a read failure."""
+    settled' and could become a FALSE poll-ceiling; the caller must see the failure and retry. Corrupt audit JSON returns a named _gap, distinct from an absent result."""
     ids = [int(r) for r in (row_ids or [])]
     if not ids:
         return {}
     out = {}
     with _queue_op() as c:
-        rows = c.execute("SELECT id, state, result, task, system FROM lane_queue WHERE id IN (%s)"
+        rows = c.execute("SELECT id, state, result, task, system, result_payload, result_gap FROM lane_queue WHERE id IN (%s)"
                          % ",".join("?" * len(ids)), ids).fetchall()
-    for rid, state, rjson, task, system in rows:
-        try:
-            res = json.loads(rjson) if rjson else {}
-        except (ValueError, TypeError):
-            res = {}
+    for rid, state, rjson, task, system, payload, gap in rows:
+        res = _read_queue_result(rid, rjson, payload, gap)
         out[rid] = {"state": state, "result": res, "task": task, "system": system}
     return out
 
@@ -560,14 +616,15 @@ def row_results(row_ids):
 def mark_batched(row_ids, batch_id, batch_model=None):
     """Move leased rows to the 'queued_batch' state, recording the batch handle (batch_id + model) so collect_batched
     can settle them later BY custom_id (== row id). Called by the drain OFFLOAD path right after submit_chat_tasks
-    returns a batch_id. Stores the handle in the row's `result` (JSON), clears the lease, and does NOT count a
+    returns a batch_id. Stores the handle in dedicated uncapped columns plus the audit JSON, clears the lease, and does NOT count a
     failure-attempt (the work is not failing — it moved to the async path). Returns the count marked. Uses the same
     stop-or-locked propagation as settle (a ledger LOCK on a DB write must propagate, which is_deliberate_stop alone
     would not catch)."""
     ids = [r for r in (row_ids or []) if r]
     if not ids or not batch_id:
         return 0
-    handle = json.dumps({"reason": "queued_batch", "batch": batch_id, "batch_model": batch_model})
+    handle, full_payload, _, _ = _queue_result_storage(
+        {"reason": "queued_batch", "batch": batch_id, "batch_model": batch_model})
     now = _iso(_utcnow())
     try:
         marked = 0
@@ -577,9 +634,9 @@ def mark_batched(row_ids, batch_id, batch_model=None):
                 # RE-POINTED to a new batch_id when the tracker resubmits an expired/failed batch. COMMIT PER ROW so a
                 # crash mid-loop leaves the already-marked rows DURABLE (never a whole-mark rollback); count the rows
                 # ACTUALLY changed (a row in any other state is skipped) — never over-report by returning len(ids).
-                cur = c.execute("UPDATE lane_queue SET state='queued_batch', result=?, lane='batch', "
+                cur = c.execute("UPDATE lane_queue SET state='queued_batch', result=?, result_payload=?, batch_handle=?, batch_model=?,  result_gap=NULL, result_migrated=1, lane='batch', "
                                 "lease_until=NULL, updated_ts=? WHERE id=? AND state IN ('leased','queued_batch')",
-                                (handle, now, rid))
+                                (handle, full_payload, batch_id, batch_model, now, rid))
                 c.commit()
                 marked += cur.rowcount if (cur.rowcount and cur.rowcount > 0) else 0
         return marked
@@ -596,7 +653,7 @@ def mark_batched(row_ids, batch_id, batch_model=None):
 
 def collect_batched(limit=2000, model=None):
     """SETTLE side of the planner's batch offload: pull + settle rows in the 'queued_batch' state. Reads them, groups
-    by their batch handle (batch_id, from result), pulls each via callio.collect_chat_tasks, and settles each row BY
+    by their batch handle (batch_id, from its uncapped column), pulls each via callio.collect_chat_tasks, and settles each row BY
     custom_id (== the row id). NOTHING is abandoned — every row is either settled or LEFT queued_batch to be retried on
     the NEXT collection round:
       · a result → settle done(text);
@@ -606,16 +663,16 @@ def collect_batched(limit=2000, model=None):
       · a batch whose collect FAILS transiently → its rows stay queued_batch, re-collected next round (a NAMED entry in
         `collect_errors`, not a drop);
       · a row absent from BOTH results and failures (partial pull) → stays queued_batch, re-collected next round;
-      · an ORPHANED row (its stored handle is missing/corrupt so it can NEVER be collected) → settled to the retry
-        ladder so it re-runs realtime instead of sitting stuck forever, and named in `collect_errors`.
+      · an ORPHANED row (its stored handle is missing/corrupt) stays queued_batch with a named gap in
+        `collect_errors`; missing evidence cannot authorize purchasing the same request again.
     $0 (a finished batch was already billed at submit). `model` defaults to config advisor.batch_model. A DELIBERATE
     spend/deadline stop from a collect propagates. Returns {rows, batches, done, failed, not_ready, collected,
-    orphaned, collect_errors}."""
+    orphaned, result_gaps, collect_errors}."""
     from . import config
     model = model or config._cfg_get("advisor", "batch_model", None)
     try:
         with _queue_op() as c:
-            rows = c.execute("SELECT id, intent, result FROM lane_queue WHERE state='queued_batch' LIMIT ?",
+            rows = c.execute("SELECT id, intent, result, batch_handle, batch_model, result_payload, result_gap FROM lane_queue WHERE state='queued_batch' LIMIT ?",
                              (int(limit),)).fetchall()
     except Exception as _e:
         from . import provider_tokens as _pt
@@ -628,12 +685,11 @@ def collect_batched(limit=2000, model=None):
         return {"rows": 0, "batches": 0, "done": 0, "failed": 0, "not_ready": 0, "collected": 0, "orphaned": 0,
                 "collect_errors": [{"error": "queue read failed: %s" % type(_e).__name__}]}
     groups, orphaned, group_model = {}, [], {}          # (batch_id, intent) -> [row_id]; orphaned = no usable handle
-    for rid, intent, result_json in rows:
-        try:
-            _h = (json.loads(result_json) if result_json else {})
-            handle, _bmodel = _h.get("batch"), _h.get("batch_model")
-        except (ValueError, TypeError):
-            handle, _bmodel = None, None
+    result_gaps = []
+    for rid, intent, result_json, handle, _bmodel, payload, gap in rows:
+        evidence = _read_queue_result(rid, result_json, payload, gap)
+        if evidence.get("_gap") or evidence.get("_truncated"):
+            result_gaps.append({"row": rid, "result": evidence})
         if handle:
             groups.setdefault((handle, intent), []).append(rid)
             group_model[(handle, intent)] = _bmodel     # the batch's OWN model → its provider (picks the collect twin)
@@ -641,19 +697,12 @@ def collect_batched(limit=2000, model=None):
             orphaned.append(rid)                       # a queued_batch row with no usable batch handle — uncollectable
     from . import callio, gate as _gate, adapters
     out = {"rows": len(rows), "batches": len(groups), "done": 0, "failed": 0, "not_ready": 0, "collected": 0,
-           "orphaned": len(orphaned), "not_settled": 0, "collect_errors": []}
-    # UNSTICK orphaned rows: with no handle they can never be collected, so settle each to the retry ladder (re-runs
-    # realtime) rather than leave it stuck in queued_batch forever — and name them (never a silent discard).
-    _orphan_failed = []
-    for rid in orphaned:
-        if not settle(rid, {"error": "queued_batch row has no usable batch handle — re-queued for realtime retry"}):
-            _orphan_failed.append(rid)                     # settle ITSELF failed → the orphan stays queued_batch — NAMED,
-            #                                                not reported as recovered (F1: don't imply the orphan was handled)
+           "orphaned": len(orphaned), "not_settled": 0, "result_gaps": len(result_gaps),
+           "collect_errors": result_gaps}
+    # Missing control evidence cannot authorize a second purchase. Keep these rows durable and named.
     if orphaned:
-        out["collect_errors"].append({"orphaned_no_handle": orphaned[:50], "count": len(orphaned)})
-    if _orphan_failed:
-        out["not_settled"] += len(_orphan_failed)
-        out["collect_errors"].append({"orphan_settle_failed": _orphan_failed[:50], "count": len(_orphan_failed)})
+        out["not_settled"] += len(orphaned)
+        out["collect_errors"].append({"_gap": "lane_queue_batch_handle_missing", "rows": orphaned})
     for (batch_id, intent), ids in groups.items():
         # The batch's OWN model (from its handle) picks the collect twin by provider — an Anthropic Message Batch settles
         # via collect_message_batch, an OpenAI chat batch via collect_chat_tasks; both return the same {results, failed,
@@ -719,15 +768,26 @@ def collect_batched(limit=2000, model=None):
     return out
 
 
+class QueueBatchHandleGap(RuntimeError):
+    """A durable queued row cannot be attributed to a batch from its remaining evidence."""
+
+    def __init__(self, row_id, evidence):
+        self.row_id = row_id
+        self.evidence = evidence
+        super().__init__(f"lane_queue_batch_handle_missing row={row_id}")
+
+
 def batched_rows(batch_id):
     """The queued_batch rows STILL awaiting collection for `batch_id` — [{id, task, system, reasoning}] — so the batch
     tracker can RESUBMIT the unsettled remainder when a batch expires/fails (job-level retry). A row already settled
     (done/pending/failed) has LEFT queued_batch and is not returned. Returns None (NOT []) on a transient read failure,
     so the tracker treats it as 'unknown, retry next tick' and never mistakes a DB hiccup for 'all rows settled' (which
-    would prematurely close the job). A stop/lock propagates. $0 read."""
+    would prematurely close the job). An unattributable queued row raises QueueBatchHandleGap, so missing control
+    evidence cannot be mistaken for an empty batch. Returned rows include named audit gaps in `result`.
+    A stop/lock propagates. $0 read."""
     try:
         with _queue_op() as c:
-            rows = c.execute("SELECT id, task, system, reasoning, result FROM lane_queue "
+            rows = c.execute("SELECT id, task, system, reasoning, result, batch_handle, result_payload, result_gap FROM lane_queue "
                              "WHERE state='queued_batch'").fetchall()
     except Exception as _e:
         from . import provider_tokens as _pt
@@ -735,13 +795,13 @@ def batched_rows(batch_id):
             raise
         return None                                    # UNKNOWN (read failed) — never [] (which reads as 'all settled')
     out = []
-    for rid, task, system, reasoning, result_json in rows:
-        try:
-            h = (json.loads(result_json) if result_json else {}).get("batch")
-        except (ValueError, TypeError):
-            h = None
-        if h == batch_id:
-            out.append({"id": rid, "task": task, "system": system, "reasoning": reasoning})
+    for rid, task, system, reasoning, result_json, handle, payload, gap in rows:
+        evidence = _read_queue_result(rid, result_json, payload, gap)
+        if handle == batch_id:
+            out.append({"id": rid, "task": task, "system": system, "reasoning": reasoning, "result": evidence})
+        elif not handle:
+            # Attribution is unknown: a typed gap prevents treating unknown membership as an empty batch.
+            raise QueueBatchHandleGap(rid, evidence)
     return out
 
 
@@ -755,15 +815,15 @@ def requeue_from_batch(row_ids, reason):
     ids = [r for r in (row_ids or []) if r]
     if not ids:
         return 0
-    payload = json.dumps({"error": reason})
+    payload, full_payload, _, _ = _queue_result_storage({"error": reason})
     now = _iso(_utcnow())
     moved = 0
     try:
         with _queue_op() as c:
             for rid in ids:
-                cur = c.execute("UPDATE lane_queue SET state='pending', result=?, lane=NULL, worker=NULL, "
+                cur = c.execute("UPDATE lane_queue SET state='pending', result=?, result_payload=?, batch_handle=NULL, batch_model=NULL,  result_gap=NULL, result_migrated=1, lane=NULL, worker=NULL, "
                                 "lease_until=NULL, updated_ts=? WHERE id=? AND state='queued_batch'",
-                                (payload, now, rid))
+                                (payload, full_payload, now, rid))
                 c.commit()
                 moved += cur.rowcount if (cur.rowcount and cur.rowcount > 0) else 0
         return moved

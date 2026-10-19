@@ -506,7 +506,11 @@ def _fail_over(bid, rows, why, attempts):
     # STRAND the unmoved queued_batch rows (never requeued, never collected). batched_rows(bid) is the completion
     # signal: [] = all moved (safe to close); non-empty = still stranded; None = read unknown. Keep 'failing' (re-polled
     # next tick, where requeue is a no-op on already-moved rows) until it is provably empty.
-    remaining = lane_queue.batched_rows(bid)
+    try:
+        remaining = lane_queue.batched_rows(bid)
+    except lane_queue.QueueBatchHandleGap as gap:
+        _set_status(bid, "failing", last_error=f"{why} ({gap})")
+        return moved
     if remaining:
         _set_status(bid, "failing", last_error="%s (partial fail-over: moved %d, %d still queued_batch)"
                     % (why, moved, len(remaining)))
@@ -542,7 +546,13 @@ def poll(limit=200, now=None):
         out["errors"].append({"stage": "collect", "error": "%s: %s" % (type(e).__name__, str(e)[:60])})
     for job in _open_jobs(limit):
         bid = job["batch_id"]
-        remaining = lane_queue.batched_rows(bid)
+        try:
+            remaining = lane_queue.batched_rows(bid)
+        except lane_queue.QueueBatchHandleGap as gap:
+            out["jobs_open"] += 1
+            out["errors"].append({"batch_id": bid, "error": str(gap), "row_id": gap.row_id,
+                                  "result": gap.evidence})
+            continue
         if remaining is None:                          # row-read hiccup → leave OPEN, retry next tick (NOT 'settled')
             out["jobs_open"] += 1
             out["errors"].append({"batch_id": bid, "error": "batched_rows read failed — retry next tick"})
