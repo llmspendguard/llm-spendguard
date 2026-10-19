@@ -23,8 +23,8 @@ _CALL_CLASSES = frozenset(("workload", "gate_internal", "probe"))
 
 
 # ── opt-in flags ──
-def _truthy(v):
-    return v in (True, "true", "1", 1)
+# Compatibility alias; internal calls use the shared home to survive partial module overlays.
+_truthy = config.is_explicit_true
 
 
 def call_recording_consent_enabled():
@@ -36,10 +36,10 @@ def call_recording_consent_enabled():
     v = os.getenv("SPENDGUARD_CALLS")
     if v is not None and v.strip() != "":
         return v.strip().lower() in ("1", "true", "yes", "on")
-    return _truthy(config._cfg_get("calls", "enabled", False))
+    return config.is_explicit_true(config._cfg_get("calls", "enabled", False))
 
 
-def _store_prompts(): return _truthy(config._cfg_get("calls", "store_prompts", False))
+def _store_prompts(): return config.is_explicit_true(config._cfg_get("calls", "store_prompts", False))
 def _snip():          return int(config._cfg_get("calls", "snippet_len", 200) or 200)
 
 
@@ -503,7 +503,7 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
     # project) BEFORE call_recording_consent_enabled()/try, so record_call and insert can never drift on it (the record-call-outcome DRIFT).
     intent, chain, proj, call_class, origin_session = _resolve_attribution(
         model, cost, intent, chain, project, call_class, origin_session)
-    if _truthy(os.getenv("SPENDGUARD_NO_LEDGER")):
+    if config.is_explicit_true(os.getenv("SPENDGUARD_NO_LEDGER")):
         return None                                      # explicit total opt-out (rare) — otherwise ALWAYS record
     # The OUTCOME row is recorded ALWAYS (forensic mandate); `call_recording_consent_enabled()` + store_prompts now gate ONLY the private
     # CONTENT snippets, never whether the call is on the ledger. A failure with the opt-in off MUST still land.

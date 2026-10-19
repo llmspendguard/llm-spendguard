@@ -42,9 +42,12 @@ decision_calls = []
 saving_calls = []
 classification = {"kind": "oneshot", "provider": "codex", "self_contained": True, "why": "independent answer"}
 configured_models = {"codex": {"cheap": "test-cheap", "strong": "test-strong"}}
+demand_test_directory = tempfile.TemporaryDirectory(prefix="sg-agentic-demand-")
 
 
 def fake_config(section, key, default=None):
+    if (section, key) == ("delegate", "codex_agentic_events_path"):
+        return os.path.join(demand_test_directory.name, delegate_router.CODEX_AGENTIC_EVENTS_FILENAME)
     if (section, key) == ("advisor", "lane_models"):
         return configured_models
     if (section, key) == ("advisor", "route_est_out"):
@@ -171,6 +174,45 @@ try:
           set(("real_api_usd", "est_value_usd", "saved_overage_usd")) <= set(receipt)
           and receipt["real_api_usd"] == 0 and receipt["est_value_usd"] == 0.1
           and receipt["saved_overage_usd"] == 0.05)
+
+    print("-- agentic demand observations bracket successful and exceptional executions --")
+    demand_path = delegate_router.codex_agentic_events_path()
+    demand_events = [json.loads(line) for line in demand_path.read_text().splitlines()]
+    check("durable log declares its historical coverage boundary",
+          demand_events[0]["event"] == "coverage_start")
+    demand_start, demand_end = demand_events[-2:]
+    check("successful execution has real correlated UTC start/end signals",
+          demand_start["event"] == "start" and demand_end["event"] == "end"
+          and demand_start["execution_id"] == demand_end["execution_id"]
+          and demand_start["ts"] <= demand_end["ts"] and demand_start["ts"].endswith("+00:00"))
+    demand_exception = RuntimeError("executor exception fixture")
+
+    def demand_executor_raises(prompt, **kwargs):
+        raise demand_exception
+
+    codex_exec.run_prompt = demand_executor_raises
+    try:
+        delegate_router._route_agentic("codex", "fixture", "test-strong", None, os.path.dirname(__file__))
+        check("executor exception propagates", False)
+    except RuntimeError as exc:
+        check("original executor exception propagates unchanged", exc is demand_exception)
+    demand_events = [json.loads(line) for line in demand_path.read_text().splitlines()]
+    check("exceptional execution also ends its interval",
+          [row["event"] for row in demand_events[-2:]] == ["start", "end"]
+          and demand_events[-2]["execution_id"] == demand_events[-1]["execution_id"])
+    codex_exec.run_prompt = fake_codex
+    original_demand_path = delegate_router.codex_agentic_events_path
+    original_demand_warning = config.warn_once
+    try:
+        delegate_router.codex_agentic_events_path = lambda: demand_path / "cannot-be-a-directory"
+        config.warn_once = demand_executor_raises
+        observed_failure = delegate_router._route_agentic(
+            "codex", "fixture", "test-strong", None, os.path.dirname(__file__))
+        check("observation and warning failure cannot change execution result",
+              observed_failure["text"] == "agentic result")
+    finally:
+        delegate_router.codex_agentic_events_path = original_demand_path
+        config.warn_once = original_demand_warning
 finally:
     config._cfg_get = original_config
     lane_balance.delegate = original_lane
@@ -184,6 +226,7 @@ finally:
     gate.require = original_require
     lanes.lanes_status = original_lanes_status
     reliability.health_reds = original_health_reds
+    demand_test_directory.cleanup()
 
 print(f"\n{'[FAIL]' if _failed else 'OK'} test_delegate_router: {len(_failed)} failure(s)")
 sys.exit(1 if _failed else 0)
