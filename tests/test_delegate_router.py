@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import tempfile
+from unittest.mock import patch
 
 os.environ.setdefault("SPENDGUARD_HOME", tempfile.mkdtemp(prefix="sg-delegate-router-"))
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
@@ -50,6 +51,8 @@ def fake_config(section, key, default=None):
         return os.path.join(demand_test_directory.name, delegate_router.CODEX_AGENTIC_EVENTS_FILENAME)
     if (section, key) == ("advisor", "lane_models"):
         return configured_models
+    if (section, key) == ("advisor", "delegate_lanes"):
+        return list(configured_models)
     if (section, key) == ("advisor", "route_est_out"):
         return 40
     if (section, key) == ("caps", "intent_caps"):
@@ -104,6 +107,22 @@ try:
                               provider=(None if kind == "needs_claude" else "codex"))
         judged = delegate_router.classify_task("do it")
         check(f"validated {kind}", judged.get("kind") == kind and not judged.get("error"))
+
+    check("classifier origin omits the caller budget", "max_tokens" not in lane_calls[-1][1])
+    with patch.object(lane_balance, "delegate", original_lane), \
+            patch.object(lane_balance, "lane_utilization", return_value={"lanes": []}), \
+            patch("spendguard.adapters.call", return_value={"text": json.dumps(classification)}) as classify_adapter_call:
+        relay_result = delegate_router.classify_task("do it")
+        check("classifier reaches the real relay", not relay_result.get("error") and classify_adapter_call.called)
+        check("classifier relay omits the caller budget", "max_tokens" not in classify_adapter_call.call_args.kwargs)
+        check("classifier relay preserves schema and intent",
+              classify_adapter_call.call_args.kwargs["schema"] == delegate_router._CLASSIFY_SCHEMA
+              and classify_adapter_call.call_args.kwargs["sig"] == delegate_router.CLASSIFY_INTENT)
+        explicit_delegate_budget = len(json.dumps(classification))
+        lane_balance.delegate("do it", lanes=list(configured_models), schema=delegate_router._CLASSIFY_SCHEMA,
+                              max_tokens=explicit_delegate_budget)
+        check("explicit external budget is still forwarded",
+              classify_adapter_call.call_args.kwargs.get("max_tokens") == explicit_delegate_budget)
 
     classification.update(kind="bogus", provider="codex", self_contained=True)
     check("invalid kind is refused", "error" in delegate_router.classify_task("do it"))
