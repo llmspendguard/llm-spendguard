@@ -3,7 +3,6 @@ import contextlib
 import datetime
 import json
 import os
-import pathlib
 import stat
 import tempfile
 from unittest.mock import patch
