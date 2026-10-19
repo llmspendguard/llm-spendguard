@@ -1563,6 +1563,11 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                                 attempts=r.get("attempts"), disposition="failed", fell_from=r.get("fell_from"))
             except Exception:
                 pass
+    if (not _no_guard and intent and isinstance(r, dict) and r.get("lane_recovery")
+            and (r.get("error") or not (r.get("text") or "").strip())):
+        from . import gate as _exhausted_recovery_gate
+        raise _exhausted_recovery_gate.SpendGateRefused(
+            f"free recovery and same-provider metered recovery exhausted for {model}")
     return r
 
 
@@ -2650,12 +2655,13 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             if _no_sub or getattr(_sub_guard, "on", False):
                 return None
             try:
-                from . import lane_balance, calls as _calls
+                from . import lane_balance, calls as _calls, plan_admission as _recovery_admission
                 _intent = (_calls.current() or {}).get("intent")
                 _free_subs = lane_balance.quality_equivalent_free_substitutes(_intent, model,
                                                                               excluded=[lane_name])
+                _free_subs = [candidate for candidate in _free_subs
+                              if _recovery_admission._ready(_LANES.get(provider_for(candidate), (None,))[0])]
                 if not _free_subs and _intent:
-                    from . import plan_admission as _recovery_admission
                     _ready_alt = _recovery_admission._best_ready_alt_lane(lane_name)
                     if _ready_alt:
                         _free_subs = [_ready_alt[1]]
@@ -2667,6 +2673,9 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 raise lane_recovery.LaneRecoveryViolation("cannot establish free substitute availability") from _quality_error
             for _rsub in _free_subs:
                 _rsub_lane = _LANES.get(provider_for(_rsub), (None,))[0]
+                from . import plan_admission as _recovery_admission
+                if not _rsub_lane or not _recovery_admission._ready(_rsub_lane):
+                    continue
                 _rwhy = "measured quality holds; $0 lane before metered fallback"
                 _lane_chatter(f"[spendguard] lane-balance REACTIVE: {lane_name} lane failed → {_rsub} ({_rwhy})")
                 _sub_guard.on = True
@@ -2737,6 +2746,11 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         _last_ready = _shed_free_recovery()
         if _last_ready is not None:
             return _last_ready
+        from . import reliability as _recovery_health, gate as _recovery_gate
+        if any(r.get("kind") == "metered" and r.get("resource") == prov
+               for r in _recovery_health.health_reds()):
+            raise _recovery_gate.SpendGateRefused(
+                f"free recovery exhausted and same-provider metered resource {prov} is unreachable")
         _gate_model = _fb_model.split(":", 1)[-1]
         _recovery.authorize_metered_recovery(prov, _gate_model, prompt, system, max_tokens)
         _recovery.assert_metered_recovery()
