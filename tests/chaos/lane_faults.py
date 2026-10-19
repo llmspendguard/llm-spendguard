@@ -83,6 +83,7 @@ def run_lane_chaos_contract():
         # prove default-on Anthropic refusal; scope this fixture to the mocked wave rather than leaking state.
         with patch.dict(os.environ, CHAOS_RECOVERY_POLICY), \
                 patch.object(adapters, "_lane_for", side_effect=lambda p: mapping.get(p)), \
+                patch.object(plan_admission, "_ready", side_effect=lambda lane: lane == mapping["anthropic"][0]), \
                 patch.object(adapters, "_call_once", side_effect=simulate_gated_metered_send), \
                 patch.object(plan_admission, "_best_ready_alt_lane", return_value=None), \
                 patch.object(adapters, "_lane_too_big", return_value=False), \
