@@ -153,7 +153,7 @@ def _expected_refresh_version_in_doctor_output(output: str) -> str | None:
     return EXPECTED_VERSION if EXPECTED_VERSION in output else None
 
 
-def _refresh_and_verify(venv: Path) -> dict[str, object]:
+def _repair_and_verify_explicit_venv(venv: Path) -> dict[str, object]:
     row: dict[str, object] = {
         "venv": str(venv),
         "classification": "editable-shared-tree",
@@ -277,7 +277,7 @@ def main() -> int:
                 "reason": "imports spendguard from a different path; left unchanged",
             })
         else:
-            result = _refresh_and_verify(venv)
+            result = _repair_and_verify_explicit_venv(venv)
             result.setdefault("imports_from", imported_from)
             results.append(result)
 

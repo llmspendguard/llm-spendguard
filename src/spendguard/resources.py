@@ -683,7 +683,7 @@ _RT_TELL = re.compile(r"chat\.completions\.create|messages\.create|--workers|wor
                       r"\$\d+\.\d{2,}", re.I)   # realtime tells INCL a printed $ cost (result-described runs)
 
 
-def reconstruct_realtime_llm(run=False, sids=None, max_sessions=None, max_chars=14000,
+def reconstruct_realtime_llm_sync(run=False, sids=None, max_sessions=None, max_chars=14000,
                              find_model=None, consolidate_model=None, model_org_hints=None, max_chunks=None,
                              since=None, drop_batch_context=True):
     """AGENTIC realtime $ RECONSTRUCTION from full conversations (two-stage, admin-free). STAGE 1 FIND (cheap model,

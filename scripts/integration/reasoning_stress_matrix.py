@@ -76,7 +76,7 @@ def targets():
     return reliability.plan()["metered"]
 
 
-def _price(spec, i, o):
+def _stress_optional_model_cost(spec, i, o):
     try:
         return pricing.realtime_cost(spec, i, o)
     except Exception:
@@ -89,11 +89,11 @@ def estimate(tgts=None):
     tgts = tgts if tgts is not None else targets()
     rows, total = [], 0.0
     for prov, mid in tgts:
-        c_main = _price(f"{prov}:{mid}", EST_IN, EST_OUT)
-        c_bound = _price(f"{prov}:{mid}", EST_IN, 200)          # bound-proof usually deadlines with little/no output
+        c_main = _stress_optional_model_cost(f"{prov}:{mid}", EST_IN, EST_OUT)
+        c_bound = _stress_optional_model_cost(f"{prov}:{mid}", EST_IN, 200)          # bound-proof usually deadlines with little/no output
         rows.append({"provider": prov, "model": mid, "main": c_main, "bound": c_bound})
         total += (c_main or 0.0) + (c_bound or 0.0)
-    bv = _price(f"{tgts[0][0]}:{tgts[0][1]}", EST_IN, EST_OUT) if tgts else 0.0   # best-value workload
+    bv = _stress_optional_model_cost(f"{tgts[0][0]}:{tgts[0][1]}", EST_IN, EST_OUT) if tgts else 0.0   # best-value workload
     total += (bv or 0.0)
     return {"rows": rows, "best_value_workload": bv, "total": round(total, 4), "n": len(tgts)}
 

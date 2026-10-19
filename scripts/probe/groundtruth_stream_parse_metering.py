@@ -44,7 +44,7 @@ def _max_rowid():
         con.close()
 
 
-def _rows_since(rowid):
+def _stream_metering_evidence_rows(rowid):
     con = sqlite3.connect(config.db_path())
     try:
         return con.execute("SELECT rowid, model, kind, COALESCE(in_tok,0), COALESCE(out_tok,0), "
@@ -100,7 +100,7 @@ def main(argv=None):
         print(f"  [2] chat.parse — call error: {type(e).__name__}: {str(e)[:120]}")
 
     time.sleep(0.6)                              # let the last row commit
-    rows = _rows_since(start)
+    rows = _stream_metering_evidence_rows(start)
     print(f"\n  ledger rows recorded since rowid {start}: {len(rows)}")
     for r in rows:
         print(f"    rowid={r[0]} model={r[1]} kind={r[2]} in={r[3]} out={r[4]} cost=${r[5]:.6f} exec={r[6]}")

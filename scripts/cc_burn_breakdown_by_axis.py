@@ -75,16 +75,16 @@ def _class_costs(model, inp, out, read, write):
     is that Claude Code's cost is dominated by re-reading context, not by what the model writes —
     a distinction the single est-$ figure hides completely.
     """
-    def priced(in_tok, out_tok, cached):
+    def _burn_additive_model_cost(in_tok, out_tok, cached):
         try:
             return pricing.realtime_cost(model, in_tok, out_tok, cached) or 0.0
         except Exception:
             return 0.0
     return {
-        "cache_read (context re-read)": priced(read, 0, read),
-        "cache_write (context load)": priced(write, 0, 0),
-        "input (new prompt)": priced(inp, 0, 0),
-        "output (what Claude wrote)": priced(0, out, 0),
+        "cache_read (context re-read)": _burn_additive_model_cost(read, 0, read),
+        "cache_write (context load)": _burn_additive_model_cost(write, 0, 0),
+        "input (new prompt)": _burn_additive_model_cost(inp, 0, 0),
+        "output (what Claude wrote)": _burn_additive_model_cost(0, out, 0),
     }
 
 
@@ -101,7 +101,7 @@ def _agent_kind(rec):
     return "main"
 
 
-def _text_of(content):
+def _burn_content_text(content):
     if isinstance(content, str):
         return content
     if isinstance(content, list):
@@ -163,7 +163,7 @@ def scan(projects_dir, since_day):
                 if not isinstance(msg, dict):
                     continue
 
-                if WEEKLY_LIMIT_MARKER in _text_of(msg.get("content")):
+                if WEEKLY_LIMIT_MARKER in _burn_content_text(msg.get("content")):
                     limit_hits[day] += 1
 
                 usage, model = msg.get("usage"), msg.get("model")
@@ -232,7 +232,7 @@ def _pct(part, whole):
     return (100.0 * part / whole) if whole else 0.0
 
 
-def _fmt_tok(n):
+def _burn_report_token_label(n):
     for unit, size in (("B", 1e9), ("M", 1e6), ("K", 1e3)):
         if n >= size:
             return f"{n / size:.1f}{unit}"
@@ -246,7 +246,7 @@ def _print_table(title, rows, total_cost, label_width=46):
     for label, b in rows:
         text = label if len(label) <= label_width else label[:label_width - 1] + "…"
         print(f"  {text:<{label_width}} {b.cost:>10,.2f} {_pct(b.cost, total_cost):>6.1f}% "
-              f"{b.turns:>7,} {_fmt_tok(b.read_tok):>9} {_fmt_tok(b.out_tok):>8}")
+              f"{b.turns:>7,} {_burn_report_token_label(b.read_tok):>9} {_burn_report_token_label(b.out_tok):>8}")
 
 
 def _top(bucket_map, n):
@@ -298,9 +298,9 @@ def main(argv=None):
     print(f"scanned {res['files']:,} transcripts ({res['skipped_files']} unreadable), "
           f"{res['responses']:,} deduped assistant responses in {time.time() - started:.1f}s")
     print(f"\nTOTAL est-value ${totals.cost:,.2f}  over {totals.turns:,} turns")
-    print(f"  tokens: in {_fmt_tok(totals.in_tok)} · out {_fmt_tok(totals.out_tok)} · "
-          f"cache-read {_fmt_tok(totals.read_tok)} · cache-write {_fmt_tok(totals.write_tok)} "
-          f"(1h-TTL slice {_fmt_tok(totals.write_1h)}, priced at base → est is a FLOOR)")
+    print(f"  tokens: in {_burn_report_token_label(totals.in_tok)} · out {_burn_report_token_label(totals.out_tok)} · "
+          f"cache-read {_burn_report_token_label(totals.read_tok)} · cache-write {_burn_report_token_label(totals.write_tok)} "
+          f"(1h-TTL slice {_burn_report_token_label(totals.write_1h)}, priced at base → est is a FLOOR)")
     if res["limit_hits"]:
         hits = ", ".join(f"{d}:{n}" for d, n in sorted(res["limit_hits"].items()))
         print(f"  weekly-limit messages seen: {hits}")
