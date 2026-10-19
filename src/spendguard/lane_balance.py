@@ -338,7 +338,9 @@ def quality_equivalent_free_substitutes(intent, primary_model, excluded=None):
         provider = adapters.provider_for(spec)
         lane = adapters._LANES.get(provider, (None,))[0]
         use_name = spec.split(":", 1)[1] if ":" in spec else spec
-        if not lane or lane == primary_lane or lane in blocked or (spec not in approved and use_name not in approved):
+        from . import plan_admission
+        if (not lane or lane == primary_lane or lane in blocked or not plan_admission._ready(lane)
+                or (spec not in approved and use_name not in approved)):
             continue
         candidates.append((lane, use_name))
     if not candidates:

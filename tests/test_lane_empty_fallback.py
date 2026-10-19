@@ -12,7 +12,7 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from spendguard import adapters, lane_balance, calls, output_contract                  # noqa: E402
+from spendguard import adapters, lane_balance, calls, output_contract, plan_admission   # noqa: E402
 
 
 def ck(name, cond):
@@ -40,7 +40,7 @@ def _run(text, schema=None):
 
 
 _orig = (adapters._lane_for, adapters.call, lane_balance.quality_equivalent_free_substitutes,
-         adapters._input_fits, adapters.json_schema_request, output_contract.check_item)
+         adapters._input_fits, adapters.json_schema_request, output_contract.check_item, plan_admission._ready)
 try:
     adapters._lane_for = lambda prov: ("codex", _FakeLane) if prov == "openai" else None
     # the API failover path: the reactive substitute (route_decision reactive) routed through call() — a distinct,
@@ -49,6 +49,7 @@ try:
                                                  "latency": 0.0, "cost": 0.0, "model": model}
     # _lane_cool no longer stubbed: cooldowns now write to the per-test-isolated resource_state store, so real
     # cooling is a harmless side effect here (this test asserts on the reply text, not on cooldowns).
+    plan_admission._ready = lambda lane: True
     adapters._input_fits = lambda *a, **k: (True, "stub")
     lane_balance.quality_equivalent_free_substitutes = lambda intent, model, excluded=None: ["openai:gpt-5.5-sub"]
     adapters.json_schema_request = lambda kind, schema, **k: {"_schema_prompt": "emit JSON"}
@@ -69,7 +70,7 @@ try:
     fails += ck("non-empty and ON-shape reply → lane KEPT", r2.get("text") == '{"ok":1}' and r2.get("executor") == "codex")
 finally:
     (adapters._lane_for, adapters.call, lane_balance.quality_equivalent_free_substitutes,
-     adapters._input_fits, adapters.json_schema_request, output_contract.check_item) = _orig
+     adapters._input_fits, adapters.json_schema_request, output_contract.check_item, plan_admission._ready) = _orig
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_lane_empty_fallback: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

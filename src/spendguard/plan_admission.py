@@ -43,6 +43,14 @@ def _ready(lane):
     is excluded. An 'unknown' lane that is actually down fails over gracefully via the reactive ladder — strictly better
     than never routing to it (the old `auth != "ok"` gate excluded every no-status-probe lane, leaving only codex able
     to absorb a shed)."""
+    from . import adapters, reliability
+    provider = lane_catalog.lane_provider(lane)
+    if any((r.get("kind") == "lane" and r.get("resource") == lane)
+           or (r.get("kind") == "metered" and r.get("resource") == provider)
+           for r in reliability.health_reds()):
+        return False
+    if adapters._lane_cooling(lane):
+        return False
     row = next((r for r in lanes.lanes_status().get("lanes", []) if r.get("lane") == lane), None)
     if not row or not row.get("enabled") or row.get("auth") not in ("ok", "unknown"):
         return False

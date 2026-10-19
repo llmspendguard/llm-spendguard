@@ -18,7 +18,7 @@ os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 os.environ["SPENDGUARD_AVOID_CLAUDE_LANE"] = "off"
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from spendguard import adapters, calls, config, lane_balance, lane_bandit, lanes  # noqa: E402
+from spendguard import adapters, calls, config, lane_balance, lane_bandit, lanes, plan_admission  # noqa: E402
 
 
 def check(results, label, condition):
@@ -66,11 +66,13 @@ def main():
     original_too_big = adapters._lane_too_big
     original_model_cooling = adapters._lane_model_cooling
     original_quality_subs = lane_balance.quality_equivalent_free_substitutes
+    original_recovery_ready = plan_admission._ready
     original_call = adapters.call
     original_once = adapters._call_once
     adapters._lane_for = lambda provider: ("claude-code", DownLane) if provider == "anthropic" else None
     adapters._lane_too_big = lambda lane, prompt: False
     adapters._lane_model_cooling = lambda lane, model: False
+    plan_admission._ready = lambda lane: lane == adapters._LANES["gemini"][0]
     try:
         print("\n-- fungible miss exhausts a measured-good $0 substitute before metered --")
         lane_balance.quality_equivalent_free_substitutes = lambda intent, model, excluded=None: ["gemini:gem-x"]
@@ -137,6 +139,7 @@ def main():
         adapters._lane_too_big = original_too_big
         adapters._lane_model_cooling = original_model_cooling
         lane_balance.quality_equivalent_free_substitutes = original_quality_subs
+        plan_admission._ready = original_recovery_ready
         adapters.call = original_call
         adapters._call_once = original_once
 
