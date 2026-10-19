@@ -4,7 +4,7 @@ Guards:
   • codex._digest reads the FINAL cumulative token_count + the model from turn_context, prices it, project=cwd;
   • day_totals emits channel=codex, billed=false, provider=openai (est-value, never actual-$) — server contract
     identical to claudecode;
-  • show() stamps est-value under source=codex so the receipt SUMS claude-code + claude-ai + codex;
+  • show_codex_report() stamps est-value under source=codex so the receipt SUMS claude-code + claude-ai + codex;
   • the gate's Responses-API estimator/actual read input/output_tokens + input_tokens_details.cached_tokens
     (the modern OpenAI surface Codex and newer SDK code use — previously an un-gated realtime gap).
 """
@@ -79,12 +79,12 @@ ck("day_totals: project from cwd", r0.get("project") == "myproj")
 ck("day_totals: spend_micros = cost×1e6", r0.get("spend_micros") == round(exp_cost * 1_000_000))
 ck("day_totals: token breakdown carried", r0.get("in_tokens") == 3000 and r0.get("out_tokens") == 600 and r0.get("cached_in_tokens") == 1500)
 
-# ── show() stamps est-value under source=codex → receipt SUMS it ─────────────
+# ── show_codex_report() stamps est-value under source=codex → receipt SUMS it ─────────────
 with contextlib.redirect_stdout(io.StringIO()):
-    codex.show()
+    codex.show_codex_report()
 ev = json.loads((pathlib.Path(os.environ["SPENDGUARD_HOME"]) / "receipt_cache.json").read_text())
-ck("show(): stamps est_value_by_source['codex']", "codex" in ev.get("est_value_by_source", {}))
-ck("show(): codex est-value month = the session cost", abs(ev["est_value_by_source"]["codex"]["month"] - exp_cost) < 1e-6)
+ck("show_codex_report(): stamps est_value_by_source['codex']", "codex" in ev.get("est_value_by_source", {}))
+ck("show_codex_report(): codex est-value month = the session cost", abs(ev["est_value_by_source"]["codex"]["month"] - exp_cost) < 1e-6)
 # prove the receipt sums sources (add a fake claude-code stamp, then the tally adds both). Stamp it on the SAME UTC day
 # as the session (_iso) — receipt windows in UTC, so a LOCAL date.today() stamp would miss the month at the boundary.
 receipt.stamp_est_value([{"day": _iso, "spend_micros": 5_000_000, "billed": False}], source="claude-code")

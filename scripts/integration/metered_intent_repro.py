@@ -84,7 +84,7 @@ def main(argv=None):
     if est["total"] > a.budget:
         print(f"  🔴 REFUSED — estimate ${est['total']:.5f} exceeds --budget ${a.budget:.2f}.")
         return 2
-    if not calls.enabled():
+    if not calls.call_recording_consent_enabled():
         print("  🔴 call logging is OFF — cannot ground against the ledger. Set SPENDGUARD_CALLS=1.")
         return 2
 

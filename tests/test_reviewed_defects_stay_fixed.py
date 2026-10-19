@@ -411,8 +411,8 @@ check("the ask decider is agentic and lives in ONE place", callable(getattr(conv
 check("claudecode does not keep its own copy of the ask rules",
       '"tool_result" not in t[:40]' not in (SRC / "claudecode.py").read_text())
 
-# claudecode.work could not tell an unreadable session directory from a period with no work.
-check("claudecode.work distinguishes an unreadable dir from no work",
+# claudecode.show_claudecode_work could not tell an unreadable session directory from a period with no work.
+check("claudecode.show_claudecode_work distinguishes an unreadable dir from no work",
       "nothing could be READ, which is not" in (SRC / "claudecode.py").read_text())
 
 

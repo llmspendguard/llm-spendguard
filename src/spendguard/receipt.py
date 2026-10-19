@@ -1327,7 +1327,7 @@ def _compaction_hint():
     k = None
     try:
         from . import compaction
-        kk, _kn = compaction.measured_k()             # REAL per-event k× (pre/post) once compactions are recorded
+        kk, _kn = compaction.measured_explicit_compaction_ratio()             # REAL per-event k× (pre/post) once compactions are recorded
         if not kk:
             from . import claudecode
             kk, _kn = claudecode.measured_compaction_ratio()   # else the ledger context-drop heuristic

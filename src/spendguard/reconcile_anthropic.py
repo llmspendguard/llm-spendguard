@@ -71,7 +71,7 @@ def _price_tokens(model, fresh_in, cread, ccreate, out):
     """Cost for a token BREAKDOWN (fresh input / cache-read / cache-creation / output), cache-aware, via
     pricing.py batch rates. Unknown/unpriceable model -> record + return 0 (never guess, never crash).
 
-    THE shared per-token math, so _cost (per-result) and cost_by_day (per-model re-price) can never diverge on
+    THE shared per-token math, so _anthropic_batch_reconciliation_cost (per-result) and cost_by_day (per-model re-price) can never diverge on
     how cache tokens are priced — the bug that let cost_by_day silently drop all cache-token spend."""
     try:
         p = pricing.price(model)
@@ -88,7 +88,7 @@ def _price_tokens(model, fresh_in, cread, ccreate, out):
         return 0.0
 
 
-def _cost(model, u):
+def _anthropic_batch_reconciliation_cost(model, u):
     """Cost for one result's usage dict, cache-aware. Thin wrapper over _price_tokens (Anthropic input_tokens is
     the uncached/fresh count; cache-read and cache-creation are separate)."""
     return _price_tokens(model, u.get("input_tokens", 0), u.get("cache_read_input_tokens", 0),
@@ -127,7 +127,7 @@ def refresh_cache(k, cache):
                 continue
             mdl = pricing.normalize(msg.get("model", "claude-opus-4-8"))
             u = msg.get("usage", {})
-            c = _cost(mdl, u)
+            c = _anthropic_batch_reconciliation_cost(mdl, u)
             cost += c
             m = by_model.setdefault(mdl, {"in": 0, "out": 0, "cread": 0, "ccreate": 0, "cost": 0.0})
             m["in"] += u.get("input_tokens", 0); m["out"] += u.get("output_tokens", 0)

@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 from spendguard import config, conv, measurement    # noqa: E402
 
 
-def _orig_chash(text):                                # conv._chash BEFORE the refactor: raw UTF-8, strict, 20 hex
+def _original_conversation_key_oracle(text):                                # conv._chash BEFORE the refactor: raw UTF-8, strict, 20 hex
     return hashlib.sha256((text or "").encode()).hexdigest()[:20]
 
 
@@ -48,7 +48,7 @@ def main():
     print("-- conv._chash is byte-identical to the original raw/strict/20-hex formula --")
     for t in cases:
         ck("_chash(%r)" % (t if not isinstance(t, str) or len(t) < 20 else t[:12] + "…",),
-           conv._chash(t) == _orig_chash(t), (conv._chash(t), _orig_chash(t)))
+           conv._chash(t) == _original_conversation_key_oracle(t), (conv._chash(t), _original_conversation_key_oracle(t)))
         ck("_chash length is 20", len(conv._chash(t)) == 20)
 
     print("\n-- measurement.item_id is byte-identical to the original \\x00/replace/16-hex formula --")

@@ -2,7 +2,7 @@
 
 The bug this guards (2026-09-03): `calls.context().__enter__` called `_flow_start_usd()` → `spent_since('1970-01-01')`
 → a full SCAN of spend_events (356k rows) through the per-row `dec_sum` Decimal aggregate, on EVERY context enter and
-un-gated by calls.enabled(). A caller that opens N flow contexts paid N full scans (one honestreview run: ~734 scans,
+un-gated by calls.call_recording_consent_enabled(). A caller that opens N flow contexts paid N full scans (one honestreview run: ~734 scans,
 51 min at 98% CPU). The fix memoizes the whole-ledger countable total on a ledger-freshness token
 (SpendLedger.running_llm_total_dec, surfaced as budget.spent_all_time), so repeat flow-starts are O(1).
 

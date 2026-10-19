@@ -109,7 +109,7 @@ rv = receipt.render_flow({"intent": "x", "n": 1, "actual": 0.5, "caller": "run.p
 ck("render_flow verbose: shows caller", "run.py:main:10" in rv)
 
 # ── flow aggregation from the calls log ──────────────────────────────────────
-ck("calls logging enabled in this test", calls.enabled())
+ck("calls logging enabled in this test", calls.call_recording_consent_enabled())
 start = calls._max_rowid()
 calls.record_call("anthropic", "claude-opus-4-8", "completion", 0.10, in_tok=1000, out_tok=200, intent="t", chain="run-1")
 calls.record_call("anthropic", "claude-opus-4-8", "completion", 0.05, in_tok=500, out_tok=100, intent="t", chain="run-1")

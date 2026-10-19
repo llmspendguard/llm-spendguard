@@ -720,7 +720,7 @@ def _batch1_check(est):
     Knobs: GATE_BATCH1_MIN (req count that counts as 'large', default 50) · GATE_BATCH1_USD (or ≥ this $, default 5)
     · GATE_BATCH1_DAYS (look-back, default 14) · GATE_REQUIRE_BATCH1 (refuse non-interactive) · GATE_NO_BATCH1 (off).
     GATE_ALLOW=1 bypasses (like the cost cap). Needs the calls corpus + an intent to reason about 'shape'."""
-    if _on("GATE_NO_BATCH1") or _allow() or not _calls.enabled():
+    if _on("GATE_NO_BATCH1") or _allow() or not _calls.call_recording_consent_enabled():
         return
     try:
         intent = (_calls.current().get("intent") or "").strip()
@@ -804,7 +804,7 @@ def record_accepted_batch_estimate(est):
     """Book a provisional batch estimate only after the provider accepted the submission."""
     _budget_record(est["cost"], est.get("model"), est.get("provider"), "batch",   # ledger (sqlite)
                    quarantine=bool(est.get("implausible")), basis=budget_basis_estimate())
-    if _calls.enabled():                                                          # job-level call-context row
+    if _calls.call_recording_consent_enabled():                                                          # job-level call-context row
         _calls.record_call(est.get("provider"), est.get("model"), "batch", est["cost"],
                       in_tok=est.get("in_tok", 0), out_tok=est.get("out_tok", 0), executor="api")
 
@@ -1448,7 +1448,7 @@ def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, 
     if _meta_intent():                            # meta call → meta ledger only (not workload realtime)
         from . import budget
         budget.record_meta(prov, model, cost)
-        if _calls.enabled():
+        if _calls.call_recording_consent_enabled():
             _calls.record_call(prov, model, "realtime", cost, in_tok=in_tok, out_tok=out_tok, latency=latency,
                           prompt=_prompt_text(kw), output=output, finish=finish, effort=_effort, executor="api")
         return
@@ -1465,7 +1465,7 @@ def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, 
                                    visible_tokens=max(0, out_tok - reasoning_tokens) if reasoning_tokens is not None else None)
     except Exception:
         pass
-    if _calls.enabled():
+    if _calls.call_recording_consent_enabled():
         _calls.record_call(prov, model, "realtime", cost, in_tok=in_tok, out_tok=out_tok, latency=latency,
                       prompt=_prompt_text(kw), output=output, finish=finish, effort=_effort,
                       # EXPLICIT 'api' (not NULL): this is the metered realtime path. A lane call records via the

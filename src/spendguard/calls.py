@@ -27,7 +27,7 @@ def _truthy(v):
     return v in (True, "true", "1", 1)
 
 
-def enabled():
+def call_recording_consent_enabled():
     # PRIVACY-CRITICAL: this can store prompts/outputs, so it FAILS CLOSED. Recording is ON only for an EXPLICIT
     # affirmative env value; ANY other value — "False", "off", "disable", a typo, blank — leaves it OFF. The old
     # check was a false-word BLOCKLIST (`not in ("0","false","")`), so `SPENDGUARD_CALLS=False` was not matched and
@@ -260,7 +260,7 @@ def _flow_start_usd() -> float:
 
 
 def _max_rowid() -> int:
-    if not enabled():
+    if not call_recording_consent_enabled():
         return 0
     try:
         from . import ledger_read
@@ -276,7 +276,7 @@ def _max_rowid() -> int:
 def flow_agg(since_rowid: int = 0, chain: Optional[str] = None):
     """Aggregate the calls logged since `since_rowid` (a flow window) → {n, in_tok, out_tok, cost, caller}, or None
     when per-call logging is off/unavailable (the receipt then falls back to the always-on budget-$ delta)."""
-    if not enabled():
+    if not call_recording_consent_enabled():
         return None
     try:
         from . import ledger_read
@@ -500,14 +500,14 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
     the repo the call belongs to (derived from the live gate context when not passed), so a lane's plan VALUE
     attributes to a project exactly like billed spend does."""
     # ATTRIBUTION is resolved by the SHARED brain _attribute (enforce a paid un-intented call + resolve intent/chain/
-    # project) BEFORE enabled()/try, so record_call and insert can never drift on it (the record-call-outcome DRIFT).
+    # project) BEFORE call_recording_consent_enabled()/try, so record_call and insert can never drift on it (the record-call-outcome DRIFT).
     intent, chain, proj, call_class, origin_session = _resolve_attribution(
         model, cost, intent, chain, project, call_class, origin_session)
     if _truthy(os.getenv("SPENDGUARD_NO_LEDGER")):
         return None                                      # explicit total opt-out (rare) — otherwise ALWAYS record
-    # The OUTCOME row is recorded ALWAYS (forensic mandate); `enabled()` + store_prompts now gate ONLY the private
+    # The OUTCOME row is recorded ALWAYS (forensic mandate); `call_recording_consent_enabled()` + store_prompts now gate ONLY the private
     # CONTENT snippets, never whether the call is on the ledger. A failure with the opt-in off MUST still land.
-    _content_ok = enabled() and _store_prompts()
+    _content_ok = call_recording_consent_enabled() and _store_prompts()
     try:
         ctx = current()                                  # for the `who` fallback + per-attempt retry linkage below
         # PER-ATTEMPT LINKAGE (Ash: "each retry a row pointing to the original"): vendor_call puts the logical call's
@@ -798,7 +798,7 @@ def tested_recently(intent, model=None, days=14, kinds=("realtime",)):
     scaling it to a big batch" from "first thing you did for this intent was a huge batch." Model match is optional
     (a prompt/tool bug shows on any model); pass model to require the same one. Realtime-only by default because a
     prior *batch* row carries no request-count, so it can't prove a SMALL test was run."""
-    if not enabled() or not intent:
+    if not call_recording_consent_enabled() or not intent:
         return False
     if not kinds:                                     # empty kinds → `IN ()` is invalid SQLite → the execute would
         return False                                  # raise and get swallowed, silently returning False; say so plainly
@@ -823,7 +823,7 @@ def cmd_summary(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--intent")
     a = ap.parse_args(argv)
-    if not enabled():
+    if not call_recording_consent_enabled():
         print("call logging is OFF — enable with `spendguard init` (calls.enabled) or SPENDGUARD_CALLS=1.")
         return 0
     rows = cost_summary(a.intent)

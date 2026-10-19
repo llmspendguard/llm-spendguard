@@ -273,7 +273,7 @@ def sync(dry=False):
         raise
 
 
-def show(days=None):
+def show_codex_report(days=None):
     """Local Codex USAGE-VALUE report by project, and stamp the est-value windows so `spendguard receipt` / the
     in-chat footer sum claude-code + claude-ai + codex."""
     digs = _session_digests(days)
@@ -327,4 +327,4 @@ def main(argv=None):
             pass
     if sub == "classify":
         return classify(run="--run" in argv, days=days, recls="--reclassify" in argv)
-    return show(days=days)
+    return show_codex_report(days=days)

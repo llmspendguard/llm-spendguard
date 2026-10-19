@@ -140,7 +140,7 @@ ck("anthropic seed recorded as dropped", ra.get("gen_params_dropped") == {"seed"
 from spendguard import gate as _gate, calls as _calls_mod  # noqa: E402
 _eff_cap = {}
 _gate._calls.record_call = lambda *a, **k: _eff_cap.__setitem__("effort", k.get("effort"))
-_gate._calls.enabled = lambda: True
+_gate._calls.call_recording_consent_enabled = lambda: True
 _gate._rt_record = lambda *a, **k: None          # isolate the effort logic from the aggregation/ledger DBs
 
 _calls_mod._local.ctx = {"intent": "onlyhome-bakeoff", "measurement": True}

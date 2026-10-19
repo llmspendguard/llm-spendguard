@@ -339,7 +339,7 @@ def _save_state(st):
     return config.save_state("chat", st)
 
 
-def update(ck=None, max_new=100000, days=None, full=False):
+def refresh_chat_conversations(ck=None, max_new=100000, days=None, full=False):
     """Fetch conversations changed since the per-org watermark (or ALL if full); digest into the local cache. Network.
     Paginates to the end by default (max_new is a safety cap, not a page size)."""
     ck = ck or _cookies()
@@ -446,11 +446,11 @@ def _convs_in_range(st, days=None):
 
 
 # ── views ────────────────────────────────────────────────────────────────────────────────────────────────────────
-def show(days=None, refresh=True):
+def show_chat_report(days=None, refresh=True):
     st = _load_state()
     if refresh:
         try:
-            st, info = update(days=days if days else None, full=not days and not st.get("convs"))
+            st, info = refresh_chat_conversations(days=days if days else None, full=not days and not st.get("convs"))
             if info.get("more"):
                 print(f"  (stopped at safety cap — {info['fetched']} fetched, more remain)\n")
         except Exception as e:
@@ -562,7 +562,7 @@ def sync(dry=False):
     if not cok:
         return {"skipped": cwhy}
     try:
-        _, info = update()
+        _, info = refresh_chat_conversations()
     except Exception as e:
         return {"skipped": f"refresh failed: {e}"}
     rows = day_totals(saas.contributor(), org_label=c.get("org"))     # org-routed: this connection's org only
@@ -597,7 +597,7 @@ def _iso_period(day, by):
     return attribution.iso_period(day, by)
 
 
-def work(by="week", days=None):
+def show_chat_work(by="week", days=None):
     """claude.ai chat WORK DONE — per-conversation rows (title + auto-summary + value) bucketed by period (day rows
     fold into the period; a multi-day conversation contributes to each day it was active)."""
     rows = _day_rows(_load_state(), days)
@@ -828,7 +828,7 @@ def discover_taxonomy(run=False, days=None, sample=None, apply=True):
     return 0
 
 
-def _classify_prompt(taxo, batch):
+def _chat_allocation_prompt(taxo, batch):
     orgs = taxo.get("orgs") or []
     teams = taxo.get("teams") or []
     projs = taxo.get("projects") or []
@@ -856,7 +856,7 @@ def _classify_prompt(taxo, batch):
         "Conversations:\n" + "\n".join(lines))
 
 
-def classify(run=False, days=None, recls=False, batch_size=25):
+def classify_chat_allocations(run=False, days=None, recls=False, batch_size=25):
     """Agentically assign (org, project) to conversations from their content. Caged (spendguard:categorize),
     estimate-first. Only classifies UNCLASSIFIED conversations unless --reclassify."""
     from . import adapters, calls, ui
@@ -872,7 +872,7 @@ def classify(run=False, days=None, recls=False, batch_size=25):
         print("    (agentically proposes orgs→projects from your history), then `chat classify --reclassify`.\n")
     model = config.advisor_model()
     batches = [todo[i:i + batch_size] for i in range(0, len(todo), batch_size)]
-    est = sum(pricing.realtime_cost(model, _toklen(_classify_prompt(taxo, b)), 80 * len(b)) for b in batches)
+    est = sum(pricing.realtime_cost(model, _toklen(_chat_allocation_prompt(taxo, b)), 80 * len(b)) for b in batches)
     print(f"agentic org+project classify — {model} (caged under caps.meta ${config.meta_cap():.2f}/day)")
     print(f"  taxonomy: {'config' if explicit else 'auto-derived'} · "
           f"orgs={taxo.get('orgs') or '[infer]'} · {len(taxo.get('projects') or [])} known projects")
@@ -883,7 +883,7 @@ def classify(run=False, days=None, recls=False, batch_size=25):
     assigned = 0
     for bi, b in enumerate(batches):
         with calls.context(intent="spendguard:categorize"):
-            r = adapters.call(model, _classify_prompt(taxo, b), max_tokens=80 * len(b) + 120, system=None)
+            r = adapters.call(model, _chat_allocation_prompt(taxo, b), max_tokens=80 * len(b) + 120, system=None)
         if r.get("error"):
             print(f"  batch {bi}: error {r['error']}")
             continue
@@ -947,14 +947,14 @@ def loop(run=False, force_discover=False, quiet=False):
         return {"skipped": "chat.enabled off — `spendguard chat enable` (or accept an org request)"}
     steps = []
     try:
-        st, info = update()
+        st, info = refresh_chat_conversations()
         steps.append(f"fetch: +{info['fetched']} new / {info['cached']} cached")
     except Exception as e:
         return {"error": f"fetch failed: {str(e)[:80]}"}
     n_unc = sum(1 for c in st.get("convs", {}).values() if not c.get("org") and not c.get("project"))
     if n_unc:
         try:
-            classify(run=run, days=None)
+            classify_chat_allocations(run=run, days=None)
             steps.append(f"classify: {n_unc} unclassified {'done' if run else '(estimate only — use --run)'}")
         except Exception as e:
             steps.append(f"classify deferred: {str(e)[:80]}")
@@ -969,7 +969,7 @@ def loop(run=False, force_discover=False, quiet=False):
                 st = _load_state(); st["last_discover"] = datetime.datetime.now().isoformat(timespec="seconds")
                 _save_state(st)
                 if auto:
-                    classify(run=run, recls=True)
+                    classify_chat_allocations(run=run, recls=True)
                     steps.append("taxonomy: discovered + reallocated (auto)")
                 else:
                     steps.append("taxonomy: proposed (review)")
@@ -1106,7 +1106,7 @@ def main(argv=None):
                 pass
         return discover_taxonomy(run="--run" in argv, days=days, sample=sample, apply="--no-apply" not in argv)
     if sub == "classify":
-        return classify(run="--run" in argv, days=days, recls="--reclassify" in argv)
+        return classify_chat_allocations(run="--run" in argv, days=days, recls="--reclassify" in argv)
     if sub == "loop":                                      # one attribution-loop iteration (cron-friendly)
         r = loop(run="--run" in argv, force_discover="--discover" in argv)
         if "skipped" in r:
@@ -1116,13 +1116,13 @@ def main(argv=None):
         print("chat sync:", sync(dry="--dry" in argv))
         return 0
     if sub == "work":
-        return work(by=by, days=days)
+        return show_chat_work(by=by, days=days)
     if sub == "story":
         return story(by=by, days=days or 7, run="--run" in argv)
     if sub in ("show", "list"):
         if "--by-project" in argv:                         # project-first pivot (orthogonal dimension)
             return show_by_project(days=days)
-        return show(days=days, refresh="--no-refresh" not in argv)
+        return show_chat_report(days=days, refresh="--no-refresh" not in argv)
     print("usage: spendguard chat {test|show|discover|classify|loop|work|story|sync|status|accept|push-taxonomy|"
           "enable|disable} [--by day|week|month|quarter] [--days N] [--run] [--reclassify] [--discover] [--sample N]")
     return 1

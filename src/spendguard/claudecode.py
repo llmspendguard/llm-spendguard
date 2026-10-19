@@ -34,7 +34,7 @@ def _load_state():
     return config.load_state("claudecode", {"sessions": {}, "ledger": {}})
 
 
-def _save_state(st):
+def _save_claudecode_state(st):
     """Persist this adapter's state. THREE byte-identical copies of this existed (chat, claudecode, codex),
     each non-atomic and each swallowing its own failure — so a crash mid-write left a TRUNCATED state file
     that the loader's bare `except: return {}` then reported as "no state", and a save that never happened
@@ -258,11 +258,11 @@ def ingest_events(days=None, limit=None, reset=False, dry=False):
             if not dry:
                 wm[path] = {"lines": total, "mtime": mtime}
                 if sessions and sessions % 200 == 0:     # CHUNK: checkpoint the watermark periodically
-                    _save_state(st)
+                    _save_claudecode_state(st)
         except Exception as e:                           # per-session isolation — a bad transcript never wedges the run
             print(f"claude-code ingest: skip {os.path.basename(path)} ({type(e).__name__}: {str(e)[:80]})")
     if not dry:
-        _save_state(st)
+        _save_claudecode_state(st)
     tag = "WOULD ingest (dry)" if dry else "ingested"
     print(f"claude-code {tag}: {rows:,} turns · ${val:,.2f} est-value · {sessions} sessions · {skipped} unchanged · "
           f"{unpriced} unpriced-skipped · {no_id} no-id-skipped · {pre_cut} pre-cutoff-skipped")
@@ -1199,9 +1199,9 @@ def conversations_cmd(top=15):
     return 0
 
 
-def show(days=None):
+def show_claudecode_report(days=None):
     st, passinfo = update()
-    _save_state(st)
+    _save_claudecode_state(st)
     cutoff = None
     if days:
         cutoff = (datetime.date.today() - datetime.timedelta(days=int(days))).isoformat()
@@ -1305,7 +1305,7 @@ def classify(run=False, days=None, recls=False):
     if not run:
         return 0
     cls.update(res)
-    _save_state(st)
+    _save_claudecode_state(st)
     print(f"claude-code: classified {len(res)}/{len(todo)} sessions into org→team×project.")
     return 0
 
@@ -1435,7 +1435,7 @@ def _digest(path, seen=None, ask_verdicts=None):
             "in_tok": in_tok, "out_tok": out_tok, "cached_tok": cached_tok, "model": dominant}
 
 
-def work(by="week", days=None):
+def show_claudecode_work(by="week", days=None):
     """Conversation-derived WORK DONE — per-session rows (what was asked + cost) bucketed by day/week/month/quarter."""
     digs = _read_session_digests(days)                     # ONE home for the guard + glob (see _read_session_digests)
     if digs is None:                                       # projects dir missing/unreadable (named there) → int status
@@ -1519,7 +1519,7 @@ def story(by="week", days=7, run=False):
 def main(argv=None):
     argv = argv or []
     if "--rebuild" in argv:                        # re-bucket: clear the accumulator + watermarks, re-mine at repo level
-        st = _load_state(); st["ledger"] = {}; st["sessions"] = {}; st["counted_ids"] = {}; _save_state(st)
+        st = _load_state(); st["ledger"] = {}; st["sessions"] = {}; st["counted_ids"] = {}; _save_claudecode_state(st)
         print("claude-code: state reset — re-mining all transcripts with repo-level buckets + per-message-id dedup")
         argv = [a for a in argv if a != "--rebuild"]
     sub = argv[0] if argv else "show"
@@ -1581,7 +1581,7 @@ def main(argv=None):
     if sub == "classify":                               # classify sessions into org→team×project (caged, est-first)
         return classify(run="--run" in argv, days=days, recls="--reclassify" in argv)
     if sub == "work":                                   # conversation-derived work rows, bucketed by period
-        return work(by=by, days=days)
+        return show_claudecode_work(by=by, days=days)
     if sub == "story":                                  # caged narrative + private work-insights (estimate-first)
         return story(by=by, days=days or 7, run="--run" in argv)
-    return show(days=days)
+    return show_claudecode_report(days=days)

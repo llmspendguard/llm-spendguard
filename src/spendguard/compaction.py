@@ -185,7 +185,7 @@ def agentic_advise(transcript_path, run=False, model=None):
         rate = (float(p["cached_in"]) / 1e6) if p.get("cached_in") is not None else None
         if rate and cr:
             reread = cr * rate
-            k = measured_k()[0] or 11.0
+            k = measured_explicit_compaction_ratio()[0] or 11.0
             econ = (f"this session re-reads ~${reread:.4f}/turn · compacting (~{k:.0f}×) saves "
                     f"~${reread * (1 - 1 / k):.4f}/turn — cents to save dollars.")
     except Exception:
@@ -307,7 +307,7 @@ def _credit_compaction_saving(ev, post):
         pass
 
 
-def measured_k():
+def measured_explicit_compaction_ratio():
     """(k, n) — the MEDIAN real compaction ratio from RECORDED events that have both pre and post (k = pre/post),
     or (None, 0) if none yet. This is the measured-from-events k× the nudge prefers over the ledger-drop heuristic."""
     ks = sorted(float(ev["k"]) for ev in _load_events() if ev.get("k"))
@@ -324,5 +324,5 @@ def event_summary():
     for ev in evs:
         t = ev.get("trigger") or "unknown"
         by_trigger[t] = by_trigger.get(t, 0) + 1
-    k, n = measured_k()
+    k, n = measured_explicit_compaction_ratio()
     return {"events": len(evs), "by_trigger": by_trigger, "measured_k": k, "k_events": n}

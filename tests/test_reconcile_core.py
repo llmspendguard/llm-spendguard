@@ -75,19 +75,19 @@ ck("LLMSource via run(): truth 800, captured 600, residual 200",
 os.environ["SPENDGUARD_ADMIN_ORACLE"] = "1"                 # opt in to the dev oracle (default off = offline)
 from spendguard import budget as _bud, report as _rep
 _bud.gate_by_project_day = lambda kind=None, since=None: ({("lmm", "2026-06-01"): 18.0} if kind == "realtime" else {})
-_rep.admin_realtime_total = lambda since=None: 1400.0      # dev oracle: an admin key is present
+_rep.admin_billed_realtime_total = lambda since=None: 1400.0      # dev oracle: an admin key is present
 rr = reconcile.run(ledger_sync.RealtimeSource(conn={"owns_account": True}, since="2026-06-01"), ptmap)
 ck("RealtimeSource: captured $18 (gate) vs truth $1400 (admin) → residual $1382 surfaced as the COVERAGE gap",
    rr["captured"] == 18.0 and rr["truth_total"] == 1400.0 and rr["residual"] == 1382.0)
 ck("RealtimeSource: attribute_gap=[] (realtime is not chat-reconstructable; gap is coverage, not filled)",
    rr["attributed"] == 0.0)
-_rep.admin_realtime_total = lambda since=None: None         # admin oracle on, but no admin key → None
+_rep.admin_billed_realtime_total = lambda since=None: None         # admin oracle on, but no admin key → None
 rn = reconcile.run(ledger_sync.RealtimeSource(conn={"owns_account": True}, since="2026-06-01"), ptmap)
 ck("RealtimeSource: no admin key → truth None (gate-coverage-dependent, never a fake $0)", rn["truth_total"] is None)
 os.environ.pop("SPENDGUARD_ADMIN_ORACLE", None)            # default-off again (offline) for the rest of the suite
 # CLIENT INVARIANT — the client needs NO admin key: with the flag OFF, truth is None even if the oracle COULD answer
 # (the OPT-IN FLAG gates it, not the key) → a client never reads/needs an admin key; realtime still reconciles (gate).
-_rep.admin_realtime_total = lambda since=None: 9999.0       # oracle COULD return a value...
+_rep.admin_billed_realtime_total = lambda since=None: 9999.0       # oracle COULD return a value...
 rc = reconcile.run(ledger_sync.RealtimeSource(conn={"owns_account": True}, since="2026-06-01"), ptmap)
 ck("CLIENT needs NO admin key: flag OFF → admin oracle NOT consulted (truth None), realtime still reconciles via gate",
    rc["truth_total"] is None and rc["captured"] == 18.0)

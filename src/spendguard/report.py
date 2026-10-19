@@ -62,7 +62,7 @@ def gpu_by_day(since):
         return {}, str(e)[:80]
 
 
-def admin_realtime_total(since=None):
+def admin_billed_realtime_total(since=None):
     """AUTHORITATIVE realtime LLM $ (OpenAI + Anthropic) via the providers' ADMIN USAGE APIs, priced by pricing.py
     (cache-discounted; usage×pricing — the cost APIs are unreliable). DEV-ONLY cross-check: needs OPENAI_ADMIN_KEY /
     ANTHROPIC_ADMIN_KEY. Returns the total $, or None if NEITHER admin key is set (the shipped client has none → its
