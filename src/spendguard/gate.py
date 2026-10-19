@@ -2635,6 +2635,13 @@ def _cli(cmd="status", live=False):
     else:  # status / doctor
         print(f"spend gate: {'🔴 DISABLED' if _disabled() else '🟢 ENABLED'}   (cap ${_cap():.0f})")
         print(f"  python    : {sys.executable}")
+        from . import config
+        _doctor_budget_backend = config.budget_backend()
+        if _doctor_budget_backend == "sqlite":
+            print(f"  budget enforcement: durable, cross-process (budget_backend={_doctor_budget_backend})")
+        else:
+            print(f"  budget enforcement: process-local, NON-DURABLE (budget_backend={_doctor_budget_backend}); "
+                  "cross-process cap + durable spend-events require budget_backend=sqlite")
         # version of the CODE running (SSOT) vs THIS venv's install-time metadata: an editable install freezes its
         # dist-info version at install time, so a stale one silently under-reports (it read 0.7.2 while running
         # 0.10.0 code). Surface the drift here so a stale editable install is visible, not silent.
