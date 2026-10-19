@@ -890,7 +890,7 @@ class Governor:
                 # sqlite sliding window has NO burst allowance beyond an explicit per-second sub-cap, so aggregate
                 # egress across ALL processes stays under the vendor's real rpm/tpm. Checked BEFORE the scarce flock
                 # slot so a rate-wait does not hold cross-process concurrency. Lanes are excluded (their ceiling is a
-                # subscription plan, governed by the flock slots below). Degrades to admit on an infra failure.
+                # subscription plan, governed by the flock slots below). Refuses on an infrastructure failure.
                 from . import xp_rate_window as _xpr
                 try:
                     _xpr.reserve(key, _xpr.limits_for(rpm=_b.rpm, tpm=_b.tpm), est_tokens=est_tokens,
@@ -1017,9 +1017,8 @@ def admit(vendor, model, deadline_s, no_metered_fallback=False, est_tokens=0, sh
     SPLIT (LANE_QUEUE_SHARE) so a saturated lane's queue wait can't starve the shed; on a lane queue-timeout it
     re-acquires under the metered VENDOR key and returns .shed=True (the caller runs metered_only) — lane-first,
     never a hard fail. A saturated METERED vendor (no cheaper twin) or no_metered_fallback → .ok=False (the caller
-    returns a DEADLINE result). Governor OFF/unavailable → proceed UNGOVERNED (.ok, not held), LOUDLY — the gate is
-    the real $ backstop and dispatch's kill-switch philosophy is that spend discipline must not depend on the
-    scheduler being correct. Returns an _Admission (.ok/.shed/.held/.release()).
+    returns a DEADLINE result). An unavailable governor refuses with its infrastructure reason. The explicit
+    governor OFF switch still bypasses dispatch. Returns an _Admission (.ok/.shed/.held/.release()).
 
     `shed=False` DISABLES the lane→metered shed: a saturated $0 lane just queues out (.ok=False) rather than moving the
     call onto the paid API. It is for a MANAGED SERIAL call (universal admission), where silently paying to escape a
@@ -1050,14 +1049,11 @@ def admit(vendor, model, deadline_s, no_metered_fallback=False, est_tokens=0, sh
                 return _Admission(False, False, False, vendor, model, False, error=str(dt2))
         return _Admission(False, False, False, vendor, model, False, error=str(dt))
     except Exception as _ge:
-        # The GOVERNOR ITSELF is unavailable (import/infra/config), NOT a queue timeout. Degrade LOUDLY to an
-        # ungoverned admission rather than block real work: the spend GATE is the real $ backstop, and this module's
-        # own kill-switch (SPENDGUARD_DISPATCH_OFF) exists precisely because spend discipline must never depend on the
-        # scheduler being correct. Loud (not silent) so a broken governor is visible and can be fixed.
-        import sys as _sys
-        print(f"[spendguard] dispatch governor unavailable ({type(_ge).__name__}: {str(_ge)[:80]}) — admitting "
-              f"{vendor}/{model} UNGOVERNED this call; the spend gate still enforces the cap", file=_sys.stderr)
-        return _Admission(True, False, False, vendor, model, False)
+        # An unavailable governor cannot prove admission. Reuse the normal refusal result and retain the
+        # complete infrastructure reason; a warning followed by ok=True would silently remove governance.
+        return _Admission(False, False, False, vendor, model, False,
+                          error=f"dispatch.admit: governor unavailable for {vendor}/{model} "
+                                f"({type(_ge).__name__}: {_ge})")
 
 
 def is_saturated(vendor=None, model=None):

@@ -7,6 +7,9 @@ code contains no keyword router. Provider/model choices are derived from advisor
 import importlib
 import json
 import os
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
 
 from . import config, guard, lane_balance, lane_registry, pricing, provider_tokens
 
@@ -18,6 +21,40 @@ CLASSIFY_OUTPUT_TOKENS = 800
 # meta default. A caller's explicit `timeout` still wins; this is only the floor when none was supplied, so a wedged
 # codex turn is HARD-killed (the daemon recycled) at a known bound instead of stalling the next delegation forever.
 AGENTIC_DELEGATE_TIMEOUT_S = 1800
+CODEX_AGENTIC_EVENTS_FILENAME = "codex-agentic-executions.jsonl"
+CODEX_AGENTIC_EVENTS_SCHEMA_VERSION = 1
+
+
+def codex_agentic_events_path():
+    """Observational execution log; relative configured paths resolve beneath spendguard HOME."""
+    configured = config._cfg_get("delegate", "codex_agentic_events_path", None)
+    path = Path(configured).expanduser() if configured else config.HOME / CODEX_AGENTIC_EVENTS_FILENAME
+    return path if path.is_absolute() else config.HOME / path
+
+
+def _append_codex_agentic_event(event, execution_id, *, plan, model, cwd):
+    """Best-effort durable observations only: logging must never change execution or its exception."""
+    try:
+        import fcntl
+        timestamp = datetime.now(timezone.utc).isoformat()
+        record = {"schema_version": CODEX_AGENTIC_EVENTS_SCHEMA_VERSION, "event": event,
+                  "execution_id": execution_id, "ts": timestamp, "plan": plan, "model": model,
+                  "cwd": os.fspath(cwd), "pid": os.getpid()}
+        path = codex_agentic_events_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as stream:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+            if os.fstat(stream.fileno()).st_size == 0:
+                stream.write(json.dumps({"schema_version": CODEX_AGENTIC_EVENTS_SCHEMA_VERSION,
+                                         "event": "coverage_start", "ts": timestamp}) + "\n")
+            stream.write(json.dumps(record) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+    except Exception as exc:
+        try:
+            config.warn_once(f"[spendguard] agentic Codex demand observation unavailable: {exc}")
+        except Exception:
+            pass
 
 _CLASSIFY_SCHEMA = {
     "type": "object", "additionalProperties": False,
@@ -283,7 +320,14 @@ def _route_agentic(plan, prompt, model, timeout, cwd):
                                       or AGENTIC_DELEGATE_TIMEOUT_S)
         kwargs["recycle_on_timeout"] = config.codex_daemon_admission_settings()["recycle_on_timeout"]
         prompt = prompt + _WORKTREE_AUTHOR_CONSTRAINTS    # bake the sandbox/git/hook contract into what codex actually receives
-    return module.run_prompt(prompt, **kwargs)
+    if spec["exec"] != "codex_exec":
+        return module.run_prompt(prompt, **kwargs)
+    execution_id = str(uuid.uuid4())
+    _append_codex_agentic_event("start", execution_id, plan=plan, model=model, cwd=cwd)
+    try:
+        return module.run_prompt(prompt, **kwargs)
+    finally:
+        _append_codex_agentic_event("end", execution_id, plan=plan, model=model, cwd=cwd)
 
 
 def delegate_task(task, files=None, intent=None, provider="auto", execute=False, timeout=None, cwd=None):
