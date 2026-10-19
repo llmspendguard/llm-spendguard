@@ -5,6 +5,26 @@ import subprocess
 import sys
 import tempfile
 
+RETENTION_MUTATION_TIMEOUT_S = 60
+RETENTION_DURABILITY_MUTATIONS = ("intact", "skip_archive_fsync", "delete_before_archive_durable")
+
+
+def retention_durability_mutation_matrix():
+    script = pathlib.Path(__file__).with_name("retention_durability_faults.py")
+    matrix = []
+    for mutation in RETENTION_DURABILITY_MUTATIONS:
+        with tempfile.TemporaryDirectory() as scenario_home:
+            env = dict(os.environ, SPENDGUARD_CHAOS_MUTATION=mutation,
+                       SPENDGUARD_HOME=scenario_home, SPENDGUARD_TEST_ISOLATED="1")
+            proc = subprocess.run([sys.executable, str(script)], env=env, text=True,
+                                  capture_output=True, timeout=RETENTION_MUTATION_TIMEOUT_S)
+        state = "GREEN" if proc.returncode == 0 else "RED"
+        print(f"retention_durability {mutation:32} {state}", flush=True)
+        matrix.append((mutation, state))
+        if (proc.returncode == 0) != (mutation == "intact"):
+            raise AssertionError(f"mutation not detected: retention/{mutation}\n{proc.stdout}\n{proc.stderr}")
+    return matrix
+
 
 def lane_mutation_matrix():
     script = pathlib.Path(__file__).with_name("lane_faults.py")
@@ -49,3 +69,4 @@ def work_mutation_matrix():
 if __name__ == "__main__":
     lane_mutation_matrix()
     work_mutation_matrix()
+    retention_durability_mutation_matrix()
