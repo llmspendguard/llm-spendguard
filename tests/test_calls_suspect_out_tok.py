@@ -5,9 +5,9 @@ the estimate-vs-actual reconciliation can exclude it — while KEEPING the raw o
 delete). This is the prerequisite for a trustworthy ledger: you cannot reconcile from data you cannot trust."""
 import os
 import sys
-import tempfile
+from _pytest_fixture_bridge import align_test_startup_home
 
-os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-suspect-")
+align_test_startup_home(prefix=__name__)
 os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
 os.environ["SPENDGUARD_CALLS"] = "1"          # enable per-call recording (fails closed otherwise)
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")

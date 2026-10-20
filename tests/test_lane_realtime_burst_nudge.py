@@ -3,9 +3,9 @@ import contextlib
 import io
 import os
 import sys
-import tempfile
+from _pytest_fixture_bridge import align_test_startup_home
 
-os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-lane-realtime-")
+align_test_startup_home(prefix=__name__)
 os.environ["SPENDGUARD_NO_AUTOINSTALL"] = "1"
 os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
