@@ -187,16 +187,21 @@ def _measure_one(model, effort, prompt, idx, intent, judge_model, acc, requireme
     dropped, so a fragile effort with fewer usable samples can't masquerade as the cheaper winner. Caller checkpoints.
     `requirement_aware` routes scoring through the two-tier requirement judge (screen→opus adjudicator)."""
     acc["consumed"] += 1
-    if len(prompt or "") > _MAX_PROMPT_CHARS:                    # per-unit size guard: never OOM/spend on a pathological
+    scoring_prompt = bakeoff._task_sample_key(prompt)
+    replay_contract = {}
+    if isinstance(prompt, dict):
+        replay_contract = {k: prompt[k] for k in ("system", "schema", "max_tokens") if prompt.get(k) is not None}
+        prompt = prompt.get("prompt") or ""
+    if len(scoring_prompt) > _MAX_PROMPT_CHARS:                    # per-unit size guard: never OOM/spend on a pathological
         acc["failed"].append(idx)                               # input — record by identity and move on (loud, bounded)
         return
-    r = adapters.call(model, prompt, sig=intent, reasoning=effort, timeout_s=120)   # gated; the effort under test
+    r = adapters.call(model, prompt, sig=intent, reasoning=effort, timeout_s=120, **replay_contract)
     if r.get("error"):
         acc["failed"].append(idx)
         return
     cost = float(r.get("cost") or 0.0)
     acc["cost"] += cost
-    sc = _score_output(prompt, r.get("text"), judge_model,
+    sc = _score_output(scoring_prompt, r.get("text"), judge_model,
                        requirement_aware=requirement_aware, adjudicator_model=adjudicator_model)
     q = None
     if sc:
@@ -224,7 +229,7 @@ def _pilot_estimate(intent, model, efforts, prompts, judge_model, requirement_aw
             if isinstance(_e, gate.deliberate_stop_types()):
                 raise
             return 0.0
-    pilot = prompts[:_PILOT]
+    pilot = [bakeoff._task_sample_key(p) for p in prompts[:_PILOT]]
     in_toks = [_count_tokens(p, model) for p in pilot]
     total = 0.0
     for _eff in efforts:
@@ -272,7 +277,7 @@ def titrate(intent, model=None, efforts=None, sample_n=_MAX_SAMPLE, run=False, b
     if not model:
         return dict(intent=intent, error="no model to titrate — this intent has no recorded model; pass model=…")
     efforts = [str(e).strip() for e in (efforts or _LADDER) if e and str(e).strip()] or list(_LADDER)
-    prompts = bakeoff._sample_prompts(intent, sample_n)
+    prompts = bakeoff._sample_prompts(intent, sample_n, include_shape=True)
     if not prompts:
         return dict(intent=intent, model=model, error="no sample tasks — this intent has no recorded prompts to "
                     "replay. Run `spendguard fetch-io` or seed via the bakeoff first.")
@@ -336,7 +341,7 @@ def titrate(intent, model=None, efforts=None, sample_n=_MAX_SAMPLE, run=False, b
     try:
         reading_id = measurement.record_reading(
             intent=intent, kind="effort-titration", judge_mix=[judge_model], judge_basis="configured",
-            judge_pinned=_judge_pinned, sample_ids=[measurement.item_id(p) for p in prompts[:reached]],
+            judge_pinned=_judge_pinned, sample_ids=[measurement.item_id(bakeoff._task_sample_key(p)) for p in prompts[:reached]],
             rubric={"system": _SCORE_SYS, "schema": _SCORE_SCHEMA, "verdict": _VERDICT_SYS},
             candidates=["%s@%s" % (model, e) for e in efforts],
             values={e: {"mean_score": per_effort[e]["mean_score"], "usable_rate": per_effort[e]["usable_rate"],
