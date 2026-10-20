@@ -181,7 +181,8 @@ assert reconcile_guard_readable_actual == {k: v for k, v in reconcile_guard_refe
                                            if k[1] != reconcile_guard_failed_provider}
 reconcile_guard_partial = ledger_sync.reconcile_into_ledger(RECONCILE_GUARD_SINCE)
 assert not reconcile_guard_partial["complete"]
-assert reconcile_guard_partial["gap_rebuild_refused"]
+assert "gap_rebuild_refused" not in reconcile_guard_partial
+assert reconcile_guard_partial["errors"]["ledger_read"]
 assert reconcile_guard_gap_rows == [(r["day"], r["project_primary"], Decimal(str(r["batch_usd"])))
     for r in reconcile_guard_connection.execute("SELECT * FROM spend_events WHERE reconciled=1")]
 print("OK reconcile_read_containment: complete full-scan corrections and late-row refusal with readable remainder")
