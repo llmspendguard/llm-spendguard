@@ -4,6 +4,30 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-10-19
+
+### Added
+- Subscription-plan quota governance across lane fan-outs, with cached quota snapshots for single-call admission.
+- Host-wide Codex app-server broker and parallel warm worker pool, including leased-turn watchdogs, isolated
+  worker recycling, bounded admission waits, and authentication failover.
+- Realized executor/lane routing surfaces through the API, MCP, and CLI; bounded ledger connection pooling,
+  consumer read surfaces, and fail-closed reclamation.
+- Consumer editable-install refresh and native Codex spawn/residency hook support.
+
+### Fixed
+- Hardened quota-aware routing, scheduler admission, governance fail-closed paths, lane queue result handling,
+  and post-dedup realtime/agentic demand handling.
+- Corrected lane-value reporting, metered fallback disclosure on receipts, budget-mode disclosure in doctor,
+  and internal classification output-budget handling.
+- Verified install-hook enforcement against the interpreter's actual package directory; sanitized ledger sync
+  rows and corrected Claude Code cache-creation billing through the pricing source of truth.
+- Isolated offline test fixtures and chaos scenarios to prevent cross-test state and work loss.
+
+### Changed
+- Consolidated configuration/state paths and established the symbol naming registry.
+- CI now targets Python 3.11 and newer, matching package metadata; refreshed GitHub Actions dependencies,
+  including the pinned PyPI trusted-publishing action.
+
 ## [0.12.22] — 2026-10-16
 
 ### Fixed

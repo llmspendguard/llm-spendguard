@@ -2,7 +2,7 @@ name: release
 # Publish to PyPI on a version tag (v*). Uses PyPI Trusted Publishing (OIDC) — no API token stored.
 # One-time setup on PyPI: add a Trusted Publisher for project `llm-spendguard` →
 #   owner: llmspendguard · repo: llm-spendguard · workflow: release.yml · environment: pypi
-# Then: bump version in pyproject.toml + __init__.py, tag `vX.Y.Z`, push the tag.
+# Then: bump src/spendguard/_version.py, update CHANGELOG.md, tag `vX.Y.Z`, push the tag.
 on:
   push:
     tags: ['v*']
