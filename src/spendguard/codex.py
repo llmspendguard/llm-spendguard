@@ -68,10 +68,10 @@ def _save_state(st):
     return config.save_state("codex", st)
 
 
-def _project_of(cwd):
+def _codex_project_of_cwd(cwd):
     """Bucket by the REPO (git-root basename), not the session's cwd — so subdirs collapse to the repo and match
     how actual-$ is tagged, instead of fragmenting est-value across many cwd names."""
-    return config.project_of_cwd(cwd, "codex")         # claudecode._project_of was the same but for its default
+    return config.project_of_cwd(cwd, "codex")         # claudecode._claudecode_project_of_cwd was the same but for its default
 
 
 def _digest(path):
@@ -123,7 +123,7 @@ def _digest(path):
     # An unpriceable model is UNKNOWN, not free. cost_or_unpriced records it (note_unpriced) so `spendguard`
     # surfaces the gap, instead of the bare `except: cost=0.0` that swallowed every error and flagged nothing.
     cost = pricing.cost_or_unpriced(model, intok, out, cached, batch=False)
-    return {"sid": sid, "day": day, "model": model, "cwd": cwd, "project": _project_of(cwd),
+    return {"sid": sid, "day": day, "model": model, "cwd": cwd, "project": _codex_project_of_cwd(cwd),
             "cost": round(cost, 6), "in_tok": intok, "out_tok": out, "cached_tok": cached,
             "plan": plan, "prompt": prompt}
 
@@ -295,7 +295,7 @@ def show_codex_report(days=None):
 
 def main(argv=None):
     argv = argv or []
-    if "--rebuild" in argv:                        # re-bucket existing sessions after the git-root _project_of change
+    if "--rebuild" in argv:                        # re-bucket existing sessions after the git-root _codex_project_of_cwd change
         st = config.load_state("codex", {"sessions": {}, "cls": {}}); st["sessions"] = {}; _save_state(st)
         print("codex: digest cache cleared — re-mining all sessions with repo-level (git-root) buckets")
         argv = [a for a in argv if a != "--rebuild"]
