@@ -161,10 +161,10 @@ def true_down(since=None, billed_rows=None):
                 billed_rows[prov_name] = fetch()
             except Exception:
                 billed_rows[prov_name] = None
-    # ONLY CLEAR WHAT WILL BE REBUILT. This ran unconditionally, so a provider whose billed fetch FAILED
-    # (billed_rows[p] is None — see the except above) had its existing corrections deleted and replaced
-    # with nothing: a fetch failure silently restated that provider's history as "no corrections needed".
-    # A provider we could not read is a provider whose corrections we must LEAVE ALONE.
+    # Failed billed fetches fall back to the gate estimate: clear their stale
+    # corrections but never rebuild against unknown billing. Unreadable ledger
+    # providers are different: preserve their corrections because the estimate
+    # base cannot be established. Neither failure suppresses readable siblings.
     _failed = [p for p, rows in billed_rows.items() if rows is None]
     if _failed:
         import sys as _sys

@@ -13,9 +13,11 @@ from .ledger_read import LedgerReadError, LEDGER_READ_DECIMAL_ARITY
 
 RECONCILE_STAGE_PREFIX = "spendguard-reconcile-stage-"
 RECONCILE_STAGE_DATABASE = "estimates.db"
+RECONCILE_ESTIMATE_BATCH_KIND = "batch"
 RECONCILE_ESTIMATE_STREAM_SQL = """SELECT id,project_primary,provider,model,day,batch_usd,cost_basis
 FROM spend_events WHERE day>=? AND reconciled=0
-AND COALESCE(status,'') NOT IN ('void','reversed') AND COALESCE(conv_id,'')!=?"""
+AND COALESCE(status,'') NOT IN ('void','reversed') AND COALESCE(conv_id,'')!=?
+AND (batch_usd IS NOT NULL OR cost_type IS NULL OR cost_type=?)"""
 RECONCILE_STAGE_LOGGER = logging.getLogger(__name__)
 
 
@@ -34,7 +36,11 @@ def stage_reconcile_estimate_cells(since, correction_marker, normalize_model, pa
             try:
                 source = config.open_ledger_connection(ledger_path.as_uri() + "?mode=ro", uri=True,
                     timeout=config.LEDGER_CONNECT_TIMEOUT_S, tune=False)
-                cursor = source.execute(RECONCILE_ESTIMATE_STREAM_SQL, (since, correction_marker))
+                # A different typed money axis has an absent batch column, not an
+                # unknown batch price. Keep explicit batch and legacy untyped rows
+                # even when their price is NULL; those remain incomplete evidence.
+                cursor = source.execute(RECONCILE_ESTIMATE_STREAM_SQL,
+                    (since, correction_marker, RECONCILE_ESTIMATE_BATCH_KIND))
                 for row_id, project, provider, model, day, amount, basis in cursor:
                     # Keep unknown prices as NULL, including writer zero placeholders.
                     if amount is None or basis == "unpriced":
