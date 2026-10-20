@@ -32,7 +32,7 @@ RT_LOG = HOME / "realtime_log.jsonl"          # real-time spend log (per-day-per
 CONFIG_JSON = HOME / "config.json"             # operational (non-secret) config: caps, budget, emit
 KEYS_ENV = HOME / "keys.env"                    # SECRETS: LLM/compute/org keys (KEY=value lines), loaded at import
 
-CODEX_POOL_SIZE_DEFAULT = 10
+CODEX_POOL_SIZE_DEFAULT = 12
 CODEX_DAEMON_MAX_WAITERS_DEFAULT = 32
 CODEX_DAEMON_REQUEST_READ_TIMEOUT_DEFAULT_S = 5.0
 CODEX_DAEMON_RECYCLE_ON_TIMEOUT_DEFAULT = True

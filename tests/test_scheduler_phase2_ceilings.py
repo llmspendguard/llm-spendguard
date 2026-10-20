@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from spendguard import codex_daemon, config, config_schema, dispatch
 
-SCHEDULER_EXPECTED_WARM_DEFAULT = 10
+SCHEDULER_EXPECTED_WARM_DEFAULT = 12
 SCHEDULER_OVERRIDE_WARM_SIZE = 13
 SCHEDULER_CEILING_CONFIGURATIONS = ((2, 11, 12), (11, 3, 12), (11, 12, 4))
 SCHEDULER_CODEX_VENDOR = "openai"
