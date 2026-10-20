@@ -4,7 +4,7 @@ OFF by default (it can store prompts/outputs — privacy). Enable with config ca
 (or SPENDGUARD_CALLS=1). Per call it records: chain, intent, caller, model, cost, tokens, latency,
 prompt hash (+ optional snippet), output snippet, finish reason, and a DEFERRED quality label:
   - feedback(call_id, ok)        -> explicit / judge verdict (authoritative)
-  - implicit 'used'              -> a later call in the same chain reused this output
+  - reuse alone                 -> unjudged (NULL); only feedback or a judge can assess quality
 That powers cost-per-GOOD-result per intent (`spendguard calls`) and, later, an `optimize` loop.
 
 Shares the SQLite db with budget (config.db_path()), table `calls`. RLock — reentrant (record/query
@@ -579,7 +579,7 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
                  (requested_model or None), (served_model or None), (resolved_lane or None),
                  (redirect_reason or None)))
             _calls_db().commit()
-        # deferred implicit feedback: did THIS call reuse an earlier output in the same chain?
+        # Reuse alone must leave quality unjudged; the compatibility entrypoint never infers a verdict.
         if chain and prompt:
             _link_used(chain, prompt)
         return cid
@@ -664,26 +664,14 @@ def reconcile_calls_batch_estimate(provider, model, intent, in_tok, out_tok, cos
 
 
 def _link_used(chain, current_prompt):
-    """Mark prior unlabeled calls in this chain 'used' if their output appears in this prompt."""
-    if not _store_prompts():
-        return
-    try:
-        with _lock:
-            rows = _calls_db().execute(
-                "SELECT id, output_snip FROM calls WHERE chain=? AND quality IS NULL "
-                "AND output_snip IS NOT NULL ORDER BY ts DESC LIMIT 10", (chain,)).fetchall()
-            for cid, out in rows:
-                # Match the FULL stored snippet (not just an 80-char prefix) and require it to be substantive (>= 40
-                # chars): an 80-char PREFIX match fired on any two calls that shared a boilerplate/system preamble,
-                # mislabelling unrelated outputs 'used'. Requiring the whole snippet to reappear, and skipping short
-                # boilerplate, keeps the signal specific. (Still a low-confidence 0.6 'used' label, never authoritative.)
-                if out and len(out) >= 40 and out in current_prompt:
-                    # NB: single string literal (not concatenated) so the static SQL index audit can see the
-                    # WHERE id=? and read it as the PK seek it is, not a full-table scan (tests/test_sql_index_audit).
-                    _calls_db().execute("UPDATE calls SET quality='good', quality_src='used', quality_conf=0.6 WHERE id=? AND COALESCE(quality_src,'') != 'truncation'", (cid,))
-            _calls_db().commit()
-    except Exception:
-        config.rollback_ledger_conn("calls")   # clear a dangling txn from the failed write on the reused pooled conn
+    """Leave reuse unjudged (quality=NULL) until explicit feedback or an agentic judge labels it.
+
+    Kept as the implicit-reuse entrypoint for compatibility. Output appearing in a later prompt is not evidence
+    that it was correct or usable: it may have been quoted for correction. Do not infer reuse or quality from
+    stored snippets, and never replace an existing measured verdict. NULL is the corpus's unjudged marker;
+    cost_summary and advise.evidence exclude it from their good/bad and confidence-weighted label counts.
+    """
+    return None
 
 
 def intent_spend(intent, window_s=86400):
@@ -836,6 +824,6 @@ def cmd_summary(argv=None):
         goodpct = f"{100*good/labeled:.0f}%" if labeled else "—"
         per = f"${cost/good:.4f}" if good else "—"
         print(f"{intent[:19]:<20}{model[:21]:<22}{n:>7}{('$%.4f' % cost):>11}{goodpct:>7}{per:>10}")
-    print("\ngood% = share of LABELED calls (feedback / judge / implicit 'used').  $/good = cost-per-good-result.")
-    print("Label calls with spendguard.feedback(call_id, ok=...) or let chains infer 'used'.")
+    print("\ngood% = share of LABELED calls (feedback / judge).  $/good = cost-per-good-result.")
+    print("Label calls with spendguard.feedback(call_id, ok=...) or an agentic judge; reuse stays unjudged.")
     return 0
