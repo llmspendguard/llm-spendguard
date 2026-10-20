@@ -119,7 +119,7 @@ def run_surface_guards(failures):
         try:
             with ledger_read._ledger_read_connection(path, SURFACE_TEST_BUDGET_S) as connection:
                 connection.execute("DELETE FROM spend_events")
-        except sqlite3.OperationalError:
+        except ledger_read.LedgerReadError:
             check_surface_guard("read-only SQLite handle refuses writes", True, failures)
         else:
             check_surface_guard("read-only SQLite handle refuses writes", False, failures)

@@ -124,10 +124,20 @@ def ledger_read_cli(argv):
     parser.add_argument("--until")
     parser.add_argument("--path")
     parser.add_argument("--group-by", nargs="+")
+    parser.add_argument("--conv")
+    parser.add_argument("--deadline-s", type=float)
+    parser.add_argument("--json", action="store_true", help="JSON output (also the default)")
     args = vars(parser.parse_args(argv))
     if args["operation"] == "event" and not args["event_id"]:
         parser.error("event requires --event-id")
-    print(json.dumps(_tool_ledger_read(args), default=str))
+    from .ledger_read import LedgerReadError
+    try:
+        payload = _tool_ledger_read(args)
+    except (LedgerReadError, ValueError) as error:
+        print(json.dumps({"error": f"{type(error).__name__}: {error}",
+                          "error_type": type(error).__name__}, default=str))
+        return 1
+    print(json.dumps(payload, default=str))
     return 0
 
 
