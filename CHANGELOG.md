@@ -4,6 +4,70 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-10-20
+
+### Added
+- Subscription-plan quota governance across lane fan-outs, with cached quota snapshots for single-call admission.
+- Host-wide Codex app-server broker and parallel warm worker pool, including leased-turn watchdogs, isolated
+  worker recycling, bounded admission waits, and authentication failover.
+- Realized executor/lane routing surfaces through the API, MCP, and CLI; bounded ledger connection pooling,
+  consumer read surfaces, and fail-closed reclamation.
+- Consumer editable-install refresh and native Codex spawn/residency hook support.
+- **Caller-supplied wall-clock query deadline on ledger budget reads.** `spent_since` / `spent_by_job` /
+  `spent_all_time` / `spent_dec` accept a progress-bounded deadline (a SQLite progress handler fires on a monotonic
+  wall-clock, removed in `finally`), surfaced from the budget entrypoint with a named `LEDGER_QUERY_DEADLINE_S`
+  config default (legacy `None` = unbounded) and `LEDGER_QUERY_PROGRESS_VM_INSTRUCTIONS` granularity. A hit raises a
+  typed `LedgerQueryDeadline` — never a silently-partial result — treated fail-closed (deadline-exceeded budget check
+  = over-budget/refuse); writes, OUTCOME marking and exactly-once are untouched (the deadline is read-only). The
+  thread-local counted-ledger handle is recovered/evicted after an interrupt. (#142)
+
+### Fixed
+- Hardened quota-aware routing, scheduler admission, governance fail-closed paths, lane queue result handling,
+  and post-dedup realtime/agentic demand handling.
+- Corrected lane-value reporting, metered fallback disclosure on receipts, budget-mode disclosure in doctor,
+  and internal classification output-budget handling.
+- Verified install-hook enforcement against the interpreter's actual package directory; sanitized ledger sync
+  rows and corrected Claude Code cache-creation billing through the pricing source of truth.
+- Isolated offline test fixtures and chaos scenarios to prevent cross-test state and work loss.
+- **Warm-daemon request-path wedge (P0).** A consumer's request-path spend/budget aggregate ran an uncancellable
+  whole-ledger SQLite scan over the multi-GB ledger; when the caller abandoned (rather than cancelled) its worker,
+  abandoned scans accumulated until the executor was exhausted (HTTP-000 wedge). The new read deadline bounds every
+  budget aggregate so an over-long scan fails fast and fail-closed instead of wedging. (#142)
+- **Reconcile estimate-stage membership.** Typed realtime/meta/subscription rows carrying a NULL batch amount, and
+  legacy untyped rows, are filtered correctly so they no longer poison the per-provider/model reconcile aggregate;
+  unpriced rows are preserved (never dropped). (#141)
+- **Reconciliation gap-row provider ownership.** Settled/gap rows now carry provider ownership (SSOT = the existing
+  `spend_events.provider` column), with a snapshotted, `BEGIN IMMEDIATE`, idempotent legacy migration that derives
+  each row's owner from its own evidence (a strict `provider:YYYY-MM` invoice, else the `pricing.PROVIDERS` catalog)
+  and leaves ambiguous rows as explicit named gaps — never guessed; the gap-rebuild refuses only when genuinely
+  unowned rows remain. (#144)
+- **Receipt residency-axis containment.** The receipt's residency display routed through a second uncontained
+  whole-ledger read (distinct from the one #139 fixed) that tripped `DEFAULT_LEDGER_READ_ROW_CAP` on a large ledger;
+  it now reuses the streamed residency totals, so the figures are complete — bounded by containment, not a row cap. (#145)
+- **Test-ledger home isolation.** Synthetic test rows could reach the real `~/.spendguard` ledger when a fixture
+  changed `SPENDGUARD_HOME` *after* the startup hook had cached the default home; writes aimed back at the stale
+  default home after an explicit redirect are now refused with a typed `LedgerHomeIsolationError` across every write
+  path (calls, default/explicit ledger, pooled handle, retained cursor, `executemany`/`executescript`, `commit`,
+  context exit), decided by structural home identity — never by model-name matching. (#143)
+
+### Changed
+- Consolidated configuration/state paths and established the symbol naming registry.
+- CI now targets Python 3.11 and newer, matching package metadata; refreshed GitHub Actions dependencies,
+  including the pinned PyPI trusted-publishing action.
+
+### Performance
+- **Ledger home-isolation check made O(1) per operation.** The per-operation home-alignment guard caches the
+  resolved live/default/request home identities (cache key includes live HOME, default, request, tilde and cwd, so a
+  redirect invalidates it), keeping the isolation decision byte-identical while removing the dominant per-row
+  `Path.resolve` cost (the reconcile-read containment test: 134.3s → ~98s). (#143)
+
+### Known limitations
+- **Output-token (`max_tokens`) right-sizing is advisory, not automatic.** The receipt surfaces calls that ended at
+  `max_tokens`/length with the measured p99 bound and a per-class `spendguard maxtokens <sig>` remediation, and
+  `gate.autotune=apply` raises a cap the caller already set below the model's published maximum — but spendguard does
+  not auto-size an *absent* cap (where no cap was sent, there is nothing to tune). Set caps per call class from the
+  surfaced measurement. (recommendation; not a code change in this release)
+
 ## [0.12.22] — 2026-10-16
 
 ### Fixed
