@@ -54,8 +54,10 @@ from __future__ import annotations
 
 import collections
 import json
+import logging
 import os
 import time
+import traceback
 
 from . import config
 
@@ -65,6 +67,7 @@ ANSWERED, REFUSED, UNRESOLVED = "answered", "refused", "unresolved"
 # omitting an item from one crowded reply) while bounding the cost of an item that will never come back. Override per
 # call via close_exhausted(rounds=...) / exhausted(rounds=...), or globally via config `bulkgate.item_retry_rounds`.
 RETRY_ROUNDS = 3
+ITEM_LEDGER_LOGGER = logging.getLogger(__name__)
 
 
 def _default_rounds() -> int:
@@ -98,27 +101,39 @@ class ItemLedger:
         self.answers: dict = {}
         self.reasons: dict = {}
         self.attempts: collections.Counter = collections.Counter()
+        self.recovery_gaps: list[dict] = []
         self._recover_state()
 
     def _recover_state(self) -> None:
         """Recover settled outcomes AND attempt counts from a previous run's append-only file."""
         if not os.path.exists(self.path):
             return
-        with open(self.path, encoding="utf-8") as handle:
-            for line in handle:
+        with open(self.path, "rb") as handle:
+            for line_number, line in enumerate(handle, start=1):
                 try:
                     row = json.loads(line)
-                except json.JSONDecodeError:
-                    continue                              # a torn final line from a crash is skipped, not fatal
+                except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                    ITEM_LEDGER_LOGGER.exception("Unrecoverable item ledger row %s:%s", self.path, line_number)
+                    self.recovery_gaps.append({"path": self.path, "line": line_number, "raw": line,
+                                               "error": repr(exc), "traceback": traceback.format_exc()})
+                    continue
                 item = row.get("item")
                 if item is None:
+                    reason = "missing item field"
+                    ITEM_LEDGER_LOGGER.error("Unrecoverable item ledger row %s:%s: %s",
+                                             self.path, line_number, reason)
+                    self.recovery_gaps.append({"path": self.path, "line": line_number, "raw": line,
+                                               "reason": reason})
+                    continue
+                if row.get("reopened"):
+                    self.attempts[item] = int(row["attempts"])
+                    self.state.pop(item, None)
+                    self.answers.pop(item, None)
+                    self.reasons.pop(item, None)
                     continue
                 if row.get("attempts") is not None:
-                    # Attempts only ever grow, so the highest seen is the truth whatever order the rows were written in.
+                    # Within a reopen epoch attempts only grow; the explicit reopen row starts the next epoch.
                     self.attempts[item] = max(self.attempts[item], int(row["attempts"]))
-                if row.get("reopened"):
-                    self.state.pop(item, None)            # a reopen row clears a prior terminal state (re-run of unresolved)
-                    continue
                 if row.get("state") in (ANSWERED, REFUSED, UNRESOLVED):
                     self.state[item] = row["state"]
                     if "answer" in row:
@@ -132,35 +147,56 @@ class ItemLedger:
         `unresolved` is terminal but RETRYABLE on a later run: a fresh run calls `reopen()` first if it wants to try
         them again, so an item parked by a bounded retry budget is not parked forever by accident.
         """
+        self._refuse_ledger_gaps()
         return [i for i in self.requested if i not in self.state]
 
     def reopen(self) -> int:
         """Clear `unresolved` items and their attempt budget for a fresh attempt. Returns how many were reopened."""
+        self._refuse_ledger_gaps()
         reopened = [i for i, s in self.state.items() if s == UNRESOLVED]
         for item in reopened:
+            self._append_row({"item": item, "attempts": 0, "reopened": True})
             del self.state[item]
             self.attempts[item] = 0
-            self._append_row({"item": item, "attempts": 0, "reopened": True})
         return len(reopened)
+
+    def _refuse_ledger_gaps(self) -> None:
+        """Keep damaged evidence visible and refuse to treat an unknown outcome as pending."""
+        if self.recovery_gaps:
+            raise RuntimeError(f"Item ledger recovery gaps require repair: {self.recovery_gaps!r}")
 
     def _append_row(self, row: dict) -> None:
         """Append one row to the durable JSONL and flush — the single write path, so every outcome/attempt is on disk
         before the next call runs (a crash loses nothing already settled)."""
-        with open(self.path, "a", encoding="utf-8") as handle:
-            handle.write(json.dumps({**row, "at": time.strftime("%Y-%m-%d %H:%M:%S")}) + "\n")
-            handle.flush()
+        self._refuse_ledger_gaps()
+        try:
+            with open(self.path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps({**row, "at": time.strftime("%Y-%m-%d %H:%M:%S")}) + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            # Persist the directory entry too when this append created the ledger.
+            directory_fd = os.open(os.path.dirname(os.path.abspath(self.path)), os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except OSError as exc:
+            ITEM_LEDGER_LOGGER.exception("Item ledger append failed: %s", self.path)
+            self.recovery_gaps.append({"path": self.path, "row": row, "error": repr(exc),
+                                       "traceback": traceback.format_exc()})
+            raise OSError(f"Item ledger append failed: {self.recovery_gaps[-1]!r}") from exc
 
     def settle_item(self, item, state: str, answer=None, reason: str = "") -> None:
         """Settle one item to a terminal state. Appended to the durable file immediately, so nothing is lost on a crash."""
         if state not in (ANSWERED, REFUSED, UNRESOLVED):
             raise ValueError(f"unknown terminal state {state!r} — one of {ANSWERED!r}/{REFUSED!r}/{UNRESOLVED!r}")
+        self._append_row({"item": item, "state": state, "answer": answer, "reason": reason or None,
+                          "attempts": int(self.attempts[item])})
         self.state[item] = state
         if answer is not None:
             self.answers[item] = answer
         if reason:
             self.reasons[item] = reason
-        self._append_row({"item": item, "state": state, "answer": answer, "reason": reason or None,
-                          "attempts": int(self.attempts[item])})
 
     def note_attempt(self, items) -> None:
         """Count and PERSIST one attempt against each item actually asked about.
@@ -169,8 +205,9 @@ class ItemLedger:
         item a fresh retry budget, so the bound would exist inside one process and nowhere else.
         """
         for item in items:
-            self.attempts[item] += 1
-            self._append_row({"item": item, "attempts": int(self.attempts[item])})
+            next_attempt = self.attempts[item] + 1
+            self._append_row({"item": item, "attempts": int(next_attempt)})
+            self.attempts[item] = next_attempt
 
     def exhausted(self, rounds: int = None) -> list:
         """Pending items already asked `rounds` times — out of retry budget. `rounds` defaults to the configured bound."""
