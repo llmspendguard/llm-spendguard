@@ -26,11 +26,15 @@ MECHANISMS OPENED (Prompt 8): the bucket starts full (→ own pacer, I5); submit
 provider-aware batch seam); plan_batch_chunks returns int counts (→ slice overflow by count, never drop the tail, I14).
 """
 import math
+import logging
+import traceback
 import threading
 import time
 from concurrent.futures import Future, InvalidStateError, ThreadPoolExecutor
 
 from . import queue_planner
+
+_STORM_FAILURE_LOGGER = logging.getLogger(__name__)
 
 
 def _is_rate_limited(r):
@@ -311,20 +315,25 @@ class StormCoalescer:
         positional zip corrupts demux (the Prompt 9 panel caught exactly this). Each _Pending's `seq` is its custom_id.
         A per-item failure (an error/rate-limit result, or a MISSING id) is ISOLATED (I19): only that id is refilled
         (bounded by batch_refill_depth), never its cohort-mates, and a succeeded sibling is never re-submitted (no
-        double-spend, no I11/I15 corruption). Unknown ids in the output are quarantined (never assigned to anyone). A
-        whole-submit EXCEPTION cannot be isolated per-item without bisection (follow-up I19-bisect) → that group
-        resolves with a typed error (never a pending future, I12/I21)."""
+        double-spend, no I11/I15 corruption). Unknown ids in the output are quarantined (never assigned to anyone).
+        Submissions are isolated per job before calling the executor: an exception may have side effects, so
+        retrying a failed group by bisection could duplicate its successful siblings. Each exception therefore
+        resolves only its own named request, with the complete exception and traceback."""
         if not pend:
             return
         failed = []
-        for group in self._slice_by_chunks(pend):
+        # A throwing submitter may already have side effects. Isolate BEFORE submission,
+        # rather than bisect/retry an ambiguous group and potentially double-bill siblings.
+        for group in ([pending_job] for pending_job in pend):
             if not group:
                 continue
             by_id = {str(p.seq): p for p in group}           # seq is the stable custom_id for demux
             try:
                 out = self._execute_batch([(str(p.seq), p.req) for p in group])
             except BaseException as e:                       # whole-submit failure: typed-error the group (never pending)
-                self._resolve_error(list(by_id.values()), "batch submit: %s" % (str(e)[:120]))
+                _STORM_FAILURE_LOGGER.exception("storm batch job failed: ids=%s", list(by_id))
+                self._resolve_error(list(by_id.values()), "batch submit ids=%r: %r\n%s" %
+                                    (list(by_id), e, traceback.format_exc()))
                 continue
             out = out if isinstance(out, dict) else {}
             with self._lock:
