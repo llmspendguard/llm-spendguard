@@ -161,16 +161,15 @@ def true_down(since=None, billed_rows=None):
                 billed_rows[prov_name] = fetch()
             except Exception:
                 billed_rows[prov_name] = None
-    # ONLY CLEAR WHAT WILL BE REBUILT. This ran unconditionally, so a provider whose billed fetch FAILED
-    # (billed_rows[p] is None — see the except above) had its existing corrections deleted and replaced
-    # with nothing: a fetch failure silently restated that provider's history as "no corrections needed".
-    # A provider we could not read is a provider whose corrections we must LEAVE ALONE.
+    # Failed billed fetches fall back to the gate estimate: clear their stale
+    # corrections but never rebuild against unknown billing. Unreadable ledger
+    # providers are different: preserve their corrections because the estimate
+    # base cannot be established. Neither failure suppresses readable siblings.
     _failed = [p for p, rows in billed_rows.items() if rows is None]
     if _failed:
         import sys as _sys
         _sys.stderr.write(f"[ledger_sync] WARN billed fetch failed for {', '.join(_failed)} — no true-down "
                           f"is written for them, so their rows stand at the gate ESTIMATE for this window.\n")
-    budget.clear_true_down(since)                       # rebuild the window's corrections from current billed truth
     # JOIN on the NORMALIZED model: gate estimate rows record the id the caller submitted (often the dated snapshot,
     # e.g. claude-haiku-4-5-20251001) while the billed caches key the base name — an exact-string join misses those,
     # trues real billed spend to $0 and dumps it on the gap machinery (right total, degraded attribution). The
@@ -200,30 +199,39 @@ def true_down(since=None, billed_rows=None):
                 billed_incomplete.add(k)
                 continue
             billed[k] = billed.get(k, 0.0) + float(cost)
-    cells = budget.gate_batch_cells(since)               # (project, provider, model, day) -> gate estimate $
-    est = {}                                             # (provider, normalized model) -> Σ estimates
-    for (_proj, prov_name, model, _day), v in cells.items():
-        k = (prov_name, _join_model(model))
-        est[k] = est.get(k, 0.0) + v
+    from .reconcile_estimate_stage import stage_reconcile_estimate_cells
     trued, by_model = 0.0, {}
-    for (prov_name, jmodel), est_total in est.items():
-        if billed_rows.get(prov_name) is None:
-            continue                                     # skipped provider (fetch failed — already in skipped_providers)
-        if (prov_name, jmodel) in billed_incomplete:
-            continue                                     # an unpriced batch made this model's billed total INCOMPLETE →
-            #                                              can't true-down safely (surfaced in unpriced_incomplete below)
-        delta = est_total - billed.get((prov_name, jmodel), 0.0)
-        if delta <= 0.01 or est_total <= 0:
-            continue                                     # billed ≥ estimate (or nothing recorded) → nothing to true down
-        for (proj, p2, m2, day), v in cells.items():
-            if (p2, _join_model(m2)) != (prov_name, jmodel) or v <= 0:
+    with stage_reconcile_estimate_cells(since, budget._TRUE_DOWN_CONV, _join_model) as (staged, read_gaps):
+        estimate_incomplete = set(staged.execute("SELECT DISTINCT provider,joined FROM cells WHERE amount IS NULL"))
+        billed_incomplete.update(estimate_incomplete)
+        for prov_name, jmodel, total in staged.execute(
+                "SELECT provider,joined,dec_sum(amount) FROM cells GROUP BY provider,joined"):
+            if billed_rows.get(prov_name) is None or (prov_name, jmodel) in billed_incomplete:
                 continue
-            share = delta * (v / est_total)
-            if share > 0.005:
-                budget.record_true_down(day, prov_name, m2, round(share, 6), project=proj)
-        trued += delta
-        by_model[f"{prov_name}:{jmodel}"] = round(delta, 2)
+            est_total = float(total)
+            delta = est_total - billed.get((prov_name, jmodel), 0.0)
+            if delta <= 0.01 or est_total <= 0:
+                continue
+            for proj, m2, day, amount in staged.execute(
+                    "SELECT project,model,day,dec_sum(amount) FROM cells WHERE provider IS ? AND joined=? "
+                    "GROUP BY project,model,day", (prov_name, jmodel)):
+                value = float(amount)
+                if value <= 0:
+                    continue
+                share = delta * (value / est_total)
+                if share > 0.005:
+                    staged.execute("INSERT INTO corrections VALUES(?,?,?,?,?)",
+                                   (proj or "unattributed", prov_name, m2 or "?", day, round(share, 6)))
+            trued += delta
+            by_model[f"{prov_name}:{jmodel}"] = round(delta, 2)
+        # All reads/calculations finish before the snapshot and destructive clear.
+        staged.commit()
+        budget.clear_readable_true_down(since, providers=[p for p in billed_rows if p not in read_gaps])
+        for proj, prov_name, model, day, share in staged.execute("SELECT * FROM corrections"):
+            budget.record_true_down(day, prov_name, model, share, project=proj)
     return dict(since=since, trued_down=round(trued, 2), by_model=by_model, skipped=skipped_providers,
+                read_gaps=read_gaps,
+                estimate_unpriced_incomplete=sorted("%s:%s" % k for k in estimate_incomplete),
                 unpriced_incomplete=sorted("%s:%s" % k for k in billed_incomplete))   # UNKNOWN billed, not $0 — never trued down
 
 
@@ -281,7 +289,15 @@ def reconcile_into_ledger(since=None):
             _billed_rows[_prov_name] = None
             errors.setdefault(_prov_name, str(e)[:140])
     td = true_down(since=since, billed_rows=_billed_rows)       # estimates → billed actuals FIRST, so every
-    local = budget.by_provider_day(kind="batch", since=since)   # gate-side read below sees corrected numbers
+    if td.get("estimate_unpriced_incomplete"):
+        return dict(since=since, true_down=td,
+                    errors={**errors, "unpriced_estimates": td["estimate_unpriced_incomplete"]},
+                    complete=False, gap_rebuild_refused="unpriced estimate rows; existing gap rows preserved")
+    if td.get("read_gaps"):
+        # Gap records combine providers. Their settled values cannot safely be rebuilt
+        # from partial truth, even though readable providers' corrections completed.
+        return dict(since=since, true_down=td, errors={**errors, "ledger_read": td["read_gaps"]},
+                    complete=False, gap_rebuild_refused="unreadable provider estimate rows; existing gap rows preserved")
     # Fallback project for batches with NO conversation evidence: a single-project repo's LLM provider account is
     # entirely THAT project (e.g. Acme's OpenAI/Anthropic spend is all 'nlp-pipeline'), so a no-evidence batch is the
     # repo's project, not truly 'unattributed' — that bucket is for genuinely MULTI-project repos only. This is the
@@ -315,7 +331,8 @@ def reconcile_into_ledger(since=None):
         prov_proj_days.setdefault(proj, {})
         prov_proj_days[proj][day] = prov_proj_days[proj].get(day, 0.0) + pv
     gate_proj_total = {}
-    for (proj, _day), gv in budget.gate_by_project_day(kind="batch", since=since).items():
+    from .reconcile_estimate_stage import iter_reconcile_gate_project_days
+    for (proj, _day), gv in iter_reconcile_gate_project_days(since):
         gate_proj_total[proj] = gate_proj_total.get(proj, 0.0) + gv
     budget.clear_reconciled(since)
     provider_total = round(sum(prov_proj_total.values()), 2)   # evidence-based total — same source as the gaps
