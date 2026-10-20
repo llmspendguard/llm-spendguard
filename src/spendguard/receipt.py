@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+import logging
 import os
 import pathlib
 import sys
@@ -552,12 +553,14 @@ def _asof_label(ev):
     return f" (⚠ STALE — windows frozen {a}{age_s}{fix})"
 
 
-def _est_tree(scope_org=None):
+def _est_tree(scope_org=None, repo=None):
     """Nested ORG → TEAM → PROJECT plan-value tree (month) from the cells, optionally one org.
     {org: {month, teams: {team: {month, projects: {project: month}}}}}."""
     tree = {}
     sl = None if scope_org is None else str(scope_org).strip().lower()
     for c in _est_cells():
+        if repo is not None and c.get("team") != repo.strip().lower() and c.get("project") != repo.strip().lower():
+            continue
         if sl is not None and c.get("org") != sl:
             continue
         m = c.get("month", 0)
@@ -626,6 +629,10 @@ def _external_tally():
         return None
 
 
+class ReceiptPlanAllocationRefused(ValueError):
+    """A contextual real-dollar total has no trustworthy plan-usage allocation basis."""
+
+
 # ── the running tally — REAL $ (API + Subscription + Remote) and est-value, NEVER summed ─────────
 def tally(project=None, conv=None) -> dict:
     """The two axes, returned SEPARATELY and never added together:
@@ -633,7 +640,9 @@ def tally(project=None, conv=None) -> dict:
         plan fee — Anthropic Max, OpenAI Pro, …) + `remote` (billed GPU/vast.ai, cached by resources.sync)
         + `external` (billed MCP/tool + external-API cost, from the ledger's external axis; None when there's none).
       • `est_value` = the value of subscription-covered usage (Claude Code/claude.ai/Codex), NOT billed.
-    `real_month` = api.month + subscription + remote.month + external.month. `actual` is an alias of `api`."""
+    `real_month` = api.month + subscription + remote.month + external.month. `actual` is an alias of `api`.
+    With `project`, global real-dollar components use its proportional plan-usage share (per window;
+    subscription uses month). Missing/stale usage refuses allocation rather than inventing a share."""
     today, week, month = _windows()
     api = {"today": None, "week": None, "month": None}
     try:
@@ -650,11 +659,33 @@ def tally(project=None, conv=None) -> dict:
     remote = _remote_tally()                       # billed GPU/remote compute (None until resources.sync stamps it)
     external = _external_tally()                    # billed MCP/tool + external-API cost (None when there's none)
     sub, sub_assumed = _plan_usd()                 # flat monthly subscription fee — a REAL cost (out the door)
+    est_value = _est_tally(repo=project) if project else _est_tally()
+    if project:
+        # These costs are installation-wide, unlike the directly attributed API ledger. Allocate each
+        # window by the same window's measured plan usage; the flat monthly fee uses month usage.
+        global_value = _est_tally()
+        shares = {}
+        for window in api:
+            global_usage = (global_value or {}).get(window) or 0
+            scoped_usage = (est_value or {}).get(window) or 0
+            allocatable = ((sub or 0) if window == "month" else 0) + sum(
+                (component or {}).get(window) or 0 for component in (remote, external))
+            if allocatable and (global_usage <= 0 or not est_value
+                                or global_value.get("stale") or est_value.get("stale")):
+                raise ReceiptPlanAllocationRefused(f"Cannot allocate global real-dollar costs to {project!r}: "
+                                 f"missing or stale plan-usage basis for {window}; "
+                                 f"global={global_value!r}, scoped={est_value!r}")
+            shares[window] = scoped_usage / global_usage if global_usage else 0.0
+        sub *= shares["month"]
+        remote, external = (
+            {**component, **{window: component.get(window) * shares[window]
+                            if component.get(window) is not None else None for window in shares}}
+            if component is not None else None for component in (remote, external))
     # est-value scoped to the SAME repo as the API-$ when this is a per-repo tally — else a repo line shows its own
     # billed spend beside the GLOBAL plan value (and _sum_repos over-counts it once per repo). Global tally = global.
     out = {"api": api, "actual": api, "remote": remote, "external": external, "subscription": sub,
            "subscription_assumed": sub_assumed,
-           "est_value": (_est_tally(repo=project) if project else _est_tally())}
+           "est_value": est_value}
     try:
         out["input_cache"] = budget.input_cache_split(month, project=project, conv=conv)
     except Exception:
@@ -1115,17 +1146,18 @@ def _saved_lines(t: dict) -> list:
     return out
 
 
-def render_tree(scope_org=None) -> str:
+def render_tree(scope_org=None, project=None) -> str:
     """The receipt: the two-axis Actual$ | Est-value$ TABLE, then the ORG → TEAM → PROJECT est-value tree (the
     attribution, matching the server). `scope_org` limits to one org (None = all orgs)."""
-    t = tally()
-    parts = [_PREFIX + "spend this month"]
+    t = tally(project=project)
+    scope_label = f" [{project}]" if project else ""
+    parts = [_PREFIX + "spend this month" + scope_label]
     parts += [_INDENT + ln for ln in _two_axis_table(t)]
     cache_line = _cache_split_line(t)
     if cache_line:
         parts.append(_INDENT + cache_line)
     parts += [_INDENT + ln for ln in _saved_lines(t)]      # 3rd axis: guarded savings (avoided $) — never summed in
-    tree = _est_tree(scope_org)
+    tree = _est_tree(scope_org, repo=project)
     if not tree:
         return "\n".join(parts)
     parts.append(_INDENT + "Est value $ by org → team → project (plan usage — NOT billed):")
@@ -1687,12 +1719,15 @@ def cli(args) -> int:
         scope = None if "--all" in args else (_arg("--org") if "--org" in args else _conv_org())
         if scope and not _est_tree(scope):
             scope = None
-        print(render_tree(scope_org=scope))
+        print(render_tree(scope_org=scope, project=None if "--all" in args else _cur_project()))
         from . import claudecode as _cc_residency
         print("\nRESIDENCY (latest Claude Code session)")
         for _res_line in _cc_residency.residency_summary_lines():
             print("  " + _res_line)
         return 0
+    except ReceiptPlanAllocationRefused as allocation_error:
+        logging.getLogger(__name__).exception("Contextual receipt allocation refused: %r", allocation_error)
+        raise
     except Exception:
         # A status line / hook must NEVER break the caller. Emit nothing rather than an error.
         return 0
