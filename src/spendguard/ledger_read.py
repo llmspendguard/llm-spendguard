@@ -146,6 +146,9 @@ def read_cc_residency_totals(conv_id=None, path=None):
                         residency_gaps.append({"unit": f"spend_events:{residency_rowid}",
                                                "error": repr(residency_error),
                                                "traceback": traceback.format_exc()})
+    except LedgerReadError:
+        # Expected containment refusals retain their type for optional status surfaces.
+        raise
     except Exception as residency_failure:
         _cc_residency_logger.exception("Residency ledger scan refused")
         raise LedgerReadError(
