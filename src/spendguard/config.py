@@ -12,6 +12,7 @@ import os
 import threading
 import sqlite3
 import gc
+from functools import partialmethod
 from pathlib import Path
 
 DEFAULT_SPENDGUARD_HOME = Path.home() / ".spendguard"
@@ -1130,7 +1131,41 @@ def budget_ledger_connection_memory(c, ceiling=None):
         c.execute("PRAGMA " + pragma)
 
 
+class _HomeAlignedLedgerCursor(sqlite3.Cursor):
+    """Retained cursors enforce the same live home boundary as admission."""
+
+    def _dispatch_home_aligned_cursor_operation(self, operation, *args, **kwargs):
+        require_ledger_home_alignment(self.connection._ledger_home_path)
+        return operation(self, *args, **kwargs)
+
+    execute = partialmethod(_dispatch_home_aligned_cursor_operation, sqlite3.Cursor.execute)
+    executemany = partialmethod(_dispatch_home_aligned_cursor_operation, sqlite3.Cursor.executemany)
+    executescript = partialmethod(_dispatch_home_aligned_cursor_operation, sqlite3.Cursor.executescript)
+
+
 class _CountedLedgerConnection(sqlite3.Connection):
+    def _dispatch_home_aligned_connection_operation(self, operation, *args, **kwargs):
+        require_ledger_home_alignment(self._ledger_home_path)
+        return operation(self, *args, **kwargs)
+
+    def _create_home_aligned_ledger_cursor(self, factory=_HomeAlignedLedgerCursor):
+        require_ledger_home_alignment(self._ledger_home_path)
+        if not issubclass(factory, _HomeAlignedLedgerCursor):
+            raise LedgerHomeIsolationError("Ledger cursor factory must preserve the live home isolation guard")
+        return sqlite3.Connection.cursor(self, factory)
+
+    def _dispatch_home_aligned_cursor_shortcut(self, operation, *args, **kwargs):
+        # SQLite's native connection shortcuts return an unguarded base Cursor.
+        # Create our cursor explicitly so a caller retaining that result stays guarded.
+        return operation(self.cursor(), *args, **kwargs)
+
+    cursor = partialmethod(_create_home_aligned_ledger_cursor)
+    execute = partialmethod(_dispatch_home_aligned_cursor_shortcut, sqlite3.Cursor.execute)
+    executemany = partialmethod(_dispatch_home_aligned_cursor_shortcut, sqlite3.Cursor.executemany)
+    executescript = partialmethod(_dispatch_home_aligned_cursor_shortcut, sqlite3.Cursor.executescript)
+    commit = partialmethod(_dispatch_home_aligned_connection_operation, sqlite3.Connection.commit)
+    __exit__ = partialmethod(_dispatch_home_aligned_connection_operation, sqlite3.Connection.__exit__)
+
     def close(self):
         generation = getattr(self, "_ledger_generation", None)
         if generation is not _LEDGER_ADMISSION:
@@ -1178,6 +1213,7 @@ def open_ledger_connection(path=None, timeout=LEDGER_CONNECT_TIMEOUT_S, *, tune=
         options.setdefault("check_same_thread", False)
         c = sqlite3.connect(path, timeout=timeout,
                             factory=_CountedLedgerConnection, **options)
+        c._ledger_home_path = path
         c._ledger_generation = _LEDGER_ADMISSION
         c._ledger_released = False
         _LEDGER_ADMISSION.live_count += 1

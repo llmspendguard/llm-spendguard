@@ -17,7 +17,13 @@ from _pytest_fixture_bridge import align_test_startup_home, run_pytest_style
 align_test_startup_home(prefix=__name__)
 
 LEDGER_ISOLATION_CHILD_TIMEOUT_S = 60
-LEDGER_ISOLATION_WRITER_CASES = ("calls", "ledger", "explicit", "pooled")
+LEDGER_ISOLATION_HELD_WRITER_CASES = (
+    "held_ledger", "held_connection", "held_cursor", "held_many", "held_script",
+    "held_commit", "held_context", "held_shortcut_cursor",
+)
+LEDGER_ISOLATION_WRITER_CASES = (
+    "calls", "ledger", "explicit", "pooled", *LEDGER_ISOLATION_HELD_WRITER_CASES,
+)
 LEDGER_ISOLATION_CHILD_SOURCE = r'''
 import os
 import pathlib
@@ -35,8 +41,18 @@ cached_path = config.db_path()
 pool_key = __name__
 zero_cost = 0
 event = {"source": __name__, "model": __name__, "cost_basis": "unpriced"}
+fixture_insert_sql = "INSERT INTO spend_events (id, source, cost_basis) VALUES (?, ?, ?)"
+fixture_insert_parameters = (__name__, __name__, "unpriced")
+held_writer_cases = tuple(sys.argv[3:])
 if writer == "pooled":
     config.pooled_ledger_conn(pool_key, lambda connection: None)
+if writer in held_writer_cases:
+    held_ledger = SpendLedger(cached_path)
+    held_cursor = held_ledger._conn.cursor()
+    if writer == "held_shortcut_cursor":
+        held_cursor = held_ledger._conn.execute("SELECT * FROM spend_events")
+    if writer in ("held_commit", "held_context"):
+        held_ledger._conn.execute(fixture_insert_sql, fixture_insert_parameters)
 
 # Include WAL and all auxiliary files: refusal may not even initialize a schema.
 before = {p.relative_to(original): p.read_bytes()
@@ -48,6 +64,21 @@ try:
         calls.record_call(__name__, __name__, "realtime", zero_cost)
     elif writer == "pooled":
         config.pooled_ledger_conn(pool_key, lambda connection: None)
+    elif writer == "held_ledger":
+        held_ledger.record_event(event)
+    elif writer == "held_connection":
+        held_ledger._conn.execute(fixture_insert_sql, fixture_insert_parameters)
+    elif writer in ("held_cursor", "held_shortcut_cursor"):
+        held_cursor.execute(fixture_insert_sql, fixture_insert_parameters)
+    elif writer == "held_many":
+        held_cursor.executemany(fixture_insert_sql, (fixture_insert_parameters,))
+    elif writer == "held_script":
+        held_ledger._conn.executescript("INSERT INTO spend_events DEFAULT VALUES;")
+    elif writer == "held_commit":
+        held_ledger._conn.commit()
+    elif writer == "held_context":
+        with held_ledger._conn:
+            pass
     else:
         ledger = SpendLedger(cached_path if writer == "explicit" else None)
         try:
@@ -73,7 +104,8 @@ def test_late_home_change_refuses_startup_ledger(writer_case):
             child_env["SPENDGUARD_HOME"] = original_home
             child_env["SPENDGUARD_CALLS"] = "1"
             result = subprocess.run(
-                [sys.executable, "-c", LEDGER_ISOLATION_CHILD_SOURCE, isolated_home, writer_case],
+                [sys.executable, "-c", LEDGER_ISOLATION_CHILD_SOURCE, isolated_home,
+                 writer_case, *LEDGER_ISOLATION_HELD_WRITER_CASES],
                 env=child_env, capture_output=True, text=True,
                 timeout=LEDGER_ISOLATION_CHILD_TIMEOUT_S,
             )
