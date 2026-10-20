@@ -1325,6 +1325,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     _governed = bool(aliases.pop("governed", False))
     _conn_tries = aliases.pop("_conn_tries", None)      # UNIVERSAL connection-429 retransmit budget (the serial/managed
     _t_conn0 = aliases.pop("_t_conn0", None) or time.time()   # twin of the fan re-admit loop); _t_conn0 bounds it by deadline
+    _storm_deadline_at = aliases.pop("_storm_deadline_at", None)
     _adm = None
     # 4b — route an IMPLICIT concurrent fan (many independent labelled adapters.call at one vendor — the actual
     # 429-storm caller: honestreview's metered_only fan) through the shared storm coalescer so it gets the pace+batch
@@ -1347,7 +1348,8 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
         #                            vanish) and a batch divert changes the call's conditions — exactly what a
         #                            reproducible A/B is controlling for. The knobs force the exact metered call below.
         from . import storm_route as _sr
-        _routed_result = _sr.route(model, prompt, intent or sig, system=system, reasoning=reasoning)
+        _routed_result = _sr.route(model, prompt, intent or sig, system=system, reasoning=reasoning,
+                                   schema=schema, timeout_s=timeout_s)
         if _routed_result is not None:
             _sig_ctx._local.ctx = _ctx_before            # returning early — restore the caller's context exactly
             # A SUCCESS routes home. A coalescer ERROR ({text:None}/error set — e.g. a NO-REPLY) must NOT be returned as
@@ -1414,6 +1416,11 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
             from . import lane_queue as _route_lq
             _qrid = _route_lq.record_open(intent or sig, prompt)
         try:
+            if _storm_deadline_at is not None:
+                timeout_s = _storm_deadline_at - time.monotonic()
+                if timeout_s <= 0:
+                    return {"text": None, "error": "storm caller deadline exhausted during admission",
+                            "error_type": "StormDeadlineExceeded", "status_code": None}
             if not _no_guard:
                 r = _call_guarded(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
                                   schema=schema, timeout_s=timeout_s, sig=sig, retries=retries,
@@ -1465,7 +1472,8 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                         soft_deadline_s=soft_deadline_s,
                         #   measurement contract + its determinism knobs across a 429 retransmit (else the retry would
                         #   drop them — silently nondeterministic — and trip the production-refusal gate on re-entry)
-                        governed=_governed, _conn_tries=_ct - 1, _t_conn0=_t_conn0, **aliases)
+                        governed=_governed, _conn_tries=_ct - 1, _t_conn0=_t_conn0,
+                        _storm_deadline_at=_storm_deadline_at, **aliases)
         import sys as _sysc   # budget/deadline spent with the 429 UNCLEARED → SIGNAL it (never a silent drop), then surface
         print(f"[spendguard] connection rate-limit on {model} NOT cleared within the retransmit budget "
               f"(tries_left={_ct}, elapsed={time.time() - _t_conn0:.0f}s / deadline {timeout_s}) — surfacing the 429; "

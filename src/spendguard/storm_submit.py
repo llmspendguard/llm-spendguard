@@ -15,11 +15,20 @@ one). The caller's blocked-thread risk is bounded by submit_storm's `collect_tim
 typed backpressure, not a hang), independent of how long the batch worker itself polls. realtime rides the real
 governed metered path here (adapters.call → dispatch.admit → the cross-process rate window → _call_guarded)."""
 import sys
+from dataclasses import dataclass
 import time
 from concurrent.futures import TimeoutError as FuturesTimeout
 
 from . import adapters, dispatch
 from .storm_coalescer import StormCoalescer
+
+
+@dataclass(frozen=True)
+class StormRequestContract:
+    """A raw call's whole output contract and absolute caller deadline, never cohort defaults."""
+    prompt: str
+    schema: object = None
+    deadline_at: float | None = None
 
 
 def sustainable_rate_per_s(provider, model):
@@ -49,11 +58,19 @@ def governed_realtime_executor(model, system, reasoning, intent, timeout_s):
     #   carry who across the boundary exactly like intent, or the re-entrant call + its wall-clock daemon mis-attribute.
 
     def _run_governed_realtime(prompt):
+        contract = prompt if isinstance(prompt, StormRequestContract) else StormRequestContract(prompt)
+        remaining = timeout_s
+        if contract.deadline_at is not None:
+            remaining = contract.deadline_at - time.monotonic()
+            if remaining <= 0:
+                return {"text": None, "error": "storm caller deadline exhausted before dispatch",
+                        "error_type": "StormDeadlineExceeded", "status_code": None}
         if _who:
             _cre.set_context(who=_who)                # re-apply on the storm-rt worker so the re-entry inherits it
-        return adapters.call(model, prompt, system=system, reasoning=reasoning, sig=intent,
+        return adapters.call(model, contract.prompt, system=system, reasoning=reasoning, sig=intent,
                              metered_only=True, governed=True, no_substitution=True,
-                             _route=False, _coalesce_eligible=False, timeout_s=timeout_s)
+                             _route=False, _coalesce_eligible=False, timeout_s=remaining,
+                             schema=contract.schema, _storm_deadline_at=contract.deadline_at)
     return _run_governed_realtime
 
 
@@ -76,7 +93,20 @@ def default_batch_executor(model, intent, system=None, reasoning="minimal", poll
                          % (provider, model, sorted(_pairs)))
     submit_fn, collect_fn = pair
 
+    contract_realtime = governed_realtime_executor(model, system, reasoning, intent, None)
+
     def _execute_batch(items):
+        # Native Batch APIs here have no schema/deadline channel. Use the existing governed
+        # capability path for contracted jobs; never silently remove a contract to gain batching.
+        items = list(items)
+        contracted = [(cid, req) for cid, req in items if isinstance(req, StormRequestContract)
+                      and (req.schema is not None or req.deadline_at is not None)]
+        res = {str(cid): contract_realtime(req) for cid, req in contracted}
+        contracted_ids = {cid for cid, req in contracted}
+        items = [(cid, req.prompt if isinstance(req, StormRequestContract) else req)
+                 for cid, req in items if cid not in contracted_ids]
+        if not items:
+            return res
         tasks = [{"custom_id": str(cid), "content": prompt} for cid, prompt in items]
         kw = {"intent": intent}
         if provider == "openai":
@@ -87,8 +117,9 @@ def default_batch_executor(model, intent, system=None, reasoning="minimal", poll
         bid = sub.get("batch_id")
         if not bid:                                           # whole-submit failure → per-item error, never a silent drop
             err = sub.get("error") or "batch submit returned no batch_id"
-            return {str(cid): {"text": None, "status_code": None, "error": "batch submit: %s" % err}
-                    for cid, _ in items}
+            res.update({str(cid): {"text": None, "status_code": None, "error": "batch submit: %s" % err}
+                        for cid, _ in items})
+            return res
         served, failed, t0, timed_out = {}, {}, time.monotonic(), False
         while True:                                           # poll until the batch ENDS (bounded by max_poll_s)
             col = collect_fn(bid, intent, model, require_ready=True) or {}
@@ -100,7 +131,7 @@ def default_batch_executor(model, intent, system=None, reasoning="minimal", poll
                 timed_out = True
                 break
             time.sleep(poll_interval_s)
-        res = {str(cid): {"text": txt, "status_code": 200, "provider": provider} for cid, txt in served.items()}
+        res.update({str(cid): {"text": txt, "status_code": 200, "provider": provider} for cid, txt in served.items()})
         for cid, err in failed.items():
             res[str(cid)] = {"text": None, "status_code": None, "error": "batch item: %s" % err}
         # SURFACE any id neither served nor failed (poll ceiling hit, or the collector dropped it) — NEVER a silent drop
