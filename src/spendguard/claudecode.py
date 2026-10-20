@@ -1040,8 +1040,9 @@ def residency_decomposition(conv_id, instruction_tokens=None, instruction_paths=
 
 def residency_summary_lines(conv_id=None):
     """Bounded receipt/doctor rendering for the newest (or explicitly named) Claude Code conversation."""
+    from .ledger_read import LedgerReadError, LedgerReadTimeout, read_cc_residency_totals
+
     try:
-        from .ledger_read import read_cc_residency_totals
         if not conv_id:
             conv_id = read_cc_residency_totals()["conv_id"]
         if not conv_id:
@@ -1075,6 +1076,10 @@ def residency_summary_lines(conv_id=None):
             lines.append("            %s · %s tok, resident ~%s turns · %s" %
                          (item["label"], item["tokens"], item["remaining_turns"], comparison))
         return lines
+    except LedgerReadTimeout:
+        return ["residency : unavailable (ledger scan exceeded its time budget)"]
+    except LedgerReadError as exc:
+        return [f"residency : unavailable ({type(exc).__name__}: {exc})"]
     except Exception as exc:
         import logging
         import traceback
