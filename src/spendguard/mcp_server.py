@@ -30,7 +30,9 @@ dict|None) so the protocol is unit-tested without a live pipe. Read-only tools d
 not require the gate; a spending tool (bakeoff) will `require()` before it runs.
 """
 import json
+import logging
 import sys
+import traceback
 
 PROTOCOL_VERSION = "2024-11-05"     # echoed back to the client if it names one; this is the safe default
 LEDGER_READ_OPERATIONS = ("events", "event", "calls", "count", "aggregate")
@@ -478,7 +480,9 @@ def _tool_health(args):
     try:
         res = reliability.sweep(run=run, timeout_s=timeout_s)
     except Exception as e:
-        return {"error": f"health-check internal error: {type(e).__name__}: {str(e)[:200]}",
+        logging.getLogger(__name__).exception("Health-check sweep failed")
+        return {"error": f"health-check internal error: {e!r}",
+                "diagnostic": {"exception": repr(e), "traceback": traceback.format_exc()},
                 "note": "the reachability surface hit an internal error and DEGRADED (it did not crash); fix the error "
                         "or update a skewed install, then re-run.",
                 "lanes": {}, "metered": {}, "actions": [],
@@ -488,20 +492,25 @@ def _tool_health(args):
     down = ([f"lane:{k}" for k, d in res["lanes"].items() if not d.get("reachable")]
             + [f"metered:{k}" for k, d in res["metered"].items() if not d.get("reachable")])
     actions = None
+    health_diagnostic = None
     try:
         if run and down and args.get("remediate", True):
             actions = reliability.remediate(res)          # agentic FIX per down resource (cached — $0 for a known failure)
         if run:
             reliability._persist_health(res, actions)     # a health check from ANY surface feeds the receipt alert + notifier
-    except Exception:
+    except Exception as e:
+        logging.getLogger(__name__).exception("Health-check remediation or persistence failed")
+        health_diagnostic = {"exception": repr(e), "traceback": traceback.format_exc()}
         actions = actions or None                         # best-effort: a remediate/persist hiccup never blanks a good sweep
-    return {"note": ("live reachability + the FIX for each down resource (agentic, cached) — lanes $0, the metered "
+    return {**({"diagnostic": health_diagnostic} if health_diagnostic is not None else {}),
+            "note": ("live reachability + the FIX for each down resource (agentic, cached) — lanes $0, the metered "
                      "pings cost ~a few $0.0001; each probe is bounded by timeout_s so a dead endpoint fails fast. "
                      "The result is also cached so a down lane surfaces in the receipt" if run
                      else "estimate only (run=false) — $0, no probe"),
             "lanes": res["lanes"], "metered": res["metered"],
             "actions": [{"resource": a["resource"], "kind": a["kind"], "issue": a.get("issue"),
-                         "fix": a.get("fix"), "command": a.get("command")} for a in (actions or [])],
+                         "fix": a.get("fix"), "command": a.get("command"),
+                         **({"diagnostic": a["diagnostic"]} if "diagnostic" in a else {})} for a in (actions or [])],
             "summary": {"lanes_up": lanes_up, "lanes_total": len(res["lanes"]),
                         "metered_up": met_up, "metered_total": len(res["metered"]), "down": down}}
 
