@@ -11,6 +11,9 @@ dist/
 venv/
 # iCloud-ignored dirs (e.g. .venv.nosync) — keep churny venvs out of iCloud sync
 *.nosync
+# .archify generated output is excluded from iCloud via .archify.nosync (matched by *.nosync above);
+# .archify is a symlink -> .archify.nosync so tooling keeps writing to the .archify path.
+/.archify
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
@@ -61,3 +64,10 @@ scripts/probe/capability_map_out/
 .honestreview/
 conformance_runs/
 scripts/reliability/*.json
+
+# Dated deferral audits swept from the WHOLE estate, not from this repo. Their register mixes four
+# unrelated sources — this repo's source defects, memory/feedback files, git-blame carryover, and
+# personal/clinical obligations — so the file carries private absolute paths and third-party health
+# information that must never reach a PUBLIC repo. Keep the sweep local; the repo-scoped rows belong
+# in a repo-scoped register instead. See docs/DEFERRAL_REGISTER.md.
+/DEFERRAL_AUDIT_*.md

@@ -1035,7 +1035,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
             # this the lane path sent the KEY as the prompt (a job id like "rev-2" -> the model asked "clarify rev-2").
             _p = prompt_for(task) if callable(prompt_for) else task
             r = adapters.call(model, _p, system=system, reasoning=reasoning,   # sig=intent → the OUTPUT budget is this
-                              sig=intent, timeout_s=deadline_s,                  # call-class's measured p99; no_fallback
+                              sig=intent, intent=intent, timeout_s=deadline_s,   # call-class's measured p99; no_fallback
                               no_metered_fallback=_eff_no_fallback,              # → a lane miss errors, never a paid retry
                               schema=schema,                                     # STRUCTURED output: adapters folds the shape
                               #                                                    into the lane's prompt + validates locally,

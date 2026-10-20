@@ -263,7 +263,15 @@ def main(argv=None):
     ap.add_argument("--top", type=int, default=DEFAULT_TOP_N,
                     help=f"rows per breakdown (default {DEFAULT_TOP_N})")
     ap.add_argument("--json", action="store_true", help="emit machine-readable JSON instead of tables")
+    ap.add_argument("--residency-session", help="emit the canonical all-row ledger residency axis for this session")
+    ap.add_argument("--instruction-path", action="append", default=None,
+                    help="explicit resident instruction file; repeat for every contributing file")
     args = ap.parse_args(argv)
+
+    if args.residency_session is not None:
+        print(json.dumps(transcript_residency_axis(
+            args.residency_session, instruction_paths=args.instruction_path), indent=2))
+        return
 
     root = _projects_dir(args.projects_dir)
     if not os.path.isdir(root):

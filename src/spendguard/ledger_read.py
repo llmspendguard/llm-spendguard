@@ -5,8 +5,16 @@ from dataclasses import dataclass
 from pathlib import Path
 import sqlite3
 import time
+import logging
+import traceback
 
 from . import config
+
+CC_RESIDENCY_SOURCE = "claude-code"
+CC_RESIDENCY_LATEST_SQL = "SELECT conv_id FROM spend_events WHERE source=? ORDER BY occurred_at DESC,conv_id DESC LIMIT 1"
+CC_RESIDENCY_STREAM_SQL = "SELECT rowid,model,cache_read_tok FROM spend_events WHERE source=? AND conv_id=? ORDER BY occurred_at,rowid"
+CC_RESIDENCY_TOKEN_SCALE = 1000000
+_cc_residency_logger = logging.getLogger(__name__)
 
 # A complete result must fit ordinary interactive consumers; larger consumers must
 # narrow their window or use count/aggregates, never silently consume a head.
@@ -39,11 +47,15 @@ DELEGATE_PLAN_SOURCE = "claude-code"
 INVOICE_OVERAGE_MONTH_SQL = """SELECT substr(occurred_at,1,7) AS mo,
 ROUND(SUM(CAST(realtime_usd AS REAL)),2) AS amount FROM spend_events
 WHERE source=? AND intent LIKE ? GROUP BY mo ORDER BY mo DESC"""
+COST_INTEGRITY_CACHE_COLUMNS = ("cache_read_tok", "cache_write_tok")
+COST_INTEGRITY_SCHEMA_SQL = "SELECT name FROM pragma_table_info(?)"
 COST_INTEGRITY_BUCKET_SQL = """SELECT model,date(ts) AS d,kind,COUNT(*) AS n,
-SUM(COALESCE(cost,0)) AS c,SUM(COALESCE(in_tok,0)) AS i,
-SUM(COALESCE(out_tok,0)) AS o FROM calls
+SUM(COALESCE(cost,0)) AS c,{input_projection} AS i,
+CASE WHEN COUNT(out_tok)=COUNT(*) THEN SUM(out_tok) END AS o,
+{cache_read_projection} AS cache_read_tok,
+{cache_write_projection} AS cache_write_tok FROM calls
 WHERE datetime(ts)>=datetime('now',?) AND kind IN ('realtime','batch')
-AND cost IS NOT NULL AND suspect IS NULL GROUP BY model,date(ts),kind"""
+AND cost IS NOT NULL AND suspect IS NULL GROUP BY model,date(ts),kind{cache_completeness_group}"""
 RECEIPT_LANE_ACTIVITY_SQL = """SELECT executor,COUNT(*) AS n,
 COALESCE(SUM(in_tok),0) AS in_tok,COALESCE(SUM(out_tok),0) AS out_tok
 FROM calls WHERE kind='subscription' AND ts>=? GROUP BY executor ORDER BY n DESC"""
@@ -104,6 +116,44 @@ READ_RECORDING_GAP_CELLS_COLUMNS = ("intent", "provider", "model", "date(ts) AS 
 READ_CALIBRATION_SUMMARY_COLUMNS = ("intent", "model", "kind", "COUNT(*) AS n", "SUM(cost) AS cost")
 
 
+def read_cc_residency_totals(conv_id=None, path=None):
+    """Fold every selected ledger row with constant row memory; expose corrupt units."""
+    from . import pricing
+
+    residency_turns = 0
+    residency_measured = 0.0
+    residency_model = None
+    residency_gaps = []
+    residency_rates = {}
+    try:
+        with _ledger_read_connection(path) as residency_connection:
+            if conv_id is None:
+                residency_latest = residency_connection.execute(
+                    CC_RESIDENCY_LATEST_SQL, (CC_RESIDENCY_SOURCE,)).fetchone()
+                conv_id = residency_latest[0] if residency_latest else None
+            if conv_id is not None:
+                for residency_rowid, residency_model, residency_tokens in residency_connection.execute(
+                        CC_RESIDENCY_STREAM_SQL, (CC_RESIDENCY_SOURCE, conv_id)):
+                    residency_turns += 1
+                    try:
+                        residency_count = int(residency_tokens or 0)
+                        if residency_model not in residency_rates:
+                            residency_rates[residency_model] = pricing.price(residency_model)["cached_in"]
+                        residency_rate = residency_rates[residency_model]
+                        residency_measured += residency_count * residency_rate / CC_RESIDENCY_TOKEN_SCALE
+                    except (ValueError, TypeError, KeyError) as residency_error:
+                        _cc_residency_logger.exception("Unreadable residency ledger unit %s", residency_rowid)
+                        residency_gaps.append({"unit": f"spend_events:{residency_rowid}",
+                                               "error": repr(residency_error),
+                                               "traceback": traceback.format_exc()})
+    except Exception as residency_failure:
+        _cc_residency_logger.exception("Residency ledger scan refused")
+        raise LedgerReadError(
+            f"Residency ledger scan refused: {residency_failure!r}\n{traceback.format_exc()}") from residency_failure
+    return {"conv_id": conv_id, "turns": residency_turns, "model": residency_model,
+            "measured_recurring_usd": residency_measured, "gaps": residency_gaps}
+
+
 class LedgerReadError(RuntimeError):
     """A ledger consumer could not obtain a complete answer."""
 
@@ -123,6 +173,10 @@ class LedgerReadTimeout(LedgerReadError):
     def __init__(self, budget):
         self.budget = budget
         super().__init__(f"Ledger read exceeded wall-clock budget {budget} seconds")
+
+
+class LedgerQueryDeadline(LedgerReadTimeout):
+    """A request-path spend aggregate could not finish within its caller deadline."""
 
 
 class LedgerReadSchemaError(LedgerReadError):
@@ -351,8 +405,28 @@ def read_invoice_overage_months(path=None):
 
 
 def read_cost_integrity_buckets(since_days, path=None):
-    return read_ledger_sql(LedgerSQLReadRequest(COST_INTEGRITY_BUCKET_SQL,
-        (f"-{int(since_days)} days",)), path)
+    """Expose disjoint fresh-input/read/write axes; incomplete legacy buckets retain NULL, never zero.
+
+    Reads do not migrate old ledgers. COUNT(column) prevents SUM from hiding partially missing cache evidence.
+    """
+    schema = read_ledger_sql(LedgerSQLReadRequest(COST_INTEGRITY_SCHEMA_SQL, (LEDGER_CALLS_TABLE,)), path)
+    available = {row["name"] for row in schema}
+    projections = tuple(
+        f"CASE WHEN COUNT({column})=COUNT(*) THEN SUM({column}) END" if column in available else "NULL"
+        for column in COST_INTEGRITY_CACHE_COLUMNS)
+    # Split calls.in_tok follows pricing's API: reads are included, writes are separate.
+    # Preserve total input for incomplete legacy buckets so their best-effort ceiling stays unchanged.
+    read_column = COST_INTEGRITY_CACHE_COLUMNS[0]
+    complete_split = " AND ".join(f"COUNT({column})=COUNT(*)" for column in COST_INTEGRITY_CACHE_COLUMNS)
+    input_projection = (f"CASE WHEN COUNT(in_tok)<>COUNT(*) THEN NULL WHEN {complete_split} "
+                        f"THEN SUM(in_tok-{read_column}) ELSE SUM(in_tok) END"
+                        if all(column in available for column in COST_INTEGRITY_CACHE_COLUMNS) else "SUM(in_tok)")
+    completeness_group = (",(" + " AND ".join(f"{column} IS NOT NULL" for column in COST_INTEGRITY_CACHE_COLUMNS)
+                          + ")" if all(column in available for column in COST_INTEGRITY_CACHE_COLUMNS) else "")
+    sql = COST_INTEGRITY_BUCKET_SQL.format(input_projection=input_projection, cache_read_projection=projections[0],
+                                          cache_write_projection=projections[1],
+                                          cache_completeness_group=completeness_group)
+    return read_ledger_sql(LedgerSQLReadRequest(sql, (f"-{int(since_days)} days",)), path)
 
 
 def read_receipt_lane_activity(since, path=None):

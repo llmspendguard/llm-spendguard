@@ -51,8 +51,21 @@ DEFAULT_TPM = 0                    # tokens/minute per key (input+output); 0 = p
 # handful of big-context calls blow TPM while well under both. Seeded from each provider's real limit via config
 # `dispatch.tpm_<vendor>` (never a literal here); 0 until set, then Step-3 self-calibration learns it from 429 headers.
 DEFAULT_GLOBAL_CONCURRENCY = 24    # a machine-wide ceiling across ALL keys — the last backstop against a swarm
+DISPATCH_POSITIVE_CONCURRENCY_MIN = 1
 
 _ENV_PREFIX = "SPENDGUARD_DISPATCH_"
+
+
+def effective_codex_concurrency(pool_size=None):
+    """Resolve Codex execution capacity without raising any configured safety bound."""
+    from . import config
+    if pool_size is None:
+        pool_size = config.codex_daemon_pool_settings()["size"]
+    # Unify warm-worker N, aggregate dispatch semaphore, and Codex lane admission conservatively.
+    return min(int(pool_size),
+               max(DISPATCH_POSITIVE_CONCURRENCY_MIN, _limit("global_concurrency", DEFAULT_GLOBAL_CONCURRENCY)),
+               max(DISPATCH_POSITIVE_CONCURRENCY_MIN, _limit(
+                   "lane_concurrency_codex", _limit("lane_concurrency", DEFAULT_LANE_CONCURRENCY))))
 
 
 def _off():
@@ -805,6 +818,8 @@ class Governor:
             # lane_concurrency_codex=10) lets a lane that parallelises well run near its own plan ceiling, while a
             # process-bound lane (a cold CLI) can be set lower — one cap no longer forces every plan to the minimum.
             limit = _limit(f"lane_concurrency_{lane}", _limit("lane_concurrency", DEFAULT_LANE_CONCURRENCY))
+            if lane == "codex":
+                limit = effective_codex_concurrency()
         else:
             key = f"vendor:{vendor}"
             # PER-VENDOR override → the global metered cap → the default: dispatch.vendor_concurrency_<vendor> (e.g.
@@ -1152,6 +1167,8 @@ def lane_free(lane):
     exactly what seeds the cross-vendor SPREAD before the fast lanes start pulling the overflow."""
     key = f"lane:{lane}"
     limit = _limit(f"lane_concurrency_{lane}", _limit("lane_concurrency", DEFAULT_LANE_CONCURRENCY))
+    if lane == "codex":
+        limit = effective_codex_concurrency()
     with _GOV._lock:
         b = _GOV._buckets.get(key)
         if b is None:

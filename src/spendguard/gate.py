@@ -1383,14 +1383,20 @@ def _provider_of(model):
 
 
 def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, finish=None, cost=None,
-               provider=None, basis=None, per_item_max=None, cache_creation=0, reasoning_tokens=None):
+               provider=None, basis=None, per_item_max=None, cache_creation=0, reasoning_tokens=None,
+               cache_read_tok=None, cache_write_tok=None):
     """Record ONE realtime call's usage → cost · cross-process ledger · max_tokens truncation telemetry · call log.
     Shared by _rt_account (non-stream), the streaming proxy (ACTUAL usage as the stream is consumed), and the
     provider-breadth adapters (LiteLLM / Bedrock / Vertex). `cost` lets a caller supply an authoritative price (e.g.
     LiteLLM's own computed cost) instead of re-pricing; `provider` overrides the inferred ledger label.
     `cached` = cache-READ tokens (priced at the read discount); `cache_creation` = cache-WRITE tokens (priced at
-    CACHE_WRITE_5M_MULTIPLIER) so a cache-heavy call is counted, never undercounted."""
+    CACHE_WRITE_5M_MULTIPLIER) so a cache-heavy call is counted, never undercounted.
+    The nullable cache_*_tok observations are separate from estimator defaults: only measured usage with a
+    known write tier can support exact integrity reconstruction. Absent evidence stays a coverage gap."""
     prov = provider or _provider_of(model)
+    # Normalize NEW split observations only; preserve raw legacy semantics on unmeasured rows. Anthropic
+    # reports fresh input, OpenAI reports input inclusive of reads; writes are separate for both.
+    call_input = in_tok + cache_read_tok if prov == "anthropic" and cache_read_tok is not None else in_tok
     if cost is None:
         # normalize to OpenAI token semantics (input INCLUDES cached) before pricing: Anthropic's input_tokens
         # EXCLUDES cache_read, so add it back or _cost double-subtracts and under-bills ~2x.
@@ -1449,8 +1455,9 @@ def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, 
         from . import budget
         budget.record_meta(prov, model, cost)
         if _calls.call_recording_consent_enabled():
-            _calls.record_call(prov, model, "realtime", cost, in_tok=in_tok, out_tok=out_tok, latency=latency,
-                          prompt=_prompt_text(kw), output=output, finish=finish, effort=_effort, executor="api")
+            _calls.record_call(prov, model, "realtime", cost, in_tok=call_input, out_tok=out_tok, latency=latency,
+                          prompt=_prompt_text(kw), output=output, finish=finish, effort=_effort, executor="api",
+                          cache_read_tok=cache_read_tok, cache_write_tok=cache_write_tok)
         return
     _calls.check_output(output)      # realtime output CONTRACT (no-op unless the flow declared one)
     _rt_record(prov, model, cost, in_tok=in_tok, out_tok=out_tok, cached=cached, basis=basis, per_item_max=per_item_max)
@@ -1466,8 +1473,9 @@ def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, 
     except Exception:
         pass
     if _calls.call_recording_consent_enabled():
-        _calls.record_call(prov, model, "realtime", cost, in_tok=in_tok, out_tok=out_tok, latency=latency,
+        _calls.record_call(prov, model, "realtime", cost, in_tok=call_input, out_tok=out_tok, latency=latency,
                       prompt=_prompt_text(kw), output=output, finish=finish, effort=_effort,
+                      cache_read_tok=cache_read_tok, cache_write_tok=cache_write_tok,
                       # EXPLICIT 'api' (not NULL): this is the metered realtime path. A lane call records via the
                       # adapters subscription path with executor=<lane>, so stamping 'api' here makes EVERY row
                       # classify $0-lane vs cash-metered with no guessing (legacy NULL rows read as metered too).
@@ -1514,8 +1522,30 @@ def _rt_account(model, kw, result, est_fn, act_fn, latency=None):
         # EMBEDDINGS bill the SUM of a LIST input but the context window bounds each ITEM — pass the largest single
         # input so the impossibility rail checks per-item, not the sum (a 1000-string batch is legitimate).
         pim = _embed_per_item_max(kw) if est_fn is _est_oai_embeddings else None
-        _record_rt(model, kw, in_tok, out_tok, _cached_in(result), latency, _output_text(result), _finish(result),
-                   basis=basis, per_item_max=pim, cache_creation=_cache_creation(result), reasoning_tokens=_rt_reasoning_report(result))
+        # Keep absence distinct from a reported zero. Positive Anthropic writes need the provider's TTL
+        # breakdown: one-hour/mixed/unknown writes cannot be verified using the five-minute price axis.
+        cache_read_tok = cache_write_tok = None
+        if act:
+            usage = getattr(_usage_bearer(result), "usage", None)
+            cache_read_tok = getattr(usage, "cache_read_input_tokens", None)
+            for details_field in ("prompt_tokens_details", "input_tokens_details"):
+                details = getattr(usage, details_field, None)
+                if details is not None:
+                    cache_read_tok = getattr(details, "cached_tokens", None)
+            creation = getattr(usage, "cache_creation_input_tokens", None)
+            if creation == 0:
+                cache_write_tok = creation
+            elif creation is not None:
+                tiers = getattr(usage, "cache_creation", None)
+                if (getattr(tiers, "ephemeral_1h_input_tokens", None) == 0
+                        and getattr(tiers, "ephemeral_5m_input_tokens", None) == creation):
+                    cache_write_tok = creation
+            elif cache_read_tok is not None and act_fn in (_act_oai_chat, _act_oai_resp, _act_oai_embeddings):
+                cache_write_tok = 0  # OpenAI automatic caching has no separate cache-write charge.
+        bearer = _usage_bearer(result)
+        _record_rt(model, kw, in_tok, out_tok, _cached_in(bearer), latency, _output_text(result), _finish(result),
+                   basis=basis, per_item_max=pim, cache_creation=_cache_creation(bearer), reasoning_tokens=_rt_reasoning_report(result),
+                   cache_read_tok=cache_read_tok, cache_write_tok=cache_write_tok)
         _record_tool_fees(model, kw, result)
     except Exception as e:
         print(f"[spend_gate] WARN real-time accounting failed ({e})", file=sys.stderr)

@@ -6,6 +6,7 @@ real-time cap only (this module is then never touched). Per-call SQLite I/O is f
 real-time volume; very high-volume loops should stay on the in-process cap.
 """
 import contextlib, datetime, threading
+import time
 from . import config
 
 _conn = None
@@ -54,6 +55,12 @@ def _ledger():
     if led is None:
         from .ledger import SpendLedger
         led = _LEDGER_TL.led = SpendLedger()
+    if led._conn is None:
+        from .ledger_read import LedgerQueryDeadline
+        try:
+            led._restore_spend_aggregate_connection()
+        except Exception as recovery_error:
+            raise LedgerQueryDeadline(config.LEDGER_QUERY_DEADLINE_S) from recovery_error
     return led
 
 
@@ -313,11 +320,15 @@ def snapshot(reason="", keep=None, force=False, *, compact_source=None, compact_
     ~650MB ledger = 12GB of full-db copies in ~/.spendguard/snapshots. Local only needs the window since the last
     daily B2 push, so the default is small and configurable (safety.snapshot_keep, default 2 ≈ a day or two of
     recovery points). None → read that config; an explicit keep still wins."""
+    from .disk_guard import require_disk_space
+    from .gate import SpendGateRefused
+
     # Offline reclaim extends this copy boundary, but MUST NOT reuse/prune a
     # snapshot or swallow an error. The caller owns locking and verification.
     if compact_source is not None or compact_target is not None:
         if compact_source is None or compact_target is None:
             raise ValueError("compact snapshot requires both source handle and target")
+        require_disk_space(compact_target)
         compact_source.execute("VACUUM INTO ?", (str(compact_target),))
         return str(compact_target)
     import datetime as _dt
@@ -351,6 +362,7 @@ def snapshot(reason="", keep=None, force=False, *, compact_source=None, compact_
         stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         tag = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in (reason or "pre-mutation"))[:40]
         dst = d / f"spend-{stamp}-{tag}.db"
+        require_disk_space(dst)
         with _sq.connect(src) as _s, _sq.connect(str(dst)) as _t:
             _s.backup(_t)                        # consistent even under a concurrent writer
         # Keep the most recent `keep`; a snapshot directory that grows without bound gets deleted by hand
@@ -364,6 +376,8 @@ def snapshot(reason="", keep=None, force=False, *, compact_source=None, compact_
                 except OSError:
                     pass
         return str(dst)
+    except SpendGateRefused:
+        raise
     except Exception as e:
         import sys as _sys
         _sys.stderr.write(f"[budget] WARN could not snapshot the ledger before mutating it "
@@ -646,9 +660,11 @@ def charge_to_event(provider, model, kind, cost, conv_id="", basis="", intent=""
     return ev
 
 
-def spent_since(day, project=None, conv=None):
+def spent_since(day, project=None, conv=None, *, deadline_s=config.LEDGER_QUERY_DEADLINE_S):
     """Gate-recorded workload $ since `day` — the LLM cap's number, now read from spend_events via the single
     `_COUNTABLE` filter (batch+realtime, excluding meta / reconciliation / voided-impossible / reconstructed).
+    `deadline_s` optionally bounds this aggregate by a relative wall-clock duration; expiry raises
+    LedgerQueryDeadline rather than returning an incomplete spend value.
     Optionally SCOPE to a `project` (repo) and/or `conv` (conversation) — the receipt uses this to show what is
     relevant to the current repo/conversation, not a global sum.
 
@@ -660,7 +676,7 @@ def spent_since(day, project=None, conv=None):
         where["project_primary"] = str(project).strip().lower()
     if conv is not None:
         where["conv_id"] = str(conv)
-    return float(_ledger().spent_dec(since=day, where=where or None))
+    return float(_ledger().spent_dec(since=day, where=where or None, deadline_s=deadline_s))
 
 
 def input_cache_split(since=None, project=None, conv=None):
@@ -687,7 +703,7 @@ def input_cache_split(since=None, project=None, conv=None):
             "cache_write_share": (write / total if total else 0.0)}
 
 
-def spent_by_job(job, since=None):
+def spent_by_job(job, since=None, *, deadline_s=config.LEDGER_QUERY_DEADLINE_S):
     """Gate-recorded billed LLM $ for ONE job/run tag — the rows whose `chain` == `spendguard.context(chain=<job>)`.
     This is the concurrency-SAFE "my spend": the chain is per-run, so a job's total never sweeps in a CONCURRENT run
     that happens to share the intent (the collision that made `spent_since` filtered by intent over-count). Read from
@@ -695,15 +711,17 @@ def spent_by_job(job, since=None):
     voided / reconstructed). $0, read-only; 0.0 for an empty job. `since` optionally bounds it to an accounting day on."""
     if not job:
         return 0.0
-    return float(_ledger().spent_dec(since=since, where={"chain": str(job)}))
+    return float(_ledger().spent_dec(since=since, where={"chain": str(job)}, deadline_s=deadline_s))
 
 
-def spent_all_time():
+def spent_all_time(*, deadline_s=config.LEDGER_QUERY_DEADLINE_S):
     """Running total of ALL gate-recorded countable LLM billed-$ to date — the flow-receipt BASELINE, read at a
     flow's enter and its exit so the DELTA is what that flow spent (calls.context / receipt.emit_flow). Memoized
     on a ledger-freshness token (SpendLedger.running_llm_total_dec), so opening many flow contexts no longer
     re-sums the whole 356k-row ledger each time. Same number as the old spent_since('1970-01-01') idiom — which
     forced a full SCAN of spend_events on every context enter — without the scan."""
+    if deadline_s is not None:
+        return float(_ledger().spent_dec(deadline_s=deadline_s))
     return float(_ledger().running_llm_total_dec())
 
 
@@ -934,7 +952,7 @@ def record_reconciled(day, provider, cost, project="unattributed", kind="batch",
                         invoice_id="%s:%s" % (provider, (day or "")[:7]))
 
 
-def clear_reconciled(since=None, model=None):
+def clear_reconciled(since=None, model=None, providers=None):
     """Remove prior reconciliation rows so reconcile is idempotent (rebuilds them). Keyed by the marker model
     (default the batch marker; the realtime backfill passes its own)."""
     snapshot_once("clear-reconciled")           # DELETEs money rows — never without a recovery path
@@ -943,7 +961,12 @@ def clear_reconciled(since=None, model=None):
     # record_reconciled writes only spend_events (the INSERT INTO charges was removed 6 lines above in this
     # same change), reconciled_by_project reads spend_events (repointed 5b, commit 6969746), and `grep
     # 'FROM charges'` across src is EMPTY. So charges holds no reconciliation rows to leave stale.
-    _ledger().delete(where={"recon_marker": marker}, since=since, actor="clear_reconciled", reason="rebuild")
+    if providers is None:
+        _ledger().delete(where={"recon_marker": marker}, since=since, actor="clear_reconciled", reason="rebuild")
+    else:
+        for provider in providers:
+            _ledger().delete(where={"recon_marker": marker, "provider": provider}, since=since,
+                             actor="clear_reconciled", reason="rebuild")
 
 
 # ── estimate→actual true-down (ledger_sync.true_down writes these; the gate's batch rows are PRE-SUBMIT
@@ -979,6 +1002,15 @@ def record_true_down(day, provider, model, delta, project):
 
 
 def clear_true_down(since=None):
+    """Clear every provider unconditionally: an estimate is more honest than stale billed truth.
+
+    A failed billed fetch must fall back to estimates, never retain an old correction.
+    Ledger-read failures use the separate readable-provider rebuild operation instead.
+    """
+    return clear_readable_true_down(since)
+
+
+def clear_readable_true_down(since=None, providers=None):
     """Remove prior true-down rows in the window so the correction is rebuilt idempotently each reconcile
     (billed actuals only grow as in-flight batches land, so each rebuild converges on the final billed $).
 
@@ -989,13 +1021,57 @@ def clear_true_down(since=None):
     Keeping the previous correction would leave a figure LABELLED as billed truth while being derived from
     billed data this run could not confirm — a stale number wearing a stronger label. The estimate is the
     more honest of the two, so the clear stays unconditional and ledger_sync warns about the gap instead.
-    Second finding today that both validators confirmed and the code was right about."""
+    Second finding today that both validators confirmed and the code was right about.
+
+    An explicit providers collection scopes the rebuild to readable provider units; None preserves the
+    unconditional default above. An empty collection changes nothing, including taking no snapshot."""
+    true_down_provider_scope = None if providers is None else tuple(dict.fromkeys(providers))
+    if true_down_provider_scope == ():
+        return
     snapshot_once("clear-true-down")    # DELETEs money rows — never without a recovery path
     # Delete the true-down correction rows from spend_events (the money-of-record). NOT charges: the ONLY writer
     # of true-down rows, record_true_down, now writes only spend_events (its INSERT INTO charges was removed
     # above); and the only consumers of these rows — gate_batch_cells (the estimate base) and by_dims (the SaaS
     # push) — read spend_events (repointed 5b). So charges holds no true-down rows for this to leave stale.
-    _ledger().delete(where={"conv_id": _TRUE_DOWN_CONV}, since=since, actor="clear_true_down", reason="rebuild")
+    from .ledger import LockedError
+    from .ledger_read import DEFAULT_LEDGER_READ_ROW_CAP
+    import logging as true_down_logging
+    import traceback as true_down_traceback
+    true_down_ledger = _ledger()
+    true_down_scopes = ([{"conv_id": _TRUE_DOWN_CONV}] if true_down_provider_scope is None else
+                        [{"conv_id": _TRUE_DOWN_CONV, "provider": true_down_provider}
+                         for true_down_provider in true_down_provider_scope])
+    try:
+        # Preserve delete's full lock preflight before the first destructive batch, without retaining all matches.
+        for true_down_scope in true_down_scopes:
+            true_down_filter, true_down_args = true_down_ledger._where(since, None, true_down_scope)
+            true_down_cursor = true_down_ledger._conn.execute(
+                f"SELECT id, period, locked FROM spend_events WHERE 1=1{true_down_filter}", true_down_args)
+            while true_down_lock_batch := true_down_cursor.fetchmany(DEFAULT_LEDGER_READ_ROW_CAP):
+                for true_down_id, true_down_period, true_down_locked in true_down_lock_batch:
+                    if true_down_locked or true_down_ledger._is_period_locked(true_down_period):
+                        raise LockedError(f"refusing to delete locked event {true_down_id} "
+                                          f"(period {true_down_period}) — use reverse/adjust")
+        for true_down_scope in true_down_scopes:
+            true_down_filter, true_down_args = true_down_ledger._where(since, None, true_down_scope)
+            while True:
+                true_down_rowids = true_down_ledger._conn.execute(
+                    f"SELECT rowid FROM spend_events WHERE 1=1{true_down_filter} LIMIT ?",
+                    (*true_down_args, DEFAULT_LEDGER_READ_ROW_CAP)).fetchall()
+                if not true_down_rowids:
+                    break
+                # rowid is a SQLite integer, not source content; parse before forming the internal SQL predicate.
+                true_down_rowid_sql = ",".join(str(int(true_down_rowid[0])) for true_down_rowid in true_down_rowids)
+                del true_down_rowids  # release this batch before delete() allocates its bounded audit batch.
+                _ledger().delete(where=true_down_scope, filt=f"rowid IN ({true_down_rowid_sql})", since=since,
+                                        actor="clear_true_down", reason="rebuild")
+    except Exception as true_down_clear_error:
+        true_down_logging.getLogger(__name__).exception("refusing clear_true_down after ledger clear failure")
+        if isinstance(true_down_clear_error, LockedError):
+            raise
+        raise RuntimeError(
+            f"refusing clear_true_down after ledger clear failure: {true_down_clear_error!r}\n"
+            f"{true_down_traceback.format_exc()}") from true_down_clear_error
 
 
 # ── spendguard's own advisor LLM use (segregated: own cap, own line, excluded from workload) ──
@@ -1184,14 +1260,23 @@ def spent_today():  return spent_since(_utc().strftime("%Y-%m-%d"))
 def spent_month():  return spent_since(_utc().strftime("%Y-%m-01"))
 
 
-def exceeded(pending=0.0, kind="llm"):
+def exceeded(pending=0.0, kind="llm", *, deadline_s=config.LEDGER_QUERY_DEADLINE_S):
     """(scope, cap, projected) if a cap would be exceeded by `pending` more $ on a call of resource class
     `kind` (llm|compute), else None. Checks the class SUB-CAP then the TOTAL ceiling, daily then monthly.
     The gate governs LLM calls, so it passes kind='llm'; remote-compute caps are checked in resources.py
     (vast.ai launches don't hit the gate). meta is separate (meta_exceeded). NOTE: this local ledger holds LLM
     spend, so the total ceiling here is evaluated against LLM spend — the true LLM+compute total is composed on
     the dashboard/report; the compute portion is enforced/alerted via resources.compute_exceeded()."""
-    sd, sm = spent_today(), spent_month()
+    from .ledger_read import LedgerQueryDeadline
+    try:
+        if deadline_s is None:
+            sd, sm = spent_today(), spent_month()
+        else:
+            expires = time.monotonic() + deadline_s
+            sd = spent_since(_utc().strftime("%Y-%m-%d"), deadline_s=expires - time.monotonic())
+            sm = spent_since(_utc().strftime("%Y-%m-01"), deadline_s=expires - time.monotonic())
+    except LedgerQueryDeadline:
+        return ("ledger-query-deadline", float("inf"), float("inf"))
     checks = []
     if kind in ("llm", "compute"):
         checks.append((f"{kind}-daily", config.class_cap(kind, "daily"), sd))

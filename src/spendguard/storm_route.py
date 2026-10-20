@@ -25,7 +25,7 @@ import time
 
 from . import adapters, dispatch
 from .storm_coalescer import StormCoalescer
-from .storm_submit import default_batch_executor, governed_realtime_executor
+from .storm_submit import StormRequestContract, default_batch_executor, governed_realtime_executor
 
 _REG = {}
 _LAST_USED = {}                 # key -> monotonic ts of the last get_coalescer; drives idle eviction (default-on bound)
@@ -146,7 +146,7 @@ def get_coalescer(vendor, model, intent, system=None, reasoning="minimal", horiz
         return c
 
 
-def route(model, prompt, intent, system=None, reasoning="minimal"):
+def route(model, prompt, intent, system=None, reasoning="minimal", schema=None, timeout_s=None):
     """Submit one labelled call into the shared coalescer for its exact shape and BLOCK on the result. Returns the
     result dict (success OR a coalescer error result — authoritative once the request entered the coalescer, so the
     caller never re-runs it and cannot double-spend), or None when routing is NOT ATTEMPTED — disabled, no known rate,
@@ -155,6 +155,7 @@ def route(model, prompt, intent, system=None, reasoning="minimal"):
     coalescer race → submit_request raising) falls back to None and the caller runs its normal DIRECT governed path
     (itself fully paced by the xp_rate + connection windows). 4b can therefore never make a call worse than not
     routing — the worst case is it declines and the direct path runs."""
+    deadline_at = time.monotonic() + float(timeout_s) if timeout_s is not None else None
     if not coalescing_enabled():
         return None
     try:
@@ -164,12 +165,17 @@ def route(model, prompt, intent, system=None, reasoning="minimal"):
         c = get_coalescer(vendor, model, intent, system=system, reasoning=reasoning, horizon_s=_horizon_s())
         if c is None:
             return None
-        fut = c.submit_request(prompt)          # may raise RuntimeError iff a race closed this coalescer → fall back
+        fut = c.submit_request(StormRequestContract(prompt, schema=schema, deadline_at=deadline_at))
     except Exception:
         return None                             # setup failed → decline, caller takes the direct path (no double-spend:
     #                                             the request never entered the coalescer)
-    return fut.result()                         # resolved exactly once by the coalescer (dict); outside the try so a
-    #                                             genuine coalescer error RESULT is returned, never retried as direct
+    try:
+        remaining = None if deadline_at is None else max(0.0, deadline_at - time.monotonic())
+        return fut.result(timeout=remaining)
+    except TimeoutError:
+        return {"text": None, "error": "storm caller deadline exhausted while waiting",
+                "error_type": "StormDeadlineExceeded", "status_code": None}
+    # An admitted coalescer result is authoritative, including a timeout: never retry it directly.
 
 
 def reset_registry():

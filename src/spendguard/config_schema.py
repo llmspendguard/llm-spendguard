@@ -12,6 +12,7 @@ reading the repo — enumerate exactly what's configurable, what the valid optio
 Environment variable (`env`) always overrides the file when set.
 """
 
+from .config import CODEX_POOL_SIZE_DEFAULT
 from .weekly_cap_guard import (
     WEEKLY_CAP_GUARD_BLOCKED_SPAWN_TOOLS_DEFAULT,
     WEEKLY_CAP_GUARD_ENABLED_DEFAULT,
@@ -19,7 +20,12 @@ from .weekly_cap_guard import (
     WEEKLY_CAP_GUARD_THRESHOLD_DEFAULT,
 )
 
+from .config import DISK_GUARD_FLOOR_DEFAULT_BYTES, DISK_GUARD_FLOOR_ENV
+
 SETTINGS = [
+    dict(section="disk_guard", key="floor_bytes", store="config.json:disk_guard.floor_bytes",
+         env=DISK_GUARD_FLOOR_ENV, default=DISK_GUARD_FLOOR_DEFAULT_BYTES, kind="int", secret=False,
+         desc="Positive free-byte reserve required before bulk ledger copies; unsafe writes deliberately refuse."),
     # ── core ──
     dict(section="core", key="home", store="env", env="SPENDGUARD_HOME", default="~/.spendguard",
          kind="path", secret=False,
@@ -351,7 +357,7 @@ SETTINGS = [
          env=None, default=None, kind="str|null", secret=False,
          desc="Override the single host-wide Codex broker socket path."),
     dict(section="advisor", key="codex_daemon_pool_size", store="config.json:advisor.codex_daemon_pool_size",
-         env="SPENDGUARD_CODEX_DAEMON_POOL_SIZE", default=3, kind="int", secret=False,
+         env="SPENDGUARD_CODEX_DAEMON_POOL_SIZE", default=CODEX_POOL_SIZE_DEFAULT, kind="int", secret=False,
          desc="Always-warm exclusive Codex workers behind the single host broker; one restores single-child capacity."),
     dict(section="advisor", key="codex_daemon_pool_isolate_homes",
          store="config.json:advisor.codex_daemon_pool_isolate_homes",

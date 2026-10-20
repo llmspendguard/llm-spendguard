@@ -22,6 +22,8 @@ import hashlib
 import datetime
 import contextlib
 import itertools
+import math
+import time
 from decimal import Decimal, InvalidOperation, getcontext
 from . import config
 
@@ -741,16 +743,83 @@ class SpendLedger:
         if filt:
             w += " AND " + filt
         sums = ", ".join(f"dec_sum({c})" for c in cols)
-        r = self._conn.execute(f"SELECT {sums} FROM spend_events WHERE 1=1" + w, args).fetchone()
-        return str(sum((to_dec(x) for x in r), Decimal(0)))
+        cursor = self._conn.execute(f"SELECT {sums} FROM spend_events WHERE 1=1" + w, args)
+        try:
+            r = cursor.fetchone()
+            return str(sum((to_dec(x) for x in r), Decimal(0)))
+        finally:
+            cursor.close()
 
-    def spent_dec(self, since=None, until=None, where=None, **filters):
+    def _restore_spend_aggregate_connection(self):
+        """Install a fully tuned replacement; failed initialization never leaks admission."""
+        replacement = config.open_ledger_connection(
+            self.db_path, timeout=config.LEDGER_WRITE_TIMEOUT_S)
+        try:
+            replacement.row_factory = sqlite3.Row
+            replacement.create_aggregate("dec_sum", 1, _DecSum)
+        except BaseException:
+            replacement.close()
+            raise
+        self._conn = replacement
+
+    def spent_dec(self, since=None, until=None, where=None, *,
+                  deadline_s=config.LEDGER_QUERY_DEADLINE_S, **filters):
         """EXACT Decimal total of COUNTABLE **LLM** spend — batch + realtime ONLY (the LLM cap's number and the
         honest 'what we spent on LLM'). NOT est-value, NOT GPU, NOT the subscription fee: those are separate
         categories with their own accessors (est_value_dec / remote_dec / subscription_dec) and must never be
         summed in here. Excludes meta, reconciliation markers, impossible-quarantined (void), and reconstructed
-        rows — the same four the legacy countable_charges view excluded. Returns a decimal string."""
-        return self._cat_dec(LLM_USD_COLS, self._COUNTABLE, since=since, until=until, where=where, **filters)
+        rows — the same four the legacy countable_charges view excluded. Returns a decimal string.
+
+        ``deadline_s`` is a relative monotonic wall-clock duration. None preserves
+        the legacy unbounded read. Expiry or an unsafe pending write transaction
+        raises LedgerQueryDeadline; no incomplete aggregate escapes."""
+        if self._conn is None:
+            from .ledger_read import LedgerQueryDeadline
+            try:
+                self._restore_spend_aggregate_connection()
+            except Exception as recovery_error:
+                raise LedgerQueryDeadline(deadline_s) from recovery_error
+        if deadline_s is None:
+            return self._cat_dec(LLM_USD_COLS, self._COUNTABLE, since=since, until=until, where=where, **filters)
+        from .ledger_read import LedgerQueryDeadline
+        if not math.isfinite(deadline_s) or deadline_s <= 0 or self._conn.in_transaction:
+            # SQLite interruption can roll back a pending transaction. Refuse the read
+            # before installing a handler rather than endangering forensic writes.
+            raise LedgerQueryDeadline(deadline_s)
+        expires = time.monotonic() + deadline_s
+        expired = False
+
+        def _spend_aggregate_progress_expired():
+            nonlocal expired
+            expired = time.monotonic() >= expires
+            return expired
+
+        connection = self._conn
+        connection.set_progress_handler(_spend_aggregate_progress_expired,
+                                        config.LEDGER_QUERY_PROGRESS_VM_INSTRUCTIONS)
+        try:
+            result = self._cat_dec(LLM_USD_COLS, self._COUNTABLE, since=since, until=until,
+                                   where=where, **filters)
+            if _spend_aggregate_progress_expired():
+                raise LedgerQueryDeadline(deadline_s)
+            return result
+        except sqlite3.OperationalError as error:
+            if expired or time.monotonic() >= expires:
+                expired = True
+                raise LedgerQueryDeadline(deadline_s) from error
+            raise
+        finally:
+            connection.set_progress_handler(None, config.LEDGER_QUERY_PROGRESS_VM_INSTRUCTIONS)
+            if expired:
+                # This is SpendLedger's direct, counted handle, not config's keyed
+                # pool. Replace it before the thread-local ledger can be reused.
+                connection.close()
+                self._conn = None
+                self._total_memo = None
+                try:
+                    self._restore_spend_aggregate_connection()
+                except Exception as recovery_error:
+                    raise LedgerQueryDeadline(deadline_s) from recovery_error
 
     def _freshness_token(self):
         """A cheap O(1) token that changes whenever spend_events could have changed — so a value memoized against
