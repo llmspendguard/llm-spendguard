@@ -12,7 +12,7 @@ import os
 import threading
 import sqlite3
 import gc
-from functools import partialmethod
+from functools import lru_cache, partialmethod
 from pathlib import Path
 
 DEFAULT_SPENDGUARD_HOME = Path.home() / ".spendguard"
@@ -1051,6 +1051,8 @@ LEDGER_QUERY_PROGRESS_VM_INSTRUCTIONS = 100
 LEDGER_BUSY_TIMEOUT_MS = 5000
 LEDGER_JOURNAL_LIMIT_BYTES = 64 * 1024 * 1024
 LEDGER_HOME_ENVIRONMENT_KEY = "SPENDGUARD_HOME"
+LEDGER_HOME_EXPANSION_ENVIRONMENT_KEY = "HOME"
+LEDGER_HOME_IDENTITY_CACHE_SIZE = 1
 
 
 class LedgerHomeIsolationError(BaseException):
@@ -1059,6 +1061,22 @@ class LedgerHomeIsolationError(BaseException):
     Deliberately escapes telemetry's best-effort Exception catches, including
     the dead-letter fallback which itself uses the import-time home.
     """
+
+
+@lru_cache(maxsize=LEDGER_HOME_IDENTITY_CACHE_SIZE)
+def _resolved_ledger_home_redirect(home, protected_default, requested_home, expansion_home, working_directory):
+    """Cache one complete identity result, never a ledger-operation authorization.
+
+    The last two inputs invalidate relative/tilde identities when their resolution
+    context changes. Exceptions are not cached. The bounded cache is thread-safe;
+    each caller uses its own returned tuple even during concurrent cache misses.
+    Home symlink identities, like an open connection's identity, stay bound while
+    these inputs remain unchanged.
+    """
+    cached_home = home.expanduser().resolve()
+    if cached_home != protected_default.expanduser().resolve():
+        return cached_home, False
+    return cached_home, Path(requested_home).expanduser().resolve() != cached_home
 
 
 def require_ledger_home_alignment(path):
@@ -1071,10 +1089,10 @@ def require_ledger_home_alignment(path):
     requested_home = os.environ.get(LEDGER_HOME_ENVIRONMENT_KEY)
     if not requested_home:
         return
-    cached_home = HOME.expanduser().resolve()
-    if cached_home != DEFAULT_SPENDGUARD_HOME.expanduser().resolve():
-        return
-    if Path(requested_home).expanduser().resolve() == cached_home:
+    cached_home, redirected = _resolved_ledger_home_redirect(
+        HOME, DEFAULT_SPENDGUARD_HOME, requested_home,
+        os.environ.get(LEDGER_HOME_EXPANSION_ENVIRONMENT_KEY), os.getcwd())
+    if not redirected:
         return
     ledger_path = Path(path).expanduser().resolve()
     if ledger_path == cached_home or cached_home in ledger_path.parents:

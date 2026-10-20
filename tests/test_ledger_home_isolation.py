@@ -17,6 +17,10 @@ from _pytest_fixture_bridge import align_test_startup_home, run_pytest_style
 align_test_startup_home(prefix=__name__)
 
 LEDGER_ISOLATION_CHILD_TIMEOUT_S = 60
+LEDGER_ALIGNMENT_OPERATION_REPETITIONS = 32
+LEDGER_ALIGNMENT_PROBE_SCHEMA = "CREATE TABLE alignment_probe (value)"
+LEDGER_ALIGNMENT_PROBE_INSERT = "INSERT INTO alignment_probe VALUES (?)"
+LEDGER_ALIGNMENT_PROBE_READ = "SELECT * FROM alignment_probe"
 LEDGER_ISOLATION_HELD_WRITER_CASES = (
     "held_ledger", "held_connection", "held_cursor", "held_many", "held_script",
     "held_commit", "held_context", "held_shortcut_cursor",
@@ -124,6 +128,48 @@ def test_aligned_home_keeps_fixture_events_isolated(tmp_path):
         assert fixture_ledger.get(fixture_event_id)["source"] == __name__
     finally:
         fixture_ledger._conn.close()
+
+
+def test_stable_home_operations_do_not_resolve_paths(tmp_path, monkeypatch):
+    """Fault: filesystem resolution is unavailable after a protected home warms."""
+    from spendguard import config
+
+    monkeypatch.setattr(config, "HOME", tmp_path)
+    monkeypatch.setattr(config, "DEFAULT_SPENDGUARD_HOME", tmp_path)
+    monkeypatch.setenv(config.LEDGER_HOME_ENVIRONMENT_KEY, str(tmp_path))
+    connection = config.open_ledger_connection(tmp_path / pathlib.Path(__file__).stem)
+    try:
+        connection.execute(LEDGER_ALIGNMENT_PROBE_SCHEMA)
+        retained_cursor = connection.cursor()
+        config.require_ledger_home_alignment(tmp_path)
+
+        def reject_repeated_alignment_resolution(*args, **kwargs):
+            raise AssertionError("stable ledger operation repeated filesystem resolution")
+
+        with monkeypatch.context() as resolution_fault:
+            resolution_fault.setattr(pathlib.Path, "resolve", reject_repeated_alignment_resolution)
+            for _ in range(LEDGER_ALIGNMENT_OPERATION_REPETITIONS):
+                connection.execute(LEDGER_ALIGNMENT_PROBE_READ).fetchone()
+                retained_cursor.execute(LEDGER_ALIGNMENT_PROBE_READ).fetchone()
+                retained_cursor.executemany(LEDGER_ALIGNMENT_PROBE_INSERT, ((__name__,),))
+                connection.commit()
+                with connection:
+                    pass
+        monkeypatch.setenv(config.LEDGER_HOME_ENVIRONMENT_KEY, str(tmp_path.parent))
+        with pytest.raises(config.LedgerHomeIsolationError):
+            retained_cursor.execute(LEDGER_ALIGNMENT_PROBE_READ)
+    finally:
+        connection.close()
+
+
+def test_alignment_cache_bypass_mutation_is_rejected(tmp_path, monkeypatch):
+    """Reintroduce per-operation resolution; the filesystem fault must catch it."""
+    from spendguard import config
+
+    monkeypatch.setattr(config, "_resolved_ledger_home_redirect",
+                        config._resolved_ledger_home_redirect.__wrapped__)
+    with pytest.raises(AssertionError, match="stable ledger operation repeated filesystem resolution"):
+        test_stable_home_operations_do_not_resolve_paths(tmp_path, monkeypatch)
 
 
 if __name__ == "__main__":
