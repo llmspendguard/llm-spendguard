@@ -110,6 +110,7 @@ seed()
 # aggregator → the rows it SHOULD count, and why it differs from its neighbours.
 MATRIX = {
     "spent_since":           ({"plain", "true_down"},   "headline workload; corrections net against estimates"),
+    "spent_all_time":        ({"plain", "true_down"},   "all-time headline workload — same _COUNTABLE as spent_since, without a date filter"),
     "quarantined_since":     ({"quarantined"},          "it is ABOUT quarantined rows — it selects them"),
     "by_provider_day":       ({"plain", "true_down"},   "compared to provider truth: like-for-like (called with kind='batch')"),
     "reconciled_by_project": ({"reconciled"},           "selects the backfill rows by marker model"),
