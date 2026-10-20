@@ -10,6 +10,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+from _pytest_fixture_bridge import align_test_startup_home
+
+align_test_startup_home(prefix=__name__)
+
 from spendguard import budget, config, disk_guard
 from spendguard.gate import SpendGateRefused
 
