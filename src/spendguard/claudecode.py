@@ -946,9 +946,9 @@ def residency_decomposition(conv_id, instruction_tokens=None, instruction_paths=
     per_turn_usd, by_source_usd, by_tool_usd, top_contributors, instruction_tokens, instruction_source, reconciles}.
     $0 — pure parse + pricing, no LLM call."""
     recs = _conv_transcript_records(conv_id)
-    seq = _cc_conv_rows().get(conv_id) or []
-    rate = _cache_read_rate(seq[-1][1]) if seq else None
-    measured = (sum(cr for _o, _m, _i, cr, _cw in seq) * rate) if rate is not None else None
+    from .ledger_read import read_cc_residency_totals
+    residency_totals = read_cc_residency_totals(conv_id)
+    measured = residency_totals["measured_recurring_usd"]
     turn, id2tool, items = 0, {}, []           # items: (source, tool|None, tokens, entry_turn, label)
     seen_tool_results = set()                   # _conv_transcript_records already dedups records by message.id; a
     for r in recs:                              # tool_result's USER record carries no message.id, so dedup its replay
@@ -989,7 +989,7 @@ def residency_decomposition(conv_id, instruction_tokens=None, instruction_paths=
     # physically resident here, billed there. Map each item's transcript position onto the ledger basis so entry and
     # total never mix two turn scales (identity when they agree, as in the offline test).
     transcript_turns = turn
-    total_turns = len(seq) or turn or 1
+    total_turns = residency_totals["turns"] or turn or 1
     entry_scale = (total_turns / transcript_turns) if transcript_turns else 1.0
     if instruction_tokens is not None:
         instr, instr_src = int(instruction_tokens), "declared"
@@ -1020,7 +1020,7 @@ def residency_decomposition(conv_id, instruction_tokens=None, instruction_paths=
         allocated = usd(weight)
         try:
             resident_direct, subagent = residency_counterfactual_costs(
-                seq[-1][1], toks, remaining, return_tokens)
+                residency_totals["model"], toks, remaining, return_tokens)
         except Exception:
             resident_direct = subagent = None
         top.append({"label": label, "tool": tool, "tokens": toks, "remaining_turns": remaining,
@@ -1034,16 +1034,16 @@ def residency_decomposition(conv_id, instruction_tokens=None, instruction_paths=
             "by_tool_usd": {k: (round(v, 4) if v is not None else None)
                             for k, v in sorted(tool_usd.items(), key=lambda kv: (kv[1] or 0), reverse=True)},
             "top_contributors": top,
-            "instruction_tokens": instr, "instruction_source": instr_src, "reconciles": reconciles}
+            "instruction_tokens": instr, "instruction_source": instr_src,
+            "gaps": residency_totals["gaps"], "reconciles": reconciles and not residency_totals["gaps"]}
 
 
 def residency_summary_lines(conv_id=None):
     """Bounded receipt/doctor rendering for the newest (or explicitly named) Claude Code conversation."""
     try:
-        rows = _cc_conv_rows()
+        from .ledger_read import read_cc_residency_totals
         if not conv_id:
-            candidates = [(seq[-1][0], cid) for cid, seq in rows.items() if seq]
-            conv_id = max(candidates)[1] if candidates else None
+            conv_id = read_cc_residency_totals()["conv_id"]
         if not conv_id:
             return ["residency : no Claude Code transcript data"]
         # Instruction residency from DETERMINISTIC, home-anchored sources only — never os.getcwd(), whose value would
@@ -1057,9 +1057,16 @@ def residency_summary_lines(conv_id=None):
         if measured is None:
             return ["residency : cache-read cost unavailable (model unpriced)"]
         buckets = result["by_source_usd"]
-        lines = [("residency : cache-read $%.4f = instructions $%.4f + tool_result $%.4f + conversation $%.4f"
+        lines = [("residency : Est sub value cache-read $%.4f = instructions $%.4f + tool_result $%.4f + conversation $%.4f"
                   % (measured, buckets["instructions"] or 0, buckets["tool_result"] or 0,
                      buckets["conversation"] or 0))]
+        turns = result["turns"]
+        lines.append("            Est sub value $%.4f/turn = instructions $%.4f + tool_result $%.4f + conversation $%.4f" %
+                     (measured / turns, (buckets["instructions"] or 0) / turns,
+                      (buckets["tool_result"] or 0) / turns, (buckets["conversation"] or 0) / turns))
+        for residency_gap in result["gaps"]:
+            lines.append("            GAP %s: %s\n%s" %
+                         (residency_gap["unit"], residency_gap["error"], residency_gap["traceback"]))
         for item in result["top_contributors"]:
             resident = item.get("allocated_measured_usd")    # its RECONCILED share of the measured total (header-consistent)
             alternative = item.get("subagent_usd")
@@ -1069,7 +1076,10 @@ def residency_summary_lines(conv_id=None):
                          (item["label"], item["tokens"], item["remaining_turns"], comparison))
         return lines
     except Exception as exc:
-        return [f"residency : unavailable ({type(exc).__name__})"]
+        import logging
+        import traceback
+        logging.getLogger(__name__).exception("Residency rendering refused")
+        return [f"residency : unavailable ({exc!r})\n{traceback.format_exc()}"]
 
 
 def context_cmd(conv_id=None, top=10):

@@ -1,5 +1,5 @@
 """claudecode.residency_decomposition — the context-RESIDENCY source split (Review 1, ask #1). Offline: the
-transcript walk is fed synthetic records, the ledger (_cc_conv_rows) + cache-read rate are stubbed. Zero spend.
+transcript walk is fed synthetic records, the streaming ledger totals + cache-read rate are stubbed. Zero spend.
 
 Pins: a resident item costs tokens × turns-it-stayed × the cache-read rate; accumulated tool_output is attributed
 PER TOOL (via tool_use_id→name) and dominates; the measured recurring cost is SPLIT by resident token-turn weight so
@@ -14,7 +14,7 @@ os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-resid-")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from spendguard import claudecode as cc  # noqa: E402
+from spendguard import claudecode as cc, ledger_read  # noqa: E402
 
 fails = []
 def ck(label, cond):
@@ -45,9 +45,9 @@ _RECS = [
     _asst([{"type": "text", "text": "done"}]),                                 # turn 2 → 3
 ]
 cc._conv_transcript_records = lambda conv_id: list(_RECS)
-cc._cc_conv_rows = lambda min_day=None: {"C1": [("t1", "claude-opus-4-8", 100, 1000, 0),
-                                                ("t2", "claude-opus-4-8", 100, 2000, 0),
-                                                ("t3", "claude-opus-4-8", 100, 3000, 0)]}
+ledger_read.read_cc_residency_totals = lambda conv_id=None, path=None: {
+    "conv_id": "C1", "turns": 3, "model": "claude-opus-4-8",
+    "measured_recurring_usd": 0.006, "gaps": []}
 cc._cache_read_rate = lambda model: 1e-6     # $1 / 1M cached tokens → measured recurring = (1000+2000+3000)*1e-6
 
 d = cc.residency_decomposition("C1")          # no instruction paths → instructions unmeasured (honest 0)
