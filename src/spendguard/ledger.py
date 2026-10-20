@@ -852,18 +852,32 @@ class SpendLedger:
     def remote_dec(self, since=None, until=None, where=None, **filters):
         """EXACT Decimal total of real GPU/remote-compute spend — the number the COMPUTE cap governs, kept
         apart from the LLM cap on purpose (a box download can burn GPU-$ without any LLM call)."""
-        return self._cat_dec(("remote_compute_usd",), self._COUNTABLE, since=since, until=until, where=where, **filters)
+        return self._bounded_category_total(("remote_compute_usd",), self._COUNTABLE,
+                                            since=since, until=until, where=where, **filters)
 
     def est_value_dec(self, since=None, until=None, where=None, **filters):
         """EXACT Decimal total of est-VALUE (est_chat_usd) — what subscription-covered usage WOULD have cost at
         API rates. Real money did NOT change hands for this, so it is reported on its own axis and is NEVER
         added into a real $ total or a cap."""
-        return self._cat_dec(("est_chat_usd",), self._LIVE_FILTER, since=since, until=until, where=where, **filters)
+        return self._bounded_category_total(("est_chat_usd",), self._LIVE_FILTER,
+                                            since=since, until=until, where=where, **filters)
 
     def subscription_dec(self, since=None, until=None, where=None, **filters):
         """EXACT Decimal total of the subscription FLAT FEE (subscription_usd) — real money, but a plan fee, not
         per-call spend, so it is its own line and not folded into the LLM cap."""
-        return self._cat_dec(("subscription_usd",), self._LIVE_FILTER, since=since, until=until, where=where, **filters)
+        return self._bounded_category_total(("subscription_usd",), self._LIVE_FILTER,
+                                            since=since, until=until, where=where, **filters)
+
+    def _bounded_category_total(self, cols, filt, since=None, until=None, where=None, **filters):
+        """Read committed category totals through the deadline-owning, disposable reader."""
+        from .ledger_read import LedgerReadRequest, read_ledger_rows
+        w, args = self._where(since, until, {**(where or {}), **filters})
+        if filt:
+            w += " AND " + filt
+        rows = read_ledger_rows(LedgerReadRequest(
+            columns=tuple(f"dec_sum({column}) AS {column}" for column in cols),
+            where_sql="1=1" + w, parameters=tuple(args)), path=self.db_path)
+        return str(sum((to_dec(value) for value in rows[0].values), Decimal(0)))
 
     # The lifecycle-status EXCLUSION, named once (same enum the DDL defines: draft|posted|reconciled|locked|
     # reversed|void). Reused by the grouped/meta primitives so the "not a void/reversed entry" rule lives in one
@@ -961,7 +975,7 @@ class SpendLedger:
 
     def meta_dec(self, since=None, until=None, where=None):
         """EXACT total of spendguard's OWN (meta) spend — the is_meta rows, kept on their own cap line."""
-        return self._cat_dec(LLM_USD_COLS, "COALESCE(is_meta,0)=1 AND " + self._NOT_VOID,
+        return self._bounded_category_total(LLM_USD_COLS, "COALESCE(is_meta,0)=1 AND " + self._NOT_VOID,
                              since=since, until=until, where=where)
 
     def count_events(self, where=None, filt="", since=None):
@@ -1021,9 +1035,11 @@ class SpendLedger:
             w += " AND COALESCE(is_meta,0)=0"
         if not include_void:
             w += " AND COALESCE(status,'') NOT IN ('void')"
-        sums = ", ".join(f"dec_sum({c})" for c in USD_COLS)       # exact per-column decimal sums
-        r = self._conn.execute(f"SELECT {sums} FROM spend_events WHERE 1=1" + w, args).fetchone()
-        return str(sum((to_dec(x) for x in r), Decimal(0)))       # add the category totals exactly
+        from .ledger_read import LedgerReadRequest, read_ledger_rows
+        r = read_ledger_rows(LedgerReadRequest(
+            columns=tuple(f"dec_sum({column}) AS {column}" for column in USD_COLS),
+            where_sql="1=1" + w, parameters=tuple(args)), path=self.db_path)[0]
+        return str(sum((to_dec(x) for x in r.values), Decimal(0)))       # add the category totals exactly
 
     def sum_usd(self, since=None, until=None, where=None, include_meta=True, include_void=False, **filters):
         """Total USD for the filter, as a FLOAT — the display convenience. Exactness lives in `sum_dec`;

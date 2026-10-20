@@ -1047,12 +1047,15 @@ LEDGER_CACHE_BUDGET_KIB = 256 * 1024
 LEDGER_MMAP_BUDGET_BYTES = 512 * 1024 * 1024
 LEDGER_CONNECT_TIMEOUT_S = 5
 LEDGER_WRITE_TIMEOUT_S = 10
-LEDGER_QUERY_DEADLINE_S = None  # Optional caller wall-clock duration; None preserves unbounded legacy reads.
 LEDGER_QUERY_PROGRESS_VM_INSTRUCTIONS = 100
 LEDGER_READ_TIME_BUDGET_S = float(os.getenv("SPENDGUARD_LEDGER_READ_TIME_BUDGET_S", "5.0"))
+LEDGER_QUERY_DEADLINE_S = float(os.getenv("SPENDGUARD_LEDGER_QUERY_DEADLINE_S", str(LEDGER_READ_TIME_BUDGET_S)))
 LEDGER_READ_ROW_CAP = int(os.getenv("SPENDGUARD_LEDGER_READ_ROW_CAP", "10000"))
 LEDGER_READ_PROGRESS_VM_INSTRUCTIONS = int(os.getenv("SPENDGUARD_LEDGER_READ_PROGRESS_VM_INSTRUCTIONS", "100"))
 LEDGER_BUSY_TIMEOUT_MS = 5000
+LEDGER_WAL_CHECKPOINT_INTERVAL_DEFAULT_S = 60.0
+LEDGER_WAL_CHECKPOINT_BUSY_TIMEOUT_MS = 0
+LEDGER_REQUEST_DISCONNECT_POLL_S = float(os.getenv("SPENDGUARD_LEDGER_REQUEST_DISCONNECT_POLL_S", "0.05"))
 LEDGER_JOURNAL_LIMIT_BYTES = 64 * 1024 * 1024
 LEDGER_HOME_ENVIRONMENT_KEY = "SPENDGUARD_HOME"
 LEDGER_HOME_EXPANSION_ENVIRONMENT_KEY = "HOME"
@@ -1137,6 +1140,15 @@ def ledger_connection_limit():
     return value
 
 
+def ledger_wal_checkpoint_interval_s():
+    """Positive finite retry cadence for opportunistic WAL maintenance."""
+    value = float(os.getenv("SPENDGUARD_LEDGER_WAL_CHECKPOINT_INTERVAL_S", _cfg_get(
+        "ledger", "wal_checkpoint_interval_s", LEDGER_WAL_CHECKPOINT_INTERVAL_DEFAULT_S)))
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError("ledger.wal_checkpoint_interval_s must be positive and finite")
+    return value
+
+
 def ledger_connection_count():
     """Open managed connections in THIS process generation, including fresh ones.
 
@@ -1161,11 +1173,24 @@ class _HomeAlignedLedgerCursor(sqlite3.Cursor):
 
     def _dispatch_home_aligned_cursor_operation(self, operation, *args, **kwargs):
         require_ledger_home_alignment(self.connection._ledger_home_path)
-        return operation(self, *args, **kwargs)
+        from .ledger_request_cursor import ManagedRequestCursorState
+        state = getattr(self, "_ledger_request_cursor_state", None)
+        if state is None:
+            state = self._ledger_request_cursor_state = ManagedRequestCursorState(self)
+        return state.dispatch_managed_request_cursor_step(operation, *args, **kwargs)
+
+    def _release_request_cursor_if_idle(self):
+        state = getattr(self, "_ledger_request_cursor_state", None)
+        if state is not None:
+            state.release_idle_managed_request_cursor()
 
     execute = partialmethod(_dispatch_home_aligned_cursor_operation, sqlite3.Cursor.execute)
     executemany = partialmethod(_dispatch_home_aligned_cursor_operation, sqlite3.Cursor.executemany)
     executescript = partialmethod(_dispatch_home_aligned_cursor_operation, sqlite3.Cursor.executescript)
+    fetchone = partialmethod(_dispatch_home_aligned_cursor_operation, sqlite3.Cursor.fetchone)
+    fetchmany = partialmethod(_dispatch_home_aligned_cursor_operation, sqlite3.Cursor.fetchmany)
+    fetchall = partialmethod(_dispatch_home_aligned_cursor_operation, sqlite3.Cursor.fetchall)
+    __next__ = partialmethod(_dispatch_home_aligned_cursor_operation, sqlite3.Cursor.__next__)
 
 
 class _CountedLedgerConnection(sqlite3.Connection):
@@ -1182,7 +1207,15 @@ class _CountedLedgerConnection(sqlite3.Connection):
     def _dispatch_home_aligned_cursor_shortcut(self, operation, *args, **kwargs):
         # SQLite's native connection shortcuts return an unguarded base Cursor.
         # Create our cursor explicitly so a caller retaining that result stays guarded.
-        return operation(self.cursor(), *args, **kwargs)
+        return self.cursor()._dispatch_home_aligned_cursor_operation(operation, *args, **kwargs)
+
+    def set_progress_handler(self, progress_handler, n):
+        self._ledger_progress = (progress_handler, n)
+        return sqlite3.Connection.set_progress_handler(self, progress_handler, n)
+
+    def set_authorizer(self, authorizer_callback):
+        self._ledger_authorizer = authorizer_callback
+        return sqlite3.Connection.set_authorizer(self, authorizer_callback)
 
     cursor = partialmethod(_create_home_aligned_ledger_cursor)
     execute = partialmethod(_dispatch_home_aligned_cursor_shortcut, sqlite3.Cursor.execute)
@@ -1370,6 +1403,8 @@ def pooled_ledger_conn(key, ensure_schema, path=None):
             pass
     c = fresh_ledger_conn(ensure_schema, path)
     conns[key] = (c, path)
+    from .ledger_wal_maintenance import maintain_ledger_wal_if_due
+    maintain_ledger_wal_if_due(path)
     return c
 
 
@@ -1414,6 +1449,8 @@ def ledger_op(key, ensure_schema, path=None):
     try:
         yield c
         c.commit()
+        from .ledger_wal_maintenance import maintain_ledger_wal_if_due
+        maintain_ledger_wal_if_due(path or db_path())
     except Exception:
         try:
             c.rollback()
