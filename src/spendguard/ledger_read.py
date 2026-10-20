@@ -5,8 +5,16 @@ from dataclasses import dataclass
 from pathlib import Path
 import sqlite3
 import time
+import logging
+import traceback
 
 from . import config
+
+CC_RESIDENCY_SOURCE = "claude-code"
+CC_RESIDENCY_LATEST_SQL = "SELECT conv_id FROM spend_events WHERE source=? ORDER BY occurred_at DESC,conv_id DESC LIMIT 1"
+CC_RESIDENCY_STREAM_SQL = "SELECT rowid,model,cache_read_tok FROM spend_events WHERE source=? AND conv_id=? ORDER BY occurred_at,rowid"
+CC_RESIDENCY_TOKEN_SCALE = 1000000
+_cc_residency_logger = logging.getLogger(__name__)
 
 # A complete result must fit ordinary interactive consumers; larger consumers must
 # narrow their window or use count/aggregates, never silently consume a head.
@@ -102,6 +110,44 @@ READ_REALIZED_CALL_RATES_COLUMNS = ("AVG(CASE WHEN ts < ? THEN cost END) AS befo
          "AVG(CASE WHEN ts >= ? THEN cost END) AS after_rate", "SUM(ts >= ?) AS after_n")
 READ_RECORDING_GAP_CELLS_COLUMNS = ("intent", "provider", "model", "date(ts) AS day", "SUM(cost) AS calls_billed")
 READ_CALIBRATION_SUMMARY_COLUMNS = ("intent", "model", "kind", "COUNT(*) AS n", "SUM(cost) AS cost")
+
+
+def read_cc_residency_totals(conv_id=None, path=None):
+    """Fold every selected ledger row with constant row memory; expose corrupt units."""
+    from . import pricing
+
+    residency_turns = 0
+    residency_measured = 0.0
+    residency_model = None
+    residency_gaps = []
+    residency_rates = {}
+    try:
+        with _ledger_read_connection(path) as residency_connection:
+            if conv_id is None:
+                residency_latest = residency_connection.execute(
+                    CC_RESIDENCY_LATEST_SQL, (CC_RESIDENCY_SOURCE,)).fetchone()
+                conv_id = residency_latest[0] if residency_latest else None
+            if conv_id is not None:
+                for residency_rowid, residency_model, residency_tokens in residency_connection.execute(
+                        CC_RESIDENCY_STREAM_SQL, (CC_RESIDENCY_SOURCE, conv_id)):
+                    residency_turns += 1
+                    try:
+                        residency_count = int(residency_tokens or 0)
+                        if residency_model not in residency_rates:
+                            residency_rates[residency_model] = pricing.price(residency_model)["cached_in"]
+                        residency_rate = residency_rates[residency_model]
+                        residency_measured += residency_count * residency_rate / CC_RESIDENCY_TOKEN_SCALE
+                    except (ValueError, TypeError, KeyError) as residency_error:
+                        _cc_residency_logger.exception("Unreadable residency ledger unit %s", residency_rowid)
+                        residency_gaps.append({"unit": f"spend_events:{residency_rowid}",
+                                               "error": repr(residency_error),
+                                               "traceback": traceback.format_exc()})
+    except Exception as residency_failure:
+        _cc_residency_logger.exception("Residency ledger scan refused")
+        raise LedgerReadError(
+            f"Residency ledger scan refused: {residency_failure!r}\n{traceback.format_exc()}") from residency_failure
+    return {"conv_id": conv_id, "turns": residency_turns, "model": residency_model,
+            "measured_recurring_usd": residency_measured, "gaps": residency_gaps}
 
 
 class LedgerReadError(RuntimeError):
