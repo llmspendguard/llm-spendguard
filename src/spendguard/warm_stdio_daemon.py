@@ -34,6 +34,7 @@ import json
 import math
 import os
 import select
+import signal
 import subprocess
 import tempfile
 import threading
@@ -44,6 +45,10 @@ from . import config
 # A FIXED, non-external bootstrap directory for the server process. Each call carries its own explicit task cwd where
 # the protocol supports it; keeping the daemon SPAWN here means its startup directory can never be steered by content.
 _SAFE_CWD = tempfile.gettempdir()
+_WARM_REAP_TIMEOUT_S = 5
+_WARM_GROUP_POLL_INTERVAL_S = 0.05
+_WARM_GROUP_PROBE_SIGNAL = 0
+_WARM_FORCE_KILL_SIGNAL = getattr(signal, "SIGKILL", None)
 
 
 class _WarmStdioJsonRpcDaemon:
@@ -244,11 +249,72 @@ class _WarmStdioJsonRpcDaemon:
 
     # ── process lifecycle ─────────────────────────────────────────────────────────────────────────────────────
     @staticmethod
-    def _terminate(p):
+    def _warm_signal_owned_group(p, group_id, termination_signal):
         try:
-            p.terminate()
-        except Exception:
-            pass
+            if group_id is not None:
+                os.killpg(group_id, termination_signal)
+            elif termination_signal == signal.SIGTERM:
+                p.terminate()
+            else:
+                p.kill()
+        except ProcessLookupError:
+            return
+        except Exception as exc:
+            config.warn_once(f"[spendguard] warm daemon: signal {termination_signal} "
+                             f"for process {p.pid} failed: {exc}")
+
+    @staticmethod
+    def _warm_owned_group_alive(group_id):
+        try:
+            os.killpg(group_id, _WARM_GROUP_PROBE_SIGNAL)
+            return True
+        except ProcessLookupError:
+            return False
+        except Exception as exc:
+            config.warn_once(f"[spendguard] warm daemon: checking process group {group_id} failed: {exc}")
+            return True  # A failed probe is not proof that descendants are gone.
+
+    @classmethod
+    def _terminate(cls, p):
+        """Reap our session leader and terminate surviving descendants within the existing grace budget."""
+        group_id = None
+        if hasattr(os, "killpg") and hasattr(os, "getpgid"):
+            # Recorded at spawn: a session leader's pgid is its pid. Keep it even after the
+            # leader exits/reaps, when getpgid(pid) can no longer find surviving descendants.
+            group_id = getattr(p, "_spendguard_process_group", None)
+            if group_id is not None:
+                try:
+                    observed_group = os.getpgid(p.pid)
+                    if observed_group != group_id:
+                        config.warn_once(f"[spendguard] warm daemon: process {p.pid} moved from owned group "
+                                         f"{group_id} to {observed_group}; retaining the owned group")
+                except ProcessLookupError:
+                    group_id = p._spendguard_process_group
+                except Exception as exc:
+                    config.warn_once(f"[spendguard] warm daemon: resolving group for {p.pid} failed: {exc}")
+        deadline = time.monotonic() + _WARM_REAP_TIMEOUT_S
+        cls._warm_signal_owned_group(p, group_id, signal.SIGTERM)
+        escalate = False
+        try:
+            p.wait(timeout=_WARM_REAP_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            escalate = True
+        except Exception as exc:
+            config.warn_once(f"[spendguard] warm daemon: waiting for process {p.pid} failed: {exc}")
+            escalate = True
+        if group_id is not None:
+            while cls._warm_owned_group_alive(group_id):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    escalate = True
+                    break
+                time.sleep(min(_WARM_GROUP_POLL_INTERVAL_S, remaining))
+        if escalate:
+            cls._warm_signal_owned_group(p, group_id, _WARM_FORCE_KILL_SIGNAL)
+            try:
+                p.wait(timeout=_WARM_REAP_TIMEOUT_S)
+            except Exception as exc:
+                config.warn_once(f"[spendguard] warm daemon: reaping process {p.pid} after kill failed: {exc}")
 
     def _spawn(self):
         """Start the server, START THE READER, run the protocol handshake; return the live process or None (a startup
@@ -273,16 +339,23 @@ class _WarmStdioJsonRpcDaemon:
         try:
             p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                  bufsize=0, cwd=_SAFE_CWD,
+                                 start_new_session=hasattr(os, "killpg") and hasattr(os, "getpgid"),
                                  env={**config.lane_exec_env(launcher), **self._environment_overrides})
         except Exception:
             return None
-        fl = fcntl.fcntl(p.stdout.fileno(), fcntl.F_GETFL)     # non-blocking stdout for the reader's os.read
-        fcntl.fcntl(p.stdout.fileno(), fcntl.F_SETFL, fl | os.O_NONBLOCK)
-        threading.Thread(target=self._reader_loop, args=(p,), daemon=True).start()   # the sole reader for THIS proc
+        if hasattr(os, "killpg") and hasattr(os, "getpgid"):
+            p._spendguard_process_group = p.pid
         try:
-            ok = bool(self._handshake(p))
-        except (BrokenPipeError, OSError):
-            ok = False
+            fl = fcntl.fcntl(p.stdout.fileno(), fcntl.F_GETFL)     # non-blocking stdout for the reader's os.read
+            fcntl.fcntl(p.stdout.fileno(), fcntl.F_SETFL, fl | os.O_NONBLOCK)
+            threading.Thread(target=self._reader_loop, args=(p,), daemon=True).start()   # the sole reader for THIS proc
+            try:
+                ok = bool(self._handshake(p))
+            except (BrokenPipeError, OSError):
+                ok = False
+        except BaseException:
+            self._terminate(p)
+            raise
         if not ok:
             config.warn_once("[spendguard] %s warm daemon: the initialize handshake did not complete within %ds — "
                              "treating the server as unavailable this run (falling back to the metered API)"
@@ -305,6 +378,9 @@ class _WarmStdioJsonRpcDaemon:
                     return None
                 if self._proc is not None and self._proc.poll() is None:
                     return self._proc
+                previous, self._proc = self._proc, None
+            if previous is not None:
+                self._terminate(previous)  # A dead session leader can still have live descendants.
             p = self._spawn()                         # slow handshake — outside _state_lock, inside _spawn_lock
             with self._state_lock:
                 retired = self._retired_from_pool
@@ -325,14 +401,6 @@ class _WarmStdioJsonRpcDaemon:
         if p is None:
             return
         self._terminate(p)
-        try:
-            p.wait(timeout=5)                         # terminate() alone leaves a zombie on every restart; escalate
-        except Exception:                             # to kill + reap so repeated crashes don't accumulate children
-            try:
-                p.kill()
-                p.wait(timeout=5)
-            except Exception:
-                pass
         self._fail_all_waiters()                      # anything still pending on the dead proc is woken, not hung
 
     # ── a shared request/response primitive the subclass run_warm() composes ──────────────────────────────────

@@ -404,11 +404,6 @@
       "verdict": "DUPLICATION",
       "why": "Both compute a percentile of token counts. bulkgate._pctl explicitly documents that it delegates to the canonical calibrate._quantile and fixes the empty-sample invariant (returns None, not 0). prompt"
     },
-    "_project_of": {
-      "n": 2,
-      "verdict": "DUPLICATION",
-      "why": "Both are thin wrappers over config.project_of_cwd, differing only in a hardcoded default tag ('claude-code' vs 'codex'). The comments explicitly note each is the same as the other but for its default "
-    },
     "_recording": {
       "n": 2,
       "verdict": "PROTOCOL",

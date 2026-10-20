@@ -12,6 +12,8 @@ sweep(run=True) executes and returns the reachability matrix — per resource {r
 """
 import hashlib
 import json
+import logging
+import traceback
 
 from . import adapters, config
 
@@ -234,7 +236,9 @@ def _classify_remediation(kind, resource, reason, model=None):
     except Exception as e:
         if gate.is_deliberate_stop(e):
             raise
-        return {"issue": str(reason)[:120], "fix": "inspect the lane's auth/quota/model config", "command": "", "cached": False}
+        logging.getLogger(__name__).exception("Resource remediation failed")
+        return {"issue": str(reason), "fix": "inspect the lane's auth/quota/model config", "command": "", "cached": False,
+                "diagnostic": {"exception": repr(e), "traceback": traceback.format_exc()}}
     j = adapters.structured_reply(r)
     if not isinstance(j, dict) or not j.get("issue"):
         return {"issue": str(reason)[:120], "fix": "inspect the lane's auth/quota/model config", "command": "", "cached": False}
