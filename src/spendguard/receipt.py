@@ -668,7 +668,9 @@ def tally(project=None, conv=None) -> dict:
         for window in api:
             global_usage = (global_value or {}).get(window) or 0
             scoped_usage = (est_value or {}).get(window) or 0
-            allocatable = ((sub or 0) if window == "month" else 0) + sum(
+            # An assumed fallback fee is not a known installation charge. Without usage it
+            # contributes no scoped share, while configured fees and actual charges still refuse.
+            allocatable = ((sub or 0) if window == "month" and not sub_assumed else 0) + sum(
                 (component or {}).get(window) or 0 for component in (remote, external))
             if allocatable and (global_usage <= 0 or not est_value
                                 or global_value.get("stale") or est_value.get("stale")):

@@ -90,4 +90,25 @@ with patch.object(budget, "spent_since", return_value=ALLOCATION_API_COST), \
             assert ALLOCATION_REPO_PRIMARY in str(allocation_failure)
         else:
             raise AssertionError("Missing plan-usage basis silently allocated global money")
+with patch.object(budget, "spent_since", return_value=ALLOCATION_API_COST), \
+     patch.object(receipt, "_plan_usd", return_value=(ALLOCATION_PLAN_FEE, True)), \
+     patch.object(receipt, "_remote_tally", return_value=None), \
+     patch.object(receipt, "_external_tally", return_value=None), \
+     patch.object(receipt, "_est_tally", return_value=None):
+    # Fault: an installation without a usage cache still has directly attributed API truth.
+    # Assumed defaults are not evidence of an actual global charge requiring allocation.
+    allocation_scoped = receipt.tally(project=ALLOCATION_REPO_PRIMARY)
+    assert allocation_scoped["api"]["month"] == ALLOCATION_API_COST
+    assert allocation_scoped["subscription"] == 0
+    assert allocation_scoped["subscription_assumed"] is True
+    assert allocation_scoped["est_value"] is None
+    assert allocation_scoped["real_month"] == ALLOCATION_API_COST
+    for allocation_component in ("_remote_tally", "_external_tally"):
+        with patch.object(receipt, allocation_component, return_value=allocation_remote):
+            try:
+                receipt.tally(project=ALLOCATION_REPO_PRIMARY)
+            except receipt.ReceiptPlanAllocationRefused as allocation_failure:
+                assert "missing or stale plan-usage basis" in str(allocation_failure)
+            else:
+                raise AssertionError("Assumed subscription hid an unallocatable actual charge")
 print("PASS: contextual global-dollar allocation and missing-basis fault refusal")
