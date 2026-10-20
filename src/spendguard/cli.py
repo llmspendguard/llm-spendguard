@@ -713,6 +713,8 @@ def _dispatch(argv=None):
             import time as _t
             _db = _cfg.db_path()
             _bak = f"{_db}.bak_reprice_{int(_t.time())}"
+            from .disk_guard import require_disk_space
+            require_disk_space(_bak)
             _src = _sq.connect(_db)
             _dst = _sq.connect(_bak)
             with _dst:

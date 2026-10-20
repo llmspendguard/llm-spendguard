@@ -1679,3 +1679,21 @@ def project_of_cwd(cwd, default):
     if not cwd:
         return default
     return git_root_project(cwd) or _os.path.basename(str(cwd).rstrip("/")).lower() or default
+
+
+# Keep a filesystem reserve before bulk writes. Bytes only: no ambiguous size suffixes.
+DISK_GUARD_FLOOR_DEFAULT_BYTES = 5 * 1024 ** 3
+DISK_GUARD_FLOOR_ENV = "SPENDGUARD_DISK_GUARD_FLOOR_BYTES"
+
+
+def disk_guard_floor_bytes():
+    """Positive integer reserve; environment overrides config.json disk_guard.floor_bytes."""
+    value = os.environ.get(DISK_GUARD_FLOOR_ENV)
+    if value is None:
+        value = _cfg_get("disk_guard", "floor_bytes", DISK_GUARD_FLOOR_DEFAULT_BYTES)
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise ValueError("disk_guard.floor_bytes must be a positive integer byte count")
+    floor = int(value)
+    if floor <= 0:
+        raise ValueError("disk_guard.floor_bytes must be a positive integer byte count")
+    return floor
