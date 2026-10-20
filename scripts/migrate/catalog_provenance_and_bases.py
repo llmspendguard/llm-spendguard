@@ -22,6 +22,8 @@ import os
 import shutil
 import time
 
+from spendguard import config
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
 CATALOG = os.path.abspath(os.path.join(_HERE, "..", "..", "src", "spendguard", "model_catalog.json"))
 
@@ -90,9 +92,7 @@ def main():
 
     bak = f"{CATALOG}.bak_{time.strftime('%Y%m%d_%H%M%S')}"
     shutil.copy2(CATALOG, bak)
-    with open(CATALOG, "w") as f:
-        json.dump(cat, f, indent=2, ensure_ascii=False)
-        f.write("\n")
+    config.update_json(CATALOG, lambda current: cat, required=True)
     print(f"wrote {CATALOG}\nbackup {bak}")
 
 

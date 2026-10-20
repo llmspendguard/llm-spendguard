@@ -197,8 +197,7 @@ def main(argv=None):
             bak = f"{DEST}.{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}.bak"
             shutil.copy2(DEST, bak)
             print(f"backed up existing → {bak}", file=sys.stderr)
-        with open(DEST, "w") as f:
-            f.write(text)
+        config.update_json(DEST, lambda current: data, required=True)
         print(f"wrote {DEST} — {len(data['models'])} models")
     else:
         sys.stdout.write(text)

@@ -100,7 +100,7 @@ def _write(looked):
             batch_input=found.get("batch_in"), batch_output=found.get("batch_out"),
             provider=record.get("provider"), source=found["source"], verified=found["verified"],
         )
-    return str(model_catalog.DATA_PATH)
+    return model_catalog.catalog_authoring_path()
 
 
 def main(argv=None):

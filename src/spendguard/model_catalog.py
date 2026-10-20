@@ -38,6 +38,13 @@ _TRACKED_FIELDS = ("price", "vision", "capabilities", "context_window", "output_
 _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 BILLING_EXEMPT_REASON_FIELD = "billing_exempt_reason"
 CATALOG_UNIT_PRICES_FIELD = "unit_prices"
+CATALOG_OVERLAY_FILENAME = "catalog_synced.json"
+
+
+def catalog_authoring_path():
+    """The configurable local catalog layer; the packaged floor is read-only."""
+    from . import config
+    return os.path.join(str(config.HOME), CATALOG_OVERLAY_FILENAME)
 
 
 def tracked_catalog_payload(record):
@@ -65,13 +72,9 @@ def _overlay_path():
     """The SERVER-SYNCED / local-override curated catalog overlay — a {"models": {id: record}} file in SPENDGUARD_HOME,
     the SAME shape as the shipped floor (DATA_PATH). Written by `spendguard sync-catalog` from the server's curated
     catalog (the data-plane T2 layer); a user may also drop it by hand to OVERRIDE the shipped floor locally. Distinct
-    filename from catalog.py's live served-list cache (HOME/served_model_ids.json), a different store. None on any error
-    → floor only (config is imported lazily, as elsewhere in this leaf, to avoid a load-time cycle)."""
-    try:
-        from . import config
-        return os.path.join(str(config.HOME), "catalog_synced.json")
-    except Exception:
-        return None
+    filename from catalog.py's live served-list cache (HOME/served_model_ids.json), a different store. Configuration
+    errors propagate; config is imported lazily, as elsewhere in this leaf, to avoid a load-time cycle."""
+    return catalog_authoring_path()
 
 
 def _read_bytes(path):
@@ -135,7 +138,11 @@ def model_record(model_id):
 
     Callers that already hold a normalized base id (pricing does, before it looks up) get an exact hit; a caller
     passing a lane/suffixed/qualified id is resolved here. Never raises."""
-    models = _load_records()
+    return catalog_record_from_snapshot(model_id, _load_records())
+
+
+def catalog_record_from_snapshot(model_id, models):
+    """Resolve an authored spelling against one captured catalog snapshot."""
     if not model_id:
         return None
     for key in (model_id, _bare(model_id)):
@@ -164,8 +171,9 @@ def unit_price_table():
 
 def catalog_pricing_metadata(section):
     """Read authored pricing metadata through the catalog's floor and overlay layers."""
-    floor = json.loads(_read_bytes(DATA_PATH) or b"{}")
-    overlay = json.loads(_read_bytes(_overlay_path()) or b"{}")
+    floor = catalog_document_from_bytes(_read_bytes(DATA_PATH), DATA_PATH)
+    overlay_path = _overlay_path()
+    overlay = catalog_document_from_bytes(_read_bytes(overlay_path), overlay_path)
     return {**floor.get(section, {}), **overlay.get(section, {})}
 
 
@@ -512,3 +520,18 @@ def validate_catalog(models=None, allow_legacy_missing_as_of=True):
         if len(rids) > 1:
             problems.append(f"provider {prov!r} has {len(rids)} provider_base records {rids}; expected exactly one")
     return problems
+
+
+class CatalogLayerCorruptionError(ValueError):
+    """A catalog layer cannot be trusted as complete JSON."""
+
+
+def catalog_document_from_bytes(raw, path):
+    """Parse a whole layer, naming corruption rather than hiding missing facts."""
+    try:
+        document = json.loads(raw) if raw is not None else {}
+        if not isinstance(document, dict):
+            raise ValueError("catalog document must be an object")
+        return document
+    except (ValueError, UnicodeError) as exc:
+        raise CatalogLayerCorruptionError(f"GAP catalog_layer_corrupt: {path}: {exc}") from exc

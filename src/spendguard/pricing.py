@@ -66,7 +66,7 @@ def _rate_key(rates):
 def user_prices_path():
     """Compatibility accessor for the catalog authoring path."""
     from . import model_catalog
-    return str(model_catalog.DATA_PATH)
+    return str(model_catalog.catalog_authoring_path())
 
 
 def set_price(model, provider, in_usd, out_usd, source, batch_in=None, batch_out=None, cached_in=None,
@@ -190,7 +190,7 @@ def _load_context():
     """{model: {max_input_tokens, max_output_tokens}} from the synced LiteLLM cache. These are LIMITS, not
     prices — the upstream table is `model_prices_and_context_window.json` and carries both. Absent → {}, and
     every caller must treat "unknown" as "no opinion" rather than inventing a bound."""
-    return dict(PRICING_BREADTH_SNAPSHOT.get("context") or {})
+    return dict(_load_pricing_breadth_snapshot().get("context") or {})
 
 
 CONTEXT_LIMITS = _load_context()
