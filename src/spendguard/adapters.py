@@ -1542,7 +1542,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                                 r.get("model") or model, prompt, r.get("text"),
                                 in_tok=r.get("in_tok") or 0, out_tok=r.get("out_tok") or 0,
                                 system=system, req_schema=schema, req_max_tokens=max_tokens,
-                                finish_reason=r.get("finish_reason"))
+                                finish_reason=r.get("finish_reason"), effort=r.get("chosen_effort"))
         # FORENSIC — record EVERY FAILED outcome on the ledger. The success path already records (gate._record_rt /
         # the subscription writer); a FAILURE reached the caller as {error} and, until now, was recorded NOWHERE — the
         # exact hole that made a week of "what is going on" unanswerable. adapters.call is the ONE function every
