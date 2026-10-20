@@ -20,7 +20,12 @@ from .weekly_cap_guard import (
     WEEKLY_CAP_GUARD_THRESHOLD_DEFAULT,
 )
 
+from .config import DISK_GUARD_FLOOR_DEFAULT_BYTES, DISK_GUARD_FLOOR_ENV
+
 SETTINGS = [
+    dict(section="disk_guard", key="floor_bytes", store="config.json:disk_guard.floor_bytes",
+         env=DISK_GUARD_FLOOR_ENV, default=DISK_GUARD_FLOOR_DEFAULT_BYTES, kind="int", secret=False,
+         desc="Positive free-byte reserve required before bulk ledger copies; unsafe writes deliberately refuse."),
     # ── core ──
     dict(section="core", key="home", store="env", env="SPENDGUARD_HOME", default="~/.spendguard",
          kind="path", secret=False,
