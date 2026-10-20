@@ -46,10 +46,10 @@ ck("claudecode tokens: in = input + cache_creation (1100), cached = cache_read (
 cost0, tin0, _, tcached0 = claudecode._row_cost("totally-unknown-model", u)
 ck("claudecode cost: unknown model → $0 (never crashes), tokens still split", cost0 == 0.0 and tin0 == 1100 and tcached0 == 200)
 
-# ── claudecode._project_of: cwd basename → project; empty → the 'claude-code' default ──
-ck("claudecode project: basename of cwd", claudecode._project_of("/Users/me/Documents/lmm") == "lmm")
-ck("claudecode project: trailing slash handled", claudecode._project_of("/Users/me/slide-recon/") == "slide-recon")
-ck("claudecode project: empty → 'claude-code'", claudecode._project_of("") == "claude-code")
+# ── claudecode._claudecode_project_of_cwd: cwd basename → project; empty → the 'claude-code' default ──
+ck("claudecode project: basename of cwd", claudecode._claudecode_project_of_cwd("/Users/me/Documents/lmm") == "lmm")
+ck("claudecode project: trailing slash handled", claudecode._claudecode_project_of_cwd("/Users/me/slide-recon/") == "slide-recon")
+ck("claudecode project: empty → 'claude-code'", claudecode._claudecode_project_of_cwd("") == "claude-code")
 
 print(("\n[FAIL] " if fails else "\n[OK] ") + f"transcript_pure: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

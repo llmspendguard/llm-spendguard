@@ -32,10 +32,10 @@ def _save_claudecode_state(st):
     return config.save_state("claudecode", st)
 
 
-def _project_of(cwd):
+def _claudecode_project_of_cwd(cwd):
     """Bucket by the REPO (git-root basename), not the session's cwd — so subdirs (lmm/scripts/fanout) collapse to
     the repo (lmm) and match how actual-$ is tagged, instead of fragmenting est-value across dozens of cwd names."""
-    return config.project_of_cwd(cwd, "claude-code")   # codex._project_of was the same but for its default
+    return config.project_of_cwd(cwd, "claude-code")   # codex._codex_project_of_cwd was the same but for its default
 
 
 def _row_cost(model, u):
@@ -112,7 +112,7 @@ def update(st=None):
             u = msg.get("usage") or {}
             model = msg.get("model")
             day = (r.get("timestamp") or "")[:10] or datetime.date.today().isoformat()
-            proj = _project_of(r.get("cwd"))
+            proj = _claudecode_project_of_cwd(r.get("cwd"))
             if u and model:
                 cost, intok, outtok, crtok = _row_cost(model, u)
                 key = f"{proj}|{model}|{day}"
@@ -203,7 +203,7 @@ def ingest_events(days=None, limit=None, reset=False, dry=False):
             proj = None; booked = 0
             for r in recs:
                 if proj is None and r.get("cwd"):
-                    proj = _project_of(r.get("cwd"))
+                    proj = _claudecode_project_of_cwd(r.get("cwd"))
                 msg = r.get("message") or {}
                 mid = msg.get("id"); u = msg.get("usage"); model = msg.get("model")
                 if not (u and model):
@@ -1377,7 +1377,7 @@ def _digest(path, seen=None, ask_verdicts=None):
     recs, _ = _scan_new_lines(path, 0)
     for r in recs:
         if proj is None and r.get("cwd"):
-            proj = _project_of(r.get("cwd"))
+            proj = _claudecode_project_of_cwd(r.get("cwd"))
         if not branch and r.get("gitBranch"):
             branch = r.get("gitBranch")
         day = (r.get("timestamp") or "")[:10]
