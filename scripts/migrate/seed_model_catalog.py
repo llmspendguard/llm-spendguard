@@ -2,10 +2,10 @@
 CURRENT, already-correct resolved values, so nothing is retyped or guessed. Run once; after this the catalog is the
 authoring home and this script is kept only as the provenance of the initial seed.
 
-For every model spendguard actually uses (the curated prices.json set ∪ the config in-use set: advisor.lane_models,
+For every model spendguard actually uses (the curated catalog set ∪ the config in-use set: advisor.lane_models,
 advisor.tiers, ask.default_vendors, reliability.probe_models, advisor/judge/recall defaults) it resolves each field
 from its current owner and records provenance:
-  price            ← pricing.price(id, provider)                         (curated prices.json / _FALLBACK / user override)
+  price            ← pricing.price(id, provider)                         (catalog with optional synced breadth)
   output_ceiling   ← pricing.max_output_tokens(id) / catalog live        (MAX_OUT / _OUTPUT_CEILING_OVERRIDES / synced / live)
   context_window   ← pricing.CONTEXT_LIMITS
   reasoning        ← models.profile(id) + models.reasons_by_default(id)  (models._RULES family + facts)
@@ -53,29 +53,10 @@ def _split(spec):
 
 
 def _curated_price_models():
-    """{base_id: provider} for every model WE authored a price for — pricing._FALLBACK plus the CURATED price JSONs
-    (the shipped src/spendguard/prices.json and the user ~/.spendguard/prices.json), NOT the synced LiteLLM breadth
-    cache (that 2700-model table is the fallback, never the catalog). Ignores :batch/exacto variant keys (they are
-    derived from the base rate, not separate models)."""
-    out = {}
-    for base, rec in getattr(pricing, "_FALLBACK", {}).items():
-        if ":" not in base:
-            out.setdefault(base, (rec or {}).get("provider"))
-    files = [os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-                          "src", "spendguard", "prices.json"),
-             os.path.join(os.environ.get("SPENDGUARD_HOME") or os.path.expanduser("~/.spendguard"), "prices.json")]
-    for f in files:
-        if not os.path.exists(f):
-            continue
-        try:
-            d = json.load(open(f))
-        except Exception:
-            continue
-        for prov, pd in (d.get("providers") or {}).items():
-            for mid in (pd.get("models") or {}):
-                if ":" not in mid:
-                    out.setdefault(mid, prov)
-    return out
+    """Read authored model identities from the catalog, never a second rate source."""
+    from spendguard import model_catalog
+    return {mid: record.get("provider") for mid, record in model_catalog.all_records().items()
+            if record.get("price")}
 
 
 def _in_use_models():
@@ -190,7 +171,7 @@ def build():
                       "output_ceiling": _ceiling(base, prov),
                       "context_window": (ctx.get(base) or {}).get("max_input_tokens"),
                       "reasoning": _reasoning(base)}
-    return {"_doc": "SSOT for per-model data. Authored here (curated edits welcome); prices.json is GENERATED from "
+    return {"_doc": "SSOT for per-model data. Authored here (curated edits welcome); price tables are derived IN MEMORY from "
                     "this. See docs/CANONICAL_CONCERNS.json concern 'model_catalog'.",
             "_seeded_from": "scripts/migrate/seed_model_catalog.py (current resolved values)",
             "models": recs}

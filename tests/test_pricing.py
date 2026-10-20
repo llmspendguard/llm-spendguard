@@ -109,9 +109,10 @@ os.makedirs(home, exist_ok=True)
 with open(os.path.join(home, "litellm_prices.json"), "w") as f:
     json.dump({"models": {"vendor-x-mega": {"in_": 1.0, "out": 2.0, "cached_in": 0.1, "batch_in": 0.5, "batch_out": 1.0}},
                "providers": {"vendor-x-mega": "vendorx"}}, f)
-loaded = P._load()
+P.PRICING_BREADTH_SNAPSHOT = P._load_pricing_breadth_snapshot()
+loaded, loaded_providers, _ = P._derive_catalog_pricing_state()
 check("_load layers the LiteLLM cache model in", "vendor-x-mega" in loaded)
-check("_load layers the cache provider mapping", P.PROVIDERS.get("vendor-x-mega") == "vendorx")
+check("_load layers the cache provider mapping", loaded_providers.get("vendor-x-mega") == "vendorx")
 
 print("-- main(): prints the table + worked example, returns 0 --")
 check("main() == 0", P.main() == 0)

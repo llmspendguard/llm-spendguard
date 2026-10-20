@@ -96,53 +96,19 @@ def _tool_advise(args):
 
 
 def _catalogue():
-    """The ACTIONABLE model catalogue: spendguard's curated prices (_FALLBACK) + the caller's own verified prices
-    (prices.json), each with per-1M rates + provider. The full provider universe (hundreds of ids) is enumerated
-    on demand by the bakeoff, never dumped here — this is the 'known, priced options' set."""
-    import os
-    from . import pricing
-    seen, out = set(), []
-
-    def add_priced_model(model, rates, source):
-        prov = (rates or {}).get("provider") or pricing.PROVIDERS.get(model) or pricing.PROVIDERS.get(pricing.normalize(model))
-        key = f"{prov}:{model}"
-        if key in seen:
-            return
-        seen.add(key)
+    """Enumerate authored catalog models, resolving rates through the sole price API."""
+    from . import model_catalog, pricing
+    out = []
+    for model, record in model_catalog.all_records().items():
+        provider = record.get("provider")
         try:
-            p = pricing.price(model, provider=prov)   # prov (resolved above) pins a bare multi-vendor id to the right rate card
-        except Exception:
-            p = rates or {}
-        out.append(dict(id=key, model=model, provider=prov,
-                        in_usd_per_m=p.get("in_"), out_usd_per_m=p.get("out"), source=source))
-
-    for m, r in getattr(pricing, "_FALLBACK", {}).items():
-        add_priced_model(m, r, "curated")
-    # The SHIPPED curated layer (src/spendguard/prices.json). _FALLBACK is only its in-source mirror and does
-    # NOT carry the vendor-hosted / newest ids that live solely in this data file (claude-opus-5,
-    # claude-fable-5-1, glm-5.3, ...). Without reading it, those were priced by pricing.price() yet INVISIBLE
-    # here on any fresh install — the exact gap that hid claude-fable-5-1 / claude-opus-5 despite their being
-    # the majority of Sept-2026 Claude Code turns. Tagged "curated" (ships with the package); the user's own
-    # prices.json below stays "verified". seen-dedup keeps _FALLBACK's copy of a shared id.
-    try:
-        shipped = os.path.join(os.path.dirname(pricing.__file__), "prices.json")
-        if os.path.exists(shipped):
-            sd = json.loads(open(shipped).read())
-            for prov, pv in (sd.get("providers") or {}).items():
-                for m, r in (pv.get("models") or {}).items():
-                    add_priced_model(m, {**(r or {}), "provider": prov}, "curated")
-    except Exception:
-        pass
-    try:
-        path = pricing.user_prices_path()
-        if os.path.exists(path):
-            data = json.loads(open(path).read())
-            for prov, pv in (data.get("providers") or {}).items():
-                for m, r in (pv.get("models") or {}).items():
-                    add_priced_model(m, {**(r or {}), "provider": prov}, "verified")
-    except Exception:
-        pass
-    return sorted(out, key=lambda d: (d["provider"] or "~", d["model"]))
+            rates = pricing.price(model, provider=provider)
+        except pricing.PriceUnknownError:
+            pricing.note_unpriced(model)
+            continue
+        out.append(dict(id=f"{provider}:{model}", model=model, provider=provider,
+                        in_usd_per_m=rates.get("in_"), out_usd_per_m=rates.get("out"), source="curated"))
+    return sorted(out, key=lambda row: (row["provider"] or "~", row["model"]))
 
 
 def _tool_models(args):

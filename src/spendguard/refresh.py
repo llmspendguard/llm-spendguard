@@ -1,7 +1,7 @@
 """LLM-assisted price freshness.
 
 Uses a configured LLM *with web search* to look up CURRENT provider prices and DIFF them
-against the local prices.json — so drift is caught without hand-checking pricing pages.
+against the catalog — so drift is caught without hand-checking pricing pages.
 
 Opt-in. Makes ONE paid LLM call (cheap model + web search). Review the diff before --write.
 Treat results as a flag-for-review, not gospel (an LLM can still misread a page).
@@ -10,7 +10,7 @@ Treat results as a flag-for-review, not gospel (an LLM can still misread a page)
   spendguard refresh-prices --write         # apply looked-up values + bump verified date
   spendguard refresh-prices --model claude-sonnet-4-6
 """
-import json, re, os, argparse, datetime
+import json, re, argparse
 from . import pricing, config
 
 # The call-class this lookup is measured under, and the COLD-START floor used until it has a measured p99.
@@ -22,15 +22,21 @@ _REFRESH_FLOOR = 8000
 
 
 def _llm_lookup(models, model_id, key):
-    """Ask an LLM (with web search) for current per-1M prices. Returns {model: {in_,out,batch_in,batch_out}}."""
+    """Ask for current per-1M rates plus the source and verification date needed to author them."""
+    import spendguard
+    spendguard.require()
     import anthropic
     client = anthropic.Anthropic(api_key=key)
     prompt = (
         "You are verifying LLM API prices. Using web search of OFFICIAL provider pricing pages "
         "(OpenAI, Anthropic), return the CURRENT price in USD per 1,000,000 tokens for each model below. "
         'Reply with ONLY a JSON object mapping model id to '
-        '{"in_": realtime_input, "out": realtime_output, "batch_in": batch_input, "batch_out": batch_output}. '
-        "Batch is typically 50% of realtime. Omit any model you cannot verify from an official source. "
+        '{"in_": realtime_input, "out": realtime_output, "cached_in": cached_input_or_null, '
+        '"batch_in": batch_input_or_null, "batch_out": batch_output_or_null, '
+        '"source": official_pricing_page_url, "verified": "YYYY-MM-DD"}. '
+        "source must identify the official page actually checked; verified must be the UTC date of that check. "
+        "Return null for optional rates that the official source does not publish; never infer a discount. "
+        "Omit any model whose realtime rates and provenance you cannot verify from an official source. "
         "Models: " + ", ".join(models)
     )
     # BUDGET FROM MEASUREMENT, NOT A LITERAL. This was `max_tokens=3000` on a call that asks for the CURRENT
@@ -81,37 +87,38 @@ def diff(looked):
 
 
 def _write(looked):
-    src = os.path.join(os.path.dirname(__file__), "prices.json")
-    if os.path.exists(src):
-        with open(src) as _fh:                                # closed deterministically (was a leaked handle)
-            base = json.load(_fh)
-    else:
-        base = {"_meta": {}, "providers": {}}
+    """Write verified lookup rows through the sole catalog authoring API."""
+    from . import model_catalog
+    from .catalog_price_authoring import set_catalog_model_price
     for model, found in looked.items():
-        prov = pricing.PROVIDERS.get(pricing.normalize(model), "openai")
-        models = base.setdefault("providers", {}).setdefault(prov, {"models": {}}).setdefault("models", {})
-        models.setdefault(model, {}).update(found)
-    base.setdefault("_meta", {})["verified"] = datetime.date.today().isoformat()
-    target = src if os.access(os.path.dirname(src), os.W_OK) else str(config.HOME / "prices.json")
-    # prices.json — the $/token table every estimate and every receipt is computed from.
-    config.update_json(target, lambda _d: base, quarantine_unparseable=True)   # prices.json is GENERATED (rebuildable): recover a corrupt file, don't silently decline the refresh
-    return target
+        if not found.get("source") or not found.get("verified"):
+            raise ValueError(f"GAP missing price provenance for {model}: source and verified are required")
+    for model, found in looked.items():
+        record = model_catalog.model_record(model) or {}
+        set_catalog_model_price(
+            model, input=found["in_"], output=found["out"], cached=found.get("cached_in"),
+            batch_input=found.get("batch_in"), batch_output=found.get("batch_out"),
+            provider=record.get("provider"), source=found["source"], verified=found["verified"],
+        )
+    return str(model_catalog.DATA_PATH)
 
 
 def main(argv=None):
+    """Parse optional argv, perform one paid lookup, display differences and optionally author catalog updates.
+
+    Return zero on success or one for missing credentials/refused writes. Lookup refusals and errors propagate;
+    argparse may raise SystemExit for help or invalid arguments.
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="claude-haiku-4-5", help="LLM to do the lookup (cheap is fine)")
-    ap.add_argument("--write", action="store_true", help="apply looked-up values to prices.json + bump verified date")
+    ap.add_argument("--write", action="store_true", help="apply source-verified values to model_catalog.json")
     a = ap.parse_args(argv)
     key = config.api_key("ANTHROPIC_API_KEY")
     if not key:
         print("no ANTHROPIC_API_KEY (set env, ~/.spendguard, or ./.env). Needed for the lookup."); return 1
     models = list(pricing.PRICING)
     print(f"Looking up {len(models)} models via {a.model} + web search (one paid LLM call)…")
-    try:
-        looked = _llm_lookup(models, a.model, key)
-    except Exception as e:
-        print(f"lookup failed: {e}"); return 1
+    looked = _llm_lookup(models, a.model, key)
     diffs = diff(looked)
     if not diffs:
         print(f"OK: local prices match all {len(looked)} verified models (local verified {pricing.PRICING_VERIFIED}).")
@@ -120,7 +127,11 @@ def main(argv=None):
     for model, f, local, found in diffs:
         print(f"  {model:<24} {f:<10} {local}  ->  {found}")
     if a.write:
-        target = _write(looked)
+        try:
+            target = _write(looked)
+        except ValueError as error:
+            print(f"catalog update refused: {error}")
+            return 1
         print(f"\nApplied to {target} + bumped verified date. Re-run `spendguard audit` and review.")
     else:
         print("\nReview above, then re-run with --write to apply. (LLM lookups can be wrong — sanity-check first.)")

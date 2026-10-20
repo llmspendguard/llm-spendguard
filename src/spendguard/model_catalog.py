@@ -6,8 +6,7 @@ lane_catalog, reasoning_equivalence) + config + scattered literals, with no sing
 env had gemini/deepseek unpriced (they lived only in the synced LiteLLM cache), and a model id / price / ceiling /
 reasoning-floor could be authored in several places at once. This module is the ONE place a model fact is authored.
 
-SoT ≠ one COPY: derived copies are fine so long as they are generated + fresh + never hand-edited. prices.json is a
-GENERATED projection of this catalog (it carries a _generated marker); the synced LiteLLM cache is a BREADTH fallback
+Price tables are derived IN MEMORY from this catalog; the synced LiteLLM cache is a BREADTH fallback
 for models not in the catalog. PUBLISHED fields (price, output_ceiling) carry the PROVIDER as origin via a `source` +
 `verified` provenance; INTERNAL decisions (lane<->metered spelling, chosen reasoning floor) are authored here.
 
@@ -37,6 +36,8 @@ REASONING_STYLES = ("param", "suffix", "thinking", "none")   # enum domain for r
 _REQUIRED_TOP = ("id", "provider")                            # a record must at least identify itself + its vendor
 _TRACKED_FIELDS = ("price", "vision", "capabilities", "context_window", "output_ceiling")
 _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+BILLING_EXEMPT_REASON_FIELD = "billing_exempt_reason"
+CATALOG_UNIT_PRICES_FIELD = "unit_prices"
 
 
 def tracked_catalog_payload(record):
@@ -143,10 +144,34 @@ def model_record(model_id):
     # a lane use-name (…-low/-high) → its base, via the authored lane_spellings (no blind suffix regex)
     bare = _bare(model_id)
     for rid, rec in models.items():
+        if bare in (rec.get("aliases") or []):
+            return rec
         for spellings in (rec.get("lane_spellings") or {}).values():
             if bare in spellings:
                 return rec
     return None
+
+
+def billing_exempt(model_id):
+    """Whether the catalog explicitly declares this model non-billable (never infer from its name)."""
+    return bool((model_record(model_id) or {}).get(BILLING_EXEMPT_REASON_FIELD))
+
+
+def unit_price_table():
+    """Catalog-authored non-token rates, overlaid using the same catalog layers as model records."""
+    return catalog_pricing_metadata(CATALOG_UNIT_PRICES_FIELD)
+
+
+def catalog_pricing_metadata(section):
+    """Read authored pricing metadata through the catalog's floor and overlay layers."""
+    floor = json.loads(_read_bytes(DATA_PATH) or b"{}")
+    overlay = json.loads(_read_bytes(_overlay_path()) or b"{}")
+    return {**floor.get(section, {}), **overlay.get(section, {})}
+
+
+def cache_modifier_table():
+    """Provider-published cache multipliers authored only in the catalog."""
+    return catalog_pricing_metadata("cache_modifiers")
 
 
 def all_records():
@@ -233,7 +258,14 @@ def model_price(model_id):
     model, or None when the model is not in the catalog or has no price (a curated model may carry price_error). This
     is the CURATED rate; pricing.py layers it above the synced breadth cache and does the cost math."""
     rec = model_record(model_id)
-    return (rec or {}).get("price") if rec else None
+    visited = set()
+    while rec and not rec.get("price") and rec.get("retired_alias_of"):
+        target = rec["retired_alias_of"]
+        if target in visited:
+            return None
+        visited.add(target)
+        rec = model_record(target)
+    return (rec or {}).get("price")
 
 
 def published_ceiling(model_id):
@@ -392,9 +424,9 @@ def model_capability(model_id, name):
 
 
 def as_price_table():
-    """The catalog projected into the prices.json shape: {provider: {model_id: {in_, out, cached_in, batch_in,
+    """The catalog projected in memory: {provider: {model_id: {in_, out, cached_in, batch_in,
     batch_out, [batch_cached_in], _source}}}. The ONE place that knows how a catalog record becomes a price row —
-    used by scripts/gen_prices_json.py to GENERATE prices.json (a derived artifact) and by pricing._load to layer the
+    used by pricing._load to layer the
     catalog's curated rates above the synced breadth. Models with no usable price (price is None or lacks in_) are
     omitted (an unpriced model is a gap, never a $0 row)."""
     out = {}

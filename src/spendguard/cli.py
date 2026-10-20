@@ -167,14 +167,9 @@ def _dispatch(argv=None):
     _load_public_api_and_install_gate()
     # ensure the gate is installed for this process so the advisor's OWN LLM calls (optimize/experiment/
     # reconstruct/mine/review/promote/cascade/brief --llm) are caged by caps.meta even when run via the CLI
-    # outside a gated venv. Idempotent + fail-open.
-    try:
-        from . import gate
-        gate.install()
-    except Exception as _ge:                          # fail-open (the CLI must still run), but NOT silent: a failed
-        import sys as _gs                             # self-install means this process's own meta LLM calls may be
-        print(f"[spendguard] warning: gate.install() failed ({str(_ge)[:80]}); this process may be UNGATED — "   # ungated
-              f"verify with `spendguard doctor`", file=_gs.stderr)
+    # outside a gated venv. Installation failures must propagate before dispatch.
+    from . import gate
+    gate.install()
     if cmd in ("status", "doctor"):                   # first-run nudge when nothing's configured yet
         try:
             from . import config
@@ -681,21 +676,24 @@ def _dispatch(argv=None):
         r = list(rest)
         if not r or r[0].startswith("-"):
             print("usage: spendguard price <model> --in <$/1M> --out <$/1M> --source '<url or invoice>' "
+                  "--verified YYYY-MM-DD "
                   "[--provider <name>] [--batch-in X] [--batch-out Y] [--cached-in Z]")
             return 2
         model = r[0]
         from .cli_arguments import cli_option_value_after
         try:
             path, entry = _pr.set_price(
-                model, cli_option_value_after(r, "--provider", "custom"), cli_option_value_after(r, "--in"),
+                model, cli_option_value_after(r, "--provider"), cli_option_value_after(r, "--in"),
                 cli_option_value_after(r, "--out"), cli_option_value_after(r, "--source", ""),
                 batch_in=cli_option_value_after(r, "--batch-in"), batch_out=cli_option_value_after(r, "--batch-out"),
-                cached_in=cli_option_value_after(r, "--cached-in"))
+                cached_in=cli_option_value_after(r, "--cached-in"),
+                verified=cli_option_value_after(r, "--verified"))
         except ValueError as e:
             print(f"refused: {e}")
             return 2
         print(f"priced {model}: ${entry['in_']}/1M in · ${entry['out']}/1M out  (source: {entry['_source']})")
-        print(f"  written to {path} — it now outranks the synced table, and past UNPRICED rows for this model")
+        print(f"  authored in {path}; the in-memory price table refreshes on the next read.")
+        print(f"  Past UNPRICED rows for {model}")
         print("  can be re-costed with `spendguard reprice --model %s`." % model)
         return 0
 
@@ -1039,9 +1037,10 @@ def _dispatch(argv=None):
         flag = f"  ⚠️ STALE (>{p.STALE_AFTER_DAYS}d) — re-verify against the source below" if stale else "  (fresh)"
         print(f"prices verified {v} ({days} days ago){flag}")
         print(f"  source : {p.PRICING_SOURCE}")
-        print("  config : edit prices.json in the package, or ~/.spendguard/prices.json (or SPENDGUARD_PRICES)")
+        print("  config : spendguard price <model> --in <rate> --out <rate> --source <URL> --verified YYYY-MM-DD")
         for prov, models in sorted(p.providers().items()):
             print(f"  {prov}: {len(models)} models")
+        from .ledger_read import LedgerReadError
         try:                                              # capability coverage/completeness pointer (full detail: `metadata`)
             from . import metadata_audit as _ma
             _cap = _ma._capability_health()
@@ -1049,6 +1048,8 @@ def _dispatch(argv=None):
                 print(f"  capabilities: {_cap['covered']}/{_cap['catalog_n']} models have LiteLLM data · "
                       f"{len(_cap.get('uncovered') or [])} uncovered · {_cap.get('discover_total', 0)} newer LiteLLM "
                       f"models to consider adding (`spendguard metadata` / `sync-capabilities --audit` for detail)")
+        except LedgerReadError:
+            raise
         except Exception:
             pass                                          # a capability-audit hiccup never fails the price-freshness view
         return 2 if stale else 0

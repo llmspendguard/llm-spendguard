@@ -74,6 +74,13 @@ def classify_impossible_cost_buckets(rows, *, gaps=None):
             lc = float(ledger_cost)
             if not math.isfinite(lc) or lc < 0:
                 raise ValueError(f"Invalid ledger cost: {ledger_cost!r}")
+        except pricing.PriceUnknownError as exc:
+            # Missing catalog data is incomplete coverage, retained as a named gap.
+            unpriced += 1
+            if gaps is not None:
+                gaps.append({**identity, "gap": "token_cost_reconstruction_unavailable",
+                             "error": repr(exc)})
+            continue
         except Exception as exc:
             COST_INTEGRITY_LOGGER.exception("Cost integrity reconstruction failed for %r", identity)
             unpriced += 1
