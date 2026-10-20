@@ -1,27 +1,16 @@
-"""Cross-check the ledger's recorded COST against the price of its recorded TOKENS — the guard that catches a
-number 'quietly wrong' (tokens under-recorded relative to cost) BEFORE it is quoted as verified. It defends the
-one column every other dollar figure rests on, costs nothing (pure arithmetic over the ledger), and runs in
-`doctor` + a `receipt` line.
+"""Cross-check metered costs using disjoint input/output/cache-read/cache-write axes.
 
-WHY A PROVABLE CEILING, NOT A 'SUSPICIOUS' THRESHOLD. The ledger stores no cache split, and prompt caching moves
-cost in both directions (cache READS discount to a fraction; cache WRITES add a premium). So there is no honest
-hand-picked band that separates "fine" from "wrong" — whether a 1.3x or 2x divergence is anomalous depends on the
-model's cache behaviour, which is a judgement, not a cutoff. We therefore assert ONLY what is arithmetically
-certain: the MOST the pricing model can charge for a set of tokens is every input token billed as a cache WRITE at
-the largest write multiplier it defines (pricing.CACHE_WRITE_1H_MULTIPLIER) plus output at list. A recorded cost
-ABOVE that ceiling cannot come from any honest pricing of the recorded tokens AT THE TABLE'S OWN RATES — so the
-ledger's cost and token columns provably disagree: either the tokens are UNDER-RECORDED, or the price-table rate
-for that model is STALE/too low. Both are real data-quality defects worth surfacing; WHICH it is is left to the
-reader (the guard names the two causes, never asserts one). The disagreement itself is a fact two reasonable people
-cannot dispute, so the flag is mechanical, not a meaning-decision. Costs BELOW the ceiling (cache reads, short
-outputs, or a genuine under-capture) are indistinguishable without the cache split, so this guard stays SILENT on
-them rather than guessing — storing the split (the follow-up) is what would let the below-ceiling direction be
-checked too.
-
-A symmetric |cost - list| check (what the hmmviz prompt proposed) fires on every cache-read-discounted day — it is
-what misread a legitimate ~5x cache discount as a capture bug. This does not: it flags only the impossible.
+Split rows use catalog rates and pricing's five-minute cache-write convention. Legacy rows lack
+cache evidence: retain the old ceiling as best effort, but report a named coverage gap.
 """
+import logging
+import math
+import traceback
+
 from . import ledger_read, pricing
+
+COST_INTEGRITY_LOGGER = logging.getLogger(__name__)
+COST_INTEGRITY_LEGACY_WIDTH = 7
 
 _CEIL_EPS = 1e-6     # relative float-rounding tolerance comparing cost to the ceiling — NOT a 'suspicious' band
 
@@ -33,37 +22,71 @@ def _max_token_cost(model, in_tok, out_tok, batch):
     when the model is unpriced (the bound is unknowable). Decomposed via the public cost fns (input-only + output-
     only) so it tracks their real rates for realtime vs batch without re-deriving the per-model price table."""
     fn = pricing.batch_cost if batch else pricing.realtime_cost
-    try:
-        in_only = fn(model, int(in_tok or 0), 0)
-        out_only = fn(model, 0, int(out_tok or 0))
-    except Exception:
-        return None
+    in_only = fn(model, int(in_tok or 0), 0)
+    out_only = fn(model, 0, int(out_tok or 0))
     if in_only is None or out_only is None:
         return None
     return float(in_only) * float(pricing.CACHE_WRITE_1H_MULTIPLIER) + float(out_only)
 
 
-def classify_impossible_cost_buckets(rows):
-    """PURE verdict logic, split from the ledger read so it is testable without a database. `rows` = iterable of
-    (model, day, kind, n, ledger_cost, in_tok, out_tok). Flags ONLY buckets whose recorded cost EXCEEDS the maximum
-    the pricing model can assign to the recorded tokens (every input token as a 1h cache-write + output at list) —
-    an arithmetically provable under-recording. Returns (findings_worst_first, unpriced_count); unpriced buckets are
-    COUNTED (never silently treated as clean), consistent buckets are omitted."""
+def _reconstruct_split_token_cost(model, in_tok, out_tok, cache_read_tok, cache_write_tok, batch):
+    """Price disjoint token axes without pricing._cost's missing-cache-rate fallback.
+
+    in_tok here is fresh input (as in spend_events), whereas pricing's public helpers include reads in input.
+    Cache creation uses the same five-minute multiplier as pricing._cost; one-hour evidence needs its own axis.
+    """
+    counts = (in_tok, out_tok, cache_read_tok, cache_write_tok)
+    if any(value is None or not math.isfinite(float(value)) or float(value) < 0 for value in counts):
+        raise ValueError(f"Incomplete or invalid token axes: {counts!r}")
+    rates = pricing.price(model)
+    input_key, output_key = ("batch_in", "batch_out") if batch else ("in_", "out")
+    read_key = "batch_cached_in" if batch else "cached_in"
+    input_rate, output_rate = rates[input_key], rates[output_key]
+    read_rate = rates[read_key] if cache_read_tok else 0
+    if cache_write_tok and rates.get("provider") != "anthropic":
+        raise ValueError(f"No authoritative cache-write rate for {model!r}: {rates!r}")
+    write_rate = input_rate * pricing.CACHE_WRITE_5M_MULTIPLIER
+    components = tuple(float(tokens) * float(rate) / pricing.ONE_MILLION
+                       for tokens, rate in zip(counts, (input_rate, output_rate, read_rate, write_rate)))
+    if not all(math.isfinite(component) and component >= 0 for component in components):
+        raise ValueError(f"Invalid priced token components: {components!r}")
+    return sum(components)
+
+
+def classify_impossible_cost_buckets(rows, *, gaps=None):
+    """Return mismatches and uncheckable count; optionally collect named coverage gaps.
+
+    Seven-column rows are legacy ceiling-only evidence. Nine-column rows append disjoint cache read/write counts.
+    Numeric comparison is accounting arithmetic, not a semantic judgement.
+    """
     findings, unpriced = [], 0
-    for model, day, kind, n, ledger_cost, in_tok, out_tok in rows:
-        ceiling = _max_token_cost(model, in_tok, out_tok, kind == "batch")
-        if ceiling is None:
+    for row in rows:
+        model, day, kind, n, ledger_cost, in_tok, out_tok, *cache_axes = row
+        split = len(row) != COST_INTEGRITY_LEGACY_WIDTH and all(axis is not None for axis in cache_axes)
+        identity = {"model": model, "day": day, "kind": kind, "n": int(n)}
+        if not split and gaps is not None:
+            gaps.append({**identity, "gap": "legacy_cache_split_missing", "basis": "best-effort ceiling only"})
+        try:
+            expected = (_reconstruct_split_token_cost(model, in_tok, out_tok, *cache_axes, kind == "batch")
+                        if split else _max_token_cost(model, in_tok, out_tok, kind == "batch"))
+            if expected is None:
+                raise ValueError("Pricing returned no token cost")
+            lc = float(ledger_cost)
+            if not math.isfinite(lc) or lc < 0:
+                raise ValueError(f"Invalid ledger cost: {ledger_cost!r}")
+        except Exception as exc:
+            COST_INTEGRITY_LOGGER.exception("Cost integrity reconstruction failed for %r", identity)
             unpriced += 1
+            if gaps is not None:
+                gaps.append({**identity, "gap": "token_cost_reconstruction_unavailable",
+                             "error": f"{exc!r}\n{traceback.format_exc()}"})
             continue
-        lc = float(ledger_cost or 0.0)
-        if ceiling <= 0.0:
-            if lc > 0.0:                 # billed a positive cost on ~zero priceable tokens → certain under-recording
-                findings.append({"model": model, "day": day, "kind": kind, "n": int(n), "ledger_cost": lc,
-                                 "ceiling": ceiling, "ratio": None})
-            continue
-        if lc > ceiling * (1.0 + _CEIL_EPS):
-            findings.append({"model": model, "day": day, "kind": kind, "n": int(n), "ledger_cost": lc,
-                             "ceiling": ceiling, "ratio": lc / ceiling})
+        mismatch = (not math.isclose(lc, expected, rel_tol=_CEIL_EPS) if split
+                    else lc > expected * (1.0 + _CEIL_EPS))
+        if mismatch:
+            findings.append({**identity, "ledger_cost": lc, "ceiling": expected,
+                             "expected_cost": expected, "basis": "split" if split else "legacy ceiling",
+                             "ratio": lc / expected if expected else None})
     findings.sort(key=lambda f: -(f["ratio"] if f["ratio"] is not None else float("inf")))
     return findings, unpriced
 
@@ -76,9 +99,11 @@ def audit_metered_cost_vs_tokens(since_days=7):
     try:
         rows = ledger_read.read_cost_integrity_buckets(since_days)
     except Exception as e:
-        return {"ok": False, "error": str(e)[:200], "findings": [], "unpriced": 0, "checked": 0}
-    findings, unpriced = classify_impossible_cost_buckets(row.values for row in rows)
-    return {"ok": True, "findings": findings, "unpriced": unpriced, "checked": len(rows)}
+        COST_INTEGRITY_LOGGER.exception("Cost integrity ledger read failed")
+        return {"ok": False, "error": f"{e!r}\n{traceback.format_exc()}", "findings": [], "unpriced": 0, "checked": 0}
+    gaps = []
+    findings, unpriced = classify_impossible_cost_buckets((row.values for row in rows), gaps=gaps)
+    return {"ok": True, "findings": findings, "unpriced": unpriced, "checked": len(rows), "gaps": gaps}
 
 
 def cost_integrity_lines(since_days=7):
@@ -91,7 +116,14 @@ def cost_integrity_lines(since_days=7):
                 % (r.get("error") or "read failed")]
     lines = []
     for f in r["findings"]:
-        if f["ratio"] is None:
+        if f.get("basis") == "split":
+            lines.append(f"🔴 cost≠split-token-price: {f['model']} {f['day']} ({f['kind']}, n={f['n']}) "
+                         f"recorded ${f['ledger_cost']:.4f}, reconstructed ${f['expected_cost']:.4f} "
+                         "from input + output + cache_read + cache_write catalog rates. Investigate.")
+        elif f.get("basis") == "legacy ceiling":
+            lines.append(f"⚪ UNKNOWN — legacy ceiling exceeded: {f['model']} {f['day']} ({f['kind']}, n={f['n']}); "
+                         "cache split missing, so this best-effort bound cannot verify the recorded cost.")
+        elif f["ratio"] is None:
             lines.append(f"🔴 cost>max-token-price: {f['model']} {f['day']} ({f['kind']}, n={f['n']}) billed "
                          f"${f['ledger_cost']:.4f} on ~zero priceable recorded tokens — the cost and token columns "
                          f"disagree: tokens UNDER-RECORDED, or a missing/stale price. Investigate.")
@@ -101,11 +133,14 @@ def cost_integrity_lines(since_days=7):
                          f"recorded tokens (every input token as a 1h cache-write + output at list; ceiling "
                          f"${f['ceiling']:.4f}) — above what any caching permits, so the ledger's own cost and token "
                          f"columns disagree: tokens UNDER-RECORDED, or a STALE price for this model. Investigate.")
+    if r.get("gaps"):
+        lines.extend(f"⚪ UNKNOWN — {gap['gap']}: {gap['model']} {gap['day']} ({gap['kind']}, n={gap['n']}) "
+                     + gap.get("error", gap.get("basis", "")) for gap in r["gaps"])
     if not lines:
         cov = f"{r['checked']} metered bucket(s) checked"
         if r["unpriced"]:
             cov += f", {r['unpriced']} unpriced (not checkable — no price)"
-        lines.append(f"🟢 no metered cost exceeds the max possible price of its recorded tokens — {cov} (last {since_days}d)")
+        lines.append(f"🟢 no metered cost mismatch (split reconstruction or legacy ceiling) — {cov} (last {since_days}d)")
     elif r["unpriced"]:
-        lines.append(f"ℹ {r['unpriced']} unpriced metered bucket(s) could not be cross-checked (no price in the catalog)")
+        lines.append(f"ℹ {r['unpriced']} uncheckable metered bucket(s): token-cost reconstruction unavailable (see named gaps)")
     return lines

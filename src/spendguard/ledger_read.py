@@ -39,11 +39,15 @@ DELEGATE_PLAN_SOURCE = "claude-code"
 INVOICE_OVERAGE_MONTH_SQL = """SELECT substr(occurred_at,1,7) AS mo,
 ROUND(SUM(CAST(realtime_usd AS REAL)),2) AS amount FROM spend_events
 WHERE source=? AND intent LIKE ? GROUP BY mo ORDER BY mo DESC"""
+COST_INTEGRITY_CACHE_COLUMNS = ("cache_read_tok", "cache_write_tok")
+COST_INTEGRITY_SCHEMA_SQL = "SELECT name FROM pragma_table_info(?)"
 COST_INTEGRITY_BUCKET_SQL = """SELECT model,date(ts) AS d,kind,COUNT(*) AS n,
-SUM(COALESCE(cost,0)) AS c,SUM(COALESCE(in_tok,0)) AS i,
-SUM(COALESCE(out_tok,0)) AS o FROM calls
+SUM(COALESCE(cost,0)) AS c,{input_projection} AS i,
+CASE WHEN COUNT(out_tok)=COUNT(*) THEN SUM(out_tok) END AS o,
+{cache_read_projection} AS cache_read_tok,
+{cache_write_projection} AS cache_write_tok FROM calls
 WHERE datetime(ts)>=datetime('now',?) AND kind IN ('realtime','batch')
-AND cost IS NOT NULL AND suspect IS NULL GROUP BY model,date(ts),kind"""
+AND cost IS NOT NULL AND suspect IS NULL GROUP BY model,date(ts),kind{cache_completeness_group}"""
 RECEIPT_LANE_ACTIVITY_SQL = """SELECT executor,COUNT(*) AS n,
 COALESCE(SUM(in_tok),0) AS in_tok,COALESCE(SUM(out_tok),0) AS out_tok
 FROM calls WHERE kind='subscription' AND ts>=? GROUP BY executor ORDER BY n DESC"""
@@ -351,8 +355,28 @@ def read_invoice_overage_months(path=None):
 
 
 def read_cost_integrity_buckets(since_days, path=None):
-    return read_ledger_sql(LedgerSQLReadRequest(COST_INTEGRITY_BUCKET_SQL,
-        (f"-{int(since_days)} days",)), path)
+    """Expose disjoint fresh-input/read/write axes; incomplete legacy buckets retain NULL, never zero.
+
+    Reads do not migrate old ledgers. COUNT(column) prevents SUM from hiding partially missing cache evidence.
+    """
+    schema = read_ledger_sql(LedgerSQLReadRequest(COST_INTEGRITY_SCHEMA_SQL, (LEDGER_CALLS_TABLE,)), path)
+    available = {row["name"] for row in schema}
+    projections = tuple(
+        f"CASE WHEN COUNT({column})=COUNT(*) THEN SUM({column}) END" if column in available else "NULL"
+        for column in COST_INTEGRITY_CACHE_COLUMNS)
+    # Split calls.in_tok follows pricing's API: reads are included, writes are separate.
+    # Preserve total input for incomplete legacy buckets so their best-effort ceiling stays unchanged.
+    read_column = COST_INTEGRITY_CACHE_COLUMNS[0]
+    complete_split = " AND ".join(f"COUNT({column})=COUNT(*)" for column in COST_INTEGRITY_CACHE_COLUMNS)
+    input_projection = (f"CASE WHEN COUNT(in_tok)<>COUNT(*) THEN NULL WHEN {complete_split} "
+                        f"THEN SUM(in_tok-{read_column}) ELSE SUM(in_tok) END"
+                        if all(column in available for column in COST_INTEGRITY_CACHE_COLUMNS) else "SUM(in_tok)")
+    completeness_group = (",(" + " AND ".join(f"{column} IS NOT NULL" for column in COST_INTEGRITY_CACHE_COLUMNS)
+                          + ")" if all(column in available for column in COST_INTEGRITY_CACHE_COLUMNS) else "")
+    sql = COST_INTEGRITY_BUCKET_SQL.format(input_projection=input_projection, cache_read_projection=projections[0],
+                                          cache_write_projection=projections[1],
+                                          cache_completeness_group=completeness_group)
+    return read_ledger_sql(LedgerSQLReadRequest(sql, (f"-{int(since_days)} days",)), path)
 
 
 def read_receipt_lane_activity(since, path=None):

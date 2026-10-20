@@ -323,7 +323,8 @@ def _ensure_call_observation_schema(c):
         quality TEXT, quality_src TEXT, quality_conf REAL,
         executor TEXT, project TEXT, effort TEXT, suspect TEXT,
         call_class TEXT, origin_session TEXT,
-        requested_model TEXT, served_model TEXT, resolved_lane TEXT, redirect_reason TEXT)""")
+        requested_model TEXT, served_model TEXT, resolved_lane TEXT, redirect_reason TEXT,
+        cache_read_tok INTEGER, cache_write_tok INTEGER)""")
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_chain ON calls(chain)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_intent ON calls(intent)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_ts ON calls(ts)")  # as_of/since range reads (calibrate, advise)
@@ -374,7 +375,8 @@ def _ensure_call_observation_schema(c):
                         ("retry_of", "TEXT"), ("fell_from", "TEXT"), ("fell_reason", "TEXT"),
                         ("call_class", "TEXT"), ("origin_session", "TEXT"),
                         ("requested_model", "TEXT"), ("served_model", "TEXT"),
-                        ("resolved_lane", "TEXT"), ("redirect_reason", "TEXT")):
+                        ("resolved_lane", "TEXT"), ("redirect_reason", "TEXT"),
+                        ("cache_read_tok", "INTEGER"), ("cache_write_tok", "INTEGER")):
         if _col not in _have:
             c.execute(f"ALTER TABLE calls ADD COLUMN {_col} {_decl}")
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_executor ON calls(executor)")  # per-lane rollups
@@ -469,8 +471,12 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
            executor=None, project=None, effort=None, *, outcome=None, http_status=None,
            provider_error=None, retry_after=None, attempts=None, disposition=None, disposition_reason=None, retry_of=None,
            fell_from=None, fell_reason=None, call_id=None, call_class=None, origin_session=None,
-           requested_model=None, served_model=None, resolved_lane=None, redirect_reason=None):
+           requested_model=None, served_model=None, resolved_lane=None, redirect_reason=None,
+           cache_read_tok=None, cache_write_tok=None):
     """Record one call — its full OUTCOME, success OR failure. Returns call_id. Never raises.
+
+    Cache observations remain NULL when unmeasured or when a write tier is unknown.
+    Complete split observations use input inclusive of reads, excluding writes; writes identify the five-minute tier.
 
     FORENSIC MANDATE (the reason this tool exists): EVERY call is on the ledger, whatever its fate — a metered success,
     a $0 lane hit, a 429 overload, a transport drop, a schema miss, an exhausted-after-N-retries failure. So the OUTCOME
@@ -562,8 +568,8 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
                 "INSERT INTO calls (id,ts,chain,intent,caller,provider,model,kind,in_tok,out_tok,"
                 "cost,latency,prompt_hash,prompt_snip,output_snip,finish,executor,project,effort,suspect,"
                 "quality,quality_src,quality_conf,outcome,http_status,provider_error,retry_after,attempts,disposition,disposition_reason,retry_of,fell_from,fell_reason,"
-                "call_class,origin_session,requested_model,served_model,resolved_lane,redirect_reason) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "call_class,origin_session,requested_model,served_model,resolved_lane,redirect_reason,cache_read_tok,cache_write_tok) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (cid, ts, chain, intent, who or ctx.get("who") or caller(), provider, model, kind,
                  int(in_tok or 0), int(out_tok or 0), float(cost or 0), latency, ph, psnip, osnip, finish,
                  executor, proj, (effort or None), suspect,
@@ -577,7 +583,9 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
                  (disposition or None), (disposition_reason or None), (retry_of or None), (fell_from or None),
                  (fell_reason or None), call_class, origin_session,
                  (requested_model or None), (served_model or None), (resolved_lane or None),
-                 (redirect_reason or None)))
+                 (redirect_reason or None),
+                 (int(cache_read_tok) if cache_read_tok is not None else None),
+                 (int(cache_write_tok) if cache_write_tok is not None else None)))
             _calls_db().commit()
         # Reuse alone must leave quality unjudged; the compatibility entrypoint never infers a verdict.
         if chain and prompt:
