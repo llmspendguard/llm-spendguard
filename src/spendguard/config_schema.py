@@ -12,6 +12,7 @@ reading the repo — enumerate exactly what's configurable, what the valid optio
 Environment variable (`env`) always overrides the file when set.
 """
 
+from .config import CODEX_POOL_SIZE_DEFAULT
 from .weekly_cap_guard import (
     WEEKLY_CAP_GUARD_BLOCKED_SPAWN_TOOLS_DEFAULT,
     WEEKLY_CAP_GUARD_ENABLED_DEFAULT,
@@ -351,7 +352,7 @@ SETTINGS = [
          env=None, default=None, kind="str|null", secret=False,
          desc="Override the single host-wide Codex broker socket path."),
     dict(section="advisor", key="codex_daemon_pool_size", store="config.json:advisor.codex_daemon_pool_size",
-         env="SPENDGUARD_CODEX_DAEMON_POOL_SIZE", default=3, kind="int", secret=False,
+         env="SPENDGUARD_CODEX_DAEMON_POOL_SIZE", default=CODEX_POOL_SIZE_DEFAULT, kind="int", secret=False,
          desc="Always-warm exclusive Codex workers behind the single host broker; one restores single-child capacity."),
     dict(section="advisor", key="codex_daemon_pool_isolate_homes",
          store="config.json:advisor.codex_daemon_pool_isolate_homes",

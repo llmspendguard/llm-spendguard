@@ -296,11 +296,12 @@ class _CodexDaemonPool:
     STARTUP_TIMEOUT_S = STARTUP_TIMEOUT_S
 
     def __init__(self, worker_factory, size=None):
-        from .dispatch import _Bucket
+        from .dispatch import _Bucket, effective_codex_concurrency
         settings = config.codex_daemon_pool_settings()
         self._size = settings["size"] if size is None else int(size)
         if self._size < 1:
             raise ValueError("codex daemon pool size must be positive")
+        self._size = effective_codex_concurrency(self._size)
         self._workers = [worker_factory() for _ in range(self._size)]
         self._pool_worker_factory = worker_factory
         for index, worker in enumerate(self._workers):
