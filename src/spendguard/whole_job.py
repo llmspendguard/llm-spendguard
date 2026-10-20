@@ -8,7 +8,12 @@ economic method choice under the goal, and the estimate-first budget gate — it
 
 CONTRACT
   run_jobs(jobs, goal) -> {results, pending, plan, receipt}
-    jobs: [ {prompt, intent, schema?, system?, id?} ]   — intent is the routing + attribution key (required per job)
+    jobs: [ {prompt, intent, schema?, system?, id?, quality_bar?, reasoning?, budget_usd?, deadline_s?} ]
+        intent groups routing, NEVER execution contracts. Schema/system default to None. Declared quality_bar
+        selects best-value when truthy; otherwise declared reasoning is used. If neither is supplied, goal's
+        quality_bar is the explicit default. An absent budget adds no cap beyond the whole-set cap; a job budget
+        is also enforced. An absent deadline uses the realtime executor's default. Quality/reasoning/budget/deadline
+        declarations require realtime because the batch interface cannot represent those per-job guarantees.
     goal: { budget_usd?, urgency?, quality_bar? }
         urgency: "auto" (default; route_report's true-$ pick decides batch vs realtime) | "realtime" (never batch —
                  results now) | "batch" (prefer the Batch API where eligible — ~half cost, async)
@@ -32,6 +37,7 @@ from . import route_economics, config
 
 
 _REALTIME, _BATCH = "realtime", "batch"
+_WHOLE_JOB_REALTIME_CONSTRAINT_FIELDS = ("quality_bar", "reasoning", "budget_usd", "deadline_s")
 
 
 def _group_by_intent(jobs):
@@ -140,14 +146,18 @@ def plan_jobs(jobs, goal=None):
     plan, total, unpriced = [], 0.0, []
     for intent, items in groups.items():
         n = len(items)
-        if horizon and intent in horizon:
+        requires_realtime = any(field in job for job in items for field in _WHOLE_JOB_REALTIME_CONSTRAINT_FIELDS)
+        if horizon and intent in horizon and not requires_realtime:
             h = horizon[intent]
             method, est, why = h["method"], h["est"], h["why"]
         else:
             # per-task input size from THIS set (chars/4, the neutral basis route_report defaults to); out_tok left to
             # route_report (expected_output for the intent) so the estimate reflects both the set and the intent's history.
             in_tok = max(1, sum(len(str(j.get("prompt", ""))) for j in items) // max(1, n) // 4)
-            method, est, why = _method_for(intent, n, goal, in_tok, None)
+            execution_goal = {**goal, "urgency": _REALTIME} if requires_realtime else goal
+            method, est, why = _method_for(intent, n, execution_goal, in_tok, None)
+            if requires_realtime:
+                why += "; realtime preserves declared per-job quality/reasoning/budget/deadline constraints"
         if est is None:
             unpriced.append(intent)
         else:
@@ -290,19 +300,31 @@ def load_pending(pending_path):
 
 def _run_realtime_group(intent, items, goal, budget_remaining, checkpoint):
     """Execute one intent-group on the realtime/lane fan (bulk_delegate — #1 capability-aware auto-route is applied
-    per task inside it, and `checkpoint` makes each completed result durable). Returns {job_id: row}. One schema per
-    group (a group shares an intent + contract); quality_bar → reasoning='best-value' so spendguard picks the cheapest
-    model that holds quality."""
+    per task inside it, and `checkpoint` makes each completed result durable). Returns {job_id: row}. Each singleton
+    fan receives its own execution contract; intent is only a routing hint. Omitted constraints use the documented
+    run_jobs defaults, never a sibling's values. Nested intent caps preserve zero-budget enforcement as well as the
+    outer whole-set cap, using scoped_intent_cap's existing spend-window accounting semantics."""
     from . import lane_balance
-    schema = next((j.get("schema") for j in items if j.get("schema") is not None), None)
-    system = next((j.get("system") for j in items if j.get("system") is not None), None)
-    reasoning = "best-value" if goal.get("quality_bar") else None
-    by_key = {j["id"]: j for j in items}
-    keyed = lane_balance.bulk_delegate(
-        list(by_key.keys()), intent=intent, system=system, schema=schema, reasoning=reasoning,
-        prompt_for=lambda jid: by_key[jid]["prompt"], task_key=lambda jid: jid,
-        return_keyed=True, budget_usd=budget_remaining, checkpoint=checkpoint)
-    return keyed if isinstance(keyed, dict) else {}
+    results = {}
+    for job in items:
+        caps = [float(cap) for cap in (job.get("budget_usd"), budget_remaining) if cap is not None]
+        if "quality_bar" in job:
+            reasoning = "best-value" if job["quality_bar"] else job.get("reasoning")
+        else:
+            reasoning = job.get("reasoning", "best-value" if goal.get("quality_bar") else None)
+        execution = {"system": job.get("system"), "schema": job.get("schema"), "reasoning": reasoning,
+                     "budget_usd": min(caps) if caps else None}
+        if "deadline_s" in job:
+            execution["deadline_s"] = job["deadline_s"]
+        with config.scoped_intent_cap((intent,), execution["budget_usd"]):
+            keyed = lane_balance.bulk_delegate(
+                [job["id"]], intent=intent, **execution,
+                prompt_for=lambda jid, submitted=job: submitted["prompt"], task_key=lambda jid: jid,
+                return_keyed=True, checkpoint=checkpoint)
+        if not isinstance(keyed, dict):
+            raise TypeError("whole-job executor returned invalid keyed results for job %r: %r" % (job["id"], keyed))
+        results.update(keyed)
+    return results
 
 
 def _run_batch_group(intent, items, goal, budget_remaining):
@@ -316,7 +338,6 @@ def _run_batch_group(intent, items, goal, budget_remaining):
     model = config.advisor_model()                    # v1: the account's advisor model (an OpenAI id rides the Batch API)
     if adapters.provider_for(model) != "openai":      # structural eligibility — the Batch API serves only OpenAI ids
         return {"batch_id": None, "eligible": False, "intent": intent}
-    schema = next((j.get("schema") for j in items if j.get("schema") is not None), None)
     tasks = []
     for j in items:
         t = {"custom_id": j["id"], "content": j["prompt"]}
@@ -325,7 +346,7 @@ def _run_batch_group(intent, items, goal, budget_remaining):
         if j.get("system") is not None:
             t["system"] = j["system"]
         tasks.append(t)
-    r = _submit.submit_chat_tasks(tasks, model, schema=schema, intent=intent, cap_dollars=budget_remaining)
+    r = _submit.submit_chat_tasks(tasks, model, schema=None, intent=intent, cap_dollars=budget_remaining)
     if r.get("error") or not r.get("batch_id"):
         return {"batch_id": None, "eligible": True, "intent": intent, "error": r.get("error") or "no batch_id returned"}
     return {"batch_id": r["batch_id"], "intent": intent, "model": model, "job_ids": [j["id"] for j in items]}
