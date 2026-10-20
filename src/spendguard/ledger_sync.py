@@ -202,6 +202,8 @@ def true_down(since=None, billed_rows=None):
     from .reconcile_estimate_stage import stage_reconcile_estimate_cells
     trued, by_model = 0.0, {}
     with stage_reconcile_estimate_cells(since, budget._TRUE_DOWN_CONV, _join_model) as (staged, read_gaps):
+        estimate_incomplete = set(staged.execute("SELECT DISTINCT provider,joined FROM cells WHERE amount IS NULL"))
+        billed_incomplete.update(estimate_incomplete)
         for prov_name, jmodel, total in staged.execute(
                 "SELECT provider,joined,dec_sum(amount) FROM cells GROUP BY provider,joined"):
             if billed_rows.get(prov_name) is None or (prov_name, jmodel) in billed_incomplete:
@@ -224,11 +226,12 @@ def true_down(since=None, billed_rows=None):
             by_model[f"{prov_name}:{jmodel}"] = round(delta, 2)
         # All reads/calculations finish before the snapshot and destructive clear.
         staged.commit()
-        budget.clear_true_down(since, providers=[p for p in billed_rows if p not in read_gaps])
+        budget.clear_readable_true_down(since, providers=[p for p in billed_rows if p not in read_gaps])
         for proj, prov_name, model, day, share in staged.execute("SELECT * FROM corrections"):
             budget.record_true_down(day, prov_name, model, share, project=proj)
     return dict(since=since, trued_down=round(trued, 2), by_model=by_model, skipped=skipped_providers,
                 read_gaps=read_gaps,
+                estimate_unpriced_incomplete=sorted("%s:%s" % k for k in estimate_incomplete),
                 unpriced_incomplete=sorted("%s:%s" % k for k in billed_incomplete))   # UNKNOWN billed, not $0 — never trued down
 
 
@@ -286,6 +289,10 @@ def reconcile_into_ledger(since=None):
             _billed_rows[_prov_name] = None
             errors.setdefault(_prov_name, str(e)[:140])
     td = true_down(since=since, billed_rows=_billed_rows)       # estimates → billed actuals FIRST, so every
+    if td.get("estimate_unpriced_incomplete"):
+        return dict(since=since, true_down=td,
+                    errors={**errors, "unpriced_estimates": td["estimate_unpriced_incomplete"]},
+                    complete=False, gap_rebuild_refused="unpriced estimate rows; existing gap rows preserved")
     if td.get("read_gaps"):
         # Gap records combine providers. Their settled values cannot safely be rebuilt
         # from partial truth, even though readable providers' corrections completed.

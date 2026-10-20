@@ -24,6 +24,8 @@ RECONCILE_GUARD_BAD_AMOUNT = "unreadable-estimate-amount"
 RECONCILE_GUARD_BILLED_FRACTION = Decimal("0.5")
 RECONCILE_GUARD_GAP = Decimal("10")
 RECONCILE_GUARD_GAP_MODEL = "gpt-5.5-mini"
+RECONCILE_GUARD_UNPRICED_BASIS = "unpriced"
+RECONCILE_GUARD_ZERO_PLACEHOLDER = "0"
 
 seed_test_spend_event(RECONCILE_GUARD_DAY, RECONCILE_GUARD_PROVIDERS[0], RECONCILE_GUARD_MODEL,
                       "batch", RECONCILE_GUARD_AMOUNT, "seed-project", timestamp_suffix="T00:00:00+00:00",
@@ -104,9 +106,61 @@ reconcile_guard_gap_rows = [(r["day"], r["project_primary"], Decimal(str(r["batc
     for r in reconcile_guard_connection.execute("SELECT * FROM spend_events WHERE reconciled=1")]
 assert reconcile_guard_gap_rows == [(RECONCILE_GUARD_DAY, "unattributed", RECONCILE_GUARD_GAP)]
 
+# A late unknown estimate must survive staging, block its whole mixed-price
+# model's correction, and refuse gap rebuilding without overwriting settled gaps.
+reconcile_guard_late_id = str(DEFAULT_LEDGER_READ_ROW_CAP + RECONCILE_GUARD_EXTRA_ROWS - 1)
+reconcile_guard_late_original = reconcile_guard_connection.execute(
+    "SELECT batch_usd,cost_basis,provider FROM spend_events WHERE id=?", (reconcile_guard_late_id,)).fetchone()
+from spendguard.reconcile_estimate_stage import stage_reconcile_estimate_cells
+for reconcile_guard_unknown_amount in (None, RECONCILE_GUARD_ZERO_PLACEHOLDER):
+    reconcile_guard_connection.execute("UPDATE spend_events SET batch_usd=?,cost_basis=? WHERE id=?",
+        (reconcile_guard_unknown_amount, RECONCILE_GUARD_UNPRICED_BASIS, reconcile_guard_late_id))
+    reconcile_guard_connection.commit()
+    with stage_reconcile_estimate_cells(RECONCILE_GUARD_SINCE, budget._TRUE_DOWN_CONV,
+                                       lambda model: model) as (reconcile_guard_stage, reconcile_guard_stage_gaps):
+        assert not reconcile_guard_stage_gaps
+        assert reconcile_guard_stage.execute("SELECT amount FROM cells WHERE project=?",
+            (f"reconcile-project-{reconcile_guard_late_id}",)).fetchone() == (None,)
+    reconcile_guard_unknown_gap = ledger_sync.reconcile_into_ledger(RECONCILE_GUARD_SINCE)
+    reconcile_guard_unknown = reconcile_guard_unknown_gap["true_down"]
+    assert reconcile_guard_unknown["estimate_unpriced_incomplete"]
+    assert not reconcile_guard_connection.execute("SELECT id FROM spend_events WHERE conv_id=? AND provider=?",
+        (budget._TRUE_DOWN_CONV, reconcile_guard_late_original[2])).fetchall()
+    assert tuple(reconcile_guard_connection.execute("SELECT batch_usd,cost_basis FROM spend_events WHERE id=?",
+        (reconcile_guard_late_id,)).fetchone()) == (reconcile_guard_unknown_amount, RECONCILE_GUARD_UNPRICED_BASIS)
+    assert not reconcile_guard_unknown_gap["complete"]
+    assert "unpriced" in reconcile_guard_unknown_gap["gap_rebuild_refused"]
+    assert reconcile_guard_gap_rows == [(r["day"], r["project_primary"], Decimal(str(r["batch_usd"])))
+        for r in reconcile_guard_connection.execute("SELECT * FROM spend_events WHERE reconciled=1")]
+reconcile_guard_connection.execute("UPDATE spend_events SET batch_usd=?,cost_basis=? WHERE id=?",
+    (*reconcile_guard_late_original[:2], reconcile_guard_late_id))
+reconcile_guard_connection.commit()
+ledger_sync.true_down(RECONCILE_GUARD_SINCE, reconcile_guard_billed)
+# The public operation keeps its historical unconditional meaning, and the
+# bounded implementation still snapshots before deleting money rows.
+reconcile_guard_snapshot_events = []
+reconcile_guard_original_snapshot = budget.snapshot_once
+budget.snapshot_once = lambda reason: reconcile_guard_snapshot_events.append(reason)
+reconcile_guard_admission_delete = budget._ledger().delete
+
+
+def reconcile_snapshot_before_bounded_delete(*args, **kwargs):
+    """Every destructive batch must follow the public clear's recovery snapshot."""
+    assert reconcile_guard_snapshot_events == ["clear-true-down"]
+    return reconcile_guard_admission_delete(*args, **kwargs)
+
+
+budget._ledger().delete = reconcile_snapshot_before_bounded_delete
+budget.clear_true_down(RECONCILE_GUARD_SINCE)
+budget._ledger().delete = reconcile_guard_admission_delete
+budget.snapshot_once = reconcile_guard_original_snapshot
+assert reconcile_guard_snapshot_events == ["clear-true-down"]
+assert not reconcile_guard_connection.execute("SELECT id FROM spend_events WHERE conv_id=?",
+                                              (budget._TRUE_DOWN_CONV,)).fetchall()
+ledger_sync.true_down(RECONCILE_GUARD_SINCE, reconcile_guard_billed)
+
 # Corrupt a raw row beyond the old admission cap. Preserve this provider's settled
 # corrections while the other provider rebuilds from all its readable estimates.
-reconcile_guard_late_id = str(DEFAULT_LEDGER_READ_ROW_CAP + RECONCILE_GUARD_EXTRA_ROWS - 1)
 reconcile_guard_failed_provider = reconcile_guard_connection.execute(
     "SELECT provider FROM spend_events WHERE id=?", (reconcile_guard_late_id,)).fetchone()[0]
 reconcile_guard_settled_ids = {r[0] for r in reconcile_guard_connection.execute(

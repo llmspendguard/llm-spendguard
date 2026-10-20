@@ -13,7 +13,7 @@ from .ledger_read import LedgerReadError, LEDGER_READ_DECIMAL_ARITY
 
 RECONCILE_STAGE_PREFIX = "spendguard-reconcile-stage-"
 RECONCILE_STAGE_DATABASE = "estimates.db"
-RECONCILE_ESTIMATE_STREAM_SQL = """SELECT id,project_primary,provider,model,day,batch_usd
+RECONCILE_ESTIMATE_STREAM_SQL = """SELECT id,project_primary,provider,model,day,batch_usd,cost_basis
 FROM spend_events WHERE day>=? AND reconciled=0
 AND COALESCE(status,'') NOT IN ('void','reversed') AND COALESCE(conv_id,'')!=?"""
 RECONCILE_STAGE_LOGGER = logging.getLogger(__name__)
@@ -35,9 +35,14 @@ def stage_reconcile_estimate_cells(since, correction_marker, normalize_model, pa
                 source = config.open_ledger_connection(ledger_path.as_uri() + "?mode=ro", uri=True,
                     timeout=config.LEDGER_CONNECT_TIMEOUT_S, tune=False)
                 cursor = source.execute(RECONCILE_ESTIMATE_STREAM_SQL, (since, correction_marker))
-                for row_id, project, provider, model, day, amount in cursor:
+                for row_id, project, provider, model, day, amount, basis in cursor:
+                    # Keep unknown prices as NULL, including writer zero placeholders.
+                    if amount is None or basis == "unpriced":
+                        staged.execute("INSERT INTO cells VALUES(?,?,?,?,?,?)",
+                            (project, provider, model, day, normalize_model(model), None))
+                        continue
                     try:
-                        value = Decimal(str(amount)) if amount is not None else Decimal()
+                        value = Decimal(str(amount))
                     except InvalidOperation as exc:
                         RECONCILE_STAGE_LOGGER.exception("Reconcile estimate row refused: id=%r provider=%r day=%r",
                                                        row_id, provider, day)

@@ -985,7 +985,16 @@ def record_true_down(day, provider, model, delta, project):
                         invoice_id="%s:%s" % (provider, (day or "")[:7]))   # reconciled to this provider-period invoice
 
 
-def clear_true_down(since=None, providers=None):
+def clear_true_down(since=None):
+    """Clear every provider unconditionally: an estimate is more honest than stale billed truth.
+
+    A failed billed fetch must fall back to estimates, never retain an old correction.
+    Ledger-read failures use the separate readable-provider rebuild operation instead.
+    """
+    return clear_readable_true_down(since)
+
+
+def clear_readable_true_down(since=None, providers=None):
     """Remove prior true-down rows in the window so the correction is rebuilt idempotently each reconcile
     (billed actuals only grow as in-flight batches land, so each rebuild converges on the final billed $).
 
@@ -1038,7 +1047,7 @@ def clear_true_down(since=None, providers=None):
                 # rowid is a SQLite integer, not source content; parse before forming the internal SQL predicate.
                 true_down_rowid_sql = ",".join(str(int(true_down_rowid[0])) for true_down_rowid in true_down_rowids)
                 del true_down_rowids  # release this batch before delete() allocates its bounded audit batch.
-                true_down_ledger.delete(where=true_down_scope, filt=f"rowid IN ({true_down_rowid_sql})", since=since,
+                _ledger().delete(where=true_down_scope, filt=f"rowid IN ({true_down_rowid_sql})", since=since,
                                         actor="clear_true_down", reason="rebuild")
     except Exception as true_down_clear_error:
         true_down_logging.getLogger(__name__).exception("refusing clear_true_down after ledger clear failure")

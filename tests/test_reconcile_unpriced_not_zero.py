@@ -13,6 +13,7 @@ import os, sys, tempfile
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-reconcile-unpriced-")
 
 from spendguard import ledger_sync, budget, pricing   # noqa: E402
+from _script_checks import seed_test_spend_event   # noqa: E402
 
 
 def main():
@@ -25,9 +26,13 @@ def main():
         print(f"  [{'OK' if cond else 'FAIL'}] {name}{('  — ' + str(extra)) if extra and not cond else ''}")
 
     # ── true_down: an unpriced batch (cost=None) is EXCLUDED from the correction, never trued down against unknown ──
-    _real_cells, _real_record = budget.gate_batch_cells, budget.record_true_down
+    _real_record = budget.record_true_down
     recorded = []
-    budget.gate_batch_cells = lambda since: {("lmm", "openai", "gpt-5.5", "2026-06-15"): 10.0}   # gate estimate $10
+    # Reconciliation now streams the ledger; seed its actual input rather than
+    # mocking the retired aggregate-reader seam (which created no database).
+    seed_test_spend_event("2026-06-15", "openai", "gpt-5.5", "batch", 10.0, "lmm",
+                          timestamp_suffix="T00:00:00+00:00", source="unpriced-billed-fixture",
+                          dedup_fields=("day", "provider", "model"))
     budget.record_true_down = lambda day, prov, model, amt, project=None: recorded.append((prov, model, amt))
     try:
         # UNPRICED billed batch (cost=None): its $ is UNKNOWN, must NOT be read as $0 (which would make delta=10 → a
@@ -48,7 +53,7 @@ def main():
         ck("a PRICED batch still trues down the real delta (est − billed)", recorded and abs(recorded[0][2] - 2.0) < 1e-6, recorded)
         ck("its unpriced_incomplete is empty", out2.get("unpriced_incomplete") == [], out2)
     finally:
-        budget.gate_batch_cells, budget.record_true_down = _real_cells, _real_record
+        budget.record_true_down = _real_record
 
     # ── _provider_total: an unpriced model in openai_by_day → the total is UNKNOWN (None), not a partial masquerade ──
     import spendguard.report as report
