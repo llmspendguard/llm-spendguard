@@ -14,6 +14,10 @@ a known batch is subtracted — no double-count. Admin API is NOT used (dev cros
 Run UNDER the gated venv (`.venv/bin/python`). Estimate-first done + approved (~$15 Batch API, tell-filtered scope).
 """
 import sys, os, json, re, datetime
+import logging
+import math
+import tempfile
+import shutil
 import spendguard; spendguard.require()
 from spendguard import conv, resources, config, calls, pricing
 
@@ -198,7 +202,7 @@ def collect():
                      "team": sc.get("team"), "project": sc.get("project"), "how": sc.get("how"),
                      "day": sc.get("day") or _sdmap.get(sid0),   # seg-day, else the SESSION's date → real month
                      "sessions": rn.get("sessions"), "calls": rn.get("calls"),
-                     "reasoning": (rn.get("reasoning") or "")[:120]})
+                     "reasoning": rn.get("reasoning") or ""})
     total = round(sum(r["usd"] for r in rows), 2)
     pr = round(sum(r["usd"] for r in rows if r["basis"] == "printed"), 2)
     json.dump({"total": total, "printed": pr, "by_org": by_org, "runs": rows}, open(STATE + ".result", "w"), indent=2)
@@ -235,8 +239,91 @@ def _parse_tags(txt):
     return out
 
 
-def clean():
+RECONSTRUCTION_UNATTRIBUTED = "unattributed"
+RECONSTRUCTION_TRUTH_ENV = "SPENDGUARD_RECONSTRUCTION_TRUTH"
+RECONSTRUCTION_MONEY_DIGITS = 6
+RECONSTRUCTION_ESTIMATE_WEIGHT = 0.5
+_RECONSTRUCTION_LOG = logging.getLogger(__name__)
+
+
+def _reconstruction_cache_payload(kept, truth_rows, since):
+    """Keep evidence attribution and canonical truth day-rows; compare independent provider/month axes.
+
+    Truth is account-wide billing, not a measurement of these reconstructed realtime runs alone.
+    Missing identity/date/truth is a named gap, never inferred from an org or model spelling.
+    """
+    rows, gaps, actual, reconstructed = [], [], {}, {}
+    for index, run in enumerate(kept):
+        project = run.get("project") or RECONSTRUCTION_UNATTRIBUTED
+        provider = run.get("provider") or pricing.price(run["model"])["provider"]
+        day = run.get("day")
+        usd = run["usd"] if run.get("basis") == "printed" else round(
+            run["usd"] * RECONSTRUCTION_ESTIMATE_WEIGHT, RECONSTRUCTION_MONEY_DIGITS)
+        row = dict(run, project=project, provider=provider, usd=usd)
+        rows.append(row)
+        if project == RECONSTRUCTION_UNATTRIBUTED:
+            gaps.append({"kind": "unattributed", "row": index, "sessions": run.get("sessions")})
+        if day is None:
+            gaps.append({"kind": "missing_day", "row": index})
+        else:
+            month = datetime.date.fromisoformat(day).strftime("%Y-%m")
+            key = (provider, month)
+            reconstructed[key] = reconstructed.get(key, 0.0) + usd
+    for truth_row in truth_rows:
+        day = datetime.date.fromisoformat(truth_row["day"])
+        provider, usd = truth_row["provider"], truth_row["usd"]
+        if not provider or isinstance(usd, bool) or not isinstance(usd, (int, float)) or not math.isfinite(usd):
+            raise ValueError(f"unusable provider truth row: {truth_row!r}")
+        key = (provider, day.strftime("%Y-%m"))
+        actual[key] = actual.get(key, 0.0) + usd
+    comparisons = []
+    for provider, month in sorted(actual.keys() | reconstructed.keys()):
+        key = (provider, month)
+        measured = actual.get(key)
+        estimate = reconstructed.get(key, 0.0)
+        if measured is None:
+            gaps.append({"kind": "missing_provider_month_truth", "provider": provider, "month": month})
+        comparisons.append({"provider": provider, "month": month, "truth_total": measured,
+                            "reconstructed": estimate,
+                            "residual": None if measured is None else measured - estimate})
+    return {"since": since, "total": sum(row["usd"] for row in rows), "rows": rows,
+            "truth": truth_rows, "provider_months": comparisons, "gaps": gaps,
+            "note": "Provider truth is account-wide; reconstructed realtime is a separate estimate axis."}
+
+
+def _write_reconstruction_checkpoint(path, payload):
+    """Copy settled output before atomically publishing its replacement."""
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", dir=os.path.dirname(path), delete=False) as stream:
+            temporary = stream.name
+            json.dump(payload, stream, indent=2)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if os.path.exists(path):
+            shutil.copy2(path, path + ".checkpoint")
+        os.replace(temporary, path)
+    except Exception as exc:
+        _RECONSTRUCTION_LOG.exception("Reconstruction checkpoint failed for %s", path)
+        raise RuntimeError(f"Reconstruction checkpoint refused for {path}: {exc!r}") from exc
+    finally:
+        if temporary and os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def clean(truth_path=None):
     from spendguard import adapters
+    truth_path = truth_path or os.environ.get(RECONSTRUCTION_TRUTH_ENV)
+    try:
+        if not truth_path:
+            raise ValueError(f"Set {RECONSTRUCTION_TRUTH_ENV} to canonical provider truth day-row JSON")
+        with open(truth_path) as stream:
+            truth_rows = json.load(stream)
+        if not isinstance(truth_rows, list):
+            raise ValueError("Provider truth input must be a list of {day, provider, usd} rows")
+    except Exception as exc:
+        _RECONSTRUCTION_LOG.exception("Provider truth input refused")
+        raise RuntimeError(f"Provider truth input refused: {exc!r}") from exc
     res = json.load(open(STATE + ".result"))
     runs = res["runs"]
     tag_by_idx = {}
@@ -269,9 +356,11 @@ def clean():
                 selfcontam.append(r); continue        # self-contamination: only-evidence is spendguard's own analysis
             sid0 = sess[0] if sess else None
             sc = conv.resolve({"conv_id": sid0, "script": r.get("name")}, segs=_segs, store=_store) if sid0 else {}
-            org = sc.get("org") or "(untagged)"
-            r["org"], r["team"], r["project"], r["how"] = org, sc.get("team"), sc.get("project"), sc.get("how")
-            r["day"] = sc.get("day") or _sdmap.get(sid0)   # seg-day, else the SESSION's date → run lands in its month
+            org = sc.get("org") or r.get("org") or "(untagged)"
+            r["org"], r["team"], r["project"], r["how"] = (
+                org, sc.get("team") or r.get("team"),
+                sc.get("project") or r.get("project") or RECONSTRUCTION_UNATTRIBUTED, sc.get("how"))
+            r["day"] = sc.get("day") or r.get("day") or _sdmap.get(sid0)   # seg-day, else the SESSION's date → run lands in its month
             by_org[org] = round(by_org.get(org, 0.0) + r["usd"], 2)
             kept.append(r)
     total = round(sum(r["usd"] for r in kept), 2)
@@ -280,18 +369,14 @@ def clean():
     out = {"realtime_total": total, "printed": printed, "by_org": by_org, "excluded": buckets,
            "self_contaminated_usd": selfcontam_usd, "kept": kept, "inflated_dropped": inflated,
            "self_contaminated": selfcontam}
-    json.dump(out, open(STATE + ".clean", "w"), indent=2)
-    # stable cache the reconcile loop READS (admin-free realtime axis). TIGHTEN here: printed-$ = ground truth (full),
-    # soft estimates halved (they overshoot ~2x). Org-level for now; per-project/per-month needs collect to keep those.
-    def _tight(r):
-        return r["usd"] if r.get("basis") == "printed" else round(r["usd"] * 0.5, 2)
-    cache = {"since": SINCE, "total": round(sum(_tight(r) for r in kept), 2),
-             "note": "2-month window; org-level; per-project + per-month split is a refinement",
-             "rows": [{"org": r.get("org") or "(untagged)",
-                       "provider": "openai" if "gpt" in (r.get("model") or "").lower() else "anthropic",
-                       "day": r.get("day"), "usd": _tight(r)} for r in kept]}
-    cache_path = str(config.HOME / "realtime_reconstruction.json")   # config.HOME (respects SPENDGUARD_HOME), not a ~ literal
-    json.dump(cache, open(cache_path, "w"), indent=2)
+    try:
+        cache = _reconstruction_cache_payload(kept, truth_rows, SINCE)
+    except Exception as exc:
+        _RECONSTRUCTION_LOG.exception("Reconstruction evidence/truth refused")
+        raise RuntimeError(f"Reconstruction evidence/truth refused: {exc!r}") from exc
+    _write_reconstruction_checkpoint(STATE + ".clean", out)
+    cache_path = str(config.HOME / "realtime_reconstruction.json")
+    _write_reconstruction_checkpoint(cache_path, cache)
     print("  wrote reconcile cache:", cache_path, "(tightened total $%.2f)" % cache["total"])
     print("=== CLEANED REALTIME (embeddings/batch/meta/self-contam removed, inflated estimates dropped) ===")
     print("  CORRECTED realtime $%.2f  (printed-$ %.2f / estimated %.2f)  across %d runs"

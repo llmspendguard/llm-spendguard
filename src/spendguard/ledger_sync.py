@@ -359,7 +359,7 @@ def reconcile_into_ledger(since=None):
 _RT_MARKER = "(realtime-history)"   # marker model for realtime backfilled from the gate's realtime_log
 _RT_ORACLE_MARKER = "(realtime-oracle)"   # marker for realtime reconciled to the provider ADMIN-usage truth (timing-matched)
 _RT_RECON_MARKER = "(realtime-reconstructed)"   # realtime reconstructed AGENTICALLY from conversations (admin-free, production)
-_RT_ORG_PROJECT = {"healiom": "lmm", "ensight": "llm-spendguard", "personal": "personal-admin"}   # org → representative project
+_RT_RECON_UNATTRIBUTED_PROJECT = "unattributed"
 
 
 def realtime_reconstruction_estimate(since=None):
@@ -397,7 +397,7 @@ def realtime_reconstruction_estimate(since=None):
         if usd <= 0:
             nonpositive += 1                              # a non-positive reconstruction row is anomalous — surfaced, not lost
             continue
-        proj = _RT_ORG_PROJECT.get((r.get("org") or "").lower(), "unattributed")
+        proj = (r.get("project") or "").strip() or _RT_RECON_UNATTRIBUTED_PROJECT
         by_proj[proj] = by_proj.get(proj, 0.0) + usd
         total += usd
     age_days = round(max(0.0, (time.time() - os.path.getmtime(cache)) / 86400.0), 1)
@@ -416,7 +416,7 @@ def record_realtime_reconstruction(since=None):
     that are reversible + excluded from gate/cap, so re-running rebuilds them. Admin NEVER writes here (dev cross-check
     only). Each row records at its OWN day (the reconstruction now carries per-run `day` from conv.resolve), so a
     multi-month window folds into the right months instead of one lump day; caches without `day` fall back to the
-    window start. Per-project-within-org (vs the org→representative-project map) remains a refinement."""
+    window start. Project identity comes from each evidence row; missing identity stays explicitly unattributed."""
     from . import budget
     import os, json
     cache = str(config.HOME / "realtime_reconstruction.json")   # config.HOME (respects SPENDGUARD_HOME), not a ~ literal
@@ -429,10 +429,9 @@ def record_realtime_reconstruction(since=None):
         return dict(recorded=0.0, rows=0, note="cache unreadable")
     fallback_day = since or data.get("since") or config.month_start_utc()
     budget.clear_reconciled(model=_RT_RECON_MARKER)              # idempotent rebuild
-    org_project = _RT_ORG_PROJECT                               # org → representative project (shared with the read-only estimate twin)
     agg = {}
     for r in data.get("rows", []):
-        proj = org_project.get((r.get("org") or "").lower(), "unattributed")
+        proj = (r.get("project") or "").strip() or _RT_RECON_UNATTRIBUTED_PROJECT
         rday = str(r.get("day") or fallback_day)[:10]           # PER-RUN date → each row lands in ITS month, so the
         k = (proj, r.get("provider") or "?", rday)              # current-month reconcile sees current-month realtime
         agg[k] = agg.get(k, 0.0) + float(r.get("usd") or 0)
